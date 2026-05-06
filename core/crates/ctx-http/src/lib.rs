@@ -7,7 +7,6 @@ mod container_builder;
 pub mod daemon;
 mod dictation_livekit;
 mod execution_effective;
-mod execution_policy;
 pub mod git_status;
 mod installer;
 mod llm;
@@ -18,11 +17,8 @@ mod merge_queue;
 mod mobile_e2ee;
 mod mobile_tunnel;
 mod ops_events;
-mod order_seq;
 mod perf_telemetry;
-mod policy_signature;
 mod process_env;
-pub mod process_limits;
 mod provider_child_reclassifier;
 pub mod provider_guard;
 pub(crate) mod provider_install_contract;
@@ -61,9 +57,6 @@ pub mod fault_injection;
 
 #[cfg(test)]
 pub(crate) mod test_support;
-
-#[cfg(test)]
-mod execution_setup;
 
 #[cfg(not(feature = "fault_injection"))]
 pub mod fault_injection {

@@ -1,8 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use axum::http::StatusCode;
-
 use crate::api::providers::provider_status_for_target;
 use crate::api::sessions::{load_provider_model_catalog_for_execution_environment, ModelCatalog};
 use crate::daemon::AppState;
@@ -10,7 +8,9 @@ use crate::execution_effective;
 use crate::provider_matrix::ProviderMatrixEntryKind;
 use ctx_core::models::{ExecutionEnvironment, Workspace};
 
-use super::errors::{api_error, internal_api_error, ApiResult};
+use super::errors::{
+    api_error, internal_api_error, internal_request_or_policy_error, ApiResult, SubagentErrorKind,
+};
 
 pub(super) async fn load_requested_model_catalogs(
     state: &Arc<AppState>,
@@ -24,7 +24,7 @@ pub(super) async fn load_requested_model_catalogs(
         execution_environment,
     )
     .await
-    .map_err(|error| crate::api::shared::map_internal_api_error(&error))?;
+    .map_err(internal_request_or_policy_error)?;
     let managed = crate::daemon::load_managed_agent_server_config_or_err(&state.core.data_root)
         .await
         .map_err(internal_api_error)?;
@@ -49,7 +49,7 @@ pub(super) async fn load_requested_model_catalogs(
     for provider_id in provider_ids {
         if !known_providers.contains(provider_id) {
             return Err(api_error(
-                StatusCode::BAD_REQUEST,
+                SubagentErrorKind::BadRequest,
                 format!(
                     "unknown harness '{provider_id}'; available harnesses: {}",
                     available_providers.join(", ")
@@ -67,7 +67,7 @@ pub(super) async fn load_requested_model_catalogs(
         .await;
         if !crate::provider_usability::provider_status_is_usable(&status) {
             return Err(api_error(
-                StatusCode::BAD_REQUEST,
+                SubagentErrorKind::BadRequest,
                 format!(
                     "harness '{provider_id}' is not ready: {}",
                     crate::provider_usability::provider_status_unusable_reason(&status,)
@@ -91,7 +91,7 @@ pub(super) async fn load_requested_model_catalogs(
                 model_catalogs.insert(provider_id.clone(), catalog);
             }
             Err(error) => {
-                return Err(api_error(StatusCode::BAD_REQUEST, error));
+                return Err(api_error(SubagentErrorKind::BadRequest, error));
             }
         }
     }

@@ -279,7 +279,7 @@ pub(super) async fn finalize_subagent_invocation(
         }),
     )
     .await
-    .map_err(|(_, error)| error.0.error)?;
+    .map_err(|error| error.message().to_string())?;
 
     Ok(())
 }

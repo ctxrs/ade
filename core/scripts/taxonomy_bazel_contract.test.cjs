@@ -112,7 +112,10 @@ test("deterministic Linux contract gates route through Bazel-owned contract entr
   ]) {
     assert.match(coreBuild, new RegExp(filegroup.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")));
   }
-  assert.match(coreBuild, /exports_files\(\[\s*"Cargo\.lock",\s*"Cargo\.toml",\s*"package\.json",\s*"pnpm-lock\.yaml",\s*"pnpm-workspace\.yaml",\s*\]\)/s);
+  assert.match(
+    coreBuild,
+    /exports_files\(\[\s*"Cargo\.Bazel\.Cargo\.lock",\s*"Cargo\.Bazel\.lock",\s*"Cargo\.lock",\s*"Cargo\.toml",\s*"package\.json",\s*"pnpm-lock\.yaml",\s*"pnpm-workspace\.yaml",\s*\]\)/s,
+  );
   assert.match(coreBuild, /"\/\/core\/crates\/ctx-http:Cargo\.toml"/);
   assert.match(coreBuild, /"\/\/core\/crates\/ctx-provider-accounts:src\/provider_matrix\.json"/);
   assert.match(ctxHttpBuild, /exports_files\(\["Cargo\.toml"\]\)/);
@@ -179,10 +182,14 @@ test("deterministic Linux contract gates route through Bazel-owned contract entr
 
   const providerMatrixArchiveContracts = readTargetBlock("desktop_provider_matrix_archive_contracts");
   assert.match(providerMatrixArchiveContracts, /srcs = \["\/\/tools\/bazel:run_node_task\.sh"\]/);
-  assert.match(
-    providerMatrixArchiveContracts,
-    /args = \[\s*"core",\s*"--test",\s*"scripts\/provider_matrix_archive_gap_report\.test\.cjs",\s*"scripts\/provider_matrix_required_targets_gate\.test\.cjs",\s*"scripts\/provider_release_bump\.test\.cjs",\s*\]/,
-  );
+  for (const script of [
+    "scripts/provider_matrix_archive_gap_report.test.cjs",
+    "scripts/provider_matrix_required_targets_gate.test.cjs",
+    "scripts/provider_release_bump.test.cjs",
+  ]) {
+    const escaped = script.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    assert.match(providerMatrixArchiveContracts, new RegExp(`"${escaped}"`));
+  }
   assert.doesNotMatch(providerMatrixArchiveContracts, /run_workspace_task\.sh/);
 
   const bundledHarnessDependencyContracts = readTargetBlock("bundled_harness_dependency_contracts");
@@ -192,10 +199,15 @@ test("deterministic Linux contract gates route through Bazel-owned contract entr
 
   const desktopE2EPreflightContracts = readTargetBlock("desktop_e2e_preflight_contracts");
   assert.match(desktopE2EPreflightContracts, /srcs = \["\/\/tools\/bazel:run_node_task\.sh"\]/);
-  assert.match(
-    desktopE2EPreflightContracts,
-    /args = \["core", "--test", "scripts\/desktop_e2e_preflight\.test\.cjs"\]/,
-  );
+  for (const script of [
+    "scripts/desktop_e2e_preflight.test.cjs",
+    "scripts/desktop_automation_task_api_contract.test.cjs",
+    "apps/desktop/automation/daemon.node-http.test.cjs",
+    "apps/desktop/scripts/automation_runtime_contract.test.cjs",
+  ]) {
+    const escaped = script.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    assert.match(desktopE2EPreflightContracts, new RegExp(`"${escaped}"`));
+  }
   assert.doesNotMatch(desktopE2EPreflightContracts, /run_workspace_task\.sh/);
 
   const desktopSyncResourcesContracts = readTargetBlock("desktop_sync_resources_contracts");

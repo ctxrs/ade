@@ -76,38 +76,11 @@ test("ctx-http BUILD exposes Bazel-native base test targets", () => {
   assert.match(ctxHttpBuild, /name = "unit_tests"/);
   assert.match(ctxHttpBuild, /name = "unit_tests_api"/);
   assert.match(ctxHttpBuild, /name = "unit_tests_daemon"/);
-  assert.match(ctxHttpBuild, /name = "unit_tests_execution_setup"/);
-  assert.match(
-    ctxHttpBuild,
-    /name = "unit_tests_execution_setup_concurrent_launch_start_is_deduplicated"/,
-  );
-  assert.match(ctxHttpBuild, /name = "unit_tests_execution_setup_startup_prewarm_runtime_warmup"/);
-  assert.match(ctxHttpBuild, /name = "unit_tests_execution_setup_refresh_clears_stale_prewarm_metadata"/);
-  assert.match(ctxHttpBuild, /name = "unit_tests_execution_setup_reuses_active_runtime_prewarm"/);
-  assert.match(ctxHttpBuild, /name = "unit_tests_execution_setup_startup_prewarm_runtime_probe_reuse"/);
-  assert.match(ctxHttpBuild, /name = "unit_tests_execution_setup_runtime_launch_ready_promotion"/);
-  assert.match(
-    ctxHttpBuild,
-    /name = "unit_tests_execution_setup_runtime_launch_ready_scope_starts_shared_vm"/,
-  );
-  assert.match(ctxHttpBuild, /name = "unit_tests_execution_setup_builder_prewarm_shared_all_job"/);
-  assert.match(
-    ctxHttpBuild,
-    /name = "unit_tests_execution_setup_workspace_launch_not_blocked_by_background_runtime_prewarm"/,
-  );
-  assert.match(
-    ctxHttpBuild,
-    /name = "unit_tests_execution_setup_successful_workspace_launch_writes_missing_prewarm_metadata"/,
-  );
   assert.match(ctxHttpBuild, /name = "unit_tests_installer"/);
   assert.match(ctxHttpBuild, /name = "unit_tests_lib"/);
   assert.match(
     ctxHttpBazelTests,
     /sh_test\([\s\S]*name = name[\s\S]*"\$\(rootpath :\{\}\)"[\s\S]*CTX_HTTP_UNIT_TEST_HARNESS_NAME[\s\S]*data = \[":\{\}"\.format\(CTX_HTTP_UNIT_TEST_HARNESS_NAME\)\]/,
-  );
-  assert.match(
-    ctxHttpBuild,
-    /rust_test\([\s\S]*name = "unit_tests_execution_setup_runtime_launch_ready_promotion"[\s\S]*args = CTX_HTTP_EXECUTION_SETUP_RUNTIME_LAUNCH_READY_PROMOTION_TEST_ARGS[\s\S]*tags = CTX_HTTP_TIMING_SENSITIVE_EXACT_TEST_TAGS/,
   );
   assert.match(ctxHttpBuild, /name = "unit_tests_lib_execution_launch_startup_prewarm_kind_supported"/);
   assert.match(ctxHttpBuild, /name = "unit_tests_merge_queue"/);
@@ -115,7 +88,8 @@ test("ctx-http BUILD exposes Bazel-native base test targets", () => {
   assert.match(ctxHttpBuild, /name = "unit_tests_provider_launch"/);
   assert.match(ctxHttpBuild, /name = "unit_tests_provider_matrix"/);
   assert.match(ctxHttpBuild, /name = "unit_tests_scheduler"/);
-  assert.match(ctxHttpBuild, /name = "unit_tests_settings"/);
+  assert.match(ctxHttpBuild, /"\/\/core\/crates\/ctx-settings-model:unit_tests"/);
+  assert.match(ctxHttpBuild, /"\/\/core\/crates\/ctx-settings-service:unit_tests"/);
   assert.match(ctxHttpBuild, /name = "unit_tests_workspace_runtime"/);
   assert.match(ctxHttpBuild, /name = "unit_tests_workspace_runtime_reuses_running_container"/);
   assert.match(ctxHttpBuild, /name = "unit_tests_workspace_runtime_reclaim_idle_machine"/);
@@ -130,91 +104,9 @@ test("ctx-http BUILD exposes Bazel-native base test targets", () => {
   );
   assert.match(ctxHttpBuild, /name = "unit_tests_daemon_golden_path_with_fake_provider"/);
   assert.match(ctxHttpBuild, /name = "unit_tests_daemon_http_and_ws_streaming"/);
-  assert.match(ctxHttpBuild, /name = "unit_tests_workspace_launch_reuses_startup_prewarm"/);
   assert.match(ctxHttpBuild, /"lib_tests::"/);
-  assert.match(ctxHttpBuild, /"execution_setup::"/);
   assert.match(ctxHttpBuild, /"workspace_runtime::"/);
   assert.match(ctxHttpBuild, /"--test-threads=1"/);
-  assert.match(
-    ctxHttpBuild,
-    /--skip=execution_setup::tests::concurrent_launch_start_is_deduplicated/,
-  );
-  assert.match(
-    ctxHttpBuild,
-    /--exact",\s*"execution_setup::tests::concurrent_launch_start_is_deduplicated/,
-  );
-  assert.match(
-    ctxHttpBuild,
-    /--skip=execution_setup::tests::startup_prewarm_runs_runtime_warmup_for_cold_container_settings/,
-  );
-  assert.match(
-    ctxHttpBuild,
-    /--exact",\s*"execution_setup::tests::startup_prewarm_runs_runtime_warmup_for_cold_container_settings/,
-  );
-  assert.match(
-    ctxHttpBuild,
-    /--skip=execution_setup::tests::successful_workspace_launch_refresh_clears_stale_prewarm_metadata/,
-  );
-  assert.match(
-    ctxHttpBuild,
-    /--exact",\s*"execution_setup::tests::successful_workspace_launch_refresh_clears_stale_prewarm_metadata/,
-  );
-  assert.match(
-    ctxHttpBuild,
-    /--skip=execution_setup::tests::workspace_launch_reuses_active_runtime_prewarm_without_second_image_load/,
-  );
-  assert.match(
-    ctxHttpBuild,
-    /--exact",\s*"execution_setup::tests::workspace_launch_reuses_active_runtime_prewarm_without_second_image_load/,
-  );
-  assert.match(
-    ctxHttpBuild,
-    /--skip=execution_setup::tests::startup_prewarm_reuses_initial_runtime_probe_for_gate_checks/,
-  );
-  assert.match(
-    ctxHttpBuild,
-    /--exact",\s*"execution_setup::tests::startup_prewarm_reuses_initial_runtime_probe_for_gate_checks/,
-  );
-  assert.match(
-    ctxHttpBuild,
-    /--skip=execution_setup::tests::runtime_prewarm_launch_ready_request_reuses_running_runtime_job_and_promotes_scope/,
-  );
-  assert.match(
-    ctxHttpBuild,
-    /--exact",\s*"execution_setup::tests::runtime_prewarm_launch_ready_request_reuses_running_runtime_job_and_promotes_scope/,
-  );
-  assert.match(
-    ctxHttpBuild,
-    /--skip=execution_setup::tests::runtime_prewarm_launch_ready_scope_starts_shared_vm_and_reports_launch_ready/,
-  );
-  assert.match(
-    ctxHttpBuild,
-    /--exact",\s*"execution_setup::tests::runtime_prewarm_launch_ready_scope_starts_shared_vm_and_reports_launch_ready/,
-  );
-  assert.match(
-    ctxHttpBuild,
-    /--skip=execution_setup::tests::builder_prewarm_reuses_background_all_job/,
-  );
-  assert.match(
-    ctxHttpBuild,
-    /--exact",\s*"execution_setup::tests::builder_prewarm_reuses_background_all_job/,
-  );
-  assert.match(
-    ctxHttpBuild,
-    /--skip=execution_setup::tests::workspace_launch_is_not_blocked_by_background_runtime_prewarm_job/,
-  );
-  assert.match(
-    ctxHttpBuild,
-    /--exact",\s*"execution_setup::tests::workspace_launch_is_not_blocked_by_background_runtime_prewarm_job/,
-  );
-  assert.match(
-    ctxHttpBuild,
-    /--skip=execution_setup::tests::successful_workspace_launch_writes_missing_prewarm_metadata/,
-  );
-  assert.match(
-    ctxHttpBuild,
-    /--exact",\s*"execution_setup::tests::successful_workspace_launch_writes_missing_prewarm_metadata/,
-  );
   assert.match(ctxHttpBuild, /--skip=lib_tests::daemon_smoke::daemon_golden_path_with_fake_provider/);
   assert.match(
     ctxHttpBuild,
@@ -232,14 +124,6 @@ test("ctx-http BUILD exposes Bazel-native base test targets", () => {
   assert.match(
     ctxHttpBuild,
     /--exact",\s*"lib_tests::execution_launch::execution_launch_startup_prewarm_kind_supported/,
-  );
-  assert.match(
-    ctxHttpBuild,
-    /--skip=execution_setup::tests::workspace_launch_reuses_startup_prewarm_without_second_image_load_when_machine_is_ready/,
-  );
-  assert.match(
-    ctxHttpBuild,
-    /--exact",\s*"execution_setup::tests::workspace_launch_reuses_startup_prewarm_without_second_image_load_when_machine_is_ready/,
   );
   assert.match(
     ctxHttpBuild,
@@ -302,40 +186,11 @@ test("ctx-http BUILD exposes Bazel-native base test targets", () => {
   assert.match(ctxHttpBuild, /name = "base"/);
   assert.match(ctxHttpBuild, /name = "unit-tests-api"/);
   assert.match(ctxHttpBuild, /name = "unit-tests-daemon-and-scheduler"/);
-  assert.match(ctxHttpBuild, /name = "unit-tests-execution-setup"/);
   assert.match(ctxHttpBuild, /name = "unit-tests-lib"/);
   assert.match(ctxHttpBuild, /name = "unit-tests-lib-session-head-large"/);
   assert.match(ctxHttpBuild, /name = "unit-tests-merge-queue"/);
   assert.match(ctxHttpBuild, /name = "unit-tests-provider-and-settings"/);
   assert.match(ctxHttpBuild, /name = "unit-tests-workspace-runtime"/);
-  assert.match(
-    ctxHttpBuild,
-    /":unit_tests_execution_setup_concurrent_launch_start_is_deduplicated"/,
-  );
-  assert.match(
-    ctxHttpBuild,
-    /":unit_tests_execution_setup_startup_prewarm_runtime_probe_reuse"/,
-  );
-  assert.match(
-    ctxHttpBuild,
-    /":unit_tests_execution_setup_runtime_launch_ready_promotion"/,
-  );
-  assert.match(
-    ctxHttpBuild,
-    /":unit_tests_execution_setup_runtime_launch_ready_scope_starts_shared_vm"/,
-  );
-  assert.match(
-    ctxHttpBuild,
-    /":unit_tests_execution_setup_builder_prewarm_shared_all_job"/,
-  );
-  assert.match(
-    ctxHttpBuild,
-    /":unit_tests_execution_setup_workspace_launch_not_blocked_by_background_runtime_prewarm"/,
-  );
-  assert.match(
-    ctxHttpBuild,
-    /":unit_tests_execution_setup_successful_workspace_launch_writes_missing_prewarm_metadata"/,
-  );
   assert.match(
     ctxHttpBuild,
     /":unit_tests_merge_queue_enabled_workspace_resume_after_open"/,
@@ -370,7 +225,6 @@ test("ctx-http unit-family suites cover every unit test target exactly once", ()
   const unitFamilySuites = [
     "unit-tests-api",
     "unit-tests-daemon-and-scheduler",
-    "unit-tests-execution-setup",
     "unit-tests-lib",
     "unit-tests-lib-session-head-large",
     "unit-tests-merge-queue",
@@ -383,10 +237,13 @@ test("ctx-http unit-family suites cover every unit test target exactly once", ()
   const familyTargets = unitFamilySuites
     .flatMap((suiteName) => extractTestSuiteLabels(suiteName))
     .sort();
+  const localFamilyTargets = familyTargets.filter((target) => target.startsWith(":"));
 
   assertNoDuplicates("ctx-http unit-family suite targets", familyTargets);
   assert.equal(familyTargets.includes(":ctx_http_unit_test_harness"), false);
-  assert.deepEqual(familyTargets, declaredUnitTargets);
+  assert.equal(familyTargets.includes("//core/crates/ctx-settings-model:unit_tests"), true);
+  assert.equal(familyTargets.includes("//core/crates/ctx-settings-service:unit_tests"), true);
+  assert.deepEqual(localFamilyTargets, declaredUnitTargets);
   assert.deepEqual(
     extractTestSuiteLabels("unit_tests").sort(),
     unitFamilySuites.map((suiteName) => `:${suiteName}`).sort(),

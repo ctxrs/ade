@@ -10,7 +10,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use axum::http::StatusCode;
 use base64::Engine;
 
 use crate::api::sessions::{
@@ -36,6 +35,7 @@ use self::child_runs::{
     PersistedSubagentPrompt,
 };
 use self::errors::{api_error, internal_api_error, load_parent_session, ApiResult};
+pub(crate) use self::errors::{SubagentError, SubagentErrorKind};
 use self::providers::load_requested_model_catalogs;
 use self::request::{
     build_subagent_request_json, collect_provider_ids, default_catalog_model_id,
@@ -218,12 +218,12 @@ async fn resolve_child_agent_session(
     raw_agent_id: &str,
 ) -> ApiResult<ctx_core::models::Session> {
     let agent_id = decode_agent_ref(raw_agent_id)
-        .map_err(|error| api_error(StatusCode::BAD_REQUEST, error))?;
+        .map_err(|error| api_error(SubagentErrorKind::BadRequest, error))?;
     let child = store
         .get_active_subagent_session(parent.id, agent_id)
         .await
         .map_err(internal_api_error)?
-        .ok_or_else(|| api_error(StatusCode::NOT_FOUND, "agent not found"))?;
+        .ok_or_else(|| api_error(SubagentErrorKind::NotFound, "agent not found"))?;
     Ok(child)
 }
 
@@ -392,7 +392,7 @@ fn parse_wait_mode(mode: Option<&str>) -> ApiResult<AgentWaitMode> {
         None | Some("any") => Ok(AgentWaitMode::Any),
         Some("all") => Ok(AgentWaitMode::All),
         Some(other) => Err(api_error(
-            StatusCode::BAD_REQUEST,
+            SubagentErrorKind::BadRequest,
             format!("unsupported wait mode '{other}'"),
         )),
     }
@@ -403,7 +403,7 @@ fn parse_wait_until(until: Option<&str>) -> ApiResult<AgentWaitUntil> {
         None | Some("terminal") => Ok(AgentWaitUntil::Terminal),
         Some("update") => Ok(AgentWaitUntil::Update),
         Some(other) => Err(api_error(
-            StatusCode::BAD_REQUEST,
+            SubagentErrorKind::BadRequest,
             format!("unsupported wait until '{other}'"),
         )),
     }
@@ -446,19 +446,22 @@ fn normalize_wait_agent_ids(req: &WaitAgentReq) -> ApiResult<Vec<String>> {
         (None, Some(agent_ids)) => agent_ids.clone(),
         (Some(_), Some(_)) => {
             return Err(api_error(
-                StatusCode::BAD_REQUEST,
+                SubagentErrorKind::BadRequest,
                 "provide either agent_id or agent_ids",
             ));
         }
         (None, None) => {
             return Err(api_error(
-                StatusCode::BAD_REQUEST,
+                SubagentErrorKind::BadRequest,
                 "agent_id or agent_ids is required",
             ));
         }
     };
     if raw_ids.is_empty() {
-        return Err(api_error(StatusCode::BAD_REQUEST, "agent_ids is required"));
+        return Err(api_error(
+            SubagentErrorKind::BadRequest,
+            "agent_ids is required",
+        ));
     }
     let mut seen = HashSet::new();
     let mut normalized_ids = Vec::with_capacity(raw_ids.len());
@@ -466,13 +469,13 @@ fn normalize_wait_agent_ids(req: &WaitAgentReq) -> ApiResult<Vec<String>> {
         let trimmed = raw.trim().to_string();
         if trimmed.is_empty() {
             return Err(api_error(
-                StatusCode::BAD_REQUEST,
+                SubagentErrorKind::BadRequest,
                 "agent_id cannot be empty",
             ));
         }
         if !seen.insert(trimmed.clone()) {
             return Err(api_error(
-                StatusCode::BAD_REQUEST,
+                SubagentErrorKind::BadRequest,
                 format!("duplicate agent_id '{trimmed}'"),
             ));
         }

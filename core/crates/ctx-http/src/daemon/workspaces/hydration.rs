@@ -16,11 +16,17 @@ pub enum WorkspaceHydrationError {
     Load(anyhow::Error),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorkspaceHydrationErrorKind {
+    NotFound,
+    Load,
+}
+
 impl WorkspaceHydrationError {
-    pub fn status_code(&self) -> axum::http::StatusCode {
+    pub fn kind(&self) -> WorkspaceHydrationErrorKind {
         match self {
-            WorkspaceHydrationError::NotFound => axum::http::StatusCode::NOT_FOUND,
-            WorkspaceHydrationError::Load(_) => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            WorkspaceHydrationError::NotFound => WorkspaceHydrationErrorKind::NotFound,
+            WorkspaceHydrationError::Load(_) => WorkspaceHydrationErrorKind::Load,
         }
     }
 }

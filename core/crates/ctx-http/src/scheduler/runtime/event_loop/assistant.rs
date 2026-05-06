@@ -2,7 +2,7 @@ use ctx_core::ids::MessageId;
 use ctx_core::models::{SessionEvent, SessionEventType};
 use serde_json::{json, Value};
 
-use crate::order_seq::{attach_order_seq, read_order_seq};
+use ctx_session_tools::order_seq::{attach_order_seq, read_order_seq};
 use crate::scheduler::persistence::{emit_event, persist_assistant_message};
 use crate::storage_guard;
 

@@ -1,0 +1,16 @@
+[package]
+name = "ctx-org-policy"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+ctx-core = { path = "../ctx-core" }
+hex = "0.4"
+jsonwebtoken = "9"
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"
+
+[dev-dependencies]
+chrono.workspace = true

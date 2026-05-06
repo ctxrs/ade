@@ -2,18 +2,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Context;
-use axum::http::StatusCode;
-use axum::Json;
 use ctx_core::models::{ExecutionEnvironment, Worktree};
 use url::Url;
 
-use crate::api::errors::ApiErrorResp;
-use crate::api::shared::status_code_for_request_or_policy_error;
 use crate::daemon::AppState;
-use crate::execution_policy::{ExecutionPolicyDenied, HostExecutionPolicy};
 use crate::settings::ExecutionMode;
 use crate::web_sessions::{WebSessionCreateRequest, WebSessionInfo, WebSessionViewport};
 use ctx_core::ids::{SessionId, WorktreeId};
+use ctx_settings_service::{ExecutionPolicyDenied, HostExecutionPolicy};
 
 pub(crate) struct WebSessionLaunchRequest {
     pub(crate) session_id: Option<SessionId>,
@@ -23,6 +19,29 @@ pub(crate) struct WebSessionLaunchRequest {
     pub(crate) fps: Option<u32>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum WebSessionLaunchErrorKind {
+    BadRequest,
+    Forbidden,
+    Internal,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct WebSessionLaunchError {
+    kind: WebSessionLaunchErrorKind,
+    message: String,
+}
+
+impl WebSessionLaunchError {
+    pub(crate) fn kind(&self) -> WebSessionLaunchErrorKind {
+        self.kind
+    }
+
+    pub(crate) fn message(&self) -> &str {
+        &self.message
+    }
+}
+
 struct WebSessionLaunchContext {
     work_dir: Option<PathBuf>,
 }
@@ -30,7 +49,7 @@ struct WebSessionLaunchContext {
 pub(crate) async fn create_web_session(
     state: &Arc<AppState>,
     request: WebSessionLaunchRequest,
-) -> Result<WebSessionInfo, (StatusCode, Json<ApiErrorResp>)> {
+) -> Result<WebSessionInfo, WebSessionLaunchError> {
     validate_web_session_url(&request.url).map_err(|e| bad_request(e.to_string()))?;
 
     let launch_context =
@@ -159,29 +178,31 @@ async fn validate_web_session_worktree(
     Ok(())
 }
 
-fn error_response(
-    status: StatusCode,
-    error: impl Into<String>,
-) -> (StatusCode, Json<ApiErrorResp>) {
-    (
-        status,
-        Json(ApiErrorResp {
-            error: error.into(),
-        }),
-    )
+fn launch_error(
+    kind: WebSessionLaunchErrorKind,
+    message: impl Into<String>,
+) -> WebSessionLaunchError {
+    WebSessionLaunchError {
+        kind,
+        message: message.into(),
+    }
 }
 
-fn bad_request(error: impl Into<String>) -> (StatusCode, Json<ApiErrorResp>) {
-    error_response(StatusCode::BAD_REQUEST, error)
+fn bad_request(error: impl Into<String>) -> WebSessionLaunchError {
+    launch_error(WebSessionLaunchErrorKind::BadRequest, error)
 }
 
-fn request_or_policy_error(error: anyhow::Error) -> (StatusCode, Json<ApiErrorResp>) {
-    let status = status_code_for_request_or_policy_error(&error);
-    error_response(status, format!("{error:#}"))
+fn request_or_policy_error(error: anyhow::Error) -> WebSessionLaunchError {
+    let kind = if ctx_settings_service::is_execution_policy_denial(&error) {
+        WebSessionLaunchErrorKind::Forbidden
+    } else {
+        WebSessionLaunchErrorKind::BadRequest
+    };
+    launch_error(kind, format!("{error:#}"))
 }
 
-fn internal_error(error: impl Into<String>) -> (StatusCode, Json<ApiErrorResp>) {
-    error_response(StatusCode::INTERNAL_SERVER_ERROR, error)
+fn internal_error(error: impl Into<String>) -> WebSessionLaunchError {
+    launch_error(WebSessionLaunchErrorKind::Internal, error)
 }
 
 fn validate_web_session_url(raw: &str) -> anyhow::Result<()> {
@@ -201,9 +222,9 @@ mod tests {
 
     use std::collections::HashMap;
 
-    use crate::execution_policy::{CTX_HOST_EXECUTION_POLICY_ENV, EXECUTION_POLICY_TEST_ENV_LOCK};
     use chrono::Utc;
     use ctx_core::models::{ExecutionEnvironment, VcsKind, Worktree};
+    use ctx_settings_service::{CTX_HOST_EXECUTION_POLICY_ENV, EXECUTION_POLICY_TEST_ENV_LOCK};
     use ctx_store::StoreManager;
 
     struct EnvVarGuard {
@@ -266,6 +287,20 @@ mod tests {
         }
     }
 
+    fn assert_launch_error(
+        error: &WebSessionLaunchError,
+        kind: WebSessionLaunchErrorKind,
+        message_contains: &str,
+    ) {
+        assert_eq!(error.kind(), kind);
+        assert!(
+            error.message().contains(message_contains),
+            "expected {:?} to contain {:?}",
+            error.message(),
+            message_contains
+        );
+    }
+
     #[tokio::test]
     async fn create_web_session_rejects_sandbox_only_before_host_runtime_setup() {
         let _env_lock = EXECUTION_POLICY_TEST_ENV_LOCK.lock().await;
@@ -286,13 +321,12 @@ mod tests {
         .await
         .expect_err("sandbox-only policy should reject host web sessions");
 
-        assert_eq!(err.0, StatusCode::FORBIDDEN);
-        assert!(err
-            .1
-             .0
-            .error
-            .contains("web sessions currently run on the host"));
-        assert!(err.1 .0.error.contains("host execution is disabled"));
+        assert_launch_error(
+            &err,
+            WebSessionLaunchErrorKind::Forbidden,
+            "web sessions currently run on the host",
+        );
+        assert!(err.message().contains("host execution is disabled"));
     }
 
     #[tokio::test]
@@ -360,8 +394,11 @@ mod tests {
         .await
         .expect_err("sandbox session should reject host web sessions");
 
-        assert_eq!(err.0, StatusCode::FORBIDDEN);
-        assert!(err.1 .0.error.contains("disabled for sandbox sessions"));
+        assert_launch_error(
+            &err,
+            WebSessionLaunchErrorKind::Forbidden,
+            "disabled for sandbox sessions",
+        );
     }
 
     #[tokio::test]
@@ -384,7 +421,10 @@ mod tests {
         .await
         .expect_err("unscoped web sessions should be rejected");
 
-        assert_eq!(err.0, StatusCode::BAD_REQUEST);
-        assert!(err.1 .0.error.contains("session_id or worktree_id"));
+        assert_launch_error(
+            &err,
+            WebSessionLaunchErrorKind::BadRequest,
+            "session_id or worktree_id",
+        );
     }
 }

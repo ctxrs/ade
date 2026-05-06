@@ -339,7 +339,7 @@ struct HealthResp {
     daemon_url: Option<String>,
     auth_required: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    open_file_limit: Option<crate::process_limits::OpenFileLimitSnapshot>,
+    open_file_limit: Option<ctx_resource_utilization::process_limits::OpenFileLimitSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
     storage: Option<crate::storage_guard::StorageGuardStatus>,
     compatibility: HealthCompatibility,

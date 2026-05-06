@@ -4,4 +4,4 @@ mod hydration;
 mod runtime;
 pub(crate) mod stream;
 
-pub use hydration::WorkspaceHydrationError;
+pub use hydration::{WorkspaceHydrationError, WorkspaceHydrationErrorKind};

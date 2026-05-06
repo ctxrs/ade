@@ -8,11 +8,17 @@ pub(crate) async fn spawn_agent(
 ) -> ApiResult<SpawnAgentResp> {
     let task_label = req.task_label.trim().to_string();
     if task_label.is_empty() {
-        return Err(api_error(StatusCode::BAD_REQUEST, "task_label is required"));
+        return Err(api_error(
+            SubagentErrorKind::BadRequest,
+            "task_label is required",
+        ));
     }
     let prompt = req.prompt.trim().to_string();
     if prompt.is_empty() {
-        return Err(api_error(StatusCode::BAD_REQUEST, "prompt is required"));
+        return Err(api_error(
+            SubagentErrorKind::BadRequest,
+            "prompt is required",
+        ));
     }
 
     let spawned_children = init_subagents(
@@ -35,7 +41,7 @@ pub(crate) async fn spawn_agent(
     let spawned = spawned_children
         .into_iter()
         .next()
-        .ok_or_else(|| api_error(StatusCode::NOT_FOUND, "spawned agent not found"))?;
+        .ok_or_else(|| api_error(SubagentErrorKind::NotFound, "spawned agent not found"))?;
     Ok(SpawnAgentResp {
         agent: build_spawned_agent_detail(&spawned),
     })
@@ -81,7 +87,10 @@ pub(crate) async fn send_input(
     let child = resolve_child_agent_session(&store, &parent, &req.agent_id).await?;
     let message = req.message.trim().to_string();
     if message.is_empty() {
-        return Err(api_error(StatusCode::BAD_REQUEST, "message is required"));
+        return Err(api_error(
+            SubagentErrorKind::BadRequest,
+            "message is required",
+        ));
     }
 
     let interrupt = req.interrupt.unwrap_or(false);
@@ -116,7 +125,7 @@ pub(crate) async fn archive_agent(
         .is_some_and(|turn| is_active_turn_status(&turn.status))
     {
         return Err(api_error(
-            StatusCode::BAD_REQUEST,
+            SubagentErrorKind::BadRequest,
             "cannot archive agent while it has active or queued work; wait or interrupt first",
         ));
     }
@@ -126,7 +135,7 @@ pub(crate) async fn archive_agent(
         .await
         .map_err(internal_api_error)?;
     if !archived {
-        return Err(api_error(StatusCode::NOT_FOUND, "agent not found"));
+        return Err(api_error(SubagentErrorKind::NotFound, "agent not found"));
     }
     state
         .workspaces
@@ -172,7 +181,7 @@ pub(crate) async fn wait_agent(
     let until = parse_wait_until(req.until.as_deref())?;
     if req.since_seq.is_some() && targets.len() != 1 {
         return Err(api_error(
-            StatusCode::BAD_REQUEST,
+            SubagentErrorKind::BadRequest,
             "since_seq is only supported with a single agent_id",
         ));
     }

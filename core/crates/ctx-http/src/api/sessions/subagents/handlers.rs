@@ -16,6 +16,7 @@ pub(crate) async fn mcp_send_input(
 
     crate::daemon::sessions::subagents::send_input(state, parent_id, req)
         .await
+        .map_err(subagent_error_response)
         .map(Json)
 }
 
@@ -35,6 +36,7 @@ pub(crate) async fn mcp_archive_agent(
 
     crate::daemon::sessions::subagents::archive_agent(state, parent_id, req)
         .await
+        .map_err(subagent_error_response)
         .map(Json)
 }
 
@@ -53,6 +55,7 @@ pub(crate) async fn mcp_list_agents(
 
     crate::daemon::sessions::subagents::list_agents(state, parent_id)
         .await
+        .map_err(subagent_error_response)
         .map(Json)
 }
 
@@ -72,6 +75,7 @@ pub(crate) async fn mcp_get_agent(
 
     crate::daemon::sessions::subagents::get_agent(state, parent_id, req)
         .await
+        .map_err(subagent_error_response)
         .map(Json)
 }
 
@@ -91,6 +95,7 @@ pub(crate) async fn mcp_interrupt_agent(
 
     crate::daemon::sessions::subagents::interrupt_agent(state, parent_id, req)
         .await
+        .map_err(subagent_error_response)
         .map(Json)
 }
 
@@ -110,5 +115,6 @@ pub(crate) async fn mcp_wait_agent(
 
     crate::daemon::sessions::subagents::wait_agent(state, parent_id, req)
         .await
+        .map_err(subagent_error_response)
         .map(Json)
 }

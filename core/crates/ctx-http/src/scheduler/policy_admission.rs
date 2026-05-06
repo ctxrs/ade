@@ -244,7 +244,7 @@ pub(super) async fn admit_turn(
     }
 
     if let Err(err) =
-        crate::policy_signature::verify_policy_snapshot_signature(&enrollment, &snapshot)
+        ctx_org_policy::signature::verify_policy_snapshot_signature(&enrollment, &snapshot)
     {
         return deny_org_run(
             store,

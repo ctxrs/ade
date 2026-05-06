@@ -5,13 +5,13 @@ use axum::http::StatusCode;
 use axum::Json;
 
 use crate::daemon::AppState;
-use crate::execution_policy::HostExecutionPolicy;
 use crate::provider_guard;
 use crate::provider_restart;
 use crate::resource_governance;
 use crate::settings as user_settings;
 use crate::telemetry::TelemetryConfig;
 use crate::tool_cgroup;
+use ctx_settings_service::HostExecutionPolicy;
 
 pub(super) async fn get_settings(
     State(state): State<Arc<AppState>>,
@@ -89,7 +89,7 @@ mod tests {
     use ctx_store::StoreManager;
     use serde_json::json;
 
-    use crate::execution_policy::EXECUTION_POLICY_TEST_ENV_LOCK;
+    use ctx_settings_service::EXECUTION_POLICY_TEST_ENV_LOCK;
 
     struct EnvVarGuard {
         key: &'static str,

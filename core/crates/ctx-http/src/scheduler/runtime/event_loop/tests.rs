@@ -1,5 +1,5 @@
 use super::*;
-use crate::order_seq::OrderSeqState;
+use ctx_session_tools::order_seq::OrderSeqState;
 use crate::scheduler::lifecycle::{fail_starting_turn, RunningTurn};
 use ctx_core::models::{ExecutionEnvironment, SessionTurn, VcsKind};
 use ctx_providers::adapters::{ProviderAdapter, ProviderRunHooks, TurnInput};

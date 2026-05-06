@@ -379,6 +379,11 @@ async fn run_archive_ingest_batch_gates_visibility_and_normalizes_payloads() {
         )
         .await
         .unwrap();
+    fixture
+        .store
+        .flush_active_snapshot_head_projection_queue()
+        .await
+        .unwrap();
 
     fixture
         .store

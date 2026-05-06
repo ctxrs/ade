@@ -11,7 +11,7 @@ use tokio::task::JoinHandle;
 use crate::git_status::GitStatusSnapshot;
 use crate::mobile_tunnel::MobileTunnelManager;
 use crate::ops_events::{OpsEvent, OpsEvents};
-use crate::order_seq::OrderSeqState;
+use ctx_session_tools::order_seq::OrderSeqState;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
 use crate::provider_guard;
 use crate::provider_restart;

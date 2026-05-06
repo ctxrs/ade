@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 
 use crate::daemon::AppState;
 use crate::logs;
-use crate::order_seq::attach_order_seq;
+use ctx_session_tools::order_seq::attach_order_seq;
 use ctx_core::ids::SessionId;
 use ctx_core::models::{Session, SessionEventType};
 use ctx_providers::adapters::{ProviderAdapter, ProviderRunHooks, ProviderSessionRefClaimHook};
@@ -175,7 +175,7 @@ async fn prepare_session_auth_runtime(
     .await
     .map_err(|error| {
         let message = format!("failed to load workspace execution settings: {error:#}");
-        if crate::execution_policy::is_execution_policy_denial(&error) {
+        if ctx_settings_service::is_execution_policy_denial(&error) {
             SessionAuthError::Forbidden(message)
         } else {
             SessionAuthError::Internal(message)

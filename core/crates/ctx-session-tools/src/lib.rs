@@ -1,4 +1,5 @@
 mod normalize;
+pub mod order_seq;
 mod preview;
 mod projections;
 mod state;

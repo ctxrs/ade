@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use axum::http::StatusCode;
-
 use crate::api::sessions::diff_worktree_summary_for_session;
 use crate::daemon::AppState;
 use crate::settings::ExecutionSettings;
@@ -10,7 +8,9 @@ use ctx_core::ids::TaskId;
 use ctx_core::models::{VcsKind, Workspace, Worktree};
 use ctx_fs::vcs;
 
-use super::errors::{api_error, internal_api_error, ApiResult};
+use super::errors::{
+    api_error, internal_api_error, internal_request_or_policy_error, ApiResult, SubagentErrorKind,
+};
 use super::request::SubagentWorktreeSelection;
 
 pub(super) async fn plan_subagent_worktree_creation(
@@ -30,7 +30,7 @@ pub(super) async fn plan_subagent_worktree_creation(
                 || msg.contains("unknown revision or path not in the working tree")
             {
                 return api_error(
-                    StatusCode::BAD_REQUEST,
+                    SubagentErrorKind::BadRequest,
                     "git repo has no commits; create an initial commit before creating a worktree",
                 );
             }
@@ -43,7 +43,7 @@ pub(super) async fn plan_subagent_worktree_creation(
             .map_err(internal_api_error)?;
     if dirty_files > 0 || dirty_additions > 0 || dirty_deletions > 0 {
         return Err(api_error(
-            StatusCode::BAD_REQUEST,
+            SubagentErrorKind::BadRequest,
             "Your worktree has uncommitted changes. Before starting new subagents in new worktree mode, you must commit or stash your changes to be explicit about whether subagents should inherit these diffs.",
         ));
     }
@@ -71,7 +71,7 @@ pub(super) async fn create_subagent_worktree(
         effective,
     )
     .await
-    .map_err(|error| crate::api::shared::map_internal_api_error(&error))?;
+    .map_err(internal_request_or_policy_error)?;
 
     let worktree = Worktree {
         id: worktree_id,

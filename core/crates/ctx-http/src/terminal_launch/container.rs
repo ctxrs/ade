@@ -3,21 +3,18 @@ use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::http::StatusCode;
-use axum::Json;
 use ctx_sandbox_container_runtime::{
     command_output_message, command_output_with_timeout, sandbox_cli_invocation,
     sandbox_container_command, SandboxCommandMode,
 };
 
-use crate::api::errors::ApiErrorResp;
 use crate::daemon::AppState;
 use crate::settings::{ContainerRuntimeKind, ExecutionMode};
 use crate::terminals::{NativeContainerTerminalSpec, SharedVmContainerTerminalSpec};
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{Workspace, Worktree};
 
-use super::{bad_request, internal_error};
+use super::{bad_request, internal_error, TerminalLaunchError};
 
 const TERMINAL_CONTAINER_CWD_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -35,7 +32,7 @@ pub(super) async fn prepare_terminal_container_launch(
         Option<NativeContainerTerminalSpec>,
         Option<SharedVmContainerTerminalSpec>,
     ),
-    (StatusCode, Json<ApiErrorResp>),
+    TerminalLaunchError,
 > {
     if !matches!(effective.mode, ExecutionMode::Sandbox) {
         return Ok((cwd.to_path_buf(), None, None));
@@ -137,7 +134,7 @@ pub(super) async fn prepare_terminal_container_launch(
 async fn ensure_materialized_workspace_root(
     state: &Arc<AppState>,
     workspace: &Workspace,
-) -> Result<(), (StatusCode, Json<ApiErrorResp>)> {
+) -> Result<(), TerminalLaunchError> {
     let sandbox_mode = ctx_harness_runtime::selected_sandbox_command_mode(&state.core.data_root)
         .map_err(|err| internal_error(err.to_string()))?;
     ctx_sandbox_materialization::ensure_workspace_root_from_host_copy(
@@ -156,7 +153,7 @@ async fn canonicalize_container_terminal_cwd(
     container_name: &str,
     cwd: &FsPath,
     live_root: &FsPath,
-) -> Result<PathBuf, (StatusCode, Json<ApiErrorResp>)> {
+) -> Result<PathBuf, TerminalLaunchError> {
     let mut cmd = sandbox_container_command(data_root, mode)
         .map_err(|e| internal_error(format!("sandbox container CLI unavailable: {e}")))?;
     cmd.arg("exec")
@@ -192,7 +189,7 @@ async fn canonicalize_container_terminal_cwd(
 pub(super) fn validate_canonical_container_terminal_cwd(
     live_root: &FsPath,
     canonical: &FsPath,
-) -> Result<PathBuf, (StatusCode, Json<ApiErrorResp>)> {
+) -> Result<PathBuf, TerminalLaunchError> {
     if !canonical.is_absolute() {
         return Err(internal_error(
             "sandbox terminal cwd validation returned a relative path",

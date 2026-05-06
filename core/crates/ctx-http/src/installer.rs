@@ -51,7 +51,7 @@ impl ctx_managed_installs::ManagedInstallHost for HttpAppState {
     }
 
     fn validate_install_target_allowed(&self, target: InstallTarget) -> Result<()> {
-        crate::execution_policy::HostExecutionPolicy::current()?.validate_install_target(target)
+        ctx_settings_service::HostExecutionPolicy::current()?.validate_install_target(target)
     }
 
     async fn start_install(

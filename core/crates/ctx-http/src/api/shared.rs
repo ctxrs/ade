@@ -20,7 +20,7 @@ use crate::worktree_data_plane::resolve_worktree_data_plane;
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
 
 pub(super) fn status_code_for_internal_error(err: &anyhow::Error) -> StatusCode {
-    if crate::execution_policy::is_execution_policy_denial(err) {
+    if ctx_settings_service::is_execution_policy_denial(err) {
         StatusCode::FORBIDDEN
     } else if err
         .chain()
@@ -33,7 +33,7 @@ pub(super) fn status_code_for_internal_error(err: &anyhow::Error) -> StatusCode 
 }
 
 pub(crate) fn status_code_for_request_or_policy_error(err: &anyhow::Error) -> StatusCode {
-    if crate::execution_policy::is_execution_policy_denial(err) {
+    if ctx_settings_service::is_execution_policy_denial(err) {
         StatusCode::FORBIDDEN
     } else {
         StatusCode::BAD_REQUEST
@@ -99,7 +99,7 @@ mod tests {
 
     #[test]
     fn status_code_for_internal_error_maps_execution_policy_denials_to_forbidden() {
-        let err = crate::execution_policy::HostExecutionPolicy::SandboxOnly
+        let err = ctx_settings_service::HostExecutionPolicy::SandboxOnly
             .validate_execution_environment(ctx_core::models::ExecutionEnvironment::Host)
             .expect_err("host execution should be denied");
         assert_eq!(status_code_for_internal_error(&err), StatusCode::FORBIDDEN);
@@ -107,7 +107,7 @@ mod tests {
 
     #[test]
     fn status_code_for_request_or_policy_error_maps_policy_denials_to_forbidden() {
-        let err = crate::execution_policy::HostExecutionPolicy::SandboxOnly
+        let err = ctx_settings_service::HostExecutionPolicy::SandboxOnly
             .validate_execution_environment(ctx_core::models::ExecutionEnvironment::Host)
             .expect_err("host execution should be denied");
         assert_eq!(
@@ -139,7 +139,7 @@ mod tests {
 
     #[test]
     fn map_effective_execution_settings_error_maps_policy_denials_to_forbidden() {
-        let err = crate::execution_policy::HostExecutionPolicy::SandboxOnly
+        let err = ctx_settings_service::HostExecutionPolicy::SandboxOnly
             .validate_execution_environment(ctx_core::models::ExecutionEnvironment::Host)
             .expect_err("host execution should be denied");
         let (status, _) = map_effective_execution_settings_error(

@@ -6,7 +6,10 @@ pub(crate) async fn init_subagents(
     req: AgentInitReq,
 ) -> ApiResult<Vec<SpawnedChild>> {
     if req.agents.is_empty() {
-        return Err(api_error(StatusCode::BAD_REQUEST, "agents is required"));
+        return Err(api_error(
+            SubagentErrorKind::BadRequest,
+            "agents is required",
+        ));
     }
 
     let settings = user_settings::load_settings(state.global_store())
@@ -15,7 +18,7 @@ pub(crate) async fn init_subagents(
     let max_subagents = resolve_max_subagents_per_call(&settings);
     if req.agents.len() > max_subagents {
         return Err(api_error(
-            StatusCode::BAD_REQUEST,
+            SubagentErrorKind::BadRequest,
             format!("max {max_subagents} subagents per call"),
         ));
     }
@@ -27,19 +30,19 @@ pub(crate) async fn init_subagents(
         .is_some()
     {
         return Err(api_error(
-            StatusCode::BAD_REQUEST,
+            SubagentErrorKind::BadRequest,
             "response_mode is not supported; use wait_agent to await",
         ));
     }
     let worktree_selection = parse_subagent_worktree(req.worktree.as_deref())
-        .map_err(|error| api_error(StatusCode::BAD_REQUEST, error))?;
+        .map_err(|error| api_error(SubagentErrorKind::BadRequest, error))?;
 
     let (store, parent) = load_parent_session(state.as_ref(), parent_id).await?;
     let creation_lock = state.task_session_creation_lock(parent.task_id).await;
     let _creation_guard = creation_lock.lock().await;
     if parent.parent_session_id.is_some() {
         return Err(api_error(
-            StatusCode::BAD_REQUEST,
+            SubagentErrorKind::BadRequest,
             format!(
                 "subagents cannot spawn child agents; max depth is {}",
                 super::request::DEFAULT_MAX_SUBAGENT_DEPTH
@@ -53,7 +56,7 @@ pub(crate) async fn init_subagents(
     if existing_active + req.agents.len() > super::request::DEFAULT_MAX_ACTIVE_SUBAGENTS_PER_PARENT
     {
         return Err(api_error(
-            StatusCode::BAD_REQUEST,
+            SubagentErrorKind::BadRequest,
             format!(
                 "max {} active child agents per parent",
                 super::request::DEFAULT_MAX_ACTIVE_SUBAGENTS_PER_PARENT
@@ -65,11 +68,11 @@ pub(crate) async fn init_subagents(
         .get_workspace(parent.workspace_id)
         .await
         .map_err(internal_api_error)?
-        .ok_or_else(|| api_error(StatusCode::NOT_FOUND, "workspace not found"))?;
+        .ok_or_else(|| api_error(SubagentErrorKind::NotFound, "workspace not found"))?;
 
     let labels = validate_requested_labels(&store, parent.task_id, &req.agents).await?;
     let provider_ids = collect_provider_ids(&req.agents, &parent.provider_id)
-        .map_err(|error| api_error(StatusCode::BAD_REQUEST, error))?;
+        .map_err(|error| api_error(SubagentErrorKind::BadRequest, error))?;
 
     let parent_worktree_execution = crate::api::tasks::resolve_existing_worktree_execution(
         &state,
@@ -217,7 +220,7 @@ pub(crate) async fn init_subagents(
             let prompt = agent.prompt.trim().to_string();
             if prompt.is_empty() {
                 return Err(api_error(
-                    StatusCode::BAD_REQUEST,
+                    SubagentErrorKind::BadRequest,
                     format!("agent {} prompt is required", idx + 1),
                 ));
             }
@@ -258,7 +261,7 @@ pub(crate) async fn init_subagents(
                     )
                     .await;
                 return Err(api_error(
-                    StatusCode::BAD_REQUEST,
+                    SubagentErrorKind::BadRequest,
                     format!("model is required for harness '{provider_id}'"),
                 ));
             }
@@ -278,7 +281,7 @@ pub(crate) async fn init_subagents(
                 fallback_model,
                 catalog,
             )
-            .map_err(|error| api_error(StatusCode::BAD_REQUEST, error))?;
+            .map_err(|error| api_error(SubagentErrorKind::BadRequest, error))?;
 
             let prompt_length = prompt.chars().count() as i64;
             let reasoning_effort = resolved.reasoning_effort.clone();
@@ -287,7 +290,7 @@ pub(crate) async fn init_subagents(
                 super::request::SubagentWorktreeSelection::Inherit => (parent.worktree_id, None),
                 super::request::SubagentWorktreeSelection::New => {
                     let (vcs_kind, base_commit_sha) = worktree_plan.clone().ok_or_else(|| {
-                        api_error(StatusCode::INTERNAL_SERVER_ERROR, "worktree plan missing")
+                        api_error(SubagentErrorKind::Internal, "worktree plan missing")
                     })?;
                     let worktree = create_subagent_worktree(
                         &state,

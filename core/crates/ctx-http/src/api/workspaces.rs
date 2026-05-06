@@ -25,6 +25,7 @@ use super::shared::{
 };
 use crate::attachments;
 use crate::completions;
+use crate::daemon::workspaces::{WorkspaceHydrationError, WorkspaceHydrationErrorKind};
 use crate::daemon::AppState;
 use crate::execution_effective;
 use crate::logs;
@@ -258,7 +259,7 @@ pub(super) async fn get_workspace_active_snapshot(
     state
         .ensure_workspace_active_snapshot_hydrated(workspace_id)
         .await
-        .map_err(|err| err.status_code())?;
+        .map_err(workspace_hydration_status)?;
     crate::merge_queue::activate_workspace_merge_queue(&state, workspace_id).await;
     let snapshot = state
         .workspaces
@@ -280,7 +281,7 @@ pub(super) async fn get_workspace_active_heads(
     state
         .ensure_workspace_active_snapshot_hydrated(workspace_id)
         .await
-        .map_err(|err| err.status_code())?;
+        .map_err(workspace_hydration_status)?;
     crate::merge_queue::activate_workspace_merge_queue(&state, workspace_id).await;
     let heads = state
         .workspaces
@@ -289,6 +290,13 @@ pub(super) async fn get_workspace_active_heads(
         .await;
     state.cache_workspace_active_heads(heads.clone()).await;
     Ok(Json(heads))
+}
+
+fn workspace_hydration_status(error: WorkspaceHydrationError) -> StatusCode {
+    match error.kind() {
+        WorkspaceHydrationErrorKind::NotFound => StatusCode::NOT_FOUND,
+        WorkspaceHydrationErrorKind::Load => StatusCode::INTERNAL_SERVER_ERROR,
+    }
 }
 
 pub(super) async fn create_workspace(

@@ -32,10 +32,7 @@ use crate::provider_launch::probe;
 use crate::provider_launch::resolver::{
     is_acp_provider_id, runtime_probe_command_as_agent_command_for_target,
 };
-use crate::provider_launch::status::{
-    install_target_for_workspace, provider_status_for_target,
-    workspace_execution_settings_error_json,
-};
+use crate::provider_launch::status::{install_target_for_workspace, provider_status_for_target};
 use crate::provider_usability::{provider_status_is_usable, provider_status_unusable_reason};
 use ctx_core::ids::WorkspaceId;
 use ctx_harness_sources as harness_sources;
@@ -189,6 +186,34 @@ struct PreparedProviderRuntimeProbe {
     env: HashMap<String, String>,
     cwd: PathBuf,
     selected_endpoint_id: Option<String>,
+}
+
+fn workspace_execution_settings_error_json(
+    error: &anyhow::Error,
+) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(serde_json::json!({
+            "error": format!("failed to load workspace execution settings: {error:#}"),
+        })),
+    )
+}
+
+fn provider_install_error_response(
+    error: provider_launch_install::StartProviderInstallError,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let status = if error.code.as_deref() == Some("install_target_disabled") {
+        StatusCode::FORBIDDEN
+    } else {
+        StatusCode::BAD_REQUEST
+    };
+    (
+        status,
+        Json(serde_json::json!({
+            "error": logs::redact_sensitive(&error.message),
+            "code": error.code,
+        })),
+    )
 }
 
 enum PreparedProviderRuntimeProbeError {
@@ -521,7 +546,10 @@ pub(super) fn endpoint_catalog_verify_outcome(
 
 #[cfg(test)]
 mod tests {
-    use super::{provider_options_probe_plan, ProviderOptionsProbePlan};
+    use super::{
+        provider_install_error_response, provider_options_probe_plan, ProviderOptionsProbePlan,
+    };
+    use axum::http::StatusCode;
 
     #[test]
     fn provider_options_probe_plan_prefers_selected_endpoint_runtime_launch() {
@@ -549,5 +577,18 @@ mod tests {
             provider_options_probe_plan(true, None),
             ProviderOptionsProbePlan::RuntimeModels
         );
+    }
+
+    #[test]
+    fn provider_install_error_response_maps_disabled_install_targets_to_forbidden() {
+        let (status, body) = provider_install_error_response(
+            ctx_provider_runtime::provider_launch::install::StartProviderInstallError {
+                message: "host provider installs are disabled by daemon policy".to_string(),
+                code: Some("install_target_disabled".to_string()),
+            },
+        );
+
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body.0["code"], "install_target_disabled");
     }
 }

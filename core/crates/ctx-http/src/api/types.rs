@@ -252,7 +252,7 @@ fn build_health_response(
         daemon_url: include_sensitive.then(|| state.core.daemon_url.clone()),
         auth_required: state.core.auth_token.is_some(),
         open_file_limit: if include_sensitive {
-            crate::process_limits::current_open_file_limit()
+            ctx_resource_utilization::process_limits::current_open_file_limit()
         } else {
             None
         },

@@ -9,7 +9,9 @@ use serde::Serialize;
 
 use super::errors::ApiErrorResp;
 use crate::daemon::AppState;
-use crate::terminal_launch::CreateTerminalLaunchRequest;
+use crate::terminal_launch::{
+    CreateTerminalLaunchRequest, TerminalLaunchError, TerminalLaunchErrorKind,
+};
 use ctx_core::ids::{SessionId, TaskId, TerminalId, WorkspaceId, WorktreeId};
 use ctx_core::models::TerminalSession;
 
@@ -99,9 +101,24 @@ pub(super) async fn create_workspace_terminal(
             shell: req.shell,
         },
     )
-    .await?;
+    .await
+    .map_err(terminal_launch_error_response)?;
 
     Ok(Json(session))
+}
+
+fn terminal_launch_error_response(error: TerminalLaunchError) -> (StatusCode, Json<ApiErrorResp>) {
+    let status = match error.kind() {
+        TerminalLaunchErrorKind::BadRequest => StatusCode::BAD_REQUEST,
+        TerminalLaunchErrorKind::NotFound => StatusCode::NOT_FOUND,
+        TerminalLaunchErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    (
+        status,
+        Json(ApiErrorResp {
+            error: error.message().to_string(),
+        }),
+    )
 }
 
 pub(super) async fn delete_terminal(

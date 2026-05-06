@@ -16,5 +16,6 @@ pub(crate) async fn mcp_spawn_agent(
 
     crate::daemon::sessions::subagents::spawn_agent(state, parent_id, req)
         .await
+        .map_err(subagent_error_response)
         .map(Json)
 }

@@ -238,7 +238,7 @@ pub async fn apply_matrix_to_status(
     }
 }
 
-pub(super) fn managed_dependency_update_available(
+pub fn managed_dependency_update_available(
     cfg: &AgentServerConfigFile,
     entry: &ProviderMatrixEntry,
     status: &ctx_providers::adapters::ProviderStatus,
@@ -432,7 +432,7 @@ pub(super) async fn probe_command_version(command: &str, args: &[String]) -> Opt
     extract_version(&format!("{stdout}\n{stderr}"))
 }
 
-pub(super) fn probe_node_package_version(
+pub fn probe_node_package_version(
     command: &ProviderCommand,
     package: &str,
     data_root: &Path,

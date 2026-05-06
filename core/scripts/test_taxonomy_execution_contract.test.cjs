@@ -18,7 +18,9 @@ function rustGateCrates(command) {
 }
 
 function isCtxHttpBazelTargetCommand(command) {
-  return String(command || "").startsWith("node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:");
+  const text = String(command || "");
+  return text.startsWith("node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:")
+    || text.startsWith("node scripts/run_bazel_pilot.cjs test //core/crates/ctx-settings-");
 }
 
 test("agent-default fans out ctx-http shared changes into suite-level commands", () => {
@@ -310,7 +312,7 @@ test("agent-default affected selection expands ctx-http base for unmatched ctx-h
   });
 
   assert.deepEqual(plan.commands, [
-    "node scripts/ctx_http_suite_task.cjs --suite unit-tests-api --suite unit-tests-execution-setup --suite unit-tests-lib --suite unit-tests-lib-session-head-large --suite unit-tests-workspace-runtime --suite unit-tests-daemon-and-scheduler --suite unit-tests-provider-and-settings --suite unit-tests-merge-queue --suite bin-tests --suite doc-tests",
+    "node scripts/ctx_http_suite_task.cjs --suite unit-tests-api --suite unit-tests-lib --suite unit-tests-lib-session-head-large --suite unit-tests-workspace-runtime --suite unit-tests-daemon-and-scheduler --suite unit-tests-provider-and-settings --suite unit-tests-merge-queue --suite bin-tests --suite doc-tests",
   ]);
   assert.equal(plan.commands.some((command) => command.includes("--suite base")), false);
 });
@@ -622,16 +624,16 @@ test("Buildkite checkin plan splits ctx-http suites and Rust crate gates without
     ctxHttpCommands.some((command) => command.includes("//core/crates/ctx-http:scheduler-runtime")),
     false,
   );
-  assert.equal(ctxHttpCommands.length, 53);
+  assert.equal(ctxHttpCommands.length, expectedCtxHttpCommands.length);
+  assert.ok(ctxHttpCommands.includes(
+    "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-settings-model:unit_tests //core/crates/ctx-settings-service:unit_tests",
+  ));
   assert.ok(ctxHttpCommands.some((command) => command.includes("//core/crates/ctx-http:session_model_api")));
   assert.ok(ctxHttpCommands.includes(
     "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:unit_tests_scheduler",
   ));
   assert.ok(ctxHttpCommands.includes(
     "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:unit_tests_workspace_runtime",
-  ));
-  assert.ok(ctxHttpCommands.includes(
-    "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:unit_tests_execution_setup",
   ));
   assert.ok(ctxHttpCommands.includes(
     "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:unit_tests_lib",

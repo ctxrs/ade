@@ -116,60 +116,6 @@ CTX_HTTP_LIB_WEB_SESSION_ROUTES_TEST_ARGS = CTX_HTTP_UNIT_TEST_SERIAL_ARGS + [
 CTX_HTTP_LIB_WORKSPACE_ACTIVE_ROUTES_TEST_ARGS = CTX_HTTP_UNIT_TEST_SERIAL_ARGS + [
     "lib_tests::workspace_active_routes::",
 ]
-CTX_HTTP_EXECUTION_SETUP_UNIT_TEST_ARGS = CTX_HTTP_UNIT_TEST_SERIAL_ARGS + [
-    "execution_setup::",
-    "--skip=execution_setup::tests::concurrent_launch_start_is_deduplicated",
-    "--skip=execution_setup::tests::startup_prewarm_runs_runtime_warmup_for_cold_container_settings",
-    "--skip=execution_setup::tests::successful_workspace_launch_refresh_clears_stale_prewarm_metadata",
-    "--skip=execution_setup::tests::workspace_launch_reuses_active_runtime_prewarm_without_second_image_load",
-    "--skip=execution_setup::tests::workspace_launch_reuses_startup_prewarm_without_second_image_load_when_machine_is_ready",
-    "--skip=execution_setup::tests::startup_prewarm_reuses_initial_runtime_probe_for_gate_checks",
-    "--skip=execution_setup::tests::runtime_prewarm_launch_ready_request_reuses_running_runtime_job_and_promotes_scope",
-    "--skip=execution_setup::tests::runtime_prewarm_launch_ready_scope_starts_shared_vm_and_reports_launch_ready",
-    "--skip=execution_setup::tests::builder_prewarm_reuses_background_all_job",
-    "--skip=execution_setup::tests::workspace_launch_is_not_blocked_by_background_runtime_prewarm_job",
-    "--skip=execution_setup::tests::successful_workspace_launch_writes_missing_prewarm_metadata",
-]
-CTX_HTTP_EXECUTION_SETUP_CONCURRENT_LAUNCH_START_IS_DEDUPLICATED_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
-    "--exact",
-    "execution_setup::tests::concurrent_launch_start_is_deduplicated",
-]
-CTX_HTTP_EXECUTION_SETUP_STARTUP_PREWARM_RUNTIME_WARMUP_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
-    "--exact",
-    "execution_setup::tests::startup_prewarm_runs_runtime_warmup_for_cold_container_settings",
-]
-CTX_HTTP_EXECUTION_SETUP_REFRESH_CLEARS_STALE_PREWARM_METADATA_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
-    "--exact",
-    "execution_setup::tests::successful_workspace_launch_refresh_clears_stale_prewarm_metadata",
-]
-CTX_HTTP_EXECUTION_SETUP_REUSES_ACTIVE_RUNTIME_PREWARM_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
-    "--exact",
-    "execution_setup::tests::workspace_launch_reuses_active_runtime_prewarm_without_second_image_load",
-]
-CTX_HTTP_EXECUTION_SETUP_STARTUP_PREWARM_RUNTIME_PROBE_REUSE_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
-    "--exact",
-    "execution_setup::tests::startup_prewarm_reuses_initial_runtime_probe_for_gate_checks",
-]
-CTX_HTTP_EXECUTION_SETUP_RUNTIME_LAUNCH_READY_PROMOTION_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
-    "--exact",
-    "execution_setup::tests::runtime_prewarm_launch_ready_request_reuses_running_runtime_job_and_promotes_scope",
-]
-CTX_HTTP_EXECUTION_SETUP_RUNTIME_LAUNCH_READY_SCOPE_STARTS_SHARED_VM_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
-    "--exact",
-    "execution_setup::tests::runtime_prewarm_launch_ready_scope_starts_shared_vm_and_reports_launch_ready",
-]
-CTX_HTTP_EXECUTION_SETUP_BUILDER_PREWARM_SHARED_ALL_JOB_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
-    "--exact",
-    "execution_setup::tests::builder_prewarm_reuses_background_all_job",
-]
-CTX_HTTP_EXECUTION_SETUP_WORKSPACE_LAUNCH_NOT_BLOCKED_BY_BACKGROUND_RUNTIME_PREWARM_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
-    "--exact",
-    "execution_setup::tests::workspace_launch_is_not_blocked_by_background_runtime_prewarm_job",
-]
-CTX_HTTP_EXECUTION_SETUP_SUCCESSFUL_WORKSPACE_LAUNCH_WRITES_MISSING_PREWARM_METADATA_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
-    "--exact",
-    "execution_setup::tests::successful_workspace_launch_writes_missing_prewarm_metadata",
-]
 CTX_HTTP_MERGE_QUEUE_UNIT_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
     "merge_queue::",
     "--skip=merge_queue::tests::enabled_workspace_queued_rows_resume_only_after_open",
@@ -189,10 +135,6 @@ CTX_HTTP_DAEMON_HTTP_AND_WS_STREAMING_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
 CTX_HTTP_LIB_STARTUP_PREWARM_KIND_SUPPORTED_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
     "--exact",
     "lib_tests::execution_launch::execution_launch_startup_prewarm_kind_supported",
-]
-CTX_HTTP_WORKSPACE_LAUNCH_PREWARM_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
-    "--exact",
-    "execution_setup::tests::workspace_launch_reuses_startup_prewarm_without_second_image_load_when_machine_is_ready",
 ]
 CTX_HTTP_WORKSPACE_RUNTIME_UNIT_TEST_ARGS = CTX_HTTP_UNIT_TEST_SERIAL_ARGS + [
     "workspace_runtime::",
@@ -268,18 +210,24 @@ CTX_HTTP_SHARED_INTERNAL_DEPS = [
     "//core/crates/ctx-harness-sources:lib",
     "//core/crates/ctx-managed-installs:lib",
     "//core/crates/ctx-linux-sandbox-runtime:lib",
+    "//core/crates/ctx-mcp-command:lib",
     "//core/crates/ctx-merge-queue:lib",
+    "//core/crates/ctx-observability:lib",
+    "//core/crates/ctx-org-policy:lib",
     "//core/crates/ctx-provider-accounts:lib",
     "//core/crates/ctx-provider-auth-import:lib",
-        "//core/crates/ctx-provider-install:lib",
-        "//core/crates/ctx-provider-runtime:lib",
-        "//core/crates/ctx-provider-matrix:lib",
-        "//core/crates/ctx-providers:lib",
-        "//core/crates/ctx-runtime-assets:lib",
+    "//core/crates/ctx-provider-install:lib",
+    "//core/crates/ctx-provider-runtime:lib",
+    "//core/crates/ctx-provider-matrix:lib",
+    "//core/crates/ctx-providers:lib",
+    "//core/crates/ctx-resource-utilization:lib",
+    "//core/crates/ctx-runtime-assets:lib",
     "//core/crates/ctx-sandbox-container-runtime:lib",
     "//core/crates/ctx-sandbox-contract:lib",
     "//core/crates/ctx-sandbox-materialization:lib",
     "//core/crates/ctx-session-tools:lib",
+    "//core/crates/ctx-settings-model:lib",
+    "//core/crates/ctx-settings-service:lib",
     "//core/crates/ctx-storage-admission:lib",
     "//core/crates/ctx-store:lib",
     "//core/crates/ctx-transport-runtime:lib",
@@ -300,18 +248,24 @@ CTX_HTTP_SHARED_INTERNAL_TEST_SUPPORT_DEPS = [
     "//core/crates/ctx-harness-sources:lib",
     "//core/crates/ctx-managed-installs:lib",
     "//core/crates/ctx-linux-sandbox-runtime:lib",
+    "//core/crates/ctx-mcp-command:lib",
     "//core/crates/ctx-merge-queue:lib",
+    "//core/crates/ctx-observability:lib_test_support",
+    "//core/crates/ctx-org-policy:lib",
     "//core/crates/ctx-provider-accounts:lib",
     "//core/crates/ctx-provider-auth-import:lib",
-        "//core/crates/ctx-provider-install:lib",
-        "//core/crates/ctx-provider-runtime:lib",
-        "//core/crates/ctx-provider-matrix:lib",
+    "//core/crates/ctx-provider-install:lib",
+    "//core/crates/ctx-provider-runtime:lib",
+    "//core/crates/ctx-provider-matrix:lib",
     "//core/crates/ctx-providers:lib",
+    "//core/crates/ctx-resource-utilization:lib",
     "//core/crates/ctx-runtime-assets:lib",
     "//core/crates/ctx-sandbox-container-runtime:lib_test_support",
     "//core/crates/ctx-sandbox-contract:lib",
     "//core/crates/ctx-sandbox-materialization:lib_test_support",
     "//core/crates/ctx-session-tools:lib",
+    "//core/crates/ctx-settings-model:lib",
+    "//core/crates/ctx-settings-service:lib",
     "//core/crates/ctx-storage-admission:lib",
     "//core/crates/ctx-store:lib",
     "//core/crates/ctx-transport-runtime:lib",
@@ -490,6 +444,7 @@ rust_binary(
         ":lib",
         "//core/crates/ctx-core:lib",
         "//core/crates/ctx-fs:lib",
+        "//core/crates/ctx-resource-utilization:lib",
         "@crates//:anyhow",
         "@crates//:chrono",
         "@crates//:clap",
@@ -582,17 +537,6 @@ declare_ctx_http_rust_unit_test(
     data = CTX_HTTP_COMPILE_DATA,
     deps = CTX_HTTP_DIRECT_TEST_DEPS,
     proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
-)
-
-declare_ctx_http_rust_unit_test(
-    name = "unit_tests_execution_setup",
-    args = CTX_HTTP_EXECUTION_SETUP_UNIT_TEST_ARGS,
-    compile_data = CTX_HTTP_COMPILE_DATA,
-    data = CTX_HTTP_COMPILE_DATA,
-    deps = CTX_HTTP_DIRECT_TEST_DEPS,
-    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
-    tags = CTX_HTTP_TIMING_SENSITIVE_TEST_TAGS,
-    timeout = "long",
 )
 
 declare_ctx_http_rust_unit_test(
@@ -743,15 +687,6 @@ declare_ctx_http_rust_unit_test(
 declare_ctx_http_rust_unit_test(
     name = "unit_tests_scheduler",
     args = CTX_HTTP_TEST_ARGS + ["scheduler::"],
-    compile_data = CTX_HTTP_COMPILE_DATA,
-    data = CTX_HTTP_COMPILE_DATA,
-    deps = CTX_HTTP_DIRECT_TEST_DEPS,
-    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
-)
-
-declare_ctx_http_rust_unit_test(
-    name = "unit_tests_settings",
-    args = CTX_HTTP_TEST_ARGS + ["settings::"],
     compile_data = CTX_HTTP_COMPILE_DATA,
     data = CTX_HTTP_COMPILE_DATA,
     deps = CTX_HTTP_DIRECT_TEST_DEPS,
@@ -913,126 +848,6 @@ rust_test(
 )
 
 rust_test(
-    name = "unit_tests_execution_setup_concurrent_launch_start_is_deduplicated",
-    crate = ":lib_test_support",
-    args = CTX_HTTP_EXECUTION_SETUP_CONCURRENT_LAUNCH_START_IS_DEDUPLICATED_TEST_ARGS,
-    compile_data = CTX_HTTP_COMPILE_DATA,
-    data = CTX_HTTP_COMPILE_DATA,
-    deps = CTX_HTTP_DIRECT_TEST_DEPS,
-    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
-    tags = CTX_HTTP_TIMING_SENSITIVE_EXACT_TEST_TAGS,
-    timeout = "long",
-)
-
-rust_test(
-    name = "unit_tests_execution_setup_startup_prewarm_runtime_warmup",
-    crate = ":lib_test_support",
-    args = CTX_HTTP_EXECUTION_SETUP_STARTUP_PREWARM_RUNTIME_WARMUP_TEST_ARGS,
-    compile_data = CTX_HTTP_COMPILE_DATA,
-    data = CTX_HTTP_COMPILE_DATA,
-    deps = CTX_HTTP_DIRECT_TEST_DEPS,
-    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
-    tags = CTX_HTTP_TIMING_SENSITIVE_EXACT_TEST_TAGS,
-    timeout = "long",
-)
-
-rust_test(
-    name = "unit_tests_execution_setup_refresh_clears_stale_prewarm_metadata",
-    crate = ":lib_test_support",
-    args = CTX_HTTP_EXECUTION_SETUP_REFRESH_CLEARS_STALE_PREWARM_METADATA_TEST_ARGS,
-    compile_data = CTX_HTTP_COMPILE_DATA,
-    data = CTX_HTTP_COMPILE_DATA,
-    deps = CTX_HTTP_DIRECT_TEST_DEPS,
-    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
-    tags = CTX_HTTP_TIMING_SENSITIVE_EXACT_TEST_TAGS,
-    timeout = "long",
-)
-
-rust_test(
-    name = "unit_tests_execution_setup_reuses_active_runtime_prewarm",
-    crate = ":lib_test_support",
-    args = CTX_HTTP_EXECUTION_SETUP_REUSES_ACTIVE_RUNTIME_PREWARM_TEST_ARGS,
-    compile_data = CTX_HTTP_COMPILE_DATA,
-    data = CTX_HTTP_COMPILE_DATA,
-    deps = CTX_HTTP_DIRECT_TEST_DEPS,
-    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
-    tags = CTX_HTTP_TIMING_SENSITIVE_EXACT_TEST_TAGS,
-    timeout = "long",
-)
-
-rust_test(
-    name = "unit_tests_execution_setup_startup_prewarm_runtime_probe_reuse",
-    crate = ":lib_test_support",
-    args = CTX_HTTP_EXECUTION_SETUP_STARTUP_PREWARM_RUNTIME_PROBE_REUSE_TEST_ARGS,
-    compile_data = CTX_HTTP_COMPILE_DATA,
-    data = CTX_HTTP_COMPILE_DATA,
-    deps = CTX_HTTP_DIRECT_TEST_DEPS,
-    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
-    tags = CTX_HTTP_TIMING_SENSITIVE_EXACT_TEST_TAGS,
-    timeout = "long",
-)
-
-rust_test(
-    name = "unit_tests_execution_setup_runtime_launch_ready_promotion",
-    crate = ":lib_test_support",
-    args = CTX_HTTP_EXECUTION_SETUP_RUNTIME_LAUNCH_READY_PROMOTION_TEST_ARGS,
-    compile_data = CTX_HTTP_COMPILE_DATA,
-    data = CTX_HTTP_COMPILE_DATA,
-    deps = CTX_HTTP_DIRECT_TEST_DEPS,
-    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
-    tags = CTX_HTTP_TIMING_SENSITIVE_EXACT_TEST_TAGS,
-    timeout = "long",
-)
-
-rust_test(
-    name = "unit_tests_execution_setup_runtime_launch_ready_scope_starts_shared_vm",
-    crate = ":lib_test_support",
-    args = CTX_HTTP_EXECUTION_SETUP_RUNTIME_LAUNCH_READY_SCOPE_STARTS_SHARED_VM_TEST_ARGS,
-    compile_data = CTX_HTTP_COMPILE_DATA,
-    data = CTX_HTTP_COMPILE_DATA,
-    deps = CTX_HTTP_DIRECT_TEST_DEPS,
-    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
-    tags = CTX_HTTP_TIMING_SENSITIVE_EXACT_TEST_TAGS,
-    timeout = "long",
-)
-
-rust_test(
-    name = "unit_tests_execution_setup_builder_prewarm_shared_all_job",
-    crate = ":lib_test_support",
-    args = CTX_HTTP_EXECUTION_SETUP_BUILDER_PREWARM_SHARED_ALL_JOB_TEST_ARGS,
-    compile_data = CTX_HTTP_COMPILE_DATA,
-    data = CTX_HTTP_COMPILE_DATA,
-    deps = CTX_HTTP_DIRECT_TEST_DEPS,
-    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
-    tags = CTX_HTTP_TIMING_SENSITIVE_EXACT_TEST_TAGS,
-    timeout = "long",
-)
-
-rust_test(
-    name = "unit_tests_execution_setup_workspace_launch_not_blocked_by_background_runtime_prewarm",
-    crate = ":lib_test_support",
-    args = CTX_HTTP_EXECUTION_SETUP_WORKSPACE_LAUNCH_NOT_BLOCKED_BY_BACKGROUND_RUNTIME_PREWARM_TEST_ARGS,
-    compile_data = CTX_HTTP_COMPILE_DATA,
-    data = CTX_HTTP_COMPILE_DATA,
-    deps = CTX_HTTP_DIRECT_TEST_DEPS,
-    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
-    tags = CTX_HTTP_TIMING_SENSITIVE_EXACT_TEST_TAGS,
-    timeout = "long",
-)
-
-rust_test(
-    name = "unit_tests_execution_setup_successful_workspace_launch_writes_missing_prewarm_metadata",
-    crate = ":lib_test_support",
-    args = CTX_HTTP_EXECUTION_SETUP_SUCCESSFUL_WORKSPACE_LAUNCH_WRITES_MISSING_PREWARM_METADATA_TEST_ARGS,
-    compile_data = CTX_HTTP_COMPILE_DATA,
-    data = CTX_HTTP_COMPILE_DATA,
-    deps = CTX_HTTP_DIRECT_TEST_DEPS,
-    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
-    tags = CTX_HTTP_TIMING_SENSITIVE_EXACT_TEST_TAGS,
-    timeout = "long",
-)
-
-rust_test(
     name = "unit_tests_daemon_golden_path_with_fake_provider",
     crate = ":lib_test_support",
     args = CTX_HTTP_DAEMON_GOLDEN_PATH_TEST_ARGS,
@@ -1048,18 +863,6 @@ rust_test(
     name = "unit_tests_daemon_http_and_ws_streaming",
     crate = ":lib_test_support",
     args = CTX_HTTP_DAEMON_HTTP_AND_WS_STREAMING_TEST_ARGS,
-    compile_data = CTX_HTTP_COMPILE_DATA,
-    data = CTX_HTTP_COMPILE_DATA,
-    deps = CTX_HTTP_DIRECT_TEST_DEPS,
-    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
-    tags = CTX_HTTP_TIMING_SENSITIVE_EXACT_TEST_TAGS,
-    timeout = "long",
-)
-
-rust_test(
-    name = "unit_tests_workspace_launch_reuses_startup_prewarm",
-    crate = ":lib_test_support",
-    args = CTX_HTTP_WORKSPACE_LAUNCH_PREWARM_TEST_ARGS,
     compile_data = CTX_HTTP_COMPILE_DATA,
     data = CTX_HTTP_COMPILE_DATA,
     deps = CTX_HTTP_DIRECT_TEST_DEPS,
@@ -1088,24 +891,6 @@ test_suite(
         ":unit_tests_api_task_lifecycle",
         ":unit_tests_api_storage_admission",
         ":unit_tests_api_workspaces",
-    ],
-)
-
-test_suite(
-    name = "unit-tests-execution-setup",
-    tests = [
-        ":unit_tests_execution_setup",
-        ":unit_tests_execution_setup_concurrent_launch_start_is_deduplicated",
-        ":unit_tests_execution_setup_startup_prewarm_runtime_warmup",
-        ":unit_tests_execution_setup_refresh_clears_stale_prewarm_metadata",
-        ":unit_tests_execution_setup_reuses_active_runtime_prewarm",
-        ":unit_tests_execution_setup_startup_prewarm_runtime_probe_reuse",
-        ":unit_tests_execution_setup_runtime_launch_ready_promotion",
-        ":unit_tests_execution_setup_runtime_launch_ready_scope_starts_shared_vm",
-        ":unit_tests_execution_setup_builder_prewarm_shared_all_job",
-        ":unit_tests_execution_setup_workspace_launch_not_blocked_by_background_runtime_prewarm",
-        ":unit_tests_execution_setup_successful_workspace_launch_writes_missing_prewarm_metadata",
-        ":unit_tests_workspace_launch_reuses_startup_prewarm",
     ],
 )
 
@@ -1167,7 +952,8 @@ test_suite(
         ":unit_tests_installer",
         ":unit_tests_provider_launch",
         ":unit_tests_provider_matrix",
-        ":unit_tests_settings",
+        "//core/crates/ctx-settings-model:unit_tests",
+        "//core/crates/ctx-settings-service:unit_tests",
     ],
 )
 
@@ -1184,7 +970,6 @@ test_suite(
     tests = [
         ":unit-tests-api",
         ":unit-tests-daemon-and-scheduler",
-        ":unit-tests-execution-setup",
         ":unit-tests-lib",
         ":unit-tests-lib-session-head-large",
         ":unit-tests-merge-queue",

@@ -782,12 +782,19 @@ fn managed_dependency_update_unavailable_when_runtime_dependency_matches_expecte
     );
     let expected = crate::installer::expected_managed_dependency_version("runtime-node-host")
         .expect("runtime node version");
+    let expected_fingerprint =
+        crate::installer::expected_managed_dependency_artifact_fingerprint_for_id(
+            "runtime-node-host",
+            None,
+            InstallTarget::Host,
+        )
+        .expect("runtime node fingerprint");
     cfg.managed_installs.insert(
         "runtime-node-host".to_string(),
         ManagedInstallMetadata {
             package: Some("node-runtime".to_string()),
             version: Some(expected.to_string()),
-            artifact_fingerprint: None,
+            artifact_fingerprint: Some(expected_fingerprint),
             archive_sha256: None,
             target: None,
             install_dir_rel: None,
@@ -844,12 +851,26 @@ fn managed_dependency_update_unavailable_for_container_provider_with_matching_du
     );
     let expected = crate::installer::expected_managed_dependency_version("runtime-node-host")
         .expect("runtime node version");
+    let expected_host_fingerprint =
+        crate::installer::expected_managed_dependency_artifact_fingerprint_for_id(
+            "runtime-node-host",
+            None,
+            InstallTarget::Host,
+        )
+        .expect("host runtime node fingerprint");
+    let expected_container_fingerprint =
+        crate::installer::expected_managed_dependency_artifact_fingerprint_for_id(
+            "runtime-node-container",
+            None,
+            InstallTarget::Container,
+        )
+        .expect("container runtime node fingerprint");
     cfg.managed_installs.insert(
         "runtime-node-host".to_string(),
         ManagedInstallMetadata {
             package: Some("node-runtime".to_string()),
             version: Some(expected.to_string()),
-            artifact_fingerprint: Some(format!("runtime:node:{expected}")),
+            artifact_fingerprint: Some(expected_host_fingerprint),
             archive_sha256: None,
             target: Some(InstallTarget::Host),
             install_dir_rel: None,
@@ -863,7 +884,7 @@ fn managed_dependency_update_unavailable_for_container_provider_with_matching_du
         ManagedInstallMetadata {
             package: Some("node-runtime".to_string()),
             version: Some(expected.to_string()),
-            artifact_fingerprint: Some(format!("runtime:node:{expected}")),
+            artifact_fingerprint: Some(expected_container_fingerprint),
             archive_sha256: None,
             target: Some(InstallTarget::Container),
             install_dir_rel: None,

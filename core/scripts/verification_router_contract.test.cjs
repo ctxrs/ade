@@ -291,7 +291,7 @@ test("verify:affected expands ctx-http base children for unmatched ctx-http sour
 
   assert.deepEqual(plan.commands, [
     "pnpm source:file-size:report",
-    "node scripts/ctx_http_suite_task.cjs --suite unit-tests-api --suite unit-tests-execution-setup --suite unit-tests-lib --suite unit-tests-lib-session-head-large --suite unit-tests-workspace-runtime --suite unit-tests-daemon-and-scheduler --suite unit-tests-provider-and-settings --suite unit-tests-merge-queue --suite bin-tests --suite doc-tests",
+    "node scripts/ctx_http_suite_task.cjs --suite unit-tests-api --suite unit-tests-lib --suite unit-tests-lib-session-head-large --suite unit-tests-workspace-runtime --suite unit-tests-daemon-and-scheduler --suite unit-tests-provider-and-settings --suite unit-tests-merge-queue --suite bin-tests --suite doc-tests",
   ]);
   assert.equal(plan.commands.some((command) => command.includes("--suite base")), false);
 });
@@ -393,7 +393,7 @@ test("verify:affected routes ctx-http suite runner edits through tooling coverag
   assert.equal(plan.commands[0], "node --test scripts/verification_git_changes.test.cjs scripts/verification_router_contract.test.cjs scripts/verification_run_store.test.cjs scripts/sdlc_verify_metrics_report.test.cjs scripts/run_bazel_pilot.test.cjs scripts/ctx_http_suite_task.test.cjs scripts/lib/ctx_http_suites.test.cjs scripts/ctx_http_bazel_contract.test.cjs scripts/testing_tiers_contract.test.cjs scripts/test_taxonomy_execution_contract.test.cjs scripts/managed_runtime_mirror.test.cjs scripts/affected_tests_contract.test.cjs");
   assert.equal(plan.commands[1], "pnpm rust:bazel-deps:check");
   assert.equal(plan.commands[2], "pnpm rust:package-scripts:check");
-  assert.deepEqual(plan.commands.slice(3, 23), [
+  assert.deepEqual(plan.commands.slice(3, 22), [
     "node scripts/ctx_http_suite_task.cjs --suite attachments-routing",
     "node scripts/ctx_http_suite_task.cjs --suite bin-tests",
     "node scripts/ctx_http_suite_task.cjs --suite doc-tests",
@@ -406,7 +406,6 @@ test("verify:affected routes ctx-http suite runner edits through tooling coverag
     "node scripts/ctx_http_suite_task.cjs --suite turns-terminal",
     "node scripts/ctx_http_suite_task.cjs --suite unit-tests-api",
     "node scripts/ctx_http_suite_task.cjs --suite unit-tests-daemon-and-scheduler",
-    "node scripts/ctx_http_suite_task.cjs --suite unit-tests-execution-setup",
     "node scripts/ctx_http_suite_task.cjs --suite unit-tests-lib",
     "node scripts/ctx_http_suite_task.cjs --suite unit-tests-lib-session-head-large",
     "node scripts/ctx_http_suite_task.cjs --suite unit-tests-merge-queue",
@@ -415,7 +414,7 @@ test("verify:affected routes ctx-http suite runner edits through tooling coverag
     "node scripts/ctx_http_suite_task.cjs --suite updates-release",
     "node scripts/ctx_http_suite_task.cjs --suite workspace-stream",
   ]);
-  assert.match(plan.commands[23], /^pnpm exec node scripts\/run_rust_gate\.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed /u);
+  assert.match(plan.commands[22], /^pnpm exec node scripts\/run_rust_gate\.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed /u);
 });
 
 test("verify router telemetry honors CTX_DISABLE_VERIFICATION_TELEMETRY and still runs commands", () => {

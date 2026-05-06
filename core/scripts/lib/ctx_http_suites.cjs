@@ -19,7 +19,6 @@ const MANUAL_ONLY_CTX_HTTP_TEST_FILES = new Set([
 const CTX_HTTP_MANUAL_ONLY_BAZEL_TARGETS = [`${CTX_HTTP_BAZEL_PACKAGE}:manual-only`];
 const CTX_HTTP_BASE_CHILD_SUITE_NAMES = [
   "unit-tests-api",
-  "unit-tests-execution-setup",
   "unit-tests-lib",
   "unit-tests-lib-session-head-large",
   "unit-tests-workspace-runtime",
@@ -36,20 +35,6 @@ const CTX_HTTP_CHECKIN_FANOUT_TARGETS_BY_SUITE = Object.freeze({
     "unit_tests_api_task_lifecycle",
     "unit_tests_api_storage_admission",
     "unit_tests_api_workspaces",
-  ],
-  "unit-tests-execution-setup": [
-    "unit_tests_execution_setup",
-    "unit_tests_execution_setup_concurrent_launch_start_is_deduplicated",
-    "unit_tests_execution_setup_startup_prewarm_runtime_warmup",
-    "unit_tests_execution_setup_refresh_clears_stale_prewarm_metadata",
-    "unit_tests_execution_setup_reuses_active_runtime_prewarm",
-    "unit_tests_execution_setup_startup_prewarm_runtime_probe_reuse",
-    "unit_tests_execution_setup_runtime_launch_ready_promotion",
-    "unit_tests_execution_setup_runtime_launch_ready_scope_starts_shared_vm",
-    "unit_tests_execution_setup_builder_prewarm_shared_all_job",
-    "unit_tests_execution_setup_workspace_launch_not_blocked_by_background_runtime_prewarm",
-    "unit_tests_execution_setup_successful_workspace_launch_writes_missing_prewarm_metadata",
-    "unit_tests_workspace_launch_reuses_startup_prewarm",
   ],
   "unit-tests-lib": [
     "unit_tests_lib",
@@ -91,7 +76,8 @@ const CTX_HTTP_CHECKIN_FANOUT_TARGETS_BY_SUITE = Object.freeze({
     "unit_tests_installer",
     "unit_tests_provider_launch",
     "unit_tests_provider_matrix",
-    "unit_tests_settings",
+    "//core/crates/ctx-settings-model:unit_tests",
+    "//core/crates/ctx-settings-service:unit_tests",
   ],
   "unit-tests-merge-queue": [
     "unit_tests_merge_queue",
@@ -121,27 +107,6 @@ const CTX_HTTP_CHECKIN_FANOUT_TARGET_BATCHES_BY_SUITE = Object.freeze({
     [
       "unit_tests_api_storage_admission",
       "unit_tests_api_workspaces",
-    ],
-  ],
-  "unit-tests-execution-setup": [
-    [
-      "unit_tests_execution_setup_concurrent_launch_start_is_deduplicated",
-      "unit_tests_execution_setup_startup_prewarm_runtime_warmup",
-      "unit_tests_execution_setup_refresh_clears_stale_prewarm_metadata",
-    ],
-    [
-      "unit_tests_execution_setup_reuses_active_runtime_prewarm",
-      "unit_tests_execution_setup_startup_prewarm_runtime_probe_reuse",
-      "unit_tests_execution_setup_runtime_launch_ready_promotion",
-    ],
-    [
-      "unit_tests_execution_setup_runtime_launch_ready_scope_starts_shared_vm",
-      "unit_tests_execution_setup_builder_prewarm_shared_all_job",
-    ],
-    [
-      "unit_tests_execution_setup_workspace_launch_not_blocked_by_background_runtime_prewarm",
-      "unit_tests_execution_setup_successful_workspace_launch_writes_missing_prewarm_metadata",
-      "unit_tests_workspace_launch_reuses_startup_prewarm",
     ],
   ],
   "unit-tests-lib": [
@@ -193,7 +158,10 @@ const CTX_HTTP_CHECKIN_FANOUT_TARGET_BATCHES_BY_SUITE = Object.freeze({
       "unit_tests_installer",
       "unit_tests_provider_launch",
       "unit_tests_provider_matrix",
-      "unit_tests_settings",
+    ],
+    [
+      "//core/crates/ctx-settings-model:unit_tests",
+      "//core/crates/ctx-settings-service:unit_tests",
     ],
   ],
   "unit-tests-merge-queue": [
@@ -340,17 +308,6 @@ const CTX_HTTP_UNIT_SUITES = [
     description: "ctx-http API unit test family",
     sourceGlobs: [
       "crates/ctx-http/src/api/**",
-    ],
-  },
-  {
-    family: "sandbox-runtime",
-    name: "unit-tests-execution-setup",
-    description: "ctx-http execution setup and startup prewarm unit family",
-    sourceGlobs: [
-      "crates/ctx-http/src/execution_effective.rs",
-      "crates/ctx-http/src/execution_setup.rs",
-      "crates/ctx-http/src/execution_setup/**",
-      "crates/ctx-http/src/workspace_runtime/**",
     ],
   },
   {
@@ -938,8 +895,6 @@ const CTX_HTTP_SUITES = [
       "crates/ctx-http/src/disk_isolated_sandbox.rs",
       "crates/ctx-http/src/disk_isolated_storage.rs",
       "crates/ctx-http/src/execution_effective.rs",
-      "crates/ctx-http/src/execution_setup.rs",
-      "crates/ctx-http/src/execution_setup/**",
       "crates/ctx-http/src/network_allowlist.rs",
       "crates/ctx-http/src/resource_governance.rs",
       "crates/ctx-http/src/resource_telemetry.rs",
@@ -972,8 +927,6 @@ const CTX_HTTP_SUITES = [
       "crates/ctx-http/src/disk_isolated_sandbox.rs",
       "crates/ctx-http/src/disk_isolated_storage.rs",
       "crates/ctx-http/src/execution_effective.rs",
-      "crates/ctx-http/src/execution_setup.rs",
-      "crates/ctx-http/src/execution_setup/**",
       "crates/ctx-http/src/network_allowlist.rs",
       "crates/ctx-http/src/workspace_runtime/**",
     ],
@@ -1021,8 +974,6 @@ const CTX_HTTP_SUITES = [
     name: "sandbox-runtime-memory-leak",
     description: "sandbox/runtime memory pressure and leak detection flows",
     sourceGlobs: [
-      "crates/ctx-http/src/execution_setup.rs",
-      "crates/ctx-http/src/execution_setup/**",
       "crates/ctx-http/src/resource_telemetry.rs",
       "crates/ctx-http/src/resource_utilization.rs",
       "crates/ctx-http/src/workspace_runtime/**",
@@ -1166,6 +1117,10 @@ function getCtxHttpSuiteTarget(suiteName) {
   return `${CTX_HTTP_BAZEL_PACKAGE}:${suite.targetName || suite.name}`;
 }
 
+function toCtxHttpBazelLabel(targetName) {
+  return targetName.startsWith("//") ? targetName : `${CTX_HTTP_BAZEL_PACKAGE}:${targetName}`;
+}
+
 function getCtxHttpSuiteDirectTargets(suiteName) {
   const suite = getCtxHttpSuiteByName(suiteName);
   if (!suite) {
@@ -1173,7 +1128,7 @@ function getCtxHttpSuiteDirectTargets(suiteName) {
   }
   if (suite.expandTestFilesToTargets) {
     return (suite.directTargets || suite.testFiles)
-      .map((targetName) => `${CTX_HTTP_BAZEL_PACKAGE}:${targetName}`);
+      .map((targetName) => toCtxHttpBazelLabel(targetName));
   }
   return [getCtxHttpSuiteTarget(suiteName)];
 }
@@ -1241,13 +1196,13 @@ function getCtxHttpSuiteCheckinFanoutTargetBatches(suiteName) {
     }
     const configuredBatch = configuredBatchByFirstTarget.get(targetName);
     if (configuredBatch) {
-      batches.push(configuredBatch.map((entry) => `${CTX_HTTP_BAZEL_PACKAGE}:${entry}`));
+      batches.push(configuredBatch.map((entry) => toCtxHttpBazelLabel(entry)));
       for (const entry of configuredBatch) {
         consumedTargetNames.add(entry);
       }
       continue;
     }
-    batches.push([`${CTX_HTTP_BAZEL_PACKAGE}:${targetName}`]);
+    batches.push([toCtxHttpBazelLabel(targetName)]);
     consumedTargetNames.add(targetName);
   }
   return batches;

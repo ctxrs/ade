@@ -127,7 +127,6 @@ test("ctx-http suite command builder expands base and meta suites predictably", 
   assert.equal(getCtxHttpSuiteTargets("all").includes(`${CTX_HTTP_BAZEL_PACKAGE}:repo-vcs`), false);
   assert.deepEqual(CTX_HTTP_BASE_CHILD_SUITE_NAMES, [
     "unit-tests-api",
-    "unit-tests-execution-setup",
     "unit-tests-lib",
     "unit-tests-lib-session-head-large",
     "unit-tests-workspace-runtime",
@@ -214,12 +213,6 @@ test("ctx-http checkin fanout exposes split unit suite targets without changing 
     `${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_workspace_runtime_running_unreachable_machine_reconfiguration`,
     `${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_workspace_runtime_recreates_machine_for_memory_profile_change`,
   ]);
-  assert.equal(
-    CTX_HTTP_CHECKIN_FANOUT_TARGETS_BY_SUITE["unit-tests-execution-setup"].includes(
-      "unit_tests_execution_setup_successful_workspace_launch_writes_missing_prewarm_metadata",
-    ),
-    true,
-  );
   assert.deepEqual(CTX_HTTP_CHECKIN_FANOUT_TARGET_BATCHES_BY_SUITE["bin-tests"], [
     [
       "bin_tests_root_help",
@@ -255,8 +248,16 @@ test("ctx-http checkin fanout exposes split unit suite targets without changing 
       `${CTX_HTTP_BAZEL_PACKAGE}:subscription_accounts_api`,
     ],
   ]);
-  assert.equal(getCtxHttpSuiteCheckinFanoutTargetBatches("base").length, 26);
-  assert.equal(getCtxHttpSuiteCheckinFanoutTargets("base").length, 56);
+  assert.equal(getCtxHttpSuiteCheckinFanoutTargetBatches("base").length, 22);
+  assert.equal(getCtxHttpSuiteCheckinFanoutTargets("base").length, 45);
+  assert.equal(
+    getCtxHttpSuiteCheckinFanoutTargets("base").includes("//core/crates/ctx-settings-model:unit_tests"),
+    true,
+  );
+  assert.equal(
+    getCtxHttpSuiteCheckinFanoutTargets("base").includes("//core/crates/ctx-settings-service:unit_tests"),
+    true,
+  );
   assert.equal(
     new Set(getCtxHttpSuiteCheckinFanoutTargets("base")).size,
     getCtxHttpSuiteCheckinFanoutTargets("base").length,

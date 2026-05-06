@@ -1,12 +1,10 @@
 use std::collections::HashSet;
 
-use axum::http::StatusCode;
-
 use crate::api::sessions::AgentInitItem;
 use crate::settings as user_settings;
 use ctx_core::ids::TaskId;
 
-use super::errors::{api_error, internal_api_error, ApiResult};
+use super::errors::{api_error, internal_api_error, ApiResult, SubagentErrorKind};
 
 const DEFAULT_MAX_SUBAGENTS_PER_CALL: usize = 10;
 pub(super) const DEFAULT_MAX_ACTIVE_SUBAGENTS_PER_PARENT: usize = 12;
@@ -133,13 +131,13 @@ pub(super) async fn validate_requested_labels(
             .filter(|value| !value.is_empty())
             .ok_or_else(|| {
                 api_error(
-                    StatusCode::BAD_REQUEST,
+                    SubagentErrorKind::BadRequest,
                     format!("agent {} label is required", idx + 1),
                 )
             })?;
         if !seen_labels.insert(label.to_string()) {
             return Err(api_error(
-                StatusCode::BAD_REQUEST,
+                SubagentErrorKind::BadRequest,
                 format!("duplicate subagent label '{label}'"),
             ));
         }
@@ -153,7 +151,7 @@ pub(super) async fn validate_requested_labels(
             .map_err(internal_api_error)?
         {
             return Err(api_error(
-                StatusCode::BAD_REQUEST,
+                SubagentErrorKind::BadRequest,
                 format!("subagent label '{label}' already exists for this task"),
             ));
         }

@@ -15,7 +15,7 @@ pub(in crate::api) async fn install_provider(
             })),
         )
     })?;
-    crate::execution_policy::HostExecutionPolicy::current()
+    ctx_settings_service::HostExecutionPolicy::current()
         .map_err(|error| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -34,8 +34,9 @@ pub(in crate::api) async fn install_provider(
             )
         })?;
 
-    let (install_id, _) =
-        provider_launch_install::start_provider_install(&state, &id, target).await?;
+    let (install_id, _) = provider_launch_install::start_provider_install(&state, &id, target)
+        .await
+        .map_err(provider_install_error_response)?;
 
     Ok(Json(InstallStartResponse {
         provider_id: project_provider_id_for_response(&requested_provider_id, &id),
@@ -56,7 +57,7 @@ pub(in crate::api) async fn install_all_providers(
             })),
         )
     })?;
-    crate::execution_policy::HostExecutionPolicy::current()
+    ctx_settings_service::HostExecutionPolicy::current()
         .map_err(|error| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -74,7 +75,9 @@ pub(in crate::api) async fn install_all_providers(
                 })),
             )
         })?;
-    let installs = provider_launch_install::start_all_provider_installs(&state, target).await?;
+    let installs = provider_launch_install::start_all_provider_installs(&state, target)
+        .await
+        .map_err(provider_install_error_response)?;
     Ok(Json(
         installs
             .into_iter()

@@ -1,5 +1,7 @@
 use super::*;
-use crate::web_session_launch::WebSessionLaunchRequest;
+use crate::web_session_launch::{
+    WebSessionLaunchError, WebSessionLaunchErrorKind, WebSessionLaunchRequest,
+};
 use crate::web_sessions::{WebSessionHandle, WebSessionManager};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -109,8 +111,25 @@ pub(super) async fn create_web_session(
             fps: payload.fps,
         },
     )
-    .await?;
+    .await
+    .map_err(web_session_launch_error_response)?;
     Ok(Json(info))
+}
+
+fn web_session_launch_error_response(
+    error: WebSessionLaunchError,
+) -> (StatusCode, Json<ApiErrorResp>) {
+    let status = match error.kind() {
+        WebSessionLaunchErrorKind::BadRequest => StatusCode::BAD_REQUEST,
+        WebSessionLaunchErrorKind::Forbidden => StatusCode::FORBIDDEN,
+        WebSessionLaunchErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    (
+        status,
+        Json(ApiErrorResp {
+            error: error.message().to_string(),
+        }),
+    )
 }
 
 pub(super) async fn list_web_sessions(

@@ -12,9 +12,9 @@ use ctx_store::StoreManager;
 use ctx_workspace_config::{ExecutionConfigUpdate, ExecutionEnvironment};
 
 use crate::daemon::AppState;
-use crate::execution_policy::EXECUTION_POLICY_TEST_ENV_LOCK;
 use crate::settings::{self, ContainerNetworkMode, ExecutionMode, ExecutionSettings, Settings};
 use ctx_provider_install::install_state::InstallTarget;
+use ctx_settings_service::EXECUTION_POLICY_TEST_ENV_LOCK;
 
 static STORE_MANAGER_OPEN_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -461,7 +461,7 @@ async fn persisted_host_session_cannot_broaden_daemon_sandbox_policy() {
     .expect_err("persisted host session must not broaden daemon sandbox policy");
     let message = format!("{err:#}");
     assert!(message.contains("host is not allowed"));
-    assert!(crate::execution_policy::is_execution_policy_denial(&err));
+    assert!(ctx_settings_service::is_execution_policy_denial(&err));
 }
 
 #[tokio::test]

@@ -1,7 +1,8 @@
 use super::container::validate_canonical_container_terminal_cwd;
 use super::{
     container_terminal_env, infer_terminal_worktree, resolve_container_terminal_cwd,
-    resolve_host_terminal_cwd, resolve_terminal_host_root,
+    resolve_host_terminal_cwd, resolve_terminal_host_root, TerminalLaunchError,
+    TerminalLaunchErrorKind,
 };
 use crate::daemon::AppState;
 use crate::settings::ExecutionMode;
@@ -69,6 +70,11 @@ async fn test_state(data_root: &std::path::Path) -> Arc<AppState> {
     ))
 }
 
+fn assert_launch_error(error: &TerminalLaunchError, kind: TerminalLaunchErrorKind, message: &str) {
+    assert_eq!(error.kind(), kind);
+    assert_eq!(error.message(), message);
+}
+
 #[test]
 fn sandbox_worktree_root_maps_managed_host_worktree_to_container_root() {
     let data_root = tempfile::tempdir().unwrap();
@@ -123,10 +129,10 @@ fn resolve_container_terminal_cwd_rejects_workspace_root_for_bound_worktree() {
     )
     .expect_err("bound worktree terminal must not map workspace root");
 
-    assert_eq!(err.0, axum::http::StatusCode::BAD_REQUEST);
-    assert_eq!(
-        err.1 .0.error,
-        "cwd must be within the container worktree/workspace root"
+    assert_launch_error(
+        &err,
+        TerminalLaunchErrorKind::BadRequest,
+        "cwd must be within the container worktree/workspace root",
     );
 }
 
@@ -194,10 +200,10 @@ fn resolve_container_terminal_cwd_rejects_live_sibling_worktree_for_bound_worktr
     )
     .expect_err("bound worktree terminal must reject sibling live roots");
 
-    assert_eq!(err.0, axum::http::StatusCode::BAD_REQUEST);
-    assert_eq!(
-        err.1 .0.error,
-        "cwd must be within the container worktree/workspace root"
+    assert_launch_error(
+        &err,
+        TerminalLaunchErrorKind::BadRequest,
+        "cwd must be within the container worktree/workspace root",
     );
 }
 
@@ -222,10 +228,10 @@ fn resolve_container_terminal_cwd_rejects_relative_parent_escape() {
     )
     .expect_err("relative cwd escape should be rejected");
 
-    assert_eq!(err.0, axum::http::StatusCode::BAD_REQUEST);
-    assert_eq!(
-        err.1 .0.error,
-        "cwd must be within the container worktree/workspace root"
+    assert_launch_error(
+        &err,
+        TerminalLaunchErrorKind::BadRequest,
+        "cwd must be within the container worktree/workspace root",
     );
 }
 
@@ -236,10 +242,10 @@ fn validate_canonical_container_terminal_cwd_rejects_symlink_to_workspace_root()
     let err = validate_canonical_container_terminal_cwd(&live_root, &PathBuf::from("/ctx/ws"))
         .expect_err("canonicalized symlink target outside bound worktree must reject");
 
-    assert_eq!(err.0, axum::http::StatusCode::BAD_REQUEST);
-    assert_eq!(
-        err.1 .0.error,
-        "cwd must be within the container worktree/workspace root"
+    assert_launch_error(
+        &err,
+        TerminalLaunchErrorKind::BadRequest,
+        "cwd must be within the container worktree/workspace root",
     );
 }
 
@@ -253,10 +259,10 @@ fn validate_canonical_container_terminal_cwd_rejects_symlink_to_sibling_worktree
     )
     .expect_err("canonicalized symlink target in sibling worktree must reject");
 
-    assert_eq!(err.0, axum::http::StatusCode::BAD_REQUEST);
-    assert_eq!(
-        err.1 .0.error,
-        "cwd must be within the container worktree/workspace root"
+    assert_launch_error(
+        &err,
+        TerminalLaunchErrorKind::BadRequest,
+        "cwd must be within the container worktree/workspace root",
     );
 }
 
@@ -293,8 +299,11 @@ async fn resolve_host_terminal_cwd_rejects_workspace_root_for_bound_worktree() {
         .await
         .expect_err("host worktree terminal must reject workspace root");
 
-    assert_eq!(err.0, axum::http::StatusCode::BAD_REQUEST);
-    assert_eq!(err.1 .0.error, "cwd must be within the terminal root");
+    assert_launch_error(
+        &err,
+        TerminalLaunchErrorKind::BadRequest,
+        "cwd must be within the terminal root",
+    );
 }
 
 #[tokio::test]
@@ -317,8 +326,11 @@ async fn resolve_host_terminal_cwd_rejects_sibling_worktree_for_bound_worktree()
         .await
         .expect_err("host worktree terminal must reject sibling worktree");
 
-    assert_eq!(err.0, axum::http::StatusCode::BAD_REQUEST);
-    assert_eq!(err.1 .0.error, "cwd must be within the terminal root");
+    assert_launch_error(
+        &err,
+        TerminalLaunchErrorKind::BadRequest,
+        "cwd must be within the terminal root",
+    );
 }
 
 #[tokio::test]
@@ -364,8 +376,11 @@ async fn resolve_terminal_host_root_requires_existing_path_for_host_mode() {
         .await
         .expect_err("host terminals should still require a materialized host path");
 
-    assert_eq!(err.0, axum::http::StatusCode::BAD_REQUEST);
-    assert_eq!(err.1 .0.error, "workspace root is unavailable");
+    assert_launch_error(
+        &err,
+        TerminalLaunchErrorKind::BadRequest,
+        "workspace root is unavailable",
+    );
 }
 
 #[tokio::test]
@@ -406,7 +421,7 @@ async fn infer_terminal_worktree_returns_not_found_for_unknown_session_without_f
     .await
     .expect_err("unknown explicit session target should 404");
 
-    assert_eq!(err.0, axum::http::StatusCode::NOT_FOUND);
+    assert_eq!(err.kind(), TerminalLaunchErrorKind::NotFound);
 }
 
 #[tokio::test]
@@ -447,7 +462,7 @@ async fn infer_terminal_worktree_returns_not_found_for_unknown_task_without_fall
     .await
     .expect_err("unknown explicit task target should 404");
 
-    assert_eq!(err.0, axum::http::StatusCode::NOT_FOUND);
+    assert_eq!(err.kind(), TerminalLaunchErrorKind::NotFound);
 }
 
 #[test]

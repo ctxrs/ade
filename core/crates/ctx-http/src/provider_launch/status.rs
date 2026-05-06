@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use axum::http::StatusCode;
-use axum::Json;
 use ctx_core::ids::WorkspaceId;
 use ctx_provider_install::install_state::InstallTarget;
 
@@ -25,15 +23,4 @@ pub(crate) async fn install_target_for_workspace(
                 workspace_id.0
             )
         })
-}
-
-pub(crate) fn workspace_execution_settings_error_json(
-    error: &anyhow::Error,
-) -> (StatusCode, Json<serde_json::Value>) {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(serde_json::json!({
-            "error": format!("failed to load workspace execution settings: {error:#}"),
-        })),
-    )
 }

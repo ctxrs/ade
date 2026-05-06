@@ -2,10 +2,6 @@ use std::collections::HashMap;
 use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
 
-use axum::http::StatusCode;
-use axum::Json;
-
-use crate::api::errors::ApiErrorResp;
 use crate::daemon::AppState;
 use crate::execution_effective;
 use crate::settings::ExecutionMode;
@@ -30,10 +26,33 @@ pub(crate) struct CreateTerminalLaunchRequest {
     pub(crate) shell: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TerminalLaunchErrorKind {
+    BadRequest,
+    NotFound,
+    Internal,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct TerminalLaunchError {
+    kind: TerminalLaunchErrorKind,
+    message: String,
+}
+
+impl TerminalLaunchError {
+    pub(crate) fn kind(&self) -> TerminalLaunchErrorKind {
+        self.kind
+    }
+
+    pub(crate) fn message(&self) -> &str {
+        &self.message
+    }
+}
+
 pub(crate) async fn create_workspace_terminal(
     state: &Arc<AppState>,
     req: CreateTerminalLaunchRequest,
-) -> Result<TerminalSession, (StatusCode, Json<ApiErrorResp>)> {
+) -> Result<TerminalSession, TerminalLaunchError> {
     let workspace_id = req.workspace_id;
     let workspace = state
         .global_store()
@@ -215,7 +234,7 @@ pub(crate) async fn infer_terminal_worktree(
     workspace_id: WorkspaceId,
     session_id: Option<SessionId>,
     task_id: Option<TaskId>,
-) -> Result<Option<Worktree>, (StatusCode, Json<ApiErrorResp>)> {
+) -> Result<Option<Worktree>, TerminalLaunchError> {
     if let Some(session_id) = session_id {
         let store = state
             .store_for_session(session_id)
@@ -281,7 +300,7 @@ pub(crate) fn resolve_container_terminal_cwd(
     host_workspace_root: &FsPath,
     host_worktree_root: Option<&FsPath>,
     requested_cwd: Option<&FsPath>,
-) -> Result<PathBuf, (StatusCode, Json<ApiErrorResp>)> {
+) -> Result<PathBuf, TerminalLaunchError> {
     let live_root = if host_worktree_root.is_some() {
         &data_plane.live_worktree_root
     } else {
@@ -318,7 +337,7 @@ pub(crate) fn resolve_container_terminal_cwd(
 pub(crate) async fn resolve_host_terminal_cwd(
     bound_root: &FsPath,
     requested_cwd: Option<&FsPath>,
-) -> Result<PathBuf, (StatusCode, Json<ApiErrorResp>)> {
+) -> Result<PathBuf, TerminalLaunchError> {
     let candidate = requested_cwd
         .map(|requested| {
             if requested.is_relative() {
@@ -341,7 +360,7 @@ pub(crate) async fn resolve_terminal_host_root(
     path: &FsPath,
     container_mode: bool,
     unavailable_error: &'static str,
-) -> Result<PathBuf, (StatusCode, Json<ApiErrorResp>)> {
+) -> Result<PathBuf, TerminalLaunchError> {
     if container_mode {
         return Ok(path.to_path_buf());
     }
@@ -351,28 +370,23 @@ pub(crate) async fn resolve_terminal_host_root(
         .map_err(|_| bad_request(unavailable_error))
 }
 
-fn error_response(
-    status: StatusCode,
-    error: impl Into<String>,
-) -> (StatusCode, Json<ApiErrorResp>) {
-    (
-        status,
-        Json(ApiErrorResp {
-            error: error.into(),
-        }),
-    )
+fn launch_error(kind: TerminalLaunchErrorKind, message: impl Into<String>) -> TerminalLaunchError {
+    TerminalLaunchError {
+        kind,
+        message: message.into(),
+    }
 }
 
-fn bad_request(error: impl Into<String>) -> (StatusCode, Json<ApiErrorResp>) {
-    error_response(StatusCode::BAD_REQUEST, error)
+fn bad_request(error: impl Into<String>) -> TerminalLaunchError {
+    launch_error(TerminalLaunchErrorKind::BadRequest, error)
 }
 
-fn not_found(error: impl Into<String>) -> (StatusCode, Json<ApiErrorResp>) {
-    error_response(StatusCode::NOT_FOUND, error)
+fn not_found(error: impl Into<String>) -> TerminalLaunchError {
+    launch_error(TerminalLaunchErrorKind::NotFound, error)
 }
 
-fn internal_error(error: impl Into<String>) -> (StatusCode, Json<ApiErrorResp>) {
-    error_response(StatusCode::INTERNAL_SERVER_ERROR, error)
+fn internal_error(error: impl Into<String>) -> TerminalLaunchError {
+    launch_error(TerminalLaunchErrorKind::Internal, error)
 }
 
 fn resolve_path_lexical_within_root(root: &FsPath, path: &str) -> anyhow::Result<PathBuf> {

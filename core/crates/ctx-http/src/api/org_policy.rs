@@ -150,7 +150,7 @@ pub(super) async fn cache_org_policy_snapshot(
             "daemon is not enrolled for this org",
         ));
     };
-    crate::policy_signature::verify_policy_snapshot_signature(&enrollment, &snapshot).map_err(
+    ctx_org_policy::signature::verify_policy_snapshot_signature(&enrollment, &snapshot).map_err(
         |err| {
             policy_api_error(
                 StatusCode::BAD_REQUEST,

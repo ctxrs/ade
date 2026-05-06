@@ -16,7 +16,6 @@ const CTX_HTTP_SINGLE_ACTION_BAZEL_JOB_SUITES = new Set([
   "base",
   "unit-tests-api",
   "unit-tests-daemon-and-scheduler",
-  "unit-tests-execution-setup",
   "unit-tests-lib",
   "unit-tests-lib-session-head-large",
   "unit-tests-merge-queue",

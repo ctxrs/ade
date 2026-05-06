@@ -25,7 +25,7 @@ use crate::api::sessions::compose_model_id;
 use crate::daemon::{ensure_provider_adapter_for_target_with_cfg, AppState};
 use crate::execution_effective;
 use crate::ops_events::OpsEvent;
-use crate::order_seq::{attach_order_seq, read_order_seq, OrderSeqState};
+use ctx_session_tools::order_seq::{attach_order_seq, read_order_seq, OrderSeqState};
 use crate::settings;
 use crate::storage_guard;
 use ctx_harness_sources::HarnessSourceKind;

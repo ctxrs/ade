@@ -105,8 +105,7 @@ pub(crate) use ctx_harness_runtime::{
 pub(crate) use ctx_sandbox_container_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV;
 #[cfg(test)]
 pub(crate) use ctx_sandbox_container_runtime::{
-    command_output_message, command_output_with_timeout, default_container_image,
-    sandbox_cli_invocation,
+    command_output_message, command_output_with_timeout, sandbox_cli_invocation,
 };
 #[cfg(test)]
 use ctx_sandbox_container_runtime::{

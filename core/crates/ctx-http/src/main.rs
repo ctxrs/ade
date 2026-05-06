@@ -296,9 +296,11 @@ fn spawn_daemon_heap_profiler(_logs_dir: &Path) {}
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let open_file_limit_adjustment = match &cli.command {
-        Commands::Serve { .. } => Some(ctx_http::process_limits::ensure_min_open_file_limit(
-            ctx_http::process_limits::RECOMMENDED_DAEMON_OPEN_FILE_SOFT_LIMIT,
-        )),
+        Commands::Serve { .. } => Some(
+            ctx_resource_utilization::process_limits::ensure_min_open_file_limit(
+                ctx_resource_utilization::process_limits::RECOMMENDED_DAEMON_OPEN_FILE_SOFT_LIMIT,
+            ),
+        ),
         Commands::Init { .. } | Commands::SelfUpdate { .. } => None,
     };
 
