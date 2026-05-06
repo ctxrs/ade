@@ -545,6 +545,69 @@ describe("sessionHeadPrefetch", () => {
     expect(bootstrapCache.get(sessionId)?.last_event_seq).toBe(summaryVersionCount);
   });
 
+  it("does not turn queued ctx-ui sized summary churn into a sequential authoritative head fetch storm", async () => {
+    const sessionId = "session-1";
+    const summaryVersionCount = 512;
+    const latestSnapshot = makeSnapshot(sessionId, { lastEventSeq: summaryVersionCount });
+    let fetchCalls = 0;
+    getSessionHeadMock.mockImplementation(async () => {
+      fetchCalls += 1;
+      await Promise.resolve();
+      return makeHead(sessionId, {
+        turnCount: 3,
+        lastEventSeq: Math.min(fetchCalls, summaryVersionCount - 1),
+      });
+    });
+    const bootstrapCache = new SessionHeadBootstrapCache();
+    const store = {
+      getSessionHeadSnapshot: vi.fn(() => null),
+      getSessionHeadsSnapshot: vi.fn(() => ({})),
+    };
+
+    const pending = Array.from({ length: summaryVersionCount }, (_, index) =>
+      primeAuthoritativeSessionHeads(
+        makeSnapshot(sessionId, { lastEventSeq: index + 1 }),
+        store,
+        bootstrapCache,
+        [sessionId],
+        { getSnapshot: () => latestSnapshot },
+      ));
+
+    const results = await Promise.all(pending);
+
+    expect(results.some(Boolean)).toBe(false);
+    expect(getSessionHeadMock).toHaveBeenCalledTimes(1);
+    expect(bootstrapCache.get(sessionId)).toBeUndefined();
+  });
+
+  it("lets foreground force bypass a stale authoritative head cooldown", async () => {
+    const sessionId = "session-1";
+    const snapshot = makeSnapshot(sessionId, { lastEventSeq: 8 });
+    getSessionHeadMock
+      .mockResolvedValueOnce(makeHead(sessionId, { turnCount: 3, lastEventSeq: 3 }))
+      .mockResolvedValueOnce(makeHead(sessionId, { turnCount: 3, lastEventSeq: 8 }));
+    const bootstrapCache = new SessionHeadBootstrapCache();
+    const store = {
+      getSessionHeadSnapshot: vi.fn(() => null),
+      getSessionHeadsSnapshot: vi.fn(() => ({})),
+    };
+
+    const staleChanged = await primeAuthoritativeSessionHeads(snapshot, store, bootstrapCache, [sessionId], {
+      getSnapshot: () => snapshot,
+      reason: "summary_repair",
+    });
+    const forceChanged = await primeAuthoritativeSessionHeads(snapshot, store, bootstrapCache, [sessionId], {
+      force: true,
+      getSnapshot: () => snapshot,
+      reason: "foreground_force",
+    });
+
+    expect(staleChanged).toBe(false);
+    expect(forceChanged).toBe(true);
+    expect(getSessionHeadMock).toHaveBeenCalledTimes(2);
+    expect(bootstrapCache.get(sessionId)?.last_event_seq).toBe(8);
+  });
+
   it("retries same-version authoritative prefetch when a newer generation overlaps an older canceled load", async () => {
     const sessionId = "session-1";
     const snapshot = makeSnapshot(sessionId, { lastEventSeq: 5 });

@@ -25,6 +25,7 @@ import {
   collectSessionHeadsForSupervisor,
   planSessionHeadPrefetchTargets,
   primeAuthoritativeSessionHeads,
+  type SessionHeadPrefetchReason,
   maybeCacheSessionHeadSeed,
   primePersistedSessionHeads,
 } from "./sessionHeadPrefetch";
@@ -196,7 +197,7 @@ export function useWorkbenchSessionBridge({
     async (
       sessionIdsToPrime: readonly string[],
       generation?: number,
-      opts?: { force?: boolean },
+      opts?: { force?: boolean; reason?: SessionHeadPrefetchReason },
     ) => {
       const shouldContinue = () => generation === undefined || prefetchGenerationRef.current === generation;
       if (sessionIdsToPrime.length === 0 || !shouldContinue()) return;
@@ -210,6 +211,7 @@ export function useWorkbenchSessionBridge({
           getSnapshot: () => workspaceSnapshotStore.getSnapshot(),
           shouldRetainSessionId: (sessionId) => isPrefetchSessionRetained(sessionId),
           force: opts?.force,
+          reason: opts?.reason,
           onHead: (sessionId, head) => {
             const retain = isPrefetchSessionRetained(sessionId);
             const continueGeneration = shouldContinue();
@@ -239,7 +241,7 @@ export function useWorkbenchSessionBridge({
       supervisor.setWorkspaceSnapshotState(snapshot);
       lifecycleCoordinator.setWorkspaceSnapshotState(snapshot);
       if (snapshot.initialized && sessionIds.length > 0) {
-        void primeAuthoritativeHeadsForSessions(sessionIds);
+        void primeAuthoritativeHeadsForSessions(sessionIds, undefined, { reason: "workspace_sync" });
       }
     };
     const handleWorkspaceEvent = (evt: WorkspaceActiveSnapshotEvent) => {
@@ -277,7 +279,7 @@ export function useWorkbenchSessionBridge({
           (evt.type === "session_summary_delta" || evt.type === "session_summary") &&
           sessionIdSet.has(sessionId)
         ) {
-          void primeAuthoritativeHeadsForSessions([sessionId]);
+          void primeAuthoritativeHeadsForSessions([sessionId], undefined, { reason: "summary_repair" });
         }
       } else if (didCacheSeed) {
         supervisor.setWorkspaceSessionHeads(
@@ -477,7 +479,7 @@ export function useWorkbenchSessionBridge({
           ),
         );
       }
-      await primeAuthoritativeHeadsForSessions(prefetchSessionIds, generation);
+      await primeAuthoritativeHeadsForSessions(prefetchSessionIds, generation, { reason: "warm_prefetch" });
     };
     void prefetchHeads();
     return () => {
@@ -521,7 +523,10 @@ export function useWorkbenchSessionBridge({
 
   useEffect(() => {
     if (!workspaceSnapshot.initialized || foregroundSessionIds.length === 0) return;
-    void primeAuthoritativeHeadsForSessions(foregroundSessionIds, undefined, { force: true });
+    void primeAuthoritativeHeadsForSessions(foregroundSessionIds, undefined, {
+      force: true,
+      reason: "foreground_force",
+    });
   }, [
     foregroundSessionIds,
     primeAuthoritativeHeadsForSessions,

@@ -27,8 +27,18 @@ export type PersistedPrefetchLease =
 
 export type AuthoritativePrefetchLease =
   | { state: "skip" }
+  | { state: "throttled" }
   | { state: "wait"; promise: Promise<void> }
-  | { state: "start"; finish: (success: boolean) => void };
+  | { state: "start"; finish: (outcome: AuthoritativePrefetchCompletion) => void };
+
+export type AuthoritativePrefetchCompletion =
+  | "success"
+  | "stale"
+  | "missing"
+  | "failed"
+  | "canceled";
+
+const AUTHORITATIVE_PREFETCH_RETRY_COOLDOWN_MS = 15_000;
 
 export class SessionHeadBootstrapCache {
   private readonly entries = new Map<string, SessionHeadSnapshot>();
@@ -36,6 +46,7 @@ export class SessionHeadBootstrapCache {
   private readonly persistedPrefetchInFlight = new Map<string, PersistedPrefetchEntry>();
   private readonly authoritativePrefetchInFlight = new Map<string, AuthoritativePrefetchEntry>();
   private readonly authoritativePrefetchVersions = new Map<string, string>();
+  private readonly authoritativePrefetchRetryAfterMs = new Map<string, number>();
 
   upsert(head: SessionHeadSnapshot | null | undefined): boolean {
     const sessionId = idToString(head?.session?.id);
@@ -100,6 +111,11 @@ export class SessionHeadBootstrapCache {
         this.authoritativePrefetchVersions.delete(sessionId);
       }
     }
+    for (const sessionId of this.authoritativePrefetchRetryAfterMs.keys()) {
+      if (!allowed.has(sessionId)) {
+        this.authoritativePrefetchRetryAfterMs.delete(sessionId);
+      }
+    }
   }
 
   beginPersistedPrefetch(sessionId: string | null | undefined): PersistedPrefetchLease {
@@ -151,6 +167,7 @@ export class SessionHeadBootstrapCache {
   beginAuthoritativePrefetch(
     sessionId: string | null | undefined,
     versionKey: string | null | undefined,
+    opts?: { force?: boolean; nowMs?: number },
   ): AuthoritativePrefetchLease {
     const id = String(sessionId ?? "").trim();
     const normalizedVersionKey = String(versionKey ?? "").trim();
@@ -162,6 +179,12 @@ export class SessionHeadBootstrapCache {
     if (inFlight) {
       return { state: "wait", promise: inFlight.promise };
     }
+    const nowMs = opts?.nowMs ?? Date.now();
+    const retryAfterMs = this.authoritativePrefetchRetryAfterMs.get(id);
+    if (!opts?.force && typeof retryAfterMs === "number" && retryAfterMs > nowMs) {
+      return { state: "throttled" };
+    }
+    this.authoritativePrefetchRetryAfterMs.delete(id);
     const token = Symbol(id);
     let resolve = () => {};
     const promise = new Promise<void>((resolver) => {
@@ -177,21 +200,27 @@ export class SessionHeadBootstrapCache {
     this.authoritativePrefetchInFlight.set(id, entry);
     return {
       state: "start",
-      finish: (success: boolean) => {
-        this.finishAuthoritativePrefetch(entry, success);
+      finish: (outcome: AuthoritativePrefetchCompletion) => {
+        this.finishAuthoritativePrefetch(entry, outcome);
       },
     };
   }
 
   private finishAuthoritativePrefetch(
     entry: AuthoritativePrefetchEntry,
-    success: boolean,
+    outcome: AuthoritativePrefetchCompletion,
   ): void {
     const current = this.authoritativePrefetchInFlight.get(entry.sessionId);
     if (current?.token === entry.token) {
       this.authoritativePrefetchInFlight.delete(entry.sessionId);
-      if (success) {
+      if (outcome === "success") {
         this.authoritativePrefetchVersions.set(entry.sessionId, entry.versionKey);
+        this.authoritativePrefetchRetryAfterMs.delete(entry.sessionId);
+      } else if (outcome === "stale" || outcome === "missing" || outcome === "failed") {
+        this.authoritativePrefetchRetryAfterMs.set(
+          entry.sessionId,
+          Date.now() + AUTHORITATIVE_PREFETCH_RETRY_COOLDOWN_MS,
+        );
       }
     }
     entry.resolve();
@@ -208,5 +237,6 @@ export class SessionHeadBootstrapCache {
     }
     this.authoritativePrefetchInFlight.clear();
     this.authoritativePrefetchVersions.clear();
+    this.authoritativePrefetchRetryAfterMs.clear();
   }
 }

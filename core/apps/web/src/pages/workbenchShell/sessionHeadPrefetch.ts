@@ -4,9 +4,16 @@ import type {
   SessionSnapshotSummary,
   WorkspaceActiveSnapshotEvent,
 } from "@ctx/types";
-import { idToString } from "../../api/client";
+import {
+  idToString,
+  recordClientCounterMetric,
+  recordClientHistogramMetric,
+} from "../../api/client";
 import { getSessionHead } from "../../api/clientSessions";
-import { SessionHeadBootstrapCache } from "../../state/sessionHeadBootstrapCache";
+import {
+  type AuthoritativePrefetchCompletion,
+  SessionHeadBootstrapCache,
+} from "../../state/sessionHeadBootstrapCache";
 import { HEAD_LIMIT, WARM_SESSION_BUDGET } from "../../state/sessionSupervisor/config";
 import { loadSessionHeadV1 } from "../../state/uiStateStore";
 import {
@@ -32,6 +39,59 @@ type PrefetchControlOptions = {
   getSnapshot?: () => WorkspaceActiveSnapshotState;
   shouldRetainSessionId?: (sessionId: string) => boolean;
   force?: boolean;
+  reason?: SessionHeadPrefetchReason;
+};
+
+export type SessionHeadPrefetchReason =
+  | "workspace_sync"
+  | "summary_repair"
+  | "warm_prefetch"
+  | "foreground_force"
+  | "explicit";
+
+type AuthoritativePrefetchOutcome =
+  | "skip_current"
+  | "skip_bootstrap_current"
+  | "wait_in_flight"
+  | "fetch_started"
+  | "fetch_success"
+  | "fetch_stale"
+  | "fetch_missing"
+  | "fetch_failed"
+  | "canceled"
+  | "not_retained"
+  | "throttled";
+
+const noteAuthoritativePrefetchOutcome = (
+  reason: SessionHeadPrefetchReason,
+  outcome: AuthoritativePrefetchOutcome,
+  forced: boolean,
+): void => {
+  recordClientCounterMetric("workbench.session_head_authoritative_prefetch_count", {
+    reason,
+    outcome,
+    forced: forced ? "true" : "false",
+  });
+};
+
+const noteAuthoritativePrefetchDuration = (
+  reason: SessionHeadPrefetchReason,
+  outcome: Extract<AuthoritativePrefetchOutcome, "fetch_success" | "fetch_stale" | "fetch_missing" | "fetch_failed" | "canceled" | "not_retained">,
+  forced: boolean,
+  durationMs: number,
+): void => {
+  recordClientHistogramMetric("workbench.session_head_authoritative_prefetch_ms", "ms", durationMs, {
+    reason,
+    outcome,
+    forced: forced ? "true" : "false",
+  });
+};
+
+const nowMs = (): number => {
+  if (typeof performance !== "undefined" && typeof performance.now === "function") {
+    return (performance.timeOrigin ?? Date.now()) + performance.now();
+  }
+  return Date.now();
 };
 
 export type SessionHeadPrefetchTargetPlan = {
@@ -284,6 +344,8 @@ export const primeAuthoritativeSessionHeads = async (
   const batchHeads = store.getSessionHeadsSnapshot?.() ?? {};
   let changed = false;
   const targetSessionIds = collectPrefetchTargetSessionIds(snapshot, sessionIds, opts?.maxTargets);
+  const reason = opts?.reason ?? "explicit";
+  const forced = Boolean(opts?.force);
 
   await runWithConcurrencyLimit(
     targetSessionIds,
@@ -295,36 +357,77 @@ export const primeAuthoritativeSessionHeads = async (
         const summary = findSessionSummary(snapshot, sessionId);
         const directHead = batchHeads[sessionId] ?? store.getSessionHeadSnapshot(sessionId);
         if (!opts?.force && isSessionHeadCompatibleWithSummary(summary, directHead)) {
+          noteAuthoritativePrefetchOutcome(reason, "skip_current", forced);
           return;
         }
         const bootstrapHead = bootstrapCache.get(sessionId);
         if (!opts?.force && isSessionHeadCompatibleWithSummary(summary, bootstrapHead)) {
+          noteAuthoritativePrefetchOutcome(reason, "skip_bootstrap_current", forced);
           return;
         }
         const versionKey = buildPrefetchVersionKey(summary, sessionId);
-        const lease = bootstrapCache.beginAuthoritativePrefetch(sessionId, versionKey);
-        if (lease.state === "skip") return;
+        const lease = bootstrapCache.beginAuthoritativePrefetch(sessionId, versionKey, {
+          force: opts?.force,
+        });
+        if (lease.state === "skip") {
+          noteAuthoritativePrefetchOutcome(reason, "skip_current", forced);
+          return;
+        }
+        if (lease.state === "throttled") {
+          noteAuthoritativePrefetchOutcome(reason, "throttled", forced);
+          return;
+        }
         if (lease.state === "wait") {
+          noteAuthoritativePrefetchOutcome(reason, "wait_in_flight", forced);
           await lease.promise;
           continue;
         }
-        let fetchSucceeded = false;
+        let completion: AuthoritativePrefetchCompletion = "canceled";
+        const startedAtMs = nowMs();
+        noteAuthoritativePrefetchOutcome(reason, "fetch_started", forced);
         try {
-          const head = await getSessionHead(sessionId, HEAD_LIMIT, true).catch(() => null);
-          if (opts?.shouldContinue && !opts.shouldContinue()) return;
-          if (opts?.shouldRetainSessionId && !opts.shouldRetainSessionId(sessionId)) return;
-          if (!head) return;
+          const head = await getSessionHead(sessionId, HEAD_LIMIT, true);
+          if (opts?.shouldContinue && !opts.shouldContinue()) {
+            completion = "canceled";
+            noteAuthoritativePrefetchOutcome(reason, "canceled", forced);
+            noteAuthoritativePrefetchDuration(reason, "canceled", forced, nowMs() - startedAtMs);
+            return;
+          }
+          if (opts?.shouldRetainSessionId && !opts.shouldRetainSessionId(sessionId)) {
+            completion = "canceled";
+            noteAuthoritativePrefetchOutcome(reason, "not_retained", forced);
+            noteAuthoritativePrefetchDuration(reason, "not_retained", forced, nowMs() - startedAtMs);
+            return;
+          }
+          if (!head) {
+            completion = "missing";
+            noteAuthoritativePrefetchOutcome(reason, "fetch_missing", forced);
+            noteAuthoritativePrefetchDuration(reason, "fetch_missing", forced, nowMs() - startedAtMs);
+            return;
+          }
           const latestSummary = findSessionSummary(opts?.getSnapshot?.() ?? snapshot, sessionId);
-          fetchSucceeded = isSessionHeadCompatibleWithSummary(latestSummary, head);
-          if (!fetchSucceeded) return;
+          if (!isSessionHeadCompatibleWithSummary(latestSummary, head)) {
+            completion = "stale";
+            noteAuthoritativePrefetchOutcome(reason, "fetch_stale", forced);
+            noteAuthoritativePrefetchDuration(reason, "fetch_stale", forced, nowMs() - startedAtMs);
+            return;
+          }
+          completion = "success";
+          noteAuthoritativePrefetchOutcome(reason, "fetch_success", forced);
+          noteAuthoritativePrefetchDuration(reason, "fetch_success", forced, nowMs() - startedAtMs);
           const didChange = bootstrapCache.upsert(head);
           if (didChange) {
             changed = true;
           }
           opts?.onHead?.(sessionId, head);
           return;
+        } catch {
+          completion = "failed";
+          noteAuthoritativePrefetchOutcome(reason, "fetch_failed", forced);
+          noteAuthoritativePrefetchDuration(reason, "fetch_failed", forced, nowMs() - startedAtMs);
+          return;
         } finally {
-          lease.finish(fetchSucceeded);
+          lease.finish(completion);
         }
       }
     },

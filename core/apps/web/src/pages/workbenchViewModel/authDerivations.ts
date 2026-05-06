@@ -237,22 +237,26 @@ export function deriveSessionError(
   const lastTurn = turns[turns.length - 1];
   if (lastTurn.status !== "failed") return null;
   const turnId = idToString(lastTurn.turn_id);
-  let errorEvent: SessionEvent | null = null;
+  let failureEvent: SessionEvent | null = null;
   for (let i = events.length - 1; i >= 0; i--) {
     const ev = events[i];
-    if (ev.event_type !== "error") continue;
+    if (ev.event_type !== "error" && ev.event_type !== "turn_finished") continue;
     if (turnId && idToString(ev.turn_id) !== turnId) continue;
-    errorEvent = ev;
+    if (ev.event_type === "turn_finished") {
+      const status = readNonEmptyString(ev.payload_json?.status);
+      if (status !== "failed") continue;
+    }
+    failureEvent = ev;
     break;
   }
-  if (!errorEvent) {
+  if (!failureEvent) {
     return { message: "Harness error." };
   }
-  const message = extractErrorMessage(errorEvent.payload_json) ?? "Harness error.";
+  const message = extractErrorMessage(failureEvent.payload_json) ?? "Harness error.";
   const provider =
-    readNonEmptyString(errorEvent.payload_json?.provider) ??
-    readNonEmptyString(errorEvent.payload_json?.provider_id) ??
-    readNonEmptyString(errorEvent.payload_json?.providerId) ??
+    readNonEmptyString(failureEvent.payload_json?.provider) ??
+    readNonEmptyString(failureEvent.payload_json?.provider_id) ??
+    readNonEmptyString(failureEvent.payload_json?.providerId) ??
     undefined;
   return { message, provider };
 }
