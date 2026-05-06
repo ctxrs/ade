@@ -188,6 +188,16 @@ describe("browser download urls", () => {
     vi.restoreAllMocks();
   });
 
+  it("derives scoped capability tokens with the shared SHA-256 implementation", () => {
+    expect(
+      deriveBrowserCapabilityToken(
+        "daemon-secret",
+        { kind: "blob", blobId: "blob-1" },
+        1_700_003_600,
+      ),
+    ).toBe("fd764ea13c26a763ef25eb71bb03035462e2b0f8c85525d758c5194b734edac9");
+  });
+
   it("builds blob urls with a scoped capability token instead of the raw daemon bearer", () => {
     getDaemonConnectionMock.mockReturnValueOnce({
       baseUrl: "http://daemon.test",

@@ -66,4 +66,21 @@ describe("clientWorkspaces websocket urls", () => {
     expect(url).not.toContain("token=");
     expect(vi.mocked(getDaemonWsUrl)).toHaveBeenCalledTimes(1);
   });
+
+  it("derives scoped stream tokens when Web Crypto is unavailable", async () => {
+    const originalCrypto = globalThis.crypto;
+    vi.stubGlobal("crypto", {});
+
+    try {
+      await expect(
+        deriveBrowserStreamToken(
+          "daemon-secret",
+          { kind: "workspace_active_snapshot", workspaceId: "ws-plain-http" },
+          1_700_000_300,
+        ),
+      ).resolves.toBe("977dcede70299dcd9cd20c6217b74dc145166b6664bb81238999c5ce06665454");
+    } finally {
+      vi.stubGlobal("crypto", originalCrypto);
+    }
+  });
 });

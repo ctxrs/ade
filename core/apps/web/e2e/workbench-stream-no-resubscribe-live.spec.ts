@@ -105,15 +105,20 @@ test("workbench: live activity does not resubscribe on the same workspace stream
   const sessionIds = Object.values(seed.sessionIdsByTask).flat();
   const streamer = startStreamingMessages(request, {
     sessionIds,
-    intervalMs: 140,
-    durationMs: 5_000,
+    intervalMs: 250,
+    durationMs: 3_000,
     messageBytes: 1400,
     includeToolSummaries: true,
     toolSummariesPerTurn: 2,
   });
 
-  await page.waitForTimeout(5_500);
+  await page.waitForTimeout(3_500);
   await streamer.stop();
+  await expect
+    .poll(async () => page.evaluate(() => (window as E2EWindow).__ctxE2E?.workspaceStream?.getConnectionState?.()), {
+      timeout: 10_000,
+    })
+    .toBe("connected");
 
   const result = await page.evaluate(() => {
     const win = window as E2EWindow;

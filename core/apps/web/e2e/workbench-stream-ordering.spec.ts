@@ -1,6 +1,10 @@
 import { test, expect } from "./fixtures";
 import type { APIRequestContext, Page } from "playwright/test";
-import { seedDummyWorkspace, startStreamingMessages } from "./utils/seedDummyWorkspace";
+import {
+  postImmediateMessageAndWaitForCompletion,
+  seedDummyWorkspace,
+  startStreamingMessages,
+} from "./utils/seedDummyWorkspace";
 
 const scrollSelector = ".wb-thread-scroller";
 
@@ -31,9 +35,11 @@ const readHeadIndices = async (page: Page, sessionId: string, prefix: string): P
 const addLongMessages = async (request: APIRequestContext, sessionId: string, count: number) => {
   const longText = Array.from({ length: 220 }, (_, i) => `stream line ${i + 1}`).join("\n");
   for (let i = 0; i < count; i += 1) {
-    await request.post(`/api/sessions/${sessionId}/messages`, {
-      data: { content: `${longText}\nblock ${i + 1}`, delivery: "immediate" },
-    });
+    await postImmediateMessageAndWaitForCompletion(
+      request,
+      sessionId,
+      `${longText}\nblock ${i + 1}`,
+    );
   }
 };
 
@@ -87,7 +93,7 @@ test.describe.serial("workbench: streaming ordering", () => {
     const stream = startStreamingMessages(request, {
       sessionIds: [sessionId],
       intervalMs: 140,
-      durationMs: 1400,
+      durationMs: 4_000,
       messagePrefix: prefix,
     });
 
@@ -143,7 +149,7 @@ test.describe.serial("workbench: streaming ordering", () => {
     const stream = startStreamingMessages(request, {
       sessionIds: [sessionId],
       intervalMs: 160,
-      durationMs: 1600,
+      durationMs: 4_000,
       messagePrefix: prefix,
     });
 

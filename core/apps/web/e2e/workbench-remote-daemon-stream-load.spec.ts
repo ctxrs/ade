@@ -27,6 +27,8 @@ const STREAMERS = envNumber("CTX_REMOTE_DAEMON_STREAM_SOAK_STREAMERS", 6);
 const STREAM_INTERVAL_MS = envNumber("CTX_REMOTE_DAEMON_STREAM_SOAK_STREAM_INTERVAL_MS", 5);
 const STREAM_TIMEOUT_MS = envNumber("CTX_REMOTE_DAEMON_STREAM_SOAK_STREAM_TIMEOUT_MS", 75_000);
 const MIN_STREAM_EVENTS = envNumber("CTX_REMOTE_DAEMON_STREAM_SOAK_MIN_EVENTS", 2000);
+const DAEMON_REPO_ROOT =
+  process.env.CTX_REMOTE_DAEMON_STREAM_SOAK_REPO_ROOT?.trim() || undefined;
 const MIN_SESSION_HEAD_DELTAS = envNumber(
   "CTX_REMOTE_DAEMON_STREAM_SOAK_MIN_SESSION_HEAD_DELTAS",
   1000,
@@ -729,6 +731,7 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
   const clock = await calibrateClock(request);
 
   const seed = await seedDummyWorkspace(request, {
+    repoRoot: DAEMON_REPO_ROOT,
     tasks: TASK_COUNT,
     sessionsPerTask: 1,
     turnsPerSession: TURNS_PER_SESSION,
@@ -755,7 +758,10 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
   });
 
   await page.setViewportSize({ width: 1440, height: 960 });
-  await page.goto(`/workspaces/${seed.workspaceId}?ctxE2E=1&loadtest=1`, {
+  const authFragment = process.env.CTX_E2E_AUTH_TOKEN
+    ? `#token=${encodeURIComponent(process.env.CTX_E2E_AUTH_TOKEN)}`
+    : "";
+  await page.goto(`/workspaces/${seed.workspaceId}?ctxE2E=1&loadtest=1${authFragment}`, {
     waitUntil: "domcontentloaded",
   });
 

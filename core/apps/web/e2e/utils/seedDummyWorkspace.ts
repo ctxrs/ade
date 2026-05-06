@@ -45,6 +45,7 @@ type StreamOptions = {
   sessionIds: string[];
   intervalMs?: number;
   durationMs?: number;
+  completionTimeoutMs?: number;
   messageBytes?: number | NumberRange;
   messagePrefix?: string;
   includeToolSummaries?: boolean;
@@ -161,11 +162,14 @@ export async function waitForMessageTurnCompletion(
   request: APIRequestContext,
   sessionId: string,
   messageId: string,
-  opts?: { timeoutMs?: number },
+  opts?: { timeoutMs?: number; shouldStop?: () => boolean },
 ): Promise<void> {
   const timeoutMs = opts?.timeoutMs ?? 15_000;
   const start = Date.now();
   while (true) {
+    if (opts?.shouldStop?.()) {
+      return;
+    }
     const head = await apiGet<{
       turns: Array<{ status: string; tool_total?: number | null; user_message_id?: string | null }>;
       tool_summaries?: unknown[];
@@ -220,12 +224,12 @@ export async function seedDummyWorkspace(
   const messageBytes = opts.messageBytes;
   const messageBodyLines = opts.messageBodyLines;
   const messageLinePrefix = opts.messageLinePrefix ?? `${messagePrefix} body`;
-  const awaitTurnCompletion = Boolean(opts.awaitTurnCompletion);
   const seedTranscriptDirect = Boolean(opts.seedTranscriptDirect);
-  if (awaitTurnCompletion && seedTranscriptDirect) {
+  const awaitTurnCompletion = opts.awaitTurnCompletion ?? !seedTranscriptDirect;
+  if (opts.awaitTurnCompletion === true && seedTranscriptDirect) {
     throw new Error("seedDummyWorkspace requires either awaitTurnCompletion or seedTranscriptDirect, not both");
   }
-  const completionTimeoutMs = opts.completionTimeoutMs ?? 15_000;
+  const completionTimeoutMs = opts.completionTimeoutMs ?? 60_000;
   const sessionSource = opts.sessionSource ?? {
     providerId: "fake",
     modelId: "fake-model",
@@ -352,6 +356,7 @@ export function startStreamingMessages(
   opts: StreamOptions,
 ): { stop: () => Promise<void>; getStats: () => StreamStats } {
   const intervalMs = opts.intervalMs ?? 250;
+  const completionTimeoutMs = opts.completionTimeoutMs ?? 60_000;
   const messagePrefix = opts.messagePrefix ?? "stream msg";
   const includeToolSummaries = Boolean(opts.includeToolSummaries);
   const toolSummariesPerTurn = opts.toolSummariesPerTurn ?? 3;
@@ -369,10 +374,37 @@ export function startStreamingMessages(
   let stopPromise: Promise<void> | null = null;
   let sent = 0;
   const failures: string[] = [];
+  const inFlightBySession = new Map<string, Promise<void>>();
+
+  const settleSessionTurn = (sessionId: string, messageId: string) => {
+    const completion = waitForMessageTurnCompletion(request, sessionId, messageId, {
+      timeoutMs: completionTimeoutMs,
+      shouldStop: () => stopped,
+    })
+      .catch((error: unknown) => {
+        if (stopped) return;
+        const message = error instanceof Error && error.message ? error.message : String(error);
+        failures.push(`background stream completion failed: ${message}`);
+      })
+      .finally(() => {
+        if (inFlightBySession.get(sessionId) === completion) {
+          inFlightBySession.delete(sessionId);
+        }
+      });
+    inFlightBySession.set(sessionId, completion);
+  };
 
   const sendOnce = async () => {
     if (stopped) return;
-    const sessionId = sessionIds[tick % sessionIds.length];
+    let sessionId: string | null = null;
+    for (let offset = 0; offset < sessionIds.length; offset += 1) {
+      const candidate = sessionIds[(tick + offset) % sessionIds.length];
+      if (!candidate || inFlightBySession.has(candidate)) continue;
+      sessionId = candidate;
+      tick += offset;
+      break;
+    }
+    if (!sessionId) return;
     const toolFixtures = includeToolSummaries
       ? chunkFixtures(toolSummaryFixtures, toolSummariesPerTurn, tick * toolSummariesPerTurn)
       : [];
@@ -383,11 +415,15 @@ export function startStreamingMessages(
       messageBytes ? parseCount(messageBytes, tick) : undefined,
     );
     tick += 1;
-    await apiPost(request, `/api/sessions/${sessionId}/messages`, {
+    const savedMessage = await apiPost<{ id: string }>(request, `/api/sessions/${sessionId}/messages`, {
       content: `${paddedMessage}${toolMarker}`,
       delivery: "immediate",
     });
+    if (!savedMessage.id) {
+      throw new Error(`streamed message for session ${sessionId} did not include an id`);
+    }
     sent += 1;
+    settleSessionTurn(sessionId, savedMessage.id);
   };
 
   const timer = setInterval(() => {
@@ -403,6 +439,7 @@ export function startStreamingMessages(
         stopped = true;
         clearInterval(timer);
         await inflight;
+        await Promise.all(inFlightBySession.values());
         if (failures.length > 0) {
           throw new Error(failures.join("; "));
         }
