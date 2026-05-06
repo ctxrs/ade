@@ -210,7 +210,17 @@ fn is_forbidden_semantic_property_key(key: &str) -> bool {
     let normalized = normalized_property_key(key);
     matches!(
         normalized.as_str(),
-        "workspaceid" | "taskid" | "sessionid" | "worktreeid" | "runid" | "turnid"
+        "workspaceid"
+            | "taskid"
+            | "sessionid"
+            | "worktreeid"
+            | "runid"
+            | "turnid"
+            | "accountid"
+            | "orgid"
+            | "organizationid"
+            | "userid"
+            | "email"
     ) || [
         "prompt",
         "code",
@@ -302,6 +312,9 @@ mod tests {
         properties.insert("nested".to_string(), serde_json::json!({ "bad": "value" }));
         properties.insert("workspace_id".to_string(), Value::String("raw".to_string()));
         properties.insert("sessionId".to_string(), Value::String("raw".to_string()));
+        properties.insert("account_id".to_string(), Value::String("raw".to_string()));
+        properties.insert("org_id".to_string(), Value::String("raw".to_string()));
+        properties.insert("email".to_string(), Value::String("raw".to_string()));
         properties.insert("prompt_body".to_string(), Value::String("raw".to_string()));
         properties.insert("command".to_string(), Value::String("raw".to_string()));
         properties.insert(
@@ -332,6 +345,9 @@ mod tests {
         assert!(!event.properties.contains_key("nested"));
         assert!(!event.properties.contains_key("workspace_id"));
         assert!(!event.properties.contains_key("sessionId"));
+        assert!(!event.properties.contains_key("account_id"));
+        assert!(!event.properties.contains_key("org_id"));
+        assert!(!event.properties.contains_key("email"));
         assert!(!event.properties.contains_key("prompt_body"));
         assert!(!event.properties.contains_key("command"));
         assert_eq!(

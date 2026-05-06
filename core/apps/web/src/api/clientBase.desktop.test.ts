@@ -1,3 +1,4 @@
+import type { SemanticTelemetryEvent } from "@ctx/types";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const desktopGetConnectionMock = vi.hoisted(() => vi.fn());
@@ -31,6 +32,24 @@ const expectAuthorizationHeader = (callIndex: number, expected: string) => {
   const authEntry = Object.entries(headers).find(([key]) => key.toLowerCase() === "authorization");
   expect(authEntry?.[1]).toBe(expected);
 };
+
+const semanticTelemetryEvent = (eventId: string): SemanticTelemetryEvent => ({
+  event_id: eventId,
+  event_name: "app_opened",
+  event_version: 1,
+  occurred_at: "2026-05-06T12:00:00.000Z",
+  plane: "product",
+  delivery: "remote",
+  origin_runtime: "desktop",
+  origin_install_id: "install-1",
+  app_version: "1.2.3",
+  os: "macos",
+  arch: "arm64",
+  surface: "desktop",
+  env_target: "remote",
+  source: "desktop-test",
+  properties: { launch_surface: "desktop" },
+});
 
 vi.mock("../utils/desktop", () => ({
   isDesktopApp: () => true,
@@ -507,6 +526,43 @@ describe("clientBase desktop connection sync", () => {
       }),
     );
     expectAuthorizationHeader(0, "Bearer browser-secret-raw");
+  });
+
+  it("auto-connects local daemon before semantic telemetry flush", async () => {
+    vi.useFakeTimers();
+    desktopGetConnectionMock.mockResolvedValue({
+      kind: "none",
+      intent: "auto_local_bootstrap",
+      local_auto_bootstrap_allowed: true,
+    });
+    desktopConnectLocalMock.mockResolvedValue({
+      kind: "local",
+      intent: "explicit_local",
+      local_auto_bootstrap_allowed: true,
+      base_url: "http://127.0.0.1:4399",
+      browser_query_secret: "browser-secret-telemetry",
+    });
+    fetchMock.mockResolvedValue(okFetchJsonResponse({ ok: true }));
+
+    try {
+      clientBaseTelemetryMod.recordSemanticTelemetryEvent(semanticTelemetryEvent("semantic-desktop-1"));
+
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(desktopGetConnectionMock).toHaveBeenCalledTimes(1);
+      expect(desktopConnectLocalMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://127.0.0.1:4399/api/telemetry/events",
+        expect.objectContaining({
+          method: "POST",
+          keepalive: true,
+        }),
+      );
+      expectAuthorizationHeader(0, "Bearer browser-secret-telemetry");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps passive raw desktop health checks from reconnecting a disconnected local daemon", async () => {

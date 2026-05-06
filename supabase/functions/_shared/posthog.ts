@@ -44,7 +44,9 @@ const sanitizeProperties = (
   return out;
 };
 
-export const capturePostHogEvent = async (input: PostHogCaptureInput): Promise<void> => {
+export const capturePostHogEvent = async (
+  input: PostHogCaptureInput,
+): Promise<void> => {
   const projectApiKey = readTrimmedEnv("POSTHOG_PROJECT_API_KEY");
   if (!projectApiKey) return;
 
@@ -52,14 +54,16 @@ export const capturePostHogEvent = async (input: PostHogCaptureInput): Promise<v
   const distinctId = input.distinctId.trim();
   if (!eventName || !distinctId) return;
 
-  const host = normalizeHost(readTrimmedEnv("POSTHOG_HOST") ?? DEFAULT_POSTHOG_HOST);
+  const host = normalizeHost(
+    readTrimmedEnv("POSTHOG_HOST") ?? DEFAULT_POSTHOG_HOST,
+  );
   const payload = {
     api_key: projectApiKey,
     event: eventName,
     distinct_id: distinctId,
     properties: {
-      source: "supabase_edge",
       ...sanitizeProperties(input.properties),
+      source: "supabase_edge",
     },
   };
 
