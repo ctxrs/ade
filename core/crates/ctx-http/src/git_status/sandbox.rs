@@ -9,6 +9,10 @@ use ctx_core::models::Worktree;
 use ctx_fs::vcs;
 use ctx_fs::vcs::VcsStructuredStatus;
 use ctx_workspace_container::workspace_container_name;
+use ctx_workspace_services::worktree_vcs::{
+    parse_git_diff_name_status, parse_git_list_untracked, parse_git_refs, parse_git_single_ref,
+    WorktreeVcsGitCommand,
+};
 
 use crate::daemon::AppState;
 use crate::execution_effective;
@@ -66,7 +70,7 @@ async fn ensure_container_for_worktree(
 async fn container_git_output(
     state: &Arc<AppState>,
     worktree: &Worktree,
-    args: &[&str],
+    args: &[String],
 ) -> Result<std::process::Output> {
     const SANDBOX_GIT_TIMEOUT: Duration = Duration::from_secs(30);
     let context = ensure_container_for_worktree(state, worktree).await?;
@@ -84,10 +88,7 @@ async fn container_git_output(
                 .context("sandbox exec git timed out")
         }
         SandboxGitTarget::SharedVmContainer => {
-            let guest_args = args
-                .iter()
-                .map(|arg| (*arg).to_string())
-                .collect::<Vec<_>>();
+            let guest_args = args.to_vec();
             tokio::time::timeout(
                 SANDBOX_GIT_TIMEOUT,
                 ctx_avf_linux_runtime::run_guest_exec_capture(
@@ -111,9 +112,10 @@ async fn container_git_output(
 pub(super) async fn container_git_stdout(
     state: &Arc<AppState>,
     worktree: &Worktree,
-    args: &[&str],
+    command: WorktreeVcsGitCommand,
 ) -> Result<Vec<u8>> {
-    let out = container_git_output(state, worktree, args).await?;
+    let args = command.args();
+    let out = container_git_output(state, worktree, &args).await?;
     if out.status.success() {
         Ok(out.stdout)
     } else {
@@ -131,15 +133,12 @@ pub(crate) async fn container_git_status_structured(
     include_untracked_files: bool,
     include_entries: bool,
 ) -> Result<VcsStructuredStatus> {
-    let untracked_mode = if include_untracked_files {
-        "--untracked-files=all"
-    } else {
-        "--untracked-files=normal"
-    };
     let bytes = container_git_stdout(
         state,
         worktree,
-        &["status", "--porcelain", "-z", "--branch", untracked_mode],
+        WorktreeVcsGitCommand::Status {
+            include_untracked_files,
+        },
     )
     .await?;
     Ok(ctx_fs::git::git_status_structured_from_bytes_with_entries(
@@ -152,20 +151,8 @@ pub(crate) async fn container_git_list_untracked(
     state: &Arc<AppState>,
     worktree: &Worktree,
 ) -> Result<Vec<String>> {
-    let bytes = container_git_stdout(
-        state,
-        worktree,
-        &["ls-files", "--others", "--exclude-standard", "-z"],
-    )
-    .await?;
-    let mut out = Vec::new();
-    for part in bytes.split(|b| *b == 0) {
-        if part.is_empty() {
-            continue;
-        }
-        out.push(String::from_utf8_lossy(part).to_string());
-    }
-    Ok(out)
+    let bytes = container_git_stdout(state, worktree, WorktreeVcsGitCommand::ListUntracked).await?;
+    Ok(parse_git_list_untracked(&bytes))
 }
 
 pub(crate) async fn container_git_diff_name_status(
@@ -190,44 +177,16 @@ async fn container_git_diff_name_status_inner(
     base_commit_sha: &str,
     no_renames: bool,
 ) -> Result<Vec<(String, String, Option<String>)>> {
-    let mut args = vec!["diff"];
-    if no_renames {
-        args.push("--no-renames");
-    }
-    args.extend(["--name-status", "-z", base_commit_sha]);
-    let bytes = container_git_stdout(state, worktree, &args).await?;
-    let mut out = Vec::new();
-    let mut parts = bytes
-        .split(|b| *b == 0)
-        .filter(|part| !part.is_empty())
-        .map(|part| String::from_utf8_lossy(part).to_string())
-        .peekable();
-    while let Some(part) = parts.next() {
-        let status = part.trim().to_string();
-        if status.is_empty() {
-            continue;
-        }
-        let Some(path) = parts.next() else {
-            continue;
-        };
-        if status.is_empty() || path.trim().is_empty() {
-            continue;
-        }
-        let status_char = status.chars().next().unwrap_or('M');
-        if status_char == 'R' || status_char == 'C' {
-            let Some(next_path) = parts.next() else {
-                continue;
-            };
-            let new_path = next_path;
-            if new_path.trim().is_empty() {
-                continue;
-            }
-            out.push((status, new_path, Some(path)));
-        } else {
-            out.push((status, path, None));
-        }
-    }
-    Ok(out)
+    let bytes = container_git_stdout(
+        state,
+        worktree,
+        WorktreeVcsGitCommand::DiffNameStatus {
+            base_commit_sha: base_commit_sha.to_string(),
+            no_renames,
+        },
+    )
+    .await?;
+    Ok(parse_git_diff_name_status(&bytes))
 }
 
 pub(crate) async fn container_git_rev_parse(
@@ -235,8 +194,15 @@ pub(crate) async fn container_git_rev_parse(
     worktree: &Worktree,
     reference: &str,
 ) -> Result<String> {
-    let bytes = container_git_stdout(state, worktree, &["rev-parse", reference]).await?;
-    Ok(String::from_utf8_lossy(&bytes).trim().to_string())
+    let bytes = container_git_stdout(
+        state,
+        worktree,
+        WorktreeVcsGitCommand::RevParse {
+            reference: reference.to_string(),
+        },
+    )
+    .await?;
+    Ok(parse_git_single_ref(&bytes))
 }
 
 pub(crate) async fn container_git_rev_parse_refs(
@@ -247,24 +213,18 @@ pub(crate) async fn container_git_rev_parse_refs(
     if references.is_empty() {
         return Ok(Vec::new());
     }
-    let mut args = Vec::with_capacity(references.len() + 1);
-    args.push("rev-parse");
-    args.extend_from_slice(references);
-    let bytes = container_git_stdout(state, worktree, &args).await?;
-    let commits = String::from_utf8_lossy(&bytes)
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(ToOwned::to_owned)
-        .collect::<Vec<_>>();
-    if commits.len() != references.len() {
-        anyhow::bail!(
-            "git rev-parse returned {} refs for {} requested refs",
-            commits.len(),
-            references.len()
-        );
-    }
-    Ok(commits)
+    let bytes = container_git_stdout(
+        state,
+        worktree,
+        WorktreeVcsGitCommand::RevParseRefs {
+            references: references
+                .iter()
+                .map(|reference| (*reference).to_string())
+                .collect(),
+        },
+    )
+    .await?;
+    parse_git_refs(&bytes, references.len())
 }
 
 async fn container_git_merge_base(
@@ -272,9 +232,15 @@ async fn container_git_merge_base(
     worktree: &Worktree,
     target_branch: &str,
 ) -> Result<String> {
-    let bytes =
-        container_git_stdout(state, worktree, &["merge-base", target_branch, "HEAD"]).await?;
-    Ok(String::from_utf8_lossy(&bytes).trim().to_string())
+    let bytes = container_git_stdout(
+        state,
+        worktree,
+        WorktreeVcsGitCommand::MergeBase {
+            target_branch: target_branch.to_string(),
+        },
+    )
+    .await?;
+    Ok(parse_git_single_ref(&bytes))
 }
 
 pub(crate) async fn worktree_rev_parse_head(

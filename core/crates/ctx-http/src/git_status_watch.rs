@@ -7,7 +7,9 @@ use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 
 use ctx_core::models::Worktree;
 use ctx_fs::patch::should_ignore_path;
-use ctx_workspace_services::worktree_vcs::{WorktreeVcsDirtyBits, WorktreeVcsInvalidation};
+use ctx_workspace_services::worktree_vcs::{
+    WorktreeVcsDirtyBits, WorktreeVcsGitCommand, WorktreeVcsInvalidation,
+};
 
 use crate::daemon::AppState;
 use crate::settings::ExecutionMode;
@@ -85,7 +87,7 @@ pub(super) async fn run_git_status_watcher(state: Arc<AppState>, worktree: Workt
     if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
         // Disk-isolated worktrees live inside the harness container; host filesystem watchers
         // cannot observe changes. Polling keeps VCS snapshots up to date.
-        let _ = container_git_stdout(&state, &worktree, &["rev-parse", "--is-inside-work-tree"])
+        let _ = container_git_stdout(&state, &worktree, WorktreeVcsGitCommand::IsInsideWorkTree)
             .await?;
         return run_git_status_poller(state, worktree).await;
     }

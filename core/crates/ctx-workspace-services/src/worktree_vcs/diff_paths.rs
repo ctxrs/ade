@@ -1,6 +1,47 @@
 use std::collections::HashSet;
 
 use anyhow::Result;
+use ctx_core::models::WorktreeVcsTouchedFile;
+
+#[async_trait::async_trait]
+pub trait WorktreeVcsDiffPathSource {
+    async fn diff_name_status(
+        &self,
+        base_commit_sha: &str,
+        summary_count: bool,
+    ) -> Result<Vec<(String, String, Option<String>)>>;
+
+    async fn list_untracked(&self) -> Result<Vec<String>>;
+}
+
+pub async fn load_diff_file_count_from_source(
+    source: &(impl WorktreeVcsDiffPathSource + Sync),
+    base_commit_sha: &str,
+) -> Result<i64> {
+    // Tier 1 stays merge-base diff based, but avoids rename detection so large
+    // change sets do not spend the hot path scoring rename candidates.
+    let entries = source.diff_name_status(base_commit_sha, true).await?;
+    let untracked = source.list_untracked().await?;
+    count_diff_paths(entries, untracked)
+}
+
+pub async fn load_diff_touched_entries_from_source(
+    source: &(impl WorktreeVcsDiffPathSource + Sync),
+    base_commit_sha: &str,
+) -> Result<Vec<WorktreeVcsTouchedFile>> {
+    let entries = source.diff_name_status(base_commit_sha, false).await?;
+    let untracked = source.list_untracked().await?;
+    let paths = build_diff_path_states(entries, untracked)?;
+    Ok(paths
+        .into_iter()
+        .map(|(path, orig_path, status)| WorktreeVcsTouchedFile {
+            path,
+            orig_path,
+            index_status: Some(status),
+            worktree_status: None,
+        })
+        .collect())
+}
 
 pub fn count_diff_paths(
     entries: Vec<(String, String, Option<String>)>,
@@ -65,6 +106,27 @@ pub fn build_diff_path_states(
 mod tests {
     use super::*;
 
+    struct FakeDiffPathSource {
+        entries: Vec<(String, String, Option<String>)>,
+        untracked: Vec<String>,
+    }
+
+    #[async_trait::async_trait]
+    impl WorktreeVcsDiffPathSource for FakeDiffPathSource {
+        async fn diff_name_status(
+            &self,
+            _base_commit_sha: &str,
+            summary_count: bool,
+        ) -> Result<Vec<(String, String, Option<String>)>> {
+            assert!(summary_count);
+            Ok(self.entries.clone())
+        }
+
+        async fn list_untracked(&self) -> Result<Vec<String>> {
+            Ok(self.untracked.clone())
+        }
+    }
+
     #[test]
     fn build_diff_path_states_deduplicates_untracked_paths_already_in_diff() -> Result<()> {
         let out = build_diff_path_states(
@@ -87,6 +149,19 @@ mod tests {
         )?;
 
         assert_eq!(count, 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn load_diff_file_count_from_source_uses_summary_mode() -> Result<()> {
+        let source = FakeDiffPathSource {
+            entries: vec![("M".to_string(), "src/lib.rs".to_string(), None)],
+            untracked: vec!["src/new.rs".to_string()],
+        };
+
+        let count = load_diff_file_count_from_source(&source, "base").await?;
+
+        assert_eq!(count, 2);
         Ok(())
     }
 }

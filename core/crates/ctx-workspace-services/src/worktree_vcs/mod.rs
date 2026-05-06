@@ -1,5 +1,6 @@
 mod cache;
 mod diff_paths;
+mod git_commands;
 mod resolution;
 mod runtime;
 mod snapshot;
@@ -12,7 +13,14 @@ pub use cache::{
     WorktreeVcsSnapshotCacheEntry, WorktreeVcsSnapshotPublishPolicy, WORKTREE_VCS_DEBOUNCE_MS,
     WORKTREE_VCS_MAX_INTERVAL_MS,
 };
-pub use diff_paths::{build_diff_path_states, count_diff_paths};
+pub use diff_paths::{
+    build_diff_path_states, count_diff_paths, load_diff_file_count_from_source,
+    load_diff_touched_entries_from_source, WorktreeVcsDiffPathSource,
+};
+pub use git_commands::{
+    parse_git_diff_name_status, parse_git_list_untracked, parse_git_refs, parse_git_single_ref,
+    WorktreeVcsGitCommand,
+};
 pub use resolution::{is_no_vcs_repo_error, WorktreeDiffBaseResolution};
 pub use runtime::{
     claim_next_worktree_vcs_job, finish_worktree_vcs_job, finish_worktree_vcs_refresh,

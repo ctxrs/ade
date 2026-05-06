@@ -17,7 +17,7 @@ mod snapshot;
 mod watch;
 use ctx_workspace_services::worktree_vcs::{
     derive_worktree_vcs_freshness, is_no_vcs_repo_error, mark_worktree_vcs_runtime_dirty,
-    queue_worktree_vcs_refresh,
+    queue_worktree_vcs_refresh, WorktreeVcsGitCommand,
 };
 pub use ctx_workspace_services::worktree_vcs::{GitStatusEntry, GitStatusSnapshot};
 pub use projection::load_git_status_snapshot;
@@ -38,7 +38,7 @@ pub(crate) async fn worktree_has_vcs_repo(
         return match sandbox::container_git_stdout(
             state,
             worktree,
-            &["rev-parse", "--is-inside-work-tree"],
+            WorktreeVcsGitCommand::IsInsideWorkTree,
         )
         .await
         {
