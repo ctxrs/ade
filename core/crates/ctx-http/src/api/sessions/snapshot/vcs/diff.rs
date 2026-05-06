@@ -1,6 +1,8 @@
 use super::context::load_session_vcs_context;
 use super::*;
 use crate::api::sessions::diff_exec::diff_worktree_for_session;
+use crate::git_status::HttpWorktreeVcsSource;
+use ctx_workspace_services::worktree_vcs::WorktreeVcsCommitLookupSource;
 
 pub(crate) async fn get_session_diff(
     State(state): State<Arc<AppState>>,
@@ -112,7 +114,9 @@ pub(crate) async fn get_session_diff_summary(
         state
             .emit_compat_payload_reject_counter("sessions.diff_summary", "no_target_branch", None)
             .await;
-        let head_commit_sha = crate::git_status::worktree_rev_parse_head(&state, &ctx.worktree)
+        let source = HttpWorktreeVcsSource::new(&state, &ctx.worktree);
+        let head_commit_sha = source
+            .resolve_commit("HEAD")
             .await
             .unwrap_or_else(|_| resolution.base_commit_sha.clone());
         return Ok(Json(SessionDiffSummaryResponse {
@@ -143,7 +147,9 @@ pub(crate) async fn get_session_diff_summary(
                 ));
             }
         };
-    let head_commit_sha = crate::git_status::worktree_rev_parse_head(&state, &ctx.worktree)
+    let source = HttpWorktreeVcsSource::new(&state, &ctx.worktree);
+    let head_commit_sha = source
+        .resolve_commit("HEAD")
         .await
         .unwrap_or_else(|_| base_commit_sha.clone());
     if available {

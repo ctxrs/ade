@@ -7,6 +7,7 @@ use crate::vcs_hooks;
 use ctx_core::ids::TaskId;
 use ctx_core::models::{VcsKind, Workspace, Worktree};
 use ctx_fs::vcs;
+use ctx_workspace_services::worktree_vcs::WorktreeVcsCommitLookupSource;
 
 use super::errors::{
     api_error, internal_api_error, internal_request_or_policy_error, ApiResult, SubagentErrorKind,
@@ -22,20 +23,19 @@ pub(super) async fn plan_subagent_worktree_creation(
         return Ok(None);
     }
 
-    let base_commit_sha = crate::git_status::worktree_rev_parse_head(state, parent_worktree)
-        .await
-        .map_err(|error| {
-            let msg = error.to_string().to_lowercase();
-            if msg.contains("ambiguous argument 'head'")
-                || msg.contains("unknown revision or path not in the working tree")
-            {
-                return api_error(
-                    SubagentErrorKind::BadRequest,
-                    "git repo has no commits; create an initial commit before creating a worktree",
-                );
-            }
-            internal_api_error(error)
-        })?;
+    let source = crate::git_status::HttpWorktreeVcsSource::new(state, parent_worktree);
+    let base_commit_sha = source.resolve_commit("HEAD").await.map_err(|error| {
+        let msg = error.to_string().to_lowercase();
+        if msg.contains("ambiguous argument 'head'")
+            || msg.contains("unknown revision or path not in the working tree")
+        {
+            return api_error(
+                SubagentErrorKind::BadRequest,
+                "git repo has no commits; create an initial commit before creating a worktree",
+            );
+        }
+        internal_api_error(error)
+    })?;
     let vcs = vcs::driver_for_kind(parent_worktree.vcs_kind.clone());
     let (dirty_files, dirty_additions, dirty_deletions) =
         diff_worktree_summary_for_session(state, parent_worktree, &base_commit_sha)
