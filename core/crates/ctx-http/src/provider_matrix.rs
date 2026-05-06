@@ -16,21 +16,21 @@ pub(crate) use ctx_provider_matrix::{
 pub(crate) use ctx_provider_matrix::load_matrix;
 
 #[cfg(test)]
+pub(crate) use ctx_managed_installs::provider_status_matrix::apply_matrix_to_status;
+#[cfg(test)]
 pub(crate) use ctx_provider_matrix::{
     builtin_matrix, parse_version_loose, release_matches_context, select_latest_release,
     version_matches, DependencyInstall, ProviderArchiveKind, ProviderArchiveTarget,
     ProviderCommand, ProviderDependency, ProviderInstall, ProviderInstallDependencyRole,
     ProviderInstallDependencyTarget, ProviderMatrixEntry, ProviderRelease, ProviderReleaseStatus,
 };
-#[cfg(test)]
-pub(crate) use ctx_managed_installs::provider_status_matrix::apply_matrix_to_status;
 
-#[cfg(test)]
-use ctx_provider_matrix::save_cached_matrix;
 #[cfg(test)]
 use ctx_managed_installs::provider_status_matrix::{
     managed_dependency_update_available, probe_node_package_version,
 };
+#[cfg(test)]
+use ctx_provider_matrix::save_cached_matrix;
 #[cfg(test)]
 mod tests;
 

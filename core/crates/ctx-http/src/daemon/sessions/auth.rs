@@ -6,11 +6,11 @@ use tokio::sync::mpsc;
 
 use crate::daemon::AppState;
 use crate::logs;
-use ctx_session_tools::order_seq::attach_order_seq;
 use ctx_core::ids::SessionId;
 use ctx_core::models::{Session, SessionEventType};
 use ctx_providers::adapters::{ProviderAdapter, ProviderRunHooks, ProviderSessionRefClaimHook};
 use ctx_providers::events::NormalizedEvent;
+use ctx_session_tools::order_seq::attach_order_seq;
 
 #[derive(Debug)]
 pub(crate) enum SessionAuthError {

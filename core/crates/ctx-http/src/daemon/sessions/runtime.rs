@@ -15,8 +15,8 @@ use ctx_workspace_active_snapshot::session_metadata_from_session;
 use crate::daemon::state::{
     ActiveTaskRefreshEntry, AppState, SessionHeadCacheKey, SessionRuntime, TimedEntry,
 };
-use ctx_session_tools::order_seq::OrderSeqState;
 use crate::scheduler::session_worker;
+use ctx_session_tools::order_seq::OrderSeqState;
 
 use super::head_projection::{
     activity_from_turn, build_session_summary_delta, derive_message_preview,

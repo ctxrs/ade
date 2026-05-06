@@ -11,7 +11,6 @@ use tokio::task::JoinHandle;
 use crate::git_status::GitStatusSnapshot;
 use crate::mobile_tunnel::MobileTunnelManager;
 use crate::ops_events::{OpsEvent, OpsEvents};
-use ctx_session_tools::order_seq::OrderSeqState;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
 use crate::provider_guard;
 use crate::provider_restart;
@@ -38,6 +37,7 @@ use ctx_provider_install::install_state::{
 };
 use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
 use ctx_providers::ask_user_question::AskUserQuestionBroker;
+use ctx_session_tools::order_seq::OrderSeqState;
 use ctx_store::{Store, StoreManager};
 use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotHub;
 use ctx_workspace_runtime::HarnessRuntimeManager;

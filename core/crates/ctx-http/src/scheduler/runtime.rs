@@ -25,11 +25,11 @@ use crate::api::sessions::compose_model_id;
 use crate::daemon::{ensure_provider_adapter_for_target_with_cfg, AppState};
 use crate::execution_effective;
 use crate::ops_events::OpsEvent;
-use ctx_session_tools::order_seq::{attach_order_seq, read_order_seq, OrderSeqState};
 use crate::settings;
 use crate::storage_guard;
 use ctx_harness_sources::HarnessSourceKind;
 use ctx_provider_install::install_state::InstallTarget;
+use ctx_session_tools::order_seq::{attach_order_seq, read_order_seq, OrderSeqState};
 use ctx_workspace_config as workspace_config;
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
 

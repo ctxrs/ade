@@ -216,6 +216,7 @@ impl Store {
             + bytes_str(&now)
             + bytes_str(&now);
 
+        let _write_guard = self.write_gate.lock().await;
         let result = self
             .query(
                 r#"INSERT INTO session_active_snapshot_heads (
@@ -264,8 +265,9 @@ impl Store {
         let now = Utc::now().to_rfc3339();
         let session_id_str = session_id.0.to_string();
         let write_bytes = I64_BYTES + bytes_str(&now);
-        let res = self
-            .query(
+        let rows_affected = {
+            let _write_guard = self.write_gate.lock().await;
+            self.query(
                 r#"UPDATE session_active_snapshot_heads
                SET last_event_seq = ?,
                    updated_at = ?
@@ -275,13 +277,15 @@ impl Store {
             .bind(&now)
             .bind(&session_id_str)
             .execute(&self.pool)
-            .await?;
+            .await?
+            .rows_affected()
+        };
         record_write(
             WriteMetricTable::SessionActiveSnapshotHeads,
-            res.rows_affected(),
+            rows_affected,
             write_bytes,
         );
-        if res.rows_affected() == 0 {
+        if rows_affected == 0 {
             self.refresh_active_snapshot_head(session_id, Some(last_event_seq))
                 .await?;
         }
@@ -300,6 +304,7 @@ impl Store {
             self.session_head_kind_for_task(session.task_id).await?,
             SessionHeadKind::Active
         ) {
+            let _write_guard = self.write_gate.lock().await;
             self.query(r#"DELETE FROM session_active_snapshot_heads WHERE session_id = ?"#)
                 .bind(session_id.0.to_string())
                 .execute(&self.pool)
@@ -310,6 +315,7 @@ impl Store {
             .is_task_primary_session(session.task_id, session.id)
             .await?
         {
+            let _write_guard = self.write_gate.lock().await;
             self.query(r#"DELETE FROM session_active_snapshot_heads WHERE session_id = ?"#)
                 .bind(session_id.0.to_string())
                 .execute(&self.pool)
@@ -350,6 +356,7 @@ impl Store {
         &self,
         task_id: TaskId,
     ) -> Result<()> {
+        let _write_guard = self.write_gate.lock().await;
         self.query(
             r#"DELETE FROM session_active_snapshot_heads
                WHERE session_id IN (SELECT id FROM sessions WHERE task_id = ?)"#,
