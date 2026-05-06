@@ -2,18 +2,20 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::Result;
-use ctx_core::models::{
-    Worktree, WorktreeVcsBaseResolutionKind, WorktreeVcsComputeState, WorktreeVcsSnapshot,
-    WorktreeVcsSummary, WorktreeVcsTouchedFilesState,
-};
+use ctx_core::models::{Worktree, WorktreeVcsBaseResolutionKind, WorktreeVcsSnapshot};
 use ctx_workspace_services::worktree_vcs::{
-    build_git_status_entries, build_git_status_summary, build_large_change_set_touched_files,
-    build_touched_files, finish_worktree_vcs_refresh, is_no_vcs_repo_error,
-    load_git_status_snapshot_from_source, pending_worktree_vcs_snapshot_cache_entry,
-    publish_worktree_vcs_snapshot_cache_entry, resolve_worktree_diff_base_from_source,
-    snapshot_for_durable_cache, summary_from_file_count, summary_has_counts, GitStatusSnapshot,
-    WorktreeDiffBaseResolution, WorktreeVcsDiffBaseQuery, WorktreeVcsSnapshotPublishPolicy,
-    WORKTREE_VCS_REVIEWABLE_FILE_LIMIT,
+    build_git_status_entries, build_git_status_summary, finish_worktree_vcs_refresh,
+    is_no_vcs_repo_error, load_git_status_snapshot_from_source,
+    pending_worktree_vcs_snapshot_cache_entry, plan_worktree_vcs_summary_refresh,
+    plan_worktree_vcs_touched_files_refresh, publish_worktree_vcs_snapshot_cache_entry,
+    resolve_worktree_diff_base_from_source, snapshot_for_durable_cache,
+    worktree_vcs_projection_cache_state, worktree_vcs_summary_refresh_error_fallback,
+    worktree_vcs_summary_refresh_from_file_count, worktree_vcs_summary_refresh_no_repo,
+    worktree_vcs_touched_files_error_fallback, worktree_vcs_touched_files_from_entries,
+    worktree_vcs_touched_files_large_change_set, worktree_vcs_touched_files_reuse,
+    GitStatusSnapshot, WorktreeDiffBaseResolution, WorktreeVcsDiffBaseQuery,
+    WorktreeVcsSnapshotPublishPolicy, WorktreeVcsSummaryRefreshPlan,
+    WorktreeVcsTouchedFilesRefreshPlan,
 };
 
 use crate::daemon::AppState;
@@ -123,25 +125,7 @@ pub(super) async fn refresh_worktree_vcs_projection(
     let _refresh_guard = refresh_lock.lock().await;
 
     let cached_snapshot = state.get_worktree_vcs_snapshot(worktree.id).await;
-    let cached_summary = cached_snapshot
-        .as_ref()
-        .map(|snapshot| snapshot.summary.clone())
-        .unwrap_or_default();
-    let cached_touched_files = cached_snapshot
-        .as_ref()
-        .map(|snapshot| snapshot.touched_files.clone())
-        .unwrap_or_default();
-    let cached_touched_files_state = cached_snapshot
-        .as_ref()
-        .map(|snapshot| snapshot.touched_files_state.clone())
-        .unwrap_or_default();
-    let cached_available = cached_snapshot
-        .as_ref()
-        .map(|snapshot| snapshot.available)
-        .unwrap_or(true);
-    let cached_unavailable_reason = cached_snapshot
-        .as_ref()
-        .and_then(|snapshot| snapshot.unavailable_reason.clone());
+    let cached = worktree_vcs_projection_cache_state(cached_snapshot.as_ref());
 
     if !worktree_has_vcs_repo(state, worktree).await? {
         return publish_no_repo_snapshot(
@@ -174,51 +158,31 @@ pub(super) async fn refresh_worktree_vcs_projection(
         return publish_unavailable_snapshot(state, worktree, resolution, force_emit, reason).await;
     }
 
-    let (summary, compute_state, summary_at, available, unavailable_reason) =
-        if refresh_summary || !summary_has_counts(&cached_summary) {
+    let summary_plan = plan_worktree_vcs_summary_refresh(&cached, refresh_summary);
+    let (summary_result, summary_at) = match summary_plan {
+        WorktreeVcsSummaryRefreshPlan::LoadFileCount => {
             match load_diff_file_count(state, worktree, &resolution.base_commit_sha).await {
                 Ok(file_count) => (
-                    summary_from_file_count(file_count),
-                    WorktreeVcsComputeState::Ready,
+                    worktree_vcs_summary_refresh_from_file_count(file_count),
                     Some(Instant::now()),
-                    true,
-                    None,
                 ),
-                Err(err) if is_no_vcs_repo_error(&err) => (
-                    WorktreeVcsSummary::default(),
-                    WorktreeVcsComputeState::Ready,
-                    None,
-                    false,
-                    Some(ctx_core::models::DiffUnavailableReason::NoRepo),
-                ),
+                Err(err) if is_no_vcs_repo_error(&err) => {
+                    (worktree_vcs_summary_refresh_no_repo(), None)
+                }
                 Err(err) => {
                     tracing::warn!(
                         worktree_id = %worktree.id.0,
                         "worktree diff file-count refresh failed: {err:#}"
                     );
-                    (
-                        cached_summary.clone(),
-                        WorktreeVcsComputeState::Error,
-                        None,
-                        cached_available,
-                        cached_unavailable_reason.clone(),
-                    )
+                    (worktree_vcs_summary_refresh_error_fallback(&cached), None)
                 }
             }
-        } else {
-            (
-                cached_summary.clone(),
-                WorktreeVcsComputeState::Ready,
-                None,
-                cached_available,
-                cached_unavailable_reason.clone(),
-            )
-        };
-
-    let large_change_set_file_count = summary
-        .file_count
-        .filter(|count| *count > WORKTREE_VCS_REVIEWABLE_FILE_LIMIT);
-    let include_status_inventory = refresh_touched_files && large_change_set_file_count.is_none();
+        }
+        WorktreeVcsSummaryRefreshPlan::Reuse(result) => (result, None),
+    };
+    let touched_plan =
+        plan_worktree_vcs_touched_files_refresh(&summary_result.summary, refresh_touched_files);
+    let include_status_inventory = touched_plan.include_status_inventory();
     let git_snapshot = match load_git_status_snapshot(
         state,
         worktree,
@@ -243,51 +207,39 @@ pub(super) async fn refresh_worktree_vcs_projection(
         },
     );
 
-    let (touched_files, touched_files_state) = if let Some(file_count) = large_change_set_file_count
-    {
-        (
-            build_large_change_set_touched_files(file_count),
-            WorktreeVcsTouchedFilesState::Ready,
-        )
-    } else if refresh_touched_files {
-        match load_diff_touched_entries(state, worktree, &resolution.base_commit_sha).await {
-            Ok(entries) => (
-                build_touched_files(&entries),
-                WorktreeVcsTouchedFilesState::Ready,
-            ),
-            Err(err) if is_no_vcs_repo_error(&err) => {
-                return publish_no_repo_snapshot(state, worktree, resolution, force_emit).await;
-            }
-            Err(err) => {
-                tracing::warn!(
-                    worktree_id = %worktree.id.0,
-                    "worktree touched-file refresh failed: {err:#}"
-                );
-                (
-                    cached_touched_files.clone(),
-                    WorktreeVcsTouchedFilesState::Error,
-                )
+    let touched_result = match touched_plan {
+        WorktreeVcsTouchedFilesRefreshPlan::LargeChangeSet { file_count } => {
+            worktree_vcs_touched_files_large_change_set(file_count)
+        }
+        WorktreeVcsTouchedFilesRefreshPlan::LoadDiff => {
+            match load_diff_touched_entries(state, worktree, &resolution.base_commit_sha).await {
+                Ok(entries) => worktree_vcs_touched_files_from_entries(&entries),
+                Err(err) if is_no_vcs_repo_error(&err) => {
+                    return publish_no_repo_snapshot(state, worktree, resolution, force_emit).await;
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        worktree_id = %worktree.id.0,
+                        "worktree touched-file refresh failed: {err:#}"
+                    );
+                    worktree_vcs_touched_files_error_fallback(&cached)
+                }
             }
         }
-    } else {
-        let next_state = match cached_touched_files_state {
-            WorktreeVcsTouchedFilesState::Loading => WorktreeVcsTouchedFilesState::NotLoaded,
-            other => other,
-        };
-        (cached_touched_files.clone(), next_state)
+        WorktreeVcsTouchedFilesRefreshPlan::Reuse => worktree_vcs_touched_files_reuse(&cached),
     };
 
     let snapshot = build_worktree_vcs_snapshot_from_parts(
         state,
         worktree,
         git_status,
-        touched_files.clone(),
-        touched_files_state.clone(),
-        summary.clone(),
-        compute_state.clone(),
+        touched_result.touched_files.clone(),
+        touched_result.touched_files_state.clone(),
+        summary_result.summary.clone(),
+        summary_result.compute_state.clone(),
         Some(resolution),
-        available,
-        unavailable_reason,
+        summary_result.available,
+        summary_result.unavailable_reason,
     )
     .await?;
 
@@ -295,7 +247,12 @@ pub(super) async fn refresh_worktree_vcs_projection(
 
     let mut runtime = state.workspaces.worktree_vcs_runtime.lock().await;
     let entry = runtime.entry(worktree.id).or_default();
-    finish_worktree_vcs_refresh(entry, git_snapshot, touched_files, touched_files_state);
+    finish_worktree_vcs_refresh(
+        entry,
+        git_snapshot,
+        touched_result.touched_files,
+        touched_result.touched_files_state,
+    );
     Ok(())
 }
 

@@ -2,6 +2,7 @@ mod cache;
 mod diff_output;
 mod diff_paths;
 mod git_commands;
+mod projection;
 mod resolution;
 mod runtime;
 mod session_diff;
@@ -27,6 +28,16 @@ pub use diff_paths::{
 pub use git_commands::{
     parse_git_diff_name_status, parse_git_list_untracked, parse_git_refs, parse_git_single_ref,
     WorktreeVcsGitCommand,
+};
+pub use projection::{
+    plan_worktree_vcs_summary_refresh, plan_worktree_vcs_touched_files_refresh,
+    worktree_vcs_projection_cache_state, worktree_vcs_summary_refresh_error_fallback,
+    worktree_vcs_summary_refresh_from_file_count, worktree_vcs_summary_refresh_no_repo,
+    worktree_vcs_touched_files_error_fallback, worktree_vcs_touched_files_from_entries,
+    worktree_vcs_touched_files_large_change_set, worktree_vcs_touched_files_reuse,
+    WorktreeVcsProjectionCacheState, WorktreeVcsSummaryRefreshPlan,
+    WorktreeVcsSummaryRefreshResult, WorktreeVcsTouchedFilesRefreshPlan,
+    WorktreeVcsTouchedFilesRefreshResult,
 };
 pub use resolution::{
     is_no_vcs_repo_error, resolve_worktree_diff_base_from_source, WorktreeDiffBaseResolution,
