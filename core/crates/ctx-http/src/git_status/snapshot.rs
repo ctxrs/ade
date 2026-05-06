@@ -6,9 +6,7 @@ use ctx_core::models::{
     WorktreeVcsSummary, WorktreeVcsTouchedFiles, WorktreeVcsTouchedFilesState,
 };
 use ctx_workspace_services::worktree_vcs::{
-    build_worktree_vcs_snapshot, plan_worktree_vcs_commit_info,
-    resolve_worktree_diff_base_from_source, resolve_worktree_vcs_commit_lookup_from_source,
-    WorktreeDiffBaseResolution, WorktreeVcsDiffBaseQuery, WorktreeVcsSnapshotBuildParts,
+    build_worktree_vcs_snapshot_from_source, WorktreeDiffBaseResolution,
 };
 
 use crate::daemon::AppState;
@@ -29,41 +27,20 @@ pub(super) async fn build_worktree_vcs_snapshot_from_parts(
     available: bool,
     unavailable_reason: Option<ctx_core::models::DiffUnavailableReason>,
 ) -> Result<WorktreeVcsSnapshot> {
-    let resolution = match resolution {
-        Some(resolution) => resolution,
-        None => {
-            let source = HttpWorktreeVcsSource::new(state, worktree);
-            resolve_worktree_diff_base_from_source(
-                &source,
-                worktree,
-                WorktreeVcsDiffBaseQuery::default(),
-            )
-            .await
-        }
-    };
-    let commit_plan = plan_worktree_vcs_commit_info(resolution, unavailable_reason.clone());
     let source = HttpWorktreeVcsSource::new(state, worktree);
-    let head_commit_sha =
-        resolve_worktree_vcs_commit_lookup_from_source(&source, &commit_plan.head_commit_sha)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("worktree vcs head commit lookup was missing"))?;
-    let target_branch_commit_sha = resolve_worktree_vcs_commit_lookup_from_source(
+    build_worktree_vcs_snapshot_from_source(
         &source,
-        &commit_plan.target_branch_commit_sha,
-    )
-    .await?;
-    let commit_info = commit_plan.into_commit_info(head_commit_sha, target_branch_commit_sha);
-    Ok(build_worktree_vcs_snapshot(WorktreeVcsSnapshotBuildParts {
-        worktree_id: worktree.id,
-        commit_info,
-        compute_state,
-        summary,
+        worktree,
         git_status,
         touched_files,
         touched_files_state,
+        summary,
+        compute_state,
+        resolution,
         available,
         unavailable_reason,
-    }))
+    )
+    .await
 }
 
 pub(super) async fn publish_no_repo_snapshot(

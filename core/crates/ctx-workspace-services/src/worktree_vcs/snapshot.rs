@@ -1,15 +1,18 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use anyhow::Result;
 use ctx_core::ids::WorktreeId;
 use ctx_core::models::{
-    DiffUnavailableReason, WorktreeVcsBaseResolution, WorktreeVcsComputeState,
+    DiffUnavailableReason, Worktree, WorktreeVcsBaseResolution, WorktreeVcsComputeState,
     WorktreeVcsFreshness, WorktreeVcsGitStatusSummary, WorktreeVcsSnapshot, WorktreeVcsSummary,
     WorktreeVcsTouchedFile, WorktreeVcsTouchedFiles, WorktreeVcsTouchedFilesState,
 };
 
 use super::{
-    GitStatusEntry, GitStatusSnapshot, WorktreeDiffBaseResolution,
-    WORKTREE_VCS_SNAPSHOT_SCHEMA_VERSION, WORKTREE_VCS_TOUCHED_FILES_CAP,
+    resolve_worktree_diff_base_from_source, resolve_worktree_vcs_commit_lookup_from_source,
+    GitStatusEntry, GitStatusSnapshot, WorktreeDiffBaseResolution, WorktreeVcsCommitLookupSource,
+    WorktreeVcsDiffBaseQuery, WorktreeVcsDiffBaseSource, WORKTREE_VCS_SNAPSHOT_SCHEMA_VERSION,
+    WORKTREE_VCS_TOUCHED_FILES_CAP,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -247,8 +250,64 @@ pub fn build_worktree_vcs_snapshot(parts: WorktreeVcsSnapshotBuildParts) -> Work
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+pub async fn build_worktree_vcs_snapshot_from_source<S>(
+    source: &S,
+    worktree: &Worktree,
+    git_status: WorktreeVcsGitStatusSummary,
+    touched_files: WorktreeVcsTouchedFiles,
+    touched_files_state: WorktreeVcsTouchedFilesState,
+    summary: WorktreeVcsSummary,
+    compute_state: WorktreeVcsComputeState,
+    resolution: Option<WorktreeDiffBaseResolution>,
+    available: bool,
+    unavailable_reason: Option<DiffUnavailableReason>,
+) -> Result<WorktreeVcsSnapshot>
+where
+    S: WorktreeVcsDiffBaseSource + WorktreeVcsCommitLookupSource,
+{
+    let resolution = match resolution {
+        Some(resolution) => resolution,
+        None => {
+            resolve_worktree_diff_base_from_source(
+                source,
+                worktree,
+                WorktreeVcsDiffBaseQuery::default(),
+            )
+            .await
+        }
+    };
+    let commit_plan = plan_worktree_vcs_commit_info(resolution, unavailable_reason.clone());
+    let head_commit_sha =
+        resolve_worktree_vcs_commit_lookup_from_source(source, &commit_plan.head_commit_sha)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("worktree vcs head commit lookup was missing"))?;
+    let target_branch_commit_sha = resolve_worktree_vcs_commit_lookup_from_source(
+        source,
+        &commit_plan.target_branch_commit_sha,
+    )
+    .await?;
+    let commit_info = commit_plan.into_commit_info(head_commit_sha, target_branch_commit_sha);
+    Ok(build_worktree_vcs_snapshot(WorktreeVcsSnapshotBuildParts {
+        worktree_id: worktree.id,
+        commit_info,
+        compute_state,
+        summary,
+        git_status,
+        touched_files,
+        touched_files_state,
+        available,
+        unavailable_reason,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
+    use anyhow::Result;
+    use chrono::Utc;
+    use ctx_core::ids::WorkspaceId;
+    use ctx_core::models::{Worktree, WorktreeVcsBaseResolutionKind};
+
     use super::super::WORKTREE_VCS_REVIEWABLE_FILE_LIMIT;
     use super::*;
 
@@ -410,5 +469,101 @@ mod tests {
 
         assert_eq!(first, same);
         assert_ne!(same, changed);
+    }
+
+    #[tokio::test]
+    async fn build_snapshot_from_source_resolves_planned_live_commits() {
+        let worktree = test_worktree();
+        let snapshot = build_worktree_vcs_snapshot_from_source(
+            &FakeSnapshotSource,
+            &worktree,
+            WorktreeVcsGitStatusSummary::default(),
+            WorktreeVcsTouchedFiles::default(),
+            WorktreeVcsTouchedFilesState::Ready,
+            WorktreeVcsSummary {
+                file_count: Some(2),
+                ..Default::default()
+            },
+            WorktreeVcsComputeState::Ready,
+            Some(WorktreeDiffBaseResolution {
+                base_commit_sha: "base".to_string(),
+                head_commit_sha: None,
+                target_branch: Some("main".to_string()),
+                target_branch_commit_sha: None,
+                target_source: None,
+                kind: WorktreeVcsBaseResolutionKind::WorktreeBase,
+                error: None,
+                unavailable_reason: None,
+                explicit_target: false,
+            }),
+            true,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(snapshot.worktree_id, worktree.id);
+        assert_eq!(snapshot.base_commit_sha, "base");
+        assert_eq!(snapshot.head_commit_sha, "resolved-HEAD");
+        assert_eq!(snapshot.target_branch.as_deref(), Some("main"));
+        assert_eq!(
+            snapshot.target_branch_commit_sha.as_deref(),
+            Some("resolved-main")
+        );
+    }
+
+    fn test_worktree() -> Worktree {
+        Worktree {
+            id: WorktreeId::new(),
+            workspace_id: WorkspaceId::new(),
+            root_path: "/tmp/worktree".to_string(),
+            base_commit_sha: "base".to_string(),
+            git_branch: Some("main".to_string()),
+            vcs_kind: None,
+            base_revision: None,
+            vcs_ref: None,
+            created_at: Utc::now(),
+            bootstrap_status: None,
+            bootstrap_started_at: None,
+            bootstrap_finished_at: None,
+            bootstrap_exit_code: None,
+            bootstrap_timeout_sec: None,
+            bootstrap_error: None,
+            bootstrap_log_path: None,
+            bootstrap_log_truncated: None,
+            bootstrap_command: None,
+            bootstrap_script_path: None,
+        }
+    }
+
+    struct FakeSnapshotSource;
+
+    #[async_trait::async_trait]
+    impl WorktreeVcsCommitLookupSource for FakeSnapshotSource {
+        async fn resolve_commit(&self, reference: &str) -> Result<String> {
+            Ok(format!("resolved-{reference}"))
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl WorktreeVcsDiffBaseSource for FakeSnapshotSource {
+        async fn load_primary_branch(&self) -> Result<Option<String>> {
+            Ok(Some("main".to_string()))
+        }
+
+        async fn rev_parse_head(&self) -> Result<String> {
+            self.resolve_commit("HEAD").await
+        }
+
+        async fn rev_parse_refs(&self, references: &[&str]) -> Result<Vec<String>> {
+            Ok(references
+                .iter()
+                .map(|reference| format!("resolved-{reference}"))
+                .collect())
+        }
+
+        async fn merge_base(&self, target_branch: &str) -> Result<String> {
+            Ok(format!("merge-base-{target_branch}"))
+        }
     }
 }

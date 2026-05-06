@@ -37,11 +37,13 @@ pub(super) async fn plan_subagent_worktree_creation(
         internal_api_error(error)
     })?;
     let vcs = vcs::driver_for_kind(parent_worktree.vcs_kind.clone());
-    let (dirty_files, dirty_additions, dirty_deletions) =
-        diff_worktree_summary_for_session(state, parent_worktree, &base_commit_sha)
-            .await
-            .map_err(internal_api_error)?;
-    if dirty_files > 0 || dirty_additions > 0 || dirty_deletions > 0 {
+    let dirty_counts = diff_worktree_summary_for_session(state, parent_worktree, &base_commit_sha)
+        .await
+        .map_err(internal_api_error)?;
+    if dirty_counts.file_count > 0
+        || dirty_counts.line_additions > 0
+        || dirty_counts.line_deletions > 0
+    {
         return Err(api_error(
             SubagentErrorKind::BadRequest,
             "Your worktree has uncommitted changes. Before starting new subagents in new worktree mode, you must commit or stash your changes to be explicit about whether subagents should inherit these diffs.",

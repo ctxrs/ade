@@ -4,6 +4,7 @@ mod diff_paths;
 mod git_commands;
 mod resolution;
 mod runtime;
+mod session_diff;
 mod snapshot;
 mod status;
 
@@ -37,12 +38,20 @@ pub use runtime::{
     worktree_vcs_scheduler_concurrency_from_env, WorktreeVcsDirtyBits, WorktreeVcsInvalidation,
     WorktreeVcsRuntimeState, WorktreeVcsSchedulerJob, WorktreeVcsSchedulerRuntime,
 };
+pub use session_diff::{
+    worktree_vcs_diff_summary_mismatch, worktree_vcs_session_diff_available,
+    worktree_vcs_session_diff_summary_available, worktree_vcs_session_diff_summary_no_repo,
+    worktree_vcs_session_diff_summary_unavailable, worktree_vcs_session_diff_unavailable,
+    WorktreeVcsDiffSummaryMismatch, WorktreeVcsSessionDiffOutcome,
+    WorktreeVcsSessionDiffSummaryOutcome,
+};
 pub use snapshot::{
     build_git_status_entries, build_git_status_summary, build_large_change_set_touched_files,
-    build_touched_files, build_worktree_vcs_snapshot, derive_worktree_vcs_freshness, now_epoch_ms,
-    plan_worktree_vcs_commit_info, snapshot_fingerprint, snapshot_for_durable_cache,
-    summary_from_file_count, summary_has_counts, WorktreeVcsCommitInfoPlan,
-    WorktreeVcsCommitLookup, WorktreeVcsSnapshotBuildParts, WorktreeVcsSnapshotCommitInfo,
+    build_touched_files, build_worktree_vcs_snapshot, build_worktree_vcs_snapshot_from_source,
+    derive_worktree_vcs_freshness, now_epoch_ms, plan_worktree_vcs_commit_info,
+    snapshot_fingerprint, snapshot_for_durable_cache, summary_from_file_count, summary_has_counts,
+    WorktreeVcsCommitInfoPlan, WorktreeVcsCommitLookup, WorktreeVcsSnapshotBuildParts,
+    WorktreeVcsSnapshotCommitInfo,
 };
 pub use status::{
     git_status_snapshot_from_structured, load_git_status_snapshot_from_source,

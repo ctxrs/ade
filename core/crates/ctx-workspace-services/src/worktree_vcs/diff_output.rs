@@ -60,7 +60,7 @@ done < <(git ls-files --others --exclude-standard)
 printf '%s %s %s\n' "$file_count" "$additions" "$deletions"
 "#;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct WorktreeVcsDiffSummaryCounts {
     pub file_count: i64,
     pub line_additions: i64,
