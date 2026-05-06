@@ -5,6 +5,7 @@ Thumbs.db
 # Repo temp outputs
 tmp/
 .tmp/
+.artifacts/
 hn-demo-output/
 bazel-*
 
