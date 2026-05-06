@@ -8,9 +8,9 @@ use ctx_core::models::{
 };
 use ctx_workspace_services::worktree_vcs::{
     build_git_status_entries, build_git_status_summary, build_large_change_set_touched_files,
-    build_touched_files, snapshot_for_durable_cache, summary_from_file_count, summary_has_counts,
-    GitStatusEntry, GitStatusSnapshot, WORKTREE_VCS_REVIEWABLE_FILE_LIMIT,
-    WORKTREE_VCS_SNAPSHOT_SCHEMA_VERSION,
+    build_touched_files, finish_worktree_vcs_refresh, now_epoch_ms, snapshot_fingerprint,
+    snapshot_for_durable_cache, summary_from_file_count, summary_has_counts, GitStatusEntry,
+    GitStatusSnapshot, WORKTREE_VCS_REVIEWABLE_FILE_LIMIT, WORKTREE_VCS_SNAPSHOT_SCHEMA_VERSION,
 };
 
 use crate::api::sessions::{resolve_diff_base_with_meta, SessionDiffQuery};
@@ -21,8 +21,7 @@ use crate::worktree_data_plane::resolve_worktree_data_plane;
 use super::diff_paths::{load_diff_file_count, load_diff_touched_entries};
 use super::sandbox::container_git_status_structured;
 use super::snapshot::{
-    build_worktree_vcs_snapshot_from_parts, now_epoch_ms, publish_no_repo_snapshot,
-    publish_unavailable_snapshot, snapshot_fingerprint,
+    build_worktree_vcs_snapshot_from_parts, publish_no_repo_snapshot, publish_unavailable_snapshot,
 };
 use super::{
     vcs_driver_for_worktree, worktree_has_vcs_repo, GIT_STATUS_DEBOUNCE_MS,
@@ -374,12 +373,7 @@ pub(super) async fn refresh_worktree_vcs_projection(
 
     let mut runtime = state.workspaces.worktree_vcs_runtime.lock().await;
     let entry = runtime.entry(worktree.id).or_default();
-    entry.last_git_status = Some(git_snapshot);
-    entry.touched_files = touched_files;
-    entry.touched_files_state = touched_files_state;
-    entry.dirty_bits = crate::daemon::WorktreeVcsDirtyBits::default();
-    entry.require_full_summary_rebuild = false;
-    entry.candidate_paths.clear();
+    finish_worktree_vcs_refresh(entry, git_snapshot, touched_files, touched_files_state);
     Ok(())
 }
 

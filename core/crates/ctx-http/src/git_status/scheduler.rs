@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use ctx_workspace_services::worktree_vcs::{claim_next_worktree_vcs_job, finish_worktree_vcs_job};
+
 use crate::daemon::AppState;
 
 use super::projection::refresh_worktree_vcs_projection;
@@ -37,13 +39,7 @@ async fn run_worktree_vcs_job(
 
     let should_notify = {
         let mut runtime = state.workspaces.worktree_vcs_runtime.lock().await;
-        match runtime.get_mut(&worktree_id) {
-            Some(entry) => {
-                entry.running = false;
-                entry.pending_summary || entry.pending_touched_files
-            }
-            None => false,
-        }
+        finish_worktree_vcs_job(&mut runtime, worktree_id)
     };
     if should_notify {
         state.workspaces.worktree_vcs_scheduler.notify.notify_one();
@@ -56,39 +52,13 @@ async fn next_worktree_vcs_job(
     let active = state.workspaces.worktree_vcs_active.lock().await;
     let open = state.workspaces.worktree_vcs_open_panes.lock().await;
     let mut runtime = state.workspaces.worktree_vcs_runtime.lock().await;
-    let mut selected: Option<(ctx_core::ids::WorktreeId, u8)> = None;
-    for (worktree_id, entry) in runtime.iter() {
-        if entry.running || (!entry.pending_summary && !entry.pending_touched_files) {
-            continue;
-        }
-        if active.get(worktree_id).copied().unwrap_or(0) == 0 {
-            continue;
-        }
-        let pane_open = open.get(worktree_id).copied().unwrap_or(0) > 0;
-        let priority = if entry.pending_touched_files && pane_open {
-            0
-        } else if entry.pending_summary && pane_open {
-            1
-        } else if entry.pending_summary {
-            2
-        } else {
-            3
-        };
-        match selected {
-            Some((current_id, current_priority))
-                if current_priority < priority
-                    || (current_priority == priority && current_id.0 <= worktree_id.0) => {}
-            _ => selected = Some((*worktree_id, priority)),
-        }
-    }
-    let (worktree_id, _) = selected?;
-    let entry = runtime.get_mut(&worktree_id)?;
-    let refresh_summary = entry.pending_summary;
-    let refresh_touched_files = entry.pending_touched_files;
-    entry.pending_summary = false;
-    entry.pending_touched_files = false;
-    entry.running = true;
-    Some((worktree_id, refresh_summary, refresh_touched_files))
+    claim_next_worktree_vcs_job(&mut runtime, &active, &open).map(|job| {
+        (
+            job.worktree_id,
+            job.refresh_summary,
+            job.refresh_touched_files,
+        )
+    })
 }
 
 async fn run_worktree_vcs_scheduler(state: Arc<AppState>) {

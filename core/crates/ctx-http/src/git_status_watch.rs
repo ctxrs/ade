@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex, MutexGuard as StdMutexGuard};
 use std::time::Duration;
@@ -8,6 +7,7 @@ use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 
 use ctx_core::models::Worktree;
 use ctx_fs::patch::should_ignore_path;
+use ctx_workspace_services::worktree_vcs::{WorktreeVcsDirtyBits, WorktreeVcsInvalidation};
 
 use crate::daemon::AppState;
 use crate::settings::ExecutionMode;
@@ -20,14 +20,8 @@ const GIT_STATUS_WATCH_DEBOUNCE_MS: u64 = 500;
 const GIT_STATUS_POLL_INTERVAL_MS: u64 = 60_000;
 
 #[derive(Default)]
-struct WatchInvalidation {
-    dirty_bits: crate::daemon::WorktreeVcsDirtyBits,
-    candidate_paths: BTreeSet<String>,
-}
-
-#[derive(Default)]
 struct WatchPendingState {
-    invalidation: WatchInvalidation,
+    invalidation: WorktreeVcsInvalidation,
     scheduled: bool,
 }
 
@@ -57,10 +51,6 @@ fn normalize_path_for_comparison(path: &Path) -> PathBuf {
     }
 }
 
-fn has_invalidation(pending: &WatchInvalidation) -> bool {
-    pending.dirty_bits.any() || !pending.candidate_paths.is_empty()
-}
-
 fn lock_watch_pending<'a>(
     pending: &'a Arc<StdMutex<WatchPendingState>>,
 ) -> StdMutexGuard<'a, WatchPendingState> {
@@ -78,22 +68,15 @@ fn lock_watch_pending<'a>(
 async fn dispatch_invalidation(
     state: &Arc<AppState>,
     worktree: &Worktree,
-    pending: WatchInvalidation,
+    pending: WorktreeVcsInvalidation,
 ) {
-    if !has_invalidation(&pending) {
+    if !pending.any() {
         return;
     }
-    let dirty_bits = pending.dirty_bits;
-    let candidate_paths = pending.candidate_paths.into_iter().collect::<Vec<_>>();
+    let (dirty_bits, candidate_paths) = pending.into_parts();
     if let Err(err) = mark_worktree_vcs_dirty(state, worktree, dirty_bits, candidate_paths).await {
         tracing::warn!(worktree_id = %worktree.id.0, "git status invalidation failed: {err:#}");
     }
-}
-
-fn merge_invalidation(target: &mut WatchInvalidation, next: WatchInvalidation) {
-    target.dirty_bits.worktree_fs |= next.dirty_bits.worktree_fs;
-    target.dirty_bits.vcs_meta |= next.dirty_bits.vcs_meta;
-    target.candidate_paths.extend(next.candidate_paths);
 }
 
 pub(super) async fn run_git_status_watcher(state: Arc<AppState>, worktree: Worktree) -> Result<()> {
@@ -219,7 +202,7 @@ async fn run_git_status_poller(state: Arc<AppState>, worktree: Worktree) -> Resu
         if let Err(err) = mark_worktree_vcs_dirty(
             &state,
             &worktree,
-            crate::daemon::WorktreeVcsDirtyBits {
+            WorktreeVcsDirtyBits {
                 worktree_fs: true,
                 vcs_meta: true,
             },
@@ -267,30 +250,27 @@ fn watcher(
             if should_ignore_event(&event, &worktree_root, &metadata_roots) {
                 return;
             }
-            let mut invalidation = WatchInvalidation::default();
+            let mut invalidation = WorktreeVcsInvalidation::default();
             for path in &event.paths {
                 let normalized = normalize_path_for_comparison(path);
                 if metadata_roots
                     .iter()
                     .any(|metadata_root| normalized.starts_with(metadata_root))
                 {
-                    invalidation.dirty_bits.vcs_meta = true;
+                    invalidation.mark_vcs_meta();
                     continue;
                 }
                 if let Ok(relative) = normalized.strip_prefix(&worktree_root) {
                     let relative = relative.to_string_lossy().trim().to_string();
-                    if !relative.is_empty() {
-                        invalidation.candidate_paths.insert(relative);
-                        invalidation.dirty_bits.worktree_fs = true;
-                    }
+                    invalidation.mark_worktree_fs_path(relative);
                 } else {
-                    invalidation.dirty_bits.vcs_meta = true;
+                    invalidation.mark_vcs_meta();
                 }
             }
-            if invalidation.dirty_bits.any() || !invalidation.candidate_paths.is_empty() {
+            if invalidation.any() {
                 let should_spawn = {
                     let mut guard = lock_watch_pending(&pending);
-                    merge_invalidation(&mut guard.invalidation, invalidation);
+                    guard.invalidation.merge(invalidation);
                     if guard.scheduled {
                         false
                     } else {
@@ -312,7 +292,7 @@ fn watcher(
                             };
                             dispatch_invalidation(&state, &worktree, next).await;
                             let mut guard = lock_watch_pending(&pending);
-                            if has_invalidation(&guard.invalidation) {
+                            if guard.invalidation.any() {
                                 continue;
                             }
                             guard.scheduled = false;

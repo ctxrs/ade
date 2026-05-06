@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use ctx_core::models::{
@@ -8,7 +7,7 @@ use ctx_core::models::{
 };
 use ctx_fs::vcs;
 use ctx_workspace_services::worktree_vcs::{
-    derive_worktree_vcs_freshness, WORKTREE_VCS_SNAPSHOT_SCHEMA_VERSION,
+    build_worktree_vcs_snapshot, WorktreeVcsSnapshotBuildParts, WorktreeVcsSnapshotCommitInfo,
 };
 
 use crate::api::sessions::{resolve_diff_base_with_meta, SessionDiffQuery};
@@ -18,20 +17,6 @@ use crate::worktree_data_plane::resolve_worktree_data_plane;
 
 use super::projection::publish_worktree_vcs_snapshot;
 use super::sandbox::container_git_rev_parse;
-
-pub(super) fn now_epoch_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|value| value.as_millis() as i64)
-        .unwrap_or(0)
-}
-
-pub(super) fn snapshot_fingerprint(snapshot: &WorktreeVcsSnapshot) -> String {
-    let mut copy = snapshot.clone();
-    copy.rev = 0;
-    copy.emitted_at_ms = 0;
-    serde_json::to_string(&copy).unwrap_or_default()
-}
 
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn build_worktree_vcs_snapshot_from_parts(
@@ -116,26 +101,23 @@ pub(super) async fn build_worktree_vcs_snapshot_from_parts(
         target_source: resolution.target_source,
         error: resolution.error,
     };
-    let freshness = derive_worktree_vcs_freshness(&compute_state, &summary);
-    Ok(WorktreeVcsSnapshot {
+    Ok(build_worktree_vcs_snapshot(WorktreeVcsSnapshotBuildParts {
         worktree_id: worktree.id,
-        rev: 0,
-        emitted_at_ms: 0,
-        base_commit_sha,
-        head_commit_sha,
-        target_branch,
-        target_branch_commit_sha,
-        base_resolution,
+        commit_info: WorktreeVcsSnapshotCommitInfo {
+            base_commit_sha,
+            head_commit_sha,
+            target_branch,
+            target_branch_commit_sha,
+            base_resolution,
+        },
         compute_state,
         summary,
         git_status,
         touched_files,
         touched_files_state,
-        freshness,
         available,
         unavailable_reason,
-        schema_version: WORKTREE_VCS_SNAPSHOT_SCHEMA_VERSION,
-    })
+    }))
 }
 
 pub(super) async fn publish_no_repo_snapshot(

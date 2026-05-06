@@ -1,6 +1,7 @@
 use super::*;
 use crate::daemon::McpAuthContext;
 use ctx_execution_runtime::ExecutionSetupCoordinator;
+use ctx_workspace_services::worktree_vcs::{WorktreeVcsRuntimeState, WorktreeVcsSchedulerRuntime};
 
 pub struct CoreState {
     pub data_root: PathBuf,
@@ -179,39 +180,6 @@ pub struct WorktreeVcsSnapshotCacheEntry {
     pub last_summary_at: Option<Instant>,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct WorktreeVcsDirtyBits {
-    pub worktree_fs: bool,
-    pub vcs_meta: bool,
-}
-
-impl WorktreeVcsDirtyBits {
-    pub fn any(self) -> bool {
-        self.worktree_fs || self.vcs_meta
-    }
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct WorktreeVcsRuntimeState {
-    pub generation: u64,
-    pub dirty_bits: WorktreeVcsDirtyBits,
-    pub pending_summary: bool,
-    pub pending_touched_files: bool,
-    pub running: bool,
-    pub require_full_summary_rebuild: bool,
-    pub summary_paths: HashSet<String>,
-    pub candidate_paths: BTreeSet<String>,
-    pub last_git_status: Option<GitStatusSnapshot>,
-    pub touched_files: WorktreeVcsTouchedFiles,
-    pub touched_files_state: WorktreeVcsTouchedFilesState,
-}
-
-pub struct WorktreeVcsSchedulerRuntime {
-    pub started: AtomicBool,
-    pub notify: Arc<Notify>,
-    pub permits: Arc<Semaphore>,
-}
-
 #[derive(Clone, Debug)]
 pub struct WorkspaceActiveSnapshotCacheEntry {
     pub snapshot: WorkspaceActiveSnapshot,
@@ -236,38 +204,9 @@ const DEFAULT_SESSION_CACHE_TTL_HOURS: u64 = 24;
 const DEFAULT_WORKSPACE_CACHE_TTL_DAYS: u64 = 1;
 const DEFAULT_CACHE_SWEEP_INTERVAL_SECS: u64 = 5 * 60;
 const DEFAULT_PROVIDER_INACTIVITY_TIMEOUT_SECS: u64 = 30 * 60;
-const DEFAULT_WORKTREE_VCS_SCHEDULER_CONCURRENCY: usize = 2;
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AppRuntimeFlags {
     pub worktree_vcs_enabled: bool,
-}
-
-fn parse_worktree_vcs_enabled(raw: &str) -> Option<bool> {
-    ctx_core::boolish::parse_boolish(raw).or_else(|| {
-        match raw.trim().to_ascii_lowercase().as_str() {
-            "enabled" => Some(true),
-            "disabled" => Some(false),
-            _ => None,
-        }
-    })
-}
-
-pub(crate) fn worktree_vcs_enabled_from_env() -> bool {
-    for key in ["CTX_WORKTREE_VCS_ENABLED", "CTX_WORKTREE_VCS"] {
-        let Ok(value) = std::env::var(key) else {
-            continue;
-        };
-        if let Some(parsed) = parse_worktree_vcs_enabled(&value) {
-            return parsed;
-        }
-        tracing::warn!(
-            env_var = key,
-            value = %value,
-            "ignoring invalid worktree VCS mode; expected on/off, true/false, enabled/disabled, or 1/0"
-        );
-    }
-    true
 }
 
 pub(crate) fn provider_inactivity_timeout_from_env() -> Duration {
@@ -277,32 +216,6 @@ pub(crate) fn provider_inactivity_timeout_from_env() -> Duration {
         .filter(|millis| *millis > 0)
         .map(Duration::from_millis)
         .unwrap_or_else(|| Duration::from_secs(DEFAULT_PROVIDER_INACTIVITY_TIMEOUT_SECS))
-}
-
-pub(crate) fn worktree_vcs_scheduler_concurrency_from_env() -> usize {
-    std::env::var("CTX_WORKTREE_VCS_SCHEDULER_CONCURRENCY")
-        .ok()
-        .and_then(|value| value.trim().parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_WORKTREE_VCS_SCHEDULER_CONCURRENCY)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::parse_worktree_vcs_enabled;
-
-    #[test]
-    fn parses_worktree_vcs_mode_values() {
-        for raw in ["1", "true", "yes", "on", "enabled"] {
-            assert_eq!(parse_worktree_vcs_enabled(raw), Some(true), "raw={raw}");
-        }
-        for raw in ["0", "false", "no", "off", "disabled"] {
-            assert_eq!(parse_worktree_vcs_enabled(raw), Some(false), "raw={raw}");
-        }
-        for raw in ["", "maybe", "summary-only"] {
-            assert_eq!(parse_worktree_vcs_enabled(raw), None, "raw={raw}");
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug)]

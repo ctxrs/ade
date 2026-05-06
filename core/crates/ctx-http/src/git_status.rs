@@ -15,7 +15,9 @@ mod scheduler;
 mod snapshot;
 #[path = "git_status_watch.rs"]
 mod watch;
-use ctx_workspace_services::worktree_vcs::derive_worktree_vcs_freshness;
+use ctx_workspace_services::worktree_vcs::{
+    derive_worktree_vcs_freshness, mark_worktree_vcs_runtime_dirty, queue_worktree_vcs_refresh,
+};
 pub use ctx_workspace_services::worktree_vcs::{GitStatusEntry, GitStatusSnapshot};
 pub use projection::load_git_status_snapshot;
 use projection::{publish_transient_worktree_vcs_snapshot, refresh_worktree_vcs_projection};
@@ -97,8 +99,7 @@ async fn request_worktree_vcs_refresh_inner(
     {
         let mut runtime = state.workspaces.worktree_vcs_runtime.lock().await;
         let entry = runtime.entry(worktree.id).or_default();
-        entry.pending_summary |= summary;
-        entry.pending_touched_files |= touched_files;
+        queue_worktree_vcs_refresh(entry, summary, touched_files);
     }
 
     if publish_transient {
@@ -141,18 +142,7 @@ pub async fn mark_worktree_vcs_dirty(
     {
         let mut runtime = state.workspaces.worktree_vcs_runtime.lock().await;
         let entry = runtime.entry(worktree.id).or_default();
-        entry.generation = entry.generation.saturating_add(1);
-        entry.dirty_bits.worktree_fs |= dirty_bits.worktree_fs;
-        entry.dirty_bits.vcs_meta |= dirty_bits.vcs_meta;
-        entry.require_full_summary_rebuild |= dirty_bits.vcs_meta;
-        for path in candidate_paths {
-            let trimmed = path.trim();
-            if !trimmed.is_empty() {
-                entry.candidate_paths.insert(trimmed.to_string());
-            }
-        }
-        entry.pending_summary = true;
-        entry.pending_touched_files |= pane_open;
+        mark_worktree_vcs_runtime_dirty(entry, dirty_bits, candidate_paths, pane_open);
     }
 
     if let Some(mut snapshot) = state.get_worktree_vcs_snapshot(worktree.id).await {

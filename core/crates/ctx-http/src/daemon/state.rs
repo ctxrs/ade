@@ -1,14 +1,13 @@
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use tokio::sync::{broadcast, mpsc, watch, Mutex, Notify, Semaphore};
+use tokio::sync::{broadcast, mpsc, watch, Mutex};
 use tokio::task::JoinHandle;
 
-use crate::git_status::GitStatusSnapshot;
 use crate::ops_events::{OpsEvent, OpsEvents};
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
 use crate::provider_guard;
@@ -25,7 +24,7 @@ use crate::web_sessions::WebSessionManager;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceAttachmentId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     Session, SessionEvent, SessionHeadSnapshot, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot,
-    WorktreeVcsSnapshot, WorktreeVcsTouchedFiles, WorktreeVcsTouchedFilesState,
+    WorktreeVcsSnapshot,
 };
 use ctx_execution_runtime::ExecutionSetupCoordinator;
 use ctx_provider_accounts as provider_accounts;
@@ -47,10 +46,14 @@ mod installs;
 mod metrics;
 mod types;
 
+pub(crate) use ctx_workspace_services::worktree_vcs::{
+    worktree_vcs_enabled_from_env, worktree_vcs_scheduler_concurrency_from_env,
+    WorktreeVcsDirtyBits,
+};
+
 pub(crate) use types::{
-    provider_inactivity_timeout_from_env, worktree_vcs_enabled_from_env,
-    worktree_vcs_scheduler_concurrency_from_env, ActiveTaskRefreshEntry,
-    AttachmentMaterializationTask, WorktreeBootstrapGate, WorktreeVcsDirtyBits,
+    provider_inactivity_timeout_from_env, ActiveTaskRefreshEntry, AttachmentMaterializationTask,
+    WorktreeBootstrapGate,
 };
 
 fn current_time_ms() -> u64 {
@@ -59,13 +62,14 @@ fn current_time_ms() -> u64 {
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or(0)
 }
+pub use ctx_workspace_services::worktree_vcs::WorktreeVcsSchedulerRuntime;
 pub use types::{
     AppRuntimeFlags, AppState, CacheSweepConfig, CacheSweepStats, CachedFileCompletions,
     CachedProviderOptions, CachedProviderVerify, CoreState, ExecutionRuntime,
     GitStatusSnapshotCacheEntry, ProviderRuntime, SessionHeadCacheKey, SessionPinState,
     SessionRuntime, StoreLookup, TelemetryRuntime, TimedEntry, TransportRuntime, UpdateDrainState,
     WorkspaceActiveHeadCacheEntry, WorkspaceActiveSnapshotCacheEntry, WorkspaceRuntime,
-    WorktreeVcsSchedulerRuntime, WorktreeVcsSnapshotCacheEntry,
+    WorktreeVcsSnapshotCacheEntry,
 };
 
 impl AppState {

@@ -169,13 +169,9 @@ impl AppState {
                 worktree_vcs_open_panes: Mutex::new(HashMap::new()),
                 worktree_vcs_summary_gen: Mutex::new(HashMap::new()),
                 worktree_vcs_runtime: Mutex::new(HashMap::new()),
-                worktree_vcs_scheduler: WorktreeVcsSchedulerRuntime {
-                    started: AtomicBool::new(false),
-                    notify: Arc::new(Notify::new()),
-                    permits: Arc::new(
-                        Semaphore::new(worktree_vcs_scheduler_concurrency_from_env()),
-                    ),
-                },
+                worktree_vcs_scheduler: WorktreeVcsSchedulerRuntime::with_concurrency(
+                    worktree_vcs_scheduler_concurrency_from_env(),
+                ),
                 git_status_watchers: Mutex::new(HashSet::new()),
                 workspace_active_snapshot,
                 workspace_active_snapshot_cache: Mutex::new(HashMap::new()),

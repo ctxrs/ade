@@ -14,9 +14,9 @@ use ctx_core::models::{
     WorktreeVcsSnapshot, WorktreeVcsSummary, WorktreeVcsTouchedFile, WorktreeVcsTouchedFiles,
 };
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
-use tokio::sync::{Mutex as AsyncMutex, Notify, Semaphore};
+use tokio::sync::Mutex as AsyncMutex;
 
 use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotHub;
 
@@ -301,11 +301,7 @@ async fn applying_workspace_hydration_payload_seeds_hub_with_loaded_snapshot_rev
         worktree_vcs_open_panes: AsyncMutex::new(HashMap::new()),
         worktree_vcs_summary_gen: AsyncMutex::new(HashMap::new()),
         worktree_vcs_runtime: AsyncMutex::new(HashMap::new()),
-        worktree_vcs_scheduler: WorktreeVcsSchedulerRuntime {
-            started: AtomicBool::new(false),
-            notify: Arc::new(Notify::new()),
-            permits: Arc::new(Semaphore::new(1)),
-        },
+        worktree_vcs_scheduler: WorktreeVcsSchedulerRuntime::with_concurrency(1),
         git_status_watchers: AsyncMutex::new(HashSet::new()),
         workspace_active_snapshot: Arc::new(WorkspaceActiveSnapshotHub::new()),
         workspace_active_snapshot_cache: AsyncMutex::new(HashMap::new()),

@@ -1769,6 +1769,7 @@ dependencies = [
  "chrono",
  "ctx-core",
  "serde",
+ "serde_json",
  "tempfile",
  "tokio",
  "toml",
