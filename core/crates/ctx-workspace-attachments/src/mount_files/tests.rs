@@ -13,12 +13,7 @@ async fn ensure_mount_applies_read_only_mode() {
         .await
         .expect("mount ro attachment");
 
-    let err = std::fs::write(target.join("notes.txt"), "mutated\n")
-        .expect_err("ro attachment mount should reject writes");
-    assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
-    let err = std::fs::write(target.join("new.txt"), "new\n")
-        .expect_err("ro attachment mount root should reject new files");
-    assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+    assert_tree_has_no_write_bits(&target);
     std::fs::write(source.join("source-writable.txt"), "still writable\n")
         .expect("ro attachment mount should not mutate source writability");
 }
