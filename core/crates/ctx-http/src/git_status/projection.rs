@@ -6,6 +6,12 @@ use ctx_core::models::{
     Worktree, WorktreeVcsBaseResolutionKind, WorktreeVcsComputeState, WorktreeVcsSnapshot,
     WorktreeVcsSummary, WorktreeVcsTouchedFilesState,
 };
+use ctx_workspace_services::worktree_vcs::{
+    build_git_status_entries, build_git_status_summary, build_large_change_set_touched_files,
+    build_touched_files, snapshot_for_durable_cache, summary_from_file_count, summary_has_counts,
+    GitStatusEntry, GitStatusSnapshot, WORKTREE_VCS_REVIEWABLE_FILE_LIMIT,
+    WORKTREE_VCS_SNAPSHOT_SCHEMA_VERSION,
+};
 
 use crate::api::sessions::{resolve_diff_base_with_meta, SessionDiffQuery};
 use crate::daemon::AppState;
@@ -13,14 +19,10 @@ use crate::settings::ExecutionMode;
 use crate::worktree_data_plane::resolve_worktree_data_plane;
 
 use super::diff_paths::{load_diff_file_count, load_diff_touched_entries};
-use super::model::{GitStatusEntry, GitStatusSnapshot};
 use super::sandbox::container_git_status_structured;
 use super::snapshot::{
-    build_git_status_entries, build_git_status_summary, build_large_change_set_touched_files,
-    build_touched_files, build_worktree_vcs_snapshot_from_parts, now_epoch_ms,
-    publish_no_repo_snapshot, publish_unavailable_snapshot, snapshot_fingerprint,
-    snapshot_for_durable_cache, summary_from_file_count, summary_has_counts,
-    WORKTREE_VCS_REVIEWABLE_FILE_LIMIT, WORKTREE_VCS_SNAPSHOT_SCHEMA_VERSION,
+    build_worktree_vcs_snapshot_from_parts, now_epoch_ms, publish_no_repo_snapshot,
+    publish_unavailable_snapshot, snapshot_fingerprint,
 };
 use super::{
     vcs_driver_for_worktree, worktree_has_vcs_repo, GIT_STATUS_DEBOUNCE_MS,

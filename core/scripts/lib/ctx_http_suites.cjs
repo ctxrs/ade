@@ -457,7 +457,13 @@ const CTX_HTTP_SUITES = [
   },
   ...CTX_HTTP_UNIT_SUITES,
   {
-    dependencyCrates: ["ctx-core", "ctx-events", "ctx-store", "ctx-workspace-active-snapshot"],
+    dependencyCrates: [
+      "ctx-core",
+      "ctx-events",
+      "ctx-store",
+      "ctx-workspace-active-snapshot",
+      "ctx-workspace-services",
+    ],
     name: "workspace-stream",
     description: "workspace snapshot, stream, cache, and replay behavior",
     expandTestFilesToTargets: true,

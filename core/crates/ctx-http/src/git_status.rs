@@ -9,21 +9,18 @@ use crate::daemon::AppState;
 use crate::settings::ExecutionMode;
 use crate::worktree_data_plane::resolve_worktree_data_plane;
 mod diff_paths;
-mod model;
 mod projection;
 mod sandbox;
 mod scheduler;
 mod snapshot;
-#[cfg(test)]
-mod tests;
 #[path = "git_status_watch.rs"]
 mod watch;
-pub use model::{GitStatusEntry, GitStatusSnapshot};
+use ctx_workspace_services::worktree_vcs::derive_worktree_vcs_freshness;
+pub use ctx_workspace_services::worktree_vcs::{GitStatusEntry, GitStatusSnapshot};
 pub use projection::load_git_status_snapshot;
 use projection::{publish_transient_worktree_vcs_snapshot, refresh_worktree_vcs_projection};
 pub(crate) use sandbox::{worktree_merge_base, worktree_rev_parse_head, worktree_rev_parse_refs};
 use scheduler::ensure_worktree_vcs_scheduler_started;
-use snapshot::derive_worktree_vcs_freshness;
 
 const GIT_STATUS_DEBOUNCE_MS: u64 = 500;
 const GIT_STATUS_MAX_INTERVAL_MS: u64 = 2000;
