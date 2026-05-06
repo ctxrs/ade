@@ -6,18 +6,17 @@ use ctx_core::models::{Worktree, WorktreeVcsComputeState, WorktreeVcsTouchedFile
 use ctx_fs::vcs::{self, VcsDriver};
 
 use crate::daemon::AppState;
-use crate::settings::ExecutionMode;
-use crate::worktree_data_plane::resolve_worktree_data_plane;
 mod diff_paths;
 mod projection;
 mod sandbox;
 mod scheduler;
 mod snapshot;
+mod source;
 #[path = "git_status_watch.rs"]
 mod watch;
 use ctx_workspace_services::worktree_vcs::{
-    derive_worktree_vcs_freshness, is_no_vcs_repo_error, mark_worktree_vcs_runtime_dirty,
-    queue_worktree_vcs_refresh, WorktreeVcsGitCommand,
+    derive_worktree_vcs_freshness, mark_worktree_vcs_runtime_dirty, queue_worktree_vcs_refresh,
+    worktree_has_vcs_repo_from_source,
 };
 pub use ctx_workspace_services::worktree_vcs::{GitStatusEntry, GitStatusSnapshot};
 pub use projection::load_git_status_snapshot;
@@ -33,32 +32,8 @@ pub(crate) async fn worktree_has_vcs_repo(
     state: &Arc<AppState>,
     worktree: &Worktree,
 ) -> Result<bool> {
-    let data_plane = resolve_worktree_data_plane(state, worktree).await?;
-    if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
-        return match sandbox::container_git_stdout(
-            state,
-            worktree,
-            WorktreeVcsGitCommand::IsInsideWorkTree,
-        )
-        .await
-        {
-            Ok(_) => Ok(true),
-            Err(err) if is_no_vcs_repo_error(&err) => Ok(false),
-            Err(err) => Err(err),
-        };
-    }
-
-    let root = data_plane.live_worktree_root.as_path();
-    let driver = match vcs::driver_for_path(root).await {
-        Ok(driver) => driver,
-        Err(err) if is_no_vcs_repo_error(&err) => return Ok(false),
-        Err(err) => return Err(err),
-    };
-    match driver.assert_repo(root).await {
-        Ok(()) => Ok(true),
-        Err(err) if is_no_vcs_repo_error(&err) => Ok(false),
-        Err(err) => Err(err),
-    }
+    let source = source::HttpWorktreeVcsStatusSource::new(state, worktree);
+    worktree_has_vcs_repo_from_source(&source).await
 }
 
 pub async fn request_worktree_vcs_refresh(

@@ -9,23 +9,21 @@ use ctx_core::models::{
 use ctx_workspace_services::worktree_vcs::{
     build_git_status_entries, build_git_status_summary, build_large_change_set_touched_files,
     build_touched_files, finish_worktree_vcs_refresh, is_no_vcs_repo_error,
-    pending_worktree_vcs_snapshot_cache_entry, publish_worktree_vcs_snapshot_cache_entry,
-    snapshot_for_durable_cache, summary_from_file_count, summary_has_counts, GitStatusEntry,
-    GitStatusSnapshot, WorktreeDiffBaseResolution, WorktreeVcsSnapshotPublishPolicy,
-    WORKTREE_VCS_REVIEWABLE_FILE_LIMIT,
+    load_git_status_snapshot_from_source, pending_worktree_vcs_snapshot_cache_entry,
+    publish_worktree_vcs_snapshot_cache_entry, snapshot_for_durable_cache, summary_from_file_count,
+    summary_has_counts, GitStatusSnapshot, WorktreeDiffBaseResolution,
+    WorktreeVcsSnapshotPublishPolicy, WORKTREE_VCS_REVIEWABLE_FILE_LIMIT,
 };
 
 use crate::api::sessions::{resolve_diff_base_with_meta, SessionDiffQuery};
 use crate::daemon::AppState;
-use crate::settings::ExecutionMode;
-use crate::worktree_data_plane::resolve_worktree_data_plane;
 
 use super::diff_paths::{load_diff_file_count, load_diff_touched_entries};
-use super::sandbox::container_git_status_structured;
 use super::snapshot::{
     build_worktree_vcs_snapshot_from_parts, publish_no_repo_snapshot, publish_unavailable_snapshot,
 };
-use super::{vcs_driver_for_worktree, worktree_has_vcs_repo};
+use super::source::HttpWorktreeVcsStatusSource;
+use super::worktree_has_vcs_repo;
 
 pub async fn load_git_status_snapshot(
     state: &Arc<AppState>,
@@ -33,44 +31,8 @@ pub async fn load_git_status_snapshot(
     include_untracked_files: bool,
     include_entries: bool,
 ) -> Result<GitStatusSnapshot> {
-    let data_plane = resolve_worktree_data_plane(state, worktree).await?;
-    let root = data_plane.live_worktree_root.as_path();
-    let structured = if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
-        container_git_status_structured(state, worktree, include_untracked_files, include_entries)
-            .await?
-    } else {
-        let vcs = vcs_driver_for_worktree(worktree);
-        vcs.status_structured(root, include_untracked_files, include_entries)
-            .await?
-    };
-    Ok(GitStatusSnapshot {
-        raw: structured.raw,
-        summary_line: structured.branch.summary_line,
-        branch: structured.branch.branch,
-        upstream: structured.branch.upstream,
-        ahead: structured.branch.ahead,
-        behind: structured.branch.behind,
-        detached: structured.branch.detached,
-        staged: structured.staged,
-        unstaged: structured.unstaged,
-        untracked: structured.untracked,
-        entries: if include_entries {
-            structured
-                .entries
-                .into_iter()
-                .map(|entry| GitStatusEntry {
-                    path: entry.path,
-                    orig_path: entry.orig_path,
-                    index_status: entry.index_status,
-                    worktree_status: entry.worktree_status,
-                })
-                .collect()
-        } else {
-            Vec::new()
-        },
-        entries_total_count: structured.total_count,
-        entries_truncated: structured.truncated,
-    })
+    let source = HttpWorktreeVcsStatusSource::new(state, worktree);
+    load_git_status_snapshot_from_source(&source, include_untracked_files, include_entries).await
 }
 
 pub(super) async fn persist_worktree_vcs_snapshot(

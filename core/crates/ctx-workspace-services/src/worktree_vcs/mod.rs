@@ -4,6 +4,7 @@ mod git_commands;
 mod resolution;
 mod runtime;
 mod snapshot;
+mod status;
 
 use serde::Serialize;
 
@@ -35,8 +36,12 @@ pub use snapshot::{
     summary_from_file_count, summary_has_counts, WorktreeVcsCommitInfoPlan,
     WorktreeVcsCommitLookup, WorktreeVcsSnapshotBuildParts, WorktreeVcsSnapshotCommitInfo,
 };
+pub use status::{
+    git_status_snapshot_from_structured, load_git_status_snapshot_from_source,
+    worktree_has_vcs_repo_from_source, WorktreeVcsStatusSource, WorktreeVcsStructuredStatus,
+};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct GitStatusSnapshot {
     pub raw: String,
     pub summary_line: String,
@@ -53,7 +58,7 @@ pub struct GitStatusSnapshot {
     pub entries_truncated: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct GitStatusEntry {
     pub path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
