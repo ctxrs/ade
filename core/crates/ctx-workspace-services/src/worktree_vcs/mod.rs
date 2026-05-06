@@ -22,7 +22,10 @@ pub use git_commands::{
     parse_git_diff_name_status, parse_git_list_untracked, parse_git_refs, parse_git_single_ref,
     WorktreeVcsGitCommand,
 };
-pub use resolution::{is_no_vcs_repo_error, WorktreeDiffBaseResolution};
+pub use resolution::{
+    is_no_vcs_repo_error, resolve_worktree_diff_base_from_source, WorktreeDiffBaseResolution,
+    WorktreeVcsDiffBaseQuery, WorktreeVcsDiffBaseSource,
+};
 pub use runtime::{
     claim_next_worktree_vcs_job, finish_worktree_vcs_job, finish_worktree_vcs_refresh,
     mark_worktree_vcs_runtime_dirty, queue_worktree_vcs_refresh, worktree_vcs_enabled_from_env,

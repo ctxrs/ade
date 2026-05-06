@@ -3,9 +3,10 @@ use std::sync::Arc;
 use anyhow::Result;
 use ctx_core::models::Worktree;
 use ctx_fs::vcs::{self, VcsStructuredStatus};
+use ctx_workspace_config as workspace_config;
 use ctx_workspace_services::worktree_vcs::{
-    is_no_vcs_repo_error, GitStatusEntry, WorktreeVcsCommitLookupSource, WorktreeVcsGitCommand,
-    WorktreeVcsStatusSource, WorktreeVcsStructuredStatus,
+    is_no_vcs_repo_error, GitStatusEntry, WorktreeVcsCommitLookupSource, WorktreeVcsDiffBaseSource,
+    WorktreeVcsGitCommand, WorktreeVcsStatusSource, WorktreeVcsStructuredStatus,
 };
 
 use crate::daemon::AppState;
@@ -15,13 +16,13 @@ use crate::worktree_data_plane::resolve_worktree_data_plane;
 use super::sandbox::{container_git_status_structured, container_git_stdout};
 use super::vcs_driver_for_worktree;
 
-pub(super) struct HttpWorktreeVcsSource<'a> {
+pub(crate) struct HttpWorktreeVcsSource<'a> {
     state: &'a Arc<AppState>,
     worktree: &'a Worktree,
 }
 
 impl<'a> HttpWorktreeVcsSource<'a> {
-    pub(super) fn new(state: &'a Arc<AppState>, worktree: &'a Worktree) -> Self {
+    pub(crate) fn new(state: &'a Arc<AppState>, worktree: &'a Worktree) -> Self {
         Self { state, worktree }
     }
 }
@@ -105,6 +106,76 @@ impl WorktreeVcsCommitLookupSource for HttpWorktreeVcsSource<'_> {
         } else {
             driver.rev_parse_ref(root, reference).await
         }
+    }
+}
+
+#[async_trait::async_trait]
+impl WorktreeVcsDiffBaseSource for HttpWorktreeVcsSource<'_> {
+    async fn load_primary_branch(&self) -> Result<Option<String>> {
+        let store = self.state.store_for_worktree(self.worktree.id).await?;
+        workspace_config::load_primary_branch(&store).await
+    }
+
+    async fn rev_parse_head(&self) -> Result<String> {
+        self.resolve_commit("HEAD").await
+    }
+
+    async fn rev_parse_refs(&self, references: &[&str]) -> Result<Vec<String>> {
+        if references.is_empty() {
+            return Ok(Vec::new());
+        }
+        let data_plane = resolve_worktree_data_plane(self.state, self.worktree).await?;
+        let root = data_plane.live_worktree_root.as_path();
+        if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
+            let bytes = container_git_stdout(
+                self.state,
+                self.worktree,
+                WorktreeVcsGitCommand::RevParseRefs {
+                    references: references
+                        .iter()
+                        .map(|reference| (*reference).to_string())
+                        .collect(),
+                },
+            )
+            .await?;
+            return ctx_workspace_services::worktree_vcs::parse_git_refs(&bytes, references.len());
+        }
+
+        let driver = vcs::driver_for_path(root).await?;
+        let mut commits = Vec::with_capacity(references.len());
+        for reference in references {
+            let commit = if *reference == "HEAD" {
+                driver.rev_parse_head(root).await?
+            } else {
+                driver.rev_parse_ref(root, reference).await?
+            };
+            commits.push(commit);
+        }
+        Ok(commits)
+    }
+
+    async fn merge_base(&self, target_branch: &str) -> Result<String> {
+        let data_plane = resolve_worktree_data_plane(self.state, self.worktree).await?;
+        let root = data_plane.live_worktree_root.as_path();
+        if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
+            let bytes = container_git_stdout(
+                self.state,
+                self.worktree,
+                WorktreeVcsGitCommand::MergeBase {
+                    target_branch: target_branch.to_string(),
+                },
+            )
+            .await?;
+            return Ok(ctx_workspace_services::worktree_vcs::parse_git_single_ref(
+                &bytes,
+            ));
+        }
+        let driver = vcs::driver_for_path(root).await?;
+        driver.merge_base(root, target_branch, "HEAD").await
+    }
+
+    fn redact_error(&self, err: &anyhow::Error) -> String {
+        crate::logs::redact_sensitive(&err.to_string())
     }
 }
 

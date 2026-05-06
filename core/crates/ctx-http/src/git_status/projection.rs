@@ -10,12 +10,12 @@ use ctx_workspace_services::worktree_vcs::{
     build_git_status_entries, build_git_status_summary, build_large_change_set_touched_files,
     build_touched_files, finish_worktree_vcs_refresh, is_no_vcs_repo_error,
     load_git_status_snapshot_from_source, pending_worktree_vcs_snapshot_cache_entry,
-    publish_worktree_vcs_snapshot_cache_entry, snapshot_for_durable_cache, summary_from_file_count,
-    summary_has_counts, GitStatusSnapshot, WorktreeDiffBaseResolution,
-    WorktreeVcsSnapshotPublishPolicy, WORKTREE_VCS_REVIEWABLE_FILE_LIMIT,
+    publish_worktree_vcs_snapshot_cache_entry, resolve_worktree_diff_base_from_source,
+    snapshot_for_durable_cache, summary_from_file_count, summary_has_counts, GitStatusSnapshot,
+    WorktreeDiffBaseResolution, WorktreeVcsDiffBaseQuery, WorktreeVcsSnapshotPublishPolicy,
+    WORKTREE_VCS_REVIEWABLE_FILE_LIMIT,
 };
 
-use crate::api::sessions::{resolve_diff_base_with_meta, SessionDiffQuery};
 use crate::daemon::AppState;
 
 use super::diff_paths::{load_diff_file_count, load_diff_touched_entries};
@@ -163,18 +163,11 @@ pub(super) async fn refresh_worktree_vcs_projection(
         .await;
     }
 
-    let store = state.store_for_worktree(worktree.id).await?;
-    let workspace = state
-        .global_store()
-        .get_workspace(worktree.workspace_id)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("workspace not found for worktree"))?;
-    let resolution = resolve_diff_base_with_meta(
-        state,
-        &store,
-        &workspace,
+    let source = HttpWorktreeVcsSource::new(state, worktree);
+    let resolution = resolve_worktree_diff_base_from_source(
+        &source,
         worktree,
-        &SessionDiffQuery::default(),
+        WorktreeVcsDiffBaseQuery::default(),
     )
     .await;
     if let Some(reason) = resolution.unavailable_reason.clone() {

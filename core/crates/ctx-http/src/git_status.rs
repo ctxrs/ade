@@ -21,8 +21,9 @@ use ctx_workspace_services::worktree_vcs::{
 pub use ctx_workspace_services::worktree_vcs::{GitStatusEntry, GitStatusSnapshot};
 pub use projection::load_git_status_snapshot;
 use projection::{publish_transient_worktree_vcs_snapshot, refresh_worktree_vcs_projection};
-pub(crate) use sandbox::{worktree_merge_base, worktree_rev_parse_head, worktree_rev_parse_refs};
+pub(crate) use sandbox::worktree_rev_parse_head;
 use scheduler::ensure_worktree_vcs_scheduler_started;
+pub(crate) use source::HttpWorktreeVcsSource;
 
 fn vcs_driver_for_worktree(worktree: &Worktree) -> Arc<dyn VcsDriver> {
     vcs::driver_for_kind(worktree.vcs_kind.clone())

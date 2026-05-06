@@ -3,7 +3,6 @@ use super::*;
 mod vcs;
 pub(crate) use vcs::{
     apply_session_diff_patch, get_session_diff, get_session_diff_summary, get_session_git_status,
-    resolve_diff_base_with_meta, SessionDiffQuery,
 };
 
 #[derive(Debug, Deserialize, Default)]

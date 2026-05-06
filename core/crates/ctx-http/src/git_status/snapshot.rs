@@ -7,13 +7,11 @@ use ctx_core::models::{
 };
 use ctx_workspace_services::worktree_vcs::{
     build_worktree_vcs_snapshot, plan_worktree_vcs_commit_info,
-    resolve_worktree_vcs_commit_lookup_from_source, WorktreeDiffBaseResolution,
-    WorktreeVcsSnapshotBuildParts,
+    resolve_worktree_diff_base_from_source, resolve_worktree_vcs_commit_lookup_from_source,
+    WorktreeDiffBaseResolution, WorktreeVcsDiffBaseQuery, WorktreeVcsSnapshotBuildParts,
 };
 
-use crate::api::sessions::{resolve_diff_base_with_meta, SessionDiffQuery};
 use crate::daemon::AppState;
-use crate::worktree_data_plane::resolve_worktree_data_plane;
 
 use super::projection::publish_worktree_vcs_snapshot;
 use super::source::HttpWorktreeVcsSource;
@@ -34,14 +32,11 @@ pub(super) async fn build_worktree_vcs_snapshot_from_parts(
     let resolution = match resolution {
         Some(resolution) => resolution,
         None => {
-            let data_plane = resolve_worktree_data_plane(state, worktree).await?;
-            let store = state.store_for_worktree(worktree.id).await?;
-            resolve_diff_base_with_meta(
-                state,
-                &store,
-                &data_plane.workspace,
+            let source = HttpWorktreeVcsSource::new(state, worktree);
+            resolve_worktree_diff_base_from_source(
+                &source,
                 worktree,
-                &SessionDiffQuery::default(),
+                WorktreeVcsDiffBaseQuery::default(),
             )
             .await
         }
