@@ -232,6 +232,100 @@ async fn blob_upload_infers_image_mime_type_from_filename_when_part_content_type
 }
 
 #[tokio::test]
+async fn blob_upload_route_accepts_attachment_limit_and_rejects_one_byte_over() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let store = common::setup_store(data_dir.path()).await;
+    let state = common::build_state(
+        data_dir.path().to_path_buf(),
+        store,
+        common::fake_providers(),
+        "http://127.0.0.1:0",
+    );
+    let app = common::router(state);
+    let boundary = "ctx-upload-limit-boundary";
+
+    let bytes_at_limit = vec![0_u8; MAX_MESSAGE_IMAGE_ATTACHMENT_BYTES];
+    let body = multipart_body(
+        boundary,
+        "file",
+        "at-limit.png",
+        Some("image/png"),
+        &bytes_at_limit,
+    );
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/blobs")
+        .header(
+            "content-type",
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(Body::from(body))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let uploaded: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        uploaded.get("bytes").and_then(|value| value.as_i64()),
+        Some(MAX_MESSAGE_IMAGE_ATTACHMENT_BYTES as i64)
+    );
+    drop(bytes_at_limit);
+
+    let bytes_one_over = vec![0_u8; MAX_MESSAGE_IMAGE_ATTACHMENT_BYTES + 1];
+    let body = multipart_body(
+        boundary,
+        "file",
+        "too-large.png",
+        Some("image/png"),
+        &bytes_one_over,
+    );
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/blobs")
+        .header(
+            "content-type",
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(Body::from(body))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let err: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        err.get("error").and_then(|value| value.as_str()),
+        Some("Image attachments must be 25 MiB or smaller.")
+    );
+    drop(bytes_one_over);
+
+    let bytes_over_multipart_limit = vec![0_u8; MAX_MESSAGE_IMAGE_ATTACHMENT_BYTES + (128 * 1024)];
+    let body = multipart_body(
+        boundary,
+        "file",
+        "far-too-large.png",
+        Some("image/png"),
+        &bytes_over_multipart_limit,
+    );
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/blobs")
+        .header(
+            "content-type",
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(Body::from(body))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let err: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        err.get("error").and_then(|value| value.as_str()),
+        Some("Image attachments must be 25 MiB or smaller.")
+    );
+}
+
+#[tokio::test]
 async fn non_image_blob_refs_are_rejected() {
     let data_dir = tempfile::tempdir().unwrap();
     let store = common::setup_store(data_dir.path()).await;

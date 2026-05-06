@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   type MessageAttachment,
   type Session,
@@ -122,9 +122,12 @@ export function SessionView({
     threadProjection: baseThreadProjection,
     supervisor,
   });
-  const attachmentErrorHandlerRef = useRef<(message: string | null) => void>(() => {});
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const handleAttachmentError = useCallback((message: string | null) => {
-    attachmentErrorHandlerRef.current(message);
+    setAttachmentError(message);
+  }, []);
+  const handleComposerSendStarted = useCallback(() => {
+    setAttachmentError(null);
   }, []);
 
   const {
@@ -141,6 +144,7 @@ export function SessionView({
 
   useEffect(() => {
     setDraftAttachmentsInternal([]);
+    setAttachmentError(null);
   }, [id, setDraftAttachmentsInternal]);
 
   const {
@@ -199,11 +203,8 @@ export function SessionView({
     resolveSendText,
     setAtBottom: transcriptController.setAtBottom,
     onDraftPersistNow,
+    onSendStarted: handleComposerSendStarted,
   });
-
-  useEffect(() => {
-    attachmentErrorHandlerRef.current = composerState.setSendError;
-  }, [composerState.setSendError]);
 
   const handleRetrySessionLoads = useCallback(() => {
     if (!id) return;
@@ -255,6 +256,7 @@ export function SessionView({
       session={session}
       sessionError={transcriptController.sessionError}
       sessionLoadIssues={hideSessionLoadIssuesBanner ? [] : runtimeController.sessionLoadIssues}
+      attachmentError={attachmentError}
       dropActive={dropActive}
       dropScopeRef={dropScopeRef}
       listItems={transcriptController.transcript.listItems}
@@ -315,7 +317,7 @@ export function SessionView({
       slashCommands={slashCommands}
       draftAttachments={draftAttachments}
       setDraftAttachments={setDraftAttachments}
-      onAttachmentError={composerState.setSendError}
+      onAttachmentError={handleAttachmentError}
       sendNow={composerState.sendNow}
       hasDraftContent={hasDraftContent}
       hasActiveTurn={runtimeController.hasActiveTurn}

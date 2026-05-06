@@ -47,9 +47,11 @@ vi.mock("../../components/dictation/DictationOnboardingModal", () => ({
 function TestPane({
   session = null,
   interruptSessionId = "",
+  attachmentError = null,
 }: {
   session?: Session | null;
   interruptSessionId?: string;
+  attachmentError?: string | null;
 }) {
   const listItems = useRef<WorkbenchListItem[]>([
     {
@@ -82,6 +84,7 @@ function TestPane({
         session={session}
         sessionError={null}
         sessionLoadIssues={[]}
+        attachmentError={attachmentError}
         dropActive={false}
         dropScopeRef={dropScopeRef}
         listItems={listItems.current}
@@ -218,6 +221,7 @@ function TestMessagePane() {
         session={null}
         sessionError={null}
         sessionLoadIssues={[]}
+        attachmentError={null}
         dropActive={false}
         dropScopeRef={dropScopeRef}
         listItems={listItems.current}
@@ -355,6 +359,7 @@ function TestAssistantPane() {
         session={null}
         sessionError={null}
         sessionLoadIssues={[]}
+        attachmentError={null}
         dropActive={false}
         dropScopeRef={dropScopeRef}
         listItems={listItems.current}
@@ -523,6 +528,19 @@ describe("SessionWorkbenchPane", () => {
     );
 
     expect(screen.getByTestId("session-view")).toHaveAttribute("data-session-id", "session-1");
+  });
+
+  it("renders attachment failures in the top session banner area", () => {
+    const { container } = render(
+      <TestPane attachmentError="Image attachments must be 25 MiB or smaller." />,
+    );
+
+    const banner = screen.getByTestId("session-attachment-error");
+    expect(banner).toHaveTextContent("Attachment Failed");
+    expect(banner).toHaveTextContent("Image attachments must be 25 MiB or smaller.");
+    expect(
+      container.querySelector(".wb-session-left > [data-testid='session-attachment-error']"),
+    ).toBe(banner);
   });
 
   it("expands a turn header when clicked inside the virtualized workbench list", async () => {

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 pub(super) fn to_err(e: impl std::fmt::Display) -> String {
-    e.to_string()
+    format!("{e:#}")
 }
 
 pub(super) fn normalize_path(path: &Path) -> PathBuf {

@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{delete, get, post, put};
 
 use super::*;
+use crate::api::artifacts::MAX_BLOB_MULTIPART_BODY_BYTES;
 use crate::daemon::AppState;
 
 mod provider_routes;
@@ -67,7 +69,10 @@ fn core_routes() -> axum::Router<Arc<AppState>> {
         .route("/api/telemetry/export", get(export_telemetry))
         .route("/api/telemetry/client", post(post_client_telemetry))
         .route("/api/telemetry/events", post(post_semantic_telemetry))
-        .route("/api/blobs", post(upload_blob))
+        .route(
+            "/api/blobs",
+            post(upload_blob).layer(DefaultBodyLimit::max(MAX_BLOB_MULTIPART_BODY_BYTES)),
+        )
         .route("/api/blobs/:id", get(get_blob))
         .route("/api/logs/open", post(open_logs_folder))
         .route("/api/desktop/log", post(append_desktop_log))

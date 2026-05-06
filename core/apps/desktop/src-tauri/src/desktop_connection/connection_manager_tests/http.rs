@@ -67,6 +67,47 @@ fn daemon_request_reuses_connection_http_client() {
 }
 
 #[test]
+fn blob_upload_error_uses_daemon_message() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind test listener");
+    let addr = listener.local_addr().expect("listener addr");
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept request");
+        let mut buf = [0_u8; 2048];
+        let _ = std::io::Read::read(&mut stream, &mut buf);
+        std::io::Write::write_all(
+            &mut stream,
+            b"HTTP/1.1 413 Payload Too Large\r\nContent-Length: 56\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"error\":\"Image attachments must be 25 MiB or smaller.\"}",
+        )
+        .expect("write response");
+    });
+
+    let manager = ConnectionManager::default();
+    manager.set_local_attached(
+        format!("http://{}", addr),
+        "token".to_string(),
+        None,
+        LocalConnectionSource::EnvOverride,
+    );
+
+    let err = manager
+        .upload_blob(
+            vec![1, 2, 3],
+            "image/png".to_string(),
+            Some("x.png".to_string()),
+        )
+        .expect_err("blob upload should fail with daemon message");
+    let message = format!("{err:#}");
+    assert!(
+        message.contains(
+            "image attachment upload failed (413 Payload Too Large): Image attachments must be 25 MiB or smaller."
+        ),
+        "expected daemon upload error message, got: {message}"
+    );
+
+    server.join().expect("join test server");
+}
+
+#[test]
 fn daemon_request_rejects_authorization_header_override() {
     let manager = ConnectionManager::default();
     manager.set_local_attached(

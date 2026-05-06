@@ -48,6 +48,7 @@ type Params = {
   resolveSendText: () => Promise<string>;
   setAtBottom: Dispatch<SetStateAction<boolean>>;
   onDraftPersistNow?: (() => void | Promise<void>) | null;
+  onSendStarted?: (() => void) | null;
 };
 
 type Result = {
@@ -120,6 +121,7 @@ export function useSessionComposerQueueController(params: Params): Result {
     resolveSendText,
     setAtBottom,
     onDraftPersistNow,
+    onSendStarted,
   } = params;
   const [sendBusy, setSendBusy] = useState(false);
   const sendBusyRef = useRef(false);
@@ -285,6 +287,7 @@ export function useSessionComposerQueueController(params: Params): Result {
       setSendBusySafe(false);
       return;
     }
+    onSendStarted?.();
     const attachmentsToSend = draftAttachments.slice();
     const shouldQueue = hasActiveTurn && queuedMessagesEnabled;
     const requestedDelivery = shouldQueue ? "queued" : undefined;
@@ -410,6 +413,7 @@ export function useSessionComposerQueueController(params: Params): Result {
     const targetSessionId = interruptSessionId || sessionId;
     const attachments = getQueuedAttachments(message);
     const content = message.content ?? "";
+    onSendStarted?.();
     markQueueOptimisticallyRemoved(messageId);
     setQueueActionBusyId(messageId);
     setSendErrorState(null);

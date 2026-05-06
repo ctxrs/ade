@@ -122,6 +122,24 @@ describe("useSessionComposerQueueController", () => {
     expect(result.current.onInterruptSession).toBeNull();
   });
 
+  it("notifies when a valid composer send starts", async () => {
+    const onSendStarted = vi.fn();
+    const { result } = renderHook(() =>
+      useSessionComposerQueueController(
+        createHookProps({
+          onSendStarted,
+          optimisticQueuedMessages: [],
+        }),
+      ),
+    );
+
+    await act(async () => {
+      await result.current.sendNow();
+    });
+
+    expect(onSendStarted).toHaveBeenCalledTimes(1);
+  });
+
   it("carries the first optimistic thread message across an immediate session-id handoff", async () => {
     const initialProps = createHookProps({
       sessionId: "session-temp",

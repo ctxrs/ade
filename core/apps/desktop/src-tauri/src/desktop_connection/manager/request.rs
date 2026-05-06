@@ -1,5 +1,29 @@
 use super::*;
 
+fn blob_upload_failure_message(status: reqwest::StatusCode, body: &str) -> String {
+    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(body.trim()) {
+        for key in ["error", "message"] {
+            if let Some(message) = parsed.get(key).and_then(|value| value.as_str()) {
+                let message = message.trim();
+                if !message.is_empty() {
+                    return message.to_string();
+                }
+            }
+        }
+    }
+    if status == reqwest::StatusCode::PAYLOAD_TOO_LARGE {
+        return "Image attachments must be 25 MiB or smaller.".to_string();
+    }
+    let trimmed = body.trim();
+    if !trimmed.is_empty() {
+        return trimmed.to_string();
+    }
+    status
+        .canonical_reason()
+        .map(|reason| reason.to_string())
+        .unwrap_or_else(|| "the daemon rejected the image attachment upload".to_string())
+}
+
 fn is_disallowed_forward_header(name: &str) -> bool {
     name.trim().eq_ignore_ascii_case("authorization")
 }
@@ -153,7 +177,7 @@ impl ConnectionManager {
             .context("invalid mime_type for multipart")?;
         let form = reqwest::blocking::multipart::Form::new().part("file", part);
         let mut req = client
-            .post(url)
+            .post(&url)
             .timeout(Duration::from_secs(60))
             .multipart(form);
         if let Some(t) = token.as_deref() {
@@ -161,11 +185,16 @@ impl ConnectionManager {
                 req = req.bearer_auth(t);
             }
         }
-        let res = req.send().context("uploading blob")?;
+        let res = req
+            .send()
+            .with_context(|| format!("uploading image attachment to {url}"))?;
         let status = res.status();
         let body = res.text().unwrap_or_default();
         if !status.is_success() {
-            return Err(anyhow!("blob upload failed ({status}): {body}"));
+            let message = blob_upload_failure_message(status, &body);
+            return Err(anyhow!(
+                "image attachment upload failed ({status}): {message}"
+            ));
         }
         Ok(serde_json::from_str(&body).context("parsing blob upload response")?)
     }

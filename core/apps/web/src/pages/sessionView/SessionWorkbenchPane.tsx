@@ -70,6 +70,7 @@ type SessionWorkbenchPaneProps = {
   session: Session | null;
   sessionError: SessionErrorState;
   sessionLoadIssues: Array<{ key: "state" | "subagentInvocations"; message: string }>;
+  attachmentError: string | null;
   dropActive: boolean;
   dropScopeRef: MutableRefObject<HTMLDivElement | null>;
   listItems: WorkbenchListItem[];
@@ -190,6 +191,7 @@ export function SessionWorkbenchPane({
   session,
   sessionError,
   sessionLoadIssues,
+  attachmentError,
   dropActive,
   dropScopeRef,
   listItems,
@@ -347,6 +349,16 @@ export function SessionWorkbenchPane({
             ))}
             <div>
               <button type="button" onClick={onRetrySessionLoads}>Retry</button>
+            </div>
+          </div>
+        ) : null}
+        {attachmentError ? (
+          <div className="banner" role="alert" data-testid="session-attachment-error">
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <strong>Attachment Failed</strong>
+            </div>
+            <div className="error" style={{ whiteSpace: "pre-wrap" }}>
+              {attachmentError}
             </div>
           </div>
         ) : null}

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use axum::body::{Body, Bytes};
-use axum::extract::{Multipart, Path, State};
+use axum::extract::{FromRequest, Multipart, Path, Request, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::Response;
 use axum::Json;
@@ -31,6 +31,47 @@ pub(super) struct BlobUploadResp {
     pub(super) mime_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) name: Option<String>,
+}
+
+pub(super) const MAX_BLOB_BYTES: usize = 25 * 1024 * 1024;
+pub(super) const MAX_BLOB_MULTIPART_BODY_BYTES: usize = MAX_BLOB_BYTES + 64 * 1024;
+const IMAGE_ATTACHMENT_TOO_LARGE_MESSAGE: &str = "Image attachments must be 25 MiB or smaller.";
+
+fn blob_upload_api_error(
+    status: StatusCode,
+    error: impl Into<String>,
+) -> (StatusCode, Json<ApiErrorResp>) {
+    (
+        status,
+        Json(ApiErrorResp {
+            error: error.into(),
+        }),
+    )
+}
+
+fn blob_upload_status_error(status: StatusCode) -> (StatusCode, Json<ApiErrorResp>) {
+    match status {
+        StatusCode::PAYLOAD_TOO_LARGE => {
+            blob_upload_api_error(status, IMAGE_ATTACHMENT_TOO_LARGE_MESSAGE)
+        }
+        StatusCode::UNSUPPORTED_MEDIA_TYPE => {
+            blob_upload_api_error(status, "Only image attachments are supported.")
+        }
+        StatusCode::INTERNAL_SERVER_ERROR => {
+            blob_upload_api_error(status, "Failed to store image attachment.")
+        }
+        _ => blob_upload_api_error(status, "Image attachment upload failed."),
+    }
+}
+
+fn blob_upload_multipart_rejection_error(status: StatusCode) -> (StatusCode, Json<ApiErrorResp>) {
+    if status == StatusCode::PAYLOAD_TOO_LARGE {
+        return blob_upload_api_error(status, IMAGE_ATTACHMENT_TOO_LARGE_MESSAGE);
+    }
+    blob_upload_api_error(
+        StatusCode::BAD_REQUEST,
+        "Image attachment upload was not valid multipart form data.",
+    )
 }
 
 fn blobs_dir(data_root: &StdPath) -> PathBuf {
@@ -155,7 +196,6 @@ pub(super) async fn persist_blob_bytes(
     mime_type: &str,
     name: Option<&str>,
 ) -> Result<BlobUploadResp, StatusCode> {
-    const MAX_BLOB_BYTES: usize = 25 * 1024 * 1024;
     if bytes.len() > MAX_BLOB_BYTES {
         return Err(StatusCode::PAYLOAD_TOO_LARGE);
     }
@@ -207,29 +247,57 @@ pub(super) async fn persist_blob_bytes(
 
 pub(super) async fn upload_blob(
     State(state): State<Arc<AppState>>,
-    mut multipart: Multipart,
-) -> Result<Json<BlobUploadResp>, StatusCode> {
+    req: Request,
+) -> Result<Json<BlobUploadResp>, (StatusCode, Json<ApiErrorResp>)> {
+    let mut multipart = Multipart::from_request(req, &state)
+        .await
+        .map_err(|rejection| blob_upload_multipart_rejection_error(rejection.status()))?;
     let mut file_name: Option<String> = None;
     let mut mime_type: Option<String> = None;
     let mut bytes: Option<Bytes> = None;
 
-    while let Ok(Some(field)) = multipart.next_field().await {
+    while let Some(field) = multipart.next_field().await.map_err(|_| {
+        blob_upload_api_error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            IMAGE_ATTACHMENT_TOO_LARGE_MESSAGE,
+        )
+    })? {
         let name = field.name().map(|s| s.to_string()).unwrap_or_default();
         if name != "file" {
             continue;
         }
+        let mut field = field;
         file_name = field.file_name().map(|s| s.to_string());
         mime_type = field.content_type().map(|s| s.to_string());
-        let b = field.bytes().await.map_err(|_| StatusCode::BAD_REQUEST)?;
-        bytes = Some(b);
+        let mut field_bytes = Vec::new();
+        while let Some(chunk) = field.chunk().await.map_err(|_| {
+            blob_upload_api_error(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                IMAGE_ATTACHMENT_TOO_LARGE_MESSAGE,
+            )
+        })? {
+            if field_bytes.len().saturating_add(chunk.len()) > MAX_BLOB_BYTES {
+                return Err(blob_upload_api_error(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    IMAGE_ATTACHMENT_TOO_LARGE_MESSAGE,
+                ));
+            }
+            field_bytes.extend_from_slice(&chunk);
+        }
+        bytes = Some(Bytes::from(field_bytes));
         break;
     }
 
     let Some(bytes) = bytes else {
-        return Err(StatusCode::BAD_REQUEST);
+        return Err(blob_upload_api_error(
+            StatusCode::BAD_REQUEST,
+            "Image attachment upload requires a file field.",
+        ));
     };
     let mime_type = infer_upload_blob_mime_type(file_name.as_deref(), mime_type);
-    let resp = persist_blob_bytes(&state, &bytes, &mime_type, file_name.as_deref()).await?;
+    let resp = persist_blob_bytes(&state, &bytes, &mime_type, file_name.as_deref())
+        .await
+        .map_err(blob_upload_status_error)?;
     Ok(Json(resp))
 }
 
