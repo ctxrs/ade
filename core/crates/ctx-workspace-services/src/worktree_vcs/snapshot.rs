@@ -8,9 +8,42 @@ use ctx_core::models::{
 };
 
 use super::{
-    GitStatusEntry, GitStatusSnapshot, WORKTREE_VCS_SNAPSHOT_SCHEMA_VERSION,
-    WORKTREE_VCS_TOUCHED_FILES_CAP,
+    GitStatusEntry, GitStatusSnapshot, WorktreeDiffBaseResolution,
+    WORKTREE_VCS_SNAPSHOT_SCHEMA_VERSION, WORKTREE_VCS_TOUCHED_FILES_CAP,
 };
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WorktreeVcsCommitLookup {
+    Resolved(String),
+    Head,
+    TargetBranch(String),
+    Missing,
+}
+
+#[derive(Clone, Debug)]
+pub struct WorktreeVcsCommitInfoPlan {
+    pub base_commit_sha: String,
+    pub target_branch: Option<String>,
+    pub base_resolution: WorktreeVcsBaseResolution,
+    pub head_commit_sha: WorktreeVcsCommitLookup,
+    pub target_branch_commit_sha: WorktreeVcsCommitLookup,
+}
+
+impl WorktreeVcsCommitInfoPlan {
+    pub fn into_commit_info(
+        self,
+        head_commit_sha: String,
+        target_branch_commit_sha: Option<String>,
+    ) -> WorktreeVcsSnapshotCommitInfo {
+        WorktreeVcsSnapshotCommitInfo {
+            base_commit_sha: self.base_commit_sha,
+            head_commit_sha,
+            target_branch: self.target_branch,
+            target_branch_commit_sha,
+            base_resolution: self.base_resolution,
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct WorktreeVcsSnapshotCommitInfo {
@@ -111,6 +144,53 @@ pub fn summary_has_counts(summary: &WorktreeVcsSummary) -> bool {
         || summary.line_additions.is_some()
         || summary.line_deletions.is_some()
         || summary.line_count.is_some()
+}
+
+pub fn plan_worktree_vcs_commit_info(
+    resolution: WorktreeDiffBaseResolution,
+    unavailable_reason: Option<DiffUnavailableReason>,
+) -> WorktreeVcsCommitInfoPlan {
+    let base_commit_sha = resolution.base_commit_sha;
+    let target_branch = resolution.target_branch;
+    let resolved_head_commit_sha = resolution.head_commit_sha;
+    let resolved_target_branch_commit_sha = resolution.target_branch_commit_sha;
+    let base_resolution = WorktreeVcsBaseResolution {
+        kind: resolution.kind,
+        target_source: resolution.target_source,
+        error: resolution.error,
+    };
+
+    if matches!(unavailable_reason, Some(DiffUnavailableReason::NoRepo)) {
+        return WorktreeVcsCommitInfoPlan {
+            head_commit_sha: WorktreeVcsCommitLookup::Resolved(base_commit_sha.clone()),
+            base_commit_sha,
+            target_branch,
+            target_branch_commit_sha: WorktreeVcsCommitLookup::Missing,
+            base_resolution,
+        };
+    }
+
+    let allow_live_target_lookup = unavailable_reason.is_none();
+    let head_commit_sha = resolved_head_commit_sha
+        .map(WorktreeVcsCommitLookup::Resolved)
+        .unwrap_or(WorktreeVcsCommitLookup::Head);
+    let target_branch_commit_sha = match (
+        resolved_target_branch_commit_sha,
+        target_branch.clone(),
+        allow_live_target_lookup,
+    ) {
+        (Some(commit), _, _) => WorktreeVcsCommitLookup::Resolved(commit),
+        (None, Some(target_branch), true) => WorktreeVcsCommitLookup::TargetBranch(target_branch),
+        (None, _, _) => WorktreeVcsCommitLookup::Missing,
+    };
+
+    WorktreeVcsCommitInfoPlan {
+        base_commit_sha,
+        target_branch,
+        base_resolution,
+        head_commit_sha,
+        target_branch_commit_sha,
+    }
 }
 
 pub fn derive_worktree_vcs_freshness(
@@ -222,6 +302,83 @@ mod tests {
         );
         assert_eq!(snapshot.rev, 0);
         assert_eq!(snapshot.emitted_at_ms, 0);
+    }
+
+    #[test]
+    fn commit_info_plan_uses_base_as_head_for_no_repo() {
+        let plan = plan_worktree_vcs_commit_info(
+            WorktreeDiffBaseResolution {
+                base_commit_sha: "base".to_string(),
+                head_commit_sha: None,
+                target_branch: Some("main".to_string()),
+                target_branch_commit_sha: None,
+                target_source: None,
+                kind: Default::default(),
+                error: Some("not a repo".to_string()),
+                unavailable_reason: Some(DiffUnavailableReason::NoRepo),
+                explicit_target: false,
+            },
+            Some(DiffUnavailableReason::NoRepo),
+        );
+
+        assert_eq!(
+            plan.head_commit_sha,
+            WorktreeVcsCommitLookup::Resolved("base".to_string())
+        );
+        assert_eq!(
+            plan.target_branch_commit_sha,
+            WorktreeVcsCommitLookup::Missing
+        );
+    }
+
+    #[test]
+    fn commit_info_plan_requests_live_target_only_when_available() {
+        let plan = plan_worktree_vcs_commit_info(
+            WorktreeDiffBaseResolution {
+                base_commit_sha: "base".to_string(),
+                head_commit_sha: Some("head".to_string()),
+                target_branch: Some("main".to_string()),
+                target_branch_commit_sha: None,
+                target_source: None,
+                kind: Default::default(),
+                error: None,
+                unavailable_reason: None,
+                explicit_target: false,
+            },
+            None,
+        );
+
+        assert_eq!(
+            plan.head_commit_sha,
+            WorktreeVcsCommitLookup::Resolved("head".to_string())
+        );
+        assert_eq!(
+            plan.target_branch_commit_sha,
+            WorktreeVcsCommitLookup::TargetBranch("main".to_string())
+        );
+    }
+
+    #[test]
+    fn commit_info_plan_skips_live_target_for_unavailable_diff() {
+        let plan = plan_worktree_vcs_commit_info(
+            WorktreeDiffBaseResolution {
+                base_commit_sha: "base".to_string(),
+                head_commit_sha: Some("head".to_string()),
+                target_branch: Some("main".to_string()),
+                target_branch_commit_sha: None,
+                target_source: None,
+                kind: Default::default(),
+                error: Some("missing target".to_string()),
+                unavailable_reason: Some(DiffUnavailableReason::NoTargetBranch),
+                explicit_target: true,
+            },
+            Some(DiffUnavailableReason::NoTargetBranch),
+        );
+
+        assert_eq!(
+            plan.target_branch_commit_sha,
+            WorktreeVcsCommitLookup::Missing
+        );
     }
 
     #[test]

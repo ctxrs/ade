@@ -31,8 +31,9 @@ pub use runtime::{
 pub use snapshot::{
     build_git_status_entries, build_git_status_summary, build_large_change_set_touched_files,
     build_touched_files, build_worktree_vcs_snapshot, derive_worktree_vcs_freshness, now_epoch_ms,
-    snapshot_fingerprint, snapshot_for_durable_cache, summary_from_file_count, summary_has_counts,
-    WorktreeVcsSnapshotBuildParts, WorktreeVcsSnapshotCommitInfo,
+    plan_worktree_vcs_commit_info, snapshot_fingerprint, snapshot_for_durable_cache,
+    summary_from_file_count, summary_has_counts, WorktreeVcsCommitInfoPlan,
+    WorktreeVcsCommitLookup, WorktreeVcsSnapshotBuildParts, WorktreeVcsSnapshotCommitInfo,
 };
 
 #[derive(Debug, Clone, Serialize)]
