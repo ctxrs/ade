@@ -1,4 +1,7 @@
 use self::assistant::handle_assistant_complete;
+use self::provider_events::{
+    claim_init_provider_session_ref, enrich_done_payload, record_first_provider_event_metric,
+};
 use self::state::{
     should_check_store_terminal_status, should_drop_post_terminal_event,
     should_process_post_terminal_assistant_complete, EventLoopRuntimeState,
@@ -8,18 +11,17 @@ use self::terminal::{
     is_truthful_start_activity,
 };
 use self::tools::{handle_persisted_tool_event, prepare_tool_event_payload};
-use super::helpers::{read_codex_context_window_metrics, should_track_thought_chunk};
+use super::helpers::should_track_thought_chunk;
 use super::*;
-use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 use crate::scheduler::TurnStartProgress;
 use ctx_core::ids::MessageId;
 use ctx_session_tools::normalize_tool_event;
 use ctx_session_tools::order_seq::attach_order_seq;
-use std::collections::HashMap;
 use std::sync::Weak;
 
 mod assistant;
 mod failure;
+mod provider_events;
 mod state;
 mod terminal;
 mod tools;
@@ -76,94 +78,21 @@ async fn run_turn_event_loop(mut ctx: TurnEventLoop) {
         let mut payload = raw_payload.clone();
 
         if runtime.mark_first_event_seen() {
-            let first_ms = ctx.run_started_at.elapsed().as_millis() as u64;
-            let mut first_labels = HashMap::new();
-            first_labels.insert("provider_id".to_string(), ctx.provider_id.clone());
-            first_labels.insert("model_id".to_string(), ctx.model_id.clone());
-            first_labels.insert(
-                "execution_environment".to_string(),
-                ctx.execution_environment_label.clone(),
-            );
-            first_labels.insert(
-                "session_root_kind".to_string(),
-                ctx.session_root_kind.clone(),
-            );
-            first_labels.insert("event".to_string(), "first_event".to_string());
-            let first_metric = PerfMetric {
-                name: "provider.first_event_ms".to_string(),
-                kind: PerfMetricKind::Histogram,
-                unit: "ms".to_string(),
-                value: first_ms as f64,
-                labels: first_labels,
-            };
-            state
-                .telemetry
-                .perf_telemetry
-                .record_metric(first_metric, ctx.perf_run_id.clone(), None, None)
-                .await;
+            record_first_provider_event_metric(&ctx, state.as_ref()).await;
         }
 
         if matches!(&ev.event_type, SessionEventType::Init) {
-            if payload.get("crp_session_id").is_some() {
-                state
-                    .emit_compat_payload_reject_counter(
-                        "scheduler.init_event",
-                        "crp_session_id",
-                        None,
-                    )
-                    .await;
-            }
-            let provider_session_id = payload.get("provider_session_id").and_then(Value::as_str);
-            if let Some(ps) = provider_session_id {
-                match ctx
-                    .store
-                    .claim_session_provider_session_ref(
-                        ctx.session_id,
-                        ps.to_string(),
-                        "scheduler.init_event",
-                    )
-                    .await
-                {
-                    Ok(()) => {
-                        ctx.provider_session_ref = Some(ps.to_string());
-                    }
-                    Err(err) => {
-                        event_type = SessionEventType::Error;
-                        payload = json!({
-                            "message": err.to_string(),
-                            "reason": "provider_session_ref_claim_failed",
-                            "kind": "provider_session_ref_claim_failed",
-                            "details": {
-                                "provider_session_id": ps,
-                                "provider_id": ctx.provider_id.clone(),
-                            },
-                        });
-                    }
-                }
-            }
+            claim_init_provider_session_ref(
+                &mut ctx,
+                state.as_ref(),
+                &mut event_type,
+                &mut payload,
+            )
+            .await;
         }
 
         if matches!(&ev.event_type, SessionEventType::Done) {
-            if let Some(obj) = payload.as_object_mut() {
-                if obj.get("context_window").is_none() {
-                    let metrics = if ctx.provider_id == "codex" {
-                        ctx.codex_home
-                            .as_deref()
-                            .and_then(|home| {
-                                ctx.provider_session_ref.as_deref().and_then(|session_ref| {
-                                    read_codex_context_window_metrics(home, session_ref)
-                                })
-                            })
-                            .or_else(|| ctx.context_window_metrics.clone())
-                    } else {
-                        ctx.context_window_metrics.clone()
-                    };
-                    if let Some(metrics) = metrics {
-                        obj.entry("context_window").or_insert(metrics);
-                    }
-                }
-                obj.entry("status").or_insert(json!("completed"));
-            }
+            enrich_done_payload(&ctx, &mut payload);
         }
 
         let allow_post_terminal_assistant_complete =
