@@ -12,7 +12,6 @@ use crate::ops_events::{OpsEvent, OpsEvents};
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
 use crate::provider_guard;
 use crate::provider_restart;
-use crate::provider_usage;
 use crate::resource_governance::ResourceGovernanceRuntime;
 use crate::runtime_adapters::{
     CtxExecutionHarness, CtxRuntimeEventSink, CtxRuntimeMetricsSink, DefaultWarmupOperations,
@@ -31,6 +30,7 @@ use ctx_provider_install::install_state::{
     InstallErrorCode, InstallEventLevel, InstallId, InstallProgressEvent, InstallState,
     InstallStateKind, InstallTarget,
 };
+use ctx_provider_runtime::provider_usage;
 use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
 use ctx_providers::ask_user_question::AskUserQuestionBroker;
 use ctx_resource_utilization::ResourceSampler;

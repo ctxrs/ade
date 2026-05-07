@@ -24,7 +24,6 @@ use crate::memleak_debug;
 use crate::provider_child_reclassifier;
 use crate::provider_guard;
 use crate::provider_restart;
-use crate::provider_usage;
 use crate::resource_governance;
 use crate::resource_telemetry;
 use crate::scheduler::reconcile_turn_terminal_state;
@@ -33,6 +32,7 @@ use crate::storage_guard;
 use crate::telemetry::TelemetryConfig;
 use crate::tool_cgroup;
 use ctx_provider_install::install_state::InstallTarget;
+use ctx_provider_runtime::provider_usage;
 
 mod activity;
 mod auth;

@@ -22,7 +22,6 @@ mod provider_launch;
 pub mod provider_restart;
 mod provider_runtime;
 mod provider_unknown_events;
-mod provider_usage;
 pub mod resource_governance;
 pub mod resource_telemetry;
 mod runtime_adapters;

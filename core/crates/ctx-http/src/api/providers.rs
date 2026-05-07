@@ -19,7 +19,6 @@ use super::errors::ApiErrorResp;
 use crate::daemon::AppState;
 use crate::installer;
 use crate::logs;
-use crate::provider_usage;
 use ctx_core::ids::WorkspaceId;
 use ctx_core::provider_ids::CODEX_PROVIDER_ID;
 use ctx_harness_sources as harness_sources;
@@ -29,6 +28,7 @@ use ctx_provider_auth_import as provider_auth_import;
 #[cfg(test)]
 use ctx_provider_install::install_state::InstallId;
 use ctx_provider_install::install_state::InstallTarget;
+use ctx_provider_runtime::provider_usage;
 use ctx_providers::adapters::{ProviderRestartMode, ProviderStatus};
 
 mod accounts;

@@ -1,4 +1,5 @@
 use super::*;
+use ctx_provider_runtime::provider_usage::ProviderUsageSnapshot;
 
 #[tokio::test]
 async fn codex_accounts_usage_surfaces_agent_server_config_errors() {
@@ -52,7 +53,7 @@ async fn provider_usage_cache_hit_surfaces_agent_server_config_errors_for_codex(
     ));
     state.providers.usage_cache.lock().await.insert(
         "codex".to_string(),
-        crate::provider_usage::ProviderUsageSnapshot {
+        ProviderUsageSnapshot {
             provider_id: "codex".to_string(),
             source: "oauth".to_string(),
             fetched_at: chrono::Utc::now(),
@@ -120,7 +121,7 @@ async fn provider_usage_cache_hit_projects_requested_provider_alias_for_codex() 
     ));
     state.providers.usage_cache.lock().await.insert(
         "codex".to_string(),
-        crate::provider_usage::ProviderUsageSnapshot {
+        ProviderUsageSnapshot {
             provider_id: "codex".to_string(),
             source: "oauth".to_string(),
             fetched_at: chrono::Utc::now(),
