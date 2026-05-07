@@ -37,6 +37,7 @@ mod lifecycle;
 mod listener;
 mod managed_auto_update;
 mod mcp_auth;
+mod mobile_startup;
 mod provider_adapters;
 mod provider_bootstrap;
 mod provider_registry;
@@ -208,39 +209,7 @@ pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
     managed_auto_update::spawn_managed_daemon_auto_update(state.clone(), requested_binds.clone());
     lifecycle::spawn_process_shutdown_listener(state.clone());
 
-    // Reconnect managed mobile access tunnel on daemon start when enabled.
-    {
-        let state = Arc::clone(&state);
-        tokio::spawn(async move {
-            if state.core.auth_token.is_none() {
-                return;
-            }
-            let cfg = match state.global_store().get_mobile_access_config().await {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!("failed to read saved mobile access config: {e:#}");
-                    return;
-                }
-            };
-            let Some(cfg) = cfg else {
-                return;
-            };
-            if !cfg.enabled {
-                return;
-            }
-
-            let start_cfg = ctx_transport_runtime::mobile_tunnel::StartMobileTunnelConfig {
-                relay_base_url: cfg.relay_base_url,
-                tunnel_id: cfg.tunnel_id,
-                tunnel_secret: cfg.tunnel_secret,
-                public_base_url: cfg.public_base_url.trim_end_matches('/').to_string(),
-                local_daemon_url: state.core.daemon_url.trim_end_matches('/').to_string(),
-            };
-            if let Err(e) = state.transport.mobile_tunnel.start(start_cfg).await {
-                tracing::warn!("failed to start saved mobile tunnel: {e:#}");
-            }
-        });
-    }
+    mobile_startup::spawn_saved_mobile_tunnel_reconnect(state.clone());
 
     spawn_startup_provider_status_refresh(state.clone());
     let app: Router = api::router(state.clone());
