@@ -2,10 +2,9 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use ctx_core::models::Worktree;
-use ctx_fs::vcs;
 use ctx_workspace_config as workspace_config;
 use ctx_workspace_services::worktree_vcs::{
-    is_no_vcs_repo_error, worktree_vcs_structured_status_from_vcs, WorktreeVcsCommitLookupSource,
+    is_no_vcs_repo_error, LocalWorktreeVcsSource, WorktreeVcsCommitLookupSource,
     WorktreeVcsDiffBaseSource, WorktreeVcsGitCommand, WorktreeVcsStatusSource,
     WorktreeVcsStructuredStatus,
 };
@@ -15,7 +14,6 @@ use crate::settings::ExecutionMode;
 use crate::worktree_data_plane::resolve_worktree_data_plane;
 
 use super::sandbox::{container_git_status_structured, container_git_stdout};
-use super::vcs_driver_for_worktree;
 
 pub(crate) struct HttpWorktreeVcsSource<'a> {
     state: &'a Arc<AppState>,
@@ -46,17 +44,9 @@ impl WorktreeVcsStatusSource for HttpWorktreeVcsSource<'_> {
             };
         }
 
-        let root = data_plane.live_worktree_root.as_path();
-        let driver = match vcs::driver_for_path(root).await {
-            Ok(driver) => driver,
-            Err(err) if is_no_vcs_repo_error(&err) => return Ok(false),
-            Err(err) => return Err(err),
-        };
-        match driver.assert_repo(root).await {
-            Ok(()) => Ok(true),
-            Err(err) if is_no_vcs_repo_error(&err) => Ok(false),
-            Err(err) => Err(err),
-        }
+        LocalWorktreeVcsSource::new(self.worktree, data_plane.live_worktree_root.as_path())
+            .has_vcs_repo()
+            .await
     }
 
     async fn load_structured_status(
@@ -75,11 +65,9 @@ impl WorktreeVcsStatusSource for HttpWorktreeVcsSource<'_> {
             )
             .await?
         } else {
-            let vcs = vcs_driver_for_worktree(self.worktree);
-            worktree_vcs_structured_status_from_vcs(
-                vcs.status_structured(root, include_untracked_files, include_entries)
-                    .await?,
-            )
+            LocalWorktreeVcsSource::new(self.worktree, root)
+                .load_structured_status(include_untracked_files, include_entries)
+                .await?
         };
         Ok(structured)
     }
@@ -103,12 +91,9 @@ impl WorktreeVcsCommitLookupSource for HttpWorktreeVcsSource<'_> {
                 &bytes,
             ));
         }
-        let driver = vcs::driver_for_path(root).await?;
-        if reference == "HEAD" {
-            driver.rev_parse_head(root).await
-        } else {
-            driver.rev_parse_ref(root, reference).await
-        }
+        LocalWorktreeVcsSource::new(self.worktree, root)
+            .resolve_commit(reference)
+            .await
     }
 }
 
@@ -144,17 +129,9 @@ impl WorktreeVcsDiffBaseSource for HttpWorktreeVcsSource<'_> {
             return ctx_workspace_services::worktree_vcs::parse_git_refs(&bytes, references.len());
         }
 
-        let driver = vcs::driver_for_path(root).await?;
-        let mut commits = Vec::with_capacity(references.len());
-        for reference in references {
-            let commit = if *reference == "HEAD" {
-                driver.rev_parse_head(root).await?
-            } else {
-                driver.rev_parse_ref(root, reference).await?
-            };
-            commits.push(commit);
-        }
-        Ok(commits)
+        LocalWorktreeVcsSource::new(self.worktree, root)
+            .rev_parse_refs(references)
+            .await
     }
 
     async fn merge_base(&self, target_branch: &str) -> Result<String> {
@@ -173,8 +150,9 @@ impl WorktreeVcsDiffBaseSource for HttpWorktreeVcsSource<'_> {
                 &bytes,
             ));
         }
-        let driver = vcs::driver_for_path(root).await?;
-        driver.merge_base(root, target_branch, "HEAD").await
+        LocalWorktreeVcsSource::new(self.worktree, root)
+            .merge_base(target_branch)
+            .await
     }
 
     fn redact_error(&self, err: &anyhow::Error) -> String {

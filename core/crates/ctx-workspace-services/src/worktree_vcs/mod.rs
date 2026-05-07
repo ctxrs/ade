@@ -2,6 +2,7 @@ mod cache;
 mod diff_output;
 mod diff_paths;
 mod git_commands;
+mod local_source;
 mod projection;
 mod resolution;
 mod runtime;
@@ -30,6 +31,7 @@ pub use git_commands::{
     parse_git_diff_name_status, parse_git_list_untracked, parse_git_refs, parse_git_single_ref,
     WorktreeVcsGitCommand,
 };
+pub use local_source::LocalWorktreeVcsSource;
 pub use projection::{
     plan_worktree_vcs_summary_refresh, plan_worktree_vcs_touched_files_refresh,
     worktree_vcs_dirty_transient_snapshot, worktree_vcs_projection_cache_state,
