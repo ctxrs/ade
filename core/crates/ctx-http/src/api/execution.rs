@@ -51,14 +51,19 @@ pub(super) async fn launch_start(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ExecutionLaunchStartReq>,
 ) -> Result<Json<ExecutionLaunchSnapshot>, (StatusCode, Json<ApiErrorResp>)> {
-    state.reject_if_update_draining().await.map_err(|err| {
-        (
-            StatusCode::CONFLICT,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&err.to_string()),
-            }),
-        )
-    })?;
+    state
+        .core
+        .update_drain
+        .reject_if_draining()
+        .await
+        .map_err(|err| {
+            (
+                StatusCode::CONFLICT,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&err.to_string()),
+                }),
+            )
+        })?;
     let kind = req.kind.unwrap_or(ExecutionSetupJobKind::WorkspaceLaunch);
     let snapshot = match kind {
         ExecutionSetupJobKind::WorkspaceLaunch => {
@@ -157,7 +162,9 @@ pub(super) async fn linux_sandbox_runtime_prepare(
     Json(req): Json<LinuxSandboxRuntimePrepareReq>,
 ) -> Result<Json<LinuxSandboxRuntimePrepareResult>, (StatusCode, Json<ApiErrorResp>)> {
     if state
-        .acquire_update_drain("linux_sandbox_runtime_prepare", "execution_api")
+        .core
+        .update_drain
+        .acquire("linux_sandbox_runtime_prepare", "execution_api")
         .await
         .is_none()
     {
@@ -173,7 +180,7 @@ pub(super) async fn linux_sandbox_runtime_prepare(
         .map_err(|err| {
             let state = state.clone();
             tokio::spawn(async move {
-                let _ = state.release_update_drain().await;
+                let _ = state.core.update_drain.release().await;
             });
             tracing::warn!(target: "linux_sandbox", error = %logs::redact_sensitive(&err.to_string()), "linux_sandbox_runtime_prepare activity gate error");
             (
@@ -182,7 +189,7 @@ pub(super) async fn linux_sandbox_runtime_prepare(
             )
         })?;
     if activity.active {
-        let _ = state.release_update_drain().await;
+        let _ = state.core.update_drain.release().await;
         return Err((
             StatusCode::CONFLICT,
             Json(ApiErrorResp {
@@ -201,7 +208,7 @@ pub(super) async fn linux_sandbox_runtime_prepare(
     .map_err(|err| {
         let state = state.clone();
         tokio::spawn(async move {
-            let _ = state.release_update_drain().await;
+            let _ = state.core.update_drain.release().await;
         });
         tracing::warn!(target: "linux_sandbox", error = %logs::redact_sensitive(&err.to_string()), "linux_sandbox_runtime_prepare error");
         (
@@ -209,7 +216,7 @@ pub(super) async fn linux_sandbox_runtime_prepare(
             Json(ApiErrorResp { error: linux_sandbox_user_message("prepare") }),
         )
     })?;
-    let _ = state.release_update_drain().await;
+    let _ = state.core.update_drain.release().await;
     Ok(Json(result))
 }
 

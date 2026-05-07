@@ -1,6 +1,7 @@
 use super::*;
 use crate::daemon::McpAuthContext;
 use ctx_execution_runtime::ExecutionSetupCoordinator;
+use ctx_update_service::UpdateDrainCoordinator;
 use ctx_workspace_services::worktree_vcs::{WorktreeVcsRuntimeState, WorktreeVcsSchedulerRuntime};
 
 pub struct CoreState {
@@ -16,14 +17,7 @@ pub struct CoreState {
     pub(crate) mcp_auth: Mutex<HashMap<String, TimedEntry<McpAuthContext>>>,
     pub ask_user_question: Arc<AskUserQuestionBroker>,
     pub shutdown_tx: broadcast::Sender<()>,
-    pub update_drain: Arc<Mutex<Option<UpdateDrainState>>>,
-}
-
-#[derive(Clone, Debug, serde::Serialize)]
-pub struct UpdateDrainState {
-    pub reason: String,
-    pub owner: String,
-    pub acquired_at_ms: u64,
+    pub update_drain: Arc<UpdateDrainCoordinator>,
 }
 
 pub type SessionRuntime = ctx_session_service::runtime::SessionRuntime<SchedulerCommand>;

@@ -285,7 +285,11 @@ pub(crate) async fn shutdown_shared_substrate(
 
 async fn trigger_daemon_shutdown(state: Arc<AppState>, reason: &str) {
     tracing::info!("daemon shutdown requested: {reason}");
-    let _ = state.acquire_update_drain(reason, "daemon_shutdown").await;
+    let _ = state
+        .core
+        .update_drain
+        .acquire(reason, "daemon_shutdown")
+        .await;
     if let Err(err) = crate::daemon::reconcile_running_turns_with_reason(&state, reason).await {
         tracing::warn!("failed to reconcile running turns during daemon shutdown: {err:#}");
     }

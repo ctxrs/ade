@@ -51,6 +51,7 @@ pub use activity::{
     daemon_sandbox_work_activity_summary, daemon_turn_activity_summary, ActiveTurnRecord,
     DaemonSandboxWorkActivitySummary, DaemonTurnActivitySummary,
 };
+pub use ctx_update_service::UpdateDrainState;
 pub(crate) use lifecycle::spawn_deferred_daemon_shutdown;
 #[cfg(test)]
 pub(crate) use lifecycle::{collect_provider_adapters_for_shutdown, shutdown_provider_adapters};
@@ -77,8 +78,8 @@ pub(crate) use state::WorktreeVcsDirtyBits;
 pub use state::{
     AppRuntimeFlags, AppState, CacheSweepConfig, CacheSweepStats, CachedFileCompletions,
     CachedProviderOptions, CachedProviderVerify, GitStatusSnapshotCacheEntry, SessionHeadCacheKey,
-    StoreLookup, TimedEntry, UpdateDrainState, WorkspaceActiveHeadCacheEntry,
-    WorkspaceActiveSnapshotCacheEntry, WorktreeVcsSnapshotCacheEntry,
+    StoreLookup, TimedEntry, WorkspaceActiveHeadCacheEntry, WorkspaceActiveSnapshotCacheEntry,
+    WorktreeVcsSnapshotCacheEntry,
 };
 
 async fn prune_archived_session_data_for_all_workspaces(

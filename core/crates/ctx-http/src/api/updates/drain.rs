@@ -63,7 +63,9 @@ pub(in crate::api) async fn shutdown_daemon(
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| "desktop_quit".to_string());
     let acquired_drain = state
-        .acquire_update_drain(&reason, "daemon_shutdown")
+        .core
+        .update_drain
+        .acquire(&reason, "daemon_shutdown")
         .await
         .is_some();
 
@@ -79,7 +81,7 @@ pub(in crate::api) async fn shutdown_daemon(
             Ok(activity) => activity,
             Err(err) => {
                 if acquired_drain {
-                    let _ = state.release_update_drain().await;
+                    let _ = state.core.update_drain.release().await;
                 }
                 return Err(internal_error_response(err));
             }
@@ -92,7 +94,7 @@ pub(in crate::api) async fn shutdown_daemon(
 
     if let Err(err) = crate::daemon::reconcile_running_turns_with_reason(&state, &reason).await {
         if acquired_drain {
-            let _ = state.release_update_drain().await;
+            let _ = state.core.update_drain.release().await;
         }
         return Err(internal_error_response(err));
     }
@@ -100,7 +102,7 @@ pub(in crate::api) async fn shutdown_daemon(
         Ok(activity) => activity,
         Err(err) => {
             if acquired_drain {
-                let _ = state.release_update_drain().await;
+                let _ = state.core.update_drain.release().await;
             }
             return Err(internal_error_response(err));
         }
@@ -152,7 +154,13 @@ pub(in crate::api) async fn begin_update_drain(
         .owner
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| "unknown".to_string());
-    if state.acquire_update_drain(reason, owner).await.is_none() {
+    if state
+        .core
+        .update_drain
+        .acquire(reason, owner)
+        .await
+        .is_none()
+    {
         return Err((
             StatusCode::CONFLICT,
             Json(ApiErrorResp {
@@ -165,7 +173,7 @@ pub(in crate::api) async fn begin_update_drain(
         .map_err(|err| {
             let state = state.clone();
             tokio::spawn(async move {
-                let _ = state.release_update_drain().await;
+                let _ = state.core.update_drain.release().await;
             });
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -175,7 +183,7 @@ pub(in crate::api) async fn begin_update_drain(
             )
         })?;
     if !activity.idle {
-        let _ = state.release_update_drain().await;
+        let _ = state.core.update_drain.release().await;
         return Err((
             StatusCode::CONFLICT,
             Json(ApiErrorResp {
@@ -212,6 +220,6 @@ pub(in crate::api) async fn release_update_drain(
             }),
         ));
     }
-    let released = state.release_update_drain().await;
+    let released = state.core.update_drain.release().await;
     Ok(Json(ReleaseUpdateDrainResp { released }))
 }

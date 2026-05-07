@@ -143,7 +143,7 @@ impl AppState {
                 mcp_auth: Mutex::new(HashMap::new()),
                 ask_user_question,
                 shutdown_tx,
-                update_drain: Arc::new(Mutex::new(None)),
+                update_drain: Arc::new(ctx_update_service::UpdateDrainCoordinator::new()),
             },
             sessions: SessionRuntime::new_from_env(),
             workspaces: WorkspaceRuntime {

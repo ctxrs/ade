@@ -84,7 +84,7 @@ pub(crate) async fn start_turn(
     order_seq_state: Arc<Mutex<OrderSeqState>>,
 ) -> Result<RunningTurn> {
     state.wait_for_worktree_bootstrap(session.worktree_id).await;
-    state.reject_if_update_draining().await?;
+    state.core.update_drain.reject_if_draining().await?;
     storage_guard::preflight_turn_start(state, workdir).await?;
 
     let store = state.store_for_session(session.id).await?;

@@ -12,13 +12,15 @@ struct ManagedDaemonAutoUpdateAppHooks {
 impl ctx_update_service::ManagedDaemonAutoUpdateHooks for ManagedDaemonAutoUpdateAppHooks {
     async fn acquire_update_drain(&self, reason: &str, owner: &str) -> bool {
         self.state
-            .acquire_update_drain(reason.to_string(), owner.to_string())
+            .core
+            .update_drain
+            .acquire(reason.to_string(), owner.to_string())
             .await
             .is_some()
     }
 
     async fn release_update_drain(&self) {
-        let _ = self.state.release_update_drain().await;
+        let _ = self.state.core.update_drain.release().await;
     }
 
     async fn daemon_is_idle(&self) -> Result<bool> {

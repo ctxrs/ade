@@ -48,63 +48,19 @@ pub(crate) use ctx_workspace_services::worktree_vcs::{
     WorktreeVcsDirtyBits,
 };
 
-pub(crate) use types::{AttachmentMaterializationTask, WorktreeBootstrapGate};
-
-fn current_time_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
-}
 pub use ctx_workspace_services::worktree_vcs::WorktreeVcsSchedulerRuntime;
 pub use types::{
     AppRuntimeFlags, AppState, CacheSweepConfig, CacheSweepStats, CachedFileCompletions,
     CachedProviderOptions, CachedProviderVerify, CoreState, ExecutionRuntime,
     GitStatusSnapshotCacheEntry, ProviderRuntime, SessionHeadCacheKey, SessionRuntime, StoreLookup,
-    TelemetryRuntime, TimedEntry, TransportRuntime, UpdateDrainState,
-    WorkspaceActiveHeadCacheEntry, WorkspaceActiveSnapshotCacheEntry, WorkspaceRuntime,
+    TelemetryRuntime, TimedEntry, TransportRuntime, WorkspaceActiveHeadCacheEntry,
+    WorkspaceActiveSnapshotCacheEntry, WorkspaceRuntime,
 };
+pub(crate) use types::{AttachmentMaterializationTask, WorktreeBootstrapGate};
 
 impl AppState {
     pub fn global_store(&self) -> &Store {
         self.core.stores.global()
-    }
-
-    pub async fn update_drain_snapshot(&self) -> Option<UpdateDrainState> {
-        self.core.update_drain.lock().await.clone()
-    }
-
-    pub async fn acquire_update_drain(
-        &self,
-        reason: impl Into<String>,
-        owner: impl Into<String>,
-    ) -> Option<UpdateDrainState> {
-        let mut guard = self.core.update_drain.lock().await;
-        if guard.is_some() {
-            return None;
-        }
-        let state = UpdateDrainState {
-            reason: reason.into(),
-            owner: owner.into(),
-            acquired_at_ms: current_time_ms(),
-        };
-        *guard = Some(state.clone());
-        Some(state)
-    }
-
-    pub async fn release_update_drain(&self) -> bool {
-        self.core.update_drain.lock().await.take().is_some()
-    }
-
-    pub async fn reject_if_update_draining(&self) -> Result<()> {
-        if let Some(drain) = self.update_drain_snapshot().await {
-            anyhow::bail!(
-                "daemon maintenance is in progress; retry after it completes (reason={}, owner={})",
-                drain.reason,
-                drain.owner
-            );
-        }
-        Ok(())
     }
 
     async fn protected_workspace_store_ids(&self) -> HashSet<WorkspaceId> {

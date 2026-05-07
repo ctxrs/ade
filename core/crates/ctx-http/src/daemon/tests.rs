@@ -1489,19 +1489,25 @@ async fn update_drain_blocks_new_work_until_released() {
     ));
 
     assert!(state
-        .acquire_update_drain("test_update", "unit_test")
+        .core
+        .update_drain
+        .acquire("test_update", "unit_test")
         .await
         .is_some());
     let err = state
-        .reject_if_update_draining()
+        .core
+        .update_drain
+        .reject_if_draining()
         .await
         .expect_err("drain should reject new work");
     assert!(err
         .to_string()
         .contains("daemon maintenance is in progress"));
-    assert!(state.release_update_drain().await);
+    assert!(state.core.update_drain.release().await);
     state
-        .reject_if_update_draining()
+        .core
+        .update_drain
+        .reject_if_draining()
         .await
         .expect("released drain should allow work");
 }

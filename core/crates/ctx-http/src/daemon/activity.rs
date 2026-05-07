@@ -142,7 +142,7 @@ pub async fn daemon_turn_activity_summary(
         running_turn_count,
         scanned_workspace_count: workspace_count,
         turns: records,
-        update_drain: state.update_drain_snapshot().await,
+        update_drain: state.core.update_drain.snapshot().await,
     })
 }
 
