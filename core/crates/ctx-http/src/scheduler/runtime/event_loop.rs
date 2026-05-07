@@ -17,6 +17,7 @@ use crate::scheduler::TurnStartProgress;
 use ctx_core::ids::{MessageId, RunId, TurnId};
 use ctx_session_tools::normalize_tool_event;
 use ctx_session_tools::order_seq::attach_order_seq;
+use std::path::PathBuf;
 use std::sync::Weak;
 
 mod assistant;

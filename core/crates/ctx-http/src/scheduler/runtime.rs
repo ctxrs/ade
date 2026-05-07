@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -42,16 +42,15 @@ use self::provider_env::{
     prepare_provider_runtime_environment, BaseProviderEnvRequest, ProviderRunEnvReadyEvent,
     ProviderRuntimeEnvironmentRequest,
 };
-use self::provider_launch::apply_provider_launch_overrides;
+use self::provider_launch::prepare_provider_launch_environment;
 use self::provider_spawn::{
-    issue_mcp_token_if_enabled, prepare_provider_adapter_for_turn, spawn_provider_turn,
-    ProviderTurnSpawnRequest,
+    prepare_provider_adapter_for_turn, spawn_provider_turn, ProviderTurnSpawnRequest,
 };
 use self::turn_failure::emit_turn_start_failed;
 use self::turn_input::prepare_turn_input;
 use self::turn_start::{
     apply_crp_launch_policy_env_for_control_mode, emit_provider_run_started_event,
-    record_queue_wait_metric, turn_start_deadline, ProviderRunStartedEvent,
+    record_queue_wait_metric, ProviderRunStartedEvent,
 };
 use super::lifecycle::{RunningTurn, TurnStartProgress};
 use super::persistence::append_session_event_with_retry;
@@ -249,19 +248,19 @@ pub(crate) async fn start_turn(
 
     let turn_input =
         prepare_turn_input(&store, session, &message, &full_model_id, &mut provider_env).await?;
-    apply_provider_launch_overrides(runtime_provider_id, workdir, &mut provider_env).await?;
-    let mcp_disabled = provider_env
-        .get("CTX_MCP_DISABLED")
-        .and_then(|value| ctx_core::boolish::parse_boolish(value))
-        .unwrap_or(false);
-    let mcp_token =
-        issue_mcp_token_if_enabled(state, session, &mut provider_env, mcp_disabled).await;
-    let codex_home = provider_env
-        .get("CODEX_HOME")
-        .map(|value| PathBuf::from(value.as_str()));
+    let launch_environment = prepare_provider_launch_environment(
+        state,
+        session,
+        runtime_provider_id,
+        workdir,
+        &mut provider_env,
+    )
+    .await?;
+    let mcp_token = launch_environment.mcp_token;
+    let codex_home = launch_environment.codex_home;
+    let start_deadline_duration = launch_environment.start_deadline_duration;
 
     let run_started_at = Instant::now();
-    let start_deadline_duration = turn_start_deadline(&provider_env);
     let handle = spawn_provider_turn(ProviderTurnSpawnRequest {
         state,
         store: &store,

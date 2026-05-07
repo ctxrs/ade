@@ -1,7 +1,46 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
+
+use ctx_core::models::Session;
+
+use crate::daemon::AppState;
+
+use super::turn_start::turn_start_deadline;
+
+pub(super) struct PreparedProviderLaunchEnvironment {
+    pub(super) mcp_token: Option<String>,
+    pub(super) codex_home: Option<PathBuf>,
+    pub(super) start_deadline_duration: Duration,
+}
+
+pub(super) async fn prepare_provider_launch_environment(
+    state: &Arc<AppState>,
+    session: &Session,
+    runtime_provider_id: &str,
+    workdir: &Path,
+    provider_env: &mut HashMap<String, String>,
+) -> Result<PreparedProviderLaunchEnvironment> {
+    apply_provider_launch_overrides(runtime_provider_id, workdir, provider_env).await?;
+    let mcp_disabled = provider_env
+        .get("CTX_MCP_DISABLED")
+        .and_then(|value| ctx_core::boolish::parse_boolish(value))
+        .unwrap_or(false);
+    let mcp_token = issue_mcp_token_if_enabled(state, session, provider_env, mcp_disabled).await;
+    let codex_home = provider_env
+        .get("CODEX_HOME")
+        .map(|value| PathBuf::from(value.as_str()));
+    let start_deadline_duration = turn_start_deadline(provider_env);
+
+    Ok(PreparedProviderLaunchEnvironment {
+        mcp_token,
+        codex_home,
+        start_deadline_duration,
+    })
+}
 
 pub(super) async fn apply_provider_launch_overrides(
     provider_id: &str,
@@ -17,6 +56,30 @@ pub(super) async fn apply_provider_launch_overrides(
 
     strip_unused_daemon_auth_from_provider_env(provider_env);
     Ok(())
+}
+
+async fn issue_mcp_token_if_enabled(
+    state: &Arc<AppState>,
+    session: &Session,
+    provider_env: &mut HashMap<String, String>,
+    mcp_disabled: bool,
+) -> Option<String> {
+    if mcp_disabled {
+        return None;
+    }
+    let capabilities =
+        crate::daemon::McpAuthCapabilities::provider_session().with_merge_queue_submit();
+    let token = crate::daemon::issue_provider_session_mcp_token_with_capabilities(
+        state.as_ref(),
+        session.id,
+        session.workspace_id,
+        session.worktree_id,
+        capabilities,
+    )
+    .await;
+    provider_env.insert("CTX_MCP_TOKEN".to_string(), token.clone());
+    provider_env.insert("CTX_MCP_CAPABILITIES".to_string(), capabilities.env_value());
+    Some(token)
 }
 
 pub(super) fn apply_provider_mcp_command_overrides(
