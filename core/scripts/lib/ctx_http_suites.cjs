@@ -751,6 +751,7 @@ const CTX_HTTP_SUITES = [
       "crates/ctx-http/src/api/sessions/messages/**",
       "crates/ctx-http/src/api/sessions/mod.rs",
       "crates/ctx-http/src/api/sessions/titles_and_modes.rs",
+      "crates/ctx-http/src/api/sessions/titles_and_modes/**",
       "crates/ctx-http/src/api/terminals.rs",
       "crates/ctx-http/src/api/terminals/**",
       "crates/ctx-http/src/api/web_sessions.rs",
