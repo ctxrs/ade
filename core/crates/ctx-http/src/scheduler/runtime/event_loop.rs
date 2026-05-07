@@ -23,6 +23,7 @@ mod assistant;
 mod failure;
 mod provider_events;
 mod state;
+mod telemetry;
 mod terminal;
 mod tools;
 
