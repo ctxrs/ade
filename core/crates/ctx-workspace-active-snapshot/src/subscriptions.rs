@@ -1,8 +1,10 @@
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
 
-use ctx_core::ids::{SessionId, TaskId, WorktreeId};
+use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
-    WorkspaceActiveSnapshotSessionReplay, WorkspaceActiveTaskSummary, WorktreeVcsSnapshot,
+    WorkspaceActiveSnapshotClientMessage, WorkspaceActiveSnapshotSessionReplay,
+    WorkspaceActiveSnapshotSubscribeScope, WorkspaceActiveTaskSummary, WorktreeVcsSnapshot,
 };
 
 use crate::SessionReplayCursor;
@@ -38,6 +40,33 @@ pub struct ResolvedWorkspaceActiveSubscriptions {
     pub worktree_vcs_summary_session_ids: Vec<SessionId>,
     pub worktree_vcs_open_session_ids: Vec<SessionId>,
     pub state: WorkspaceActiveSubscriptionState,
+}
+
+pub trait WorkspaceActiveSubscriptionSource {
+    fn session_belongs_to_workspace(
+        &self,
+        workspace_id: WorkspaceId,
+        session_id: SessionId,
+    ) -> impl Future<Output = bool> + Send;
+
+    fn active_tasks(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> impl Future<Output = Vec<WorkspaceActiveTaskSummary>> + Send;
+
+    fn primary_session_id_for_task(
+        &self,
+        workspace_id: WorkspaceId,
+        task_id: TaskId,
+    ) -> impl Future<Output = Result<Option<SessionId>, ()>> + Send;
+
+    fn session_replay_cursor(
+        &self,
+        workspace_id: WorkspaceId,
+        session_id: SessionId,
+    ) -> impl Future<Output = SessionReplayCursor> + Send;
+
+    fn worktree_vcs_enabled(&self) -> bool;
 }
 
 pub fn primary_session_id_for_active_task(task: &WorkspaceActiveTaskSummary) -> SessionId {
@@ -80,6 +109,144 @@ pub fn resolve_worktree_vcs_open_session_ids(
         .collect();
     ordered.sort_by_key(|session_id| session_id.0);
     ordered
+}
+
+pub async fn resolve_workspace_active_snapshot_subscriptions<S>(
+    source: &S,
+    workspace_id: WorkspaceId,
+    message: WorkspaceActiveSnapshotClientMessage,
+    existing: &HashMap<SessionId, SessionReplayCursor>,
+) -> Result<ResolvedWorkspaceActiveSubscriptions, ()>
+where
+    S: WorkspaceActiveSubscriptionSource + Sync,
+{
+    let WorkspaceActiveSnapshotClientMessage::Subscribe {
+        session_ids,
+        sessions,
+        task_ids,
+        foreground_session_id,
+        scope,
+        vcs_open_session_ids,
+        ..
+    } = message;
+
+    let mut resolved = HashSet::new();
+    let mut replay_map: HashMap<SessionId, WorkspaceActiveSnapshotSessionReplay> = HashMap::new();
+    let mut explicit_sessions = HashSet::new();
+    let mut active_task_sessions = HashMap::new();
+    let mut active_task_vcs_sessions = HashMap::new();
+    let mut open_vcs_sessions = HashSet::new();
+    let mut active_scope = false;
+    let mut foreground_session_ids = None;
+
+    for sub in sessions {
+        if !source
+            .session_belongs_to_workspace(workspace_id, sub.session_id)
+            .await
+        {
+            continue;
+        }
+        replay_map.insert(sub.session_id, sub.replay);
+        resolved.insert(sub.session_id);
+        explicit_sessions.insert(sub.session_id);
+    }
+    for session_id in session_ids {
+        if !source
+            .session_belongs_to_workspace(workspace_id, session_id)
+            .await
+        {
+            continue;
+        }
+        resolved.insert(session_id);
+        explicit_sessions.insert(session_id);
+    }
+    if matches!(scope, Some(WorkspaceActiveSnapshotSubscribeScope::Active)) {
+        active_scope = true;
+        for task in source.active_tasks(workspace_id).await {
+            let session_id = primary_session_id_for_active_task(&task);
+            resolved.insert(session_id);
+            active_task_sessions.insert(task.task.id, session_id);
+            active_task_vcs_sessions.insert(
+                task.task.id,
+                primary_session_ids_for_active_task_summary(&task),
+            );
+        }
+    }
+    for task_id in task_ids {
+        if let Some(primary_session_id) = source
+            .primary_session_id_for_task(workspace_id, task_id)
+            .await?
+        {
+            resolved.insert(primary_session_id);
+            explicit_sessions.insert(primary_session_id);
+        }
+    }
+    for session_id in vcs_open_session_ids {
+        if !source
+            .session_belongs_to_workspace(workspace_id, session_id)
+            .await
+        {
+            continue;
+        }
+        open_vcs_sessions.insert(session_id);
+        resolved.insert(session_id);
+    }
+    if let Some(session_id) = foreground_session_id {
+        if source
+            .session_belongs_to_workspace(workspace_id, session_id)
+            .await
+        {
+            let mut sessions = HashSet::new();
+            sessions.insert(session_id);
+            foreground_session_ids = Some(sessions);
+        }
+    }
+
+    let mut next = Vec::with_capacity(resolved.len());
+    for session_id in resolved {
+        let replay = replay_map.get(&session_id);
+        let existing_last_sent = existing.get(&session_id).copied();
+        let current_tail = if matches!(
+            replay,
+            Some(WorkspaceActiveSnapshotSessionReplay::Auto) | None
+        ) && existing_last_sent.is_none()
+        {
+            source.session_replay_cursor(workspace_id, session_id).await
+        } else {
+            SessionReplayCursor::default()
+        };
+        let replay = resolve_session_replay(replay, existing_last_sent, current_tail);
+        next.push(ResolvedWorkspaceActiveSessionSubscription { session_id, replay });
+    }
+    next.sort_by_key(|subscription| subscription.session_id.0);
+    let subscription_state = WorkspaceActiveSubscriptionState {
+        active_scope,
+        explicit_sessions,
+        active_task_sessions,
+        active_task_vcs_sessions,
+        vcs_open_sessions: open_vcs_sessions,
+        foreground_session_ids,
+    };
+    let worktree_vcs_summary_session_ids = resolve_worktree_vcs_summary_session_ids(
+        next.iter().map(|sub| sub.session_id),
+        &subscription_state,
+    );
+    let worktree_vcs_open_session_ids = resolve_worktree_vcs_open_session_ids(&subscription_state);
+    let (worktree_vcs_summary_session_ids, worktree_vcs_open_session_ids) =
+        if source.worktree_vcs_enabled() {
+            (
+                worktree_vcs_summary_session_ids,
+                worktree_vcs_open_session_ids,
+            )
+        } else {
+            (Vec::new(), Vec::new())
+        };
+    Ok(ResolvedWorkspaceActiveSubscriptions {
+        sessions: next,
+        worktree_vcs_summary_session_ids,
+        worktree_vcs_open_session_ids,
+        state: subscription_state,
+    })
 }
 
 pub fn merge_worktree_vcs_snapshots(

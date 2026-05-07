@@ -1,7 +1,7 @@
 use super::*;
 use std::path::Path;
 
-use ctx_core::models::ExecutionEnvironment;
+use ctx_core::models::{ExecutionEnvironment, WorkspaceActiveSnapshotSessionReplay};
 use ctx_store::StoreManager;
 
 fn session_id(value: &str) -> SessionId {

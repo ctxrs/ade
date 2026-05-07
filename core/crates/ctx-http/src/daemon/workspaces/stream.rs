@@ -4,14 +4,11 @@ use std::sync::Arc;
 use ctx_core::ids::{SessionId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     WorkspaceActiveSnapshotClientMessage, WorkspaceActiveSnapshotEvent,
-    WorkspaceActiveSnapshotSessionReplay, WorkspaceActiveSnapshotStreamMessage,
-    WorkspaceActiveSnapshotSubscribeScope, Worktree, WorktreeVcsFreshness, WorktreeVcsSnapshot,
+    WorkspaceActiveSnapshotStreamMessage, Worktree, WorktreeVcsFreshness, WorktreeVcsSnapshot,
 };
 use ctx_workspace_active_snapshot::{
-    primary_session_id_for_active_task, primary_session_ids_for_active_task_summary,
-    resolve_session_replay, resolve_worktree_vcs_open_session_ids,
-    resolve_worktree_vcs_summary_session_ids, ResolvedWorkspaceActiveSessionSubscription,
-    ResolvedWorkspaceActiveSubscriptions, SessionReplayCursor, WorkspaceActiveSubscriptionState,
+    resolve_workspace_active_snapshot_subscriptions as resolve_workspace_active_snapshot_subscriptions_with_source,
+    ResolvedWorkspaceActiveSubscriptions, SessionReplayCursor, WorkspaceActiveSubscriptionSource,
     WorkspaceSessionReplay, WorkspaceSessionReplayItem,
 };
 
@@ -128,142 +125,82 @@ pub(crate) async fn resolve_workspace_active_snapshot_subscriptions(
     message: WorkspaceActiveSnapshotClientMessage,
     existing: &HashMap<SessionId, SessionReplayCursor>,
 ) -> Result<ResolvedWorkspaceActiveSubscriptions, ()> {
-    match message {
-        WorkspaceActiveSnapshotClientMessage::Subscribe {
-            session_ids,
-            sessions,
-            task_ids,
-            foreground_session_id,
-            scope,
-            vcs_open_session_ids,
-            ..
-        } => {
-            let mut resolved = HashSet::new();
-            let mut replay_map: HashMap<SessionId, WorkspaceActiveSnapshotSessionReplay> =
-                HashMap::new();
-            let mut explicit_sessions = HashSet::new();
-            let mut active_task_sessions = HashMap::new();
-            let mut active_task_vcs_sessions = HashMap::new();
-            let mut open_vcs_sessions = HashSet::new();
-            let mut active_scope = false;
-            let mut foreground_session_ids = None;
-            for sub in sessions {
-                if !session_belongs_to_workspace(state, workspace_id, sub.session_id).await {
-                    continue;
-                }
-                replay_map.insert(sub.session_id, sub.replay);
-                resolved.insert(sub.session_id);
-                explicit_sessions.insert(sub.session_id);
-            }
-            for session_id in session_ids {
-                if !session_belongs_to_workspace(state, workspace_id, session_id).await {
-                    continue;
-                }
-                resolved.insert(session_id);
-                explicit_sessions.insert(session_id);
-            }
-            if matches!(scope, Some(WorkspaceActiveSnapshotSubscribeScope::Active)) {
-                active_scope = true;
-                let snapshot = state
-                    .workspaces
-                    .workspace_active_snapshot
-                    .active_snapshot(workspace_id, i64::MAX)
-                    .await;
-                for task in snapshot.active.tasks {
-                    let session_id = primary_session_id_for_active_task(&task);
-                    resolved.insert(session_id);
-                    active_task_sessions.insert(task.task.id, session_id);
-                    active_task_vcs_sessions.insert(
-                        task.task.id,
-                        primary_session_ids_for_active_task_summary(&task),
-                    );
-                }
-            }
-            if !task_ids.is_empty() {
-                let store = state
-                    .store_for_workspace(workspace_id)
-                    .await
-                    .map_err(|_| ())?;
-                for task_id in task_ids {
-                    let task = store.get_task(task_id).await.map_err(|_| ())?;
-                    let Some(task) = task else {
-                        continue;
-                    };
-                    if task.workspace_id != workspace_id {
-                        continue;
-                    }
-                    if let Some(primary_session_id) = task.primary_session_id {
-                        resolved.insert(primary_session_id);
-                        explicit_sessions.insert(primary_session_id);
-                    }
-                }
-            }
-            for session_id in vcs_open_session_ids {
-                if !session_belongs_to_workspace(state, workspace_id, session_id).await {
-                    continue;
-                }
-                open_vcs_sessions.insert(session_id);
-                resolved.insert(session_id);
-            }
-            if let Some(session_id) = foreground_session_id {
-                if session_belongs_to_workspace(state, workspace_id, session_id).await {
-                    let mut sessions = HashSet::new();
-                    sessions.insert(session_id);
-                    foreground_session_ids = Some(sessions);
-                }
-            }
+    resolve_workspace_active_snapshot_subscriptions_with_source(
+        &HttpWorkspaceActiveSubscriptionSource { state },
+        workspace_id,
+        message,
+        existing,
+    )
+    .await
+}
 
-            let mut next = Vec::with_capacity(resolved.len());
-            for session_id in resolved {
-                let replay = replay_map.get(&session_id);
-                let existing_last_sent = existing.get(&session_id).copied();
-                let current_tail = if matches!(
-                    replay,
-                    Some(WorkspaceActiveSnapshotSessionReplay::Auto) | None
-                ) && existing_last_sent.is_none()
-                {
-                    state
-                        .workspaces
-                        .workspace_active_snapshot
-                        .session_replay_cursor(workspace_id, session_id)
-                        .await
-                } else {
-                    SessionReplayCursor::default()
-                };
-                let replay = resolve_session_replay(replay, existing_last_sent, current_tail);
-                next.push(ResolvedWorkspaceActiveSessionSubscription { session_id, replay });
-            }
-            next.sort_by_key(|subscription| subscription.session_id.0);
-            let subscription_state = WorkspaceActiveSubscriptionState {
-                active_scope,
-                explicit_sessions,
-                active_task_sessions,
-                active_task_vcs_sessions,
-                vcs_open_sessions: open_vcs_sessions,
-                foreground_session_ids,
-            };
-            let worktree_vcs_summary_session_ids = resolve_worktree_vcs_summary_session_ids(
-                next.iter().map(|sub| sub.session_id),
-                &subscription_state,
-            );
-            let worktree_vcs_open_session_ids =
-                resolve_worktree_vcs_open_session_ids(&subscription_state);
-            let (worktree_vcs_summary_session_ids, worktree_vcs_open_session_ids) =
-                if state.worktree_vcs_enabled() {
-                    (
-                        worktree_vcs_summary_session_ids,
-                        worktree_vcs_open_session_ids,
-                    )
-                } else {
-                    (Vec::new(), Vec::new())
-                };
-            Ok(ResolvedWorkspaceActiveSubscriptions {
-                sessions: next,
-                worktree_vcs_summary_session_ids,
-                worktree_vcs_open_session_ids,
-                state: subscription_state,
-            })
+struct HttpWorkspaceActiveSubscriptionSource<'a> {
+    state: &'a Arc<AppState>,
+}
+
+impl WorkspaceActiveSubscriptionSource for HttpWorkspaceActiveSubscriptionSource<'_> {
+    fn session_belongs_to_workspace(
+        &self,
+        workspace_id: WorkspaceId,
+        session_id: SessionId,
+    ) -> impl std::future::Future<Output = bool> + Send {
+        async move { session_belongs_to_workspace(self.state, workspace_id, session_id).await }
+    }
+
+    fn active_tasks(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> impl std::future::Future<Output = Vec<ctx_core::models::WorkspaceActiveTaskSummary>> + Send
+    {
+        async move {
+            self.state
+                .workspaces
+                .workspace_active_snapshot
+                .active_snapshot(workspace_id, i64::MAX)
+                .await
+                .active
+                .tasks
         }
+    }
+
+    fn primary_session_id_for_task(
+        &self,
+        workspace_id: WorkspaceId,
+        task_id: ctx_core::ids::TaskId,
+    ) -> impl std::future::Future<Output = Result<Option<SessionId>, ()>> + Send {
+        async move {
+            let store = self
+                .state
+                .store_for_workspace(workspace_id)
+                .await
+                .map_err(|_| ())?;
+            let task = store.get_task(task_id).await.map_err(|_| ())?;
+            let Some(task) = task else {
+                return Ok(None);
+            };
+            if task.workspace_id != workspace_id {
+                return Ok(None);
+            }
+            Ok(task.primary_session_id)
+        }
+    }
+
+    fn session_replay_cursor(
+        &self,
+        workspace_id: WorkspaceId,
+        session_id: SessionId,
+    ) -> impl std::future::Future<Output = SessionReplayCursor> + Send {
+        async move {
+            self.state
+                .workspaces
+                .workspace_active_snapshot
+                .session_replay_cursor(workspace_id, session_id)
+                .await
+        }
+    }
+
+    fn worktree_vcs_enabled(&self) -> bool {
+        self.state.worktree_vcs_enabled()
     }
 }
 
