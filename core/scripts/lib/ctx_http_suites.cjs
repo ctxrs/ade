@@ -875,7 +875,7 @@ const CTX_HTTP_SUITES = [
     name: "updates-release",
     description: "updates, manifests, release safety, and auxiliary response flows",
     sourceGlobs: [
-      "crates/ctx-http/src/api/updates.rs",
+      "crates/ctx-http/src/api/updates/**",
       "crates/ctx-http/src/bundled_assets.rs",
       "crates/ctx-http/src/bundled_assets/**",
       "crates/ctx-update-service/src/**",
