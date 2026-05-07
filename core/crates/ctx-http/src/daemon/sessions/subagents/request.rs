@@ -2,80 +2,8 @@ use std::collections::HashSet;
 
 use crate::api::sessions::AgentInitItem;
 use ctx_core::ids::TaskId;
-use ctx_session_tools::model_resolution::normalize_effort_id;
 
 use super::errors::{api_error, internal_api_error, ApiResult, SubagentErrorKind};
-
-fn normalize_reasoning_effort(value: Option<&str>) -> Option<String> {
-    value
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(normalize_effort_id)
-        .filter(|value| !value.is_empty())
-}
-
-pub(super) fn build_subagent_request_json(agents: &[AgentInitItem]) -> serde_json::Value {
-    let mut items = Vec::with_capacity(agents.len());
-    for (idx, agent) in agents.iter().enumerate() {
-        let prompt = agent.prompt.trim();
-        let mut obj = serde_json::Map::new();
-        obj.insert(
-            "position".to_string(),
-            serde_json::Value::Number(serde_json::Number::from(idx as u64)),
-        );
-        obj.insert(
-            "prompt_length".to_string(),
-            serde_json::Value::Number(serde_json::Number::from(prompt.chars().count() as u64)),
-        );
-        if let Some(label) = agent
-            .label
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            obj.insert(
-                "label".to_string(),
-                serde_json::Value::String(label.to_string()),
-            );
-        }
-        if let Some(harness) = agent
-            .harness
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            obj.insert(
-                "harness".to_string(),
-                serde_json::Value::String(harness.to_string()),
-            );
-        }
-        if let Some(model) = agent
-            .model
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            obj.insert(
-                "model".to_string(),
-                serde_json::Value::String(model.to_string()),
-            );
-        }
-        if let Some(reasoning_effort) =
-            normalize_reasoning_effort(agent.reasoning_effort.as_deref())
-        {
-            obj.insert(
-                "reasoning_effort".to_string(),
-                serde_json::Value::String(reasoning_effort),
-            );
-        }
-        items.push(serde_json::Value::Object(obj));
-    }
-
-    serde_json::json!({
-        "agents_total": agents.len(),
-        "agents": items,
-    })
-}
 
 pub(super) fn default_catalog_model_id(
     catalog: Option<&ctx_session_tools::model_resolution::ModelCatalog>,
@@ -125,23 +53,4 @@ pub(super) async fn validate_requested_labels(
     }
 
     Ok(labels)
-}
-
-pub(super) fn collect_provider_ids(
-    agents: &[AgentInitItem],
-    parent_provider_id: &str,
-) -> Result<HashSet<String>, String> {
-    let mut provider_ids = HashSet::new();
-    for agent in agents {
-        let provider_id = agent
-            .harness
-            .as_deref()
-            .unwrap_or(parent_provider_id)
-            .trim();
-        if provider_id.is_empty() {
-            return Err("harness is required".to_string());
-        }
-        provider_ids.insert(provider_id.to_string());
-    }
-    Ok(provider_ids)
 }

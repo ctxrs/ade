@@ -71,7 +71,18 @@ pub(crate) async fn init_subagents(
         .ok_or_else(|| api_error(SubagentErrorKind::NotFound, "workspace not found"))?;
 
     let labels = validate_requested_labels(&store, parent.task_id, &req.agents).await?;
-    let provider_ids = collect_provider_ids(&req.agents, &parent.provider_id)
+    let request_agents = req
+        .agents
+        .iter()
+        .map(|agent| SubagentRequestAgent {
+            prompt: &agent.prompt,
+            label: agent.label.as_deref(),
+            harness: agent.harness.as_deref(),
+            model: agent.model.as_deref(),
+            reasoning_effort: agent.reasoning_effort.as_deref(),
+        })
+        .collect::<Vec<_>>();
+    let provider_ids = collect_provider_ids(&request_agents, &parent.provider_id)
         .map_err(|error| api_error(SubagentErrorKind::BadRequest, error))?;
 
     let parent_worktree_execution = crate::api::tasks::resolve_existing_worktree_execution(
@@ -103,7 +114,7 @@ pub(crate) async fn init_subagents(
     let worktree_plan =
         plan_subagent_worktree_creation(&state, &parent_worktree, worktree_selection).await?;
 
-    let request_json = Some(build_subagent_request_json(&req.agents));
+    let request_json = Some(build_subagent_request_json(&request_agents));
     let mut requested_tool_call_id = req
         .tool_call_id
         .as_deref()

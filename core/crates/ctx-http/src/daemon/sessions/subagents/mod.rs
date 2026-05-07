@@ -12,7 +12,8 @@ use std::time::{Duration, Instant};
 
 use base64::Engine;
 use ctx_session_service::subagents::{
-    parse_subagent_worktree, resolve_max_subagents_per_call, SubagentWorktreeSelection,
+    build_subagent_request_json, collect_provider_ids, parse_subagent_worktree,
+    resolve_max_subagents_per_call, SubagentRequestAgent, SubagentWorktreeSelection,
     DEFAULT_MAX_ACTIVE_SUBAGENTS_PER_PARENT, DEFAULT_MAX_SUBAGENT_DEPTH,
 };
 use ctx_session_tools::interrupt_telemetry::InterruptTelemetryContext;
@@ -43,10 +44,7 @@ use self::child_runs::{
 use self::errors::{api_error, internal_api_error, load_parent_session, ApiResult};
 pub(crate) use self::errors::{SubagentError, SubagentErrorKind};
 use self::providers::load_requested_model_catalogs;
-use self::request::{
-    build_subagent_request_json, collect_provider_ids, default_catalog_model_id,
-    validate_requested_labels,
-};
+use self::request::{default_catalog_model_id, validate_requested_labels};
 use self::worktrees::{
     cleanup_archived_subagent_worktree, create_subagent_worktree, plan_subagent_worktree_creation,
 };
