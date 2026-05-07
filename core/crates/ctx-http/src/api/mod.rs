@@ -28,7 +28,6 @@ mod merge_queue_api;
 mod mobile_access;
 mod mobile_scopes;
 mod org_policy;
-mod provider_catalog;
 mod provider_launch;
 pub(crate) mod provider_probe_auth;
 pub(crate) mod providers;

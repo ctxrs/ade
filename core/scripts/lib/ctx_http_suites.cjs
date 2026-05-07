@@ -570,7 +570,7 @@ const CTX_HTTP_SUITES = [
       "workspace_provider_model_preferences_http",
     ],
     sourceGlobs: [
-      "crates/ctx-http/src/api/provider_catalog.rs",
+      "crates/ctx-provider-runtime/src/provider_launch/options.rs",
       "crates/ctx-http/src/api/provider_launch.rs",
       "crates/ctx-http/src/api/provider_launch/**",
       "crates/ctx-http/src/api/providers/probe.rs",
@@ -610,7 +610,7 @@ const CTX_HTTP_SUITES = [
     name: "provider-runtime-live",
     description: "provider runtime flows that require live-provider or bridge truth",
     sourceGlobs: [
-      "crates/ctx-http/src/api/provider_catalog.rs",
+      "crates/ctx-provider-runtime/src/provider_launch/options.rs",
       "crates/ctx-http/src/api/provider_launch.rs",
       "crates/ctx-http/src/api/provider_launch/**",
       "crates/ctx-http/src/api/providers/probe.rs",

@@ -19,10 +19,6 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use super::errors::ApiErrorResp;
-use super::provider_catalog::{
-    provider_options_cache_entry_is_authoritative, provider_supports_runtime_model_catalog,
-    runtime_probe_models_payload,
-};
 use super::provider_probe_auth::provider_auth_mode;
 use super::redact_json_value;
 use crate::daemon::AppState;
@@ -45,7 +41,9 @@ use ctx_provider_runtime::provider_launch::models::{
     endpoint_models_payload, subscription_models_payload_from_status,
 };
 use ctx_provider_runtime::provider_launch::options::{
-    endpoint_supports_model_catalog_verify, provider_options_probe_plan, ProviderOptionsProbePlan,
+    endpoint_supports_model_catalog_verify, provider_options_cache_entry_is_authoritative,
+    provider_options_probe_plan, provider_supports_runtime_model_catalog,
+    runtime_probe_models_payload, ProviderOptionsProbePlan,
 };
 use ctx_provider_runtime::provider_launch::probe_error::classify_probe_error;
 use ctx_provider_runtime::provider_launch::resolver::{

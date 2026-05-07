@@ -1,4 +1,8 @@
 use super::*;
+use ctx_provider_runtime::provider_launch::options::{
+    provider_options_cache_entry_is_authoritative, provider_supports_runtime_model_catalog,
+    runtime_probe_models_payload,
+};
 use ctx_session_tools::model_resolution::{build_model_catalog, ModelCatalog};
 
 async fn load_pinned_subscription_model_catalog(
@@ -52,12 +56,7 @@ async fn load_provider_model_catalog_for_install_target(
         .lock()
         .await
         .get(&cache_key)
-        .filter(|entry| {
-            crate::api::provider_catalog::provider_options_cache_entry_is_authoritative(
-                provider_id,
-                &entry.value,
-            )
-        })
+        .filter(|entry| provider_options_cache_entry_is_authoritative(provider_id, &entry.value))
     {
         if let Some(models) = entry.value.get("models") {
             if let Some(catalog) = build_model_catalog(models) {
@@ -138,7 +137,7 @@ async fn load_provider_model_catalog_for_install_target(
         }
     }
 
-    if !crate::api::provider_catalog::provider_supports_runtime_model_catalog(provider_id) {
+    if !provider_supports_runtime_model_catalog(provider_id) {
         return load_pinned_subscription_model_catalog(state, provider_id, install_target).await;
     }
 
@@ -227,11 +226,9 @@ async fn load_provider_model_catalog_for_install_target(
     let fallback_current_model_id = pinned_catalog
         .as_ref()
         .and_then(ModelCatalog::default_model_id);
-    let Some(models_value) = crate::api::provider_catalog::runtime_probe_models_payload(
-        provider_id,
-        &probe,
-        fallback_current_model_id,
-    ) else {
+    let Some(models_value) =
+        runtime_probe_models_payload(provider_id, &probe, fallback_current_model_id)
+    else {
         return Ok(pinned_catalog);
     };
     if let Some(models) = build_model_catalog(&models_value) {
