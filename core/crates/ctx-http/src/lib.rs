@@ -19,7 +19,6 @@ mod provider_child_reclassifier;
 pub mod provider_guard;
 pub(crate) mod provider_install_contract;
 mod provider_launch;
-pub(crate) mod provider_model_preferences;
 pub mod provider_restart;
 mod provider_runtime;
 mod provider_unknown_events;

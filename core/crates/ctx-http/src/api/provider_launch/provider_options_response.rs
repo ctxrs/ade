@@ -1,6 +1,7 @@
 use super::*;
 use ctx_core::ids::WorkspaceId;
 use ctx_harness_sources::HarnessEndpointRecord;
+use ctx_provider_runtime::model_preferences::preferred_model_id_from_available_models;
 use ctx_providers::adapters::ProviderStatus;
 
 fn supplement_models_payload_with_endpoint_metadata(
@@ -101,10 +102,8 @@ pub(super) fn inject_preferred_model_id(
     value: &mut serde_json::Value,
     preferred_model_id: Option<String>,
 ) {
-    let resolved = crate::provider_model_preferences::preferred_model_id_from_available_models(
-        preferred_model_id,
-        value.get("models"),
-    );
+    let resolved =
+        preferred_model_id_from_available_models(preferred_model_id, value.get("models"));
     let Some(obj) = value.as_object_mut() else {
         return;
     };

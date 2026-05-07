@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-pub(crate) fn preferred_model_id_from_available_models(
+pub fn preferred_model_id_from_available_models(
     preferred_model_id: Option<String>,
     models: Option<&Value>,
 ) -> Option<String> {

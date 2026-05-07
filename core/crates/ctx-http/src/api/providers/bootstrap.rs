@@ -1,4 +1,5 @@
 use super::*;
+use ctx_provider_runtime::model_preferences::preferred_model_id_from_available_models;
 use ctx_provider_runtime::provider_auth::selected_endpoint_record_from_harness_config;
 use ctx_provider_runtime::provider_launch::models::{
     endpoint_models_payload, subscription_models_payload_from_status,
@@ -177,7 +178,7 @@ pub(crate) async fn get_workspace_providers_bootstrap(
                     options["models"] = models;
                 }
                 if let Some(preferred_model_id) =
-                    crate::provider_model_preferences::preferred_model_id_from_available_models(
+                    preferred_model_id_from_available_models(
                         preferred_model_by_provider.get(&provider_id).cloned(),
                         options.get("models"),
                     )

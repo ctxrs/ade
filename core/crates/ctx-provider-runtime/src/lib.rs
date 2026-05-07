@@ -5,6 +5,7 @@ use std::sync::Arc;
 use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
 use tokio::sync::Mutex;
 
+pub mod model_preferences;
 pub mod provider_adapters;
 pub mod provider_auth;
 pub mod provider_child_reclassifier;
