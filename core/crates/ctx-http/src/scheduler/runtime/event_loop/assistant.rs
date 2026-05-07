@@ -8,7 +8,8 @@ use ctx_session_tools::order_seq::{attach_order_seq, read_order_seq};
 
 use super::super::helpers::strip_emitted_prefix;
 use super::failure::{fail_turn, TurnFailurePayload};
-use super::{EventLoopRuntimeState, TurnEventLoop};
+use super::state::EventLoopRuntimeState;
+use super::TurnEventLoop;
 
 pub(super) async fn handle_assistant_complete(
     ctx: &TurnEventLoop,

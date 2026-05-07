@@ -11,7 +11,7 @@ use tokio::time::Instant as TokioInstant;
 use ctx_core::ids::{RunId, TurnId};
 use ctx_core::models::{
     ExecutionEnvironment, MessageDelivery, MessageRole, NetworkProfile, Session, SessionEventType,
-    SessionTurnStatus, SessionTurnTool,
+    SessionTurnStatus,
 };
 use ctx_providers::adapters::TurnInput;
 use ctx_providers::events::NormalizedEvent;

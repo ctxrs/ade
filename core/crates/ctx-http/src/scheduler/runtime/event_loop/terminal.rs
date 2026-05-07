@@ -8,7 +8,8 @@ use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 use crate::telemetry::TelemetryEvent;
 
 use super::failure::record_failed_turn_telemetry;
-use super::{EventLoopRuntimeState, TurnEventLoop};
+use super::state::EventLoopRuntimeState;
+use super::TurnEventLoop;
 
 pub(super) fn is_truthful_start_activity(event_type: &SessionEventType) -> bool {
     matches!(

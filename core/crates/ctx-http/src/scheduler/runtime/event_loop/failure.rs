@@ -8,7 +8,8 @@ use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 use crate::scheduler::terminal::{finalize_failed_turn, FailedTurnTerminalization};
 use crate::telemetry::TelemetryEvent;
 
-use super::{EventLoopRuntimeState, TurnEventLoop};
+use super::state::EventLoopRuntimeState;
+use super::TurnEventLoop;
 
 pub(super) struct TurnFailurePayload {
     pub(super) error_message: String,
