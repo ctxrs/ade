@@ -18,16 +18,13 @@ use ctx_session_tools::model_resolution::compose_model_id;
 use ctx_session_tools::order_seq::OrderSeqState;
 
 use crate::daemon::{ensure_provider_adapter_for_target_with_cfg, AppState};
-use crate::execution_effective;
 use crate::settings;
 use crate::storage_guard;
 use ctx_provider_install::install_state::InstallTarget;
 use ctx_workspace_config as workspace_config;
-use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
-
-use crate::worktree_data_plane::resolve_worktree_data_plane;
 
 mod event_loop;
+mod execution_plan;
 mod helpers;
 mod provider_env;
 mod provider_launch;
@@ -39,6 +36,7 @@ mod turn_failure;
 mod turn_start;
 
 use self::event_loop::{spawn_turn_event_loop, TurnEventLoop};
+use self::execution_plan::prepare_turn_execution_plan;
 use self::helpers::{
     compute_context_window_metrics, load_system_prompt_append_for_relationship,
     normalize_session_model_id, provider_supports_system_prompt_append,
@@ -154,76 +152,16 @@ pub(crate) async fn start_turn(
         provider_control_mode: &provider_control_mode,
     });
 
-    let workspace = match store.get_workspace(session.workspace_id).await {
-        Ok(Some(workspace)) => workspace,
-        Ok(None) => {
-            let err = anyhow!("workspace not found: {}", session.workspace_id.0);
-            emit_turn_start_failed(state, session, run_id, turn_id, message_id, &err).await;
-            return Err(err);
-        }
-        Err(err) => {
-            emit_turn_start_failed(state, session, run_id, turn_id, message_id, &err).await;
-            return Err(err);
-        }
-    };
-    let worktree_for_runtime = match store.get_worktree(session.worktree_id).await {
-        Ok(Some(worktree)) => worktree,
-        Ok(None) => {
-            let err = anyhow!("worktree not found: {}", session.worktree_id.0);
-            emit_turn_start_failed(state, session, run_id, turn_id, message_id, &err).await;
-            return Err(err);
-        }
-        Err(err) => {
-            emit_turn_start_failed(state, session, run_id, turn_id, message_id, &err).await;
-            return Err(err);
-        }
-    };
-    let execution_settings =
-        match execution_effective::effective_execution_settings_for_environment(
-            state.as_ref(),
-            workspace.id,
-            execution_environment,
-        )
-        .await
-        {
-            Ok(settings) => settings,
+    let execution_plan =
+        match prepare_turn_execution_plan(state, &store, session, execution_environment).await {
+            Ok(execution_plan) => execution_plan,
             Err(err) => {
                 emit_turn_start_failed(state, session, run_id, turn_id, message_id, &err).await;
                 return Err(err);
             }
         };
-    let execution_settings = match resolve_worktree_data_plane(state, &worktree_for_runtime).await {
-        Ok(data_plane) => {
-            match apply_data_plane_to_execution_settings(&execution_settings, &data_plane) {
-                Ok(settings) => settings,
-                Err(err) => {
-                    emit_turn_start_failed(state, session, run_id, turn_id, message_id, &err).await;
-                    return Err(err);
-                }
-            }
-        }
-        Err(err) => {
-            emit_turn_start_failed(state, session, run_id, turn_id, message_id, &err).await;
-            return Err(err);
-        }
-    };
-    let runtime_plan = match state
-        .execution
-        .harness
-        .prepare(
-            &workspace,
-            &worktree_for_runtime,
-            &execution_settings,
-            &state.core.daemon_url,
-        )
-        .await
-    {
-        Ok(plan) => plan,
-        Err(err) => {
-            emit_turn_start_failed(state, session, run_id, turn_id, message_id, &err).await;
-            return Err(err);
-        }
-    };
+    let execution_settings = execution_plan.execution_settings;
+    let runtime_plan = execution_plan.runtime_plan;
     let is_linux_sandbox = runtime_plan.is_linux_sandbox();
     let source_env = match apply_runtime_source_env(
         &state.core.data_root,
