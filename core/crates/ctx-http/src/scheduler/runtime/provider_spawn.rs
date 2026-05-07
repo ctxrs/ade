@@ -65,15 +65,16 @@ pub(super) fn build_provider_run_hooks(
             Ok(())
         })
     });
-    let provider_unknown_event = crate::provider_unknown_events::provider_unknown_event_hook(
-        state.telemetry.provider_unknown_events.clone(),
-        crate::provider_unknown_events::ProviderUnknownEventContext {
-            provider_id: session.provider_id.clone(),
-            execution_environment: Some(execution_environment.as_str().to_string()),
-            session_root_kind: Some(session_root_kind.to_string()),
-            operation: "turn".to_string(),
-        },
-    );
+    let provider_unknown_event =
+        ctx_observability::provider_unknown_events::provider_unknown_event_hook(
+            state.telemetry.provider_unknown_events.clone(),
+            ctx_observability::provider_unknown_events::ProviderUnknownEventContext {
+                provider_id: session.provider_id.clone(),
+                execution_environment: Some(execution_environment.as_str().to_string()),
+                session_root_kind: Some(session_root_kind.to_string()),
+                operation: "turn".to_string(),
+            },
+        );
     ProviderRunHooks {
         provider_session_ref_claim: Some(provider_session_ref_claim),
         provider_unknown_event: Some(provider_unknown_event),
