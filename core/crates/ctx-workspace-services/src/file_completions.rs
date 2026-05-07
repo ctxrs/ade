@@ -1,6 +1,13 @@
 use std::cmp::Ordering;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
+use std::sync::Arc;
+use std::time::Instant;
+
+pub struct CachedFileCompletions {
+    pub cached_at: Instant,
+    pub files: Arc<Vec<String>>,
+}
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct ScoredCandidate {

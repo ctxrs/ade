@@ -53,6 +53,7 @@ pub use activity::{
 };
 pub use ctx_provider_runtime::{CachedProviderOptions, CachedProviderVerify};
 pub use ctx_update_service::UpdateDrainState;
+pub use ctx_workspace_services::file_completions::CachedFileCompletions;
 pub(crate) use lifecycle::spawn_deferred_daemon_shutdown;
 #[cfg(test)]
 pub(crate) use lifecycle::{collect_provider_adapters_for_shutdown, shutdown_provider_adapters};
@@ -77,10 +78,9 @@ pub(crate) use provider_bootstrap::{
 pub(crate) use state::AttachmentMaterializationTask;
 pub(crate) use state::WorktreeVcsDirtyBits;
 pub use state::{
-    AppRuntimeFlags, AppState, CacheSweepConfig, CacheSweepStats, CachedFileCompletions,
-    GitStatusSnapshotCacheEntry, SessionHeadCacheKey, StoreLookup, TimedEntry,
-    WorkspaceActiveHeadCacheEntry, WorkspaceActiveSnapshotCacheEntry,
-    WorktreeVcsSnapshotCacheEntry,
+    AppRuntimeFlags, AppState, CacheSweepConfig, CacheSweepStats, GitStatusSnapshotCacheEntry,
+    SessionHeadCacheKey, StoreLookup, TimedEntry, WorkspaceActiveHeadCacheEntry,
+    WorkspaceActiveSnapshotCacheEntry, WorktreeVcsSnapshotCacheEntry,
 };
 
 async fn prune_archived_session_data_for_all_workspaces(

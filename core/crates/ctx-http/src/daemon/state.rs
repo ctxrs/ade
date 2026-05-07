@@ -50,10 +50,10 @@ pub(crate) use ctx_workspace_services::worktree_vcs::{
 
 pub use ctx_workspace_services::worktree_vcs::WorktreeVcsSchedulerRuntime;
 pub use types::{
-    AppRuntimeFlags, AppState, CacheSweepConfig, CacheSweepStats, CachedFileCompletions, CoreState,
-    ExecutionRuntime, GitStatusSnapshotCacheEntry, ProviderRuntime, SessionHeadCacheKey,
-    SessionRuntime, StoreLookup, TelemetryRuntime, TimedEntry, TransportRuntime,
-    WorkspaceActiveHeadCacheEntry, WorkspaceActiveSnapshotCacheEntry, WorkspaceRuntime,
+    AppRuntimeFlags, AppState, CacheSweepConfig, CacheSweepStats, CoreState, ExecutionRuntime,
+    GitStatusSnapshotCacheEntry, ProviderRuntime, SessionHeadCacheKey, SessionRuntime, StoreLookup,
+    TelemetryRuntime, TimedEntry, TransportRuntime, WorkspaceActiveHeadCacheEntry,
+    WorkspaceActiveSnapshotCacheEntry, WorkspaceRuntime,
 };
 pub(crate) use types::{AttachmentMaterializationTask, WorktreeBootstrapGate};
 
