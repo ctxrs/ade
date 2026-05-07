@@ -27,7 +27,7 @@ pub(crate) fn runtime_probe_command_as_agent_command_for_target(
     provider_id: &str,
     requested_target: Option<InstallTarget>,
 ) -> Result<Option<installer::AgentServerCommand>> {
-    crate::provider_launch::resolver::runtime_probe_command_as_agent_command_for_target(
+    ctx_provider_runtime::provider_launch::resolver::runtime_probe_command_as_agent_command_for_target(
         data_root,
         cfg,
         provider_id,

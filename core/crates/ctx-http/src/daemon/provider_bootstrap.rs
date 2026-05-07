@@ -137,5 +137,9 @@ pub(crate) fn normalize_acp_provider_command(
     provider_id: &str,
     cmd: installer::AgentServerCommand,
 ) -> Result<installer::AgentServerCommand> {
-    crate::provider_launch::resolver::normalize_acp_provider_command(data_root, provider_id, cmd)
+    ctx_provider_runtime::provider_launch::resolver::normalize_acp_provider_command(
+        data_root,
+        provider_id,
+        cmd,
+    )
 }
