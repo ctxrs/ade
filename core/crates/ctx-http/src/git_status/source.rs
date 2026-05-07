@@ -2,11 +2,12 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use ctx_core::models::Worktree;
-use ctx_fs::vcs::{self, VcsStructuredStatus};
+use ctx_fs::vcs;
 use ctx_workspace_config as workspace_config;
 use ctx_workspace_services::worktree_vcs::{
-    is_no_vcs_repo_error, GitStatusEntry, WorktreeVcsCommitLookupSource, WorktreeVcsDiffBaseSource,
-    WorktreeVcsGitCommand, WorktreeVcsStatusSource, WorktreeVcsStructuredStatus,
+    is_no_vcs_repo_error, worktree_vcs_structured_status_from_vcs, WorktreeVcsCommitLookupSource,
+    WorktreeVcsDiffBaseSource, WorktreeVcsGitCommand, WorktreeVcsStatusSource,
+    WorktreeVcsStructuredStatus,
 };
 
 use crate::daemon::AppState;
@@ -75,10 +76,12 @@ impl WorktreeVcsStatusSource for HttpWorktreeVcsSource<'_> {
             .await?
         } else {
             let vcs = vcs_driver_for_worktree(self.worktree);
-            vcs.status_structured(root, include_untracked_files, include_entries)
-                .await?
+            worktree_vcs_structured_status_from_vcs(
+                vcs.status_structured(root, include_untracked_files, include_entries)
+                    .await?,
+            )
         };
-        Ok(worktree_vcs_structured_status_from_vcs(structured))
+        Ok(structured)
     }
 }
 
@@ -176,34 +179,5 @@ impl WorktreeVcsDiffBaseSource for HttpWorktreeVcsSource<'_> {
 
     fn redact_error(&self, err: &anyhow::Error) -> String {
         crate::logs::redact_sensitive(&err.to_string())
-    }
-}
-
-fn worktree_vcs_structured_status_from_vcs(
-    structured: VcsStructuredStatus,
-) -> WorktreeVcsStructuredStatus {
-    WorktreeVcsStructuredStatus {
-        raw: structured.raw,
-        summary_line: structured.branch.summary_line,
-        branch: structured.branch.branch,
-        upstream: structured.branch.upstream,
-        ahead: structured.branch.ahead,
-        behind: structured.branch.behind,
-        detached: structured.branch.detached,
-        staged: structured.staged,
-        unstaged: structured.unstaged,
-        untracked: structured.untracked,
-        entries: structured
-            .entries
-            .into_iter()
-            .map(|entry| GitStatusEntry {
-                path: entry.path,
-                orig_path: entry.orig_path,
-                index_status: entry.index_status,
-                worktree_status: entry.worktree_status,
-            })
-            .collect(),
-        entries_total_count: structured.total_count,
-        entries_truncated: structured.truncated,
     }
 }

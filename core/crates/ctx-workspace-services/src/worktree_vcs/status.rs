@@ -1,5 +1,6 @@
 use anyhow::Result;
 use ctx_core::models::SessionGitStatusSummary;
+use ctx_fs::vcs::VcsStructuredStatus;
 
 use super::{GitStatusEntry, GitStatusSnapshot, WorktreeVcsCommitLookup};
 
@@ -95,6 +96,35 @@ pub fn git_status_snapshot_from_structured(
     }
 }
 
+pub fn worktree_vcs_structured_status_from_vcs(
+    structured: VcsStructuredStatus,
+) -> WorktreeVcsStructuredStatus {
+    WorktreeVcsStructuredStatus {
+        raw: structured.raw,
+        summary_line: structured.branch.summary_line,
+        branch: structured.branch.branch,
+        upstream: structured.branch.upstream,
+        ahead: structured.branch.ahead,
+        behind: structured.branch.behind,
+        detached: structured.branch.detached,
+        staged: structured.staged,
+        unstaged: structured.unstaged,
+        untracked: structured.untracked,
+        entries: structured
+            .entries
+            .into_iter()
+            .map(|entry| GitStatusEntry {
+                path: entry.path,
+                orig_path: entry.orig_path,
+                index_status: entry.index_status,
+                worktree_status: entry.worktree_status,
+            })
+            .collect(),
+        entries_total_count: structured.total_count,
+        entries_truncated: structured.truncated,
+    }
+}
+
 pub fn session_git_status_summary_from_snapshot(
     snapshot: &GitStatusSnapshot,
 ) -> SessionGitStatusSummary {
@@ -158,6 +188,52 @@ mod tests {
 
         assert!(snapshot.entries.is_empty());
         assert_eq!(snapshot.entries_total_count, 1);
+    }
+
+    #[test]
+    fn structured_status_from_vcs_preserves_branch_counts_and_entries() {
+        let structured =
+            worktree_vcs_structured_status_from_vcs(ctx_fs::vcs::VcsStructuredStatus {
+                raw: "## feature...origin/feature [ahead 2, behind 1]".to_string(),
+                branch: ctx_fs::vcs::VcsStatusBranchInfo {
+                    summary_line: "## feature...origin/feature [ahead 2, behind 1]".to_string(),
+                    branch: Some("feature".to_string()),
+                    upstream: Some("origin/feature".to_string()),
+                    ahead: 2,
+                    behind: 1,
+                    detached: false,
+                },
+                staged: 3,
+                unstaged: 4,
+                untracked: 5,
+                entries: vec![ctx_fs::vcs::VcsStatusEntry {
+                    path: "src/main.rs".to_string(),
+                    orig_path: Some("src/old.rs".to_string()),
+                    index_status: "R".to_string(),
+                    worktree_status: "M".to_string(),
+                }],
+                total_count: 9,
+                truncated: true,
+            });
+
+        assert_eq!(
+            structured.summary_line,
+            "## feature...origin/feature [ahead 2, behind 1]"
+        );
+        assert_eq!(structured.branch.as_deref(), Some("feature"));
+        assert_eq!(structured.upstream.as_deref(), Some("origin/feature"));
+        assert_eq!(structured.ahead, 2);
+        assert_eq!(structured.behind, 1);
+        assert_eq!(structured.staged, 3);
+        assert_eq!(structured.unstaged, 4);
+        assert_eq!(structured.untracked, 5);
+        assert_eq!(structured.entries_total_count, 9);
+        assert!(structured.entries_truncated);
+        assert_eq!(structured.entries.len(), 1);
+        assert_eq!(
+            structured.entries[0].orig_path.as_deref(),
+            Some("src/old.rs")
+        );
     }
 
     #[test]

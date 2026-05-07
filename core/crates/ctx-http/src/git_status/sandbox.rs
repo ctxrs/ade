@@ -6,10 +6,10 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 
 use ctx_core::models::Worktree;
-use ctx_fs::vcs::VcsStructuredStatus;
 use ctx_workspace_container::workspace_container_name;
 use ctx_workspace_services::worktree_vcs::{
-    parse_git_diff_name_status, parse_git_list_untracked, WorktreeVcsGitCommand,
+    parse_git_diff_name_status, parse_git_list_untracked, worktree_vcs_structured_status_from_vcs,
+    WorktreeVcsGitCommand, WorktreeVcsStructuredStatus,
 };
 
 use crate::daemon::AppState;
@@ -130,7 +130,7 @@ pub(crate) async fn container_git_status_structured(
     worktree: &Worktree,
     include_untracked_files: bool,
     include_entries: bool,
-) -> Result<VcsStructuredStatus> {
+) -> Result<WorktreeVcsStructuredStatus> {
     let bytes = container_git_stdout(
         state,
         worktree,
@@ -139,9 +139,8 @@ pub(crate) async fn container_git_status_structured(
         },
     )
     .await?;
-    Ok(ctx_fs::git::git_status_structured_from_bytes_with_entries(
-        &bytes,
-        include_entries,
+    Ok(worktree_vcs_structured_status_from_vcs(
+        ctx_fs::git::git_status_structured_from_bytes_with_entries(&bytes, include_entries),
     ))
 }
 

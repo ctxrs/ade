@@ -69,8 +69,8 @@ pub use snapshot::{
 pub use status::{
     git_status_snapshot_from_structured, load_git_status_snapshot_from_source,
     resolve_worktree_vcs_commit_lookup_from_source, session_git_status_summary_from_snapshot,
-    worktree_has_vcs_repo_from_source, WorktreeVcsCommitLookupSource, WorktreeVcsStatusSource,
-    WorktreeVcsStructuredStatus,
+    worktree_has_vcs_repo_from_source, worktree_vcs_structured_status_from_vcs,
+    WorktreeVcsCommitLookupSource, WorktreeVcsStatusSource, WorktreeVcsStructuredStatus,
 };
 pub use watch::{
     normalize_worktree_vcs_watch_path, resolve_worktree_vcs_metadata_roots,
