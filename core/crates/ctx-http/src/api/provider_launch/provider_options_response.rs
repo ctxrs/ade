@@ -7,6 +7,121 @@ use ctx_provider_runtime::provider_launch::models::{
 };
 use ctx_providers::adapters::ProviderStatus;
 
+pub(super) struct CachedProviderOptionsSnapshot {
+    pub(super) cached_at: std::time::Instant,
+    pub(super) value: serde_json::Value,
+}
+
+pub(super) struct ProviderOptionsCacheSnapshot {
+    cache_key: String,
+    verify_entry: Option<CachedProviderOptionsSnapshot>,
+    authoritative_entry: Option<CachedProviderOptionsSnapshot>,
+}
+
+pub(super) struct ProviderOptionsResponseContext<'a> {
+    pub(super) state: &'a Arc<AppState>,
+    pub(super) provider_id: &'a str,
+    pub(super) provider_status: Option<&'a ProviderStatus>,
+    pub(super) selected_endpoint: Option<&'a HarnessEndpointRecord>,
+    pub(super) cache: &'a ProviderOptionsCacheSnapshot,
+    pub(super) preferred_model_id: Option<String>,
+}
+
+impl ProviderOptionsCacheSnapshot {
+    pub(super) async fn load(
+        state: &Arc<AppState>,
+        workspace_id: WorkspaceId,
+        target: InstallTarget,
+        provider_id: &str,
+        skip_cached_config_surfaces: bool,
+    ) -> Self {
+        let cache_key = workspace_provider_cache_key(workspace_id, target, provider_id);
+        let verify_entry = if skip_cached_config_surfaces {
+            None
+        } else {
+            state
+                .providers
+                .verify_cache
+                .lock()
+                .await
+                .get(&cache_key)
+                .map(|c| CachedProviderOptionsSnapshot {
+                    cached_at: c.cached_at,
+                    value: c.value.clone(),
+                })
+        };
+        let cached_entry = if skip_cached_config_surfaces {
+            None
+        } else {
+            state
+                .providers
+                .options_cache
+                .lock()
+                .await
+                .get(&cache_key)
+                .map(|c| CachedProviderOptionsSnapshot {
+                    cached_at: c.cached_at,
+                    value: c.value.clone(),
+                })
+        };
+        let authoritative_entry = cached_entry
+            .filter(|entry| entry.value.get("config_error").is_none())
+            .filter(|entry| {
+                provider_options_cache_entry_is_authoritative(provider_id, &entry.value)
+            });
+
+        Self {
+            cache_key,
+            verify_entry,
+            authoritative_entry,
+        }
+    }
+
+    pub(super) fn fresh_authoritative_response(
+        &self,
+        cache_ttl: Duration,
+        verify_ttl: Duration,
+    ) -> Option<serde_json::Value> {
+        let entry = self.authoritative_entry.as_ref()?;
+        if entry.cached_at.elapsed() >= cache_ttl {
+            return None;
+        }
+        let mut out = entry.value.clone();
+        self.attach_verify_cache(&mut out, verify_ttl);
+        Some(out)
+    }
+
+    fn cached_payload_field(&self, field: &str) -> Option<serde_json::Value> {
+        self.authoritative_entry
+            .as_ref()
+            .and_then(|entry| entry.value.get(field))
+            .cloned()
+            .filter(|value| !value.is_null())
+    }
+
+    pub(super) fn cached_models(&self) -> Option<serde_json::Value> {
+        self.cached_payload_field("models")
+    }
+
+    pub(super) fn cached_modes(&self) -> Option<serde_json::Value> {
+        self.cached_payload_field("modes")
+    }
+
+    pub(super) async fn store_response(&self, state: &Arc<AppState>, value: serde_json::Value) {
+        state.providers.options_cache.lock().await.insert(
+            self.cache_key.clone(),
+            crate::daemon::CachedProviderOptions {
+                cached_at: std::time::Instant::now(),
+                value,
+            },
+        );
+    }
+
+    pub(super) fn attach_verify_cache(&self, value: &mut serde_json::Value, verify_ttl: Duration) {
+        attach_verify_cache(value, self.verify_entry.as_ref(), verify_ttl);
+    }
+}
+
 pub(super) fn parse_workspace_id(
     ws_id: &str,
 ) -> Result<WorkspaceId, (StatusCode, Json<serde_json::Value>)> {
@@ -108,15 +223,57 @@ pub(super) async fn attach_static_provider_models_and_modes(
     }
 }
 
+pub(super) fn attach_source_config(
+    value: &mut serde_json::Value,
+    source_config: Option<&harness_sources::HarnessProviderSourceConfig>,
+) {
+    if let Some(source) = source_config {
+        value["source"] = serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
+    }
+}
+
+pub(super) async fn finalize_provider_options_response(
+    context: ProviderOptionsResponseContext<'_>,
+    mut raw_response: serde_json::Value,
+    write_options_cache: bool,
+    verify_ttl: Duration,
+) -> serde_json::Value {
+    if let Some(provider_status) = context.provider_status {
+        attach_static_provider_models_and_modes(
+            context.state,
+            &mut raw_response,
+            context.provider_id,
+            provider_status,
+            context.selected_endpoint,
+            context.cache.cached_models(),
+            context.cache.cached_modes(),
+        )
+        .await;
+    }
+    inject_preferred_model_id(&mut raw_response, context.preferred_model_id);
+
+    let response = redact_json_value(raw_response);
+    if write_options_cache {
+        context
+            .cache
+            .store_response(context.state, response.clone())
+            .await;
+    }
+
+    let mut out = response;
+    context.cache.attach_verify_cache(&mut out, verify_ttl);
+    out
+}
+
 pub(super) fn attach_verify_cache(
     value: &mut serde_json::Value,
-    verify_entry: Option<&(std::time::Instant, serde_json::Value)>,
+    verify_entry: Option<&CachedProviderOptionsSnapshot>,
     verify_ttl: Duration,
 ) {
-    if let Some((verify_at, verify)) = verify_entry {
-        if verify_at.elapsed() < verify_ttl {
+    if let Some(verify_entry) = verify_entry {
+        if verify_entry.cached_at.elapsed() < verify_ttl {
             if let Some(obj) = value.as_object_mut() {
-                obj.insert("verify".to_string(), verify.clone());
+                obj.insert("verify".to_string(), verify_entry.value.clone());
             }
         }
     }

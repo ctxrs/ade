@@ -25,54 +25,19 @@ pub(in crate::api) async fn get_provider_options(
     };
     let (source_config, source_config_error) =
         load_provider_source_config_with_error(&state.core.data_root, &provider_id).await;
-    let cache_key = workspace_provider_cache_key(ws_id, install_target, &provider_id);
     let skip_cached_config_surfaces =
         managed_config_error.is_some() || source_config_error.is_some();
-    let verify_entry: Option<(std::time::Instant, serde_json::Value)> =
-        if skip_cached_config_surfaces {
-            None
-        } else {
-            state
-                .providers
-                .verify_cache
-                .lock()
-                .await
-                .get(&cache_key)
-                .map(|c| (c.cached_at, c.value.clone()))
-        };
-    let cached_entry: Option<(std::time::Instant, serde_json::Value)> =
-        if skip_cached_config_surfaces {
-            None
-        } else {
-            state
-                .providers
-                .options_cache
-                .lock()
-                .await
-                .get(&cache_key)
-                .map(|c| (c.cached_at, c.value.clone()))
-        };
-    let authoritative_cached_entry = cached_entry
-        .as_ref()
-        .filter(|(_, value)| value.get("config_error").is_none())
-        .filter(|(_, value)| provider_options_cache_entry_is_authoritative(&provider_id, value));
-    if let Some((cached_at, cached_value)) = authoritative_cached_entry {
-        if cached_at.elapsed() < CACHE_TTL {
-            let mut out = cached_value.clone();
-            attach_verify_cache(&mut out, verify_entry.as_ref(), VERIFY_TTL);
-            return Ok(Json(out));
-        }
+    let cache = ProviderOptionsCacheSnapshot::load(
+        &state,
+        ws_id,
+        install_target,
+        &provider_id,
+        skip_cached_config_surfaces,
+    )
+    .await;
+    if let Some(out) = cache.fresh_authoritative_response(CACHE_TTL, VERIFY_TTL) {
+        return Ok(Json(out));
     }
-    let cached_models = authoritative_cached_entry
-        .as_ref()
-        .and_then(|(_, value)| value.get("models"))
-        .cloned()
-        .filter(|v| !v.is_null());
-    let cached_modes = authoritative_cached_entry
-        .as_ref()
-        .and_then(|(_, value)| value.get("modes"))
-        .cloned()
-        .filter(|v| !v.is_null());
     if !known {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -116,13 +81,21 @@ pub(in crate::api) async fn get_provider_options(
             "probe_error": config_error,
             "config_error": config_error,
         });
-        if let Some(source) = source_config.as_ref() {
-            raw_resp["source"] = serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
-        }
-        inject_preferred_model_id(&mut raw_resp, preferred_model_id.clone());
-        let resp = redact_json_value(raw_resp);
-        let mut out = resp;
-        attach_verify_cache(&mut out, verify_entry.as_ref(), VERIFY_TTL);
+        attach_source_config(&mut raw_resp, source_config.as_ref());
+        let out = finalize_provider_options_response(
+            ProviderOptionsResponseContext {
+                state: &state,
+                provider_id: &provider_id,
+                provider_status: None,
+                selected_endpoint: None,
+                cache: &cache,
+                preferred_model_id: preferred_model_id.clone(),
+            },
+            raw_resp,
+            false,
+            VERIFY_TTL,
+        )
+        .await;
         return Ok(Json(out));
     }
 
@@ -137,7 +110,7 @@ pub(in crate::api) async fn get_provider_options(
 
     if let Some(config_error) = source_config_error.as_ref() {
         let now = chrono::Utc::now();
-        let mut raw_resp = serde_json::json!({
+        let raw_resp = serde_json::json!({
             "provider_id": provider_id,
             "workspace_id": ws_id.0,
             "installed": provider_status.installed,
@@ -150,21 +123,20 @@ pub(in crate::api) async fn get_provider_options(
             "probe_error": config_error,
             "config_error": config_error,
         });
-        attach_static_provider_models_and_modes(
-            &state,
-            &mut raw_resp,
-            &provider_id,
-            &provider_status,
-            None,
-            cached_models.clone(),
-            cached_modes.clone(),
+        let out = finalize_provider_options_response(
+            ProviderOptionsResponseContext {
+                state: &state,
+                provider_id: &provider_id,
+                provider_status: Some(&provider_status),
+                selected_endpoint: None,
+                cache: &cache,
+                preferred_model_id: preferred_model_id.clone(),
+            },
+            raw_resp,
+            false,
+            VERIFY_TTL,
         )
         .await;
-        inject_preferred_model_id(&mut raw_resp, preferred_model_id.clone());
-
-        let resp = redact_json_value(raw_resp);
-        let mut out = resp;
-        attach_verify_cache(&mut out, verify_entry.as_ref(), VERIFY_TTL);
         return Ok(Json(out));
     }
 
@@ -180,7 +152,7 @@ pub(in crate::api) async fn get_provider_options(
         Err(config_error) => {
             let config_error = logs::redact_sensitive(&config_error);
             let now = chrono::Utc::now();
-            let mut raw_resp = serde_json::json!({
+            let raw_resp = serde_json::json!({
                 "provider_id": provider_id,
                 "workspace_id": ws_id.0,
                 "installed": provider_status.installed,
@@ -193,21 +165,20 @@ pub(in crate::api) async fn get_provider_options(
                 "probe_error": config_error,
                 "config_error": config_error,
             });
-            attach_static_provider_models_and_modes(
-                &state,
-                &mut raw_resp,
-                &provider_id,
-                &provider_status,
-                None,
-                cached_models.clone(),
-                cached_modes.clone(),
+            let out = finalize_provider_options_response(
+                ProviderOptionsResponseContext {
+                    state: &state,
+                    provider_id: &provider_id,
+                    provider_status: Some(&provider_status),
+                    selected_endpoint: None,
+                    cache: &cache,
+                    preferred_model_id: preferred_model_id.clone(),
+                },
+                raw_resp,
+                false,
+                VERIFY_TTL,
             )
             .await;
-            inject_preferred_model_id(&mut raw_resp, preferred_model_id.clone());
-
-            let resp = redact_json_value(raw_resp);
-            let mut out = resp;
-            attach_verify_cache(&mut out, verify_entry.as_ref(), VERIFY_TTL);
             return Ok(Json(out));
         }
     };
@@ -228,31 +199,21 @@ pub(in crate::api) async fn get_provider_options(
             "auth_mode": auth_mode,
             "probed_at": chrono::Utc::now().to_rfc3339(),
         });
-        if let Some(source) = source_config.as_ref() {
-            raw_base_resp["source"] =
-                serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
-        }
-        attach_static_provider_models_and_modes(
-            &state,
-            &mut raw_base_resp,
-            &provider_id,
-            &provider_status,
-            selected_endpoint.as_ref(),
-            cached_models.clone(),
-            cached_modes.clone(),
+        attach_source_config(&mut raw_base_resp, source_config.as_ref());
+        let out = finalize_provider_options_response(
+            ProviderOptionsResponseContext {
+                state: &state,
+                provider_id: &provider_id,
+                provider_status: Some(&provider_status),
+                selected_endpoint: selected_endpoint.as_ref(),
+                cache: &cache,
+                preferred_model_id: preferred_model_id.clone(),
+            },
+            raw_base_resp,
+            true,
+            VERIFY_TTL,
         )
         .await;
-        inject_preferred_model_id(&mut raw_base_resp, preferred_model_id.clone());
-        let base_resp = redact_json_value(raw_base_resp);
-        state.providers.options_cache.lock().await.insert(
-            cache_key,
-            crate::daemon::CachedProviderOptions {
-                cached_at: std::time::Instant::now(),
-                value: base_resp.clone(),
-            },
-        );
-        let mut out = base_resp;
-        attach_verify_cache(&mut out, verify_entry.as_ref(), VERIFY_TTL);
         return Ok(Json(out));
     }
 
@@ -294,33 +255,21 @@ pub(in crate::api) async fn get_provider_options(
             if let Some(probe_error) = probe_error {
                 raw_resp["probe_error"] = serde_json::json!(probe_error);
             }
-            if let Some(source) = source_config.as_ref() {
-                raw_resp["source"] =
-                    serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
-            }
-            attach_static_provider_models_and_modes(
-                &state,
-                &mut raw_resp,
-                &provider_id,
-                &provider_status,
-                selected_endpoint.as_ref(),
-                cached_models.clone(),
-                cached_modes.clone(),
+            attach_source_config(&mut raw_resp, source_config.as_ref());
+            let out = finalize_provider_options_response(
+                ProviderOptionsResponseContext {
+                    state: &state,
+                    provider_id: &provider_id,
+                    provider_status: Some(&provider_status),
+                    selected_endpoint: selected_endpoint.as_ref(),
+                    cache: &cache,
+                    preferred_model_id: preferred_model_id.clone(),
+                },
+                raw_resp,
+                true,
+                VERIFY_TTL,
             )
             .await;
-            inject_preferred_model_id(&mut raw_resp, preferred_model_id.clone());
-
-            let resp = redact_json_value(raw_resp);
-            state.providers.options_cache.lock().await.insert(
-                cache_key,
-                crate::daemon::CachedProviderOptions {
-                    cached_at: std::time::Instant::now(),
-                    value: resp.clone(),
-                },
-            );
-
-            let mut out = resp;
-            attach_verify_cache(&mut out, verify_entry.as_ref(), VERIFY_TTL);
             return Ok(Json(out));
         }
         ProviderOptionsProbePlan::SelectedEndpointRuntimeLaunch(endpoint_id) => {
@@ -401,31 +350,21 @@ pub(in crate::api) async fn get_provider_options(
             if let Some(probe_error) = probe_error {
                 raw_resp["probe_error"] = serde_json::json!(probe_error);
             }
-            if let Some(source) = source_config.as_ref() {
-                raw_resp["source"] =
-                    serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
-            }
-            attach_static_provider_models_and_modes(
-                &state,
-                &mut raw_resp,
-                &provider_id,
-                &provider_status,
-                selected_endpoint.as_ref(),
-                cached_models.clone(),
-                cached_modes.clone(),
+            attach_source_config(&mut raw_resp, source_config.as_ref());
+            let out = finalize_provider_options_response(
+                ProviderOptionsResponseContext {
+                    state: &state,
+                    provider_id: &provider_id,
+                    provider_status: Some(&provider_status),
+                    selected_endpoint: selected_endpoint.as_ref(),
+                    cache: &cache,
+                    preferred_model_id: preferred_model_id.clone(),
+                },
+                raw_resp,
+                true,
+                VERIFY_TTL,
             )
             .await;
-            inject_preferred_model_id(&mut raw_resp, preferred_model_id.clone());
-            let resp = redact_json_value(raw_resp);
-            state.providers.options_cache.lock().await.insert(
-                cache_key,
-                crate::daemon::CachedProviderOptions {
-                    cached_at: std::time::Instant::now(),
-                    value: resp.clone(),
-                },
-            );
-            let mut out = resp;
-            attach_verify_cache(&mut out, verify_entry.as_ref(), VERIFY_TTL);
             return Ok(Json(out));
         }
         ProviderOptionsProbePlan::RuntimeModels => {}
@@ -535,31 +474,20 @@ pub(in crate::api) async fn get_provider_options(
             })
         }
     };
-    if let Some(source) = source_config.as_ref() {
-        raw_resp["source"] = serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
-    }
-    attach_static_provider_models_and_modes(
-        &state,
-        &mut raw_resp,
-        &provider_id,
-        &provider_status,
-        selected_endpoint.as_ref(),
-        cached_models,
-        cached_modes,
+    attach_source_config(&mut raw_resp, source_config.as_ref());
+    let out = finalize_provider_options_response(
+        ProviderOptionsResponseContext {
+            state: &state,
+            provider_id: &provider_id,
+            provider_status: Some(&provider_status),
+            selected_endpoint: selected_endpoint.as_ref(),
+            cache: &cache,
+            preferred_model_id,
+        },
+        raw_resp,
+        true,
+        VERIFY_TTL,
     )
     .await;
-    inject_preferred_model_id(&mut raw_resp, preferred_model_id);
-
-    let resp = redact_json_value(raw_resp);
-    state.providers.options_cache.lock().await.insert(
-        cache_key,
-        crate::daemon::CachedProviderOptions {
-            cached_at: std::time::Instant::now(),
-            value: resp.clone(),
-        },
-    );
-
-    let mut out = resp;
-    attach_verify_cache(&mut out, verify_entry.as_ref(), VERIFY_TTL);
     Ok(Json(out))
 }
