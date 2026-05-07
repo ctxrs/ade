@@ -2,7 +2,8 @@ use super::attachments::{attachments_match, normalize_message_attachments};
 use super::turns::ensure_session_turn_for_message;
 use super::*;
 use ctx_session_service::message_delivery::{
-    delivery_matches, resolve_message_delivery as resolve_message_delivery_policy,
+    delivery_matches, resolve_message_client_ids,
+    resolve_message_delivery as resolve_message_delivery_policy, MessageClientIdResolutionError,
     MessageDeliveryResolutionError,
 };
 
@@ -85,32 +86,38 @@ pub(crate) async fn post_message(
         ));
     }
 
-    let (message_id, turn_id, client_ids) = match (
-        req.id.as_deref().map(str::trim).filter(|v| !v.is_empty()),
-        req.turn_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|v| !v.is_empty()),
-    ) {
-        (Some(message_id), Some(turn_id)) => (
-            MessageId(
-                uuid::Uuid::parse_str(message_id)
-                    .map_err(|_| api_error(StatusCode::BAD_REQUEST, "Invalid message id."))?,
-            ),
-            TurnId(
-                uuid::Uuid::parse_str(turn_id)
-                    .map_err(|_| api_error(StatusCode::BAD_REQUEST, "Invalid turn id."))?,
-            ),
-            true,
-        ),
-        (None, None) => (MessageId::new(), TurnId::new(), false),
-        _ => {
-            return Err(api_error(
-                StatusCode::BAD_REQUEST,
-                "Message id and turn id must either both be provided or both be omitted.",
-            ))
-        }
-    };
+    let request_message_id = req
+        .id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            uuid::Uuid::parse_str(value)
+                .map(MessageId)
+                .map_err(|_| api_error(StatusCode::BAD_REQUEST, "Invalid message id."))
+        })
+        .transpose()?;
+    let request_turn_id = req
+        .turn_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            uuid::Uuid::parse_str(value)
+                .map(TurnId)
+                .map_err(|_| api_error(StatusCode::BAD_REQUEST, "Invalid turn id."))
+        })
+        .transpose()?;
+    let client_ids = resolve_message_client_ids(request_message_id, request_turn_id).map_err(
+        |error| match error {
+            MessageClientIdResolutionError::PartialClientIds => {
+                api_error(StatusCode::BAD_REQUEST, error.message())
+            }
+        },
+    )?;
+    let message_id = client_ids.message_id;
+    let turn_id = client_ids.turn_id;
+    let client_ids = client_ids.client_supplied;
 
     let attachments = normalize_message_attachments(&state, req.attachments).await?;
     let content = req.content;

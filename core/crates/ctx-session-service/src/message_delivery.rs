@@ -1,3 +1,4 @@
+use ctx_core::ids::{MessageId, TurnId};
 use ctx_core::models::{MessageDelivery, SessionTurnStatus};
 
 const QUEUED_MESSAGES_DISABLED_MESSAGE: &str = "Queued messages are disabled.";
@@ -10,6 +11,28 @@ pub enum MessageDeliveryResolutionError {
     TurnAlreadyRunning,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MessageClientIdResolutionError {
+    PartialClientIds,
+}
+
+impl MessageClientIdResolutionError {
+    pub fn message(self) -> &'static str {
+        match self {
+            MessageClientIdResolutionError::PartialClientIds => {
+                "Message id and turn id must either both be provided or both be omitted."
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MessageClientIds {
+    pub message_id: MessageId,
+    pub turn_id: TurnId,
+    pub client_supplied: bool,
+}
+
 impl MessageDeliveryResolutionError {
     pub fn message(self) -> &'static str {
         match self {
@@ -18,6 +41,25 @@ impl MessageDeliveryResolutionError {
             }
             MessageDeliveryResolutionError::TurnAlreadyRunning => TURN_ALREADY_RUNNING_MESSAGE,
         }
+    }
+}
+
+pub fn resolve_message_client_ids(
+    message_id: Option<MessageId>,
+    turn_id: Option<TurnId>,
+) -> Result<MessageClientIds, MessageClientIdResolutionError> {
+    match (message_id, turn_id) {
+        (Some(message_id), Some(turn_id)) => Ok(MessageClientIds {
+            message_id,
+            turn_id,
+            client_supplied: true,
+        }),
+        (None, None) => Ok(MessageClientIds {
+            message_id: MessageId::new(),
+            turn_id: TurnId::new(),
+            client_supplied: false,
+        }),
+        _ => Err(MessageClientIdResolutionError::PartialClientIds),
     }
 }
 
@@ -95,6 +137,30 @@ mod tests {
         assert_eq!(
             MessageDeliveryResolutionError::TurnAlreadyRunning.message(),
             "A turn is already running. Stop it or wait for it to finish."
+        );
+    }
+
+    #[test]
+    fn client_ids_must_be_paired_or_generated_together() {
+        let message_id = MessageId::new();
+        let turn_id = TurnId::new();
+        let supplied = resolve_message_client_ids(Some(message_id), Some(turn_id))
+            .expect("paired ids should be accepted");
+        assert_eq!(supplied.message_id, message_id);
+        assert_eq!(supplied.turn_id, turn_id);
+        assert!(supplied.client_supplied);
+
+        let generated =
+            resolve_message_client_ids(None, None).expect("missing ids should be generated");
+        assert_ne!(generated.message_id, message_id);
+        assert_ne!(generated.turn_id, turn_id);
+        assert!(!generated.client_supplied);
+
+        let err = resolve_message_client_ids(Some(message_id), None)
+            .expect_err("partial ids should be rejected");
+        assert_eq!(
+            err.message(),
+            "Message id and turn id must either both be provided or both be omitted."
         );
     }
 
