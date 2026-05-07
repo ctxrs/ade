@@ -15,6 +15,7 @@ use super::helpers::should_track_thought_chunk;
 use super::*;
 use crate::scheduler::TurnStartProgress;
 use ctx_core::ids::{MessageId, RunId, TurnId};
+use ctx_core::models::{Session, SessionEventType, SessionTurnStatus};
 use ctx_session_tools::normalize_tool_event;
 use ctx_session_tools::order_seq::attach_order_seq;
 use std::path::PathBuf;

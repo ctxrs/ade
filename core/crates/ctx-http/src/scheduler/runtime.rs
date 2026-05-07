@@ -3,15 +3,11 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::Result;
-use chrono::Utc;
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot, watch, Mutex};
 use tokio::time::Instant as TokioInstant;
 
-use ctx_core::ids::{RunId, TurnId};
-use ctx_core::models::{
-    MessageDelivery, MessageRole, Session, SessionEventType, SessionTurnStatus,
-};
+use ctx_core::models::{MessageRole, Session};
 use ctx_providers::events::NormalizedEvent;
 use ctx_session_tools::model_resolution::compose_model_id;
 use ctx_session_tools::order_seq::OrderSeqState;
@@ -36,7 +32,7 @@ mod turn_start;
 
 use self::event_loop::{spawn_turn_event_loop_for_session, TurnEventLoopSpawnRequest};
 use self::execution_plan::prepare_turn_execution_plan;
-use self::helpers::{compute_context_window_metrics, runtime_provider_id_for_session_provider};
+use self::helpers::runtime_provider_id_for_session_provider;
 use self::provider_env::{
     apply_runtime_source_env, build_base_provider_env, emit_provider_run_env_ready_event,
     prepare_provider_runtime_environment, BaseProviderEnvRequest, ProviderRunEnvReadyEvent,
@@ -48,10 +44,7 @@ use self::provider_spawn::{
 };
 use self::turn_failure::emit_turn_start_failed;
 use self::turn_input::prepare_turn_input;
-use self::turn_start::{
-    apply_crp_launch_policy_env_for_control_mode, emit_provider_run_started_event,
-    record_queue_wait_metric, ProviderRunStartedEvent,
-};
+use self::turn_start::{apply_crp_launch_policy_env_for_control_mode, prepare_turn_start};
 use super::lifecycle::{RunningTurn, TurnStartProgress};
 use super::persistence::append_session_event_with_retry;
 use super::policy_admission::{
@@ -79,54 +72,24 @@ pub(crate) async fn start_turn(
     let execution_environment = session.execution_environment;
     let full_model_id = compose_model_id(&session.model_id, session.reasoning_effort.as_deref());
 
-    let mut message = queued.message;
-    let message_id = message.id;
-    let perf_run_id = queued.run_id.clone();
-    let queue_wait_ms = queued.enqueued_at.elapsed().as_millis() as u64;
-    record_queue_wait_metric(
+    let turn_start = prepare_turn_start(
         state,
+        &store,
         session,
+        &workdir_str,
         &full_model_id,
-        execution_environment.as_str(),
+        execution_environment,
         session_root_kind,
-        perf_run_id.clone(),
-        queue_wait_ms,
+        queued,
     )
-    .await;
-    let run_id = message.run_id.get_or_insert_with(RunId::new).to_owned();
-    let turn_id = message.turn_id.get_or_insert_with(TurnId::new).to_owned();
-
-    emit_provider_run_started_event(ProviderRunStartedEvent {
-        state,
-        session,
-        run_id,
-        turn_id,
-        workdir_str: &workdir_str,
-        full_model_id: &full_model_id,
-        execution_environment: execution_environment.as_str(),
-        session_root_kind,
-    });
-
-    if message.delivered_at.is_none() {
-        store.mark_message_delivered(message.id).await?;
-        message.delivery = MessageDelivery::Immediate;
-        message.delivered_at = Some(Utc::now());
-    }
-    store
-        .update_session_turn_status(
-            session.id,
-            turn_id,
-            SessionTurnStatus::Starting,
-            None,
-            None,
-            Utc::now(),
-        )
-        .await?;
-
-    let prompt = message.content.clone();
-    let provider_session_ref = session.provider_session_ref.clone();
-    let context_window_metrics =
-        compute_context_window_metrics(&session.provider_id, &full_model_id, &prompt);
+    .await?;
+    let message = turn_start.message;
+    let message_id = turn_start.message_id;
+    let perf_run_id = turn_start.perf_run_id;
+    let run_id = turn_start.run_id;
+    let turn_id = turn_start.turn_id;
+    let provider_session_ref = turn_start.provider_session_ref;
+    let context_window_metrics = turn_start.context_window_metrics;
 
     let (ev_tx, ev_rx) = mpsc::channel::<NormalizedEvent>(128);
     let (events_done_tx, events_done_rx) = oneshot::channel();
