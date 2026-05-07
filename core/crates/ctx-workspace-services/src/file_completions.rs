@@ -33,34 +33,27 @@ fn match_score(candidate: &str, query: &str) -> Option<i32> {
     let cand = candidate.to_lowercase();
     let q = query.to_lowercase();
 
-    // Extract filename from path (everything after last '/')
     let filename = candidate.rsplit('/').next().unwrap_or(candidate);
     let filename_lower = filename.to_lowercase();
 
-    // 1. Filename exact match - highest priority
     if filename_lower == q {
         return Some(100_000);
     }
 
-    // 2. Filename prefix match
     if filename_lower.starts_with(&q) {
         let filename_len = i32::try_from(filename.len()).ok()?;
         return Some(50_000 - filename_len);
     }
 
-    // 3. Filename substring match
     if let Some(idx) = filename_lower.find(&q) {
         let idx = i32::try_from(idx).ok()?;
         let filename_len = i32::try_from(filename.len()).ok()?;
         return Some(20_000 - idx * 10 - filename_len);
     }
 
-    // 4. Directory name substring match
-    // Check each directory component separately
     let path_parts: Vec<&str> = candidate.split('/').collect();
     if path_parts.len() > 1 {
         for (i, part) in path_parts.iter().enumerate() {
-            // Skip the filename (last part)
             if i == path_parts.len() - 1 {
                 continue;
             }
@@ -73,7 +66,6 @@ fn match_score(candidate: &str, query: &str) -> Option<i32> {
         }
     }
 
-    // 5. Full path substring match as fallback
     if let Some(idx) = cand.find(&q) {
         let idx = i32::try_from(idx).ok()?;
         let path_len = i32::try_from(candidate.len()).ok()?;
@@ -133,8 +125,6 @@ mod tests {
             "src/earth_model.ts".to_string(),
         ];
 
-        // "earth" should NOT match "supabase_local_start.sh" (no substring)
-        // but SHOULD match "earth_model.ts" (filename substring)
         let out = filter_and_rank_paths(&paths, "earth", 10);
         assert_eq!(out.len(), 1);
         assert_eq!(out.first().map(|s| s.as_str()), Some("src/earth_model.ts"));
@@ -148,7 +138,6 @@ mod tests {
             "c.txt".to_string(),
         ];
         let out = filter_and_rank_paths(&paths, "", 2);
-        // With equal score, shorter/lex order picks deterministically.
         assert_eq!(out.len(), 2);
     }
 

@@ -58,7 +58,7 @@ pub(crate) async fn session_file_completions(
         }
     };
 
-    Ok(Json(completions::filter_and_rank_paths(
+    Ok(Json(workspace_file_completions::filter_and_rank_paths(
         &files, &query, limit,
     )))
 }

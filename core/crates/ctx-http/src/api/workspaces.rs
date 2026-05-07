@@ -23,7 +23,6 @@ use super::shared::{
     load_and_cache_workspace_files, map_effective_execution_settings_error,
     path_resolves_within_root, store_for_existing_workspace_status, FileCompletionsQuery,
 };
-use crate::completions;
 use crate::daemon::workspaces::{WorkspaceHydrationError, WorkspaceHydrationErrorKind};
 use crate::daemon::AppState;
 use crate::execution_effective;
@@ -40,6 +39,7 @@ use ctx_fs::vcs;
 use ctx_workspace_attachments::AttachmentConfig;
 use ctx_workspace_config as workspace_config;
 use ctx_workspace_container::WorkspaceContainerStatus as HarnessContainerStatus;
+use ctx_workspace_services::file_completions;
 
 #[derive(Debug, Deserialize)]
 pub(super) struct UpdateMergeQueueConfigReq {

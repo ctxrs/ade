@@ -1,7 +1,6 @@
 pub mod api;
 mod async_util;
 mod build_identity;
-mod completions;
 mod container_builder;
 pub mod daemon;
 mod dictation_livekit;
