@@ -12,6 +12,7 @@ rust_library(
     edition = "2021",
     srcs = glob(["src/**/*.rs"]),
     deps = _CTX_SESSION_SERVICE_DEPS.deps,
+    proc_macro_deps = _CTX_SESSION_SERVICE_DEPS.proc_macro_deps,
 )
 
 rust_test(

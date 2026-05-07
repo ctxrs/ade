@@ -3,12 +3,24 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use async_trait::async_trait;
 use tokio::sync::{broadcast, mpsc, watch, Mutex};
 
-use ctx_core::ids::{SessionId, TaskId, WorkspaceId};
-use ctx_core::models::{Session, SessionEvent, SessionHeadSnapshot};
+use ctx_core::ids::{SessionId, TaskId, TurnId, WorkspaceId};
+use ctx_core::models::{
+    Session, SessionEvent, SessionEventType, SessionHeadDelta, SessionHeadSnapshot,
+    SessionSummaryDelta, SessionTurn, SessionTurnToolSummary,
+};
 use ctx_session_tools::order_seq::OrderSeqState;
 use ctx_store::Store;
+
+use crate::head_projection::{
+    activity_from_turn, build_session_summary_delta, derive_message_preview,
+    derive_summary_activity, event_context_window, is_session_gap_notice, message_from_event,
+    patch_turn_from_event, recompute_turn_tool_counts, resolve_projection_rev_for_stream_delta,
+    session_metadata_from_session, should_include_session_metadata_in_head_delta,
+    should_refresh_turn_from_store, turn_from_event,
+};
 
 const DEFAULT_PROVIDER_INACTIVITY_TIMEOUT_SECS: u64 = 30 * 60;
 
@@ -158,6 +170,14 @@ impl<SchedulerCommand> SessionRuntime<SchedulerCommand> {
     pub async fn remember_session_meta(&self, session: &Session) {
         let mut cache = self.session_meta_cache.lock().await;
         cache.insert(session.id, TimedEntry::new(session.clone()));
+    }
+
+    async fn cached_session_meta(&self, session_id: SessionId) -> Option<Session> {
+        let mut cache = self.session_meta_cache.lock().await;
+        cache.get_mut(&session_id).map(|entry| {
+            entry.touch();
+            entry.value.clone()
+        })
     }
 
     pub async fn session_meta_workspace(&self, session_id: SessionId) -> Option<WorkspaceId> {
@@ -405,6 +425,230 @@ impl<SchedulerCommand> SessionRuntime<SchedulerCommand> {
     pub async fn set_provider_inactivity_timeout(&self, timeout: Duration) {
         *self.provider_inactivity_timeout.lock().await = timeout;
     }
+
+    pub async fn publish_event_with_host<H>(&self, host: &H, event: SessionEvent)
+    where
+        H: SessionEventPublicationHost,
+    {
+        let tx = self.get_broadcaster(event.session_id).await;
+        let _ = tx.send(event.clone());
+        self.publish_session_event_head(event.session_id, event.seq)
+            .await;
+
+        if is_session_gap_notice(&event) {
+            return;
+        }
+
+        let session = match self.cached_session_meta(event.session_id).await {
+            Some(session) => session,
+            None => {
+                let Some(session) = host.load_session(event.session_id).await else {
+                    return;
+                };
+                self.remember_session_meta(&session).await;
+                session
+            }
+        };
+
+        if should_refresh_task_delta_for_event(&event.event_type) {
+            host.queue_task_delta_refresh(session.task_id).await;
+        }
+
+        let message = if should_materialize_message(&event.event_type) {
+            message_from_event(&event, &session)
+        } else {
+            None
+        };
+
+        let tool_event = is_tool_event(&event.event_type);
+        let mut tool_summaries = Vec::new();
+        if tool_event {
+            if let Some(turn_id) = event.turn_id {
+                tool_summaries = host
+                    .list_turn_tool_summaries_for_turn(event.session_id, turn_id)
+                    .await;
+            }
+        }
+
+        let mut turn = turn_from_event(&event, message.as_ref());
+        let prefers_cached_turn = tool_event
+            || event_context_window(&event).is_some()
+            || should_refresh_turn_from_store(&event.event_type);
+        if turn.is_none() && prefers_cached_turn {
+            if let Some(turn_id) = event.turn_id {
+                turn = host.cached_turn_for_read(event.session_id, turn_id).await;
+            }
+        }
+        if turn.is_none() && (should_refresh_turn_from_store(&event.event_type) || tool_event) {
+            if let Some(turn_id) = event.turn_id {
+                turn = host.load_turn(event.session_id, turn_id).await;
+            }
+        }
+        if let Some(turn) = turn.as_mut() {
+            patch_turn_from_event(turn, &event);
+            if !tool_summaries.is_empty() {
+                recompute_turn_tool_counts(turn, &tool_summaries);
+            }
+        }
+
+        let stream_only = is_stream_only_event(&event.event_type);
+        let cached_replay_cursor = if stream_only {
+            host.session_replay_cursor(session.workspace_id, event.session_id)
+                .await
+        } else {
+            SessionReplayCursor::default()
+        };
+        let last_event_seq = if stream_only {
+            cached_replay_cursor.last_event_seq
+        } else {
+            event.seq
+        };
+        let projection_rev = resolve_projection_rev_for_stream_delta(
+            stream_only,
+            last_event_seq,
+            cached_replay_cursor.projection_rev,
+            || async { host.load_projection_rev(event.session_id).await },
+        )
+        .await;
+        let state_rev = last_event_seq;
+
+        let activity =
+            derive_summary_activity(&event).or_else(|| turn.as_ref().map(activity_from_turn));
+
+        let mut last_message_at = None;
+        let mut last_message_preview = None;
+        if let Some(message) = message.as_ref() {
+            last_message_at = Some(message.created_at);
+            last_message_preview = Some(derive_message_preview(&message.content));
+        }
+
+        let summary_delta = build_session_summary_delta(
+            &session,
+            activity.clone(),
+            last_message_at,
+            last_message_preview,
+            last_event_seq,
+            projection_rev,
+            state_rev,
+        );
+
+        let delta = SessionHeadDelta {
+            session_id: event.session_id,
+            last_event_seq,
+            projection_rev,
+            state_rev,
+            emitted_at_ms: Some(chrono::Utc::now().timestamp_millis()),
+            session: should_include_session_metadata_in_head_delta(&event.event_type)
+                .then(|| session_metadata_from_session(&session)),
+            activity,
+            event: Some(event),
+            turn,
+            message,
+            tool_summaries,
+        };
+        host.publish_session_head_delta(session.workspace_id, &session, delta, !stream_only)
+            .await;
+
+        if let Some(summary_delta) = summary_delta {
+            host.publish_session_summary_delta(session.workspace_id, summary_delta)
+                .await;
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SessionReplayCursor {
+    pub last_event_seq: i64,
+    pub projection_rev: i64,
+}
+
+#[async_trait]
+pub trait SessionEventPublicationHost: Send + Sync {
+    async fn load_session(&self, session_id: SessionId) -> Option<Session>;
+
+    async fn list_turn_tool_summaries_for_turn(
+        &self,
+        session_id: SessionId,
+        turn_id: TurnId,
+    ) -> Vec<SessionTurnToolSummary>;
+
+    async fn cached_turn_for_read(
+        &self,
+        session_id: SessionId,
+        turn_id: TurnId,
+    ) -> Option<SessionTurn>;
+
+    async fn load_turn(&self, session_id: SessionId, turn_id: TurnId) -> Option<SessionTurn>;
+
+    async fn session_replay_cursor(
+        &self,
+        workspace_id: WorkspaceId,
+        session_id: SessionId,
+    ) -> SessionReplayCursor;
+
+    async fn load_projection_rev(&self, session_id: SessionId) -> Option<i64>;
+
+    async fn publish_session_head_delta(
+        &self,
+        workspace_id: WorkspaceId,
+        session: &Session,
+        delta: SessionHeadDelta,
+        durable: bool,
+    );
+
+    async fn publish_session_summary_delta(
+        &self,
+        workspace_id: WorkspaceId,
+        delta: SessionSummaryDelta,
+    );
+
+    async fn queue_task_delta_refresh(&self, task_id: TaskId);
+}
+
+fn is_stream_only_event(event_type: &SessionEventType) -> bool {
+    matches!(
+        event_type,
+        SessionEventType::AssistantChunk
+            | SessionEventType::ThoughtChunk
+            | SessionEventType::ContextWindowUpdate
+    )
+}
+
+fn should_refresh_task_delta_for_event(event_type: &SessionEventType) -> bool {
+    matches!(
+        event_type,
+        SessionEventType::UserMessage
+            | SessionEventType::AssistantMessageInserted
+            | SessionEventType::AssistantComplete
+            | SessionEventType::Done
+            | SessionEventType::TurnQueued
+            | SessionEventType::TurnStarted
+            | SessionEventType::TurnFinished
+            | SessionEventType::TurnInterrupted
+            | SessionEventType::MessageQueueAdded
+            | SessionEventType::MessageQueueUpdated
+            | SessionEventType::MessageQueueRemoved
+            | SessionEventType::MessageQueuePromoted
+            | SessionEventType::Error
+    )
+}
+
+fn should_materialize_message(event_type: &SessionEventType) -> bool {
+    matches!(
+        event_type,
+        SessionEventType::UserMessage
+            | SessionEventType::AssistantMessageInserted
+            | SessionEventType::Notice
+    )
+}
+
+fn is_tool_event(event_type: &SessionEventType) -> bool {
+    matches!(
+        event_type,
+        SessionEventType::ToolCall
+            | SessionEventType::ToolCallUpdate
+            | SessionEventType::ToolResult
+    )
 }
 
 impl<SchedulerCommand: Send + 'static> SessionRuntime<SchedulerCommand> {
@@ -516,6 +760,13 @@ pub fn provider_inactivity_timeout_from_env() -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
+    use ctx_core::ids::{MessageId, SessionEventId, TurnId, WorktreeId};
+    use ctx_core::models::{
+        ExecutionEnvironment, SessionHeadDelta, SessionStatus, SessionSummaryDelta,
+        SessionTurnStatus,
+    };
+    use serde_json::json;
 
     #[tokio::test]
     async fn pin_state_reports_only_pinned_transitions() {
@@ -543,5 +794,245 @@ mod tests {
 
         let replacement = runtime.task_session_creation_lock(task_id).await;
         assert_eq!(Arc::strong_count(&replacement), 1);
+    }
+
+    #[tokio::test]
+    async fn publish_gap_notice_only_updates_realtime_session_channels() {
+        let runtime = SessionRuntime::<()>::new(Duration::from_secs(60));
+        let host = RecordingPublicationHost::default();
+        let session_id = SessionId::new();
+        let mut events = runtime.get_broadcaster(session_id).await.subscribe();
+        let head = runtime.subscribe_session_event_head(session_id).await;
+        let event = test_event(
+            session_id,
+            SessionEventType::Notice,
+            json!({
+                "kind": "session_gap",
+                "reason": "data_plane_overflow"
+            }),
+        );
+
+        runtime.publish_event_with_host(&host, event.clone()).await;
+
+        assert_eq!(events.try_recv().expect("published event").id, event.id);
+        assert_eq!(*head.borrow(), event.seq);
+        assert_eq!(host.load_session_calls.lock().await.len(), 0);
+        assert!(host.head_deltas.lock().await.is_empty());
+        assert!(host.summary_deltas.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn publish_user_message_materializes_head_summary_and_task_delta() {
+        let runtime = SessionRuntime::<()>::new(Duration::from_secs(60));
+        let session = test_session();
+        let host = RecordingPublicationHost::new(session.clone());
+        *host.projection_rev.lock().await = Some(42);
+        let mut event = test_event(session.id, SessionEventType::UserMessage, json!({}));
+        let turn_id = TurnId::new();
+        let message_id = MessageId::new();
+        event.turn_id = Some(turn_id);
+        event.seq = 12;
+        event.payload_json = json!({
+            "message_id": message_id.0.to_string(),
+            "content": "first line\nsecond line",
+            "order_seq": 3
+        });
+
+        runtime.publish_event_with_host(&host, event).await;
+
+        let head_deltas = host.head_deltas.lock().await;
+        assert_eq!(head_deltas.len(), 1);
+        let published = &head_deltas[0];
+        assert_eq!(published.workspace_id, session.workspace_id);
+        assert!(published.durable);
+        assert_eq!(published.delta.last_event_seq, 12);
+        assert_eq!(published.delta.projection_rev, 42);
+        assert_eq!(
+            published.delta.message.as_ref().map(|message| message.id),
+            Some(message_id)
+        );
+        assert_eq!(
+            published
+                .delta
+                .turn
+                .as_ref()
+                .map(|turn| turn.status.clone()),
+            Some(SessionTurnStatus::Starting)
+        );
+        drop(head_deltas);
+
+        let summary_deltas = host.summary_deltas.lock().await;
+        assert_eq!(summary_deltas.len(), 1);
+        assert_eq!(
+            summary_deltas[0].last_message_preview.as_deref(),
+            Some("first line")
+        );
+        drop(summary_deltas);
+
+        assert_eq!(
+            host.queued_task_refreshes.lock().await.as_slice(),
+            &[session.task_id]
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_only_event_uses_replay_cursor_and_stays_transient() {
+        let runtime = SessionRuntime::<()>::new(Duration::from_secs(60));
+        let session = test_session();
+        let host = RecordingPublicationHost::new(session.clone());
+        *host.replay_cursor.lock().await = SessionReplayCursor {
+            last_event_seq: 25,
+            projection_rev: 9,
+        };
+        let mut event = test_event(
+            session.id,
+            SessionEventType::AssistantChunk,
+            json!({"delta": "partial"}),
+        );
+        event.seq = 30;
+
+        runtime.publish_event_with_host(&host, event).await;
+
+        let head_deltas = host.head_deltas.lock().await;
+        assert_eq!(head_deltas.len(), 1);
+        assert!(!head_deltas[0].durable);
+        assert_eq!(head_deltas[0].delta.last_event_seq, 25);
+        assert_eq!(head_deltas[0].delta.projection_rev, 9);
+        drop(head_deltas);
+        assert_eq!(*host.projection_rev_loads.lock().await, 0);
+    }
+
+    fn test_session() -> Session {
+        let now = Utc::now();
+        Session {
+            id: SessionId::new(),
+            task_id: TaskId::new(),
+            workspace_id: WorkspaceId::new(),
+            worktree_id: WorktreeId::new(),
+            execution_environment: ExecutionEnvironment::Host,
+            parent_session_id: None,
+            relationship: None,
+            provider_id: "fake".to_string(),
+            model_id: "fake-model".to_string(),
+            reasoning_effort: None,
+            title: "Test".to_string(),
+            agent_role: "assistant".to_string(),
+            status: SessionStatus::Active,
+            provider_session_ref: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    fn test_event(
+        session_id: SessionId,
+        event_type: SessionEventType,
+        payload_json: serde_json::Value,
+    ) -> SessionEvent {
+        SessionEvent {
+            seq: 7,
+            id: SessionEventId::new(),
+            session_id,
+            run_id: None,
+            turn_id: None,
+            event_type,
+            payload_json,
+            transient: false,
+            created_at: Utc::now(),
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingPublicationHost {
+        session: Mutex<Option<Session>>,
+        replay_cursor: Mutex<SessionReplayCursor>,
+        projection_rev: Mutex<Option<i64>>,
+        projection_rev_loads: Mutex<usize>,
+        load_session_calls: Mutex<Vec<SessionId>>,
+        head_deltas: Mutex<Vec<PublishedHeadDelta>>,
+        summary_deltas: Mutex<Vec<SessionSummaryDelta>>,
+        queued_task_refreshes: Mutex<Vec<TaskId>>,
+    }
+
+    impl RecordingPublicationHost {
+        fn new(session: Session) -> Self {
+            Self {
+                session: Mutex::new(Some(session)),
+                ..Self::default()
+            }
+        }
+    }
+
+    struct PublishedHeadDelta {
+        workspace_id: WorkspaceId,
+        delta: SessionHeadDelta,
+        durable: bool,
+    }
+
+    #[async_trait]
+    impl SessionEventPublicationHost for RecordingPublicationHost {
+        async fn load_session(&self, session_id: SessionId) -> Option<Session> {
+            self.load_session_calls.lock().await.push(session_id);
+            self.session.lock().await.clone()
+        }
+
+        async fn list_turn_tool_summaries_for_turn(
+            &self,
+            _session_id: SessionId,
+            _turn_id: TurnId,
+        ) -> Vec<SessionTurnToolSummary> {
+            Vec::new()
+        }
+
+        async fn cached_turn_for_read(
+            &self,
+            _session_id: SessionId,
+            _turn_id: TurnId,
+        ) -> Option<SessionTurn> {
+            None
+        }
+
+        async fn load_turn(&self, _session_id: SessionId, _turn_id: TurnId) -> Option<SessionTurn> {
+            None
+        }
+
+        async fn session_replay_cursor(
+            &self,
+            _workspace_id: WorkspaceId,
+            _session_id: SessionId,
+        ) -> SessionReplayCursor {
+            *self.replay_cursor.lock().await
+        }
+
+        async fn load_projection_rev(&self, _session_id: SessionId) -> Option<i64> {
+            *self.projection_rev_loads.lock().await += 1;
+            *self.projection_rev.lock().await
+        }
+
+        async fn publish_session_head_delta(
+            &self,
+            workspace_id: WorkspaceId,
+            _session: &Session,
+            delta: SessionHeadDelta,
+            durable: bool,
+        ) {
+            self.head_deltas.lock().await.push(PublishedHeadDelta {
+                workspace_id,
+                delta,
+                durable,
+            });
+        }
+
+        async fn publish_session_summary_delta(
+            &self,
+            _workspace_id: WorkspaceId,
+            delta: SessionSummaryDelta,
+        ) {
+            self.summary_deltas.lock().await.push(delta);
+        }
+
+        async fn queue_task_delta_refresh(&self, task_id: TaskId) {
+            self.queued_task_refreshes.lock().await.push(task_id);
+        }
     }
 }

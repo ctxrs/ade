@@ -291,7 +291,9 @@ RUST_BAZEL_DEPS = {
         ],
         dev_deps = [],
         dev_proc_macro_deps = [],
-        proc_macro_deps = [],
+        proc_macro_deps = [
+            "@crates//:async-trait",
+        ],
     ),
     "ctx-session-tools": struct(
         build_deps = [],

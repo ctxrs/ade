@@ -1482,6 +1482,7 @@ dependencies = [
 name = "ctx-session-service"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "chrono",
  "ctx-core",
  "ctx-provider-runtime",
