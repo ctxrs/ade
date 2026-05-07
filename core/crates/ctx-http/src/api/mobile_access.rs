@@ -6,6 +6,7 @@ mod control_plane;
 mod payloads;
 mod profiles;
 mod secure;
+mod secure_pairing;
 
 pub(super) use access::*;
 use body::{decode_body_b64, parse_json_body};
@@ -16,3 +17,4 @@ pub(in crate::api) use profiles::{
     list_mobile_connection_profiles, list_mobile_devices_for_profile, register_mobile_device,
 };
 pub(super) use secure::*;
+pub(in crate::api) use secure_pairing::pair_mobile_device;
