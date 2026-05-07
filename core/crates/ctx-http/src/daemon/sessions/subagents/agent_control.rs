@@ -173,12 +173,15 @@ pub(crate) async fn wait_agent(
     parent_id: SessionId,
     req: WaitAgentReq,
 ) -> ApiResult<WaitAgentResp> {
-    let agent_ids = normalize_wait_agent_ids(&req)?;
+    let agent_ids = normalize_wait_agent_ids(req.agent_id.as_deref(), req.agent_ids.as_deref())
+        .map_err(|error| api_error(SubagentErrorKind::BadRequest, error))?;
     let (store, parent) = load_parent_session(state.as_ref(), parent_id).await?;
     let inactivity_timeout = state.provider_inactivity_timeout().await;
     let targets = collect_wait_targets(&store, &parent, &agent_ids).await?;
-    let mode = parse_wait_mode(req.mode.as_deref())?;
-    let until = parse_wait_until(req.until.as_deref())?;
+    let mode = parse_wait_mode(req.mode.as_deref())
+        .map_err(|error| api_error(SubagentErrorKind::BadRequest, error))?;
+    let until = parse_wait_until(req.until.as_deref())
+        .map_err(|error| api_error(SubagentErrorKind::BadRequest, error))?;
     if req.since_seq.is_some() && targets.len() != 1 {
         return Err(api_error(
             SubagentErrorKind::BadRequest,
@@ -207,7 +210,7 @@ pub(crate) async fn wait_agent(
         }
     }
 
-    if wait_predicate_satisfied(&details, mode, until, &thresholds) {
+    if wait_predicate_satisfied(&agent_wait_details(&details), mode, until, &thresholds) {
         return Ok(WaitAgentResp {
             wait_status: "matched".to_string(),
             mode: mode.as_str().to_string(),
@@ -233,7 +236,7 @@ pub(crate) async fn wait_agent(
                 build_agent_detail(&state, &store, &parent, target, inactivity_timeout).await?,
             );
         }
-        if wait_predicate_satisfied(&details, mode, until, &thresholds) {
+        if wait_predicate_satisfied(&agent_wait_details(&details), mode, until, &thresholds) {
             return Ok(WaitAgentResp {
                 wait_status: "matched".to_string(),
                 mode: mode.as_str().to_string(),
@@ -249,4 +252,16 @@ pub(crate) async fn wait_agent(
         until: until.as_str().to_string(),
         results: details,
     })
+}
+
+fn agent_wait_details(details: &[AgentDetail]) -> Vec<AgentWaitDetail<'_>> {
+    details
+        .iter()
+        .map(|detail| AgentWaitDetail {
+            agent_id: &detail.agent.agent_id,
+            has_current_run: detail.agent.current_run_id.is_some(),
+            has_latest_result: detail.agent.latest_result_status.is_some(),
+            last_event_seq: detail.agent.last_event_seq,
+        })
+        .collect()
 }

@@ -6,15 +6,16 @@ mod providers;
 mod request;
 mod worktrees;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use base64::Engine;
 use ctx_session_service::subagents::{
-    build_subagent_request_json, collect_provider_ids, parse_subagent_worktree,
-    resolve_max_subagents_per_call, SubagentRequestAgent, SubagentWorktreeSelection,
-    DEFAULT_MAX_ACTIVE_SUBAGENTS_PER_PARENT, DEFAULT_MAX_SUBAGENT_DEPTH,
+    build_subagent_request_json, collect_provider_ids, normalize_wait_agent_ids,
+    parse_subagent_worktree, parse_wait_mode, parse_wait_until, resolve_max_subagents_per_call,
+    wait_predicate_satisfied, AgentWaitDetail, AgentWaitUntil, SubagentRequestAgent,
+    SubagentWorktreeSelection, DEFAULT_MAX_ACTIVE_SUBAGENTS_PER_PARENT, DEFAULT_MAX_SUBAGENT_DEPTH,
 };
 use ctx_session_tools::interrupt_telemetry::InterruptTelemetryContext;
 use ctx_session_tools::model_resolution::resolve_model_id;
@@ -82,36 +83,6 @@ fn encode_run_ref(run_id: RunId) -> String {
         "run_{}",
         base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(run_id.0.as_bytes())
     )
-}
-
-#[derive(Clone, Copy)]
-enum AgentWaitMode {
-    Any,
-    All,
-}
-
-impl AgentWaitMode {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Any => "any",
-            Self::All => "all",
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-enum AgentWaitUntil {
-    Terminal,
-    Update,
-}
-
-impl AgentWaitUntil {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Terminal => "terminal",
-            Self::Update => "update",
-        }
-    }
 }
 
 fn agent_terminal_result_status(status: SessionTurnStatus) -> Option<&'static str> {
@@ -389,103 +360,6 @@ fn build_spawned_agent_detail(spawned: &SpawnedChild) -> AgentDetail {
         latest_result: None,
         worktree_path: spawned.worktree_path.clone(),
     }
-}
-
-fn parse_wait_mode(mode: Option<&str>) -> ApiResult<AgentWaitMode> {
-    match mode.map(str::trim).filter(|value| !value.is_empty()) {
-        None | Some("any") => Ok(AgentWaitMode::Any),
-        Some("all") => Ok(AgentWaitMode::All),
-        Some(other) => Err(api_error(
-            SubagentErrorKind::BadRequest,
-            format!("unsupported wait mode '{other}'"),
-        )),
-    }
-}
-
-fn parse_wait_until(until: Option<&str>) -> ApiResult<AgentWaitUntil> {
-    match until.map(str::trim).filter(|value| !value.is_empty()) {
-        None | Some("terminal") => Ok(AgentWaitUntil::Terminal),
-        Some("update") => Ok(AgentWaitUntil::Update),
-        Some(other) => Err(api_error(
-            SubagentErrorKind::BadRequest,
-            format!("unsupported wait until '{other}'"),
-        )),
-    }
-}
-
-fn detail_satisfies_terminal(detail: &AgentDetail) -> bool {
-    detail.agent.current_run_id.is_none() && detail.agent.latest_result_status.is_some()
-}
-
-fn detail_satisfies_update(detail: &AgentDetail, threshold: i64) -> bool {
-    detail.agent.last_event_seq > threshold
-}
-
-fn wait_predicate_satisfied(
-    details: &[AgentDetail],
-    mode: AgentWaitMode,
-    until: AgentWaitUntil,
-    thresholds: &HashMap<String, i64>,
-) -> bool {
-    let per_agent = |detail: &AgentDetail| match until {
-        AgentWaitUntil::Terminal => detail_satisfies_terminal(detail),
-        AgentWaitUntil::Update => detail_satisfies_update(
-            detail,
-            thresholds
-                .get(&detail.agent.agent_id)
-                .copied()
-                .unwrap_or_default(),
-        ),
-    };
-
-    match mode {
-        AgentWaitMode::Any => details.iter().any(per_agent),
-        AgentWaitMode::All => details.iter().all(per_agent),
-    }
-}
-
-fn normalize_wait_agent_ids(req: &WaitAgentReq) -> ApiResult<Vec<String>> {
-    let raw_ids = match (&req.agent_id, &req.agent_ids) {
-        (Some(agent_id), None) => vec![agent_id.clone()],
-        (None, Some(agent_ids)) => agent_ids.clone(),
-        (Some(_), Some(_)) => {
-            return Err(api_error(
-                SubagentErrorKind::BadRequest,
-                "provide either agent_id or agent_ids",
-            ));
-        }
-        (None, None) => {
-            return Err(api_error(
-                SubagentErrorKind::BadRequest,
-                "agent_id or agent_ids is required",
-            ));
-        }
-    };
-    if raw_ids.is_empty() {
-        return Err(api_error(
-            SubagentErrorKind::BadRequest,
-            "agent_ids is required",
-        ));
-    }
-    let mut seen = HashSet::new();
-    let mut normalized_ids = Vec::with_capacity(raw_ids.len());
-    for raw in raw_ids {
-        let trimmed = raw.trim().to_string();
-        if trimmed.is_empty() {
-            return Err(api_error(
-                SubagentErrorKind::BadRequest,
-                "agent_id cannot be empty",
-            ));
-        }
-        if !seen.insert(trimmed.clone()) {
-            return Err(api_error(
-                SubagentErrorKind::BadRequest,
-                format!("duplicate agent_id '{trimmed}'"),
-            ));
-        }
-        normalized_ids.push(trimmed);
-    }
-    Ok(normalized_ids)
 }
 
 async fn collect_wait_targets(
