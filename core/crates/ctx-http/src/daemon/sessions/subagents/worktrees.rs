@@ -12,7 +12,7 @@ use ctx_workspace_services::worktree_vcs::WorktreeVcsCommitLookupSource;
 use super::errors::{
     api_error, internal_api_error, internal_request_or_policy_error, ApiResult, SubagentErrorKind,
 };
-use super::request::SubagentWorktreeSelection;
+use ctx_session_service::subagents::SubagentWorktreeSelection;
 
 pub(super) async fn plan_subagent_worktree_creation(
     state: &Arc<AppState>,

@@ -15,7 +15,8 @@ pub(crate) async fn init_subagents(
     let settings = user_settings::load_settings(state.global_store())
         .await
         .map_err(internal_api_error)?;
-    let max_subagents = resolve_max_subagents_per_call(&settings);
+    let max_subagents =
+        resolve_max_subagents_per_call(settings.subagents.as_ref().and_then(|s| s.max_per_call));
     if req.agents.len() > max_subagents {
         return Err(api_error(
             SubagentErrorKind::BadRequest,
@@ -45,7 +46,7 @@ pub(crate) async fn init_subagents(
             SubagentErrorKind::BadRequest,
             format!(
                 "subagents cannot spawn child agents; max depth is {}",
-                super::request::DEFAULT_MAX_SUBAGENT_DEPTH
+                DEFAULT_MAX_SUBAGENT_DEPTH
             ),
         ));
     }
@@ -53,13 +54,12 @@ pub(crate) async fn init_subagents(
         .count_active_subagent_sessions(parent.id)
         .await
         .map_err(internal_api_error)?;
-    if existing_active + req.agents.len() > super::request::DEFAULT_MAX_ACTIVE_SUBAGENTS_PER_PARENT
-    {
+    if existing_active + req.agents.len() > DEFAULT_MAX_ACTIVE_SUBAGENTS_PER_PARENT {
         return Err(api_error(
             SubagentErrorKind::BadRequest,
             format!(
                 "max {} active child agents per parent",
-                super::request::DEFAULT_MAX_ACTIVE_SUBAGENTS_PER_PARENT
+                DEFAULT_MAX_ACTIVE_SUBAGENTS_PER_PARENT
             ),
         ));
     }
@@ -287,8 +287,8 @@ pub(crate) async fn init_subagents(
             let reasoning_effort = resolved.reasoning_effort.clone();
 
             let (worktree_id, worktree_path) = match worktree_selection {
-                super::request::SubagentWorktreeSelection::Inherit => (parent.worktree_id, None),
-                super::request::SubagentWorktreeSelection::New => {
+                SubagentWorktreeSelection::Inherit => (parent.worktree_id, None),
+                SubagentWorktreeSelection::New => {
                     let (vcs_kind, base_commit_sha) = worktree_plan.clone().ok_or_else(|| {
                         api_error(SubagentErrorKind::Internal, "worktree plan missing")
                     })?;

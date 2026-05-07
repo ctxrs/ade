@@ -1,44 +1,10 @@
 use std::collections::HashSet;
 
 use crate::api::sessions::AgentInitItem;
-use crate::settings as user_settings;
 use ctx_core::ids::TaskId;
 use ctx_session_tools::model_resolution::normalize_effort_id;
 
 use super::errors::{api_error, internal_api_error, ApiResult, SubagentErrorKind};
-
-const DEFAULT_MAX_SUBAGENTS_PER_CALL: usize = 10;
-pub(super) const DEFAULT_MAX_ACTIVE_SUBAGENTS_PER_PARENT: usize = 12;
-pub(super) const DEFAULT_MAX_SUBAGENT_DEPTH: usize = 1;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum SubagentWorktreeSelection {
-    Inherit,
-    New,
-}
-
-pub(super) fn resolve_max_subagents_per_call(settings: &user_settings::Settings) -> usize {
-    let configured = settings
-        .subagents
-        .as_ref()
-        .and_then(|s| s.max_per_call)
-        .filter(|value| *value > 0);
-    configured
-        .map(|value| value as usize)
-        .unwrap_or(DEFAULT_MAX_SUBAGENTS_PER_CALL)
-}
-
-pub(super) fn parse_subagent_worktree(
-    value: Option<&str>,
-) -> Result<SubagentWorktreeSelection, String> {
-    let trimmed = value.map(|raw| raw.trim()).filter(|raw| !raw.is_empty());
-    match trimmed {
-        Some("inherit") => Ok(SubagentWorktreeSelection::Inherit),
-        Some("new") => Ok(SubagentWorktreeSelection::New),
-        Some(_) => Err("worktree must be 'inherit' or 'new'".to_string()),
-        None => Err("worktree is required".to_string()),
-    }
-}
 
 fn normalize_reasoning_effort(value: Option<&str>) -> Option<String> {
     value
