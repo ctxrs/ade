@@ -1,6 +1,6 @@
 [package]
 name = "ctx-desktop"
-version = "0.63.6"
+version = "0.63.7"
 edition = "2021"
 build = "build.rs"
 default-run = "ctx"
