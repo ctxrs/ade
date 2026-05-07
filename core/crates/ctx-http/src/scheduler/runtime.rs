@@ -23,7 +23,6 @@ use crate::execution_effective;
 use crate::ops_events::OpsEvent;
 use crate::settings;
 use crate::storage_guard;
-use ctx_harness_sources::HarnessSourceKind;
 use ctx_provider_install::install_state::InstallTarget;
 use ctx_workspace_config as workspace_config;
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
@@ -48,7 +47,7 @@ use self::helpers::{
     runtime_provider_id_for_session_provider,
 };
 use self::provider_env::{
-    build_base_provider_env, emit_provider_run_env_ready_event,
+    apply_runtime_source_env, build_base_provider_env, emit_provider_run_env_ready_event,
     prepare_provider_runtime_environment, BaseProviderEnvRequest, ProviderRunEnvReadyEvent,
     ProviderRuntimeEnvironmentRequest,
 };
@@ -233,56 +232,23 @@ pub(crate) async fn start_turn(
         }
     };
     let is_linux_sandbox = runtime_plan.is_linux_sandbox();
-    for (key, value) in runtime_plan.env_overrides.iter() {
-        provider_env.insert(key.clone(), value.clone());
-    }
-    if let Err(err) = ctx_mcp_command::configure_runtime_mcp_command(
-        &session.provider_id,
-        &mut provider_env,
+    let source_env = match apply_runtime_source_env(
         &state.core.data_root,
-    ) {
-        emit_turn_start_failed(state, session, run_id, turn_id, message_id, &err).await;
-        return Err(err);
-    }
-    let runtime_data_root = runtime_plan.runtime_data_root();
-    let resolved_source =
-        match ctx_harness_sources::resolve_provider_source_for_run_with_runtime_root(
-            &state.core.data_root,
-            &session.provider_id,
-            runtime_data_root,
-        )
-        .await
-        {
-            Ok(source) => source,
-            Err(err) => {
-                let err = anyhow!(
-                    "provider source resolution failed for {}: {}",
-                    session.provider_id,
-                    err
-                );
-                emit_turn_start_failed(state, session, run_id, turn_id, message_id, &err).await;
-                return Err(err);
-            }
-        };
-    let runtime_source_mode = resolved_source.runtime_source_mode();
-    let using_endpoint_source = runtime_source_mode.source_kind() == HarnessSourceKind::Endpoint;
-    provider_env.insert(
-        "CTX_PROVIDER_SOURCE_KIND".to_string(),
-        match resolved_source.source_kind {
-            HarnessSourceKind::Subscription => "subscription".to_string(),
-            HarnessSourceKind::Endpoint => "endpoint".to_string(),
-        },
-    );
-    if let Some(endpoint) = resolved_source.endpoint.as_ref() {
-        provider_env.insert("CTX_PROVIDER_ENDPOINT_ID".to_string(), endpoint.id.clone());
-        provider_env.insert(
-            "CTX_PROVIDER_ENDPOINT_SHAPE".to_string(),
-            endpoint.api_shape.as_str().to_string(),
-        );
-    }
-    for (key, value) in resolved_source.env.iter() {
-        provider_env.insert(key.clone(), value.clone());
-    }
+        &session.provider_id,
+        &runtime_plan,
+        &mut provider_env,
+    )
+    .await
+    {
+        Ok(source_env) => source_env,
+        Err(err) => {
+            emit_turn_start_failed(state, session, run_id, turn_id, message_id, &err).await;
+            return Err(err);
+        }
+    };
+    let resolved_source = source_env.resolved_source;
+    let runtime_source_mode = source_env.runtime_source_mode;
+    let using_endpoint_source = source_env.using_endpoint_source;
 
     let route_type = route_type_for_source(AdmissionRouteSource::from(resolved_source.source_kind));
     let network_profile = if matches!(execution_environment, ExecutionEnvironment::Sandbox) {
