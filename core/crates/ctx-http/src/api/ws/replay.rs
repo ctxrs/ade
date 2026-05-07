@@ -1,12 +1,15 @@
 use super::*;
 
 pub(super) use crate::daemon::workspaces::stream::{
-    load_worktree_vcs_snapshots_for_sessions, merge_worktree_vcs_snapshots,
-    primary_session_id_for_active_task, primary_session_ids_for_active_task_summary,
-    refresh_worktree_vcs_for_sessions, replay_session_events,
-    resolve_workspace_active_snapshot_subscriptions, resolve_worktree_vcs_open_session_ids,
-    resolve_worktree_vcs_publish_worktree_ids, resolve_worktree_vcs_summary_session_ids,
-    spawn_worktree_vcs_refresh_for_sessions, sync_active_worktrees, ReplayOutcome,
+    load_worktree_vcs_snapshots_for_sessions, refresh_worktree_vcs_for_sessions,
+    replay_session_events, resolve_workspace_active_snapshot_subscriptions,
+    resolve_worktree_vcs_publish_worktree_ids, spawn_worktree_vcs_refresh_for_sessions,
+    sync_active_worktrees, ReplayOutcome,
+};
+pub(super) use ctx_workspace_active_snapshot::{
+    merge_worktree_vcs_snapshots, primary_session_id_for_active_task,
+    primary_session_ids_for_active_task_summary, resolve_worktree_vcs_open_session_ids,
+    resolve_worktree_vcs_summary_session_ids,
 };
 
 pub(super) fn with_stream_rev(

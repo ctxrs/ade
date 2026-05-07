@@ -29,6 +29,7 @@ mod projection;
 mod replay_state;
 mod session_heads;
 mod stats;
+mod subscriptions;
 mod trim;
 mod workspace_events;
 
@@ -38,6 +39,13 @@ pub use replay_state::{
     WorkspaceSessionReplayItem,
 };
 pub use stats::WorkspaceActiveSnapshotStats;
+pub use subscriptions::{
+    merge_worktree_vcs_snapshots, primary_session_id_for_active_task,
+    primary_session_ids_for_active_task_summary, resolve_session_replay,
+    resolve_worktree_vcs_open_session_ids, resolve_worktree_vcs_summary_session_ids,
+    ResolvedWorkspaceActiveSessionReplay, ResolvedWorkspaceActiveSessionSubscription,
+    ResolvedWorkspaceActiveSubscriptions, WorkspaceActiveSubscriptionState,
+};
 pub use trim::session_metadata_from_session;
 
 pub struct WorkspaceActiveSnapshotHub {

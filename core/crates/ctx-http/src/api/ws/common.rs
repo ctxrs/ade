@@ -5,7 +5,7 @@ pub(super) struct SessionCursor {
     pub(super) last_sent: SessionReplayCursor,
 }
 
-pub(crate) use crate::daemon::workspaces::stream::{
+pub(crate) use ctx_workspace_active_snapshot::{
     ResolvedWorkspaceActiveSessionReplay, ResolvedWorkspaceActiveSubscriptions,
     WorkspaceActiveSubscriptionState,
 };

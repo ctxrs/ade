@@ -1,49 +1,21 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
+use ctx_core::ids::{SessionId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     WorkspaceActiveSnapshotClientMessage, WorkspaceActiveSnapshotEvent,
     WorkspaceActiveSnapshotSessionReplay, WorkspaceActiveSnapshotStreamMessage,
-    WorkspaceActiveSnapshotSubscribeScope, WorkspaceActiveTaskSummary, Worktree,
-    WorktreeVcsFreshness, WorktreeVcsSnapshot,
+    WorkspaceActiveSnapshotSubscribeScope, Worktree, WorktreeVcsFreshness, WorktreeVcsSnapshot,
 };
 use ctx_workspace_active_snapshot::{
-    SessionReplayCursor, WorkspaceSessionReplay, WorkspaceSessionReplayItem,
+    primary_session_id_for_active_task, primary_session_ids_for_active_task_summary,
+    resolve_session_replay, resolve_worktree_vcs_open_session_ids,
+    resolve_worktree_vcs_summary_session_ids, ResolvedWorkspaceActiveSessionSubscription,
+    ResolvedWorkspaceActiveSubscriptions, SessionReplayCursor, WorkspaceActiveSubscriptionState,
+    WorkspaceSessionReplay, WorkspaceSessionReplayItem,
 };
 
 use crate::daemon::AppState;
-
-#[derive(Clone, Copy)]
-pub(crate) enum ResolvedWorkspaceActiveSessionReplay {
-    Reset,
-    Resume {
-        after_seq: i64,
-        after_projection_rev: i64,
-    },
-}
-
-pub(crate) struct ResolvedWorkspaceActiveSessionSubscription {
-    pub(crate) session_id: SessionId,
-    pub(crate) replay: ResolvedWorkspaceActiveSessionReplay,
-}
-
-#[derive(Default)]
-pub(crate) struct WorkspaceActiveSubscriptionState {
-    pub(crate) active_scope: bool,
-    pub(crate) explicit_sessions: HashSet<SessionId>,
-    pub(crate) active_task_sessions: HashMap<TaskId, SessionId>,
-    pub(crate) active_task_vcs_sessions: HashMap<TaskId, HashSet<SessionId>>,
-    pub(crate) vcs_open_sessions: HashSet<SessionId>,
-    pub(crate) foreground_session_ids: Option<HashSet<SessionId>>,
-}
-
-pub(crate) struct ResolvedWorkspaceActiveSubscriptions {
-    pub(crate) sessions: Vec<ResolvedWorkspaceActiveSessionSubscription>,
-    pub(crate) worktree_vcs_summary_session_ids: Vec<SessionId>,
-    pub(crate) worktree_vcs_open_session_ids: Vec<SessionId>,
-    pub(crate) state: WorkspaceActiveSubscriptionState,
-}
 
 pub(crate) enum ReplayOutcome {
     Replay { last_sent: SessionReplayCursor },
@@ -51,48 +23,6 @@ pub(crate) enum ReplayOutcome {
 }
 
 const SESSION_REPLAY_MAX_EVENTS: usize = 2000;
-
-pub(crate) fn primary_session_id_for_active_task(task: &WorkspaceActiveTaskSummary) -> SessionId {
-    task.task
-        .primary_session_id
-        .unwrap_or(task.primary_session.session.id)
-}
-
-pub(crate) fn primary_session_ids_for_active_task_summary(
-    task: &WorkspaceActiveTaskSummary,
-) -> HashSet<SessionId> {
-    let mut sessions = HashSet::new();
-    sessions.insert(primary_session_id_for_active_task(task));
-    sessions
-}
-
-pub(crate) fn resolve_worktree_vcs_summary_session_ids<I>(
-    session_ids: I,
-    subscription_state: &WorkspaceActiveSubscriptionState,
-) -> Vec<SessionId>
-where
-    I: IntoIterator<Item = SessionId>,
-{
-    let mut ids: HashSet<SessionId> = session_ids.into_iter().collect();
-    for task_session_ids in subscription_state.active_task_vcs_sessions.values() {
-        ids.extend(task_session_ids.iter().copied());
-    }
-    let mut ordered: Vec<_> = ids.into_iter().collect();
-    ordered.sort_by_key(|session_id| session_id.0);
-    ordered
-}
-
-pub(crate) fn resolve_worktree_vcs_open_session_ids(
-    subscription_state: &WorkspaceActiveSubscriptionState,
-) -> Vec<SessionId> {
-    let mut ordered: Vec<_> = subscription_state
-        .vcs_open_sessions
-        .iter()
-        .copied()
-        .collect();
-    ordered.sort_by_key(|session_id| session_id.0);
-    ordered
-}
 
 pub(crate) async fn replay_session_events<F, Fut>(
     state: &Arc<AppState>,
@@ -513,48 +443,6 @@ pub(crate) async fn sync_active_worktrees(
         .await;
     *active_worktrees = next;
     *open_worktrees = next_open;
-}
-
-pub(crate) fn merge_worktree_vcs_snapshots(
-    snapshots: Vec<WorktreeVcsSnapshot>,
-    extras: Vec<WorktreeVcsSnapshot>,
-) -> Vec<WorktreeVcsSnapshot> {
-    let mut merged: HashMap<WorktreeId, WorktreeVcsSnapshot> = HashMap::new();
-    for snapshot in snapshots {
-        merged.insert(snapshot.worktree_id, snapshot);
-    }
-    for snapshot in extras {
-        merged.insert(snapshot.worktree_id, snapshot);
-    }
-    let mut ordered: Vec<_> = merged.into_values().collect();
-    ordered.sort_by_key(|snapshot| snapshot.worktree_id.0);
-    ordered
-}
-
-fn resolve_session_replay(
-    replay: Option<&WorkspaceActiveSnapshotSessionReplay>,
-    existing_last_sent: Option<SessionReplayCursor>,
-    current_tail: SessionReplayCursor,
-) -> ResolvedWorkspaceActiveSessionReplay {
-    match replay {
-        Some(WorkspaceActiveSnapshotSessionReplay::Resume {
-            after_seq,
-            after_projection_rev,
-        }) => ResolvedWorkspaceActiveSessionReplay::Resume {
-            after_seq: *after_seq,
-            after_projection_rev: *after_projection_rev,
-        },
-        Some(WorkspaceActiveSnapshotSessionReplay::Reset) => {
-            ResolvedWorkspaceActiveSessionReplay::Reset
-        }
-        Some(WorkspaceActiveSnapshotSessionReplay::Auto) | None => {
-            let cursor = existing_last_sent.unwrap_or(current_tail);
-            ResolvedWorkspaceActiveSessionReplay::Resume {
-                after_seq: cursor.last_event_seq,
-                after_projection_rev: cursor.projection_rev,
-            }
-        }
-    }
 }
 
 async fn resolve_worktree_ids_for_sessions(
