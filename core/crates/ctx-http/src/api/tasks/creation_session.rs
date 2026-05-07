@@ -2,7 +2,8 @@ use super::*;
 use crate::api::sessions;
 use crate::api::shared;
 use ctx_session_service::session_creation::{
-    validate_create_session_request, CreateSessionRequestError, CreateSessionRequestPolicy,
+    session_matches_creation_identity, validate_create_session_request, CreateSessionRequestError,
+    CreateSessionRequestPolicy, SessionCreationIdentity,
 };
 use ctx_session_tools::model_resolution::{compose_model_id, resolve_model_id};
 
@@ -298,16 +299,20 @@ async fn create_session_for_loaded_task_inner(
                 .await
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
             if let Some(existing) = existing {
-                if existing.task_id != task_id
-                    || existing.workspace_id != task.workspace_id
-                    || existing.worktree_id != worktree_id
-                    || existing.execution_environment != execution_environment
-                    || existing.provider_id != provider_id
-                    || existing.model_id != model_id
-                    || existing.reasoning_effort != reasoning_effort
-                    || existing.parent_session_id != parent_session_id
-                    || existing.relationship != relationship
-                {
+                if !session_matches_creation_identity(
+                    &existing,
+                    SessionCreationIdentity {
+                        task_id,
+                        workspace_id: task.workspace_id,
+                        worktree_id,
+                        execution_environment,
+                        provider_id: &provider_id,
+                        model_id: &model_id,
+                        reasoning_effort: reasoning_effort.as_deref(),
+                        parent_session_id,
+                        relationship: relationship.as_deref(),
+                    },
+                ) {
                     if let Some(created_worktree_id) = created_worktree_id {
                         cleanup_orphaned_provisioned_worktree(
                             &state,
@@ -436,15 +441,20 @@ async fn create_session_for_loaded_task_inner(
     };
     if let Some(session_id) = requested_session_id {
         if session.id != session_id
-            || session.task_id != task_id
-            || session.workspace_id != task.workspace_id
-            || session.worktree_id != worktree_id
-            || session.execution_environment != execution_environment
-            || session.provider_id != provider_id
-            || session.model_id != model_id
-            || session.reasoning_effort != reasoning_effort
-            || session.parent_session_id != parent_session_id
-            || session.relationship != requested_relationship
+            || !session_matches_creation_identity(
+                &session,
+                SessionCreationIdentity {
+                    task_id,
+                    workspace_id: task.workspace_id,
+                    worktree_id,
+                    execution_environment,
+                    provider_id: &provider_id,
+                    model_id: &model_id,
+                    reasoning_effort: reasoning_effort.as_deref(),
+                    parent_session_id,
+                    relationship: requested_relationship.as_deref(),
+                },
+            )
         {
             return Err(StatusCode::CONFLICT);
         }

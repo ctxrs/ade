@@ -1,4 +1,5 @@
-use ctx_core::ids::SessionId;
+use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
+use ctx_core::models::{ExecutionEnvironment, Session};
 
 #[derive(Debug, Clone, Copy)]
 pub struct CreateSessionRequestPolicy<'a> {
@@ -25,6 +26,19 @@ pub enum CreateSessionRequestError {
     RelationshipRequiresParent,
     MissingInitialPromptIds,
     PrimarySessionConflict,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SessionCreationIdentity<'a> {
+    pub task_id: TaskId,
+    pub workspace_id: WorkspaceId,
+    pub worktree_id: WorktreeId,
+    pub execution_environment: ExecutionEnvironment,
+    pub provider_id: &'a str,
+    pub model_id: &'a str,
+    pub reasoning_effort: Option<&'a str>,
+    pub parent_session_id: Option<SessionId>,
+    pub relationship: Option<&'a str>,
 }
 
 pub fn validate_create_session_request(
@@ -63,6 +77,21 @@ pub fn validate_create_session_request(
     })
 }
 
+pub fn session_matches_creation_identity(
+    session: &Session,
+    expected: SessionCreationIdentity<'_>,
+) -> bool {
+    session.task_id == expected.task_id
+        && session.workspace_id == expected.workspace_id
+        && session.worktree_id == expected.worktree_id
+        && session.execution_environment == expected.execution_environment
+        && session.provider_id == expected.provider_id
+        && session.model_id == expected.model_id
+        && session.reasoning_effort.as_deref() == expected.reasoning_effort
+        && session.parent_session_id == expected.parent_session_id
+        && session.relationship.as_deref() == expected.relationship
+}
+
 fn parse_optional_session_id(raw: Option<&str>) -> Result<Option<SessionId>, uuid::Error> {
     match raw.map(str::trim) {
         Some("") | None => Ok(None),
@@ -73,6 +102,8 @@ fn parse_optional_session_id(raw: Option<&str>) -> Result<Option<SessionId>, uui
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
+    use ctx_core::models::SessionStatus;
 
     #[test]
     fn parses_requested_session_and_parent_relationship() {
@@ -154,5 +185,53 @@ mod tests {
             }),
             Err(CreateSessionRequestError::PrimarySessionConflict)
         );
+    }
+
+    #[test]
+    fn session_identity_requires_exact_creation_tuple_match() {
+        let session = test_session();
+        let matching = SessionCreationIdentity {
+            task_id: session.task_id,
+            workspace_id: session.workspace_id,
+            worktree_id: session.worktree_id,
+            execution_environment: session.execution_environment,
+            provider_id: &session.provider_id,
+            model_id: &session.model_id,
+            reasoning_effort: session.reasoning_effort.as_deref(),
+            parent_session_id: session.parent_session_id,
+            relationship: session.relationship.as_deref(),
+        };
+        assert!(session_matches_creation_identity(&session, matching));
+
+        let mismatched_model = SessionCreationIdentity {
+            model_id: "different-model",
+            ..matching
+        };
+        assert!(!session_matches_creation_identity(
+            &session,
+            mismatched_model
+        ));
+    }
+
+    fn test_session() -> Session {
+        let now = Utc::now();
+        Session {
+            id: SessionId::new(),
+            task_id: TaskId::new(),
+            workspace_id: WorkspaceId::new(),
+            worktree_id: WorktreeId::new(),
+            execution_environment: ExecutionEnvironment::Host,
+            parent_session_id: None,
+            relationship: None,
+            provider_id: "fake".to_string(),
+            model_id: "fake-model".to_string(),
+            reasoning_effort: Some("medium".to_string()),
+            title: String::new(),
+            agent_role: "assistant".to_string(),
+            status: SessionStatus::Active,
+            provider_session_ref: None,
+            created_at: now,
+            updated_at: now,
+        }
     }
 }
