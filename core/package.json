@@ -37,6 +37,7 @@
     "managed-runtime:mirror:check": "node scripts/managed_runtime_mirror.cjs --check-presence",
     "managed-runtime:mirror:verify": "node scripts/managed_runtime_mirror.cjs --verify",
     "managed-runtime:mirror:publish": "node scripts/managed_runtime_mirror.cjs --publish --verify-after-publish",
+    "supply-chain:integrity:check": "node --test scripts/product_artifact_url_contract.test.cjs scripts/managed_runtime_mirror.test.cjs",
     "release:buildkite:codex-crp:verify": "BUILD_BUDDY_RELEASE_COMMIT=${BUILD_BUDDY_RELEASE_COMMIT:?set BUILD_BUDDY_RELEASE_COMMIT} node scripts/trigger_buildkite_provider_deps.cjs --commit \"$BUILD_BUDDY_RELEASE_COMMIT\" --provider codex --no-publish",
     "release:buildkite:codex-crp:publish": "BUILD_BUDDY_RELEASE_COMMIT=${BUILD_BUDDY_RELEASE_COMMIT:?set BUILD_BUDDY_RELEASE_COMMIT} node scripts/trigger_buildkite_provider_deps.cjs --commit \"$BUILD_BUDDY_RELEASE_COMMIT\" --provider codex --publish",
     "release:buildkite:controller": "BUILD_BUDDY_RELEASE_COMMIT=${BUILD_BUDDY_RELEASE_COMMIT:?set BUILD_BUDDY_RELEASE_COMMIT} node scripts/run_buildkite_release_controller.cjs --commit \"$BUILD_BUDDY_RELEASE_COMMIT\"",

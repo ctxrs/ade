@@ -317,14 +317,14 @@ fn fetch_vosk_runtime(
         "linux" => match target_arch {
             "x86_64" => (
                 "vosk-linux-x86_64-0.3.42.zip",
-                "https://github.com/alphacep/vosk-api/releases/download/v0.3.42/vosk-linux-x86_64-0.3.42.zip",
+                "https://api.ctx.rs/storage/v1/object/public/releases/runtimes/vosk/0.3.42/linux/x86_64/sha256/70480495011a29f957c1194cd460449ef7de8c17ea000e387ddb13fd7f844d42/vosk-linux-x86_64-0.3.42.zip",
                 "70480495011a29f957c1194cd460449ef7de8c17ea000e387ddb13fd7f844d42",
                 vec!["libvosk.so"],
                 vec!["libvosk.so"],
             ),
             "aarch64" => (
                 "vosk-linux-aarch64-0.3.42.zip",
-                "https://github.com/alphacep/vosk-api/releases/download/v0.3.42/vosk-linux-aarch64-0.3.42.zip",
+                "https://api.ctx.rs/storage/v1/object/public/releases/runtimes/vosk/0.3.42/linux/aarch64/sha256/e53fea373d591722b40c31449994854d54792457ad0ec7807428dca60549dbac/vosk-linux-aarch64-0.3.42.zip",
                 "e53fea373d591722b40c31449994854d54792457ad0ec7807428dca60549dbac",
                 vec!["libvosk.so"],
                 vec!["libvosk.so"],
@@ -337,7 +337,7 @@ fn fetch_vosk_runtime(
         },
         "macos" => (
             "vosk-osx-0.3.42.zip",
-            "https://github.com/alphacep/vosk-api/releases/download/v0.3.42/vosk-osx-0.3.42.zip",
+            "https://api.ctx.rs/storage/v1/object/public/releases/runtimes/vosk/0.3.42/macos/universal/sha256/65395f196c9d0583d79949142b25560acaf9c295f36284e18433097f3adb0ea1/vosk-osx-0.3.42.zip",
             "65395f196c9d0583d79949142b25560acaf9c295f36284e18433097f3adb0ea1",
             vec!["libvosk.dylib"],
             vec!["libvosk.dylib"],
@@ -351,7 +351,7 @@ fn fetch_vosk_runtime(
             }
             (
                 "vosk-win64-0.3.42.zip",
-                "https://github.com/alphacep/vosk-api/releases/download/v0.3.42/vosk-win64-0.3.42.zip",
+                "https://api.ctx.rs/storage/v1/object/public/releases/runtimes/vosk/0.3.42/windows/x86_64/sha256/9a63e42bd970343041d19e784e545228d3f4703ccec9f2eb1ccc6d5e96c170c3/vosk-win64-0.3.42.zip",
                 "9a63e42bd970343041d19e784e545228d3f4703ccec9f2eb1ccc6d5e96c170c3",
                 vec![
                     "libvosk.dll",

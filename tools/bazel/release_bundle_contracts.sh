@@ -27,6 +27,7 @@ done
 
 cd "$ROOT_DIR"
 
+node --test core/scripts/product_artifact_url_contract.test.cjs
 node core/scripts/bundled_dependency_updates.cjs policy
 bash tools/bazel/codex_provenance_policy.sh
 if [[ "${CTX_RELEASE_VERIFY_PUBLISHED_PROVIDER_ARTIFACTS:-0}" == "1" && -n "$codex_target" ]]; then

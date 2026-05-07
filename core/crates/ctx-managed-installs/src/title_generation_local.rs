@@ -31,25 +31,25 @@ pub fn runtime_download_spec() -> Option<RuntimeDownloadSpec> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
         ("macos", "aarch64") => Some(RuntimeDownloadSpec {
             version: LLAMA_CPP_VERSION,
-            url: "https://github.com/ggml-org/llama.cpp/releases/download/b7847/llama-b7847-bin-macos-arm64.tar.gz",
+            url: "https://api.ctx.rs/storage/v1/object/public/releases/runtimes/llama.cpp/b7847/macos/aarch64/sha256/bf19a461d787561e4a25f8ea20904cfe183e5aaa7d744fba9224f5c6204688f6/llama-b7847-bin-macos-arm64.tar.gz",
             sha256: "bf19a461d787561e4a25f8ea20904cfe183e5aaa7d744fba9224f5c6204688f6",
             archive_kind: RuntimeArchiveKind::TarGz,
         }),
         ("macos", "x86_64") => Some(RuntimeDownloadSpec {
             version: LLAMA_CPP_VERSION,
-            url: "https://github.com/ggml-org/llama.cpp/releases/download/b7847/llama-b7847-bin-macos-x64.tar.gz",
+            url: "https://api.ctx.rs/storage/v1/object/public/releases/runtimes/llama.cpp/b7847/macos/x86_64/sha256/3bb896d28cdffa2532f5fe62378cd388abe448cdf253a24fafd7a97abc9f1fc0/llama-b7847-bin-macos-x64.tar.gz",
             sha256: "3bb896d28cdffa2532f5fe62378cd388abe448cdf253a24fafd7a97abc9f1fc0",
             archive_kind: RuntimeArchiveKind::TarGz,
         }),
         ("linux", "x86_64") => Some(RuntimeDownloadSpec {
             version: LLAMA_CPP_VERSION,
-            url: "https://github.com/ggml-org/llama.cpp/releases/download/b7847/llama-b7847-bin-ubuntu-x64.tar.gz",
+            url: "https://api.ctx.rs/storage/v1/object/public/releases/runtimes/llama.cpp/b7847/linux/x86_64/sha256/5e002408611bd9ac991753fd986f7ceaad437a09582a5ff7da85fd4e2cfac117/llama-b7847-bin-ubuntu-x64.tar.gz",
             sha256: "5e002408611bd9ac991753fd986f7ceaad437a09582a5ff7da85fd4e2cfac117",
             archive_kind: RuntimeArchiveKind::TarGz,
         }),
         ("windows", "x86_64") => Some(RuntimeDownloadSpec {
             version: LLAMA_CPP_VERSION,
-            url: "https://github.com/ggml-org/llama.cpp/releases/download/b7847/llama-b7847-bin-win-cpu-x64.zip",
+            url: "https://api.ctx.rs/storage/v1/object/public/releases/runtimes/llama.cpp/b7847/windows/x86_64/sha256/429881f5294f5af94c26f235daa0c2975bf087fe467966b2ea10412167fae595/llama-b7847-bin-win-cpu-x64.zip",
             sha256: "429881f5294f5af94c26f235daa0c2975bf087fe467966b2ea10412167fae595",
             archive_kind: RuntimeArchiveKind::Zip,
         }),
