@@ -1,9 +1,10 @@
 use ctx_core::models::{SessionEvent, SessionEventType, SessionTurnStatus};
 use serde_json::Value;
 
-use super::failure::record_failed_turn_telemetry;
 use super::state::EventLoopRuntimeState;
-use super::telemetry::{record_interrupt_visible_telemetry, record_terminal_run_telemetry};
+use super::telemetry::{
+    record_failed_turn_telemetry, record_interrupt_visible_telemetry, record_terminal_run_telemetry,
+};
 use super::TurnEventLoop;
 
 pub(super) fn is_truthful_start_activity(event_type: &SessionEventType) -> bool {
@@ -112,9 +113,9 @@ pub(super) async fn handle_error_event(
     runtime: &mut EventLoopRuntimeState,
     event: &SessionEvent,
 ) {
-    if ctx.state().is_none() {
+    let Some(state) = ctx.state() else {
         return;
-    }
+    };
     runtime.promote_terminal(&ctx.start_progress_tx);
     if runtime.terminal_status.is_some() {
         return;
@@ -128,6 +129,7 @@ pub(super) async fn handle_error_event(
     record_failed_turn_telemetry(
         ctx,
         runtime,
+        state.as_ref(),
         error_message,
         event.payload_json.get("details").cloned(),
         event.payload_json.get("kind").cloned(),
