@@ -253,28 +253,6 @@ fn workspace_provider_cache_key(
     format!("{}/{}/{}", workspace_id.0, target.as_str(), provider_id)
 }
 
-fn canonicalize_provider_id(provider_id: &str) -> String {
-    provider_id.to_string()
-}
-
-fn project_provider_id_for_response(
-    requested_provider_id: &str,
-    canonical_provider_id_value: &str,
-) -> String {
-    let _ = requested_provider_id;
-    canonical_provider_id_value.to_string()
-}
-
-fn project_provider_id_field(requested_provider_id: &str, value: &mut serde_json::Value) {
-    let Some(provider_id) = value.get("provider_id").and_then(serde_json::Value::as_str) else {
-        return;
-    };
-    let projected = project_provider_id_for_response(requested_provider_id, provider_id);
-    if projected != provider_id {
-        value["provider_id"] = serde_json::json!(projected);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::provider_install_error_response;

@@ -5,8 +5,6 @@ pub(in crate::api) async fn install_provider(
     Path(id): Path<String>,
     Query(query): Query<InstallTargetQuery>,
 ) -> Result<Json<InstallStartResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let requested_provider_id = id;
-    let id = canonicalize_provider_id(&requested_provider_id);
     let target = crate::installer::parse_install_target(query.target.as_deref()).map_err(|e| {
         (
             StatusCode::BAD_REQUEST,
@@ -39,7 +37,7 @@ pub(in crate::api) async fn install_provider(
         .map_err(provider_install_error_response)?;
 
     Ok(Json(InstallStartResponse {
-        provider_id: project_provider_id_for_response(&requested_provider_id, &id),
+        provider_id: id,
         install_id,
         target,
     }))

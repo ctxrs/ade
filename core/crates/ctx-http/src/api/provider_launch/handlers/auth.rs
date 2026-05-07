@@ -5,8 +5,6 @@ pub(in crate::api) async fn verify_provider_for_workspace(
     State(state): State<Arc<AppState>>,
     Path((ws_id, provider_id)): Path<(String, String)>,
 ) -> Result<Json<ProviderAuthCheckResp>, (StatusCode, Json<serde_json::Value>)> {
-    let requested_provider_id = provider_id;
-    let provider_id = canonicalize_provider_id(&requested_provider_id);
     let ws_id = parse_workspace_id(&ws_id)?;
 
     let workspace = state
@@ -64,7 +62,7 @@ pub(in crate::api) async fn verify_provider_for_workspace(
 
     if let Some(config_error) = managed_config_error {
         let resp = ProviderAuthCheckResp {
-            provider_id: project_provider_id_for_response(&requested_provider_id, &provider_id),
+            provider_id: provider_id.clone(),
             workspace_id: ws_id.0.to_string(),
             status: "error".to_string(),
             auth_required: Some(false),
@@ -76,7 +74,7 @@ pub(in crate::api) async fn verify_provider_for_workspace(
 
     if let Some(config_error) = source_config_error {
         let resp = ProviderAuthCheckResp {
-            provider_id: project_provider_id_for_response(&requested_provider_id, &provider_id),
+            provider_id: provider_id.clone(),
             workspace_id: ws_id.0.to_string(),
             status: "error".to_string(),
             auth_required: Some(false),
@@ -226,7 +224,7 @@ pub(in crate::api) async fn verify_provider_for_workspace(
     }
 
     let resp = ProviderAuthCheckResp {
-        provider_id: project_provider_id_for_response(&requested_provider_id, &provider_id),
+        provider_id: provider_id.clone(),
         workspace_id: ws_id.0.to_string(),
         status: status.clone(),
         auth_required,
@@ -252,8 +250,6 @@ pub(in crate::api) async fn authenticate_provider_for_workspace(
     Path((ws_id, provider_id)): Path<(String, String)>,
     req: Option<Json<AuthenticateProviderReq>>,
 ) -> Result<Json<ProviderAuthCheckResp>, (StatusCode, Json<serde_json::Value>)> {
-    let requested_provider_id = provider_id;
-    let provider_id = canonicalize_provider_id(&requested_provider_id);
     let ws_id = parse_workspace_id(&ws_id)?;
     let method_id = req.and_then(|value| value.0.method_id);
     let workspace = state
@@ -328,7 +324,7 @@ pub(in crate::api) async fn authenticate_provider_for_workspace(
 
     let resp = match result {
         Ok(()) => ProviderAuthCheckResp {
-            provider_id: project_provider_id_for_response(&requested_provider_id, &provider_id),
+            provider_id: provider_id.clone(),
             workspace_id: ws_id.0.to_string(),
             status: "ok".to_string(),
             auth_required: Some(false),
@@ -339,7 +335,7 @@ pub(in crate::api) async fn authenticate_provider_for_workspace(
             let msg = logs::redact_sensitive(&err.to_string());
             let (status, auth_required, _) = classify_probe_error(&msg);
             ProviderAuthCheckResp {
-                provider_id: project_provider_id_for_response(&requested_provider_id, &provider_id),
+                provider_id: provider_id.clone(),
                 workspace_id: ws_id.0.to_string(),
                 status: status.to_string(),
                 auth_required,

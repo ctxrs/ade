@@ -7,9 +7,6 @@ pub(in crate::api) async fn get_provider_options(
     const CACHE_TTL: Duration = Duration::from_secs(30);
     const VERIFY_TTL: Duration = Duration::from_secs(30 * 60);
 
-    let requested_provider_id = provider_id;
-    let provider_id = canonicalize_provider_id(&requested_provider_id);
-
     let ws_id = parse_workspace_id(&ws_id)?;
     let install_target = install_target_for_workspace(&state, ws_id)
         .await
@@ -62,7 +59,6 @@ pub(in crate::api) async fn get_provider_options(
     if let Some((cached_at, cached_value)) = authoritative_cached_entry {
         if cached_at.elapsed() < CACHE_TTL {
             let mut out = cached_value.clone();
-            project_provider_id_field(&requested_provider_id, &mut out);
             attach_verify_cache(&mut out, verify_entry.as_ref(), VERIFY_TTL);
             return Ok(Json(out));
         }
@@ -126,7 +122,6 @@ pub(in crate::api) async fn get_provider_options(
         inject_preferred_model_id(&mut raw_resp, preferred_model_id.clone());
         let resp = redact_json_value(raw_resp);
         let mut out = resp;
-        project_provider_id_field(&requested_provider_id, &mut out);
         attach_verify_cache(&mut out, verify_entry.as_ref(), VERIFY_TTL);
         return Ok(Json(out));
     }
@@ -169,7 +164,6 @@ pub(in crate::api) async fn get_provider_options(
 
         let resp = redact_json_value(raw_resp);
         let mut out = resp;
-        project_provider_id_field(&requested_provider_id, &mut out);
         attach_verify_cache(&mut out, verify_entry.as_ref(), VERIFY_TTL);
         return Ok(Json(out));
     }
@@ -213,7 +207,6 @@ pub(in crate::api) async fn get_provider_options(
 
             let resp = redact_json_value(raw_resp);
             let mut out = resp;
-            project_provider_id_field(&requested_provider_id, &mut out);
             attach_verify_cache(&mut out, verify_entry.as_ref(), VERIFY_TTL);
             return Ok(Json(out));
         }
@@ -259,7 +252,6 @@ pub(in crate::api) async fn get_provider_options(
             },
         );
         let mut out = base_resp;
-        project_provider_id_field(&requested_provider_id, &mut out);
         attach_verify_cache(&mut out, verify_entry.as_ref(), VERIFY_TTL);
         return Ok(Json(out));
     }
@@ -328,7 +320,6 @@ pub(in crate::api) async fn get_provider_options(
             );
 
             let mut out = resp;
-            project_provider_id_field(&requested_provider_id, &mut out);
             attach_verify_cache(&mut out, verify_entry.as_ref(), VERIFY_TTL);
             return Ok(Json(out));
         }
@@ -569,7 +560,6 @@ pub(in crate::api) async fn get_provider_options(
     );
 
     let mut out = resp;
-    project_provider_id_field(&requested_provider_id, &mut out);
     attach_verify_cache(&mut out, verify_entry.as_ref(), VERIFY_TTL);
     Ok(Json(out))
 }
