@@ -44,8 +44,8 @@ use self::provider_env::{
 };
 use self::provider_launch::apply_provider_launch_overrides;
 use self::provider_spawn::{
-    build_provider_run_hooks, handle_provider_start_failure, issue_mcp_token_if_enabled,
-    prepare_provider_adapter_for_turn, record_provider_spawn_metric, ProviderStartFailure,
+    issue_mcp_token_if_enabled, prepare_provider_adapter_for_turn, spawn_provider_turn,
+    ProviderTurnSpawnRequest,
 };
 use self::turn_failure::emit_turn_start_failed;
 use self::turn_input::prepare_turn_input;
@@ -261,60 +261,28 @@ pub(crate) async fn start_turn(
         .map(|value| PathBuf::from(value.as_str()));
 
     let run_started_at = Instant::now();
-    let spawn_started_at = Instant::now();
     let start_deadline_duration = turn_start_deadline(&provider_env);
-    let provider_run_hooks = build_provider_run_hooks(
+    let handle = spawn_provider_turn(ProviderTurnSpawnRequest {
         state,
-        &store,
+        store: &store,
         session,
+        adapter: prepared_adapter.adapter.clone(),
+        turn_input,
+        workdir,
+        provider_env,
+        event_tx: ev_tx,
+        perf_run_id: perf_run_id.clone(),
+        run_id,
+        turn_id,
+        message_id,
+        mcp_token: mcp_token.as_deref(),
+        run_started_at,
+        workdir_str: &workdir_str,
+        full_model_id: &full_model_id,
         execution_environment,
         session_root_kind,
-    );
-    let handle = match prepared_adapter
-        .adapter
-        .run(
-            turn_input,
-            workdir.to_path_buf(),
-            provider_env,
-            ev_tx,
-            provider_run_hooks,
-        )
-        .await
-    {
-        Ok(handle) => {
-            record_provider_spawn_metric(
-                state,
-                perf_run_id.clone(),
-                session,
-                &full_model_id,
-                execution_environment,
-                session_root_kind,
-                spawn_started_at,
-            )
-            .await;
-            handle
-        }
-        Err(err) => {
-            handle_provider_start_failure(
-                state,
-                ProviderStartFailure {
-                    session,
-                    run_id,
-                    turn_id,
-                    message_id,
-                    mcp_token: mcp_token.as_deref(),
-                    run_started_at,
-                    workdir_str: &workdir_str,
-                    full_model_id: &full_model_id,
-                    execution_environment,
-                    session_root_kind,
-                    err: &err,
-                },
-            )
-            .await;
-            return Err(err);
-        }
-    };
+    })
+    .await?;
 
     spawn_turn_event_loop(TurnEventLoop {
         state_weak: Arc::downgrade(state),

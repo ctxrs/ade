@@ -1,14 +1,19 @@
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{anyhow, Error, Result};
 use serde_json::json;
+use tokio::sync::mpsc;
 
 use ctx_core::ids::{MessageId, RunId, TurnId};
 use ctx_core::models::{ExecutionEnvironment, Session};
 use ctx_provider_install::install_state::InstallTarget;
-use ctx_providers::adapters::{ProviderAdapter, ProviderRunHooks, ProviderSessionRefClaimHook};
+use ctx_providers::adapters::{
+    ProviderAdapter, ProviderRunHooks, ProviderSessionRefClaimHook, RunHandle, TurnInput,
+};
+use ctx_providers::events::NormalizedEvent;
 use ctx_store::Store;
 
 use crate::daemon::{ensure_provider_adapter_for_target_with_cfg, AppState};
@@ -55,6 +60,106 @@ fn provider_install_target_for_runtime(is_linux_sandbox: bool) -> InstallTarget 
     } else {
         InstallTarget::Host
     }
+}
+
+pub(super) struct ProviderTurnSpawnRequest<'a> {
+    pub(super) state: &'a Arc<AppState>,
+    pub(super) store: &'a Store,
+    pub(super) session: &'a Session,
+    pub(super) adapter: Arc<dyn ProviderAdapter>,
+    pub(super) turn_input: TurnInput,
+    pub(super) workdir: &'a Path,
+    pub(super) provider_env: HashMap<String, String>,
+    pub(super) event_tx: mpsc::Sender<NormalizedEvent>,
+    pub(super) perf_run_id: Option<String>,
+    pub(super) run_id: RunId,
+    pub(super) turn_id: TurnId,
+    pub(super) message_id: MessageId,
+    pub(super) mcp_token: Option<&'a str>,
+    pub(super) run_started_at: Instant,
+    pub(super) workdir_str: &'a str,
+    pub(super) full_model_id: &'a str,
+    pub(super) execution_environment: ExecutionEnvironment,
+    pub(super) session_root_kind: &'a str,
+}
+
+pub(super) async fn spawn_provider_turn(
+    request: ProviderTurnSpawnRequest<'_>,
+) -> Result<RunHandle> {
+    let ProviderTurnSpawnRequest {
+        state,
+        store,
+        session,
+        adapter,
+        turn_input,
+        workdir,
+        provider_env,
+        event_tx,
+        perf_run_id,
+        run_id,
+        turn_id,
+        message_id,
+        mcp_token,
+        run_started_at,
+        workdir_str,
+        full_model_id,
+        execution_environment,
+        session_root_kind,
+    } = request;
+    let spawn_started_at = Instant::now();
+    let provider_run_hooks = build_provider_run_hooks(
+        state,
+        store,
+        session,
+        execution_environment,
+        session_root_kind,
+    );
+    let handle = match adapter
+        .run(
+            turn_input,
+            workdir.to_path_buf(),
+            provider_env,
+            event_tx,
+            provider_run_hooks,
+        )
+        .await
+    {
+        Ok(handle) => {
+            record_provider_spawn_metric(
+                state,
+                perf_run_id,
+                session,
+                full_model_id,
+                execution_environment,
+                session_root_kind,
+                spawn_started_at,
+            )
+            .await;
+            handle
+        }
+        Err(err) => {
+            handle_provider_start_failure(
+                state,
+                ProviderStartFailure {
+                    session,
+                    run_id,
+                    turn_id,
+                    message_id,
+                    mcp_token,
+                    run_started_at,
+                    workdir_str,
+                    full_model_id,
+                    execution_environment,
+                    session_root_kind,
+                    err: &err,
+                },
+            )
+            .await;
+            return Err(err);
+        }
+    };
+
+    Ok(handle)
 }
 
 pub(super) async fn issue_mcp_token_if_enabled(
