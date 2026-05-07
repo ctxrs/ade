@@ -2,7 +2,7 @@ use super::attachments::{attachments_match, normalize_message_attachments};
 use super::turns::ensure_session_turn_for_message;
 use super::*;
 use ctx_session_service::message_delivery::{
-    delivery_matches, resolve_message_client_ids,
+    build_user_message_turn, delivery_matches, resolve_message_client_ids,
     resolve_message_delivery as resolve_message_delivery_policy, MessageClientIdResolutionError,
     MessageDeliveryResolutionError,
 };
@@ -265,28 +265,7 @@ pub(crate) async fn post_message(
         })?;
     let start_seq = event.seq;
 
-    let turn = SessionTurn {
-        turn_id,
-        session_id,
-        run_id: Some(run_id),
-        user_message_id: Some(saved.id),
-        status: match &saved.delivery {
-            MessageDelivery::Queued => SessionTurnStatus::Queued,
-            MessageDelivery::Immediate => SessionTurnStatus::Starting,
-        },
-        start_seq: Some(start_seq),
-        end_seq: None,
-        started_at: saved.created_at,
-        updated_at: saved.created_at,
-        assistant_partial: None,
-        thought_partial: None,
-        metrics_json: None,
-        tool_total: 0,
-        tool_pending: 0,
-        tool_running: 0,
-        tool_completed: 0,
-        tool_failed: 0,
-    };
+    let turn = build_user_message_turn(&saved, turn_id, Some(start_seq));
     let existing_turn = store.get_session_turn_by_id(turn_id).await.map_err(|_| {
         api_error(
             StatusCode::INTERNAL_SERVER_ERROR,

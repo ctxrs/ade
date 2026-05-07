@@ -1,5 +1,5 @@
 use ctx_core::ids::{MessageId, TurnId};
-use ctx_core::models::{MessageDelivery, SessionTurnStatus};
+use ctx_core::models::{Message, MessageDelivery, SessionTurn, SessionTurnStatus};
 
 const QUEUED_MESSAGES_DISABLED_MESSAGE: &str = "Queued messages are disabled.";
 const TURN_ALREADY_RUNNING_MESSAGE: &str =
@@ -89,6 +89,32 @@ pub fn initial_turn_status(delivery: &MessageDelivery) -> SessionTurnStatus {
     match delivery {
         MessageDelivery::Queued => SessionTurnStatus::Queued,
         MessageDelivery::Immediate => SessionTurnStatus::Starting,
+    }
+}
+
+pub fn build_user_message_turn(
+    message: &Message,
+    turn_id: TurnId,
+    start_seq: Option<i64>,
+) -> SessionTurn {
+    SessionTurn {
+        turn_id,
+        session_id: message.session_id,
+        run_id: message.run_id,
+        user_message_id: Some(message.id),
+        status: initial_turn_status(&message.delivery),
+        start_seq,
+        end_seq: None,
+        started_at: message.created_at,
+        updated_at: message.created_at,
+        assistant_partial: None,
+        thought_partial: None,
+        metrics_json: None,
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
     }
 }
 
@@ -182,5 +208,41 @@ mod tests {
             initial_turn_status(&MessageDelivery::Immediate),
             SessionTurnStatus::Starting
         ));
+    }
+
+    #[test]
+    fn user_message_turn_builder_sets_initial_status_and_defaults() {
+        use ctx_core::ids::{RunId, SessionId, TaskId};
+        use ctx_core::models::MessageRole;
+
+        let message = Message {
+            id: MessageId::new(),
+            session_id: SessionId::new(),
+            task_id: TaskId::new(),
+            run_id: Some(RunId::new()),
+            turn_id: None,
+            turn_sequence: None,
+            order_seq: None,
+            role: MessageRole::User,
+            content: "hello".to_string(),
+            attachments: Vec::new(),
+            delivery: MessageDelivery::Queued,
+            delivered_at: None,
+            created_at: "2026-01-01T00:00:00Z".parse().expect("created_at"),
+        };
+        let turn_id = TurnId::new();
+        let turn = build_user_message_turn(&message, turn_id, Some(42));
+
+        assert_eq!(turn.turn_id, turn_id);
+        assert_eq!(turn.session_id, message.session_id);
+        assert_eq!(turn.run_id, message.run_id);
+        assert_eq!(turn.user_message_id, Some(message.id));
+        assert_eq!(turn.status, SessionTurnStatus::Queued);
+        assert_eq!(turn.start_seq, Some(42));
+        assert_eq!(turn.end_seq, None);
+        assert_eq!(turn.started_at, message.created_at);
+        assert_eq!(turn.updated_at, message.created_at);
+        assert_eq!(turn.tool_total, 0);
+        assert_eq!(turn.tool_failed, 0);
     }
 }
