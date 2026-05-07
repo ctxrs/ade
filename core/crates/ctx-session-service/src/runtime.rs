@@ -23,6 +23,7 @@ use crate::head_projection::{
 };
 
 const DEFAULT_PROVIDER_INACTIVITY_TIMEOUT_SECS: u64 = 30 * 60;
+const TASK_DELTA_REFRESH_DEBOUNCE_MS: u64 = 250;
 
 pub struct SessionRuntime<SchedulerCommand> {
     pub session_head_cache:
@@ -32,7 +33,7 @@ pub struct SessionRuntime<SchedulerCommand> {
     pub broadcasters: Mutex<HashMap<SessionId, TimedEntry<broadcast::Sender<SessionEvent>>>>,
     pub session_event_heads: Mutex<HashMap<SessionId, TimedEntry<watch::Sender<i64>>>>,
     pub order_seq_states: Mutex<HashMap<SessionId, TimedEntry<Arc<Mutex<OrderSeqState>>>>>,
-    pub active_task_refreshes: Mutex<HashMap<TaskId, ActiveTaskRefreshEntry>>,
+    pub active_task_refreshes: Arc<Mutex<HashMap<TaskId, ActiveTaskRefreshEntry>>>,
     pub task_session_creation_locks:
         Mutex<HashMap<TaskId, std::sync::Weak<tokio::sync::Mutex<()>>>>,
     pub running_sessions: Arc<Mutex<HashSet<SessionId>>>,
@@ -49,7 +50,7 @@ impl<SchedulerCommand> SessionRuntime<SchedulerCommand> {
             broadcasters: Mutex::new(HashMap::new()),
             session_event_heads: Mutex::new(HashMap::new()),
             order_seq_states: Mutex::new(HashMap::new()),
-            active_task_refreshes: Mutex::new(HashMap::new()),
+            active_task_refreshes: Arc::new(Mutex::new(HashMap::new())),
             task_session_creation_locks: Mutex::new(HashMap::new()),
             running_sessions: Arc::new(Mutex::new(HashSet::new())),
             session_pins: Mutex::new(HashMap::new()),
@@ -451,7 +452,11 @@ impl<SchedulerCommand> SessionRuntime<SchedulerCommand> {
         };
 
         if should_refresh_task_delta_for_event(&event.event_type) {
-            host.queue_task_delta_refresh(session.task_id).await;
+            self.queue_task_delta_refresh_with_host(
+                host.task_delta_refresh_host(),
+                session.task_id,
+            )
+            .await;
         }
 
         let message = if should_materialize_message(&event.event_type) {
@@ -554,6 +559,44 @@ impl<SchedulerCommand> SessionRuntime<SchedulerCommand> {
                 .await;
         }
     }
+
+    pub async fn queue_task_delta_refresh_with_host<H>(&self, host: Arc<H>, task_id: TaskId)
+    where
+        H: SessionTaskDeltaRefreshHost,
+    {
+        self.queue_task_delta_refresh_with_debounce(
+            host,
+            task_id,
+            Duration::from_millis(TASK_DELTA_REFRESH_DEBOUNCE_MS.max(1)),
+        )
+        .await;
+    }
+
+    async fn queue_task_delta_refresh_with_debounce<H>(
+        &self,
+        host: Arc<H>,
+        task_id: TaskId,
+        debounce: Duration,
+    ) where
+        H: SessionTaskDeltaRefreshHost,
+    {
+        let should_spawn = {
+            let mut map = self.active_task_refreshes.lock().await;
+            if let Some(entry) = map.get_mut(&task_id) {
+                entry.generation = entry.generation.wrapping_add(1);
+                false
+            } else {
+                map.insert(task_id, ActiveTaskRefreshEntry { generation: 1 });
+                true
+            }
+        };
+        if should_spawn {
+            let active_task_refreshes = Arc::clone(&self.active_task_refreshes);
+            tokio::spawn(async move {
+                run_task_delta_refresh_loop(active_task_refreshes, host, task_id, debounce).await;
+            });
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -564,6 +607,10 @@ pub struct SessionReplayCursor {
 
 #[async_trait]
 pub trait SessionEventPublicationHost: Send + Sync {
+    type TaskDeltaRefreshHost: SessionTaskDeltaRefreshHost;
+
+    fn task_delta_refresh_host(&self) -> Arc<Self::TaskDeltaRefreshHost>;
+
     async fn load_session(&self, session_id: SessionId) -> Option<Session>;
 
     async fn list_turn_tool_summaries_for_turn(
@@ -601,8 +648,56 @@ pub trait SessionEventPublicationHost: Send + Sync {
         workspace_id: WorkspaceId,
         delta: SessionSummaryDelta,
     );
+}
 
-    async fn queue_task_delta_refresh(&self, task_id: TaskId);
+#[async_trait]
+pub trait SessionTaskDeltaRefreshHost: Send + Sync + 'static {
+    async fn emit_task_delta_refresh(&self, task_id: TaskId);
+}
+
+async fn run_task_delta_refresh_loop<H>(
+    active_task_refreshes: Arc<Mutex<HashMap<TaskId, ActiveTaskRefreshEntry>>>,
+    host: Arc<H>,
+    task_id: TaskId,
+    debounce: Duration,
+) where
+    H: SessionTaskDeltaRefreshHost,
+{
+    let debounce = debounce.max(Duration::from_millis(1));
+    loop {
+        let generation = {
+            let map = active_task_refreshes.lock().await;
+            match map.get(&task_id) {
+                Some(entry) => entry.generation,
+                None => return,
+            }
+        };
+
+        tokio::time::sleep(debounce).await;
+
+        let current = {
+            let map = active_task_refreshes.lock().await;
+            match map.get(&task_id) {
+                Some(entry) => entry.generation,
+                None => return,
+            }
+        };
+        if current != generation {
+            continue;
+        }
+
+        host.emit_task_delta_refresh(task_id).await;
+
+        let mut map = active_task_refreshes.lock().await;
+        match map.get(&task_id) {
+            Some(entry) if entry.generation == current => {
+                map.remove(&task_id);
+                return;
+            }
+            Some(_) => continue,
+            None => return,
+        }
+    }
 }
 
 fn is_stream_only_event(event_type: &SessionEventType) -> bool {
@@ -869,8 +964,13 @@ mod tests {
         );
         drop(summary_deltas);
 
+        wait_for_task_delta(&host.task_delta_refresh_host).await;
         assert_eq!(
-            host.queued_task_refreshes.lock().await.as_slice(),
+            host.task_delta_refresh_host
+                .task_ids
+                .lock()
+                .await
+                .as_slice(),
             &[session.task_id]
         );
     }
@@ -900,6 +1000,55 @@ mod tests {
         assert_eq!(head_deltas[0].delta.projection_rev, 9);
         drop(head_deltas);
         assert_eq!(*host.projection_rev_loads.lock().await, 0);
+    }
+
+    #[tokio::test]
+    async fn task_delta_refresh_debounces_to_latest_generation() {
+        let runtime = SessionRuntime::<()>::new(Duration::from_secs(60));
+        let task_id = TaskId::new();
+        let host = Arc::new(RecordingTaskDeltaRefreshHost::default());
+
+        runtime
+            .queue_task_delta_refresh_with_debounce(
+                Arc::clone(&host),
+                task_id,
+                Duration::from_millis(1),
+            )
+            .await;
+        runtime
+            .queue_task_delta_refresh_with_debounce(
+                Arc::clone(&host),
+                task_id,
+                Duration::from_millis(1),
+            )
+            .await;
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if !host.task_ids.lock().await.is_empty() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("task delta refresh should fire");
+
+        assert_eq!(host.task_ids.lock().await.as_slice(), &[task_id]);
+        assert!(runtime.active_task_refreshes.lock().await.is_empty());
+    }
+
+    async fn wait_for_task_delta(host: &RecordingTaskDeltaRefreshHost) {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if !host.task_ids.lock().await.is_empty() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("task delta refresh should fire");
     }
 
     fn test_session() -> Session {
@@ -945,13 +1094,13 @@ mod tests {
     #[derive(Default)]
     struct RecordingPublicationHost {
         session: Mutex<Option<Session>>,
+        task_delta_refresh_host: Arc<RecordingTaskDeltaRefreshHost>,
         replay_cursor: Mutex<SessionReplayCursor>,
         projection_rev: Mutex<Option<i64>>,
         projection_rev_loads: Mutex<usize>,
         load_session_calls: Mutex<Vec<SessionId>>,
         head_deltas: Mutex<Vec<PublishedHeadDelta>>,
         summary_deltas: Mutex<Vec<SessionSummaryDelta>>,
-        queued_task_refreshes: Mutex<Vec<TaskId>>,
     }
 
     impl RecordingPublicationHost {
@@ -971,6 +1120,12 @@ mod tests {
 
     #[async_trait]
     impl SessionEventPublicationHost for RecordingPublicationHost {
+        type TaskDeltaRefreshHost = RecordingTaskDeltaRefreshHost;
+
+        fn task_delta_refresh_host(&self) -> Arc<Self::TaskDeltaRefreshHost> {
+            Arc::clone(&self.task_delta_refresh_host)
+        }
+
         async fn load_session(&self, session_id: SessionId) -> Option<Session> {
             self.load_session_calls.lock().await.push(session_id);
             self.session.lock().await.clone()
@@ -1030,9 +1185,17 @@ mod tests {
         ) {
             self.summary_deltas.lock().await.push(delta);
         }
+    }
 
-        async fn queue_task_delta_refresh(&self, task_id: TaskId) {
-            self.queued_task_refreshes.lock().await.push(task_id);
+    #[derive(Default)]
+    struct RecordingTaskDeltaRefreshHost {
+        task_ids: Mutex<Vec<TaskId>>,
+    }
+
+    #[async_trait]
+    impl SessionTaskDeltaRefreshHost for RecordingTaskDeltaRefreshHost {
+        async fn emit_task_delta_refresh(&self, task_id: TaskId) {
+            self.task_ids.lock().await.push(task_id);
         }
     }
 }

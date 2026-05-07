@@ -1,5 +1,4 @@
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Weak};
 
 use ctx_core::ids::{SessionId, TaskId, TurnId, WorkspaceId};
 use ctx_core::models::{
@@ -8,26 +7,39 @@ use ctx_core::models::{
 };
 
 use ctx_session_service::runtime::{
-    ActiveTaskRefreshEntry, SessionEventPublicationHost, SessionReplayCursor,
+    SessionEventPublicationHost, SessionReplayCursor, SessionTaskDeltaRefreshHost,
 };
 
 use crate::daemon::state::AppState;
 
-const ACTIVE_TASK_REFRESH_DEBOUNCE_MS: u64 = 250;
-
 pub async fn publish_event(state: &Arc<AppState>, event: SessionEvent) {
-    state
-        .sessions
-        .publish_event_with_host(&HttpSessionPublicationHost { state }, event)
-        .await;
+    let task_delta_refresh_host = Arc::new(HttpTaskDeltaRefreshHost {
+        state: Arc::downgrade(state),
+    });
+    let host = HttpSessionPublicationHost {
+        state: Arc::clone(state),
+        task_delta_refresh_host,
+    };
+    state.sessions.publish_event_with_host(&host, event).await;
 }
 
-struct HttpSessionPublicationHost<'a> {
-    state: &'a Arc<AppState>,
+struct HttpSessionPublicationHost {
+    state: Arc<AppState>,
+    task_delta_refresh_host: Arc<HttpTaskDeltaRefreshHost>,
+}
+
+struct HttpTaskDeltaRefreshHost {
+    state: Weak<AppState>,
 }
 
 #[async_trait::async_trait]
-impl SessionEventPublicationHost for HttpSessionPublicationHost<'_> {
+impl SessionEventPublicationHost for HttpSessionPublicationHost {
+    type TaskDeltaRefreshHost = HttpTaskDeltaRefreshHost;
+
+    fn task_delta_refresh_host(&self) -> Arc<Self::TaskDeltaRefreshHost> {
+        Arc::clone(&self.task_delta_refresh_host)
+    }
+
     async fn load_session(&self, session_id: SessionId) -> Option<Session> {
         let store = self.state.store_for_session(session_id).await.ok()?;
         store.get_session(session_id).await.ok().flatten()
@@ -116,59 +128,14 @@ impl SessionEventPublicationHost for HttpSessionPublicationHost<'_> {
             .publish_session_summary_delta(workspace_id, delta)
             .await;
     }
-
-    async fn queue_task_delta_refresh(&self, task_id: TaskId) {
-        queue_workspace_task_delta_refresh(self.state, task_id).await;
-    }
 }
 
-async fn queue_workspace_task_delta_refresh(state: &Arc<AppState>, task_id: TaskId) {
-    let should_spawn = {
-        let mut map = state.sessions.active_task_refreshes.lock().await;
-        if let Some(entry) = map.get_mut(&task_id) {
-            entry.generation = entry.generation.wrapping_add(1);
-            false
-        } else {
-            map.insert(task_id, ActiveTaskRefreshEntry { generation: 1 });
-            true
-        }
-    };
-    if should_spawn {
-        let state = Arc::downgrade(state);
-        tokio::spawn(async move {
-            let Some(state) = state.upgrade() else {
-                return;
-            };
-            let state_clone = state.clone();
-            run_workspace_task_delta_refresh(state_clone, task_id).await;
-        });
-    }
-}
-
-async fn run_workspace_task_delta_refresh(state: Arc<AppState>, task_id: TaskId) {
-    let debounce = Duration::from_millis(ACTIVE_TASK_REFRESH_DEBOUNCE_MS.max(1));
-    loop {
-        let generation = {
-            let map = state.sessions.active_task_refreshes.lock().await;
-            match map.get(&task_id) {
-                Some(entry) => entry.generation,
-                None => return,
-            }
+#[async_trait::async_trait]
+impl SessionTaskDeltaRefreshHost for HttpTaskDeltaRefreshHost {
+    async fn emit_task_delta_refresh(&self, task_id: TaskId) {
+        let Some(state) = self.state.upgrade() else {
+            return;
         };
-
-        tokio::time::sleep(debounce).await;
-
-        let current = {
-            let map = state.sessions.active_task_refreshes.lock().await;
-            match map.get(&task_id) {
-                Some(entry) => entry.generation,
-                None => return,
-            }
-        };
-        if current != generation {
-            continue;
-        }
-
         match state.store_for_task(task_id).await {
             Ok(store) => match store.get_workspace_active_task_summary(task_id).await {
                 Ok(Some(summary)) => {
@@ -206,16 +173,6 @@ async fn run_workspace_task_delta_refresh(state: Arc<AppState>, task_id: TaskId)
                     "workspace task delta refresh store lookup failed: {err:?}"
                 );
             }
-        }
-
-        let mut map = state.sessions.active_task_refreshes.lock().await;
-        match map.get(&task_id) {
-            Some(entry) if entry.generation == current => {
-                map.remove(&task_id);
-                return;
-            }
-            Some(_) => continue,
-            None => return,
         }
     }
 }
