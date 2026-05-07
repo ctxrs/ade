@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use super::*;
 
 const INSTALL_TIMEOUT_GRACE_SECS: u64 = 90;
