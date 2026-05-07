@@ -23,10 +23,12 @@ import {
 import type { OptimisticTaskSummary } from "./WorkbenchPage.types";
 import {
   collectSessionHeadsForSupervisor,
+  buildWorkspaceSyncPrefetchVersionKey,
   planSessionHeadPrefetchTargets,
   primeAuthoritativeSessionHeads,
   type SessionHeadPrefetchReason,
   maybeCacheSessionHeadSeed,
+  noteWorkspaceSyncPrefetchSuppressed,
   primePersistedSessionHeads,
 } from "./sessionHeadPrefetch";
 import {
@@ -126,6 +128,7 @@ export function useWorkbenchSessionBridge({
   const prefetchGenerationRef = useRef(0);
   const prefetchSessionIdsRef = useRef<Set<string>>(new Set());
   const foregroundSessionIdsRef = useRef<string[]>([]);
+  const workspaceSyncPrefetchKeyRef = useRef<string | null>(null);
   const activeSessionId = useMemo(
     () =>
       resolveWorkbenchActiveSessionId({
@@ -241,7 +244,13 @@ export function useWorkbenchSessionBridge({
       supervisor.setWorkspaceSnapshotState(snapshot);
       lifecycleCoordinator.setWorkspaceSnapshotState(snapshot);
       if (snapshot.initialized && sessionIds.length > 0) {
-        void primeAuthoritativeHeadsForSessions(sessionIds, undefined, { reason: "workspace_sync" });
+        const prefetchKey = buildWorkspaceSyncPrefetchVersionKey(snapshot, sessionIds);
+        if (prefetchKey !== workspaceSyncPrefetchKeyRef.current) {
+          workspaceSyncPrefetchKeyRef.current = prefetchKey;
+          void primeAuthoritativeHeadsForSessions(sessionIds, undefined, { reason: "workspace_sync" });
+        } else {
+          noteWorkspaceSyncPrefetchSuppressed("unchanged_session_versions");
+        }
       }
     };
     const handleWorkspaceEvent = (evt: WorkspaceActiveSnapshotEvent) => {

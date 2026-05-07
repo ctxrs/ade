@@ -1,4 +1,5 @@
 use super::*;
+use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 #[path = "snapshot/vcs.rs"]
 mod vcs;
 pub(crate) use vcs::{
@@ -56,6 +57,7 @@ pub(crate) async fn get_session_head(
     Path(id): Path<String>,
     Query(q): Query<SessionHeadQuery>,
 ) -> Result<Json<SessionHeadSnapshot>, StatusCode> {
+    let started_at = Instant::now();
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let limit = q.limit.unwrap_or(60);
     let include_events = parse_boolish_flag(q.include_events.as_deref(), "include_events")
@@ -78,6 +80,15 @@ pub(crate) async fn get_session_head(
         .get_cached_session_head_for_request(session_id, include_events, limit)
         .await
     {
+        record_session_head_recovery_metrics(
+            &state,
+            "active_snapshot_cache",
+            "ok",
+            started_at.elapsed(),
+            limit,
+            include_events,
+            Some(&head),
+        );
         return Ok(Json(head));
     }
     let store = store_for_existing_session_status_allow_archived(&state, session_id).await?;
@@ -88,6 +99,15 @@ pub(crate) async fn get_session_head(
     {
         Ok(Some(head)) => {
             state.emit_cache_rehydrate("session_head", true).await;
+            record_session_head_recovery_metrics(
+                &state,
+                "store_rebuild",
+                "ok",
+                started_at.elapsed(),
+                limit,
+                include_events,
+                Some(&head),
+            );
             if include_events {
                 state
                     .workspaces
@@ -105,12 +125,120 @@ pub(crate) async fn get_session_head(
         }
         Ok(None) => {
             state.emit_cache_rehydrate("session_head", false).await;
+            record_session_head_recovery_metrics(
+                &state,
+                "store_rebuild",
+                "missing",
+                started_at.elapsed(),
+                limit,
+                include_events,
+                None,
+            );
             Err(StatusCode::NOT_FOUND)
         }
         Err(_) => {
             state.emit_cache_rehydrate("session_head", false).await;
+            record_session_head_recovery_metrics(
+                &state,
+                "store_rebuild",
+                "error",
+                started_at.elapsed(),
+                limit,
+                include_events,
+                None,
+            );
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
+    }
+}
+
+fn record_session_head_recovery_metrics(
+    state: &Arc<AppState>,
+    source: &'static str,
+    result: &'static str,
+    elapsed: Duration,
+    limit: u32,
+    include_events: bool,
+    head: Option<&SessionHeadSnapshot>,
+) {
+    let mut labels = HashMap::new();
+    labels.insert("source".to_string(), "daemon".to_string());
+    labels.insert("surface".to_string(), "session_head_recovery".to_string());
+    labels.insert("recovery_source".to_string(), source.to_string());
+    labels.insert("result".to_string(), result.to_string());
+    labels.insert(
+        "include_events".to_string(),
+        if include_events { "true" } else { "false" }.to_string(),
+    );
+    labels.insert(
+        "limit_bucket".to_string(),
+        session_head_limit_bucket(limit).to_string(),
+    );
+
+    let response_bytes = head
+        .map(|value| value.head_window.bytes.max(0) as f64)
+        .unwrap_or(0.0);
+    let metrics = [
+        (
+            "workbench.session_head_recovery_ms",
+            "ms",
+            elapsed.as_millis() as f64,
+        ),
+        (
+            "workbench.session_head_recovery_response_bytes",
+            "bytes",
+            response_bytes,
+        ),
+        (
+            "workbench.session_head_recovery_turn_count",
+            "count",
+            head.map(|value| value.turns.len() as f64).unwrap_or(0.0),
+        ),
+        (
+            "workbench.session_head_recovery_message_count",
+            "count",
+            head.map(|value| value.messages.len() as f64).unwrap_or(0.0),
+        ),
+        (
+            "workbench.session_head_recovery_tool_summary_count",
+            "count",
+            head.map(|value| value.tool_summaries.len() as f64)
+                .unwrap_or(0.0),
+        ),
+        (
+            "workbench.session_head_recovery_event_count",
+            "count",
+            head.map(|value| value.events.len() as f64).unwrap_or(0.0),
+        ),
+    ];
+    let perf_telemetry = state.telemetry.perf_telemetry.clone();
+    tokio::spawn(async move {
+        for (name, unit, value) in metrics {
+            perf_telemetry
+                .record_metric(
+                    PerfMetric {
+                        name: name.to_string(),
+                        kind: PerfMetricKind::Histogram,
+                        unit: unit.to_string(),
+                        value,
+                        labels: labels.clone(),
+                    },
+                    None,
+                    None,
+                    None,
+                )
+                .await;
+        }
+    });
+}
+
+fn session_head_limit_bucket(limit: u32) -> &'static str {
+    match limit {
+        0 => "zero",
+        1..=5 => "1_5",
+        6..=60 => "6_60",
+        61..=200 => "61_200",
+        _ => "gt_200",
     }
 }
 

@@ -76,6 +76,60 @@ impl Store {
         Ok(out)
     }
 
+    pub async fn list_recent_turn_tool_summaries_for_turns(
+        &self,
+        session_id: SessionId,
+        turn_ids: &[TurnId],
+        limit: usize,
+    ) -> Result<Vec<SessionTurnToolSummary>> {
+        if turn_ids.is_empty() || limit == 0 {
+            return Ok(Vec::new());
+        }
+        let mut sql = String::from(
+            r#"SELECT tools.session_id, tools.tool_call_id, tools.turn_id, tools.tool_kind,
+                      tools.provider_tool_name, tools.title, tools.subtitle, tools.status,
+                      tools.input_json, tools.output_text, tools.order_seq, tools.first_event_seq,
+                      tools.input_truncated, tools.input_original_bytes,
+                      tools.output_truncated, tools.output_original_bytes,
+                      tools.created_at, tools.updated_at
+               FROM session_turn_tools AS tools
+               INNER JOIN (
+                   SELECT session_id, tool_call_id
+                   FROM session_turn_tools
+                   WHERE session_id = ? AND turn_id IN ("#,
+        );
+        for i in 0..turn_ids.len() {
+            if i > 0 {
+                sql.push_str(", ");
+            }
+            sql.push('?');
+        }
+        sql.push_str(
+            r#")
+                   ORDER BY order_seq DESC, created_at DESC, tool_call_id DESC
+                   LIMIT ?
+               ) AS recent
+                 ON recent.session_id = tools.session_id
+                AND recent.tool_call_id = tools.tool_call_id
+               ORDER BY tools.order_seq ASC, tools.created_at ASC, tools.tool_call_id ASC"#,
+        );
+        let sql = self.rewrite_sql(&sql);
+        let mut query = sqlx::query(sql.as_ref()).bind(session_id.0.to_string());
+        for turn_id in turn_ids {
+            query = query.bind(turn_id.0.to_string());
+        }
+        query = query.bind(limit.saturating_add(1) as i64);
+        let rows = query.fetch_all(&self.pool).await?;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            if let Ok(tool) = build_session_turn_tool_summary_from_row(r) {
+                out.push(tool);
+            }
+        }
+        out.sort_by(compare_tool_summary_order);
+        Ok(out)
+    }
+
     pub async fn get_session_turn_tool(
         &self,
         session_id: SessionId,

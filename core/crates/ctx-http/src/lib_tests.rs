@@ -179,6 +179,7 @@ mod org_policy_routes;
 mod provider_routes;
 mod run_archive_routes;
 mod session_artifacts;
+mod session_head_ctx_ui_sized_http;
 mod session_head_large_http;
 mod telemetry_export_boundaries;
 mod update_boundaries;

@@ -66,6 +66,8 @@ async fn handle_workspace_active_snapshot_ws(
         let summary_buffer = runtime.summary_buffer.clone();
         let send_control = runtime.send_control.clone();
         let latest_snapshot_rev = runtime.latest_snapshot_rev.clone();
+        let state = state.clone();
+        let event_queue_label = labels.event_queue_label;
         tokio::spawn(async move {
             let mut sender = sender;
             let mut stream_seq: i64 = 0;
@@ -158,7 +160,15 @@ async fn handle_workspace_active_snapshot_ws(
                                 break;
                             }
                         }
-                        NextWorkspaceStreamItem::SummaryBatch { events } => {
+                        NextWorkspaceStreamItem::SummaryBatch {
+                            events,
+                            vcs_coalesced_count,
+                        } => {
+                            workspace_stream::record_vcs_stream_coalesced(
+                                &state,
+                                event_queue_label,
+                                vcs_coalesced_count,
+                            );
                             let mut send_failed = false;
                             for event in events {
                                 stream_seq += 1;

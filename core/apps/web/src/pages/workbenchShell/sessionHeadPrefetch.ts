@@ -231,6 +231,21 @@ const buildPrefetchVersionKey = (
   return `${sessionId}:${lastEventSeq}:${projectionRev}:${stateRev}`;
 };
 
+export const buildWorkspaceSyncPrefetchVersionKey = (
+  snapshot: WorkspaceActiveSnapshotState,
+  sessionIds: readonly string[],
+): string => {
+  return uniqueSessionIds(sessionIds)
+    .map((sessionId) => buildPrefetchVersionKey(findSessionSummary(snapshot, sessionId), sessionId))
+    .join("\u001f");
+};
+
+export const noteWorkspaceSyncPrefetchSuppressed = (reason: "unchanged_session_versions"): void => {
+  recordClientCounterMetric("workbench.workspace_sync_prefetch_suppressed_count", {
+    reason,
+  });
+};
+
 export const collectSessionHeadsForSupervisor = (
   snapshot: WorkspaceActiveSnapshotState,
   store: SessionHeadStoreReader,

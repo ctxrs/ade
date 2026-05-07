@@ -185,14 +185,18 @@ impl Store {
         let turn_ids: Vec<TurnId> = out.iter().map(|t| t.turn_id).collect();
         let mut messages = self.list_messages_for_turns(session.id, &turn_ids).await?;
         let mut tool_summaries = self
-            .list_turn_tool_summaries_for_turns(session.id, &turn_ids)
+            .list_recent_turn_tool_summaries_for_turns(
+                session.id,
+                &turn_ids,
+                limits.tool_summary_limit,
+            )
             .await?;
         if !turn_ids.is_empty() {
             let mut tool_ids: HashMap<String, bool> = HashMap::new();
             for tool in &tool_summaries {
                 tool_ids.insert(tool.tool_call_id.clone(), true);
             }
-            for turn in &out {
+            for turn in out.iter().rev() {
                 if turn.tool_total <= 0 {
                     continue;
                 }
@@ -202,6 +206,17 @@ impl Store {
                 if has_any {
                     continue;
                 }
+                if tool_summaries.len() >= limits.tool_summary_limit {
+                    let oldest_hot_seq = tool_summaries
+                        .iter()
+                        .map(|tool| tool.order_seq)
+                        .min()
+                        .unwrap_or(i64::MIN);
+                    let turn_end_seq = turn.end_seq.unwrap_or(i64::MAX);
+                    if turn_end_seq <= oldest_hot_seq {
+                        break;
+                    }
+                }
                 let tools = self.list_turn_tools(session.id, turn.turn_id).await?;
                 for tool in tools {
                     if tool_ids.contains_key(&tool.tool_call_id) {
@@ -210,6 +225,7 @@ impl Store {
                     tool_ids.insert(tool.tool_call_id.clone(), true);
                     tool_summaries.push(summarize_session_turn_tool(&tool));
                 }
+                trim_tool_summaries_for_limit(&mut tool_summaries, limits.tool_summary_limit);
             }
             tool_summaries.sort_by(compare_tool_summary_order);
         }

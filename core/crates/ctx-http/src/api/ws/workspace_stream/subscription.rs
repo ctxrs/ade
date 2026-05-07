@@ -124,6 +124,19 @@ pub(crate) async fn handle_workspace_stream_subscription(
         else {
             continue;
         };
+        let replay_cursor = resume_replay_cursor(after_seq, after_projection_rev);
+        runtime
+            .foreground_head_buffer
+            .drop_session_deltas_at_or_before(session_id, replay_cursor)
+            .await;
+        runtime
+            .background_head_buffer
+            .drop_session_deltas_at_or_before(session_id, replay_cursor)
+            .await;
+        runtime
+            .summary_buffer
+            .drop_session_events_at_or_before(session_id, replay_cursor)
+            .await;
         if include_initial_snapshot && skip_replay_sessions.contains(&session_id) {
             let last_sent = state
                 .workspaces
@@ -154,10 +167,7 @@ pub(crate) async fn handle_workspace_stream_subscription(
             state,
             workspace_id,
             session_id,
-            SessionReplayCursor {
-                last_event_seq: after_seq,
-                projection_rev: after_projection_rev,
-            },
+            replay_cursor,
             labels.replay_list_metric,
             labels.replay_send_metric,
             move |event| {
@@ -217,7 +227,8 @@ pub(crate) async fn handle_workspace_stream_subscription(
                                         workspace_id,
                                         &error,
                                     );
-                                })
+                                })?;
+                                Ok(())
                             }
                             other => {
                                 let target = if is_priority_control_event(
@@ -309,4 +320,15 @@ pub(crate) async fn handle_workspace_stream_subscription(
         worktree_vcs_open_session_ids,
     );
     Ok(())
+}
+
+fn resume_replay_cursor(after_seq: i64, after_projection_rev: i64) -> SessionReplayCursor {
+    SessionReplayCursor {
+        last_event_seq: after_seq,
+        projection_rev: if after_projection_rev > 0 {
+            after_projection_rev
+        } else {
+            i64::MAX
+        },
+    }
 }

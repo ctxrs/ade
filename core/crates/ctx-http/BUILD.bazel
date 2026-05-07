@@ -85,6 +85,7 @@ CTX_HTTP_LIB_UNIT_TEST_ARGS = CTX_HTTP_UNIT_TEST_SERIAL_ARGS + [
     "--skip=lib_tests::mobile_secure_routes::",
     "--skip=lib_tests::provider_routes::",
     "--skip=lib_tests::session_artifacts::",
+    "--skip=lib_tests::session_head_ctx_ui_sized_http::",
     "--skip=lib_tests::session_head_large_http::",
     "--skip=lib_tests::telemetry_export_boundaries::",
     "--skip=lib_tests::update_boundaries::",
@@ -100,9 +101,11 @@ CTX_HTTP_LIB_PROVIDER_ROUTES_TEST_ARGS = CTX_HTTP_UNIT_TEST_SERIAL_ARGS + [
 CTX_HTTP_LIB_SESSION_ARTIFACTS_TEST_ARGS = CTX_HTTP_UNIT_TEST_SERIAL_ARGS + [
     "lib_tests::session_artifacts::",
 ]
+CTX_HTTP_LIB_SESSION_HEAD_CTX_UI_SIZED_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
+    "lib_tests::session_head_ctx_ui_sized_http::",
+]
 CTX_HTTP_LIB_SESSION_HEAD_LARGE_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
-    "--exact",
-    "lib_tests::session_head_large_http::large_session_head_http_responses_are_bounded",
+    "lib_tests::session_head_large_http::",
 ]
 CTX_HTTP_LIB_TELEMETRY_EXPORT_TEST_ARGS = CTX_HTTP_UNIT_TEST_SERIAL_ARGS + [
     "lib_tests::telemetry_export_boundaries::",
@@ -596,6 +599,16 @@ declare_ctx_http_rust_unit_test(
 )
 
 declare_ctx_http_rust_unit_test(
+    name = "unit_tests_lib_session_head_ctx_ui_sized",
+    args = CTX_HTTP_LIB_SESSION_HEAD_CTX_UI_SIZED_TEST_ARGS,
+    compile_data = CTX_HTTP_COMPILE_DATA,
+    data = CTX_HTTP_COMPILE_DATA,
+    deps = CTX_HTTP_DIRECT_TEST_DEPS,
+    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
+    timeout = "long",
+)
+
+declare_ctx_http_rust_unit_test(
     name = "unit_tests_lib_session_head_large",
     args = CTX_HTTP_LIB_SESSION_HEAD_LARGE_TEST_ARGS,
     compile_data = CTX_HTTP_COMPILE_DATA,
@@ -902,6 +915,7 @@ test_suite(
 test_suite(
     name = "unit-tests-lib-session-head-large",
     tests = [
+        ":unit_tests_lib_session_head_ctx_ui_sized",
         ":unit_tests_lib_session_head_large",
     ],
 )

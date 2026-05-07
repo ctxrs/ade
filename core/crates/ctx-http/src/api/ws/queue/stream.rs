@@ -123,9 +123,18 @@ pub(crate) async fn take_next_workspace_stream_item(
             deltas,
         });
     }
-    let events = summary_buffer.take().await;
+    let (events, vcs_coalesced_count) = summary_buffer.take().await;
     if !events.is_empty() {
-        return Some(NextWorkspaceStreamItem::SummaryBatch { events });
+        return Some(NextWorkspaceStreamItem::SummaryBatch {
+            events,
+            vcs_coalesced_count,
+        });
+    }
+    if vcs_coalesced_count > 0 {
+        return Some(NextWorkspaceStreamItem::SummaryBatch {
+            events,
+            vcs_coalesced_count,
+        });
     }
     None
 }

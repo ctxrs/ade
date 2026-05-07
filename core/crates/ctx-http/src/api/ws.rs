@@ -42,7 +42,7 @@ use queue::{
     log_head_batch_push_error, log_summary_batch_push_error, push_stream_message,
     should_stream_head_delta, take_next_workspace_stream_item, workspace_stream_is_idle,
     HeadBatchBuffer, NextWorkspaceStreamItem, StreamQueue, SummaryBatchBuffer,
-    HEAD_BATCH_TOTAL_LIMIT,
+    SummaryBatchPushOutcome, HEAD_BATCH_TOTAL_LIMIT,
 };
 use replay::{
     primary_session_ids_for_active_task_summary, queue_reset_required, queue_snapshot_payload,

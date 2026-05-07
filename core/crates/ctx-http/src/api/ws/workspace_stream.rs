@@ -1,5 +1,6 @@
 use super::replay::primary_session_id_for_active_task;
 use super::*;
+use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 use serde_json::json;
 
 mod events;
@@ -51,4 +52,35 @@ async fn emit_workspace_stream_incident(
         event = event.with_property(*key, value.clone());
     }
     state.telemetry.telemetry.emit(event).await;
+}
+
+pub(super) fn record_vcs_stream_coalesced(
+    state: &Arc<AppState>,
+    queue_label: &'static str,
+    count: u64,
+) {
+    if count == 0 {
+        return;
+    }
+    let mut labels = HashMap::new();
+    labels.insert("source".to_string(), "daemon".to_string());
+    labels.insert("queue_label".to_string(), queue_label.to_string());
+    labels.insert("traffic_class".to_string(), "vcs".to_string());
+    let perf_telemetry = state.telemetry.perf_telemetry.clone();
+    let _metric_task = tokio::spawn(async move {
+        perf_telemetry
+            .record_metric(
+                PerfMetric {
+                    name: "workbench.vcs_stream_coalesced_count".to_string(),
+                    kind: PerfMetricKind::Counter,
+                    unit: "count".to_string(),
+                    value: count as f64,
+                    labels,
+                },
+                None,
+                None,
+                None,
+            )
+            .await;
+    });
 }

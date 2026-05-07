@@ -39,7 +39,7 @@ fn retain_tool_summaries_for_turns(
     tool_summaries.retain(|tool| allowed.contains(&tool.turn_id));
 }
 
-fn trim_tool_summaries_for_limit(
+pub(super) fn trim_tool_summaries_for_limit(
     tool_summaries: &mut Vec<SessionTurnToolSummary>,
     limit: usize,
 ) -> bool {

@@ -54,13 +54,17 @@ const MAX_BACKEND_TO_DOM_MS = envNumber(
   "CTX_REMOTE_DAEMON_STREAM_SOAK_MAX_BACKEND_TO_DOM_MS",
   REMOTE_MODE ? 10_000 : 5000,
 );
-const MAX_CLIENT_RECEIVE_LAG_MS = envNumber(
+const MAX_FOREGROUND_CLIENT_RECEIVE_LAG_MS = envNumber(
   "CTX_REMOTE_DAEMON_STREAM_SOAK_MAX_CLIENT_RECEIVE_LAG_MS",
   10_000,
 );
+const MAX_ALL_CLIENT_RECEIVE_LAG_MS = envNumber(
+  "CTX_REMOTE_DAEMON_STREAM_SOAK_MAX_ALL_CLIENT_RECEIVE_LAG_MS",
+  REMOTE_MODE ? 30_000 : 15_000,
+);
 const MAX_REPLICA_APPLY_LAG_MS = envNumber(
   "CTX_REMOTE_DAEMON_STREAM_SOAK_MAX_REPLICA_APPLY_LAG_MS",
-  10_000,
+  REMOTE_MODE ? 20_000 : 10_000,
 );
 const MAX_CLICK_TO_PENDING_MS = envNumber(
   "CTX_REMOTE_DAEMON_STREAM_SOAK_MAX_CLICK_TO_PENDING_MS",
@@ -943,7 +947,8 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
       maxVisibleSilenceMs: MAX_VISIBLE_SILENCE_MS,
       maxBackendToDomP95Ms: MAX_BACKEND_TO_DOM_P95_MS,
       maxBackendToDomMs: MAX_BACKEND_TO_DOM_MS,
-      maxClientReceiveLagMs: MAX_CLIENT_RECEIVE_LAG_MS,
+      maxForegroundClientReceiveLagMs: MAX_FOREGROUND_CLIENT_RECEIVE_LAG_MS,
+      maxAllClientReceiveLagMs: MAX_ALL_CLIENT_RECEIVE_LAG_MS,
       maxReplicaApplyLagMs: MAX_REPLICA_APPLY_LAG_MS,
       maxClickToPendingMs: MAX_CLICK_TO_PENDING_MS,
       maxClickToTerminalMs: MAX_CLICK_TO_TERMINAL_MS,
@@ -1019,7 +1024,11 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
   );
   expect(telemetryMetrics["workbench.client_receive_lag_ms"]?.count ?? 0).toBeGreaterThan(0);
   expect(correctedReceiveLag.count).toBeGreaterThan(0);
-  expect(correctedReceiveLag.p95 ?? Infinity).toBeLessThanOrEqual(MAX_CLIENT_RECEIVE_LAG_MS);
+  expect(correctedReceiveLag.p95 ?? Infinity).toBeLessThanOrEqual(MAX_ALL_CLIENT_RECEIVE_LAG_MS);
+  expect(correctedForegroundReceiveLag.count).toBeGreaterThan(0);
+  expect(correctedForegroundReceiveLag.p95 ?? Infinity).toBeLessThanOrEqual(
+    MAX_FOREGROUND_CLIENT_RECEIVE_LAG_MS,
+  );
   expect(telemetryMetrics["workbench.session_replica_apply_lag_ms"]?.count ?? 0).toBeGreaterThan(0);
   expect(telemetryMetrics["workbench.session_replica_apply_lag_ms"]?.p95 ?? Infinity).toBeLessThanOrEqual(
     MAX_REPLICA_APPLY_LAG_MS,

@@ -268,6 +268,19 @@ pub(crate) async fn handle_workspace_stream_event(
                 queue_workspace_stream_reset(state, workspace_id, runtime).await?;
             }
         }
+        other @ WorkspaceActiveSnapshotEvent::WorktreeVcsSnapshot { .. } => {
+            match runtime.summary_buffer.push(other).await {
+                Ok(SummaryBatchPushOutcome::Replaced) => {}
+                Ok(SummaryBatchPushOutcome::Enqueued) => {}
+                Err(error) => {
+                    log_summary_batch_push_error(labels.event_queue_label, workspace_id, &error);
+                    if runtime.reset_queued {
+                        return Ok(());
+                    }
+                    queue_workspace_stream_reset(state, workspace_id, runtime).await?;
+                }
+            }
+        }
         other => {
             let target = if is_priority_control_event(
                 &other,
