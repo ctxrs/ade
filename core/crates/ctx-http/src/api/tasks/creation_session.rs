@@ -1,6 +1,7 @@
 use super::*;
 use crate::api::sessions;
 use crate::api::shared;
+use ctx_session_tools::model_resolution::{compose_model_id, resolve_model_id};
 
 #[path = "creation_session/cleanup.rs"]
 mod cleanup;
@@ -246,7 +247,7 @@ async fn create_session_for_loaded_task_inner(
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
     };
-    let resolved_model = match sessions::resolve_model_id(
+    let resolved_model = match resolve_model_id(
         Some(req.model_id.as_str()),
         req.reasoning_effort.as_deref(),
         None,
@@ -269,7 +270,7 @@ async fn create_session_for_loaded_task_inner(
     };
     let model_id = resolved_model.model_id.clone();
     let reasoning_effort = resolved_model.reasoning_effort.clone();
-    let preferred_model_id = sessions::compose_model_id(&model_id, reasoning_effort.as_deref());
+    let preferred_model_id = compose_model_id(&model_id, reasoning_effort.as_deref());
 
     if let Some(session_id) = session_id {
         let existing_ws = state
@@ -508,7 +509,7 @@ async fn create_session_for_loaded_task_inner(
         .telemetry
         .emit(TelemetryEvent::session_started(
             session.provider_id.clone(),
-            sessions::compose_model_id(&session.model_id, session.reasoning_effort.as_deref()),
+            compose_model_id(&session.model_id, session.reasoning_effort.as_deref()),
             Some(session.execution_environment.as_str().to_string()),
             Some(session_root_kind.clone()),
         ))
@@ -518,7 +519,7 @@ async fn create_session_for_loaded_task_inner(
     ops_event.worktree_id = Some(session.worktree_id.0.to_string());
     ops_event.provider_id = Some(session.provider_id.clone());
     ops_event.meta = Some(serde_json::json!({
-        "model_id": sessions::compose_model_id(&session.model_id, session.reasoning_effort.as_deref()),
+        "model_id": compose_model_id(&session.model_id, session.reasoning_effort.as_deref()),
         "reasoning_effort": session.reasoning_effort.clone(),
         "execution_environment": session.execution_environment.as_str(),
         "session_root_kind": session_root_kind.clone(),

@@ -281,6 +281,7 @@ RUST_BAZEL_DEPS = {
             "//core/crates/ctx-core:lib",
             "@crates//:chrono",
             "@crates//:mime_guess",
+            "@crates//:serde",
             "@crates//:serde_json",
             "@crates//:tracing",
         ],

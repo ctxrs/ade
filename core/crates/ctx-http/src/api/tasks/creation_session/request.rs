@@ -11,7 +11,7 @@ pub(in crate::api) struct CreateSessionReq {
     pub(super) model_id: String,
     #[serde(
         default,
-        deserialize_with = "sessions::deserialize_optional_reasoning_effort"
+        deserialize_with = "ctx_session_tools::model_resolution::deserialize_optional_reasoning_effort"
     )]
     pub(super) reasoning_effort: Option<String>,
     #[serde(default)]
@@ -41,7 +41,7 @@ pub(in crate::api::tasks) struct CreateTaskDefaultSessionReq {
     model_id: String,
     #[serde(
         default,
-        deserialize_with = "sessions::deserialize_optional_reasoning_effort"
+        deserialize_with = "ctx_session_tools::model_resolution::deserialize_optional_reasoning_effort"
     )]
     reasoning_effort: Option<String>,
     #[serde(default)]

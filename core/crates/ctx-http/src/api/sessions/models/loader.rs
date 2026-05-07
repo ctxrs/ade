@@ -1,5 +1,5 @@
-use super::catalog::build_model_catalog;
 use super::*;
+use ctx_session_tools::model_resolution::{build_model_catalog, ModelCatalog};
 
 async fn load_pinned_subscription_model_catalog(
     state: &Arc<AppState>,

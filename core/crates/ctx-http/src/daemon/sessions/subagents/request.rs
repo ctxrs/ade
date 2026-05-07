@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use crate::api::sessions::AgentInitItem;
 use crate::settings as user_settings;
 use ctx_core::ids::TaskId;
+use ctx_session_tools::model_resolution::normalize_effort_id;
 
 use super::errors::{api_error, internal_api_error, ApiResult, SubagentErrorKind};
 
@@ -43,7 +44,7 @@ fn normalize_reasoning_effort(value: Option<&str>) -> Option<String> {
     value
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(crate::api::sessions::normalize_effort_id)
+        .map(normalize_effort_id)
         .filter(|value| !value.is_empty())
 }
 
@@ -111,9 +112,9 @@ pub(super) fn build_subagent_request_json(agents: &[AgentInitItem]) -> serde_jso
 }
 
 pub(super) fn default_catalog_model_id(
-    catalog: Option<&crate::api::sessions::ModelCatalog>,
+    catalog: Option<&ctx_session_tools::model_resolution::ModelCatalog>,
 ) -> Option<&str> {
-    catalog.and_then(crate::api::sessions::ModelCatalog::default_model_id)
+    catalog.and_then(ctx_session_tools::model_resolution::ModelCatalog::default_model_id)
 }
 
 pub(super) async fn validate_requested_labels(

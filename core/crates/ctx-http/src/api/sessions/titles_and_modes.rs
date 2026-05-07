@@ -7,8 +7,7 @@ use serde::Deserialize;
 
 use super::super::errors::ApiErrorResp;
 use super::{
-    compose_model_id, load_provider_model_catalog_for_execution_environment, normalize_effort_id,
-    resolve_model_id, store_for_existing_session_api_error,
+    load_provider_model_catalog_for_execution_environment, store_for_existing_session_api_error,
     store_for_existing_session_api_error_for_write, store_for_existing_session_status_for_write,
 };
 pub(crate) use crate::daemon::sessions::title_generation::{
@@ -24,6 +23,9 @@ use crate::execution_effective;
 use crate::logs;
 use ctx_core::ids::SessionId;
 use ctx_core::models::{Session, SessionEventType};
+use ctx_session_tools::model_resolution::{
+    compose_model_id, normalize_effort_id, resolve_model_id,
+};
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct SetSessionModelReq {

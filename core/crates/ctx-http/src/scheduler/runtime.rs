@@ -15,13 +15,13 @@ use ctx_core::models::{
 };
 use ctx_providers::adapters::TurnInput;
 use ctx_providers::events::NormalizedEvent;
+use ctx_session_tools::model_resolution::compose_model_id;
 use ctx_session_tools::{
     build_tool_ops_meta_from_normalized, build_turn_tool_update, merge_tool_update,
     normalize_tool_event, sanitize_normalized_tool_event_payload, tool_count_deltas,
 };
 use ctx_store::store::SessionTurnToolCountDeltas;
 
-use crate::api::sessions::compose_model_id;
 use crate::daemon::{ensure_provider_adapter_for_target_with_cfg, AppState};
 use crate::execution_effective;
 use crate::ops_events::OpsEvent;

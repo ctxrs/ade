@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -13,7 +13,6 @@ use serde::{Deserialize, Serialize};
 
 use super::artifacts::persist_blob_bytes;
 use super::errors::ApiErrorResp;
-use super::extractors::extract_model_entries;
 use super::redact_json_value;
 use super::shared::{load_and_cache_worktree_files, FileCompletionsQuery};
 use crate::completions;
@@ -60,11 +59,7 @@ mod messages;
 pub(crate) use messages::ensure_session_turn_for_message;
 pub(super) use messages::{delete_session_message, post_message};
 mod models;
-pub(crate) use models::{
-    compose_model_id, deserialize_optional_reasoning_effort,
-    load_provider_model_catalog_for_execution_environment, normalize_effort_id, resolve_model_id,
-    ModelCatalog,
-};
+pub(crate) use models::load_provider_model_catalog_for_execution_environment;
 mod snapshot;
 pub(super) use snapshot::{
     apply_session_diff_patch, get_session_diff, get_session_diff_summary, get_session_events,

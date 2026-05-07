@@ -3,6 +3,7 @@ use crate::api::sessions;
 use ctx_core::provider_ids::CODEX_PROVIDER_ID;
 use ctx_provider_install::InstallTarget;
 use ctx_provider_runtime::provider_launch::models::subscription_models_payload_from_status;
+use ctx_session_tools::model_resolution::{resolve_model_id, ModelCatalog};
 
 const PREFERRED_DEFAULT_PROVIDER_IDS: &[&str] = &[
     CODEX_PROVIDER_ID,
@@ -203,7 +204,7 @@ async fn resolve_default_session_target(
     })?;
     let fallback_model = catalog
         .as_ref()
-        .and_then(sessions::ModelCatalog::default_model_id)
+        .and_then(ModelCatalog::default_model_id)
         .map(str::to_string)
         .or_else(|| {
             provider_status.and_then(|status| {
@@ -215,7 +216,7 @@ async fn resolve_default_session_target(
                 })
             })
         });
-    let resolved_model = sessions::resolve_model_id(
+    let resolved_model = resolve_model_id(
         preferred_model_id.as_deref(),
         None,
         fallback_model.as_deref(),

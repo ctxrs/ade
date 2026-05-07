@@ -1,5 +1,3 @@
-use super::{load_provider_model_catalog, resolve_model_id, ModelCatalog};
-
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -8,6 +6,8 @@ use ctx_store::StoreManager;
 
 use crate::daemon::AppState;
 use crate::settings::{ExecutionMode, ExecutionSettings, Settings};
+
+use super::load_provider_model_catalog;
 
 fn write_invalid_harness_registry(data_root: &std::path::Path) {
     let path = data_root
@@ -87,9 +87,9 @@ async fn load_provider_model_catalog_reads_target_scoped_options_cache() {
         .expect("load catalog")
         .expect("catalog");
 
-    assert!(catalog.full_ids.iter().any(|id| id == "gpt-5"));
-    assert!(catalog.full_ids.iter().any(|id| id == "gpt-5/high"));
-    assert_eq!(catalog.current_model_id.as_deref(), Some("gpt-5"));
+    assert!(catalog.full_ids().iter().any(|id| id == "gpt-5"));
+    assert!(catalog.full_ids().iter().any(|id| id == "gpt-5/high"));
+    assert_eq!(catalog.current_model_id(), Some("gpt-5"));
 }
 
 #[tokio::test]
@@ -133,10 +133,10 @@ async fn load_provider_model_catalog_falls_back_to_pinned_gemini_catalog() {
         .expect("load catalog")
         .expect("catalog");
 
-    assert_eq!(catalog.current_model_id.as_deref(), Some("auto-gemini-3"));
-    assert!(catalog.full_ids.iter().any(|id| id == "auto-gemini-3"));
+    assert_eq!(catalog.current_model_id(), Some("auto-gemini-3"));
+    assert!(catalog.full_ids().iter().any(|id| id == "auto-gemini-3"));
     assert!(catalog
-        .full_ids
+        .full_ids()
         .iter()
         .any(|id| id == "gemini-3-pro-preview"));
 }
@@ -223,65 +223,4 @@ async fn load_provider_model_catalog_surfaces_agent_server_config_errors_for_pin
         .await
         .expect_err("managed config error should surface for pinned catalogs too");
     assert!(err.contains("parsing agent server config"));
-}
-
-#[test]
-fn model_catalog_default_model_id_prefers_current_model_id() {
-    let catalog = ModelCatalog {
-        full_ids: vec!["gemini-2.5-pro".to_string(), "auto-gemini-3".to_string()],
-        current_model_id: Some("auto-gemini-3".to_string()),
-        base_ids: Vec::new(),
-        efforts_by_base: HashMap::new(),
-        full_id_by_base_effort: HashMap::new(),
-        info_by_full_id: HashMap::new(),
-    };
-
-    assert_eq!(catalog.default_model_id(), Some("auto-gemini-3"));
-}
-
-#[test]
-fn resolve_model_id_allows_explicit_unknown_model_when_catalog_is_present() {
-    let catalog = ModelCatalog {
-        full_ids: vec!["gemini-2.5-pro".to_string(), "gemini-2.5-flash".to_string()],
-        current_model_id: Some("gemini-2.5-pro".to_string()),
-        base_ids: vec!["gemini-2.5-pro".to_string(), "gemini-2.5-flash".to_string()],
-        efforts_by_base: HashMap::new(),
-        full_id_by_base_effort: HashMap::new(),
-        info_by_full_id: HashMap::new(),
-    };
-
-    let resolved = resolve_model_id(Some("gemini-3-pro-exp"), None, None, Some(&catalog))
-        .expect("explicit unknown model should be accepted");
-
-    assert_eq!(resolved.model_id, "gemini-3-pro-exp");
-    assert_eq!(resolved.reasoning_effort, None);
-    assert_eq!(resolved.full_model_id, "gemini-3-pro-exp");
-}
-
-#[test]
-fn resolve_model_id_allows_explicit_unknown_model_with_reasoning_effort() {
-    let catalog = ModelCatalog {
-        full_ids: vec!["gpt-5/medium".to_string(), "gpt-5/high".to_string()],
-        current_model_id: Some("gpt-5/medium".to_string()),
-        base_ids: vec!["gpt-5".to_string()],
-        efforts_by_base: HashMap::from([(
-            "gpt-5".to_string(),
-            vec!["medium".to_string(), "high".to_string()],
-        )]),
-        full_id_by_base_effort: HashMap::from([(
-            "gpt-5".to_string(),
-            HashMap::from([
-                ("medium".to_string(), "gpt-5/medium".to_string()),
-                ("high".to_string(), "gpt-5/high".to_string()),
-            ]),
-        )]),
-        info_by_full_id: HashMap::new(),
-    };
-
-    let resolved = resolve_model_id(Some("gpt-6"), Some("xhigh"), None, Some(&catalog))
-        .expect("explicit unknown model with effort should be accepted");
-
-    assert_eq!(resolved.model_id, "gpt-6");
-    assert_eq!(resolved.reasoning_effort.as_deref(), Some("xhigh"));
-    assert_eq!(resolved.full_model_id, "gpt-6/xhigh");
 }

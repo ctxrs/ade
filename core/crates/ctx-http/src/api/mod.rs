@@ -24,7 +24,6 @@ mod auth;
 mod demo;
 pub(crate) mod errors;
 mod execution;
-mod extractors;
 mod merge_queue_api;
 mod mobile_access;
 mod mobile_scopes;

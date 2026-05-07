@@ -12,12 +12,13 @@ use std::time::{Duration, Instant};
 
 use base64::Engine;
 use ctx_session_tools::interrupt_telemetry::InterruptTelemetryContext;
+use ctx_session_tools::model_resolution::resolve_model_id;
 
 use crate::api::sessions::{
-    context_window_for_run, resolve_model_id, worktree_path_for_child, AgentDetail, AgentInitReq,
-    AgentResult, AgentSummary, ArchiveAgentReq, ArchiveAgentResp, GetAgentReq, GetAgentResp,
-    InterruptAgentReq, InterruptAgentResp, SendInputReq, SendInputResp, SpawnAgentReq,
-    SpawnAgentResp, WaitAgentReq, WaitAgentResp,
+    context_window_for_run, worktree_path_for_child, AgentDetail, AgentInitReq, AgentResult,
+    AgentSummary, ArchiveAgentReq, ArchiveAgentResp, GetAgentReq, GetAgentResp, InterruptAgentReq,
+    InterruptAgentResp, SendInputReq, SendInputResp, SpawnAgentReq, SpawnAgentResp, WaitAgentReq,
+    WaitAgentResp,
 };
 use crate::daemon::AppState;
 use crate::scheduler::SchedulerCommand;
