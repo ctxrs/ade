@@ -427,6 +427,44 @@ impl<SchedulerCommand> SessionRuntime<SchedulerCommand> {
         *self.provider_inactivity_timeout.lock().await = timeout;
     }
 
+    pub async fn set_running_with_host<H>(&self, host: &H, session_id: SessionId, running: bool)
+    where
+        H: SessionLifecycleHost,
+    {
+        if let Some(pinned) = self.set_running(session_id, running).await {
+            host.set_provider_session_pinned(session_id, pinned).await;
+        }
+    }
+
+    pub async fn attach_session_with_host<H>(&self, host: &H, session_id: SessionId)
+    where
+        H: SessionLifecycleHost,
+    {
+        if let Some(pinned) = self.attach_session(session_id).await {
+            host.set_provider_session_pinned(session_id, pinned).await;
+        }
+    }
+
+    pub async fn detach_session_with_host<H>(&self, host: &H, session_id: SessionId)
+    where
+        H: SessionLifecycleHost,
+    {
+        if let Some(pinned) = self.detach_session(session_id).await {
+            host.set_provider_session_pinned(session_id, pinned).await;
+        }
+    }
+
+    pub async fn cleanup_session_with_host<H>(&self, host: &H, session_id: SessionId)
+    where
+        H: SessionLifecycleHost,
+    {
+        if self.clear_pin_state(session_id).await {
+            host.set_provider_session_pinned(session_id, false).await;
+        }
+        host.remove_workspace_active_session(session_id).await;
+        self.remove_session_state(session_id).await;
+    }
+
     pub async fn publish_event_with_host<H>(&self, host: &H, event: SessionEvent)
     where
         H: SessionEventPublicationHost,
@@ -655,6 +693,13 @@ pub trait SessionTaskDeltaRefreshHost: Send + Sync + 'static {
     async fn emit_task_delta_refresh(&self, task_id: TaskId);
 }
 
+#[async_trait]
+pub trait SessionLifecycleHost: Send + Sync {
+    async fn set_provider_session_pinned(&self, session_id: SessionId, pinned: bool);
+
+    async fn remove_workspace_active_session(&self, session_id: SessionId);
+}
+
 async fn run_task_delta_refresh_loop<H>(
     active_task_refreshes: Arc<Mutex<HashMap<TaskId, ActiveTaskRefreshEntry>>>,
     host: Arc<H>,
@@ -873,6 +918,30 @@ mod tests {
         assert_eq!(runtime.attach_session(session_id).await, None);
         assert_eq!(runtime.set_running(session_id, false).await, None);
         assert_eq!(runtime.detach_session(session_id).await, Some(false));
+    }
+
+    #[tokio::test]
+    async fn lifecycle_host_receives_only_pin_transitions_and_cleanup() {
+        let runtime = SessionRuntime::<()>::new(Duration::from_secs(60));
+        let host = RecordingLifecycleHost::default();
+        let session_id = SessionId::new();
+
+        runtime.set_running_with_host(&host, session_id, true).await;
+        runtime.set_running_with_host(&host, session_id, true).await;
+        runtime.attach_session_with_host(&host, session_id).await;
+        runtime
+            .set_running_with_host(&host, session_id, false)
+            .await;
+        runtime.detach_session_with_host(&host, session_id).await;
+        runtime.cleanup_session_with_host(&host, session_id).await;
+
+        assert_eq!(
+            host.pin_updates.lock().await.as_slice(),
+            &[(session_id, true), (session_id, false)]
+        );
+        assert_eq!(host.removed_sessions.lock().await.as_slice(), &[session_id]);
+        assert!(!runtime.is_running(session_id).await);
+        assert!(runtime.session_meta_workspace(session_id).await.is_none());
     }
 
     #[tokio::test]
@@ -1196,6 +1265,23 @@ mod tests {
     impl SessionTaskDeltaRefreshHost for RecordingTaskDeltaRefreshHost {
         async fn emit_task_delta_refresh(&self, task_id: TaskId) {
             self.task_ids.lock().await.push(task_id);
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingLifecycleHost {
+        pin_updates: Mutex<Vec<(SessionId, bool)>>,
+        removed_sessions: Mutex<Vec<SessionId>>,
+    }
+
+    #[async_trait]
+    impl SessionLifecycleHost for RecordingLifecycleHost {
+        async fn set_provider_session_pinned(&self, session_id: SessionId, pinned: bool) {
+            self.pin_updates.lock().await.push((session_id, pinned));
+        }
+
+        async fn remove_workspace_active_session(&self, session_id: SessionId) {
+            self.removed_sessions.lock().await.push(session_id);
         }
     }
 }

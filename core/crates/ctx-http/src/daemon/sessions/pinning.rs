@@ -2,11 +2,12 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use ctx_core::ids::SessionId;
+use ctx_session_service::runtime::SessionLifecycleHost;
 
 use crate::daemon::state::AppState;
 
 impl AppState {
-    async fn set_provider_session_pinned_by_key(&self, session_key: String, pinned: bool) {
+    async fn propagate_provider_session_pin_by_key(&self, session_key: String, pinned: bool) {
         let adapters = {
             let mut adapters = {
                 let map = self.providers.adapters.lock().await;
@@ -39,33 +40,44 @@ impl AppState {
         }
     }
 
-    async fn set_provider_session_pinned(&self, session_id: SessionId, pinned: bool) {
-        self.set_provider_session_pinned_by_key(session_id.0.to_string(), pinned)
+    async fn propagate_provider_session_pin(&self, session_id: SessionId, pinned: bool) {
+        self.propagate_provider_session_pin_by_key(session_id.0.to_string(), pinned)
             .await;
     }
 
     pub async fn set_running(&self, session_id: SessionId, running: bool) {
-        if let Some(pinned) = self.sessions.set_running(session_id, running).await {
-            self.set_provider_session_pinned(session_id, pinned).await;
-        }
+        self.sessions
+            .set_running_with_host(self, session_id, running)
+            .await;
     }
 
     pub async fn attach_session(&self, session_id: SessionId) {
-        if let Some(pinned) = self.sessions.attach_session(session_id).await {
-            self.set_provider_session_pinned(session_id, pinned).await;
-        }
+        self.sessions
+            .attach_session_with_host(self, session_id)
+            .await;
     }
 
     pub async fn detach_session(&self, session_id: SessionId) {
-        if let Some(pinned) = self.sessions.detach_session(session_id).await {
-            self.set_provider_session_pinned(session_id, pinned).await;
-        }
+        self.sessions
+            .detach_session_with_host(self, session_id)
+            .await;
     }
 
     pub async fn cleanup_session(&self, session_id: SessionId) {
-        if self.sessions.clear_pin_state(session_id).await {
-            self.set_provider_session_pinned(session_id, false).await;
-        }
+        self.sessions
+            .cleanup_session_with_host(self, session_id)
+            .await;
+    }
+}
+
+#[async_trait::async_trait]
+impl SessionLifecycleHost for AppState {
+    async fn set_provider_session_pinned(&self, session_id: SessionId, pinned: bool) {
+        self.propagate_provider_session_pin(session_id, pinned)
+            .await;
+    }
+
+    async fn remove_workspace_active_session(&self, session_id: SessionId) {
         let workspace_id = self
             .global_store()
             .get_workspace_id_for_session(session_id)
@@ -83,6 +95,5 @@ impl AppState {
                 .remove_session(session_id)
                 .await;
         }
-        self.sessions.remove_session_state(session_id).await;
     }
 }
