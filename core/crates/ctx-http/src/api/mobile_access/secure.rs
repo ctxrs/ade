@@ -1,5 +1,7 @@
 use super::*;
-use ctx_transport_runtime::mobile_e2ee;
+use ctx_transport_runtime::{
+    mobile_e2ee, mobile_secure_proxy_allows_request, secure_proxy_path_is_unnormalized,
+};
 
 pub(in crate::api) async fn pair_mobile_device(
     State(state): State<Arc<AppState>>,
@@ -514,41 +516,6 @@ impl SecureProxyError {
             message: message.to_string(),
         }
     }
-}
-
-fn mobile_secure_proxy_allows_request(method: &axum::http::Method, path: &str) -> bool {
-    if *method == axum::http::Method::GET && path == "/api/health" {
-        return true;
-    }
-    if *method == axum::http::Method::GET && path == "/api/workspaces" {
-        return true;
-    }
-    if *method == axum::http::Method::GET {
-        if let Some(workspace_id) = path.strip_prefix("/api/workspaces/") {
-            return !workspace_id.is_empty() && !workspace_id.contains('/');
-        }
-    }
-    false
-}
-
-fn secure_proxy_path_is_unnormalized(path: &str) -> bool {
-    if path.contains('%') {
-        return true;
-    }
-    let mut saw_leading = false;
-    for segment in path.split('/') {
-        if !saw_leading {
-            saw_leading = true;
-            if !segment.is_empty() {
-                return true;
-            }
-            continue;
-        }
-        if segment.is_empty() || segment == "." || segment == ".." {
-            return true;
-        }
-    }
-    false
 }
 
 fn desktop_auth_required_secure_response() -> Result<SecureResponsePayload, SecureProxyError> {
