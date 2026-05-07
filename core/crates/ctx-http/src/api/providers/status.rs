@@ -3,41 +3,13 @@ use super::*;
 use anyhow::Context;
 use ctx_core::ids::WorkspaceId;
 use ctx_core::provider_ids::CODEX_PROVIDER_ID;
-use ctx_providers::adapters::{
-    ProviderHealth, ProviderRecommendedAction, ProviderUsability, ProviderUsabilityStatus,
-};
+#[cfg(test)]
+pub(crate) use ctx_provider_runtime::provider_launch::status::apply_target_aware_provider_status;
+use ctx_provider_runtime::provider_launch::status::mark_provider_status_with_managed_config_error;
+pub(crate) use ctx_provider_runtime::provider_launch::status::provider_status_for_target;
+use ctx_providers::adapters::{ProviderHealth, ProviderUsability};
 
 use crate::execution_effective;
-#[allow(unused_imports)]
-pub(crate) use crate::provider_launch::status::{
-    apply_target_aware_provider_status, provider_status_for_target,
-};
-
-pub(crate) fn mark_provider_status_with_managed_config_error(
-    status: &mut ProviderStatus,
-    config_error: &str,
-) {
-    let reason = format!("managed provider config error: {config_error}");
-    status.health = ProviderHealth::Error;
-    status
-        .details
-        .insert("managed_config_error".into(), "true".into());
-    status.details.insert(
-        "managed_config_error_message".into(),
-        config_error.to_string(),
-    );
-    if !status.diagnostics.iter().any(|value| value == &reason) {
-        status.diagnostics.push(reason.clone());
-    }
-    status.usability = ProviderUsability {
-        usable: false,
-        status: ProviderUsabilityStatus::Blocked,
-        reason_code: Some("managed_config_error".into()),
-        reason: Some(reason),
-        blocking_provider_ids: Vec::new(),
-        recommended_action: ProviderRecommendedAction::ConfigureRuntime,
-    };
-}
 
 async fn provider_status_without_target_bootstrap(
     state: &Arc<AppState>,

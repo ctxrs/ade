@@ -7,9 +7,7 @@ use ctx_provider_install::install_state::InstallTarget;
 use crate::daemon::AppState;
 use crate::execution_effective;
 
-pub use ctx_provider_runtime::provider_launch::status::{
-    apply_target_aware_provider_status, provider_status_for_target,
-};
+pub use ctx_provider_runtime::provider_launch::status::provider_status_for_target;
 
 pub(crate) async fn install_target_for_workspace(
     state: &Arc<AppState>,

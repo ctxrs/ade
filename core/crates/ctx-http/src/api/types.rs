@@ -1,6 +1,7 @@
 use super::*;
 use crate::api::shared::store_for_existing_workspace_status;
 use ctx_linux_sandbox_runtime::linux_sandbox_runtime_status;
+use ctx_provider_runtime::provider_launch::status::mark_provider_status_with_managed_config_error;
 use ctx_resource_utilization as resource_utilization;
 
 #[derive(Debug, Deserialize)]
@@ -175,10 +176,7 @@ pub(in crate::api) async fn diagnostics(
         drop(map);
         if let Some(config_error) = managed_config_error.as_deref() {
             for status in &mut providers {
-                super::providers::mark_provider_status_with_managed_config_error(
-                    status,
-                    config_error,
-                );
+                mark_provider_status_with_managed_config_error(status, config_error);
             }
         }
         providers

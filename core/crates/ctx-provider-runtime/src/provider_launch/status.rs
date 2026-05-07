@@ -1,4 +1,7 @@
-use ctx_providers::adapters::ProviderStatus;
+use ctx_providers::adapters::{
+    ProviderHealth, ProviderRecommendedAction, ProviderStatus, ProviderUsability,
+    ProviderUsabilityStatus,
+};
 use std::collections::{BTreeSet, HashMap};
 
 use crate::provider_usability::{
@@ -128,6 +131,32 @@ pub fn apply_target_aware_provider_status(
     installer::apply_install_target_status(status, target);
 }
 
+pub fn mark_provider_status_with_managed_config_error(
+    status: &mut ProviderStatus,
+    config_error: &str,
+) {
+    let reason = format!("managed provider config error: {config_error}");
+    status.health = ProviderHealth::Error;
+    status
+        .details
+        .insert("managed_config_error".into(), "true".into());
+    status.details.insert(
+        "managed_config_error_message".into(),
+        config_error.to_string(),
+    );
+    if !status.diagnostics.iter().any(|value| value == &reason) {
+        status.diagnostics.push(reason.clone());
+    }
+    status.usability = ProviderUsability {
+        usable: false,
+        status: ProviderUsabilityStatus::Blocked,
+        reason_code: Some("managed_config_error".into()),
+        reason: Some(reason),
+        blocking_provider_ids: Vec::new(),
+        recommended_action: ProviderRecommendedAction::ConfigureRuntime,
+    };
+}
+
 pub async fn provider_status_for_target(
     state: &impl ProviderRuntimeHost,
     managed: &installer::AgentServerConfigFile,
@@ -197,4 +226,50 @@ pub async fn provider_status_for_target(
         current_ctx_version.as_deref(),
     );
     status
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn managed_config_error_marks_status_blocked_without_duplicate_diagnostics() {
+        let mut status = ProviderStatus {
+            provider_id: "codex".to_string(),
+            installed: true,
+            detected_path: None,
+            version: None,
+            capabilities: None,
+            health: ProviderHealth::Ok,
+            diagnostics: Vec::new(),
+            details: HashMap::new(),
+            usability: ProviderUsability::default(),
+        };
+
+        mark_provider_status_with_managed_config_error(&mut status, "bad config");
+        mark_provider_status_with_managed_config_error(&mut status, "bad config");
+
+        assert_eq!(status.health, ProviderHealth::Error);
+        assert_eq!(
+            status.details.get("managed_config_error"),
+            Some(&"true".to_string())
+        );
+        assert_eq!(
+            status.details.get("managed_config_error_message"),
+            Some(&"bad config".to_string())
+        );
+        assert_eq!(
+            status.diagnostics,
+            vec!["managed provider config error: bad config".to_string()]
+        );
+        assert!(!status.usability.usable);
+        assert_eq!(
+            status.usability.reason_code.as_deref(),
+            Some("managed_config_error")
+        );
+        assert_eq!(
+            status.usability.recommended_action,
+            ProviderRecommendedAction::ConfigureRuntime
+        );
+    }
 }
