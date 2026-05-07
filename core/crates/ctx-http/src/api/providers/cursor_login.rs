@@ -1,14 +1,21 @@
-use super::login::{
-    extract_auth_url, reject_mobile_auth, resolve_provider_login_command_from_config,
-    resolve_runtime_provider_command_from_config,
-};
+use super::login::{extract_auth_url, reject_mobile_auth};
 use super::*;
 use crate::api::MobileAuthContext;
 use axum::Extension;
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 
+mod capture;
+mod runtime;
 #[cfg(test)]
 mod tests;
+
+use capture::{
+    cursor_login_home, ensure_private_dir, initialize_cursor_capture_file,
+    parse_cursor_captured_tokens, write_cursor_capture_hook,
+};
+use runtime::resolve_cursor_login_runtime;
+#[cfg(test)]
+use runtime::resolve_cursor_login_runtime_from_config;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct CursorLoginStartReq {
@@ -28,16 +35,6 @@ struct CursorLoginOutputLine {
     is_stderr: bool,
 }
 
-#[derive(Debug, Deserialize)]
-struct CursorCapturedTokenLine {
-    #[serde(default)]
-    event: String,
-    #[serde(default)]
-    service: String,
-    #[serde(default)]
-    value: String,
-}
-
 const CURSOR_LOGIN_TIMEOUT_DEFAULT: Duration = Duration::from_secs(300);
 const CURSOR_LOGIN_POLL_INTERVAL: Duration = Duration::from_millis(700);
 
@@ -48,47 +45,6 @@ fn cursor_login_timeout() -> Duration {
         .filter(|value| *value > 0)
         .unwrap_or(CURSOR_LOGIN_TIMEOUT_DEFAULT.as_secs());
     Duration::from_secs(seconds)
-}
-
-#[cfg(unix)]
-async fn set_private_permissions(path: &StdPath, mode: u32) -> anyhow::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-
-    tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
-        .await
-        .with_context(|| format!("setting permissions {:o} on {}", mode, path.display()))?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-async fn set_private_permissions(_path: &StdPath, _mode: u32) -> anyhow::Result<()> {
-    Ok(())
-}
-
-async fn ensure_private_dir(path: &StdPath) -> anyhow::Result<()> {
-    tokio::fs::create_dir_all(path)
-        .await
-        .with_context(|| format!("creating private dir {}", path.display()))?;
-    set_private_permissions(path, 0o700).await?;
-    Ok(())
-}
-
-async fn write_private_file(path: &StdPath, bytes: &[u8], label: &str) -> anyhow::Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("missing parent dir for {}", path.display()))?;
-    ensure_private_dir(parent).await?;
-    tokio::fs::write(path, bytes)
-        .await
-        .with_context(|| format!("writing {label} {}", path.display()))?;
-    set_private_permissions(path, 0o600).await?;
-    Ok(())
-}
-
-// The hook appends with `{ mode: 0o600 }`, but append mode does not tighten an existing file.
-// Pre-create the capture file here so managed auth tokens never inherit permissive defaults.
-async fn initialize_cursor_capture_file(path: &StdPath) -> anyhow::Result<()> {
-    write_private_file(path, b"", "cursor capture file").await
 }
 
 fn first_email_from_text(value: &str) -> Option<String> {
@@ -134,129 +90,6 @@ fn spawn_cursor_login_reader<R>(
             }
         }
     });
-}
-
-const CURSOR_KEYCHAIN_CAPTURE_HOOK: &str = r#"const fs = require('fs');
-const path = process.env.CTX_CURSOR_CAPTURE_FILE;
-function emit(row) {
-  if (!path) return;
-  try {
-    fs.appendFileSync(path, JSON.stringify(row) + '\n', { mode: 0o600 });
-  } catch {}
-}
-const cp = require('child_process');
-for (const name of ['spawn', 'spawnSync']) {
-  const orig = cp[name];
-  if (typeof orig !== 'function') continue;
-  cp[name] = function (...args) {
-    try {
-      const cmd = String(args[0] || '');
-      const argv = Array.isArray(args[1]) ? args[1] : [];
-      if (cmd.includes('/usr/bin/security') || cmd === 'security') {
-        if (String(argv[0] || '') === 'add-generic-password') {
-          const serviceIdx = argv.indexOf('-s');
-          const valueIdx = argv.indexOf('-w');
-          const service = serviceIdx >= 0 ? String(argv[serviceIdx + 1] || '') : '';
-          const value = valueIdx >= 0 ? String(argv[valueIdx + 1] || '') : '';
-          if (service.startsWith('cursor-') && value) {
-            emit({ ts: new Date().toISOString(), event: 'captured', service, value });
-          }
-        }
-      }
-    } catch {}
-    return orig.apply(this, args);
-  };
-}
-"#;
-
-async fn write_cursor_capture_hook(path: &StdPath) -> anyhow::Result<()> {
-    write_private_file(path, CURSOR_KEYCHAIN_CAPTURE_HOOK.as_bytes(), "cursor hook").await
-}
-
-async fn parse_cursor_captured_tokens(
-    path: &StdPath,
-) -> anyhow::Result<(Option<String>, Option<String>, Option<String>)> {
-    let payload = tokio::fs::read_to_string(path)
-        .await
-        .with_context(|| format!("reading cursor capture {}", path.display()))?;
-    let mut access_token = None::<String>;
-    let mut refresh_token = None::<String>;
-    let mut api_key = None::<String>;
-    for line in payload.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let parsed: CursorCapturedTokenLine = match serde_json::from_str(trimmed) {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
-        if parsed.event != "captured" || parsed.value.trim().is_empty() {
-            continue;
-        }
-        match parsed.service.as_str() {
-            "cursor-access-token" => access_token = Some(parsed.value),
-            "cursor-refresh-token" => refresh_token = Some(parsed.value),
-            "cursor-api-key" => api_key = Some(parsed.value),
-            _ => {}
-        }
-    }
-    Ok((access_token, refresh_token, api_key))
-}
-
-fn cursor_login_home(data_root: &StdPath, login_id: &str) -> PathBuf {
-    data_root
-        .join("providers")
-        .join("cursor")
-        .join("login-sessions")
-        .join(login_id)
-}
-
-fn is_cursor_login_command(path: &StdPath) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name == "cursor-agent" || name == "cursor-agent.exe")
-}
-
-async fn resolve_cursor_login_runtime_from_config(
-    data_root: &StdPath,
-) -> anyhow::Result<installer::ProviderRuntimeCommand> {
-    if let Some(runtime) = resolve_provider_login_command_from_config(data_root, "cursor").await? {
-        if is_cursor_login_command(StdPath::new(&runtime.command_abs_path)) {
-            return Ok(runtime);
-        }
-        anyhow::bail!(
-            "runtime_command_invalid: provider=cursor-login (configured login executable must point to `cursor-agent`)"
-        );
-    }
-
-    if let Some(runtime) = resolve_runtime_provider_command_from_config(data_root, "cursor").await?
-    {
-        if matches!(
-            runtime.source,
-            installer::ProviderRuntimeCommandSource::BundledSeed
-        ) {
-            anyhow::bail!(
-                "runtime_command_missing: provider=cursor-login (ctx requires a managed or explicitly configured `cursor-agent` login executable; bundled runtime discovery is not supported)"
-            );
-        }
-        if is_cursor_login_command(StdPath::new(&runtime.command_abs_path)) {
-            return Ok(runtime);
-        }
-        anyhow::bail!(
-            "runtime_command_invalid: provider=cursor-login (configured runtime command must point to `cursor-agent`)"
-        );
-    }
-
-    anyhow::bail!(
-        "runtime_command_missing: provider=cursor-login (ctx requires a managed or explicitly configured `cursor-agent` login executable; host PATH lookup is not supported)"
-    );
-}
-
-async fn resolve_cursor_login_runtime(
-    state: &Arc<AppState>,
-) -> anyhow::Result<installer::ProviderRuntimeCommand> {
-    resolve_cursor_login_runtime_from_config(&state.core.data_root).await
 }
 
 async fn set_cursor_login_error(state: &Arc<AppState>, login_id: &str, error: String) {

@@ -525,6 +525,7 @@ const CTX_HTTP_SUITES = [
       "crates/ctx-http/src/api/providers/accounts.rs",
       "crates/ctx-http/src/api/providers/bootstrap.rs",
       "crates/ctx-http/src/api/providers/cursor_login.rs",
+      "crates/ctx-http/src/api/providers/cursor_login/**",
       "crates/ctx-http/src/api/providers/harness_config.rs",
       "crates/ctx-http/src/api/providers/imports.rs",
       "crates/ctx-http/src/api/providers/install.rs",
