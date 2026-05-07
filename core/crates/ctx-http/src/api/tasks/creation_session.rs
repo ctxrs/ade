@@ -1,6 +1,9 @@
 use super::*;
 use crate::api::sessions;
 use crate::api::shared;
+use ctx_session_service::session_creation::{
+    validate_create_session_request, CreateSessionRequestError, CreateSessionRequestPolicy,
+};
 use ctx_session_tools::model_resolution::{compose_model_id, resolve_model_id};
 
 #[path = "creation_session/cleanup.rs"]
@@ -67,43 +70,41 @@ async fn create_session_for_loaded_task_inner(
     {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let session_id = match req.id.as_deref().map(str::trim) {
-        Some("") | None => None,
-        Some(raw) => Some(SessionId(
-            uuid::Uuid::parse_str(raw).map_err(|_| StatusCode::BAD_REQUEST)?,
-        )),
-    };
-    let parent_session_id = match req.parent_session_id {
-        Some(id) => Some(SessionId(
-            uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?,
-        )),
-        None => None,
-    };
-    let relationship = req
-        .relationship
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| value.to_string());
-    let requested_relationship = relationship.clone();
-    if parent_session_id.is_some() != relationship.is_some() {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-    if parent_session_id.is_none() && relationship.is_none() {
-        if let Some(primary_session_id) = task.primary_session_id {
-            if session_id.as_ref() != Some(&primary_session_id) {
-                return Err(StatusCode::CONFLICT);
-            }
+    let session_request = match validate_create_session_request(CreateSessionRequestPolicy {
+        requested_session_id: req.id.as_deref(),
+        parent_session_id: req.parent_session_id.as_deref(),
+        relationship: req.relationship.as_deref(),
+        initial_prompt_present: req.initial_prompt.is_some(),
+        initial_message_id_present: req.initial_message_id.is_some(),
+        initial_turn_id_present: req.initial_turn_id.is_some(),
+        task_primary_session_id: task.primary_session_id,
+    }) {
+        Ok(decision) => decision,
+        Err(CreateSessionRequestError::MissingInitialPromptIds) => {
+            state
+                .emit_compat_payload_reject_counter(
+                    "tasks.create_session",
+                    "missing_initial_ids",
+                    None,
+                )
+                .await;
+            return Err(StatusCode::BAD_REQUEST);
         }
-    }
-    if req.initial_prompt.is_some()
-        && (req.initial_message_id.is_none() || req.initial_turn_id.is_none())
-    {
-        state
-            .emit_compat_payload_reject_counter("tasks.create_session", "missing_initial_ids", None)
-            .await;
-        return Err(StatusCode::BAD_REQUEST);
-    }
+        Err(CreateSessionRequestError::PrimarySessionConflict) => {
+            return Err(StatusCode::CONFLICT);
+        }
+        Err(
+            CreateSessionRequestError::InvalidSessionId
+            | CreateSessionRequestError::InvalidParentSessionId
+            | CreateSessionRequestError::RelationshipRequiresParent,
+        ) => {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    };
+    let session_id = session_request.session_id;
+    let parent_session_id = session_request.parent_session_id;
+    let relationship = session_request.relationship;
+    let requested_relationship = relationship.clone();
 
     let workspace_effective =
         execution_effective::effective_execution_settings(&state, workspace.id)
