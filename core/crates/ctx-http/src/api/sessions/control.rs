@@ -1,6 +1,6 @@
 use super::*;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
-use crate::scheduler::{metric_labels, InterruptTelemetryContext};
+use ctx_session_tools::interrupt_telemetry::{metric_labels, InterruptTelemetryContext};
 
 pub(crate) async fn cancel_session(
     State(state): State<Arc<AppState>>,
@@ -68,7 +68,7 @@ pub(crate) async fn interrupt_session(
         .await;
     tracing::info!(
         session_id = %session_id.0,
-        interrupt_id = %interrupt.interrupt_id,
+        interrupt_id = %interrupt.interrupt_id(),
         provider_id = %provider_id,
         model_id = %model_id,
         dispatch_ms,

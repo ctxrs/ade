@@ -1,4 +1,5 @@
 mod artifacts;
+pub mod interrupt_telemetry;
 mod normalize;
 pub mod order_seq;
 mod preview;

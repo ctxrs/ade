@@ -9,11 +9,11 @@ use tokio::time::Instant as TokioInstant;
 
 use ctx_core::ids::MessageId;
 use ctx_core::models::{Message, MessageDelivery, Session, SessionEventType};
+use ctx_session_tools::interrupt_telemetry::InterruptTelemetryContext;
 
 use crate::daemon::AppState;
 use crate::ops_events::OpsEvent;
 
-mod interrupt_telemetry;
 mod lifecycle;
 mod persistence;
 mod policy_admission;
@@ -21,7 +21,6 @@ mod reconcile;
 mod runtime;
 mod terminal;
 
-pub(crate) use interrupt_telemetry::{latency_bucket, metric_labels, InterruptTelemetryContext};
 use lifecycle::{
     fail_starting_turn, finalize_start_failure_if_needed, handle_provider_exit,
     handle_provider_stall, stop_running_turn, RunningTurn, StopReason, TurnStartProgress,

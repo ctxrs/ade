@@ -8,15 +8,16 @@ use ctx_core::ids::{MessageId, RunId, SessionId, TurnId};
 use ctx_core::models::{SessionEventType, SessionTurnStatus};
 use ctx_providers::adapters::{ProviderAdapter, ProviderTurnOutcome, RunHandle};
 use ctx_providers::events::NormalizedEvent;
+use ctx_session_tools::interrupt_telemetry::{
+    metric_labels, payload_fields, InterruptTelemetryContext,
+};
 
 use crate::daemon::AppState;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 
-use super::interrupt_telemetry::{metric_labels, payload_fields};
 use super::persistence::emit_event;
 use super::reconcile::reconcile_turn_terminal_state;
 use super::terminal::{finalize_failed_turn, finalize_provider_outcome, FailedTurnTerminalization};
-use super::InterruptTelemetryContext;
 
 pub(crate) struct RunningTurn {
     pub(crate) adapter: Arc<dyn ProviderAdapter>,
@@ -273,7 +274,7 @@ pub(crate) async fn stop_running_turn(
             session_id = %session_id.0,
             run_id = %turn.run_id.0,
             turn_id = %turn.turn_id.0,
-            interrupt_id = %interrupt.interrupt_id,
+            interrupt_id = %interrupt.interrupt_id(),
             provider_id = %turn.provider_id,
             model_id = %turn.model_id,
             request_age_ms = interrupt.elapsed_ms(),
@@ -334,7 +335,7 @@ pub(crate) async fn stop_running_turn(
             session_id = %session_id.0,
             run_id = %run_id.0,
             turn_id = %turn_id.0,
-            interrupt_id = %interrupt.interrupt_id,
+            interrupt_id = %interrupt.interrupt_id(),
             provider_cancel_ms = cancel_ms,
             interrupt_total_ms = interrupt.elapsed_ms(),
             "session interrupt provider cancel finished"

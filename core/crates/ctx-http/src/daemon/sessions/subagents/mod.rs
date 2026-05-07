@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use base64::Engine;
+use ctx_session_tools::interrupt_telemetry::InterruptTelemetryContext;
 
 use crate::api::sessions::{
     context_window_for_run, resolve_model_id, worktree_path_for_child, AgentDetail, AgentInitReq,
@@ -19,7 +20,7 @@ use crate::api::sessions::{
     SpawnAgentResp, WaitAgentReq, WaitAgentResp,
 };
 use crate::daemon::AppState;
-use crate::scheduler::{InterruptTelemetryContext, SchedulerCommand};
+use crate::scheduler::SchedulerCommand;
 use crate::settings as user_settings;
 use ctx_core::ids::{RunId, SessionId};
 use ctx_core::models::{

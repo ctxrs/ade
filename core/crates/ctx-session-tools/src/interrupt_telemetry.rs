@@ -6,9 +6,9 @@ use serde_json::{json, Value};
 
 #[derive(Clone, Debug)]
 pub struct InterruptTelemetryContext {
-    pub(crate) interrupt_id: String,
-    pub(crate) requested_at: Instant,
-    pub(crate) requested_at_utc: DateTime<Utc>,
+    interrupt_id: String,
+    requested_at: Instant,
+    requested_at_utc: DateTime<Utc>,
 }
 
 impl InterruptTelemetryContext {
@@ -20,16 +20,20 @@ impl InterruptTelemetryContext {
         }
     }
 
-    pub(crate) fn requested_at_unix_ms(&self) -> i64 {
+    pub fn interrupt_id(&self) -> &str {
+        &self.interrupt_id
+    }
+
+    pub fn requested_at_unix_ms(&self) -> i64 {
         self.requested_at_utc.timestamp_millis()
     }
 
-    pub(crate) fn elapsed_ms(&self) -> u64 {
+    pub fn elapsed_ms(&self) -> u64 {
         self.requested_at.elapsed().as_millis() as u64
     }
 }
 
-pub(crate) fn latency_bucket(duration_ms: u64) -> &'static str {
+pub fn latency_bucket(duration_ms: u64) -> &'static str {
     match duration_ms {
         0..=249 => "lt_250ms",
         250..=999 => "250ms_to_1s",
@@ -38,7 +42,7 @@ pub(crate) fn latency_bucket(duration_ms: u64) -> &'static str {
     }
 }
 
-pub(crate) fn metric_labels(
+pub fn metric_labels(
     provider_id: &str,
     model_id: &str,
     execution_environment: &str,
@@ -60,7 +64,7 @@ pub(crate) fn metric_labels(
     labels
 }
 
-pub(crate) fn payload_fields(ctx: &InterruptTelemetryContext) -> Value {
+pub fn payload_fields(ctx: &InterruptTelemetryContext) -> Value {
     json!({
         "interrupt_id": ctx.interrupt_id,
         "requested_at_ms": ctx.requested_at_unix_ms(),

@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
 use ctx_core::models::{SessionEvent, SessionEventType, SessionTurnStatus};
+use ctx_session_tools::interrupt_telemetry::{latency_bucket, metric_labels};
 use serde_json::Value;
 
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
-use crate::scheduler::{latency_bucket, metric_labels};
 use crate::telemetry::TelemetryEvent;
 
 use super::failure::record_failed_turn_telemetry;

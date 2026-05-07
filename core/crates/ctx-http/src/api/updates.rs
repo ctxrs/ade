@@ -1,5 +1,6 @@
 use super::*;
-use crate::scheduler::{InterruptTelemetryContext, SchedulerCommand};
+use crate::scheduler::SchedulerCommand;
+use ctx_session_tools::interrupt_telemetry::InterruptTelemetryContext;
 
 const LOCAL_DAEMON_SHUTDOWN_TOKEN_HEADER: &str = "x-ctx-local-daemon-shutdown-token";
 
