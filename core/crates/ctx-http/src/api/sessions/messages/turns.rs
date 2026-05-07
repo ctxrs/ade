@@ -1,15 +1,5 @@
 use super::*;
-
-pub(super) fn delivery_matches(left: &MessageDelivery, right: &MessageDelivery) -> bool {
-    std::mem::discriminant(left) == std::mem::discriminant(right)
-}
-
-fn initial_turn_status(delivery: &MessageDelivery) -> SessionTurnStatus {
-    match delivery {
-        MessageDelivery::Queued => SessionTurnStatus::Queued,
-        MessageDelivery::Immediate => SessionTurnStatus::Starting,
-    }
-}
+use ctx_session_service::message_delivery::initial_turn_status;
 
 pub(crate) async fn ensure_session_turn_for_message(
     store: &ctx_store::Store,

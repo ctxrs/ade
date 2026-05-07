@@ -1,8 +1,9 @@
 use super::attachments::{attachments_match, normalize_message_attachments};
-use super::turns::{delivery_matches, ensure_session_turn_for_message};
+use super::turns::ensure_session_turn_for_message;
 use super::*;
 use ctx_session_service::message_delivery::{
-    resolve_message_delivery as resolve_message_delivery_policy, MessageDeliveryResolutionError,
+    delivery_matches, resolve_message_delivery as resolve_message_delivery_policy,
+    MessageDeliveryResolutionError,
 };
 
 #[derive(Debug, Deserialize)]

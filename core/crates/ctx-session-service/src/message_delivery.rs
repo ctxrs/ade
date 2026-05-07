@@ -1,4 +1,4 @@
-use ctx_core::models::MessageDelivery;
+use ctx_core::models::{MessageDelivery, SessionTurnStatus};
 
 const QUEUED_MESSAGES_DISABLED_MESSAGE: &str = "Queued messages are disabled.";
 const TURN_ALREADY_RUNNING_MESSAGE: &str =
@@ -36,6 +36,17 @@ pub fn resolve_message_delivery(
             Err(MessageDeliveryResolutionError::TurnAlreadyRunning)
         }
         Some(MessageDelivery::Immediate) | None => Ok(MessageDelivery::Immediate),
+    }
+}
+
+pub fn delivery_matches(left: &MessageDelivery, right: &MessageDelivery) -> bool {
+    std::mem::discriminant(left) == std::mem::discriminant(right)
+}
+
+pub fn initial_turn_status(delivery: &MessageDelivery) -> SessionTurnStatus {
+    match delivery {
+        MessageDelivery::Queued => SessionTurnStatus::Queued,
+        MessageDelivery::Immediate => SessionTurnStatus::Starting,
     }
 }
 
@@ -85,5 +96,25 @@ mod tests {
             MessageDeliveryResolutionError::TurnAlreadyRunning.message(),
             "A turn is already running. Stop it or wait for it to finish."
         );
+    }
+
+    #[test]
+    fn delivery_matching_and_initial_turn_status_follow_delivery_variant() {
+        assert!(delivery_matches(
+            &MessageDelivery::Queued,
+            &MessageDelivery::Queued
+        ));
+        assert!(!delivery_matches(
+            &MessageDelivery::Queued,
+            &MessageDelivery::Immediate
+        ));
+        assert!(matches!(
+            initial_turn_status(&MessageDelivery::Queued),
+            SessionTurnStatus::Queued
+        ));
+        assert!(matches!(
+            initial_turn_status(&MessageDelivery::Immediate),
+            SessionTurnStatus::Starting
+        ));
     }
 }
