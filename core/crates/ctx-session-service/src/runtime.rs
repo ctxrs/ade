@@ -465,6 +465,26 @@ impl<SchedulerCommand> SessionRuntime<SchedulerCommand> {
         self.remove_session_state(session_id).await;
     }
 
+    pub async fn refresh_session_head_cache_with_host<H>(&self, host: &H, session_id: SessionId)
+    where
+        H: SessionHeadRefreshHost,
+    {
+        match host.load_active_snapshot_head(session_id).await {
+            SessionHeadRefreshLoad::Found(head) => {
+                host.update_compact_session_head(head).await;
+            }
+            SessionHeadRefreshLoad::Missing => {
+                host.remove_session_from_active_head_cache(session_id).await;
+            }
+            SessionHeadRefreshLoad::Failed { error } => {
+                tracing::warn!(
+                    session_id = %session_id.0,
+                    "active session head cache refresh failed: {error}"
+                );
+            }
+        }
+    }
+
     pub async fn publish_event_with_host<H>(&self, host: &H, event: SessionEvent)
     where
         H: SessionEventPublicationHost,
@@ -700,6 +720,22 @@ pub trait SessionLifecycleHost: Send + Sync {
     async fn remove_workspace_active_session(&self, session_id: SessionId);
 }
 
+#[derive(Debug)]
+pub enum SessionHeadRefreshLoad {
+    Found(SessionHeadSnapshot),
+    Missing,
+    Failed { error: String },
+}
+
+#[async_trait]
+pub trait SessionHeadRefreshHost: Send + Sync {
+    async fn load_active_snapshot_head(&self, session_id: SessionId) -> SessionHeadRefreshLoad;
+
+    async fn update_compact_session_head(&self, head: SessionHeadSnapshot);
+
+    async fn remove_session_from_active_head_cache(&self, session_id: SessionId);
+}
+
 async fn run_task_delta_refresh_loop<H>(
     active_task_refreshes: Arc<Mutex<HashMap<TaskId, ActiveTaskRefreshEntry>>>,
     host: Arc<H>,
@@ -903,8 +939,8 @@ mod tests {
     use chrono::Utc;
     use ctx_core::ids::{MessageId, SessionEventId, TurnId, WorktreeId};
     use ctx_core::models::{
-        ExecutionEnvironment, SessionHeadDelta, SessionStatus, SessionSummaryDelta,
-        SessionTurnStatus,
+        ExecutionEnvironment, SessionActivityState, SessionHeadDelta, SessionHeadWindow,
+        SessionStatus, SessionSummaryDelta, SessionTurnStatus,
     };
     use serde_json::json;
 
@@ -942,6 +978,34 @@ mod tests {
         assert_eq!(host.removed_sessions.lock().await.as_slice(), &[session_id]);
         assert!(!runtime.is_running(session_id).await);
         assert!(runtime.session_meta_workspace(session_id).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn head_refresh_host_updates_found_heads_and_removes_missing_sessions() {
+        let runtime = SessionRuntime::<()>::new(Duration::from_secs(60));
+        let session = test_session();
+        let head = test_head_snapshot(&session);
+        let host = RecordingHeadRefreshHost::new(SessionHeadRefreshLoad::Found(head.clone()));
+
+        runtime
+            .refresh_session_head_cache_with_host(&host, session.id)
+            .await;
+
+        let updated_heads = host.updated_heads.lock().await;
+        assert_eq!(updated_heads.len(), 1);
+        assert_eq!(updated_heads[0].session.id, session.id);
+        assert_eq!(updated_heads[0].last_event_seq, head.last_event_seq);
+        drop(updated_heads);
+        assert!(host.removed_sessions.lock().await.is_empty());
+
+        let missing = RecordingHeadRefreshHost::new(SessionHeadRefreshLoad::Missing);
+        runtime
+            .refresh_session_head_cache_with_host(&missing, session.id)
+            .await;
+        assert_eq!(
+            missing.removed_sessions.lock().await.as_slice(),
+            &[session.id]
+        );
     }
 
     #[tokio::test]
@@ -1160,6 +1224,25 @@ mod tests {
         }
     }
 
+    fn test_head_snapshot(session: &Session) -> SessionHeadSnapshot {
+        SessionHeadSnapshot {
+            session: crate::head_projection::session_metadata_from_session(session),
+            turns: Vec::new(),
+            tool_summaries: Vec::new(),
+            events: Vec::new(),
+            messages: Vec::new(),
+            last_event_seq: 5,
+            projection_rev: 5,
+            state_rev: 5,
+            activity: SessionActivityState::default(),
+            has_more_turns: false,
+            history_cursor: None,
+            has_more_history: false,
+            summary_checkpoint: None,
+            head_window: SessionHeadWindow::default(),
+        }
+    }
+
     #[derive(Default)]
     struct RecordingPublicationHost {
         session: Mutex<Option<Session>>,
@@ -1281,6 +1364,44 @@ mod tests {
         }
 
         async fn remove_workspace_active_session(&self, session_id: SessionId) {
+            self.removed_sessions.lock().await.push(session_id);
+        }
+    }
+
+    struct RecordingHeadRefreshHost {
+        load: Mutex<Option<SessionHeadRefreshLoad>>,
+        updated_heads: Mutex<Vec<SessionHeadSnapshot>>,
+        removed_sessions: Mutex<Vec<SessionId>>,
+    }
+
+    impl RecordingHeadRefreshHost {
+        fn new(load: SessionHeadRefreshLoad) -> Self {
+            Self {
+                load: Mutex::new(Some(load)),
+                updated_heads: Mutex::new(Vec::new()),
+                removed_sessions: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl SessionHeadRefreshHost for RecordingHeadRefreshHost {
+        async fn load_active_snapshot_head(
+            &self,
+            _session_id: SessionId,
+        ) -> SessionHeadRefreshLoad {
+            self.load
+                .lock()
+                .await
+                .take()
+                .expect("load should be called once")
+        }
+
+        async fn update_compact_session_head(&self, head: SessionHeadSnapshot) {
+            self.updated_heads.lock().await.push(head);
+        }
+
+        async fn remove_session_from_active_head_cache(&self, session_id: SessionId) {
             self.removed_sessions.lock().await.push(session_id);
         }
     }

@@ -2,12 +2,13 @@ use std::sync::{Arc, Weak};
 
 use ctx_core::ids::{SessionId, TaskId, TurnId, WorkspaceId};
 use ctx_core::models::{
-    Session, SessionEvent, SessionHeadDelta, SessionSummaryDelta, SessionTurn,
+    Session, SessionEvent, SessionHeadDelta, SessionHeadSnapshot, SessionSummaryDelta, SessionTurn,
     SessionTurnToolSummary, TaskDeltaKind,
 };
 
 use ctx_session_service::runtime::{
-    SessionEventPublicationHost, SessionReplayCursor, SessionTaskDeltaRefreshHost,
+    SessionEventPublicationHost, SessionHeadRefreshHost, SessionHeadRefreshLoad,
+    SessionReplayCursor, SessionTaskDeltaRefreshHost,
 };
 
 use crate::daemon::state::AppState;
@@ -178,31 +179,43 @@ impl SessionTaskDeltaRefreshHost for HttpTaskDeltaRefreshHost {
 }
 
 pub async fn refresh_session_head_cache(state: &AppState, session_id: SessionId) {
-    let store = match state.store_for_session(session_id).await {
-        Ok(store) => store,
-        Err(_) => return,
-    };
-    let head = match store.get_active_snapshot_head(session_id).await {
-        Ok(Some(head)) => head,
-        Ok(None) => {
-            state
-                .workspaces
-                .workspace_active_snapshot
-                .remove_session(session_id)
-                .await;
-            return;
-        }
-        Err(err) => {
-            tracing::warn!(
-                session_id = %session_id.0,
-                "active session head cache refresh failed: {err:#}"
-            );
-            return;
-        }
-    };
     state
-        .workspaces
-        .workspace_active_snapshot
-        .update_compact_session_head(head)
+        .sessions
+        .refresh_session_head_cache_with_host(state, session_id)
         .await;
+}
+
+#[async_trait::async_trait]
+impl SessionHeadRefreshHost for AppState {
+    async fn load_active_snapshot_head(&self, session_id: SessionId) -> SessionHeadRefreshLoad {
+        let store = match self.store_for_session(session_id).await {
+            Ok(store) => store,
+            Err(err) => {
+                return SessionHeadRefreshLoad::Failed {
+                    error: format!("{err:#}"),
+                };
+            }
+        };
+        match store.get_active_snapshot_head(session_id).await {
+            Ok(Some(head)) => SessionHeadRefreshLoad::Found(head),
+            Ok(None) => SessionHeadRefreshLoad::Missing,
+            Err(err) => SessionHeadRefreshLoad::Failed {
+                error: format!("{err:#}"),
+            },
+        }
+    }
+
+    async fn update_compact_session_head(&self, head: SessionHeadSnapshot) {
+        self.workspaces
+            .workspace_active_snapshot
+            .update_compact_session_head(head)
+            .await;
+    }
+
+    async fn remove_session_from_active_head_cache(&self, session_id: SessionId) {
+        self.workspaces
+            .workspace_active_snapshot
+            .remove_session(session_id)
+            .await;
+    }
 }
