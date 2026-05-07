@@ -34,7 +34,7 @@ mod turn_failure;
 mod turn_input;
 mod turn_start;
 
-use self::event_loop::{spawn_turn_event_loop, TurnEventLoop};
+use self::event_loop::{spawn_turn_event_loop_for_session, TurnEventLoopSpawnRequest};
 use self::execution_plan::prepare_turn_execution_plan;
 use self::helpers::{compute_context_window_metrics, runtime_provider_id_for_session_provider};
 use self::provider_env::{
@@ -284,17 +284,13 @@ pub(crate) async fn start_turn(
     })
     .await?;
 
-    spawn_turn_event_loop(TurnEventLoop {
-        state_weak: Arc::downgrade(state),
+    spawn_turn_event_loop_for_session(TurnEventLoopSpawnRequest {
+        state,
         store: store.clone(),
-        session_id: session.id,
-        task_id: session.task_id,
-        workspace_id: session.workspace_id,
-        worktree_id: session.worktree_id,
-        provider_id: session.provider_id.clone(),
-        model_id: full_model_id.clone(),
-        session_root_kind: session_root_kind.to_string(),
-        execution_environment_label: execution_environment.as_str().to_string(),
+        session,
+        full_model_id: &full_model_id,
+        session_root_kind,
+        execution_environment_label: execution_environment.as_str(),
         perf_run_id: perf_run_id.clone(),
         workdir_root: workdir_root.clone(),
         workdir_canonical: workdir_canonical.clone(),
