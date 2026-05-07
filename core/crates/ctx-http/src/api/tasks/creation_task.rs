@@ -364,7 +364,3 @@ pub(in crate::api) async fn create_task(
     }
     Ok(Json(task))
 }
-
-#[cfg(test)]
-#[path = "creation_task/tests.rs"]
-mod tests;

@@ -275,6 +275,19 @@ RUST_BAZEL_DEPS = {
         dev_proc_macro_deps = [],
         proc_macro_deps = [],
     ),
+    "ctx-session-service": struct(
+        build_deps = [],
+        deps = [
+            "//core/crates/ctx-core:lib",
+            "//core/crates/ctx-provider-runtime:lib",
+            "//core/crates/ctx-providers:lib",
+            "//core/crates/ctx-session-tools:lib",
+            "@crates//:serde_json",
+        ],
+        dev_deps = [],
+        dev_proc_macro_deps = [],
+        proc_macro_deps = [],
+    ),
     "ctx-session-tools": struct(
         build_deps = [],
         deps = [

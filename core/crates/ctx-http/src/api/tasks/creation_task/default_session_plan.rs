@@ -1,76 +1,9 @@
 use super::*;
 use crate::api::sessions;
-use ctx_core::provider_ids::CODEX_PROVIDER_ID;
 use ctx_provider_install::InstallTarget;
-use ctx_provider_runtime::provider_launch::models::subscription_models_payload_from_status;
-use ctx_session_tools::model_resolution::{resolve_model_id, ModelCatalog};
-
-const PREFERRED_DEFAULT_PROVIDER_IDS: &[&str] = &[
-    CODEX_PROVIDER_ID,
-    "claude-crp",
-    "gemini",
-    "qwen",
-    "opencode",
-    "mistral",
-    "kimi",
-    "auggie",
-];
-
-pub(super) fn select_default_provider_id(
-    statuses: &[ctx_providers::adapters::ProviderStatus],
-) -> Option<String> {
-    let is_visible = |status: &ctx_providers::adapters::ProviderStatus| {
-        !status.detail_flag("ui_hidden").unwrap_or(false)
-    };
-    let is_installed = |status: &ctx_providers::adapters::ProviderStatus| status.installed;
-    let is_ready = |status: &ctx_providers::adapters::ProviderStatus| {
-        status.installed
-            && status.health == ctx_providers::adapters::ProviderHealth::Ok
-            && status.is_usable()
-    };
-    let mut provider_statuses = std::collections::BTreeMap::new();
-    for status in statuses {
-        provider_statuses
-            .entry(status.provider_id.clone())
-            .or_insert(status);
-    }
-
-    for preferred in PREFERRED_DEFAULT_PROVIDER_IDS {
-        if provider_statuses
-            .get(*preferred)
-            .is_some_and(|status| is_visible(status) && is_ready(status))
-        {
-            return Some((*preferred).to_string());
-        }
-    }
-
-    provider_statuses
-        .iter()
-        .filter(|(_, status)| is_visible(status) && is_ready(status))
-        .map(|(provider_id, _)| provider_id.clone())
-        .next()
-        .or_else(|| {
-            provider_statuses
-                .iter()
-                .filter(|(_, status)| is_ready(status))
-                .map(|(provider_id, _)| provider_id.clone())
-                .next()
-        })
-        .or_else(|| {
-            provider_statuses
-                .iter()
-                .filter(|(_, status)| is_visible(status) && is_installed(status))
-                .map(|(provider_id, _)| provider_id.clone())
-                .next()
-        })
-        .or_else(|| {
-            provider_statuses
-                .iter()
-                .filter(|(_, status)| is_installed(status))
-                .map(|(provider_id, _)| provider_id.clone())
-                .next()
-        })
-}
+use ctx_session_service::default_session::{
+    resolve_default_session_model, select_default_provider_id,
+};
 
 async fn validate_workspace_root_is_repo(
     workspace: &Workspace,
@@ -202,25 +135,10 @@ async fn resolve_default_session_target(
             }),
         )
     })?;
-    let fallback_model = catalog
-        .as_ref()
-        .and_then(ModelCatalog::default_model_id)
-        .map(str::to_string)
-        .or_else(|| {
-            provider_status.and_then(|status| {
-                subscription_models_payload_from_status(status).and_then(|value| {
-                    value
-                        .get("current_model_id")
-                        .and_then(serde_json::Value::as_str)
-                        .map(str::to_string)
-                })
-            })
-        });
-    let resolved_model = resolve_model_id(
+    let resolved_model = resolve_default_session_model(
         preferred_model_id.as_deref(),
-        None,
-        fallback_model.as_deref(),
         catalog.as_ref(),
+        provider_status,
     )
     .map_err(|error| {
         (

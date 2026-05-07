@@ -300,7 +300,7 @@ const CTX_HTTP_SHARED_SOURCE_GLOBS = [
 
 const CTX_HTTP_UNIT_SUITES = [
   {
-    dependencyCrates: ["ctx-storage-admission"],
+    dependencyCrates: ["ctx-session-service", "ctx-storage-admission"],
     family: "workspace-stream",
     name: "unit-tests-api",
     description: "ctx-http API unit test family",
@@ -462,6 +462,7 @@ const CTX_HTTP_SUITES = [
       "ctx-events",
       "ctx-store",
       "ctx-workspace-active-snapshot",
+      "ctx-session-service",
       "ctx-workspace-services",
     ],
     name: "workspace-stream",

@@ -1025,6 +1025,7 @@ dependencies = [
  "ctx-sandbox-container-runtime",
  "ctx-sandbox-contract",
  "ctx-sandbox-materialization",
+ "ctx-session-service",
  "ctx-session-tools",
  "ctx-settings-model",
  "ctx-settings-service",
@@ -1475,6 +1476,17 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "ctx-session-service"
+version = "0.1.0"
+dependencies = [
+ "ctx-core",
+ "ctx-provider-runtime",
+ "ctx-providers",
+ "ctx-session-tools",
+ "serde_json",
 ]
 
 [[package]]

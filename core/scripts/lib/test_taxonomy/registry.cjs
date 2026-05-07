@@ -167,6 +167,7 @@ const RUST_FAMILY_BY_CRATE = {
   "ctx-sandbox-container-runtime": "sandbox-runtime",
   "ctx-sandbox-contract": "sandbox-runtime",
   "ctx-sandbox-materialization": "sandbox-runtime",
+  "ctx-session-service": "workspace-stream",
   "ctx-session-tools": "turns-terminal",
   "ctx-settings-model": "settings-config",
   "ctx-settings-service": "settings-config",

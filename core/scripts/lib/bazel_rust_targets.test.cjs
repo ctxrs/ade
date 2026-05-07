@@ -66,6 +66,7 @@ test("Bazel-covered crates stay on the intended explicit Rust slice", () => {
     "ctx-sandbox-container-runtime",
     "ctx-sandbox-contract",
     "ctx-sandbox-materialization",
+    "ctx-session-service",
     "ctx-session-tools",
     "ctx-settings-model",
     "ctx-settings-service",
