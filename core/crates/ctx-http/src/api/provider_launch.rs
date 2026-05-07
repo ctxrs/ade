@@ -37,11 +37,14 @@ use crate::provider_usability::{provider_status_is_usable, provider_status_unusa
 use ctx_core::ids::WorkspaceId;
 use ctx_harness_sources as harness_sources;
 use ctx_harness_sources::{
-    HarnessApiShape, HarnessEndpointRecord, HarnessEndpointVerificationStatus, HarnessSourceKind,
+    HarnessEndpointRecord, HarnessEndpointVerificationStatus, HarnessSourceKind,
 };
 use ctx_provider_accounts as provider_accounts;
 use ctx_provider_install::install_state::{
     InstallId, InstallInfo, InstallProgressEvent, InstallTarget,
+};
+use ctx_provider_runtime::provider_launch::options::{
+    endpoint_supports_model_catalog_verify, provider_options_probe_plan, ProviderOptionsProbePlan,
 };
 use ctx_provider_runtime::provider_launch::probe_error::classify_probe_error;
 use ctx_providers::crp::{probe_crp_models, probe_crp_runtime_launch};
@@ -145,27 +148,6 @@ fn provider_install_error_response(
 enum PreparedProviderRuntimeProbeError {
     Route((StatusCode, Json<serde_json::Value>)),
     Verify(String),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ProviderOptionsProbePlan<'a> {
-    EnvOnly,
-    RuntimeModels,
-    SelectedEndpointRuntimeLaunch(&'a str),
-}
-
-fn provider_options_probe_plan<'a>(
-    use_crp_probe: bool,
-    selected_endpoint_id: Option<&'a str>,
-) -> ProviderOptionsProbePlan<'a> {
-    if let Some(endpoint_id) = selected_endpoint_id.filter(|value| !value.trim().is_empty()) {
-        return ProviderOptionsProbePlan::SelectedEndpointRuntimeLaunch(endpoint_id);
-    }
-    if use_crp_probe {
-        ProviderOptionsProbePlan::RuntimeModels
-    } else {
-        ProviderOptionsProbePlan::EnvOnly
-    }
 }
 
 async fn prepare_provider_runtime_probe(
@@ -423,14 +405,6 @@ pub(crate) fn endpoint_models_payload(
     })
 }
 
-pub(super) fn endpoint_supports_model_catalog_verify(endpoint: &HarnessEndpointRecord) -> bool {
-    endpoint.api_shape == HarnessApiShape::OpenaiResponses
-        && endpoint
-            .base_url
-            .as_ref()
-            .is_some_and(|value| !value.trim().is_empty())
-}
-
 pub(super) fn endpoint_catalog_verify_outcome(
     endpoint: &HarnessEndpointRecord,
 ) -> (
@@ -472,38 +446,8 @@ pub(super) fn endpoint_catalog_verify_outcome(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        provider_install_error_response, provider_options_probe_plan, ProviderOptionsProbePlan,
-    };
+    use super::provider_install_error_response;
     use axum::http::StatusCode;
-
-    #[test]
-    fn provider_options_probe_plan_prefers_selected_endpoint_runtime_launch() {
-        assert_eq!(
-            provider_options_probe_plan(false, Some("endpoint-1")),
-            ProviderOptionsProbePlan::SelectedEndpointRuntimeLaunch("endpoint-1")
-        );
-        assert_eq!(
-            provider_options_probe_plan(true, Some("endpoint-1")),
-            ProviderOptionsProbePlan::SelectedEndpointRuntimeLaunch("endpoint-1")
-        );
-    }
-
-    #[test]
-    fn provider_options_probe_plan_uses_env_only_without_selected_endpoint_or_catalog_probe() {
-        assert_eq!(
-            provider_options_probe_plan(false, None),
-            ProviderOptionsProbePlan::EnvOnly
-        );
-    }
-
-    #[test]
-    fn provider_options_probe_plan_uses_runtime_models_without_selected_endpoint() {
-        assert_eq!(
-            provider_options_probe_plan(true, None),
-            ProviderOptionsProbePlan::RuntimeModels
-        );
-    }
 
     #[test]
     fn provider_install_error_response_maps_disabled_install_targets_to_forbidden() {
