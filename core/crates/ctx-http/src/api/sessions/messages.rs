@@ -3,10 +3,12 @@ use super::*;
 type ApiErr = (StatusCode, Json<ApiErrorResp>);
 
 mod attachments;
-mod handlers;
+mod delete;
+mod post;
 mod turns;
 
-pub(crate) use handlers::{delete_session_message, post_message};
+pub(crate) use delete::delete_session_message;
+pub(crate) use post::post_message;
 pub(crate) use turns::ensure_session_turn_for_message;
 
 fn api_error(status: StatusCode, error: impl Into<String>) -> ApiErr {
