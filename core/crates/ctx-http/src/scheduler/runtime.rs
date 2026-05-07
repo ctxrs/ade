@@ -19,7 +19,6 @@ use ctx_session_tools::order_seq::OrderSeqState;
 
 use crate::daemon::{ensure_provider_adapter_for_target_with_cfg, AppState};
 use crate::execution_effective;
-use crate::ops_events::OpsEvent;
 use crate::settings;
 use crate::storage_guard;
 use ctx_provider_install::install_state::InstallTarget;
@@ -57,7 +56,8 @@ use self::provider_spawn::{
 };
 use self::turn_failure::emit_turn_start_failed;
 use self::turn_start::{
-    apply_crp_launch_policy_env_for_control_mode, record_queue_wait_metric, turn_start_deadline,
+    apply_crp_launch_policy_env_for_control_mode, emit_provider_run_started_event,
+    record_queue_wait_metric, turn_start_deadline, ProviderRunStartedEvent,
 };
 use super::lifecycle::{RunningTurn, TurnStartProgress};
 use super::persistence::append_session_event_with_retry;
@@ -103,21 +103,16 @@ pub(crate) async fn start_turn(
     let run_id = message.run_id.get_or_insert_with(RunId::new).to_owned();
     let turn_id = message.turn_id.get_or_insert_with(TurnId::new).to_owned();
 
-    let mut run_event = OpsEvent::new("info", "provider_run_started");
-    run_event.session_id = Some(session.id.0.to_string());
-    run_event.worktree_id = Some(session.worktree_id.0.to_string());
-    run_event.run_id = Some(run_id.0.to_string());
-    run_event.turn_id = Some(turn_id.0.to_string());
-    run_event.provider_id = Some(session.provider_id.clone());
-    run_event.cwd = Some(workdir_str.clone());
-    run_event.worktree_root = Some(workdir_str.clone());
-    run_event.meta = Some(json!({
-        "model_id": full_model_id.clone(),
-        "reasoning_effort": session.reasoning_effort.clone(),
-        "execution_environment": execution_environment.as_str(),
-        "session_root_kind": session_root_kind,
-    }));
-    state.telemetry.ops_events.emit(run_event);
+    emit_provider_run_started_event(ProviderRunStartedEvent {
+        state,
+        session,
+        run_id,
+        turn_id,
+        workdir_str: &workdir_str,
+        full_model_id: &full_model_id,
+        execution_environment: execution_environment.as_str(),
+        session_root_kind,
+    });
 
     if message.delivered_at.is_none() {
         store.mark_message_delivered(message.id).await?;
