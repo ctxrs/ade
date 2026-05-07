@@ -7,6 +7,7 @@ mod payloads;
 mod profiles;
 mod secure;
 mod secure_pairing;
+mod secure_proxy;
 
 pub(super) use access::*;
 use body::{decode_body_b64, parse_json_body};
