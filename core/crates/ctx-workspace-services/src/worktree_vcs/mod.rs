@@ -8,6 +8,7 @@ mod runtime;
 mod session_diff;
 mod snapshot;
 mod status;
+mod watch;
 
 use serde::Serialize;
 
@@ -70,6 +71,11 @@ pub use status::{
     resolve_worktree_vcs_commit_lookup_from_source, session_git_status_summary_from_snapshot,
     worktree_has_vcs_repo_from_source, WorktreeVcsCommitLookupSource, WorktreeVcsStatusSource,
     WorktreeVcsStructuredStatus,
+};
+pub use watch::{
+    normalize_worktree_vcs_watch_path, resolve_worktree_vcs_metadata_roots,
+    worktree_vcs_invalidation_for_watch_paths, WORKTREE_VCS_POLL_INTERVAL_MS,
+    WORKTREE_VCS_WATCH_DEBOUNCE_MS,
 };
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
