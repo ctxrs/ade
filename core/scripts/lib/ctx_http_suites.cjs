@@ -659,6 +659,7 @@ const CTX_HTTP_SUITES = [
     sourceGlobs: [
       "crates/ctx-http/src/api/merge_queue_api.rs",
       "crates/ctx-http/src/api/repo.rs",
+      "crates/ctx-http/src/api/repo/**",
       "crates/ctx-http/src/api/sessions/diff_exec.rs",
       "crates/ctx-http/src/git_status.rs",
       "crates/ctx-http/src/git_status/**",
