@@ -5,22 +5,21 @@ use anyhow::Result;
 use ctx_core::models::{Worktree, WorktreeVcsBaseResolutionKind, WorktreeVcsSnapshot};
 use ctx_workspace_services::worktree_vcs::{
     build_git_status_entries, build_git_status_summary, finish_worktree_vcs_refresh,
-    is_no_vcs_repo_error, load_git_status_snapshot_from_source,
-    pending_worktree_vcs_snapshot_cache_entry, plan_worktree_vcs_summary_refresh,
-    plan_worktree_vcs_touched_files_refresh, publish_worktree_vcs_snapshot_cache_entry,
-    resolve_worktree_diff_base_from_source, snapshot_for_durable_cache,
-    worktree_vcs_projection_cache_state, worktree_vcs_summary_refresh_error_fallback,
-    worktree_vcs_summary_refresh_from_file_count, worktree_vcs_summary_refresh_no_repo,
-    worktree_vcs_touched_files_error_fallback, worktree_vcs_touched_files_from_entries,
-    worktree_vcs_touched_files_large_change_set, worktree_vcs_touched_files_reuse,
-    GitStatusSnapshot, WorktreeDiffBaseResolution, WorktreeVcsDiffBaseQuery,
-    WorktreeVcsSnapshotPublishPolicy, WorktreeVcsSummaryRefreshPlan,
+    is_no_vcs_repo_error, load_diff_file_count_from_source, load_diff_touched_entries_from_source,
+    load_git_status_snapshot_from_source, pending_worktree_vcs_snapshot_cache_entry,
+    plan_worktree_vcs_summary_refresh, plan_worktree_vcs_touched_files_refresh,
+    publish_worktree_vcs_snapshot_cache_entry, resolve_worktree_diff_base_from_source,
+    snapshot_for_durable_cache, worktree_vcs_projection_cache_state,
+    worktree_vcs_summary_refresh_error_fallback, worktree_vcs_summary_refresh_from_file_count,
+    worktree_vcs_summary_refresh_no_repo, worktree_vcs_touched_files_error_fallback,
+    worktree_vcs_touched_files_from_entries, worktree_vcs_touched_files_large_change_set,
+    worktree_vcs_touched_files_reuse, GitStatusSnapshot, WorktreeDiffBaseResolution,
+    WorktreeVcsDiffBaseQuery, WorktreeVcsSnapshotPublishPolicy, WorktreeVcsSummaryRefreshPlan,
     WorktreeVcsTouchedFilesRefreshPlan,
 };
 
 use crate::daemon::AppState;
 
-use super::diff_paths::{load_diff_file_count, load_diff_touched_entries};
 use super::snapshot::{
     build_worktree_vcs_snapshot_from_parts, publish_no_repo_snapshot, publish_unavailable_snapshot,
 };
@@ -161,7 +160,7 @@ pub(super) async fn refresh_worktree_vcs_projection(
     let summary_plan = plan_worktree_vcs_summary_refresh(&cached, refresh_summary);
     let (summary_result, summary_at) = match summary_plan {
         WorktreeVcsSummaryRefreshPlan::LoadFileCount => {
-            match load_diff_file_count(state, worktree, &resolution.base_commit_sha).await {
+            match load_diff_file_count_from_source(&source, &resolution.base_commit_sha).await {
                 Ok(file_count) => (
                     worktree_vcs_summary_refresh_from_file_count(file_count),
                     Some(Instant::now()),
@@ -212,7 +211,8 @@ pub(super) async fn refresh_worktree_vcs_projection(
             worktree_vcs_touched_files_large_change_set(file_count)
         }
         WorktreeVcsTouchedFilesRefreshPlan::LoadDiff => {
-            match load_diff_touched_entries(state, worktree, &resolution.base_commit_sha).await {
+            match load_diff_touched_entries_from_source(&source, &resolution.base_commit_sha).await
+            {
                 Ok(entries) => worktree_vcs_touched_files_from_entries(&entries),
                 Err(err) if is_no_vcs_repo_error(&err) => {
                     return publish_no_repo_snapshot(state, worktree, resolution, force_emit).await;

@@ -5,7 +5,8 @@ use ctx_core::models::Worktree;
 use ctx_workspace_config as workspace_config;
 use ctx_workspace_services::worktree_vcs::{
     LocalWorktreeVcsSource, SandboxWorktreeVcsSource, WorktreeVcsCommitLookupSource,
-    WorktreeVcsDiffBaseSource, WorktreeVcsStatusSource, WorktreeVcsStructuredStatus,
+    WorktreeVcsDiffBaseSource, WorktreeVcsDiffPathSource, WorktreeVcsStatusSource,
+    WorktreeVcsStructuredStatus,
 };
 
 use crate::daemon::AppState;
@@ -124,5 +125,40 @@ impl WorktreeVcsDiffBaseSource for HttpWorktreeVcsSource<'_> {
 
     fn redact_error(&self, err: &anyhow::Error) -> String {
         crate::logs::redact_sensitive(&err.to_string())
+    }
+}
+
+#[async_trait::async_trait]
+impl WorktreeVcsDiffPathSource for HttpWorktreeVcsSource<'_> {
+    async fn diff_name_status(
+        &self,
+        base_commit_sha: &str,
+        summary_count: bool,
+    ) -> Result<Vec<(String, String, Option<String>)>> {
+        let data_plane = resolve_worktree_data_plane(self.state, self.worktree).await?;
+        let root = data_plane.live_worktree_root.as_path();
+        if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
+            let executor = HttpSandboxWorktreeVcsExecutor::new(self.state, self.worktree);
+            return SandboxWorktreeVcsSource::new(&executor)
+                .diff_name_status(base_commit_sha, summary_count)
+                .await;
+        }
+        LocalWorktreeVcsSource::new(self.worktree, root)
+            .diff_name_status(base_commit_sha, summary_count)
+            .await
+    }
+
+    async fn list_untracked(&self) -> Result<Vec<String>> {
+        let data_plane = resolve_worktree_data_plane(self.state, self.worktree).await?;
+        let root = data_plane.live_worktree_root.as_path();
+        if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
+            let executor = HttpSandboxWorktreeVcsExecutor::new(self.state, self.worktree);
+            return SandboxWorktreeVcsSource::new(&executor)
+                .list_untracked()
+                .await;
+        }
+        LocalWorktreeVcsSource::new(self.worktree, root)
+            .list_untracked()
+            .await
     }
 }

@@ -6,7 +6,6 @@ use ctx_core::models::Worktree;
 use ctx_fs::vcs::{self, VcsDriver};
 
 use crate::daemon::AppState;
-mod diff_paths;
 mod projection;
 mod sandbox;
 mod scheduler;
