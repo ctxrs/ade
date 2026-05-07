@@ -145,3 +145,10 @@ test("wdio connection retries are configurable for packaged mac app readiness", 
   assert.match(script, /connectionRetryCount: CONNECTION_RETRY_COUNT/);
   assert.match(script, /connectionRetryTimeout: CONNECTION_RETRY_TIMEOUT_MS/);
 });
+
+test("wdio chooses an unused tauri-driver port on every platform by default", () => {
+  const script = fs.readFileSync(configPath, "utf8");
+
+  assert.match(script, /const DEFAULT_DRIVER_PORT = pickUnusedPortSync\(4444\);/);
+  assert.doesNotMatch(script, /process\.platform === "darwin"\s*\?\s*pickUnusedPortSync\(4444\)\s*:\s*4444/);
+});

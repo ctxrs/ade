@@ -75,6 +75,15 @@ test("Linux updater proof exposes explicit phases for split release proof jobs",
   assert.match(scriptText, /target_channel_not_installed/);
 });
 
+test("Linux updater proof pins automation to the repo pnpm even when installer PATH is first", () => {
+  assert.match(scriptText, /repo_pnpm="\$\{CTX_UPDATER_LINUX_PROOF_PNPM:-\}"/);
+  assert.match(scriptText, /repo_pnpm="\$\(command -v pnpm \|\| true\)"/);
+  assert.match(scriptText, /write_report "infra_unavailable" "missing_pnpm"/);
+  assert.match(scriptText, /"\$\{repo_pnpm\}" -C "\$\{ROOT\}\/core\/apps\/desktop" test:automation:updater-native-smoke/);
+  assert.match(scriptText, /CTX_DESKTOP_SMOKE_PNPM="\$\{repo_pnpm\}"/);
+  assert.match(scriptText, /PATH="\$\{home_dir\}\/\.local\/bin:\$\{PATH\}"/);
+});
+
 test("Linux clean workspace proof uploads provider diagnostics when the wizard fails", () => {
   assert.match(scriptText, /collect_clean_workspace_diagnostics\(\) \{/);
   assert.match(scriptText, /shipped-app\.summary\.json/);

@@ -13,6 +13,7 @@ DEFAULT_CARGO_TARGET_DIR="${CARGO_TARGET_DIR}"
 SCENARIOS="${CTX_AUTOMATION_SCENARIOS:-local-import}"
 INFISICAL_ENV="${INFISICAL_ENV:-dev}"
 INFISICAL_PROJECT_ID="${INFISICAL_PROJECT_ID:-}"
+PNPM_BIN="${CTX_DESKTOP_SMOKE_PNPM:-pnpm}"
 DEFAULT_AUTOMATION_TMP_BASE_DIR="${CTX_AUTOMATION_TMP_BASE_DIR:-${VOLATILE_ARTIFACTS_DIR}/ctx-desktop-e2e}"
 mkdir -p "${DEFAULT_AUTOMATION_TMP_BASE_DIR}"
 AUTOMATION_TMPDIR_CREATED=0
@@ -38,17 +39,17 @@ mkdir -p \
 
 ensure_desktop_automation_deps() {
   if [[ -d node_modules ]] \
-    && pnpm -C apps/web exec which vite >/dev/null 2>&1 \
-    && pnpm -C apps/desktop exec which wdio >/dev/null 2>&1; then
+    && "${PNPM_BIN}" -C apps/web exec which vite >/dev/null 2>&1 \
+    && "${PNPM_BIN}" -C apps/desktop exec which wdio >/dev/null 2>&1; then
     return
   fi
   echo "[desktop-smoke] repairing missing core/apps/web/apps/desktop automation toolchain" >&2
-  pnpm install --frozen-lockfile >/dev/null
-  pnpm -C apps/web install --frozen-lockfile >/dev/null
-  pnpm -C apps/desktop install --frozen-lockfile >/dev/null
+  "${PNPM_BIN}" install --frozen-lockfile >/dev/null
+  "${PNPM_BIN}" -C apps/web install --frozen-lockfile >/dev/null
+  "${PNPM_BIN}" -C apps/desktop install --frozen-lockfile >/dev/null
   [[ -d node_modules ]]
-  pnpm -C apps/web exec which vite >/dev/null
-  pnpm -C apps/desktop exec which wdio >/dev/null
+  "${PNPM_BIN}" -C apps/web exec which vite >/dev/null
+  "${PNPM_BIN}" -C apps/desktop exec which wdio >/dev/null
 }
 
 cleanup_automation_tmpdir() {
@@ -125,7 +126,7 @@ if [[ "$(uname -s)" == "Darwin" && -z "${CN_API_KEY:-}" && "${INFISICAL_HELP_BYP
 	      CTX_AUTOMATION_TMPDIR="${AUTOMATION_TMPDIR}" \
 	      CTX_AUTOMATION_CN_BACKEND_LOG="${CTX_AUTOMATION_CN_BACKEND_LOG}" \
 	      CTX_AUTOMATION_CN_DRIVER_LOG="${CTX_AUTOMATION_CN_DRIVER_LOG}" \
-	      pnpm -C apps/desktop exec wdio run automation/wdio.conf.cjs "${ARGS[@]}"
+	      "${PNPM_BIN}" -C apps/desktop exec wdio run automation/wdio.conf.cjs "${ARGS[@]}"
 	    exit $?
   fi
 	  run_wdio infisical "${INFISICAL_RUN_ARGS[@]}" \
@@ -137,7 +138,7 @@ if [[ "$(uname -s)" == "Darwin" && -z "${CN_API_KEY:-}" && "${INFISICAL_HELP_BYP
 	    CTX_AUTOMATION_TMPDIR="${AUTOMATION_TMPDIR}" \
 	    CTX_AUTOMATION_CN_BACKEND_LOG="${CTX_AUTOMATION_CN_BACKEND_LOG}" \
 	    CTX_AUTOMATION_CN_DRIVER_LOG="${CTX_AUTOMATION_CN_DRIVER_LOG}" \
-	    pnpm -C apps/desktop exec wdio run automation/wdio.conf.cjs
+	    "${PNPM_BIN}" -C apps/desktop exec wdio run automation/wdio.conf.cjs
   exit $?
 fi
 
@@ -152,7 +153,7 @@ if [[ "${#ARGS[@]}" -gt 0 ]]; then
 	  CTX_AUTOMATION_TMPDIR="${AUTOMATION_TMPDIR}" \
 	  CTX_AUTOMATION_CN_BACKEND_LOG="${CTX_AUTOMATION_CN_BACKEND_LOG}" \
 	  CTX_AUTOMATION_CN_DRIVER_LOG="${CTX_AUTOMATION_CN_DRIVER_LOG}" \
-	  pnpm -C apps/desktop exec wdio run automation/wdio.conf.cjs "${ARGS[@]}"
+	  "${PNPM_BIN}" -C apps/desktop exec wdio run automation/wdio.conf.cjs "${ARGS[@]}"
   exit $?
 fi
 run_wdio env CTX_AUTOMATION_SCENARIOS="${SCENARIOS}" \
@@ -163,5 +164,5 @@ run_wdio env CTX_AUTOMATION_SCENARIOS="${SCENARIOS}" \
   CTX_AUTOMATION_TMPDIR="${AUTOMATION_TMPDIR}" \
   CTX_AUTOMATION_CN_BACKEND_LOG="${CTX_AUTOMATION_CN_BACKEND_LOG}" \
   CTX_AUTOMATION_CN_DRIVER_LOG="${CTX_AUTOMATION_CN_DRIVER_LOG}" \
-  pnpm -C apps/desktop exec wdio run automation/wdio.conf.cjs
+  "${PNPM_BIN}" -C apps/desktop exec wdio run automation/wdio.conf.cjs
 exit $?

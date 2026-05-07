@@ -97,9 +97,7 @@ const pickUnusedPortSync = (fallback) => {
   return parsePort(String(out.stdout || "").trim(), fallback);
 };
 
-const DEFAULT_DRIVER_PORT = process.platform === "darwin"
-  ? pickUnusedPortSync(4444)
-  : 4444;
+const DEFAULT_DRIVER_PORT = pickUnusedPortSync(4444);
 const TAURI_DRIVER_PORT = parsePort(process.env.TAURI_DRIVER_PORT, DEFAULT_DRIVER_PORT);
 const TEST_BACKEND_PORT = parsePort(process.env.TAURI_TEST_BACKEND_PORT, 3000);
 const FIXED_MACOS_CN_BACKEND_PORT = 3000;

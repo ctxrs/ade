@@ -564,6 +564,15 @@ for cmd in curl node git timeout; do
     exit 1
   }
 done
+repo_pnpm="${CTX_UPDATER_LINUX_PROOF_PNPM:-}"
+if [[ -z "${repo_pnpm}" ]]; then
+  repo_pnpm="$(command -v pnpm || true)"
+fi
+if [[ -z "${repo_pnpm}" ]]; then
+  write_report "infra_unavailable" "missing_pnpm"
+  echo "error: missing required command: pnpm" >&2
+  exit 1
+fi
 
 if [[ "${RUN_CLEAN_WORKSPACE_PHASE}" == "1" && -z "${OPENROUTER_API_KEY:-}" ]]; then
   write_report "infra_unavailable" "missing_openrouter_api_key"
@@ -686,7 +695,7 @@ if [[ "${RUN_UPDATER_PHASE}" == "1" ]]; then
   CTX_UPDATER_PROOF_EXPECT_AUTO_READY=1 \
   CTX_UPDATER_PROOF_EXPECT_UPDATE_AVAILABLE=1 \
   CTX_UPDATER_PROOF_APPLY_UPDATE=1 \
-  pnpm -C "${ROOT}/core/apps/desktop" test:automation:updater-native-smoke; then
+  "${repo_pnpm}" -C "${ROOT}/core/apps/desktop" test:automation:updater-native-smoke; then
     write_report "failed" "native_update_smoke_failed"
     exit 1
   fi
@@ -731,7 +740,7 @@ if [[ "${RUN_UPDATER_PHASE}" == "1" ]]; then
   CTX_UPDATER_E2E_CHANNEL="${TARGET_CHANNEL}" \
   CTX_UPDATER_NATIVE_SMOKE_REPORT="${UP_TO_DATE_REPORT}" \
   CTX_UPDATER_PROOF_EXPECT_UP_TO_DATE=1 \
-  pnpm -C "${ROOT}/core/apps/desktop" test:automation:updater-native-smoke; then
+  "${repo_pnpm}" -C "${ROOT}/core/apps/desktop" test:automation:updater-native-smoke; then
     write_report "failed" "native_up_to_date_smoke_failed"
     exit 1
   fi
@@ -836,6 +845,7 @@ CTX_AUTOMATION_WDIO_LOG_LEVEL="${CTX_AUTOMATION_WDIO_LOG_LEVEL:-warn}" \
 CTX_AUTOMATION_CONNECTION_RETRY_TIMEOUT_MS="${CTX_AUTOMATION_CONNECTION_RETRY_TIMEOUT_MS:-${WDIO_CONNECTION_RETRY_TIMEOUT_MS}}" \
 CTX_AUTOMATION_KEEP_TMPDIR=1 \
 CTX_VOLATILE_ROOT="${ARTIFACT_DIR}/volatile" \
+CTX_DESKTOP_SMOKE_PNPM="${repo_pnpm}" \
 CTX_DESKTOP_APP_PATH="${updated_automation_app_path}" \
 TAURI_DRIVER_PORT="${wizard_driver_port}" \
 TAURI_TEST_BACKEND_PORT="${wizard_backend_port}" \

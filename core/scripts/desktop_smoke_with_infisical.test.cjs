@@ -83,6 +83,40 @@ function runDesktopSmoke(envOverrides = {}) {
   };
 }
 
+test("desktop smoke can pin repo pnpm when PATH contains an installed-app pnpm", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-desktop-smoke-pnpm-test-"));
+  const pathBinDir = path.join(tempRoot, "path-bin");
+  const repoBinDir = path.join(tempRoot, "repo-bin");
+  const tmpBaseDir = path.join(tempRoot, "tmp-base");
+  const capturePath = path.join(tempRoot, "captured-tmpdir.txt");
+  fs.mkdirSync(pathBinDir, { recursive: true });
+  fs.mkdirSync(repoBinDir, { recursive: true });
+  fs.mkdirSync(tmpBaseDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(pathBinDir, "pnpm"),
+    "#!/usr/bin/env bash\necho poisoned-pnpm >&2\nexit 44\n",
+    { encoding: "utf8", mode: 0o755 },
+  );
+  const repoPnpm = makeFakePnpm(repoBinDir, capturePath, path.join(repoRoot, "core"));
+
+  const result = spawnSync("bash", [scriptPath], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PATH: `${pathBinDir}:${process.env.PATH || ""}`,
+      CN_API_KEY: "test-cn-key",
+      CTX_AUTOMATION_TMP_BASE_DIR: tmpBaseDir,
+      CTX_DESKTOP_SMOKE_PNPM: repoPnpm,
+      CARGO_TARGET_DIR: path.join(tempRoot, "cargo-target"),
+    },
+  });
+
+  assert.equal(result.status, 0, `script should use CTX_DESKTOP_SMOKE_PNPM: ${result.stderr || result.stdout}`);
+  assert.ok(fs.existsSync(capturePath), "expected pinned repo pnpm to run wdio command");
+  assert.doesNotMatch(result.stderr, /poisoned-pnpm/);
+});
+
 test("desktop smoke removes auto-created tmp dirs by default", () => {
   const { result, tmpBaseDir, capturedEnv } = runDesktopSmoke();
 
