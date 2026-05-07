@@ -48,8 +48,9 @@ use self::helpers::{
     runtime_provider_id_for_session_provider,
 };
 use self::provider_env::{
-    emit_provider_run_env_ready_event, prepare_provider_runtime_environment,
-    ProviderRunEnvReadyEvent, ProviderRuntimeEnvironmentRequest,
+    build_base_provider_env, emit_provider_run_env_ready_event,
+    prepare_provider_runtime_environment, BaseProviderEnvRequest, ProviderRunEnvReadyEvent,
+    ProviderRuntimeEnvironmentRequest,
 };
 use self::provider_launch::apply_provider_launch_overrides;
 use self::provider_spawn::{
@@ -58,8 +59,7 @@ use self::provider_spawn::{
 };
 use self::turn_failure::emit_turn_start_failed;
 use self::turn_start::{
-    apply_crp_launch_policy_env_for_control_mode, provider_mode_id_for, record_queue_wait_metric,
-    turn_start_deadline,
+    apply_crp_launch_policy_env_for_control_mode, record_queue_wait_metric, turn_start_deadline,
 };
 use super::lifecycle::{RunningTurn, TurnStartProgress};
 use super::persistence::append_session_event_with_retry;
@@ -148,41 +148,19 @@ pub(crate) async fn start_turn(
     let (start_progress_tx, start_progress_rx) = watch::channel(TurnStartProgress::Pending);
     let event_tx = ev_tx.clone();
 
-    let mut provider_env = std::collections::HashMap::new();
-    provider_env.insert("CTX_DAEMON_URL".to_string(), state.core.daemon_url.clone());
-    provider_env.insert(
-        "CTX_DATA_ROOT".to_string(),
-        state.core.data_root.to_string_lossy().to_string(),
-    );
-    provider_env.insert("CTX_PROVIDER_ID".to_string(), session.provider_id.clone());
-    provider_env.insert(
-        "CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL".to_string(),
-        "1".to_string(),
-    );
-    if let Some(provider_ref) = session.provider_session_ref.clone() {
-        provider_env.insert("CTX_PROVIDER_SESSION_REF".to_string(), provider_ref);
-    }
-    provider_env.insert("CTX_SESSION_ID".to_string(), session.id.0.to_string());
-    provider_env.insert(
-        "CTX_WORKTREE_ID".to_string(),
-        session.worktree_id.0.to_string(),
-    );
-    provider_env.insert("CTX_MODEL_ID".to_string(), full_model_id.clone());
     let settings = settings::load_settings(state.global_store()).await?;
     let provider_control_mode = settings
         .sandboxing
         .as_ref()
         .map(|s| s.provider_control_mode.clone())
         .unwrap_or_default();
-    if let Some(mode_id) = provider_mode_id_for(&session.provider_id, &provider_control_mode) {
-        provider_env.insert("CTX_PROVIDER_MODE".to_string(), mode_id.to_string());
-    }
-    if let Ok(v) = std::env::var("CTX_MCP_COMMAND") {
-        provider_env.insert("CTX_MCP_COMMAND".to_string(), v);
-    }
-    if let Ok(v) = std::env::var("CTX_MCP_DISABLED") {
-        provider_env.insert("CTX_MCP_DISABLED".to_string(), v);
-    }
+    let mut provider_env = build_base_provider_env(BaseProviderEnvRequest {
+        daemon_url: &state.core.daemon_url,
+        data_root: &state.core.data_root,
+        session,
+        full_model_id: &full_model_id,
+        provider_control_mode: &provider_control_mode,
+    });
 
     let workspace = match store.get_workspace(session.workspace_id).await {
         Ok(Some(workspace)) => workspace,
