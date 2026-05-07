@@ -93,33 +93,6 @@ use probe::*;
 #[cfg(test)]
 use restarts::*;
 
-pub(super) fn canonicalize_provider_id(provider_id: &str) -> String {
-    provider_id.to_string()
-}
-
-pub(super) fn project_provider_id_for_response(
-    requested_provider_id: &str,
-    canonical_provider_id_value: &str,
-) -> String {
-    let _ = requested_provider_id;
-    canonical_provider_id_value.to_string()
-}
-
-pub(super) fn project_harness_config_for_response(
-    requested_provider_id: &str,
-    config: &mut harness_sources::HarnessProviderSourceConfig,
-) {
-    let projected_provider_id =
-        project_provider_id_for_response(requested_provider_id, &config.provider_id);
-    if projected_provider_id == config.provider_id {
-        return;
-    }
-    config.provider_id = projected_provider_id.clone();
-    for endpoint in &mut config.endpoints {
-        endpoint.provider_id = projected_provider_id.clone();
-    }
-}
-
 #[derive(Debug, Default, Deserialize)]
 pub(super) struct InstallTargetQuery {
     target: Option<String>,

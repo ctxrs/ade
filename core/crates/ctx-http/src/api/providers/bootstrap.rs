@@ -186,16 +186,12 @@ pub(crate) async fn get_workspace_providers_bootstrap(
                     options["preferred_model_id"] = serde_json::json!(preferred_model_id);
                 }
 
-                let projected_source_config = source_config.clone().map(|mut config| {
-                    super::project_harness_config_for_response(&provider_id, &mut config);
-                    config
-                });
-                if let Some(source) = projected_source_config.as_ref() {
+                if let Some(source) = source_config.as_ref() {
                     options["source"] =
                         serde_json::to_value(source).unwrap_or(serde_json::Value::Null);
                 }
 
-                (provider_id, options, projected_source_config)
+                (provider_id, options, source_config)
             }
         }))
         .buffer_unordered(visible_provider_count_hint(providers.len()))

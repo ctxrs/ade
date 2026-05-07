@@ -210,8 +210,6 @@ pub(crate) async fn get_provider(
     Path(id): Path<String>,
     Query(query): Query<InstallTargetQuery>,
 ) -> Result<Json<ProviderStatus>, (StatusCode, Json<serde_json::Value>)> {
-    let requested_id = id;
-    let id = super::canonicalize_provider_id(&requested_id);
     let target = installer::parse_install_target(query.target.as_deref()).map_err(|e| {
         (
             StatusCode::BAD_REQUEST,
@@ -246,8 +244,6 @@ pub(crate) async fn get_provider(
     } else {
         provider_status_for_target(state.as_ref(), &managed, &matrix, &id, target).await
     };
-    status.provider_id =
-        super::project_provider_id_for_response(&requested_id, &status.provider_id);
     if let Some(config_error) = managed_config_error.as_deref() {
         mark_provider_status_with_managed_config_error(&mut status, config_error);
     }
@@ -312,8 +308,6 @@ pub(crate) async fn get_provider_usage(
     Path(id): Path<String>,
     Query(query): Query<ProviderUsageQuery>,
 ) -> Result<Json<provider_usage::ProviderUsageSnapshot>, (StatusCode, Json<serde_json::Value>)> {
-    let requested_id = id;
-    let id = super::canonicalize_provider_id(&requested_id);
     let refresh = query.refresh.unwrap_or(false);
     let env = provider_usage_env_for_request(&state, &id).await?;
     let snapshot = if !refresh {
@@ -322,13 +316,11 @@ pub(crate) async fn get_provider_usage(
     } else {
         None
     };
-    let mut snapshot = match snapshot {
+    let snapshot = match snapshot {
         Some(snapshot) => snapshot,
         None => provider_usage::refresh_provider_usage_for(state.as_ref(), &id, env)
             .await
             .map_err(provider_usage_internal_error)?,
     };
-    snapshot.provider_id =
-        super::project_provider_id_for_response(&requested_id, &snapshot.provider_id);
     Ok(Json(snapshot))
 }

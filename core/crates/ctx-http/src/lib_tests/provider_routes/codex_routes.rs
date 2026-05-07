@@ -80,7 +80,7 @@ async fn provider_usage_cache_hit_surfaces_agent_server_config_errors_for_codex(
 }
 
 #[tokio::test]
-async fn provider_usage_cache_hit_projects_requested_provider_alias_for_codex() {
+async fn provider_usage_cache_hit_preserves_canonical_provider_id_for_codex() {
     let _serial = home_env_test_lock().lock().await;
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
