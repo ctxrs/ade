@@ -1,7 +1,7 @@
 use super::status::apply_target_aware_provider_status;
 use super::*;
 use crate::api::provider_launch::{
-    classify_probe_error, endpoint_catalog_runtime_probe_failure, endpoint_catalog_verify_outcome,
+    endpoint_catalog_runtime_probe_failure, endpoint_catalog_verify_outcome,
     endpoint_models_payload, endpoint_supports_model_catalog_verify, get_install_statuses,
     selected_endpoint_from_harness_config, selected_endpoint_record_from_harness_config,
     GetInstallStatusesReq,
@@ -9,6 +9,7 @@ use crate::api::provider_launch::{
 use crate::provider_launch::install::should_skip_install_for_healthy_provider;
 use chrono::Utc;
 use ctx_provider_install::install_state::{InstallEventLevel, InstallProgressEvent};
+use ctx_provider_runtime::provider_launch::probe_error::classify_probe_error;
 use ctx_providers::adapters::{
     ProviderAdapter, ProviderHealth, ProviderProcessInfo, ProviderRestartMode, ProviderStatus,
     RunHandle, TurnInput,
