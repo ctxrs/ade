@@ -238,10 +238,13 @@ write_linux_launcher_script() {
   chmod 0755 "$launcher_path"
 }
 
-install_linux_icon() {
+linux_icon_path() {
+  printf "%s\\n" "\${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/512x512/apps/ctx.png"
+}
+
+extract_linux_icon() {
   appimage_path="$1"
-  icon_dir="\${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/512x512/apps"
-  icon_path="$icon_dir/ctx.png"
+  output_icon_path="$2"
   extract_dir="$tmp_dir/appimage-icon"
 
   rm -rf "$extract_dir"
@@ -266,9 +269,20 @@ install_linux_icon() {
     fail "failed to locate application icon in AppImage contents"
   fi
 
-  mkdir -p "$icon_dir"
-  cp "$icon_source" "$icon_path"
-  chmod 0644 "$icon_path"
+  mkdir -p "\${output_icon_path%/*}"
+  cp "$icon_source" "$output_icon_path"
+  chmod 0644 "$output_icon_path"
+}
+
+promote_linux_icon() {
+  source_icon_path="$1"
+  icon_path="$(linux_icon_path)"
+  staged_icon="$(stage_path_for_target "$icon_path")"
+
+  mkdir -p "\${staged_icon%/*}"
+  cp "$source_icon_path" "$staged_icon"
+  chmod 0644 "$staged_icon"
+  promote_staged_path "$staged_icon" "$icon_path" "ctx desktop icon"
   log "Installed app icon at $icon_path"
   printf "%s\\n" "$icon_path"
 }
@@ -396,13 +410,17 @@ install_linux() {
   staged_appimage="$(stage_path_for_target "$target_appimage")"
   cp "$artifact_path" "$staged_appimage"
   chmod +x "$staged_appimage"
+  cleanup_stage_path="$staged_appimage"
+
+  icon_candidate="$tmp_dir/ctx-icon.png"
+  extract_linux_icon "$staged_appimage" "$icon_candidate"
   promote_staged_path "$staged_appimage" "$target_appimage" "ctx desktop AppImage"
+  icon_path="$(promote_linux_icon "$icon_candidate")"
 
   bin_dir="\${CTX_BIN_DIR:-$HOME/.local/bin}"
   mkdir -p "$bin_dir"
   launcher_path="$bin_dir/ctx-desktop"
   write_linux_launcher_script "$launcher_path" "$target_appimage"
-  icon_path="$(install_linux_icon "$target_appimage")"
   install_linux_desktop_entry "$launcher_path" "$target_appimage" "$icon_path"
 
   log "Installed ctx desktop AppImage to $target_appimage"

@@ -110,6 +110,28 @@ exec /bin/cp "$src" "$dest"
 `,
   );
   writeExecutable(
+    path.join(stubDir, "mv"),
+    `#!/bin/sh
+set -eu
+dest=""
+for arg in "$@"; do
+  dest="$arg"
+done
+case "\${CTX_TEST_FAIL_MV_DEST_MATCH:-}" in
+  "")
+    ;;
+  *)
+    case "$dest" in
+      *"$CTX_TEST_FAIL_MV_DEST_MATCH"*)
+        exit 1
+        ;;
+    esac
+    ;;
+esac
+exec /bin/mv "$@"
+`,
+  );
+  writeExecutable(
     path.join(stubDir, "uname"),
     `#!/bin/sh
 set -eu
@@ -209,6 +231,7 @@ const runInstaller = ({
   binDirName = "bin-root",
   osReleaseText = "ID=testos\n",
   existingAppImageContents = null,
+  existingIconContents = null,
   extraEnv = {},
 }) => {
   const sandboxDir = makeTempDir("ctx-install-script-");
@@ -236,6 +259,11 @@ const runInstaller = ({
   mkdirSync(xdgDataHome);
   if (existingAppImageContents !== null) {
     writeFileSync(path.join(installDir, "ctx.AppImage"), existingAppImageContents);
+  }
+  if (existingIconContents !== null) {
+    const existingIconPath = path.join(xdgDataHome, "icons", "hicolor", "512x512", "apps", "ctx.png");
+    mkdirSync(path.dirname(existingIconPath), { recursive: true });
+    writeFileSync(existingIconPath, existingIconContents);
   }
 
   const result = spawnSync("sh", [scriptPath], {
@@ -484,6 +512,109 @@ test("linux upgrade preserves the existing AppImage when staging the replacement
     assert.notEqual(result.status, 0);
     assert.equal(readFileSync(path.join(result.installDir, "ctx.AppImage"), "utf8"), existingAppImageContents);
     assert.match(result.stderr, /Verified artifact sha256/);
+  } finally {
+    result.cleanup();
+  }
+});
+
+test("linux install does not promote AppImage when icon extraction fails", () => {
+  const artifactContents = `#!/bin/sh
+set -eu
+exit 42
+`;
+  const result = runInstaller({
+    os: "Linux",
+    arch: "x86_64",
+    artifactContents,
+    manifest: {
+      channel: "stable",
+      latest_version: "0.0.1",
+      platforms: {
+        "linux-x64": {
+          appimage: {
+            url_path: "/download/stable/0.0.1/ctx.AppImage",
+            sha256: sha256(artifactContents),
+          },
+        },
+      },
+    },
+  });
+  try {
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /error: failed to extract application icon from AppImage/);
+    assert.equal(existsSync(path.join(result.installDir, "ctx.AppImage")), false);
+    assert.equal(existsSync(path.join(result.binDir, "ctx-desktop")), false);
+  } finally {
+    result.cleanup();
+  }
+});
+
+test("linux upgrade preserves the existing AppImage when replacement icon extraction fails", () => {
+  const existingAppImageContents = createFakeAppImage();
+  const artifactContents = `#!/bin/sh
+set -eu
+exit 42
+`;
+  const result = runInstaller({
+    os: "Linux",
+    arch: "x86_64",
+    artifactContents,
+    existingAppImageContents,
+    manifest: {
+      channel: "stable",
+      latest_version: "0.0.2",
+      platforms: {
+        "linux-x64": {
+          appimage: {
+            url_path: "/download/stable/0.0.2/ctx.AppImage",
+            sha256: sha256(artifactContents),
+          },
+        },
+      },
+    },
+  });
+  try {
+    assert.notEqual(result.status, 0);
+    assert.equal(readFileSync(path.join(result.installDir, "ctx.AppImage"), "utf8"), existingAppImageContents);
+    assert.match(result.stderr, /Verified artifact sha256/);
+    assert.match(result.stderr, /error: failed to extract application icon from AppImage/);
+  } finally {
+    result.cleanup();
+  }
+});
+
+test("linux upgrade preserves the existing icon when AppImage promotion fails", () => {
+  const existingAppImageContents = createFakeAppImage();
+  const existingIconContents = "existing-icon";
+  const artifactContents = createFakeAppImage();
+  const result = runInstaller({
+    os: "Linux",
+    arch: "x86_64",
+    artifactContents,
+    existingAppImageContents,
+    existingIconContents,
+    extraEnv: {
+      CTX_TEST_FAIL_MV_DEST_MATCH: ".ctx-backup.",
+    },
+    manifest: {
+      channel: "stable",
+      latest_version: "0.0.2",
+      platforms: {
+        "linux-x64": {
+          appimage: {
+            url_path: "/download/stable/0.0.2/ctx.AppImage",
+            sha256: sha256(artifactContents),
+          },
+        },
+      },
+    },
+  });
+  try {
+    assert.notEqual(result.status, 0);
+    assert.equal(readFileSync(path.join(result.installDir, "ctx.AppImage"), "utf8"), existingAppImageContents);
+    const iconPath = path.join(result.xdgDataHome, "icons", "hicolor", "512x512", "apps", "ctx.png");
+    assert.equal(readFileSync(iconPath, "utf8"), existingIconContents);
+    assert.match(result.stderr, /error: failed to move existing ctx desktop AppImage aside/);
   } finally {
     result.cleanup();
   }
