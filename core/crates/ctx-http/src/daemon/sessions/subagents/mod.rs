@@ -12,10 +12,11 @@ use std::time::{Duration, Instant};
 
 use base64::Engine;
 use ctx_session_service::subagents::{
-    build_subagent_request_json, collect_provider_ids, normalize_wait_agent_ids,
-    parse_subagent_worktree, parse_wait_mode, parse_wait_until, resolve_max_subagents_per_call,
-    wait_predicate_satisfied, AgentWaitDetail, AgentWaitUntil, SubagentRequestAgent,
-    SubagentWorktreeSelection, DEFAULT_MAX_ACTIVE_SUBAGENTS_PER_PARENT, DEFAULT_MAX_SUBAGENT_DEPTH,
+    build_subagent_request_json, collect_provider_ids, normalize_subagent_labels,
+    normalize_wait_agent_ids, parse_subagent_worktree, parse_wait_mode, parse_wait_until,
+    resolve_max_subagents_per_call, wait_predicate_satisfied, AgentWaitDetail, AgentWaitUntil,
+    SubagentRequestAgent, SubagentWorktreeSelection, DEFAULT_MAX_ACTIVE_SUBAGENTS_PER_PARENT,
+    DEFAULT_MAX_SUBAGENT_DEPTH,
 };
 use ctx_session_tools::interrupt_telemetry::InterruptTelemetryContext;
 use ctx_session_tools::model_resolution::resolve_model_id;
@@ -45,7 +46,7 @@ use self::child_runs::{
 use self::errors::{api_error, internal_api_error, load_parent_session, ApiResult};
 pub(crate) use self::errors::{SubagentError, SubagentErrorKind};
 use self::providers::load_requested_model_catalogs;
-use self::request::{default_catalog_model_id, validate_requested_labels};
+use self::request::{default_catalog_model_id, ensure_requested_labels_available};
 use self::worktrees::{
     cleanup_archived_subagent_worktree, create_subagent_worktree, plan_subagent_worktree_creation,
 };

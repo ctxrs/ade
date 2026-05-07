@@ -70,7 +70,6 @@ pub(crate) async fn init_subagents(
         .map_err(internal_api_error)?
         .ok_or_else(|| api_error(SubagentErrorKind::NotFound, "workspace not found"))?;
 
-    let labels = validate_requested_labels(&store, parent.task_id, &req.agents).await?;
     let request_agents = req
         .agents
         .iter()
@@ -82,6 +81,9 @@ pub(crate) async fn init_subagents(
             reasoning_effort: agent.reasoning_effort.as_deref(),
         })
         .collect::<Vec<_>>();
+    let labels = normalize_subagent_labels(&request_agents)
+        .map_err(|error| api_error(SubagentErrorKind::BadRequest, error))?;
+    ensure_requested_labels_available(&store, parent.task_id, &labels).await?;
     let provider_ids = collect_provider_ids(&request_agents, &parent.provider_id)
         .map_err(|error| api_error(SubagentErrorKind::BadRequest, error))?;
 

@@ -109,6 +109,22 @@ pub fn collect_provider_ids(
     Ok(provider_ids)
 }
 
+pub fn normalize_subagent_labels(
+    agents: &[SubagentRequestAgent<'_>],
+) -> Result<Vec<String>, String> {
+    let mut labels = Vec::with_capacity(agents.len());
+    let mut seen_labels = HashSet::new();
+    for (idx, agent) in agents.iter().enumerate() {
+        let label = normalize_optional(agent.label)
+            .ok_or_else(|| format!("agent {} label is required", idx + 1))?;
+        if !seen_labels.insert(label.to_string()) {
+            return Err(format!("duplicate subagent label '{label}'"));
+        }
+        labels.push(label.to_string());
+    }
+    Ok(labels)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentWaitMode {
     Any,
@@ -339,6 +355,67 @@ mod tests {
                 .as_ref()
                 .map_err(String::as_str),
             Err("harness is required")
+        );
+    }
+
+    #[test]
+    fn normalizes_subagent_labels_strictly() {
+        let agents = [
+            SubagentRequestAgent {
+                prompt: "one",
+                label: Some(" alpha "),
+                harness: None,
+                model: None,
+                reasoning_effort: None,
+            },
+            SubagentRequestAgent {
+                prompt: "two",
+                label: Some("beta"),
+                harness: None,
+                model: None,
+                reasoning_effort: None,
+            },
+        ];
+        assert_eq!(
+            normalize_subagent_labels(&agents),
+            Ok(vec!["alpha".to_string(), "beta".to_string()])
+        );
+
+        let agents = [SubagentRequestAgent {
+            prompt: "one",
+            label: Some(" "),
+            harness: None,
+            model: None,
+            reasoning_effort: None,
+        }];
+        assert_eq!(
+            normalize_subagent_labels(&agents)
+                .as_ref()
+                .map_err(String::as_str),
+            Err("agent 1 label is required")
+        );
+
+        let agents = [
+            SubagentRequestAgent {
+                prompt: "one",
+                label: Some("alpha"),
+                harness: None,
+                model: None,
+                reasoning_effort: None,
+            },
+            SubagentRequestAgent {
+                prompt: "two",
+                label: Some(" alpha "),
+                harness: None,
+                model: None,
+                reasoning_effort: None,
+            },
+        ];
+        assert_eq!(
+            normalize_subagent_labels(&agents)
+                .as_ref()
+                .map_err(String::as_str),
+            Err("duplicate subagent label 'alpha'")
         );
     }
 

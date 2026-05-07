@@ -1,6 +1,3 @@
-use std::collections::HashSet;
-
-use crate::api::sessions::AgentInitItem;
 use ctx_core::ids::TaskId;
 
 use super::errors::{api_error, internal_api_error, ApiResult, SubagentErrorKind};
@@ -11,35 +8,12 @@ pub(super) fn default_catalog_model_id(
     catalog.and_then(ctx_session_tools::model_resolution::ModelCatalog::default_model_id)
 }
 
-pub(super) async fn validate_requested_labels(
+pub(super) async fn ensure_requested_labels_available(
     store: &ctx_store::Store,
     task_id: TaskId,
-    agents: &[AgentInitItem],
-) -> ApiResult<Vec<String>> {
-    let mut labels = Vec::with_capacity(agents.len());
-    let mut seen_labels = HashSet::new();
-    for (idx, agent) in agents.iter().enumerate() {
-        let label = agent
-            .label
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| {
-                api_error(
-                    SubagentErrorKind::BadRequest,
-                    format!("agent {} label is required", idx + 1),
-                )
-            })?;
-        if !seen_labels.insert(label.to_string()) {
-            return Err(api_error(
-                SubagentErrorKind::BadRequest,
-                format!("duplicate subagent label '{label}'"),
-            ));
-        }
-        labels.push(label.to_string());
-    }
-
-    for label in &labels {
+    labels: &[String],
+) -> ApiResult<()> {
+    for label in labels {
         if store
             .subagent_label_exists(task_id, label)
             .await
@@ -52,5 +26,5 @@ pub(super) async fn validate_requested_labels(
         }
     }
 
-    Ok(labels)
+    Ok(())
 }
