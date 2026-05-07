@@ -306,6 +306,7 @@ const CTX_HTTP_UNIT_SUITES = [
     description: "ctx-http API unit test family",
     sourceGlobs: [
       "crates/ctx-http/src/api/**",
+      "crates/ctx-workspace-services/src/workspace_registration.rs",
     ],
   },
   {
@@ -317,6 +318,7 @@ const CTX_HTTP_UNIT_SUITES = [
       "crates/ctx-http/src/daemon/**",
       "crates/ctx-http/src/lib.rs",
       "crates/ctx-http/src/test_support.rs",
+      "crates/ctx-workspace-services/src/workspace_registration.rs",
     ],
   },
   {

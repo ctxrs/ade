@@ -2,7 +2,6 @@ use std::path::{Path as StdPath, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::Context;
 use axum::body::Body;
 use axum::extract::{Path, Query, State};
 use axum::http::{header, StatusCode};
@@ -31,15 +30,16 @@ use crate::telemetry::TelemetryEvent;
 use crate::vcs_hooks;
 use ctx_core::ids::{WorkspaceId, WorktreeId};
 use ctx_core::models::{
-    AttachmentMode, AttachmentUpdatePolicy, VcsKind, Workspace, WorkspaceActiveHeadBatch,
+    AttachmentMode, AttachmentUpdatePolicy, Workspace, WorkspaceActiveHeadBatch,
     WorkspaceActiveSnapshot, WorkspaceAttachment, WorkspaceAttachmentKind, Worktree,
 };
-use ctx_fs::git::{assert_git_repo, git_default_branch};
+use ctx_fs::git::assert_git_repo;
 use ctx_fs::vcs;
 use ctx_workspace_attachments::AttachmentConfig;
 use ctx_workspace_config as workspace_config;
 use ctx_workspace_container::WorkspaceContainerStatus as HarnessContainerStatus;
 use ctx_workspace_services::file_completions;
+use ctx_workspace_services::workspace_registration::detect_workspace_primary_branch;
 
 #[derive(Debug, Deserialize)]
 pub(super) struct UpdateMergeQueueConfigReq {
@@ -84,33 +84,6 @@ pub(super) struct WorkspacePrimaryBranchResp {
 pub(super) struct CreateWorkspaceReq {
     root_path: String,
     name: Option<String>,
-}
-
-async fn detect_workspace_primary_branch(
-    vcs_kind: VcsKind,
-    root_path: &StdPath,
-    driver: &dyn vcs::VcsDriver,
-) -> anyhow::Result<String> {
-    match vcs_kind {
-        VcsKind::Git => {
-            let branch = git_default_branch(root_path)
-                .await?
-                .ok_or_else(|| anyhow::anyhow!("unable to detect default git branch"))?;
-            let trimmed = branch.trim().to_string();
-            if trimmed.is_empty() {
-                anyhow::bail!("detected default git branch is empty");
-            }
-            Ok(trimmed)
-        }
-        VcsKind::Jj => {
-            driver
-                .rev_parse_ref(root_path, "main")
-                .await
-                .context("resolving jj primary bookmark `main`")?;
-            Ok("main".to_string())
-        }
-        _ => anyhow::bail!("primary branch detection is only supported for git and jj workspaces"),
-    }
 }
 
 pub(super) async fn list_workspaces(

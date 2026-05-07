@@ -1,7 +1,9 @@
 use super::*;
 use chrono::Utc;
 use ctx_core::ids::WorktreeId;
-use ctx_core::models::{SandboxBinding, SandboxGuestIdentity, SandboxProfile, SandboxSubstrate};
+use ctx_core::models::{
+    SandboxBinding, SandboxGuestIdentity, SandboxProfile, SandboxSubstrate, VcsKind,
+};
 use ctx_store::StoreManager;
 use std::collections::HashMap;
 use uuid::Uuid;
