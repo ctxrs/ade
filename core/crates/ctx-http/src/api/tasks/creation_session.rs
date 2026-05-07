@@ -9,6 +9,8 @@ use ctx_session_tools::model_resolution::{compose_model_id, resolve_model_id};
 
 #[path = "creation_session/cleanup.rs"]
 mod cleanup;
+#[path = "creation_session/existing.rs"]
+mod existing;
 #[path = "creation_session/initial_prompt.rs"]
 mod initial_prompt;
 #[path = "creation_session/replay.rs"]
@@ -19,6 +21,7 @@ mod request;
 mod worktree;
 
 use cleanup::cleanup_orphaned_provisioned_worktree;
+use existing::resolve_existing_requested_session;
 use initial_prompt::{seed_initial_prompt, InitialPromptSeed};
 pub(super) use replay::{
     create_requested_default_session_for_task, replay_requested_default_session_for_task,
@@ -176,90 +179,26 @@ async fn create_session_for_loaded_task_inner(
     let reasoning_effort = resolved_model.reasoning_effort.clone();
     let preferred_model_id = compose_model_id(&model_id, reasoning_effort.as_deref());
 
-    if let Some(session_id) = session_id {
-        let existing_ws = state
-            .global_store()
-            .get_workspace_id_for_session(session_id)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        if let Some(existing_ws) = existing_ws {
-            if existing_ws != task.workspace_id {
-                if let Some(created_worktree_id) = created_worktree_id {
-                    cleanup_orphaned_provisioned_worktree(
-                        &state,
-                        &store,
-                        &workspace,
-                        task_id,
-                        created_worktree_id,
-                    )
-                    .await;
-                }
-                return Err(StatusCode::CONFLICT);
-            }
-            let existing = store
-                .get_session(session_id)
-                .await
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-            if let Some(existing) = existing {
-                if !session_matches_creation_identity(
-                    &existing,
-                    SessionCreationIdentity {
-                        task_id,
-                        workspace_id: task.workspace_id,
-                        worktree_id,
-                        execution_environment,
-                        provider_id: &provider_id,
-                        model_id: &model_id,
-                        reasoning_effort: reasoning_effort.as_deref(),
-                        parent_session_id,
-                        relationship: relationship.as_deref(),
-                    },
-                ) {
-                    if let Some(created_worktree_id) = created_worktree_id {
-                        cleanup_orphaned_provisioned_worktree(
-                            &state,
-                            &store,
-                            &workspace,
-                            task_id,
-                            created_worktree_id,
-                        )
-                        .await;
-                    }
-                    return Err(StatusCode::CONFLICT);
-                }
-                state.sessions.remember_session_meta(&existing).await;
-                if req.remember_model_preference {
-                    if let Err(error) =
-                        crate::workspace_provider_model_preferences::update_workspace_provider_preferred_model_id(
-                            &state,
-                            task.workspace_id,
-                            &provider_id,
-                            Some(preferred_model_id.clone()),
-                        )
-                        .await
-                    {
-                        tracing::warn!(
-                            session_id = %existing.id.0,
-                            workspace_id = %task.workspace_id.0,
-                            provider_id = provider_id,
-                            "failed to persist workspace provider model preference: {error:#}"
-                        );
-                    }
-                }
-                return Ok(Json(existing));
-            }
-            if let Some(created_worktree_id) = created_worktree_id {
-                cleanup_orphaned_provisioned_worktree(
-                    &state,
-                    &store,
-                    &workspace,
-                    task_id,
-                    created_worktree_id,
-                )
-                .await;
-            }
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
-        }
+    if let Some(existing) = resolve_existing_requested_session(
+        &state,
+        &store,
+        &task,
+        &workspace,
+        session_id,
+        created_worktree_id,
+        worktree_id,
+        execution_environment,
+        &provider_id,
+        &model_id,
+        reasoning_effort.as_deref(),
+        parent_session_id,
+        relationship.as_deref(),
+        req.remember_model_preference,
+        &preferred_model_id,
+    )
+    .await?
+    {
+        return Ok(Json(existing));
     }
 
     if let Ok(Some(worktree)) = store.get_worktree(worktree_id).await {
