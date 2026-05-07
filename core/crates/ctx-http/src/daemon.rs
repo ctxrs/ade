@@ -44,6 +44,7 @@ mod provider_registry;
 mod retention;
 pub(crate) mod sessions;
 mod state;
+mod workspace_init;
 pub(crate) mod workspaces;
 
 use activity::reconcile_running_turns;
@@ -86,6 +87,7 @@ pub use state::{
     SessionHeadCacheKey, StoreLookup, TimedEntry, WorkspaceActiveHeadCacheEntry,
     WorkspaceActiveSnapshotCacheEntry, WorktreeVcsSnapshotCacheEntry,
 };
+pub use workspace_init::init_workspace;
 
 fn spawn_startup_provider_status_refresh(state: Arc<AppState>) {
     tokio::spawn(async move {
@@ -236,44 +238,6 @@ pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
     while let Some(result) = servers.join_next().await {
         result.context("daemon listener task panicked")??;
     }
-    Ok(())
-}
-
-pub async fn init_workspace(root: Option<String>) -> Result<()> {
-    let root_path = root
-        .map(PathBuf::from)
-        .unwrap_or(std::env::current_dir().context("getting current dir")?);
-    let vcs = ctx_fs::vcs::driver_for_path(&root_path).await?;
-    vcs.assert_repo(&root_path).await?;
-
-    let context_dir = root_path.join(".ctx");
-    let pack_dir = context_dir.join("ctx-pack");
-    let tmp_dir = pack_dir.join("tmp");
-
-    tokio::fs::create_dir_all(pack_dir.join("specs")).await?;
-    tokio::fs::create_dir_all(pack_dir.join("prompts")).await?;
-    tokio::fs::create_dir_all(pack_dir.join("docs")).await?;
-    tokio::fs::create_dir_all(pack_dir.join("skills")).await?;
-    tokio::fs::create_dir_all(&tmp_dir).await?;
-
-    tokio::fs::create_dir_all(context_dir.join("exec-plans")).await?;
-
-    let gitignore_path = root_path.join(".gitignore");
-    let ignore_line = ".ctx/ctx-pack/tmp/";
-    let mut gitignore = if gitignore_path.exists() {
-        tokio::fs::read_to_string(&gitignore_path).await?
-    } else {
-        String::new()
-    };
-    if !gitignore.lines().any(|l| l.trim() == ignore_line) {
-        if !gitignore.ends_with('\n') && !gitignore.is_empty() {
-            gitignore.push('\n');
-        }
-        gitignore.push_str(ignore_line);
-        gitignore.push('\n');
-        tokio::fs::write(&gitignore_path, gitignore).await?;
-    }
-
     Ok(())
 }
 
