@@ -6,6 +6,7 @@ mod local_source;
 mod projection;
 mod resolution;
 mod runtime;
+mod sandbox_source;
 mod session_diff;
 mod snapshot;
 mod status;
@@ -53,6 +54,7 @@ pub use runtime::{
     worktree_vcs_scheduler_concurrency_from_env, WorktreeVcsDirtyBits, WorktreeVcsInvalidation,
     WorktreeVcsRuntimeState, WorktreeVcsSchedulerJob, WorktreeVcsSchedulerRuntime,
 };
+pub use sandbox_source::{SandboxWorktreeVcsSource, WorktreeVcsSandboxGitExecutor};
 pub use session_diff::{
     worktree_vcs_diff_summary_mismatch, worktree_vcs_session_diff_available,
     worktree_vcs_session_diff_summary_available, worktree_vcs_session_diff_summary_no_repo,

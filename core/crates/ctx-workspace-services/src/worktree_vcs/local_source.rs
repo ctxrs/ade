@@ -5,7 +5,9 @@ use ctx_core::models::Worktree;
 use ctx_fs::vcs;
 
 use super::WorktreeVcsStructuredStatus;
-use super::{is_no_vcs_repo_error, worktree_vcs_structured_status_from_vcs};
+use super::{
+    is_no_vcs_repo_error, worktree_vcs_structured_status_from_vcs, WorktreeVcsDiffPathSource,
+};
 
 pub struct LocalWorktreeVcsSource<'a> {
     worktree: &'a Worktree,
@@ -73,6 +75,45 @@ impl<'a> LocalWorktreeVcsSource<'a> {
         let driver = vcs::driver_for_path(self.root).await?;
         driver.merge_base(self.root, target_branch, "HEAD").await
     }
+
+    pub async fn diff_name_status(
+        &self,
+        base_commit_sha: &str,
+        summary_count: bool,
+    ) -> Result<Vec<(String, String, Option<String>)>> {
+        let driver = vcs::driver_for_kind(self.worktree.vcs_kind.clone());
+        let entries = if summary_count {
+            driver
+                .diff_name_status_for_summary(self.root, base_commit_sha)
+                .await?
+        } else {
+            driver.diff_name_status(self.root, base_commit_sha).await?
+        };
+        Ok(entries
+            .into_iter()
+            .map(|entry| (entry.status, entry.path, entry.orig_path))
+            .collect())
+    }
+
+    pub async fn list_untracked(&self) -> Result<Vec<String>> {
+        let driver = vcs::driver_for_kind(self.worktree.vcs_kind.clone());
+        driver.list_untracked(self.root).await
+    }
+}
+
+#[async_trait::async_trait]
+impl WorktreeVcsDiffPathSource for LocalWorktreeVcsSource<'_> {
+    async fn diff_name_status(
+        &self,
+        base_commit_sha: &str,
+        summary_count: bool,
+    ) -> Result<Vec<(String, String, Option<String>)>> {
+        LocalWorktreeVcsSource::diff_name_status(self, base_commit_sha, summary_count).await
+    }
+
+    async fn list_untracked(&self) -> Result<Vec<String>> {
+        LocalWorktreeVcsSource::list_untracked(self).await
+    }
 }
 
 #[cfg(test)]
@@ -135,19 +176,30 @@ mod tests {
         std::fs::write(temp.path().join("README.md"), "hello\n").expect("write readme");
         git(&["add", "README.md"], temp.path());
         git(&["commit", "-m", "initial"], temp.path());
+        let head = std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(temp.path())
+            .output()
+            .expect("rev-parse head");
+        assert!(head.status.success());
+        let head = String::from_utf8_lossy(&head.stdout).trim().to_string();
         std::fs::write(temp.path().join("README.md"), "changed\n").expect("modify readme");
+        std::fs::write(temp.path().join("new.txt"), "new\n").expect("write untracked");
 
         let worktree = worktree(temp.path());
         let source = LocalWorktreeVcsSource::new(&worktree, temp.path());
 
         assert!(source.has_vcs_repo().await.expect("check repo"));
-        let head = source.resolve_commit("HEAD").await.expect("resolve head");
+        assert_eq!(
+            source.resolve_commit("HEAD").await.expect("resolve head"),
+            head
+        );
         assert_eq!(
             source
                 .rev_parse_refs(&["HEAD"])
                 .await
                 .expect("resolve refs"),
-            vec![head]
+            vec![head.clone()]
         );
         let status = source
             .load_structured_status(true, true)
@@ -155,6 +207,18 @@ mod tests {
             .expect("load status");
         assert_eq!(status.branch.as_deref(), Some("main"));
         assert_eq!(status.unstaged, 1);
-        assert_eq!(status.entries.len(), 1);
+        assert_eq!(status.untracked, 1);
+        let diff_entries = source
+            .diff_name_status(&head, false)
+            .await
+            .expect("load diff entries");
+        assert_eq!(
+            diff_entries,
+            vec![("M".to_string(), "README.md".to_string(), None)]
+        );
+        assert_eq!(
+            source.list_untracked().await.expect("list untracked"),
+            vec!["new.txt".to_string()]
+        );
     }
 }

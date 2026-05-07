@@ -7,10 +7,7 @@ use anyhow::{Context, Result};
 
 use ctx_core::models::Worktree;
 use ctx_workspace_container::workspace_container_name;
-use ctx_workspace_services::worktree_vcs::{
-    parse_git_diff_name_status, parse_git_list_untracked, worktree_vcs_structured_status_from_vcs,
-    WorktreeVcsGitCommand, WorktreeVcsStructuredStatus,
-};
+use ctx_workspace_services::worktree_vcs::{WorktreeVcsGitCommand, WorktreeVcsSandboxGitExecutor};
 
 use crate::daemon::AppState;
 use crate::execution_effective;
@@ -27,6 +24,24 @@ enum SandboxGitTarget {
 struct SandboxGitContext {
     live_worktree_root: PathBuf,
     target: SandboxGitTarget,
+}
+
+pub(super) struct HttpSandboxWorktreeVcsExecutor<'a> {
+    state: &'a Arc<AppState>,
+    worktree: &'a Worktree,
+}
+
+impl<'a> HttpSandboxWorktreeVcsExecutor<'a> {
+    pub(super) fn new(state: &'a Arc<AppState>, worktree: &'a Worktree) -> Self {
+        Self { state, worktree }
+    }
+}
+
+#[async_trait::async_trait]
+impl WorktreeVcsSandboxGitExecutor for HttpSandboxWorktreeVcsExecutor<'_> {
+    async fn git_stdout(&self, command: WorktreeVcsGitCommand) -> Result<Vec<u8>> {
+        container_git_stdout(self.state, self.worktree, command).await
+    }
 }
 
 async fn ensure_container_for_worktree(
@@ -123,65 +138,4 @@ pub(super) async fn container_git_stdout(
             String::from_utf8_lossy(&out.stderr).trim()
         );
     }
-}
-
-pub(crate) async fn container_git_status_structured(
-    state: &Arc<AppState>,
-    worktree: &Worktree,
-    include_untracked_files: bool,
-    include_entries: bool,
-) -> Result<WorktreeVcsStructuredStatus> {
-    let bytes = container_git_stdout(
-        state,
-        worktree,
-        WorktreeVcsGitCommand::Status {
-            include_untracked_files,
-        },
-    )
-    .await?;
-    Ok(worktree_vcs_structured_status_from_vcs(
-        ctx_fs::git::git_status_structured_from_bytes_with_entries(&bytes, include_entries),
-    ))
-}
-
-pub(crate) async fn container_git_list_untracked(
-    state: &Arc<AppState>,
-    worktree: &Worktree,
-) -> Result<Vec<String>> {
-    let bytes = container_git_stdout(state, worktree, WorktreeVcsGitCommand::ListUntracked).await?;
-    Ok(parse_git_list_untracked(&bytes))
-}
-
-pub(crate) async fn container_git_diff_name_status(
-    state: &Arc<AppState>,
-    worktree: &Worktree,
-    base_commit_sha: &str,
-) -> Result<Vec<(String, String, Option<String>)>> {
-    container_git_diff_name_status_inner(state, worktree, base_commit_sha, false).await
-}
-
-pub(crate) async fn container_git_diff_name_status_no_renames(
-    state: &Arc<AppState>,
-    worktree: &Worktree,
-    base_commit_sha: &str,
-) -> Result<Vec<(String, String, Option<String>)>> {
-    container_git_diff_name_status_inner(state, worktree, base_commit_sha, true).await
-}
-
-async fn container_git_diff_name_status_inner(
-    state: &Arc<AppState>,
-    worktree: &Worktree,
-    base_commit_sha: &str,
-    no_renames: bool,
-) -> Result<Vec<(String, String, Option<String>)>> {
-    let bytes = container_git_stdout(
-        state,
-        worktree,
-        WorktreeVcsGitCommand::DiffNameStatus {
-            base_commit_sha: base_commit_sha.to_string(),
-            no_renames,
-        },
-    )
-    .await?;
-    Ok(parse_git_diff_name_status(&bytes))
 }
