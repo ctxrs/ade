@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
@@ -32,6 +33,16 @@ pub(super) struct TurnAdmissionRequest<'a> {
     pub(super) execution_environment: ExecutionEnvironment,
     pub(super) network_profile: NetworkProfile,
     pub(super) route_type: RouteType,
+}
+
+pub(super) struct RuntimeTurnAdmissionRequest<'a> {
+    pub(super) session: &'a Session,
+    pub(super) run_id: RunId,
+    pub(super) provider_id: &'a str,
+    pub(super) model_id: &'a str,
+    pub(super) execution_environment: ExecutionEnvironment,
+    pub(super) container_network_mode: ContainerNetworkMode,
+    pub(super) source_kind: HarnessSourceKind,
 }
 
 #[derive(Clone, Debug)]
@@ -364,6 +375,49 @@ pub(super) async fn admit_turn(
         .await?;
 
     Ok(TurnAdmission::OrgManaged { run_grant })
+}
+
+pub(super) async fn admit_runtime_turn(
+    state: &Arc<AppState>,
+    store: &Store,
+    request: RuntimeTurnAdmissionRequest<'_>,
+) -> Result<TurnAdmission> {
+    let route_type = route_type_for_source(AdmissionRouteSource::from(request.source_kind));
+    let network_profile = if matches!(request.execution_environment, ExecutionEnvironment::Sandbox)
+    {
+        network_profile_for_container_mode(request.container_network_mode)
+    } else {
+        NetworkProfile::All
+    };
+
+    admit_turn(
+        state,
+        store,
+        TurnAdmissionRequest {
+            session: request.session,
+            run_id: request.run_id,
+            provider_id: request.provider_id,
+            model_id: request.model_id,
+            execution_environment: request.execution_environment,
+            network_profile,
+            route_type,
+        },
+    )
+    .await
+}
+
+pub(super) fn apply_turn_admission_env(
+    provider_env: &mut HashMap<String, String>,
+    admission: &TurnAdmission,
+) {
+    if let TurnAdmission::OrgManaged { run_grant } = admission {
+        provider_env.insert("CTX_RUN_GRANT_ID".to_string(), run_grant.id.0.to_string());
+        provider_env.insert("CTX_ORG_ID".to_string(), run_grant.org_id.0.to_string());
+        provider_env.insert(
+            "CTX_POLICY_VERSION".to_string(),
+            run_grant.policy_version.clone(),
+        );
+    }
 }
 
 pub(super) async fn update_run_terminal_status(

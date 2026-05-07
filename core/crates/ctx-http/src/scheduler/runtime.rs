@@ -10,8 +10,7 @@ use tokio::time::Instant as TokioInstant;
 
 use ctx_core::ids::{RunId, TurnId};
 use ctx_core::models::{
-    ExecutionEnvironment, MessageDelivery, MessageRole, NetworkProfile, Session, SessionEventType,
-    SessionTurnStatus,
+    MessageDelivery, MessageRole, Session, SessionEventType, SessionTurnStatus,
 };
 use ctx_providers::adapters::TurnInput;
 use ctx_providers::events::NormalizedEvent;
@@ -63,8 +62,7 @@ use self::turn_start::{
 use super::lifecycle::{RunningTurn, TurnStartProgress};
 use super::persistence::append_session_event_with_retry;
 use super::policy_admission::{
-    admit_turn, network_profile_for_container_mode, route_type_for_source, AdmissionRouteSource,
-    TurnAdmission, TurnAdmissionRequest,
+    admit_runtime_turn, apply_turn_admission_env, RuntimeTurnAdmissionRequest,
 };
 use super::QueuedMessage;
 
@@ -250,23 +248,17 @@ pub(crate) async fn start_turn(
     let runtime_source_mode = source_env.runtime_source_mode;
     let using_endpoint_source = source_env.using_endpoint_source;
 
-    let route_type = route_type_for_source(AdmissionRouteSource::from(resolved_source.source_kind));
-    let network_profile = if matches!(execution_environment, ExecutionEnvironment::Sandbox) {
-        network_profile_for_container_mode(execution_settings.container.network_mode.clone())
-    } else {
-        NetworkProfile::All
-    };
-    let admission = match admit_turn(
+    let admission = match admit_runtime_turn(
         state,
         &store,
-        TurnAdmissionRequest {
+        RuntimeTurnAdmissionRequest {
             session,
             run_id,
             provider_id: &session.provider_id,
             model_id: &full_model_id,
             execution_environment,
-            network_profile,
-            route_type,
+            container_network_mode: execution_settings.container.network_mode.clone(),
+            source_kind: resolved_source.source_kind,
         },
     )
     .await
@@ -277,14 +269,7 @@ pub(crate) async fn start_turn(
             return Err(err);
         }
     };
-    if let TurnAdmission::OrgManaged { run_grant } = &admission {
-        provider_env.insert("CTX_RUN_GRANT_ID".to_string(), run_grant.id.0.to_string());
-        provider_env.insert("CTX_ORG_ID".to_string(), run_grant.org_id.0.to_string());
-        provider_env.insert(
-            "CTX_POLICY_VERSION".to_string(),
-            run_grant.policy_version.clone(),
-        );
-    }
+    apply_turn_admission_env(&mut provider_env, &admission);
 
     let runtime_provider_id =
         runtime_provider_id_for_session_provider(&session.provider_id, &resolved_source);
