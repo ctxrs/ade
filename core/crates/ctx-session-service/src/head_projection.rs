@@ -1,15 +1,10 @@
-use std::sync::Arc;
-
-use ctx_core::ids::SessionId;
 use ctx_core::models::{
     Message, MessageAttachment, MessageDelivery, MessageRole, Session, SessionActivityState,
     SessionEvent, SessionEventType, SessionSummaryDelta, SessionTurn, SessionTurnStatus,
     SessionTurnToolSummary,
 };
 
-use crate::daemon::state::AppState;
-
-pub(super) fn message_from_event(event: &SessionEvent, session: &Session) -> Option<Message> {
+pub fn message_from_event(event: &SessionEvent, session: &Session) -> Option<Message> {
     let message_id = event
         .payload_json
         .get("message_id")
@@ -65,7 +60,7 @@ pub(super) fn message_from_event(event: &SessionEvent, session: &Session) -> Opt
     })
 }
 
-pub(super) fn derive_message_preview(content: &str) -> String {
+pub fn derive_message_preview(content: &str) -> String {
     let trimmed = content.trim();
     let line = trimmed.lines().next().unwrap_or("").trim();
     if line.is_empty() {
@@ -79,11 +74,11 @@ pub(super) fn derive_message_preview(content: &str) -> String {
     out
 }
 
-pub(super) fn event_context_window(event: &SessionEvent) -> Option<serde_json::Value> {
+pub fn event_context_window(event: &SessionEvent) -> Option<serde_json::Value> {
     event.payload_json.get("context_window").cloned()
 }
 
-pub(super) fn is_session_gap_notice(event: &SessionEvent) -> bool {
+pub fn is_session_gap_notice(event: &SessionEvent) -> bool {
     matches!(event.event_type, SessionEventType::Notice)
         && event
             .payload_json
@@ -100,7 +95,7 @@ fn turn_status_from_finished_event(event: &SessionEvent) -> SessionTurnStatus {
         .unwrap_or(SessionTurnStatus::Completed)
 }
 
-pub(super) fn patch_turn_from_event(turn: &mut SessionTurn, event: &SessionEvent) {
+pub fn patch_turn_from_event(turn: &mut SessionTurn, event: &SessionEvent) {
     match event.event_type {
         SessionEventType::TurnQueued => {
             turn.status = SessionTurnStatus::Queued;
@@ -120,7 +115,7 @@ pub(super) fn patch_turn_from_event(turn: &mut SessionTurn, event: &SessionEvent
     turn.updated_at = event.created_at;
 }
 
-pub(super) fn derive_summary_activity(event: &SessionEvent) -> Option<SessionActivityState> {
+pub fn derive_summary_activity(event: &SessionEvent) -> Option<SessionActivityState> {
     match event.event_type {
         SessionEventType::TurnQueued => Some(SessionActivityState {
             is_working: false,
@@ -138,7 +133,7 @@ pub(super) fn derive_summary_activity(event: &SessionEvent) -> Option<SessionAct
     }
 }
 
-pub(super) fn activity_from_turn(turn: &SessionTurn) -> SessionActivityState {
+pub fn activity_from_turn(turn: &SessionTurn) -> SessionActivityState {
     match turn.status {
         SessionTurnStatus::Queued => SessionActivityState {
             is_working: false,
@@ -167,14 +162,14 @@ pub(super) fn activity_from_turn(turn: &SessionTurn) -> SessionActivityState {
     }
 }
 
-pub(super) fn should_include_session_metadata_in_head_delta(event_type: &SessionEventType) -> bool {
+pub fn should_include_session_metadata_in_head_delta(event_type: &SessionEventType) -> bool {
     matches!(
         event_type,
         SessionEventType::Init | SessionEventType::Notice
     )
 }
 
-pub(super) fn recompute_turn_tool_counts(
+pub fn recompute_turn_tool_counts(
     turn: &mut SessionTurn,
     tool_summaries: &[SessionTurnToolSummary],
 ) {
@@ -204,7 +199,7 @@ pub(super) fn recompute_turn_tool_counts(
     turn.tool_failed = failed;
 }
 
-pub(super) fn build_session_summary_delta(
+pub fn build_session_summary_delta(
     session: &Session,
     activity: Option<SessionActivityState>,
     last_message_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -230,7 +225,7 @@ pub(super) fn build_session_summary_delta(
     })
 }
 
-pub(super) async fn resolve_projection_rev_for_stream_delta<F, Fut>(
+pub async fn resolve_projection_rev_for_stream_delta<F, Fut>(
     stream_only: bool,
     last_event_seq: i64,
     cached_projection_rev: i64,
@@ -246,10 +241,7 @@ where
     load_projection_rev().await.unwrap_or(last_event_seq.max(0))
 }
 
-pub(super) fn turn_from_event(
-    event: &SessionEvent,
-    message: Option<&Message>,
-) -> Option<SessionTurn> {
+pub fn turn_from_event(event: &SessionEvent, message: Option<&Message>) -> Option<SessionTurn> {
     if !matches!(event.event_type, SessionEventType::UserMessage) {
         return None;
     }
@@ -283,7 +275,7 @@ pub(super) fn turn_from_event(
     })
 }
 
-pub(super) fn should_refresh_turn_from_store(event_type: &SessionEventType) -> bool {
+pub fn should_refresh_turn_from_store(event_type: &SessionEventType) -> bool {
     matches!(
         event_type,
         SessionEventType::TurnQueued
@@ -295,15 +287,207 @@ pub(super) fn should_refresh_turn_from_store(event_type: &SessionEventType) -> b
     )
 }
 
-pub(super) async fn turn_from_cached_head_for_read(
-    state: &Arc<AppState>,
-    session_id: SessionId,
-    turn_id: ctx_core::ids::TurnId,
-) -> Option<SessionTurn> {
-    state
-        .workspaces
-        .workspace_active_snapshot
-        .get_cached_session_head_for_read(session_id)
-        .await
-        .and_then(|head| head.turns.into_iter().find(|turn| turn.turn_id == turn_id))
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use ctx_core::ids::{SessionEventId, SessionId, TaskId, WorkspaceId, WorktreeId};
+    use ctx_core::models::{
+        ExecutionEnvironment, SessionEventType, SessionStatus, SessionTurnStatus,
+    };
+    use serde_json::json;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    fn test_session() -> Session {
+        Session {
+            id: SessionId::new(),
+            task_id: TaskId::new(),
+            workspace_id: WorkspaceId::new(),
+            worktree_id: WorktreeId::new(),
+            execution_environment: ExecutionEnvironment::Host,
+            parent_session_id: None,
+            relationship: None,
+            provider_id: "fake".to_string(),
+            model_id: "fake-model".to_string(),
+            reasoning_effort: None,
+            title: String::new(),
+            agent_role: "assistant".to_string(),
+            status: SessionStatus::Active,
+            provider_session_ref: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    fn test_event(event_type: SessionEventType, payload_json: serde_json::Value) -> SessionEvent {
+        SessionEvent {
+            seq: 1,
+            id: SessionEventId::new(),
+            session_id: SessionId::new(),
+            run_id: None,
+            turn_id: None,
+            event_type,
+            payload_json,
+            transient: false,
+            created_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn queued_turns_do_not_publish_working_activity() {
+        let queued = derive_summary_activity(&test_event(SessionEventType::TurnQueued, json!({})))
+            .expect("queued turns should publish summary activity");
+        assert!(!queued.is_working);
+        assert_eq!(queued.last_turn_status, Some(SessionTurnStatus::Queued));
+
+        let running =
+            derive_summary_activity(&test_event(SessionEventType::TurnStarted, json!({})))
+                .expect("running turns should publish summary activity");
+        assert!(running.is_working);
+        assert_eq!(running.last_turn_status, Some(SessionTurnStatus::Running));
+    }
+
+    #[test]
+    fn turn_finished_summary_activity_uses_embedded_status() {
+        let interrupted = derive_summary_activity(&test_event(
+            SessionEventType::TurnFinished,
+            json!({"status": "interrupted"}),
+        ))
+        .expect("interrupt finish should publish summary activity");
+        assert_eq!(
+            interrupted.last_turn_status,
+            Some(SessionTurnStatus::Interrupted)
+        );
+
+        let failed = derive_summary_activity(&test_event(
+            SessionEventType::TurnFinished,
+            json!({"status": "failed"}),
+        ))
+        .expect("failed finish should publish summary activity");
+        assert_eq!(failed.last_turn_status, Some(SessionTurnStatus::Failed));
+    }
+
+    #[test]
+    fn raw_terminal_events_do_not_publish_terminal_summary_activity() {
+        assert!(derive_summary_activity(&test_event(SessionEventType::Done, json!({}))).is_none());
+        assert!(derive_summary_activity(&test_event(SessionEventType::Error, json!({}))).is_none());
+        assert!(
+            derive_summary_activity(&test_event(SessionEventType::TurnInterrupted, json!({})))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn emitted_session_summary_deltas_always_include_monotonic_versions() {
+        let session = test_session();
+        let now = Utc::now();
+
+        let message_delta = build_session_summary_delta(
+            &session,
+            None,
+            Some(now),
+            Some("preview".to_string()),
+            22,
+            22,
+            22,
+        )
+        .expect("message preview should emit a summary delta");
+        assert_eq!(message_delta.last_event_seq, Some(22));
+        assert_eq!(message_delta.projection_rev, Some(22));
+        assert_eq!(message_delta.state_rev, Some(22));
+    }
+
+    #[test]
+    fn empty_session_summary_delta_is_not_emitted() {
+        let session = test_session();
+        assert!(
+            build_session_summary_delta(&session, None, None, None, 5, 5, 5).is_none(),
+            "empty updates should not publish summary deltas"
+        );
+    }
+
+    #[test]
+    fn activity_only_session_summary_delta_is_emitted() {
+        let session = test_session();
+        let delta = build_session_summary_delta(
+            &session,
+            Some(SessionActivityState {
+                is_working: true,
+                last_turn_status: Some(SessionTurnStatus::Running),
+            }),
+            None,
+            None,
+            5,
+            5,
+            5,
+        )
+        .expect("activity updates should emit a summary delta");
+        assert!(delta.activity.expect("activity delta").is_working);
+        assert_eq!(delta.last_event_seq, Some(5));
+    }
+
+    #[tokio::test]
+    async fn stream_only_projection_rev_skips_lookup() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_for_lookup = Arc::clone(&calls);
+        let projection_rev =
+            resolve_projection_rev_for_stream_delta(true, 41, 23, move || async move {
+                calls_for_lookup.fetch_add(1, Ordering::SeqCst);
+                Some(99)
+            })
+            .await;
+
+        assert_eq!(projection_rev, 23);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn non_stream_only_projection_rev_uses_lookup_when_available() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_for_lookup = Arc::clone(&calls);
+        let projection_rev =
+            resolve_projection_rev_for_stream_delta(false, 17, 7, move || async move {
+                calls_for_lookup.fetch_add(1, Ordering::SeqCst);
+                Some(23)
+            })
+            .await;
+
+        assert_eq!(projection_rev, 23);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn detects_session_gap_notice() {
+        let event = test_event(
+            SessionEventType::Notice,
+            json!({
+                "kind": "session_gap",
+                "reason": "data_plane_overflow",
+            }),
+        );
+        assert!(is_session_gap_notice(&event));
+    }
+
+    #[test]
+    fn ignores_non_gap_notice() {
+        let event = test_event(
+            SessionEventType::Notice,
+            json!({
+                "kind": "context.compacted",
+            }),
+        );
+        assert!(!is_session_gap_notice(&event));
+    }
+
+    #[test]
+    fn ignores_non_notice_events() {
+        let event = test_event(
+            SessionEventType::ToolResult,
+            json!({
+                "kind": "session_gap",
+            }),
+        );
+        assert!(!is_session_gap_notice(&event));
+    }
 }

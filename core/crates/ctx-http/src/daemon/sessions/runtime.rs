@@ -3,21 +3,20 @@ use std::time::Duration;
 
 use ctx_core::ids::{SessionId, TaskId};
 use ctx_core::models::{
-    SessionEvent, SessionEventType, SessionHeadDelta, SessionTurnToolSummary, TaskDeltaKind,
+    SessionEvent, SessionEventType, SessionHeadDelta, SessionTurn, SessionTurnToolSummary,
+    TaskDeltaKind,
 };
 use ctx_workspace_active_snapshot::session_metadata_from_session;
 
-use ctx_session_service::runtime::ActiveTaskRefreshEntry;
-
-use crate::daemon::state::AppState;
-
-use super::head_projection::{
+use ctx_session_service::head_projection::{
     activity_from_turn, build_session_summary_delta, derive_message_preview,
     derive_summary_activity, event_context_window, is_session_gap_notice, message_from_event,
     patch_turn_from_event, recompute_turn_tool_counts, resolve_projection_rev_for_stream_delta,
-    should_include_session_metadata_in_head_delta, should_refresh_turn_from_store,
-    turn_from_cached_head_for_read, turn_from_event,
+    should_include_session_metadata_in_head_delta, should_refresh_turn_from_store, turn_from_event,
 };
+use ctx_session_service::runtime::ActiveTaskRefreshEntry;
+
+use crate::daemon::state::AppState;
 
 const ACTIVE_TASK_REFRESH_DEBOUNCE_MS: u64 = 250;
 
@@ -346,4 +345,17 @@ pub async fn refresh_session_head_cache(state: &AppState, session_id: SessionId)
         .workspace_active_snapshot
         .update_compact_session_head(head)
         .await;
+}
+
+async fn turn_from_cached_head_for_read(
+    state: &Arc<AppState>,
+    session_id: SessionId,
+    turn_id: ctx_core::ids::TurnId,
+) -> Option<SessionTurn> {
+    state
+        .workspaces
+        .workspace_active_snapshot
+        .get_cached_session_head_for_read(session_id)
+        .await
+        .and_then(|head| head.turns.into_iter().find(|turn| turn.turn_id == turn_id))
 }

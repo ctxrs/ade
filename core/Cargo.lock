@@ -1482,6 +1482,7 @@ dependencies = [
 name = "ctx-session-service"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "ctx-core",
  "ctx-provider-runtime",
  "ctx-providers",
@@ -1490,6 +1491,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
