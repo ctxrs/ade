@@ -42,18 +42,20 @@ mod installs;
 mod metrics;
 mod types;
 
-pub use ctx_workspace_services::worktree_vcs::WorktreeVcsSnapshotCacheEntry;
 pub(crate) use ctx_workspace_services::worktree_vcs::{
     worktree_vcs_enabled_from_env, worktree_vcs_scheduler_concurrency_from_env,
     WorktreeVcsDirtyBits,
+};
+pub use ctx_workspace_services::worktree_vcs::{
+    GitStatusSnapshotCacheEntry, WorktreeVcsSnapshotCacheEntry,
 };
 
 pub use ctx_workspace_services::worktree_vcs::WorktreeVcsSchedulerRuntime;
 pub use types::{
     AppRuntimeFlags, AppState, CacheSweepConfig, CacheSweepStats, CoreState, ExecutionRuntime,
-    GitStatusSnapshotCacheEntry, ProviderRuntime, SessionHeadCacheKey, SessionRuntime, StoreLookup,
-    TelemetryRuntime, TimedEntry, TransportRuntime, WorkspaceActiveHeadCacheEntry,
-    WorkspaceActiveSnapshotCacheEntry, WorkspaceRuntime,
+    ProviderRuntime, SessionHeadCacheKey, SessionRuntime, StoreLookup, TelemetryRuntime,
+    TimedEntry, TransportRuntime, WorkspaceActiveHeadCacheEntry, WorkspaceActiveSnapshotCacheEntry,
+    WorkspaceRuntime,
 };
 pub(crate) use types::{AttachmentMaterializationTask, WorktreeBootstrapGate};
 

@@ -4,7 +4,9 @@ use ctx_execution_runtime::ExecutionSetupCoordinator;
 use ctx_provider_runtime::{CachedProviderOptions, CachedProviderVerify};
 use ctx_update_service::UpdateDrainCoordinator;
 use ctx_workspace_services::file_completions::CachedFileCompletions;
-use ctx_workspace_services::worktree_vcs::{WorktreeVcsRuntimeState, WorktreeVcsSchedulerRuntime};
+use ctx_workspace_services::worktree_vcs::{
+    GitStatusSnapshotCacheEntry, WorktreeVcsRuntimeState, WorktreeVcsSchedulerRuntime,
+};
 
 pub struct CoreState {
     pub data_root: PathBuf,
@@ -122,12 +124,6 @@ pub(crate) struct WorktreeBootstrapGate {
 pub(crate) struct AttachmentMaterializationTask {
     pub(crate) generation: u64,
     pub(crate) handle: JoinHandle<()>,
-}
-
-pub struct GitStatusSnapshotCacheEntry {
-    pub payload: String,
-    pub emitted_at: Instant,
-    pub last_change_at: Instant,
 }
 
 #[derive(Clone, Debug)]

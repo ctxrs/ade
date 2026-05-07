@@ -17,8 +17,8 @@ use serde::Serialize;
 pub use cache::{
     hydrated_worktree_vcs_snapshot_cache_entry, pending_worktree_vcs_snapshot_cache_entry,
     publish_worktree_vcs_snapshot_cache_entry, published_worktree_vcs_snapshot_cache_entry,
-    WorktreeVcsSnapshotCacheEntry, WorktreeVcsSnapshotPublishPolicy, WORKTREE_VCS_DEBOUNCE_MS,
-    WORKTREE_VCS_MAX_INTERVAL_MS,
+    GitStatusSnapshotCacheEntry, WorktreeVcsSnapshotCacheEntry, WorktreeVcsSnapshotPublishPolicy,
+    WORKTREE_VCS_DEBOUNCE_MS, WORKTREE_VCS_MAX_INTERVAL_MS,
 };
 pub use diff_output::{
     parse_worktree_vcs_diff_summary_counts, WorktreeVcsDiffSummaryCounts,

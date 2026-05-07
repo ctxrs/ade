@@ -30,6 +30,12 @@ pub struct WorktreeVcsSnapshotCacheEntry {
     pub last_summary_at: Option<Instant>,
 }
 
+pub struct GitStatusSnapshotCacheEntry {
+    pub payload: String,
+    pub emitted_at: Instant,
+    pub last_change_at: Instant,
+}
+
 pub fn published_worktree_vcs_snapshot_cache_entry(
     snapshot: WorktreeVcsSnapshot,
     now: Instant,
