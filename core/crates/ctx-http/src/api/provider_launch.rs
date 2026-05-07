@@ -38,7 +38,6 @@ use ctx_provider_runtime::provider_auth::{
 };
 use ctx_provider_runtime::provider_launch::models::{
     endpoint_catalog_runtime_probe_failure, endpoint_catalog_verify_outcome,
-    endpoint_models_payload, subscription_models_payload_from_status,
 };
 use ctx_provider_runtime::provider_launch::options::{
     endpoint_supports_model_catalog_verify, provider_options_cache_entry_is_authoritative,
