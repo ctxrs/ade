@@ -98,6 +98,50 @@ pub fn endpoint_models_payload(
     })
 }
 
+pub fn supplement_models_payload_with_endpoint_metadata(
+    models: &mut Value,
+    provider_id: &str,
+    endpoint: &HarnessEndpointRecord,
+    now: DateTime<Utc>,
+) {
+    let endpoint_payload = endpoint_models_payload(provider_id, endpoint, now);
+    let Some(models_obj) = models.as_object_mut() else {
+        *models = endpoint_payload;
+        return;
+    };
+
+    let missing_current_model = models_obj
+        .get("current_model_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .map(str::is_empty)
+        .unwrap_or(true);
+    if missing_current_model {
+        if let Some(current_model_id) = endpoint_payload
+            .get("current_model_id")
+            .cloned()
+            .filter(|value| !value.is_null())
+        {
+            models_obj.insert("current_model_id".to_string(), current_model_id);
+        }
+    }
+
+    let endpoint_meta = endpoint_payload.get("meta").cloned().unwrap_or(Value::Null);
+    match models_obj.get_mut("meta") {
+        Some(Value::Object(meta_obj)) => {
+            meta_obj.insert("endpoint".to_string(), endpoint_meta);
+        }
+        _ => {
+            models_obj.insert(
+                "meta".to_string(),
+                serde_json::json!({
+                    "endpoint": endpoint_meta,
+                }),
+            );
+        }
+    }
+}
+
 pub fn endpoint_catalog_runtime_probe_failure(
     message: String,
     endpoint_status: HarnessEndpointVerificationStatus,
@@ -165,7 +209,7 @@ mod tests {
 
     use super::{
         endpoint_catalog_runtime_probe_failure, endpoint_catalog_verify_outcome,
-        endpoint_models_payload,
+        endpoint_models_payload, supplement_models_payload_with_endpoint_metadata,
     };
 
     fn test_endpoint(id: &str) -> HarnessEndpointRecord {
@@ -285,6 +329,106 @@ mod tests {
         assert_eq!(
             models[1].get("id").and_then(serde_json::Value::as_str),
             Some("custom/manual-model")
+        );
+    }
+
+    #[test]
+    fn supplement_models_payload_preserves_live_probe_catalog() {
+        let mut endpoint = test_endpoint("ep-1");
+        endpoint.name = "OpenRouter".to_string();
+        endpoint.base_url = Some("https://openrouter.ai/api/v1".to_string());
+        endpoint.model_override = Some("openai/gpt-5.2".to_string());
+        endpoint.model_catalog_status = EndpointModelCatalogStatus::Ready;
+        endpoint.model_catalog_fetched_at = Some(Utc::now());
+        endpoint.model_catalog_models = vec![EndpointModelRecord {
+            id: "openai/gpt-5.2".to_string(),
+            name: Some("GPT-5.2".to_string()),
+        }];
+        endpoint.manual_model_ids = vec!["manual/fallback".to_string()];
+        endpoint.model_catalog_source = Some("mixed".to_string());
+        let now = Utc::now();
+        let mut models = serde_json::json!({
+            "models": [
+                { "id": "openai/gpt-5.4", "name": "GPT-5.4" },
+                { "id": "openai/o3", "name": "o3" }
+            ],
+            "current_model_id": "openai/gpt-5.4",
+            "meta": {
+                "source_kind": "subscription",
+                "catalog_source": "runtime_probe_live",
+                "refresh_pending": false,
+            },
+        });
+
+        supplement_models_payload_with_endpoint_metadata(&mut models, "codex", &endpoint, now);
+
+        let model_ids = models
+            .get("models")
+            .and_then(serde_json::Value::as_array)
+            .expect("models array")
+            .iter()
+            .filter_map(|entry| entry.get("id").and_then(serde_json::Value::as_str))
+            .collect::<Vec<_>>();
+        assert_eq!(model_ids, vec!["openai/gpt-5.4", "openai/o3"]);
+        assert_eq!(
+            models
+                .get("current_model_id")
+                .and_then(serde_json::Value::as_str),
+            Some("openai/gpt-5.4")
+        );
+        assert_eq!(
+            models
+                .pointer("/meta/source_kind")
+                .and_then(serde_json::Value::as_str),
+            Some("subscription")
+        );
+        assert_eq!(
+            models
+                .pointer("/meta/endpoint/catalog_status")
+                .and_then(serde_json::Value::as_str),
+            Some("ready")
+        );
+        assert_eq!(
+            models
+                .pointer("/meta/endpoint/catalog_source")
+                .and_then(serde_json::Value::as_str),
+            Some("mixed")
+        );
+    }
+
+    #[test]
+    fn supplement_models_payload_uses_endpoint_current_model_when_probe_has_none() {
+        let mut endpoint = test_endpoint("ep-1");
+        endpoint.name = "OpenRouter".to_string();
+        endpoint.base_url = Some("https://openrouter.ai/api/v1".to_string());
+        endpoint.model_override = Some("openai/gpt-5.2".to_string());
+        endpoint.model_catalog_status = EndpointModelCatalogStatus::Ready;
+        endpoint.model_catalog_fetched_at = Some(Utc::now());
+        endpoint.model_catalog_models = vec![EndpointModelRecord {
+            id: "openai/gpt-5.2".to_string(),
+            name: Some("GPT-5.2".to_string()),
+        }];
+        endpoint.manual_model_ids = vec!["manual/fallback".to_string()];
+        endpoint.model_catalog_source = Some("mixed".to_string());
+        let now = Utc::now();
+        let mut models = serde_json::json!({
+            "models": [
+                { "id": "openai/gpt-5.4", "name": "GPT-5.4" }
+            ],
+            "meta": {
+                "source_kind": "subscription",
+                "catalog_source": "runtime_probe_live",
+                "refresh_pending": false,
+            },
+        });
+
+        supplement_models_payload_with_endpoint_metadata(&mut models, "codex", &endpoint, now);
+
+        assert_eq!(
+            models
+                .get("current_model_id")
+                .and_then(serde_json::Value::as_str),
+            Some("openai/gpt-5.2")
         );
     }
 

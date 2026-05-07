@@ -40,6 +40,7 @@ use ctx_harness_sources::{HarnessEndpointVerificationStatus, HarnessSourceKind};
 use ctx_provider_install::install_state::{
     InstallId, InstallInfo, InstallProgressEvent, InstallTarget,
 };
+use ctx_provider_runtime::model_preferences::inject_preferred_model_id;
 use ctx_provider_runtime::provider_auth::{
     selected_endpoint_from_harness_config, selected_endpoint_record_from_harness_config,
 };

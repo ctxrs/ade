@@ -17,6 +17,22 @@ pub fn preferred_model_id_from_available_models(
     }
 }
 
+pub fn inject_preferred_model_id(value: &mut Value, preferred_model_id: Option<String>) {
+    let resolved =
+        preferred_model_id_from_available_models(preferred_model_id, value.get("models"));
+    let Some(obj) = value.as_object_mut() else {
+        return;
+    };
+    if let Some(preferred_model_id) = resolved {
+        obj.insert(
+            "preferred_model_id".to_string(),
+            serde_json::json!(preferred_model_id),
+        );
+    } else {
+        obj.remove("preferred_model_id");
+    }
+}
+
 fn model_payload_contains_id(models: &Value, target_id: &str) -> bool {
     let target_id = target_id.trim();
     if target_id.is_empty() {
@@ -64,7 +80,7 @@ fn extract_model_entries(models: &Value) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::preferred_model_id_from_available_models;
+    use super::{inject_preferred_model_id, preferred_model_id_from_available_models};
 
     #[test]
     fn omits_preference_when_catalog_does_not_contain_it() {
@@ -116,6 +132,42 @@ mod tests {
                 Some(&models),
             ),
             Some("gpt-5.4/xhigh".to_string())
+        );
+    }
+
+    #[test]
+    fn inject_preferred_model_id_removes_unavailable_preference() {
+        let mut value = serde_json::json!({
+            "preferred_model_id": "stale",
+            "models": {
+                "models": [
+                    {"id": "gpt-5.4/medium"}
+                ]
+            }
+        });
+
+        inject_preferred_model_id(&mut value, Some("gpt-5.4/xhigh".to_string()));
+
+        assert!(value.get("preferred_model_id").is_none());
+    }
+
+    #[test]
+    fn inject_preferred_model_id_keeps_available_preference() {
+        let mut value = serde_json::json!({
+            "models": {
+                "models": [
+                    {"id": "gpt-5.4/xhigh"}
+                ]
+            }
+        });
+
+        inject_preferred_model_id(&mut value, Some(" gpt-5.4/xhigh ".to_string()));
+
+        assert_eq!(
+            value
+                .get("preferred_model_id")
+                .and_then(serde_json::Value::as_str),
+            Some("gpt-5.4/xhigh")
         );
     }
 }
