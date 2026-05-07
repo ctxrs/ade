@@ -1,9 +1,22 @@
-use super::*;
+use std::io::SeekFrom;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use axum::body::Body;
+use axum::extract::{Path, State};
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
+use axum::response::Response;
+use ctx_core::ids::{ArtifactId, SessionId};
 use ctx_session_tools::{
     build_session_artifact_etag, build_session_artifact_last_modified,
     parse_session_artifact_range_header, session_artifact_if_none_match_matches,
     session_artifact_if_range_allows_range_request, SessionArtifactRange,
 };
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use tokio_util::io::ReaderStream;
+
+use super::{open_canonical_session_artifact_file, resolve_session_artifact_accessible_path};
+use crate::daemon::AppState;
 
 fn apply_session_artifact_response_headers(headers: &mut HeaderMap) {
     headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));

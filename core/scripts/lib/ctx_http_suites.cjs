@@ -788,6 +788,7 @@ const CTX_HTTP_SUITES = [
     ],
     sourceGlobs: [
       "crates/ctx-http/src/api/artifacts.rs",
+      "crates/ctx-http/src/api/artifacts/**",
       "crates/ctx-http/src/api/demo.rs",
       "crates/ctx-http/src/daemon/workspaces/attachments.rs",
       "crates/ctx-http/src/storage_guard.rs",
