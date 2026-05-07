@@ -35,7 +35,17 @@ pub(crate) struct SeedTranscriptReq {
     pub(crate) session_title: Option<String>,
     #[serde(default)]
     pub(crate) task_title: Option<String>,
+    #[serde(default)]
+    pub(crate) append: bool,
+    #[serde(default = "default_seed_transcript_refresh")]
+    pub(crate) refresh: bool,
+    #[serde(default)]
+    pub(crate) materialize_tail_turns: Option<usize>,
     pub(crate) turns: Vec<SeedTranscriptTurnReq>,
+}
+
+fn default_seed_transcript_refresh() -> bool {
+    true
 }
 
 #[derive(Debug, Serialize)]
@@ -104,18 +114,19 @@ pub(crate) async fn dev_seed_session_transcript(
             }),
         ))?;
 
-    if !store
-        .list_messages_for_session(session_id)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to inspect session messages".to_string(),
-                }),
-            )
-        })?
-        .is_empty()
+    if !req.append
+        && !store
+            .list_messages_for_session(session_id)
+            .await
+            .map_err(|_| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: "failed to inspect session messages".to_string(),
+                    }),
+                )
+            })?
+            .is_empty()
     {
         return Err((
             StatusCode::CONFLICT,
@@ -186,7 +197,14 @@ pub(crate) async fn dev_seed_session_transcript(
     let mut seeded_events = 0usize;
     let base_time = Utc::now() - Duration::minutes(req.turns.len() as i64);
 
+    let materialize_from_index = req
+        .materialize_tail_turns
+        .map(|tail| req.turns.len().saturating_sub(tail));
+
     for (index, turn) in req.turns.iter().enumerate() {
+        let materialize_turn = materialize_from_index
+            .map(|from_index| index >= from_index)
+            .unwrap_or(true);
         let run_id = RunId::new();
         let turn_id = TurnId::new();
         let user_message_id = MessageId::new();
@@ -225,18 +243,20 @@ pub(crate) async fn dev_seed_session_transcript(
             created_at: assistant_created_at,
         };
 
-        store
-            .insert_message(user_message.clone())
-            .await
-            .map_err(|_| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: "failed to insert user message".to_string(),
-                    }),
-                )
-            })?;
-        seeded_messages += 1;
+        if materialize_turn {
+            store
+                .insert_message(user_message.clone())
+                .await
+                .map_err(|_| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ApiErrorResp {
+                            error: "failed to insert user message".to_string(),
+                        }),
+                    )
+                })?;
+            seeded_messages += 1;
+        }
 
         let user_event = store
             .append_session_event(
@@ -284,18 +304,20 @@ pub(crate) async fn dev_seed_session_transcript(
             })?;
         seeded_events += 1;
 
-        store
-            .insert_message(assistant_message.clone())
-            .await
-            .map_err(|_| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: "failed to insert assistant message".to_string(),
-                    }),
-                )
-            })?;
-        seeded_messages += 1;
+        if materialize_turn {
+            store
+                .insert_message(assistant_message.clone())
+                .await
+                .map_err(|_| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ApiErrorResp {
+                            error: "failed to insert assistant message".to_string(),
+                        }),
+                    )
+                })?;
+            seeded_messages += 1;
+        }
 
         store
             .append_session_event(
@@ -374,41 +396,45 @@ pub(crate) async fn dev_seed_session_transcript(
             })?;
         seeded_events += 1;
 
-        store
-            .insert_session_turn(SessionTurn {
-                turn_id,
-                session_id,
-                run_id: Some(run_id),
-                user_message_id: Some(user_message_id),
-                status: SessionTurnStatus::Completed,
-                start_seq: Some(user_event.seq),
-                end_seq: Some(done_event.seq),
-                started_at: user_created_at,
-                updated_at: assistant_created_at,
-                assistant_partial: None,
-                thought_partial: None,
-                metrics_json: turn.context_window.clone(),
-                tool_total: 0,
-                tool_pending: 0,
-                tool_running: 0,
-                tool_completed: 0,
-                tool_failed: 0,
-            })
-            .await
-            .map_err(|_| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: "failed to insert session turn".to_string(),
-                    }),
-                )
-            })?;
+        if materialize_turn {
+            store
+                .insert_session_turn(SessionTurn {
+                    turn_id,
+                    session_id,
+                    run_id: Some(run_id),
+                    user_message_id: Some(user_message_id),
+                    status: SessionTurnStatus::Completed,
+                    start_seq: Some(user_event.seq),
+                    end_seq: Some(done_event.seq),
+                    started_at: user_created_at,
+                    updated_at: assistant_created_at,
+                    assistant_partial: None,
+                    thought_partial: None,
+                    metrics_json: turn.context_window.clone(),
+                    tool_total: 0,
+                    tool_pending: 0,
+                    tool_running: 0,
+                    tool_completed: 0,
+                    tool_failed: 0,
+                })
+                .await
+                .map_err(|_| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ApiErrorResp {
+                            error: "failed to insert session turn".to_string(),
+                        }),
+                    )
+                })?;
+        }
     }
 
-    state.refresh_session_head_cache(session_id).await;
+    if req.refresh {
+        state.refresh_session_head_cache(session_id).await;
 
-    if let Err(err) = state.emit_workspace_task_upsert(session.task_id).await {
-        tracing::warn!(task_id = %session.task_id.0, "workspace active snapshot refresh failed after demo transcript seed: {err:?}");
+        if let Err(err) = state.emit_workspace_task_upsert(session.task_id).await {
+            tracing::warn!(task_id = %session.task_id.0, "workspace active snapshot refresh failed after demo transcript seed: {err:?}");
+        }
     }
 
     Ok(Json(SeedTranscriptResp {

@@ -12,6 +12,8 @@ const FAULT_MODE = process.env.CTX_REMOTE_DAEMON_STREAM_SOAK_FAULT ?? "";
 const REMOTE_MODE =
   process.env.CTX_REMOTE_DAEMON_STREAM_SOAK_REMOTE === "1" ||
   Boolean(process.env.CTX_E2E_BASE_URL && !process.env.CTX_E2E_BASE_URL.includes("127.0.0.1"));
+const SCENARIO = process.env.CTX_REMOTE_DAEMON_STREAM_SOAK_SCENARIO ?? "multi-session";
+const LONG_FOREGROUND_RECOVERY = SCENARIO === "long-foreground-recovery";
 
 const envNumber = (name: string, fallback: number): number => {
   const raw = process.env[name];
@@ -20,18 +22,38 @@ const envNumber = (name: string, fallback: number): number => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
-const TASK_COUNT = envNumber("CTX_REMOTE_DAEMON_STREAM_SOAK_TASKS", 16);
-const TURNS_PER_SESSION = envNumber("CTX_REMOTE_DAEMON_STREAM_SOAK_TURNS", 3);
-const MESSAGE_BYTES = envNumber("CTX_REMOTE_DAEMON_STREAM_SOAK_MESSAGE_BYTES", 1800);
+const TASK_COUNT = envNumber(
+  "CTX_REMOTE_DAEMON_STREAM_SOAK_TASKS",
+  LONG_FOREGROUND_RECOVERY ? 1 : 16,
+);
+const TURNS_PER_SESSION = envNumber(
+  "CTX_REMOTE_DAEMON_STREAM_SOAK_TURNS",
+  LONG_FOREGROUND_RECOVERY ? 13_000 : 3,
+);
+const DIRECT_SEED_BATCH_SIZE = envNumber(
+  "CTX_REMOTE_DAEMON_STREAM_SOAK_DIRECT_SEED_BATCH_SIZE",
+  LONG_FOREGROUND_RECOVERY ? 2000 : Number.MAX_SAFE_INTEGER,
+);
+const DIRECT_SEED_MATERIALIZED_TAIL_TURNS = envNumber(
+  "CTX_REMOTE_DAEMON_STREAM_SOAK_DIRECT_SEED_MATERIALIZED_TAIL_TURNS",
+  LONG_FOREGROUND_RECOVERY ? 200 : Number.MAX_SAFE_INTEGER,
+);
+const MESSAGE_BYTES = envNumber(
+  "CTX_REMOTE_DAEMON_STREAM_SOAK_MESSAGE_BYTES",
+  LONG_FOREGROUND_RECOVERY ? 220 : 1800,
+);
 const STREAMERS = envNumber("CTX_REMOTE_DAEMON_STREAM_SOAK_STREAMERS", 6);
 const STREAM_INTERVAL_MS = envNumber("CTX_REMOTE_DAEMON_STREAM_SOAK_STREAM_INTERVAL_MS", 5);
 const STREAM_TIMEOUT_MS = envNumber("CTX_REMOTE_DAEMON_STREAM_SOAK_STREAM_TIMEOUT_MS", 75_000);
-const MIN_STREAM_EVENTS = envNumber("CTX_REMOTE_DAEMON_STREAM_SOAK_MIN_EVENTS", 2000);
+const MIN_STREAM_EVENTS = envNumber(
+  "CTX_REMOTE_DAEMON_STREAM_SOAK_MIN_EVENTS",
+  LONG_FOREGROUND_RECOVERY ? 20 : 2000,
+);
 const DAEMON_REPO_ROOT =
   process.env.CTX_REMOTE_DAEMON_STREAM_SOAK_REPO_ROOT?.trim() || undefined;
 const MIN_SESSION_HEAD_DELTAS = envNumber(
   "CTX_REMOTE_DAEMON_STREAM_SOAK_MIN_SESSION_HEAD_DELTAS",
-  1000,
+  LONG_FOREGROUND_RECOVERY ? 12 : 1000,
 );
 const PROBE_COUNT = envNumber("CTX_REMOTE_DAEMON_STREAM_SOAK_PROBES", 4);
 const PROBE_TIMEOUT_MS = envNumber("CTX_REMOTE_DAEMON_STREAM_SOAK_PROBE_TIMEOUT_MS", 35_000);
@@ -53,6 +75,10 @@ const MAX_BACKEND_TO_DOM_P95_MS = envNumber(
 const MAX_BACKEND_TO_DOM_MS = envNumber(
   "CTX_REMOTE_DAEMON_STREAM_SOAK_MAX_BACKEND_TO_DOM_MS",
   REMOTE_MODE ? 10_000 : 5000,
+);
+const MAX_SEND_TO_VISIBLE_MS = envNumber(
+  "CTX_REMOTE_DAEMON_STREAM_SOAK_MAX_SEND_TO_VISIBLE_MS",
+  REMOTE_MODE ? 8000 : 5000,
 );
 const MAX_FOREGROUND_CLIENT_RECEIVE_LAG_MS = envNumber(
   "CTX_REMOTE_DAEMON_STREAM_SOAK_MAX_CLIENT_RECEIVE_LAG_MS",
@@ -119,6 +145,9 @@ type MetricRollup = {
 type ProbeOutcome = {
   marker: string;
   turnId: string | null;
+  sentAtMs: number | null;
+  firstVisibleAtMs: number | null;
+  sendToFirstVisibleMs: number | null;
   backendReadyAtMs: number | null;
   domVisibleAtMs: number | null;
   backendToDomMs: number | null;
@@ -172,6 +201,12 @@ type RemoteDaemonLoadWindow = Window & {
     stop: () => VisibleProgressSnapshot;
   };
   __ctxWorkspaceStreamTelemetrySamples?: WorkspaceStreamTelemetrySample[];
+  __ctxE2E?: {
+    workspaceStream?: {
+      getConnectionState?: () => string | null;
+      setDropMessages?: (drop: boolean) => void;
+    };
+  };
 };
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -285,20 +320,33 @@ async function sendSessionMessage(
   request: APIRequestContext,
   sessionId: string,
   content: string,
+  opts?: { retryBusyForMs?: number },
 ): Promise<string> {
-  const response = await request.post(`/api/sessions/${sessionId}/messages`, {
-    data: {
-      content,
-      delivery: "immediate",
-    },
-  });
-  if (!response.ok()) {
+  const deadline = Date.now() + Math.max(0, opts?.retryBusyForMs ?? 0);
+  while (true) {
+    const response = await request.post(`/api/sessions/${sessionId}/messages`, {
+      data: {
+        content,
+        delivery: "immediate",
+      },
+    });
+    if (response.ok()) {
+      const payload = (await response.json()) as { id?: string };
+      return String(payload.id ?? "");
+    }
     const body = await response.text().catch(() => "");
+    const retryableBusy =
+      response.status() === 409 &&
+      body.toLowerCase().includes("turn") &&
+      body.toLowerCase().includes("running") &&
+      Date.now() < deadline;
+    if (retryableBusy) {
+      await sleep(150);
+      continue;
+    }
     const suffix = body.trim() ? `: ${body.trim()}` : "";
     throw new Error(`message send failed: ${response.url()} (${response.status()})${suffix}`);
   }
-  const payload = (await response.json()) as { id?: string };
-  return String(payload.id ?? "");
 }
 
 async function waitForForegroundTurnCompletion(
@@ -368,22 +416,30 @@ async function runForegroundProbe(
   sessionId: string,
   marker: string,
 ): Promise<ProbeOutcome> {
+  let sentAtMs: number | null = null;
   try {
     await sendSessionMessage(
       request,
       sessionId,
       buildSlowPrompt(marker, { bodyLines: 24, toolCount: 2 }),
+      { retryBusyForMs: 5000 },
     );
+    sentAtMs = Date.now();
+    const firstVisiblePromise = waitForVisibleMarker(page, marker, PROBE_TIMEOUT_MS);
     const { backendReadyAtMs, turnId } = await waitForForegroundTurnCompletion(
       request,
       sessionId,
       marker,
       PROBE_TIMEOUT_MS,
     );
+    const firstVisibleAtMs = await firstVisiblePromise;
     const domVisibleAtMs = await waitForVisibleMarker(page, marker, PROBE_TIMEOUT_MS);
     return {
       marker,
       turnId,
+      sentAtMs,
+      firstVisibleAtMs,
+      sendToFirstVisibleMs: firstVisibleAtMs - sentAtMs,
       backendReadyAtMs,
       domVisibleAtMs,
       backendToDomMs: domVisibleAtMs - backendReadyAtMs,
@@ -394,6 +450,9 @@ async function runForegroundProbe(
     return {
       marker,
       turnId: null,
+      sentAtMs,
+      firstVisibleAtMs: null,
+      sendToFirstVisibleMs: null,
       backendReadyAtMs: null,
       domVisibleAtMs: null,
       backendToDomMs: null,
@@ -653,6 +712,64 @@ async function readWorkspaceStreamTelemetrySamples(
   });
 }
 
+async function waitForWorkspaceStreamConnected(page: Page): Promise<void> {
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const win = window as RemoteDaemonLoadWindow;
+        return win.__ctxE2E?.workspaceStream?.getConnectionState?.() ?? null;
+      }),
+    )
+    .toBe("connected");
+}
+
+async function setWorkspaceStreamDrop(page: Page, drop: boolean): Promise<void> {
+  await page.evaluate((nextDrop) => {
+    const win = window as RemoteDaemonLoadWindow;
+    win.__ctxE2E?.workspaceStream?.setDropMessages?.(nextDrop);
+  }, drop);
+}
+
+async function runForcedForegroundGapRecovery(
+  page: Page,
+  request: APIRequestContext,
+  sessionId: string,
+): Promise<{
+  missedMarker: string;
+  triggerProbe: ProbeOutcome;
+  missedBackendReadyAtMs: number;
+  missedVisibleAtMs: number;
+  missedBackendToVisibleMs: number;
+}> {
+  await waitForWorkspaceStreamConnected(page);
+  const missedMarker = `remote-ui-gap-missed-${Date.now()}`;
+  await setWorkspaceStreamDrop(page, true);
+  await sendSessionMessage(
+    request,
+    sessionId,
+    buildSlowPrompt(missedMarker, { bodyLines: 4, toolCount: 0 }),
+    { retryBusyForMs: 5000 },
+  );
+  const missedCompletion = await waitForForegroundTurnCompletion(
+    request,
+    sessionId,
+    missedMarker,
+    PROBE_TIMEOUT_MS,
+  );
+  await setWorkspaceStreamDrop(page, false);
+  const missedVisiblePromise = waitForVisibleMarker(page, missedMarker, PROBE_TIMEOUT_MS);
+  const triggerMarker = `remote-ui-gap-trigger-${Date.now()}`;
+  const triggerProbe = await runForegroundProbe(page, request, sessionId, triggerMarker);
+  const missedVisibleAtMs = await missedVisiblePromise;
+  return {
+    missedMarker,
+    triggerProbe,
+    missedBackendReadyAtMs: missedCompletion.backendReadyAtMs,
+    missedVisibleAtMs,
+    missedBackendToVisibleMs: missedVisibleAtMs - missedCompletion.backendReadyAtMs,
+  };
+}
+
 function summarizeVisibleCadence(snapshot: VisibleProgressSnapshot, activeUntilMs?: number | null): {
   sampleCount: number;
   maxVisibleSilenceMs: number;
@@ -742,9 +859,11 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
     throttleMs: 1,
     messageBytes: MESSAGE_BYTES,
     messagePrefix: "remote stream fixture msg",
-    includeToolSummaries: true,
-    toolSummariesPerTurn: 3,
+    includeToolSummaries: !LONG_FOREGROUND_RECOVERY,
+    toolSummariesPerTurn: LONG_FOREGROUND_RECOVERY ? 0 : 3,
     seedTranscriptDirect: true,
+    directSeedBatchSize: DIRECT_SEED_BATCH_SIZE,
+    directSeedMaterializedTailTurns: DIRECT_SEED_MATERIALIZED_TAIL_TURNS,
   });
 
   const foregroundTaskId = seed.taskIds[0] ?? "";
@@ -754,7 +873,9 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
     .slice(1)
     .map((taskId) => seed.sessionIdsByTask[taskId]?.[0] ?? "")
     .filter((sessionId): sessionId is string => Boolean(sessionId));
-  expect(backgroundSessionIds.length).toBeGreaterThan(0);
+  if (!LONG_FOREGROUND_RECOVERY) {
+    expect(backgroundSessionIds.length).toBeGreaterThan(0);
+  }
 
   let pageCrashed = false;
   page.on("crash", () => {
@@ -785,9 +906,15 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
   });
   await clearDiagnostics(page);
 
-  await startVisibleProgressProbe(page, FAULT_MODE);
+  let visibleProgressProbeStarted = false;
+  if (!LONG_FOREGROUND_RECOVERY) {
+    await startVisibleProgressProbe(page, FAULT_MODE);
+    visibleProgressProbeStarted = true;
+  }
 
-  const writerSessionIds = backgroundSessionIds.slice(0, Math.max(1, Math.min(STREAMERS, backgroundSessionIds.length)));
+  const writerSessionIds = LONG_FOREGROUND_RECOVERY
+    ? []
+    : backgroundSessionIds.slice(0, Math.max(1, Math.min(STREAMERS, backgroundSessionIds.length)));
   const streamers = startBoundedBackgroundWriters(request, writerSessionIds);
 
   const probes: ProbeOutcome[] = [];
@@ -818,7 +945,21 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
     clickToTerminalMs: null as number | null,
   };
 
+  let forcedGapRecovery: Awaited<ReturnType<typeof runForcedForegroundGapRecovery>> | null = null;
   try {
+    if (LONG_FOREGROUND_RECOVERY) {
+      forcedGapRecovery = await runForcedForegroundGapRecovery(
+        page,
+        request,
+        foregroundSessionId,
+      );
+      probes.push(forcedGapRecovery.triggerProbe);
+    }
+    if (!visibleProgressProbeStarted) {
+      await startVisibleProgressProbe(page, FAULT_MODE);
+      visibleProgressProbeStarted = true;
+    }
+
     for (let index = 0; index < PROBE_COUNT; index += 1) {
       const marker = `remote-ui-progress-${index + 1}-${Date.now()}`;
       probes.push(await runForegroundProbe(page, request, foregroundSessionId, marker));
@@ -828,7 +969,9 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
     const interruptMarker = `remote-ui-interrupt-${Date.now()}`;
     interrupt.marker = interruptMarker;
     try {
-      await sendSessionMessage(request, foregroundSessionId, buildSlowPrompt(interruptMarker));
+      await sendSessionMessage(request, foregroundSessionId, buildSlowPrompt(interruptMarker), {
+        retryBusyForMs: 5000,
+      });
       const stopButton = page.getByRole("button", { name: "Stop" });
       await expect(stopButton).toBeVisible({ timeout: 20_000 });
       interrupt.clickAtMs = Date.now();
@@ -881,6 +1024,9 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
   const visibleCadence = summarizeVisibleCadence(visibleSnapshot, interrupt.terminalAtMs);
   const backendToDomMs = probes
     .map((probe) => probe.backendToDomMs)
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  const sendToFirstVisibleMs = probes
+    .map((probe) => probe.sendToFirstVisibleMs)
     .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
   const correctedReceiveLag = summarizeCorrectedReceiveLag(
     streamTelemetrySamples,
@@ -939,6 +1085,8 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
       foregroundSessionId,
       backgroundSessionCount: backgroundSessionIds.length,
       pageCrashed,
+      scenario: SCENARIO,
+      turnsPerSession: TURNS_PER_SESSION,
     },
     budgets: {
       minStreamEvents: MIN_STREAM_EVENTS,
@@ -947,6 +1095,7 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
       maxVisibleSilenceMs: MAX_VISIBLE_SILENCE_MS,
       maxBackendToDomP95Ms: MAX_BACKEND_TO_DOM_P95_MS,
       maxBackendToDomMs: MAX_BACKEND_TO_DOM_MS,
+      maxSendToVisibleMs: MAX_SEND_TO_VISIBLE_MS,
       maxForegroundClientReceiveLagMs: MAX_FOREGROUND_CLIENT_RECEIVE_LAG_MS,
       maxAllClientReceiveLagMs: MAX_ALL_CLIENT_RECEIVE_LAG_MS,
       maxReplicaApplyLagMs: MAX_REPLICA_APPLY_LAG_MS,
@@ -977,7 +1126,12 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
       p50BackendToDomMs: percentile(backendToDomMs, 0.5),
       p95BackendToDomMs: percentile(backendToDomMs, 0.95),
       maxBackendToDomMs: backendToDomMs.length > 0 ? Math.max(...backendToDomMs) : null,
+      sendToFirstVisibleMs,
+      p95SendToFirstVisibleMs: percentile(sendToFirstVisibleMs, 0.95),
+      maxSendToFirstVisibleMs:
+        sendToFirstVisibleMs.length > 0 ? Math.max(...sendToFirstVisibleMs) : null,
     },
+    forcedGapRecovery,
     receiveLag: {
       correctedAll: correctedReceiveLag,
       correctedForeground: correctedForegroundReceiveLag,
@@ -1015,13 +1169,21 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
   expect(visibleCadence.maxVisibleSilenceMs).toBeLessThanOrEqual(MAX_VISIBLE_SILENCE_MS);
   expect(visibleCadence.sampleCount).toBeGreaterThan(0);
   expect(probes.every((probe) => !probe.timedOut)).toBe(true);
-  expect(backendToDomMs.length).toBe(PROBE_COUNT);
+  const expectedProbeCount = PROBE_COUNT + (forcedGapRecovery ? 1 : 0);
+  expect(backendToDomMs.length).toBe(expectedProbeCount);
+  expect(sendToFirstVisibleMs.length).toBe(probes.length);
+  expect(sendToFirstVisibleMs.length > 0 ? Math.max(...sendToFirstVisibleMs) : Infinity).toBeLessThanOrEqual(
+    MAX_SEND_TO_VISIBLE_MS,
+  );
   expect(percentile(backendToDomMs, 0.95) ?? Infinity).toBeLessThanOrEqual(
     MAX_BACKEND_TO_DOM_P95_MS,
   );
   expect(backendToDomMs.length > 0 ? Math.max(...backendToDomMs) : Infinity).toBeLessThanOrEqual(
     MAX_BACKEND_TO_DOM_MS,
   );
+  if (forcedGapRecovery) {
+    expect(forcedGapRecovery.missedBackendToVisibleMs).toBeLessThanOrEqual(MAX_BACKEND_TO_DOM_MS);
+  }
   expect(telemetryMetrics["workbench.client_receive_lag_ms"]?.count ?? 0).toBeGreaterThan(0);
   expect(correctedReceiveLag.count).toBeGreaterThan(0);
   expect(correctedReceiveLag.p95 ?? Infinity).toBeLessThanOrEqual(MAX_ALL_CLIENT_RECEIVE_LAG_MS);

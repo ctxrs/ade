@@ -32,6 +32,7 @@ import type {
   WorkspaceActiveSnapshotPatch,
   WorkspaceActiveSnapshotStreamTelemetry,
 } from "../workspaceActiveSnapshotProtocol";
+import type { SessionSubscriptionCursor } from "../sessionSubscription";
 import type { WorkspaceActiveSnapshotState } from "./storeTypes";
 import { WorkspaceActiveSnapshotStoreState } from "./storeState";
 import { parseWsJson } from "../../utils/wsJson";
@@ -129,6 +130,8 @@ export type WorkspaceActiveSnapshotStreamHost = {
   workerPatchOldestEventReceivedAtMs: number | null;
   workerPatchOldestForegroundEventReceivedAtMs: number | null;
   streamQueue: Promise<void>;
+  foregroundSessionId?: string | null;
+  subscribedSessions?: SessionSubscriptionCursor[];
   openWebSocket?(url: string): Promise<void>;
   scheduleReconnect?(): void;
   handleStreamMessage?(
@@ -141,6 +144,38 @@ export type WorkspaceActiveSnapshotStreamHost = {
   flushSubscriptions(reason?: string): void;
   notifyEventListeners(evt: WorkspaceActiveSnapshotEvent): void;
   isForegroundSessionEvent(evt: WorkspaceActiveSnapshotEvent): boolean;
+};
+
+const notifyRecoverableSessionStreamGap = (
+  host: WorkspaceActiveSnapshotStreamHost,
+  reason: "stream_seq_gap" | "stream_seq_reset",
+): void => {
+  const sessionIds = new Set<string>();
+  const foregroundSessionId = String(host.foregroundSessionId ?? "").trim();
+  if (foregroundSessionId) {
+    sessionIds.add(foregroundSessionId);
+  }
+  for (const subscription of host.subscribedSessions ?? []) {
+    const sessionId = String(subscription.sessionId ?? "").trim();
+    if (sessionId) {
+      sessionIds.add(sessionId);
+    }
+  }
+  for (const sessionId of sessionIds) {
+    const head = host.state.getSessionHeadSnapshot(sessionId);
+    const afterSeq =
+      typeof head?.last_event_seq === "number" && Number.isFinite(head.last_event_seq)
+        ? head.last_event_seq
+        : 0;
+    host.notifyEventListeners({
+      type: "session_gap",
+      workspace_id: host.workspaceId,
+      snapshot_rev: host.state.getSnapshotRev(),
+      session_id: sessionId,
+      after_seq: afterSeq,
+      reason,
+    });
+  }
 };
 
 export const applyWorkspaceSnapshot = (
@@ -391,9 +426,11 @@ export const handleStreamMessage = async (
     if (host.lastStreamSeq > 0 && streamRev < host.lastStreamSeq) {
       host.lastStreamSeq = streamRev;
       host.allowSnapshotReset = true;
+      notifyRecoverableSessionStreamGap(host, "stream_seq_reset");
       host.flushSubscriptions("stream_seq_reset");
     } else if (host.lastStreamSeq > 0 && streamRev > host.lastStreamSeq + 1) {
       host.allowSnapshotReset = true;
+      notifyRecoverableSessionStreamGap(host, "stream_seq_gap");
       host.flushSubscriptions("stream_seq_gap");
     }
     host.lastStreamSeq = Math.max(host.lastStreamSeq, streamRev);

@@ -43,9 +43,16 @@ import { handleSessionReplicaWorkspaceEvent } from "./sessionReplicaCoreEvents";
 
 export class SessionReplicaCore {
   private entries = new Map<string, SessionReplicaEntry>();
-  private config: SessionReplicaConfig = { eventBufferLimit: 800, headLimit: 60 };
+  private config: SessionReplicaConfig = {
+    eventBufferLimit: 800,
+    headLimit: 60,
+    recoveryHeadLimit: 5,
+    recoveryHeadIncludeEvents: false,
+  };
   private gapAlertedSessionIds = new Set<string>();
   private gapRepairBaselineBySessionId = new Map<string, { lastEventSeq: number | null }>();
+  private gapRepairInFlightSessionIds = new Set<string>();
+  private gapRepairPendingSessionIds = new Set<string>();
 
   constructor(
     private deps: {
@@ -437,15 +444,25 @@ export class SessionReplicaCore {
       force?: boolean;
       silent?: boolean;
       emitOp?: "append" | "replace";
+      headLimit?: number;
+      includeEvents?: boolean;
+      coalesce?: boolean;
     },
   ): Promise<void> {
     const id = normalizeReplicaId(sessionId);
     if (!id) return;
     const entry = this.ensureEntry(id);
+    if (opts?.coalesce && this.gapRepairInFlightSessionIds.has(id)) {
+      this.gapRepairPendingSessionIds.add(id);
+      return;
+    }
     if (entry.loading && !opts?.force) return;
     if (!opts?.force && entry.hydrated) return;
 
     const token = ++entry.requestToken;
+    if (opts?.coalesce) {
+      this.gapRepairInFlightSessionIds.add(id);
+    }
     entry.loading = true;
     if (!opts?.silent) {
       this.emitPatch("append", id, {
@@ -456,7 +473,11 @@ export class SessionReplicaCore {
     }
 
     try {
-      const head = await this.deps.api.getSessionHead(id, this.config.headLimit, true);
+      const head = await this.deps.api.getSessionHead(
+        id,
+        opts?.headLimit ?? this.config.headLimit,
+        opts?.includeEvents ?? true,
+      );
       if (token !== entry.requestToken) return;
       if (head) {
         this.applyHead(entry, snapshotToSessionHead(head), opts?.emitOp, {
@@ -487,6 +508,18 @@ export class SessionReplicaCore {
           error: message,
           appendMode: "metadata_update",
         });
+      }
+    } finally {
+      if (opts?.coalesce) {
+        this.gapRepairInFlightSessionIds.delete(id);
+        const hasPendingRepair = this.gapRepairPendingSessionIds.delete(id);
+        const shouldRunPendingRepair =
+          hasPendingRepair &&
+          (this.gapRepairBaselineBySessionId.has(id) ||
+            this.entries.get(id)?.freshness === "recovering");
+        if (shouldRunPendingRepair) {
+          void this.hydrateSessionHead(id, opts).catch(() => {});
+        }
       }
     }
   }

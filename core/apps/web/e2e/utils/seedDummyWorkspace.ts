@@ -28,6 +28,8 @@ type SeedOptions = {
   awaitTurnCompletion?: boolean;
   completionTimeoutMs?: number;
   seedTranscriptDirect?: boolean;
+  directSeedBatchSize?: number;
+  directSeedMaterializedTailTurns?: number;
   sessionSource?: {
     providerId: string;
     modelId: string;
@@ -304,7 +306,17 @@ export async function seedDummyWorkspace(
             assistant: assistantMessage,
           });
         }
-        await apiPost(request, `/api/dev/sessions/${sessionId}/seed_transcript`, { turns });
+        const batchSize = Math.max(1, opts.directSeedBatchSize ?? turns.length);
+        for (let start = 0; start < turns.length; start += batchSize) {
+          const end = Math.min(turns.length, start + batchSize);
+          await apiPost(request, `/api/dev/sessions/${sessionId}/seed_transcript`, {
+            append: start > 0,
+            refresh: end >= turns.length,
+            materialize_tail_turns:
+              end >= turns.length ? opts.directSeedMaterializedTailTurns : 0,
+            turns: turns.slice(start, end),
+          });
+        }
         if (throttle > 0) {
           await sleep(throttle);
         }

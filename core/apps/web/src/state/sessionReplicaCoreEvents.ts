@@ -50,6 +50,9 @@ type SessionReplicaHydrateOptions = {
   force?: boolean;
   silent?: boolean;
   emitOp?: "append" | "replace";
+  headLimit?: number;
+  includeEvents?: boolean;
+  coalesce?: boolean;
 };
 
 const changedItemsById = <T>(
@@ -322,6 +325,9 @@ export const handleSessionReplicaWorkspaceEvent = (
   void host.hydrateSessionHead(sessionId, {
     force: true,
     emitOp: "replace",
+    headLimit: host.config.recoveryHeadLimit ?? Math.min(5, host.config.headLimit),
+    includeEvents: host.config.recoveryHeadIncludeEvents ?? false,
+    coalesce: true,
   }).catch(() => {});
 };
 

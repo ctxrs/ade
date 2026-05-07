@@ -454,6 +454,57 @@ describe("WorkspaceActiveSnapshotStore", () => {
     expect(payload.include_active_heads).toBe(true);
   });
 
+  it("marks live sessions recovering when the workspace stream sequence has a gap", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    const ws = mkOpenWs();
+    const events: Array<{ type: string; session_id?: string; reason?: string }> = [];
+    asStoreInternals(store).ws = ws;
+    const unsubscribe = store.subscribeEvents((event) => {
+      if (event.type === "session_gap") {
+        events.push({
+          type: event.type,
+          session_id: event.session_id,
+          reason: event.reason ?? undefined,
+        });
+      }
+    });
+
+    store.setForegroundSessionId?.("session-1");
+    store.setSubscribedSessions([
+      { sessionId: "session-1", replay: { kind: "resume", afterSeq: 5 } },
+      { sessionId: "session-2", replay: { kind: "auto" } },
+    ]);
+    ws.send.mockClear();
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 1,
+        event: { type: "ready", workspace_id: "ws-1", snapshot_rev: 1 },
+      }),
+    );
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 3,
+        event: { type: "ready", workspace_id: "ws-1", snapshot_rev: 3 },
+      }),
+    );
+
+    expect(events).toEqual([
+      { type: "session_gap", session_id: "session-1", reason: "stream_seq_gap" },
+      { type: "session_gap", session_id: "session-2", reason: "stream_seq_gap" },
+    ]);
+    expect(ws.send).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(String(ws.send.mock.calls[0]?.[0] ?? "{}"));
+    expect(payload.type).toBe("subscribe");
+    expect(payload.include_active_heads).toBe(true);
+    unsubscribe();
+    store.destroy();
+  });
+
   it("flushes subscribe messages when replay mode changes to reset", async () => {
     const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
 

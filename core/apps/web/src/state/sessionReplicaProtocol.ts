@@ -16,6 +16,8 @@ import type { AssistantStreamingState } from "./assistantStreaming";
 export type SessionReplicaConfig = {
   eventBufferLimit: number;
   headLimit: number;
+  recoveryHeadLimit?: number;
+  recoveryHeadIncludeEvents?: boolean;
 };
 
 export type SessionReplicaFreshnessState = "bootstrap" | "authoritative" | "recovering";

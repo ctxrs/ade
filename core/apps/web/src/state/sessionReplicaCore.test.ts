@@ -455,6 +455,175 @@ describe("SessionReplicaCore", () => {
     alertSpy.mockRestore();
   });
 
+  it("repairs session_gap with compact active tail instead of full event head", async () => {
+    const sessionId = "session-gap-compact-tail";
+    const initialHead = mkHead(sessionId, "before-gap", 100);
+    const repairedHead = {
+      ...mkHead(sessionId, "tail-repair", 120),
+      has_more_turns: true,
+      head_window: {
+        turn_limit: 5,
+        message_limit: 200,
+        event_limit: 0,
+        byte_limit: 256_000,
+        turn_count: 5,
+        message_count: 10,
+        event_count: 0,
+        bytes: 4096,
+        truncated: true,
+      },
+    } satisfies SessionHeadSnapshot;
+    const getSessionHead = vi
+      .fn(async () => initialHead)
+      .mockResolvedValueOnce(initialHead)
+      .mockResolvedValueOnce(repairedHead);
+    const core = new SessionReplicaCore({
+      api: { getSessionHead },
+      emit: () => {},
+    });
+
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 100, headLimit: 60 } });
+    core.handleCommand({ type: "hydrate_session_head", sessionId });
+    await waitForCondition(() => getSessionHead.mock.calls.length === 1);
+    const initialResult = getSessionHead.mock.results[0];
+    if (initialResult?.type === "return") {
+      await initialResult.value;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    core.handleCommand({
+      type: "workspace_event",
+      event: {
+        type: "session_gap",
+        workspace_id: "ws-1",
+        snapshot_rev: 2,
+        session_id: sessionId,
+        after_seq: 119,
+      },
+    });
+
+    await waitForCondition(() => getSessionHead.mock.calls.length >= 2);
+    expect(getSessionHead.mock.calls[0]).toEqual([sessionId, 60, true]);
+    expect(getSessionHead.mock.calls[1]).toEqual([sessionId, 5, false]);
+  });
+
+  it("coalesces repeated session_gap repairs while the first compact repair is in flight", async () => {
+    const sessionId = "session-gap-coalesce";
+    const initialHead = mkHead(sessionId, "before-gap", 100);
+    let resolveRepairHead: (value: SessionHeadSnapshot) => void = () => {
+      throw new Error("repair resolver was not initialized");
+    };
+    const getSessionHead = vi
+      .fn(async () => initialHead)
+      .mockResolvedValueOnce(initialHead)
+      .mockImplementationOnce(
+        () =>
+          new Promise<SessionHeadSnapshot>((resolve) => {
+            resolveRepairHead = resolve;
+          }),
+      );
+    const core = new SessionReplicaCore({
+      api: { getSessionHead },
+      emit: () => {},
+    });
+
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 100, headLimit: 60 } });
+    core.handleCommand({ type: "hydrate_session_head", sessionId });
+    await waitForCondition(() => getSessionHead.mock.calls.length === 1);
+    const initialResult = getSessionHead.mock.results[0];
+    if (initialResult?.type === "return") {
+      await initialResult.value;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    for (let index = 0; index < 5; index += 1) {
+      core.handleCommand({
+        type: "workspace_event",
+        event: {
+          type: "session_gap",
+          workspace_id: "ws-1",
+          snapshot_rev: 2 + index,
+          session_id: sessionId,
+          after_seq: 119 + index,
+        },
+      });
+    }
+
+    await waitForCondition(() => getSessionHead.mock.calls.length >= 2);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(getSessionHead).toHaveBeenCalledTimes(2);
+
+    resolveRepairHead(mkHead(sessionId, "tail-repair", 124));
+    await waitForCondition(() => getSessionHead.mock.results[1]?.type === "return");
+  });
+
+  it("queues a follow-up compact repair when a later session_gap arrives during repair", async () => {
+    const sessionId = "session-gap-coalesce-pending";
+    const initialHead = mkHead(sessionId, "before-gap", 100);
+    let resolveRepairHead: (value: SessionHeadSnapshot) => void = () => {
+      throw new Error("repair resolver was not initialized");
+    };
+    const getSessionHead = vi
+      .fn(async () => initialHead)
+      .mockResolvedValueOnce(initialHead)
+      .mockImplementationOnce(
+        () =>
+          new Promise<SessionHeadSnapshot>((resolve) => {
+            resolveRepairHead = resolve;
+          }),
+      )
+      .mockResolvedValueOnce(mkHead(sessionId, "tail-repair-follow-up", 124));
+    const freshnessEvents: SessionReplicaFreshnessEvent[] = [];
+    const core = new SessionReplicaCore({
+      api: { getSessionHead },
+      emit: () => {},
+      emitFreshness: (event) => freshnessEvents.push(event),
+    });
+
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 100, headLimit: 60 } });
+    core.handleCommand({ type: "hydrate_session_head", sessionId });
+    await waitForCondition(() => getSessionHead.mock.calls.length === 1);
+    const initialResult = getSessionHead.mock.results[0];
+    if (initialResult?.type === "return") {
+      await initialResult.value;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    core.handleCommand({
+      type: "workspace_event",
+      event: {
+        type: "session_gap",
+        workspace_id: "ws-1",
+        snapshot_rev: 2,
+        session_id: sessionId,
+        after_seq: 119,
+      },
+    });
+    await waitForCondition(() => getSessionHead.mock.calls.length === 2);
+
+    core.handleCommand({
+      type: "workspace_event",
+      event: {
+        type: "session_gap",
+        workspace_id: "ws-1",
+        snapshot_rev: 3,
+        session_id: sessionId,
+        after_seq: 124,
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(getSessionHead).toHaveBeenCalledTimes(2);
+
+    resolveRepairHead(mkHead(sessionId, "tail-repair-before-latest-gap", 119));
+    await waitForCondition(() => getSessionHead.mock.calls.length === 3);
+
+    expect(getSessionHead.mock.calls[1]).toEqual([sessionId, 5, false]);
+    expect(getSessionHead.mock.calls[2]).toEqual([sessionId, 5, false]);
+    await waitForCondition(() =>
+      freshnessEvents.some((event) => event.type === "gap_recovery_finished" && event.sessionId === sessionId),
+    );
+  });
+
   it("recovers from session_gap via authoritative /head rehydrate and resumed deltas", async () => {
     const sessionId = "session-gap-recovery";
     const initialHead = mkHead(sessionId, "before-gap");
