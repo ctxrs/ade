@@ -3,63 +3,7 @@ use std::sync::Arc;
 
 use ctx_core::ids::SessionId;
 
-use crate::daemon::state::{AppState, SessionPinState, SessionRuntime};
-
-impl SessionRuntime {
-    async fn update_pin_state<F>(&self, session_id: SessionId, update: F) -> Option<bool>
-    where
-        F: FnOnce(&mut SessionPinState),
-    {
-        let mut pins = self.session_pins.lock().await;
-        let entry = pins.entry(session_id).or_default();
-        let was_pinned = entry.is_pinned();
-        update(entry);
-        let is_pinned = entry.is_pinned();
-        if !is_pinned {
-            pins.remove(&session_id);
-        }
-        (was_pinned != is_pinned).then_some(is_pinned)
-    }
-
-    pub async fn set_running(&self, session_id: SessionId, running: bool) -> Option<bool> {
-        let mut set = self.running_sessions.lock().await;
-        let changed = if running {
-            set.insert(session_id)
-        } else {
-            set.remove(&session_id)
-        };
-        drop(set);
-        if !changed {
-            return None;
-        }
-        self.update_pin_state(session_id, |state| state.running = running)
-            .await
-    }
-
-    pub async fn attach_session(&self, session_id: SessionId) -> Option<bool> {
-        self.update_pin_state(session_id, |state| {
-            state.attached_clients = state.attached_clients.saturating_add(1);
-        })
-        .await
-    }
-
-    pub async fn detach_session(&self, session_id: SessionId) -> Option<bool> {
-        self.update_pin_state(session_id, |state| {
-            state.attached_clients = state.attached_clients.saturating_sub(1);
-        })
-        .await
-    }
-
-    pub async fn clear_pin_state(&self, session_id: SessionId) -> bool {
-        {
-            let mut set = self.running_sessions.lock().await;
-            set.remove(&session_id);
-        }
-        let mut pins = self.session_pins.lock().await;
-        pins.remove(&session_id)
-            .is_some_and(SessionPinState::is_pinned)
-    }
-}
+use crate::daemon::state::AppState;
 
 impl AppState {
     async fn set_provider_session_pinned_by_key(&self, session_key: String, pinned: bool) {
@@ -122,6 +66,23 @@ impl AppState {
         if self.sessions.clear_pin_state(session_id).await {
             self.set_provider_session_pinned(session_id, false).await;
         }
-        self.sessions.cleanup_session(self, session_id).await;
+        let workspace_id = self
+            .global_store()
+            .get_workspace_id_for_session(session_id)
+            .await
+            .ok()
+            .flatten();
+        if let Some(workspace_id) = workspace_id {
+            self.workspaces
+                .workspace_active_snapshot
+                .remove_session_with_workspace_hint(workspace_id, session_id)
+                .await;
+        } else {
+            self.workspaces
+                .workspace_active_snapshot
+                .remove_session(session_id)
+                .await;
+        }
+        self.sessions.remove_session_state(session_id).await;
     }
 }

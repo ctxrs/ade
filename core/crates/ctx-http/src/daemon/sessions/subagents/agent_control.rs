@@ -52,7 +52,7 @@ pub(crate) async fn list_agents(
     parent_id: SessionId,
 ) -> ApiResult<Vec<AgentSummary>> {
     let (store, parent) = load_parent_session(state.as_ref(), parent_id).await?;
-    let inactivity_timeout = state.provider_inactivity_timeout().await;
+    let inactivity_timeout = state.sessions.provider_inactivity_timeout().await;
     let subs = store
         .list_subagent_sessions(parent.id)
         .await
@@ -72,7 +72,7 @@ pub(crate) async fn get_agent(
     req: GetAgentReq,
 ) -> ApiResult<GetAgentResp> {
     let (store, parent) = load_parent_session(state.as_ref(), parent_id).await?;
-    let inactivity_timeout = state.provider_inactivity_timeout().await;
+    let inactivity_timeout = state.sessions.provider_inactivity_timeout().await;
     let child = resolve_child_agent_session(&store, &parent, &req.agent_id).await?;
     let detail = build_agent_detail(&state, &store, &parent, &child, inactivity_timeout).await?;
     Ok(GetAgentResp { agent: detail })
@@ -159,7 +159,7 @@ pub(crate) async fn interrupt_agent(
     req: InterruptAgentReq,
 ) -> ApiResult<InterruptAgentResp> {
     let (store, parent) = load_parent_session(state.as_ref(), parent_id).await?;
-    let inactivity_timeout = state.provider_inactivity_timeout().await;
+    let inactivity_timeout = state.sessions.provider_inactivity_timeout().await;
     let child = resolve_child_agent_session(&store, &parent, &req.agent_id).await?;
     let tx = state.ensure_scheduler(child.clone()).await;
     let interrupt = InterruptTelemetryContext::new(uuid::Uuid::new_v4().to_string());
@@ -176,7 +176,7 @@ pub(crate) async fn wait_agent(
     let agent_ids = normalize_wait_agent_ids(req.agent_id.as_deref(), req.agent_ids.as_deref())
         .map_err(|error| api_error(SubagentErrorKind::BadRequest, error))?;
     let (store, parent) = load_parent_session(state.as_ref(), parent_id).await?;
-    let inactivity_timeout = state.provider_inactivity_timeout().await;
+    let inactivity_timeout = state.sessions.provider_inactivity_timeout().await;
     let targets = collect_wait_targets(&store, &parent, &agent_ids).await?;
     let mode = parse_wait_mode(req.mode.as_deref())
         .map_err(|error| api_error(SubagentErrorKind::BadRequest, error))?;

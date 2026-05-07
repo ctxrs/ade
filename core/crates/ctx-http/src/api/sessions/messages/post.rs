@@ -75,7 +75,7 @@ pub(crate) async fn post_message(
         .await
         .map_err(|_| api_error(StatusCode::INTERNAL_SERVER_ERROR, "Failed to load session."))?
         .ok_or_else(|| api_error(StatusCode::NOT_FOUND, "Session not found."))?;
-    state.remember_session_meta(&session).await;
+    state.sessions.remember_session_meta(&session).await;
     if let Some(drain) = state.update_drain_snapshot().await {
         return Err(api_error(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -164,7 +164,7 @@ pub(crate) async fn post_message(
 
     let delivery = resolve_message_delivery(
         requested_delivery.clone(),
-        state.is_running(session_id).await,
+        state.sessions.is_running(session_id).await,
         queued_messages_enabled(),
     )?;
 

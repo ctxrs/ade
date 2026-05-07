@@ -529,10 +529,16 @@ async fn sweeper_eviction_keeps_active_entries() {
 
     {
         let mut cache = state.sessions.session_head_cache.lock().await;
-        cache.insert(session.id, TimedEntry::new(HashMap::new()));
+        cache.insert(
+            session.id,
+            ctx_session_service::runtime::TimedEntry::new(HashMap::new()),
+        );
     }
-    let _ = state.get_broadcaster(session.id).await;
-    let _ = state.subscribe_session_event_head(session.id).await;
+    let _ = state.sessions.get_broadcaster(session.id).await;
+    let _ = state
+        .sessions
+        .subscribe_session_event_head(session.id)
+        .await;
     let _ = state.ensure_scheduler(session.clone()).await;
 
     let now = Instant::now();

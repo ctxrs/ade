@@ -180,7 +180,7 @@ pub(crate) async fn dev_seed_session_transcript(
                 error: "session not found".to_string(),
             }),
         ))?;
-    state.remember_session_meta(&session).await;
+    state.sessions.remember_session_meta(&session).await;
 
     let mut seeded_messages = 0usize;
     let mut seeded_events = 0usize;
@@ -405,10 +405,7 @@ pub(crate) async fn dev_seed_session_transcript(
             })?;
     }
 
-    state
-        .sessions
-        .refresh_session_head_cache(&state, session_id)
-        .await;
+    state.refresh_session_head_cache(session_id).await;
 
     if let Err(err) = state.emit_workspace_task_upsert(session.task_id).await {
         tracing::warn!(task_id = %session.task_id.0, "workspace active snapshot refresh failed after demo transcript seed: {err:?}");

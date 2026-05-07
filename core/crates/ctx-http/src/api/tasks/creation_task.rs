@@ -204,7 +204,7 @@ pub(in crate::api) async fn create_task(
         tracing::warn!(task_id = %task.id.0, "failed to update task index: {e:?}");
     }
 
-    let default_session_lock = state.task_session_creation_lock(task.id).await;
+    let default_session_lock = state.sessions.task_session_creation_lock(task.id).await;
     let _default_session_guard = default_session_lock.lock().await;
     let task = store.get_task_with_activity(task.id).await.map_err(|e| {
         (

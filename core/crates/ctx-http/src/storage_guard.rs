@@ -225,7 +225,7 @@ async fn dispatch_storage_emergency_interrupts(
     state: &Arc<AppState>,
     snapshot: &StorageGuardStatus,
 ) {
-    let running_sessions = state.list_running_sessions().await;
+    let running_sessions = state.sessions.list_running_sessions().await;
     let mut interrupted = 0usize;
     for session_id in running_sessions {
         if dispatch_storage_emergency_interrupt(state, session_id).await {
@@ -245,7 +245,7 @@ async fn dispatch_storage_emergency_interrupt(
     state: &Arc<AppState>,
     session_id: SessionId,
 ) -> bool {
-    let Some(tx) = state.scheduler_sender(session_id).await else {
+    let Some(tx) = state.sessions.scheduler_sender(session_id).await else {
         return false;
     };
     tx.send(SchedulerCommand::StorageEmergency).await.is_ok()
@@ -365,7 +365,7 @@ fn push_observed_path(
 
 async fn running_session_workdirs(state: &Arc<AppState>) -> Vec<PathBuf> {
     let mut workdirs = Vec::new();
-    for session_id in state.list_running_sessions().await {
+    for session_id in state.sessions.list_running_sessions().await {
         let Ok(store) = state.store_for_session(session_id).await else {
             continue;
         };

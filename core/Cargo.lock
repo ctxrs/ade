@@ -1486,7 +1486,10 @@ dependencies = [
  "ctx-provider-runtime",
  "ctx-providers",
  "ctx-session-tools",
+ "ctx-store",
  "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

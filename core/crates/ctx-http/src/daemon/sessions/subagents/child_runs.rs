@@ -89,7 +89,10 @@ pub(super) async fn wait_for_run_terminal_turn(
     let Some(state) = state_weak.upgrade() else {
         return Ok(None);
     };
-    let mut rx = state.subscribe_session_event_head(session_id).await;
+    let mut rx = state
+        .sessions
+        .subscribe_session_event_head(session_id)
+        .await;
     drop(state);
 
     loop {
@@ -99,7 +102,7 @@ pub(super) async fn wait_for_run_terminal_turn(
                     let Some(state) = state_weak.upgrade() else {
                         return Ok(None);
                     };
-                    rx = state.subscribe_session_event_head(session_id).await;
+                    rx = state.sessions.subscribe_session_event_head(session_id).await;
                 }
                 if let Some(turn) = latest_terminal_turn_for_run(store, session_id, run_id).await?
                 {
@@ -301,7 +304,7 @@ pub(super) async fn persist_subagent_prompt(
         let mut order_seq_state = order_seq_state.lock().await;
         order_seq_state.get_or_assign(format!("message:{}", message_id.0), None)
     };
-    let has_backlog = state.is_running(session.id).await
+    let has_backlog = state.sessions.is_running(session.id).await
         || !store
             .list_queued_messages_for_session(session.id)
             .await

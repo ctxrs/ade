@@ -216,7 +216,7 @@ async fn notify_sessions(
     state: &Arc<AppState>,
     event: &ctx_provider_runtime::provider_guard::ProviderGuardEvent,
 ) {
-    let session_ids = state.list_running_sessions().await;
+    let session_ids = state.sessions.list_running_sessions().await;
     for session_id in session_ids {
         let store = match state.store_for_session(session_id).await {
             Ok(store) => store,

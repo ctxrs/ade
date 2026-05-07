@@ -156,7 +156,7 @@ async fn setup_projection_harness() -> ProjectionHarness {
 
     let session = common::load_primary_session_http(&server.client, &server.base_url, &task).await;
 
-    state.remember_session_meta(&session).await;
+    state.sessions.remember_session_meta(&session).await;
 
     ProjectionHarness {
         _repo: repo,

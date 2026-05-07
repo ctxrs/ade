@@ -90,7 +90,7 @@ async fn build_loop_fixture(data_dir: &Path, provider_id: &str, model_id: &str) 
         .upsert_workspace_session_index(session.id, workspace.id)
         .await
         .expect("workspace session index");
-    state.remember_session_meta(&session).await;
+    state.sessions.remember_session_meta(&session).await;
 
     let run_id = RunId::new();
     let turn_id = TurnId::new();
@@ -732,7 +732,7 @@ async fn tool_events_publish_after_tool_state_persists() {
         .upsert_workspace_session_index(session.id, workspace.id)
         .await
         .expect("workspace session index");
-    state.remember_session_meta(&session).await;
+    state.sessions.remember_session_meta(&session).await;
 
     let run_id = RunId::new();
     let turn_id = TurnId::new();
@@ -920,7 +920,7 @@ async fn tool_result_uses_sanitized_payload_for_persisted_summary() {
         .upsert_workspace_session_index(session.id, workspace.id)
         .await
         .expect("workspace session index");
-    state.remember_session_meta(&session).await;
+    state.sessions.remember_session_meta(&session).await;
 
     let run_id = RunId::new();
     let turn_id = TurnId::new();
@@ -1105,7 +1105,7 @@ async fn large_tool_result_spills_to_artifact_and_keeps_preview_bounded() {
         .upsert_workspace_session_index(session.id, workspace.id)
         .await
         .expect("workspace session index");
-    state.remember_session_meta(&session).await;
+    state.sessions.remember_session_meta(&session).await;
 
     let run_id = RunId::new();
     let turn_id = TurnId::new();

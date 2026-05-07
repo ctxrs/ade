@@ -138,7 +138,7 @@ async fn wait_for_session_idle_in_memory(
 ) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     while tokio::time::Instant::now() < deadline {
-        if !state.is_running(session_id).await {
+        if !state.sessions.is_running(session_id).await {
             return;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use tokio::sync::{broadcast, mpsc, watch, Mutex};
+use tokio::sync::{broadcast, watch, Mutex};
 use tokio::task::JoinHandle;
 
 use crate::ops_events::{OpsEvent, OpsEvents};
@@ -21,9 +21,7 @@ use crate::telemetry::Telemetry;
 use crate::terminals::TerminalManager;
 use crate::web_sessions::WebSessionManager;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceAttachmentId, WorkspaceId, WorktreeId};
-use ctx_core::models::{
-    Session, SessionEvent, SessionHeadSnapshot, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot,
-};
+use ctx_core::models::{WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot};
 use ctx_execution_runtime::ExecutionSetupCoordinator;
 use ctx_provider_accounts as provider_accounts;
 use ctx_provider_install::install_state::{
@@ -34,7 +32,6 @@ use ctx_provider_runtime::provider_usage;
 use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
 use ctx_providers::ask_user_question::AskUserQuestionBroker;
 use ctx_resource_utilization::ResourceSampler;
-use ctx_session_tools::order_seq::OrderSeqState;
 use ctx_store::{Store, StoreManager};
 use ctx_transport_runtime::mobile_tunnel::MobileTunnelManager;
 use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotHub;
@@ -51,10 +48,7 @@ pub(crate) use ctx_workspace_services::worktree_vcs::{
     WorktreeVcsDirtyBits,
 };
 
-pub(crate) use types::{
-    provider_inactivity_timeout_from_env, ActiveTaskRefreshEntry, AttachmentMaterializationTask,
-    WorktreeBootstrapGate,
-};
+pub(crate) use types::{AttachmentMaterializationTask, WorktreeBootstrapGate};
 
 fn current_time_ms() -> u64 {
     std::time::SystemTime::now()
@@ -66,8 +60,8 @@ pub use ctx_workspace_services::worktree_vcs::WorktreeVcsSchedulerRuntime;
 pub use types::{
     AppRuntimeFlags, AppState, CacheSweepConfig, CacheSweepStats, CachedFileCompletions,
     CachedProviderOptions, CachedProviderVerify, CoreState, ExecutionRuntime,
-    GitStatusSnapshotCacheEntry, ProviderRuntime, SessionHeadCacheKey, SessionPinState,
-    SessionRuntime, StoreLookup, TelemetryRuntime, TimedEntry, TransportRuntime, UpdateDrainState,
+    GitStatusSnapshotCacheEntry, ProviderRuntime, SessionHeadCacheKey, SessionRuntime, StoreLookup,
+    TelemetryRuntime, TimedEntry, TransportRuntime, UpdateDrainState,
     WorkspaceActiveHeadCacheEntry, WorkspaceActiveSnapshotCacheEntry, WorkspaceRuntime,
 };
 

@@ -26,33 +26,9 @@ pub struct UpdateDrainState {
     pub acquired_at_ms: u64,
 }
 
-pub struct SessionRuntime {
-    pub session_head_cache:
-        Mutex<HashMap<SessionId, TimedEntry<HashMap<SessionHeadCacheKey, SessionHeadSnapshot>>>>,
-    pub schedulers: Mutex<HashMap<SessionId, TimedEntry<mpsc::Sender<SchedulerCommand>>>>,
-    pub provider_inactivity_timeout: Mutex<Duration>,
-    pub broadcasters: Mutex<HashMap<SessionId, TimedEntry<broadcast::Sender<SessionEvent>>>>,
-    pub session_event_heads: Mutex<HashMap<SessionId, TimedEntry<watch::Sender<i64>>>>,
-    pub order_seq_states: Mutex<HashMap<SessionId, TimedEntry<Arc<Mutex<OrderSeqState>>>>>,
-    pub(crate) active_task_refreshes: Mutex<HashMap<TaskId, ActiveTaskRefreshEntry>>,
-    pub(crate) task_session_creation_locks:
-        Mutex<HashMap<TaskId, std::sync::Weak<tokio::sync::Mutex<()>>>>,
-    pub running_sessions: Arc<Mutex<HashSet<SessionId>>>,
-    pub session_pins: Mutex<HashMap<SessionId, SessionPinState>>,
-    pub session_meta_cache: Mutex<HashMap<SessionId, TimedEntry<Session>>>,
-}
+pub type SessionRuntime = ctx_session_service::runtime::SessionRuntime<SchedulerCommand>;
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct SessionPinState {
-    pub running: bool,
-    pub attached_clients: usize,
-}
-
-impl SessionPinState {
-    pub fn is_pinned(self) -> bool {
-        self.running || self.attached_clients > 0
-    }
-}
+pub use ctx_session_service::runtime::SessionHeadCacheKey;
 
 pub struct WorkspaceRuntime {
     pub worktree_vcs_enabled: bool,
@@ -178,37 +154,17 @@ pub struct WorkspaceActiveSnapshotCacheEntry {
     pub snapshot: WorkspaceActiveSnapshot,
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct SessionHeadCacheKey {
-    pub limit: u32,
-    pub include_events: bool,
-}
-
 #[derive(Clone, Debug)]
 pub struct WorkspaceActiveHeadCacheEntry {
     pub batch: WorkspaceActiveHeadBatch,
 }
 
-pub(crate) struct ActiveTaskRefreshEntry {
-    pub(crate) generation: u64,
-}
-
 const DEFAULT_SESSION_CACHE_TTL_HOURS: u64 = 24;
 const DEFAULT_WORKSPACE_CACHE_TTL_DAYS: u64 = 1;
 const DEFAULT_CACHE_SWEEP_INTERVAL_SECS: u64 = 5 * 60;
-const DEFAULT_PROVIDER_INACTIVITY_TIMEOUT_SECS: u64 = 30 * 60;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AppRuntimeFlags {
     pub worktree_vcs_enabled: bool,
-}
-
-pub(crate) fn provider_inactivity_timeout_from_env() -> Duration {
-    std::env::var("CTX_PROVIDER_TURN_INACTIVITY_TIMEOUT_MS")
-        .ok()
-        .and_then(|raw| raw.trim().parse::<u64>().ok())
-        .filter(|millis| *millis > 0)
-        .map(Duration::from_millis)
-        .unwrap_or_else(|| Duration::from_secs(DEFAULT_PROVIDER_INACTIVITY_TIMEOUT_SECS))
 }
 
 #[derive(Clone, Copy, Debug)]

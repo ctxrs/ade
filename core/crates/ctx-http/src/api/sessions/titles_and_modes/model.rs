@@ -200,7 +200,7 @@ pub(crate) async fn set_session_model(
             )
         })?
         .ok_or_else(|| session_model_error(StatusCode::NOT_FOUND, "session not found"))?;
-    state.remember_session_meta(&updated).await;
+    state.sessions.remember_session_meta(&updated).await;
 
     let event = store
         .append_session_event(

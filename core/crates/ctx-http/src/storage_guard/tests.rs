@@ -177,7 +177,10 @@ async fn dispatches_storage_emergency_interrupts_to_running_sessions() {
 
     {
         let mut schedulers = state.sessions.schedulers.lock().await;
-        schedulers.insert(session_id, crate::daemon::TimedEntry::new(tx));
+        schedulers.insert(
+            session_id,
+            ctx_session_service::runtime::TimedEntry::new(tx),
+        );
     }
     state.set_running(session_id, true).await;
 

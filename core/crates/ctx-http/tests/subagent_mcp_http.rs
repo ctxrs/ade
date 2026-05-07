@@ -1929,6 +1929,7 @@ async fn subagent_wait_fails_when_child_stalls_without_done_or_outcome() {
     let (_data_dir, state, server, _store, parent_id) =
         setup_state_with_providers(repo.path(), providers).await;
     state
+        .sessions
         .set_provider_inactivity_timeout(Duration::from_millis(250))
         .await;
     let client = &server.client;

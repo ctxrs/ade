@@ -899,7 +899,7 @@ async fn workspace_stream_replays_from_after_seq() {
         create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "replay").await;
 
     let session = create_primary_worktree_session(client, base, task.id).await;
-    state.remember_session_meta(&session).await;
+    state.sessions.remember_session_meta(&session).await;
 
     let store = state.store_for_session(session.id).await.unwrap();
     let ev1 = store
@@ -1049,7 +1049,7 @@ async fn workspace_stream_reset_replay_waits_for_fresh_resume_cursor() {
         create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "replay").await;
 
     let session = create_primary_worktree_session(client, base, task.id).await;
-    state.remember_session_meta(&session).await;
+    state.sessions.remember_session_meta(&session).await;
 
     let store = state.store_for_session(session.id).await.unwrap();
     let ev1 = store
@@ -1270,7 +1270,7 @@ async fn workspace_stream_replays_tool_events() {
             .await;
 
     let session = create_primary_worktree_session(client, base, task.id).await;
-    state.remember_session_meta(&session).await;
+    state.sessions.remember_session_meta(&session).await;
 
     let store = state.store_for_session(session.id).await.unwrap();
     let ev1 = store
@@ -1419,7 +1419,7 @@ async fn workspace_stream_under_load_no_gap_or_reset() {
         create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "load").await;
 
     let session = create_primary_worktree_session(client, base, task.id).await;
-    state.remember_session_meta(&session).await;
+    state.sessions.remember_session_meta(&session).await;
 
     let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
     let (mut socket, _) = connect_async(&ws_url).await.unwrap();
@@ -1563,7 +1563,7 @@ async fn workspace_stream_emits_git_status_snapshot_on_change() {
             .await;
 
     let session = create_primary_worktree_session(client, base, task.id).await;
-    state.remember_session_meta(&session).await;
+    state.sessions.remember_session_meta(&session).await;
     let store = state.store_for_session(session.id).await.unwrap();
     let worktree = store
         .get_worktree(session.worktree_id)
@@ -1674,7 +1674,7 @@ async fn workspace_stream_emits_git_status_snapshot_for_new_subscriber() {
     .await;
 
     let session_one = create_primary_worktree_session(client, base, task.id).await;
-    state.remember_session_meta(&session_one).await;
+    state.sessions.remember_session_meta(&session_one).await;
     let store_one = state.store_for_session(session_one.id).await.unwrap();
     let worktree_one = store_one
         .get_worktree(session_one.worktree_id)
@@ -1729,7 +1729,7 @@ async fn workspace_stream_emits_git_status_snapshot_for_new_subscriber() {
     assert!(saw_initial, "expected initial git status snapshot");
 
     let session_two = create_primary_worktree_session(client, base, task.id).await;
-    state.remember_session_meta(&session_two).await;
+    state.sessions.remember_session_meta(&session_two).await;
     let store_two = state.store_for_session(session_two.id).await.unwrap();
     let worktree_two = store_two
         .get_worktree(session_two.worktree_id)
@@ -3277,7 +3277,7 @@ async fn workspace_stream_emits_gap_on_large_replay() {
         create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "gap").await;
 
     let session = create_primary_worktree_session(client, base, task.id).await;
-    state.remember_session_meta(&session).await;
+    state.sessions.remember_session_meta(&session).await;
     let store = state.store_for_task(task.id).await.unwrap();
     let sessions = store.list_sessions_for_task(task.id).await.unwrap();
     assert!(
@@ -3460,7 +3460,7 @@ async fn workspace_stream_session_updates_emit_task_delta_without_full_active_ta
     let task =
         create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "delta").await;
     let session = create_primary_worktree_session(client, base, task.id).await;
-    state.remember_session_meta(&session).await;
+    state.sessions.remember_session_meta(&session).await;
 
     let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
     let (mut socket, _) = connect_async(&ws_url).await.unwrap();

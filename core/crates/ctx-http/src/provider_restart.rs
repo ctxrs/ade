@@ -135,7 +135,7 @@ async fn notify_sessions(
         "provider_restart" => "Provider restart requested after sustained high memory usage.",
         _ => "Provider restart notice.",
     };
-    let session_ids = state.list_running_sessions().await;
+    let session_ids = state.sessions.list_running_sessions().await;
     for session_id in session_ids {
         let store = match state.store_for_session(session_id).await {
             Ok(store) => store,

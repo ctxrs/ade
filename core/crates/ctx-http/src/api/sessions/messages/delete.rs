@@ -42,7 +42,7 @@ pub(crate) async fn delete_session_message(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     state.publish_event(removed).await;
 
-    if let Some(tx) = state.scheduler_sender(msg.session_id).await {
+    if let Some(tx) = state.sessions.scheduler_sender(msg.session_id).await {
         let _ = tx.send(SchedulerCommand::RemoveQueued(msg_id)).await;
     }
     Ok(StatusCode::NO_CONTENT)

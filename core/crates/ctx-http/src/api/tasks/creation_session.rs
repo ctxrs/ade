@@ -319,7 +319,7 @@ async fn create_session_for_loaded_task_inner(
                     }
                     return Err(StatusCode::CONFLICT);
                 }
-                state.remember_session_meta(&existing).await;
+                state.sessions.remember_session_meta(&existing).await;
                 if req.remember_model_preference {
                     if let Err(error) =
                         crate::workspace_provider_model_preferences::update_workspace_provider_preferred_model_id(
@@ -448,7 +448,7 @@ async fn create_session_for_loaded_task_inner(
             return Err(StatusCode::CONFLICT);
         }
     }
-    state.remember_session_meta(&session).await;
+    state.sessions.remember_session_meta(&session).await;
     if let Err(e) = retry_global_index_write(|| async {
         state
             .global_store()
@@ -541,7 +541,7 @@ pub(in crate::api) async fn create_session_for_task(
     Json(req): Json<CreateSessionReq>,
 ) -> Result<Json<Session>, StatusCode> {
     let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let creation_lock = state.task_session_creation_lock(task_id).await;
+    let creation_lock = state.sessions.task_session_creation_lock(task_id).await;
     let _creation_guard = creation_lock.lock().await;
     create_session_for_task_inner(state, task_id, headers, req).await
 }

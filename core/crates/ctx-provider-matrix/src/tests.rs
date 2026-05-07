@@ -548,7 +548,7 @@ fn builtin_matrix_uses_raw_upstream_cline_acp_runtime() {
 }
 
 #[test]
-fn builtin_matrix_uses_goose_upstream_acp_archive() {
+fn builtin_matrix_uses_goose_mirrored_acp_archive() {
     let matrix = builtin_matrix();
     let goose = matrix
         .providers
@@ -580,7 +580,7 @@ fn builtin_matrix_uses_goose_upstream_acp_archive() {
             assert_eq!(darwin.bin_path, "goose");
             assert_eq!(
                 darwin.url,
-                "https://github.com/aaif-goose/goose/releases/download/v1.32.0/goose-aarch64-apple-darwin.tar.bz2"
+                "https://api.ctx.rs/storage/v1/object/public/releases/providers/goose/1.32.0/macos/aarch64/sha256/917ac8ab1ae9a1d63b3b2785ccc42c171f6ef97c1ca4447afbe7694e7a9a6f00/goose-aarch64-apple-darwin.tar.bz2"
             );
             assert_eq!(
                 darwin.sha256.as_deref(),

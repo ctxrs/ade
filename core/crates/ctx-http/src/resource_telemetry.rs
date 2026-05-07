@@ -165,7 +165,7 @@ async fn list_provider_processes(state: &Arc<AppState>) -> Vec<ProviderProcessIn
 }
 
 async fn provider_session_counts(state: &Arc<AppState>) -> HashMap<String, u64> {
-    let session_ids = state.list_running_sessions().await;
+    let session_ids = state.sessions.list_running_sessions().await;
     let mut counts: HashMap<String, u64> = HashMap::new();
     for session_id in session_ids {
         let session = match state.store_for_session(session_id).await {

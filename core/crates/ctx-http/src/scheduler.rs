@@ -78,7 +78,10 @@ pub async fn session_worker(
     let mut running_inactivity_deadline: Option<TokioInstant> = None;
     let mut running_start_deadline: Option<TokioInstant> = None;
     let mut suspend_queue = false;
-    let mut event_head_rx = state.subscribe_session_event_head(session.id).await;
+    let mut event_head_rx = state
+        .sessions
+        .subscribe_session_event_head(session.id)
+        .await;
 
     let worktree = match store.get_worktree(session.worktree_id).await {
         Ok(Some(wt)) => wt,
@@ -149,7 +152,7 @@ pub async fn session_worker(
                 {
                     Ok(turn) => {
                         state.set_running(session.id, true).await;
-                        let timeout = state.provider_inactivity_timeout().await;
+                        let timeout = state.sessions.provider_inactivity_timeout().await;
                         running_inactivity_timeout = Some(timeout);
                         running_inactivity_deadline = Some(TokioInstant::now() + timeout);
                         running_start_deadline = Some(turn.start_deadline);
@@ -278,7 +281,7 @@ pub async fn session_worker(
                     break;
                 };
                 if changed.is_err() {
-                    event_head_rx = state.subscribe_session_event_head(session.id).await;
+                    event_head_rx = state.sessions.subscribe_session_event_head(session.id).await;
                 }
                 if let Some(timeout) = running_inactivity_timeout {
                     running_inactivity_deadline = Some(TokioInstant::now() + timeout);

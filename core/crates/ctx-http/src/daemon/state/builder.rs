@@ -82,7 +82,6 @@ impl AppState {
             runtime_events.clone(),
         ));
         let storage_guard = crate::storage_guard::StorageGuardRuntime::new(&data_root);
-        let running_sessions = Arc::new(Mutex::new(HashSet::new()));
         let terminals = Arc::new(TerminalManager::default());
         let local_shutdown_token = std::env::var("CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN")
             .ok()
@@ -146,19 +145,7 @@ impl AppState {
                 shutdown_tx,
                 update_drain: Arc::new(Mutex::new(None)),
             },
-            sessions: SessionRuntime {
-                session_head_cache: Mutex::new(HashMap::new()),
-                schedulers: Mutex::new(HashMap::new()),
-                provider_inactivity_timeout: Mutex::new(provider_inactivity_timeout_from_env()),
-                broadcasters: Mutex::new(HashMap::new()),
-                session_event_heads: Mutex::new(HashMap::new()),
-                order_seq_states: Mutex::new(HashMap::new()),
-                active_task_refreshes: Mutex::new(HashMap::new()),
-                task_session_creation_locks: Mutex::new(HashMap::new()),
-                running_sessions,
-                session_pins: Mutex::new(HashMap::new()),
-                session_meta_cache: Mutex::new(HashMap::new()),
-            },
+            sessions: SessionRuntime::new_from_env(),
             workspaces: WorkspaceRuntime {
                 worktree_vcs_enabled,
                 file_completions_cache: Mutex::new(HashMap::new()),
