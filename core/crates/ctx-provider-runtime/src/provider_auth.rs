@@ -2,7 +2,9 @@ use std::path::Path as StdPath;
 
 use ctx_core::provider_ids::CODEX_PROVIDER_ID;
 use ctx_harness_sources as harness_sources;
-use ctx_harness_sources::{HarnessRouteBackend, HarnessRuntimeSourceMode, HarnessSourceKind};
+use ctx_harness_sources::{
+    HarnessEndpointRecord, HarnessRouteBackend, HarnessRuntimeSourceMode, HarnessSourceKind,
+};
 use ctx_provider_accounts as provider_accounts;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +44,32 @@ pub fn endpoint_selection_is_active(config: &harness_sources::HarnessProviderSou
             && (endpoint.has_api_key
                 || endpoint.route_backend() == HarnessRouteBackend::CtxManagedRelay)
     })
+}
+
+pub fn selected_endpoint_from_harness_config(
+    config: Option<harness_sources::HarnessProviderSourceConfig>,
+) -> Option<String> {
+    config.and_then(|cfg| {
+        if cfg.selected_source_kind == HarnessSourceKind::Endpoint {
+            cfg.selected_endpoint_id
+        } else {
+            None
+        }
+    })
+}
+
+pub fn selected_endpoint_record_from_harness_config(
+    config: Option<&harness_sources::HarnessProviderSourceConfig>,
+) -> Option<HarnessEndpointRecord> {
+    let cfg = config?;
+    if cfg.selected_source_kind != HarnessSourceKind::Endpoint {
+        return None;
+    }
+    let selected_id = cfg.selected_endpoint_id.as_deref()?;
+    cfg.endpoints
+        .iter()
+        .find(|endpoint| endpoint.id == selected_id)
+        .cloned()
 }
 
 pub async fn provider_has_active_auth_config(
@@ -162,6 +190,57 @@ mod tests {
         };
 
         assert!(!endpoint_selection_is_active(&config));
+    }
+
+    #[test]
+    fn selected_endpoint_from_harness_config_prefers_endpoint_selection() {
+        let selected = selected_endpoint_from_harness_config(Some(
+            harness_sources::HarnessProviderSourceConfig {
+                provider_id: CODEX_PROVIDER_ID.to_string(),
+                selected_source_kind: HarnessSourceKind::Endpoint,
+                selected_endpoint_id: Some("endpoint-1".to_string()),
+                endpoints: vec![],
+            },
+        ));
+        assert_eq!(selected.as_deref(), Some("endpoint-1"));
+
+        let subscription = selected_endpoint_from_harness_config(Some(
+            harness_sources::HarnessProviderSourceConfig {
+                provider_id: CODEX_PROVIDER_ID.to_string(),
+                selected_source_kind: HarnessSourceKind::Subscription,
+                selected_endpoint_id: Some("endpoint-1".to_string()),
+                endpoints: vec![],
+            },
+        ));
+        assert!(subscription.is_none());
+    }
+
+    #[test]
+    fn selected_endpoint_record_from_harness_config_returns_selected_record() {
+        let selected = selected_endpoint_record_from_harness_config(Some(
+            &harness_sources::HarnessProviderSourceConfig {
+                provider_id: CODEX_PROVIDER_ID.to_string(),
+                selected_source_kind: HarnessSourceKind::Endpoint,
+                selected_endpoint_id: Some("endpoint-2".to_string()),
+                endpoints: vec![sample_endpoint(true), {
+                    let mut endpoint = sample_endpoint(true);
+                    endpoint.id = "endpoint-2".to_string();
+                    endpoint
+                }],
+            },
+        ))
+        .expect("selected endpoint");
+        assert_eq!(selected.id, "endpoint-2");
+
+        let missing = selected_endpoint_record_from_harness_config(Some(
+            &harness_sources::HarnessProviderSourceConfig {
+                provider_id: CODEX_PROVIDER_ID.to_string(),
+                selected_source_kind: HarnessSourceKind::Endpoint,
+                selected_endpoint_id: Some("endpoint-3".to_string()),
+                endpoints: vec![sample_endpoint(true)],
+            },
+        ));
+        assert!(missing.is_none());
     }
 
     #[test]

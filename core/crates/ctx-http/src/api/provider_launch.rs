@@ -36,11 +36,12 @@ use crate::provider_launch::status::{install_target_for_workspace, provider_stat
 use crate::provider_usability::{provider_status_is_usable, provider_status_unusable_reason};
 use ctx_core::ids::WorkspaceId;
 use ctx_harness_sources as harness_sources;
-use ctx_harness_sources::{
-    HarnessEndpointRecord, HarnessEndpointVerificationStatus, HarnessSourceKind,
-};
+use ctx_harness_sources::{HarnessEndpointVerificationStatus, HarnessSourceKind};
 use ctx_provider_install::install_state::{
     InstallId, InstallInfo, InstallProgressEvent, InstallTarget,
+};
+use ctx_provider_runtime::provider_auth::{
+    selected_endpoint_from_harness_config, selected_endpoint_record_from_harness_config,
 };
 use ctx_provider_runtime::provider_launch::models::{
     endpoint_catalog_runtime_probe_failure, endpoint_catalog_verify_outcome,
@@ -271,32 +272,6 @@ fn project_provider_id_field(requested_provider_id: &str, value: &mut serde_json
     if projected != provider_id {
         value["provider_id"] = serde_json::json!(projected);
     }
-}
-
-pub(super) fn selected_endpoint_from_harness_config(
-    config: Option<harness_sources::HarnessProviderSourceConfig>,
-) -> Option<String> {
-    config.and_then(|cfg| {
-        if cfg.selected_source_kind == HarnessSourceKind::Endpoint {
-            cfg.selected_endpoint_id
-        } else {
-            None
-        }
-    })
-}
-
-pub(crate) fn selected_endpoint_record_from_harness_config(
-    config: Option<&harness_sources::HarnessProviderSourceConfig>,
-) -> Option<HarnessEndpointRecord> {
-    let cfg = config?;
-    if cfg.selected_source_kind != HarnessSourceKind::Endpoint {
-        return None;
-    }
-    let selected_id = cfg.selected_endpoint_id.as_deref()?;
-    cfg.endpoints
-        .iter()
-        .find(|endpoint| endpoint.id == selected_id)
-        .cloned()
 }
 
 #[cfg(test)]

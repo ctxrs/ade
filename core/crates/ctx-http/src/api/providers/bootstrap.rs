@@ -1,4 +1,5 @@
 use super::*;
+use ctx_provider_runtime::provider_auth::selected_endpoint_record_from_harness_config;
 use ctx_provider_runtime::provider_launch::models::{
     endpoint_models_payload, subscription_models_payload_from_status,
 };
@@ -168,11 +169,7 @@ pub(crate) async fn get_workspace_providers_bootstrap(
                     options["probe_error"] = serde_json::json!(config_error);
                     options["config_error"] = serde_json::json!(config_error);
                 }
-                if let Some(endpoint) =
-                    crate::api::provider_launch::selected_endpoint_record_from_harness_config(
-                        source_config.as_ref(),
-                    )
-                {
+                if let Some(endpoint) = selected_endpoint_record_from_harness_config(source_config.as_ref()) {
                     options["models"] =
                         endpoint_models_payload(&provider_id, &endpoint, chrono::Utc::now());
                 } else if let Some(models) = subscription_models_payload_from_status(&provider_status)
