@@ -1,6 +1,10 @@
+mod context_window;
 mod request;
 mod wait;
 
+pub use context_window::{
+    legacy_context_window_metric_key, summarize_context_window, SubagentContextWindowSummary,
+};
 pub use request::{
     build_subagent_request_json, collect_provider_ids, normalize_subagent_labels,
     parse_subagent_worktree, resolve_max_subagents_per_call, SubagentRequestAgent,
