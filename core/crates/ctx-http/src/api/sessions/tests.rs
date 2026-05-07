@@ -1,5 +1,5 @@
 use super::*;
-use crate::title_generation_local;
+use ctx_managed_installs::title_generation_local;
 use std::collections::HashMap;
 
 use ctx_providers::fake::FakeProviderAdapter;

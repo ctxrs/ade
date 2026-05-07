@@ -31,7 +31,6 @@ pub mod telemetry;
 mod terminal_launch;
 mod terminals;
 pub mod title_generation;
-mod title_generation_local;
 mod tool_cgroup;
 mod vcs_hooks;
 mod web_session_launch;

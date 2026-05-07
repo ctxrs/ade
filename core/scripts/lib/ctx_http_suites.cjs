@@ -826,7 +826,7 @@ const CTX_HTTP_SUITES = [
       "crates/ctx-http/src/daemon/sessions/subagents.rs",
       "crates/ctx-http/src/oracle.rs",
       "crates/ctx-http/src/title_generation.rs",
-      "crates/ctx-http/src/title_generation_local.rs",
+      "crates/ctx-managed-installs/src/title_generation_local.rs",
     ],
     testFiles: [
       "subagent_mcp_http",
@@ -848,7 +848,7 @@ const CTX_HTTP_SUITES = [
     description: "real local title-generation runtime flows",
     sourceGlobs: [
       "crates/ctx-http/src/title_generation.rs",
-      "crates/ctx-http/src/title_generation_local.rs",
+      "crates/ctx-managed-installs/src/title_generation_local.rs",
     ],
     testFiles: [
       "title_generation_local_e2e",

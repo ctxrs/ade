@@ -12,7 +12,7 @@ use crate::llm::{
     ChatCompletionRequest, ChatMessage, JsonSchemaSpec, OpenAiClient, ResponseFormat,
 };
 use crate::settings::{TitleGenerationMode, TitleGenerationSettings};
-use crate::title_generation_local;
+use ctx_managed_installs::title_generation_local;
 
 pub const DEFAULT_SESSION_TITLE: &str = "New Task";
 pub const TITLE_MAX_CHARS: usize = 60;

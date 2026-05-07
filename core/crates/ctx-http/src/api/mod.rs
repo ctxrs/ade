@@ -94,11 +94,11 @@ use crate::installer;
 use crate::logs;
 use crate::merge_queue;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
-use crate::title_generation_local;
 use crate::web_sessions::{
     render_web_session_view, WebSessionInfo, WebSessionRunRequest, WebSessionRunResponse,
     WebSessionViewport,
 };
+use ctx_managed_installs::title_generation_local;
 use ctx_provider_install::install_state::InstallId;
 use ctx_providers::adapters::ProviderStatus;
 
