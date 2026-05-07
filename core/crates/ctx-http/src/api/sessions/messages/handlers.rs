@@ -1,6 +1,9 @@
 use super::attachments::{attachments_match, normalize_message_attachments};
 use super::turns::{delivery_matches, ensure_session_turn_for_message};
 use super::*;
+use ctx_session_service::message_delivery::{
+    resolve_message_delivery as resolve_message_delivery_policy, MessageDeliveryResolutionError,
+};
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct PostMessageReq {
@@ -35,19 +38,16 @@ fn resolve_message_delivery(
     session_running: bool,
     queued_enabled: bool,
 ) -> Result<MessageDelivery, ApiErr> {
-    match requested_delivery {
-        Some(MessageDelivery::Queued) if queued_enabled => Ok(MessageDelivery::Queued),
-        Some(MessageDelivery::Queued) => Err(api_error(
-            StatusCode::BAD_REQUEST,
-            "Queued messages are disabled.",
-        )),
-        None if session_running && queued_enabled => Ok(MessageDelivery::Queued),
-        Some(MessageDelivery::Immediate) | None if session_running => Err(api_error(
-            StatusCode::CONFLICT,
-            "A turn is already running. Stop it or wait for it to finish.",
-        )),
-        Some(MessageDelivery::Immediate) | None => Ok(MessageDelivery::Immediate),
-    }
+    resolve_message_delivery_policy(requested_delivery, session_running, queued_enabled).map_err(
+        |error| match error {
+            MessageDeliveryResolutionError::QueuedMessagesDisabled => {
+                api_error(StatusCode::BAD_REQUEST, error.message())
+            }
+            MessageDeliveryResolutionError::TurnAlreadyRunning => {
+                api_error(StatusCode::CONFLICT, error.message())
+            }
+        },
+    )
 }
 
 pub(crate) async fn delete_session_message(
