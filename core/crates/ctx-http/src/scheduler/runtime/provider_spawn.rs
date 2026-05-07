@@ -2,20 +2,60 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::Error;
+use anyhow::{anyhow, Error, Result};
 use serde_json::json;
 
 use ctx_core::ids::{MessageId, RunId, TurnId};
 use ctx_core::models::{ExecutionEnvironment, Session};
-use ctx_providers::adapters::{ProviderRunHooks, ProviderSessionRefClaimHook};
+use ctx_provider_install::install_state::InstallTarget;
+use ctx_providers::adapters::{ProviderAdapter, ProviderRunHooks, ProviderSessionRefClaimHook};
 use ctx_store::Store;
 
-use crate::daemon::AppState;
+use crate::daemon::{ensure_provider_adapter_for_target_with_cfg, AppState};
+use crate::installer;
 use crate::ops_events::OpsEvent;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 use crate::telemetry::TelemetryEvent;
 
 use super::super::terminal::{finalize_failed_turn, FailedTurnTerminalization};
+
+pub(super) struct PreparedProviderAdapter {
+    pub(super) adapter: Arc<dyn ProviderAdapter>,
+    pub(super) adapter_cfg: installer::AgentServerConfigFile,
+    pub(super) install_target: InstallTarget,
+}
+
+pub(super) async fn prepare_provider_adapter_for_turn(
+    state: &Arc<AppState>,
+    runtime_provider_id: &str,
+    is_linux_sandbox: bool,
+) -> Result<PreparedProviderAdapter> {
+    let install_target = provider_install_target_for_runtime(is_linux_sandbox);
+    let adapter_cfg = crate::daemon::load_managed_agent_server_config_or_err(&state.core.data_root)
+        .await
+        .map_err(|err| anyhow!(err.to_string()))?;
+    let adapter = ensure_provider_adapter_for_target_with_cfg(
+        state.as_ref(),
+        &adapter_cfg,
+        runtime_provider_id,
+        install_target,
+    )
+    .await;
+
+    Ok(PreparedProviderAdapter {
+        adapter,
+        adapter_cfg,
+        install_target,
+    })
+}
+
+fn provider_install_target_for_runtime(is_linux_sandbox: bool) -> InstallTarget {
+    if is_linux_sandbox {
+        InstallTarget::Container
+    } else {
+        InstallTarget::Host
+    }
+}
 
 pub(super) async fn issue_mcp_token_if_enabled(
     state: &Arc<AppState>,
@@ -196,4 +236,25 @@ pub(super) async fn handle_provider_start_failure(
         },
     )
     .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linux_sandbox_runtime_uses_container_install_target() {
+        assert_eq!(
+            provider_install_target_for_runtime(true),
+            InstallTarget::Container
+        );
+    }
+
+    #[test]
+    fn host_runtime_uses_host_install_target() {
+        assert_eq!(
+            provider_install_target_for_runtime(false),
+            InstallTarget::Host
+        );
+    }
 }

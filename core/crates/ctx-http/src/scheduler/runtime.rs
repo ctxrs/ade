@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use chrono::Utc;
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot, watch, Mutex};
@@ -17,10 +17,9 @@ use ctx_providers::events::NormalizedEvent;
 use ctx_session_tools::model_resolution::compose_model_id;
 use ctx_session_tools::order_seq::OrderSeqState;
 
-use crate::daemon::{ensure_provider_adapter_for_target_with_cfg, AppState};
+use crate::daemon::AppState;
 use crate::settings;
 use crate::storage_guard;
-use ctx_provider_install::install_state::InstallTarget;
 use ctx_workspace_config as workspace_config;
 
 mod event_loop;
@@ -50,7 +49,7 @@ use self::provider_env::{
 use self::provider_launch::apply_provider_launch_overrides;
 use self::provider_spawn::{
     build_provider_run_hooks, handle_provider_start_failure, issue_mcp_token_if_enabled,
-    record_provider_spawn_metric, ProviderStartFailure,
+    prepare_provider_adapter_for_turn, record_provider_spawn_metric, ProviderStartFailure,
 };
 use self::turn_failure::emit_turn_start_failed;
 use self::turn_start::{
@@ -212,27 +211,15 @@ pub(crate) async fn start_turn(
             runtime_provider_id.to_string(),
         );
     }
-    let install_target = if is_linux_sandbox {
-        InstallTarget::Container
-    } else {
-        InstallTarget::Host
-    };
-    let adapter_cfg =
-        match crate::daemon::load_managed_agent_server_config_or_err(&state.core.data_root).await {
-            Ok(cfg) => cfg,
+    let prepared_adapter =
+        match prepare_provider_adapter_for_turn(state, runtime_provider_id, is_linux_sandbox).await
+        {
+            Ok(prepared_adapter) => prepared_adapter,
             Err(err) => {
-                let err = anyhow!(err.to_string());
                 emit_turn_start_failed(state, session, run_id, turn_id, message_id, &err).await;
                 return Err(err);
             }
         };
-    let adapter = ensure_provider_adapter_for_target_with_cfg(
-        state,
-        &adapter_cfg,
-        runtime_provider_id,
-        install_target,
-    )
-    .await;
 
     prepare_provider_runtime_environment(ProviderRuntimeEnvironmentRequest {
         state,
@@ -241,8 +228,8 @@ pub(crate) async fn start_turn(
         runtime_plan: &runtime_plan,
         is_linux_sandbox,
         runtime_source_mode,
-        adapter_cfg: &adapter_cfg,
-        install_target,
+        adapter_cfg: &prepared_adapter.adapter_cfg,
+        install_target: prepared_adapter.install_target,
     })
     .await?;
     apply_crp_launch_policy_env_for_control_mode(&mut provider_env, &provider_control_mode);
@@ -293,7 +280,8 @@ pub(crate) async fn start_turn(
         execution_environment,
         session_root_kind,
     );
-    let handle = match adapter
+    let handle = match prepared_adapter
+        .adapter
         .run(
             TurnInput {
                 content: prompt,
@@ -372,7 +360,7 @@ pub(crate) async fn start_turn(
     });
 
     Ok(RunningTurn {
-        adapter,
+        adapter: prepared_adapter.adapter,
         handle,
         run_id,
         turn_id,
