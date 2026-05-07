@@ -1,4 +1,7 @@
 use super::*;
+use ctx_provider_runtime::provider_launch::models::{
+    endpoint_models_payload, subscription_models_payload_from_status,
+};
 use ctx_workspace_config as workspace_config;
 
 fn bootstrap_accounts_error(
@@ -170,15 +173,9 @@ pub(crate) async fn get_workspace_providers_bootstrap(
                         source_config.as_ref(),
                     )
                 {
-                    options["models"] = crate::api::provider_launch::endpoint_models_payload(
-                        &provider_id,
-                        &endpoint,
-                        chrono::Utc::now(),
-                    );
-                } else if let Some(models) =
-                    crate::api::provider_launch::subscription_models_payload_from_status(
-                        &provider_status,
-                    )
+                    options["models"] =
+                        endpoint_models_payload(&provider_id, &endpoint, chrono::Utc::now());
+                } else if let Some(models) = subscription_models_payload_from_status(&provider_status)
                 {
                     options["models"] = models;
                 }

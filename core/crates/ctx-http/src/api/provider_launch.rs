@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -39,9 +39,12 @@ use ctx_harness_sources as harness_sources;
 use ctx_harness_sources::{
     HarnessEndpointRecord, HarnessEndpointVerificationStatus, HarnessSourceKind,
 };
-use ctx_provider_accounts as provider_accounts;
 use ctx_provider_install::install_state::{
     InstallId, InstallInfo, InstallProgressEvent, InstallTarget,
+};
+use ctx_provider_runtime::provider_launch::models::{
+    endpoint_catalog_runtime_probe_failure, endpoint_catalog_verify_outcome,
+    endpoint_models_payload, subscription_models_payload_from_status,
 };
 use ctx_provider_runtime::provider_launch::options::{
     endpoint_supports_model_catalog_verify, provider_options_probe_plan, ProviderOptionsProbePlan,
@@ -240,24 +243,6 @@ async fn prepare_provider_runtime_probe(
     })
 }
 
-pub(super) fn endpoint_catalog_runtime_probe_failure(
-    message: String,
-    endpoint_status: HarnessEndpointVerificationStatus,
-) -> (
-    String,
-    Option<bool>,
-    Option<String>,
-    HarnessEndpointVerificationStatus,
-) {
-    let (status, auth_required, _) = classify_probe_error(&message);
-    (
-        status.to_string(),
-        auth_required,
-        Some(message),
-        endpoint_status,
-    )
-}
-
 fn workspace_provider_cache_key(
     workspace_id: WorkspaceId,
     target: InstallTarget,
@@ -312,136 +297,6 @@ pub(crate) fn selected_endpoint_record_from_harness_config(
         .iter()
         .find(|endpoint| endpoint.id == selected_id)
         .cloned()
-}
-
-pub(crate) fn subscription_models_payload_from_status(
-    provider_status: &ctx_providers::adapters::ProviderStatus,
-) -> Option<serde_json::Value> {
-    if provider_status.provider_id == "fake" {
-        return Some(serde_json::json!({
-            "catalog_source": "fake_provider",
-            "current_model_id": "fake-model",
-            "models": [
-                {
-                    "id": "fake-model",
-                    "name": "fake-model",
-                }
-            ],
-            "meta": {
-                "source_kind": "subscription",
-                "catalog_source": "fake_provider",
-                "refresh_pending": false,
-            },
-        }));
-    }
-    provider_accounts::pinned_subscription_models_value(
-        &provider_status.provider_id,
-        provider_status.version.as_deref(),
-    )
-}
-
-fn endpoint_model_entries(endpoint: &HarnessEndpointRecord) -> Vec<serde_json::Value> {
-    let mut seen = HashSet::new();
-    let mut entries = Vec::new();
-
-    for model in &endpoint.model_catalog_models {
-        let id = model.id.trim();
-        if id.is_empty() || !seen.insert(id.to_string()) {
-            continue;
-        }
-        entries.push(serde_json::json!({
-            "id": id,
-            "name": model.name.clone(),
-        }));
-    }
-
-    for model_id in &endpoint.manual_model_ids {
-        let id = model_id.trim();
-        if id.is_empty() || !seen.insert(id.to_string()) {
-            continue;
-        }
-        entries.push(serde_json::json!({
-            "id": id,
-        }));
-    }
-
-    entries
-}
-
-fn endpoint_current_model_id(
-    provider_id: &str,
-    endpoint: &HarnessEndpointRecord,
-) -> Option<String> {
-    if provider_id == "droid" {
-        return harness_sources::droid_cli_model_id_for_endpoint_model(
-            endpoint.model_override.as_deref(),
-            endpoint.base_url.as_deref(),
-        );
-    }
-    endpoint
-        .model_override
-        .as_ref()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
-
-pub(crate) fn endpoint_models_payload(
-    provider_id: &str,
-    endpoint: &HarnessEndpointRecord,
-    now: chrono::DateTime<chrono::Utc>,
-) -> serde_json::Value {
-    let stale = harness_sources::endpoint_model_catalog_is_stale(endpoint, now);
-    serde_json::json!({
-        "models": endpoint_model_entries(endpoint),
-        "current_model_id": endpoint_current_model_id(provider_id, endpoint),
-        "meta": {
-            "source_kind": "endpoint",
-            "catalog_status": endpoint.model_catalog_status,
-            "catalog_source": endpoint.model_catalog_source,
-            "fetched_at": endpoint.model_catalog_fetched_at,
-            "last_error": endpoint.model_catalog_error,
-            "stale": stale,
-        },
-    })
-}
-
-pub(super) fn endpoint_catalog_verify_outcome(
-    endpoint: &HarnessEndpointRecord,
-) -> (
-    String,
-    Option<bool>,
-    Option<String>,
-    HarnessEndpointVerificationStatus,
-) {
-    match endpoint.model_catalog_status {
-        harness_sources::EndpointModelCatalogStatus::Ready
-        | harness_sources::EndpointModelCatalogStatus::ManualOnly => (
-            "ok".to_string(),
-            Some(false),
-            None,
-            HarnessEndpointVerificationStatus::Valid,
-        ),
-        harness_sources::EndpointModelCatalogStatus::Unknown
-        | harness_sources::EndpointModelCatalogStatus::Error => {
-            let detail = endpoint
-                .model_catalog_error
-                .as_ref()
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
-                .unwrap_or_else(|| {
-                    "endpoint model catalog is unavailable; refresh endpoint models in Settings"
-                        .to_string()
-                });
-            let redacted = logs::redact_sensitive(&detail);
-            let (status, auth_required, endpoint_status) = classify_probe_error(&redacted);
-            (
-                status.to_string(),
-                auth_required,
-                Some(redacted),
-                endpoint_status,
-            )
-        }
-    }
 }
 
 #[cfg(test)]

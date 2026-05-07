@@ -1,4 +1,5 @@
 pub mod install;
+pub mod models;
 pub mod options;
 pub mod probe;
 pub mod probe_error;

@@ -2,6 +2,7 @@ use super::*;
 use crate::api::sessions;
 use ctx_core::provider_ids::CODEX_PROVIDER_ID;
 use ctx_provider_install::InstallTarget;
+use ctx_provider_runtime::provider_launch::models::subscription_models_payload_from_status;
 
 const PREFERRED_DEFAULT_PROVIDER_IDS: &[&str] = &[
     CODEX_PROVIDER_ID,
@@ -206,13 +207,12 @@ async fn resolve_default_session_target(
         .map(str::to_string)
         .or_else(|| {
             provider_status.and_then(|status| {
-                crate::api::provider_launch::subscription_models_payload_from_status(status)
-                    .and_then(|value| {
-                        value
-                            .get("current_model_id")
-                            .and_then(serde_json::Value::as_str)
-                            .map(str::to_string)
-                    })
+                subscription_models_payload_from_status(status).and_then(|value| {
+                    value
+                        .get("current_model_id")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string)
+                })
             })
         });
     let resolved_model = sessions::resolve_model_id(
