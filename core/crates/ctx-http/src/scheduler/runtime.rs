@@ -16,11 +16,7 @@ use ctx_core::models::{
 use ctx_providers::adapters::TurnInput;
 use ctx_providers::events::NormalizedEvent;
 use ctx_session_tools::model_resolution::compose_model_id;
-use ctx_session_tools::{
-    build_tool_ops_meta_from_normalized, build_turn_tool_update, merge_tool_update,
-    normalize_tool_event, sanitize_normalized_tool_event_payload, tool_count_deltas,
-};
-use ctx_store::store::SessionTurnToolCountDeltas;
+use ctx_session_tools::order_seq::OrderSeqState;
 
 use crate::daemon::{ensure_provider_adapter_for_target_with_cfg, AppState};
 use crate::execution_effective;
@@ -29,7 +25,6 @@ use crate::settings;
 use crate::storage_guard;
 use ctx_harness_sources::HarnessSourceKind;
 use ctx_provider_install::install_state::InstallTarget;
-use ctx_session_tools::order_seq::{attach_order_seq, read_order_seq, OrderSeqState};
 use ctx_workspace_config as workspace_config;
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
 
@@ -61,7 +56,6 @@ use self::provider_spawn::{
     build_provider_run_hooks, handle_provider_start_failure, issue_mcp_token_if_enabled,
     record_provider_spawn_metric, ProviderStartFailure,
 };
-use self::tool_runtime::{cwd_outside_worktree, maybe_spool_tool_output};
 use self::turn_failure::emit_turn_start_failed;
 use self::turn_start::{
     apply_crp_launch_policy_env_for_control_mode, provider_mode_id_for, record_queue_wait_metric,
