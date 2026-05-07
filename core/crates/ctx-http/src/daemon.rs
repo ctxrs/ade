@@ -1,11 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::{Context, Result};
 use axum::Router;
-use chrono::Utc;
 use directories::BaseDirs;
 use serde::Serialize;
 use serde_json::json;
@@ -41,6 +39,7 @@ mod managed_auto_update;
 mod mcp_auth;
 mod provider_adapters;
 mod provider_bootstrap;
+mod retention;
 pub(crate) mod sessions;
 mod state;
 pub(crate) mod workspaces;
@@ -75,6 +74,8 @@ pub(crate) use provider_bootstrap::{
     ensure_provider_adapter_for_target, ensure_provider_adapter_for_target_with_cfg,
     load_managed_agent_server_config_or_err, normalize_acp_provider_command,
 };
+#[cfg(test)]
+pub(crate) use retention::prune_archived_session_data_for_all_workspaces;
 pub(crate) use state::AttachmentMaterializationTask;
 pub(crate) use state::WorktreeVcsDirtyBits;
 pub use state::{
@@ -82,48 +83,6 @@ pub use state::{
     SessionHeadCacheKey, StoreLookup, TimedEntry, WorkspaceActiveHeadCacheEntry,
     WorkspaceActiveSnapshotCacheEntry, WorktreeVcsSnapshotCacheEntry,
 };
-
-async fn prune_archived_session_data_for_all_workspaces(
-    stores: &StoreManager,
-    retention_days: u64,
-) -> Result<()> {
-    let workspaces = stores.global().list_workspaces().await?;
-    for workspace in workspaces {
-        match stores.workspace_transient(workspace.id).await {
-            Ok(store) => {
-                let prune_result = store
-                    .prune_session_data_older_than_days(retention_days)
-                    .await;
-                store.close().await;
-                match prune_result {
-                    Ok(stats) => {
-                        tracing::info!(
-                            workspace_id = %workspace.id.0,
-                            tool_summaries_deleted = stats.tool_summaries_deleted,
-                            turn_thoughts_cleared = stats.turn_thoughts_cleared,
-                            retention_days,
-                            "pruned archived session data",
-                        );
-                    }
-                    Err(err) => {
-                        tracing::warn!(
-                            workspace_id = %workspace.id.0,
-                            retention_days,
-                            "failed to prune old session data: {err:#}",
-                        );
-                    }
-                }
-            }
-            Err(err) => {
-                tracing::warn!(
-                    workspace_id = %workspace.id.0,
-                    "failed to open workspace store for pruning: {err:#}",
-                );
-            }
-        }
-    }
-    Ok(())
-}
 
 fn spawn_startup_provider_status_refresh(state: Arc<AppState>) {
     tokio::spawn(async move {
@@ -169,39 +128,7 @@ pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
         .unwrap_or_default();
     let stores = StoreManager::open_with_config(&data_root, store_config).await?;
 
-    // Retention policy (configurable via env):
-    // - Keep tool summaries and final thoughts for archived tasks for N days.
-    // - Do not retain thought chunk events (handled at ingestion time).
-    const DEFAULT_TOOL_SUMMARY_RETENTION_DAYS: u64 = 30;
-    fn tool_summary_retention_days() -> u64 {
-        std::env::var("CTX_TOOL_SUMMARY_RETENTION_DAYS")
-            .ok()
-            .and_then(|value| value.trim().parse::<u64>().ok())
-            .unwrap_or(DEFAULT_TOOL_SUMMARY_RETENTION_DAYS)
-    }
-    {
-        let stores = stores.clone();
-        tokio::spawn(async move {
-            let mut last_cleanup = None::<String>;
-            loop {
-                let today = Utc::now().format("%Y-%m-%d").to_string();
-                if last_cleanup.as_deref() != Some(&today) {
-                    let retention_days = tool_summary_retention_days();
-                    if let Err(err) =
-                        prune_archived_session_data_for_all_workspaces(&stores, retention_days)
-                            .await
-                    {
-                        tracing::warn!(
-                            retention_days,
-                            "failed to list workspaces for pruning: {err:#}",
-                        );
-                    }
-                    last_cleanup = Some(today);
-                }
-                tokio::time::sleep(Duration::from_secs(60 * 60)).await;
-            }
-        });
-    }
+    retention::spawn_archived_session_data_pruner(stores.clone());
 
     let agent_cfg = load_managed_agent_server_config_or_err(&data_root).await?;
 
