@@ -4,6 +4,9 @@ pub(super) use super::super::provider_probe_auth::provider_auth_mode;
 #[cfg(test)]
 pub(super) use super::super::provider_probe_auth::provider_has_active_auth_config;
 use super::*;
+use ctx_provider_runtime::provider_usability::{
+    provider_status_is_usable, provider_status_unusable_reason,
+};
 
 pub(super) fn cache_key_matches_provider(cache_key: &str, provider_id: &str) -> bool {
     cache_key
@@ -31,12 +34,12 @@ pub(super) fn bootstrap_provider_probe_summary(
     provider_status: &ProviderStatus,
     has_active_auth: bool,
 ) -> (bool, bool, Option<String>) {
-    if !crate::provider_usability::provider_status_is_usable(provider_status) {
+    if !provider_status_is_usable(provider_status) {
         return (
             false,
             false,
             Some(
-                crate::provider_usability::provider_status_unusable_reason(provider_status)
+                provider_status_unusable_reason(provider_status)
                     .unwrap_or_else(|| "provider not ready for use".to_string()),
             ),
         );

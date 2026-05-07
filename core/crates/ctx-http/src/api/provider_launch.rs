@@ -33,7 +33,6 @@ use crate::provider_launch::resolver::{
     is_acp_provider_id, runtime_probe_command_as_agent_command_for_target,
 };
 use crate::provider_launch::status::{install_target_for_workspace, provider_status_for_target};
-use crate::provider_usability::{provider_status_is_usable, provider_status_unusable_reason};
 use ctx_core::ids::WorkspaceId;
 use ctx_harness_sources as harness_sources;
 use ctx_harness_sources::{HarnessEndpointVerificationStatus, HarnessSourceKind};
@@ -52,6 +51,9 @@ use ctx_provider_runtime::provider_launch::options::{
     endpoint_supports_model_catalog_verify, provider_options_probe_plan, ProviderOptionsProbePlan,
 };
 use ctx_provider_runtime::provider_launch::probe_error::classify_probe_error;
+use ctx_provider_runtime::provider_usability::{
+    provider_status_is_usable, provider_status_unusable_reason,
+};
 use ctx_providers::crp::{probe_crp_models, probe_crp_runtime_launch};
 
 #[derive(Debug, Deserialize)]

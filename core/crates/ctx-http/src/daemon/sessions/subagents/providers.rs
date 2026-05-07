@@ -7,6 +7,9 @@ use crate::daemon::AppState;
 use crate::execution_effective;
 use ctx_core::models::{ExecutionEnvironment, Workspace};
 use ctx_provider_matrix::ProviderMatrixEntryKind;
+use ctx_provider_runtime::provider_usability::{
+    provider_status_is_usable, provider_status_unusable_reason,
+};
 
 use super::errors::{
     api_error, internal_api_error, internal_request_or_policy_error, ApiResult, SubagentErrorKind,
@@ -65,12 +68,12 @@ pub(super) async fn load_requested_model_catalogs(
             install_target,
         )
         .await;
-        if !crate::provider_usability::provider_status_is_usable(&status) {
+        if !provider_status_is_usable(&status) {
             return Err(api_error(
                 SubagentErrorKind::BadRequest,
                 format!(
                     "harness '{provider_id}' is not ready: {}",
-                    crate::provider_usability::provider_status_unusable_reason(&status,)
+                    provider_status_unusable_reason(&status)
                         .unwrap_or_else(|| "provider not ready for use".to_string())
                 ),
             ));
