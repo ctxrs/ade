@@ -1,5 +1,15 @@
 use ctx_core::ids::WorkspaceId;
-use ctx_core::models::SessionHeadSnapshot;
+use ctx_core::models::{SessionHeadSnapshot, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot};
+
+#[derive(Clone, Debug)]
+pub struct WorkspaceActiveSnapshotCacheEntry {
+    pub snapshot: WorkspaceActiveSnapshot,
+}
+
+#[derive(Clone, Debug)]
+pub struct WorkspaceActiveHeadCacheEntry {
+    pub batch: WorkspaceActiveHeadBatch,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SessionHeadCompleteness {

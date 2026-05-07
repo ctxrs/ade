@@ -21,7 +21,6 @@ use crate::telemetry::Telemetry;
 use crate::terminals::TerminalManager;
 use crate::web_sessions::WebSessionManager;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceAttachmentId, WorkspaceId, WorktreeId};
-use ctx_core::models::{WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot};
 use ctx_execution_runtime::ExecutionSetupCoordinator;
 use ctx_provider_accounts as provider_accounts;
 use ctx_provider_install::install_state::{
@@ -42,6 +41,9 @@ mod installs;
 mod metrics;
 mod types;
 
+pub use ctx_workspace_active_snapshot::{
+    WorkspaceActiveHeadCacheEntry, WorkspaceActiveSnapshotCacheEntry,
+};
 pub(crate) use ctx_workspace_services::worktree_vcs::{
     worktree_vcs_enabled_from_env, worktree_vcs_scheduler_concurrency_from_env,
     WorktreeVcsDirtyBits,
@@ -54,8 +56,7 @@ pub use ctx_workspace_services::worktree_vcs::WorktreeVcsSchedulerRuntime;
 pub use types::{
     AppRuntimeFlags, AppState, CacheSweepConfig, CacheSweepStats, CoreState, ExecutionRuntime,
     ProviderRuntime, SessionHeadCacheKey, SessionRuntime, StoreLookup, TelemetryRuntime,
-    TimedEntry, TransportRuntime, WorkspaceActiveHeadCacheEntry, WorkspaceActiveSnapshotCacheEntry,
-    WorkspaceRuntime,
+    TimedEntry, TransportRuntime, WorkspaceRuntime,
 };
 pub(crate) use types::{AttachmentMaterializationTask, WorktreeBootstrapGate};
 

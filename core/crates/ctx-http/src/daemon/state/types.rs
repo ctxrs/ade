@@ -3,6 +3,9 @@ use crate::daemon::McpAuthContext;
 use ctx_execution_runtime::ExecutionSetupCoordinator;
 use ctx_provider_runtime::{CachedProviderOptions, CachedProviderVerify};
 use ctx_update_service::UpdateDrainCoordinator;
+use ctx_workspace_active_snapshot::{
+    WorkspaceActiveHeadCacheEntry, WorkspaceActiveSnapshotCacheEntry,
+};
 use ctx_workspace_services::file_completions::CachedFileCompletions;
 use ctx_workspace_services::worktree_vcs::{
     GitStatusSnapshotCacheEntry, WorktreeVcsRuntimeState, WorktreeVcsSchedulerRuntime,
@@ -124,16 +127,6 @@ pub(crate) struct WorktreeBootstrapGate {
 pub(crate) struct AttachmentMaterializationTask {
     pub(crate) generation: u64,
     pub(crate) handle: JoinHandle<()>,
-}
-
-#[derive(Clone, Debug)]
-pub struct WorkspaceActiveSnapshotCacheEntry {
-    pub snapshot: WorkspaceActiveSnapshot,
-}
-
-#[derive(Clone, Debug)]
-pub struct WorkspaceActiveHeadCacheEntry {
-    pub batch: WorkspaceActiveHeadBatch,
 }
 
 const DEFAULT_SESSION_CACHE_TTL_HOURS: u64 = 24;

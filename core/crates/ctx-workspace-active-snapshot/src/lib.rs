@@ -32,6 +32,7 @@ mod stats;
 mod trim;
 mod workspace_events;
 
+pub use cache::{WorkspaceActiveHeadCacheEntry, WorkspaceActiveSnapshotCacheEntry};
 pub use replay_state::{
     is_transient_session_delta, SessionReplayCursor, WorkspaceSessionReplay,
     WorkspaceSessionReplayItem,
