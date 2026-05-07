@@ -12,7 +12,6 @@ use ctx_core::ids::{RunId, TurnId};
 use ctx_core::models::{
     MessageDelivery, MessageRole, Session, SessionEventType, SessionTurnStatus,
 };
-use ctx_providers::adapters::TurnInput;
 use ctx_providers::events::NormalizedEvent;
 use ctx_session_tools::model_resolution::compose_model_id;
 use ctx_session_tools::order_seq::OrderSeqState;
@@ -32,15 +31,12 @@ mod provider_spawn;
 mod tests;
 mod tool_runtime;
 mod turn_failure;
+mod turn_input;
 mod turn_start;
 
 use self::event_loop::{spawn_turn_event_loop, TurnEventLoop};
 use self::execution_plan::prepare_turn_execution_plan;
-use self::helpers::{
-    compute_context_window_metrics, load_system_prompt_append_for_relationship,
-    normalize_session_model_id, provider_supports_system_prompt_append,
-    runtime_provider_id_for_session_provider,
-};
+use self::helpers::{compute_context_window_metrics, runtime_provider_id_for_session_provider};
 use self::provider_env::{
     apply_runtime_source_env, build_base_provider_env, emit_provider_run_env_ready_event,
     prepare_provider_runtime_environment, BaseProviderEnvRequest, ProviderRunEnvReadyEvent,
@@ -52,6 +48,7 @@ use self::provider_spawn::{
     prepare_provider_adapter_for_turn, record_provider_spawn_metric, ProviderStartFailure,
 };
 use self::turn_failure::emit_turn_start_failed;
+use self::turn_input::prepare_turn_input;
 use self::turn_start::{
     apply_crp_launch_policy_env_for_control_mode, emit_provider_run_started_event,
     record_queue_wait_metric, turn_start_deadline, ProviderRunStartedEvent,
@@ -250,15 +247,8 @@ pub(crate) async fn start_turn(
         provider_env: &provider_env,
     });
 
-    let system_prompt_append =
-        load_system_prompt_append_for_relationship(&store, session.relationship.as_deref()).await?;
-    let mut context_blocks = Vec::new();
-    if let Some(append) = system_prompt_append.as_deref() {
-        if !provider_supports_system_prompt_append(&session.provider_id) {
-            context_blocks.push(json!({"type":"text","text": append}));
-        }
-        provider_env.insert("CTX_SYSTEM_PROMPT_APPEND".to_string(), append.to_string());
-    }
+    let turn_input =
+        prepare_turn_input(&store, session, &message, &full_model_id, &mut provider_env).await?;
     apply_provider_launch_overrides(runtime_provider_id, workdir, &mut provider_env).await?;
     let mcp_disabled = provider_env
         .get("CTX_MCP_DISABLED")
@@ -283,12 +273,7 @@ pub(crate) async fn start_turn(
     let handle = match prepared_adapter
         .adapter
         .run(
-            TurnInput {
-                content: prompt,
-                attachments: message.attachments.clone(),
-                context_blocks,
-                model_id: normalize_session_model_id(&full_model_id),
-            },
+            turn_input,
             workdir.to_path_buf(),
             provider_env,
             ev_tx,
