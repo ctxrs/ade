@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Instant;
 
 use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
 use tokio::sync::Mutex;
@@ -29,3 +30,13 @@ pub trait ProviderRuntimeHost: Send + Sync + 'static {
 }
 
 pub type AppState = dyn ProviderRuntimeHost;
+
+pub struct CachedProviderOptions {
+    pub cached_at: Instant,
+    pub value: serde_json::Value,
+}
+
+pub struct CachedProviderVerify {
+    pub cached_at: Instant,
+    pub value: serde_json::Value,
+}

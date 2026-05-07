@@ -1,6 +1,7 @@
 use super::*;
 use crate::daemon::McpAuthContext;
 use ctx_execution_runtime::ExecutionSetupCoordinator;
+use ctx_provider_runtime::{CachedProviderOptions, CachedProviderVerify};
 use ctx_update_service::UpdateDrainCoordinator;
 use ctx_workspace_services::worktree_vcs::{WorktreeVcsRuntimeState, WorktreeVcsSchedulerRuntime};
 
@@ -120,16 +121,6 @@ pub(crate) struct WorktreeBootstrapGate {
 pub(crate) struct AttachmentMaterializationTask {
     pub(crate) generation: u64,
     pub(crate) handle: JoinHandle<()>,
-}
-
-pub struct CachedProviderOptions {
-    pub cached_at: Instant,
-    pub value: serde_json::Value,
-}
-
-pub struct CachedProviderVerify {
-    pub cached_at: Instant,
-    pub value: serde_json::Value,
 }
 
 pub struct CachedFileCompletions {
