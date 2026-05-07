@@ -8,6 +8,11 @@ use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::Response;
 use axum::Json;
 use chrono::Utc;
+use ctx_session_tools::{
+    infer_session_artifact_mime_type, infer_session_upload_blob_mime_type,
+    normalize_session_artifact_name, SESSION_IMAGE_BLOB_MAX_BYTES,
+    SESSION_IMAGE_BLOB_MULTIPART_MAX_BYTES, SESSION_IMAGE_BLOB_TOO_LARGE_MESSAGE,
+};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
@@ -33,9 +38,8 @@ pub(super) struct BlobUploadResp {
     pub(super) name: Option<String>,
 }
 
-pub(super) const MAX_BLOB_BYTES: usize = 25 * 1024 * 1024;
-pub(super) const MAX_BLOB_MULTIPART_BODY_BYTES: usize = MAX_BLOB_BYTES + 64 * 1024;
-const IMAGE_ATTACHMENT_TOO_LARGE_MESSAGE: &str = "Image attachments must be 25 MiB or smaller.";
+pub(super) const MAX_BLOB_BYTES: usize = SESSION_IMAGE_BLOB_MAX_BYTES;
+pub(super) const MAX_BLOB_MULTIPART_BODY_BYTES: usize = SESSION_IMAGE_BLOB_MULTIPART_MAX_BYTES;
 
 fn blob_upload_api_error(
     status: StatusCode,
@@ -52,7 +56,7 @@ fn blob_upload_api_error(
 fn blob_upload_status_error(status: StatusCode) -> (StatusCode, Json<ApiErrorResp>) {
     match status {
         StatusCode::PAYLOAD_TOO_LARGE => {
-            blob_upload_api_error(status, IMAGE_ATTACHMENT_TOO_LARGE_MESSAGE)
+            blob_upload_api_error(status, SESSION_IMAGE_BLOB_TOO_LARGE_MESSAGE)
         }
         StatusCode::UNSUPPORTED_MEDIA_TYPE => {
             blob_upload_api_error(status, "Only image attachments are supported.")
@@ -66,7 +70,7 @@ fn blob_upload_status_error(status: StatusCode) -> (StatusCode, Json<ApiErrorRes
 
 fn blob_upload_multipart_rejection_error(status: StatusCode) -> (StatusCode, Json<ApiErrorResp>) {
     if status == StatusCode::PAYLOAD_TOO_LARGE {
-        return blob_upload_api_error(status, IMAGE_ATTACHMENT_TOO_LARGE_MESSAGE);
+        return blob_upload_api_error(status, SESSION_IMAGE_BLOB_TOO_LARGE_MESSAGE);
     }
     blob_upload_api_error(
         StatusCode::BAD_REQUEST,
@@ -76,13 +80,6 @@ fn blob_upload_multipart_rejection_error(status: StatusCode) -> (StatusCode, Jso
 
 fn blobs_dir(data_root: &StdPath) -> PathBuf {
     data_root.join("blobs")
-}
-
-fn infer_upload_blob_mime_type(file_name: Option<&str>, override_value: Option<String>) -> String {
-    match file_name {
-        Some(name) => infer_artifact_mime_type(StdPath::new(name), override_value),
-        None => override_value.unwrap_or_else(|| "application/octet-stream".to_string()),
-    }
 }
 
 async fn canonicalize_existing_or_raw(path: &StdPath) -> PathBuf {
@@ -259,7 +256,7 @@ pub(super) async fn upload_blob(
     while let Some(field) = multipart.next_field().await.map_err(|_| {
         blob_upload_api_error(
             StatusCode::PAYLOAD_TOO_LARGE,
-            IMAGE_ATTACHMENT_TOO_LARGE_MESSAGE,
+            SESSION_IMAGE_BLOB_TOO_LARGE_MESSAGE,
         )
     })? {
         let name = field.name().map(|s| s.to_string()).unwrap_or_default();
@@ -273,13 +270,13 @@ pub(super) async fn upload_blob(
         while let Some(chunk) = field.chunk().await.map_err(|_| {
             blob_upload_api_error(
                 StatusCode::PAYLOAD_TOO_LARGE,
-                IMAGE_ATTACHMENT_TOO_LARGE_MESSAGE,
+                SESSION_IMAGE_BLOB_TOO_LARGE_MESSAGE,
             )
         })? {
             if field_bytes.len().saturating_add(chunk.len()) > MAX_BLOB_BYTES {
                 return Err(blob_upload_api_error(
                     StatusCode::PAYLOAD_TOO_LARGE,
-                    IMAGE_ATTACHMENT_TOO_LARGE_MESSAGE,
+                    SESSION_IMAGE_BLOB_TOO_LARGE_MESSAGE,
                 ));
             }
             field_bytes.extend_from_slice(&chunk);
@@ -294,7 +291,7 @@ pub(super) async fn upload_blob(
             "Image attachment upload requires a file field.",
         ));
     };
-    let mime_type = infer_upload_blob_mime_type(file_name.as_deref(), mime_type);
+    let mime_type = infer_session_upload_blob_mime_type(file_name.as_deref(), mime_type);
     let resp = persist_blob_bytes(&state, &bytes, &mime_type, file_name.as_deref())
         .await
         .map_err(blob_upload_status_error)?;
@@ -334,38 +331,6 @@ pub(super) async fn get_blob(
         }
     }
     Ok(resp)
-}
-
-fn normalize_artifact_name(name: Option<String>, path: &StdPath) -> Option<String> {
-    if let Some(name) = name {
-        let trimmed = name.trim();
-        if !trimmed.is_empty() {
-            return Some(trimmed.to_string());
-        }
-    }
-    path.file_name()
-        .and_then(|s| s.to_str())
-        .map(|s| s.to_string())
-}
-
-fn infer_artifact_mime_type(path: &StdPath, override_value: Option<String>) -> String {
-    if let Some(value) = override_value {
-        let trimmed = value.trim();
-        if !trimmed.is_empty() {
-            return trimmed.to_string();
-        }
-    }
-    if path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("mdx"))
-    {
-        return "text/markdown".to_string();
-    }
-    mime_guess::from_path(path)
-        .first_or_octet_stream()
-        .essence_str()
-        .to_string()
 }
 
 #[derive(Debug, Deserialize)]
@@ -509,8 +474,8 @@ pub(super) async fn set_session_artifacts(
                 )
             })?;
 
-        let name = normalize_artifact_name(artifact.name, &path);
-        let mime_type = infer_artifact_mime_type(&path, artifact.mime_type);
+        let name = normalize_session_artifact_name(artifact.name, &path);
+        let mime_type = infer_session_artifact_mime_type(&path, artifact.mime_type);
         let bytes = meta.len() as i64;
         let created_at = Utc::now();
 
@@ -560,37 +525,4 @@ pub(super) async fn set_session_artifacts(
     state.publish_event(event).await;
 
     Ok(Json(artifacts))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::infer_artifact_mime_type;
-    use std::path::Path;
-
-    #[test]
-    fn infer_artifact_mime_type_treats_mdx_as_markdown() {
-        assert_eq!(
-            infer_artifact_mime_type(Path::new("/tmp/merge-queue-for-agents.mdx"), None),
-            "text/markdown"
-        );
-    }
-
-    #[test]
-    fn infer_artifact_mime_type_preserves_explicit_override() {
-        assert_eq!(
-            infer_artifact_mime_type(
-                Path::new("/tmp/merge-queue-for-agents.mdx"),
-                Some("application/mdx".to_string())
-            ),
-            "application/mdx"
-        );
-    }
-
-    #[test]
-    fn infer_artifact_mime_type_keeps_existing_markdown_inference() {
-        assert_eq!(
-            infer_artifact_mime_type(Path::new("/tmp/notes.md"), None),
-            "text/markdown"
-        );
-    }
 }

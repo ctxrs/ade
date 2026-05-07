@@ -1483,6 +1483,7 @@ version = "0.36.0"
 dependencies = [
  "chrono",
  "ctx-core",
+ "mime_guess",
  "serde_json",
  "tracing",
 ]

@@ -1,3 +1,4 @@
+mod artifacts;
 mod normalize;
 pub mod order_seq;
 mod preview;
@@ -6,6 +7,11 @@ mod state;
 #[cfg(test)]
 mod tests;
 
+pub use artifacts::{
+    infer_session_artifact_mime_type, infer_session_upload_blob_mime_type,
+    normalize_session_artifact_name, SESSION_IMAGE_BLOB_MAX_BYTES,
+    SESSION_IMAGE_BLOB_MULTIPART_MAX_BYTES, SESSION_IMAGE_BLOB_TOO_LARGE_MESSAGE,
+};
 pub use normalize::{normalize_tool_event, NormalizedToolEvent};
 pub use preview::{
     build_text_preview, ToolJsonPreview, ToolTextPreview, TOOL_PREVIEW_MAX_LINES,
