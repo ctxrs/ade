@@ -1,7 +1,6 @@
 pub mod api;
 mod async_util;
 pub mod daemon;
-mod dictation_livekit;
 mod execution_effective;
 pub mod git_status;
 mod installer;

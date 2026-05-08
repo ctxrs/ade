@@ -22,6 +22,7 @@ use ctx_transport_runtime::terminals::{TerminalClientMessage, TerminalServerMess
 use super::SecureEnvelope;
 
 mod common;
+mod dictation_livekit;
 mod queue;
 mod replay;
 mod secure_mobile;
@@ -66,7 +67,7 @@ pub(super) async fn dictation_livekit_stream_ws(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| crate::dictation_livekit::dictation_livekit_stream(socket, state))
+    ws.on_upgrade(move |socket| dictation_livekit::dictation_livekit_stream(socket, state))
 }
 
 #[cfg(test)]
