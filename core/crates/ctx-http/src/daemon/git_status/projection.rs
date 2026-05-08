@@ -66,11 +66,7 @@ pub(super) async fn publish_worktree_vcs_snapshot(
     let published = upsert_worktree_vcs_snapshot(state, snapshot, force_emit, summary_at).await?;
     persist_worktree_vcs_snapshot(state, worktree, &published).await;
     if state.is_worktree_vcs_active(worktree.id).await {
-        state
-            .workspaces
-            .workspace_active_snapshot
-            .publish_worktree_vcs_snapshot(worktree.workspace_id, published.clone())
-            .await;
+        let _ = state.workspaces.worktree_vcs_events.send(published.clone());
     }
     Some(published)
 }
@@ -265,10 +261,6 @@ pub(super) async fn publish_transient_worktree_vcs_snapshot(
         return;
     };
     if state.is_worktree_vcs_active(worktree.id).await {
-        state
-            .workspaces
-            .workspace_active_snapshot
-            .publish_worktree_vcs_snapshot(worktree.workspace_id, snapshot)
-            .await;
+        let _ = state.workspaces.worktree_vcs_events.send(snapshot);
     }
 }

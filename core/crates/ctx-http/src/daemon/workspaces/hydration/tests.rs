@@ -9,9 +9,7 @@ use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     ExecutionEnvironment, SessionActivityState, SessionHeadSnapshot, SessionHeadWindow,
     SessionMetadata, SessionSnapshotSummary, SessionStatus, SessionTurnStatus, Task, TaskStatus,
-    WorkspaceActiveTaskSummary, WorktreeVcsBaseResolution, WorktreeVcsBaseResolutionKind,
-    WorktreeVcsComputeState, WorktreeVcsFreshness, WorktreeVcsGitStatusSummary,
-    WorktreeVcsSnapshot, WorktreeVcsSummary, WorktreeVcsTouchedFile, WorktreeVcsTouchedFiles,
+    WorkspaceActiveTaskSummary,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicU64;
@@ -26,7 +24,6 @@ struct FakeHydrationStore {
     snapshot_state: (i64, i64),
     tasks: Vec<WorkspaceActiveTaskSummary>,
     heads: Vec<SessionHeadSnapshot>,
-    worktree_vcs_snapshots: Vec<WorktreeVcsSnapshot>,
     heads_error: Option<&'static str>,
     calls: Mutex<Vec<&'static str>>,
 }
@@ -57,20 +54,6 @@ impl WorkspaceSnapshotHydrationStore for FakeHydrationStore {
             return Err(anyhow!(message));
         }
         Ok(self.heads.clone())
-    }
-
-    async fn list_worktree_vcs_snapshots(
-        &self,
-        _workspace_id: WorkspaceId,
-        worktree_ids: &HashSet<WorktreeId>,
-    ) -> Result<Vec<WorktreeVcsSnapshot>> {
-        self.calls.lock().unwrap().push("worktree_vcs");
-        Ok(self
-            .worktree_vcs_snapshots
-            .iter()
-            .filter(|snapshot| worktree_ids.contains(&snapshot.worktree_id))
-            .cloned()
-            .collect())
     }
 }
 
@@ -173,46 +156,6 @@ fn test_head(
     }
 }
 
-fn test_worktree_vcs_snapshot(worktree_id: WorktreeId) -> WorktreeVcsSnapshot {
-    WorktreeVcsSnapshot {
-        worktree_id,
-        rev: 5,
-        emitted_at_ms: 123,
-        base_commit_sha: "base".to_string(),
-        head_commit_sha: "head".to_string(),
-        target_branch: Some("origin/main".to_string()),
-        target_branch_commit_sha: Some("target".to_string()),
-        base_resolution: WorktreeVcsBaseResolution {
-            kind: WorktreeVcsBaseResolutionKind::MergeBase,
-            target_source: None,
-            error: None,
-        },
-        compute_state: WorktreeVcsComputeState::Ready,
-        summary: WorktreeVcsSummary {
-            file_count: Some(7),
-            line_additions: Some(11),
-            line_deletions: Some(4),
-            line_count: Some(15),
-        },
-        git_status: WorktreeVcsGitStatusSummary {
-            raw: "## main\n M edited.txt\n".to_string(),
-            entries: vec![WorktreeVcsTouchedFile {
-                path: "edited.txt".to_string(),
-                orig_path: None,
-                index_status: Some("M".to_string()),
-                worktree_status: Some(" ".to_string()),
-            }],
-            ..Default::default()
-        },
-        touched_files: WorktreeVcsTouchedFiles::default(),
-        touched_files_state: ctx_core::models::WorktreeVcsTouchedFilesState::Ready,
-        freshness: WorktreeVcsFreshness::Fresh,
-        available: true,
-        unavailable_reason: None,
-        schema_version: 1,
-    }
-}
-
 #[tokio::test]
 async fn workspace_hydration_payload_uses_canonical_page_and_preserves_snapshot_rev() {
     let workspace_id = WorkspaceId::new();
@@ -226,7 +169,6 @@ async fn workspace_hydration_payload_uses_canonical_page_and_preserves_snapshot_
         snapshot_state: (17, 4),
         tasks: vec![summary],
         heads: vec![head.clone()],
-        worktree_vcs_snapshots: vec![test_worktree_vcs_snapshot(head.session.worktree_id)],
         heads_error: None,
         calls: Mutex::new(Vec::new()),
     };
@@ -235,15 +177,7 @@ async fn workspace_hydration_payload_uses_canonical_page_and_preserves_snapshot_
         .await
         .expect("expected hydration payload");
     let calls = store.calls.lock().unwrap().clone();
-    assert_eq!(
-        calls,
-        vec![
-            "snapshot_state",
-            "active_page",
-            "active_heads",
-            "worktree_vcs"
-        ]
-    );
+    assert_eq!(calls, vec!["snapshot_state", "active_page", "active_heads"]);
     assert_eq!(payload.snapshot_rev, 17);
     assert_eq!(payload.archived_rev, 4);
     assert_eq!(payload.tasks.len(), 1);
@@ -258,11 +192,6 @@ async fn workspace_hydration_payload_uses_canonical_page_and_preserves_snapshot_
     assert_eq!(payload.heads.len(), 1);
     assert_eq!(payload.heads[0].session.id, head.session.id);
     assert_eq!(payload.heads[0].last_event_seq, head.last_event_seq);
-    assert_eq!(payload.worktree_vcs_snapshots.len(), 1);
-    assert_eq!(
-        payload.worktree_vcs_snapshots[0].freshness,
-        WorktreeVcsFreshness::Stale
-    );
 }
 
 #[tokio::test]
@@ -273,7 +202,6 @@ async fn workspace_hydration_payload_propagates_active_head_batch_errors() {
         snapshot_state: (19, 5),
         tasks: vec![test_summary(workspace_id, task_id, SessionId::new())],
         heads: Vec::new(),
-        worktree_vcs_snapshots: Vec::new(),
         heads_error: Some("head decode failed"),
         calls: Mutex::new(Vec::new()),
     };
@@ -302,6 +230,7 @@ async fn applying_workspace_hydration_payload_seeds_hub_with_loaded_snapshot_rev
         worktree_vcs_summary_gen: AsyncMutex::new(HashMap::new()),
         worktree_vcs_runtime: AsyncMutex::new(HashMap::new()),
         worktree_vcs_scheduler: WorktreeVcsSchedulerRuntime::with_concurrency(1),
+        worktree_vcs_events: tokio::sync::broadcast::channel(1024).0,
         git_status_watchers: AsyncMutex::new(HashSet::new()),
         workspace_active_snapshot: Arc::new(WorkspaceActiveSnapshotHub::new()),
         workspace_active_snapshot_cache: AsyncMutex::new(HashMap::new()),
@@ -336,7 +265,6 @@ async fn applying_workspace_hydration_payload_seeds_hub_with_loaded_snapshot_rev
             sort_at: Utc::now(),
         }],
         heads: vec![test_head(workspace_id, task_id, session_id)],
-        worktree_vcs_snapshots: vec![test_worktree_vcs_snapshot(worktree_id)],
     };
 
     apply_workspace_snapshot_hydration_payload(&runtime, workspace_id, payload).await;
@@ -348,22 +276,6 @@ async fn applying_workspace_hydration_payload_seeds_hub_with_loaded_snapshot_rev
     assert_eq!(snapshot.snapshot_rev, 23);
     assert_eq!(snapshot.archived_rev, 6);
     assert_eq!(snapshot.active.tasks.len(), 1);
-    assert_eq!(snapshot.worktree_vcs_snapshots.len(), 1);
-    assert_eq!(
-        snapshot.worktree_vcs_snapshots[0].freshness,
-        WorktreeVcsFreshness::Stale
-    );
-    assert!(
-        snapshot.worktree_vcs_snapshots[0].git_status.raw.is_empty(),
-        "hydrated workspace snapshot should not expose raw git status text"
-    );
-    assert!(
-        snapshot.worktree_vcs_snapshots[0]
-            .git_status
-            .entries
-            .is_empty(),
-        "hydrated workspace snapshot should not expose cached git status entries"
-    );
 
     let heads = runtime
         .workspace_active_snapshot
@@ -372,18 +284,4 @@ async fn applying_workspace_hydration_payload_seeds_hub_with_loaded_snapshot_rev
     assert_eq!(heads.snapshot_rev, 23);
     assert_eq!(heads.heads.len(), 1);
     assert_eq!(heads.heads[0].session.id, session_id);
-
-    let cached = runtime
-        .get_worktree_vcs_snapshot(worktree_id)
-        .await
-        .expect("expected hydrated runtime worktree vcs snapshot");
-    assert_eq!(cached.freshness, WorktreeVcsFreshness::Stale);
-    assert!(
-        cached.git_status.raw.is_empty(),
-        "hydrated runtime snapshot should not expose raw git status text"
-    );
-    assert!(
-        cached.git_status.entries.is_empty(),
-        "hydrated runtime snapshot should not expose cached git status entries"
-    );
 }

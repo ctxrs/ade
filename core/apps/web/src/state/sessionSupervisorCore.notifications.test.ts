@@ -87,7 +87,6 @@ const makeWorkspaceSnapshot = (taskTitle: string) => ({
   totalActive: 1,
   totalArchived: 0,
   archivedRev: 0,
-  worktreeVcsById: {},
   fetchState: {
     active: "idle" as const,
     archived: "idle" as const,

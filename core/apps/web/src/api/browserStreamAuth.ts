@@ -3,6 +3,7 @@ import { sha256Hex } from "./sha256";
 export type BrowserStreamScope =
   | { kind: "workspace_active_snapshot"; workspaceId: string }
   | { kind: "workspace_stream"; workspaceId: string }
+  | { kind: "workspace_vcs"; workspaceId: string }
   | { kind: "execution_launch"; jobId: string }
   | { kind: "dictation_livekit" }
   | { kind: "provider_install"; installId: string };
@@ -16,6 +17,8 @@ export const serializeBrowserStreamScope = (scope: BrowserStreamScope): string =
       return `workspace_active_snapshot:${scope.workspaceId}`;
     case "workspace_stream":
       return `workspace_stream:${scope.workspaceId}`;
+    case "workspace_vcs":
+      return `workspace_vcs:${scope.workspaceId}`;
     case "execution_launch":
       return `execution_launch:${scope.jobId}`;
     case "dictation_livekit":

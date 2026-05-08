@@ -146,6 +146,10 @@ fn workspace_routes() -> axum::Router<Arc<AppState>> {
             get(workspace_active_snapshot_stream_ws),
         )
         .route(
+            "/api/workspaces/:id/vcs/stream",
+            get(workspace_vcs_stream_ws),
+        )
+        .route(
             "/api/workspaces/:id/completions/files",
             get(workspace_file_completions),
         )

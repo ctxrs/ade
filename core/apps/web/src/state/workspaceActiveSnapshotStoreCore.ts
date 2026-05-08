@@ -2,15 +2,12 @@ import type {
   SessionHeadSnapshot,
   Task,
   WorkspaceActiveSnapshot,
-  WorktreeVcsSnapshot,
   WorkspaceActiveSnapshotEvent,
 } from "@ctx/types";
 import {
   getDaemonClientConfig,
   subscribeDaemonConfig,
   listWorkspaceArchivedTaskSummaries,
-  recordClientCounterMetric,
-  recordClientHistogramMetric,
 } from "../api/client";
 import { isDesktopApp } from "../utils/desktop";
 import { type PersistedWorkspaceActiveSnapshotV1 } from "./uiStateStore";
@@ -38,7 +35,6 @@ import {
   setE2EEnabled,
   setForegroundSessionId,
   setSubscribedSessions,
-  setVcsOpenSessionIds,
   unwrapEvent,
   type WorkspaceActiveSnapshotControlHost,
 } from "./workspaceActiveSnapshot/controls";
@@ -91,7 +87,6 @@ type WorkspaceActiveSnapshotStoreOptions = {
 
 const SNAPSHOT_WAIT_MS = 1200;
 const WORKSPACE_PATCH_FLUSH_MS = 50;
-
 export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshotEventSource {
   private listeners = new Set<() => void>();
   eventListeners = new Set<(event: WorkspaceActiveSnapshotEvent) => void>();
@@ -127,7 +122,6 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   private configUnsubscribe: (() => void) | null = null;
   private listWorkspaceArchivedTaskSummariesFn: typeof listWorkspaceArchivedTaskSummaries;
   subscribedSessions: SessionSubscriptionCursor[] = [];
-  vcsOpenSessionIds: string[] = [];
   foregroundSessionId: string | null = null;
   ws: WebSocket | null = null;
   private connecting = false;
@@ -181,20 +175,12 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     return this.state.getWorktreeRoot(worktreeId);
   };
 
-  getWorktreeVcsSnapshot = (worktreeId: string): WorktreeVcsSnapshot | null => {
-    return this.state.getWorktreeVcsSnapshot(worktreeId);
-  };
-
   getSessionHeadsSnapshot = (): Record<string, SessionHeadSnapshot> => {
     return this.state.getSessionHeadsSnapshot();
   };
 
   getWorktreeRootsSnapshot = (): Record<string, string> => {
     return this.state.getWorktreeRootsSnapshot();
-  };
-
-  getWorktreeVcsSnapshots = (): WorktreeVcsSnapshot[] => {
-    return this.state.getWorktreeVcsSnapshots();
   };
 
   getSnapshotRev = (): number => this.state.getSnapshotRev();
@@ -213,9 +199,6 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
 
   setSubscribedSessions = (sessions: SessionSubscriptionCursor[]) =>
     setSubscribedSessions(this, sessions);
-
-  setVcsOpenSessionIds = (sessionIds: string[]) =>
-    setVcsOpenSessionIds(this, sessionIds);
 
   setForegroundSessionId = (sessionId: string | null) =>
     setForegroundSessionId(this, sessionId);

@@ -78,7 +78,6 @@ describe("WorkspaceActiveSnapshotStore metrics", () => {
         archivedLoaded: false,
         connection: "idle",
         fetchState: { active: "idle", archived: "idle" },
-        worktreeVcsById: {},
       },
       events: [],
       activeSessionIds: [],

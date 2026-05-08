@@ -58,7 +58,6 @@ const makeSnapshot = (sessionIds: readonly string[]): WorkspaceActiveSnapshotSta
   totalActive: 1,
   totalArchived: 0,
   archivedRev: 0,
-  worktreeVcsById: {},
   fetchState: { active: "idle", archived: "idle" },
   hasMoreActive: false,
   hasMoreArchived: false,

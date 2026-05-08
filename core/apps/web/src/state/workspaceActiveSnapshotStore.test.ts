@@ -5,7 +5,6 @@ import type {
   SessionHeadSnapshot,
   SessionSnapshotSummary,
   Task,
-  WorktreeVcsSnapshot,
   WorkspaceActiveHeadBatch,
   WorkspaceActiveSnapshot,
   WorkspaceActiveTaskSummary,
@@ -18,6 +17,7 @@ import {
 } from "../testdata/projectionEquivalenceFixtures";
 import { buildWorkbenchThreadViewModel } from "../pages/SessionPage.workbenchViewModel";
 import type { WorkspaceActiveSnapshotPatch } from "./workspaceActiveSnapshotProtocol";
+import { ctxUiRemoteIncident20260508 } from "./__fixtures__/ctxUiRemoteIncident20260508";
 
 vi.mock("../api/client", () => {
   const idToString = (id: string | null | undefined): string => {
@@ -178,46 +178,26 @@ const mkActiveSummary = (
   sort_at: now,
 });
 
-const mkWorktreeVcsSnapshot = (
-  worktreeId: string,
-  rev: number,
-  fileCount: number,
-): WorktreeVcsSnapshot => ({
-  worktree_id: worktreeId,
-  rev,
-  emitted_at_ms: rev,
-  base_commit_sha: "base",
-  head_commit_sha: "head",
-  base_resolution: {
-    kind: "merge_base",
-  },
-  compute_state: "ready",
-  summary: {
-    file_count: fileCount,
-    line_additions: fileCount,
-    line_deletions: 0,
-    line_count: fileCount,
-  },
-  git_status: {
-    branch: null,
-    upstream: null,
-    ahead: 0,
-    behind: 0,
-    detached: false,
-    staged: 0,
-    unstaged: fileCount,
-    untracked: 0,
-    entries: [],
-  },
-  touched_files: {
-    total_count: fileCount,
-    truncated: false,
-    items: [],
-  },
-  freshness: "fresh",
-  available: true,
-  schema_version: 2,
-});
+type IncidentReplayEvent = {
+  lane: "foreground" | "workspace";
+  eventType: string;
+};
+
+const expandCtxUiIncidentReplayEvents = (): IncidentReplayEvent[] => {
+  const events: IncidentReplayEvent[] = [];
+  for (const segment of ctxUiRemoteIncident20260508.rle) {
+    const [laneCode, eventType, rawCount] = segment.split(":");
+    const count = Number.parseInt(rawCount ?? "", 10);
+    if ((laneCode !== "f" && laneCode !== "w") || !eventType || !Number.isFinite(count) || count <= 0) {
+      throw new Error(`Invalid ctx-ui incident replay segment: ${segment}`);
+    }
+    const lane = laneCode === "f" ? "foreground" : "workspace";
+    for (let index = 0; index < count; index += 1) {
+      events.push({ lane, eventType });
+    }
+  }
+  return events;
+};
 
 const openWsState = (globalThis.WebSocket as unknown as { OPEN?: number } | undefined)?.OPEN ?? 1;
 
@@ -307,111 +287,6 @@ describe("WorkspaceActiveSnapshotStore", () => {
 
     expect(store.getSessionHeadSnapshot(session.id)?.session.id).toBe(session.id);
     expect(store.getSnapshot().tasksById[task.id]?.primarySessionHead?.session.id).toBe(session.id);
-  });
-
-  it("clears cached worktree vcs when a live snapshot omits it for an active worktree", async () => {
-    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
-
-    const now = new Date().toISOString();
-    const task = mkTask("task-1", "ws-1", now);
-    const session = mkSession("session-1", "task-1", "ws-1", now);
-    const summary = mkSummary(session, now);
-    const head = mkHead(session);
-
-    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
-    store.seedCachedSnapshot({
-      v: 1,
-      workspaceId: "ws-1",
-      snapshotRev: 1,
-      archivedRev: 0,
-      worktreeVcsSnapshots: [mkWorktreeVcsSnapshot("wt-1", 1, 3)],
-      active: {
-        totalCount: 1,
-        tasks: [
-          {
-            task,
-            primary_session: summary,
-            primary_session_head: head,
-            sessions: [summary],
-            sort_at: now,
-          },
-        ],
-      },
-      updatedAtMs: Date.now(),
-    });
-
-    expect(store.getSnapshot().worktreeVcsById["wt-1"]?.summary.file_count).toBe(3);
-
-    await asStoreInternals(store).handleStreamMessage(
-      JSON.stringify({
-        type: "snapshot",
-        rev: 2,
-        active_snapshot: {
-          workspace_id: "ws-1",
-          snapshot_rev: 2,
-          archived_rev: 0,
-          active: { total_count: 1, tasks: [mkActiveSummary(task, summary, head, now)] },
-          worktree_vcs_snapshots: [],
-        },
-        active_heads: {
-          workspace_id: "ws-1",
-          snapshot_rev: 2,
-          heads: [head],
-        },
-      }),
-    );
-
-    await waitForCondition(() => store.getSnapshot().initialized);
-
-    expect(store.getSnapshot().worktreeVcsById["wt-1"]).toBeUndefined();
-  });
-
-  it("drops stale worktree vcs for worktrees that are no longer active", async () => {
-    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
-
-    const now = new Date().toISOString();
-    const task = mkTask("task-2", "ws-1", now);
-    const session = { ...mkSession("session-2", "task-2", "ws-1", now), worktree_id: "wt-2" };
-    const summary = mkSummary(session, now);
-    const head = mkHead(session);
-
-    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
-    await asStoreInternals(store).handleStreamMessage(
-      JSON.stringify({
-        type: "event",
-        rev: 1,
-        event: {
-          type: "worktree_vcs_snapshot",
-          workspace_id: "ws-1",
-          snapshot_rev: 1,
-          snapshot: mkWorktreeVcsSnapshot("wt-1", 1, 2),
-        },
-      }),
-    );
-
-    await asStoreInternals(store).handleStreamMessage(
-      JSON.stringify({
-        type: "snapshot",
-        rev: 2,
-        active_snapshot: {
-          workspace_id: "ws-1",
-          snapshot_rev: 2,
-          archived_rev: 0,
-          active: { total_count: 1, tasks: [mkActiveSummary(task, summary, head, now)] },
-          worktree_vcs_snapshots: [],
-        },
-        active_heads: {
-          workspace_id: "ws-1",
-          snapshot_rev: 2,
-          heads: [head],
-        },
-      }),
-    );
-
-    await waitForCondition(() => store.getSnapshot().initialized);
-
-    expect(store.getSnapshot().worktreeVcsById["wt-1"]).toBeUndefined();
-    expect(store.getSnapshot().worktreeVcsById["wt-2"]).toBeUndefined();
   });
 
   it("requests snapshot on reset_required", async () => {
@@ -538,21 +413,6 @@ describe("WorkspaceActiveSnapshotStore", () => {
     expect(ws.send).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(String(ws.send.mock.calls[0]?.[0] ?? "{}"));
     expect(payload.foreground_session_id).toBe("session-foreground");
-    store.destroy();
-  });
-
-  it("includes vcs open session demand in subscribe messages", async () => {
-    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
-
-    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
-    const ws = mkOpenWs();
-    asStoreInternals(store).ws = ws;
-
-    store.setVcsOpenSessionIds?.(["session-2", "session-1"]);
-
-    expect(ws.send).toHaveBeenCalledTimes(1);
-    const payload = JSON.parse(String(ws.send.mock.calls[0]?.[0] ?? "{}"));
-    expect(payload.vcs_open_session_ids).toEqual(["session-1", "session-2"]);
     store.destroy();
   });
 
@@ -708,6 +568,204 @@ describe("WorkspaceActiveSnapshotStore", () => {
     vi.advanceTimersByTime(50);
     expect(patches).toHaveLength(1);
     expect(patches[0]?.events.map((event) => event.type)).toEqual(["session_head_delta"]);
+    store.destroy();
+  });
+
+  it("keeps the desktop publish path bounded under the ctx-ui May 8 incident event mix", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    vi.useFakeTimers();
+    const now = "2026-05-08T15:00:00.000Z";
+    const task = mkTask("ctx-ui-task", "ws-1", now);
+    const foregroundSession = mkSession("ctx-ui-foreground-session", "ctx-ui-task", "ws-1", now);
+    const workspaceSession = mkSession("ctx-ui-workspace-session", "ctx-ui-task", "ws-1", now);
+    const foregroundSummary = mkSummary(foregroundSession, now);
+    const workspaceSummary = mkSummary(workspaceSession, now);
+    const foregroundHead = mkHead(foregroundSession);
+    const activeSnapshot: WorkspaceActiveSnapshot = {
+      workspace_id: "ws-1",
+      snapshot_rev: 1,
+      archived_rev: 0,
+      active: {
+        total_count: 1,
+        tasks: [
+          {
+            ...mkActiveSummary(task, foregroundSummary, foregroundHead, now),
+            sessions: [foregroundSummary, workspaceSummary],
+          },
+        ],
+      },
+    };
+
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", {
+      disableCache: true,
+      disableWorker: true,
+    });
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "snapshot",
+        rev: 1,
+        active_snapshot: activeSnapshot,
+      }),
+    );
+    store.setForegroundSessionId?.(foregroundSession.id);
+    await waitForCondition(() => store.getSnapshot().initialized);
+
+    let publishCount = 0;
+    let foregroundDeltaEvents = 0;
+    const unsubscribeSnapshot = store.subscribe(() => {
+      publishCount += 1;
+    });
+    const unsubscribeEvents = store.subscribeEvents((event) => {
+      if (
+        event.type === "session_head_delta" &&
+        event.delta.session_id === foregroundSession.id
+      ) {
+        foregroundDeltaEvents += 1;
+      }
+    });
+
+    let rev = 1;
+    let foregroundSeq = 0;
+    let workspaceSeq = 0;
+    let omittedVcsEvents = 0;
+    let taskRev = 0;
+    const replayEvents = expandCtxUiIncidentReplayEvents();
+    expect(replayEvents).toHaveLength(ctxUiRemoteIncident20260508.eventCount);
+
+    const sendEvent = async (event: object) => {
+      rev += 1;
+      await asStoreInternals(store).handleStreamMessage(
+        JSON.stringify({
+          type: "event",
+          rev,
+          event: {
+            workspace_id: "ws-1",
+            snapshot_rev: rev,
+            ...event,
+          },
+        }),
+      );
+    };
+
+    for (const replayEvent of replayEvents) {
+      switch (replayEvent.eventType) {
+        case "worktree_vcs_snapshot": {
+          omittedVcsEvents += 1;
+          break;
+        }
+        case "session_head_delta": {
+          const session = replayEvent.lane === "foreground" ? foregroundSession : workspaceSession;
+          const seq = replayEvent.lane === "foreground" ? ++foregroundSeq : ++workspaceSeq;
+          await sendEvent({
+            type: "session_head_delta",
+            delta: {
+              session_id: session.id,
+              last_event_seq: seq,
+              projection_rev: seq,
+              state_rev: seq,
+              emitted_at_ms: Date.now(),
+              activity: { is_working: true, last_turn_status: "running" },
+            },
+          });
+          break;
+        }
+        case "session_summary_delta": {
+          const session = replayEvent.lane === "foreground" ? foregroundSession : workspaceSession;
+          const seq = replayEvent.lane === "foreground" ? foregroundSeq : workspaceSeq;
+          await sendEvent({
+            type: "session_summary_delta",
+            delta: {
+              session_id: session.id,
+              task_id: task.id,
+              activity: { is_working: true, last_turn_status: "running" },
+              last_message_at: now,
+              last_message_preview: `${replayEvent.lane} preview ${seq}`,
+              last_event_seq: seq,
+              state_rev: seq,
+              emitted_at_ms: Date.now(),
+            },
+          });
+          break;
+        }
+        case "task_delta": {
+          taskRev += 1;
+          await sendEvent({
+            type: "task_delta",
+            delta: {
+              kind: "updated",
+              task: {
+                ...task,
+                title: `Active task ${taskRev}`,
+                updated_at: `2026-05-08T15:${String(taskRev % 60).padStart(2, "0")}:00.000Z`,
+              },
+            },
+          });
+          break;
+        }
+        case "session_gap":
+          await sendEvent({
+            type: "session_gap",
+            session_id: replayEvent.lane === "foreground" ? foregroundSession.id : workspaceSession.id,
+            after_seq: replayEvent.lane === "foreground" ? foregroundSeq : workspaceSeq,
+          });
+          break;
+        case "session_head_seed":
+          await sendEvent({
+            type: "session_head_seed",
+            head: {
+              ...mkHead(replayEvent.lane === "foreground" ? foregroundSession : workspaceSession),
+              last_event_seq: replayEvent.lane === "foreground" ? foregroundSeq : workspaceSeq,
+            },
+          });
+          break;
+        case "active_task_upsert":
+          await sendEvent({
+            type: "active_task_upsert",
+            task: mkActiveSummary(task, foregroundSummary, foregroundHead, now),
+          });
+          break;
+        case "active_task_delete":
+          await sendEvent({ type: "active_task_delete", task_id: "unused-task" });
+          break;
+        case "archived_task_upsert":
+          await sendEvent({
+            type: "archived_task_upsert",
+            archived_rev: rev,
+            task: {
+              task: { ...task, id: "archived-task", archived_at: now },
+              sessions: [],
+              sort_at: now,
+            },
+          });
+          break;
+        case "archived_task_delete":
+          await sendEvent({ type: "archived_task_delete", archived_rev: rev, task_id: "archived-task" });
+          break;
+        case "session_removed":
+          await sendEvent({ type: "session_removed", session_id: "unused-session" });
+          break;
+        case "ready":
+          await sendEvent({ type: "ready" });
+          break;
+        default:
+          throw new Error(`Unhandled ctx-ui incident event type: ${replayEvent.eventType}`);
+      }
+    }
+
+    expect(foregroundDeltaEvents).toBe(
+      ctxUiRemoteIncident20260508.counts["foreground/session_head_delta"],
+    );
+    expect(ctxUiRemoteIncident20260508.counts["workspace/worktree_vcs_snapshot"]).toBeGreaterThan(
+      10_000,
+    );
+    expect(omittedVcsEvents).toBe(ctxUiRemoteIncident20260508.counts["workspace/worktree_vcs_snapshot"]);
+    expect(publishCount).toBeLessThan(500);
+
+    await vi.runOnlyPendingTimersAsync();
+    expect(publishCount).toBeLessThan(510);
+    unsubscribeEvents();
+    unsubscribeSnapshot();
     store.destroy();
   });
 

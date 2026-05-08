@@ -1,7 +1,6 @@
 import type {
   SessionHeadSnapshot,
   SessionSnapshotSummary,
-  WorktreeVcsSnapshot,
 } from "@ctx/types";
 import { idToString } from "../../api/client";
 
@@ -9,19 +8,6 @@ export const sortSessionSummaries = (summaries: SessionSnapshotSummary[]): Sessi
   return summaries
     .slice()
     .sort((a, b) => String(a.session.created_at ?? "").localeCompare(String(b.session.created_at ?? "")));
-};
-
-export const mapWorktreeVcsSnapshots = (
-  snapshots?: WorktreeVcsSnapshot[] | null,
-): Record<string, WorktreeVcsSnapshot> => {
-  const out: Record<string, WorktreeVcsSnapshot> = {};
-  if (!Array.isArray(snapshots)) return out;
-  for (const snapshot of snapshots) {
-    const id = idToString(snapshot?.worktree_id ?? "");
-    if (!id) continue;
-    out[id] = snapshot;
-  }
-  return out;
 };
 
 export const hasOwnProperty = (value: unknown, key: string): boolean => {

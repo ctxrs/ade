@@ -22,7 +22,6 @@ const makeWorkspaceSnapshot = (
     totalActive: 0,
     totalArchived: 0,
     archivedRev: 0,
-    worktreeVcsById: {},
     fetchState: { active: "loading", archived: "idle" },
     hasMoreActive: false,
     hasMoreArchived: false,

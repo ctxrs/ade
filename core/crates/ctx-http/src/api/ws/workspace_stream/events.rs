@@ -59,15 +59,10 @@ pub(crate) async fn handle_workspace_stream_event(
         return Ok(());
     }
 
-    let mut refresh_active_worktrees = false;
     if let WorkspaceActiveSnapshotEvent::SessionRemoved { session_id, .. } = &event {
         let removed_explicit = runtime
             .subscription_state
             .explicit_sessions
-            .remove(session_id);
-        let removed_open = runtime
-            .subscription_state
-            .vcs_open_sessions
             .remove(session_id);
         let removed_foreground = runtime
             .subscription_state
@@ -84,10 +79,9 @@ pub(crate) async fn handle_workspace_stream_event(
             runtime.subscription_state.foreground_session_ids = None;
         }
         let removed_subscription = remove_runtime_subscription(state, runtime, *session_id).await;
-        if !(removed_explicit || removed_open || removed_foreground || removed_subscription) {
+        if !(removed_explicit || removed_foreground || removed_subscription) {
             return Ok(());
         }
-        refresh_active_worktrees = true;
     }
     if runtime.subscription_state.active_scope {
         match &event {
@@ -97,11 +91,6 @@ pub(crate) async fn handle_workspace_stream_event(
                     .subscription_state
                     .active_task_sessions
                     .insert(task.task.id, session_id);
-                runtime.subscription_state.active_task_vcs_sessions.insert(
-                    task.task.id,
-                    primary_session_ids_for_active_task_summary(task),
-                );
-                refresh_active_worktrees = true;
                 if let std::collections::hash_map::Entry::Vacant(entry) =
                     runtime.subscriptions.entry(session_id)
                 {
@@ -114,16 +103,11 @@ pub(crate) async fn handle_workspace_stream_event(
                 }
             }
             WorkspaceActiveSnapshotEvent::ActiveTaskDelete { task_id, .. } => {
-                let removed_vcs_sessions = runtime
-                    .subscription_state
-                    .active_task_vcs_sessions
-                    .remove(task_id);
                 if let Some(session_id) = runtime
                     .subscription_state
                     .active_task_sessions
                     .remove(task_id)
                 {
-                    refresh_active_worktrees = true;
                     let still_active = runtime
                         .subscription_state
                         .active_task_sessions
@@ -137,24 +121,16 @@ pub(crate) async fn handle_workspace_stream_event(
                     {
                         remove_runtime_subscription(state, runtime, session_id).await;
                     }
-                }
-                if removed_vcs_sessions.is_some() {
-                    refresh_active_worktrees = true;
                 }
             }
             WorkspaceActiveSnapshotEvent::TaskDelta { delta, .. }
                 if matches!(delta.kind, TaskDeltaKind::Archived) =>
             {
-                let removed_vcs_sessions = runtime
-                    .subscription_state
-                    .active_task_vcs_sessions
-                    .remove(&delta.task.id);
                 if let Some(session_id) = runtime
                     .subscription_state
                     .active_task_sessions
                     .remove(&delta.task.id)
                 {
-                    refresh_active_worktrees = true;
                     let still_active = runtime
                         .subscription_state
                         .active_task_sessions
@@ -169,28 +145,9 @@ pub(crate) async fn handle_workspace_stream_event(
                         remove_runtime_subscription(state, runtime, session_id).await;
                     }
                 }
-                if removed_vcs_sessions.is_some() {
-                    refresh_active_worktrees = true;
-                }
             }
             _ => {}
         }
-    }
-    if refresh_active_worktrees {
-        let summary_session_ids = resolve_worktree_vcs_summary_session_ids(
-            runtime.subscriptions.keys().copied(),
-            &runtime.subscription_state,
-        );
-        let open_session_ids = resolve_worktree_vcs_open_session_ids(&runtime.subscription_state);
-        sync_active_worktrees(
-            state,
-            &mut runtime.active_worktrees,
-            &mut runtime.open_worktrees,
-            &summary_session_ids,
-            &open_session_ids,
-        )
-        .await;
-        refresh_worktree_vcs_for_sessions(state, &summary_session_ids, &open_session_ids).await;
     }
 
     match &event {
@@ -266,19 +223,6 @@ pub(crate) async fn handle_workspace_stream_event(
                     return Ok(());
                 }
                 queue_workspace_stream_reset(state, workspace_id, runtime).await?;
-            }
-        }
-        other @ WorkspaceActiveSnapshotEvent::WorktreeVcsSnapshot { .. } => {
-            match runtime.summary_buffer.push(other).await {
-                Ok(SummaryBatchPushOutcome::Replaced) => {}
-                Ok(SummaryBatchPushOutcome::Enqueued) => {}
-                Err(error) => {
-                    log_summary_batch_push_error(labels.event_queue_label, workspace_id, &error);
-                    if runtime.reset_queued {
-                        return Ok(());
-                    }
-                    queue_workspace_stream_reset(state, workspace_id, runtime).await?;
-                }
             }
         }
         other => {

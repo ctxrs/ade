@@ -1,10 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 
-use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
+use ctx_core::ids::{SessionId, TaskId, WorkspaceId};
 use ctx_core::models::{
     WorkspaceActiveSnapshotClientMessage, WorkspaceActiveSnapshotSessionReplay,
-    WorkspaceActiveSnapshotSubscribeScope, WorkspaceActiveTaskSummary, WorktreeVcsSnapshot,
+    WorkspaceActiveSnapshotSubscribeScope, WorkspaceActiveTaskSummary,
 };
 
 use crate::SessionReplayCursor;
@@ -29,16 +29,12 @@ pub struct WorkspaceActiveSubscriptionState {
     pub active_scope: bool,
     pub explicit_sessions: HashSet<SessionId>,
     pub active_task_sessions: HashMap<TaskId, SessionId>,
-    pub active_task_vcs_sessions: HashMap<TaskId, HashSet<SessionId>>,
-    pub vcs_open_sessions: HashSet<SessionId>,
     pub foreground_session_ids: Option<HashSet<SessionId>>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct ResolvedWorkspaceActiveSubscriptions {
     pub sessions: Vec<ResolvedWorkspaceActiveSessionSubscription>,
-    pub worktree_vcs_summary_session_ids: Vec<SessionId>,
-    pub worktree_vcs_open_session_ids: Vec<SessionId>,
     pub state: WorkspaceActiveSubscriptionState,
 }
 
@@ -65,8 +61,6 @@ pub trait WorkspaceActiveSubscriptionSource {
         workspace_id: WorkspaceId,
         session_id: SessionId,
     ) -> impl Future<Output = SessionReplayCursor> + Send;
-
-    fn worktree_vcs_enabled(&self) -> bool;
 }
 
 pub fn primary_session_id_for_active_task(task: &WorkspaceActiveTaskSummary) -> SessionId {
@@ -74,43 +68,6 @@ pub fn primary_session_id_for_active_task(task: &WorkspaceActiveTaskSummary) -> 
         .primary_session_id
         .unwrap_or(task.primary_session.session.id)
 }
-
-pub fn primary_session_ids_for_active_task_summary(
-    task: &WorkspaceActiveTaskSummary,
-) -> HashSet<SessionId> {
-    let mut sessions = HashSet::new();
-    sessions.insert(primary_session_id_for_active_task(task));
-    sessions
-}
-
-pub fn resolve_worktree_vcs_summary_session_ids<I>(
-    session_ids: I,
-    subscription_state: &WorkspaceActiveSubscriptionState,
-) -> Vec<SessionId>
-where
-    I: IntoIterator<Item = SessionId>,
-{
-    let mut ids: HashSet<SessionId> = session_ids.into_iter().collect();
-    for task_session_ids in subscription_state.active_task_vcs_sessions.values() {
-        ids.extend(task_session_ids.iter().copied());
-    }
-    let mut ordered: Vec<_> = ids.into_iter().collect();
-    ordered.sort_by_key(|session_id| session_id.0);
-    ordered
-}
-
-pub fn resolve_worktree_vcs_open_session_ids(
-    subscription_state: &WorkspaceActiveSubscriptionState,
-) -> Vec<SessionId> {
-    let mut ordered: Vec<_> = subscription_state
-        .vcs_open_sessions
-        .iter()
-        .copied()
-        .collect();
-    ordered.sort_by_key(|session_id| session_id.0);
-    ordered
-}
-
 pub async fn resolve_workspace_active_snapshot_subscriptions<S>(
     source: &S,
     workspace_id: WorkspaceId,
@@ -126,7 +83,6 @@ where
         task_ids,
         foreground_session_id,
         scope,
-        vcs_open_session_ids,
         ..
     } = message;
 
@@ -134,8 +90,6 @@ where
     let mut replay_map: HashMap<SessionId, WorkspaceActiveSnapshotSessionReplay> = HashMap::new();
     let mut explicit_sessions = HashSet::new();
     let mut active_task_sessions = HashMap::new();
-    let mut active_task_vcs_sessions = HashMap::new();
-    let mut open_vcs_sessions = HashSet::new();
     let mut active_scope = false;
     let mut foreground_session_ids = None;
 
@@ -166,10 +120,6 @@ where
             let session_id = primary_session_id_for_active_task(&task);
             resolved.insert(session_id);
             active_task_sessions.insert(task.task.id, session_id);
-            active_task_vcs_sessions.insert(
-                task.task.id,
-                primary_session_ids_for_active_task_summary(&task),
-            );
         }
     }
     for task_id in task_ids {
@@ -180,16 +130,6 @@ where
             resolved.insert(primary_session_id);
             explicit_sessions.insert(primary_session_id);
         }
-    }
-    for session_id in vcs_open_session_ids {
-        if !source
-            .session_belongs_to_workspace(workspace_id, session_id)
-            .await
-        {
-            continue;
-        }
-        open_vcs_sessions.insert(session_id);
-        resolved.insert(session_id);
     }
     if let Some(session_id) = foreground_session_id {
         if source
@@ -223,46 +163,12 @@ where
         active_scope,
         explicit_sessions,
         active_task_sessions,
-        active_task_vcs_sessions,
-        vcs_open_sessions: open_vcs_sessions,
         foreground_session_ids,
     };
-    let worktree_vcs_summary_session_ids = resolve_worktree_vcs_summary_session_ids(
-        next.iter().map(|sub| sub.session_id),
-        &subscription_state,
-    );
-    let worktree_vcs_open_session_ids = resolve_worktree_vcs_open_session_ids(&subscription_state);
-    let (worktree_vcs_summary_session_ids, worktree_vcs_open_session_ids) =
-        if source.worktree_vcs_enabled() {
-            (
-                worktree_vcs_summary_session_ids,
-                worktree_vcs_open_session_ids,
-            )
-        } else {
-            (Vec::new(), Vec::new())
-        };
     Ok(ResolvedWorkspaceActiveSubscriptions {
         sessions: next,
-        worktree_vcs_summary_session_ids,
-        worktree_vcs_open_session_ids,
         state: subscription_state,
     })
-}
-
-pub fn merge_worktree_vcs_snapshots(
-    snapshots: Vec<WorktreeVcsSnapshot>,
-    extras: Vec<WorktreeVcsSnapshot>,
-) -> Vec<WorktreeVcsSnapshot> {
-    let mut merged: HashMap<WorktreeId, WorktreeVcsSnapshot> = HashMap::new();
-    for snapshot in snapshots {
-        merged.insert(snapshot.worktree_id, snapshot);
-    }
-    for snapshot in extras {
-        merged.insert(snapshot.worktree_id, snapshot);
-    }
-    let mut ordered: Vec<_> = merged.into_values().collect();
-    ordered.sort_by_key(|snapshot| snapshot.worktree_id.0);
-    ordered
 }
 
 pub fn resolve_session_replay(

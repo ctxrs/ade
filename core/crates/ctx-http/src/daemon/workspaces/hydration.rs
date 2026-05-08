@@ -1,10 +1,9 @@
 use async_trait::async_trait;
 
 use anyhow::Result;
-use std::collections::HashSet;
 
-use ctx_core::ids::{WorkspaceId, WorktreeId};
-use ctx_core::models::{SessionHeadSnapshot, WorkspaceActiveTaskSummary, WorktreeVcsSnapshot};
+use ctx_core::ids::WorkspaceId;
+use ctx_core::models::{SessionHeadSnapshot, WorkspaceActiveTaskSummary};
 use ctx_store::Store;
 
 use crate::daemon::state::{AppState, WorkspaceRuntime};
@@ -37,7 +36,6 @@ struct WorkspaceSnapshotHydrationPayload {
     archived_rev: i64,
     tasks: Vec<WorkspaceActiveTaskSummary>,
     heads: Vec<SessionHeadSnapshot>,
-    worktree_vcs_snapshots: Vec<WorktreeVcsSnapshot>,
 }
 
 #[async_trait]
@@ -52,11 +50,6 @@ trait WorkspaceSnapshotHydrationStore {
         &self,
         workspace_id: WorkspaceId,
     ) -> Result<Vec<SessionHeadSnapshot>>;
-    async fn list_worktree_vcs_snapshots(
-        &self,
-        workspace_id: WorkspaceId,
-        worktree_ids: &HashSet<WorktreeId>,
-    ) -> Result<Vec<WorktreeVcsSnapshot>>;
 }
 
 #[async_trait]
@@ -81,26 +74,6 @@ impl WorkspaceSnapshotHydrationStore for Store {
         self.list_workspace_active_head_snapshots(workspace_id)
             .await
     }
-
-    async fn list_worktree_vcs_snapshots(
-        &self,
-        workspace_id: WorkspaceId,
-        worktree_ids: &HashSet<WorktreeId>,
-    ) -> Result<Vec<WorktreeVcsSnapshot>> {
-        self.list_workspace_worktree_vcs_snapshots(workspace_id, worktree_ids)
-            .await
-    }
-}
-
-fn active_worktree_ids_for_tasks(tasks: &[WorkspaceActiveTaskSummary]) -> HashSet<WorktreeId> {
-    let mut worktree_ids = HashSet::new();
-    for task in tasks {
-        worktree_ids.insert(task.primary_session.session.worktree_id);
-        for session in &task.sessions {
-            worktree_ids.insert(session.session.worktree_id);
-        }
-    }
-    worktree_ids
 }
 
 async fn load_workspace_snapshot_hydration_payload<S: WorkspaceSnapshotHydrationStore + Sync>(
@@ -116,29 +89,18 @@ async fn load_workspace_snapshot_hydration_payload<S: WorkspaceSnapshotHydration
         .list_active_page_for_hydration(workspace_id, i64::MAX)
         .await?;
     let active_page_ms = active_page_start.elapsed().as_millis();
-    let active_worktree_ids = active_worktree_ids_for_tasks(&tasks);
     let active_heads_start = std::time::Instant::now();
     let heads = store.list_active_heads(workspace_id).await?;
     let active_heads_ms = active_heads_start.elapsed().as_millis();
-    let worktree_vcs_start = std::time::Instant::now();
-    let worktree_vcs_snapshots = store
-        .list_worktree_vcs_snapshots(workspace_id, &active_worktree_ids)
-        .await?
-        .into_iter()
-        .map(crate::daemon::workspaces::runtime::normalize_hydrated_worktree_vcs_snapshot)
-        .collect::<Vec<_>>();
-    let worktree_vcs_ms = worktree_vcs_start.elapsed().as_millis();
     if std::env::var_os("CTX_DEBUG_WORKSPACE_STREAM_TIMINGS").is_some() {
         eprintln!(
-            "CTX_WS_TIMING hydration_payload workspace_id={} snapshot_state_ms={} active_page_ms={} active_heads_ms={} worktree_vcs_ms={} active_tasks={} active_heads={} worktree_vcs={} total_ms={}",
+            "CTX_WS_TIMING hydration_payload workspace_id={} snapshot_state_ms={} active_page_ms={} active_heads_ms={} active_tasks={} active_heads={} total_ms={}",
             workspace_id.0,
             snapshot_state_ms,
             active_page_ms,
             active_heads_ms,
-            worktree_vcs_ms,
             tasks.len(),
             heads.len(),
-            worktree_vcs_snapshots.len(),
             payload_start.elapsed().as_millis(),
         );
     }
@@ -147,7 +109,6 @@ async fn load_workspace_snapshot_hydration_payload<S: WorkspaceSnapshotHydration
         archived_rev,
         tasks,
         heads,
-        worktree_vcs_snapshots,
     })
 }
 
@@ -156,11 +117,6 @@ async fn apply_workspace_snapshot_hydration_payload(
     workspace_id: WorkspaceId,
     payload: WorkspaceSnapshotHydrationPayload,
 ) {
-    let worktree_vcs_snapshots = payload
-        .worktree_vcs_snapshots
-        .into_iter()
-        .map(crate::daemon::workspaces::runtime::normalize_hydrated_worktree_vcs_snapshot)
-        .collect::<Vec<_>>();
     runtime
         .workspace_active_snapshot
         .hydrate_snapshot(
@@ -170,13 +126,6 @@ async fn apply_workspace_snapshot_hydration_payload(
             payload.tasks,
             payload.heads,
         )
-        .await;
-    runtime
-        .workspace_active_snapshot
-        .hydrate_worktree_vcs_snapshots(workspace_id, worktree_vcs_snapshots.clone())
-        .await;
-    runtime
-        .hydrate_worktree_vcs_snapshots(worktree_vcs_snapshots)
         .await;
 }
 

@@ -112,12 +112,10 @@ async fn handle_mobile_secure_ws(
 
     let send_task = send_loop::spawn_mobile_secure_send_loop(
         sender,
-        state.clone(),
         workspace_id,
         device_id.clone(),
         key.clone(),
         &runtime,
-        labels.event_queue_label,
     );
 
     let recv_loop = async {

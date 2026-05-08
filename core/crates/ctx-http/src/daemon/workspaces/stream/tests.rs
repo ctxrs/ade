@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::HashSet;
 use std::path::Path;
 
 use ctx_core::models::{ExecutionEnvironment, WorkspaceActiveSnapshotSessionReplay};
@@ -190,7 +191,6 @@ async fn subscription_resolution_filters_cross_workspace_session_references() {
             ],
             task_ids: Vec::new(),
             foreground_session_id: Some(session_b),
-            vcs_open_session_ids: vec![session_b],
             scope: None,
             include_active_heads: false,
         },
@@ -201,9 +201,6 @@ async fn subscription_resolution_filters_cross_workspace_session_references() {
 
     assert_eq!(resolved.sessions.len(), 1);
     assert_eq!(resolved.sessions[0].session_id, session_a);
-    assert_eq!(resolved.worktree_vcs_summary_session_ids, vec![session_a]);
-    assert!(resolved.worktree_vcs_open_session_ids.is_empty());
-    assert!(resolved.state.vcs_open_sessions.is_empty());
     assert!(resolved.state.foreground_session_ids.is_none());
     assert_eq!(resolved.state.explicit_sessions, HashSet::from([session_a]));
 }

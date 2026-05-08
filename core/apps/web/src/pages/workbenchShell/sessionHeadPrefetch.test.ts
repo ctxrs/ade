@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { SessionHeadSnapshot, SessionSnapshotSummary, WorktreeVcsSnapshot } from "@ctx/types";
+import type { SessionHeadSnapshot, SessionSnapshotSummary } from "@ctx/types";
 import { SessionHeadBootstrapCache } from "../../state/sessionHeadBootstrapCache";
 import type { WorkspaceActiveSnapshotState } from "../../state/workspaceActiveSnapshotStore";
 import {
@@ -141,7 +141,6 @@ const makeSnapshot = (
   totalActive: 1,
   totalArchived: 0,
   archivedRev: 0,
-  worktreeVcsById: {},
   fetchState: { active: "idle", archived: "idle" },
   hasMoreActive: false,
   hasMoreArchived: false,
@@ -172,34 +171,6 @@ const makeSnapshotWithSessions = (
     },
   };
 };
-
-const makeVcsSnapshot = (rev: number): WorktreeVcsSnapshot => ({
-  worktree_id: "worktree-1",
-  rev,
-  emitted_at_ms: Date.parse(now) + rev,
-  base_commit_sha: "base",
-  head_commit_sha: "head",
-  base_resolution: { kind: "merge_base", target_source: "primary_branch_config", error: null },
-  compute_state: "ready",
-  summary: { file_count: rev, line_additions: rev, line_deletions: 0, line_count: rev },
-  git_status: {
-    branch: "main",
-    upstream: "origin/main",
-    ahead: rev,
-    behind: 0,
-    detached: false,
-    staged: rev,
-    unstaged: 0,
-    untracked: 0,
-    entries: [],
-  },
-  touched_files: { items: [], truncated: false, total_count: rev },
-  touched_files_state: "ready",
-  freshness: "fresh",
-  available: true,
-  unavailable_reason: null,
-  schema_version: 2,
-});
 
 describe("sessionHeadPrefetch", () => {
   beforeEach(() => {
@@ -607,33 +578,6 @@ describe("sessionHeadPrefetch", () => {
     expect(results.some(Boolean)).toBe(false);
     expect(getSessionHeadMock).toHaveBeenCalledTimes(1);
     expect(bootstrapCache.get(sessionId)).toBeUndefined();
-  });
-
-  it("keeps workspace-sync prefetch keys stable across VCS-only snapshot churn", () => {
-    const sessionId = "session-1";
-    const base = makeSnapshot(sessionId, {
-      lastEventSeq: 42,
-      projectionRev: 7,
-      stateRev: 11,
-    });
-    const vcsOnly: WorkspaceActiveSnapshotState = {
-      ...base,
-      worktreeVcsById: {
-        "worktree-1": makeVcsSnapshot(99),
-      },
-    };
-    const sessionAdvanced = makeSnapshot(sessionId, {
-      lastEventSeq: 43,
-      projectionRev: 8,
-      stateRev: 12,
-    });
-
-    expect(buildWorkspaceSyncPrefetchVersionKey(vcsOnly, [sessionId])).toBe(
-      buildWorkspaceSyncPrefetchVersionKey(base, [sessionId]),
-    );
-    expect(buildWorkspaceSyncPrefetchVersionKey(sessionAdvanced, [sessionId])).not.toBe(
-      buildWorkspaceSyncPrefetchVersionKey(base, [sessionId]),
-    );
   });
 
   it("lets foreground force bypass a stale authoritative head cooldown", async () => {

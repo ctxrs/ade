@@ -3,7 +3,6 @@ import type {
   SessionHeadSnapshot,
   SessionSnapshotSummary,
   Task,
-  WorktreeVcsSnapshot,
   WorkspaceActiveSnapshot,
   WorkspaceActiveSnapshotSessionSummaryDeltaEvent,
   WorkspaceActiveSnapshotTaskDeltaEvent,
@@ -77,7 +76,6 @@ export class WorkspaceActiveSnapshotStoreState {
       totalActive: 0,
       totalArchived: 0,
       archivedRev: 0,
-      worktreeVcsById: {},
       fetchState: { active: "idle", archived: "idle" },
       hasMoreActive: true,
       hasMoreArchived: false,
@@ -104,15 +102,6 @@ export class WorkspaceActiveSnapshotStoreState {
 
   getWorktreeRootsSnapshot = (): Record<string, string> =>
     Object.fromEntries(this.worktreeRootsById.entries()) as Record<string, string>;
-
-  getWorktreeVcsSnapshot = (worktreeId: string): WorktreeVcsSnapshot | null => {
-    const id = idToString(worktreeId);
-    if (!id) return null;
-    return this.snapshot.worktreeVcsById[id] ?? null;
-  };
-
-  getWorktreeVcsSnapshots = (): WorktreeVcsSnapshot[] =>
-    Object.values(this.snapshot.worktreeVcsById ?? {});
 
   getSnapshotRev = (): number => this.snapshotRev;
 
@@ -187,21 +176,6 @@ export class WorkspaceActiveSnapshotStoreState {
     const nextRoot = String(root ?? "").trim();
     if (!id || !nextRoot || this.worktreeRootsById.get(id) === nextRoot) return false;
     this.worktreeRootsById.set(id, nextRoot);
-    return true;
-  }
-
-  applyWorktreeVcsSnapshot(snapshot: WorktreeVcsSnapshot): boolean {
-    const worktreeId = idToString(snapshot.worktree_id);
-    if (!worktreeId) return false;
-    const prev = this.snapshot.worktreeVcsById[worktreeId];
-    if (prev?.rev === snapshot.rev) return false;
-    this.snapshot = {
-      ...this.snapshot,
-      worktreeVcsById: {
-        ...this.snapshot.worktreeVcsById,
-        [worktreeId]: snapshot,
-      },
-    };
     return true;
   }
 

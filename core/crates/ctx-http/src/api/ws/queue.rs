@@ -5,8 +5,7 @@ mod partials;
 mod stream;
 
 pub(super) use buffers::{
-    HeadBatchBuffer, NextWorkspaceStreamItem, SummaryBatchBuffer, SummaryBatchPushOutcome,
-    HEAD_BATCH_TOTAL_LIMIT,
+    HeadBatchBuffer, NextWorkspaceStreamItem, SummaryBatchBuffer, HEAD_BATCH_TOTAL_LIMIT,
 };
 pub(super) use partials::{
     filter_partial_delta_for_active_tasks, is_foreground_session, is_priority_control_event,

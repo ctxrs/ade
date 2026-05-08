@@ -230,7 +230,6 @@ const mkWorkspaceSnapshotState = (): WorkspaceActiveSnapshotState => ({
   totalActive: 0,
   totalArchived: 0,
   archivedRev: 0,
-  worktreeVcsById: {},
   fetchState: { active: "idle" as const, archived: "idle" as const },
   hasMoreActive: false,
   hasMoreArchived: false,
@@ -920,7 +919,6 @@ describe("SessionSupervisor", () => {
       },
       getSessionHeadSnapshot: () => null,
       getWorktreeRoot: () => null,
-      getWorktreeVcsSnapshot: () => null,
       setSubscribedSessions: () => {},
       getSnapshot: () => mkWorkspaceSnapshotState(),
     };
@@ -1045,7 +1043,6 @@ describe("SessionSupervisor", () => {
       },
       getSessionHeadSnapshot: () => null,
       getWorktreeRoot: () => null,
-      getWorktreeVcsSnapshot: () => null,
       setSubscribedSessions: () => {},
       getSnapshot: () => activeState,
     };
@@ -1144,7 +1141,6 @@ describe("SessionSupervisor", () => {
       },
       getSessionHeadSnapshot: () => null,
       getWorktreeRoot: () => null,
-      getWorktreeVcsSnapshot: () => null,
       setSubscribedSessions: () => {},
       getSnapshot: () => mkWorkspaceSnapshotState(),
     };
@@ -1221,7 +1217,6 @@ describe("SessionSupervisor", () => {
       },
       getSessionHeadSnapshot: () => null,
       getWorktreeRoot: () => null,
-      getWorktreeVcsSnapshot: () => null,
       setSubscribedSessions: () => {},
       getSnapshot: () => mkWorkspaceSnapshotState(),
     };
@@ -1298,7 +1293,6 @@ describe("SessionSupervisor", () => {
       },
       getSessionHeadSnapshot: () => null,
       getWorktreeRoot: () => null,
-      getWorktreeVcsSnapshot: () => null,
       setSubscribedSessions: () => {},
       getSnapshot: () => mkWorkspaceSnapshotState(),
     };
@@ -1398,7 +1392,6 @@ describe("SessionSupervisor", () => {
       },
       getSessionHeadSnapshot: () => null,
       getWorktreeRoot: () => null,
-      getWorktreeVcsSnapshot: () => null,
       setSubscribedSessions: () => {},
       getSnapshot: () => mkWorkspaceSnapshotState(),
     };
@@ -1479,7 +1472,6 @@ describe("SessionSupervisor", () => {
       },
       getSessionHeadSnapshot: () => null,
       getWorktreeRoot: () => null,
-      getWorktreeVcsSnapshot: () => null,
       setSubscribedSessions: () => {},
       getSnapshot: () => mkWorkspaceSnapshotState(),
     };
@@ -1568,7 +1560,6 @@ describe("SessionSupervisor", () => {
       },
       getSessionHeadSnapshot: () => null,
       getWorktreeRoot: () => null,
-      getWorktreeVcsSnapshot: () => null,
       setSubscribedSessions: () => {},
       getSnapshot: () => activeState,
     };
@@ -1996,7 +1987,6 @@ describe("SessionSupervisor", () => {
       },
       getSessionHeadSnapshot: () => null,
       getWorktreeRoot: () => null,
-      getWorktreeVcsSnapshot: () => null,
       setSubscribedSessions: () => {},
       getSnapshot: () => mkWorkspaceSnapshotState(),
     };
@@ -2120,7 +2110,6 @@ describe("SessionSupervisor", () => {
       getSessionHeadSnapshot: () => null,
       getSessionHeadsSnapshot: () => ({ [sessionId]: head }),
       getWorktreeRoot: () => null,
-      getWorktreeVcsSnapshot: () => null,
       setSubscribedSessions: () => {},
       getSnapshot: () => mkWorkspaceSnapshotState(),
     };
@@ -2334,7 +2323,6 @@ describe("SessionSupervisor", () => {
       getSessionHeadSnapshot: () => null,
       getSessionHeadsSnapshot: () => ({ [sessionId]: head }),
       getWorktreeRoot: () => null,
-      getWorktreeVcsSnapshot: () => null,
       setSubscribedSessions: () => {},
       getSnapshot: () => ({ ...mkWorkspaceSnapshotState(), liveSnapshotApplied: false }),
     };
@@ -3548,7 +3536,6 @@ describe("SessionSupervisor", () => {
       },
       getSessionHeadSnapshot: () => null,
       getWorktreeRoot: () => null,
-      getWorktreeVcsSnapshot: () => null,
       setSubscribedSessions: () => {},
       getSnapshot: () => mkWorkspaceSnapshotState(),
     };
@@ -3653,7 +3640,6 @@ describe("SessionSupervisor", () => {
       },
       getSessionHeadSnapshot: () => null,
       getWorktreeRoot: () => null,
-      getWorktreeVcsSnapshot: () => null,
       setSubscribedSessions: () => {},
       getSnapshot: () => mkWorkspaceSnapshotState(),
     };
@@ -3764,7 +3750,6 @@ describe("SessionSupervisor", () => {
       },
       getSessionHeadSnapshot: () => null,
       getWorktreeRoot: () => null,
-      getWorktreeVcsSnapshot: () => null,
       setSubscribedSessions: () => {},
       getSnapshot: () => mkWorkspaceSnapshotState(),
     };
@@ -3872,7 +3857,6 @@ describe("SessionSupervisor", () => {
       },
       getSessionHeadSnapshot: () => null,
       getWorktreeRoot: () => null,
-      getWorktreeVcsSnapshot: () => null,
       setSubscribedSessions: () => {},
       getSnapshot: () => mkWorkspaceSnapshotState(),
     };
@@ -3997,7 +3981,6 @@ describe("SessionSupervisor", () => {
       getSessionHeadsSnapshot: () =>
         workspaceHead ? { [sessionId]: workspaceHead } : ({} as Record<string, SessionHeadSnapshot>),
       getWorktreeRoot: () => null,
-      getWorktreeVcsSnapshot: () => null,
       setSubscribedSessions: () => {},
       getSnapshot: () => activeState,
     };
@@ -4992,7 +4975,6 @@ describe("SessionSupervisor", () => {
       },
       getSessionHeadSnapshot: () => null,
       getWorktreeRoot: () => null,
-      getWorktreeVcsSnapshot: () => null,
       setSubscribedSessions: () => {},
       getSnapshot: () => mkWorkspaceSnapshotState(),
     };
@@ -5895,7 +5877,6 @@ describe("SessionSupervisor", () => {
       subscribeEvents: (_listener: (evt: WorkspaceActiveSnapshotEvent) => void) => () => {},
       getSessionHeadSnapshot: () => null,
       getWorktreeRoot: () => null,
-      getWorktreeVcsSnapshot: () => null,
       setSubscribedSessions: () => {},
       getSnapshot: () => activeState,
     };
@@ -5969,7 +5950,6 @@ describe("SessionSupervisor", () => {
       subscribeEvents: (_listener: (evt: WorkspaceActiveSnapshotEvent) => void) => () => {},
       getSessionHeadSnapshot: () => null,
       getWorktreeRoot: () => null,
-      getWorktreeVcsSnapshot: () => null,
       setSubscribedSessions: () => {},
       getSnapshot: () => archivedState,
     };
@@ -6020,7 +6000,6 @@ describe("SessionSupervisor", () => {
       subscribeEvents: (_listener: (evt: WorkspaceActiveSnapshotEvent) => void) => () => {},
       getSessionHeadSnapshot: () => null,
       getWorktreeRoot: () => null,
-      getWorktreeVcsSnapshot: () => null,
       setSubscribedSessions: () => {},
       getSnapshot: () => archivedState,
     };
@@ -6044,7 +6023,6 @@ describe("SessionSupervisor", () => {
       subscribeEvents: (_listener: (evt: WorkspaceActiveSnapshotEvent) => void) => () => {},
       getSessionHeadSnapshot: () => null,
       getWorktreeRoot: () => null,
-      getWorktreeVcsSnapshot: () => null,
       setSubscribedSessions: () => {},
       getSnapshot: () => mkWorkspaceSnapshotState(),
     };

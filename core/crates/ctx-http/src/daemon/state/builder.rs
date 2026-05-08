@@ -160,6 +160,7 @@ impl AppState {
                 worktree_vcs_scheduler: WorktreeVcsSchedulerRuntime::with_concurrency(
                     worktree_vcs_scheduler_concurrency_from_env(),
                 ),
+                worktree_vcs_events: broadcast::channel(1024).0,
                 git_status_watchers: Mutex::new(HashSet::new()),
                 workspace_active_snapshot,
                 workspace_active_snapshot_cache: Mutex::new(HashMap::new()),

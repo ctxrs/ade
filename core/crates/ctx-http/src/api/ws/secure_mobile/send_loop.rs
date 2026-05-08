@@ -9,12 +9,10 @@ use super::*;
 
 pub(super) fn spawn_mobile_secure_send_loop(
     sender: futures::stream::SplitSink<WebSocket, WsMessage>,
-    state: Arc<AppState>,
     workspace_id: WorkspaceId,
     device_id: String,
     key: mobile_e2ee::E2eeKey,
     runtime: &workspace_stream::WorkspaceStreamRuntime,
-    event_queue_label: &'static str,
 ) -> tokio::task::JoinHandle<()> {
     let priority_control = runtime.priority_control.clone();
     let control = runtime.control.clone();
@@ -96,15 +94,7 @@ pub(super) fn spawn_mobile_secure_send_loop(
                             break;
                         }
                     }
-                    NextWorkspaceStreamItem::SummaryBatch {
-                        events,
-                        vcs_coalesced_count,
-                    } => {
-                        workspace_stream::record_vcs_stream_coalesced(
-                            &state,
-                            event_queue_label,
-                            vcs_coalesced_count,
-                        );
+                    NextWorkspaceStreamItem::SummaryBatch { events } => {
                         let mut send_failed = false;
                         for event in events {
                             envelope_seq += 1;

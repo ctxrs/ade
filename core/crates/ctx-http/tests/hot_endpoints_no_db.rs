@@ -203,7 +203,6 @@ async fn assert_hot_endpoints_with_failpoints(failpoints: &[&'static str]) {
     let subscribe = WorkspaceActiveSnapshotClientMessage::Subscribe {
         session_ids: vec![session.id],
         sessions: Vec::new(),
-        vcs_open_session_ids: Vec::new(),
         task_ids: Vec::new(),
         foreground_session_id: None,
         scope: None,

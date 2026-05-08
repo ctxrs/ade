@@ -76,8 +76,7 @@ pub(super) fn event_snapshot_rev(event: &WorkspaceActiveSnapshotEvent) -> Option
         | WorkspaceActiveSnapshotEvent::SessionHeadDelta { snapshot_rev, .. }
         | WorkspaceActiveSnapshotEvent::SessionHeadSeed { snapshot_rev, .. }
         | WorkspaceActiveSnapshotEvent::SessionGap { snapshot_rev, .. }
-        | WorkspaceActiveSnapshotEvent::WorktreeBootstrap { snapshot_rev, .. }
-        | WorkspaceActiveSnapshotEvent::WorktreeVcsSnapshot { snapshot_rev, .. } => {
+        | WorkspaceActiveSnapshotEvent::WorktreeBootstrap { snapshot_rev, .. } => {
             Some(*snapshot_rev)
         }
         WorkspaceActiveSnapshotEvent::ArchivedTaskUpsert { .. }

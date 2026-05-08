@@ -195,7 +195,6 @@ export type WorkspaceActiveSnapshot = {
   snapshot_rev: number;
   archived_rev?: number;
   active: WorkspaceActivePage;
-  worktree_vcs_snapshots?: WorktreeVcsSnapshot[];
 };
 
 export type WorkspaceActiveHeadBatch = {
@@ -373,12 +372,6 @@ export type WorkspaceActiveSnapshotEvent =
       notice: WorktreeBootstrapNotice;
     }
   | {
-      type: "worktree_vcs_snapshot";
-      workspace_id: string;
-      snapshot_rev: number;
-      snapshot: WorktreeVcsSnapshot;
-    }
-  | {
       type: "archived_task_upsert";
       workspace_id: string;
       snapshot_rev?: number;
@@ -418,9 +411,62 @@ export type WorkspaceActiveSnapshotClientMessage =
       type: "subscribe";
       session_ids?: (string)[];
       sessions?: WorkspaceActiveSnapshotSessionSubscription[];
-      vcs_open_session_ids?: (string)[];
       task_ids?: (string)[];
       foreground_session_id?: string;
       scope?: WorkspaceActiveSnapshotSubscribeScope | null;
       include_active_heads?: boolean;
+    };
+
+export type WorktreeVcsStreamTier = "summary" | "details";
+
+export type WorktreeVcsStreamClientMessage =
+  | {
+      type: "replace_subscription";
+      summary_worktree_ids?: string[];
+      detail_worktree_ids?: string[];
+    }
+  | {
+      type: "refresh";
+      worktree_ids?: string[];
+      tier: WorktreeVcsStreamTier;
+    };
+
+export type WorktreeVcsStreamMessage =
+  | {
+      type: "ready";
+      workspace_id: string;
+      vcs_generation: number;
+    }
+  | {
+      type: "subscribed";
+      workspace_id: string;
+      demand_generation: number;
+      summary_worktree_ids: string[];
+      detail_worktree_ids: string[];
+    }
+  | {
+      type: "summary_snapshot";
+      workspace_id: string;
+      worktree_id: string;
+      demand_generation: number;
+      snapshot: WorktreeVcsSnapshot;
+    }
+  | {
+      type: "details_snapshot";
+      workspace_id: string;
+      worktree_id: string;
+      demand_generation: number;
+      snapshot: WorktreeVcsSnapshot;
+    }
+  | {
+      type: "unavailable_snapshot";
+      workspace_id: string;
+      worktree_id: string;
+      demand_generation: number;
+      snapshot: WorktreeVcsSnapshot;
+    }
+  | {
+      type: "reset_required";
+      workspace_id: string;
+      vcs_generation: number;
     };

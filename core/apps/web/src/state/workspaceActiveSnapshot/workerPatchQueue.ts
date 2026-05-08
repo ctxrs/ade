@@ -295,10 +295,6 @@ const flushWorkerPatch = (host: WorkspaceActiveSnapshotWorkerHost): void => {
     if (snapshot.archivedLoaded !== previousSnapshot.archivedLoaded) {
       shell.archivedLoaded = snapshot.archivedLoaded;
     }
-    if (!sameRecordRefs(snapshot.worktreeVcsById, previousSnapshot.worktreeVcsById)) {
-      shell.worktreeVcsById = snapshot.worktreeVcsById;
-    }
-
     const shellChanged = Object.keys(shell).length > 0;
     const taskChanged = Boolean(taskDiff.upserts) || Boolean(taskDiff.deletes);
     patch = {

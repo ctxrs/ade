@@ -2,7 +2,6 @@ import type {
   SessionHeadSnapshot,
   SessionSnapshotSummary,
   Task,
-  WorktreeVcsSnapshot,
   WorkspaceActiveSnapshotEvent,
 } from "@ctx/types";
 import type { SessionSubscriptionCursor } from "../sessionSubscription";
@@ -29,7 +28,6 @@ export type WorkspaceActiveSnapshotState = {
   totalActive: number;
   totalArchived: number;
   archivedRev: number;
-  worktreeVcsById: Record<string, WorktreeVcsSnapshot>;
   fetchState: {
     active: "idle" | "loading" | "error";
     archived: "idle" | "loading" | "error";
@@ -46,7 +44,6 @@ export type WorkspaceActiveSnapshotEventSource = {
   getSessionHeadSnapshot: (sessionId: string) => SessionHeadSnapshot | null;
   getSessionHeadsSnapshot?: () => Record<string, SessionHeadSnapshot>;
   getWorktreeRoot: (worktreeId: string) => string | null;
-  getWorktreeVcsSnapshot: (worktreeId: string) => WorktreeVcsSnapshot | null;
   setSubscribedSessions?: (sessions: SessionSubscriptionCursor[]) => void;
   setForegroundSessionId?: (sessionId: string | null) => void;
 };

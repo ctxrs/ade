@@ -50,7 +50,6 @@ const makeWorkspaceSnapshot = (taskTitle = "Implement desktop notifications"): W
   totalActive: 1,
   totalArchived: 0,
   archivedRev: 0,
-  worktreeVcsById: {},
   fetchState: {
     active: "idle",
     archived: "idle",

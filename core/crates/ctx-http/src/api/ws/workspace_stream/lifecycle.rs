@@ -59,8 +59,6 @@ pub(crate) async fn initialize_workspace_stream(
             send_control,
             subscriptions: HashMap::new(),
             subscription_state: WorkspaceActiveSubscriptionState::default(),
-            active_worktrees: HashSet::new(),
-            open_worktrees: HashSet::new(),
             reset_queued: false,
             latest_snapshot_rev: Arc::new(AtomicI64::new(snapshot_rev)),
         },
@@ -82,12 +80,6 @@ pub(crate) async fn release_workspace_stream(
     runtime: &WorkspaceStreamRuntime,
 ) {
     release_workspace_stream_session_pins(state, runtime.subscriptions.keys().copied()).await;
-    state
-        .update_worktree_vcs_activity(&runtime.active_worktrees, &HashSet::new())
-        .await;
-    state
-        .update_worktree_vcs_open_panes(&runtime.open_worktrees, &HashSet::new())
-        .await;
 }
 
 pub(super) async fn clear_runtime_queues(runtime: &WorkspaceStreamRuntime) {

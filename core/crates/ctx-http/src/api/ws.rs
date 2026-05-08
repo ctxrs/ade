@@ -31,6 +31,7 @@ mod terminal;
 mod web_session;
 mod workspace_active;
 mod workspace_stream;
+mod workspace_vcs;
 
 use common::{
     accept_session_delta, accept_session_head, bump_latest_snapshot_rev, event_snapshot_rev,
@@ -44,15 +45,11 @@ use queue::{
     log_head_batch_push_error, log_summary_batch_push_error, push_stream_message,
     should_stream_head_delta, take_next_workspace_stream_item, workspace_stream_is_idle,
     HeadBatchBuffer, NextWorkspaceStreamItem, StreamQueue, SummaryBatchBuffer,
-    SummaryBatchPushOutcome, HEAD_BATCH_TOTAL_LIMIT,
+    HEAD_BATCH_TOTAL_LIMIT,
 };
 use replay::{
-    primary_session_ids_for_active_task_summary, queue_reset_required, queue_snapshot_payload,
-    refresh_worktree_vcs_for_sessions, replay_session_events,
-    resolve_workspace_active_snapshot_subscriptions, resolve_worktree_vcs_open_session_ids,
-    resolve_worktree_vcs_summary_session_ids, seed_worktree_vcs_for_subscribe,
-    spawn_worktree_vcs_refresh_for_sessions, sync_active_worktrees, with_stream_rev, ReplayOutcome,
-    WorktreeVcsSeedMode,
+    queue_reset_required, queue_snapshot_payload, replay_session_events,
+    resolve_workspace_active_snapshot_subscriptions, with_stream_rev, ReplayOutcome,
 };
 
 pub(super) use secure_mobile::mobile_secure_workspace_stream_ws;
@@ -63,6 +60,7 @@ use terminal::{
 };
 pub(super) use web_session::web_session_signal;
 pub(super) use workspace_active::workspace_active_snapshot_stream_ws;
+pub(super) use workspace_vcs::workspace_vcs_stream_ws;
 
 pub(super) async fn dictation_livekit_stream_ws(
     ws: WebSocketUpgrade,

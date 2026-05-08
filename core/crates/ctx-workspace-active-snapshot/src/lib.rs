@@ -40,10 +40,8 @@ pub use replay_state::{
 };
 pub use stats::WorkspaceActiveSnapshotStats;
 pub use subscriptions::{
-    merge_worktree_vcs_snapshots, primary_session_id_for_active_task,
-    primary_session_ids_for_active_task_summary, resolve_session_replay,
-    resolve_workspace_active_snapshot_subscriptions, resolve_worktree_vcs_open_session_ids,
-    resolve_worktree_vcs_summary_session_ids, ResolvedWorkspaceActiveSessionReplay,
+    primary_session_id_for_active_task, resolve_session_replay,
+    resolve_workspace_active_snapshot_subscriptions, ResolvedWorkspaceActiveSessionReplay,
     ResolvedWorkspaceActiveSessionSubscription, ResolvedWorkspaceActiveSubscriptions,
     WorkspaceActiveSubscriptionSource, WorkspaceActiveSubscriptionState,
 };

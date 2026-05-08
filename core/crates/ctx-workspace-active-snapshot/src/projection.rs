@@ -18,7 +18,7 @@ impl WorkspaceActiveSnapshotHub {
         limit: i64,
     ) -> WorkspaceActiveSnapshot {
         let limit = limit.clamp(1, 200) as usize;
-        let (snapshot_rev, archived_rev, total_count, mut tasks, worktree_vcs_snapshots) = {
+        let (snapshot_rev, archived_rev, total_count, mut tasks) = {
             let guard = self.inner.lock().await;
             match guard.get(&workspace_id) {
                 Some(entry) => (
@@ -26,9 +26,8 @@ impl WorkspaceActiveSnapshotHub {
                     entry.archived_rev,
                     entry.active_tasks.len() as i64,
                     entry.active_tasks.values().cloned().collect::<Vec<_>>(),
-                    entry.worktree_vcs_snapshots.clone(),
                 ),
-                None => (0, 0, 0, Vec::new(), HashMap::new()),
+                None => (0, 0, 0, Vec::new()),
             }
         };
         tasks.sort_by(|a, b| {
@@ -42,26 +41,11 @@ impl WorkspaceActiveSnapshotHub {
         if tasks.len() > limit {
             tasks.truncate(limit);
         }
-        let mut active_worktree_ids = HashSet::new();
-        for task in &tasks {
-            active_worktree_ids.insert(task.primary_session.session.worktree_id);
-            for summary in &task.sessions {
-                active_worktree_ids.insert(summary.session.worktree_id);
-            }
-        }
-        let mut snapshots = Vec::new();
-        for worktree_id in active_worktree_ids {
-            if let Some(snapshot) = worktree_vcs_snapshots.get(&worktree_id) {
-                snapshots.push(snapshot.clone());
-            }
-        }
-        snapshots.sort_by_key(|snapshot| snapshot.worktree_id.0);
         WorkspaceActiveSnapshot {
             workspace_id,
             snapshot_rev,
             archived_rev,
             active: WorkspaceActivePage { tasks, total_count },
-            worktree_vcs_snapshots: snapshots,
         }
     }
 

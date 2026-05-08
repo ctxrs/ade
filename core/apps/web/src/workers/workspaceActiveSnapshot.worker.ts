@@ -53,7 +53,6 @@ const listWorkspaceArchivedTaskSummaries = (
 let store: WorkspaceActiveSnapshotStoreImpl | null = null;
 let pendingSeed: PersistedWorkspaceActiveSnapshotV1 | null = null;
 let pendingSubscribedSessions: SessionSubscriptionCursor[] | null = null;
-let pendingVcsOpenSessionIds: string[] | null = null;
 let pendingForegroundSessionId: string | null = null;
 let heartbeatTimer: ReturnType<typeof globalThis.setInterval> | null = null;
 let heartbeatDegraded = false;
@@ -138,10 +137,6 @@ const ensureStore = (cmd: Extract<WorkspaceActiveSnapshotCommand, { type: "init"
     store.setSubscribedSessions?.(pendingSubscribedSessions);
     pendingSubscribedSessions = null;
   }
-  if (pendingVcsOpenSessionIds) {
-    store.setVcsOpenSessionIds?.(pendingVcsOpenSessionIds);
-    pendingVcsOpenSessionIds = null;
-  }
   if (pendingForegroundSessionId !== null) {
     store.setForegroundSessionId?.(pendingForegroundSessionId);
     pendingForegroundSessionId = null;
@@ -178,13 +173,6 @@ self.onmessage = (event: MessageEvent<WorkspaceActiveSnapshotCommand>) => {
         return;
       }
       store.setSubscribedSessions?.(cmd.sessions);
-      return;
-    case "set_vcs_open_session_ids":
-      if (!store) {
-        pendingVcsOpenSessionIds = cmd.sessionIds;
-        return;
-      }
-      store.setVcsOpenSessionIds?.(cmd.sessionIds);
       return;
     case "set_foreground_session_id":
       if (!store) {

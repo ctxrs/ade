@@ -1,5 +1,6 @@
 use super::*;
 use crate::daemon::McpAuthContext;
+use ctx_core::models::WorktreeVcsSnapshot;
 use ctx_execution_runtime::ExecutionSetupCoordinator;
 use ctx_provider_runtime::{CachedProviderOptions, CachedProviderVerify};
 use ctx_update_service::UpdateDrainCoordinator;
@@ -45,6 +46,7 @@ pub struct WorkspaceRuntime {
     pub worktree_vcs_summary_gen: Mutex<HashMap<WorktreeId, u64>>,
     pub worktree_vcs_runtime: Mutex<HashMap<WorktreeId, WorktreeVcsRuntimeState>>,
     pub worktree_vcs_scheduler: WorktreeVcsSchedulerRuntime,
+    pub worktree_vcs_events: broadcast::Sender<WorktreeVcsSnapshot>,
     pub git_status_watchers: Mutex<HashSet<WorktreeId>>,
     pub workspace_active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
     pub workspace_active_snapshot_cache:

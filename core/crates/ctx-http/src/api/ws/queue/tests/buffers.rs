@@ -62,7 +62,6 @@ async fn summary_buffer_drops_session_events_at_or_before_resume_cursor() {
     let workspace_id = WorkspaceId::new();
     let session_id = SessionId::new();
     let other_session_id = SessionId::new();
-    let worktree_id = WorktreeId::new();
 
     buffer
         .push(session_summary_delta_event(workspace_id, session_id, 3))
@@ -86,11 +85,6 @@ async fn summary_buffer_drops_session_events_at_or_before_resume_cursor() {
         .await
         .expect("other summary delta should enqueue");
     buffer
-        .push(worktree_vcs_event(workspace_id, worktree_id, 2))
-        .await
-        .expect("VCS delta should enqueue");
-
-    buffer
         .drop_session_events_at_or_before(
             session_id,
             SessionReplayCursor {
@@ -100,9 +94,8 @@ async fn summary_buffer_drops_session_events_at_or_before_resume_cursor() {
         )
         .await;
 
-    let (events, vcs_coalesced_count) = buffer.take().await;
-    assert_eq!(events.len(), 3);
-    assert_eq!(vcs_coalesced_count, 0);
+    let events = buffer.take().await;
+    assert_eq!(events.len(), 2);
     assert!(events.iter().any(|event| matches!(
         event,
         WorkspaceActiveSnapshotEvent::SessionSummaryDelta { delta, .. }
@@ -113,11 +106,6 @@ async fn summary_buffer_drops_session_events_at_or_before_resume_cursor() {
         WorkspaceActiveSnapshotEvent::SessionSummaryDelta { delta, .. }
             if delta.session_id == other_session_id
     )));
-    assert!(events.iter().any(|event| matches!(
-        event,
-        WorkspaceActiveSnapshotEvent::WorktreeVcsSnapshot { snapshot, .. }
-            if snapshot.worktree_id == worktree_id
-    )));
 }
 
 #[tokio::test]
@@ -125,7 +113,6 @@ async fn summary_buffer_removes_session_event_at_resume_cursor() {
     let buffer = SummaryBatchBuffer::new(8);
     let workspace_id = WorkspaceId::new();
     let session_id = SessionId::new();
-    let worktree_id = WorktreeId::new();
 
     buffer
         .push(session_summary_delta_event_with_projection(
@@ -137,11 +124,6 @@ async fn summary_buffer_removes_session_event_at_resume_cursor() {
         .await
         .expect("summary delta should enqueue");
     buffer
-        .push(worktree_vcs_event(workspace_id, worktree_id, 2))
-        .await
-        .expect("VCS delta should enqueue");
-
-    buffer
         .drop_session_events_at_or_before(
             session_id,
             SessionReplayCursor {
@@ -151,12 +133,6 @@ async fn summary_buffer_removes_session_event_at_resume_cursor() {
         )
         .await;
 
-    let (events, vcs_coalesced_count) = buffer.take().await;
-    assert_eq!(events.len(), 1);
-    assert_eq!(vcs_coalesced_count, 0);
-    assert!(events.iter().any(|event| matches!(
-        event,
-        WorkspaceActiveSnapshotEvent::WorktreeVcsSnapshot { snapshot, .. }
-            if snapshot.worktree_id == worktree_id
-    )));
+    let events = buffer.take().await;
+    assert!(events.is_empty());
 }

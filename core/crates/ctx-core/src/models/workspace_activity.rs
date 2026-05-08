@@ -80,8 +80,6 @@ pub struct WorkspaceActiveSnapshot {
     #[serde(default)]
     pub archived_rev: i64,
     pub active: WorkspaceActivePage,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub worktree_vcs_snapshots: Vec<WorktreeVcsSnapshot>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -381,11 +379,6 @@ pub enum WorkspaceActiveSnapshotEvent {
         snapshot_rev: i64,
         notice: WorktreeBootstrapNotice,
     },
-    WorktreeVcsSnapshot {
-        workspace_id: WorkspaceId,
-        snapshot_rev: i64,
-        snapshot: Box<WorktreeVcsSnapshot>,
-    },
     ArchivedTaskUpsert {
         workspace_id: WorkspaceId,
         archived_rev: i64,
@@ -458,11 +451,69 @@ pub enum WorkspaceActiveSnapshotClientMessage {
         task_ids: Vec<TaskId>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         foreground_session_id: Option<SessionId>,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        vcs_open_session_ids: Vec<SessionId>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         scope: Option<WorkspaceActiveSnapshotSubscribeScope>,
         #[serde(default, skip_serializing_if = "is_false")]
         include_active_heads: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum WorktreeVcsStreamTier {
+    Summary,
+    Details,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum WorktreeVcsStreamClientMessage {
+    ReplaceSubscription {
+        #[serde(default)]
+        summary_worktree_ids: Vec<WorktreeId>,
+        #[serde(default)]
+        detail_worktree_ids: Vec<WorktreeId>,
+    },
+    Refresh {
+        #[serde(default)]
+        worktree_ids: Vec<WorktreeId>,
+        tier: WorktreeVcsStreamTier,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum WorktreeVcsStreamMessage {
+    Ready {
+        workspace_id: WorkspaceId,
+        vcs_generation: i64,
+    },
+    Subscribed {
+        workspace_id: WorkspaceId,
+        demand_generation: i64,
+        summary_worktree_ids: Vec<WorktreeId>,
+        detail_worktree_ids: Vec<WorktreeId>,
+    },
+    SummarySnapshot {
+        workspace_id: WorkspaceId,
+        worktree_id: WorktreeId,
+        demand_generation: i64,
+        snapshot: WorktreeVcsSnapshot,
+    },
+    DetailsSnapshot {
+        workspace_id: WorkspaceId,
+        worktree_id: WorktreeId,
+        demand_generation: i64,
+        snapshot: WorktreeVcsSnapshot,
+    },
+    UnavailableSnapshot {
+        workspace_id: WorkspaceId,
+        worktree_id: WorktreeId,
+        demand_generation: i64,
+        snapshot: WorktreeVcsSnapshot,
+    },
+    ResetRequired {
+        workspace_id: WorkspaceId,
+        vcs_generation: i64,
     },
 }

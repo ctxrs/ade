@@ -2,10 +2,9 @@ use std::collections::HashMap;
 
 use tokio::sync::broadcast;
 
-use ctx_core::ids::{SessionId, TaskId, WorktreeId};
+use ctx_core::ids::{SessionId, TaskId};
 use ctx_core::models::{
-    SessionHeadDelta, SessionHeadSnapshot, WorkspaceActiveSnapshotEvent,
-    WorkspaceActiveTaskSummary, WorktreeVcsSnapshot,
+    SessionHeadDelta, SessionHeadSnapshot, WorkspaceActiveSnapshotEvent, WorkspaceActiveTaskSummary,
 };
 
 use crate::replay_state::{SessionReplayResult, SessionReplayState};
@@ -19,7 +18,6 @@ pub(super) struct WorkspaceActiveSnapshotEntry {
     pub(super) active_tasks: HashMap<TaskId, WorkspaceActiveTaskSummary>,
     pub(super) active_heads: HashMap<SessionId, SessionHeadSnapshot>,
     pub(super) session_replay: HashMap<SessionId, SessionReplayState>,
-    pub(super) worktree_vcs_snapshots: HashMap<WorktreeId, WorktreeVcsSnapshot>,
 }
 
 impl WorkspaceActiveSnapshotEntry {
@@ -33,7 +31,6 @@ impl WorkspaceActiveSnapshotEntry {
             active_tasks: HashMap::new(),
             active_heads: HashMap::new(),
             session_replay: HashMap::new(),
-            worktree_vcs_snapshots: HashMap::new(),
         }
     }
 

@@ -101,7 +101,6 @@ export type WorkspaceActiveSnapshotWorkerHost = {
   pendingWorkerCache: PersistedWorkspaceActiveSnapshotV1 | null;
   cachePersistTimer: ReturnType<typeof globalThis.setTimeout> | null;
   subscribedSessions: SessionSubscriptionCursor[];
-  vcsOpenSessionIds: string[];
   foregroundSessionId: string | null;
   ws: WebSocket | null;
   publish(): void;
@@ -194,12 +193,6 @@ export const startWorker = async (host: WorkspaceActiveSnapshotWorkerHost): Prom
       postWorkerCommand(host, {
         type: "set_subscribed_sessions",
         sessions: host.subscribedSessions.slice(),
-      });
-    }
-    if (host.vcsOpenSessionIds.length > 0) {
-      postWorkerCommand(host, {
-        type: "set_vcs_open_session_ids",
-        sessionIds: host.vcsOpenSessionIds.slice(),
       });
     }
     if (host.foregroundSessionId) {

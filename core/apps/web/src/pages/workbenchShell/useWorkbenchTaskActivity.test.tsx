@@ -223,7 +223,6 @@ const makeWorkspaceSnapshot = (
   totalActive: activeIds.length,
   totalArchived: 0,
   archivedRev: 0,
-  worktreeVcsById: {},
   fetchState: { active: "idle", archived: "idle" },
   hasMoreActive: false,
   hasMoreArchived: false,

@@ -13,8 +13,6 @@ struct HeadBatchState {
 struct SummaryBatchState {
     total_len: usize,
     session_events: HashMap<SessionId, WorkspaceActiveSnapshotEvent>,
-    worktree_vcs_events: HashMap<WorktreeId, WorkspaceActiveSnapshotEvent>,
-    vcs_coalesced_count: u64,
 }
 
 pub(crate) struct HeadBatchBuffer {
@@ -36,7 +34,6 @@ pub(crate) enum NextWorkspaceStreamItem {
     },
     SummaryBatch {
         events: Vec<WorkspaceActiveSnapshotEvent>,
-        vcs_coalesced_count: u64,
     },
 }
 
@@ -166,8 +163,6 @@ impl SummaryBatchBuffer {
             state: Mutex::new(SummaryBatchState {
                 total_len: 0,
                 session_events: HashMap::new(),
-                worktree_vcs_events: HashMap::new(),
-                vcs_coalesced_count: 0,
             }),
             notify: Notify::new(),
             limit,
@@ -193,21 +188,6 @@ impl SummaryBatchBuffer {
                 }
                 state.session_events.insert(delta.session_id, event);
             }
-            WorkspaceActiveSnapshotEvent::WorktreeVcsSnapshot { snapshot, .. } => {
-                let worktree_id = snapshot.worktree_id;
-                if let std::collections::hash_map::Entry::Occupied(mut entry) =
-                    state.worktree_vcs_events.entry(worktree_id)
-                {
-                    entry.insert(event);
-                    state.vcs_coalesced_count = state.vcs_coalesced_count.saturating_add(1);
-                    self.notify.notify_one();
-                    return Ok(SummaryBatchPushOutcome::Replaced);
-                }
-                if state.total_len >= self.limit {
-                    return Err(SummaryBatchPushError::TotalLimit { limit: self.limit });
-                }
-                state.worktree_vcs_events.insert(worktree_id, event);
-            }
             _ => return Ok(SummaryBatchPushOutcome::Enqueued),
         }
         state.total_len += 1;
@@ -215,31 +195,24 @@ impl SummaryBatchBuffer {
         Ok(SummaryBatchPushOutcome::Enqueued)
     }
 
-    pub(crate) async fn take(&self) -> (Vec<WorkspaceActiveSnapshotEvent>, u64) {
+    pub(crate) async fn take(&self) -> Vec<WorkspaceActiveSnapshotEvent> {
         let mut state = self.state.lock().await;
-        let vcs_coalesced_count = state.vcs_coalesced_count;
-        state.vcs_coalesced_count = 0;
-        if state.session_events.is_empty() && state.worktree_vcs_events.is_empty() {
+        if state.session_events.is_empty() {
             state.total_len = 0;
-            return (Vec::new(), vcs_coalesced_count);
+            return Vec::new();
         }
         let mut events = Vec::with_capacity(state.total_len);
         for (_, event) in state.session_events.drain() {
             events.push(event);
         }
-        for (_, event) in state.worktree_vcs_events.drain() {
-            events.push(event);
-        }
         state.total_len = 0;
-        (events, vcs_coalesced_count)
+        events
     }
 
     pub(crate) async fn clear(&self) {
         let mut state = self.state.lock().await;
         state.session_events.clear();
-        state.worktree_vcs_events.clear();
         state.total_len = 0;
-        state.vcs_coalesced_count = 0;
     }
 
     pub(crate) async fn drop_session_events_at_or_before(
@@ -270,7 +243,7 @@ impl SummaryBatchBuffer {
 
     pub(crate) async fn is_empty(&self) -> bool {
         let state = self.state.lock().await;
-        state.session_events.is_empty() && state.worktree_vcs_events.is_empty()
+        state.session_events.is_empty()
     }
 
     pub(crate) fn notify(&self) -> &Notify {

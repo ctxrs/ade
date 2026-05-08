@@ -229,6 +229,12 @@ vi.mock("../api/client", () => ({
   deleteProviderHarnessEndpoint: vi.fn(async () => ({})),
   deleteQwenAccount: vi.fn(async () => emptyProviderAccounts),
   deleteTask: vi.fn(async () => ({})),
+  getDaemonClientConfig: vi.fn(() => ({
+    baseUrl: null,
+    wsBaseUrl: null,
+    authToken: null,
+    runId: null,
+  })),
   getHealth: vi.fn(async () => ({
     version: "0.0.0",
     daemon_version: "0.0.0",
@@ -245,6 +251,7 @@ vi.mock("../api/client", () => ({
   recordClientCounterMetric: vi.fn(),
   recordClientGaugeMetric: vi.fn(),
   recordClientHistogramMetric: vi.fn(),
+  subscribeDaemonConfig: vi.fn(() => () => {}),
   getTitleGenerationLocalStatus: vi.fn(async () => ({
     ready: true,
     runtime: { version: "1.0.0", installed: true, path: "/tmp/runtime" },

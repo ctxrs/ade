@@ -43,7 +43,6 @@ import {
 } from "./transport";
 
 const ACTIVE_PAGE_SIZE = 50;
-
 const nowMs = (): number => {
   if (typeof performance !== "undefined" && typeof performance.now === "function") {
     return (performance.timeOrigin ?? Date.now()) + performance.now();
@@ -62,10 +61,6 @@ const emittedAtMsForWorkspaceEvent = (
     case "session_summary_delta":
       return typeof evt.delta.emitted_at_ms === "number" && Number.isFinite(evt.delta.emitted_at_ms)
         ? evt.delta.emitted_at_ms
-        : null;
-    case "worktree_vcs_snapshot":
-      return typeof evt.snapshot.emitted_at_ms === "number" && Number.isFinite(evt.snapshot.emitted_at_ms)
-        ? evt.snapshot.emitted_at_ms
         : null;
     default:
       return null;
@@ -607,12 +602,6 @@ export const handleStreamMessage = async (
         )
       ) {
         publish();
-      }
-      break;
-    case "worktree_vcs_snapshot":
-      if (host.state.applyWorktreeVcsSnapshot(evt.snapshot)) {
-        publish();
-        host.schedulePersistCache();
       }
       break;
     default:

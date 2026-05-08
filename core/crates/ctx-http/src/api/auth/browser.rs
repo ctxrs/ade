@@ -16,6 +16,7 @@ pub(super) enum ScopedMcpRoute {
 pub(crate) enum BrowserStreamAuthScope {
     WorkspaceActiveSnapshot { workspace_id: String },
     WorkspaceStream { workspace_id: String },
+    WorkspaceVcs { workspace_id: String },
     ExecutionLaunch { job_id: String },
     DictationLivekit,
     ProviderInstall { install_id: String },
@@ -28,6 +29,7 @@ impl BrowserStreamAuthScope {
                 format!("workspace_active_snapshot:{workspace_id}")
             }
             Self::WorkspaceStream { workspace_id } => format!("workspace_stream:{workspace_id}"),
+            Self::WorkspaceVcs { workspace_id } => format!("workspace_vcs:{workspace_id}"),
             Self::ExecutionLaunch { job_id } => format!("execution_launch:{job_id}"),
             Self::DictationLivekit => "dictation_livekit".to_string(),
             Self::ProviderInstall { install_id } => format!("provider_install:{install_id}"),
@@ -85,6 +87,9 @@ fn workspace_stream_scope(path: &str) -> Option<BrowserStreamAuthScope> {
             workspace_id: workspace_id.to_string(),
         }),
         "stream" => Some(BrowserStreamAuthScope::WorkspaceStream {
+            workspace_id: workspace_id.to_string(),
+        }),
+        "vcs/stream" => Some(BrowserStreamAuthScope::WorkspaceVcs {
             workspace_id: workspace_id.to_string(),
         }),
         _ => None,

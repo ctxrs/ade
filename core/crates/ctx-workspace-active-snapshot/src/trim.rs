@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use ctx_core::models::{
     Message, Session, SessionActivityState, SessionEvent, SessionEventType, SessionHeadSnapshot,
-    SessionMetadata, SessionTurn, SessionTurnToolSummary, WorktreeVcsSnapshot,
+    SessionMetadata, SessionTurn, SessionTurnToolSummary,
 };
 
 pub(super) const ACTIVE_HEAD_TURN_LIMIT: usize = 5;
@@ -250,12 +250,6 @@ pub(super) fn compact_active_head_snapshot(head: &SessionHeadSnapshot) -> Sessio
     out.head_window.truncated = out.head_window.truncated || dropped;
     out.has_more_turns =
         out.has_more_turns || head.has_more_turns || head.turns.len() > out.turns.len();
-    out
-}
-
-pub(super) fn compact_worktree_vcs_snapshot(snapshot: &WorktreeVcsSnapshot) -> WorktreeVcsSnapshot {
-    let mut out = snapshot.clone();
-    out.git_status.raw.clear();
     out
 }
 

@@ -8,6 +8,7 @@ import {
 import { artifactPrefetcher } from "../../state/artifactPrefetch";
 import { type SessionSupervisor, useOpenSession, useSessionCacheSnapshot } from "../../state/sessionSupervisor";
 import type { WorkspaceActiveSnapshotItem, WorkspaceActiveSnapshotState } from "../../state/workspaceActiveSnapshotStore";
+import { useWorkspaceVcsSnapshot, useWorkspaceVcsStore } from "../../state/workspaceVcsStore";
 import { findHarnessCatalogEntry } from "../../utils/harnessCatalog";
 import { errorMessage } from "../../utils/errorMessage";
 import { composeModelId, parseModelId } from "../../utils/modelEffort";
@@ -29,6 +30,7 @@ import {
 import { useWorkbenchConversationMenu } from "./useWorkbenchConversationMenu";
 import { useWorkbenchPanelState } from "./useWorkbenchPanelState";
 import { useWorkbenchWebSessions } from "./useWorkbenchWebSessions";
+import { buildGitPaneModel } from "./worktreeGitPaneModel";
 
 const compareSessionTurnOrder = (left: SessionTurn, right: SessionTurn): number => {
   const leftSeq = Number(left.start_seq ?? Number.NaN);
@@ -55,11 +57,19 @@ const getLatestTurnStatus = (turns: SessionTurn[] | null | undefined): SessionTu
   }
   return latestTurn?.status ?? null;
 };
-import { buildGitPaneModel } from "./worktreeGitPaneModel";
+
+export const resolveWorkspaceVcsDetailDemand = ({
+  diffOpen,
+  activeWorktreeId,
+  inventoryDemandAllowed,
+}: {
+  diffOpen: boolean;
+  activeWorktreeId: string;
+  inventoryDemandAllowed: boolean;
+}): string[] => (diffOpen && activeWorktreeId && inventoryDemandAllowed ? [activeWorktreeId] : []);
 
 type WorkspaceSnapshotStore = {
   getWorktreeRoot: (worktreeId: string) => string | null | undefined;
-  setVcsOpenSessionIds?: (sessionIds: string[]) => void;
 };
 
 type WorkbenchActiveTaskControllerArgs = {
@@ -99,6 +109,8 @@ export function useWorkbenchActiveTaskController({
   supervisor,
 }: WorkbenchActiveTaskControllerArgs) {
   const sessionCache = useSessionCacheSnapshot();
+  const workspaceVcsStore = useWorkspaceVcsStore();
+  const workspaceVcsSnapshot = useWorkspaceVcsSnapshot();
   const activeEntry = activeSessionId ? sessionCache.sessions[activeSessionId] ?? null : null;
   const activeSessionRenderable = canRenderWorkbenchActiveSession(activeEntry);
   const activeLoadErrors = activeEntry?.loadErrors;
@@ -150,7 +162,7 @@ export function useWorkbenchActiveTaskController({
   const activeDiffContentError = activeSessionId ? diffContentErrorBySessionId[activeSessionId] ?? null : null;
   const activeWorktreeId = activeEntry?.session ? idToString(activeEntry.session.worktree_id) : "";
   const activeWorktreeVcsSnapshot = activeWorktreeId
-    ? workspaceSnapshot.worktreeVcsById?.[activeWorktreeId] ?? null
+    ? workspaceVcsSnapshot.snapshotsByWorktreeId[activeWorktreeId] ?? null
     : null;
   const activeWorktreeVcsSummary: Record<string, unknown> | null = useMemo(() => {
     if (!activeWorktreeVcsSnapshot) return null;
@@ -159,9 +171,35 @@ export function useWorkbenchActiveTaskController({
   const activeWorktreeVcsComputeState = activeWorktreeVcsSnapshot?.compute_state ?? null;
   const activeWorktreeDiffAvailable = activeWorktreeVcsSnapshot?.available !== false;
   const gitPaneModel = useMemo(() => buildGitPaneModel(activeWorktreeVcsSnapshot), [activeWorktreeVcsSnapshot]);
+  const summaryWorktreeIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const taskId of workspaceSnapshot.activeIds) {
+      const item = workspaceSnapshot.tasksById[taskId];
+      const primaryWorktreeId = idToString(item?.task.primary_worktree_id);
+      if (primaryWorktreeId) ids.add(primaryWorktreeId);
+      for (const session of item?.sessions ?? []) {
+        const worktreeId = idToString(session.session.worktree_id);
+        if (worktreeId) ids.add(worktreeId);
+      }
+    }
+    if (activeWorktreeId) ids.add(activeWorktreeId);
+    return Array.from(ids).sort();
+  }, [activeWorktreeId, workspaceSnapshot.activeIds, workspaceSnapshot.tasksById]);
+  const detailWorktreeIds = useMemo(
+    () =>
+      resolveWorkspaceVcsDetailDemand({
+        diffOpen,
+        activeWorktreeId,
+        inventoryDemandAllowed: gitPaneModel.inventoryDemandAllowed,
+      }),
+    [activeWorktreeId, diffOpen, gitPaneModel.inventoryDemandAllowed],
+  );
   useEffect(() => {
-    workspaceSnapshotStore.setVcsOpenSessionIds?.(diffOpen && openSessionId && gitPaneModel.inventoryDemandAllowed ? [openSessionId] : []);
-  }, [diffOpen, gitPaneModel.inventoryDemandAllowed, openSessionId, workspaceSnapshotStore]);
+    workspaceVcsStore.setDemand({
+      summaryWorktreeIds,
+      detailWorktreeIds,
+    });
+  }, [detailWorktreeIds, summaryWorktreeIds, workspaceVcsStore]);
   const snapshotSummaryStats = useMemo(
     () => getDiffSummaryStats(activeWorktreeVcsSummary),
     [activeWorktreeVcsSummary],

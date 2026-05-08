@@ -57,7 +57,6 @@ async fn hydrating_keeps_snapshot_control_ahead_of_priority_lane() {
                     tasks: Vec::new(),
                     total_count: 0,
                 },
-                worktree_vcs_snapshots: Vec::new(),
             },
             active_heads: None,
         },

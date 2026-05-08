@@ -148,15 +148,6 @@ async fn worktree_vcs_disabled_mode_suppresses_projection_work() {
         state.get_worktree_vcs_snapshot(worktree.id).await.is_none(),
         "disabled VCS mode must not compute or cache worktree VCS snapshots"
     );
-    let active_snapshot = state
-        .workspaces
-        .workspace_active_snapshot
-        .active_snapshot(ws.id, 10)
-        .await;
-    assert!(
-        active_snapshot.worktree_vcs_snapshots.is_empty(),
-        "disabled VCS mode must not publish worktree VCS snapshots"
-    );
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -236,28 +227,6 @@ async fn worktree_vcs_snapshot_clears_stale_counts_when_repo_becomes_unavailable
     assert!(snapshot.touched_files.items.is_empty());
     assert_eq!(
         snapshot.touched_files_state,
-        ctx_core::models::WorktreeVcsTouchedFilesState::NotLoaded
-    );
-
-    let active_snapshot = state
-        .workspaces
-        .workspace_active_snapshot
-        .active_snapshot(ws.id, 10)
-        .await;
-    let published = active_snapshot
-        .worktree_vcs_snapshots
-        .into_iter()
-        .find(|candidate| candidate.worktree_id == worktree.id)
-        .expect("workspace active snapshot should include worktree vcs snapshot");
-    assert!(!published.available);
-    assert_eq!(
-        published.unavailable_reason,
-        Some(DiffUnavailableReason::NoRepo)
-    );
-    assert_eq!(published.summary.file_count, None);
-    assert!(published.touched_files.items.is_empty());
-    assert_eq!(
-        published.touched_files_state,
         ctx_core::models::WorktreeVcsTouchedFilesState::NotLoaded
     );
 }
@@ -405,18 +374,6 @@ async fn worktree_vcs_snapshot_recovers_when_repo_is_reinitialized() {
         if recovered.available {
             assert_eq!(recovered.unavailable_reason, None);
 
-            let active_snapshot = state
-                .workspaces
-                .workspace_active_snapshot
-                .active_snapshot(ws.id, 10)
-                .await;
-            let published = active_snapshot
-                .worktree_vcs_snapshots
-                .into_iter()
-                .find(|candidate| candidate.worktree_id == worktree.id)
-                .expect("workspace active snapshot should include recovered vcs snapshot");
-            assert!(published.available);
-            assert_eq!(published.unavailable_reason, None);
             break;
         }
 
@@ -485,21 +442,6 @@ async fn worktree_vcs_snapshot_noop_emit_preserves_freshness() {
         WorktreeVcsFreshness::Fresh,
         "noop emit should preserve cached fresh snapshot"
     );
-
-    let published = state
-        .workspaces
-        .workspace_active_snapshot
-        .active_snapshot(ws.id, 10)
-        .await
-        .worktree_vcs_snapshots
-        .into_iter()
-        .find(|candidate| candidate.worktree_id == worktree.id)
-        .expect("active snapshot should include worktree snapshot");
-    assert_eq!(
-        published.freshness,
-        WorktreeVcsFreshness::Fresh,
-        "noop emit should preserve published fresh snapshot"
-    );
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -559,19 +501,6 @@ async fn worktree_vcs_snapshot_does_not_repopulate_cache_after_activity_eviction
     assert!(
         state.get_worktree_vcs_snapshot(worktree.id).await.is_none(),
         "inactive emit should not recreate worktree vcs cache",
-    );
-
-    let active_snapshot = state
-        .workspaces
-        .workspace_active_snapshot
-        .active_snapshot(ws.id, 10)
-        .await;
-    assert!(
-        active_snapshot
-            .worktree_vcs_snapshots
-            .into_iter()
-            .all(|candidate| candidate.worktree_id != worktree.id),
-        "inactive emit should not repopulate workspace active snapshot",
     );
 }
 

@@ -1,10 +1,10 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use ctx_core::ids::{SessionId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     WorkspaceActiveSnapshotClientMessage, WorkspaceActiveSnapshotEvent,
-    WorkspaceActiveSnapshotStreamMessage, Worktree, WorktreeVcsFreshness, WorktreeVcsSnapshot,
+    WorkspaceActiveSnapshotStreamMessage, Worktree, WorktreeVcsFreshness,
 };
 use ctx_workspace_active_snapshot::{
     resolve_workspace_active_snapshot_subscriptions as resolve_workspace_active_snapshot_subscriptions_with_source,
@@ -191,10 +191,69 @@ impl WorkspaceActiveSubscriptionSource for HttpWorkspaceActiveSubscriptionSource
             .session_replay_cursor(workspace_id, session_id)
             .await
     }
+}
 
-    fn worktree_vcs_enabled(&self) -> bool {
-        self.state.worktree_vcs_enabled()
+pub(crate) async fn refresh_worktree_vcs_for_worktrees(
+    state: &Arc<AppState>,
+    summary_worktree_ids: &[WorktreeId],
+    detail_worktree_ids: &[WorktreeId],
+) {
+    if !state.worktree_vcs_enabled() {
+        return;
     }
+    if summary_worktree_ids.is_empty() && detail_worktree_ids.is_empty() {
+        return;
+    }
+    let mut worktrees: HashMap<WorktreeId, (Worktree, bool)> = HashMap::new();
+    for worktree_id in summary_worktree_ids {
+        if let Some(worktree) = load_worktree(state, *worktree_id).await {
+            worktrees.entry(worktree.id).or_insert((worktree, false));
+        }
+    }
+    for worktree_id in detail_worktree_ids {
+        if let Some(worktree) = load_worktree(state, *worktree_id).await {
+            worktrees
+                .entry(worktree.id)
+                .and_modify(|(_, details)| *details = true)
+                .or_insert((worktree, true));
+        }
+    }
+
+    for (worktree_id, (worktree, details)) in worktrees {
+        state.ensure_git_status_watcher(worktree.clone()).await;
+        let should_refresh = match state.get_worktree_vcs_snapshot(worktree.id).await {
+            Some(snapshot)
+                if snapshot.freshness == WorktreeVcsFreshness::Fresh
+                    && snapshot.available
+                    && (!details
+                        || matches!(
+                            snapshot.touched_files_state,
+                            ctx_core::models::WorktreeVcsTouchedFilesState::Ready
+                        )) =>
+            {
+                false
+            }
+            _ => true,
+        };
+        if should_refresh {
+            if let Err(err) =
+                crate::daemon::git_status::request_worktree_vcs_refresh_without_transient(
+                    state, &worktree, true, details,
+                )
+                .await
+            {
+                tracing::warn!(
+                    worktree_id = %worktree_id.0,
+                    "worktree vcs refresh failed: {err:#}"
+                );
+            }
+        }
+    }
+}
+
+async fn load_worktree(state: &Arc<AppState>, worktree_id: WorktreeId) -> Option<Worktree> {
+    let store = state.store_for_worktree(worktree_id).await.ok()?;
+    store.get_worktree(worktree_id).await.ok().flatten()
 }
 
 async fn session_belongs_to_workspace(
@@ -210,190 +269,6 @@ async fn session_belongs_to_workspace(
         Ok(Some(session)) => session.workspace_id == workspace_id,
         _ => false,
     }
-}
-
-pub(crate) async fn refresh_worktree_vcs_for_sessions(
-    state: &Arc<AppState>,
-    summary_session_ids: &[SessionId],
-    open_session_ids: &[SessionId],
-) {
-    if !state.worktree_vcs_enabled() {
-        return;
-    }
-    if summary_session_ids.is_empty() && open_session_ids.is_empty() {
-        return;
-    }
-    let mut worktrees: HashMap<WorktreeId, (Worktree, bool)> = HashMap::new();
-    for session_id in summary_session_ids {
-        let store = match state.store_for_session(*session_id).await {
-            Ok(store) => store,
-            Err(_) => continue,
-        };
-        let session = match store.get_session(*session_id).await {
-            Ok(Some(session)) => session,
-            _ => continue,
-        };
-        let worktree = match store.get_worktree(session.worktree_id).await {
-            Ok(Some(worktree)) => worktree,
-            _ => continue,
-        };
-        worktrees.entry(worktree.id).or_insert((worktree, false));
-    }
-    for session_id in open_session_ids {
-        let store = match state.store_for_session(*session_id).await {
-            Ok(store) => store,
-            Err(_) => continue,
-        };
-        let session = match store.get_session(*session_id).await {
-            Ok(Some(session)) => session,
-            _ => continue,
-        };
-        let worktree = match store.get_worktree(session.worktree_id).await {
-            Ok(Some(worktree)) => worktree,
-            _ => continue,
-        };
-        worktrees
-            .entry(worktree.id)
-            .and_modify(|(_, open)| *open = true)
-            .or_insert((worktree, true));
-    }
-
-    for (worktree_id, (worktree, open_pane)) in worktrees {
-        state.ensure_git_status_watcher(worktree.clone()).await;
-        match state.get_worktree_vcs_snapshot(worktree.id).await {
-            Some(snapshot)
-                if snapshot.freshness == WorktreeVcsFreshness::Fresh
-                    && snapshot.available
-                    && (!open_pane
-                        || matches!(
-                            snapshot.touched_files_state,
-                            ctx_core::models::WorktreeVcsTouchedFilesState::Ready
-                        )) => {}
-            Some(_) => {
-                // Subscription warm-up should not downgrade an already-published ready snapshot.
-                // Real filesystem invalidations still use the transient stale path.
-                if let Err(err) =
-                    crate::daemon::git_status::request_worktree_vcs_refresh_without_transient(
-                        state, &worktree, true, open_pane,
-                    )
-                    .await
-                {
-                    tracing::warn!(
-                        worktree_id = %worktree_id.0,
-                        "worktree vcs refresh failed: {err:#}"
-                    );
-                }
-            }
-            None => {
-                if let Err(err) =
-                    crate::daemon::git_status::request_worktree_vcs_refresh_without_transient(
-                        state, &worktree, true, open_pane,
-                    )
-                    .await
-                {
-                    tracing::warn!(
-                        worktree_id = %worktree_id.0,
-                        "worktree vcs seed failed: {err:#}"
-                    );
-                }
-            }
-        }
-    }
-}
-
-pub(crate) fn spawn_worktree_vcs_refresh_for_sessions(
-    state: Arc<AppState>,
-    summary_session_ids: Vec<SessionId>,
-    open_session_ids: Vec<SessionId>,
-) {
-    if summary_session_ids.is_empty() && open_session_ids.is_empty() {
-        return;
-    }
-    tokio::spawn(async move {
-        refresh_worktree_vcs_for_sessions(&state, &summary_session_ids, &open_session_ids).await;
-    });
-}
-
-pub(crate) async fn load_worktree_vcs_snapshots_for_sessions(
-    state: &Arc<AppState>,
-    session_ids: &[SessionId],
-) -> Vec<WorktreeVcsSnapshot> {
-    if !state.worktree_vcs_enabled() {
-        return Vec::new();
-    }
-    let worktree_ids = resolve_worktree_ids_for_sessions(state, session_ids).await;
-    let mut ordered_worktree_ids: Vec<_> = worktree_ids.into_iter().collect();
-    ordered_worktree_ids.sort_by_key(|worktree_id| worktree_id.0);
-    let mut snapshots = Vec::new();
-    for worktree_id in ordered_worktree_ids {
-        if let Some(snapshot) = state.get_worktree_vcs_snapshot(worktree_id).await {
-            snapshots.push(snapshot);
-        }
-    }
-    snapshots
-}
-
-pub(crate) async fn resolve_worktree_vcs_publish_worktree_ids(
-    state: &Arc<AppState>,
-    summary_session_ids: &[SessionId],
-    open_session_ids: &[SessionId],
-) -> HashSet<WorktreeId> {
-    if !state.worktree_vcs_enabled() {
-        return HashSet::new();
-    }
-    let mut worktree_ids = resolve_worktree_ids_for_sessions(state, summary_session_ids).await;
-    worktree_ids.extend(resolve_worktree_ids_for_sessions(state, open_session_ids).await);
-    worktree_ids
-}
-
-pub(crate) async fn sync_active_worktrees(
-    state: &Arc<AppState>,
-    active_worktrees: &mut HashSet<WorktreeId>,
-    open_worktrees: &mut HashSet<WorktreeId>,
-    summary_session_ids: &[SessionId],
-    open_session_ids: &[SessionId],
-) {
-    if !state.worktree_vcs_enabled() {
-        state
-            .update_worktree_vcs_activity(active_worktrees, &HashSet::new())
-            .await;
-        state
-            .update_worktree_vcs_open_panes(open_worktrees, &HashSet::new())
-            .await;
-        active_worktrees.clear();
-        open_worktrees.clear();
-        return;
-    }
-    let mut next = resolve_worktree_ids_for_sessions(state, summary_session_ids).await;
-    let next_open = resolve_worktree_ids_for_sessions(state, open_session_ids).await;
-    next.extend(next_open.iter().copied());
-    state
-        .update_worktree_vcs_activity(active_worktrees, &next)
-        .await;
-    state
-        .update_worktree_vcs_open_panes(open_worktrees, &next_open)
-        .await;
-    *active_worktrees = next;
-    *open_worktrees = next_open;
-}
-
-async fn resolve_worktree_ids_for_sessions(
-    state: &Arc<AppState>,
-    session_ids: &[SessionId],
-) -> HashSet<WorktreeId> {
-    let mut worktree_ids = HashSet::new();
-    for session_id in session_ids {
-        let store = match state.store_for_session(*session_id).await {
-            Ok(store) => store,
-            Err(_) => continue,
-        };
-        let session = match store.get_session(*session_id).await {
-            Ok(Some(session)) => session,
-            _ => continue,
-        };
-        worktree_ids.insert(session.worktree_id);
-    }
-    worktree_ids
 }
 
 #[cfg(test)]

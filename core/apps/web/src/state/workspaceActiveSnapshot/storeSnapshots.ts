@@ -6,7 +6,6 @@ import type {
   PersistedWorkspaceActiveTaskSummaryV1,
 } from "../uiStateStore";
 import { buildPersistedActiveSnapshotSummary } from "./itemBuilders";
-import { mapWorktreeVcsSnapshots } from "./projection";
 import type { WorkspaceActiveSnapshotItem, WorkspaceActiveSnapshotState } from "./storeTypes";
 import {
   applyActiveHeadsForStore,
@@ -63,7 +62,6 @@ export const applyWorkerPatchToStoreState = (
 
   const shell = patch.shell;
   let nextTasksById = host.snapshot.tasksById;
-  let nextWorktreeVcsById = host.snapshot.worktreeVcsById;
 
   if ((patch.taskDeletes?.length ?? 0) > 0 || patch.taskUpserts) {
     nextTasksById = { ...nextTasksById };
@@ -89,9 +87,6 @@ export const applyWorkerPatchToStoreState = (
     host.worktreeRootsById.set(worktreeId, root);
   }
 
-  if (shell?.worktreeVcsById) {
-    nextWorktreeVcsById = shell.worktreeVcsById;
-  }
   if (shell?.activeIds) {
     host.activeOrder = shell.activeIds.slice();
   }
@@ -128,16 +123,12 @@ export const applyWorkerPatchToStoreState = (
 
   if (
     shell ||
-    nextTasksById !== host.snapshot.tasksById ||
-    nextWorktreeVcsById !== host.snapshot.worktreeVcsById
+    nextTasksById !== host.snapshot.tasksById
   ) {
     host.snapshot = {
       ...host.snapshot,
       ...(shell ?? {}),
       ...(nextTasksById !== host.snapshot.tasksById ? { tasksById: nextTasksById } : {}),
-      ...(nextWorktreeVcsById !== host.snapshot.worktreeVcsById
-        ? { worktreeVcsById: nextWorktreeVcsById }
-        : {}),
     };
     host.liveSnapshotApplied = Boolean(host.snapshot.liveSnapshotApplied);
   }
@@ -159,7 +150,6 @@ export const buildPersistedSnapshotForStoreState = (
   return {
     snapshotRev: host.snapshotRev,
     archivedRev: host.archivedRev,
-    worktreeVcsSnapshots: Object.values(host.snapshot.worktreeVcsById ?? {}),
     active: {
       tasks,
       totalCount: Math.max(host.totalActive, tasks.length),
@@ -212,7 +202,6 @@ export const applyCachedSnapshotToStoreState = (
   host.snapshotRev = Math.max(host.snapshotRev, cached.snapshotRev ?? 0);
   host.snapshot = {
     ...host.snapshot,
-    worktreeVcsById: mapWorktreeVcsSnapshots(cached.worktreeVcsSnapshots ?? []),
     initialized: true,
   };
   host.syncSnapshot();
@@ -266,7 +255,6 @@ export const applyWorkspaceSnapshotToStoreState = (
   restoreRetainedLiveSessionHeadsForStore(host, previousHeads);
   host.snapshot = {
     ...host.snapshot,
-    worktreeVcsById: mapWorktreeVcsSnapshots(snapshot.worktree_vcs_snapshots ?? []),
     initialized: true,
   };
   host.liveSnapshotApplied = true;

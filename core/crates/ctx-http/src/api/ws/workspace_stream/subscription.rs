@@ -53,33 +53,17 @@ pub(crate) async fn handle_workspace_stream_subscription(
     };
     let ResolvedWorkspaceActiveSubscriptions {
         sessions: resolved_sessions,
-        worktree_vcs_summary_session_ids,
-        worktree_vcs_open_session_ids,
         state: next_state,
     } = resolved;
 
     clear_runtime_queues(runtime).await;
     runtime.reset_queued = false;
     runtime.send_control.clear_disconnect_after_flush();
-    sync_active_worktrees(
-        state,
-        &mut runtime.active_worktrees,
-        &mut runtime.open_worktrees,
-        &worktree_vcs_summary_session_ids,
-        &worktree_vcs_open_session_ids,
-    )
-    .await;
     let active_head_cursors = if include_initial_snapshot {
         runtime.send_control.set_hydrating();
-        if queue_snapshot_payload(
-            &runtime.control,
-            state,
-            workspace_id,
-            &worktree_vcs_summary_session_ids,
-            &worktree_vcs_open_session_ids,
-        )
-        .await
-        .is_err()
+        if queue_snapshot_payload(&runtime.control, state, workspace_id)
+            .await
+            .is_err()
         {
             return Err(());
         }
@@ -298,27 +282,6 @@ pub(crate) async fn handle_workspace_stream_subscription(
     .await;
     runtime.subscriptions = next_map;
     runtime.subscription_state = next_state;
-    if seed_worktree_vcs_for_subscribe(
-        &runtime.control,
-        state,
-        workspace_id,
-        &worktree_vcs_summary_session_ids,
-        if include_initial_snapshot {
-            WorktreeVcsSeedMode::IncludedInSnapshot
-        } else {
-            WorktreeVcsSeedMode::EmitCachedEvents
-        },
-    )
-    .await
-    .is_err()
-    {
-        return Err(());
-    }
-    spawn_worktree_vcs_refresh_for_sessions(
-        state.clone(),
-        worktree_vcs_summary_session_ids,
-        worktree_vcs_open_session_ids,
-    );
     Ok(())
 }
 

@@ -110,9 +110,6 @@ impl WorkspaceRuntime {
                     runtime.remove(worktree_id);
                 }
             }
-            self.workspace_active_snapshot
-                .drop_worktree_vcs_snapshots(&evicted)
-                .await;
         }
     }
 

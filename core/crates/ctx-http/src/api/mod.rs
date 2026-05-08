@@ -96,7 +96,7 @@ use demo::*;
 use errors::ApiErrorResp;
 use ws::{
     dictation_livekit_stream_ws, mobile_secure_workspace_stream_ws, terminal_stream_ws,
-    web_session_signal, workspace_active_snapshot_stream_ws,
+    web_session_signal, workspace_active_snapshot_stream_ws, workspace_vcs_stream_ws,
 };
 
 use ctx_core::{ids::*, models::*};

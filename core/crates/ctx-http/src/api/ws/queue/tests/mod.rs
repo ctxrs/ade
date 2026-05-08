@@ -87,38 +87,7 @@ fn session_summary_delta_event_with_projection(
     }
 }
 
-fn worktree_vcs_event(
-    workspace_id: WorkspaceId,
-    worktree_id: WorktreeId,
-    rev: i64,
-) -> WorkspaceActiveSnapshotEvent {
-    WorkspaceActiveSnapshotEvent::WorktreeVcsSnapshot {
-        workspace_id,
-        snapshot_rev: rev,
-        snapshot: Box::new(WorktreeVcsSnapshot {
-            worktree_id,
-            rev,
-            emitted_at_ms: rev,
-            base_commit_sha: "base".to_string(),
-            head_commit_sha: "head".to_string(),
-            target_branch: Some("origin/main".to_string()),
-            target_branch_commit_sha: Some("target".to_string()),
-            base_resolution: WorktreeVcsBaseResolution::default(),
-            compute_state: WorktreeVcsComputeState::Ready,
-            summary: WorktreeVcsSummary::default(),
-            git_status: WorktreeVcsGitStatusSummary::default(),
-            touched_files: WorktreeVcsTouchedFiles::default(),
-            touched_files_state: WorktreeVcsTouchedFilesState::Ready,
-            freshness: WorktreeVcsFreshness::Fresh,
-            available: true,
-            unavailable_reason: None,
-            schema_version: 1,
-        }),
-    }
-}
-
 mod buffers;
 mod control_events;
 mod partial_filtering;
 mod priority_ordering;
-mod vcs_summary;
