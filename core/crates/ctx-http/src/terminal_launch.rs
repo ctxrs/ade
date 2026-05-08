@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-use std::path::{Path as FsPath, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::daemon::AppState;
@@ -9,13 +8,15 @@ use crate::terminals::TerminalCreateRequest;
 use crate::worktree_data_plane::resolve_worktree_data_plane;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{TerminalSession, Worktree};
-use ctx_worktree_data_plane::{
-    apply_data_plane_to_execution_settings, workspace_data_plane, WorktreeDataPlane,
+use ctx_transport_runtime::terminal_launch::{
+    container_terminal_env, default_terminal_shell, resolve_container_terminal_cwd,
+    resolve_host_terminal_cwd, resolve_terminal_host_root, TerminalLaunchError,
 };
+use ctx_worktree_data_plane::{apply_data_plane_to_execution_settings, workspace_data_plane};
 
 mod container;
 
-use self::container::{container_terminal_env, prepare_terminal_container_launch};
+use self::container::prepare_terminal_container_launch;
 
 pub(crate) struct CreateTerminalLaunchRequest {
     pub(crate) workspace_id: WorkspaceId,
@@ -24,29 +25,6 @@ pub(crate) struct CreateTerminalLaunchRequest {
     pub(crate) worktree_id: Option<WorktreeId>,
     pub(crate) cwd: Option<String>,
     pub(crate) shell: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum TerminalLaunchErrorKind {
-    BadRequest,
-    NotFound,
-    Internal,
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) struct TerminalLaunchError {
-    kind: TerminalLaunchErrorKind,
-    message: String,
-}
-
-impl TerminalLaunchError {
-    pub(crate) fn kind(&self) -> TerminalLaunchErrorKind {
-        self.kind
-    }
-
-    pub(crate) fn message(&self) -> &str {
-        &self.message
-    }
 }
 
 pub(crate) async fn create_workspace_terminal(
@@ -151,10 +129,14 @@ pub(crate) async fn create_workspace_terminal(
         None
     };
     let cwd = if container_mode {
+        let data_plane = worktree_data_plane.as_ref().ok_or_else(|| {
+            internal_error("sandbox terminal requires a resolved worktree data plane")
+        })?;
         resolve_container_terminal_cwd(
-            worktree_data_plane.as_ref().ok_or_else(|| {
-                internal_error("sandbox terminal requires a resolved worktree data plane")
-            })?,
+            &data_plane.live_workspace_root,
+            worktree_root
+                .as_ref()
+                .map(|_| data_plane.live_worktree_root.as_path()),
             &workspace_root,
             worktree_root.as_deref(),
             requested_cwd.as_deref(),
@@ -179,7 +161,7 @@ pub(crate) async fn create_workspace_terminal(
     } else {
         requested_shell
             .map(ToString::to_string)
-            .unwrap_or_else(default_shell)
+            .unwrap_or_else(default_terminal_shell)
     };
 
     let (cwd, native_container, shared_vm_container) = prepare_terminal_container_launch(
@@ -207,7 +189,7 @@ pub(crate) async fn create_workspace_terminal(
             env: if container_mode {
                 container_terminal_env()
             } else {
-                HashMap::new()
+                Default::default()
             },
             native_container,
             shared_vm_container,
@@ -216,17 +198,6 @@ pub(crate) async fn create_workspace_terminal(
         .map_err(|e| internal_error(format!("failed to create terminal: {e}")))?;
 
     Ok(session.snapshot())
-}
-
-pub(crate) fn default_shell() -> String {
-    #[cfg(windows)]
-    {
-        std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string())
-    }
-    #[cfg(not(windows))]
-    {
-        std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string())
-    }
 }
 
 pub(crate) async fn infer_terminal_worktree(
@@ -295,137 +266,16 @@ pub(crate) async fn infer_terminal_worktree(
     Ok(None)
 }
 
-pub(crate) fn resolve_container_terminal_cwd(
-    data_plane: &WorktreeDataPlane,
-    host_workspace_root: &FsPath,
-    host_worktree_root: Option<&FsPath>,
-    requested_cwd: Option<&FsPath>,
-) -> Result<PathBuf, TerminalLaunchError> {
-    let live_root = if host_worktree_root.is_some() {
-        &data_plane.live_worktree_root
-    } else {
-        &data_plane.live_workspace_root
-    };
-    let host_root = host_worktree_root.unwrap_or(host_workspace_root);
-
-    let Some(requested) = requested_cwd else {
-        return Ok(live_root.clone());
-    };
-
-    let requested_str = requested.to_string_lossy().to_string();
-    if requested.is_relative() {
-        return resolve_path_lexical_within_root(live_root, &requested_str)
-            .map_err(|_| bad_request("cwd must be within the container worktree/workspace root"));
-    }
-
-    if let Ok(cwd) = resolve_path_lexical_within_root(live_root, &requested_str) {
-        return Ok(cwd);
-    }
-
-    if let Ok(host_cwd) = resolve_path_lexical_within_root(host_root, &requested_str) {
-        let relative = host_cwd
-            .strip_prefix(host_root)
-            .map_err(|_| bad_request("cwd must be within the container worktree/workspace root"))?;
-        return Ok(live_root.join(relative));
-    }
-
-    Err(bad_request(
-        "cwd must be within the container worktree/workspace root",
-    ))
-}
-
-pub(crate) async fn resolve_host_terminal_cwd(
-    bound_root: &FsPath,
-    requested_cwd: Option<&FsPath>,
-) -> Result<PathBuf, TerminalLaunchError> {
-    let candidate = requested_cwd
-        .map(|requested| {
-            if requested.is_relative() {
-                bound_root.join(requested)
-            } else {
-                requested.to_path_buf()
-            }
-        })
-        .unwrap_or_else(|| bound_root.to_path_buf());
-    let cwd = tokio::fs::canonicalize(&candidate)
-        .await
-        .map_err(|_| bad_request("cwd does not exist"))?;
-    if !cwd.starts_with(bound_root) {
-        return Err(bad_request("cwd must be within the terminal root"));
-    }
-    Ok(cwd)
-}
-
-pub(crate) async fn resolve_terminal_host_root(
-    path: &FsPath,
-    container_mode: bool,
-    unavailable_error: &'static str,
-) -> Result<PathBuf, TerminalLaunchError> {
-    if container_mode {
-        return Ok(path.to_path_buf());
-    }
-
-    tokio::fs::canonicalize(path)
-        .await
-        .map_err(|_| bad_request(unavailable_error))
-}
-
-fn launch_error(kind: TerminalLaunchErrorKind, message: impl Into<String>) -> TerminalLaunchError {
-    TerminalLaunchError {
-        kind,
-        message: message.into(),
-    }
-}
-
-fn bad_request(error: impl Into<String>) -> TerminalLaunchError {
-    launch_error(TerminalLaunchErrorKind::BadRequest, error)
-}
-
 fn not_found(error: impl Into<String>) -> TerminalLaunchError {
-    launch_error(TerminalLaunchErrorKind::NotFound, error)
+    TerminalLaunchError::not_found(error)
 }
 
-fn internal_error(error: impl Into<String>) -> TerminalLaunchError {
-    launch_error(TerminalLaunchErrorKind::Internal, error)
+pub(super) fn bad_request(error: impl Into<String>) -> TerminalLaunchError {
+    TerminalLaunchError::bad_request(error)
 }
 
-fn resolve_path_lexical_within_root(root: &FsPath, path: &str) -> anyhow::Result<PathBuf> {
-    let candidate = if PathBuf::from(path).is_absolute() {
-        PathBuf::from(path)
-    } else {
-        root.join(path)
-    };
-    let mut is_abs = false;
-    let mut parts: Vec<std::ffi::OsString> = Vec::new();
-    for comp in candidate.components() {
-        use std::path::Component;
-        match comp {
-            Component::Prefix(_) => anyhow::bail!("unsupported path prefix"),
-            Component::RootDir => {
-                is_abs = true;
-                parts.clear();
-            }
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if parts.is_empty() {
-                    continue;
-                }
-                parts.pop();
-            }
-            Component::Normal(seg) => parts.push(seg.to_os_string()),
-        }
-    }
-    let mut normalized = PathBuf::new();
-    if is_abs {
-        normalized.push(std::path::MAIN_SEPARATOR.to_string());
-    }
-    for part in &parts {
-        normalized.push(part);
-    }
-    if !normalized.starts_with(root) {
-        anyhow::bail!("path outside root");
-    }
-    Ok(normalized)
+pub(super) fn internal_error(error: impl Into<String>) -> TerminalLaunchError {
+    TerminalLaunchError::internal(error)
 }
 
 #[cfg(test)]

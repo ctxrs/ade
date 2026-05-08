@@ -16,6 +16,7 @@ rust_library(
     deps = [
         "//core/crates/ctx-core:lib",
         "//core/crates/ctx-sandbox-container-runtime:lib",
+        "//core/crates/ctx-workspace-container:lib",
         "@crates//:anyhow",
         "@crates//:base64",
         "@crates//:chacha20poly1305",

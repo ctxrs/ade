@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -7,6 +6,7 @@ use ctx_sandbox_container_runtime::{
     command_output_message, command_output_with_timeout, sandbox_cli_invocation,
     sandbox_container_command, SandboxCommandMode,
 };
+use ctx_transport_runtime::terminal_launch::validate_canonical_container_terminal_cwd;
 
 use crate::daemon::AppState;
 use crate::settings::{ContainerRuntimeKind, ExecutionMode};
@@ -184,38 +184,4 @@ async fn canonicalize_container_terminal_cwd(
         .map(PathBuf::from)
         .ok_or_else(|| internal_error("sandbox terminal cwd validation returned no path"))?;
     validate_canonical_container_terminal_cwd(live_root, &canonical)
-}
-
-pub(super) fn validate_canonical_container_terminal_cwd(
-    live_root: &FsPath,
-    canonical: &FsPath,
-) -> Result<PathBuf, TerminalLaunchError> {
-    if !canonical.is_absolute() {
-        return Err(internal_error(
-            "sandbox terminal cwd validation returned a relative path",
-        ));
-    }
-    if !canonical.starts_with(live_root) {
-        return Err(bad_request(
-            "cwd must be within the container worktree/workspace root",
-        ));
-    }
-    Ok(canonical.to_path_buf())
-}
-
-pub(super) fn container_terminal_env() -> HashMap<String, String> {
-    HashMap::from([
-        (
-            "HOME".to_string(),
-            ctx_workspace_container::CONTAINER_TERMINAL_HOME.to_string(),
-        ),
-        (
-            "USER".to_string(),
-            ctx_workspace_container::CONTAINER_TERMINAL_USER.to_string(),
-        ),
-        (
-            "LOGNAME".to_string(),
-            ctx_workspace_container::CONTAINER_TERMINAL_USER.to_string(),
-        ),
-    ])
 }

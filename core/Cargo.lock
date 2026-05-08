@@ -1583,6 +1583,7 @@ dependencies = [
  "chrono",
  "ctx-core",
  "ctx-sandbox-container-runtime",
+ "ctx-workspace-container",
  "futures",
  "hkdf",
  "http 1.4.0",

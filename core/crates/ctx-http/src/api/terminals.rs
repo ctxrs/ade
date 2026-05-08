@@ -9,11 +9,10 @@ use serde::Serialize;
 
 use super::errors::ApiErrorResp;
 use crate::daemon::AppState;
-use crate::terminal_launch::{
-    CreateTerminalLaunchRequest, TerminalLaunchError, TerminalLaunchErrorKind,
-};
+use crate::terminal_launch::CreateTerminalLaunchRequest;
 use ctx_core::ids::{SessionId, TaskId, TerminalId, WorkspaceId, WorktreeId};
 use ctx_core::models::TerminalSession;
+use ctx_transport_runtime::terminal_launch::{TerminalLaunchError, TerminalLaunchErrorKind};
 
 #[derive(Debug, Deserialize)]
 pub(super) struct CreateTerminalReq {
