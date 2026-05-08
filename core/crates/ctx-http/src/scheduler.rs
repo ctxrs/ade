@@ -16,7 +16,6 @@ use crate::ops_events::OpsEvent;
 
 mod lifecycle;
 mod persistence;
-mod policy_admission;
 mod reconcile;
 mod runtime;
 mod terminal;

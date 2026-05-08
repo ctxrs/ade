@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
@@ -16,37 +15,35 @@ use ctx_harness_sources::HarnessSourceKind;
 use ctx_sandbox_contract::ContainerNetworkMode;
 use ctx_store::Store;
 
-use crate::daemon::AppState;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum AdmissionRouteSource {
+pub enum AdmissionRouteSource {
     Subscription,
     Endpoint,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(super) struct TurnAdmissionRequest<'a> {
-    pub(super) session: &'a Session,
-    pub(super) run_id: RunId,
-    pub(super) provider_id: &'a str,
-    pub(super) model_id: &'a str,
-    pub(super) execution_environment: ExecutionEnvironment,
-    pub(super) network_profile: NetworkProfile,
-    pub(super) route_type: RouteType,
+pub struct TurnAdmissionRequest<'a> {
+    pub session: &'a Session,
+    pub run_id: RunId,
+    pub provider_id: &'a str,
+    pub model_id: &'a str,
+    pub execution_environment: ExecutionEnvironment,
+    pub network_profile: NetworkProfile,
+    pub route_type: RouteType,
 }
 
-pub(super) struct RuntimeTurnAdmissionRequest<'a> {
-    pub(super) session: &'a Session,
-    pub(super) run_id: RunId,
-    pub(super) provider_id: &'a str,
-    pub(super) model_id: &'a str,
-    pub(super) execution_environment: ExecutionEnvironment,
-    pub(super) container_network_mode: ContainerNetworkMode,
-    pub(super) source_kind: HarnessSourceKind,
+pub struct RuntimeTurnAdmissionRequest<'a> {
+    pub session: &'a Session,
+    pub run_id: RunId,
+    pub provider_id: &'a str,
+    pub model_id: &'a str,
+    pub execution_environment: ExecutionEnvironment,
+    pub container_network_mode: ContainerNetworkMode,
+    pub source_kind: HarnessSourceKind,
 }
 
 #[derive(Clone, Debug)]
-pub(super) enum TurnAdmission {
+pub enum TurnAdmission {
     Local,
     OrgManaged { run_grant: RunGrant },
 }
@@ -60,14 +57,14 @@ impl From<HarnessSourceKind> for AdmissionRouteSource {
     }
 }
 
-pub(super) fn route_type_for_source(source: AdmissionRouteSource) -> RouteType {
+pub fn route_type_for_source(source: AdmissionRouteSource) -> RouteType {
     match source {
         AdmissionRouteSource::Subscription => RouteType::UserProviderAccount,
         AdmissionRouteSource::Endpoint => RouteType::UserApiKey,
     }
 }
 
-pub(super) fn network_profile_for_container_mode(mode: ContainerNetworkMode) -> NetworkProfile {
+pub fn network_profile_for_container_mode(mode: ContainerNetworkMode) -> NetworkProfile {
     match mode {
         ContainerNetworkMode::LlmOnly => NetworkProfile::LlmOnly,
         ContainerNetworkMode::Allowlist => NetworkProfile::Allowlist,
@@ -185,8 +182,8 @@ async fn deny_org_run<T>(
     Err(anyhow!("org policy denied run: {deny_reason:?}: {detail}"))
 }
 
-pub(super) async fn admit_turn(
-    state: &Arc<AppState>,
+pub async fn admit_turn(
+    global_store: &Store,
     store: &Store,
     request: TurnAdmissionRequest<'_>,
 ) -> Result<TurnAdmission> {
@@ -198,8 +195,7 @@ pub(super) async fn admit_turn(
         return Ok(TurnAdmission::Local);
     };
 
-    let Some(enrollment) = state
-        .global_store()
+    let Some(enrollment) = global_store
         .get_daemon_enrollment_by_org_id(overlay.org_id)
         .await
         .context("load daemon enrollment")?
@@ -227,7 +223,7 @@ pub(super) async fn admit_turn(
         .await;
     }
 
-    let Some(snapshot) = snapshot_for_enrollment(state.global_store(), &enrollment)
+    let Some(snapshot) = snapshot_for_enrollment(global_store, &enrollment)
         .await
         .context("load active org policy snapshot")?
     else {
@@ -254,9 +250,7 @@ pub(super) async fn admit_turn(
         .await;
     }
 
-    if let Err(err) =
-        ctx_org_policy::signature::verify_policy_snapshot_signature(&enrollment, &snapshot)
-    {
+    if let Err(err) = crate::signature::verify_policy_snapshot_signature(&enrollment, &snapshot) {
         return deny_org_run(
             store,
             &request,
@@ -377,8 +371,8 @@ pub(super) async fn admit_turn(
     Ok(TurnAdmission::OrgManaged { run_grant })
 }
 
-pub(super) async fn admit_runtime_turn(
-    state: &Arc<AppState>,
+pub async fn admit_runtime_turn(
+    global_store: &Store,
     store: &Store,
     request: RuntimeTurnAdmissionRequest<'_>,
 ) -> Result<TurnAdmission> {
@@ -391,7 +385,7 @@ pub(super) async fn admit_runtime_turn(
     };
 
     admit_turn(
-        state,
+        global_store,
         store,
         TurnAdmissionRequest {
             session: request.session,
@@ -406,7 +400,7 @@ pub(super) async fn admit_runtime_turn(
     .await
 }
 
-pub(super) fn apply_turn_admission_env(
+pub fn apply_turn_admission_env(
     provider_env: &mut HashMap<String, String>,
     admission: &TurnAdmission,
 ) {
@@ -420,11 +414,7 @@ pub(super) fn apply_turn_admission_env(
     }
 }
 
-pub(super) async fn update_run_terminal_status(
-    store: &Store,
-    run_id: Option<RunId>,
-    status: RunStatus,
-) {
+pub async fn update_run_terminal_status(store: &Store, run_id: Option<RunId>, status: RunStatus) {
     let Some(run_id) = run_id else {
         return;
     };

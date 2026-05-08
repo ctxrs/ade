@@ -84,7 +84,7 @@ async fn persist_terminal_events(
     let persisted =
         persist_turn_terminal_events_with_retry(&store, session_id, run_id, turn_id, &events)
             .await?;
-    super::policy_admission::update_run_terminal_status(&store, run_id, run_status).await;
+    ctx_org_policy::admission::update_run_terminal_status(&store, run_id, run_status).await;
     publish_persisted_events(state, persisted).await;
     Ok(())
 }

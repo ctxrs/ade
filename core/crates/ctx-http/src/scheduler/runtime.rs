@@ -47,10 +47,10 @@ use self::turn_input::prepare_turn_input;
 use self::turn_start::{apply_crp_launch_policy_env_for_control_mode, prepare_turn_start};
 use super::lifecycle::{RunningTurn, TurnStartProgress};
 use super::persistence::append_session_event_with_retry;
-use super::policy_admission::{
+use super::QueuedMessage;
+use ctx_org_policy::admission::{
     admit_runtime_turn, apply_turn_admission_env, RuntimeTurnAdmissionRequest,
 };
-use super::QueuedMessage;
 
 pub(crate) async fn start_turn(
     state: &Arc<AppState>,
@@ -140,7 +140,7 @@ pub(crate) async fn start_turn(
     let using_endpoint_source = source_env.using_endpoint_source;
 
     let admission = match admit_runtime_turn(
-        state,
+        state.global_store(),
         &store,
         RuntimeTurnAdmissionRequest {
             session,

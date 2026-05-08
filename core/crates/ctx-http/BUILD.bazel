@@ -986,6 +986,13 @@ test_suite(
 )
 
 test_suite(
+    name = "unit-tests-org-policy",
+    tests = [
+        "//core/crates/ctx-org-policy:unit_tests",
+    ],
+)
+
+test_suite(
     name = "unit-tests-provider-and-settings",
     tests = [
         ":unit_tests_installer",
@@ -1014,6 +1021,7 @@ test_suite(
         ":unit-tests-lib",
         ":unit-tests-lib-session-head-large",
         ":unit-tests-merge-queue",
+        ":unit-tests-org-policy",
         ":unit-tests-provider-and-settings",
         ":unit-tests-storage-admission",
         ":unit-tests-workspace-runtime",

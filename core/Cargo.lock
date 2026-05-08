@@ -1279,11 +1279,16 @@ dependencies = [
  "anyhow",
  "chrono",
  "ctx-core",
+ "ctx-harness-sources",
+ "ctx-sandbox-contract",
+ "ctx-store",
  "hex",
  "jsonwebtoken",
  "serde",
  "serde_json",
  "sha2",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
