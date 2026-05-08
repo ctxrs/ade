@@ -40,6 +40,7 @@ mod provider_adapters;
 mod provider_bootstrap;
 mod provider_child_reclassifier;
 mod provider_registry;
+mod provider_runtime;
 mod retention;
 pub(crate) mod sessions;
 mod state;

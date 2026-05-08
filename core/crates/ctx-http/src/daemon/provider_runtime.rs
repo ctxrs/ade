@@ -5,7 +5,7 @@ use std::sync::Arc;
 use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
 use tokio::sync::{broadcast, Mutex};
 
-use crate::daemon::AppState;
+use super::AppState;
 
 impl ctx_provider_runtime::ProviderRuntimeHost for AppState {
     fn data_root(&self) -> &Path {

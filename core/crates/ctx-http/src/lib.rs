@@ -10,7 +10,6 @@ mod merge_queue;
 pub mod provider_guard;
 mod provider_launch;
 pub mod provider_restart;
-mod provider_runtime;
 mod resource_governance;
 pub mod resource_telemetry;
 mod runtime_adapters;
