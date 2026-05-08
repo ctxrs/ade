@@ -197,7 +197,7 @@ impl SessionHeadRefreshHost for AppState {
             }
         };
         match store.get_active_snapshot_head(session_id).await {
-            Ok(Some(head)) => SessionHeadRefreshLoad::Found(head),
+            Ok(Some(head)) => SessionHeadRefreshLoad::Found(Box::new(head)),
             Ok(None) => SessionHeadRefreshLoad::Missing,
             Err(err) => SessionHeadRefreshLoad::Failed {
                 error: format!("{err:#}"),

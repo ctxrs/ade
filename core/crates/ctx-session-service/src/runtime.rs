@@ -471,7 +471,7 @@ impl<SchedulerCommand> SessionRuntime<SchedulerCommand> {
     {
         match host.load_active_snapshot_head(session_id).await {
             SessionHeadRefreshLoad::Found(head) => {
-                host.update_compact_session_head(head).await;
+                host.update_compact_session_head(*head).await;
             }
             SessionHeadRefreshLoad::Missing => {
                 host.remove_session_from_active_head_cache(session_id).await;
@@ -722,7 +722,7 @@ pub trait SessionLifecycleHost: Send + Sync {
 
 #[derive(Debug)]
 pub enum SessionHeadRefreshLoad {
-    Found(SessionHeadSnapshot),
+    Found(Box<SessionHeadSnapshot>),
     Missing,
     Failed { error: String },
 }
@@ -985,7 +985,8 @@ mod tests {
         let runtime = SessionRuntime::<()>::new(Duration::from_secs(60));
         let session = test_session();
         let head = test_head_snapshot(&session);
-        let host = RecordingHeadRefreshHost::new(SessionHeadRefreshLoad::Found(head.clone()));
+        let host =
+            RecordingHeadRefreshHost::new(SessionHeadRefreshLoad::Found(Box::new(head.clone())));
 
         runtime
             .refresh_session_head_cache_with_host(&host, session.id)
