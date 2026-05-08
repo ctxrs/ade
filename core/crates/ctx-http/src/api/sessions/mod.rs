@@ -68,7 +68,7 @@ pub(super) use snapshot::{
 };
 mod titles_and_modes;
 #[cfg(test)]
-use crate::title_generation;
+use ctx_session_service::title_generation;
 pub(super) use titles_and_modes::{
     generate_session_title, schedule_session_title_generation, set_session_mode, set_session_model,
 };

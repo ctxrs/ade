@@ -1482,13 +1482,18 @@ dependencies = [
 name = "ctx-session-service"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "chrono",
  "ctx-core",
+ "ctx-managed-installs",
  "ctx-provider-runtime",
  "ctx-providers",
  "ctx-session-tools",
+ "ctx-settings-model",
  "ctx-store",
+ "reqwest 0.12.28",
+ "serde",
  "serde_json",
  "tokio",
  "tracing",

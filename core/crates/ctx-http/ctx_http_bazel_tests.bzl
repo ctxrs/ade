@@ -127,7 +127,10 @@ CTX_HTTP_MANUAL_ONLY_TESTS = [
     "attachments_demo_react",
 ]
 
-CTX_HTTP_INTEGRATION_SOURCE_DEPS = {}
+CTX_HTTP_INTEGRATION_SOURCE_DEPS = {
+    "title_generation_local": ["//core/crates/ctx-session-service:lib"],
+    "title_generation_local_e2e": ["//core/crates/ctx-session-service:lib"],
+}
 
 CTX_HTTP_SUITE_EXTRA_TARGETS = {
     "scheduler-runtime": [

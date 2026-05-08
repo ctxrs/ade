@@ -6,8 +6,8 @@ use anyhow::Context;
 use crate::daemon::AppState;
 use crate::logs;
 use crate::settings as user_settings;
-use crate::title_generation;
 use ctx_core::models::{Session, SessionEventType};
+use ctx_session_service::title_generation;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum TitleGenerationSource {
