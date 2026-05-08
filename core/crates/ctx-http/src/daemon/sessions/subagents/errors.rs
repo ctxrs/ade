@@ -62,7 +62,7 @@ pub(super) fn internal_request_or_policy_error(error: anyhow::Error) -> Subagent
         SubagentErrorKind::Forbidden
     } else if error
         .chain()
-        .any(|cause| crate::storage_guard::is_storage_exhaustion_error(&cause.to_string()))
+        .any(|cause| crate::daemon::storage_guard::is_storage_exhaustion_error(&cause.to_string()))
     {
         SubagentErrorKind::InsufficientStorage
     } else {

@@ -11,7 +11,6 @@ mod provider_launch;
 pub mod provider_restart;
 pub mod resource_telemetry;
 pub mod scheduler;
-mod storage_guard;
 pub(crate) mod workspace_provider_model_preferences;
 mod workspace_runtime;
 

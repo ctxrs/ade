@@ -81,7 +81,7 @@ impl AppState {
             data_root.clone(),
             runtime_events.clone(),
         ));
-        let storage_guard = crate::storage_guard::StorageGuardRuntime::new(&data_root);
+        let storage_guard = crate::daemon::storage_guard::StorageGuardRuntime::new(&data_root);
         let terminals = Arc::new(TerminalManager::default());
         let local_shutdown_token = std::env::var("CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN")
             .ok()

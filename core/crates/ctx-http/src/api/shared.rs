@@ -24,7 +24,7 @@ pub(super) fn status_code_for_internal_error(err: &anyhow::Error) -> StatusCode 
         StatusCode::FORBIDDEN
     } else if err
         .chain()
-        .any(|cause| crate::storage_guard::is_storage_exhaustion_error(&cause.to_string()))
+        .any(|cause| crate::daemon::storage_guard::is_storage_exhaustion_error(&cause.to_string()))
     {
         StatusCode::INSUFFICIENT_STORAGE
     } else {
@@ -44,7 +44,7 @@ fn internal_api_error_message(err: &anyhow::Error) -> String {
     if let Some(storage_message) = err
         .chain()
         .map(ToString::to_string)
-        .find(|message| crate::storage_guard::is_storage_exhaustion_error(message))
+        .find(|message| crate::daemon::storage_guard::is_storage_exhaustion_error(message))
     {
         storage_message
     } else {

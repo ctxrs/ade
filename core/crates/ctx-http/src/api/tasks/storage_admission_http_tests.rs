@@ -18,7 +18,7 @@ use ctx_settings_model::{
 use ctx_storage_admission::{StorageAdmissionOperation, StorageAdmissionSample};
 use ctx_store::StoreManager;
 
-use crate::storage_guard::StorageGuardStatus;
+use crate::daemon::storage_guard::StorageGuardStatus;
 
 fn git(args: &[&str], cwd: &Path) {
     let status = std::process::Command::new("git")

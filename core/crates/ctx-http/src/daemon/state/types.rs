@@ -13,7 +13,7 @@ use ctx_workspace_services::worktree_vcs::{
 
 pub struct CoreState {
     pub data_root: PathBuf,
-    pub storage_guard: crate::storage_guard::StorageGuardRuntime,
+    pub storage_guard: crate::daemon::storage_guard::StorageGuardRuntime,
     pub tool_output_spool_enabled: bool,
     pub tool_output_spool_dir: PathBuf,
     pub stores: StoreManager,
