@@ -33,7 +33,11 @@ mod tests;
 
 pub use handle::WebSessionHandle;
 use handle::WebSessionRuntime;
-pub use launch_policy::validate_web_session_url;
+pub use launch_policy::{
+    validate_web_session_host_session, validate_web_session_host_worktree,
+    validate_web_session_launch_scope, validate_web_session_url, WebSessionLaunchPolicyError,
+    WebSessionLaunchPolicyErrorKind,
+};
 use runtime_support::{
     allocate_port, build_run_payload, build_signal_connect_path, build_stream_connect_path,
     build_stream_path, log_stream,

@@ -7,10 +7,13 @@ use ctx_core::models::{ExecutionEnvironment, Worktree};
 use crate::daemon::AppState;
 use crate::settings::ExecutionMode;
 use crate::web_sessions::{
-    validate_web_session_url, WebSessionCreateRequest, WebSessionInfo, WebSessionViewport,
+    validate_web_session_host_session, validate_web_session_host_worktree,
+    validate_web_session_launch_scope, validate_web_session_url, WebSessionCreateRequest,
+    WebSessionInfo, WebSessionLaunchPolicyError, WebSessionLaunchPolicyErrorKind,
+    WebSessionViewport,
 };
 use ctx_core::ids::{SessionId, WorktreeId};
-use ctx_settings_service::{ExecutionPolicyDenied, HostExecutionPolicy};
+use ctx_settings_service::HostExecutionPolicy;
 
 pub(crate) struct WebSessionLaunchRequest {
     pub(crate) session_id: Option<SessionId>,
@@ -104,9 +107,7 @@ async fn resolve_web_session_launch_context(
         .validate_execution_environment(ExecutionEnvironment::Host)
         .context("web sessions currently run on the host")?;
 
-    if session_id.is_none() && worktree_id.is_none() {
-        anyhow::bail!("web session launches must be scoped to a session_id or worktree_id");
-    }
+    validate_web_session_launch_scope(session_id.is_some(), worktree_id.is_some())?;
 
     let mut session_worktree_id = None;
     if let Some(session_id) = session_id {
@@ -115,12 +116,7 @@ async fn resolve_web_session_launch_context(
             .get_session(session_id)
             .await?
             .context("session not found")?;
-        if matches!(session.execution_environment, ExecutionEnvironment::Sandbox) {
-            return Err(ExecutionPolicyDenied::new(
-                "web sessions currently run on the host and are disabled for sandbox sessions until web sessions run inside the sandbox",
-            )
-            .into());
-        }
+        validate_web_session_host_session(session.execution_environment)?;
         let worktree = store
             .get_worktree(session.worktree_id)
             .await?
@@ -159,23 +155,15 @@ async fn validate_web_session_worktree(
     store: &ctx_store::Store,
     worktree: &Worktree,
 ) -> anyhow::Result<()> {
-    if store.get_sandbox_binding(worktree.id).await?.is_some() {
-        return Err(ExecutionPolicyDenied::new(
-            "web sessions currently run on the host and are disabled for sandbox worktrees until web sessions run inside the sandbox",
-        )
-        .into());
-    }
-
+    let has_sandbox_binding = store.get_sandbox_binding(worktree.id).await?.is_some();
     let effective =
         crate::execution_effective::effective_execution_settings(state, worktree.workspace_id)
             .await
             .context("loading workspace execution settings for web session")?;
-    if matches!(effective.mode, ExecutionMode::Sandbox) {
-        return Err(ExecutionPolicyDenied::new(
-            "web sessions currently run on the host and are disabled for sandbox workspaces until web sessions run inside the sandbox",
-        )
-        .into());
-    }
+    validate_web_session_host_worktree(
+        has_sandbox_binding,
+        matches!(effective.mode, ExecutionMode::Sandbox),
+    )?;
     Ok(())
 }
 
@@ -194,7 +182,12 @@ fn bad_request(error: impl Into<String>) -> WebSessionLaunchError {
 }
 
 fn request_or_policy_error(error: anyhow::Error) -> WebSessionLaunchError {
-    let kind = if ctx_settings_service::is_execution_policy_denial(&error) {
+    let kind = if let Some(policy_error) = error.downcast_ref::<WebSessionLaunchPolicyError>() {
+        match policy_error.kind() {
+            WebSessionLaunchPolicyErrorKind::BadRequest => WebSessionLaunchErrorKind::BadRequest,
+            WebSessionLaunchPolicyErrorKind::Forbidden => WebSessionLaunchErrorKind::Forbidden,
+        }
+    } else if ctx_settings_service::is_execution_policy_denial(&error) {
         WebSessionLaunchErrorKind::Forbidden
     } else {
         WebSessionLaunchErrorKind::BadRequest
