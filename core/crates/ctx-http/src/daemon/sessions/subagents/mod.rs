@@ -31,9 +31,7 @@ use crate::daemon::AppState;
 use crate::scheduler::SchedulerCommand;
 use crate::settings as user_settings;
 use ctx_core::ids::{RunId, SessionId};
-use ctx_core::models::{
-    MessageDelivery, SessionTurnStatus, SubagentInvocation, SubagentInvocationChild,
-};
+use ctx_core::models::{MessageDelivery, SessionTurnStatus, SubagentInvocationChild};
 
 pub(crate) use self::agent_control::{
     archive_agent, get_agent, interrupt_agent, list_agents, send_input, spawn_agent, wait_agent,

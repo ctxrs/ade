@@ -1,5 +1,11 @@
 use super::*;
 
+mod invocation;
+
+use invocation::{
+    mark_subagent_invocation_failed, start_subagent_invocation, StartedSubagentInvocation,
+};
+
 pub(crate) async fn init_subagents(
     state: Arc<AppState>,
     parent_id: SessionId,
@@ -120,92 +126,17 @@ pub(crate) async fn init_subagents(
         plan_subagent_worktree_creation(&state, &parent_worktree, worktree_selection).await?;
 
     let request_json = Some(build_subagent_request_json(&request_agents));
-    let mut requested_tool_call_id = req
-        .tool_call_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned);
-    let invocation_id = requested_tool_call_id
-        .clone()
-        .unwrap_or_else(|| format!("subagent-{}", uuid::Uuid::new_v4()));
-    let tool_call_id = requested_tool_call_id
-        .take()
-        .unwrap_or_else(|| invocation_id.clone());
-
-    let mut parent_turn_id = None;
-    if !tool_call_id.trim().is_empty() {
-        if let Ok(Some(tool)) = store.get_session_turn_tool(parent.id, &tool_call_id).await {
-            parent_turn_id = Some(tool.turn_id);
-        }
-    }
-    if parent_turn_id.is_none() {
-        if let Ok(turns) = store
-            .list_session_turns_page_by_seq(parent.id, None, Some(5))
-            .await
-        {
-            for turn in turns.iter().rev() {
-                if matches!(
-                    turn.status,
-                    SessionTurnStatus::Starting
-                        | SessionTurnStatus::Running
-                        | SessionTurnStatus::Queued
-                ) {
-                    parent_turn_id = Some(turn.turn_id);
-                    break;
-                }
-            }
-        }
-    }
-
-    let now = chrono::Utc::now();
-    let invocation = SubagentInvocation {
-        id: invocation_id.clone(),
-        tool_call_id: tool_call_id.clone(),
-        parent_session_id: parent.id,
+    let StartedSubagentInvocation {
+        invocation_id,
+        tool_call_id,
         parent_turn_id,
-        requested_count: req.agents.len() as i64,
+    } = start_subagent_invocation(
+        &state,
+        &store,
+        &parent,
+        req.agents.len(),
         request_json,
-        status: "requested".to_string(),
-        created_at: now,
-        updated_at: now,
-        children: Vec::new(),
-    };
-    store
-        .upsert_subagent_invocation(invocation)
-        .await
-        .map_err(internal_api_error)?;
-    emit_subagent_invocation_notice(
-        &state,
-        parent.id,
-        parent_turn_id,
-        serde_json::json!({
-            "kind": "subagent_invocation_created",
-            "invocation_id": invocation_id.clone(),
-            "tool_call_id": tool_call_id.clone(),
-            "status": "requested",
-            "requested_count": req.agents.len(),
-            "child_session_ids": Vec::<String>::new(),
-        }),
-    )
-    .await?;
-
-    let running_at = chrono::Utc::now();
-    store
-        .update_subagent_invocation_status(&invocation_id, "running", running_at)
-        .await
-        .map_err(internal_api_error)?;
-    emit_subagent_invocation_notice(
-        &state,
-        parent.id,
-        parent_turn_id,
-        serde_json::json!({
-            "kind": "subagent_invocation_updated",
-            "invocation_id": invocation_id.clone(),
-            "tool_call_id": tool_call_id.clone(),
-            "status": "running",
-            "child_session_ids": Vec::<String>::new(),
-        }),
+        req.tool_call_id.as_deref(),
     )
     .await?;
 
@@ -410,33 +341,17 @@ pub(crate) async fn init_subagents(
     let spawned_children = match futures::future::try_join_all(futures).await {
         Ok(children) => children,
         Err(error) => {
-            let updated_at = chrono::Utc::now();
-            if let Ok(store) = state.store_for_session(parent.id).await {
-                if let Err(update_error) = store
-                    .update_subagent_invocation_status(&invocation_id, "failed", updated_at)
-                    .await
-                {
-                    tracing::warn!(
-                        error = ?update_error,
-                        "failed to update subagent invocation status"
-                    );
-                }
-            }
             let child_session_ids = {
                 let ids = child_ids.lock().await;
                 ids.clone()
             };
-            let _ = emit_subagent_invocation_notice(
+            mark_subagent_invocation_failed(
                 &state,
-                parent.id,
+                &parent,
+                &invocation_id,
+                &tool_call_id,
                 parent_turn_id,
-                serde_json::json!({
-                    "kind": "subagent_invocation_updated",
-                    "invocation_id": invocation_id.clone(),
-                    "tool_call_id": tool_call_id.clone(),
-                    "status": "failed",
-                    "child_session_ids": child_session_ids,
-                }),
+                &child_session_ids,
             )
             .await;
             return Err(error);
