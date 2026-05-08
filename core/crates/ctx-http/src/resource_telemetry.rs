@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -11,7 +10,8 @@ use tokio::time::MissedTickBehavior;
 use ctx_avf_linux_runtime::SubstrateLifecycleRecord;
 use ctx_providers::adapters::ProviderProcessInfo;
 use ctx_resource_utilization::{
-    trim_resource_processes, ProviderMemoryRollup, ResourceProcesses, SystemSnapshot,
+    resource_utilization_disabled_from_env, trim_resource_processes, ProviderMemoryRollup,
+    ResourceProcesses, ResourceTelemetryConfig, SystemSnapshot,
 };
 
 use crate::daemon::AppState;
@@ -20,44 +20,6 @@ use crate::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
 
 const RESOURCE_LOG_PREFIX: &str = "resource-util-";
 const RESOURCE_LOG_SUFFIX: &str = ".jsonl";
-
-const DEFAULT_INTERVAL_MS: u64 = 15_000;
-const DEFAULT_RETENTION_DAYS: u64 = 7;
-const DEFAULT_MAX_BYTES: u64 = 25 * 1024 * 1024;
-const DEFAULT_CHILD_LIMIT: usize = 10;
-
-#[derive(Debug, Clone)]
-struct ResourceTelemetryConfig {
-    interval: Duration,
-    local_retention_days: u64,
-    local_max_bytes: u64,
-    child_limit: usize,
-}
-
-impl ResourceTelemetryConfig {
-    fn from_env() -> Self {
-        let interval_ms =
-            env_u64("CTX_RESOURCE_TELEMETRY_INTERVAL_MS").unwrap_or(DEFAULT_INTERVAL_MS);
-        let local_retention_days = env_u64("CTX_RESOURCE_TELEMETRY_LOCAL_RETENTION_DAYS")
-            .unwrap_or(DEFAULT_RETENTION_DAYS);
-        let local_max_bytes =
-            env_u64("CTX_RESOURCE_TELEMETRY_LOCAL_MAX_BYTES").unwrap_or(DEFAULT_MAX_BYTES);
-        let child_limit = env_u64("CTX_RESOURCE_TELEMETRY_CHILD_LIMIT")
-            .map(|v| v as usize)
-            .unwrap_or(DEFAULT_CHILD_LIMIT);
-
-        Self {
-            interval: Duration::from_millis(interval_ms),
-            local_retention_days,
-            local_max_bytes,
-            child_limit,
-        }
-    }
-
-    fn enabled(&self) -> bool {
-        !self.interval.is_zero()
-    }
-}
 
 #[derive(Debug, Serialize)]
 struct ResourceTelemetryEvent {
@@ -72,7 +34,7 @@ struct ResourceTelemetryEvent {
 }
 
 pub fn spawn_resource_telemetry(state: Arc<AppState>) {
-    if resource_utilization_disabled() {
+    if resource_utilization_disabled_from_env() {
         return;
     }
     let cfg = ResourceTelemetryConfig::from_env();
@@ -400,21 +362,4 @@ async fn cleanup_old_logs(data_root: &Path, retention_days: u64) -> Result<()> {
         }
     }
     Ok(())
-}
-
-fn env_u64(key: &str) -> Option<u64> {
-    std::env::var(key)
-        .ok()
-        .and_then(|v| v.trim().parse::<u64>().ok())
-}
-
-fn resource_utilization_disabled() -> bool {
-    env_bool("CTX_RESOURCE_UTILIZATION_DISABLED").unwrap_or(true)
-}
-
-fn env_bool(key: &str) -> Option<bool> {
-    std::env::var(key)
-        .ok()
-        .as_deref()
-        .and_then(ctx_core::boolish::parse_boolish)
 }

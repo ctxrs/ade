@@ -20,6 +20,11 @@ pub mod process_limits;
 
 const SYSTEM_CACHE_TTL: Duration = Duration::from_millis(750);
 const DISK_CACHE_TTL: Duration = Duration::from_secs(30);
+
+const RESOURCE_TELEMETRY_DEFAULT_INTERVAL_MS: u64 = 15_000;
+const RESOURCE_TELEMETRY_DEFAULT_RETENTION_DAYS: u64 = 7;
+const RESOURCE_TELEMETRY_DEFAULT_MAX_BYTES: u64 = 25 * 1024 * 1024;
+const RESOURCE_TELEMETRY_DEFAULT_CHILD_LIMIT: usize = 10;
 #[derive(Debug, Clone, Serialize)]
 pub struct SystemSnapshot {
     pub cpu_pct: f32,
@@ -65,6 +70,67 @@ pub struct ResourceProcess {
 pub struct ResourceProcesses {
     pub daemon: Option<ResourceProcess>,
     pub providers: Vec<ResourceProcess>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct ResourceTelemetryConfig {
+    pub interval: Duration,
+    pub local_retention_days: u64,
+    pub local_max_bytes: u64,
+    pub child_limit: usize,
+}
+
+impl ResourceTelemetryConfig {
+    pub fn from_env() -> Self {
+        Self::from_lookup(|key| std::env::var(key).ok())
+    }
+
+    pub fn from_lookup(mut lookup: impl FnMut(&str) -> Option<String>) -> Self {
+        let interval_ms = env_u64_from_lookup(&mut lookup, "CTX_RESOURCE_TELEMETRY_INTERVAL_MS")
+            .unwrap_or(RESOURCE_TELEMETRY_DEFAULT_INTERVAL_MS);
+        let local_retention_days =
+            env_u64_from_lookup(&mut lookup, "CTX_RESOURCE_TELEMETRY_LOCAL_RETENTION_DAYS")
+                .unwrap_or(RESOURCE_TELEMETRY_DEFAULT_RETENTION_DAYS);
+        let local_max_bytes =
+            env_u64_from_lookup(&mut lookup, "CTX_RESOURCE_TELEMETRY_LOCAL_MAX_BYTES")
+                .unwrap_or(RESOURCE_TELEMETRY_DEFAULT_MAX_BYTES);
+        let child_limit = env_u64_from_lookup(&mut lookup, "CTX_RESOURCE_TELEMETRY_CHILD_LIMIT")
+            .map(|v| v as usize)
+            .unwrap_or(RESOURCE_TELEMETRY_DEFAULT_CHILD_LIMIT);
+
+        Self {
+            interval: Duration::from_millis(interval_ms),
+            local_retention_days,
+            local_max_bytes,
+            child_limit,
+        }
+    }
+
+    pub fn enabled(&self) -> bool {
+        !self.interval.is_zero()
+    }
+}
+
+pub fn resource_utilization_disabled_from_env() -> bool {
+    resource_utilization_disabled_from_lookup(|key| std::env::var(key).ok())
+}
+
+pub fn resource_utilization_disabled_from_lookup(
+    lookup: impl FnMut(&str) -> Option<String>,
+) -> bool {
+    env_bool_from_lookup(lookup, "CTX_RESOURCE_UTILIZATION_DISABLED").unwrap_or(true)
+}
+
+fn env_u64_from_lookup(lookup: &mut impl FnMut(&str) -> Option<String>, key: &str) -> Option<u64> {
+    lookup(key)
+        .as_deref()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+}
+
+fn env_bool_from_lookup(mut lookup: impl FnMut(&str) -> Option<String>, key: &str) -> Option<bool> {
+    lookup(key)
+        .as_deref()
+        .and_then(ctx_core::boolish::parse_boolish)
 }
 
 pub fn trim_resource_processes(
@@ -209,8 +275,12 @@ impl ProcMemoryRollup {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+    use std::time::Duration;
+
     use super::{
-        trim_resource_processes, ResourceChildProcess, ResourceProcess, ResourceProcesses,
+        resource_utilization_disabled_from_lookup, trim_resource_processes, ResourceChildProcess,
+        ResourceProcess, ResourceProcesses, ResourceTelemetryConfig,
     };
 
     fn child(pid: u32, cpu_pct: f32, memory_bytes: u64) -> ResourceChildProcess {
@@ -283,6 +353,51 @@ mod tests {
         let daemon = trimmed.daemon.expect("daemon");
         assert!(daemon.children.is_empty());
         assert!(daemon.children_truncated);
+    }
+
+    #[test]
+    fn resource_telemetry_config_uses_defaults_and_disables_zero_interval() {
+        let defaults = ResourceTelemetryConfig::from_lookup(|_| None);
+        assert_eq!(defaults.interval, Duration::from_millis(15_000));
+        assert_eq!(defaults.local_retention_days, 7);
+        assert_eq!(defaults.local_max_bytes, 25 * 1024 * 1024);
+        assert_eq!(defaults.child_limit, 10);
+        assert!(defaults.enabled());
+
+        let disabled = ResourceTelemetryConfig::from_lookup(|key| {
+            (key == "CTX_RESOURCE_TELEMETRY_INTERVAL_MS").then(|| "0".to_string())
+        });
+        assert!(!disabled.enabled());
+    }
+
+    #[test]
+    fn resource_telemetry_config_reads_explicit_values() {
+        let values = HashMap::from([
+            ("CTX_RESOURCE_TELEMETRY_INTERVAL_MS", "250".to_string()),
+            (
+                "CTX_RESOURCE_TELEMETRY_LOCAL_RETENTION_DAYS",
+                "2".to_string(),
+            ),
+            ("CTX_RESOURCE_TELEMETRY_LOCAL_MAX_BYTES", "1024".to_string()),
+            ("CTX_RESOURCE_TELEMETRY_CHILD_LIMIT", "4".to_string()),
+        ]);
+
+        let cfg = ResourceTelemetryConfig::from_lookup(|key| values.get(key).cloned());
+        assert_eq!(cfg.interval, Duration::from_millis(250));
+        assert_eq!(cfg.local_retention_days, 2);
+        assert_eq!(cfg.local_max_bytes, 1024);
+        assert_eq!(cfg.child_limit, 4);
+    }
+
+    #[test]
+    fn resource_utilization_disable_flag_defaults_disabled_and_parses_boolish() {
+        assert!(resource_utilization_disabled_from_lookup(|_| None));
+        assert!(resource_utilization_disabled_from_lookup(|key| {
+            (key == "CTX_RESOURCE_UTILIZATION_DISABLED").then(|| "yes".to_string())
+        }));
+        assert!(!resource_utilization_disabled_from_lookup(|key| {
+            (key == "CTX_RESOURCE_UTILIZATION_DISABLED").then(|| "false".to_string())
+        }));
     }
 }
 
