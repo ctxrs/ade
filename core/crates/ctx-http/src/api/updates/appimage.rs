@@ -71,7 +71,7 @@ pub(in crate::api) async fn download_appimage_update(
             }),
         )
     })?;
-    let current_version = crate::current_build_identity()
+    let current_version = ctx_update_service::current_build_identity(env!("CARGO_PKG_VERSION"))
         .map(|identity| identity.exact_version.clone())
         .map_err(|err| {
             (
@@ -186,7 +186,7 @@ pub(in crate::api) async fn apply_appimage_update(
             }),
         ));
     };
-    let current_version = crate::current_build_identity()
+    let current_version = ctx_update_service::current_build_identity(env!("CARGO_PKG_VERSION"))
         .map(|identity| identity.exact_version.clone())
         .map_err(|err| {
             (

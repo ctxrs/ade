@@ -404,7 +404,10 @@ async fn main() -> Result<()> {
             check,
         } => {
             let base_url = base_url.unwrap_or_else(ctx_update_service::default_download_base_url);
-            let current_version = ctx_http::current_build_exact_version()?;
+            let current_version =
+                ctx_update_service::current_build_identity(env!("CARGO_PKG_VERSION"))?
+                    .exact_version
+                    .clone();
             ctx_update_service::self_update_daemon(
                 &channel,
                 &base_url,

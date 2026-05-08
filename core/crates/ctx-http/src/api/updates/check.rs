@@ -40,7 +40,7 @@ pub(in crate::api) async fn check_updates(
             })?;
     let base_url = ctx_update_service::default_download_base_url();
     let platform = ctx_update_service::platform_key().map(|s| s.to_string());
-    let current_version = crate::current_build_identity()
+    let current_version = ctx_update_service::current_build_identity(env!("CARGO_PKG_VERSION"))
         .map(|identity| identity.exact_version.clone())
         .map_err(|err| {
             (

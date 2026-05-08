@@ -13,7 +13,7 @@ impl ctx_provider_runtime::ProviderRuntimeHost for AppState {
     }
 
     fn current_ctx_version(&self) -> Option<String> {
-        match crate::current_build_identity() {
+        match ctx_update_service::current_build_identity(env!("CARGO_PKG_VERSION")) {
             Ok(identity) => Some(identity.exact_version.clone()),
             Err(err) => {
                 tracing::error!("failed to load ctx build identity for provider runtime: {err:#}");

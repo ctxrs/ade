@@ -32,8 +32,10 @@ pub(super) fn spawn_managed_daemon_auto_update(state: Arc<AppState>, bind: Vec<S
     if !ctx_update_service::managed_daemon_auto_update_configured_from_env() {
         return;
     }
-    let current_version = match crate::current_build_exact_version() {
-        Ok(version) => version,
+    let current_version = match ctx_update_service::current_build_identity(env!(
+        "CARGO_PKG_VERSION"
+    )) {
+        Ok(identity) => identity.exact_version.clone(),
         Err(err) => {
             tracing::warn!(err = %err, "managed daemon auto-update disabled; build identity unavailable");
             return;
