@@ -5,13 +5,13 @@ use crate::daemon::AppState;
 use crate::execution_effective;
 use crate::settings::ExecutionMode;
 use crate::terminals::TerminalCreateRequest;
-use crate::worktree_data_plane::resolve_worktree_data_plane;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{TerminalSession, Worktree};
 use ctx_transport_runtime::terminal_launch::{
     container_terminal_env, default_terminal_shell, resolve_container_terminal_cwd,
     resolve_host_terminal_cwd, resolve_terminal_host_root, TerminalLaunchError,
 };
+use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
 use ctx_worktree_data_plane::{apply_data_plane_to_execution_settings, workspace_data_plane};
 
 mod container;
@@ -63,7 +63,7 @@ pub(crate) async fn create_workspace_terminal(
     };
     let worktree_data_plane = if let Some(worktree) = worktree.as_ref() {
         Some(
-            resolve_worktree_data_plane(state, worktree)
+            resolve_worktree_data_plane(state.as_ref(), worktree)
                 .await
                 .map_err(|_| internal_error("failed to resolve worktree data plane"))?,
         )

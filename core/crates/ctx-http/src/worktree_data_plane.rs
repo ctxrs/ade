@@ -2,11 +2,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use ctx_core::ids::WorkspaceId;
-use ctx_core::models::Worktree;
 use ctx_store::Store;
-use ctx_worktree_data_plane::{
-    resolve_worktree_data_plane_with_host, WorktreeDataPlane, WorktreeDataPlaneHost,
-};
+use ctx_worktree_data_plane::WorktreeDataPlaneHost;
 
 use crate::daemon::AppState;
 
@@ -24,13 +21,6 @@ impl WorktreeDataPlaneHost for AppState {
     }
 }
 
-pub(crate) async fn resolve_worktree_data_plane(
-    state: &AppState,
-    worktree: &Worktree,
-) -> Result<WorktreeDataPlane> {
-    resolve_worktree_data_plane_with_host(state, worktree).await
-}
-
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
@@ -41,7 +31,6 @@ mod tests {
     use std::sync::Arc;
     use uuid::Uuid;
 
-    use super::*;
     use crate::daemon::AppState;
 
     #[tokio::test]
@@ -115,9 +104,12 @@ mod tests {
             .await
             .expect("create sandbox session");
 
-        let err = resolve_worktree_data_plane(&state, &worktree)
-            .await
-            .expect_err("sandbox session without binding must fail closed");
+        let err = ctx_worktree_data_plane::resolve_worktree_data_plane_with_host(
+            state.as_ref(),
+            &worktree,
+        )
+        .await
+        .expect_err("sandbox session without binding must fail closed");
 
         assert!(err
             .to_string()

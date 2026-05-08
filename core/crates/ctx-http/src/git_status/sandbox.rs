@@ -12,9 +12,9 @@ use ctx_workspace_services::worktree_vcs::{WorktreeVcsGitCommand, WorktreeVcsSan
 use crate::daemon::AppState;
 use crate::execution_effective;
 use crate::settings::ContainerRuntimeKind;
-use crate::worktree_data_plane::resolve_worktree_data_plane;
 use ctx_harness_runtime::sandbox_container_command;
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
+use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
 
 enum SandboxGitTarget {
     NativeContainer { container_name: String },
@@ -48,7 +48,7 @@ async fn ensure_container_for_worktree(
     state: &Arc<AppState>,
     worktree: &Worktree,
 ) -> Result<SandboxGitContext> {
-    let data_plane = resolve_worktree_data_plane(state, worktree).await?;
+    let data_plane = resolve_worktree_data_plane(state.as_ref(), worktree).await?;
     let effective =
         execution_effective::effective_execution_settings(state, data_plane.workspace.id).await?;
     let effective = apply_data_plane_to_execution_settings(&effective, &data_plane)?;

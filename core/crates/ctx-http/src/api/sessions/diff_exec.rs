@@ -1,11 +1,11 @@
 use super::*;
 use crate::settings::ExecutionMode;
-use crate::worktree_data_plane::resolve_worktree_data_plane;
 use ctx_workspace_services::worktree_vcs::{
     parse_worktree_vcs_diff_summary_counts, WorktreeVcsDiffSummaryCounts,
     WORKTREE_VCS_CONTAINER_DIFF_SCRIPT, WORKTREE_VCS_CONTAINER_DIFF_SUMMARY_SCRIPT,
 };
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
+use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
 
 enum SandboxExecTarget {
     NativeContainer { container_name: String },
@@ -16,7 +16,7 @@ async fn ensure_container_for_worktree(
     state: &Arc<AppState>,
     worktree: &Worktree,
 ) -> anyhow::Result<SandboxExecTarget> {
-    let data_plane = resolve_worktree_data_plane(state, worktree).await?;
+    let data_plane = resolve_worktree_data_plane(state.as_ref(), worktree).await?;
     let effective =
         execution_effective::effective_execution_settings(state, data_plane.workspace.id).await?;
     let effective = apply_data_plane_to_execution_settings(&effective, &data_plane)?;
@@ -50,7 +50,7 @@ async fn container_exec_stdout(
 ) -> anyhow::Result<Vec<u8>> {
     const SANDBOX_EXEC_TIMEOUT: Duration = Duration::from_secs(30);
     let target = ensure_container_for_worktree(state, worktree).await?;
-    let data_plane = resolve_worktree_data_plane(state, worktree).await?;
+    let data_plane = resolve_worktree_data_plane(state.as_ref(), worktree).await?;
     let out = match target {
         SandboxExecTarget::NativeContainer { container_name } => {
             let mut cmd = sandbox_container_command(&state.core.data_root)?;
@@ -143,7 +143,7 @@ pub(crate) async fn diff_worktree_for_session(
     worktree: &Worktree,
     base_commit_sha: &str,
 ) -> anyhow::Result<String> {
-    let data_plane = resolve_worktree_data_plane(state, worktree).await?;
+    let data_plane = resolve_worktree_data_plane(state.as_ref(), worktree).await?;
     if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
         return container_diff_worktree(state, worktree, base_commit_sha).await;
     }
@@ -159,7 +159,7 @@ pub(crate) async fn diff_worktree_summary_for_session(
     worktree: &Worktree,
     base_commit_sha: &str,
 ) -> anyhow::Result<WorktreeVcsDiffSummaryCounts> {
-    let data_plane = resolve_worktree_data_plane(state, worktree).await?;
+    let data_plane = resolve_worktree_data_plane(state.as_ref(), worktree).await?;
     if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
         return container_diff_worktree_summary(state, worktree, base_commit_sha).await;
     }

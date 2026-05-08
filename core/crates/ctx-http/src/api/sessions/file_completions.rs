@@ -22,9 +22,10 @@ pub(crate) async fn session_file_completions(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    let data_plane = crate::worktree_data_plane::resolve_worktree_data_plane(&state, &worktree)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let data_plane =
+        ctx_worktree_data_plane::resolve_worktree_data_plane_with_host(state.as_ref(), &worktree)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let execution_environment = match data_plane.execution_mode {
         crate::settings::ExecutionMode::Host => ctx_core::models::ExecutionEnvironment::Host,
         crate::settings::ExecutionMode::Sandbox => ctx_core::models::ExecutionEnvironment::Sandbox,

@@ -6,8 +6,8 @@ use ctx_settings_model::ExecutionSettings;
 
 use crate::daemon::AppState;
 use crate::execution_effective;
-use crate::worktree_data_plane::resolve_worktree_data_plane;
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
+use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
 
 pub(super) struct TurnExecutionPlan {
     pub(super) execution_settings: ExecutionSettings,
@@ -34,10 +34,13 @@ pub(super) async fn prepare_turn_execution_plan(
         execution_environment,
     )
     .await?;
-    let execution_settings = match resolve_worktree_data_plane(state, &worktree_for_runtime).await {
-        Ok(data_plane) => apply_data_plane_to_execution_settings(&execution_settings, &data_plane)?,
-        Err(err) => return Err(err),
-    };
+    let execution_settings =
+        match resolve_worktree_data_plane(state.as_ref(), &worktree_for_runtime).await {
+            Ok(data_plane) => {
+                apply_data_plane_to_execution_settings(&execution_settings, &data_plane)?
+            }
+            Err(err) => return Err(err),
+        };
     let runtime_plan = state
         .execution
         .harness

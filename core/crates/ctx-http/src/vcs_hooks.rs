@@ -17,7 +17,7 @@ use tokio::process::Command;
 use crate::daemon::AppState;
 use crate::execution_effective;
 use crate::settings::{ContainerRuntimeKind, ExecutionMode};
-use crate::worktree_data_plane::resolve_worktree_data_plane;
+use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
 
 pub async fn ensure_task_commit_hook(
     state: &AppState,

@@ -13,8 +13,8 @@ use ctx_workspace_services::workspace_attachments;
 
 use crate::daemon::{AppState, AttachmentMaterializationTask};
 use crate::execution_effective;
-use crate::worktree_data_plane::resolve_worktree_data_plane;
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
+use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
 
 pub(crate) async fn spawn_attachment_materialization(
     state: Arc<AppState>,

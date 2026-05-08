@@ -16,8 +16,8 @@ use crate::execution_effective;
 use crate::logs;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 use crate::settings::ContainerRuntimeKind;
-use crate::worktree_data_plane::resolve_worktree_data_plane;
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
+use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
 
 pub(super) fn status_code_for_internal_error(err: &anyhow::Error) -> StatusCode {
     if ctx_settings_service::is_execution_policy_denial(err) {
@@ -189,7 +189,7 @@ pub(super) async fn load_and_cache_worktree_files(
     now: Instant,
 ) -> Result<Arc<Vec<String>>, StatusCode> {
     let started_at = Instant::now();
-    let data_plane = resolve_worktree_data_plane(state, worktree)
+    let data_plane = resolve_worktree_data_plane(state.as_ref(), worktree)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let root = data_plane.live_worktree_root.clone();
@@ -264,7 +264,7 @@ async fn list_container_worktree_files(
     )
     .await
     .map_err(|err| status_code_for_internal_error(&err))?;
-    let data_plane = resolve_worktree_data_plane(state, worktree)
+    let data_plane = resolve_worktree_data_plane(state.as_ref(), worktree)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let settings = apply_data_plane_to_execution_settings(&settings, &data_plane)

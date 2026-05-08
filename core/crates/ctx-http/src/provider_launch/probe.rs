@@ -14,7 +14,7 @@ use crate::daemon::AppState;
 use crate::execution_effective;
 use crate::logs;
 use crate::settings::{ContainerMountMode, ExecutionMode};
-use crate::worktree_data_plane::resolve_worktree_data_plane;
+use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
 
 #[allow(unused_imports)]
 pub(crate) use ctx_provider_runtime::provider_launch::probe::{

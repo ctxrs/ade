@@ -15,9 +15,10 @@ pub(in crate::api) async fn get_worktree(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     {
         Some(mut wt) => {
-            let data_plane = crate::worktree_data_plane::resolve_worktree_data_plane(&state, &wt)
-                .await
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            let data_plane =
+                ctx_worktree_data_plane::resolve_worktree_data_plane_with_host(state.as_ref(), &wt)
+                    .await
+                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
             wt.root_path = data_plane.live_worktree_root.to_string_lossy().to_string();
             Ok(Json(wt))
         }

@@ -11,7 +11,7 @@ use ctx_workspace_services::worktree_vcs::{
 
 use crate::daemon::AppState;
 use crate::settings::ExecutionMode;
-use crate::worktree_data_plane::resolve_worktree_data_plane;
+use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
 
 use super::sandbox::HttpSandboxWorktreeVcsExecutor;
 
@@ -29,7 +29,7 @@ impl<'a> HttpWorktreeVcsSource<'a> {
 #[async_trait::async_trait]
 impl WorktreeVcsStatusSource for HttpWorktreeVcsSource<'_> {
     async fn has_vcs_repo(&self) -> Result<bool> {
-        let data_plane = resolve_worktree_data_plane(self.state, self.worktree).await?;
+        let data_plane = resolve_worktree_data_plane(self.state.as_ref(), self.worktree).await?;
         if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
             let executor = HttpSandboxWorktreeVcsExecutor::new(self.state, self.worktree);
             return SandboxWorktreeVcsSource::new(&executor)
@@ -47,7 +47,7 @@ impl WorktreeVcsStatusSource for HttpWorktreeVcsSource<'_> {
         include_untracked_files: bool,
         include_entries: bool,
     ) -> Result<WorktreeVcsStructuredStatus> {
-        let data_plane = resolve_worktree_data_plane(self.state, self.worktree).await?;
+        let data_plane = resolve_worktree_data_plane(self.state.as_ref(), self.worktree).await?;
         let root = data_plane.live_worktree_root.as_path();
         let structured = if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
             let executor = HttpSandboxWorktreeVcsExecutor::new(self.state, self.worktree);
@@ -66,7 +66,7 @@ impl WorktreeVcsStatusSource for HttpWorktreeVcsSource<'_> {
 #[async_trait::async_trait]
 impl WorktreeVcsCommitLookupSource for HttpWorktreeVcsSource<'_> {
     async fn resolve_commit(&self, reference: &str) -> Result<String> {
-        let data_plane = resolve_worktree_data_plane(self.state, self.worktree).await?;
+        let data_plane = resolve_worktree_data_plane(self.state.as_ref(), self.worktree).await?;
         let root = data_plane.live_worktree_root.as_path();
         if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
             let executor = HttpSandboxWorktreeVcsExecutor::new(self.state, self.worktree);
@@ -95,7 +95,7 @@ impl WorktreeVcsDiffBaseSource for HttpWorktreeVcsSource<'_> {
         if references.is_empty() {
             return Ok(Vec::new());
         }
-        let data_plane = resolve_worktree_data_plane(self.state, self.worktree).await?;
+        let data_plane = resolve_worktree_data_plane(self.state.as_ref(), self.worktree).await?;
         let root = data_plane.live_worktree_root.as_path();
         if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
             let executor = HttpSandboxWorktreeVcsExecutor::new(self.state, self.worktree);
@@ -110,7 +110,7 @@ impl WorktreeVcsDiffBaseSource for HttpWorktreeVcsSource<'_> {
     }
 
     async fn merge_base(&self, target_branch: &str) -> Result<String> {
-        let data_plane = resolve_worktree_data_plane(self.state, self.worktree).await?;
+        let data_plane = resolve_worktree_data_plane(self.state.as_ref(), self.worktree).await?;
         let root = data_plane.live_worktree_root.as_path();
         if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
             let executor = HttpSandboxWorktreeVcsExecutor::new(self.state, self.worktree);
@@ -135,7 +135,7 @@ impl WorktreeVcsDiffPathSource for HttpWorktreeVcsSource<'_> {
         base_commit_sha: &str,
         summary_count: bool,
     ) -> Result<Vec<(String, String, Option<String>)>> {
-        let data_plane = resolve_worktree_data_plane(self.state, self.worktree).await?;
+        let data_plane = resolve_worktree_data_plane(self.state.as_ref(), self.worktree).await?;
         let root = data_plane.live_worktree_root.as_path();
         if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
             let executor = HttpSandboxWorktreeVcsExecutor::new(self.state, self.worktree);
@@ -149,7 +149,7 @@ impl WorktreeVcsDiffPathSource for HttpWorktreeVcsSource<'_> {
     }
 
     async fn list_untracked(&self) -> Result<Vec<String>> {
-        let data_plane = resolve_worktree_data_plane(self.state, self.worktree).await?;
+        let data_plane = resolve_worktree_data_plane(self.state.as_ref(), self.worktree).await?;
         let root = data_plane.live_worktree_root.as_path();
         if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {
             let executor = HttpSandboxWorktreeVcsExecutor::new(self.state, self.worktree);
