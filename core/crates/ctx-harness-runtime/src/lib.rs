@@ -32,6 +32,7 @@ use ctx_sandbox_contract::{
 };
 use ctx_workspace_container::sandbox_machine_required;
 
+pub mod container_builder;
 #[cfg(test)]
 mod tests;
 

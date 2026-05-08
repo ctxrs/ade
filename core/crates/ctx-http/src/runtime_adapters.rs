@@ -184,7 +184,7 @@ impl SharedWarmupOperations for DefaultWarmupOperations {
 
     async fn warm_builder(&self, observer: Arc<dyn HarnessSetupObserver>) -> Result<()> {
         observer.on_phase(HarnessSetupPhase::ImageLoad, "warming container builder");
-        crate::container_builder::ensure_builder_ready(&self.data_root).await?;
+        ctx_harness_runtime::container_builder::ensure_builder_ready(&self.data_root).await?;
         if let Some(record) =
             ctx_harness_runtime::selected_shared_substrate_lifecycle(&self.data_root)?
         {

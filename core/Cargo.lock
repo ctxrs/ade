@@ -954,7 +954,9 @@ dependencies = [
  "ctx-sandbox-contract",
  "ctx-workspace-container",
  "serde",
+ "serde_json",
  "sha2",
+ "tempfile",
  "tokio",
 ]
 

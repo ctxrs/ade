@@ -13,7 +13,6 @@ use ctx_provider_install::install_state::{
 };
 use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
 
-use crate::container_builder;
 use crate::daemon::{self, AppState as HttpAppState};
 
 pub use ctx_managed_installs::*;
@@ -116,7 +115,7 @@ impl ctx_managed_installs::ManagedInstallHost for HttpAppState {
     }
 
     async fn ensure_builder_ready(&self) -> Result<()> {
-        container_builder::ensure_builder_ready(&self.core.data_root).await
+        ctx_harness_runtime::container_builder::ensure_builder_ready(&self.core.data_root).await
     }
 
     async fn run_builder_command(
@@ -126,7 +125,14 @@ impl ctx_managed_installs::ManagedInstallHost for HttpAppState {
         argv: &[String],
         timeout_dur: Duration,
     ) -> Result<Output> {
-        container_builder::run_command(&self.core.data_root, cwd, env, argv, timeout_dur).await
+        ctx_harness_runtime::container_builder::run_command(
+            &self.core.data_root,
+            cwd,
+            env,
+            argv,
+            timeout_dur,
+        )
+        .await
     }
 
     fn is_acp_provider_id(&self, provider_id: &str) -> bool {

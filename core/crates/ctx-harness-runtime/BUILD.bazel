@@ -47,4 +47,8 @@ rust_library(
 rust_test(
     name = "unit_tests",
     crate = ":lib",
+    deps = [
+        "@crates//:serde_json",
+        "@crates//:tempfile",
+    ],
 )

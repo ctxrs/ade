@@ -2,7 +2,6 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use ctx_harness_runtime::SandboxCommandBackend;
 use tokio::process::Command;
 
 const BUILDER_READY_TIMEOUT: Duration = Duration::from_secs(2 * 60);
@@ -18,9 +17,9 @@ fn builder_platform_for_arch(arch: &str) -> Result<&'static str> {
 fn builder_mount_source(
     data_root: &Path,
     mount_path: &Path,
-    backend: SandboxCommandBackend,
+    backend: crate::SandboxCommandBackend,
 ) -> String {
-    if matches!(backend, SandboxCommandBackend::SharedVmContainer) {
+    if matches!(backend, crate::SandboxCommandBackend::SharedVmContainer) {
         if let Some(guest_path) =
             ctx_sandbox_contract::shared_vm_guest_host_share_path(data_root, mount_path)
         {
@@ -33,7 +32,7 @@ fn builder_mount_source(
 fn data_root_bind_mount(
     data_root: &Path,
     mount_path: &Path,
-    backend: SandboxCommandBackend,
+    backend: crate::SandboxCommandBackend,
 ) -> String {
     format!(
         "type=bind,src={},dst={},rw",
@@ -59,7 +58,7 @@ fn builder_run_args(
     env: &[(String, String)],
     argv: &[String],
 ) -> Result<Vec<String>> {
-    let backend = ctx_harness_runtime::selected_sandbox_command_backend(data_root)?;
+    let backend = crate::selected_sandbox_command_backend(data_root)?;
     builder_run_args_for_backend(data_root, cwd, env, argv, backend)
 }
 
@@ -68,7 +67,7 @@ fn builder_run_args_for_backend(
     cwd: &Path,
     env: &[(String, String)],
     argv: &[String],
-    backend: SandboxCommandBackend,
+    backend: crate::SandboxCommandBackend,
 ) -> Result<Vec<String>> {
     let platform = builder_platform_for_arch(std::env::consts::ARCH)?;
     let mut args = vec![
@@ -92,17 +91,17 @@ fn builder_run_args_for_backend(
 }
 
 pub async fn ensure_builder_ready(data_root: &Path) -> Result<()> {
-    ctx_harness_runtime::ensure_builder_backend_launch_ready_with_observer(data_root, None)
+    crate::ensure_builder_backend_launch_ready_with_observer(data_root, None)
         .await
         .context("ensuring sandbox runtime launch readiness")?;
-    ctx_harness_runtime::prefetch_container_image(
+    crate::prefetch_container_image(
         data_root,
         ctx_sandbox_container_runtime::default_container_image(),
     )
     .await
     .context("ensuring builder image availability")?;
 
-    let mut cmd = ctx_harness_runtime::sandbox_container_command(data_root)?;
+    let mut cmd = crate::sandbox_container_command(data_root)?;
     configure_builder_run(
         &mut cmd,
         data_root,
@@ -140,7 +139,7 @@ pub async fn run_command(
     argv: &[String],
     timeout_dur: Duration,
 ) -> Result<std::process::Output> {
-    let mut cmd = ctx_harness_runtime::sandbox_container_command(data_root)?;
+    let mut cmd = crate::sandbox_container_command(data_root)?;
     configure_builder_run(&mut cmd, data_root, cwd, env, argv)?;
     ctx_sandbox_container_runtime::command_output_with_timeout(cmd, timeout_dur)
         .await
@@ -152,6 +151,8 @@ mod tests {
     use super::*;
     #[cfg(target_os = "macos")]
     use std::path::PathBuf;
+    #[cfg(target_os = "macos")]
+    use std::sync::OnceLock;
     #[cfg(target_os = "macos")]
     use tempfile::tempdir;
 
@@ -185,7 +186,7 @@ mod tests {
     #[test]
     fn data_root_bind_mount_uses_rw_mount() {
         let path = Path::new("/tmp/ctx-data");
-        let mount = data_root_bind_mount(path, path, SandboxCommandBackend::NativeContainer);
+        let mount = data_root_bind_mount(path, path, crate::SandboxCommandBackend::NativeContainer);
         assert!(mount.contains("type=bind"));
         assert!(mount.contains("src=/tmp/ctx-data"));
         assert!(mount.contains("dst=/tmp/ctx-data"));
@@ -198,7 +199,7 @@ mod tests {
         let mount = data_root_bind_mount(
             data_root,
             data_root,
-            SandboxCommandBackend::SharedVmContainer,
+            crate::SandboxCommandBackend::SharedVmContainer,
         );
         assert!(mount.contains("type=bind"));
         assert!(mount.contains("src=/mnt/ctx-host"));
@@ -217,7 +218,7 @@ mod tests {
                 "-lc".to_string(),
                 "echo ok".to_string(),
             ],
-            SandboxCommandBackend::NativeContainer,
+            crate::SandboxCommandBackend::NativeContainer,
         )
         .expect("builder args");
         let image = ctx_sandbox_container_runtime::default_container_image();
@@ -239,7 +240,7 @@ mod tests {
             Path::new("/Users/example-user/.ctx/providers/install"),
             &[],
             &["/bin/sh".to_string(), "-lc".to_string(), "true".to_string()],
-            SandboxCommandBackend::SharedVmContainer,
+            crate::SandboxCommandBackend::SharedVmContainer,
         )
         .expect("builder args");
         let rendered = args.join("\n");
@@ -306,6 +307,18 @@ mod tests {
     }
 
     #[cfg(target_os = "macos")]
+    fn process_env_test_lock() -> &'static tokio::sync::Mutex<()> {
+        static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn sandbox_cli_env_test_lock() -> &'static tokio::sync::Mutex<()> {
+        static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+    }
+
+    #[cfg(target_os = "macos")]
     fn write_default_harness_bundle(root: &Path) -> PathBuf {
         use std::fs;
         use std::os::unix::fs::PermissionsExt;
@@ -345,10 +358,8 @@ mod tests {
         use std::fs;
         use std::os::unix::fs::PermissionsExt;
 
-        let _process_env = crate::test_support::process_env_test_lock().lock().await;
-        let _serial = crate::test_support::sandbox_cli_env_test_lock()
-            .lock()
-            .await;
+        let _process_env = process_env_test_lock().lock().await;
+        let _serial = sandbox_cli_env_test_lock().lock().await;
         let temp = tempdir().expect("tempdir");
         let bundle_dir = write_default_harness_bundle(temp.path());
         let log_path = temp.path().join("sandbox-cli.log");
