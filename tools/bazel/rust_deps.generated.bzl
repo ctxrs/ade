@@ -347,8 +347,12 @@ RUST_BAZEL_DEPS = {
     "ctx-storage-admission": struct(
         build_deps = [],
         deps = [
+            "//core/crates/ctx-resource-utilization:lib",
+            "@crates//:anyhow",
             "@crates//:chrono",
+            "@crates//:fs2",
             "@crates//:serde",
+            "@crates//:tokio",
         ],
         dev_deps = [],
         dev_proc_macro_deps = [],

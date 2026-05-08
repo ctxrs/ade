@@ -130,6 +130,9 @@ CTX_HTTP_MERGE_QUEUE_ENABLED_WORKSPACE_RESUME_AFTER_OPEN_TEST_ARGS = CTX_HTTP_TE
 CTX_HTTP_VCS_HOOKS_UNIT_TEST_ARGS = CTX_HTTP_UNIT_TEST_SERIAL_ARGS + [
     "vcs_hooks::",
 ]
+CTX_HTTP_STORAGE_GUARD_UNIT_TEST_ARGS = CTX_HTTP_UNIT_TEST_SERIAL_ARGS + [
+    "storage_guard::",
+]
 CTX_HTTP_DAEMON_GOLDEN_PATH_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
     "--exact",
     "lib_tests::daemon_smoke::daemon_golden_path_with_fake_provider",
@@ -712,6 +715,16 @@ declare_ctx_http_rust_unit_test(
 )
 
 declare_ctx_http_rust_unit_test(
+    name = "unit_tests_storage_guard",
+    args = CTX_HTTP_STORAGE_GUARD_UNIT_TEST_ARGS,
+    compile_data = CTX_HTTP_COMPILE_DATA,
+    data = CTX_HTTP_COMPILE_DATA,
+    deps = CTX_HTTP_DIRECT_TEST_DEPS,
+    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
+    timeout = "long",
+)
+
+declare_ctx_http_rust_unit_test(
     name = "unit_tests_workspace_runtime",
     args = CTX_HTTP_WORKSPACE_RUNTIME_UNIT_TEST_ARGS,
     compile_data = CTX_HTTP_COMPILE_DATA,
@@ -959,8 +972,16 @@ test_suite(
     tests = [
         ":unit_tests_daemon",
         ":unit_tests_scheduler",
+        ":unit_tests_storage_guard",
         ":unit_tests_daemon_golden_path_with_fake_provider",
         ":unit_tests_daemon_http_and_ws_streaming",
+    ],
+)
+
+test_suite(
+    name = "unit-tests-storage-admission",
+    tests = [
+        "//core/crates/ctx-storage-admission:unit_tests",
     ],
 )
 
@@ -994,6 +1015,7 @@ test_suite(
         ":unit-tests-lib-session-head-large",
         ":unit-tests-merge-queue",
         ":unit-tests-provider-and-settings",
+        ":unit-tests-storage-admission",
         ":unit-tests-workspace-runtime",
     ],
 )

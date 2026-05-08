@@ -3,6 +3,13 @@ use std::fmt;
 use chrono::Utc;
 use serde::Serialize;
 
+mod guard;
+
+pub use guard::{
+    StorageGuardObservedPath, StorageGuardReserveAction, StorageGuardReserveWarning,
+    StorageGuardRuntime, STORAGE_GUARD_MONITOR_INTERVAL, STORAGE_GUARD_RESERVE_FILE_NAME,
+};
+
 pub const STORAGE_BYTES_MIB: u64 = 1024 * 1024;
 pub const STORAGE_BYTES_GIB: u64 = 1024 * STORAGE_BYTES_MIB;
 const EMERGENCY_FREE_BYTES: u64 = STORAGE_BYTES_GIB;
