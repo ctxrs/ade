@@ -8,7 +8,11 @@ import type {
 import { clearAllAssistantStreaming } from "./assistantStreaming";
 import { loadSessionHeadV1, saveSessionHeadV1 } from "./uiStateStore";
 import { ensureReplicaEventSeq, rebuildReplicaTranscriptAuxState } from "./sessionReplicaTranscript";
-import { isBoundedSessionHead, shouldPreserveExistingTranscriptWindow } from "./sessionHeadRepair";
+import {
+  isBoundedSessionHead,
+  shouldPreserveExistingTranscriptWindow,
+  shouldRepairSessionHeadReplace,
+} from "./sessionHeadRepair";
 import {
   reconcileActivityInterruptedFromTurns,
   reconcileLatestTurnInterruptedFromActivity,
@@ -21,6 +25,7 @@ import type {
   SessionReplicaFreshnessEvent,
   SessionReplicaHeadSeedMode,
   SessionReplicaPatch,
+  SessionReplicaReplaceMode,
 } from "./sessionReplicaProtocol";
 import { isAuthoritativeSessionReplicaReplace } from "./sessionReplicaProtocol";
 import { buildCanonicalReplicaPatch } from "./sessionReplicaPatches";
@@ -144,6 +149,15 @@ export class SessionReplicaCore {
     return entry;
   }
 
+  private authoritativeReplaceModeForHead(
+    entry: SessionReplicaEntry,
+    head: SessionHead | SessionHeadSnapshot,
+  ): SessionReplicaReplaceMode {
+    return isBoundedSessionHead(head) || shouldRepairSessionHeadReplace(entry, head)
+      ? "repair_replace"
+      : "authoritative_replace";
+  }
+
   private ensureEventSeq(entry: SessionReplicaEntry, event: SessionEvent): SessionEvent {
     return ensureReplicaEventSeq(entry, event);
   }
@@ -214,11 +228,16 @@ export class SessionReplicaCore {
             head_window: data.headWindow ?? undefined,
           })));
     let toolSummaries = data.toolSummaries ?? entry.toolSummaries;
-    if (incomingIsOlder || (!authoritative && existingSeq > incomingSeq) || incomingIsNarrower) {
+    if (incomingIsOlder || (!authoritative && existingSeq > incomingSeq)) {
       turns = mergeReplicaTurns(turns, entry.turns);
       messages = mergeReplicaMessages(messages, entry.messages);
       events = mergeReplicaEvents(events, entry.events);
       toolSummaries = mergeReplicaToolSummaries(data.toolSummaries ?? [], entry.toolSummaries);
+    } else if (incomingIsNarrower) {
+      turns = mergeReplicaTurns(entry.turns, turns);
+      messages = mergeReplicaMessages(entry.messages, messages);
+      events = mergeReplicaEvents(entry.events, events);
+      toolSummaries = mergeReplicaToolSummaries(entry.toolSummaries, data.toolSummaries ?? []);
     }
 
     entry.session = data.session ?? entry.session;
@@ -405,9 +424,13 @@ export class SessionReplicaCore {
       const head = await this.deps.api.getSessionHead(id, this.config.headLimit, true);
       if (token !== entry.requestToken) return;
       if (head) {
-        this.applyHead(entry, snapshotToSessionHead(head), opts?.emitOp, {
+        const sessionHead = snapshotToSessionHead(head);
+        this.applyHead(entry, sessionHead, opts?.emitOp, {
           appendMode: opts?.emitOp === "append" ? "head_refresh" : undefined,
-          replaceMode: opts?.emitOp === "append" ? undefined : "authoritative_replace",
+          replaceMode:
+            opts?.emitOp === "append"
+              ? undefined
+              : this.authoritativeReplaceModeForHead(entry, sessionHead),
           freshness: "authoritative",
         });
         await this.persistHead(entry);
@@ -480,9 +503,13 @@ export class SessionReplicaCore {
       );
       if (token !== entry.requestToken) return;
       if (head) {
-        this.applyHead(entry, snapshotToSessionHead(head), opts?.emitOp, {
+        const sessionHead = snapshotToSessionHead(head);
+        this.applyHead(entry, sessionHead, opts?.emitOp, {
           appendMode: opts?.emitOp === "append" ? "head_refresh" : undefined,
-          replaceMode: opts?.emitOp === "append" ? undefined : "authoritative_replace",
+          replaceMode:
+            opts?.emitOp === "append"
+              ? undefined
+              : this.authoritativeReplaceModeForHead(entry, sessionHead),
           freshness: "authoritative",
         });
         await this.persistHead(entry);

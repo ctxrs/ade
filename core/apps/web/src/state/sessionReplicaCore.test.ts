@@ -61,6 +61,42 @@ const mkHead = (
   };
 };
 
+const mkCompletedTurn = (
+  sessionId: string,
+  turnId: string,
+  startSeq: number,
+  createdAt: string,
+): SessionTurn => ({
+  turn_id: turnId,
+  session_id: sessionId,
+  status: "completed",
+  start_seq: startSeq,
+  started_at: createdAt,
+  updated_at: createdAt,
+  tool_total: 0,
+  tool_pending: 0,
+  tool_running: 0,
+  tool_completed: 0,
+  tool_failed: 0,
+});
+
+const mkMessageForTurn = (
+  sessionId: string,
+  messageId: string,
+  turnId: string,
+  content: string,
+  createdAt: string,
+): Message => ({
+  id: messageId,
+  session_id: sessionId,
+  task_id: "task-1",
+  turn_id: turnId,
+  role: "assistant",
+  content,
+  delivery: "immediate",
+  created_at: createdAt,
+});
+
 const loadSessionHeadV1Mock = vi.mocked(loadSessionHeadV1);
 
 describe("SessionReplicaCore", () => {
@@ -505,6 +541,98 @@ describe("SessionReplicaCore", () => {
     await waitForCondition(() => getSessionHead.mock.calls.length >= 2);
     expect(getSessionHead.mock.calls[0]).toEqual([sessionId, 60, true]);
     expect(getSessionHead.mock.calls[1]).toEqual([sessionId, 5, false]);
+  });
+
+  it("repairs bounded /head hydrates instead of dropping the visible transcript tail", async () => {
+    const sessionId = "session-head-bounded-hydrate-repair";
+    const olderAt = "2026-03-09T00:00:01.000Z";
+    const newerAt = "2026-03-09T00:00:02.000Z";
+    const latestAt = "2026-03-09T00:00:03.000Z";
+    const fullHead: SessionHeadSnapshot = {
+      session: mkSession(sessionId),
+      turns: [
+        mkCompletedTurn(sessionId, "turn-1", 1, olderAt),
+        mkCompletedTurn(sessionId, "turn-2", 3, newerAt),
+      ],
+      events: [] as SessionEvent[],
+      messages: [
+        mkMessageForTurn(sessionId, "m-1", "turn-1", "older", olderAt),
+        mkMessageForTurn(sessionId, "m-2", "turn-2", "newer", newerAt),
+      ],
+      last_event_seq: 10,
+      projection_rev: 10,
+      state_rev: 10,
+      has_more_turns: false,
+      has_more_history: false,
+      history_cursor: null,
+      head_window: {
+        turn_limit: 0,
+        message_limit: 0,
+        event_limit: 0,
+        byte_limit: 0,
+        turn_count: 2,
+        message_count: 2,
+        event_count: 0,
+        bytes: 512,
+        truncated: false,
+      },
+    };
+    const shiftedHead: SessionHeadSnapshot = {
+      ...fullHead,
+      turns: [
+        fullHead.turns[1]!,
+        mkCompletedTurn(sessionId, "turn-3", 5, latestAt),
+      ],
+      messages: [
+        fullHead.messages[1]!,
+        mkMessageForTurn(sessionId, "m-3", "turn-3", "latest", latestAt),
+      ],
+      last_event_seq: 20,
+      projection_rev: 20,
+      state_rev: 20,
+      has_more_turns: true,
+      head_window: {
+        turn_limit: 2,
+        message_limit: 2,
+        event_limit: 0,
+        byte_limit: 4096,
+        turn_count: 2,
+        message_count: 2,
+        event_count: 0,
+        bytes: 512,
+        truncated: true,
+      },
+    };
+    const getSessionHead = vi.fn(async () => shiftedHead);
+    const patches: SessionReplicaPatch[] = [];
+    const core = new SessionReplicaCore({
+      api: { getSessionHead },
+      emit: (next) => patches.push(...next),
+    });
+
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 100, headLimit: 50 } });
+    core.handleCommand({ type: "seed_head", sessionId, head: fullHead, mode: "repair_replace" });
+    core.handleCommand({ type: "hydrate_session_head", sessionId, force: true });
+
+    await waitForCondition(() =>
+      patches.some(
+        (patch) =>
+          patch.sessionId === sessionId &&
+          patch.op === "replace" &&
+          patch.data.lastEventSeq === 20,
+      ),
+    );
+
+    const lastPatch = [...patches]
+      .reverse()
+      .find((patch) => patch.sessionId === sessionId && patch.op === "replace");
+    if (!lastPatch || lastPatch.op === "evict") {
+      throw new Error("expected replace patch");
+    }
+    expect(getSessionHead).toHaveBeenCalledWith(sessionId, 50, true);
+    expect(lastPatch.data.replaceMode).toBe("repair_replace");
+    expect(lastPatch.data.messages?.map((message) => message.id)).toEqual(["m-1", "m-2", "m-3"]);
+    expect(lastPatch.data.turns?.map((turn) => turn.turn_id)).toEqual(["turn-1", "turn-2", "turn-3"]);
   });
 
   it("coalesces repeated session_gap repairs while the first compact repair is in flight", async () => {
