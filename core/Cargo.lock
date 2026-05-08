@@ -1409,6 +1409,7 @@ dependencies = [
  "ctx-settings-model",
  "libc",
  "serde",
+ "serde_json",
  "sysinfo",
  "tokio",
 ]

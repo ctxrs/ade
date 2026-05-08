@@ -11,5 +11,6 @@ ctx-providers = { path = "../ctx-providers" }
 ctx-settings-model = { path = "../ctx-settings-model" }
 libc = "0.2"
 serde.workspace = true
+serde_json.workspace = true
 sysinfo.workspace = true
 tokio.workspace = true

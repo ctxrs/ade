@@ -18,6 +18,7 @@ use ctx_providers::adapters::ProviderProcessInfo;
 mod process;
 pub mod process_limits;
 pub mod resource_governance;
+pub mod resource_telemetry_log;
 
 const SYSTEM_CACHE_TTL: Duration = Duration::from_millis(750);
 const DISK_CACHE_TTL: Duration = Duration::from_secs(30);

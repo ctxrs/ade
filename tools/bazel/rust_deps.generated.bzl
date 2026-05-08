@@ -236,6 +236,7 @@ RUST_BAZEL_DEPS = {
             "@crates//:chrono",
             "@crates//:libc",
             "@crates//:serde",
+            "@crates//:serde_json",
             "@crates//:sysinfo",
             "@crates//:tokio",
         ],

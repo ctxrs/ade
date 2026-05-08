@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -10,6 +9,10 @@ use tokio::time::MissedTickBehavior;
 use ctx_avf_linux_runtime::SubstrateLifecycleRecord;
 use ctx_providers::adapters::ProviderProcessInfo;
 use ctx_resource_utilization::{
+    resource_telemetry_log::{
+        append_resource_telemetry_log, cleanup_old_resource_telemetry_logs,
+        resource_telemetry_cleanup_key,
+    },
     resource_utilization_disabled_from_env, trim_resource_processes, ProviderMemoryRollup,
     ResourceProcesses, ResourceTelemetryConfig, SystemSnapshot,
 };
@@ -17,9 +20,6 @@ use ctx_resource_utilization::{
 use crate::daemon::AppState;
 use crate::logs;
 use crate::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
-
-const RESOURCE_LOG_PREFIX: &str = "resource-util-";
-const RESOURCE_LOG_SUFFIX: &str = ".jsonl";
 
 #[derive(Debug, Serialize)]
 struct ResourceTelemetryEvent {
@@ -95,11 +95,18 @@ async fn sample_once(
         shared_substrate_lifecycle: shared_substrate_lifecycle.clone(),
     };
 
-    append_local_log(&state.core.data_root, &event, cfg).await?;
+    let logs_dir = logs::logs_dir(&state.core.data_root);
+    append_resource_telemetry_log(&logs_dir, event.occurred_at, &event, cfg.local_max_bytes)
+        .await?;
     if cfg.local_retention_days > 0 {
-        let today = event.occurred_at.format("%Y-%m-%d").to_string();
+        let today = resource_telemetry_cleanup_key(event.occurred_at);
         if last_cleanup.as_deref() != Some(&today) {
-            let _ = cleanup_old_logs(&state.core.data_root, cfg.local_retention_days).await;
+            let _ = cleanup_old_resource_telemetry_logs(
+                &logs_dir,
+                Utc::now(),
+                cfg.local_retention_days,
+            )
+            .await;
             *last_cleanup = Some(today);
         }
     }
@@ -306,60 +313,4 @@ fn serde_label<T: Serialize>(value: &T) -> Option<String> {
         .ok()?
         .as_str()
         .map(ToString::to_string)
-}
-
-async fn append_local_log(
-    data_root: &Path,
-    event: &ResourceTelemetryEvent,
-    cfg: &ResourceTelemetryConfig,
-) -> Result<()> {
-    let dir = logs::logs_dir(data_root);
-    tokio::fs::create_dir_all(&dir).await.ok();
-    let date = event.occurred_at.format("%Y-%m-%d").to_string();
-    let path = dir.join(format!("{RESOURCE_LOG_PREFIX}{date}{RESOURCE_LOG_SUFFIX}"));
-
-    if cfg.local_max_bytes > 0 {
-        if let Ok(metadata) = tokio::fs::metadata(&path).await {
-            if metadata.len() >= cfg.local_max_bytes {
-                return Ok(());
-            }
-        }
-    }
-
-    let line = serde_json::to_string(event)?;
-    let mut file = tokio::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .await?;
-    use tokio::io::AsyncWriteExt;
-    file.write_all(line.as_bytes()).await?;
-    file.write_all(b"\n").await?;
-    file.flush().await?;
-    Ok(())
-}
-
-async fn cleanup_old_logs(data_root: &Path, retention_days: u64) -> Result<()> {
-    let dir = logs::logs_dir(data_root);
-    let mut entries = tokio::fs::read_dir(&dir).await?;
-    let cutoff = Utc::now() - chrono::Duration::days(retention_days as i64);
-    while let Some(entry) = entries.next_entry().await? {
-        let file_name = entry.file_name().to_string_lossy().to_string();
-        if !file_name.starts_with(RESOURCE_LOG_PREFIX) || !file_name.ends_with(RESOURCE_LOG_SUFFIX)
-        {
-            continue;
-        }
-        let date = file_name
-            .trim_start_matches(RESOURCE_LOG_PREFIX)
-            .trim_end_matches(RESOURCE_LOG_SUFFIX);
-        let Ok(date) = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d") else {
-            continue;
-        };
-        let naive = date.and_hms_opt(0, 0, 0).unwrap_or_default();
-        let date = DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc);
-        if date < cutoff {
-            let _ = tokio::fs::remove_file(entry.path()).await;
-        }
-    }
-    Ok(())
 }
