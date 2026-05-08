@@ -653,12 +653,20 @@ async fn workspace_active_snapshot_includes_worktree_vcs_for_active_tasks_only()
         .update_worktree_vcs_activity(&HashSet::new(), &next)
         .await;
 
-    ctx_http::git_status::emit_worktree_vcs_snapshot_for_worktree(&state, &worktree_active, true)
-        .await
-        .unwrap();
-    ctx_http::git_status::emit_worktree_vcs_snapshot_for_worktree(&state, &worktree_archived, true)
-        .await
-        .unwrap();
+    ctx_http::daemon::git_status::emit_worktree_vcs_snapshot_for_worktree(
+        &state,
+        &worktree_active,
+        true,
+    )
+    .await
+    .unwrap();
+    ctx_http::daemon::git_status::emit_worktree_vcs_snapshot_for_worktree(
+        &state,
+        &worktree_archived,
+        true,
+    )
+    .await
+    .unwrap();
 
     let resp = client
         .post(format!("{base}/api/tasks/{}/archive", task_archived.id.0))
@@ -1926,7 +1934,7 @@ async fn workspace_stream_repeat_subscribe_preserves_ready_worktree_vcs_state() 
     state
         .update_worktree_vcs_activity(&HashSet::new(), &next)
         .await;
-    ctx_http::git_status::refresh_worktree_vcs_summary(state.clone(), worktree.clone())
+    ctx_http::daemon::git_status::refresh_worktree_vcs_summary(state.clone(), worktree.clone())
         .await
         .unwrap();
 
@@ -2047,7 +2055,7 @@ async fn workspace_stream_subscribe_does_not_reemit_when_worktree_vcs_is_already
     state
         .update_worktree_vcs_activity(&HashSet::new(), &next)
         .await;
-    ctx_http::git_status::refresh_worktree_vcs_summary(state.clone(), worktree.clone())
+    ctx_http::daemon::git_status::refresh_worktree_vcs_summary(state.clone(), worktree.clone())
         .await
         .unwrap();
     tokio::fs::write(
@@ -2059,7 +2067,7 @@ async fn workspace_stream_subscribe_does_not_reemit_when_worktree_vcs_is_already
 
     let refresh_lock = state.worktree_vcs_refresh_lock(worktree.id).await;
     let _refresh_guard = refresh_lock.lock().await;
-    ctx_http::git_status::request_worktree_vcs_refresh(&state, &worktree, true, false)
+    ctx_http::daemon::git_status::request_worktree_vcs_refresh(&state, &worktree, true, false)
         .await
         .unwrap();
 
@@ -2166,13 +2174,13 @@ async fn worktree_vcs_summary_refresh_reloads_live_inventory_before_ready_publis
     state
         .update_worktree_vcs_open_panes(&HashSet::new(), &next)
         .await;
-    ctx_http::git_status::emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, true)
+    ctx_http::daemon::git_status::emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, true)
         .await
         .unwrap();
 
     tokio::fs::remove_file(&first_path).await.unwrap();
     tokio::fs::write(&second_path, "second\n").await.unwrap();
-    ctx_http::git_status::request_worktree_vcs_refresh(&state, &worktree, true, true)
+    ctx_http::daemon::git_status::request_worktree_vcs_refresh(&state, &worktree, true, true)
         .await
         .unwrap();
 
@@ -2248,7 +2256,7 @@ async fn worktree_vcs_emit_and_summary_refresh_share_refresh_lock() {
     let emit_state = state.clone();
     let emit_worktree = worktree.clone();
     let emit_handle = tokio::spawn(async move {
-        ctx_http::git_status::emit_worktree_vcs_snapshot_for_worktree(
+        ctx_http::daemon::git_status::emit_worktree_vcs_snapshot_for_worktree(
             &emit_state,
             &emit_worktree,
             false,
@@ -2259,7 +2267,8 @@ async fn worktree_vcs_emit_and_summary_refresh_share_refresh_lock() {
     let summary_state = state.clone();
     let summary_worktree = worktree.clone();
     let summary_handle = tokio::spawn(async move {
-        ctx_http::git_status::refresh_worktree_vcs_summary(summary_state, summary_worktree).await
+        ctx_http::daemon::git_status::refresh_worktree_vcs_summary(summary_state, summary_worktree)
+            .await
     });
 
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -2371,7 +2380,7 @@ async fn workspace_stream_replay_only_subscribe_reseeds_cached_worktree_vcs_snap
     state
         .update_worktree_vcs_activity(&HashSet::new(), &next)
         .await;
-    ctx_http::git_status::refresh_worktree_vcs_summary(state.clone(), worktree.clone())
+    ctx_http::daemon::git_status::refresh_worktree_vcs_summary(state.clone(), worktree.clone())
         .await
         .unwrap();
 
@@ -2465,7 +2474,7 @@ async fn mobile_secure_workspace_stream_replay_only_subscribe_reseeds_cached_wor
     state
         .update_worktree_vcs_activity(&HashSet::new(), &next)
         .await;
-    ctx_http::git_status::refresh_worktree_vcs_summary(state.clone(), worktree.clone())
+    ctx_http::daemon::git_status::refresh_worktree_vcs_summary(state.clone(), worktree.clone())
         .await
         .unwrap();
 
@@ -2579,7 +2588,7 @@ async fn workspace_stream_repeat_subscribe_rescans_fresh_unavailable_worktree_vc
     )
     .await
     .expect("write poisoned .git marker");
-    ctx_http::git_status::emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, true)
+    ctx_http::daemon::git_status::emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, true)
         .await
         .unwrap();
     let unavailable = state
@@ -2710,7 +2719,7 @@ async fn workspace_stream_initial_snapshot_includes_worktree_vcs_for_explicit_ar
     state
         .update_worktree_vcs_activity(&HashSet::new(), &next)
         .await;
-    ctx_http::git_status::refresh_worktree_vcs_summary(state.clone(), worktree.clone())
+    ctx_http::daemon::git_status::refresh_worktree_vcs_summary(state.clone(), worktree.clone())
         .await
         .unwrap();
 
@@ -2841,12 +2850,18 @@ async fn workspace_stream_initial_snapshot_excludes_secondary_worktree_vcs_for_a
     state
         .update_worktree_vcs_activity(&HashSet::new(), &next)
         .await;
-    ctx_http::git_status::refresh_worktree_vcs_summary(state.clone(), primary_worktree.clone())
-        .await
-        .unwrap();
-    ctx_http::git_status::refresh_worktree_vcs_summary(state.clone(), secondary_worktree.clone())
-        .await
-        .unwrap();
+    ctx_http::daemon::git_status::refresh_worktree_vcs_summary(
+        state.clone(),
+        primary_worktree.clone(),
+    )
+    .await
+    .unwrap();
+    ctx_http::daemon::git_status::refresh_worktree_vcs_summary(
+        state.clone(),
+        secondary_worktree.clone(),
+    )
+    .await
+    .unwrap();
 
     let seeded_snapshot = state
         .workspaces
@@ -2970,12 +2985,18 @@ async fn workspace_stream_active_subscribe_includes_secondary_worktree_vcs_when_
     state
         .update_worktree_vcs_activity(&HashSet::new(), &next)
         .await;
-    ctx_http::git_status::refresh_worktree_vcs_summary(state.clone(), primary_worktree.clone())
-        .await
-        .unwrap();
-    ctx_http::git_status::refresh_worktree_vcs_summary(state.clone(), secondary_worktree.clone())
-        .await
-        .unwrap();
+    ctx_http::daemon::git_status::refresh_worktree_vcs_summary(
+        state.clone(),
+        primary_worktree.clone(),
+    )
+    .await
+    .unwrap();
+    ctx_http::daemon::git_status::refresh_worktree_vcs_summary(
+        state.clone(),
+        secondary_worktree.clone(),
+    )
+    .await
+    .unwrap();
 
     let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
     let (mut socket, _) = connect_async(&ws_url).await.unwrap();
@@ -3003,7 +3024,7 @@ async fn workspace_stream_active_subscribe_includes_secondary_worktree_vcs_when_
         .unwrap()
         .unwrap();
 
-    ctx_http::git_status::emit_worktree_vcs_snapshot_for_worktree(
+    ctx_http::daemon::git_status::emit_worktree_vcs_snapshot_for_worktree(
         &state,
         &secondary_worktree,
         true,
@@ -3103,12 +3124,18 @@ async fn mobile_secure_workspace_stream_active_subscribe_includes_secondary_work
     state
         .update_worktree_vcs_activity(&HashSet::new(), &next)
         .await;
-    ctx_http::git_status::refresh_worktree_vcs_summary(state.clone(), primary_worktree.clone())
-        .await
-        .unwrap();
-    ctx_http::git_status::refresh_worktree_vcs_summary(state.clone(), secondary_worktree.clone())
-        .await
-        .unwrap();
+    ctx_http::daemon::git_status::refresh_worktree_vcs_summary(
+        state.clone(),
+        primary_worktree.clone(),
+    )
+    .await
+    .unwrap();
+    ctx_http::daemon::git_status::refresh_worktree_vcs_summary(
+        state.clone(),
+        secondary_worktree.clone(),
+    )
+    .await
+    .unwrap();
 
     let (device_id, key) = configure_mobile_secure_access(&state).await;
     let ws_url = build_mobile_secure_ws_url(base, ws.id, &device_id, &key);
@@ -3141,7 +3168,7 @@ async fn mobile_secure_workspace_stream_active_subscribe_includes_secondary_work
         .await
         .expect("expected secure snapshot after subscribe");
 
-    ctx_http::git_status::emit_worktree_vcs_snapshot_for_worktree(
+    ctx_http::daemon::git_status::emit_worktree_vcs_snapshot_for_worktree(
         &state,
         &secondary_worktree,
         true,

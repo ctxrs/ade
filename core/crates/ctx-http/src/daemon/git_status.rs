@@ -11,7 +11,6 @@ mod sandbox;
 mod scheduler;
 mod snapshot;
 mod source;
-#[path = "git_status_watch.rs"]
 mod watch;
 use ctx_workspace_services::worktree_vcs::{
     mark_worktree_vcs_runtime_dirty, queue_worktree_vcs_refresh, worktree_has_vcs_repo_from_source,

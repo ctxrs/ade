@@ -1,6 +1,6 @@
 use super::context::load_session_vcs_context;
 use super::*;
-use crate::git_status::load_git_status_snapshot;
+use crate::daemon::git_status::load_git_status_snapshot;
 use ctx_workspace_services::worktree_vcs::session_git_status_summary_from_snapshot;
 
 pub(crate) async fn get_session_git_status(

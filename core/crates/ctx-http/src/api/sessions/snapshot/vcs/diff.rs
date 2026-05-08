@@ -1,7 +1,7 @@
 use super::context::load_session_vcs_context;
 use super::*;
 use crate::api::sessions::diff_exec::diff_worktree_for_session;
-use crate::git_status::HttpWorktreeVcsSource;
+use crate::daemon::git_status::HttpWorktreeVcsSource;
 use ctx_workspace_services::worktree_vcs::{
     worktree_vcs_diff_summary_mismatch, worktree_vcs_session_diff_available,
     worktree_vcs_session_diff_summary_available, worktree_vcs_session_diff_summary_no_repo,
@@ -24,7 +24,7 @@ pub(crate) async fn get_session_diff(
         )
     })?);
     let (store, ctx) = load_session_vcs_context(&state, session_id).await?;
-    if !crate::git_status::worktree_has_vcs_repo(&state, &ctx.worktree)
+    if !crate::daemon::git_status::worktree_has_vcs_repo(&state, &ctx.worktree)
         .await
         .map_err(|err| {
             (
@@ -85,7 +85,7 @@ pub(crate) async fn get_session_diff_summary(
         )
     })?);
     let (store, ctx) = load_session_vcs_context(&state, session_id).await?;
-    if !crate::git_status::worktree_has_vcs_repo(&state, &ctx.worktree)
+    if !crate::daemon::git_status::worktree_has_vcs_repo(&state, &ctx.worktree)
         .await
         .map_err(|err| {
             (

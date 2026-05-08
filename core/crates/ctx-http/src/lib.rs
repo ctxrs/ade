@@ -1,6 +1,5 @@
 pub mod api;
 pub mod daemon;
-pub mod git_status;
 pub mod scheduler;
 mod workspace_runtime;
 

@@ -14,11 +14,11 @@ use ctx_workspace_services::worktree_vcs::{
     hydrated_worktree_vcs_snapshot_cache_entry, published_worktree_vcs_snapshot_cache_entry,
 };
 
+use crate::daemon::git_status;
 use crate::daemon::state::{
     AppState, TimedEntry, WorkspaceActiveHeadCacheEntry, WorkspaceActiveSnapshotCacheEntry,
     WorkspaceRuntime, WorktreeBootstrapGate,
 };
-use crate::git_status;
 
 const HYDRATED_WORKTREE_VCS_CACHE_BACKDATE: Duration = Duration::from_secs(10);
 

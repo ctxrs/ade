@@ -6,7 +6,7 @@ use std::process::Command;
 
 use axum::http::{Method, StatusCode};
 use ctx_core::models::Worktree;
-use ctx_http::git_status::emit_worktree_vcs_snapshot_for_worktree;
+use ctx_http::daemon::git_status::emit_worktree_vcs_snapshot_for_worktree;
 use serde_json::Value;
 
 #[tokio::test]

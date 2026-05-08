@@ -23,7 +23,7 @@ pub(super) async fn plan_subagent_worktree_creation(
         return Ok(None);
     }
 
-    let source = crate::git_status::HttpWorktreeVcsSource::new(state, parent_worktree);
+    let source = crate::daemon::git_status::HttpWorktreeVcsSource::new(state, parent_worktree);
     let base_commit_sha = source.resolve_commit("HEAD").await.map_err(|error| {
         let msg = error.to_string().to_lowercase();
         if msg.contains("ambiguous argument 'head'")

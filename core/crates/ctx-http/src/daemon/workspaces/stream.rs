@@ -279,10 +279,11 @@ pub(crate) async fn refresh_worktree_vcs_for_sessions(
             Some(_) => {
                 // Subscription warm-up should not downgrade an already-published ready snapshot.
                 // Real filesystem invalidations still use the transient stale path.
-                if let Err(err) = crate::git_status::request_worktree_vcs_refresh_without_transient(
-                    state, &worktree, true, open_pane,
-                )
-                .await
+                if let Err(err) =
+                    crate::daemon::git_status::request_worktree_vcs_refresh_without_transient(
+                        state, &worktree, true, open_pane,
+                    )
+                    .await
                 {
                     tracing::warn!(
                         worktree_id = %worktree_id.0,
@@ -291,10 +292,11 @@ pub(crate) async fn refresh_worktree_vcs_for_sessions(
                 }
             }
             None => {
-                if let Err(err) = crate::git_status::request_worktree_vcs_refresh_without_transient(
-                    state, &worktree, true, open_pane,
-                )
-                .await
+                if let Err(err) =
+                    crate::daemon::git_status::request_worktree_vcs_refresh_without_transient(
+                        state, &worktree, true, open_pane,
+                    )
+                    .await
                 {
                     tracing::warn!(
                         worktree_id = %worktree_id.0,

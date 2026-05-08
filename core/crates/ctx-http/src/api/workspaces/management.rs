@@ -1,5 +1,5 @@
 use super::*;
-use crate::git_status::emit_worktree_vcs_snapshot_for_worktree;
+use crate::daemon::git_status::emit_worktree_vcs_snapshot_for_worktree;
 use ctx_workspace_config as workspace_config;
 
 mod attachment_ops;
