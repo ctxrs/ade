@@ -16,7 +16,6 @@ async fn event_loop_drops_provider_events_after_turn_terminalized_by_store() {
             reason: Some("usage_limit"),
             details: None,
             kind: Some(json!("usageLimitExceeded")),
-            emit_error_event: true,
         },
     )
     .await
@@ -27,7 +26,15 @@ async fn event_loop_drops_provider_events_after_turn_terminalized_by_store() {
         .list_session_events_for_turn(fixture.session_id, fixture.turn_id, false)
         .await
         .expect("load terminal events");
-    assert_eq!(terminal_events.len(), 2);
+    assert_eq!(terminal_events.len(), 1);
+    assert!(terminal_events.iter().any(|event| {
+        matches!(event.event_type, SessionEventType::TurnFinished)
+            && event
+                .payload_json
+                .get("status")
+                .and_then(|value| value.as_str())
+                == Some("failed")
+    }));
 
     let (ev_tx, ev_rx) = mpsc::channel(8);
     let (events_done_tx, events_done_rx) = oneshot::channel();

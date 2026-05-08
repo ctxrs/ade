@@ -81,20 +81,6 @@ pub(crate) async fn emit_event(
     Ok(event)
 }
 
-pub(crate) async fn flush_session_events(
-    store: &ctx_store::Store,
-    session_id: ctx_core::ids::SessionId,
-    context: &str,
-) {
-    if let Err(err) = store.flush_session_event_log().await {
-        tracing::warn!(
-            session_id = %session_id.0,
-            context,
-            "failed to flush session event log: {err:#}"
-        );
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn persist_assistant_message(
     _state: &AppState,

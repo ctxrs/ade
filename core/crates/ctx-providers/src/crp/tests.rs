@@ -460,7 +460,7 @@ async fn prompt_fails_fast_on_fatal_startup_stderr_and_shuts_down_runtime() -> R
     let mut env = crp_test_env();
     env.insert("CTX_SESSION_ID".to_string(), session_key.to_string());
 
-    let (event_sink, mut event_rx) = tokio::sync::mpsc::channel(8);
+    let (event_sink, _event_rx) = tokio::sync::mpsc::channel(8);
     let handle = adapter
         .run(
             TurnInput {
@@ -476,32 +476,26 @@ async fn prompt_fails_fast_on_fatal_startup_stderr_and_shuts_down_runtime() -> R
         )
         .await?;
 
-    tokio::time::timeout(Duration::from_secs(5), handle.done)
+    let crate::adapters::RunHandle {
+        done,
+        outcome,
+        cancel: _cancel,
+        ..
+    } = handle;
+    tokio::time::timeout(Duration::from_secs(5), done)
         .await
         .expect("fatal startup run should finish promptly")?;
 
-    let error_event = tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            match event_rx.recv().await {
-                Some(event) if matches!(event.event_type, SessionEventType::Error) => {
-                    return Some(event)
-                }
-                Some(_) => {}
-                None => return None,
-            }
-        }
-    })
-    .await
-    .expect("error event wait should complete")
-    .expect("expected error event");
-
+    let outcome = tokio::time::timeout(Duration::from_secs(5), outcome)
+        .await
+        .expect("fatal startup outcome should finish promptly")?;
+    assert_eq!(outcome.status, ProviderTurnStatus::Failed);
     assert!(
-        error_event
-            .payload_json
-            .get("message")
-            .and_then(|value| value.as_str())
+        outcome
+            .message
+            .as_deref()
             .is_some_and(|message| message.contains("level=fatal")),
-        "expected fatal stderr to surface through the error event"
+        "expected fatal stderr to surface through the failed outcome"
     );
     assert!(
         !adapter.has_live_session(session_key).await,
@@ -1820,16 +1814,7 @@ done
     assert_eq!(outcome.status, ProviderTurnStatus::Failed);
     assert_eq!(outcome.reason.as_deref(), Some("provider_startup_timeout"));
     assert_eq!(outcome.kind, Some(json!("provider_startup_timeout")));
-
-    let event = event_rx
-        .recv()
-        .await
-        .context("missing startup timeout error event")?;
-    assert!(matches!(event.event_type, SessionEventType::Error));
-    assert_eq!(
-        event.payload_json.get("reason"),
-        Some(&json!("provider_startup_timeout"))
-    );
+    assert!(event_rx.try_recv().is_err());
 
     let stats = adapter
         .pool
@@ -2084,26 +2069,9 @@ done
         Some("Gemini CLI could not obtain interactive OAuth consent in this environment.")
     );
     assert_ne!(outcome.reason.as_deref(), Some("provider_startup_timeout"));
-
-    let error_event = tokio::time::timeout(Duration::from_secs(5), event_rx.recv())
-        .await
-        .context("timed out waiting for auth-error event")?
-        .context("missing auth-error event")?;
-    assert!(matches!(error_event.event_type, SessionEventType::Error));
-    assert_eq!(
-        error_event.payload_json.get("message"),
-        Some(&json!(
-            "Gemini CLI could not obtain interactive OAuth consent in this environment."
-        ))
-    );
-    assert_eq!(
-        error_event.payload_json.get("source"),
-        Some(&json!("crp_stderr"))
-    );
-    assert_ne!(
-        error_event.payload_json.get("reason"),
-        Some(&json!("provider_startup_timeout"))
-    );
+    assert_eq!(outcome.details, Some(json!({ "source": "crp_stderr" })));
+    assert_eq!(outcome.kind, Some(json!("auth_error")));
+    assert!(event_rx.try_recv().is_err());
 
     let stats = adapter
         .pool

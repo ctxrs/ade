@@ -88,7 +88,7 @@ const replayControlChanged = (
   next: SessionSubscriptionReplay,
 ): boolean => {
   if (previous.kind !== next.kind) {
-    return previous.kind === "reset" || next.kind === "reset";
+    return true;
   }
   if (previous.kind !== "resume" || next.kind !== "resume") {
     return false;

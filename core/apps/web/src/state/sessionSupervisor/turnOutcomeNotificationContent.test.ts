@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Message, Session, SessionEvent } from "../../api/client";
+import type { Message, Session, SessionTurn } from "../../api/client";
 import type { WorkspaceActiveSnapshotState } from "../workspaceActiveSnapshotStore";
 import {
   buildTurnOutcomeNotificationBodyPreview,
@@ -71,14 +71,17 @@ const makeMessage = (overrides: Partial<Message> = {}): Message => ({
   ...overrides,
 });
 
-const makeEvent = (overrides: Partial<SessionEvent> = {}): SessionEvent => ({
-  seq: 1,
-  id: "event-1",
-  session_id: "session-1",
+const makeTurn = (overrides: Partial<SessionTurn> = {}): SessionTurn => ({
   turn_id: "turn-1",
-  event_type: "error",
-  payload_json: {},
-  created_at: baseIso,
+  session_id: "session-1",
+  status: "running",
+  started_at: baseIso,
+  updated_at: baseIso,
+  tool_total: 0,
+  tool_pending: 0,
+  tool_running: 0,
+  tool_completed: 0,
+  tool_failed: 0,
   ...overrides,
 });
 
@@ -110,7 +113,6 @@ describe("turnOutcomeNotificationContent", () => {
   it("uses the latest non-queued assistant message for the finishing turn", () => {
     expect(
       resolveTurnOutcomeNotificationBody({
-        events: [],
         turnId: "turn-2",
         messages: [
           makeMessage({
@@ -135,23 +137,16 @@ describe("turnOutcomeNotificationContent", () => {
     ).toBe("Final answer with inline code and multiple lines.");
   });
 
-  it("uses the latest error event message for failed turns without assistant output", () => {
+  it("uses turn failure message for failed turns without assistant output", () => {
     expect(
       resolveTurnOutcomeNotificationBody({
         turnId: "turn-2",
         messages: [],
-        events: [
-          makeEvent({
-            id: "event-old",
-            turn_id: "turn-1",
-            payload_json: { message: "Old failure" },
-          }),
-          makeEvent({
-            id: "event-final",
-            turn_id: "turn-2",
-            payload_json: { message: "OAuth token has expired.\nPlease reconnect." },
-          }),
-        ],
+        turn: makeTurn({
+          turn_id: "turn-2",
+          status: "failed",
+          failure: { message: "OAuth token has expired.\nPlease reconnect." },
+        }),
         status: "failed",
       }),
     ).toBe("OAuth token has expired. Please reconnect.");
@@ -161,7 +156,6 @@ describe("turnOutcomeNotificationContent", () => {
     const longText = "A".repeat(200);
     expect(
       resolveTurnOutcomeNotificationBody({
-        events: [],
         turnId: "turn-1",
         messages: [makeMessage({ content: longText })],
         status: "completed",

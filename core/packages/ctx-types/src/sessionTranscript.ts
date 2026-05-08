@@ -65,8 +65,7 @@ export type SessionEventType =
   | "artifacts_set"
   | "done"
   | "interrupt_requested"
-  | "turn_interrupted"
-  | "error";
+  | "turn_interrupted";
 
 export type TurnLifecycleEventPayload = {
   message_id?: string;
@@ -108,6 +107,15 @@ export type SessionActivityState = {
   last_turn_status?: SessionTurnStatus | null;
 };
 
+export type SessionTurnFailure = {
+  message?: string | null;
+  details?: unknown | null;
+  kind?: string | null;
+  reason?: string | null;
+  provider?: string | null;
+  provider_id?: string | null;
+};
+
 export type SessionTurn = {
   turn_id: string;
   session_id: string;
@@ -121,6 +129,7 @@ export type SessionTurn = {
   assistant_partial?: string | null;
   thought_partial?: string | null;
   metrics_json?: Record<string, unknown> | null;
+  failure?: SessionTurnFailure | null;
   tool_total: number;
   tool_pending: number;
   tool_running: number;

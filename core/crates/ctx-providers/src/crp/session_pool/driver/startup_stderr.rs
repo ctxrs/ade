@@ -57,18 +57,16 @@ pub(super) async fn handle_startup_stderr_line(
 
     if let Some(message) = extract_auth_error_from_stderr_line(line) {
         session.opening.store(false, Ordering::SeqCst);
-        let error = NormalizedEvent {
-            event_type: SessionEventType::Error,
-            payload_json: json!({
-                "message": message,
-                "source": "crp_stderr",
-            }),
-        };
-        let emitted = event_sink.send(error.clone()).await.is_ok();
         session.process.shutdown("crp_auth_error_stderr").await;
         return Ok(Some(StartupStderrOutcome {
-            outcome: ProviderTurnOutcome::failed_with_context(message, None, None, None, emitted),
-            terminal_events: vec![error],
+            outcome: ProviderTurnOutcome::failed_with_context(
+                message,
+                None,
+                Some(json!({ "source": "crp_stderr" })),
+                Some(json!("auth_error")),
+                false,
+            ),
+            terminal_events: Vec::new(),
         }));
     }
 

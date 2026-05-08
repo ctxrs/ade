@@ -1,4 +1,5 @@
 use ctx_core::models::{SessionEvent, SessionEventType, SessionTurnStatus};
+use ctx_core::session_projection::terminal_status_from_finished_payload;
 use serde_json::Value;
 
 use super::state::EventLoopRuntimeState;
@@ -20,7 +21,7 @@ pub(super) fn is_truthful_start_activity(event_type: &SessionEventType) -> bool 
             | SessionEventType::ToolResult
             | SessionEventType::Done
             | SessionEventType::TurnInterrupted
-            | SessionEventType::Error
+            | SessionEventType::TurnFinished
     )
 }
 
@@ -108,11 +109,14 @@ pub(super) async fn handle_turn_interrupted(
         .await;
 }
 
-pub(super) async fn handle_error_event(
+pub(super) async fn handle_turn_finished(
     ctx: &TurnEventLoop,
     runtime: &mut EventLoopRuntimeState,
     event: &SessionEvent,
 ) {
+    let Some(status) = terminal_status_from_finished_payload(&event.payload_json) else {
+        return;
+    };
     let Some(state) = ctx.state() else {
         return;
     };
@@ -120,22 +124,50 @@ pub(super) async fn handle_error_event(
     if runtime.terminal_status.is_some() {
         return;
     }
-    let error_message = event
-        .payload_json
-        .get("message")
-        .and_then(Value::as_str)
-        .unwrap_or("provider runtime error")
-        .to_string();
-    record_failed_turn_telemetry(
-        ctx,
-        runtime,
-        state.as_ref(),
-        error_message,
-        event.payload_json.get("details").cloned(),
-        event.payload_json.get("kind").cloned(),
-    )
-    .await;
-    runtime.terminal_status = Some(SessionTurnStatus::Failed);
+    match status {
+        SessionTurnStatus::Completed => {
+            record_terminal_run_telemetry(
+                ctx,
+                runtime,
+                state.as_ref(),
+                "run_complete",
+                true,
+                "completed",
+            )
+            .await;
+        }
+        SessionTurnStatus::Failed => {
+            let error_message = event
+                .payload_json
+                .get("message")
+                .or_else(|| event.payload_json.get("error"))
+                .and_then(Value::as_str)
+                .unwrap_or("provider runtime error")
+                .to_string();
+            record_failed_turn_telemetry(
+                ctx,
+                runtime,
+                state.as_ref(),
+                error_message,
+                event.payload_json.get("details").cloned(),
+                event.payload_json.get("kind").cloned(),
+            )
+            .await;
+        }
+        SessionTurnStatus::Interrupted => {
+            record_terminal_run_telemetry(
+                ctx,
+                runtime,
+                state.as_ref(),
+                "run_interrupt",
+                false,
+                "interrupted",
+            )
+            .await;
+        }
+        SessionTurnStatus::Queued | SessionTurnStatus::Starting | SessionTurnStatus::Running => {}
+    }
+    runtime.terminal_status = Some(status);
     let _ = ctx
         .store
         .delete_session_events_for_turn_types(

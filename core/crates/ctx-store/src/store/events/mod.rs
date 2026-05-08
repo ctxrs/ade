@@ -12,5 +12,12 @@ fn is_terminal_session_event(event_type: &SessionEventType) -> bool {
     matches!(event_type, SessionEventType::TurnFinished)
 }
 
+fn ensure_supported_session_event_type(event_type: &SessionEventType) -> Result<()> {
+    if matches!(event_type, SessionEventType::Error) {
+        anyhow::bail!("session error events are not durable; use failed turn_finished");
+    }
+    Ok(())
+}
+
 include!("writes.rs");
 include!("reads.rs");

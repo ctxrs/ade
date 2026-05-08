@@ -219,9 +219,11 @@ pub(in crate::api) async fn get_provider_options(
                     auth_mode,
                     source_config: source_config.as_ref(),
                 },
-                probe_ok,
-                auth_required,
-                probe_error,
+                ProviderOptionsProbeResult {
+                    probe_ok,
+                    auth_required,
+                    probe_error,
+                },
             );
             let out = finalize_provider_options_response(
                 ProviderOptionsResponseContext {
@@ -263,9 +265,11 @@ pub(in crate::api) async fn get_provider_options(
                     source_config: source_config.as_ref(),
                 },
                 endpoint,
-                probe_ok,
-                auth_required,
-                probe_error,
+                ProviderOptionsProbeResult {
+                    probe_ok,
+                    auth_required,
+                    probe_error,
+                },
             );
             let out = finalize_provider_options_response(
                 ProviderOptionsResponseContext {

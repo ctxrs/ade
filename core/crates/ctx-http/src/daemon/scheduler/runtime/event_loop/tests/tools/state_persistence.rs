@@ -89,6 +89,7 @@ async fn tool_events_publish_after_tool_state_persists() {
             assistant_partial: None,
             thought_partial: None,
             metrics_json: None,
+            failure: None,
             tool_total: 0,
             tool_pending: 0,
             tool_running: 0,

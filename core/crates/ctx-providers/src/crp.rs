@@ -9,6 +9,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::time::Duration;
 use uuid::Uuid;
 
+#[cfg(test)]
 use ctx_core::models::SessionEventType;
 use ctx_core::provider_ids::CODEX_PROVIDER_ID;
 pub use ctx_crp_protocol::CrpModelInfo;
@@ -183,7 +184,6 @@ impl ProviderAdapter for Tier1CrpAdapter {
         let (done_tx, done_rx) = oneshot::channel::<()>();
         let (outcome_tx, outcome_rx) = oneshot::channel::<ProviderTurnOutcome>();
         let pool = Arc::clone(&self.pool);
-        let error_sink = event_sink.clone();
         let join = tokio::spawn(async move {
             let session_key = env
                 .get("CTX_SESSION_ID")
@@ -201,22 +201,13 @@ impl ProviderAdapter for Tier1CrpAdapter {
             };
             let outcome = match pool.prompt(request).await {
                 Ok(outcome) => outcome,
-                Err(err) => {
-                    let emitted = error_sink
-                        .send(NormalizedEvent {
-                            event_type: SessionEventType::Error,
-                            payload_json: json!({ "message": err.to_string() }),
-                        })
-                        .await
-                        .is_ok();
-                    ProviderTurnOutcome::failed_with_context(
-                        err.to_string(),
-                        None,
-                        None,
-                        None,
-                        emitted,
-                    )
-                }
+                Err(err) => ProviderTurnOutcome::failed_with_context(
+                    err.to_string(),
+                    None,
+                    None,
+                    None,
+                    false,
+                ),
             };
             let _ = outcome_tx.send(outcome);
             pool.trigger_background_reap();

@@ -1,4 +1,5 @@
 use self::assistant::handle_assistant_complete;
+use self::failure::fail_turn;
 use self::provider_events::{
     claim_init_provider_session_ref, enrich_done_payload, record_first_provider_event_metric,
 };
@@ -7,7 +8,7 @@ use self::state::{
     should_process_post_terminal_assistant_complete, EventLoopRuntimeState,
 };
 use self::terminal::{
-    handle_done_event, handle_error_event, handle_session_gap_notice, handle_turn_interrupted,
+    handle_done_event, handle_session_gap_notice, handle_turn_finished, handle_turn_interrupted,
     is_truthful_start_activity,
 };
 use self::tools::{handle_persisted_tool_event, prepare_tool_event_payload};
@@ -130,7 +131,7 @@ async fn run_turn_event_loop(mut ctx: TurnEventLoop) {
         let Some(state) = ctx.state() else {
             break;
         };
-        let mut event_type = ev.event_type.clone();
+        let event_type = ev.event_type.clone();
         let raw_payload = ev.payload_json.clone();
         let mut payload = raw_payload.clone();
 
@@ -139,28 +140,32 @@ async fn run_turn_event_loop(mut ctx: TurnEventLoop) {
         }
 
         if matches!(&ev.event_type, SessionEventType::Init) {
-            claim_init_provider_session_ref(
-                &mut ctx,
-                state.as_ref(),
-                &mut event_type,
-                &mut payload,
-            )
-            .await;
+            if let Some(failure) =
+                claim_init_provider_session_ref(&mut ctx, state.as_ref(), &mut payload).await
+            {
+                fail_turn(&ctx, &mut runtime, failure).await;
+                continue;
+            }
         }
 
         if matches!(&ev.event_type, SessionEventType::Done) {
             enrich_done_payload(&ctx, &mut payload);
         }
 
-        if should_check_store_terminal_status(&event_type) {
-            let _ = should_drop_post_terminal_event(&ctx, &mut runtime).await;
-        }
+        let dropped_by_store_terminal_status = should_check_store_terminal_status(&event_type)
+            && should_drop_post_terminal_event(&ctx, &mut runtime).await
+            && !should_process_post_terminal_assistant_complete(
+                &event_type,
+                runtime.terminal_status.as_ref(),
+            );
         let allow_post_terminal_assistant_complete =
             should_process_post_terminal_assistant_complete(
                 &event_type,
                 runtime.terminal_status.as_ref(),
             );
-        if runtime.terminal_status.is_some() && !allow_post_terminal_assistant_complete {
+        if (runtime.terminal_status.is_some() && !allow_post_terminal_assistant_complete)
+            || dropped_by_store_terminal_status
+        {
             tracing::debug!(
                 session_id = %ctx.session_id.0,
                 run_id = %ctx.run_id.0,
@@ -302,8 +307,8 @@ async fn run_turn_event_loop(mut ctx: TurnEventLoop) {
             SessionEventType::TurnInterrupted => {
                 handle_turn_interrupted(&ctx, &mut runtime, &event).await;
             }
-            SessionEventType::Error => {
-                handle_error_event(&ctx, &mut runtime, &event).await;
+            SessionEventType::TurnFinished => {
+                handle_turn_finished(&ctx, &mut runtime, &event).await;
             }
             _ => {}
         }

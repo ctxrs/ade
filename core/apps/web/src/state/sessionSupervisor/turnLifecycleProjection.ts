@@ -41,11 +41,55 @@ export const resolveTurnStatusFromLifecycleEvent = (
     }
     case "turn_interrupted":
       return mergeOrderedTurnStatus(previousStatus, "interrupted");
-    case "error":
-      return mergeOrderedTurnStatus(previousStatus, "failed");
     case "done":
       return mergeOrderedTurnStatus(previousStatus, "completed");
     default:
       return null;
   }
+};
+
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+
+const readNonEmptyString = (value: unknown): string | undefined => {
+  if (typeof value !== "string") return undefined;
+  const text = value.trim();
+  return text.length > 0 ? text : undefined;
+};
+
+export const resolveTurnFailureFromLifecycleEvent = (
+  event: SessionEvent,
+): SessionTurn["failure"] | null => {
+  if (event.event_type !== "turn_finished") return null;
+  if (readTurnStatusFromPayload(event) !== "failed") return null;
+
+  const payload = asRecord(event.payload_json);
+  const details = payload.details;
+  const hasDetails = details !== null && details !== undefined;
+  const failure = {
+    message:
+      readNonEmptyString(payload.message) ??
+      readNonEmptyString(payload.error) ??
+      readNonEmptyString(payload.reason),
+    details: hasDetails ? details : undefined,
+    kind: readNonEmptyString(payload.kind),
+    reason: readNonEmptyString(payload.reason),
+    provider: readNonEmptyString(payload.provider),
+    provider_id:
+      readNonEmptyString(payload.provider_id) ??
+      readNonEmptyString(payload.providerId),
+  };
+
+  if (
+    !failure.message &&
+    !hasDetails &&
+    !failure.kind &&
+    !failure.reason &&
+    !failure.provider &&
+    !failure.provider_id
+  ) {
+    return null;
+  }
+
+  return failure;
 };

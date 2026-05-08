@@ -3,6 +3,9 @@ use ctx_core::models::{
     SessionEvent, SessionEventType, SessionMetadata, SessionSummaryDelta, SessionTurn,
     SessionTurnStatus, SessionTurnToolSummary,
 };
+use ctx_core::session_projection::{
+    terminal_status_from_finished_payload, turn_failure_from_finished_payload,
+};
 
 pub fn session_metadata_from_session(session: &Session) -> SessionMetadata {
     SessionMetadata {
@@ -108,12 +111,8 @@ pub fn is_session_gap_notice(event: &SessionEvent) -> bool {
             .is_some_and(|kind| kind == "session_gap")
 }
 
-fn turn_status_from_finished_event(event: &SessionEvent) -> SessionTurnStatus {
-    event
-        .payload_json
-        .get("status")
-        .and_then(|value| serde_json::from_value::<SessionTurnStatus>(value.clone()).ok())
-        .unwrap_or(SessionTurnStatus::Completed)
+fn terminal_status_from_finished_event(event: &SessionEvent) -> Option<SessionTurnStatus> {
+    terminal_status_from_finished_payload(&event.payload_json)
 }
 
 pub fn patch_turn_from_event(turn: &mut SessionTurn, event: &SessionEvent) {
@@ -125,8 +124,12 @@ pub fn patch_turn_from_event(turn: &mut SessionTurn, event: &SessionEvent) {
             turn.status = SessionTurnStatus::Running;
         }
         SessionEventType::TurnFinished => {
-            turn.status = turn_status_from_finished_event(event);
+            let Some(status) = terminal_status_from_finished_event(event) else {
+                return;
+            };
+            turn.status = status;
             turn.end_seq = Some(event.seq);
+            turn.failure = turn_failure_from_finished_payload(&event.payload_json);
         }
         _ => {}
     }
@@ -146,10 +149,12 @@ pub fn derive_summary_activity(event: &SessionEvent) -> Option<SessionActivitySt
             is_working: true,
             last_turn_status: Some(SessionTurnStatus::Running),
         }),
-        SessionEventType::TurnFinished => Some(SessionActivityState {
-            is_working: false,
-            last_turn_status: Some(turn_status_from_finished_event(event)),
-        }),
+        SessionEventType::TurnFinished => {
+            terminal_status_from_finished_event(event).map(|status| SessionActivityState {
+                is_working: false,
+                last_turn_status: Some(status),
+            })
+        }
         _ => None,
     }
 }
@@ -288,6 +293,7 @@ pub fn turn_from_event(event: &SessionEvent, message: Option<&Message>) -> Optio
         assistant_partial: None,
         thought_partial: None,
         metrics_json: None,
+        failure: None,
         tool_total: 0,
         tool_pending: 0,
         tool_running: 0,
@@ -304,7 +310,6 @@ pub fn should_refresh_turn_from_store(event_type: &SessionEventType) -> bool {
             | SessionEventType::Done
             | SessionEventType::TurnFinished
             | SessionEventType::TurnInterrupted
-            | SessionEventType::Error
     )
 }
 
@@ -312,7 +317,7 @@ pub fn should_refresh_turn_from_store(event_type: &SessionEventType) -> bool {
 mod tests {
     use super::*;
     use chrono::Utc;
-    use ctx_core::ids::{SessionEventId, SessionId, TaskId, WorkspaceId, WorktreeId};
+    use ctx_core::ids::{SessionEventId, SessionId, TaskId, TurnId, WorkspaceId, WorktreeId};
     use ctx_core::models::{
         ExecutionEnvironment, SessionEventType, SessionStatus, SessionTurnStatus,
     };
@@ -387,12 +392,60 @@ mod tests {
         ))
         .expect("failed finish should publish summary activity");
         assert_eq!(failed.last_turn_status, Some(SessionTurnStatus::Failed));
+
+        assert!(derive_summary_activity(&test_event(
+            SessionEventType::TurnFinished,
+            json!({"status": "running"}),
+        ))
+        .is_none());
+        assert!(
+            derive_summary_activity(&test_event(SessionEventType::TurnFinished, json!({}),))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn patch_turn_ignores_non_terminal_turn_finished_status() {
+        let created_at = Utc::now();
+        let mut turn = SessionTurn {
+            turn_id: TurnId::new(),
+            session_id: SessionId::new(),
+            run_id: None,
+            user_message_id: None,
+            status: SessionTurnStatus::Running,
+            start_seq: Some(1),
+            end_seq: None,
+            started_at: created_at,
+            updated_at: created_at,
+            assistant_partial: None,
+            thought_partial: None,
+            metrics_json: None,
+            failure: None,
+            tool_total: 0,
+            tool_pending: 0,
+            tool_running: 0,
+            tool_completed: 0,
+            tool_failed: 0,
+        };
+        let event = test_event(
+            SessionEventType::TurnFinished,
+            json!({"status": "running", "message": "not terminal"}),
+        );
+
+        patch_turn_from_event(&mut turn, &event);
+
+        assert_eq!(turn.status, SessionTurnStatus::Running);
+        assert_eq!(turn.end_seq, None);
+        assert_eq!(turn.failure, None);
+        assert_eq!(turn.updated_at, created_at);
     }
 
     #[test]
     fn raw_terminal_events_do_not_publish_terminal_summary_activity() {
         assert!(derive_summary_activity(&test_event(SessionEventType::Done, json!({}))).is_none());
-        assert!(derive_summary_activity(&test_event(SessionEventType::Error, json!({}))).is_none());
+        assert!(
+            derive_summary_activity(&test_event(SessionEventType::Notice, json!({}))).is_none()
+        );
         assert!(
             derive_summary_activity(&test_event(SessionEventType::TurnInterrupted, json!({})))
                 .is_none()

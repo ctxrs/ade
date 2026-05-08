@@ -214,7 +214,7 @@ impl ProviderTurnOutcome {
             details: None,
             kind: None,
             provider_cancelled: None,
-            terminal_event_emitted: true,
+            terminal_event_emitted: false,
         }
     }
 

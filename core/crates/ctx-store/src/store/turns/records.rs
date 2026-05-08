@@ -6,6 +6,12 @@ impl Store {
             .map(serde_json::to_string)
             .transpose()
             .context("serializing turn metrics")?;
+        let failure_json = turn
+            .failure
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .context("serializing turn failure")?;
         let turn_id = turn.turn_id.0.to_string();
         let session_id = turn.session_id.0.to_string();
         let run_id = turn.run_id.map(|r| r.0.to_string());
@@ -25,6 +31,7 @@ impl Store {
             + bytes_opt_str(turn.assistant_partial.as_deref())
             + bytes_opt_str(turn.thought_partial.as_deref())
             + bytes_opt_str(metrics_json.as_deref())
+            + bytes_opt_str(failure_json.as_deref())
             + (I64_BYTES * 5);
         let result = self
             .query(
@@ -41,13 +48,14 @@ impl Store {
                     assistant_partial,
                     thought_partial,
                     metrics_json,
+                    failure_json,
                     tool_total,
                     tool_pending,
                     tool_running,
                     tool_completed,
                     tool_failed
                )
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
             )
             .bind(&turn_id)
             .bind(&session_id)
@@ -61,6 +69,7 @@ impl Store {
             .bind(turn.assistant_partial.as_deref())
             .bind(turn.thought_partial.as_deref())
             .bind(metrics_json)
+            .bind(failure_json)
             .bind(turn.tool_total)
             .bind(turn.tool_pending)
             .bind(turn.tool_running)
@@ -85,9 +94,9 @@ impl Store {
         turn_id: TurnId,
     ) -> Result<Option<SessionTurn>> {
         let row = self.query(
-            r#"SELECT turn_id, session_id, run_id, user_message_id, status,
+                r#"SELECT turn_id, session_id, run_id, user_message_id, status,
                       start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
-                      metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
+                      metrics_json, failure_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
                FROM session_turns
                WHERE session_id = ? AND turn_id = ?"#,
         )
@@ -104,7 +113,7 @@ impl Store {
             .query(
                 r#"SELECT turn_id, session_id, run_id, user_message_id, status,
                       start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
-                      metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
+                      metrics_json, failure_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
                FROM session_turns
                WHERE turn_id = ?"#,
             )
@@ -123,7 +132,7 @@ impl Store {
             .query(
                 r#"SELECT turn_id, session_id, run_id, user_message_id, status,
                           start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
-                          metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
+                          metrics_json, failure_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
                    FROM session_turns
                    WHERE session_id = ? AND status IN ('queued', 'running')
                    ORDER BY start_seq DESC
@@ -144,7 +153,7 @@ impl Store {
             .query(
                 r#"SELECT turn_id, session_id, run_id, user_message_id, status,
                           start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
-                          metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
+                          metrics_json, failure_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
                    FROM session_turns
                    WHERE session_id = ?
                    ORDER BY start_seq DESC
@@ -166,7 +175,7 @@ impl Store {
             .query(
                 r#"SELECT turn_id, session_id, run_id, user_message_id, status,
                           start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
-                          metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
+                          metrics_json, failure_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
                    FROM session_turns
                    WHERE session_id = ? AND run_id = ?
                    ORDER BY start_seq DESC

@@ -99,6 +99,7 @@ async fn daemon_shutdown_endpoint_terminalizes_running_turns_before_ack() {
             assistant_partial: None,
             thought_partial: None,
             metrics_json: None,
+            failure: None,
             tool_total: 0,
             tool_pending: 0,
             tool_running: 0,

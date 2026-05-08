@@ -78,6 +78,7 @@ async fn insert_running_turn(
             assistant_partial: None,
             thought_partial: None,
             metrics_json: None,
+            failure: None,
             tool_total: 0,
             tool_pending: 0,
             tool_running: 0,
@@ -257,12 +258,19 @@ async fn reconcile_provider_exit_emits_failed_terminal_events_when_missing() {
         .list_session_events_for_turn(harness.session.id, turn_id, false)
         .await
         .unwrap();
-    let error = events
+    let failed_finished = events
         .iter()
-        .find(|event| matches!(event.event_type, SessionEventType::Error))
-        .expect("error event");
+        .find(|event| {
+            matches!(event.event_type, SessionEventType::TurnFinished)
+                && event
+                    .payload_json
+                    .get("status")
+                    .and_then(|value| value.as_str())
+                    == Some("failed")
+        })
+        .expect("failed turn_finished event");
     assert_eq!(
-        error
+        failed_finished
             .payload_json
             .get("reason")
             .and_then(|value| value.as_str()),
@@ -331,10 +339,12 @@ async fn start_failure_marks_turn_failed_and_finishes() {
         .list_session_events_for_turn(harness.session.id, turn_id, false)
         .await
         .unwrap();
-    assert!(events
-        .iter()
-        .any(|event| matches!(event.event_type, SessionEventType::Error)));
-    assert!(events
-        .iter()
-        .any(|event| matches!(event.event_type, SessionEventType::TurnFinished)));
+    assert!(events.iter().any(|event| {
+        matches!(event.event_type, SessionEventType::TurnFinished)
+            && event
+                .payload_json
+                .get("status")
+                .and_then(|value| value.as_str())
+                == Some("failed")
+    }));
 }

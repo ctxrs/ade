@@ -282,8 +282,8 @@ impl ProviderAdapter for GeminiLoginTestAdapter {
             GeminiLoginFixture::Failure { error } => {
                 let _ = event_sink
                     .send(NormalizedEvent {
-                        event_type: SessionEventType::Error,
-                        payload_json: json!({ "message": error }),
+                        event_type: SessionEventType::Notice,
+                        payload_json: json!({ "kind": "auth_error", "message": error }),
                     })
                     .await;
                 Err(anyhow!("{error}"))

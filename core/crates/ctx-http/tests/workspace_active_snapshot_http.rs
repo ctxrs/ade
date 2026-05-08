@@ -609,6 +609,7 @@ async fn workspace_active_heads_batch_strips_partials() {
             assistant_partial: Some("partial".to_string()),
             thought_partial: Some("thinking".to_string()),
             metrics_json: None,
+            failure: None,
             tool_total: 0,
             tool_pending: 0,
             tool_running: 0,

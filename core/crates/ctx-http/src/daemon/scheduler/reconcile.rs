@@ -7,7 +7,6 @@ use ctx_core::ids::{RunId, TurnId};
 use ctx_core::models::{SessionEventType, SessionTurnStatus};
 use ctx_core::session_projection::resolve_turn_terminal_state;
 
-use crate::daemon::scheduler::persistence::{emit_event, flush_session_events};
 use crate::daemon::AppState;
 
 pub async fn reconcile_turn_terminal_state(
@@ -125,40 +124,26 @@ pub async fn reconcile_turn_failed_on_provider_exit(
     }
 
     let message_id = turn.user_message_id.map(|id| id.0);
-    let _ = emit_event(
-        state,
-        session_id,
-        run_id,
-        Some(turn_id),
-        SessionEventType::Error,
-        json!({
-            "message_id": message_id,
-            "error": "provider exited without emitting a terminal event",
-            "reason": fallback_reason,
-            "status": "failed",
-        }),
-    )
-    .await;
-    flush_session_events(&store, session_id, "reconcile_turn_failed_on_provider_exit").await;
-    let _ = store
-        .repair_session_turn_projection_from_events(session_id, turn_id)
-        .await;
-    let _ = emit_event(
-        state,
-        session_id,
-        run_id,
-        Some(turn_id),
-        SessionEventType::TurnFinished,
-        json!({
-            "message_id": message_id,
-            "status": "failed",
-            "reason": fallback_reason,
-        }),
-    )
-    .await;
-    let _ = store
-        .repair_session_turn_projection_from_events(session_id, turn_id)
-        .await;
+    let persisted = store
+        .persist_turn_terminal_events(
+            session_id,
+            run_id,
+            turn_id,
+            vec![(
+                SessionEventType::TurnFinished,
+                json!({
+                    "message_id": message_id,
+                    "status": "failed",
+                    "message": "provider exited without emitting a terminal event",
+                    "reason": fallback_reason,
+                    "kind": "provider_exit_without_terminal_event",
+                }),
+            )],
+        )
+        .await?;
+    for event in persisted {
+        state.publish_event(event).await;
+    }
     Ok(())
 }
 
@@ -206,7 +191,7 @@ mod tests {
     #[test]
     fn turn_finished_without_status_does_not_resolve_terminal_state() {
         let events = vec![
-            event(3, SessionEventType::Error, json!({"status": "failed"})),
+            event(3, SessionEventType::Done, json!({})),
             event(4, SessionEventType::TurnFinished, json!({})),
         ];
 

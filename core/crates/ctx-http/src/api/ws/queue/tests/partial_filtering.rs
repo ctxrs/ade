@@ -68,6 +68,21 @@ fn should_stream_head_delta_keeps_foreground_session() {
 }
 
 #[test]
+fn should_stream_head_delta_keeps_active_primary_session() {
+    let session_id = SessionId::new();
+    let mut active_task_sessions = HashMap::new();
+    active_task_sessions.insert(TaskId::new(), session_id);
+    let explicit_sessions = HashSet::new();
+
+    assert!(should_stream_head_delta(
+        &active_task_sessions,
+        &explicit_sessions,
+        None,
+        session_id,
+    ));
+}
+
+#[test]
 fn should_stream_head_delta_drops_non_active_non_explicit_background_session() {
     let session_id = SessionId::new();
     let active_task_sessions = HashMap::new();

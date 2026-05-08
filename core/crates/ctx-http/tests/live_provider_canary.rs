@@ -42,13 +42,18 @@ async fn wait_for_terminal(state: &Arc<AppState>, session_id: ctx_core::ids::Ses
         {
             return;
         }
-        if events.iter().any(|e| {
-            matches!(
-                e.event_type,
-                SessionEventType::Error | SessionEventType::AuthRequired
-            )
-        }) {
-            panic!("live canary saw terminal error/auth-required events: {events:#?}");
+        if events
+            .iter()
+            .any(|e| matches!(e.event_type, SessionEventType::AuthRequired))
+            || events.iter().any(|e| {
+                matches!(e.event_type, SessionEventType::TurnFinished)
+                    && e.payload_json
+                        .get("status")
+                        .and_then(|value| value.as_str())
+                        == Some("failed")
+            })
+        {
+            panic!("live canary saw terminal failure/auth-required events: {events:#?}");
         }
         if tokio::time::Instant::now() >= deadline {
             panic!("timed out waiting for Done event: {events:#?}");

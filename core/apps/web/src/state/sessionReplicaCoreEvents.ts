@@ -101,7 +101,6 @@ const TERMINAL_VISIBLE_EVENT_TYPES = new Set([
   "assistant_complete",
   "assistant_message_inserted",
   "done",
-  "error",
   "turn_finished",
   "turn_interrupted",
 ]);

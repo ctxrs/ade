@@ -3,10 +3,7 @@ use super::*;
 fn has_terminal_event(event_type: &SessionEventType) -> bool {
     matches!(
         event_type,
-        SessionEventType::Done
-            | SessionEventType::Error
-            | SessionEventType::TurnInterrupted
-            | SessionEventType::TurnFinished
+        SessionEventType::Done | SessionEventType::TurnInterrupted | SessionEventType::TurnFinished
     )
 }
 
@@ -63,7 +60,6 @@ pub(crate) async fn finalize_start_failure_if_needed(
             reason: Some("start_failed"),
             details: None,
             kind: Some(json!("start_failed")),
-            emit_error_event: true,
         },
     )
     .await;

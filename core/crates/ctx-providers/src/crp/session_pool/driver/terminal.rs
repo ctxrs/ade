@@ -22,7 +22,13 @@ pub(super) fn outcome_from_terminal_events(
 ) -> Option<ProviderTurnOutcome> {
     events.iter().find_map(|event| match event.event_type {
         SessionEventType::Done => Some(ProviderTurnOutcome::completed()),
-        SessionEventType::Error => {
+        SessionEventType::TurnFinished
+            if event
+                .payload_json
+                .get("status")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|status| status == "failed" || status == "error") =>
+        {
             let message = event
                 .payload_json
                 .get("message")
@@ -121,11 +127,12 @@ mod tests {
     }
 
     #[test]
-    fn outcome_from_terminal_events_prefers_first_error_terminal_event() {
+    fn outcome_from_terminal_events_prefers_first_failed_turn_finished() {
         let outcome = outcome_from_terminal_events(&[
             event(
-                SessionEventType::Error,
+                SessionEventType::TurnFinished,
                 json!({
+                    "status": "failed",
                     "message": "boom",
                     "reason": "crp_error",
                     "details": {"code": 42},

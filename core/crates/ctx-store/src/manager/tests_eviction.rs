@@ -89,6 +89,7 @@ async fn evicted_workspace_clone_remains_usable_until_last_handle_drops() -> Res
             assistant_partial: None,
             thought_partial: None,
             metrics_json: None,
+            failure: None,
             tool_total: 0,
             tool_pending: 0,
             tool_running: 0,

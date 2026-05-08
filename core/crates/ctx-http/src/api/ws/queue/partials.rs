@@ -26,12 +26,15 @@ pub(crate) fn is_foreground_session(
 }
 
 pub(crate) fn should_stream_head_delta(
-    _active_task_sessions: &HashMap<TaskId, SessionId>,
+    active_task_sessions: &HashMap<TaskId, SessionId>,
     explicit_sessions: &HashSet<SessionId>,
     foreground_session_ids: Option<&HashSet<SessionId>>,
     session_id: SessionId,
 ) -> bool {
-    explicit_sessions.contains(&session_id)
+    active_task_sessions
+        .values()
+        .any(|active_session_id| *active_session_id == session_id)
+        || explicit_sessions.contains(&session_id)
         || allows_partial_for_foreground_session(foreground_session_ids, session_id)
 }
 

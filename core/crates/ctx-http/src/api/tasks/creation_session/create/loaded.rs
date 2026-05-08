@@ -125,14 +125,16 @@ pub(in crate::api::tasks) async fn create_session_for_loaded_task_inner(
     let reasoning_effort = resolved_model.reasoning_effort.clone();
     let preferred_model_id = compose_model_id(&model_id, reasoning_effort.as_deref());
 
-    if let Some(existing) = resolve_existing_requested_session(
-        &state,
-        &store,
-        &task,
-        &workspace,
-        ExistingRequestedSession {
-            requested_session_id: session_id,
-            created_worktree_id,
+    if let Some(existing) = resolve_existing_requested_session(ExistingRequestedSession {
+        state: &state,
+        store: &store,
+        task: &task,
+        workspace: &workspace,
+        requested_session_id: session_id,
+        created_worktree_id,
+        identity: SessionCreationIdentity {
+            task_id: task.id,
+            workspace_id: task.workspace_id,
             worktree_id,
             execution_environment,
             provider_id: &provider_id,
@@ -140,10 +142,10 @@ pub(in crate::api::tasks) async fn create_session_for_loaded_task_inner(
             reasoning_effort: reasoning_effort.as_deref(),
             parent_session_id,
             relationship: relationship.as_deref(),
-            remember_model_preference: req.remember_model_preference,
-            preferred_model_id: &preferred_model_id,
         },
-    )
+        remember_model_preference: req.remember_model_preference,
+        preferred_model_id: &preferred_model_id,
+    })
     .await?
     {
         return Ok(Json(existing));

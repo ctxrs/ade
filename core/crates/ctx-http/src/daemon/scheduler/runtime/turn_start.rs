@@ -109,7 +109,7 @@ pub(super) struct PreparedTurnStart {
     pub(super) context_window_metrics: Option<serde_json::Value>,
 }
 
-pub(super) struct PrepareTurnStartInput<'a> {
+pub(super) struct PrepareTurnStartRequest<'a> {
     pub(super) state: &'a Arc<AppState>,
     pub(super) store: &'a ctx_store::Store,
     pub(super) session: &'a Session,
@@ -121,9 +121,9 @@ pub(super) struct PrepareTurnStartInput<'a> {
 }
 
 pub(super) async fn prepare_turn_start(
-    input: PrepareTurnStartInput<'_>,
+    request: PrepareTurnStartRequest<'_>,
 ) -> Result<PreparedTurnStart> {
-    let PrepareTurnStartInput {
+    let PrepareTurnStartRequest {
         state,
         store,
         session,
@@ -132,7 +132,7 @@ pub(super) async fn prepare_turn_start(
         execution_environment,
         session_root_kind,
         queued,
-    } = input;
+    } = request;
     let QueuedMessage {
         mut message,
         enqueued_at,

@@ -24,6 +24,12 @@ pub(in crate::api::provider_launch) struct ProviderOptionsResponseBase<'a> {
         Option<&'a harness_sources::HarnessProviderSourceConfig>,
 }
 
+pub(in crate::api::provider_launch) struct ProviderOptionsProbeResult {
+    pub(in crate::api::provider_launch) probe_ok: bool,
+    pub(in crate::api::provider_launch) auth_required: bool,
+    pub(in crate::api::provider_launch) probe_error: Option<String>,
+}
+
 pub(in crate::api::provider_launch) fn config_error_provider_options_response(
     provider_id: &str,
     workspace_id: WorkspaceId,
@@ -91,22 +97,20 @@ pub(in crate::api::provider_launch) fn unusable_provider_options_response(
 
 pub(in crate::api::provider_launch) fn env_probe_provider_options_response(
     base: ProviderOptionsResponseBase<'_>,
-    probe_ok: bool,
-    auth_required: bool,
-    probe_error: Option<String>,
+    probe: ProviderOptionsProbeResult,
 ) -> serde_json::Value {
     let mut response = serde_json::json!({
         "provider_id": base.provider_id,
         "workspace_id": base.workspace_id.0,
         "installed": base.provider_status.installed,
-        "probe_ok": probe_ok,
+        "probe_ok": probe.probe_ok,
         "supports_load": false,
-        "auth_required": auth_required,
+        "auth_required": probe.auth_required,
         "has_active_auth": base.has_active_auth,
         "auth_mode": base.auth_mode,
         "probed_at": chrono::Utc::now().to_rfc3339(),
     });
-    if let Some(probe_error) = probe_error {
+    if let Some(probe_error) = probe.probe_error {
         response["probe_error"] = serde_json::json!(probe_error);
     }
     attach_source_config(&mut response, base.source_config);
@@ -116,24 +120,22 @@ pub(in crate::api::provider_launch) fn env_probe_provider_options_response(
 pub(in crate::api::provider_launch) fn selected_endpoint_runtime_launch_options_response(
     base: ProviderOptionsResponseBase<'_>,
     endpoint: &HarnessEndpointRecord,
-    probe_ok: bool,
-    auth_required: bool,
-    probe_error: Option<String>,
+    probe: ProviderOptionsProbeResult,
 ) -> serde_json::Value {
     let now = chrono::Utc::now();
     let mut response = serde_json::json!({
         "provider_id": base.provider_id,
         "workspace_id": base.workspace_id.0,
         "installed": base.provider_status.installed,
-        "probe_ok": probe_ok,
+        "probe_ok": probe.probe_ok,
         "supports_load": false,
-        "auth_required": auth_required,
+        "auth_required": probe.auth_required,
         "has_active_auth": base.has_active_auth,
         "auth_mode": base.auth_mode,
         "models": endpoint_models_payload(base.provider_id, endpoint, now),
         "probed_at": now.to_rfc3339(),
     });
-    if let Some(probe_error) = probe_error {
+    if let Some(probe_error) = probe.probe_error {
         response["probe_error"] = serde_json::json!(probe_error);
     }
     attach_source_config(&mut response, base.source_config);

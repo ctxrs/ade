@@ -129,23 +129,6 @@ impl CrpSessionPool {
                                 "CRP runtime did not emit session.opened within {timeout_ms}ms after launching {runtime} provider session",
                             );
                             session.opening.store(false, Ordering::SeqCst);
-                            let emitted = req
-                                .event_sink
-                                .send(NormalizedEvent {
-                                    event_type: SessionEventType::Error,
-                                    payload_json: json!({
-                                        "kind": "provider_startup_timeout",
-                                        "reason": "provider_startup_timeout",
-                                        "message": message,
-                                        "details": {
-                                            "timeout_ms": timeout_ms,
-                                            "runtime": runtime,
-                                            "provider_id": self.agent.provider_id,
-                                        },
-                                    }),
-                                })
-                                .await
-                                .is_ok();
                             session.process.shutdown("crp_session_open_timeout").await;
                             return Ok(ProviderTurnOutcome::failed_with_context(
                                 message,
@@ -156,7 +139,7 @@ impl CrpSessionPool {
                                     "provider_id": self.agent.provider_id,
                                 })),
                                 Some(json!("provider_startup_timeout")),
-                                emitted,
+                                false,
                             ));
                         }
                         shutdown = shutdown_rx.changed() => {
@@ -371,22 +354,6 @@ impl CrpSessionPool {
                             "CRP runtime did not emit any events within {timeout_ms}ms after launching {runtime} provider session",
                         );
                         session.opening.store(false, Ordering::SeqCst);
-                        let _ = req
-                            .event_sink
-                            .send(NormalizedEvent {
-                                event_type: SessionEventType::Error,
-                                payload_json: json!({
-                                    "kind": "provider_startup_timeout",
-                                    "reason": "provider_startup_timeout",
-                                    "message": message,
-                                    "details": {
-                                        "timeout_ms": timeout_ms,
-                                        "runtime": runtime,
-                                        "provider_id": self.agent.provider_id,
-                                    },
-                                }),
-                            })
-                            .await;
                         session.process.shutdown("crp_first_event_timeout").await;
                         outcome = Some(ProviderTurnOutcome::failed_with_context(
                             message,
@@ -397,7 +364,7 @@ impl CrpSessionPool {
                                 "provider_id": self.agent.provider_id,
                             })),
                             Some(json!("provider_startup_timeout")),
-                            true,
+                            false,
                         ));
                         break;
                     }

@@ -3,6 +3,7 @@ import type { SessionEvent, SessionTurn } from "../../api/client";
 import {
   isTerminalTurnStatus,
   mergeOrderedTurnStatus,
+  resolveTurnFailureFromLifecycleEvent,
   resolveTurnStatusFromLifecycleEvent,
 } from "./turnLifecycleProjection";
 
@@ -47,17 +48,64 @@ describe("turnLifecycleProjection", () => {
     expect(resolveTurnStatusFromLifecycleEvent("running", event)).toBe("failed");
   });
 
+  it("treats turn_finished status error as failed", () => {
+    const event = buildEvent("turn_finished", { status: "error" });
+    expect(resolveTurnStatusFromLifecycleEvent("running", event)).toBe("failed");
+  });
+
   it("maps lifecycle events to the expected next statuses", () => {
     const cases: Array<[SessionTurn["status"] | undefined, SessionEvent["event_type"], SessionTurn["status"]]> = [
       [undefined, "turn_queued", "queued"],
       ["queued", "turn_started", "running"],
       ["running", "turn_interrupted", "interrupted"],
-      ["running", "error", "failed"],
       ["running", "done", "completed"],
     ];
 
     for (const [previousStatus, eventType, expectedStatus] of cases) {
       expect(resolveTurnStatusFromLifecycleEvent(previousStatus, buildEvent(eventType))).toBe(expectedStatus);
     }
+  });
+
+  it("extracts failure details from failed turn_finished", () => {
+    const failure = resolveTurnFailureFromLifecycleEvent(
+      buildEvent("turn_finished", {
+        status: "failed",
+        message: "provider failed",
+        details: { exit_code: 1 },
+        kind: "provider_protocol_violation",
+        providerId: "codex",
+      }),
+    );
+
+    expect(failure).toEqual({
+      message: "provider failed",
+      details: { exit_code: 1 },
+      kind: "provider_protocol_violation",
+      reason: undefined,
+      provider: undefined,
+      provider_id: "codex",
+    });
+  });
+
+  it("preserves scalar and array failure details from failed turn_finished", () => {
+    expect(
+      resolveTurnFailureFromLifecycleEvent(
+        buildEvent("turn_finished", {
+          status: "failed",
+          message: "provider failed",
+          details: "stderr tail",
+        }),
+      )?.details,
+    ).toBe("stderr tail");
+
+    expect(
+      resolveTurnFailureFromLifecycleEvent(
+        buildEvent("turn_finished", {
+          status: "failed",
+          message: "provider failed",
+          details: ["line one", "line two"],
+        }),
+      )?.details,
+    ).toEqual(["line one", "line two"]);
   });
 });

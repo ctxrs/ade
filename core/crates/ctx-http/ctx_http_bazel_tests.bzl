@@ -128,12 +128,39 @@ CTX_HTTP_MANUAL_ONLY_TESTS = [
 ]
 
 CTX_HTTP_INTEGRATION_SOURCE_DEPS = {
+    "acp_crp_bridge_tokens_e2e": [
+        "//core/crates/ctx-settings-model:lib",
+        "//core/crates/ctx-settings-service:lib",
+    ],
+    "harness_container_sandbox_e2e": [
+        "//core/crates/ctx-settings-model:lib",
+        "//core/crates/ctx-settings-service:lib",
+    ],
+    "memory_leak_e2e": [
+        "//core/crates/ctx-settings-model:lib",
+    ],
     "provider_target_scoped_installs": [
         "//core/crates/ctx-settings-model:lib",
         "//core/crates/ctx-settings-service:lib",
     ],
-    "title_generation_local": ["//core/crates/ctx-session-service:lib"],
-    "title_generation_local_e2e": ["//core/crates/ctx-session-service:lib"],
+    "resource_governance_systemd_e2e": [
+        "//core/crates/ctx-settings-model:lib",
+    ],
+    "workspace_attachments_local_canonical": [
+        "//core/crates/ctx-settings-model:lib",
+        "//core/crates/ctx-settings-service:lib",
+    ],
+    "workspace_runtime_crash_recovery": [
+        "//core/crates/ctx-settings-model:lib",
+    ],
+    "title_generation_local": [
+        "//core/crates/ctx-session-service:lib",
+        "//core/crates/ctx-settings-model:lib",
+    ],
+    "title_generation_local_e2e": [
+        "//core/crates/ctx-session-service:lib",
+        "//core/crates/ctx-settings-model:lib",
+    ],
 }
 
 CTX_HTTP_SUITE_EXTRA_TARGETS = {

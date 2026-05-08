@@ -83,12 +83,18 @@ export function deriveAuthUi(events: SessionEvent[]): AuthUi {
       message = readNonEmptyString(payload.message) ?? undefined;
       methods = fromMethodsValue(payload.auth_methods ?? payload.authMethods);
     }
-    if (kind === "auth_failed") {
+    if (kind === "auth_failed" || kind === "auth_error") {
       status = "failed";
       provider = readNonEmptyString(payload.provider) ?? undefined;
       message = readNonEmptyString(payload.message) ?? undefined;
     }
-    if (kind === "auth_finished") {
+    if (
+      kind === "auth_finished" ||
+      kind === "auth_complete" ||
+      kind === "auth_completed" ||
+      kind === "auth_success" ||
+      kind === "authenticated"
+    ) {
       status = "authenticated";
       provider = readNonEmptyString(payload.provider) ?? undefined;
       message = undefined;
@@ -236,16 +242,23 @@ export function deriveSessionError(
   if (turns.length === 0) return null;
   const lastTurn = turns[turns.length - 1];
   if (lastTurn.status !== "failed") return null;
+  if (lastTurn.failure) {
+    return {
+      message: extractErrorMessage(lastTurn.failure) ?? "Harness error.",
+      provider:
+        readNonEmptyString(lastTurn.failure.provider) ??
+        readNonEmptyString(lastTurn.failure.provider_id) ??
+        undefined,
+    };
+  }
   const turnId = idToString(lastTurn.turn_id);
   let failureEvent: SessionEvent | null = null;
   for (let i = events.length - 1; i >= 0; i--) {
     const ev = events[i];
-    if (ev.event_type !== "error" && ev.event_type !== "turn_finished") continue;
+    if (ev.event_type !== "turn_finished") continue;
     if (turnId && idToString(ev.turn_id) !== turnId) continue;
-    if (ev.event_type === "turn_finished") {
-      const status = readNonEmptyString(ev.payload_json?.status);
-      if (status !== "failed") continue;
-    }
+    const status = readNonEmptyString(ev.payload_json?.status);
+    if (status !== "failed") continue;
     failureEvent = ev;
     break;
   }

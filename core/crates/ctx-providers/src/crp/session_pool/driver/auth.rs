@@ -216,8 +216,9 @@ impl CrpSessionPool {
                                 if let Some(message) = extract_auth_error_from_stderr_line(&line) {
                                     let _ = event_sink
                                         .send(NormalizedEvent {
-                                            event_type: SessionEventType::Error,
+                                            event_type: SessionEventType::Notice,
                                             payload_json: json!({
+                                                "kind": "auth_error",
                                                 "message": message,
                                                 "source": "crp_stderr",
                                             }),

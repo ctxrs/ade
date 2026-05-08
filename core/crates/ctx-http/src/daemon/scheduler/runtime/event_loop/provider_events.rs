@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
-use ctx_core::models::SessionEventType;
 use serde_json::{json, Value};
 
 use crate::daemon::AppState;
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
 
 use super::super::helpers::read_codex_context_window_metrics;
+use super::failure::TurnFailurePayload;
 use super::TurnEventLoop;
 
 pub(super) async fn record_first_provider_event_metric(ctx: &TurnEventLoop, state: &AppState) {
@@ -40,9 +40,8 @@ pub(super) async fn record_first_provider_event_metric(ctx: &TurnEventLoop, stat
 pub(super) async fn claim_init_provider_session_ref(
     ctx: &mut TurnEventLoop,
     state: &AppState,
-    event_type: &mut SessionEventType,
     payload: &mut Value,
-) {
+) -> Option<TurnFailurePayload> {
     if payload.get("crp_session_id").is_some() {
         state
             .emit_compat_payload_reject_counter("scheduler.init_event", "crp_session_id", None)
@@ -52,10 +51,7 @@ pub(super) async fn claim_init_provider_session_ref(
     let provider_session_id = payload
         .get("provider_session_id")
         .and_then(Value::as_str)
-        .map(str::to_string);
-    let Some(provider_session_id) = provider_session_id else {
-        return;
-    };
+        .map(str::to_string)?;
 
     match ctx
         .store
@@ -68,19 +64,16 @@ pub(super) async fn claim_init_provider_session_ref(
     {
         Ok(()) => {
             ctx.provider_session_ref = Some(provider_session_id);
+            None
         }
-        Err(err) => {
-            *event_type = SessionEventType::Error;
-            *payload = json!({
-                "message": err.to_string(),
-                "reason": "provider_session_ref_claim_failed",
-                "kind": "provider_session_ref_claim_failed",
-                "details": {
+        Err(err) => Some(TurnFailurePayload {
+            error_message: err.to_string(),
+            details: Some(json!({
                     "provider_session_id": provider_session_id,
                     "provider_id": ctx.provider_id.clone(),
-                },
-            });
-        }
+            })),
+            kind: Some(json!("provider_session_ref_claim_failed")),
+        }),
     }
 }
 

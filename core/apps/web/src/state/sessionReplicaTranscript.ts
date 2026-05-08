@@ -18,7 +18,10 @@ import { compareSessionTurnOrder, mergeSessionMessages } from "./sessionHeadStat
 import { asRecord, messageFromEvent, readPayloadObject } from "./sessionSupervisor/eventHydration";
 import { appendFragment, isTerminalTurnStatus, mergeTurn } from "./sessionSupervisor/cachePolicy";
 import { readPayloadString } from "./sessionSupervisor/eventNormalization";
-import { resolveTurnStatusFromLifecycleEvent } from "./sessionSupervisor/turnLifecycleProjection";
+import {
+  resolveTurnFailureFromLifecycleEvent,
+  resolveTurnStatusFromLifecycleEvent,
+} from "./sessionSupervisor/turnLifecycleProjection";
 import {
   applyToolBucketDelta,
   deriveTurnStatusFromEvent,
@@ -281,7 +284,6 @@ const applyEventToTurns = (
     case "turn_started":
     case "turn_finished":
     case "turn_interrupted":
-    case "error":
     case "done": {
       const nextStatus = resolveTurnStatusFromLifecycleEvent(turn.status, event);
       if (nextStatus) {
@@ -290,6 +292,9 @@ const applyEventToTurns = (
           turn.tool_pending = 0;
           turn.tool_running = 0;
         }
+      }
+      if (event.event_type === "turn_finished") {
+        turn.failure = resolveTurnFailureFromLifecycleEvent(event);
       }
       const contextWindow = readPayloadObject(event.payload_json, "context_window");
       if (contextWindow) {

@@ -148,7 +148,9 @@ pub(super) fn map_known_event(
                     let kind = error.as_ref().and_then(|err| err.kind.clone());
                     let details = error.as_ref().and_then(|err| err.details.clone());
                     let mut payload = serde_json::Map::new();
+                    payload.insert("status".to_string(), json!("failed"));
                     payload.insert("message".to_string(), json!(message));
+                    payload.insert("reason".to_string(), json!("crp_turn_error"));
                     if let Some(kind) = kind {
                         payload.insert("kind".to_string(), json!(kind));
                     }
@@ -156,7 +158,7 @@ pub(super) fn map_known_event(
                         payload.insert("details".to_string(), json!(details));
                     }
                     payload.insert("crp_seq".to_string(), json!(seq));
-                    (SessionEventType::Error, Value::Object(payload))
+                    (SessionEventType::TurnFinished, Value::Object(payload))
                 }
                 CrpTurnStatus::Canceled | CrpTurnStatus::Interrupted => (
                     SessionEventType::TurnInterrupted,

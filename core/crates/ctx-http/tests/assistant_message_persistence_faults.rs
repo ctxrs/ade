@@ -227,10 +227,15 @@ async fn assistant_message_persistence_faults_recover_or_fail_honestly() {
         let (turn, events) = wait_for_terminal_turn(&state, session.id, turn_id).await;
         assert_eq!(turn.status, SessionTurnStatus::Failed);
         assert!(
-            events
-                .iter()
-                .any(|event| matches!(event.event_type, SessionEventType::Error)),
-            "fatal assistant persistence failure must surface as an Error event: {events:#?}"
+            events.iter().any(|event| {
+                matches!(event.event_type, SessionEventType::TurnFinished)
+                    && event
+                        .payload_json
+                        .get("status")
+                        .and_then(|value| value.as_str())
+                        == Some("failed")
+            }),
+            "fatal assistant persistence failure must surface as a failed turn_finished event: {events:#?}"
         );
         assert_eq!(
             events

@@ -221,7 +221,8 @@ pub(crate) async fn refresh_worktree_vcs_for_worktrees(
 
     for (worktree_id, (worktree, details)) in worktrees {
         state.ensure_git_status_watcher(worktree.clone()).await;
-        let should_refresh = match state.get_worktree_vcs_snapshot(worktree.id).await {
+        let should_refresh = !matches!(
+            state.get_worktree_vcs_snapshot(worktree.id).await,
             Some(snapshot)
                 if snapshot.freshness == WorktreeVcsFreshness::Fresh
                     && snapshot.available
@@ -229,12 +230,8 @@ pub(crate) async fn refresh_worktree_vcs_for_worktrees(
                         || matches!(
                             snapshot.touched_files_state,
                             ctx_core::models::WorktreeVcsTouchedFilesState::Ready
-                        )) =>
-            {
-                false
-            }
-            _ => true,
-        };
+                        ))
+        );
         if should_refresh {
             if let Err(err) =
                 crate::daemon::git_status::request_worktree_vcs_refresh_without_transient(

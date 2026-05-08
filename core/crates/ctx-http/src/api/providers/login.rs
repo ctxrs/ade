@@ -250,7 +250,10 @@ fn is_auth_success_notice_code(code: &str) -> bool {
 }
 
 fn is_auth_failure_notice_code(code: &str) -> bool {
-    matches!(code, "auth_failed" | "auth_error")
+    matches!(
+        code,
+        "auth_failed" | "auth_error" | "provider_session_ref_claim_failed"
+    )
 }
 
 pub(super) async fn resolve_runtime_provider_command_from_config(

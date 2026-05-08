@@ -26,7 +26,10 @@ import {
   normalizeFinalThoughtPayload,
   readThoughtFullContent,
 } from "./thoughtProjection";
-import { resolveTurnStatusFromLifecycleEvent } from "./turnLifecycleProjection";
+import {
+  resolveTurnFailureFromLifecycleEvent,
+  resolveTurnStatusFromLifecycleEvent,
+} from "./turnLifecycleProjection";
 import {
   applyToolBucketDelta,
   deriveTurnStatusFromEvent,
@@ -345,11 +348,13 @@ export function applyEventToTurns(
     case "turn_started":
     case "turn_finished":
     case "turn_interrupted":
-    case "error":
     case "done": {
       const nextStatus = resolveTurnStatusFromLifecycleEvent(turn.status, event);
       if (nextStatus) {
         turn.status = nextStatus;
+      }
+      if (event.event_type === "turn_finished") {
+        turn.failure = resolveTurnFailureFromLifecycleEvent(event);
       }
       const contextWindow = readPayloadObject(event.payload_json, "context_window");
       if (contextWindow) {

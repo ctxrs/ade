@@ -550,6 +550,7 @@ export const handleStreamMessage = async (
         publish();
         host.schedulePersistCache();
       }
+      flushAfterNotifyReason = "active_task_upsert";
       break;
     case "active_task_delete":
       if (host.state.removeTask(idToString(evt.task_id), { adjustCounts: true })) {

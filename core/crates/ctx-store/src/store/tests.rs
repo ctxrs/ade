@@ -57,6 +57,7 @@ pub(crate) async fn create_session_with_turn(
         assistant_partial,
         thought_partial: None,
         metrics_json: None,
+        failure: None,
         tool_total: 0,
         tool_pending: 0,
         tool_running: 0,
@@ -214,13 +215,6 @@ async fn raw_provider_terminal_events_do_not_complete_turn_until_turn_finished_p
             Some(json!({"total_tokens": 7})),
         ),
         (
-            SessionEventType::Error,
-            json!({"message": "provider error"}),
-            json!({"status": "failed", "message": "provider error"}),
-            SessionTurnStatus::Failed,
-            None,
-        ),
-        (
             SessionEventType::TurnInterrupted,
             json!({"reason": "cancelled", "provider_cancelled": true}),
             json!({"status": "interrupted", "reason": "cancelled", "provider_cancelled": true}),
@@ -268,6 +262,42 @@ async fn raw_provider_terminal_events_do_not_complete_turn_until_turn_finished_p
         assert_eq!(completed_turn.end_seq, Some(persisted[0].seq));
         assert_eq!(completed_turn.metrics_json, expected_metrics);
     }
+}
+
+#[tokio::test]
+async fn failed_turn_finished_projects_failure_json() {
+    let (_dir, store) = setup_store().await;
+    let (session, turn_id) = create_session_with_turn(&store, None).await;
+
+    let persisted = store
+        .persist_turn_terminal_events(
+            session.id,
+            None,
+            turn_id,
+            vec![(
+                SessionEventType::TurnFinished,
+                json!({
+                    "status": "failed",
+                    "message": "provider error",
+                    "details": {"exit_code": 1},
+                    "kind": "provider_protocol_violation",
+                }),
+            )],
+        )
+        .await
+        .unwrap();
+
+    let turn = store
+        .get_session_turn(session.id, turn_id)
+        .await
+        .unwrap()
+        .expect("turn exists");
+    assert_eq!(turn.status, SessionTurnStatus::Failed);
+    assert_eq!(turn.end_seq, Some(persisted[0].seq));
+    let failure = turn.failure.expect("failure projection");
+    assert_eq!(failure.message.as_deref(), Some("provider error"));
+    assert_eq!(failure.details, Some(json!({"exit_code": 1})));
+    assert_eq!(failure.kind.as_deref(), Some("provider_protocol_violation"));
 }
 
 #[tokio::test]
@@ -348,6 +378,75 @@ async fn terminal_projection_without_turn_finished_persists_missing_turn_finishe
         .filter(|event| matches!(event.event_type, SessionEventType::TurnFinished))
         .count();
     assert_eq!(finished_count, 1);
+}
+
+#[tokio::test]
+async fn malformed_turn_finished_does_not_suppress_valid_terminal_write() {
+    let (_dir, store) = setup_store().await;
+    let (session, turn_id) = create_session_with_turn(&store, None).await;
+
+    let malformed = store
+        .append_session_event(
+            session.id,
+            None,
+            Some(turn_id),
+            SessionEventType::TurnFinished,
+            json!({"status": "not-terminal"}),
+        )
+        .await
+        .unwrap();
+    store.flush_session_event_log().await.unwrap();
+
+    let running_turn = store
+        .get_session_turn(session.id, turn_id)
+        .await
+        .unwrap()
+        .expect("turn exists");
+    assert_eq!(running_turn.status, SessionTurnStatus::Running);
+    assert_eq!(running_turn.end_seq, None);
+
+    let persisted = store
+        .persist_turn_terminal_events(
+            session.id,
+            None,
+            turn_id,
+            vec![(
+                SessionEventType::TurnFinished,
+                json!({
+                    "status": "failed",
+                    "message": "provider failed after malformed terminal event",
+                }),
+            )],
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(persisted.len(), 1);
+    assert!(persisted[0].seq > malformed.seq);
+
+    let failed_turn = store
+        .get_session_turn(session.id, turn_id)
+        .await
+        .unwrap()
+        .expect("turn exists");
+    assert_eq!(failed_turn.status, SessionTurnStatus::Failed);
+    assert_eq!(failed_turn.end_seq, Some(persisted[0].seq));
+    assert_eq!(
+        failed_turn
+            .failure
+            .as_ref()
+            .and_then(|failure| failure.message.as_deref()),
+        Some("provider failed after malformed terminal event")
+    );
+
+    let finished_count = store
+        .list_session_events_for_turn(session.id, turn_id, false)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|event| matches!(event.event_type, SessionEventType::TurnFinished))
+        .count();
+    assert_eq!(finished_count, 2);
 }
 
 #[tokio::test]

@@ -915,6 +915,45 @@ describe("sessionHeadPrefetch", () => {
     expect(bootstrapCache.get(sessionId)?.last_event_seq).toBe(3);
   });
 
+  it("does not throttle repair prefetch after a forced optimistic miss", async () => {
+    const sessionId = "session-1";
+    const snapshot = makeSnapshot(sessionId, { lastEventSeq: 3, projectionRev: 7 });
+    const repairedHead = makeHead(sessionId, { turnCount: 3, lastEventSeq: 8 });
+    getSessionHeadMock
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(repairedHead);
+    const bootstrapCache = new SessionHeadBootstrapCache();
+    const store = {
+      getSessionHeadSnapshot: vi.fn(() => null),
+      getSessionHeadsSnapshot: vi.fn(() => ({})),
+    };
+
+    const forcedChanged = await primeAuthoritativeSessionHeads(
+      snapshot,
+      store,
+      bootstrapCache,
+      [sessionId],
+      {
+        force: true,
+        reason: "foreground_force",
+      },
+    );
+    const repairChanged = await primeAuthoritativeSessionHeads(
+      snapshot,
+      store,
+      bootstrapCache,
+      [sessionId],
+      {
+        reason: "summary_repair",
+      },
+    );
+
+    expect(forcedChanged).toBe(false);
+    expect(repairChanged).toBe(true);
+    expect(getSessionHeadMock).toHaveBeenCalledTimes(2);
+    expect(bootstrapCache.get(sessionId)?.last_event_seq).toBe(8);
+  });
+
   it("accepts a newer authoritative head when activity has advanced past a running summary", async () => {
     const sessionId = "session-1";
     const snapshot = makeSnapshot(sessionId, {

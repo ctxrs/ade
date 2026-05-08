@@ -255,7 +255,6 @@ fn should_refresh_task_delta_for_event(event_type: &SessionEventType) -> bool {
             | SessionEventType::MessageQueueUpdated
             | SessionEventType::MessageQueueRemoved
             | SessionEventType::MessageQueuePromoted
-            | SessionEventType::Error
     )
 }
 

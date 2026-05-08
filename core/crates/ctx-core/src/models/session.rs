@@ -250,6 +250,22 @@ pub struct SessionActivityState {
     pub last_turn_status: Option<SessionTurnStatus>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SessionTurnFailure {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionTurn {
     pub turn_id: TurnId,
@@ -264,6 +280,8 @@ pub struct SessionTurn {
     pub assistant_partial: Option<String>,
     pub thought_partial: Option<String>,
     pub metrics_json: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<SessionTurnFailure>,
     pub tool_total: i64,
     pub tool_pending: i64,
     pub tool_running: i64,

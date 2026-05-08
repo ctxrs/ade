@@ -100,7 +100,6 @@ pub(crate) struct FailedTurnTerminalization<'a> {
     pub(crate) reason: Option<&'a str>,
     pub(crate) details: Option<Value>,
     pub(crate) kind: Option<Value>,
-    pub(crate) emit_error_event: bool,
 }
 
 pub(crate) async fn finalize_completed_turn(
@@ -184,28 +183,6 @@ pub(crate) async fn finalize_failed_turn(
     message_id: MessageId,
     failure: FailedTurnTerminalization<'_>,
 ) -> Result<()> {
-    let mut events = Vec::new();
-    if failure.emit_error_event {
-        let mut payload = json!({
-            "message_id": message_id.0,
-            "message": failure.message,
-            "error": failure.message,
-            "status": "failed",
-        });
-        if let Some(obj) = payload.as_object_mut() {
-            if let Some(reason) = failure.reason {
-                obj.insert("reason".to_string(), json!(reason));
-            }
-            if let Some(details) = failure.details.clone() {
-                obj.insert("details".to_string(), details);
-            }
-            if let Some(kind) = failure.kind.clone() {
-                obj.insert("kind".to_string(), kind);
-            }
-        }
-        events.push((SessionEventType::Error, payload));
-    }
-
     let mut finished = json!({
         "message_id": message_id.0,
         "status": "failed",
@@ -222,7 +199,6 @@ pub(crate) async fn finalize_failed_turn(
             obj.insert("kind".to_string(), kind);
         }
     }
-    events.push((SessionEventType::TurnFinished, finished));
 
     persist_terminal_events(
         state,
@@ -235,7 +211,7 @@ pub(crate) async fn finalize_failed_turn(
             SessionEventType::ThoughtChunk,
             SessionEventType::ContextWindowUpdate,
         ],
-        events,
+        vec![(SessionEventType::TurnFinished, finished)],
     )
     .await
 }
@@ -279,7 +255,6 @@ pub(crate) async fn finalize_provider_outcome(
                     reason: outcome.reason.as_deref(),
                     details: outcome.details,
                     kind: outcome.kind,
-                    emit_error_event: !outcome.terminal_event_emitted,
                 },
             )
             .await

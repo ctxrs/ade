@@ -126,6 +126,7 @@ pub(super) async fn seed_initial_prompt(
             assistant_partial: None,
             thought_partial: None,
             metrics_json: None,
+            failure: None,
             tool_total: 0,
             tool_pending: 0,
             tool_running: 0,

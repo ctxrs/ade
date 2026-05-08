@@ -17,7 +17,6 @@ pub(super) async fn fail_turn(
     ctx: &TurnEventLoop,
     runtime: &mut EventLoopRuntimeState,
     failure: TurnFailurePayload,
-    emit_error_event: bool,
 ) {
     let Some(state) = ctx.state() else {
         return;
@@ -43,7 +42,6 @@ pub(super) async fn fail_turn(
             reason: None,
             details: failure.details,
             kind: failure.kind,
-            emit_error_event,
         },
     )
     .await;

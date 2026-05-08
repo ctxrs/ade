@@ -120,7 +120,6 @@ pub(crate) async fn fail_starting_turn(
             reason: Some("start_not_acknowledged"),
             details: None,
             kind: Some(json!("start_not_acknowledged")),
-            emit_error_event: true,
         },
     )
     .await;

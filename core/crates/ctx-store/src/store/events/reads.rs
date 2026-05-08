@@ -188,7 +188,7 @@ impl Store {
         let row = self.query(
             r#"SELECT seq, id, session_id, run_id, turn_id, event_type, payload_json, transient, created_at
                FROM session_events
-               WHERE session_id = ? AND run_id = ? AND event_type IN ('done', 'error', 'turn_interrupted', 'turn_finished')
+               WHERE session_id = ? AND run_id = ? AND event_type IN ('done', 'turn_interrupted', 'turn_finished')
                ORDER BY seq DESC
                LIMIT 1"#,
         )

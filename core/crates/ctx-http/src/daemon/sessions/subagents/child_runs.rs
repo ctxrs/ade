@@ -45,7 +45,6 @@ fn subagent_terminal_status_from_turn_status(status: SessionTurnStatus) -> Optio
 fn subagent_terminal_status_from_event(event: &SessionEvent) -> Option<&'static str> {
     match event.event_type {
         SessionEventType::Done => Some("completed"),
-        SessionEventType::Error => Some("failed"),
         SessionEventType::TurnInterrupted => Some("interrupted"),
         SessionEventType::TurnFinished => turn_status_from_finished_payload(&event.payload_json)
             .and_then(subagent_terminal_status_from_turn_status),

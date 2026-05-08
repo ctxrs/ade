@@ -92,6 +92,7 @@ async fn tool_result_uses_sanitized_payload_for_persisted_summary() {
             assistant_partial: None,
             thought_partial: None,
             metrics_json: None,
+            failure: None,
             tool_total: 0,
             tool_pending: 0,
             tool_running: 0,

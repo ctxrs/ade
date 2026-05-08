@@ -1,4 +1,4 @@
-import { idToString, type Message, type Session, type SessionEvent, type SessionTurn } from "../../api/client";
+import { idToString, type Message, type Session, type SessionTurn } from "../../api/client";
 import { markdownToPlainText } from "../../utils/markdownPlainText";
 import type { SessionSupervisorWorkspaceSnapshotState } from "./workspaceInputs";
 import { readPayloadString } from "./eventNormalization";
@@ -42,14 +42,14 @@ export function resolveTurnOutcomeNotificationTitle({
 }
 
 export function resolveTurnOutcomeNotificationBody({
-  events,
   messages,
   status,
+  turn,
   turnId,
 }: {
-  events: readonly SessionEvent[];
   messages: readonly Message[];
   status: SessionTurn["status"] | null | undefined;
+  turn?: SessionTurn | null;
   turnId?: string | null;
 }): string | undefined {
   const normalizedTurnId = idToString(turnId ?? "");
@@ -64,15 +64,8 @@ export function resolveTurnOutcomeNotificationBody({
     if (preview) return preview;
   }
   if (status !== "failed") return undefined;
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const event = events[index];
-    if (!event || event.event_type !== "error") continue;
-    if (idToString(event.turn_id ?? "") !== normalizedTurnId) continue;
-    const errorMessage =
-      readPayloadString(event.payload_json, ["message", "details", "error"]) ?? null;
-    if (!errorMessage) continue;
-    const preview = buildTurnOutcomeNotificationBodyPreview(errorMessage);
-    if (preview) return preview;
-  }
+  const failureMessage =
+    readPayloadString(turn?.failure, ["message", "details", "error", "kind"]) ?? null;
+  if (failureMessage) return buildTurnOutcomeNotificationBodyPreview(failureMessage);
   return undefined;
 }

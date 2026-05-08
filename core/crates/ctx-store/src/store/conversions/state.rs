@@ -315,7 +315,7 @@ pub(super) fn parse_session_event_type(value: &str) -> SessionEventType {
         "message_queue_removed" => SessionEventType::MessageQueueRemoved,
         "message_queue_promoted" => SessionEventType::MessageQueuePromoted,
         "error" => SessionEventType::Error,
-        _ => SessionEventType::Error,
+        _ => SessionEventType::Notice,
     }
 }
 

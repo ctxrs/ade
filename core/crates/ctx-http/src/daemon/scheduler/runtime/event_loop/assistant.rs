@@ -144,7 +144,6 @@ pub(super) async fn handle_assistant_complete(
                                 "assistant_message_persist_failed"
                             })),
                         },
-                        true,
                     )
                     .await;
                     runtime.assistant_partial.clear();

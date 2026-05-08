@@ -282,23 +282,17 @@ describe("SessionSupervisor turn notifications", () => {
     expect(sendDesktopNotification).not.toHaveBeenCalled();
   });
 
-  it("uses the error event message when a live failed turn has no assistant message", () => {
+  it("uses the turn failure message when a live failed turn has no assistant message", () => {
     const { supervisor } = setupSupervisorWithSession();
     supervisor.setWorkspaceSnapshotState(makeWorkspaceSnapshot("Fix login race"));
 
     applyAppendPatch(supervisor, {
-      turns: [buildTurn("turn-1", "failed")],
-      events: [{
-        seq: 2,
-        id: "ev-2",
-        session_id: "session-1",
-        turn_id: "turn-1",
-        event_type: "error",
-        payload_json: {
+      turns: [buildTurn("turn-1", "failed", {
+        failure: {
           message: "OAuth token has expired. Please reconnect.",
         },
-        created_at: "2024-01-01T00:00:05.000Z",
-      }],
+      })],
+      events: [],
       messages: [],
       turnsRev: 1,
       eventsRev: 1,

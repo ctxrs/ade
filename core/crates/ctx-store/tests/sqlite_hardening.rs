@@ -542,6 +542,312 @@ async fn unknown_data_cleanup_migration_deletes_noisy_notices() -> Result<()> {
 }
 
 #[tokio::test]
+async fn turn_error_migration_backfills_failure_and_removes_error_events() -> Result<()> {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await?;
+
+    execute_sql_script(
+        &pool,
+        r#"
+        CREATE TABLE session_events (
+            seq INTEGER PRIMARY KEY,
+            id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            run_id TEXT,
+            turn_id TEXT,
+            event_type TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            transient INTEGER NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE session_turns (
+            session_id TEXT NOT NULL,
+            turn_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            end_seq INTEGER,
+            updated_at TEXT NOT NULL,
+            failure_json TEXT
+        );
+        CREATE TABLE session_head_materializations (
+            session_id TEXT NOT NULL
+        );
+        CREATE TABLE session_active_snapshot_heads (
+            session_id TEXT NOT NULL
+        );
+        CREATE TABLE session_snapshot_summaries (
+            session_id TEXT NOT NULL,
+            projection_rev INTEGER NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        "#,
+    )
+    .await?;
+
+    for (session_id, turn_id, status) in [
+        ("s1", "t1", "failed"),
+        ("s2", "t2", "running"),
+        ("s3", "t3", "running"),
+        ("s4", "t4", "completed"),
+        ("s5", "t5", "completed"),
+        ("s6", "t6", "running"),
+        ("s7", "t7", "completed"),
+        ("s8", "t8", "running"),
+    ] {
+        sqlx::query(
+            "INSERT INTO session_turns (session_id, turn_id, status, updated_at) VALUES (?, ?, ?, 'before')",
+        )
+        .bind(session_id)
+        .bind(turn_id)
+        .bind(status)
+        .execute(&pool)
+        .await?;
+        sqlx::query("INSERT INTO session_head_materializations (session_id) VALUES (?)")
+            .bind(session_id)
+            .execute(&pool)
+            .await?;
+        sqlx::query("INSERT INTO session_active_snapshot_heads (session_id) VALUES (?)")
+            .bind(session_id)
+            .execute(&pool)
+            .await?;
+        sqlx::query(
+            "INSERT INTO session_snapshot_summaries (session_id, projection_rev, updated_at) VALUES (?, 7, 'before')",
+        )
+        .bind(session_id)
+        .execute(&pool)
+        .await?;
+    }
+
+    sqlx::query(
+        r#"INSERT INTO session_events
+           (seq, id, session_id, turn_id, event_type, payload_json, transient, created_at)
+           VALUES
+           (1, 'tf-duplicate', 's1', 't1', 'turn_finished', '{"status":"failed"}', 0, '2026-05-08T17:00:01Z'),
+           (2, 'err-duplicate', 's1', 't1', 'error', '{"message":"provider failed","kind":"provider_protocol_violation","details":{"exit_code":1}}', 0, '2026-05-08T17:00:02Z'),
+           (3, 'err-only', 's2', 't2', 'error', '{"error":"startup timed out","reason":"provider_startup_timeout"}', 0, '2026-05-08T17:00:03Z'),
+           (4, 'session-error', 's3', NULL, 'error', '{"message":"session level"}', 0, '2026-05-08T17:00:04Z'),
+           (5, 'tf-no-error', 's4', 't4', 'turn_finished', '{"status":"failed","message":"failed from turn finished"}', 0, '2026-05-08T17:00:05Z'),
+           (6, 'tf-earlier-failed', 's5', 't5', 'turn_finished', '{"status":"failed","message":"older failure"}', 0, '2026-05-08T17:00:06Z'),
+           (7, 'tf-later-completed', 's5', 't5', 'turn_finished', '{"status":"completed"}', 0, '2026-05-08T17:00:07Z'),
+           (8, 'tf-status-error', 's6', 't6', 'turn_finished', '{"status":"error","error":"status alias failure"}', 0, '2026-05-08T17:00:08Z'),
+           (9, 'tf-before-error', 's7', 't7', 'turn_finished', '{"status":"completed"}', 0, '2026-05-08T17:00:09Z'),
+           (10, 'err-after-completed', 's7', 't7', 'error', '{"message":"late terminal failure"}', 0, '2026-05-08T17:00:10Z'),
+           (11, 'err-non-string-fields', 's8', 't8', 'error', '{"message":{"unexpected":true},"error":"string fallback","kind":{"name":"bad"},"reason":17,"provider":{"id":"bad"},"providerId":99,"details":{"raw":true}}', 0, '2026-05-08T17:00:11Z')"#,
+    )
+    .execute(&pool)
+    .await?;
+
+    execute_sql_script(
+        &pool,
+        include_str!("../migrations/0074_migrate_turn_errors_to_failure_projection.sql"),
+    )
+    .await?;
+
+    let error_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM session_events WHERE event_type = 'error'")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(error_count, 0);
+
+    let s1_late_event_type: String =
+        sqlx::query_scalar("SELECT event_type FROM session_events WHERE id = 'err-duplicate'")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(s1_late_event_type, "turn_finished");
+    let s1_late_message: String = sqlx::query_scalar(
+        "SELECT json_extract(payload_json, '$.message') FROM session_events WHERE id = 'err-duplicate'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(s1_late_message, "provider failed");
+
+    let s1_failure_message: String = sqlx::query_scalar(
+        "SELECT json_extract(failure_json, '$.message') FROM session_turns WHERE session_id = 's1'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(s1_failure_message, "provider failed");
+    let s1_end_seq: i64 =
+        sqlx::query_scalar("SELECT end_seq FROM session_turns WHERE session_id = 's1'")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(s1_end_seq, 2);
+    let s1_failure_detail: i64 = sqlx::query_scalar(
+        "SELECT json_extract(failure_json, '$.details.exit_code') FROM session_turns WHERE session_id = 's1'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(s1_failure_detail, 1);
+
+    let s2_event_type: String =
+        sqlx::query_scalar("SELECT event_type FROM session_events WHERE id = 'err-only'")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(s2_event_type, "turn_finished");
+    let s2_status: String =
+        sqlx::query_scalar("SELECT status FROM session_turns WHERE session_id = 's2'")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(s2_status, "failed");
+    let s2_end_seq: i64 =
+        sqlx::query_scalar("SELECT end_seq FROM session_turns WHERE session_id = 's2'")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(s2_end_seq, 3);
+    let s2_updated_at: String =
+        sqlx::query_scalar("SELECT updated_at FROM session_turns WHERE session_id = 's2'")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(s2_updated_at, "2026-05-08T17:00:03Z");
+    let s2_failure_message: String = sqlx::query_scalar(
+        "SELECT json_extract(failure_json, '$.message') FROM session_turns WHERE session_id = 's2'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(s2_failure_message, "startup timed out");
+
+    let s4_status: String =
+        sqlx::query_scalar("SELECT status FROM session_turns WHERE session_id = 's4'")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(s4_status, "failed");
+    let s4_failure_message: String = sqlx::query_scalar(
+        "SELECT json_extract(failure_json, '$.message') FROM session_turns WHERE session_id = 's4'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(s4_failure_message, "failed from turn finished");
+
+    let s5_status: String =
+        sqlx::query_scalar("SELECT status FROM session_turns WHERE session_id = 's5'")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(s5_status, "completed");
+    let s5_failure_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM session_turns WHERE session_id = 's5' AND failure_json IS NOT NULL",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(s5_failure_count, 0);
+
+    let s6_event_status: String = sqlx::query_scalar(
+        "SELECT json_extract(payload_json, '$.status') FROM session_events WHERE id = 'tf-status-error'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(s6_event_status, "failed");
+    let s6_failure_message: String = sqlx::query_scalar(
+        "SELECT json_extract(failure_json, '$.message') FROM session_turns WHERE session_id = 's6'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(s6_failure_message, "status alias failure");
+
+    let s7_late_event_type: String = sqlx::query_scalar(
+        "SELECT event_type FROM session_events WHERE id = 'err-after-completed'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(s7_late_event_type, "turn_finished");
+    let s7_status: String =
+        sqlx::query_scalar("SELECT status FROM session_turns WHERE session_id = 's7'")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(s7_status, "failed");
+    let s7_failure_message: String = sqlx::query_scalar(
+        "SELECT json_extract(failure_json, '$.message') FROM session_turns WHERE session_id = 's7'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(s7_failure_message, "late terminal failure");
+
+    let s8_event_message: String = sqlx::query_scalar(
+        "SELECT json_extract(payload_json, '$.message') FROM session_events WHERE id = 'err-non-string-fields'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(s8_event_message, "string fallback");
+    let s8_failure_message: String = sqlx::query_scalar(
+        "SELECT json_extract(failure_json, '$.message') FROM session_turns WHERE session_id = 's8'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(s8_failure_message, "string fallback");
+    let s8_failure_detail: bool = sqlx::query_scalar(
+        "SELECT json_extract(failure_json, '$.details.raw') FROM session_turns WHERE session_id = 's8'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert!(s8_failure_detail);
+    let s8_typed_failure_field_count: i64 = sqlx::query_scalar(
+        r#"
+        SELECT
+          CASE WHEN json_type(failure_json, '$.kind') IN ('null', 'text') THEN 0 ELSE 1 END +
+          CASE WHEN json_type(failure_json, '$.reason') IN ('null', 'text') THEN 0 ELSE 1 END +
+          CASE WHEN json_type(failure_json, '$.provider') IN ('null', 'text') THEN 0 ELSE 1 END +
+          CASE WHEN json_type(failure_json, '$.provider_id') IN ('null', 'text') THEN 0 ELSE 1 END
+        FROM session_turns
+        WHERE session_id = 's8'
+        "#,
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(s8_typed_failure_field_count, 0);
+
+    let session_event_type: String =
+        sqlx::query_scalar("SELECT event_type FROM session_events WHERE id = 'session-error'")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(session_event_type, "notice");
+
+    let materialized_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM session_head_materializations")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(materialized_count, 1);
+    let remaining_materialized_session: String =
+        sqlx::query_scalar("SELECT session_id FROM session_head_materializations")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(remaining_materialized_session, "s5");
+    let active_head_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM session_active_snapshot_heads")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(active_head_count, 1);
+    let remaining_active_head_session: String =
+        sqlx::query_scalar("SELECT session_id FROM session_active_snapshot_heads")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(remaining_active_head_session, "s5");
+    let projection_revs: Vec<(String, i64)> = sqlx::query(
+        "SELECT session_id, projection_rev FROM session_snapshot_summaries ORDER BY session_id",
+    )
+    .fetch_all(&pool)
+    .await?
+    .into_iter()
+    .map(|row| Ok((row.try_get("session_id")?, row.try_get("projection_rev")?)))
+    .collect::<Result<_>>()?;
+    assert_eq!(
+        projection_revs,
+        vec![
+            ("s1".to_string(), 8),
+            ("s2".to_string(), 8),
+            ("s3".to_string(), 8),
+            ("s4".to_string(), 8),
+            ("s5".to_string(), 7),
+            ("s6".to_string(), 8),
+            ("s7".to_string(), 8),
+            ("s8".to_string(), 8),
+        ]
+    );
+
+    pool.close().await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn open_repairs_historical_tool_order_seq_duplicate_version() -> Result<()> {
     let tempdir = tempfile::tempdir().context("creating tempdir for tool-order repair")?;
     let subset_dir = tempdir.path().join("subset-migrations");

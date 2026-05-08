@@ -61,7 +61,7 @@ async fn start_deadline_failure_finalizes_starting_turn_as_failed() {
         .await
         .expect("load turn events");
     assert!(events.iter().any(|event| {
-        matches!(&event.event_type, SessionEventType::Error)
+        matches!(&event.event_type, SessionEventType::TurnFinished)
             && event
                 .payload_json
                 .get("reason")

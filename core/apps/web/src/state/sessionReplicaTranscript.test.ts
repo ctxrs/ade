@@ -104,7 +104,7 @@ describe("sessionReplicaTranscript", () => {
   it("promotes failed turns to interrupted when turn_interrupted follows cancel fallout", () => {
     const entry = mkEntry();
 
-    applyReplicaTranscriptEvent(entry, mkEvent(2, "error", { message: "cancelled" }));
+    applyReplicaTranscriptEvent(entry, mkEvent(2, "turn_finished", { status: "failed", message: "cancelled" }));
     expect(entry.turns[0]?.status).toBe("failed");
 
     applyReplicaTranscriptEvent(entry, mkEvent(3, "turn_interrupted", { reason: "user_interrupt" }));

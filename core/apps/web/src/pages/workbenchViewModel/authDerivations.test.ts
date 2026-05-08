@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SessionEvent, SessionTurn } from "../../api/client";
-import { deriveSessionError, extractErrorMessage } from "./authDerivations";
+import { deriveAuthUi, deriveSessionError, extractErrorMessage } from "./authDerivations";
 
 describe("extractErrorMessage", () => {
   it("returns plain-string payload errors", () => {
@@ -74,6 +74,42 @@ describe("deriveSessionError", () => {
   it("keeps the generic harness error only when no failure payload is available", () => {
     expect(deriveSessionError([makeFailedTurn("turn-1")], [])).toEqual({
       message: "Harness error.",
+    });
+  });
+});
+
+describe("deriveAuthUi", () => {
+  it("treats normalized auth_error notices as failed auth", () => {
+    expect(
+      deriveAuthUi([
+        makeEvent("notice", "turn-1", {
+          kind: "auth_error",
+          provider: "codex",
+          message: "Run codex login.",
+        }),
+      ]),
+    ).toEqual({
+      status: "failed",
+      provider: "codex",
+      message: "Run codex login.",
+      methods: [],
+    });
+  });
+
+  it("treats normalized auth success notices as authenticated", () => {
+    expect(
+      deriveAuthUi([
+        makeEvent("notice", "turn-1", {
+          kind: "authenticated",
+          provider: "codex",
+          message: "authenticated",
+        }),
+      ]),
+    ).toEqual({
+      status: "authenticated",
+      provider: "codex",
+      message: undefined,
+      methods: [],
     });
   });
 });

@@ -25,6 +25,32 @@ async fn update_cursor_auth_url(state: &Arc<AppState>, login_id: &str, auth_url:
     }
 }
 
+async fn record_cursor_login_output(
+    state: &Arc<AppState>,
+    login_id: &str,
+    output_line: CursorLoginOutputLine,
+    transcript: &mut String,
+    observed_email: &mut Option<String>,
+    observed_auth_url: &mut Option<String>,
+) {
+    transcript.push_str(&output_line.line);
+    transcript.push('\n');
+    if !output_line.is_stderr && observed_email.is_none() {
+        *observed_email = first_email_from_text(&output_line.line);
+    }
+    if let Some(candidate) =
+        extract_auth_url(&output_line.line).or_else(|| extract_auth_url(transcript))
+    {
+        let needs_update = observed_auth_url
+            .as_ref()
+            .is_none_or(|current| candidate.len() > current.len());
+        if needs_update {
+            *observed_auth_url = Some(candidate.clone());
+            update_cursor_auth_url(state, login_id, candidate).await;
+        }
+    }
+}
+
 pub(super) async fn monitor_cursor_login(
     state: Arc<AppState>,
     login_id: String,
@@ -142,22 +168,15 @@ pub(super) async fn monitor_cursor_login(
         tokio::select! {
             maybe_line = line_rx.recv() => {
                 if let Some(output_line) = maybe_line {
-                    transcript.push_str(&output_line.line);
-                    transcript.push('\n');
-                    if !output_line.is_stderr && observed_email.is_none() {
-                        observed_email = first_email_from_text(&output_line.line);
-                    }
-                    if let Some(candidate) =
-                        extract_auth_url(&output_line.line).or_else(|| extract_auth_url(&transcript))
-                    {
-                        let needs_update = observed_auth_url
-                            .as_ref()
-                            .is_none_or(|current| candidate.len() > current.len());
-                        if needs_update {
-                            observed_auth_url = Some(candidate.clone());
-                            update_cursor_auth_url(&state, &login_id, candidate).await;
-                        }
-                    }
+                    record_cursor_login_output(
+                        &state,
+                        &login_id,
+                        output_line,
+                        &mut transcript,
+                        &mut observed_email,
+                        &mut observed_auth_url,
+                    )
+                    .await;
                 }
             }
             wait = child.wait() => {
@@ -167,21 +186,24 @@ pub(super) async fn monitor_cursor_login(
         }
     };
 
-    while let Ok(output_line) = line_rx.try_recv() {
-        transcript.push_str(&output_line.line);
-        transcript.push('\n');
-        if !output_line.is_stderr && observed_email.is_none() {
-            observed_email = first_email_from_text(&output_line.line);
-        }
-        if let Some(candidate) =
-            extract_auth_url(&output_line.line).or_else(|| extract_auth_url(&transcript))
-        {
-            let needs_update = observed_auth_url
-                .as_ref()
-                .is_none_or(|current| candidate.len() > current.len());
-            if needs_update {
-                observed_auth_url = Some(candidate.clone());
-                update_cursor_auth_url(&state, &login_id, candidate).await;
+    let drain_deadline = Instant::now() + std::time::Duration::from_millis(200);
+    loop {
+        match tokio::time::timeout(std::time::Duration::from_millis(20), line_rx.recv()).await {
+            Ok(Some(output_line)) => {
+                record_cursor_login_output(
+                    &state,
+                    &login_id,
+                    output_line,
+                    &mut transcript,
+                    &mut observed_email,
+                    &mut observed_auth_url,
+                )
+                .await;
+            }
+            Ok(None) => break,
+            Err(_) if Instant::now() >= drain_deadline => break,
+            Err(_) => {
+                continue;
             }
         }
     }

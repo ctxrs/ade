@@ -1,4 +1,38 @@
 impl Store {
+    async fn latest_valid_turn_finished_seq_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, Sqlite>,
+        session_id: SessionId,
+        turn_id: TurnId,
+    ) -> Result<Option<i64>> {
+        let finished_event_type = session_event_type_to_str(&SessionEventType::TurnFinished);
+        let rows = sqlx::query(
+            r#"SELECT seq, payload_json
+               FROM session_events
+               WHERE session_id = ? AND turn_id = ? AND event_type = ?
+               ORDER BY seq DESC"#,
+        )
+        .bind(session_id.0.to_string())
+        .bind(turn_id.0.to_string())
+        .bind(finished_event_type)
+        .fetch_all(&mut **tx)
+        .await?;
+
+        for row in rows {
+            let payload_json: String = row.try_get("payload_json")?;
+            let Ok(payload) = serde_json::from_str::<Value>(&payload_json) else {
+                continue;
+            };
+            if ctx_core::session_projection::terminal_status_from_finished_payload(&payload)
+                .is_some()
+            {
+                return Ok(Some(row.try_get("seq")?));
+            }
+        }
+
+        Ok(None)
+    }
+
     async fn ensure_turn_accepts_durable_event(
         &self,
         session_id: SessionId,
@@ -63,6 +97,7 @@ impl Store {
         payload_json: serde_json::Value,
     ) -> Result<SessionEvent> {
         crate::fault_injection::maybe_fail("ctx_store.append_session_event")?;
+        ensure_supported_session_event_type(&event_type)?;
         let payload_json = if matches!(
             event_type,
             SessionEventType::ToolCall
@@ -128,6 +163,9 @@ impl Store {
         if events.is_empty() {
             return Ok(Vec::new());
         }
+        for (event_type, _) in &events {
+            ensure_supported_session_event_type(event_type)?;
+        }
 
         self.flush_event_log_for_reads().await;
 
@@ -158,21 +196,10 @@ impl Store {
                     | SessionTurnStatus::Interrupted
             );
 
-            let finished_event_type = session_event_type_to_str(&SessionEventType::TurnFinished);
-            let existing_finished_row = sqlx::query(
-                r#"SELECT seq
-                   FROM session_events
-                   WHERE session_id = ? AND turn_id = ? AND event_type = ?
-                   ORDER BY seq DESC
-                   LIMIT 1"#,
-            )
-            .bind(session_id.0.to_string())
-            .bind(turn_id.0.to_string())
-            .bind(finished_event_type)
-            .fetch_optional(&mut *tx)
-            .await?;
-            if let Some(row) = existing_finished_row {
-                let existing_finished_seq = row.try_get::<i64, _>("seq")?;
+            if let Some(existing_finished_seq) = self
+                .latest_valid_turn_finished_seq_tx(&mut tx, session_id, turn_id)
+                .await?
+            {
                 let projection_changed = self
                     .repair_session_turn_projection_from_events_tx(&mut tx, session_id, turn_id)
                     .await?;
@@ -315,6 +342,7 @@ impl Store {
         let mut summary_refresh_sessions: HashSet<SessionId> = HashSet::new();
 
         for event in events {
+            ensure_supported_session_event_type(&event.event_type)?;
             let id = event.id.0.to_string();
             let session_id = event.session_id.0.to_string();
             let run_id = event.run_id.map(|r| r.0.to_string());

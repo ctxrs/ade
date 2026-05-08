@@ -44,7 +44,7 @@ use self::provider_spawn::{
 use self::turn_failure::emit_turn_start_failed;
 use self::turn_input::prepare_turn_input;
 use self::turn_start::{
-    apply_crp_launch_policy_env_for_control_mode, prepare_turn_start, PrepareTurnStartInput,
+    apply_crp_launch_policy_env_for_control_mode, prepare_turn_start, PrepareTurnStartRequest,
 };
 use super::lifecycle::{RunningTurn, TurnStartProgress};
 use super::persistence::append_session_event_with_retry;
@@ -73,7 +73,7 @@ pub(crate) async fn start_turn(
     let execution_environment = session.execution_environment;
     let full_model_id = compose_model_id(&session.model_id, session.reasoning_effort.as_deref());
 
-    let turn_start = prepare_turn_start(PrepareTurnStartInput {
+    let turn_start = prepare_turn_start(PrepareTurnStartRequest {
         state,
         store: &store,
         session,

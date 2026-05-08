@@ -201,9 +201,9 @@ export const replayTurnOutcomeEffectsFromTurns = ({
       workspaceSnapshotState,
     });
     const notificationBody = resolveTurnOutcomeNotificationBody({
-      events,
       messages,
       status: turn.status,
+      turn,
       turnId,
     });
     applyTurnOutcomeEffects({

@@ -10,7 +10,7 @@ impl Store {
             self.query(
                 r#"SELECT turn_id, session_id, run_id, user_message_id, status,
                           start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
-                          metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
+                          metrics_json, failure_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
                    FROM session_turns
                    WHERE session_id = ? AND start_seq < ?
                    ORDER BY start_seq DESC
@@ -25,7 +25,7 @@ impl Store {
             self.query(
                 r#"SELECT turn_id, session_id, run_id, user_message_id, status,
                           start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
-                          metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
+                          metrics_json, failure_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
                    FROM session_turns
                    WHERE session_id = ?
                    ORDER BY start_seq DESC
@@ -57,7 +57,7 @@ impl Store {
         let mut sql = String::from(
             r#"SELECT turn_id, session_id, run_id, user_message_id, status,
                       start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
-                      metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
+                      metrics_json, failure_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
                FROM session_turns
                WHERE status IN ("#,
         );
@@ -116,7 +116,7 @@ impl Store {
             self.query(
                 r#"SELECT turn_id, session_id, run_id, user_message_id, status,
                           start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
-                          metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
+                          metrics_json, failure_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
                    FROM session_turns
                    WHERE session_id = ? AND start_seq < ?
                    ORDER BY start_seq DESC
@@ -131,7 +131,7 @@ impl Store {
             self.query(
                 r#"SELECT turn_id, session_id, run_id, user_message_id, status,
                           start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
-                          metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
+                          metrics_json, failure_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
                    FROM session_turns
                    WHERE session_id = ?
                    ORDER BY start_seq DESC

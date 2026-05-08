@@ -280,11 +280,11 @@ fn spawn_session_auth_event_sink(
                         )
                         .await
                     {
-                        event_type = SessionEventType::Error;
+                        event_type = SessionEventType::Notice;
                         payload = serde_json::json!({
+                            "kind": "provider_session_ref_claim_failed",
                             "message": err.to_string(),
                             "reason": "provider_session_ref_claim_failed",
-                            "kind": "provider_session_ref_claim_failed",
                             "details": {
                                 "provider_session_id": provider_session_id,
                             },

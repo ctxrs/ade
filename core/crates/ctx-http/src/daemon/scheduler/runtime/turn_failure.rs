@@ -28,7 +28,6 @@ pub(super) async fn emit_turn_start_failed(
             reason: Some("start_failed"),
             details: None,
             kind: Some(json!("start_failed")),
-            emit_error_event: true,
         },
     )
     .await;

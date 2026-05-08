@@ -87,6 +87,12 @@ pub(super) fn build_session_turn_from_row(r: SqliteRow) -> Result<SessionTurn> {
     let metrics_json = metrics_json
         .as_deref()
         .and_then(|s| serde_json::from_str::<Value>(s).ok());
+    let failure_json: Option<String> = r.try_get("failure_json")?;
+    let failure = failure_json
+        .as_deref()
+        .map(serde_json::from_str::<SessionTurnFailure>)
+        .transpose()
+        .context("parsing turn failure_json")?;
 
     Ok(SessionTurn {
         turn_id: TurnId(uuid::Uuid::parse_str(&turn_id)?),
@@ -107,6 +113,7 @@ pub(super) fn build_session_turn_from_row(r: SqliteRow) -> Result<SessionTurn> {
         assistant_partial: r.try_get("assistant_partial")?,
         thought_partial: r.try_get("thought_partial")?,
         metrics_json,
+        failure,
         tool_total: r.try_get("tool_total")?,
         tool_pending: r.try_get("tool_pending")?,
         tool_running: r.try_get("tool_running")?,

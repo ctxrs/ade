@@ -23,6 +23,7 @@ struct RepairedTurnProjection {
     status: SessionTurnStatus,
     end_seq: Option<i64>,
     metrics_json: Option<Value>,
+    failure: Option<SessionTurnFailure>,
     updated_at: DateTime<Utc>,
     tool_counts: TurnToolCounts,
 }
@@ -104,6 +105,7 @@ fn build_repaired_turn_projection(
         status: terminal.status.clone(),
         end_seq: terminal.end_seq.or(turn.end_seq),
         metrics_json: terminal.metrics.clone().or(turn.metrics_json.clone()),
+        failure: terminal.failure.clone(),
         updated_at,
         tool_counts,
     }
@@ -113,6 +115,7 @@ fn turn_projection_changed(turn: &SessionTurn, repaired: &RepairedTurnProjection
     turn.status != repaired.status
         || turn.end_seq != repaired.end_seq
         || turn.metrics_json != repaired.metrics_json
+        || turn.failure != repaired.failure
         || turn.tool_total != repaired.tool_counts.total
         || turn.tool_pending != repaired.tool_counts.pending
         || turn.tool_running != repaired.tool_counts.running
@@ -178,7 +181,7 @@ async fn list_session_turns_tx(
     let rows = sqlx::query(
         r#"SELECT turn_id, session_id, run_id, user_message_id, status,
                   start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
-                  metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
+                  metrics_json, failure_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
            FROM session_turns
            WHERE session_id = ?
            ORDER BY COALESCE(start_seq, -1) DESC, started_at DESC, turn_id DESC"#,
@@ -205,7 +208,7 @@ impl Store {
             .query(
                 r#"SELECT turn_id, session_id, run_id, user_message_id, status,
                           start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
-                          metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
+                          metrics_json, failure_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
                    FROM session_turns
                    WHERE session_id = ?
                    ORDER BY COALESCE(start_seq, -1) DESC, started_at DESC, turn_id DESC"#,
@@ -328,10 +331,17 @@ impl Store {
             .map(serde_json::to_string)
             .transpose()
             .context("serializing repaired turn metrics")?;
+        let repaired_failure_json = repaired
+            .failure
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .context("serializing repaired turn failure")?;
         let repaired_updated_at_str = repaired.updated_at.to_rfc3339();
         let write_bytes = bytes_str(repaired_status_str)
             + bytes_opt_i64(repaired.end_seq)
             + bytes_opt_str(repaired_metrics_json.as_deref())
+            + bytes_opt_str(repaired_failure_json.as_deref())
             + (I64_BYTES * 5)
             + bytes_str(&repaired_updated_at_str);
         let result = self
@@ -340,6 +350,7 @@ impl Store {
                    SET status = ?,
                        end_seq = ?,
                        metrics_json = ?,
+                       failure_json = ?,
                        tool_total = ?,
                        tool_pending = ?,
                        tool_running = ?,
@@ -351,6 +362,7 @@ impl Store {
             .bind(repaired_status_str)
             .bind(repaired.end_seq)
             .bind(repaired_metrics_json)
+            .bind(repaired_failure_json)
             .bind(repaired.tool_counts.total)
             .bind(repaired.tool_counts.pending)
             .bind(repaired.tool_counts.running)
@@ -381,7 +393,7 @@ impl Store {
         let row = sqlx::query(
             r#"SELECT turn_id, session_id, run_id, user_message_id, status,
                       start_seq, end_seq, started_at, updated_at, assistant_partial, thought_partial,
-                      metrics_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
+                      metrics_json, failure_json, tool_total, tool_pending, tool_running, tool_completed, tool_failed
                FROM session_turns
                WHERE session_id = ? AND turn_id = ?"#,
         )
@@ -412,11 +424,18 @@ impl Store {
             .map(serde_json::to_string)
             .transpose()
             .context("serializing repaired turn metrics")?;
+        let repaired_failure_json = repaired
+            .failure
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .context("serializing repaired turn failure")?;
         sqlx::query(
             r#"UPDATE session_turns
                SET status = ?,
                    end_seq = ?,
                    metrics_json = ?,
+                   failure_json = ?,
                    tool_total = ?,
                    tool_pending = ?,
                    tool_running = ?,
@@ -428,6 +447,7 @@ impl Store {
         .bind(session_turn_status_to_str(&repaired.status))
         .bind(repaired.end_seq)
         .bind(repaired_metrics_json)
+        .bind(repaired_failure_json)
         .bind(repaired.tool_counts.total)
         .bind(repaired.tool_counts.pending)
         .bind(repaired.tool_counts.running)

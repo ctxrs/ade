@@ -150,6 +150,8 @@ export const readTurnStatusFromPayload = (event: SessionEvent): SessionTurn["sta
     case "interrupted":
     case "failed":
       return status;
+    case "error":
+      return "failed";
     default:
       return null;
   }

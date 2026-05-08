@@ -100,7 +100,7 @@ async fn monitor_gemini_login(state: Arc<AppState>, login_id: String, label: Opt
                             entry.auth_url = Some(auth_url);
                         }
                     }
-                    if matches!(event.event_type, ctx_core::models::SessionEventType::Error) {
+                    if is_auth_failure_notice_code(auth_notice_code(&event.payload_json)) {
                         let message = event
                             .payload_json
                             .get("message")

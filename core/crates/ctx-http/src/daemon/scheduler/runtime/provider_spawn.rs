@@ -313,7 +313,6 @@ pub(super) async fn handle_provider_start_failure(
             reason: Some("provider_start_failed"),
             details: None,
             kind: Some(json!("provider_start_failed")),
-            emit_error_event: true,
         },
     )
     .await;

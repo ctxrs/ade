@@ -401,6 +401,48 @@ describe("WorkspaceActiveSnapshotStore", () => {
     expect(payload.include_active_heads).toBe(false);
   });
 
+  it("flushes subscribe messages when a pending session gains a resume cursor", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    const ws = mkOpenWs();
+    asStoreInternals(store).ws = ws;
+
+    store.setSubscribedSessions([{ sessionId: "session-1", replay: { kind: "auto" } }]);
+    expect(ws.send).toHaveBeenCalledTimes(1);
+
+    ws.send.mockClear();
+    store.setSubscribedSessions([
+      { sessionId: "session-1", replay: { kind: "resume", afterSeq: 3, afterProjectionRev: 7 } },
+    ]);
+
+    expect(ws.send).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(String(ws.send.mock.calls[0]?.[0] ?? "{}"));
+    expect(payload.include_active_heads).toBe(false);
+    expect(payload.sessions).toEqual([
+      {
+        session_id: "session-1",
+        replay: { mode: "resume", after_seq: 3, after_projection_rev: 7 },
+      },
+    ]);
+    store.destroy();
+  });
+
+  it("requests active heads when subscribed session ids change", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    const ws = mkOpenWs();
+    asStoreInternals(store).ws = ws;
+
+    store.setSubscribedSessions([{ sessionId: "session-1", replay: { kind: "auto" } }]);
+
+    expect(ws.send).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(String(ws.send.mock.calls[0]?.[0] ?? "{}"));
+    expect(payload.include_active_heads).toBe(true);
+    store.destroy();
+  });
+
   it("includes the foreground session in subscribe messages", async () => {
     const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
 
@@ -413,6 +455,45 @@ describe("WorkspaceActiveSnapshotStore", () => {
     expect(ws.send).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(String(ws.send.mock.calls[0]?.[0] ?? "{}"));
     expect(payload.foreground_session_id).toBe("session-foreground");
+    expect(payload.include_active_heads).toBe(true);
+    store.destroy();
+  });
+
+  it("resubscribes with active heads after an active task upsert", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    const ws = mkOpenWs();
+    asStoreInternals(store).ws = ws;
+    const now = new Date().toISOString();
+    const task = mkTask("task-1", "ws-1", now);
+    const session = mkSession("session-1", "task-1", "ws-1", now);
+    const summary = mkSummary(session, now);
+    const head = mkHead(session);
+
+    store.setSubscribedSessions([{ sessionId: session.id, replay: { kind: "auto" } }]);
+    store.setForegroundSessionId?.(session.id);
+    ws.send.mockClear();
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 1,
+        event: {
+          type: "active_task_upsert",
+          workspace_id: "ws-1",
+          snapshot_rev: 1,
+          task: mkActiveSummary(task, summary, head, now),
+        },
+      }),
+    );
+
+    expect(ws.send).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(String(ws.send.mock.calls[0]?.[0] ?? "{}"));
+    expect(payload.type).toBe("subscribe");
+    expect(payload.include_active_heads).toBe(true);
+    expect(payload.foreground_session_id).toBe(session.id);
+    expect(payload.session_ids).toEqual([session.id]);
     store.destroy();
   });
 

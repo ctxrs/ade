@@ -150,7 +150,7 @@ async fn monitor_mistral_login(state: Arc<AppState>, login_id: String, label: Op
             observed_email = first_email_from_value(&event.payload_json);
         }
 
-        if matches!(event.event_type, ctx_core::models::SessionEventType::Error) {
+        if is_auth_failure_notice_code(auth_notice_code(&event.payload_json)) {
             let message = event
                 .payload_json
                 .get("message")

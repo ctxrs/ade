@@ -134,6 +134,7 @@ async fn workspace_stream_does_not_reset_during_hydration_when_active_heads_are_
                 assistant_partial: None,
                 thought_partial: None,
                 metrics_json: None,
+                failure: None,
                 tool_total: 0,
                 tool_pending: 0,
                 tool_running: 0,
