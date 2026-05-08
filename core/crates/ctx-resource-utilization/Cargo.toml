@@ -8,6 +8,8 @@ anyhow.workspace = true
 chrono.workspace = true
 ctx-core = { path = "../ctx-core" }
 ctx-providers = { path = "../ctx-providers" }
+ctx-settings-model = { path = "../ctx-settings-model" }
 libc = "0.2"
 serde.workspace = true
 sysinfo.workspace = true
+tokio.workspace = true

@@ -231,11 +231,13 @@ RUST_BAZEL_DEPS = {
         deps = [
             "//core/crates/ctx-core:lib",
             "//core/crates/ctx-providers:lib",
+            "//core/crates/ctx-settings-model:lib",
             "@crates//:anyhow",
             "@crates//:chrono",
             "@crates//:libc",
             "@crates//:serde",
             "@crates//:sysinfo",
+            "@crates//:tokio",
         ],
         dev_deps = [],
         dev_proc_macro_deps = [],
