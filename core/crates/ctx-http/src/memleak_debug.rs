@@ -1,9 +1,11 @@
-use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use ctx_resource_utilization::memleak_debug::{
+    append_memleak_debug_log, json_bytes, read_memleak_debug_process_stats, GlibcMallinfo,
+    JemallocStats, MemleakDebugConfig,
+};
 use serde::Serialize;
 use tokio::time::MissedTickBehavior;
 
@@ -15,8 +17,6 @@ use crate::web_sessions::WebSessionManagerStats;
 use ctx_harness_runtime::HarnessRuntimeStats;
 use ctx_store::StoreManagerStats;
 use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotStats;
-
-const DEFAULT_INTERVAL_MS: u64 = 5_000;
 
 #[derive(Debug, Serialize)]
 struct MemleakDebugSnapshot {
@@ -87,34 +87,14 @@ struct ProviderCacheStats {
     installs: usize,
 }
 
-#[derive(Debug, Serialize)]
-struct JemallocStats {
-    allocated: u64,
-    active: u64,
-    resident: u64,
-    retained: u64,
-    mapped: u64,
-}
-
-#[derive(Debug, Serialize)]
-struct GlibcMallinfo {
-    arena: u64,
-    ordblks: u64,
-    hblks: u64,
-    hblkhd: u64,
-    uordblks: u64,
-    fordblks: u64,
-    keepcost: u64,
-}
-
 pub fn spawn_memleak_debug(state: Arc<AppState>) {
-    if !memleak_debug_enabled() {
+    let config = MemleakDebugConfig::from_env();
+    if !config.enabled {
         return;
     }
-    let interval_ms = env_u64("CTX_MEMLEAK_DEBUG_INTERVAL_MS").unwrap_or(DEFAULT_INTERVAL_MS);
     let mut shutdown_rx = state.core.shutdown_tx.subscribe();
     tokio::spawn(async move {
-        let mut ticker = tokio::time::interval(Duration::from_millis(interval_ms.max(250)));
+        let mut ticker = tokio::time::interval(config.interval);
         ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
         loop {
             tokio::select! {
@@ -309,13 +289,12 @@ async fn sample_once(state: &Arc<AppState>) -> Result<()> {
     let web_sessions = state.transport.web_sessions.stats().await;
     let harness_runtime = state.execution.harness.stats().await;
     let stores = state.core.stores.stats().await;
-    let glibc = read_glibc_mallinfo();
-    let jemalloc = read_jemalloc_stats();
+    let process = read_memleak_debug_process_stats();
 
     let snapshot = MemleakDebugSnapshot {
         occurred_at: Utc::now(),
-        rss_bytes: read_rss_bytes(),
-        thread_count: read_thread_count(),
+        rss_bytes: process.rss_bytes,
+        thread_count: process.thread_count,
         sessions,
         workspaces,
         providers,
@@ -325,206 +304,11 @@ async fn sample_once(state: &Arc<AppState>) -> Result<()> {
         web_sessions,
         harness_runtime,
         stores,
-        glibc,
-        jemalloc,
+        glibc: process.glibc,
+        jemalloc: process.jemalloc,
     };
 
-    append_local_log(&state.core.data_root, &snapshot).await?;
+    let logs_dir = logs::logs_dir(&state.core.data_root);
+    append_memleak_debug_log(&logs_dir, &snapshot).await?;
     Ok(())
-}
-
-async fn append_local_log(data_root: &Path, snapshot: &MemleakDebugSnapshot) -> Result<()> {
-    let dir = logs::logs_dir(data_root);
-    tokio::fs::create_dir_all(&dir).await.ok();
-    let path = dir.join("memleak-debug.jsonl");
-    let line = serde_json::to_string(snapshot)?;
-    let mut file = tokio::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .await?;
-    use tokio::io::AsyncWriteExt;
-    file.write_all(line.as_bytes()).await?;
-    file.write_all(b"\n").await?;
-    file.flush().await?;
-    Ok(())
-}
-
-fn memleak_debug_enabled() -> bool {
-    env_bool("CTX_MEMLEAK_DEBUG").unwrap_or(false)
-}
-
-fn env_bool(key: &str) -> Option<bool> {
-    std::env::var(key)
-        .ok()
-        .as_deref()
-        .and_then(ctx_core::boolish::parse_boolish)
-}
-
-fn env_u64(key: &str) -> Option<u64> {
-    std::env::var(key)
-        .ok()
-        .and_then(|v| v.trim().parse::<u64>().ok())
-}
-
-fn json_bytes<T: serde::Serialize>(value: &T) -> usize {
-    serde_json::to_vec(value)
-        .map(|bytes| bytes.len())
-        .unwrap_or(0)
-}
-
-#[cfg(feature = "daemon-heap-prof")]
-fn read_jemalloc_stats() -> Option<JemallocStats> {
-    use tikv_jemalloc_ctl::stats;
-    let allocated = stats::allocated::read().ok()? as u64;
-    let active = stats::active::read().ok()? as u64;
-    let resident = stats::resident::read().ok()? as u64;
-    let retained = stats::retained::read().ok()? as u64;
-    let mapped = stats::mapped::read().ok()? as u64;
-    Some(JemallocStats {
-        allocated,
-        active,
-        resident,
-        retained,
-        mapped,
-    })
-}
-
-#[cfg(not(feature = "daemon-heap-prof"))]
-fn read_jemalloc_stats() -> Option<JemallocStats> {
-    None
-}
-
-#[cfg(target_os = "linux")]
-fn read_rss_bytes() -> u64 {
-    let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
-    for line in status.lines() {
-        if let Some(rest) = line.strip_prefix("VmRSS:") {
-            let kb = rest
-                .split_whitespace()
-                .next()
-                .and_then(|value| value.parse::<u64>().ok())
-                .unwrap_or(0);
-            return kb.saturating_mul(1024);
-        }
-    }
-    0
-}
-
-#[cfg(not(target_os = "linux"))]
-fn read_rss_bytes() -> u64 {
-    0
-}
-
-#[cfg(target_os = "linux")]
-fn read_thread_count() -> u32 {
-    let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
-    for line in status.lines() {
-        if let Some(rest) = line.strip_prefix("Threads:") {
-            return rest
-                .split_whitespace()
-                .next()
-                .and_then(|value| value.parse::<u32>().ok())
-                .unwrap_or(0);
-        }
-    }
-    0
-}
-
-#[cfg(not(target_os = "linux"))]
-fn read_thread_count() -> u32 {
-    0
-}
-
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
-fn read_glibc_mallinfo() -> Option<GlibcMallinfo> {
-    let symbol_name = b"mallinfo2\0";
-    let symbol = unsafe { libc::dlsym(libc::RTLD_DEFAULT, symbol_name.as_ptr().cast()) };
-    mallinfo_from_symbol(symbol)
-}
-
-#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
-fn read_glibc_mallinfo() -> Option<GlibcMallinfo> {
-    None
-}
-
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
-type Mallinfo2Fn = unsafe extern "C" fn() -> libc::mallinfo2;
-
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
-fn mallinfo_from_symbol(symbol: *mut libc::c_void) -> Option<GlibcMallinfo> {
-    if symbol.is_null() {
-        return None;
-    }
-    let mallinfo2 = unsafe { std::mem::transmute::<*mut libc::c_void, Mallinfo2Fn>(symbol) };
-    let info = unsafe { mallinfo2() };
-    Some(glibc_mallinfo_from_mallinfo2(info))
-}
-
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
-fn glibc_mallinfo_from_mallinfo2(info: libc::mallinfo2) -> GlibcMallinfo {
-    GlibcMallinfo {
-        arena: info.arena as u64,
-        ordblks: info.ordblks as u64,
-        hblks: info.hblks as u64,
-        hblkhd: info.hblkhd as u64,
-        uordblks: info.uordblks as u64,
-        fordblks: info.fordblks as u64,
-        keepcost: info.keepcost as u64,
-    }
-}
-
-#[cfg(all(test, target_os = "linux", target_env = "gnu"))]
-mod tests {
-    use super::{glibc_mallinfo_from_mallinfo2, mallinfo_from_symbol};
-
-    unsafe extern "C" fn fake_mallinfo2() -> libc::mallinfo2 {
-        libc::mallinfo2 {
-            arena: 11,
-            ordblks: 12,
-            smblks: 0,
-            hblks: 13,
-            hblkhd: 14,
-            usmblks: 0,
-            fsmblks: 0,
-            uordblks: 15,
-            fordblks: 16,
-            keepcost: 17,
-        }
-    }
-
-    #[test]
-    fn glibc_mallinfo_maps_all_fields() {
-        let mapped = glibc_mallinfo_from_mallinfo2(unsafe { fake_mallinfo2() });
-
-        assert_eq!(mapped.arena, 11);
-        assert_eq!(mapped.ordblks, 12);
-        assert_eq!(mapped.hblks, 13);
-        assert_eq!(mapped.hblkhd, 14);
-        assert_eq!(mapped.uordblks, 15);
-        assert_eq!(mapped.fordblks, 16);
-        assert_eq!(mapped.keepcost, 17);
-    }
-
-    #[test]
-    fn glibc_mallinfo_returns_none_when_symbol_is_missing() {
-        assert!(mallinfo_from_symbol(std::ptr::null_mut()).is_none());
-    }
-
-    #[test]
-    fn glibc_mallinfo_reads_symbol_when_present() {
-        let symbol = fake_mallinfo2 as *const () as usize as *mut libc::c_void;
-        let mapped = match mallinfo_from_symbol(symbol) {
-            Some(mapped) => mapped,
-            None => panic!("mallinfo2 symbol should resolve"),
-        };
-
-        assert_eq!(mapped.arena, 11);
-        assert_eq!(mapped.ordblks, 12);
-        assert_eq!(mapped.hblks, 13);
-        assert_eq!(mapped.hblkhd, 14);
-        assert_eq!(mapped.uordblks, 15);
-        assert_eq!(mapped.fordblks, 16);
-        assert_eq!(mapped.keepcost, 17);
-    }
 }

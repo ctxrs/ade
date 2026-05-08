@@ -15,6 +15,7 @@ use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{Workspace, Worktree};
 use ctx_providers::adapters::ProviderProcessInfo;
 
+pub mod memleak_debug;
 mod process;
 pub mod process_limits;
 pub mod resource_governance;

@@ -1411,6 +1411,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sysinfo",
+ "tikv-jemalloc-ctl",
  "tokio",
  "tracing",
 ]
