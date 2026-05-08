@@ -394,7 +394,10 @@ export const primeAuthoritativeSessionHeads = async (
         }
         if (lease.state === "wait") {
           noteAuthoritativePrefetchOutcome(reason, "wait_in_flight", forced);
-          await lease.promise;
+          const outcome = await lease.promise;
+          if (outcome !== "canceled" && outcome !== "not_retained") {
+            return;
+          }
           continue;
         }
         let completion: AuthoritativePrefetchCompletion = "canceled";
@@ -409,7 +412,7 @@ export const primeAuthoritativeSessionHeads = async (
             return;
           }
           if (opts?.shouldRetainSessionId && !opts.shouldRetainSessionId(sessionId)) {
-            completion = "canceled";
+            completion = "not_retained";
             noteAuthoritativePrefetchOutcome(reason, "not_retained", forced);
             noteAuthoritativePrefetchDuration(reason, "not_retained", forced, nowMs() - startedAtMs);
             return;

@@ -664,6 +664,115 @@ describe("sessionHeadPrefetch", () => {
     expect(bootstrapCache.get(sessionId)?.last_event_seq).toBe(8);
   });
 
+  it("retries summary repair after an authoritative fetch races with a stale head", async () => {
+    const sessionId = "session-1";
+    const staleSnapshot = makeSnapshot(sessionId, { lastEventSeq: 8 });
+    const completedSnapshot = makeSnapshot(sessionId, { lastEventSeq: 8 });
+    getSessionHeadMock
+      .mockResolvedValueOnce(makeHead(sessionId, { turnCount: 1, lastEventSeq: 3, turnStatus: "running" }))
+      .mockResolvedValueOnce(makeHead(sessionId, { turnCount: 3, lastEventSeq: 8 }));
+    const bootstrapCache = new SessionHeadBootstrapCache();
+    const store = {
+      getSessionHeadSnapshot: vi.fn(() => null),
+      getSessionHeadsSnapshot: vi.fn(() => ({})),
+    };
+
+    const staleChanged = await primeAuthoritativeSessionHeads(staleSnapshot, store, bootstrapCache, [sessionId], {
+      getSnapshot: () => staleSnapshot,
+      reason: "summary_repair",
+    });
+    const repairChanged = await primeAuthoritativeSessionHeads(completedSnapshot, store, bootstrapCache, [sessionId], {
+      getSnapshot: () => completedSnapshot,
+      reason: "summary_repair",
+    });
+
+    expect(staleChanged).toBe(false);
+    expect(repairChanged).toBe(true);
+    expect(getSessionHeadMock).toHaveBeenCalledTimes(2);
+    expect(bootstrapCache.get(sessionId)?.last_event_seq).toBe(8);
+  });
+
+  it("lets summary repair run after an early foreground force fetch fails", async () => {
+    const sessionId = "session-1";
+    const snapshot = makeSnapshot(sessionId, { lastEventSeq: 8 });
+    getSessionHeadMock
+      .mockRejectedValueOnce(new Error("Session not found"))
+      .mockResolvedValueOnce(makeHead(sessionId, { turnCount: 3, lastEventSeq: 8 }));
+    const bootstrapCache = new SessionHeadBootstrapCache();
+    const store = {
+      getSessionHeadSnapshot: vi.fn(() => null),
+      getSessionHeadsSnapshot: vi.fn(() => ({})),
+    };
+
+    const forceChanged = await primeAuthoritativeSessionHeads(snapshot, store, bootstrapCache, [sessionId], {
+      force: true,
+      getSnapshot: () => snapshot,
+      reason: "foreground_force",
+    });
+    const repairChanged = await primeAuthoritativeSessionHeads(snapshot, store, bootstrapCache, [sessionId], {
+      getSnapshot: () => snapshot,
+      reason: "summary_repair",
+    });
+
+    expect(forceChanged).toBe(false);
+    expect(repairChanged).toBe(true);
+    expect(getSessionHeadMock).toHaveBeenCalledTimes(2);
+    expect(bootstrapCache.get(sessionId)?.last_event_seq).toBe(8);
+  });
+
+  it("lets foreground force suppress cooldown on an in-flight non-forced fetch", async () => {
+    const sessionId = "session-1";
+    const snapshot = makeSnapshot(sessionId, { lastEventSeq: 8 });
+    let rejectFirstFetch: ((error: Error) => void) | null = null;
+    getSessionHeadMock
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectFirstFetch = reject as (error: Error) => void;
+          }),
+      )
+      .mockResolvedValueOnce(makeHead(sessionId, { turnCount: 3, lastEventSeq: 8 }));
+    const bootstrapCache = new SessionHeadBootstrapCache();
+    const store = {
+      getSessionHeadSnapshot: vi.fn(() => null),
+      getSessionHeadsSnapshot: vi.fn(() => ({})),
+    };
+
+    const firstRepair = primeAuthoritativeSessionHeads(snapshot, store, bootstrapCache, [sessionId], {
+      getSnapshot: () => snapshot,
+      reason: "summary_repair",
+    });
+    await vi.waitFor(() => {
+      expect(getSessionHeadMock).toHaveBeenCalledTimes(1);
+    });
+
+    const foregroundForce = primeAuthoritativeSessionHeads(snapshot, store, bootstrapCache, [sessionId], {
+      force: true,
+      getSnapshot: () => snapshot,
+      reason: "foreground_force",
+    });
+    await Promise.resolve();
+    expect(getSessionHeadMock).toHaveBeenCalledTimes(1);
+
+    if (!rejectFirstFetch) {
+      throw new Error("Expected first authoritative rejecter");
+    }
+    const rejectFetch = rejectFirstFetch as (error: Error) => void;
+    rejectFetch(new Error("Session not found"));
+
+    const [firstChanged, forceChanged] = await Promise.all([firstRepair, foregroundForce]);
+    const repairChanged = await primeAuthoritativeSessionHeads(snapshot, store, bootstrapCache, [sessionId], {
+      getSnapshot: () => snapshot,
+      reason: "summary_repair",
+    });
+
+    expect(firstChanged).toBe(false);
+    expect(forceChanged).toBe(false);
+    expect(repairChanged).toBe(true);
+    expect(getSessionHeadMock).toHaveBeenCalledTimes(2);
+    expect(bootstrapCache.get(sessionId)?.last_event_seq).toBe(8);
+  });
+
   it("retries same-version authoritative prefetch when a newer generation overlaps an older canceled load", async () => {
     const sessionId = "session-1";
     const snapshot = makeSnapshot(sessionId, { lastEventSeq: 5 });
