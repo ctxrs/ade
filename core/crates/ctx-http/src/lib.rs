@@ -16,7 +16,6 @@ pub mod scheduler;
 mod storage_guard;
 mod terminal_launch;
 mod vcs_hooks;
-mod web_session_launch;
 pub(crate) mod workspace_provider_model_preferences;
 mod workspace_runtime;
 mod worktree_bootstrap;

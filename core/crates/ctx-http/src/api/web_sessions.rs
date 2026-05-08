@@ -1,10 +1,11 @@
 use super::*;
-use crate::web_session_launch::{
-    WebSessionLaunchError, WebSessionLaunchErrorKind, WebSessionLaunchRequest,
-};
 use chrono::{DateTime, Utc};
 use ctx_transport_runtime::web_sessions::{WebSessionHandle, WebSessionManager};
 use serde::Serialize;
+
+mod launch;
+
+use self::launch::{WebSessionLaunchError, WebSessionLaunchErrorKind, WebSessionLaunchRequest};
 
 #[derive(Debug, Deserialize)]
 pub(super) struct WebSessionCreatePayload {
@@ -101,7 +102,7 @@ pub(super) async fn create_web_session(
         })?
         .map(WorktreeId);
 
-    let info = crate::web_session_launch::create_web_session(
+    let info = launch::create_web_session(
         &state,
         WebSessionLaunchRequest {
             session_id,
