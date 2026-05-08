@@ -239,6 +239,7 @@ RUST_BAZEL_DEPS = {
             "@crates//:serde_json",
             "@crates//:sysinfo",
             "@crates//:tokio",
+            "@crates//:tracing",
         ],
         dev_deps = [],
         dev_proc_macro_deps = [],
