@@ -14,7 +14,6 @@ mod resource_governance;
 pub mod resource_telemetry;
 pub mod scheduler;
 mod storage_guard;
-mod terminal_launch;
 mod vcs_hooks;
 pub(crate) mod workspace_provider_model_preferences;
 mod workspace_runtime;

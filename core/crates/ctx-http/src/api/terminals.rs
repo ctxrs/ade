@@ -9,10 +9,13 @@ use serde::Serialize;
 
 use super::errors::ApiErrorResp;
 use crate::daemon::AppState;
-use crate::terminal_launch::CreateTerminalLaunchRequest;
 use ctx_core::ids::{SessionId, TaskId, TerminalId, WorkspaceId, WorktreeId};
 use ctx_core::models::TerminalSession;
 use ctx_transport_runtime::terminal_launch::{TerminalLaunchError, TerminalLaunchErrorKind};
+
+mod launch;
+
+use self::launch::CreateTerminalLaunchRequest;
 
 #[derive(Debug, Deserialize)]
 pub(super) struct CreateTerminalReq {
@@ -89,7 +92,7 @@ pub(super) async fn create_workspace_terminal(
         None => None,
     };
 
-    let session = crate::terminal_launch::create_workspace_terminal(
+    let session = launch::create_workspace_terminal(
         &state,
         CreateTerminalLaunchRequest {
             workspace_id,
