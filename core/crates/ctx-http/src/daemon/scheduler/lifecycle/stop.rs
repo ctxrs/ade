@@ -13,9 +13,10 @@ use crate::daemon::AppState;
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
 
 use super::super::persistence::emit_event;
-use super::{
+use super::state::{RunningTurn, StopReason};
+use super::terminalization::{
     finalize_provider_outcome_required, revoke_turn_mcp_token, wait_for_provider_outcome,
-    wait_for_turn_event_loop, RunningTurn, StopReason,
+    wait_for_turn_event_loop,
 };
 
 impl StopReason {
