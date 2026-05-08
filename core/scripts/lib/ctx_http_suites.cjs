@@ -82,6 +82,7 @@ const CTX_HTTP_CHECKIN_FANOUT_TARGETS_BY_SUITE = Object.freeze({
   "unit-tests-merge-queue": [
     "unit_tests_merge_queue",
     "unit_tests_merge_queue_enabled_workspace_resume_after_open",
+    "unit_tests_vcs_hooks",
   ],
   "bin-tests": [
     "bin_tests_root_help",
@@ -165,6 +166,7 @@ const CTX_HTTP_CHECKIN_FANOUT_TARGET_BATCHES_BY_SUITE = Object.freeze({
     [
       "unit_tests_merge_queue",
       "unit_tests_merge_queue_enabled_workspace_resume_after_open",
+      "unit_tests_vcs_hooks",
     ],
   ],
   "workspace-stream": [
@@ -670,6 +672,7 @@ const CTX_HTTP_SUITES = [
       "crates/ctx-http/src/merge_queue.rs",
       "crates/ctx-http/src/merge_queue/**",
       "crates/ctx-http/src/vcs_hooks.rs",
+      "crates/ctx-http/src/vcs_hooks/**",
       "crates/ctx-http/src/workspace_config.rs",
       "crates/ctx-http/src/worktree_bootstrap.rs",
       "crates/ctx-http/src/worktree_data_plane.rs",
