@@ -41,26 +41,15 @@ impl ctx_workspace_services::worktree_bootstrap::WorktreeBootstrapHost for AppSt
             return Ok(None);
         };
 
-        let command = cfg
-            .setup_command
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
-        let Some(command) = command else {
-            return Ok(None);
-        };
-
-        let timeout_sec = cfg.timeout_sec.unwrap_or(60);
-        let timeout_sec = if timeout_sec == 0 { 60 } else { timeout_sec };
-        let wait_for_completion = cfg.wait_for_completion.unwrap_or(false);
-        Ok(Some(
-            ctx_workspace_services::worktree_bootstrap::BootstrapConfig {
-                timeout: Duration::from_secs(timeout_sec),
-                command,
-                wait_for_completion,
-            },
-        ))
+        Ok(
+            ctx_workspace_services::worktree_bootstrap::normalize_bootstrap_config(
+                ctx_workspace_services::worktree_bootstrap::BootstrapConfigInput {
+                    setup_command: cfg.setup_command,
+                    timeout_sec: cfg.timeout_sec,
+                    wait_for_completion: cfg.wait_for_completion,
+                },
+            ),
+        )
     }
 
     async fn execute_bootstrap_step(

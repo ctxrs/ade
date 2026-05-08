@@ -21,6 +21,13 @@ pub struct BootstrapConfig {
     pub wait_for_completion: bool,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct BootstrapConfigInput {
+    pub setup_command: Option<String>,
+    pub timeout_sec: Option<u64>,
+    pub wait_for_completion: Option<bool>,
+}
+
 #[derive(Debug, Clone)]
 pub struct BootstrapStep {
     pub label: String,
@@ -323,6 +330,27 @@ pub fn shell_bootstrap_command(command: &str) -> Command {
     }
 }
 
+pub fn normalize_bootstrap_config(input: BootstrapConfigInput) -> Option<BootstrapConfig> {
+    let command = input
+        .setup_command
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)?;
+    let timeout_sec = input.timeout_sec.unwrap_or(DEFAULT_TIMEOUT_SEC);
+    let timeout_sec = if timeout_sec == 0 {
+        DEFAULT_TIMEOUT_SEC
+    } else {
+        timeout_sec
+    };
+
+    Some(BootstrapConfig {
+        timeout: Duration::from_secs(timeout_sec),
+        command,
+        wait_for_completion: input.wait_for_completion.unwrap_or(false),
+    })
+}
+
 pub async fn run_bootstrap_command(
     mut cmd: Command,
     timeout: Duration,
@@ -470,8 +498,8 @@ mod tests {
 
     use super::{
         bootstrap_command_env, bootstrap_log_path, build_bootstrap_steps,
-        prepare_bootstrap_log_for_storage, run_bootstrap_command, shell_bootstrap_command,
-        truncate_log, BootstrapCommandRuntime,
+        normalize_bootstrap_config, prepare_bootstrap_log_for_storage, run_bootstrap_command,
+        shell_bootstrap_command, truncate_log, BootstrapCommandRuntime, BootstrapConfigInput,
     };
 
     #[test]
@@ -481,6 +509,43 @@ mod tests {
             build_bootstrap_steps("echo hi").expect("steps")[0].command,
             "echo hi"
         );
+    }
+
+    #[test]
+    fn normalize_bootstrap_config_ignores_blank_commands() {
+        assert!(normalize_bootstrap_config(BootstrapConfigInput {
+            setup_command: Some("   ".to_string()),
+            timeout_sec: Some(5),
+            wait_for_completion: Some(true),
+        })
+        .is_none());
+    }
+
+    #[test]
+    fn normalize_bootstrap_config_defaults_zero_timeout_and_wait_flag() {
+        let config = normalize_bootstrap_config(BootstrapConfigInput {
+            setup_command: Some("  pnpm install  ".to_string()),
+            timeout_sec: Some(0),
+            wait_for_completion: None,
+        })
+        .expect("config");
+
+        assert_eq!(config.command, "pnpm install");
+        assert_eq!(config.timeout.as_secs(), super::DEFAULT_TIMEOUT_SEC);
+        assert!(!config.wait_for_completion);
+    }
+
+    #[test]
+    fn normalize_bootstrap_config_preserves_explicit_timeout_and_wait_flag() {
+        let config = normalize_bootstrap_config(BootstrapConfigInput {
+            setup_command: Some("make bootstrap".to_string()),
+            timeout_sec: Some(120),
+            wait_for_completion: Some(true),
+        })
+        .expect("config");
+
+        assert_eq!(config.timeout.as_secs(), 120);
+        assert!(config.wait_for_completion);
     }
 
     #[test]
