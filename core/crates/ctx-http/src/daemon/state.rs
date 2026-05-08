@@ -10,9 +10,6 @@ use tokio::task::JoinHandle;
 use crate::provider_guard;
 use crate::provider_restart;
 use crate::resource_governance::ResourceGovernanceRuntime;
-use crate::runtime_adapters::{
-    CtxExecutionHarness, CtxRuntimeEventSink, CtxRuntimeMetricsSink, DefaultWarmupOperations,
-};
 use crate::scheduler::SchedulerCommand;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceAttachmentId, WorkspaceId, WorktreeId};
 use ctx_execution_runtime::ExecutionSetupCoordinator;
@@ -39,6 +36,7 @@ mod builder;
 mod cache;
 mod installs;
 mod metrics;
+mod runtime_adapters;
 mod types;
 
 pub use cache::{CacheSweepConfig, CacheSweepStats, TimedEntry};
@@ -51,6 +49,9 @@ pub(crate) use ctx_workspace_services::worktree_vcs::{
 };
 pub use ctx_workspace_services::worktree_vcs::{
     GitStatusSnapshotCacheEntry, WorktreeVcsSnapshotCacheEntry,
+};
+use runtime_adapters::{
+    CtxExecutionHarness, CtxRuntimeEventSink, CtxRuntimeMetricsSink, DefaultWarmupOperations,
 };
 
 pub use ctx_workspace_services::worktree_vcs::WorktreeVcsSchedulerRuntime;

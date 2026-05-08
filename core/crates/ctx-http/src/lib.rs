@@ -12,7 +12,6 @@ mod provider_launch;
 pub mod provider_restart;
 mod resource_governance;
 pub mod resource_telemetry;
-mod runtime_adapters;
 pub mod scheduler;
 mod storage_guard;
 mod terminal_launch;
