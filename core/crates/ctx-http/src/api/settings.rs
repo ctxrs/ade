@@ -4,10 +4,9 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
 
-use crate::daemon::{tool_cgroup, AppState};
+use crate::daemon::{resource_governance, tool_cgroup, AppState};
 use crate::provider_guard;
 use crate::provider_restart;
-use crate::resource_governance;
 use ctx_observability::telemetry::TelemetryConfig;
 use ctx_settings_model as user_settings;
 use ctx_settings_service::HostExecutionPolicy;

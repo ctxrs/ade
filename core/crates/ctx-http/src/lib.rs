@@ -9,7 +9,6 @@ mod memleak_debug;
 pub mod provider_guard;
 mod provider_launch;
 pub mod provider_restart;
-mod resource_governance;
 pub mod resource_telemetry;
 pub mod scheduler;
 mod storage_guard;
