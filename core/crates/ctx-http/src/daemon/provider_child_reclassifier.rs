@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use tokio::sync::broadcast;
 
-use crate::daemon::AppState;
+use super::AppState;
 
-pub fn spawn_provider_child_reclassifier(state: Arc<AppState>) {
+pub(super) fn spawn_provider_child_reclassifier(state: Arc<AppState>) {
     ctx_provider_runtime::provider_child_reclassifier::spawn_provider_child_reclassifier(state);
 }
 

@@ -7,7 +7,6 @@ pub mod git_status;
 mod installer;
 mod memleak_debug;
 mod merge_queue;
-mod provider_child_reclassifier;
 pub mod provider_guard;
 mod provider_launch;
 pub mod provider_restart;
