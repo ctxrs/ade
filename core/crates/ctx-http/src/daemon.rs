@@ -24,7 +24,6 @@ use crate::resource_governance;
 use crate::resource_telemetry;
 use crate::scheduler::reconcile_turn_terminal_state;
 use crate::storage_guard;
-use crate::tool_cgroup;
 use ctx_observability::telemetry::TelemetryConfig;
 use ctx_provider_install::install_state::InstallTarget;
 use ctx_provider_runtime::provider_usage;
@@ -44,6 +43,7 @@ mod provider_runtime;
 mod retention;
 pub(crate) mod sessions;
 mod state;
+pub(crate) mod tool_cgroup;
 mod workspace_init;
 pub(crate) mod workspaces;
 

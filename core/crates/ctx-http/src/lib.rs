@@ -15,7 +15,6 @@ pub mod resource_telemetry;
 pub mod scheduler;
 mod storage_guard;
 mod terminal_launch;
-mod tool_cgroup;
 mod vcs_hooks;
 mod web_session_launch;
 pub(crate) mod workspace_provider_model_preferences;

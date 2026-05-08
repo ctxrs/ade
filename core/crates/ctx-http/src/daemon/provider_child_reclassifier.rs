@@ -35,7 +35,7 @@ impl ctx_provider_runtime::provider_child_reclassifier::ProviderChildReclassifie
     fn tool_slice_unit(&self) -> &'static str {
         #[cfg(target_os = "linux")]
         {
-            crate::tool_cgroup::TOOL_SLICE_UNIT
+            super::tool_cgroup::TOOL_SLICE_UNIT
         }
         #[cfg(not(target_os = "linux"))]
         {
