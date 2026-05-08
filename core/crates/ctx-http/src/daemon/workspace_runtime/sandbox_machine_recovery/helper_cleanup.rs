@@ -2,7 +2,7 @@ use super::*;
 
 #[cfg(any(test, not(unix)))]
 #[cfg(any(test, not(unix)))]
-pub(in crate::workspace_runtime) fn is_ctx_managed_sandbox_helper_process_command(
+pub(in crate::daemon::workspace_runtime) fn is_ctx_managed_sandbox_helper_process_command(
     command: &[String],
     data_root: &Path,
     machine_name: &str,
@@ -41,7 +41,7 @@ fn is_ctx_managed_sandbox_helper_process_rendered(
 }
 
 #[cfg(any(test, not(unix)))]
-pub(in crate::workspace_runtime) fn collect_ctx_managed_sandbox_helper_pids<I>(
+pub(in crate::daemon::workspace_runtime) fn collect_ctx_managed_sandbox_helper_pids<I>(
     rows: I,
     data_root: &Path,
     machine_name: &str,
@@ -136,7 +136,7 @@ where
 }
 
 #[cfg(test)]
-pub(in crate::workspace_runtime) fn collect_ctx_managed_sandbox_helper_pids_from_ps_output(
+pub(in crate::daemon::workspace_runtime) fn collect_ctx_managed_sandbox_helper_pids_from_ps_output(
     output: &str,
     data_root: &Path,
     machine_name: &str,
@@ -154,13 +154,13 @@ pub(in crate::workspace_runtime) fn collect_ctx_managed_sandbox_helper_pids_from
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub(in crate::workspace_runtime) struct SandboxHelperCleanupOutcome {
-    pub(in crate::workspace_runtime) killed: Vec<u32>,
-    pub(in crate::workspace_runtime) failed: Vec<u32>,
-    pub(in crate::workspace_runtime) skipped: Vec<u32>,
+pub(in crate::daemon::workspace_runtime) struct SandboxHelperCleanupOutcome {
+    pub(in crate::daemon::workspace_runtime) killed: Vec<u32>,
+    pub(in crate::daemon::workspace_runtime) failed: Vec<u32>,
+    pub(in crate::daemon::workspace_runtime) skipped: Vec<u32>,
 }
 
-pub(in crate::workspace_runtime) fn literal_pkill_pattern(command: &str) -> String {
+pub(in crate::daemon::workspace_runtime) fn literal_pkill_pattern(command: &str) -> String {
     let mut pattern = String::with_capacity(command.len());
     for ch in command.chars() {
         if matches!(
@@ -188,7 +188,7 @@ fn kill_ctx_managed_sandbox_helper_command(command: &str) -> bool {
 }
 
 #[cfg(unix)]
-pub(in crate::workspace_runtime) fn kill_ctx_managed_sandbox_helper_processes(
+pub(in crate::daemon::workspace_runtime) fn kill_ctx_managed_sandbox_helper_processes(
     data_root: &Path,
     machine_name: &str,
 ) -> SandboxHelperCleanupOutcome {
@@ -245,7 +245,7 @@ pub(in crate::workspace_runtime) fn kill_ctx_managed_sandbox_helper_processes(
 }
 
 #[cfg(not(unix))]
-pub(in crate::workspace_runtime) fn kill_ctx_managed_sandbox_helper_processes(
+pub(in crate::daemon::workspace_runtime) fn kill_ctx_managed_sandbox_helper_processes(
     data_root: &Path,
     machine_name: &str,
 ) -> SandboxHelperCleanupOutcome {

@@ -1,6 +1,5 @@
 pub mod api;
 pub mod daemon;
-mod workspace_runtime;
 
 #[cfg(feature = "fault_injection")]
 pub mod fault_injection;

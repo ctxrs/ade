@@ -146,67 +146,67 @@ CTX_HTTP_LIB_STARTUP_PREWARM_KIND_SUPPORTED_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
     "lib_tests::execution_launch::execution_launch_startup_prewarm_kind_supported",
 ]
 CTX_HTTP_WORKSPACE_RUNTIME_UNIT_TEST_ARGS = CTX_HTTP_UNIT_TEST_SERIAL_ARGS + [
-    "workspace_runtime::",
-    "--skip=workspace_runtime::reclaim_unit_tests::idle_runtime_reclaim_stops_machine_even_with_running_ctx_harness_container",
-    "--skip=workspace_runtime::tests::prepare_reuses_running_workspace_container_without_front_loading_image_readiness",
-    "--skip=workspace_runtime::tests::prepare_starts_cached_workspace_container_when_sandbox_cli_reports_it_stopped",
-    "--skip=workspace_runtime::tests::maybe_reclaim_sandbox_machine_stops_idle_machine",
-    "--skip=workspace_runtime::tests::maybe_reclaim_sandbox_machine_stops_idle_runtime_with_running_workspace_containers",
-    "--skip=workspace_runtime::reclaim_unit_tests::idle_runtime_reclaim_stops_machine_even_with_running_ctx_harness_container",
-    "--skip=workspace_runtime::tests::container_status_reports_running_avf_workspace_container",
-    "--skip=workspace_runtime::tests::ensure_workspace_container_starts_avf_workspace_vm",
-    "--skip=workspace_runtime::tests::ensure_workspace_container_for_worktree_keeps_avf_workspace_container_ready",
-    "--skip=workspace_runtime::tests::ensure_sandbox_machine_materialized_defers_reconfiguration_when_machine_state_is_unknown_and_engine_unreachable",
-    "--skip=workspace_runtime::tests::ensure_sandbox_machine_materialized_defers_reconfiguration_when_machine_is_running_but_engine_unreachable",
-    "--skip=workspace_runtime::tests::ensure_sandbox_machine_materialized_recreates_machine_for_memory_profile_change_when_engine_is_down",
+    "daemon::workspace_runtime::",
+    "--skip=daemon::workspace_runtime::reclaim_unit_tests::idle_runtime_reclaim_stops_machine_even_with_running_ctx_harness_container",
+    "--skip=daemon::workspace_runtime::tests::prepare_reuses_running_workspace_container_without_front_loading_image_readiness",
+    "--skip=daemon::workspace_runtime::tests::prepare_starts_cached_workspace_container_when_sandbox_cli_reports_it_stopped",
+    "--skip=daemon::workspace_runtime::tests::maybe_reclaim_sandbox_machine_stops_idle_machine",
+    "--skip=daemon::workspace_runtime::tests::maybe_reclaim_sandbox_machine_stops_idle_runtime_with_running_workspace_containers",
+    "--skip=daemon::workspace_runtime::reclaim_unit_tests::idle_runtime_reclaim_stops_machine_even_with_running_ctx_harness_container",
+    "--skip=daemon::workspace_runtime::tests::container_status_reports_running_avf_workspace_container",
+    "--skip=daemon::workspace_runtime::tests::ensure_workspace_container_starts_avf_workspace_vm",
+    "--skip=daemon::workspace_runtime::tests::ensure_workspace_container_for_worktree_keeps_avf_workspace_container_ready",
+    "--skip=daemon::workspace_runtime::tests::ensure_sandbox_machine_materialized_defers_reconfiguration_when_machine_state_is_unknown_and_engine_unreachable",
+    "--skip=daemon::workspace_runtime::tests::ensure_sandbox_machine_materialized_defers_reconfiguration_when_machine_is_running_but_engine_unreachable",
+    "--skip=daemon::workspace_runtime::tests::ensure_sandbox_machine_materialized_recreates_machine_for_memory_profile_change_when_engine_is_down",
 ]
 CTX_HTTP_WORKSPACE_RUNTIME_RECLAIM_IDLE_RUNTIME_WITH_PARKED_CONTAINERS_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
     "--exact",
-    "workspace_runtime::reclaim_unit_tests::idle_runtime_reclaim_stops_machine_even_with_running_ctx_harness_container",
+    "daemon::workspace_runtime::reclaim_unit_tests::idle_runtime_reclaim_stops_machine_even_with_running_ctx_harness_container",
 ]
 CTX_HTTP_WORKSPACE_RUNTIME_REUSES_RUNNING_CONTAINER_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
     "--exact",
-    "workspace_runtime::tests::prepare_reuses_running_workspace_container_without_front_loading_image_readiness",
+    "daemon::workspace_runtime::tests::prepare_reuses_running_workspace_container_without_front_loading_image_readiness",
 ]
 CTX_HTTP_WORKSPACE_RUNTIME_PREPARE_STARTS_CACHED_CONTAINER_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
     "--exact",
-    "workspace_runtime::tests::prepare_starts_cached_workspace_container_when_sandbox_cli_reports_it_stopped",
+    "daemon::workspace_runtime::tests::prepare_starts_cached_workspace_container_when_sandbox_cli_reports_it_stopped",
 ]
 CTX_HTTP_WORKSPACE_RUNTIME_RECLAIM_IDLE_MACHINE_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
     "--exact",
-    "workspace_runtime::tests::maybe_reclaim_sandbox_machine_stops_idle_machine",
+    "daemon::workspace_runtime::tests::maybe_reclaim_sandbox_machine_stops_idle_machine",
 ]
 CTX_HTTP_WORKSPACE_RUNTIME_RECLAIM_IDLE_RUNTIME_WITH_CONTAINERS_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
     "--exact",
-    "workspace_runtime::tests::maybe_reclaim_sandbox_machine_stops_idle_runtime_with_running_workspace_containers",
+    "daemon::workspace_runtime::tests::maybe_reclaim_sandbox_machine_stops_idle_runtime_with_running_workspace_containers",
 ]
 CTX_HTTP_WORKSPACE_RUNTIME_RECLAIM_CTX_HARNESS_CONTAINER_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
     "--exact",
-    "workspace_runtime::reclaim_unit_tests::idle_runtime_reclaim_stops_machine_even_with_running_ctx_harness_container",
+    "daemon::workspace_runtime::reclaim_unit_tests::idle_runtime_reclaim_stops_machine_even_with_running_ctx_harness_container",
 ]
 CTX_HTTP_WORKSPACE_RUNTIME_CONTAINER_STATUS_AVF_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
     "--exact",
-    "workspace_runtime::tests::container_status_reports_running_avf_workspace_container",
+    "daemon::workspace_runtime::tests::container_status_reports_running_avf_workspace_container",
 ]
 CTX_HTTP_WORKSPACE_RUNTIME_STARTS_AVF_WORKSPACE_VM_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
     "--exact",
-    "workspace_runtime::tests::ensure_workspace_container_starts_avf_workspace_vm",
+    "daemon::workspace_runtime::tests::ensure_workspace_container_starts_avf_workspace_vm",
 ]
 CTX_HTTP_WORKSPACE_RUNTIME_KEEPS_AVF_WORKSPACE_CONTAINER_READY_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
     "--exact",
-    "workspace_runtime::tests::ensure_workspace_container_for_worktree_keeps_avf_workspace_container_ready",
+    "daemon::workspace_runtime::tests::ensure_workspace_container_for_worktree_keeps_avf_workspace_container_ready",
 ]
 CTX_HTTP_WORKSPACE_RUNTIME_UNKNOWN_MACHINE_STATE_ENGINE_UNREACHABLE_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
     "--exact",
-    "workspace_runtime::tests::ensure_sandbox_machine_materialized_defers_reconfiguration_when_machine_state_is_unknown_and_engine_unreachable",
+    "daemon::workspace_runtime::tests::ensure_sandbox_machine_materialized_defers_reconfiguration_when_machine_state_is_unknown_and_engine_unreachable",
 ]
 CTX_HTTP_WORKSPACE_RUNTIME_RUNNING_UNREACHABLE_MACHINE_RECONFIGURATION_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
     "--exact",
-    "workspace_runtime::tests::ensure_sandbox_machine_materialized_defers_reconfiguration_when_machine_is_running_but_engine_unreachable",
+    "daemon::workspace_runtime::tests::ensure_sandbox_machine_materialized_defers_reconfiguration_when_machine_is_running_but_engine_unreachable",
 ]
 CTX_HTTP_WORKSPACE_RUNTIME_RECREATES_MACHINE_FOR_MEMORY_PROFILE_CHANGE_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
     "--exact",
-    "workspace_runtime::tests::ensure_sandbox_machine_materialized_recreates_machine_for_memory_profile_change_when_engine_is_down",
+    "daemon::workspace_runtime::tests::ensure_sandbox_machine_materialized_recreates_machine_for_memory_profile_change_when_engine_is_down",
 ]
 
 CTX_HTTP_SHARED_INTERNAL_DEPS = [

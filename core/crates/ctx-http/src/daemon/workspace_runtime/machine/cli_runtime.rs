@@ -8,7 +8,7 @@ fn managed_sandbox_machine_cache_install_lock() -> &'static Mutex<()> {
 }
 
 #[cfg(test)]
-pub(in crate::workspace_runtime) async fn ensure_managed_sandbox_machine_cache(
+pub(in crate::daemon::workspace_runtime) async fn ensure_managed_sandbox_machine_cache(
     data_root: &Path,
     observer: Option<&dyn HarnessSetupObserver>,
     download_aggregate: Option<ManagedDownloadAggregate>,
@@ -90,14 +90,14 @@ pub(in crate::workspace_runtime) async fn ensure_managed_sandbox_machine_cache(
 }
 
 #[cfg(test)]
-pub(in crate::workspace_runtime) fn managed_sandbox_cli_runtime_source(
+pub(in crate::daemon::workspace_runtime) fn managed_sandbox_cli_runtime_source(
 ) -> Option<bundled_assets::ManagedRuntimeSource> {
     let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
     bundled_assets::managed_runtime_source("sandbox-cli", os, arch)
 }
 
 #[cfg(test)]
-pub(in crate::workspace_runtime) fn managed_sandbox_cli_runtime_bin_path(
+pub(in crate::daemon::workspace_runtime) fn managed_sandbox_cli_runtime_bin_path(
     data_root: &Path,
     source: &bundled_assets::ManagedRuntimeSource,
 ) -> PathBuf {
@@ -180,7 +180,7 @@ async fn mark_managed_sandbox_cli_runtime_ready(runtime_root: &Path) -> Result<(
 }
 
 #[cfg(test)]
-pub(in crate::workspace_runtime) async fn ensure_managed_sandbox_cli_runtime(
+pub(in crate::daemon::workspace_runtime) async fn ensure_managed_sandbox_cli_runtime(
     data_root: &Path,
     observer: Option<&dyn HarnessSetupObserver>,
     download_aggregate: Option<ManagedDownloadAggregate>,
@@ -190,7 +190,7 @@ pub(in crate::workspace_runtime) async fn ensure_managed_sandbox_cli_runtime(
 }
 
 #[cfg(test)]
-pub(in crate::workspace_runtime) async fn ensure_managed_sandbox_cli_runtime_with_override(
+pub(in crate::daemon::workspace_runtime) async fn ensure_managed_sandbox_cli_runtime_with_override(
     data_root: &Path,
     source_override: Option<&bundled_assets::ManagedRuntimeSource>,
     observer: Option<&dyn HarnessSetupObserver>,

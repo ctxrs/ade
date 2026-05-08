@@ -8,17 +8,17 @@ mod running;
 
 use self::helper_cleanup::cleanup_ctx_managed_sandbox_helper_processes;
 #[cfg(test)]
-pub(in crate::workspace_runtime) use self::helper_cleanup::collect_ctx_managed_sandbox_helper_pids;
+pub(in crate::daemon::workspace_runtime) use self::helper_cleanup::collect_ctx_managed_sandbox_helper_pids;
 #[cfg(test)]
-pub(in crate::workspace_runtime) use self::helper_cleanup::collect_ctx_managed_sandbox_helper_pids_from_ps_output;
+pub(in crate::daemon::workspace_runtime) use self::helper_cleanup::collect_ctx_managed_sandbox_helper_pids_from_ps_output;
 #[cfg(test)]
 #[allow(unused_imports)]
-pub(in crate::workspace_runtime) use self::helper_cleanup::{
+pub(in crate::daemon::workspace_runtime) use self::helper_cleanup::{
     is_ctx_managed_sandbox_helper_process_command, kill_ctx_managed_sandbox_helper_processes,
     literal_pkill_pattern,
 };
 #[cfg_attr(test, allow(unused_imports))]
-pub(in crate::workspace_runtime) use self::running::ensure_sandbox_machine_running_with_observer;
+pub(in crate::daemon::workspace_runtime) use self::running::ensure_sandbox_machine_running_with_observer;
 
 use ctx_harness_setup::{
     observe_log, observe_progress, HarnessSetupLogLevel, HarnessSetupObserver, HarnessSetupPhase,
@@ -469,7 +469,7 @@ pub(super) async fn initialize_sandbox_machine(
     .await
 }
 
-pub(in crate::workspace_runtime) async fn initialize_sandbox_machine_with_image(
+pub(in crate::daemon::workspace_runtime) async fn initialize_sandbox_machine_with_image(
     data_root: &Path,
     machine_name: &str,
     machine_image: Option<&Path>,

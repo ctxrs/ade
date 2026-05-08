@@ -1007,7 +1007,7 @@ async fn ready_runtime_sandbox_cli_short_circuits_network_cleanup_scripts_for_sh
     let sandbox_cli_path = write_ready_runtime_sandbox_cli_shim(temp.path());
     let _sandbox_cli_available = EnvGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
     let _sandbox_cli_path = EnvGuard::set(
-        crate::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+        crate::daemon::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
         &sandbox_cli_path.to_string_lossy(),
     );
 
@@ -2548,7 +2548,7 @@ async fn ensure_container_machine_ready_prefetches_avf_runtime_without_starting_
     let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, &helper_path.to_string_lossy());
     let _sandbox_cli_available = EnvGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
     let _sandbox_cli_path = EnvGuard::set(
-        crate::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+        crate::daemon::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
         &sandbox_cli_path.to_string_lossy(),
     );
     let (_runtime_guard, servers) = install_test_managed_avf_linux_runtime_source().await;
@@ -2583,7 +2583,7 @@ async fn prepare_returns_avf_linux_vm_plan_after_workspace_vm_and_container_read
     let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, &helper_path.to_string_lossy());
     let _sandbox_cli_available = EnvGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
     let _sandbox_cli_path = EnvGuard::set(
-        crate::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+        crate::daemon::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
         &sandbox_cli_path.to_string_lossy(),
     );
     let (_runtime_guard, servers) = install_test_managed_avf_linux_runtime_source().await;
@@ -2668,7 +2668,7 @@ async fn container_status_reports_running_avf_workspace_container() {
     let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, &helper_path.to_string_lossy());
     let _sandbox_cli_available = EnvGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
     let _sandbox_cli_path = EnvGuard::set(
-        crate::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+        crate::daemon::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
         &sandbox_cli_path.to_string_lossy(),
     );
     let (_runtime_guard, servers) = install_test_managed_avf_linux_runtime_source().await;
@@ -2718,7 +2718,7 @@ async fn ensure_workspace_container_starts_avf_workspace_vm() {
     let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, &helper_path.to_string_lossy());
     let _sandbox_cli_available = EnvGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
     let _sandbox_cli_path = EnvGuard::set(
-        crate::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+        crate::daemon::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
         &sandbox_cli_path.to_string_lossy(),
     );
     let (_runtime_guard, servers) = install_test_managed_avf_linux_runtime_source().await;
@@ -2764,7 +2764,7 @@ async fn ensure_workspace_container_for_worktree_keeps_avf_workspace_container_r
     let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, &helper_path.to_string_lossy());
     let _sandbox_cli_available = EnvGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
     let _sandbox_cli_path = EnvGuard::set(
-        crate::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+        crate::daemon::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
         &sandbox_cli_path.to_string_lossy(),
     );
     let (_runtime_guard, servers) = install_test_managed_avf_linux_runtime_source().await;
@@ -2816,7 +2816,7 @@ async fn shared_vm_container_launch_omits_slirp_network_flag() {
     let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, &helper_path.to_string_lossy());
     let _sandbox_cli_available = EnvGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
     let _sandbox_cli_path = EnvGuard::set(
-        crate::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+        crate::daemon::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
         &sandbox_cli_path.to_string_lossy(),
     );
     let (_runtime_guard, servers) = install_test_managed_avf_linux_runtime_source().await;
@@ -2932,7 +2932,7 @@ async fn ensure_workspace_container_after_runtime_ready_starts_avf_workspace_vm(
     let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, &helper_path.to_string_lossy());
     let _sandbox_cli_available = EnvGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
     let _sandbox_cli_path = EnvGuard::set(
-        crate::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+        crate::daemon::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
         &sandbox_cli_path.to_string_lossy(),
     );
     let (_runtime_guard, servers) = install_test_managed_avf_linux_runtime_source().await;
@@ -3004,7 +3004,7 @@ async fn stop_container_removes_avf_workspace_container() {
     let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, &helper_path.to_string_lossy());
     let _sandbox_cli_available = EnvGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
     let _sandbox_cli_path = EnvGuard::set(
-        crate::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+        crate::daemon::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
         &sandbox_cli_path.to_string_lossy(),
     );
     let (_runtime_guard, servers) = install_test_managed_avf_linux_runtime_source().await;
