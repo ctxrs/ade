@@ -1008,6 +1008,97 @@ fn make_assistant_message(
     }
 }
 
+#[tokio::test]
+async fn completed_turn_accepts_only_late_assistant_finalization_events() {
+    let fixture = setup_session_fixture().await;
+    let run_id = RunId::new();
+    let completed_turn_id = TurnId::new();
+    fixture
+        .store
+        .insert_session_turn(make_turn(fixture.session_id, run_id, completed_turn_id))
+        .await
+        .unwrap();
+    fixture
+        .store
+        .update_session_turn_status(
+            fixture.session_id,
+            completed_turn_id,
+            SessionTurnStatus::Completed,
+            Some(1),
+            None,
+            Utc::now(),
+        )
+        .await
+        .unwrap();
+
+    fixture
+        .store
+        .append_session_event(
+            fixture.session_id,
+            Some(run_id),
+            Some(completed_turn_id),
+            SessionEventType::AssistantComplete,
+            serde_json::json!({ "full_content": "late final answer" }),
+        )
+        .await
+        .unwrap();
+    fixture
+        .store
+        .append_session_event(
+            fixture.session_id,
+            Some(run_id),
+            Some(completed_turn_id),
+            SessionEventType::AssistantMessageInserted,
+            serde_json::json!({ "content": "late final answer" }),
+        )
+        .await
+        .unwrap();
+
+    let err = fixture
+        .store
+        .append_session_event(
+            fixture.session_id,
+            Some(run_id),
+            Some(completed_turn_id),
+            SessionEventType::ToolCall,
+            serde_json::json!({ "tool_call_id": "late-tool" }),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("turn terminalization"), "{err:#}");
+
+    let failed_turn_id = TurnId::new();
+    fixture
+        .store
+        .insert_session_turn(make_turn(fixture.session_id, run_id, failed_turn_id))
+        .await
+        .unwrap();
+    fixture
+        .store
+        .update_session_turn_status(
+            fixture.session_id,
+            failed_turn_id,
+            SessionTurnStatus::Failed,
+            Some(1),
+            None,
+            Utc::now(),
+        )
+        .await
+        .unwrap();
+    let err = fixture
+        .store
+        .append_session_event(
+            fixture.session_id,
+            Some(run_id),
+            Some(failed_turn_id),
+            SessionEventType::AssistantComplete,
+            serde_json::json!({ "full_content": "late failed answer" }),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("turn terminalization"), "{err:#}");
+}
+
 async fn delete_tool_projection(
     db_path: &std::path::Path,
     session_id: SessionId,

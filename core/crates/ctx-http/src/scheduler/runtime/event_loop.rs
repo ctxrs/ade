@@ -152,20 +152,15 @@ async fn run_turn_event_loop(mut ctx: TurnEventLoop) {
             enrich_done_payload(&ctx, &mut payload);
         }
 
+        if should_check_store_terminal_status(&event_type) {
+            let _ = should_drop_post_terminal_event(&ctx, &mut runtime).await;
+        }
         let allow_post_terminal_assistant_complete =
             should_process_post_terminal_assistant_complete(
                 &event_type,
                 runtime.terminal_status.as_ref(),
             );
-        let dropped_by_store_terminal_status = should_check_store_terminal_status(&event_type)
-            && should_drop_post_terminal_event(&ctx, &mut runtime).await
-            && !should_process_post_terminal_assistant_complete(
-                &event_type,
-                runtime.terminal_status.as_ref(),
-            );
-        if (runtime.terminal_status.is_some() && !allow_post_terminal_assistant_complete)
-            || dropped_by_store_terminal_status
-        {
+        if runtime.terminal_status.is_some() && !allow_post_terminal_assistant_complete {
             tracing::debug!(
                 session_id = %ctx.session_id.0,
                 run_id = %ctx.run_id.0,

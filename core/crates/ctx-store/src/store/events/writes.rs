@@ -8,6 +8,14 @@ impl Store {
         let Some(turn) = self.get_session_turn(session_id, turn_id).await? else {
             return Ok(());
         };
+        if matches!(turn.status, SessionTurnStatus::Completed)
+            && matches!(
+                event_type,
+                SessionEventType::AssistantComplete | SessionEventType::AssistantMessageInserted
+            )
+        {
+            return Ok(());
+        }
         if matches!(
             turn.status,
             SessionTurnStatus::Completed

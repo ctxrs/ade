@@ -505,13 +505,20 @@ async fn event_loop_persists_assistant_complete_after_completed_terminal_event()
         order_seq_state: Arc::new(Mutex::new(OrderSeqState::new(1))),
     }));
 
-    ev_tx
-        .send(NormalizedEvent {
-            event_type: SessionEventType::Done,
-            payload_json: json!({"status": "completed"}),
-        })
+    fixture
+        .store
+        .persist_turn_terminal_events(
+            fixture.session_id,
+            Some(fixture.run_id),
+            fixture.turn_id,
+            vec![(
+                SessionEventType::TurnFinished,
+                json!({"status": "completed"}),
+            )],
+        )
         .await
-        .expect("send done event");
+        .expect("persist completed terminal event before assistant complete");
+
     ev_tx
         .send(NormalizedEvent {
             event_type: SessionEventType::AssistantComplete,
