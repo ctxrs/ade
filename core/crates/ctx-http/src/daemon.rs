@@ -36,6 +36,7 @@ mod provider_adapters;
 mod provider_bootstrap;
 mod provider_child_reclassifier;
 pub mod provider_guard;
+pub(crate) mod provider_launch;
 mod provider_registry;
 pub mod provider_restart;
 mod provider_runtime;

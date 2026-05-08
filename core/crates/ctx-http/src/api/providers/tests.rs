@@ -1,7 +1,7 @@
 use super::status::apply_target_aware_provider_status;
 use super::*;
 use crate::api::provider_launch::{get_install_statuses, GetInstallStatusesReq};
-use crate::provider_launch::install::should_skip_install_for_healthy_provider;
+use crate::daemon::provider_launch::install::should_skip_install_for_healthy_provider;
 use chrono::Utc;
 use ctx_provider_install::install_state::{InstallEventLevel, InstallProgressEvent};
 use ctx_provider_runtime::provider_launch::probe_error::classify_probe_error;

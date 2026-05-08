@@ -172,7 +172,7 @@ async fn load_provider_model_catalog_for_install_target(
     let args = runtime_command.args;
 
     let probe_context =
-        match crate::provider_launch::probe::provider_probe_context_for_workspace_runtime(
+        match crate::daemon::provider_launch::probe::provider_probe_context_for_workspace_runtime(
             state.as_ref(),
             workspace,
             provider_id,

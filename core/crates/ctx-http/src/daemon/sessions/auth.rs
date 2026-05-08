@@ -193,13 +193,14 @@ async fn prepare_session_auth_runtime(
         install_target,
     )
     .await;
-    let probe_context = crate::provider_launch::probe::provider_auth_context_for_worktree_runtime(
-        state.as_ref(),
-        &resolved_worktree.worktree,
-        &session.provider_id,
-    )
-    .await
-    .map_err(SessionAuthError::BadRequest)?;
+    let probe_context =
+        crate::daemon::provider_launch::probe::provider_auth_context_for_worktree_runtime(
+            state.as_ref(),
+            &resolved_worktree.worktree,
+            &session.provider_id,
+        )
+        .await
+        .map_err(SessionAuthError::BadRequest)?;
     let mut provider_env = probe_context.env;
     if let Some(provider_ref) = session.provider_session_ref.clone() {
         provider_env.insert("CTX_PROVIDER_SESSION_REF".to_string(), provider_ref);

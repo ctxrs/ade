@@ -697,7 +697,7 @@ declare_ctx_http_rust_unit_test(
 
 declare_ctx_http_rust_unit_test(
     name = "unit_tests_provider_launch",
-    args = CTX_HTTP_TEST_ARGS + ["provider_launch::"],
+    args = CTX_HTTP_TEST_ARGS + ["daemon::provider_launch::"],
     compile_data = CTX_HTTP_COMPILE_DATA,
     data = CTX_HTTP_COMPILE_DATA,
     deps = CTX_HTTP_DIRECT_TEST_DEPS,
