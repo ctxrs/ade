@@ -50,6 +50,7 @@ mod state;
 pub(crate) mod storage_guard;
 pub(crate) mod tool_cgroup;
 mod workspace_init;
+#[cfg(test)]
 mod workspace_runtime;
 pub(crate) mod workspaces;
 
