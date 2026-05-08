@@ -1,7 +1,7 @@
 use ctx_core::models::SessionTurnStatus;
 use serde_json::Value;
 
-use crate::scheduler::terminal::{finalize_failed_turn, FailedTurnTerminalization};
+use crate::daemon::scheduler::terminal::{finalize_failed_turn, FailedTurnTerminalization};
 
 use super::state::EventLoopRuntimeState;
 use super::telemetry::record_failed_turn_telemetry;

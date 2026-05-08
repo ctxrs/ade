@@ -1,5 +1,5 @@
 use super::*;
-use crate::scheduler::lifecycle::{fail_starting_turn, RunningTurn};
+use crate::daemon::scheduler::lifecycle::{fail_starting_turn, RunningTurn};
 use ctx_core::models::{ExecutionEnvironment, SessionTurn, VcsKind};
 use ctx_providers::adapters::{ProviderAdapter, ProviderRunHooks, TurnInput};
 use ctx_providers::events::NormalizedEvent;
@@ -203,7 +203,7 @@ async fn run_done_event_loop(
 
     events_done_rx.await.expect("event loop completion");
     loop_task.await.expect("event loop join");
-    crate::scheduler::terminal::finalize_completed_turn(
+    crate::daemon::scheduler::terminal::finalize_completed_turn(
         &fixture.state,
         fixture.session_id,
         Some(fixture.run_id),
@@ -359,13 +359,13 @@ async fn event_loop_drops_provider_events_after_turn_terminalized_by_store() {
     let data_dir = tempdir().expect("temp dir");
     let fixture = build_loop_fixture(data_dir.path(), "fake", "model").await;
 
-    crate::scheduler::terminal::finalize_failed_turn(
+    crate::daemon::scheduler::terminal::finalize_failed_turn(
         &fixture.state,
         fixture.session_id,
         Some(fixture.run_id),
         fixture.turn_id,
         fixture.message_id,
-        crate::scheduler::terminal::FailedTurnTerminalization {
+        crate::daemon::scheduler::terminal::FailedTurnTerminalization {
             message: "provider usage limit exceeded",
             reason: Some("usage_limit"),
             details: None,

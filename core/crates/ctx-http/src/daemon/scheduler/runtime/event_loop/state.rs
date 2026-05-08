@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use ctx_core::models::{SessionEventType, SessionTurnStatus, SessionTurnTool};
 
-use crate::scheduler::TurnStartProgress;
+use crate::daemon::scheduler::TurnStartProgress;
 
 use super::TurnEventLoop;
 

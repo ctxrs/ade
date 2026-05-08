@@ -137,7 +137,7 @@ async fn reconcile_terminal_state_respects_turn_finished_status() {
         .await
         .unwrap();
 
-    ctx_http::scheduler::reconcile_turn_terminal_state(
+    ctx_http::daemon::scheduler::reconcile_turn_terminal_state(
         &harness.state,
         harness.session.id,
         Some(run_id),
@@ -176,7 +176,7 @@ async fn reconcile_terminal_state_emits_interrupt_when_terminal_event_missing() 
     let turn_id = TurnId::new();
     insert_running_turn(&harness.store, harness.session.id, run_id, turn_id).await;
 
-    ctx_http::scheduler::reconcile_turn_terminal_state(
+    ctx_http::daemon::scheduler::reconcile_turn_terminal_state(
         &harness.state,
         harness.session.id,
         Some(run_id),
@@ -222,7 +222,7 @@ async fn reconcile_provider_exit_emits_failed_terminal_events_when_missing() {
     let turn_id = TurnId::new();
     insert_running_turn(&harness.store, harness.session.id, run_id, turn_id).await;
 
-    ctx_http::scheduler::reconcile_turn_failed_on_provider_exit(
+    ctx_http::daemon::scheduler::reconcile_turn_failed_on_provider_exit(
         &harness.state,
         harness.session.id,
         Some(run_id),

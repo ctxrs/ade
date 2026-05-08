@@ -13,7 +13,7 @@ use self::terminal::{
 use self::tools::{handle_persisted_tool_event, prepare_tool_event_payload};
 use super::helpers::should_track_thought_chunk;
 use super::*;
-use crate::scheduler::TurnStartProgress;
+use crate::daemon::scheduler::TurnStartProgress;
 use ctx_core::ids::{MessageId, RunId, TurnId};
 use ctx_core::models::{Session, SessionEventType, SessionTurnStatus};
 use ctx_session_tools::normalize_tool_event;

@@ -10,7 +10,7 @@ use tokio::task::JoinHandle;
 use crate::daemon::provider_guard;
 use crate::daemon::provider_restart;
 use crate::daemon::resource_governance::ResourceGovernanceRuntime;
-use crate::scheduler::SchedulerCommand;
+use crate::daemon::scheduler::SchedulerCommand;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceAttachmentId, WorkspaceId, WorktreeId};
 use ctx_execution_runtime::ExecutionSetupCoordinator;
 use ctx_observability::ops_events::{OpsEvent, OpsEvents};

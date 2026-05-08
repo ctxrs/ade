@@ -5,8 +5,8 @@ use std::time::Duration;
 use anyhow::Result;
 use chrono::Utc;
 
+use crate::daemon::scheduler::QueuedMessage;
 use crate::daemon::AppState;
-use crate::scheduler::QueuedMessage;
 use ctx_core::ids::{MessageId, RunId, TurnId};
 use ctx_core::models::{
     ExecutionEnvironment, Message, MessageDelivery, Session, SessionTurnStatus,

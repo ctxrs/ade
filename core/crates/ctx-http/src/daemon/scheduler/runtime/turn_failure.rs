@@ -5,8 +5,8 @@ use serde_json::json;
 use ctx_core::ids::{MessageId, RunId, TurnId};
 use ctx_core::models::Session;
 
+use crate::daemon::scheduler::terminal::{finalize_failed_turn, FailedTurnTerminalization};
 use crate::daemon::AppState;
-use crate::scheduler::terminal::{finalize_failed_turn, FailedTurnTerminalization};
 
 pub(super) async fn emit_turn_start_failed(
     state: &Arc<AppState>,

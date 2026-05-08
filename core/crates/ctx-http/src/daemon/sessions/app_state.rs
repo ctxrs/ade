@@ -19,11 +19,11 @@ impl AppState {
     pub async fn ensure_scheduler(
         self: &Arc<Self>,
         session: Session,
-    ) -> mpsc::Sender<crate::scheduler::SchedulerCommand> {
+    ) -> mpsc::Sender<crate::daemon::scheduler::SchedulerCommand> {
         let state = Arc::downgrade(self);
         self.sessions
             .ensure_scheduler(session, move |session, rx| {
-                crate::scheduler::session_worker(state, session, rx)
+                crate::daemon::scheduler::session_worker(state, session, rx)
             })
             .await
     }

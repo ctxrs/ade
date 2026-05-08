@@ -44,9 +44,9 @@ use super::errors::ApiErrorResp;
 use super::sessions::schedule_session_title_generation;
 use super::shared::session_root_kind_for_worktree;
 use crate::daemon::execution_effective;
+use crate::daemon::scheduler::SchedulerCommand;
 use crate::daemon::workspaces::vcs_hooks;
 use crate::daemon::AppState;
-use crate::scheduler::SchedulerCommand;
 use ctx_core::ids::{MessageId, RunId, SessionId, TaskId, TurnId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     ExecutionEnvironment, Message, MessageDelivery, MessageRole, SandboxBinding, SandboxProfile,

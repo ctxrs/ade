@@ -156,7 +156,7 @@ pub(super) async fn seed_initial_prompt(
 
         let prompt = saved.content.clone();
         let tx = state.ensure_scheduler(session.clone()).await;
-        let queued = crate::scheduler::QueuedMessage {
+        let queued = crate::daemon::scheduler::QueuedMessage {
             message: saved,
             enqueued_at: Instant::now(),
             run_id: seed.run_id_header.clone(),

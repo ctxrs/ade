@@ -7,8 +7,8 @@ use ctx_core::ids::{RunId, TurnId};
 use ctx_core::models::{SessionEventType, SessionTurnStatus};
 use ctx_core::session_projection::resolve_turn_terminal_state;
 
+use crate::daemon::scheduler::persistence::{emit_event, flush_session_events};
 use crate::daemon::AppState;
-use crate::scheduler::persistence::{emit_event, flush_session_events};
 
 pub async fn reconcile_turn_terminal_state(
     state: &Arc<AppState>,

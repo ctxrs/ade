@@ -383,7 +383,7 @@ pub(crate) async fn post_message(
     }
 
     let tx = state.ensure_scheduler(session.clone()).await;
-    let queued = crate::scheduler::QueuedMessage {
+    let queued = crate::daemon::scheduler::QueuedMessage {
         message: saved.clone(),
         enqueued_at: Instant::now(),
         run_id: run_id_header.clone(),
