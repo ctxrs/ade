@@ -357,9 +357,7 @@ async function requestRemoteVcsChurnStop(rootPath: string): Promise<string | nul
       "-i",
       REMOTE_CHURN_KEY_PATH,
       `root@${REMOTE_CHURN_HOST}`,
-      "bash",
-      "-lc",
-      `mkdir -p ${shellQuote(stopDirectory)} && touch ${shellQuote(stopFile)}`,
+      `bash -s -- ${shellQuote(stopDirectory)} ${shellQuote(stopFile)}`,
     ],
     { stdio: "pipe" },
   );
@@ -369,7 +367,7 @@ async function requestRemoteVcsChurnStop(rootPath: string): Promise<string | nul
   child.stderr.on("data", (chunk: Buffer) => {
     stderrTail = appendTail(stderrTail, chunk);
   });
-  return await new Promise<string | null>((resolve) => {
+  const stopResult = new Promise<string | null>((resolve) => {
     let settled = false;
     const timeout = setTimeout(() => {
       if (settled) return;
@@ -399,6 +397,14 @@ async function requestRemoteVcsChurnStop(rootPath: string): Promise<string | nul
       );
     });
   });
+  child.stdin.end(`#!/usr/bin/env bash
+set -euo pipefail
+stop_directory="$1"
+stop_file="$2"
+mkdir -p "$stop_directory"
+touch "$stop_file"
+`);
+  return await stopResult;
 }
 
 async function startRemoteVcsChurn(
