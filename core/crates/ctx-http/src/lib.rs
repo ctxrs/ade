@@ -5,7 +5,6 @@ pub mod git_status;
 mod installer;
 mod provider_launch;
 pub mod scheduler;
-pub(crate) mod workspace_provider_model_preferences;
 mod workspace_runtime;
 
 #[cfg(feature = "fault_injection")]

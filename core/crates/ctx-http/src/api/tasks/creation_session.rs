@@ -334,7 +334,7 @@ async fn create_session_for_loaded_task_inner(
 
     if req.remember_model_preference {
         if let Err(error) =
-            crate::workspace_provider_model_preferences::update_workspace_provider_preferred_model_id(
+            crate::api::workspace_provider_model_preferences::update_workspace_provider_preferred_model_id(
                 &state,
                 task.workspace_id,
                 &provider_id,

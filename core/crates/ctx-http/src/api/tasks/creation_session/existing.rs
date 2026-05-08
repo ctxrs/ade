@@ -62,7 +62,7 @@ pub(super) async fn resolve_existing_requested_session(
     state.sessions.remember_session_meta(&existing).await;
     if remember_model_preference {
         if let Err(error) =
-            crate::workspace_provider_model_preferences::update_workspace_provider_preferred_model_id(
+            crate::api::workspace_provider_model_preferences::update_workspace_provider_preferred_model_id(
                 state,
                 task.workspace_id,
                 provider_id,

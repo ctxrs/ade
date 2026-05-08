@@ -223,7 +223,7 @@ pub(crate) async fn set_session_model(
     state.publish_event(event).await;
 
     if let Err(error) =
-        crate::workspace_provider_model_preferences::update_workspace_provider_preferred_model_id(
+        crate::api::workspace_provider_model_preferences::update_workspace_provider_preferred_model_id(
             &state,
             updated.workspace_id,
             &updated.provider_id,

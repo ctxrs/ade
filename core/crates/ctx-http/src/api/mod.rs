@@ -45,6 +45,7 @@ mod terminals;
 mod types;
 mod updates;
 mod web_sessions;
+pub(crate) mod workspace_provider_model_preferences;
 mod workspaces;
 mod ws;
 
