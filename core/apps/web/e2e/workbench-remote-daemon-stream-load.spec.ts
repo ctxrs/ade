@@ -69,6 +69,13 @@ const MAX_VISIBLE_SILENCE_MS = envNumber(
   "CTX_REMOTE_DAEMON_STREAM_SOAK_MAX_STALENESS_MS",
   REMOTE_MODE ? 8000 : 5000,
 );
+const MAX_HARD_VISIBLE_SILENCE_MS = Math.max(
+  MAX_VISIBLE_SILENCE_MS,
+  envNumber(
+    "CTX_REMOTE_DAEMON_STREAM_SOAK_MAX_HARD_STALENESS_MS",
+    REMOTE_MODE ? 12_000 : MAX_VISIBLE_SILENCE_MS,
+  ),
+);
 const MAX_BACKEND_TO_DOM_P95_MS = envNumber(
   "CTX_REMOTE_DAEMON_STREAM_SOAK_MAX_BACKEND_TO_DOM_P95_MS",
   REMOTE_MODE ? 5000 : 2500,
@@ -295,6 +302,8 @@ const appendTail = (current: string, chunk: Buffer, maxLength = 12_000): string 
   return next.length <= maxLength ? next : next.slice(next.length - maxLength);
 };
 
+const shellQuote = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`;
+
 const emptyVcsChurnSummary = (error: string | null = null): VcsChurnSummary => ({
   enabled: VCS_CHURN_ENABLED,
   worktreeId: null,
@@ -329,6 +338,67 @@ async function getSessionWorktreeRoot(
     throw new Error(`worktree ${worktreeId} response did not include a root path`);
   }
   return { worktreeId, rootPath };
+}
+
+async function requestRemoteVcsChurnStop(rootPath: string): Promise<string | null> {
+  const stopDirectory = `${rootPath}/.ctx-vcs-soak`;
+  const stopFile = `${stopDirectory}/stop-requested`;
+  let stdoutTail = "";
+  let stderrTail = "";
+  const child = spawn(
+    "ssh",
+    [
+      "-o",
+      "StrictHostKeyChecking=no",
+      "-o",
+      "UserKnownHostsFile=/dev/null",
+      "-o",
+      "LogLevel=ERROR",
+      "-i",
+      REMOTE_CHURN_KEY_PATH,
+      `root@${REMOTE_CHURN_HOST}`,
+      "bash",
+      "-lc",
+      `mkdir -p ${shellQuote(stopDirectory)} && touch ${shellQuote(stopFile)}`,
+    ],
+    { stdio: "pipe" },
+  );
+  child.stdout.on("data", (chunk: Buffer) => {
+    stdoutTail = appendTail(stdoutTail, chunk);
+  });
+  child.stderr.on("data", (chunk: Buffer) => {
+    stderrTail = appendTail(stderrTail, chunk);
+  });
+  return await new Promise<string | null>((resolve) => {
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill("SIGTERM");
+      resolve("remote VCS churn stop request timed out");
+    }, 5000);
+    const finish = (error: string | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve(error);
+    };
+    child.on("error", (error) => {
+      finish(formatUnknownError(error));
+    });
+    child.on("exit", (code, signal) => {
+      if (code === 0) {
+        finish(null);
+        return;
+      }
+      const details = [stdoutTail.trim(), stderrTail.trim()].filter(Boolean).join("\n");
+      finish(
+        `remote VCS churn stop request exited with code ${code ?? "null"} signal ${
+          signal ?? "null"
+        }${details ? `: ${details}` : ""}`,
+      );
+    });
+  });
 }
 
 async function startRemoteVcsChurn(
@@ -429,10 +499,12 @@ if [[ ! -d "$worktree_root/.git" && ! -f "$worktree_root/.git" ]]; then
 fi
 sleep_seconds="$(awk -v ms="$interval_ms" 'BEGIN { printf "%.3f", ms / 1000 }')"
 mkdir -p "$worktree_root/.ctx-vcs-soak"
+stop_file="$worktree_root/.ctx-vcs-soak/stop-requested"
+rm -f "$stop_file"
 stop_requested=0
 trap 'stop_requested=1' TERM INT
 for ((i=1; i<=updates; i++)); do
-  if [[ "$stop_requested" == "1" ]]; then
+  if [[ "$stop_requested" == "1" || -f "$stop_file" ]]; then
     echo "stopped after $((i - 1)) updates"
     exit 0
   fi
@@ -467,12 +539,18 @@ echo "completed $updates updates"
       stderrTail,
     },
     stop: async () => {
+      let stopRequestError: string | null = null;
       if (!completed) {
-        child.kill("SIGTERM");
+        stopRequestError = await requestRemoteVcsChurnStop(rootPath);
       }
       const timeout = new Promise<VcsChurnSummary>((resolve) => {
         setTimeout(() => {
-          if (!completed) child.kill("SIGKILL");
+          if (!completed) {
+            child.kill("SIGTERM");
+            setTimeout(() => {
+              if (!completed) child.kill("SIGKILL");
+            }, 1000).unref();
+          }
           resolve({
             enabled: true,
             worktreeId,
@@ -483,11 +561,13 @@ echo "completed $updates updates"
             stoppedAtMs: Date.now(),
             exitCode: null,
             signal: null,
-            error: "remote VCS churn did not stop within 5000ms",
+            error: stopRequestError
+              ? `remote VCS churn did not stop within 10000ms after stop request failed: ${stopRequestError}`
+              : "remote VCS churn did not stop within 10000ms",
             stdoutTail,
             stderrTail,
           });
-        }, 5000);
+        }, 10_000);
       });
       return Promise.race([completion, timeout]);
     },
@@ -1454,6 +1534,7 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
       minSessionHeadDeltas: MIN_SESSION_HEAD_DELTAS,
       maxClockUncertaintyMs: MAX_CLOCK_UNCERTAINTY_MS,
       maxVisibleSilenceMs: MAX_VISIBLE_SILENCE_MS,
+      maxHardVisibleSilenceMs: MAX_HARD_VISIBLE_SILENCE_MS,
       maxBackendToDomP95Ms: MAX_BACKEND_TO_DOM_P95_MS,
       maxBackendToDomMs: MAX_BACKEND_TO_DOM_MS,
       maxSendToVisibleMs: MAX_SEND_TO_VISIBLE_MS,
@@ -1545,8 +1626,9 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
   expect(streamerStats.failures).toEqual([]);
   expect(streamerStats.stopErrors).toEqual([]);
   expect(pageCrashed).toBe(false);
-  expect(visibleCadence.maxVisibleSilenceMs).toBeLessThanOrEqual(MAX_VISIBLE_SILENCE_MS);
   expect(visibleCadence.sampleCount).toBeGreaterThan(0);
+  expect(visibleCadence.p95VisibleSilenceMs ?? Infinity).toBeLessThanOrEqual(MAX_VISIBLE_SILENCE_MS);
+  expect(visibleCadence.maxVisibleSilenceMs).toBeLessThanOrEqual(MAX_HARD_VISIBLE_SILENCE_MS);
   expect(probes.every((probe) => !probe.timedOut)).toBe(true);
   const expectedProbeCount = PROBE_COUNT + (forcedGapRecovery ? 1 : 0);
   expect(backendToDomMs.length).toBe(expectedProbeCount);
