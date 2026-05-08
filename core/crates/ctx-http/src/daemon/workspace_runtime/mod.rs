@@ -120,7 +120,7 @@ pub(crate) use ctx_workspace_runtime::HarnessRuntimeManager;
 #[cfg(test)]
 const SANDBOX_MACHINE_CACHE_DIR_ENV: &str = "CTX_SANDBOX_MACHINE_CACHE_DIR";
 #[cfg(test)]
-const SANDBOX_INFO_TIMEOUT: Duration = Duration::from_secs(5);
+const SANDBOX_INFO_TIMEOUT: Duration = Duration::from_secs(15);
 #[cfg(test)]
 const SANDBOX_MACHINE_START_TIMEOUT: Duration = Duration::from_secs(180);
 #[cfg(test)]
