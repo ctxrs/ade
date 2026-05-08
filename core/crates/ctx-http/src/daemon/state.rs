@@ -7,9 +7,9 @@ use anyhow::{Context, Result};
 use tokio::sync::{broadcast, watch, Mutex};
 use tokio::task::JoinHandle;
 
+use crate::daemon::provider_guard;
+use crate::daemon::provider_restart;
 use crate::daemon::resource_governance::ResourceGovernanceRuntime;
-use crate::provider_guard;
-use crate::provider_restart;
 use crate::scheduler::SchedulerCommand;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceAttachmentId, WorkspaceId, WorktreeId};
 use ctx_execution_runtime::ExecutionSetupCoordinator;
