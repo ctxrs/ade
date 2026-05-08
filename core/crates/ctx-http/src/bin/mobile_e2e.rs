@@ -1,80 +1,32 @@
-use std::io::ErrorKind;
 use std::path::Path;
-use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
-use base64::Engine;
 use futures::StreamExt;
-use serde::{Deserialize, Serialize};
 use tokio_tungstenite::connect_async;
-use url::Url;
 use uuid::Uuid;
 
 use ctx_core::models::{WorkspaceActiveSnapshotEvent, WorkspaceActiveSnapshotStreamMessage};
 use ctx_transport_runtime::mobile_e2ee;
 
-#[derive(Debug, Deserialize)]
-struct EnableMobileAccessResp {
-    qr_payload: serde_json::Value,
-}
+use crypto::{
+    build_ws_url, decode_body_b64, encrypt_pairing_request, encrypt_secure_request,
+    parse_qr_payload,
+};
+use dto::{
+    EnableMobileAccessReq, EnableMobileAccessResp, PairMobileDevicePayload, SecureEnvelope,
+    SecureResponsePayload,
+};
+use harness::{
+    create_workspace, init_git_repo, pick_port, read_daemon_auth_token, wait_for_health,
+    wait_for_public_tunnel,
+};
 
-#[derive(Debug, Serialize)]
-struct EnableMobileAccessReq {
-    supabase_token: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct DaemonAuthFile {
-    token: String,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct SecureEnvelope {
-    device_id: String,
-    seq: i64,
-    nonce: String,
-    ciphertext: String,
-}
-
-#[derive(Debug, Serialize)]
-struct PairMobileDeviceReq {
-    device_id: String,
-    public_key: String,
-    seq: i64,
-    nonce: String,
-    ciphertext: String,
-}
-
-#[derive(Debug, Serialize)]
-struct PairMobileDevicePayload {
-    pairing_token: String,
-    device_label: Option<String>,
-    platform: Option<String>,
-    app_version: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct SecureRequestPayload {
-    method: String,
-    path: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    query: Option<String>,
-    #[serde(default)]
-    headers: Vec<(String, String)>,
-    #[serde(default)]
-    body_b64: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct SecureResponsePayload {
-    status: u16,
-    body_b64: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct WorkspaceSummary {
-    id: String,
-}
+#[path = "mobile_e2e/crypto.rs"]
+mod crypto;
+#[path = "mobile_e2e/dto.rs"]
+mod dto;
+#[path = "mobile_e2e/harness.rs"]
+mod harness;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -114,7 +66,7 @@ async fn run_e2e(
     daemon_url: &str,
     auth_token: &str,
     supabase_token: &str,
-    repo_root: &std::path::Path,
+    repo_root: &Path,
 ) -> Result<()> {
     let client = reqwest::Client::new();
 
@@ -240,246 +192,4 @@ async fn run_e2e(
 
     println!("mobile e2e ok");
     Ok(())
-}
-
-fn parse_qr_payload(payload: &serde_json::Value) -> Result<(String, String, String)> {
-    let base_url = payload
-        .get("base_url")
-        .and_then(|v| v.as_str())
-        .map(|v| v.trim_end_matches('/').to_string())
-        .context("qr payload missing base_url")?;
-    let pairing_token = payload
-        .get("pairing_token")
-        .and_then(|v| v.as_str())
-        .context("qr payload missing pairing_token")?
-        .to_string();
-    let daemon_public_key = payload
-        .get("daemon_public_key")
-        .and_then(|v| v.as_str())
-        .context("qr payload missing daemon_public_key")?
-        .to_string();
-    let encryption = payload
-        .get("pairing_request_encryption")
-        .and_then(|v| v.as_str())
-        .context("qr payload missing pairing_request_encryption")?;
-    if encryption != mobile_e2ee::PAIRING_REQUEST_ENCRYPTION {
-        return Err(anyhow!(
-            "unsupported pairing request encryption: {encryption}"
-        ));
-    }
-    Ok((base_url, pairing_token, daemon_public_key))
-}
-
-async fn create_workspace(
-    client: &reqwest::Client,
-    daemon_url: &str,
-    auth_token: &str,
-    repo_root: &std::path::Path,
-) -> Result<String> {
-    let resp = client
-        .post(format!("{daemon_url}/api/workspaces"))
-        .bearer_auth(auth_token)
-        .json(&serde_json::json!({
-            "root_path": repo_root.to_string_lossy(),
-            "name": "e2e",
-        }))
-        .send()
-        .await?
-        .error_for_status()
-        .context("create workspace")?
-        .json::<WorkspaceSummary>()
-        .await?;
-    Ok(resp.id)
-}
-
-fn encrypt_pairing_request(
-    key: &mobile_e2ee::E2eeKey,
-    device_id: &str,
-    device_public: &str,
-    payload: PairMobileDevicePayload,
-) -> Result<PairMobileDeviceReq> {
-    let plaintext = serde_json::to_vec(&payload)?;
-    let enc = mobile_e2ee::encrypt_pairing_request(key, device_id, device_public, &plaintext)?;
-    Ok(PairMobileDeviceReq {
-        device_id: enc.device_id,
-        public_key: device_public.to_string(),
-        seq: enc.seq,
-        nonce: enc.nonce_b64,
-        ciphertext: enc.ciphertext_b64,
-    })
-}
-
-fn encrypt_secure_request(
-    key: &mobile_e2ee::E2eeKey,
-    device_id: &str,
-    seq: i64,
-    path: &str,
-) -> Result<SecureEnvelope> {
-    let req_payload = SecureRequestPayload {
-        method: "GET".to_string(),
-        path: path.to_string(),
-        query: None,
-        headers: Vec::new(),
-        body_b64: String::new(),
-    };
-    let payload_bytes = serde_json::to_vec(&req_payload)?;
-    let enc = mobile_e2ee::encrypt(key, device_id, seq, &payload_bytes)?;
-    Ok(SecureEnvelope {
-        device_id: enc.device_id,
-        seq: enc.seq,
-        nonce: enc.nonce_b64,
-        ciphertext: enc.ciphertext_b64,
-    })
-}
-
-fn build_ws_url(
-    base_url: &str,
-    workspace_id: &str,
-    device_id: &str,
-    key: &mobile_e2ee::E2eeKey,
-) -> Result<Url> {
-    let mut url = Url::parse(base_url)?;
-    let ws_scheme = match url.scheme() {
-        "https" => "wss",
-        "http" => "ws",
-        other => return Err(anyhow!("unsupported base url scheme: {other}")),
-    };
-    url.set_scheme(ws_scheme)
-        .map_err(|_| anyhow!("failed to set ws scheme"))?;
-    let prefix = url.path().trim_end_matches('/');
-    let path = if prefix.is_empty() {
-        format!("/api/mobile/secure/workspaces/{workspace_id}/stream")
-    } else {
-        format!("{prefix}/api/mobile/secure/workspaces/{workspace_id}/stream")
-    };
-    url.set_path(&path);
-    let token = mobile_e2ee::derive_stream_token(key, workspace_id);
-    url.set_query(Some(&format!("device_id={device_id}&token={token}")));
-    Ok(url)
-}
-
-fn decode_body_b64(value: &str) -> Result<Vec<u8>> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Ok(Vec::new());
-    }
-    let mut normalized = trimmed.replace('-', "+").replace('_', "/");
-    while !normalized.len().is_multiple_of(4) {
-        normalized.push('=');
-    }
-    base64::engine::general_purpose::STANDARD
-        .decode(normalized.as_bytes())
-        .map_err(|_| anyhow!("invalid base64 body"))
-}
-
-async fn wait_for_health(client: &reqwest::Client, daemon_url: &str) -> Result<()> {
-    for _ in 0..60 {
-        match client.get(format!("{daemon_url}/api/health")).send().await {
-            Ok(resp) if resp.status().is_success() => return Ok(()),
-            _ => tokio::time::sleep(std::time::Duration::from_millis(500)).await,
-        }
-    }
-    Err(anyhow!("timed out waiting for daemon health"))
-}
-
-async fn wait_for_public_tunnel(client: &reqwest::Client, base_url: &str) -> Result<()> {
-    let health_url = format!("{base_url}/api/health");
-    let deadline = Instant::now() + Duration::from_secs(45);
-    let mut last_status = None::<reqwest::StatusCode>;
-
-    loop {
-        match client.get(&health_url).send().await {
-            Ok(resp) if resp.status().is_success() => return Ok(()),
-            Ok(resp) => last_status = Some(resp.status()),
-            Err(_) => {}
-        }
-        if Instant::now() > deadline {
-            let detail = last_status
-                .map(|status| format!("last status {status}"))
-                .unwrap_or_else(|| "no HTTP response".to_string());
-            return Err(anyhow!(
-                "timed out waiting for public tunnel health at {health_url}: {detail}"
-            ));
-        }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-}
-
-async fn read_daemon_auth_token(data_dir: &Path) -> Result<String> {
-    let path = data_dir.join("daemon_auth.json");
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        match tokio::fs::read(&path).await {
-            Ok(bytes) => {
-                let auth: DaemonAuthFile = serde_json::from_slice(&bytes)
-                    .with_context(|| format!("parsing daemon auth file {}", path.display()))?;
-                if auth.token.trim().is_empty() {
-                    return Err(anyhow!(
-                        "daemon auth file {} contains empty token",
-                        path.display()
-                    ));
-                }
-                return Ok(auth.token);
-            }
-            Err(err) if err.kind() == ErrorKind::NotFound => {}
-            Err(err) => {
-                return Err(err)
-                    .with_context(|| format!("reading daemon auth file {}", path.display()));
-            }
-        }
-        if Instant::now() > deadline {
-            return Err(anyhow!("daemon auth file not found at {}", path.display()));
-        }
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
-}
-
-fn pick_port() -> Result<u16> {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
-    let port = listener.local_addr()?.port();
-    Ok(port)
-}
-
-fn init_git_repo(path: &std::path::Path) -> Result<()> {
-    run_cmd(
-        std::process::Command::new("git")
-            .arg("-C")
-            .arg(path)
-            .arg("init"),
-    )?;
-    run_cmd(std::process::Command::new("git").arg("-C").arg(path).args([
-        "config",
-        "user.email",
-        "e2e@example.com",
-    ]))?;
-    run_cmd(std::process::Command::new("git").arg("-C").arg(path).args([
-        "config",
-        "user.name",
-        "E2E",
-    ]))?;
-    std::fs::write(path.join("README.md"), "e2e\n")?;
-    run_cmd(
-        std::process::Command::new("git")
-            .arg("-C")
-            .arg(path)
-            .args(["add", "."]),
-    )?;
-    run_cmd(
-        std::process::Command::new("git")
-            .arg("-C")
-            .arg(path)
-            .args(["commit", "-m", "init"]),
-    )?;
-    Ok(())
-}
-
-fn run_cmd(cmd: &mut std::process::Command) -> Result<()> {
-    let output = cmd.output()?;
-    if output.status.success() {
-        return Ok(());
-    }
-    Err(anyhow!(
-        "command failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    ))
 }
