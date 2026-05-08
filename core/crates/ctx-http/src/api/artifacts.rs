@@ -10,9 +10,9 @@ use serde::Deserialize;
 
 use super::{errors::ApiErrorResp, validate_scoped_mcp_session_context};
 use crate::daemon::AppState;
-use crate::logs;
 use ctx_core::ids::{ArtifactId, SessionId};
 use ctx_core::models::{Artifact, SessionEventType};
+use ctx_observability::logs;
 
 mod blob;
 mod download;

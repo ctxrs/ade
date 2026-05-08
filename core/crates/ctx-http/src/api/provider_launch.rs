@@ -22,13 +22,13 @@ use super::errors::ApiErrorResp;
 use super::provider_probe_auth::provider_auth_mode;
 use super::redact_json_value;
 use crate::daemon::AppState;
-use crate::logs;
 use crate::provider_launch::install as provider_launch_install;
 use crate::provider_launch::probe;
 use crate::provider_launch::status::{install_target_for_workspace, provider_status_for_target};
 use ctx_core::ids::WorkspaceId;
 use ctx_harness_sources as harness_sources;
 use ctx_harness_sources::{HarnessEndpointVerificationStatus, HarnessSourceKind};
+use ctx_observability::logs;
 use ctx_provider_install::install_state::{
     InstallId, InstallInfo, InstallProgressEvent, InstallTarget,
 };

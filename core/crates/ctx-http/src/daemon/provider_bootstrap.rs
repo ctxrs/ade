@@ -120,7 +120,7 @@ pub(crate) async fn load_managed_agent_server_config_or_err(
 ) -> Result<installer::AgentServerConfigFile> {
     installer::load_agent_server_config(data_root)
         .await
-        .map_err(|err| anyhow::anyhow!(crate::logs::redact_sensitive(&err.to_string())))
+        .map_err(|err| anyhow::anyhow!(ctx_observability::logs::redact_sensitive(&err.to_string())))
 }
 
 pub(crate) async fn ensure_provider_adapter_for_target(

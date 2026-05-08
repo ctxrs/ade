@@ -16,8 +16,8 @@ use ctx_provider_install::install_state::InstallTarget;
 
 use crate::daemon::AppState;
 use crate::installer;
-use crate::ops_events::OpsEvent;
 use crate::settings::ProviderControlMode;
+use ctx_observability::ops_events::OpsEvent;
 
 pub(super) struct BaseProviderEnvRequest<'a> {
     pub(super) daemon_url: &'a str,

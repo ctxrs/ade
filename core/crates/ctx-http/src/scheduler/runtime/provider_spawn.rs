@@ -18,9 +18,9 @@ use ctx_store::Store;
 
 use crate::daemon::{ensure_provider_adapter_for_target_with_cfg, AppState};
 use crate::installer;
-use crate::ops_events::OpsEvent;
-use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
-use crate::telemetry::TelemetryEvent;
+use ctx_observability::ops_events::OpsEvent;
+use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
+use ctx_observability::telemetry::TelemetryEvent;
 
 use super::super::terminal::{finalize_failed_turn, FailedTurnTerminalization};
 

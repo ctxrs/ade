@@ -18,8 +18,8 @@ use ctx_resource_utilization::{
 };
 
 use crate::daemon::AppState;
-use crate::logs;
-use crate::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
+use ctx_observability::logs;
+use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
 
 #[derive(Debug, Serialize)]
 struct ResourceTelemetryEvent {

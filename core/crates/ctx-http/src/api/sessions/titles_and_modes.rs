@@ -20,9 +20,9 @@ pub(crate) use crate::daemon::sessions::title_generation::{
 };
 use crate::daemon::AppState;
 use crate::execution_effective;
-use crate::logs;
 use ctx_core::ids::SessionId;
 use ctx_core::models::{Session, SessionEventType};
+use ctx_observability::logs;
 use ctx_session_tools::model_resolution::{
     compose_model_id, normalize_effort_id, resolve_model_id,
 };

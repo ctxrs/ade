@@ -18,11 +18,11 @@ use url::Url;
 use super::errors::ApiErrorResp;
 use crate::daemon::AppState;
 use crate::installer;
-use crate::logs;
 use ctx_core::ids::WorkspaceId;
 use ctx_core::provider_ids::CODEX_PROVIDER_ID;
 use ctx_harness_sources as harness_sources;
 use ctx_harness_sources::{HarnessApiShape, HarnessEndpointUpsert, HarnessSourceKind};
+use ctx_observability::logs;
 use ctx_provider_accounts as provider_accounts;
 use ctx_provider_auth_import as provider_auth_import;
 #[cfg(test)]

@@ -3,9 +3,9 @@ use ctx_session_tools::interrupt_telemetry::{latency_bucket, metric_labels};
 use serde_json::{json, Value};
 
 use crate::daemon::AppState;
-use crate::ops_events::OpsEvent;
-use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
-use crate::telemetry::TelemetryEvent;
+use ctx_observability::ops_events::OpsEvent;
+use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
+use ctx_observability::telemetry::TelemetryEvent;
 
 use super::state::EventLoopRuntimeState;
 use super::TurnEventLoop;

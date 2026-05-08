@@ -11,8 +11,8 @@ use uuid::Uuid;
 use super::errors::ApiErrorResp;
 use crate::api::MobileAuthContext;
 use crate::daemon::AppState;
-use crate::logs;
 use ctx_fs::vcs;
+use ctx_observability::logs;
 
 mod clone;
 mod destination;

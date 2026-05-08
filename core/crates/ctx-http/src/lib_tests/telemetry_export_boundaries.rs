@@ -15,7 +15,8 @@ async fn telemetry_export_reads_valid_daily_log() {
     ));
     let app = api::router(state.clone());
 
-    let path = crate::perf_telemetry::perf_log_path_for_date(data_dir.path(), "2026-04-24");
+    let path =
+        ctx_observability::perf_telemetry::perf_log_path_for_date(data_dir.path(), "2026-04-24");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, "metric\n").unwrap();
 

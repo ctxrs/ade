@@ -14,8 +14,8 @@ pub use ctx_storage_admission::{
 };
 
 use crate::daemon::AppState;
-use crate::ops_events::OpsEvent;
 use crate::scheduler::SchedulerCommand;
+use ctx_observability::ops_events::OpsEvent;
 
 #[cfg(test)]
 const GIB: u64 = ctx_storage_admission::STORAGE_BYTES_GIB;

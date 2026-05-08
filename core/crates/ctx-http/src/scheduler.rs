@@ -12,7 +12,7 @@ use ctx_core::models::{Message, MessageDelivery, Session, SessionEventType};
 use ctx_session_tools::interrupt_telemetry::InterruptTelemetryContext;
 
 use crate::daemon::AppState;
-use crate::ops_events::OpsEvent;
+use ctx_observability::ops_events::OpsEvent;
 
 mod lifecycle;
 mod persistence;

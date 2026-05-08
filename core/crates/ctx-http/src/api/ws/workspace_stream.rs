@@ -1,6 +1,6 @@
 use super::replay::primary_session_id_for_active_task;
 use super::*;
-use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
+use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
 use serde_json::json;
 
 mod events;
@@ -45,7 +45,7 @@ async fn emit_workspace_stream_incident(
     _workspace_id: WorkspaceId,
     labels: &[(&'static str, serde_json::Value)],
 ) {
-    let mut event = crate::telemetry::TelemetryEvent::daemon_incident(event_name)
+    let mut event = ctx_observability::telemetry::TelemetryEvent::daemon_incident(event_name)
         .with_source("workspace_stream")
         .with_property("has_workspace_scope", json!(true));
     for (key, value) in labels {

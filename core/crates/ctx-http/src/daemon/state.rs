@@ -7,8 +7,6 @@ use anyhow::{Context, Result};
 use tokio::sync::{broadcast, watch, Mutex};
 use tokio::task::JoinHandle;
 
-use crate::ops_events::{OpsEvent, OpsEvents};
-use crate::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
 use crate::provider_guard;
 use crate::provider_restart;
 use crate::resource_governance::ResourceGovernanceRuntime;
@@ -16,11 +14,13 @@ use crate::runtime_adapters::{
     CtxExecutionHarness, CtxRuntimeEventSink, CtxRuntimeMetricsSink, DefaultWarmupOperations,
 };
 use crate::scheduler::SchedulerCommand;
-use crate::telemetry::Telemetry;
 use crate::terminals::TerminalManager;
 use crate::web_sessions::WebSessionManager;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceAttachmentId, WorkspaceId, WorktreeId};
 use ctx_execution_runtime::ExecutionSetupCoordinator;
+use ctx_observability::ops_events::{OpsEvent, OpsEvents};
+use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
+use ctx_observability::telemetry::Telemetry;
 use ctx_provider_accounts as provider_accounts;
 use ctx_provider_install::install_state::{
     InstallErrorCode, InstallEventLevel, InstallId, InstallProgressEvent, InstallState,

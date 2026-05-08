@@ -22,8 +22,8 @@ use ctx_linux_sandbox_runtime::{
 
 use crate::daemon::AppState;
 use crate::execution_effective;
-use crate::logs;
 use crate::settings::ExecutionMode;
+use ctx_observability::logs;
 
 use super::errors::ApiErrorResp;
 use super::shared::map_effective_execution_settings_error;

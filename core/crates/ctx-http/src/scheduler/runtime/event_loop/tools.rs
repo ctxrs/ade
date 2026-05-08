@@ -8,7 +8,7 @@ use ctx_store::store::SessionTurnToolCountDeltas;
 use serde_json::{json, Value};
 
 use crate::daemon::AppState;
-use crate::ops_events::OpsEvent;
+use ctx_observability::ops_events::OpsEvent;
 
 use super::super::tool_runtime::{self, cwd_outside_worktree, maybe_spool_tool_output};
 use super::state::EventLoopRuntimeState;

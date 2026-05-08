@@ -44,11 +44,8 @@ use super::sessions::schedule_session_title_generation;
 use super::shared::session_root_kind_for_worktree;
 use crate::daemon::AppState;
 use crate::execution_effective;
-use crate::logs;
-use crate::ops_events::OpsEvent;
 use crate::scheduler::SchedulerCommand;
 use crate::settings::{ExecutionMode, ExecutionSettings};
-use crate::telemetry::TelemetryEvent;
 use crate::vcs_hooks;
 use crate::worktree_bootstrap;
 use ctx_core::ids::{MessageId, RunId, SessionId, TaskId, TurnId, WorkspaceId, WorktreeId};
@@ -60,6 +57,9 @@ use ctx_core::models::{
 use ctx_fs::git::delete_branch;
 use ctx_fs::vcs;
 use ctx_fs::worktrees::{create_worktree, managed_worktree_path};
+use ctx_observability::logs;
+use ctx_observability::ops_events::OpsEvent;
+use ctx_observability::telemetry::TelemetryEvent;
 use ctx_store::{is_unique_constraint_violation, Store};
 
 #[derive(Debug, Deserialize)]

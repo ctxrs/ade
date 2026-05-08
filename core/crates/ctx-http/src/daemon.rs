@@ -26,8 +26,8 @@ use crate::resource_telemetry;
 use crate::scheduler::reconcile_turn_terminal_state;
 use crate::settings;
 use crate::storage_guard;
-use crate::telemetry::TelemetryConfig;
 use crate::tool_cgroup;
+use ctx_observability::telemetry::TelemetryConfig;
 use ctx_provider_install::install_state::InstallTarget;
 use ctx_provider_runtime::provider_usage;
 

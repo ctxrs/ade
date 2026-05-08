@@ -52,7 +52,7 @@ async fn worktree_bootstrap_logs_return_in_root_log_file() {
         .unwrap()
         .expect("workspace worktree");
 
-    let log_dir = crate::logs::logs_dir(data_dir.path()).join("worktree-bootstrap");
+    let log_dir = ctx_observability::logs::logs_dir(data_dir.path()).join("worktree-bootstrap");
     std::fs::create_dir_all(&log_dir).unwrap();
     let log_path = log_dir.join("bootstrap.log");
     std::fs::write(&log_path, b"inside bootstrap log\n").unwrap();

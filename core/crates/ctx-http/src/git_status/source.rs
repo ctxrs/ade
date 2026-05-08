@@ -124,7 +124,7 @@ impl WorktreeVcsDiffBaseSource for HttpWorktreeVcsSource<'_> {
     }
 
     fn redact_error(&self, err: &anyhow::Error) -> String {
-        crate::logs::redact_sensitive(&err.to_string())
+        ctx_observability::logs::redact_sensitive(&err.to_string())
     }
 }
 

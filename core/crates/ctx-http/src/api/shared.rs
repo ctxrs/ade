@@ -13,9 +13,9 @@ use serde::Deserialize;
 use super::errors::ApiErrorResp;
 use crate::daemon::AppState;
 use crate::execution_effective;
-use crate::logs;
-use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
 use crate::settings::ContainerRuntimeKind;
+use ctx_observability::logs;
+use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
 use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
 

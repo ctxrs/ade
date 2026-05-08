@@ -1,5 +1,5 @@
 use super::*;
-use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
+use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
 use ctx_session_tools::interrupt_telemetry::{metric_labels, InterruptTelemetryContext};
 
 pub(crate) async fn cancel_session(

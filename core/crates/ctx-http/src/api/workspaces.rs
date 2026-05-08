@@ -36,8 +36,6 @@ use super::shared::{
 use crate::daemon::workspaces::{WorkspaceHydrationError, WorkspaceHydrationErrorKind};
 use crate::daemon::AppState;
 use crate::execution_effective;
-use crate::logs;
-use crate::telemetry::TelemetryEvent;
 use crate::vcs_hooks;
 use ctx_core::ids::{WorkspaceId, WorktreeId};
 use ctx_core::models::{
@@ -46,6 +44,8 @@ use ctx_core::models::{
 };
 use ctx_fs::git::assert_git_repo;
 use ctx_fs::vcs;
+use ctx_observability::logs;
+use ctx_observability::telemetry::TelemetryEvent;
 use ctx_workspace_attachments::AttachmentConfig;
 use ctx_workspace_config as workspace_config;
 use ctx_workspace_container::WorkspaceContainerStatus as HarnessContainerStatus;

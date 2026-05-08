@@ -1,5 +1,5 @@
 use super::*;
-use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
+use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
 #[path = "snapshot/vcs.rs"]
 mod vcs;
 pub(crate) use vcs::{

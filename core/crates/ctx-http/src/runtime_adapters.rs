@@ -14,10 +14,10 @@ use ctx_execution_runtime::{
 use ctx_store::Store;
 use ctx_workspace_runtime::HarnessRuntimeManager;
 
-use crate::ops_events::{
+use ctx_observability::ops_events::{
     substrate_lifecycle_observed_event, OpsEvent, OpsEvents, SubstrateLifecycleOpsEventContext,
 };
-use crate::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
+use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
 
 pub(crate) struct CtxRuntimeEventSink {
     inner: OpsEvents,

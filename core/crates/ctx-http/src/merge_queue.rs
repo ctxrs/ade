@@ -13,7 +13,7 @@ pub(crate) use ctx_merge_queue::WorkspaceDrainStop;
 use ctx_merge_queue::{MergeQueueHost, MergeQueueNotice, MergeQueueToolExecEvent};
 
 use crate::daemon::AppState;
-use crate::ops_events::OpsEvent;
+use ctx_observability::ops_events::OpsEvent;
 
 #[async_trait]
 impl MergeQueueHost for AppState {

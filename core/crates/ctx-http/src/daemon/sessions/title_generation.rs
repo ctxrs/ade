@@ -4,9 +4,9 @@ use std::sync::Arc;
 use anyhow::Context;
 
 use crate::daemon::AppState;
-use crate::logs;
 use crate::settings as user_settings;
 use ctx_core::models::{Session, SessionEventType};
+use ctx_observability::logs;
 use ctx_session_service::title_generation;
 
 #[derive(Debug, Clone, Copy)]

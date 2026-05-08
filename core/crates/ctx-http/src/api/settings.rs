@@ -9,8 +9,8 @@ use crate::provider_guard;
 use crate::provider_restart;
 use crate::resource_governance;
 use crate::settings as user_settings;
-use crate::telemetry::TelemetryConfig;
 use crate::tool_cgroup;
+use ctx_observability::telemetry::TelemetryConfig;
 use ctx_settings_service::HostExecutionPolicy;
 
 pub(super) async fn get_settings(

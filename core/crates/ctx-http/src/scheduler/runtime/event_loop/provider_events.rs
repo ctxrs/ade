@@ -4,7 +4,7 @@ use ctx_core::models::SessionEventType;
 use serde_json::{json, Value};
 
 use crate::daemon::AppState;
-use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
+use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
 
 use super::super::helpers::read_codex_context_window_metrics;
 use super::TurnEventLoop;

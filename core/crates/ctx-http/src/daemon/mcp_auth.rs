@@ -3,8 +3,8 @@ use std::time::Duration;
 use sha2::Digest;
 
 use super::*;
-use crate::ops_events::OpsEvent;
 use ctx_core::ids::{SessionId, WorkspaceId, WorktreeId};
+use ctx_observability::ops_events::OpsEvent;
 
 const PROVIDER_SESSION_MCP_AUTH_TTL: Duration = Duration::from_secs(12 * 60 * 60);
 

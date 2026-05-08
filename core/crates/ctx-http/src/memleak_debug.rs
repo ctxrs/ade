@@ -10,11 +10,11 @@ use serde::Serialize;
 use tokio::time::MissedTickBehavior;
 
 use crate::daemon::AppState;
-use crate::logs;
-use crate::perf_telemetry::PerfTelemetryStats;
 use crate::terminals::TerminalManagerStats;
 use crate::web_sessions::WebSessionManagerStats;
 use ctx_harness_runtime::HarnessRuntimeStats;
+use ctx_observability::logs;
+use ctx_observability::perf_telemetry::PerfTelemetryStats;
 use ctx_store::StoreManagerStats;
 use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotStats;
 

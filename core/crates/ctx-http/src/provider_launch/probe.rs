@@ -12,8 +12,8 @@ use ctx_worktree_data_plane::{
 
 use crate::daemon::AppState;
 use crate::execution_effective;
-use crate::logs;
 use crate::settings::{ContainerMountMode, ExecutionMode};
+use ctx_observability::logs;
 use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
 
 #[allow(unused_imports)]

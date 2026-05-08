@@ -2,13 +2,13 @@ use std::sync::{Arc, Weak};
 use std::time::Instant;
 
 use crate::daemon::AppState;
-use crate::logs;
 use ctx_core::ids::{RunId, SessionId, TurnId, WorktreeId};
 #[cfg(test)]
 use ctx_core::models::SessionEvent;
 use ctx_core::models::{SessionEventType, SessionTurn, SessionTurnStatus, SubagentInvocationChild};
 #[cfg(test)]
 use ctx_core::session_projection::turn_status_from_finished_payload;
+use ctx_observability::logs;
 
 use super::errors::{internal_api_error, store_for_session, ApiResult};
 

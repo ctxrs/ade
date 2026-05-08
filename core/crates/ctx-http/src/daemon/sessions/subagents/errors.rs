@@ -1,7 +1,7 @@
 use crate::daemon::AppState;
-use crate::logs;
 use ctx_core::ids::SessionId;
 use ctx_core::models::Session;
+use ctx_observability::logs;
 
 pub(super) type SubagentResult<T> = Result<T, SubagentError>;
 pub(super) type ApiResult<T> = SubagentResult<T>;

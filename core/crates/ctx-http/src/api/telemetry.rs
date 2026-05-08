@@ -1,8 +1,8 @@
 use super::*;
-use crate::telemetry::{
+use chrono::{DateTime, NaiveDate, Utc};
+use ctx_observability::telemetry::{
     TelemetryDelivery, TelemetryEvent, TelemetryOriginRuntime, TelemetryPlane, TelemetryProperties,
 };
-use chrono::{DateTime, NaiveDate, Utc};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
@@ -22,7 +22,7 @@ pub(super) struct TelemetrySummaryQuery {
 pub(super) async fn get_telemetry_summary(
     State(state): State<Arc<AppState>>,
     Query(q): Query<TelemetrySummaryQuery>,
-) -> Result<Json<crate::perf_telemetry::PerfSummary>, StatusCode> {
+) -> Result<Json<ctx_observability::perf_telemetry::PerfSummary>, StatusCode> {
     let limit = q.limit.map(|v| v as usize);
     let summary = state.telemetry.perf_telemetry.summary(
         q.metric.as_deref(),
@@ -52,7 +52,8 @@ pub(super) async fn export_telemetry(
     Query(q): Query<TelemetryExportQuery>,
 ) -> Result<Response, StatusCode> {
     let date = normalize_export_date(q.date)?;
-    let path = crate::perf_telemetry::perf_log_path_for_date(&state.core.data_root, &date);
+    let path =
+        ctx_observability::perf_telemetry::perf_log_path_for_date(&state.core.data_root, &date);
     let bytes = tokio::fs::read(&path)
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;

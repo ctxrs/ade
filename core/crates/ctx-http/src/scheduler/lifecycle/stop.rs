@@ -10,7 +10,7 @@ use ctx_session_tools::interrupt_telemetry::{
 };
 
 use crate::daemon::AppState;
-use crate::perf_telemetry::{PerfMetric, PerfMetricKind};
+use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
 
 use super::super::persistence::emit_event;
 use super::{

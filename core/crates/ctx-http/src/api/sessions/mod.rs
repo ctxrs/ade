@@ -19,13 +19,13 @@ use crate::daemon::AppState;
 use crate::execution_effective;
 use crate::git_status::GitStatusEntry;
 use crate::installer;
-use crate::logs;
 use crate::scheduler::SchedulerCommand;
 #[cfg(test)]
 use crate::settings as user_settings;
 use ctx_core::ids::*;
 use ctx_core::models::*;
 use ctx_harness_runtime::sandbox_container_command;
+use ctx_observability::logs;
 use ctx_providers::{
     ask_user_question::{AskUserQuestionAnswer, AskUserQuestionOutcome},
     crp::probe_crp_models,
