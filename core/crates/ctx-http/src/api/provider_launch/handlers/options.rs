@@ -204,15 +204,17 @@ pub(in crate::api) async fn get_provider_options(
             let (probe_ok, auth_required, probe_error) =
                 probe_provider_options_env(&state, &workspace, &provider_id).await;
             let raw_resp = env_probe_provider_options_response(
-                &provider_id,
-                ws_id,
-                &provider_status,
+                ProviderOptionsResponseBase {
+                    provider_id: &provider_id,
+                    workspace_id: ws_id,
+                    provider_status: &provider_status,
+                    has_active_auth,
+                    auth_mode,
+                    source_config: source_config.as_ref(),
+                },
                 probe_ok,
                 auth_required,
                 probe_error,
-                has_active_auth,
-                auth_mode,
-                source_config.as_ref(),
             );
             let out = finalize_provider_options_response(
                 ProviderOptionsResponseContext {
@@ -245,16 +247,18 @@ pub(in crate::api) async fn get_provider_options(
             )
             .await?;
             let raw_resp = selected_endpoint_runtime_launch_options_response(
-                &provider_id,
-                ws_id,
-                &provider_status,
+                ProviderOptionsResponseBase {
+                    provider_id: &provider_id,
+                    workspace_id: ws_id,
+                    provider_status: &provider_status,
+                    has_active_auth,
+                    auth_mode,
+                    source_config: source_config.as_ref(),
+                },
                 endpoint,
                 probe_ok,
                 auth_required,
                 probe_error,
-                has_active_auth,
-                auth_mode,
-                source_config.as_ref(),
             );
             let out = finalize_provider_options_response(
                 ProviderOptionsResponseContext {

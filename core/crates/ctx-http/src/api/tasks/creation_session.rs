@@ -21,7 +21,7 @@ mod request;
 mod worktree;
 
 use cleanup::cleanup_orphaned_provisioned_worktree;
-use existing::resolve_existing_requested_session;
+use existing::{resolve_existing_requested_session, ExistingRequestedSession};
 use initial_prompt::{seed_initial_prompt, InitialPromptSeed};
 pub(super) use replay::{
     create_requested_default_session_for_task, replay_requested_default_session_for_task,
@@ -184,17 +184,19 @@ async fn create_session_for_loaded_task_inner(
         &store,
         &task,
         &workspace,
-        session_id,
-        created_worktree_id,
-        worktree_id,
-        execution_environment,
-        &provider_id,
-        &model_id,
-        reasoning_effort.as_deref(),
-        parent_session_id,
-        relationship.as_deref(),
-        req.remember_model_preference,
-        &preferred_model_id,
+        ExistingRequestedSession {
+            requested_session_id: session_id,
+            created_worktree_id,
+            worktree_id,
+            execution_environment,
+            provider_id: &provider_id,
+            model_id: &model_id,
+            reasoning_effort: reasoning_effort.as_deref(),
+            parent_session_id,
+            relationship: relationship.as_deref(),
+            remember_model_preference: req.remember_model_preference,
+            preferred_model_id: &preferred_model_id,
+        },
     )
     .await?
     {

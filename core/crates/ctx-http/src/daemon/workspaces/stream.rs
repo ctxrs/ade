@@ -139,64 +139,57 @@ struct HttpWorkspaceActiveSubscriptionSource<'a> {
 }
 
 impl WorkspaceActiveSubscriptionSource for HttpWorkspaceActiveSubscriptionSource<'_> {
-    fn session_belongs_to_workspace(
+    async fn session_belongs_to_workspace(
         &self,
         workspace_id: WorkspaceId,
         session_id: SessionId,
-    ) -> impl std::future::Future<Output = bool> + Send {
-        async move { session_belongs_to_workspace(self.state, workspace_id, session_id).await }
+    ) -> bool {
+        session_belongs_to_workspace(self.state, workspace_id, session_id).await
     }
 
-    fn active_tasks(
+    async fn active_tasks(
         &self,
         workspace_id: WorkspaceId,
-    ) -> impl std::future::Future<Output = Vec<ctx_core::models::WorkspaceActiveTaskSummary>> + Send
-    {
-        async move {
-            self.state
-                .workspaces
-                .workspace_active_snapshot
-                .active_snapshot(workspace_id, i64::MAX)
-                .await
-                .active
-                .tasks
-        }
+    ) -> Vec<ctx_core::models::WorkspaceActiveTaskSummary> {
+        self.state
+            .workspaces
+            .workspace_active_snapshot
+            .active_snapshot(workspace_id, i64::MAX)
+            .await
+            .active
+            .tasks
     }
 
-    fn primary_session_id_for_task(
+    async fn primary_session_id_for_task(
         &self,
         workspace_id: WorkspaceId,
         task_id: ctx_core::ids::TaskId,
-    ) -> impl std::future::Future<Output = Result<Option<SessionId>, ()>> + Send {
-        async move {
-            let store = self
-                .state
-                .store_for_workspace(workspace_id)
-                .await
-                .map_err(|_| ())?;
-            let task = store.get_task(task_id).await.map_err(|_| ())?;
-            let Some(task) = task else {
-                return Ok(None);
-            };
-            if task.workspace_id != workspace_id {
-                return Ok(None);
-            }
-            Ok(task.primary_session_id)
+    ) -> Result<Option<SessionId>, ()> {
+        let store = self
+            .state
+            .store_for_workspace(workspace_id)
+            .await
+            .map_err(|_| ())?;
+        let task = store.get_task(task_id).await.map_err(|_| ())?;
+        let Some(task) = task else {
+            return Ok(None);
+        };
+        if task.workspace_id != workspace_id {
+            return Ok(None);
         }
+        Ok(task.primary_session_id)
     }
 
-    fn session_replay_cursor(
+    async fn session_replay_cursor(
         &self,
         workspace_id: WorkspaceId,
         session_id: SessionId,
-    ) -> impl std::future::Future<Output = SessionReplayCursor> + Send {
-        async move {
-            self.state
-                .workspaces
-                .workspace_active_snapshot
-                .session_replay_cursor(workspace_id, session_id)
-                .await
-        }
+    ) -> SessionReplayCursor {
+        self.state
+            .workspaces
+            .workspace_active_snapshot
+            .session_replay_cursor(workspace_id, session_id)
+            .await
     }
 
     fn worktree_vcs_enabled(&self) -> bool {

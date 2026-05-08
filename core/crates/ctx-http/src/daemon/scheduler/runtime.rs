@@ -43,7 +43,9 @@ use self::provider_spawn::{
 };
 use self::turn_failure::emit_turn_start_failed;
 use self::turn_input::prepare_turn_input;
-use self::turn_start::{apply_crp_launch_policy_env_for_control_mode, prepare_turn_start};
+use self::turn_start::{
+    apply_crp_launch_policy_env_for_control_mode, prepare_turn_start, PrepareTurnStartInput,
+};
 use super::lifecycle::{RunningTurn, TurnStartProgress};
 use super::persistence::append_session_event_with_retry;
 use super::QueuedMessage;
@@ -71,16 +73,16 @@ pub(crate) async fn start_turn(
     let execution_environment = session.execution_environment;
     let full_model_id = compose_model_id(&session.model_id, session.reasoning_effort.as_deref());
 
-    let turn_start = prepare_turn_start(
+    let turn_start = prepare_turn_start(PrepareTurnStartInput {
         state,
-        &store,
+        store: &store,
         session,
-        &workdir_str,
-        &full_model_id,
+        workdir_str: &workdir_str,
+        full_model_id: &full_model_id,
         execution_environment,
         session_root_kind,
         queued,
-    )
+    })
     .await?;
     let message = turn_start.message;
     let message_id = turn_start.message_id;

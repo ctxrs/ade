@@ -183,28 +183,29 @@ pub async fn dictation_livekit_stream(mut socket: WebSocket, state: std::sync::A
                     }
                 }
                 WsMessage::Binary(_) => {}
-                WsMessage::Text(text) => {
-                    if livekit_client_control_requests_stop(&text) && !finalized {
-                        finalize_requested_tx.store(true, Ordering::Relaxed);
-                        let _ = lk_tx_send
-                            .lock()
-                            .await
-                            .send(TMessage::Text(livekit_dictation_finalize_payload().into()))
-                            .await;
-                        if !close_scheduled_tx.swap(true, Ordering::Relaxed) {
-                            let lk_tx_close = lk_tx_close.clone();
-                            let session_closed_tx = session_closed_send.clone();
-                            tokio::spawn(async move {
-                                tokio::time::sleep(Duration::from_millis(150)).await;
-                                if session_closed_tx.load(Ordering::Relaxed) {
-                                    return;
-                                }
-                                let _ = lk_tx_close.lock().await.send(TMessage::Close(None)).await;
-                            });
-                        }
-                        finalized = true;
+                WsMessage::Text(text)
+                    if livekit_client_control_requests_stop(&text) && !finalized =>
+                {
+                    finalize_requested_tx.store(true, Ordering::Relaxed);
+                    let _ = lk_tx_send
+                        .lock()
+                        .await
+                        .send(TMessage::Text(livekit_dictation_finalize_payload().into()))
+                        .await;
+                    if !close_scheduled_tx.swap(true, Ordering::Relaxed) {
+                        let lk_tx_close = lk_tx_close.clone();
+                        let session_closed_tx = session_closed_send.clone();
+                        tokio::spawn(async move {
+                            tokio::time::sleep(Duration::from_millis(150)).await;
+                            if session_closed_tx.load(Ordering::Relaxed) {
+                                return;
+                            }
+                            let _ = lk_tx_close.lock().await.send(TMessage::Close(None)).await;
+                        });
                     }
+                    finalized = true;
                 }
+                WsMessage::Text(_) => {}
                 WsMessage::Ping(payload) => {
                     let _ = client_tx_send
                         .lock()

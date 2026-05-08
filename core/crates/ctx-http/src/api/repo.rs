@@ -26,30 +26,6 @@ pub(super) use destination::{
 pub(super) use init::repo_init;
 pub(super) use status::repo_status;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn derive_repo_name_strips_git_and_handles_scp_style() {
-        assert_eq!(
-            derive_repo_name("git@github.com:org/repo.git"),
-            Some("repo".to_string())
-        );
-        assert_eq!(
-            derive_repo_name("https://github.com/org/repo"),
-            Some("repo".to_string())
-        );
-        assert_eq!(derive_repo_name(""), None);
-    }
-
-    #[test]
-    fn validate_absolute_path_rejects_relative() {
-        let p = PathBuf::from("relative/path");
-        assert!(validate_absolute_path(&p, "path").is_err());
-    }
-}
-
 fn expand_tilde(raw: &str) -> Result<PathBuf, String> {
     let raw = raw.trim();
     if raw == "~" || raw.starts_with("~/") {
@@ -143,5 +119,29 @@ fn validate_dest_name(name: &str) -> Result<(), String> {
     match first {
         Some(std::path::Component::Normal(_)) => Ok(()),
         _ => Err("dest_name must be a single path segment".to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn derive_repo_name_strips_git_and_handles_scp_style() {
+        assert_eq!(
+            derive_repo_name("git@github.com:org/repo.git"),
+            Some("repo".to_string())
+        );
+        assert_eq!(
+            derive_repo_name("https://github.com/org/repo"),
+            Some("repo".to_string())
+        );
+        assert_eq!(derive_repo_name(""), None);
+    }
+
+    #[test]
+    fn validate_absolute_path_rejects_relative() {
+        let p = PathBuf::from("relative/path");
+        assert!(validate_absolute_path(&p, "path").is_err());
     }
 }

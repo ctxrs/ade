@@ -51,10 +51,7 @@ pub async fn cleanup_old_resource_telemetry_logs(
     retention_days: u64,
 ) -> Result<usize> {
     let mut entries = tokio::fs::read_dir(logs_dir).await?;
-    let retention_days = match i64::try_from(retention_days) {
-        Ok(days) => days,
-        Err(_) => i64::MAX,
-    };
+    let retention_days = i64::try_from(retention_days).unwrap_or(i64::MAX);
     let cutoff = now - chrono::Duration::days(retention_days);
     let mut removed = 0usize;
     while let Some(entry) = entries.next_entry().await? {
