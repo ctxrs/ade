@@ -1,6 +1,5 @@
 pub mod api;
 mod async_util;
-mod build_identity;
 mod container_builder;
 pub mod daemon;
 mod dictation_livekit;
@@ -58,7 +57,10 @@ pub mod fault_injection {
 mod lib_tests;
 
 pub fn current_build_exact_version() -> anyhow::Result<String> {
-    Ok(build_identity::current_build_identity()?
-        .exact_version
-        .clone())
+    Ok(current_build_identity()?.exact_version.clone())
+}
+
+pub(crate) fn current_build_identity() -> anyhow::Result<&'static ctx_update_service::BuildIdentity>
+{
+    ctx_update_service::current_build_identity(env!("CARGO_PKG_VERSION"))
 }

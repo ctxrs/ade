@@ -60,8 +60,8 @@ pub(in crate::api) async fn health(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<HealthResp>, StatusCode> {
-    let identity = crate::build_identity::current_build_identity()
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let identity =
+        crate::current_build_identity().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let include_sensitive = health_request_is_authorized(&state, &headers);
     Ok(Json(build_health_response(
         &state,
@@ -200,8 +200,8 @@ pub(in crate::api) async fn diagnostics(
 
     let log_files = logs::list_log_files(&state.core.data_root).await;
 
-    let identity = crate::build_identity::current_build_identity()
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let identity =
+        crate::current_build_identity().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(DiagnosticsResp {
         daemon: build_health_response(&state, identity, true),
         platform: serde_json::json!({
@@ -234,7 +234,7 @@ fn health_request_is_authorized(state: &Arc<AppState>, headers: &HeaderMap) -> b
 
 fn build_health_response(
     state: &Arc<AppState>,
-    identity: &crate::build_identity::BuildIdentity,
+    identity: &ctx_update_service::BuildIdentity,
     include_sensitive: bool,
 ) -> HealthResp {
     let version = identity.exact_version.clone();

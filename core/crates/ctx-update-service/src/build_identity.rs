@@ -1,31 +1,32 @@
-use anyhow::{anyhow, Context, Result};
-use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-const BUILD_IDENTITY_PATH_ENV: &str = "CTX_BUILD_IDENTITY_PATH";
+use anyhow::{anyhow, Context, Result};
+use serde::Deserialize;
+
+pub const BUILD_IDENTITY_PATH_ENV: &str = "CTX_BUILD_IDENTITY_PATH";
 
 #[derive(Clone, Debug, Deserialize)]
-pub(crate) struct BuildIdentity {
+pub struct BuildIdentity {
     #[serde(rename = "schemaVersion")]
-    pub(crate) schema_version: u32,
+    pub schema_version: u32,
     #[serde(rename = "exactVersion")]
-    pub(crate) exact_version: String,
+    pub exact_version: String,
     #[serde(rename = "buildId")]
-    pub(crate) build_id: String,
+    pub build_id: String,
     #[serde(rename = "compatibilityToken")]
-    pub(crate) compatibility_token: String,
+    pub compatibility_token: String,
 }
 
-fn compile_time_build_identity() -> BuildIdentity {
+fn compile_time_build_identity(package_version: &'static str) -> BuildIdentity {
     let version = option_env!("CTX_RELEASE_EFFECTIVE_VERSION")
-        .unwrap_or(env!("CARGO_PKG_VERSION"))
+        .unwrap_or(package_version)
         .to_string();
     BuildIdentity {
         schema_version: 1,
         exact_version: version.clone(),
         build_id: option_env!("CTX_BUILD_ID")
-            .unwrap_or(env!("CARGO_PKG_VERSION"))
+            .unwrap_or(package_version)
             .to_string(),
         compatibility_token: option_env!("CTX_COMPATIBILITY_TOKEN")
             .or(option_env!("CTX_DEV_INSTANCE_ID"))
@@ -73,16 +74,17 @@ fn parse_build_identity(path: &Path) -> Result<BuildIdentity> {
     Ok(identity)
 }
 
-fn load_build_identity() -> Result<BuildIdentity> {
+fn load_build_identity(package_version: &'static str) -> Result<BuildIdentity> {
     let Some(identity_path) = configured_identity_path()? else {
-        return Ok(compile_time_build_identity());
+        return Ok(compile_time_build_identity(package_version));
     };
     parse_build_identity(&identity_path)
 }
 
-pub(crate) fn current_build_identity() -> Result<&'static BuildIdentity> {
+pub fn current_build_identity(package_version: &'static str) -> Result<&'static BuildIdentity> {
     static BUILD_IDENTITY: OnceLock<Result<BuildIdentity, String>> = OnceLock::new();
-    let entry = BUILD_IDENTITY.get_or_init(|| load_build_identity().map_err(|err| err.to_string()));
+    let entry = BUILD_IDENTITY
+        .get_or_init(|| load_build_identity(package_version).map_err(|err| err.to_string()));
     match entry {
         Ok(identity) => Ok(identity),
         Err(err) => Err(anyhow!(err.clone())),
@@ -213,10 +215,20 @@ mod tests {
                 .is_none(),
             "daemon build identity must not be inferred from CTX_BUNDLE_DIR"
         );
-        let identity = load_build_identity().expect("load compile-time identity");
-        assert_ne!(identity.exact_version, "9.9.9-preview.bundle");
+        let identity = load_build_identity("0.63.10").expect("load compile-time identity");
+        assert_eq!(identity.exact_version, "0.63.10");
         assert_ne!(identity.build_id, "bundle-build");
         assert_ne!(identity.compatibility_token, "artifact-bundle");
+    }
+
+    #[test]
+    fn build_identity_uses_caller_package_version_as_fallback() {
+        let _env = EnvGuard::new();
+
+        let identity = load_build_identity("0.63.10").expect("load compile-time identity");
+
+        assert_eq!(identity.exact_version, "0.63.10");
+        assert_eq!(identity.build_id, "0.63.10");
     }
 
     #[test]
@@ -236,7 +248,7 @@ mod tests {
         .expect("write identity");
         std::env::set_var(super::BUILD_IDENTITY_PATH_ENV, &path);
 
-        let identity = load_build_identity().expect("load explicit identity");
+        let identity = load_build_identity("0.63.10").expect("load explicit identity");
         assert_eq!(identity.exact_version, "1.2.3-explicit");
         assert_eq!(identity.build_id, "explicit-build");
         assert_eq!(identity.compatibility_token, "artifact-explicit");

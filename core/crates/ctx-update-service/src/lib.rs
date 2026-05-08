@@ -9,6 +9,7 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 
 mod appimage;
+mod build_identity;
 mod drain;
 mod fs_ops;
 mod managed_daemon;
@@ -21,6 +22,7 @@ pub use appimage::{
     download_verified_appimage_candidate, read_verified_appimage_candidate_meta, updates_dir,
     validate_verified_appimage_candidate, AppImageCandidateRequest, VerifiedAppImageCandidateMeta,
 };
+pub use build_identity::{current_build_identity, BuildIdentity, BUILD_IDENTITY_PATH_ENV};
 pub use drain::{UpdateDrainCoordinator, UpdateDrainState};
 pub use fs_ops::{
     atomic_replace_exe, atomic_replace_exe_with_backup, download_to_path, sha256_hex_file,
