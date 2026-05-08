@@ -1,9 +1,12 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine;
 use futures::SinkExt;
 use jsonwebtoken::{EncodingKey, Header};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
@@ -59,6 +62,72 @@ pub fn normalize_livekit_dictation_config(
         model: input.model,
         language: input.language,
     })
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum LiveKitDictationClientControl {
+    Stop,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum LiveKitDictationUpstreamEvent {
+    InterimTranscript { payload: String },
+    FinalTranscript { payload: String },
+    Error { payload: String },
+    SessionFinalized,
+    SessionClosed,
+    Ignore,
+}
+
+pub fn livekit_client_control_requests_stop(text: &str) -> bool {
+    matches!(
+        serde_json::from_str::<LiveKitDictationClientControl>(text),
+        Ok(LiveKitDictationClientControl::Stop)
+    )
+}
+
+pub fn livekit_dictation_input_audio_payload(audio: &[u8]) -> String {
+    json!({ "type": "input_audio", "audio": BASE64.encode(audio) }).to_string()
+}
+
+pub fn livekit_dictation_finalize_payload() -> String {
+    json!({ "type": "session.finalize" }).to_string()
+}
+
+pub fn translate_livekit_dictation_text_message(text: &str) -> LiveKitDictationUpstreamEvent {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else {
+        return LiveKitDictationUpstreamEvent::Ignore;
+    };
+    match v.get("type").and_then(|t| t.as_str()).unwrap_or("") {
+        "interim_transcript" | "final_transcript" => {
+            let payload = json!({
+                "type": if v.get("type").and_then(|t| t.as_str()) == Some("final_transcript") {
+                    "final"
+                } else {
+                    "interim"
+                },
+                "text": v.get("transcript").and_then(|t| t.as_str()).unwrap_or(""),
+                "language": v.get("language").and_then(|t| t.as_str()).unwrap_or(""),
+            })
+            .to_string();
+            if v.get("type").and_then(|t| t.as_str()) == Some("final_transcript") {
+                LiveKitDictationUpstreamEvent::FinalTranscript { payload }
+            } else {
+                LiveKitDictationUpstreamEvent::InterimTranscript { payload }
+            }
+        }
+        "session.finalized" => LiveKitDictationUpstreamEvent::SessionFinalized,
+        "session.closed" => LiveKitDictationUpstreamEvent::SessionClosed,
+        "error" => LiveKitDictationUpstreamEvent::Error {
+            payload: json!({
+                "type": "error",
+                "message": v.get("message").and_then(|t| t.as_str()).unwrap_or("LiveKit STT error"),
+            })
+            .to_string(),
+        },
+        _ => LiveKitDictationUpstreamEvent::Ignore,
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -305,5 +374,79 @@ mod tests {
         assert_eq!(cfg.base_url, "https://example.test");
         assert_eq!(cfg.model, "deepgram/nova-3");
         assert_eq!(cfg.language, "en");
+    }
+
+    #[test]
+    fn livekit_dictation_client_control_detects_stop() {
+        assert!(livekit_client_control_requests_stop(r#"{"type":"stop"}"#));
+        assert!(!livekit_client_control_requests_stop(r#"{"type":"noop"}"#));
+        assert!(!livekit_client_control_requests_stop("not json"));
+    }
+
+    #[test]
+    fn livekit_dictation_input_audio_payload_encodes_audio() {
+        let payload = livekit_dictation_input_audio_payload(b"abc");
+        let value = serde_json::from_str::<serde_json::Value>(&payload).expect("json");
+        assert_eq!(
+            value.get("type").and_then(|v| v.as_str()),
+            Some("input_audio")
+        );
+        assert_eq!(value.get("audio").and_then(|v| v.as_str()), Some("YWJj"));
+    }
+
+    #[test]
+    fn livekit_dictation_finalize_payload_requests_session_finalize() {
+        let payload = livekit_dictation_finalize_payload();
+        let value = serde_json::from_str::<serde_json::Value>(&payload).expect("json");
+        assert_eq!(
+            value.get("type").and_then(|v| v.as_str()),
+            Some("session.finalize")
+        );
+    }
+
+    #[test]
+    fn livekit_dictation_upstream_translation_maps_transcripts_and_terminal_events() {
+        assert_eq!(
+            translate_livekit_dictation_text_message(
+                r#"{"type":"interim_transcript","transcript":"hel","language":"en"}"#
+            ),
+            LiveKitDictationUpstreamEvent::InterimTranscript {
+                payload: r#"{"language":"en","text":"hel","type":"interim"}"#.to_string()
+            }
+        );
+        assert_eq!(
+            translate_livekit_dictation_text_message(
+                r#"{"type":"final_transcript","transcript":"hello","language":"en"}"#
+            ),
+            LiveKitDictationUpstreamEvent::FinalTranscript {
+                payload: r#"{"language":"en","text":"hello","type":"final"}"#.to_string()
+            }
+        );
+        assert_eq!(
+            translate_livekit_dictation_text_message(r#"{"type":"session.finalized"}"#),
+            LiveKitDictationUpstreamEvent::SessionFinalized
+        );
+        assert_eq!(
+            translate_livekit_dictation_text_message(r#"{"type":"session.closed"}"#),
+            LiveKitDictationUpstreamEvent::SessionClosed
+        );
+    }
+
+    #[test]
+    fn livekit_dictation_upstream_translation_maps_errors_and_ignores_unknown() {
+        assert_eq!(
+            translate_livekit_dictation_text_message(r#"{"type":"error","message":"bad"}"#),
+            LiveKitDictationUpstreamEvent::Error {
+                payload: r#"{"message":"bad","type":"error"}"#.to_string()
+            }
+        );
+        assert_eq!(
+            translate_livekit_dictation_text_message(r#"{"type":"unknown"}"#),
+            LiveKitDictationUpstreamEvent::Ignore
+        );
+        assert_eq!(
+            translate_livekit_dictation_text_message("not json"),
+            LiveKitDictationUpstreamEvent::Ignore
+        );
     }
 }

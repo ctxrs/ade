@@ -4,13 +4,14 @@ use std::time::Duration;
 use std::time::Instant;
 
 use axum::extract::ws::{Message as WsMessage, WebSocket};
-use base64::engine::general_purpose::STANDARD as BASE64;
-use base64::Engine;
 use ctx_transport_runtime::dictation_livekit::{
-    connect_livekit_inference_stt, normalize_livekit_dictation_config, LiveKitDictationConfigInput,
+    connect_livekit_inference_stt, livekit_client_control_requests_stop,
+    livekit_dictation_finalize_payload, livekit_dictation_input_audio_payload,
+    normalize_livekit_dictation_config, translate_livekit_dictation_text_message,
+    LiveKitDictationConfigInput, LiveKitDictationUpstreamEvent,
 };
 use futures::{SinkExt, StreamExt};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::json;
 use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::Message as TMessage;
@@ -22,12 +23,6 @@ use crate::settings::{self, DictationProvider};
 struct ErrorMsg {
     r#type: &'static str,
     message: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum ClientControl {
-    Stop,
 }
 
 pub async fn dictation_livekit_stream(mut socket: WebSocket, state: std::sync::Arc<AppState>) {
@@ -176,8 +171,7 @@ pub async fn dictation_livekit_stream(mut socket: WebSocket, state: std::sync::A
                             ))
                             .await;
                     }
-                    let audio = BASE64.encode(bytes);
-                    let payload = json!({ "type": "input_audio", "audio": audio }).to_string();
+                    let payload = livekit_dictation_input_audio_payload(&bytes);
                     if lk_tx_send
                         .lock()
                         .await
@@ -190,15 +184,12 @@ pub async fn dictation_livekit_stream(mut socket: WebSocket, state: std::sync::A
                 }
                 WsMessage::Binary(_) => {}
                 WsMessage::Text(text) => {
-                    let parsed = serde_json::from_str::<ClientControl>(&text);
-                    if matches!(parsed, Ok(ClientControl::Stop)) && !finalized {
+                    if livekit_client_control_requests_stop(&text) && !finalized {
                         finalize_requested_tx.store(true, Ordering::Relaxed);
                         let _ = lk_tx_send
                             .lock()
                             .await
-                            .send(TMessage::Text(
-                                json!({ "type": "session.finalize" }).to_string().into(),
-                            ))
+                            .send(TMessage::Text(livekit_dictation_finalize_payload().into()))
                             .await;
                         if !close_scheduled_tx.swap(true, Ordering::Relaxed) {
                             let lk_tx_close = lk_tx_close.clone();
@@ -227,9 +218,7 @@ pub async fn dictation_livekit_stream(mut socket: WebSocket, state: std::sync::A
                         let _ = lk_tx_send
                             .lock()
                             .await
-                            .send(TMessage::Text(
-                                json!({ "type": "session.finalize" }).to_string().into(),
-                            ))
+                            .send(TMessage::Text(livekit_dictation_finalize_payload().into()))
                             .await;
                         if !close_scheduled_tx.swap(true, Ordering::Relaxed) {
                             let lk_tx_close = lk_tx_close.clone();
@@ -276,56 +265,52 @@ pub async fn dictation_livekit_stream(mut socket: WebSocket, state: std::sync::A
         } {
             let Ok(msg) = item else { break };
             match msg {
-                TMessage::Text(text) => {
-                    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
-                        continue;
-                    };
-                    let msg_type = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
-                    match msg_type {
-                        "interim_transcript" | "final_transcript" => {
-                            transcript_messages = transcript_messages.saturating_add(1);
-                            last_transcript_at = Instant::now();
-                            if msg_type == "final_transcript" {
-                                got_final = true;
-                            }
-                            let out = json!({
-                                "type": if msg_type == "final_transcript" { "final" } else { "interim" },
-                                "text": v.get("transcript").and_then(|t| t.as_str()).unwrap_or(""),
-                                "language": v.get("language").and_then(|t| t.as_str()).unwrap_or(""),
-                            });
-                            if client_tx_recv
-                                .lock()
-                                .await
-                                .send(WsMessage::Text(out.to_string()))
-                                .await
-                                .is_err()
-                            {
-                                break;
-                            }
-                        }
-                        "session.finalized" => {
-                            session_closed_recv.store(true, Ordering::Relaxed);
+                TMessage::Text(text) => match translate_livekit_dictation_text_message(&text) {
+                    LiveKitDictationUpstreamEvent::InterimTranscript { payload } => {
+                        transcript_messages = transcript_messages.saturating_add(1);
+                        last_transcript_at = Instant::now();
+                        if client_tx_recv
+                            .lock()
+                            .await
+                            .send(WsMessage::Text(payload))
+                            .await
+                            .is_err()
+                        {
                             break;
                         }
-                        "error" => {
-                            let out = json!({
-                                "type": "error",
-                                "message": v.get("message").and_then(|t| t.as_str()).unwrap_or("LiveKit STT error"),
-                            });
-                            let _ = client_tx_recv
-                                .lock()
-                                .await
-                                .send(WsMessage::Text(out.to_string()))
-                                .await;
-                            break;
-                        }
-                        "session.closed" => {
-                            session_closed_recv.store(true, Ordering::Relaxed);
-                            break;
-                        }
-                        _ => {}
                     }
-                }
+                    LiveKitDictationUpstreamEvent::FinalTranscript { payload } => {
+                        transcript_messages = transcript_messages.saturating_add(1);
+                        last_transcript_at = Instant::now();
+                        got_final = true;
+                        if client_tx_recv
+                            .lock()
+                            .await
+                            .send(WsMessage::Text(payload))
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    LiveKitDictationUpstreamEvent::SessionFinalized => {
+                        session_closed_recv.store(true, Ordering::Relaxed);
+                        break;
+                    }
+                    LiveKitDictationUpstreamEvent::Error { payload } => {
+                        let _ = client_tx_recv
+                            .lock()
+                            .await
+                            .send(WsMessage::Text(payload))
+                            .await;
+                        break;
+                    }
+                    LiveKitDictationUpstreamEvent::SessionClosed => {
+                        session_closed_recv.store(true, Ordering::Relaxed);
+                        break;
+                    }
+                    LiveKitDictationUpstreamEvent::Ignore => {}
+                },
                 TMessage::Close(_) => {
                     session_closed_recv.store(true, Ordering::Relaxed);
                     break;
