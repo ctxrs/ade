@@ -215,8 +215,8 @@ mod tests {
                 .is_none(),
             "daemon build identity must not be inferred from CTX_BUNDLE_DIR"
         );
-        let identity = load_build_identity("0.63.11").expect("load compile-time identity");
-        assert_eq!(identity.exact_version, "0.63.11");
+        let identity = load_build_identity("0.63.12").expect("load compile-time identity");
+        assert_eq!(identity.exact_version, "0.63.12");
         assert_ne!(identity.build_id, "bundle-build");
         assert_ne!(identity.compatibility_token, "artifact-bundle");
     }
@@ -225,10 +225,10 @@ mod tests {
     fn build_identity_uses_caller_package_version_as_fallback() {
         let _env = EnvGuard::new();
 
-        let identity = load_build_identity("0.63.11").expect("load compile-time identity");
+        let identity = load_build_identity("0.63.12").expect("load compile-time identity");
 
-        assert_eq!(identity.exact_version, "0.63.11");
-        assert_eq!(identity.build_id, "0.63.11");
+        assert_eq!(identity.exact_version, "0.63.12");
+        assert_eq!(identity.build_id, "0.63.12");
     }
 
     #[test]
@@ -248,7 +248,7 @@ mod tests {
         .expect("write identity");
         std::env::set_var(super::BUILD_IDENTITY_PATH_ENV, &path);
 
-        let identity = load_build_identity("0.63.11").expect("load explicit identity");
+        let identity = load_build_identity("0.63.12").expect("load explicit identity");
         assert_eq!(identity.exact_version, "1.2.3-explicit");
         assert_eq!(identity.build_id, "explicit-build");
         assert_eq!(identity.compatibility_token, "artifact-explicit");
