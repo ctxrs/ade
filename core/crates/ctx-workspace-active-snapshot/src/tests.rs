@@ -220,8 +220,8 @@ mod delta_tests {
     use super::super::trim::{new_head_snapshot, session_metadata_from_session};
     use super::super::*;
     use chrono::{TimeZone, Utc};
-    use ctx_core::ids::TurnId;
-    use ctx_core::models::SessionTurnStatus;
+    use ctx_core::ids::{MessageId, TurnId};
+    use ctx_core::models::{Message, MessageDelivery, MessageRole, SessionTurn, SessionTurnStatus};
 
     fn test_session(parent_session_id: Option<SessionId>) -> Session {
         let now = Utc.timestamp_opt(0, 0).unwrap();
@@ -475,6 +475,98 @@ mod delta_tests {
             .expect("hydrated head should become serveable");
         assert_eq!(cached.last_event_seq, hydrated.last_event_seq);
         assert_eq!(cached.projection_rev, hydrated.projection_rev);
+    }
+
+    #[tokio::test]
+    async fn terminal_completed_head_without_assistant_message_is_not_authoritative_for_recovery() {
+        let hub = WorkspaceActiveSnapshotHub::new();
+        let primary = test_session(None);
+        let turn_id = TurnId::new();
+        let now = Utc.timestamp_opt(0, 0).unwrap();
+        let mut head = new_head_snapshot(&primary);
+        head.last_event_seq = 8;
+        head.projection_rev = 13;
+        head.state_rev = 8;
+        head.activity = SessionActivityState {
+            is_working: false,
+            last_turn_status: Some(SessionTurnStatus::Completed),
+        };
+        head.turns.push(SessionTurn {
+            turn_id,
+            session_id: primary.id,
+            run_id: None,
+            user_message_id: None,
+            status: SessionTurnStatus::Completed,
+            start_seq: Some(1),
+            end_seq: Some(8),
+            started_at: now,
+            updated_at: now,
+            assistant_partial: None,
+            thought_partial: None,
+            metrics_json: None,
+            tool_total: 1,
+            tool_pending: 0,
+            tool_running: 0,
+            tool_completed: 1,
+            tool_failed: 0,
+        });
+        head.messages.push(Message {
+            id: MessageId::new(),
+            session_id: primary.id,
+            task_id: primary.task_id,
+            run_id: None,
+            turn_id: Some(turn_id),
+            turn_sequence: Some(0),
+            order_seq: Some(1),
+            role: MessageRole::User,
+            content: "hello".to_string(),
+            attachments: Vec::new(),
+            delivery: MessageDelivery::Immediate,
+            delivered_at: None,
+            created_at: now,
+        });
+
+        hub.update_session_head(head.clone()).await;
+
+        assert!(
+            hub.get_cached_session_head_for_request(primary.id, true, 60)
+                .await
+                .is_none(),
+            "recovery must rebuild from store instead of serving a terminal cache missing assistant text"
+        );
+        assert!(
+            hub.get_cached_session_head_for_request(primary.id, false, 60)
+                .await
+                .is_some(),
+            "compact reads can still use the cache; only authoritative event-bearing recovery is blocked"
+        );
+
+        head.messages.push(Message {
+            id: MessageId::new(),
+            session_id: primary.id,
+            task_id: primary.task_id,
+            run_id: None,
+            turn_id: Some(turn_id),
+            turn_sequence: Some(1),
+            order_seq: Some(2),
+            role: MessageRole::Assistant,
+            content: "done: hello".to_string(),
+            attachments: Vec::new(),
+            delivery: MessageDelivery::Immediate,
+            delivered_at: Some(now),
+            created_at: now,
+        });
+        hub.update_session_head(head).await;
+
+        let recovered = hub
+            .get_cached_session_head_for_request(primary.id, true, 60)
+            .await
+            .expect("completed head with assistant text is authoritative");
+        assert!(recovered
+            .messages
+            .iter()
+            .any(|message| message.role == MessageRole::Assistant
+                && message.content == "done: hello"));
     }
 
     #[tokio::test]

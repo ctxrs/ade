@@ -3,7 +3,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use ctx_core::ids::{SessionId, WorkspaceId};
 use ctx_core::models::{
-    Session, SessionHeadDelta, SessionHeadSnapshot, WorkspaceActiveSnapshotEvent,
+    MessageRole, Session, SessionHeadDelta, SessionHeadSnapshot, SessionTurnStatus,
+    WorkspaceActiveSnapshotEvent,
 };
 
 use crate::cache::{CachedSessionHead, SessionHeadCapability, SessionHeadCompleteness};
@@ -13,6 +14,20 @@ use crate::trim::{compact_active_head_snapshot, new_head_snapshot};
 use crate::{SessionReplayCursor, WorkspaceActiveSnapshotHub};
 
 impl WorkspaceActiveSnapshotHub {
+    fn completed_head_is_visibly_complete(head: &SessionHeadSnapshot) -> bool {
+        let Some(latest_turn) = head.turns.last() else {
+            return true;
+        };
+        if latest_turn.status != SessionTurnStatus::Completed {
+            return true;
+        }
+        head.messages.iter().any(|message| {
+            message.role == MessageRole::Assistant
+                && message.turn_id == Some(latest_turn.turn_id)
+                && !message.content.trim().is_empty()
+        })
+    }
+
     pub(crate) fn now_ms() -> i64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -312,6 +327,9 @@ impl WorkspaceActiveSnapshotHub {
                 return None;
             }
             if include_events && cached.capability != SessionHeadCapability::ReplayCapable {
+                return None;
+            }
+            if include_events && !Self::completed_head_is_visibly_complete(&cached.head) {
                 return None;
             }
             cached.touch(Self::now_ms());
