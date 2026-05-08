@@ -53,6 +53,13 @@ const sameDemand = (left: WorkspaceVcsDemand, right: WorkspaceVcsDemand): boolea
   sameIds(left.summaryWorktreeIds, right.summaryWorktreeIds) &&
   sameIds(left.detailWorktreeIds, right.detailWorktreeIds);
 
+const hasTouchedFileInventory = (snapshot: WorktreeVcsSnapshot): boolean =>
+  snapshot.touched_files_state !== "not_loaded" || (snapshot.touched_files.items?.length ?? 0) > 0;
+
+const staleTouchedFilesState = (
+  state: WorktreeVcsSnapshot["touched_files_state"],
+): WorktreeVcsSnapshot["touched_files_state"] => (state === "ready" ? "stale" : state);
+
 const nowMs = (): number => {
   if (typeof performance !== "undefined" && typeof performance.now === "function") {
     return (performance.timeOrigin ?? Date.now()) + performance.now();
@@ -295,8 +302,38 @@ export class WorkspaceVcsStore {
     const summaryDemanded = this.demand.summaryWorktreeIds.includes(worktreeId);
     const detailsDemanded = this.demand.detailWorktreeIds.includes(worktreeId);
     if (message.type === "details_snapshot") return detailsDemanded;
-    if (message.type === "summary_snapshot") return summaryDemanded && !detailsDemanded;
+    if (message.type === "summary_snapshot") return summaryDemanded;
     return summaryDemanded || detailsDemanded;
+  }
+
+  private mergeSnapshot(
+    previous: WorktreeVcsSnapshot | undefined,
+    message: WorkspaceVcsSnapshotMessage,
+  ): WorktreeVcsSnapshot | null {
+    const incoming = message.snapshot;
+    if (!previous) return incoming;
+    if (message.type === "summary_snapshot") {
+      if (incoming.rev < previous.rev) return null;
+      if (hasTouchedFileInventory(previous) && !hasTouchedFileInventory(incoming)) {
+        return {
+          ...incoming,
+          touched_files: previous.touched_files,
+          touched_files_state: staleTouchedFilesState(previous.touched_files_state),
+        };
+      }
+      return incoming;
+    }
+    if (message.type === "details_snapshot") {
+      if (incoming.rev >= previous.rev) return incoming;
+      if (!hasTouchedFileInventory(incoming)) return null;
+      return {
+        ...previous,
+        touched_files: incoming.touched_files,
+        touched_files_state: staleTouchedFilesState(incoming.touched_files_state),
+      };
+    }
+    if (previous.rev >= incoming.rev) return null;
+    return incoming;
   }
 
   private applySnapshotMessage(message: WorkspaceVcsSnapshotMessage, receivedAtMs: number): void {
@@ -305,10 +342,11 @@ export class WorkspaceVcsStore {
     const worktreeId = idToString(snapshot.worktree_id);
     if (!worktreeId) return;
     const previous = this.snapshot.snapshotsByWorktreeId[worktreeId];
-    if (previous && previous.rev >= snapshot.rev) return;
+    const nextSnapshot = this.mergeSnapshot(previous, message);
+    if (!nextSnapshot) return;
     const nextSnapshots = {
       ...this.snapshot.snapshotsByWorktreeId,
-      [worktreeId]: snapshot,
+      [worktreeId]: nextSnapshot,
     };
     this.snapshot = {
       ...this.snapshot,
@@ -317,11 +355,11 @@ export class WorkspaceVcsStore {
     recordClientCounterMetric("workspace.vcs_stream.snapshot_count", {
       message_type: message.type,
     });
-    if (typeof snapshot.emitted_at_ms === "number" && Number.isFinite(snapshot.emitted_at_ms)) {
+    if (typeof nextSnapshot.emitted_at_ms === "number" && Number.isFinite(nextSnapshot.emitted_at_ms)) {
       recordClientHistogramMetric(
         "workspace.vcs_stream.receive_lag_ms",
         "ms",
-        Math.max(0, receivedAtMs - snapshot.emitted_at_ms),
+        Math.max(0, receivedAtMs - nextSnapshot.emitted_at_ms),
         { message_type: message.type },
       );
     }

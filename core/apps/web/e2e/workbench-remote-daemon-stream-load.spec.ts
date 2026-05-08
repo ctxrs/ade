@@ -1,3 +1,4 @@
+import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
 import fs from "fs/promises";
 import type { APIRequestContext, Page, Request } from "playwright/test";
 import { test, expect } from "./fixtures";
@@ -100,8 +101,32 @@ const MAX_CLICK_TO_TERMINAL_MS = envNumber(
   "CTX_REMOTE_DAEMON_STREAM_SOAK_MAX_CLICK_TO_TERMINAL_MS",
   REMOTE_MODE ? 25_000 : 15_000,
 );
+const VCS_CHURN_ENABLED = process.env.CTX_REMOTE_DAEMON_STREAM_SOAK_VCS_CHURN === "1";
+const VCS_CHURN_UPDATES = envNumber("CTX_REMOTE_DAEMON_STREAM_SOAK_VCS_CHURN_UPDATES", 1400);
+const VCS_CHURN_INTERVAL_MS = envNumber("CTX_REMOTE_DAEMON_STREAM_SOAK_VCS_CHURN_INTERVAL_MS", 60);
+const MIN_VCS_SNAPSHOTS = envNumber(
+  "CTX_REMOTE_DAEMON_STREAM_SOAK_MIN_VCS_SNAPSHOTS",
+  VCS_CHURN_ENABLED ? 25 : 0,
+);
+const MAX_VCS_RECEIVE_LAG_MS = envNumber(
+  "CTX_REMOTE_DAEMON_STREAM_SOAK_MAX_VCS_RECEIVE_LAG_MS",
+  REMOTE_MODE ? 20_000 : 10_000,
+);
+const MAX_VCS_GIT_PANE_OPEN_MS = envNumber(
+  "CTX_REMOTE_DAEMON_STREAM_SOAK_MAX_VCS_GIT_PANE_OPEN_MS",
+  REMOTE_MODE ? 20_000 : 10_000,
+);
+const MAX_VCS_TASK_SWITCH_MS = envNumber(
+  "CTX_REMOTE_DAEMON_STREAM_SOAK_MAX_VCS_TASK_SWITCH_MS",
+  REMOTE_MODE ? 8000 : 5000,
+);
+const REMOTE_CHURN_HOST = process.env.CTX_REMOTE_DAEMON_STREAM_SOAK_SSH_HOST?.trim() ?? "";
+const REMOTE_CHURN_KEY_PATH = process.env.CTX_REMOTE_DAEMON_STREAM_SOAK_SSH_KEY_PATH?.trim() ?? "";
 
 type SessionHeadResponse = {
+  session?: {
+    worktree_id?: string | null;
+  };
   turns?: Array<{
     turn_id?: string;
     user_message_id?: string;
@@ -140,6 +165,38 @@ type MetricRollup = {
   p50: number | null;
   p95: number | null;
   p99: number | null;
+};
+
+type WorktreeResponse = {
+  id?: string;
+  root_path?: string;
+};
+
+type VcsChurnSummary = {
+  enabled: boolean;
+  worktreeId: string | null;
+  worktreeRoot: string | null;
+  updates: number;
+  intervalMs: number;
+  startedAtMs: number | null;
+  stoppedAtMs: number | null;
+  exitCode: number | null;
+  signal: string | null;
+  error: string | null;
+  stdoutTail: string;
+  stderrTail: string;
+};
+
+type VcsTaskSwitchSummary = {
+  toBackgroundMs: number | null;
+  backToForegroundMs: number | null;
+  error: string | null;
+};
+
+type VcsGitPaneSummary = {
+  openMs: number | null;
+  firstFileVisibleMs: number | null;
+  error: string | null;
 };
 
 type ProbeOutcome = {
@@ -232,6 +289,210 @@ const formatUnknownError = (error: unknown): string => {
   if (error instanceof Error && error.message) return error.message;
   return String(error);
 };
+
+const appendTail = (current: string, chunk: Buffer, maxLength = 12_000): string => {
+  const next = `${current}${chunk.toString("utf8")}`;
+  return next.length <= maxLength ? next : next.slice(next.length - maxLength);
+};
+
+const emptyVcsChurnSummary = (error: string | null = null): VcsChurnSummary => ({
+  enabled: VCS_CHURN_ENABLED,
+  worktreeId: null,
+  worktreeRoot: null,
+  updates: VCS_CHURN_UPDATES,
+  intervalMs: VCS_CHURN_INTERVAL_MS,
+  startedAtMs: null,
+  stoppedAtMs: null,
+  exitCode: null,
+  signal: null,
+  error,
+  stdoutTail: "",
+  stderrTail: "",
+});
+
+async function getSessionWorktreeRoot(
+  request: APIRequestContext,
+  sessionId: string,
+): Promise<{ worktreeId: string; rootPath: string }> {
+  const headResponse = await request.get(`/api/sessions/${sessionId}/head`);
+  expect(headResponse.ok(), `head request failed: ${headResponse.url()}`).toBeTruthy();
+  const head = (await headResponse.json()) as SessionHeadResponse;
+  const worktreeId = String(head.session?.worktree_id ?? "").trim();
+  if (!worktreeId) {
+    throw new Error(`session ${sessionId} head did not include a worktree id`);
+  }
+  const worktreeResponse = await request.get(`/api/worktrees/${worktreeId}`);
+  expect(worktreeResponse.ok(), `worktree request failed: ${worktreeResponse.url()}`).toBeTruthy();
+  const worktree = (await worktreeResponse.json()) as WorktreeResponse;
+  const rootPath = String(worktree.root_path ?? "").trim();
+  if (!rootPath) {
+    throw new Error(`worktree ${worktreeId} response did not include a root path`);
+  }
+  return { worktreeId, rootPath };
+}
+
+async function startRemoteVcsChurn(
+  request: APIRequestContext,
+  sessionId: string,
+): Promise<{ summary: VcsChurnSummary; stop: () => Promise<VcsChurnSummary> } | null> {
+  if (!VCS_CHURN_ENABLED) return null;
+  if (!REMOTE_CHURN_HOST || !REMOTE_CHURN_KEY_PATH) {
+    throw new Error(
+      "VCS churn requires CTX_REMOTE_DAEMON_STREAM_SOAK_SSH_HOST and CTX_REMOTE_DAEMON_STREAM_SOAK_SSH_KEY_PATH",
+    );
+  }
+
+  const { worktreeId, rootPath } = await getSessionWorktreeRoot(request, sessionId);
+  let stdoutTail = "";
+  let stderrTail = "";
+  let completed: VcsChurnSummary | null = null;
+  const startedAtMs = Date.now();
+  const child: ChildProcessWithoutNullStreams = spawn(
+    "ssh",
+    [
+      "-o",
+      "StrictHostKeyChecking=no",
+      "-o",
+      "UserKnownHostsFile=/dev/null",
+      "-o",
+      "LogLevel=ERROR",
+      "-i",
+      REMOTE_CHURN_KEY_PATH,
+      `root@${REMOTE_CHURN_HOST}`,
+      "bash",
+      "-s",
+      "--",
+      rootPath,
+      String(VCS_CHURN_UPDATES),
+      String(VCS_CHURN_INTERVAL_MS),
+    ],
+    { stdio: "pipe" },
+  );
+
+  child.stdout.on("data", (chunk: Buffer) => {
+    stdoutTail = appendTail(stdoutTail, chunk);
+  });
+  child.stderr.on("data", (chunk: Buffer) => {
+    stderrTail = appendTail(stderrTail, chunk);
+  });
+  const completion = new Promise<VcsChurnSummary>((resolve) => {
+    const finish = (summary: VcsChurnSummary) => {
+      completed = summary;
+      resolve(summary);
+    };
+    child.on("error", (error) => {
+      finish({
+        enabled: true,
+        worktreeId,
+        worktreeRoot: rootPath,
+        updates: VCS_CHURN_UPDATES,
+        intervalMs: VCS_CHURN_INTERVAL_MS,
+        startedAtMs,
+        stoppedAtMs: Date.now(),
+        exitCode: null,
+        signal: null,
+        error: formatUnknownError(error),
+        stdoutTail,
+        stderrTail,
+      });
+    });
+    child.on("exit", (code, signal) => {
+      finish({
+        enabled: true,
+        worktreeId,
+        worktreeRoot: rootPath,
+        updates: VCS_CHURN_UPDATES,
+        intervalMs: VCS_CHURN_INTERVAL_MS,
+        startedAtMs,
+        stoppedAtMs: Date.now(),
+        exitCode: code,
+        signal,
+        error: code === 0 ? null : `remote VCS churn exited with code ${code ?? "null"} signal ${signal ?? "null"}`,
+        stdoutTail,
+        stderrTail,
+      });
+    });
+  });
+
+  child.stdin.end(`#!/usr/bin/env bash
+set -euo pipefail
+worktree_root="$1"
+updates="$2"
+interval_ms="$3"
+if [[ ! -d "$worktree_root" ]]; then
+  echo "worktree root missing: $worktree_root" >&2
+  exit 11
+fi
+if [[ ! -d "$worktree_root/.git" && ! -f "$worktree_root/.git" ]]; then
+  echo "not a git worktree: $worktree_root" >&2
+  exit 12
+fi
+sleep_seconds="$(awk -v ms="$interval_ms" 'BEGIN { printf "%.3f", ms / 1000 }')"
+mkdir -p "$worktree_root/.ctx-vcs-soak"
+stop_requested=0
+trap 'stop_requested=1' TERM INT
+for ((i=1; i<=updates; i++)); do
+  if [[ "$stop_requested" == "1" ]]; then
+    echo "stopped after $((i - 1)) updates"
+    exit 0
+  fi
+  printf 'remote vcs soak update %06d %s\\n' "$i" "$(date +%s%3N)" >"$worktree_root/vcs-soak-tracked.txt"
+  printf 'rotating vcs soak file %06d\\n' "$i" >"$worktree_root/.ctx-vcs-soak/rotating-$((i % 64)).txt"
+  if (( i % 100 == 0 )); then
+    git -C "$worktree_root" status --short >/dev/null || true
+  fi
+  sleep "$sleep_seconds"
+done
+echo "completed $updates updates"
+`);
+
+  await sleep(1000);
+  if (completed?.error) {
+    throw new Error(completed.error);
+  }
+
+  return {
+    summary: {
+      enabled: true,
+      worktreeId,
+      worktreeRoot: rootPath,
+      updates: VCS_CHURN_UPDATES,
+      intervalMs: VCS_CHURN_INTERVAL_MS,
+      startedAtMs,
+      stoppedAtMs: null,
+      exitCode: null,
+      signal: null,
+      error: null,
+      stdoutTail,
+      stderrTail,
+    },
+    stop: async () => {
+      if (!completed) {
+        child.kill("SIGTERM");
+      }
+      const timeout = new Promise<VcsChurnSummary>((resolve) => {
+        setTimeout(() => {
+          if (!completed) child.kill("SIGKILL");
+          resolve({
+            enabled: true,
+            worktreeId,
+            worktreeRoot: rootPath,
+            updates: VCS_CHURN_UPDATES,
+            intervalMs: VCS_CHURN_INTERVAL_MS,
+            startedAtMs,
+            stoppedAtMs: Date.now(),
+            exitCode: null,
+            signal: null,
+            error: "remote VCS churn did not stop within 5000ms",
+            stdoutTail,
+            stderrTail,
+          });
+        }, 5000);
+      });
+      return Promise.race([completion, timeout]);
+    },
+  };
+}
 
 const buildSlowPrompt = (
   marker: string,
@@ -557,6 +818,22 @@ function sumMetricEntriesByLabel(
     out[labelValue] = (out[labelValue] ?? 0) + value;
   }
   return out;
+}
+
+async function waitForTelemetryMetricSum(
+  request: APIRequestContext,
+  metric: string,
+  minimum: number,
+  timeoutMs: number,
+): Promise<number> {
+  const deadline = Date.now() + timeoutMs;
+  let current = 0;
+  while (Date.now() < deadline) {
+    current = sumMetricEntries(await readTelemetryMetricEntries(request, metric, 180_000));
+    if (current >= minimum) return current;
+    await sleep(500);
+  }
+  return current;
 }
 
 async function readTelemetryMetrics(
@@ -906,6 +1183,73 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
   });
   await clearDiagnostics(page);
 
+  const vcsChurnController = await startRemoteVcsChurn(request, foregroundSessionId);
+  let vcsChurnSummary = vcsChurnController?.summary ?? emptyVcsChurnSummary();
+  let vcsTaskSwitch: VcsTaskSwitchSummary | null = null;
+  let vcsGitPane: VcsGitPaneSummary | null = null;
+  if (VCS_CHURN_ENABLED) {
+    vcsTaskSwitch = {
+      toBackgroundMs: null,
+      backToForegroundMs: null,
+      error: null,
+    };
+    try {
+      const backgroundTaskId = seed.taskIds[1] ?? "";
+      const backgroundSessionId = backgroundTaskId ? seed.sessionIdsByTask[backgroundTaskId]?.[0] ?? "" : "";
+      expect(backgroundTaskId).not.toBe("");
+      expect(backgroundSessionId).not.toBe("");
+      const toBackgroundStartedAt = Date.now();
+      const switchedToBackground = await page.evaluate(
+        ({ taskId, sessionId }) => window.__ctxE2E?.focusTask?.(taskId, sessionId) ?? false,
+        { taskId: backgroundTaskId, sessionId: backgroundSessionId },
+      );
+      expect(switchedToBackground).toBe(true);
+      await expect(sessionView).toContainText(/remote stream fixture msg 2\.1\./i, {
+        timeout: MAX_VCS_TASK_SWITCH_MS,
+      });
+      vcsTaskSwitch.toBackgroundMs = Date.now() - toBackgroundStartedAt;
+      const backStartedAt = Date.now();
+      const switchedBack = await page.evaluate(
+        ({ taskId, sessionId }) => window.__ctxE2E?.focusTask?.(taskId, sessionId) ?? false,
+        { taskId: foregroundTaskId, sessionId: foregroundSessionId },
+      );
+      expect(switchedBack).toBe(true);
+      await expect(sessionView).toContainText(/remote stream fixture msg 1\.1\./i, {
+        timeout: MAX_VCS_TASK_SWITCH_MS,
+      });
+      vcsTaskSwitch.backToForegroundMs = Date.now() - backStartedAt;
+    } catch (error) {
+      vcsTaskSwitch.error = formatUnknownError(error);
+    }
+
+    vcsGitPane = {
+      openMs: null,
+      firstFileVisibleMs: null,
+      error: null,
+    };
+    try {
+      await waitForTelemetryMetricSum(
+        request,
+        "workspace.vcs_stream.snapshot_count",
+        Math.min(3, MIN_VCS_SNAPSHOTS),
+        MAX_VCS_GIT_PANE_OPEN_MS,
+      );
+      const openStartedAt = Date.now();
+      const opened = await page.evaluate(() => window.__ctxE2E?.toggleDiffPane?.() ?? false);
+      expect(opened).toBe(true);
+      await expect(page.locator(".wb-right-pane.wb-diff")).toBeVisible({
+        timeout: MAX_VCS_GIT_PANE_OPEN_MS,
+      });
+      vcsGitPane.openMs = Date.now() - openStartedAt;
+      await expect(page.locator(".cursor-diff-file-header").first()).toBeVisible({
+        timeout: MAX_VCS_GIT_PANE_OPEN_MS,
+      });
+      vcsGitPane.firstFileVisibleMs = Date.now() - openStartedAt;
+    } catch (error) {
+      vcsGitPane.error = formatUnknownError(error);
+    }
+  }
+
   let visibleProgressProbeStarted = false;
   if (!LONG_FOREGROUND_RECOVERY) {
     await startVisibleProgressProbe(page, FAULT_MODE);
@@ -1002,8 +1346,19 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
       if (sumMetricEntries(streamEvents) >= MIN_STREAM_EVENTS) break;
       await sleep(500);
     }
+    if (VCS_CHURN_ENABLED) {
+      await waitForTelemetryMetricSum(
+        request,
+        "workspace.vcs_stream.snapshot_count",
+        MIN_VCS_SNAPSHOTS,
+        STREAM_TIMEOUT_MS,
+      );
+    }
   } finally {
     streamerStats = await stopStreamers(streamers);
+    if (vcsChurnController) {
+      vcsChurnSummary = await vcsChurnController.stop();
+    }
     page.off("request", requestListener);
   }
 
@@ -1062,6 +1417,12 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
       "workbench.gap_repair_mismatch_count",
       "workbench.switch_stale_visible_count",
       "workbench.nav_thread_activity_mismatch_count",
+      "workspace.vcs_stream.snapshot_count",
+      "workspace.vcs_stream.receive_lag_ms",
+      "workspace.vcs_stream.server_snapshot_queued_count",
+      "workspace.vcs_stream.server_snapshot_coalesced_count",
+      "workspace.vcs_stream.server_message_sent_count",
+      "workspace.vcs_stream.server_snapshot_sent_count",
     ],
     180_000,
   );
@@ -1101,6 +1462,10 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
       maxReplicaApplyLagMs: MAX_REPLICA_APPLY_LAG_MS,
       maxClickToPendingMs: MAX_CLICK_TO_PENDING_MS,
       maxClickToTerminalMs: MAX_CLICK_TO_TERMINAL_MS,
+      minVcsSnapshots: MIN_VCS_SNAPSHOTS,
+      maxVcsReceiveLagMs: MAX_VCS_RECEIVE_LAG_MS,
+      maxVcsGitPaneOpenMs: MAX_VCS_GIT_PANE_OPEN_MS,
+      maxVcsTaskSwitchMs: MAX_VCS_TASK_SWITCH_MS,
     },
     clock,
     load: {
@@ -1115,6 +1480,19 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
       streamEventCountsByType,
       streamEventCountsByLane,
       streamTelemetrySampleCount: streamTelemetrySamples.length,
+    },
+    vcs: {
+      churn: vcsChurnSummary,
+      taskSwitch: vcsTaskSwitch,
+      gitPane: vcsGitPane,
+      snapshotCount: telemetryMetrics["workspace.vcs_stream.snapshot_count"]?.sum ?? 0,
+      receiveLag: telemetryMetrics["workspace.vcs_stream.receive_lag_ms"] ?? metricRollupEmpty(),
+      serverSnapshotQueued:
+        telemetryMetrics["workspace.vcs_stream.server_snapshot_queued_count"] ?? metricRollupEmpty(),
+      serverSnapshotCoalesced:
+        telemetryMetrics["workspace.vcs_stream.server_snapshot_coalesced_count"] ?? metricRollupEmpty(),
+      serverSnapshotSent:
+        telemetryMetrics["workspace.vcs_stream.server_snapshot_sent_count"] ?? metricRollupEmpty(),
     },
     visibleProgress: {
       cadence: visibleCadence,
@@ -1162,6 +1540,7 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
   expect(clock.uncertaintyMs).toBeLessThanOrEqual(MAX_CLOCK_UNCERTAINTY_MS);
   expect(sumMetricEntries(streamEventMetricEntries)).toBeGreaterThanOrEqual(MIN_STREAM_EVENTS);
   expect(streamEventCountsByType.session_head_delta ?? 0).toBeGreaterThanOrEqual(MIN_SESSION_HEAD_DELTAS);
+  expect(streamEventCountsByType.worktree_vcs_snapshot ?? 0).toBe(0);
   expect(streamEventCountsByLane.foreground ?? 0).toBeGreaterThan(0);
   expect(streamerStats.failures).toEqual([]);
   expect(streamerStats.stopErrors).toEqual([]);
@@ -1196,6 +1575,23 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
     MAX_REPLICA_APPLY_LAG_MS,
   );
   expect(telemetryMetrics["workbench.session_replica_apply_duration_ms"]?.count ?? 0).toBeGreaterThan(0);
+  if (VCS_CHURN_ENABLED) {
+    expect(vcsChurnSummary.error).toBeNull();
+    expect(vcsChurnSummary.exitCode).toBe(0);
+    expect(vcsTaskSwitch?.error ?? null).toBeNull();
+    expect(vcsTaskSwitch?.toBackgroundMs ?? Infinity).toBeLessThanOrEqual(MAX_VCS_TASK_SWITCH_MS);
+    expect(vcsTaskSwitch?.backToForegroundMs ?? Infinity).toBeLessThanOrEqual(MAX_VCS_TASK_SWITCH_MS);
+    expect(vcsGitPane?.error ?? null).toBeNull();
+    expect(vcsGitPane?.openMs ?? Infinity).toBeLessThanOrEqual(MAX_VCS_GIT_PANE_OPEN_MS);
+    expect(vcsGitPane?.firstFileVisibleMs ?? Infinity).toBeLessThanOrEqual(MAX_VCS_GIT_PANE_OPEN_MS);
+    expect(telemetryMetrics["workspace.vcs_stream.snapshot_count"]?.sum ?? 0).toBeGreaterThanOrEqual(
+      MIN_VCS_SNAPSHOTS,
+    );
+    expect(telemetryMetrics["workspace.vcs_stream.receive_lag_ms"]?.count ?? 0).toBeGreaterThan(0);
+    expect(telemetryMetrics["workspace.vcs_stream.receive_lag_ms"]?.p95 ?? Infinity).toBeLessThanOrEqual(
+      MAX_VCS_RECEIVE_LAG_MS,
+    );
+  }
   expect(interrupt.error).toBeNull();
   expect(interrupt.clickToRequestMs ?? Infinity).toBeLessThanOrEqual(MAX_CLICK_TO_PENDING_MS);
   expect(interrupt.clickToPendingMs ?? Infinity).toBeLessThanOrEqual(MAX_CLICK_TO_PENDING_MS);

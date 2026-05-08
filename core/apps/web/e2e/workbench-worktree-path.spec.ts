@@ -40,7 +40,29 @@ const readClipboardText = async (page: Page): Promise<string> =>
   page.evaluate(() => navigator.clipboard.readText());
 
 test("workbench: worktree slug is visible and copyable for the active session", async ({ page, request }) => {
-  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.addInitScript(() => {
+    let clipboardText = "";
+    const originalExecCommand = document.execCommand?.bind(document);
+    document.execCommand = (commandId: string, showUI?: boolean, value?: string): boolean => {
+      if (commandId.toLowerCase() === "copy") {
+        const active = document.activeElement;
+        if (active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement) {
+          clipboardText = active.value;
+        }
+        return true;
+      }
+      return originalExecCommand?.(commandId, showUI, value) ?? false;
+    };
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        readText: async () => clipboardText,
+        writeText: async (nextText: string) => {
+          clipboardText = String(nextText);
+        },
+      },
+    });
+  });
   const seed = await seedDummyWorkspace(request, {
     tasks: 1,
     sessionsPerTask: 1,

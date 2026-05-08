@@ -89,6 +89,33 @@ const makeSnapshot = (worktreeId: string, rev: number): WorktreeVcsSnapshot => (
   schema_version: 2,
 });
 
+const makeSummaryOnlySnapshot = (worktreeId: string, rev: number): WorktreeVcsSnapshot => ({
+  ...makeSnapshot(worktreeId, rev),
+  touched_files: {
+    total_count: rev,
+    truncated: false,
+    items: [],
+  },
+  touched_files_state: "not_loaded",
+});
+
+const makeDetailSnapshot = (worktreeId: string, rev: number, path: string): WorktreeVcsSnapshot => ({
+  ...makeSnapshot(worktreeId, rev),
+  touched_files: {
+    total_count: 1,
+    truncated: false,
+    items: [
+      {
+        path,
+        orig_path: null,
+        index_status: null,
+        worktree_status: "M",
+      },
+    ],
+  },
+  touched_files_state: "ready",
+});
+
 describe("WorkspaceVcsStore", () => {
   afterEach(() => {
     globalThis.WebSocket = originalWebSocket;
@@ -133,7 +160,7 @@ describe("WorkspaceVcsStore", () => {
       snapshot: makeSnapshot("worktree-1", 2),
     });
     await Promise.resolve();
-    expect(store.getWorktreeVcsSnapshot("worktree-1")).toBeNull();
+    expect(store.getWorktreeVcsSnapshot("worktree-1")?.rev).toBe(2);
     socket.emit({
       type: "summary_snapshot",
       workspace_id: "workspace-1",
@@ -229,7 +256,7 @@ describe("WorkspaceVcsStore", () => {
       snapshot: makeSnapshot("worktree-2", 5),
     });
     await Promise.resolve();
-    expect(store.getWorktreeVcsSnapshot("worktree-2")).toBeNull();
+    expect(store.getWorktreeVcsSnapshot("worktree-2")?.rev).toBe(5);
 
     socket.emit({
       type: "details_snapshot",
@@ -240,6 +267,64 @@ describe("WorkspaceVcsStore", () => {
     });
     await Promise.resolve();
     expect(store.getWorktreeVcsSnapshot("worktree-2")?.rev).toBe(6);
+    store.destroy();
+  });
+
+  it("merges summary and detail tiers so detail demand does not starve coarse VCS status", async () => {
+    globalThis.WebSocket = MockWebSocket as unknown as typeof WebSocket;
+    const store = new WorkspaceVcsStore("workspace-1");
+    store.init();
+    await Promise.resolve();
+    await Promise.resolve();
+    const socket = mockSockets[0];
+    socket.open();
+
+    store.setDemand({ summaryWorktreeIds: ["worktree-1"], detailWorktreeIds: ["worktree-1"] });
+    socket.emit({
+      type: "subscribed",
+      workspace_id: "workspace-1",
+      demand_generation: 1,
+      summary_worktree_ids: ["worktree-1"],
+      detail_worktree_ids: ["worktree-1"],
+    });
+    await Promise.resolve();
+    socket.emit({
+      type: "summary_snapshot",
+      workspace_id: "workspace-1",
+      worktree_id: "worktree-1",
+      demand_generation: 1,
+      snapshot: makeSummaryOnlySnapshot("worktree-1", 10),
+    });
+    await Promise.resolve();
+    expect(store.getWorktreeVcsSnapshot("worktree-1")?.rev).toBe(10);
+    expect(store.getWorktreeVcsSnapshot("worktree-1")?.touched_files.total_count).toBe(10);
+    expect(store.getWorktreeVcsSnapshot("worktree-1")?.touched_files.items).toEqual([]);
+
+    socket.emit({
+      type: "details_snapshot",
+      workspace_id: "workspace-1",
+      worktree_id: "worktree-1",
+      demand_generation: 1,
+      snapshot: makeDetailSnapshot("worktree-1", 9, "src/app.ts"),
+    });
+    await Promise.resolve();
+    const staleDetailSnapshot = store.getWorktreeVcsSnapshot("worktree-1");
+    expect(staleDetailSnapshot?.rev).toBe(10);
+    expect(staleDetailSnapshot?.touched_files_state).toBe("stale");
+    expect((staleDetailSnapshot?.touched_files.items ?? [])[0]?.path).toBe("src/app.ts");
+
+    socket.emit({
+      type: "summary_snapshot",
+      workspace_id: "workspace-1",
+      worktree_id: "worktree-1",
+      demand_generation: 1,
+      snapshot: makeSummaryOnlySnapshot("worktree-1", 11),
+    });
+    await Promise.resolve();
+    const newerSummarySnapshot = store.getWorktreeVcsSnapshot("worktree-1");
+    expect(newerSummarySnapshot?.rev).toBe(11);
+    expect(newerSummarySnapshot?.touched_files_state).toBe("stale");
+    expect((newerSummarySnapshot?.touched_files.items ?? [])[0]?.path).toBe("src/app.ts");
     store.destroy();
   });
 });
