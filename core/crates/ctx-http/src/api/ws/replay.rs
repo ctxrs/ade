@@ -87,7 +87,7 @@ pub(super) async fn queue_snapshot_payload(
                 "workspace snapshot hydration failed before snapshot payload: {err:?}"
             );
         })?;
-    crate::merge_queue::activate_workspace_merge_queue(state, workspace_id).await;
+    crate::daemon::merge_queue::activate_workspace_merge_queue(state, workspace_id).await;
     let mut active_snapshot = state
         .workspaces
         .workspace_active_snapshot

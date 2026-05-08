@@ -140,18 +140,21 @@ pub(super) async fn update_workspace_merge_queue_config(
     })?;
 
     if !was_enabled && req.enabled {
-        crate::merge_queue::schedule_workspace_if_enabled_and_queued(state, ctx.workspace_id)
-            .await
-            .map_err(|error| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: logs::redact_sensitive(&error.to_string()),
-                    }),
-                )
-            })?;
+        crate::daemon::merge_queue::schedule_workspace_if_enabled_and_queued(
+            state,
+            ctx.workspace_id,
+        )
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&error.to_string()),
+                }),
+            )
+        })?;
     } else if was_enabled && !req.enabled {
-        crate::merge_queue::cancel_queued_entries_for_disabled_workspace(
+        crate::daemon::merge_queue::cancel_queued_entries_for_disabled_workspace(
             state,
             &ctx.store,
             ctx.workspace_id,

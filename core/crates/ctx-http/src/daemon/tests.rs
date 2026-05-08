@@ -914,7 +914,7 @@ async fn merge_queue_startup_runner_does_not_cache_historical_workspace_stores()
             .unwrap();
     }
 
-    crate::merge_queue::spawn_merge_queue_runner(state);
+    crate::daemon::merge_queue::spawn_merge_queue_runner(state);
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     let stats = stores.stats().await;

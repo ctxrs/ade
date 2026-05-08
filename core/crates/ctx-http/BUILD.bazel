@@ -120,12 +120,12 @@ CTX_HTTP_LIB_WORKSPACE_ACTIVE_ROUTES_TEST_ARGS = CTX_HTTP_UNIT_TEST_SERIAL_ARGS 
     "lib_tests::workspace_active_routes::",
 ]
 CTX_HTTP_MERGE_QUEUE_UNIT_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
-    "merge_queue::",
-    "--skip=merge_queue::tests::enabled_workspace_queued_rows_resume_only_after_open",
+    "daemon::merge_queue::",
+    "--skip=daemon::merge_queue::tests::enabled_workspace_queued_rows_resume_only_after_open",
 ]
 CTX_HTTP_MERGE_QUEUE_ENABLED_WORKSPACE_RESUME_AFTER_OPEN_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
     "--exact",
-    "merge_queue::tests::enabled_workspace_queued_rows_resume_only_after_open",
+    "daemon::merge_queue::tests::enabled_workspace_queued_rows_resume_only_after_open",
 ]
 CTX_HTTP_VCS_HOOKS_UNIT_TEST_ARGS = CTX_HTTP_UNIT_TEST_SERIAL_ARGS + [
     "vcs_hooks::",

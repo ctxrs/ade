@@ -34,6 +34,7 @@ mod lifecycle;
 mod listener;
 mod managed_auto_update;
 mod mcp_auth;
+pub(crate) mod merge_queue;
 mod mobile_startup;
 mod provider_adapters;
 mod provider_bootstrap;
@@ -206,7 +207,7 @@ pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
     provider_guard::spawn_provider_guard(state.clone());
     provider_restart::spawn_provider_restart(state.clone());
     provider_child_reclassifier::spawn_provider_child_reclassifier(state.clone());
-    crate::merge_queue::spawn_merge_queue_runner(state.clone());
+    merge_queue::spawn_merge_queue_runner(state.clone());
     provider_usage::spawn_provider_usage_poller(state.clone());
     managed_auto_update::spawn_managed_daemon_auto_update(state.clone(), requested_binds.clone());
     lifecycle::spawn_process_shutdown_listener(state.clone());

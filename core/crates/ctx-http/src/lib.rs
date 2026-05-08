@@ -6,7 +6,6 @@ mod execution_effective;
 pub mod git_status;
 mod installer;
 mod memleak_debug;
-mod merge_queue;
 pub mod provider_guard;
 mod provider_launch;
 pub mod provider_restart;

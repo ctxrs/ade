@@ -25,7 +25,7 @@ pub(crate) async fn handle_workspace_stream_subscription(
                 "workspace stream hydration failed: {error:?}"
             );
         })?;
-    crate::merge_queue::activate_workspace_merge_queue(state, workspace_id).await;
+    crate::daemon::merge_queue::activate_workspace_merge_queue(state, workspace_id).await;
     let existing_replay_cursors = runtime
         .subscriptions
         .iter()
