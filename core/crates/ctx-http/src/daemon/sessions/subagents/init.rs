@@ -1,7 +1,9 @@
 use super::*;
 
+mod children;
 mod invocation;
 
+use children::{create_subagent_child, SubagentChildInit, SubagentChildInitItem};
 use invocation::{
     mark_subagent_invocation_failed, start_subagent_invocation, StartedSubagentInvocation,
 };
@@ -141,201 +143,31 @@ pub(crate) async fn init_subagents(
     .await?;
 
     let child_ids = Arc::new(tokio::sync::Mutex::new(Vec::<String>::new()));
-    let parent_effective = parent_worktree_execution.effective.clone();
+    let child_init = SubagentChildInit {
+        state: state.clone(),
+        parent: parent.clone(),
+        workspace: workspace.clone(),
+        model_catalogs,
+        invocation_id: invocation_id.clone(),
+        tool_call_id: tool_call_id.clone(),
+        child_ids: child_ids.clone(),
+        parent_turn_id,
+        worktree_selection,
+        worktree_plan,
+        parent_effective: parent_worktree_execution.effective.clone(),
+        execution_environment: resolved_parent_execution_environment,
+    };
 
     let mut futures = Vec::with_capacity(req.agents.len());
     for (idx, agent) in req.agents.into_iter().enumerate() {
-        let state = state.clone();
-        let parent = parent.clone();
-        let workspace = workspace.clone();
-        let model_catalogs = model_catalogs.clone();
-        let invocation_id = invocation_id.clone();
-        let tool_call_id = tool_call_id.clone();
-        let child_ids = child_ids.clone();
-        let parent_turn_id = parent_turn_id;
         let label = labels
             .get(idx)
             .cloned()
             .unwrap_or_else(|| format!("Subagent {}", idx + 1));
-        let worktree_plan = worktree_plan.clone();
-        let parent_effective = parent_effective.clone();
-        futures.push(async move {
-            let store = state
-                .store_for_session(parent.id)
-                .await
-                .map_err(internal_api_error)?;
-            let prompt = agent.prompt.trim().to_string();
-            if prompt.is_empty() {
-                return Err(api_error(
-                    SubagentErrorKind::BadRequest,
-                    format!("agent {} prompt is required", idx + 1),
-                ));
-            }
-            let harness_defaulted = agent.harness.is_none();
-            let provider_id = agent
-                .harness
-                .as_deref()
-                .unwrap_or(&parent.provider_id)
-                .trim()
-                .to_string();
-            if harness_defaulted {
-                state
-                    .emit_product_fallback_applied_counter(
-                        "sessions.subagent_init",
-                        "harness_default_parent",
-                        None,
-                    )
-                    .await;
-            }
-            let catalog = model_catalogs
-                .get(&provider_id)
-                .and_then(|value| value.as_ref());
-            let fallback_model = if agent.model.is_none() {
-                if provider_id == parent.provider_id {
-                    Some(parent.model_id.as_str())
-                } else {
-                    default_catalog_model_id(catalog)
-                }
-            } else {
-                None
-            };
-            if agent.model.is_none() && fallback_model.is_none() {
-                state
-                    .emit_compat_payload_reject_counter(
-                        "sessions.subagent_init",
-                        "missing_model_without_default",
-                        Some(("provider_id", &provider_id)),
-                    )
-                    .await;
-                return Err(api_error(
-                    SubagentErrorKind::BadRequest,
-                    format!("model is required for harness '{provider_id}'"),
-                ));
-            }
-            if agent.model.is_none() {
-                let fallback = if provider_id == parent.provider_id {
-                    "model_default_parent"
-                } else {
-                    "model_default_catalog"
-                };
-                state
-                    .emit_product_fallback_applied_counter("sessions.subagent_init", fallback, None)
-                    .await;
-            }
-            let resolved = resolve_model_id(
-                agent.model.as_deref(),
-                agent.reasoning_effort.as_deref(),
-                fallback_model,
-                catalog,
-            )
-            .map_err(|error| api_error(SubagentErrorKind::BadRequest, error))?;
-
-            let prompt_length = prompt.chars().count() as i64;
-            let reasoning_effort = resolved.reasoning_effort.clone();
-
-            let (worktree_id, worktree_path) = match worktree_selection {
-                SubagentWorktreeSelection::Inherit => (parent.worktree_id, None),
-                SubagentWorktreeSelection::New => {
-                    let (vcs_kind, base_commit_sha) = worktree_plan.clone().ok_or_else(|| {
-                        api_error(SubagentErrorKind::Internal, "worktree plan missing")
-                    })?;
-                    let worktree = create_subagent_worktree(
-                        &state,
-                        &store,
-                        &workspace,
-                        parent.task_id,
-                        &base_commit_sha,
-                        vcs_kind,
-                        &parent_effective,
-                    )
-                    .await?;
-                    (worktree.id, Some(worktree.root_path))
-                }
-            };
-
-            let session = store
-                .create_session_with_reasoning_effort(
-                    parent.task_id,
-                    parent.workspace_id,
-                    worktree_id,
-                    resolved_parent_execution_environment,
-                    provider_id.clone(),
-                    resolved.model_id.clone(),
-                    reasoning_effort.clone(),
-                    "subagent".into(),
-                    Some(parent.id),
-                    Some("sub_agent".to_string()),
-                    None,
-                )
-                .await
-                .map_err(internal_api_error)?;
-            if let Err(error) = state
-                .global_store()
-                .upsert_workspace_session_index(session.id, parent.workspace_id)
-                .await
-            {
-                tracing::warn!(
-                    session_id = %session.id.0,
-                    "failed to update subagent session index: {error:?}"
-                );
-            }
-            if store
-                .update_session_title(session.id, label.clone())
-                .await
-                .is_err()
-            {
-                tracing::warn!(session_id = %session.id.0, "failed to set subagent label");
-            }
-
-            let child_created_at = chrono::Utc::now();
-            let persisted = persist_subagent_prompt(&state, &session, prompt).await?;
-            let child_session_id = session.id;
-            let child = SubagentInvocationChild {
-                invocation_id: invocation_id.clone(),
-                child_session_id,
-                run_id: Some(persisted.run_id),
-                position: idx as i64,
-                status: "running".to_string(),
-                label: Some(label),
-                harness: Some(provider_id),
-                model: Some(resolved.full_model_id),
-                reasoning_effort,
-                prompt_length,
-                created_at: child_created_at,
-                updated_at: child_created_at,
-            };
-            store
-                .upsert_subagent_invocation_child(child.clone())
-                .await
-                .map_err(internal_api_error)?;
-
-            let child_ids_snapshot = {
-                let mut ids = child_ids.lock().await;
-                let child_id_string = child_session_id.0.to_string();
-                ids.push(child_id_string);
-                ids.clone()
-            };
-            emit_subagent_invocation_notice(
-                &state,
-                parent.id,
-                parent_turn_id,
-                serde_json::json!({
-                    "kind": "subagent_invocation_updated",
-                    "invocation_id": invocation_id.clone(),
-                    "tool_call_id": tool_call_id.clone(),
-                    "status": "running",
-                    "child_session_ids": child_ids_snapshot,
-                }),
-            )
-            .await?;
-            dispatch_subagent_prompt(&state, &session, &persisted.saved_message).await;
-
-            Ok(SpawnedChild {
-                child,
-                worktree_path,
-                last_event_seq: persisted.last_event_seq,
-            })
-        });
+        futures.push(create_subagent_child(
+            child_init.clone(),
+            SubagentChildInitItem { idx, agent, label },
+        ));
     }
 
     let spawned_children = match futures::future::try_join_all(futures).await {
