@@ -38,6 +38,7 @@ mod installs;
 mod metrics;
 mod runtime_adapters;
 mod types;
+mod worktree_data_plane;
 
 pub use cache::{CacheSweepConfig, CacheSweepStats, TimedEntry};
 pub use ctx_workspace_active_snapshot::{

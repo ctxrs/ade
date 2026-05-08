@@ -18,7 +18,6 @@ mod vcs_hooks;
 pub(crate) mod workspace_provider_model_preferences;
 mod workspace_runtime;
 mod worktree_bootstrap;
-mod worktree_data_plane;
 
 #[cfg(feature = "fault_injection")]
 pub mod fault_injection;
