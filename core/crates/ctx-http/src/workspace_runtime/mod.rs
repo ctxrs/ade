@@ -29,13 +29,13 @@ use crate::settings::{
     ContainerExecutionSettings, ContainerRuntimeKind, ExecutionMode, ExecutionSettings,
 };
 #[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
-use crate::terminals::TerminalManager;
-#[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
 use ctx_core::ids::SessionId;
 #[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
 use ctx_core::models::ExecutionEnvironment;
 #[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
 use ctx_store::StoreManager;
+#[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
+use ctx_transport_runtime::terminals::TerminalManager;
 #[cfg(test)]
 use url::Url;
 

@@ -20,7 +20,6 @@ pub mod scheduler;
 pub mod settings;
 pub mod storage_guard;
 mod terminal_launch;
-mod terminals;
 mod tool_cgroup;
 mod vcs_hooks;
 mod web_session_launch;

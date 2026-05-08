@@ -8,9 +8,11 @@ use ctx_transport_runtime::terminal_launch::canonicalize_container_terminal_cwd;
 
 use crate::daemon::AppState;
 use crate::settings::{ContainerRuntimeKind, ExecutionMode};
-use crate::terminals::{NativeContainerTerminalSpec, SharedVmContainerTerminalSpec};
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{Workspace, Worktree};
+use ctx_transport_runtime::terminals::{
+    NativeContainerTerminalSpec, SharedVmContainerTerminalSpec,
+};
 
 use super::{internal_error, TerminalLaunchError};
 

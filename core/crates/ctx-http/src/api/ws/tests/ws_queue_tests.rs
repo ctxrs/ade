@@ -45,7 +45,9 @@ fn terminal_ws_tail_resync_waits_until_capacity_returns() {
         TerminalWsQueueOutcome::Enqueued
     );
 
-    let session = crate::terminals::TerminalSessionHandle::test_handle_with_output(b"tail-marker");
+    let session = ctx_transport_runtime::terminals::TerminalSessionHandle::test_handle_with_output(
+        b"tail-marker",
+    );
 
     assert!(matches!(
         queue_terminal_ws_tail_resync_if_requested(&tx, &session, 4096, &needs_tail_resync),

@@ -5,6 +5,10 @@ use std::sync::{
 };
 use std::time::Duration;
 
+use ctx_transport_runtime::terminals::{
+    TerminalManager, TerminalSessionHandle, DEFAULT_OUTPUT_TAIL_BYTES,
+};
+
 // Terminal bytes are lossy; a slow browser should not force unbounded per-connection buffering.
 const TERMINAL_WS_EVENT_QUEUE_LIMIT: usize = 128;
 const TERMINAL_PING_INTERVAL: Duration = Duration::from_secs(25);
@@ -18,10 +22,10 @@ pub(super) enum TerminalWsQueueOutcome {
 }
 
 async fn require_terminal_stream_access(
-    manager: &Arc<crate::terminals::TerminalManager>,
+    manager: &Arc<TerminalManager>,
     id: TerminalId,
     token: Option<&str>,
-) -> Result<Arc<crate::terminals::TerminalSessionHandle>, StatusCode> {
+) -> Result<Arc<TerminalSessionHandle>, StatusCode> {
     let provided_token = token.ok_or(StatusCode::UNAUTHORIZED)?;
     let handle = manager.get(id).await.ok_or(StatusCode::NOT_FOUND)?;
     if !handle.consume_stream_token(provided_token) {
@@ -61,7 +65,7 @@ fn terminal_stream_tail_bytes(params: &HashMap<String, String>) -> usize {
                 trimmed.parse::<usize>().ok()
             }
         })
-        .unwrap_or(crate::terminals::DEFAULT_OUTPUT_TAIL_BYTES)
+        .unwrap_or(DEFAULT_OUTPUT_TAIL_BYTES)
 }
 
 pub(super) fn queue_terminal_ws_message(
@@ -77,7 +81,7 @@ pub(super) fn queue_terminal_ws_message(
 
 fn queue_terminal_ws_tail_snapshot(
     event_tx: &tokio::sync::mpsc::Sender<WsMessage>,
-    session: &crate::terminals::TerminalSessionHandle,
+    session: &TerminalSessionHandle,
     snapshot_tail: usize,
 ) -> TerminalWsQueueOutcome {
     let snapshot = session.output_snapshot_tail(snapshot_tail);
@@ -93,7 +97,7 @@ fn request_terminal_ws_tail_resync(needs_tail_resync: &AtomicBool) {
 
 pub(super) fn queue_terminal_ws_tail_resync_if_requested(
     event_tx: &tokio::sync::mpsc::Sender<WsMessage>,
-    session: &crate::terminals::TerminalSessionHandle,
+    session: &TerminalSessionHandle,
     snapshot_tail: usize,
     needs_tail_resync: &AtomicBool,
 ) -> Option<TerminalWsQueueOutcome> {
@@ -109,7 +113,7 @@ pub(super) fn queue_terminal_ws_tail_resync_if_requested(
 
 async fn handle_terminal_socket(
     mut socket: WebSocket,
-    session: Arc<crate::terminals::TerminalSessionHandle>,
+    session: Arc<TerminalSessionHandle>,
     snapshot_tail: usize,
 ) {
     session.mark_client_connected();

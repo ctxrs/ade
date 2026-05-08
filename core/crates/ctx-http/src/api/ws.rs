@@ -17,7 +17,7 @@ use ctx_core::models::*;
 use ctx_workspace_active_snapshot::{is_transient_session_delta, SessionReplayCursor};
 
 use crate::daemon::AppState;
-use crate::terminals::{TerminalClientMessage, TerminalServerMessage};
+use ctx_transport_runtime::terminals::{TerminalClientMessage, TerminalServerMessage};
 
 use super::SecureEnvelope;
 

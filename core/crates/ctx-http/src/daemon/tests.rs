@@ -1640,7 +1640,7 @@ async fn sandbox_work_activity_counts_container_backed_terminals() {
     let terminal = state
         .transport
         .terminals
-        .create(crate::terminals::TerminalCreateRequest {
+        .create(ctx_transport_runtime::terminals::TerminalCreateRequest {
             workspace_id: WorkspaceId::new(),
             task_id: Some(TaskId::new()),
             session_id: None,
@@ -1650,13 +1650,15 @@ async fn sandbox_work_activity_counts_container_backed_terminals() {
             cols: None,
             rows: None,
             env: HashMap::new(),
-            native_container: Some(crate::terminals::NativeContainerTerminalSpec {
-                cli_bin: cli_path,
-                cli_env: HashMap::new(),
-                container_name: "ctx-harness-terminal".to_string(),
-                workdir: "/workspace".to_string(),
-                user: None,
-            }),
+            native_container: Some(
+                ctx_transport_runtime::terminals::NativeContainerTerminalSpec {
+                    cli_bin: cli_path,
+                    cli_env: HashMap::new(),
+                    container_name: "ctx-harness-terminal".to_string(),
+                    workdir: "/workspace".to_string(),
+                    user: None,
+                },
+            ),
             shared_vm_container: None,
         })
         .await

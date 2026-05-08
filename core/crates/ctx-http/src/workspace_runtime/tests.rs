@@ -2193,7 +2193,7 @@ async fn maybe_reclaim_sandbox_machine_stops_idle_machine() {
     };
     let stores = StoreManager::open(temp.path()).await.expect("open stores");
     let running_sessions = Arc::new(tokio::sync::Mutex::new(HashSet::new()));
-    let terminals = crate::terminals::TerminalManager::default();
+    let terminals = ctx_transport_runtime::terminals::TerminalManager::default();
     let snapshot = SystemSnapshot {
         cpu_pct: 0.0,
         memory_total_bytes: 32 * 1024 * 1024 * 1024,
@@ -2256,7 +2256,7 @@ async fn maybe_reclaim_sandbox_machine_clamps_short_idle_timeout() {
     };
     let stores = StoreManager::open(temp.path()).await.expect("open stores");
     let running_sessions = Arc::new(tokio::sync::Mutex::new(HashSet::new()));
-    let terminals = crate::terminals::TerminalManager::default();
+    let terminals = ctx_transport_runtime::terminals::TerminalManager::default();
     let snapshot = SystemSnapshot {
         cpu_pct: 0.0,
         memory_total_bytes: 32 * 1024 * 1024 * 1024,
@@ -2323,7 +2323,7 @@ async fn maybe_reclaim_sandbox_machine_stops_idle_runtime_with_running_workspace
     };
     let stores = StoreManager::open(temp.path()).await.expect("open stores");
     let running_sessions = Arc::new(tokio::sync::Mutex::new(HashSet::new()));
-    let terminals = crate::terminals::TerminalManager::default();
+    let terminals = ctx_transport_runtime::terminals::TerminalManager::default();
     let snapshot = SystemSnapshot {
         cpu_pct: 0.0,
         memory_total_bytes: 32 * 1024 * 1024 * 1024,
@@ -2380,7 +2380,7 @@ async fn maybe_reclaim_sandbox_machine_skips_active_container_sessions() {
     let session_id =
         create_session_with_environment(&stores, temp.path(), ExecutionEnvironment::Sandbox).await;
     running_sessions.lock().await.insert(session_id);
-    let terminals = crate::terminals::TerminalManager::default();
+    let terminals = ctx_transport_runtime::terminals::TerminalManager::default();
     let settings = ContainerExecutionSettings {
         machine: crate::settings::ContainerMachineSettings {
             idle_shutdown_seconds: 60,
@@ -2459,9 +2459,9 @@ async fn maybe_reclaim_sandbox_machine_skips_running_container_terminals() {
     manager.set_last_activity_for_test(Instant::now() - Duration::from_secs(600));
     let stores = StoreManager::open(temp.path()).await.expect("open stores");
     let running_sessions = Arc::new(tokio::sync::Mutex::new(HashSet::new()));
-    let terminals = Arc::new(crate::terminals::TerminalManager::default());
+    let terminals = Arc::new(ctx_transport_runtime::terminals::TerminalManager::default());
     let terminal = terminals
-        .create(crate::terminals::TerminalCreateRequest {
+        .create(ctx_transport_runtime::terminals::TerminalCreateRequest {
             workspace_id: WorkspaceId::new(),
             task_id: Some(TaskId::new()),
             session_id: None,
@@ -2471,13 +2471,15 @@ async fn maybe_reclaim_sandbox_machine_skips_running_container_terminals() {
             cols: None,
             rows: None,
             env: HashMap::new(),
-            native_container: Some(crate::terminals::NativeContainerTerminalSpec {
-                cli_bin: sandbox_cli_path.clone(),
-                cli_env: HashMap::new(),
-                container_name: "ctx-harness-terminal".to_string(),
-                workdir: "/workspace".to_string(),
-                user: None,
-            }),
+            native_container: Some(
+                ctx_transport_runtime::terminals::NativeContainerTerminalSpec {
+                    cli_bin: sandbox_cli_path.clone(),
+                    cli_env: HashMap::new(),
+                    container_name: "ctx-harness-terminal".to_string(),
+                    workdir: "/workspace".to_string(),
+                    user: None,
+                },
+            ),
             shared_vm_container: None,
         })
         .await
