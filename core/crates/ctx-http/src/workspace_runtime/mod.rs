@@ -21,17 +21,17 @@ use ctx_resource_utilization::SystemSnapshot;
 use sysinfo::System;
 
 #[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
-use crate::settings::normalize_container_machine_idle_shutdown_seconds;
-#[cfg(test)]
-use crate::settings::ContainerMachineMemoryProfile;
-#[cfg(test)]
-use crate::settings::{
-    ContainerExecutionSettings, ContainerRuntimeKind, ExecutionMode, ExecutionSettings,
-};
-#[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
 use ctx_core::ids::SessionId;
 #[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
 use ctx_core::models::ExecutionEnvironment;
+#[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
+use ctx_settings_model::normalize_container_machine_idle_shutdown_seconds;
+#[cfg(test)]
+use ctx_settings_model::ContainerMachineMemoryProfile;
+#[cfg(test)]
+use ctx_settings_model::{
+    ContainerExecutionSettings, ContainerRuntimeKind, ExecutionMode, ExecutionSettings,
+};
 #[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
 use ctx_store::StoreManager;
 #[cfg(all(test, any(target_os = "macos", target_os = "windows")))]

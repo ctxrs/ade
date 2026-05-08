@@ -12,10 +12,6 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use ctx_core::models::SessionEventType;
 use ctx_http::daemon::AppState;
-use ctx_http::settings::{
-    save_settings, ContainerExecutionSettings, ContainerMountMode, ContainerNetworkMode,
-    ExecutionMode, ExecutionSettings, Settings,
-};
 use ctx_managed_installs::{
     agent_server_config_path, load_agent_server_config, refresh_provider_statuses,
     save_agent_server_config, AgentServerCommand, AgentServerConfigFile, ManagedInstallMetadata,
@@ -32,6 +28,11 @@ use ctx_provider_matrix::{
 use ctx_provider_runtime::provider_launch::resolver::target_adapter_cache_key;
 use ctx_providers::adapters::{ProviderAdapter, ProviderHealth, ProviderStatus};
 use ctx_providers::crp::Tier1CrpAdapter;
+use ctx_settings_model::{
+    ContainerExecutionSettings, ContainerMountMode, ContainerNetworkMode, ExecutionMode,
+    ExecutionSettings, Settings,
+};
+use ctx_settings_service::save_settings;
 use ctx_store::Store;
 use sha2::{Digest, Sha256};
 

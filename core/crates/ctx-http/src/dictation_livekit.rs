@@ -17,7 +17,7 @@ use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::Message as TMessage;
 
 use crate::daemon::AppState;
-use crate::settings::{self, DictationProvider};
+use ctx_settings_model::{self, DictationProvider};
 
 #[derive(Debug, Serialize)]
 struct ErrorMsg {
@@ -27,7 +27,7 @@ struct ErrorMsg {
 
 pub async fn dictation_livekit_stream(mut socket: WebSocket, state: std::sync::Arc<AppState>) {
     tracing::info!("dictation: client connected");
-    let settings = match settings::load_settings(state.global_store()).await {
+    let settings = match ctx_settings_service::load_settings(state.global_store()).await {
         Ok(settings) => settings,
         Err(err) => {
             let _ = socket

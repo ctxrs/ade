@@ -2,11 +2,11 @@ use std::sync::Arc;
 
 use crate::api::sessions::diff_worktree_summary_for_session;
 use crate::daemon::AppState;
-use crate::settings::ExecutionSettings;
 use crate::vcs_hooks;
 use ctx_core::ids::TaskId;
 use ctx_core::models::{VcsKind, Workspace, Worktree};
 use ctx_fs::vcs;
+use ctx_settings_model::ExecutionSettings;
 use ctx_workspace_services::worktree_vcs::WorktreeVcsCommitLookupSource;
 
 use super::errors::{

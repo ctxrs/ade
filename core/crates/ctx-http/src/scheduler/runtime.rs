@@ -13,7 +13,6 @@ use ctx_session_tools::model_resolution::compose_model_id;
 use ctx_session_tools::order_seq::OrderSeqState;
 
 use crate::daemon::AppState;
-use crate::settings;
 use crate::storage_guard;
 use ctx_workspace_config as workspace_config;
 
@@ -96,7 +95,7 @@ pub(crate) async fn start_turn(
     let (start_progress_tx, start_progress_rx) = watch::channel(TurnStartProgress::Pending);
     let event_tx = ev_tx.clone();
 
-    let settings = settings::load_settings(state.global_store()).await?;
+    let settings = ctx_settings_service::load_settings(state.global_store()).await?;
     let provider_control_mode = settings
         .sandboxing
         .as_ref()

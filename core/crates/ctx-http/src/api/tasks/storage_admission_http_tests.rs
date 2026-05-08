@@ -8,13 +8,13 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 
 use crate::daemon::AppState;
-use crate::settings::{
-    ContainerExecutionSettings, ContainerMountMode, ContainerNetworkMode, ContainerRuntimeKind,
-    ExecutionMode, ExecutionSettings, Settings,
-};
 use ctx_core::models::VcsKind;
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_sandbox_materialization::set_test_preflight_storage_samples_override;
+use ctx_settings_model::{
+    ContainerExecutionSettings, ContainerMountMode, ContainerNetworkMode, ContainerRuntimeKind,
+    ExecutionMode, ExecutionSettings, Settings,
+};
 use ctx_storage_admission::{StorageAdmissionOperation, StorageAdmissionSample};
 use ctx_store::StoreManager;
 
@@ -53,7 +53,7 @@ async fn test_state(data_root: &Path) -> Arc<AppState> {
 }
 
 async fn save_test_execution_settings(state: &Arc<AppState>, execution: ExecutionSettings) {
-    crate::settings::save_settings(
+    ctx_settings_service::save_settings(
         state.global_store(),
         &Settings {
             execution: Some(execution),

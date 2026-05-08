@@ -8,8 +8,8 @@ use tokio::sync::{broadcast, Mutex};
 use ctx_core::models::SessionEventType;
 
 use crate::daemon::AppState;
-use crate::settings::{ProviderGuardSettings, ResourceGovernanceMode, Settings};
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
+use ctx_settings_model::{ProviderGuardSettings, ResourceGovernanceMode, Settings};
 
 pub use ctx_provider_runtime::provider_guard::{
     compute_effective_limits, ProviderGuardConfig, ProviderGuardLimits, ProviderGuardRuntime,

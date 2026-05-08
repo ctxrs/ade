@@ -101,7 +101,7 @@ impl AppState {
                 let db_path = startup_data_root.join("db").join("db.sqlite");
                 match Store::open_sqlite(&db_path, None).await {
                     Ok(store) => {
-                        let loaded = crate::settings::load_settings(&store).await;
+                        let loaded = ctx_settings_service::load_settings(&store).await;
                         store.close().await;
                         match loaded {
                             Ok(settings) => {

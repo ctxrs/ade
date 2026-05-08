@@ -51,14 +51,14 @@ async fn unarchive_task_recreates_managed_root_and_keeps_binding_snapshot_runtim
         .await
         .expect("set primary worktree");
 
-    let persisted_snapshot = crate::settings::ExecutionSettings {
-        mode: crate::settings::ExecutionMode::Sandbox,
-        container: crate::settings::ContainerExecutionSettings {
-            runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
-            network_mode: crate::settings::ContainerNetworkMode::Allowlist,
+    let persisted_snapshot = ctx_settings_model::ExecutionSettings {
+        mode: ctx_settings_model::ExecutionMode::Sandbox,
+        container: ctx_settings_model::ContainerExecutionSettings {
+            runtime: ctx_settings_model::ContainerRuntimeKind::NativeContainer,
+            network_mode: ctx_settings_model::ContainerNetworkMode::Allowlist,
             allowlist: vec!["github.com".to_string()],
             image: Some("registry.example/sandbox:v1".to_string()),
-            ..crate::settings::ContainerExecutionSettings::default()
+            ..ctx_settings_model::ContainerExecutionSettings::default()
         },
     };
     store
@@ -103,14 +103,14 @@ async fn unarchive_task_recreates_managed_root_and_keeps_binding_snapshot_runtim
 
     save_test_execution_settings(
         &state,
-        crate::settings::ExecutionSettings {
-            mode: crate::settings::ExecutionMode::Sandbox,
-            container: crate::settings::ContainerExecutionSettings {
-                runtime: crate::settings::ContainerRuntimeKind::SharedVmContainer,
-                network_mode: crate::settings::ContainerNetworkMode::All,
+        ctx_settings_model::ExecutionSettings {
+            mode: ctx_settings_model::ExecutionMode::Sandbox,
+            container: ctx_settings_model::ContainerExecutionSettings {
+                runtime: ctx_settings_model::ContainerRuntimeKind::SharedVmContainer,
+                network_mode: ctx_settings_model::ContainerNetworkMode::All,
                 allowlist: Vec::new(),
                 image: Some("registry.example/sandbox:v2".to_string()),
-                ..crate::settings::ContainerExecutionSettings::default()
+                ..ctx_settings_model::ContainerExecutionSettings::default()
             },
         },
     )
@@ -145,7 +145,7 @@ async fn unarchive_task_recreates_managed_root_and_keeps_binding_snapshot_runtim
             .expect("load current effective settings");
     assert_eq!(
         current_effective.container.runtime,
-        crate::settings::ContainerRuntimeKind::SharedVmContainer,
+        ctx_settings_model::ContainerRuntimeKind::SharedVmContainer,
         "workspace defaults should now point at the new runtime"
     );
 
@@ -163,12 +163,12 @@ async fn unarchive_task_recreates_managed_root_and_keeps_binding_snapshot_runtim
         .expect("parse rematerialized binding snapshot");
     assert_eq!(
         parsed.container.runtime,
-        crate::settings::ContainerRuntimeKind::NativeContainer,
+        ctx_settings_model::ContainerRuntimeKind::NativeContainer,
         "rematerialized binding must preserve the original runtime snapshot"
     );
     assert_eq!(
         parsed.container.network_mode,
-        crate::settings::ContainerNetworkMode::Allowlist
+        ctx_settings_model::ContainerNetworkMode::Allowlist
     );
     assert_eq!(parsed.container.allowlist, vec!["github.com".to_string()]);
     assert_eq!(

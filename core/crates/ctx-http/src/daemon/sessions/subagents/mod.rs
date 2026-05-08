@@ -27,7 +27,6 @@ use crate::api::sessions::{
 };
 use crate::daemon::AppState;
 use crate::scheduler::SchedulerCommand;
-use crate::settings as user_settings;
 use ctx_core::ids::{RunId, SessionId};
 use ctx_core::models::{MessageDelivery, SessionTurnStatus, SubagentInvocationChild};
 

@@ -7,9 +7,9 @@ use ctx_sandbox_container_runtime::{
 use ctx_transport_runtime::terminal_launch::canonicalize_container_terminal_cwd;
 
 use crate::daemon::AppState;
-use crate::settings::{ContainerRuntimeKind, ExecutionMode};
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{Workspace, Worktree};
+use ctx_settings_model::{ContainerRuntimeKind, ExecutionMode};
 use ctx_transport_runtime::terminals::{
     NativeContainerTerminalSpec, SharedVmContainerTerminalSpec,
 };
@@ -20,7 +20,7 @@ pub(super) async fn prepare_terminal_container_launch(
     state: &Arc<AppState>,
     workspace: &Workspace,
     worktree: Option<&Worktree>,
-    effective: &crate::settings::ExecutionSettings,
+    effective: &ctx_settings_model::ExecutionSettings,
     workspace_id: WorkspaceId,
     cwd: &FsPath,
     container_cwd_authority_root: Option<&FsPath>,

@@ -12,8 +12,8 @@ use ctx_store::StoreManager;
 use ctx_workspace_config::{ExecutionConfigUpdate, ExecutionEnvironment};
 
 use crate::daemon::AppState;
-use crate::settings::{self, ContainerNetworkMode, ExecutionMode, ExecutionSettings, Settings};
 use ctx_provider_install::install_state::InstallTarget;
+use ctx_settings_model::{self, ContainerNetworkMode, ExecutionMode, ExecutionSettings, Settings};
 use ctx_settings_service::EXECUTION_POLICY_TEST_ENV_LOCK;
 
 static STORE_MANAGER_OPEN_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -140,7 +140,7 @@ async fn state_with_workspace() -> (tempfile::TempDir, AppState, Workspace) {
 }
 
 async fn set_daemon_execution_settings(state: &AppState, execution: ExecutionSettings) {
-    settings::save_settings(
+    ctx_settings_service::save_settings(
         state.global_store(),
         &Settings {
             execution: Some(execution),
@@ -311,7 +311,7 @@ async fn sandbox_only_policy_drops_stale_container_fields_from_existing_host_def
         &state,
         ExecutionSettings {
             mode: ExecutionMode::Host,
-            container: crate::settings::ContainerExecutionSettings {
+            container: ctx_settings_model::ContainerExecutionSettings {
                 network_mode: ContainerNetworkMode::All,
                 allowlist: vec!["example.com".to_string()],
                 image: Some("ignored.example/legacy-host".to_string()),
@@ -404,7 +404,7 @@ async fn workspace_allowlist_override_must_be_subset_of_daemon_allowlist() {
         &state,
         ExecutionSettings {
             mode: ExecutionMode::Sandbox,
-            container: crate::settings::ContainerExecutionSettings {
+            container: ctx_settings_model::ContainerExecutionSettings {
                 network_mode: ContainerNetworkMode::Allowlist,
                 allowlist: vec!["api.openai.com".to_string()],
                 ..Default::default()

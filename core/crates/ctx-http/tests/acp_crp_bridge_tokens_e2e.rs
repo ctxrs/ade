@@ -275,12 +275,12 @@ fn resolve_data_root() -> PathBuf {
 async fn load_openrouter_settings(data_root: &Path) -> Option<(String, String)> {
     let db_path = data_root.join("db").join("db.sqlite");
     let store = ctx_store::Store::open_sqlite(&db_path, None).await.ok()?;
-    let settings = ctx_http::settings::load_settings(&store).await.ok();
+    let settings = ctx_settings_service::load_settings(&store).await.ok();
     store.close().await;
 
     let settings = settings?;
     let title = settings.title_generation?;
-    if !matches!(title.mode, ctx_http::settings::TitleGenerationMode::Remote) {
+    if !matches!(title.mode, ctx_settings_model::TitleGenerationMode::Remote) {
         return None;
     }
     let api_key = title.remote.api_key.trim().to_string();

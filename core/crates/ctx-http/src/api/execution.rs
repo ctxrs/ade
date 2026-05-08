@@ -22,8 +22,8 @@ use ctx_linux_sandbox_runtime::{
 
 use crate::daemon::AppState;
 use crate::execution_effective;
-use crate::settings::ExecutionMode;
 use ctx_observability::logs;
+use ctx_settings_model::ExecutionMode;
 
 use super::errors::ApiErrorResp;
 use super::shared::map_effective_execution_settings_error;
@@ -97,7 +97,7 @@ pub(super) async fn launch_start(
                 .await
         }
         ExecutionSetupJobKind::StartupPrewarm => {
-            let settings = crate::settings::load_settings(state.global_store())
+            let settings = ctx_settings_service::load_settings(state.global_store())
                 .await
                 .map_err(|e| {
                     (
@@ -333,7 +333,7 @@ async fn resolve_workspace_execution_settings(
 ) -> Result<
     (
         ctx_core::models::Workspace,
-        crate::settings::ExecutionSettings,
+        ctx_settings_model::ExecutionSettings,
     ),
     (StatusCode, Json<ApiErrorResp>),
 > {

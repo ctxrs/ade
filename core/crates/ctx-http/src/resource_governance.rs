@@ -8,7 +8,9 @@ pub use ctx_resource_utilization::resource_governance::{
 };
 
 use crate::daemon::AppState;
-use crate::settings::{PublicResourceGovernanceSettings, ResourceGovernanceStatusState, Settings};
+use ctx_settings_model::{
+    PublicResourceGovernanceSettings, ResourceGovernanceStatusState, Settings,
+};
 
 pub async fn apply_settings(state: &AppState, settings: &Settings) -> Result<()> {
     let cfg = settings.resource_governance.clone().unwrap_or_default();

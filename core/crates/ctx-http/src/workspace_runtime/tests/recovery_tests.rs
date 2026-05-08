@@ -1,6 +1,6 @@
 use super::*;
-use crate::settings::ContainerNetworkMode;
 use ctx_sandbox_contract::CTX_CONTAINER_WORKSPACE_ROOT;
+use ctx_settings_model::ContainerNetworkMode;
 use ctx_workspace_container::workspace_container_name;
 
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -11,11 +11,11 @@ async fn save_test_execution_settings(data_root: &Path, execution: ExecutionSett
     let store = ctx_store::Store::open_sqlite(&db_path, None)
         .await
         .expect("open settings db");
-    crate::settings::save_settings(
+    ctx_settings_service::save_settings(
         &store,
-        &crate::settings::Settings {
+        &ctx_settings_model::Settings {
             execution: Some(execution),
-            ..crate::settings::Settings::default()
+            ..ctx_settings_model::Settings::default()
         },
     )
     .await
@@ -57,7 +57,7 @@ async fn prepare_starts_existing_workspace_container_when_not_cached() {
         container: ContainerExecutionSettings {
             network_mode: ContainerNetworkMode::All,
             allowlist: Vec::new(),
-            runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
+            runtime: ctx_settings_model::ContainerRuntimeKind::NativeContainer,
             ..Default::default()
         },
     };
@@ -136,7 +136,7 @@ async fn prepare_adopts_existing_workspace_container_when_run_reports_name_colli
         container: ContainerExecutionSettings {
             network_mode: ContainerNetworkMode::All,
             allowlist: Vec::new(),
-            runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
+            runtime: ctx_settings_model::ContainerRuntimeKind::NativeContainer,
             ..Default::default()
         },
     };
@@ -346,12 +346,12 @@ async fn ensure_sandbox_machine_running_missing_machine_recovery_uses_configured
         ExecutionSettings {
             mode: ExecutionMode::Sandbox,
             container: ContainerExecutionSettings {
-                machine: crate::settings::ContainerMachineSettings {
-                    memory_profile: crate::settings::ContainerMachineMemoryProfile::Custom,
+                machine: ctx_settings_model::ContainerMachineSettings {
+                    memory_profile: ctx_settings_model::ContainerMachineMemoryProfile::Custom,
                     custom_memory_mb: Some(6144),
-                    ..crate::settings::ContainerMachineSettings::default()
+                    ..ctx_settings_model::ContainerMachineSettings::default()
                 },
-                runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
+                runtime: ctx_settings_model::ContainerRuntimeKind::NativeContainer,
                 ..ContainerExecutionSettings::default()
             },
         },
@@ -408,12 +408,12 @@ async fn ensure_sandbox_machine_running_recreate_recovery_uses_configured_memory
         ExecutionSettings {
             mode: ExecutionMode::Sandbox,
             container: ContainerExecutionSettings {
-                machine: crate::settings::ContainerMachineSettings {
-                    memory_profile: crate::settings::ContainerMachineMemoryProfile::Custom,
+                machine: ctx_settings_model::ContainerMachineSettings {
+                    memory_profile: ctx_settings_model::ContainerMachineMemoryProfile::Custom,
                     custom_memory_mb: Some(7168),
-                    ..crate::settings::ContainerMachineSettings::default()
+                    ..ctx_settings_model::ContainerMachineSettings::default()
                 },
-                runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
+                runtime: ctx_settings_model::ContainerRuntimeKind::NativeContainer,
                 ..ContainerExecutionSettings::default()
             },
         },

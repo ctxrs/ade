@@ -13,9 +13,9 @@ use serde::Deserialize;
 use super::errors::ApiErrorResp;
 use crate::daemon::AppState;
 use crate::execution_effective;
-use crate::settings::ContainerRuntimeKind;
 use ctx_observability::logs;
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
+use ctx_settings_model::ContainerRuntimeKind;
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
 use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
 
@@ -195,7 +195,7 @@ pub(super) async fn load_and_cache_worktree_files(
     let root = data_plane.live_worktree_root.clone();
     let files = if matches!(
         data_plane.execution_mode,
-        crate::settings::ExecutionMode::Sandbox
+        ctx_settings_model::ExecutionMode::Sandbox
     ) {
         Arc::new(list_container_worktree_files(state, worktree, execution_environment).await?)
     } else {

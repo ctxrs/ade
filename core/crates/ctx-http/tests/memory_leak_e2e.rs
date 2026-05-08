@@ -9,7 +9,7 @@ use serde_json::json;
 use ctx_http::provider_guard;
 use ctx_http::provider_restart;
 use ctx_http::resource_telemetry;
-use ctx_http::settings::{
+use ctx_settings_model::{
     ProviderGuardSettings, ProviderRestartSettings, ResourceGovernanceMode, Settings,
 };
 

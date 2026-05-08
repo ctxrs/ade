@@ -24,7 +24,6 @@ use crate::provider_restart;
 use crate::resource_governance;
 use crate::resource_telemetry;
 use crate::scheduler::reconcile_turn_terminal_state;
-use crate::settings;
 use crate::storage_guard;
 use crate::tool_cgroup;
 use ctx_observability::telemetry::TelemetryConfig;
@@ -120,7 +119,7 @@ pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
 
     let global_db_path = data_root.join("db").join("db.sqlite");
     let bootstrap_store = Store::open_sqlite(&global_db_path, None).await?;
-    let settings_data = settings::load_settings(&bootstrap_store).await?;
+    let settings_data = ctx_settings_service::load_settings(&bootstrap_store).await?;
     bootstrap_store.close().await;
     let store_config = settings_data
         .storage
@@ -167,7 +166,7 @@ pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
     if let Err(err) = reconcile_running_turns(&state).await {
         tracing::warn!(err = %err, "failed to reconcile running turns on startup");
     }
-    let settings = settings::load_settings(state.global_store()).await?;
+    let settings = ctx_settings_service::load_settings(state.global_store()).await?;
     let mut telemetry_cfg = TelemetryConfig::default();
     if let Some(telemetry) = settings.telemetry.as_ref() {
         telemetry_cfg.enabled = telemetry.enabled;

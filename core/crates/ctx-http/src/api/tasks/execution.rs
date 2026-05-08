@@ -46,12 +46,12 @@ pub(crate) async fn resolve_existing_worktree_execution(
 mod tests {
     use super::*;
     use crate::daemon::AppState;
-    use crate::settings::{ContainerMountMode, ContainerNetworkMode, ContainerRuntimeKind};
     use chrono::Utc;
     use ctx_core::ids::{SandboxInstanceId, WorkspaceId, WorktreeId};
     use ctx_core::models::{
         ExecutionEnvironment, SandboxGuestIdentity, SandboxProfile, SandboxSubstrate, VcsKind,
     };
+    use ctx_settings_model::{ContainerMountMode, ContainerNetworkMode, ContainerRuntimeKind};
     use ctx_store::StoreManager;
     use ctx_workspace_config::{self, ExecutionConfigUpdate};
     use std::collections::HashMap;

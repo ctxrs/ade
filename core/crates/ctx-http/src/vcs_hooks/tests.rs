@@ -1,15 +1,16 @@
 use super::*;
 use crate::daemon::AppState;
-use crate::settings::{
-    save_settings, ContainerExecutionSettings, ContainerNetworkMode, ContainerRuntimeKind,
-    ExecutionMode, ExecutionSettings, Settings,
-};
 use chrono::Utc;
 use ctx_core::ids::{TaskId, WorktreeId};
 use ctx_core::models::{
     sandbox_instance_id_for_workspace, SandboxBinding, SandboxGuestIdentity, SandboxProfile,
     SandboxSubstrate, VcsKind,
 };
+use ctx_settings_model::{
+    ContainerExecutionSettings, ContainerNetworkMode, ContainerRuntimeKind, ExecutionMode,
+    ExecutionSettings, Settings,
+};
+use ctx_settings_service::save_settings;
 use ctx_store::StoreManager;
 use ctx_workspace_services::vcs_hooks::{
     get_git_config, set_git_config, worktree_hooks_dir, CORE_HOOKS_PATH_KEY,

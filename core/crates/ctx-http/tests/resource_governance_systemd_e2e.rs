@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use tokio::process::Command;
 
 use ctx_http::resource_governance::{apply_limits, EffectiveResourceLimits};
-use ctx_http::settings::ResourceGovernanceStatusState;
+use ctx_settings_model::ResourceGovernanceStatusState;
 
 const SCOPE_UNIT: &str = "ctx-daemon.scope";
 const REEXEC_ENV: &str = "CTX_SYSTEMD_E2E_REEXEC";

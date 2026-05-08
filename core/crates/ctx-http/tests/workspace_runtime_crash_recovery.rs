@@ -8,7 +8,7 @@ use tokio::sync::Mutex;
 
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::Workspace;
-use ctx_http::settings::{
+use ctx_settings_model::{
     ContainerExecutionSettings, ContainerMountMode, ContainerNetworkMode, ContainerRuntimeKind,
     ExecutionMode, ExecutionSettings,
 };

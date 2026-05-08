@@ -65,13 +65,13 @@ async fn test_state(data_root: &StdPath) -> Arc<AppState> {
 
 async fn save_test_execution_settings(
     state: &Arc<AppState>,
-    execution: crate::settings::ExecutionSettings,
+    execution: ctx_settings_model::ExecutionSettings,
 ) {
-    let settings = crate::settings::Settings {
+    let settings = ctx_settings_model::Settings {
         execution: Some(execution),
         ..Default::default()
     };
-    crate::settings::save_settings(state.global_store(), &settings)
+    ctx_settings_service::save_settings(state.global_store(), &settings)
         .await
         .expect("save runtime settings");
 }

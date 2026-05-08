@@ -273,7 +273,7 @@ impl ExecutionHarness for CtxExecutionHarness {
     async fn configured_startup_target(&self) -> anyhow::Result<String> {
         let db_path = self.inner.data_root().join("db").join("db.sqlite");
         let store = Store::open_sqlite(&db_path, Some(1)).await?;
-        let settings = crate::settings::load_settings(&store).await?;
+        let settings = ctx_settings_service::load_settings(&store).await?;
         store.close().await;
         Ok(ctx_harness_runtime::runtime_prewarm_target(
             &settings.execution.unwrap_or_default().container,

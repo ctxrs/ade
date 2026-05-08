@@ -9,7 +9,6 @@ use super::sandbox_machine_recovery::{
     looks_like_running_but_unreachable_machine_start_error, sandbox_machine_temp_state_paths,
 };
 use super::*;
-use crate::settings::{ContainerMountMode, ContainerNetworkMode};
 use crate::test_support::write_running_container_sandbox_cli_shim;
 use chrono::Utc;
 use ctx_bundled_assets as bundled_assets;
@@ -27,6 +26,7 @@ use ctx_core::ids::{WorkspaceId, WorktreeId};
 use ctx_core::models::ExecutionEnvironment;
 use ctx_sandbox_container_runtime::SandboxCommandMode;
 use ctx_sandbox_contract::CTX_CONTAINER_WORKSPACE_ROOT;
+use ctx_settings_model::{ContainerMountMode, ContainerNetworkMode};
 #[cfg(target_os = "macos")]
 use ctx_store::StoreManager;
 use ctx_workspace_container::workspace_container_name;
@@ -79,19 +79,20 @@ fn env_var_test_lock() -> &'static tokio::sync::Mutex<()> {
 fn container_machine_memory_profiles_scale_with_host_ram() {
     let mut settings = ContainerExecutionSettings::default();
 
-    settings.machine.memory_profile = crate::settings::ContainerMachineMemoryProfile::Economy;
+    settings.machine.memory_profile = ctx_settings_model::ContainerMachineMemoryProfile::Economy;
     assert_eq!(
         container_machine_memory_mb_for_host_memory(&settings, 48 * 1024),
         6144
     );
 
-    settings.machine.memory_profile = crate::settings::ContainerMachineMemoryProfile::Balanced;
+    settings.machine.memory_profile = ctx_settings_model::ContainerMachineMemoryProfile::Balanced;
     assert_eq!(
         container_machine_memory_mb_for_host_memory(&settings, 48 * 1024),
         12 * 1024
     );
 
-    settings.machine.memory_profile = crate::settings::ContainerMachineMemoryProfile::Performance;
+    settings.machine.memory_profile =
+        ctx_settings_model::ContainerMachineMemoryProfile::Performance;
     assert_eq!(
         container_machine_memory_mb_for_host_memory(&settings, 48 * 1024),
         24 * 1024
@@ -102,7 +103,7 @@ fn container_machine_memory_profiles_scale_with_host_ram() {
 fn container_machine_memory_profiles_apply_expected_floors_and_caps() {
     let mut settings = ContainerExecutionSettings::default();
 
-    settings.machine.memory_profile = crate::settings::ContainerMachineMemoryProfile::Economy;
+    settings.machine.memory_profile = ctx_settings_model::ContainerMachineMemoryProfile::Economy;
     assert_eq!(
         container_machine_memory_mb_for_host_memory(&settings, 16 * 1024),
         4096
@@ -112,7 +113,7 @@ fn container_machine_memory_profiles_apply_expected_floors_and_caps() {
         8192
     );
 
-    settings.machine.memory_profile = crate::settings::ContainerMachineMemoryProfile::Balanced;
+    settings.machine.memory_profile = ctx_settings_model::ContainerMachineMemoryProfile::Balanced;
     assert_eq!(
         container_machine_memory_mb_for_host_memory(&settings, 16 * 1024),
         4096
@@ -122,7 +123,8 @@ fn container_machine_memory_profiles_apply_expected_floors_and_caps() {
         16 * 1024
     );
 
-    settings.machine.memory_profile = crate::settings::ContainerMachineMemoryProfile::Performance;
+    settings.machine.memory_profile =
+        ctx_settings_model::ContainerMachineMemoryProfile::Performance;
     assert_eq!(
         container_machine_memory_mb_for_host_memory(&settings, 16 * 1024),
         8192
@@ -1038,7 +1040,7 @@ async fn sandbox_mode_errors_when_container_cli_is_unavailable() {
     let settings = ExecutionSettings {
         mode: ExecutionMode::Sandbox,
         container: ContainerExecutionSettings {
-            runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
+            runtime: ctx_settings_model::ContainerRuntimeKind::NativeContainer,
             ..ContainerExecutionSettings::default()
         },
     };
@@ -1125,7 +1127,7 @@ async fn prepare_reuses_running_workspace_container_without_front_loading_image_
         mode: ExecutionMode::Sandbox,
         container: ContainerExecutionSettings {
             network_mode: ContainerNetworkMode::All,
-            runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
+            runtime: ctx_settings_model::ContainerRuntimeKind::NativeContainer,
             ..Default::default()
         },
     };
@@ -1189,7 +1191,7 @@ async fn prepare_starts_cached_workspace_container_when_sandbox_cli_reports_it_s
         container: ContainerExecutionSettings {
             network_mode: ContainerNetworkMode::All,
             allowlist: Vec::new(),
-            runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
+            runtime: ctx_settings_model::ContainerRuntimeKind::NativeContainer,
             ..Default::default()
         },
     };
@@ -2030,12 +2032,12 @@ async fn ensure_sandbox_machine_materialized_recreates_machine_for_memory_profil
         install_test_managed_machine_cache_source(b"machine-cache".to_vec()).await;
     let settings = ContainerExecutionSettings {
         mount_mode: ContainerMountMode::DiskIsolated,
-        machine: crate::settings::ContainerMachineSettings {
-            memory_profile: crate::settings::ContainerMachineMemoryProfile::Custom,
+        machine: ctx_settings_model::ContainerMachineSettings {
+            memory_profile: ctx_settings_model::ContainerMachineMemoryProfile::Custom,
             custom_memory_mb: Some(12288),
-            ..crate::settings::ContainerMachineSettings::default()
+            ..ctx_settings_model::ContainerMachineSettings::default()
         },
-        runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
+        runtime: ctx_settings_model::ContainerRuntimeKind::NativeContainer,
         ..ContainerExecutionSettings::default()
     };
     assert_eq!(container_machine_memory_mb(&settings), 12288);
@@ -2084,12 +2086,12 @@ async fn ensure_sandbox_machine_materialized_defers_reconfiguration_when_machine
     );
     let _available = EnvGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
     let settings = ContainerExecutionSettings {
-        machine: crate::settings::ContainerMachineSettings {
-            memory_profile: crate::settings::ContainerMachineMemoryProfile::Balanced,
-            ..crate::settings::ContainerMachineSettings::default()
+        machine: ctx_settings_model::ContainerMachineSettings {
+            memory_profile: ctx_settings_model::ContainerMachineMemoryProfile::Balanced,
+            ..ctx_settings_model::ContainerMachineSettings::default()
         },
         mount_mode: ContainerMountMode::Legacy,
-        runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
+        runtime: ctx_settings_model::ContainerRuntimeKind::NativeContainer,
         ..ContainerExecutionSettings::default()
     };
 
@@ -2134,12 +2136,12 @@ async fn ensure_sandbox_machine_materialized_defers_reconfiguration_when_machine
     );
     let _available = EnvGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
     let settings = ContainerExecutionSettings {
-        machine: crate::settings::ContainerMachineSettings {
-            memory_profile: crate::settings::ContainerMachineMemoryProfile::Balanced,
-            ..crate::settings::ContainerMachineSettings::default()
+        machine: ctx_settings_model::ContainerMachineSettings {
+            memory_profile: ctx_settings_model::ContainerMachineMemoryProfile::Balanced,
+            ..ctx_settings_model::ContainerMachineSettings::default()
         },
         mount_mode: ContainerMountMode::Legacy,
-        runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
+        runtime: ctx_settings_model::ContainerRuntimeKind::NativeContainer,
         ..ContainerExecutionSettings::default()
     };
 
@@ -2184,11 +2186,11 @@ async fn maybe_reclaim_sandbox_machine_stops_idle_machine() {
     let _available = EnvGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
     manager.set_last_activity_for_test(Instant::now() - Duration::from_secs(600));
     let settings = ContainerExecutionSettings {
-        machine: crate::settings::ContainerMachineSettings {
+        machine: ctx_settings_model::ContainerMachineSettings {
             idle_shutdown_seconds: 60,
-            ..crate::settings::ContainerMachineSettings::default()
+            ..ctx_settings_model::ContainerMachineSettings::default()
         },
-        runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
+        runtime: ctx_settings_model::ContainerRuntimeKind::NativeContainer,
         ..ContainerExecutionSettings::default()
     };
     let stores = StoreManager::open(temp.path()).await.expect("open stores");
@@ -2247,11 +2249,11 @@ async fn maybe_reclaim_sandbox_machine_clamps_short_idle_timeout() {
     );
     manager.set_last_activity_for_test(Instant::now() - Duration::from_secs(30));
     let settings = ContainerExecutionSettings {
-        machine: crate::settings::ContainerMachineSettings {
+        machine: ctx_settings_model::ContainerMachineSettings {
             idle_shutdown_seconds: 5,
-            ..crate::settings::ContainerMachineSettings::default()
+            ..ctx_settings_model::ContainerMachineSettings::default()
         },
-        runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
+        runtime: ctx_settings_model::ContainerRuntimeKind::NativeContainer,
         ..ContainerExecutionSettings::default()
     };
     let stores = StoreManager::open(temp.path()).await.expect("open stores");
@@ -2314,11 +2316,11 @@ async fn maybe_reclaim_sandbox_machine_stops_idle_runtime_with_running_workspace
     let _available = EnvGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
     manager.set_last_activity_for_test(Instant::now() - Duration::from_secs(600));
     let settings = ContainerExecutionSettings {
-        machine: crate::settings::ContainerMachineSettings {
+        machine: ctx_settings_model::ContainerMachineSettings {
             idle_shutdown_seconds: 60,
-            ..crate::settings::ContainerMachineSettings::default()
+            ..ctx_settings_model::ContainerMachineSettings::default()
         },
-        runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
+        runtime: ctx_settings_model::ContainerRuntimeKind::NativeContainer,
         ..ContainerExecutionSettings::default()
     };
     let stores = StoreManager::open(temp.path()).await.expect("open stores");
@@ -2382,11 +2384,11 @@ async fn maybe_reclaim_sandbox_machine_skips_active_container_sessions() {
     running_sessions.lock().await.insert(session_id);
     let terminals = ctx_transport_runtime::terminals::TerminalManager::default();
     let settings = ContainerExecutionSettings {
-        machine: crate::settings::ContainerMachineSettings {
+        machine: ctx_settings_model::ContainerMachineSettings {
             idle_shutdown_seconds: 60,
-            ..crate::settings::ContainerMachineSettings::default()
+            ..ctx_settings_model::ContainerMachineSettings::default()
         },
-        runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
+        runtime: ctx_settings_model::ContainerRuntimeKind::NativeContainer,
         ..ContainerExecutionSettings::default()
     };
     let snapshot = SystemSnapshot {
@@ -2485,11 +2487,11 @@ async fn maybe_reclaim_sandbox_machine_skips_running_container_terminals() {
         .await
         .expect("create terminal");
     let settings = ContainerExecutionSettings {
-        machine: crate::settings::ContainerMachineSettings {
+        machine: ctx_settings_model::ContainerMachineSettings {
             idle_shutdown_seconds: 60,
-            ..crate::settings::ContainerMachineSettings::default()
+            ..ctx_settings_model::ContainerMachineSettings::default()
         },
-        runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
+        runtime: ctx_settings_model::ContainerRuntimeKind::NativeContainer,
         ..ContainerExecutionSettings::default()
     };
     let snapshot = SystemSnapshot {
@@ -2551,7 +2553,7 @@ async fn ensure_container_machine_ready_prefetches_avf_runtime_without_starting_
     );
     let (_runtime_guard, servers) = install_test_managed_avf_linux_runtime_source().await;
     let settings = ContainerExecutionSettings {
-        runtime: crate::settings::ContainerRuntimeKind::SharedVmContainer,
+        runtime: ctx_settings_model::ContainerRuntimeKind::SharedVmContainer,
         ..ContainerExecutionSettings::default()
     };
 
@@ -2592,7 +2594,7 @@ async fn prepare_returns_avf_linux_vm_plan_after_workspace_vm_and_container_read
     let settings = ExecutionSettings {
         mode: ExecutionMode::Sandbox,
         container: ContainerExecutionSettings {
-            runtime: crate::settings::ContainerRuntimeKind::SharedVmContainer,
+            runtime: ctx_settings_model::ContainerRuntimeKind::SharedVmContainer,
             mount_mode: ContainerMountMode::DiskIsolated,
             network_mode: ContainerNetworkMode::All,
             ..ContainerExecutionSettings::default()
@@ -2677,7 +2679,7 @@ async fn container_status_reports_running_avf_workspace_container() {
     let settings = ExecutionSettings {
         mode: ExecutionMode::Sandbox,
         container: ContainerExecutionSettings {
-            runtime: crate::settings::ContainerRuntimeKind::SharedVmContainer,
+            runtime: ctx_settings_model::ContainerRuntimeKind::SharedVmContainer,
             mount_mode: ContainerMountMode::DiskIsolated,
             network_mode: ContainerNetworkMode::All,
             ..ContainerExecutionSettings::default()
@@ -2726,7 +2728,7 @@ async fn ensure_workspace_container_starts_avf_workspace_vm() {
     let settings = ExecutionSettings {
         mode: ExecutionMode::Sandbox,
         container: ContainerExecutionSettings {
-            runtime: crate::settings::ContainerRuntimeKind::SharedVmContainer,
+            runtime: ctx_settings_model::ContainerRuntimeKind::SharedVmContainer,
             mount_mode: ContainerMountMode::DiskIsolated,
             network_mode: ContainerNetworkMode::All,
             ..ContainerExecutionSettings::default()
@@ -2773,7 +2775,7 @@ async fn ensure_workspace_container_for_worktree_keeps_avf_workspace_container_r
     let settings = ExecutionSettings {
         mode: ExecutionMode::Sandbox,
         container: ContainerExecutionSettings {
-            runtime: crate::settings::ContainerRuntimeKind::SharedVmContainer,
+            runtime: ctx_settings_model::ContainerRuntimeKind::SharedVmContainer,
             mount_mode: ContainerMountMode::DiskIsolated,
             network_mode: ContainerNetworkMode::All,
             ..ContainerExecutionSettings::default()
@@ -2832,7 +2834,7 @@ async fn shared_vm_container_launch_omits_slirp_network_flag() {
     let settings = ExecutionSettings {
         mode: ExecutionMode::Sandbox,
         container: ContainerExecutionSettings {
-            runtime: crate::settings::ContainerRuntimeKind::SharedVmContainer,
+            runtime: ctx_settings_model::ContainerRuntimeKind::SharedVmContainer,
             mount_mode: ContainerMountMode::DiskIsolated,
             network_mode: ContainerNetworkMode::All,
             ..ContainerExecutionSettings::default()
@@ -2947,7 +2949,7 @@ async fn ensure_workspace_container_after_runtime_ready_starts_avf_workspace_vm(
     let settings = ExecutionSettings {
         mode: ExecutionMode::Sandbox,
         container: ContainerExecutionSettings {
-            runtime: crate::settings::ContainerRuntimeKind::SharedVmContainer,
+            runtime: ctx_settings_model::ContainerRuntimeKind::SharedVmContainer,
             mount_mode: ContainerMountMode::DiskIsolated,
             network_mode: ContainerNetworkMode::All,
             ..ContainerExecutionSettings::default()
@@ -3013,7 +3015,7 @@ async fn stop_container_removes_avf_workspace_container() {
     let settings = ExecutionSettings {
         mode: ExecutionMode::Sandbox,
         container: ContainerExecutionSettings {
-            runtime: crate::settings::ContainerRuntimeKind::SharedVmContainer,
+            runtime: ctx_settings_model::ContainerRuntimeKind::SharedVmContainer,
             mount_mode: ContainerMountMode::DiskIsolated,
             network_mode: ContainerNetworkMode::All,
             ..ContainerExecutionSettings::default()
@@ -3159,7 +3161,7 @@ async fn unrestricted_network_transition_surfaces_teardown_failures() {
 
     let settings = ContainerExecutionSettings {
         network_mode: ContainerNetworkMode::All,
-        runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
+        runtime: ctx_settings_model::ContainerRuntimeKind::NativeContainer,
         ..Default::default()
     };
     let err = apply_container_network_policy(
@@ -3268,7 +3270,7 @@ async fn unrestricted_network_transition_ignores_stale_proxy_pid_file() {
 
     let settings = ContainerExecutionSettings {
         network_mode: ContainerNetworkMode::All,
-        runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
+        runtime: ctx_settings_model::ContainerRuntimeKind::NativeContainer,
         ..Default::default()
     };
     let applied = apply_container_network_policy(

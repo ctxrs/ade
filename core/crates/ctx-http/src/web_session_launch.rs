@@ -11,8 +11,8 @@ use ctx_transport_runtime::web_sessions::{
 };
 
 use crate::daemon::AppState;
-use crate::settings::ExecutionMode;
 use ctx_core::ids::{SessionId, WorktreeId};
+use ctx_settings_model::ExecutionMode;
 use ctx_settings_service::HostExecutionPolicy;
 
 pub(crate) struct WebSessionLaunchRequest {

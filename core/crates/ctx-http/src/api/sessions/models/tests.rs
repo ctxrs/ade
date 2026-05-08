@@ -5,7 +5,7 @@ use ctx_core::models::VcsKind;
 use ctx_store::StoreManager;
 
 use crate::daemon::AppState;
-use crate::settings::{ExecutionMode, ExecutionSettings, Settings};
+use ctx_settings_model::{ExecutionMode, ExecutionSettings, Settings};
 
 use super::load_provider_model_catalog;
 
@@ -48,7 +48,7 @@ async fn load_provider_model_catalog_reads_target_scoped_options_cache() {
         )
         .await
         .expect("create workspace");
-    crate::settings::save_settings(
+    ctx_settings_service::save_settings(
         state.global_store(),
         &Settings {
             execution: Some(ExecutionSettings {

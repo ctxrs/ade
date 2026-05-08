@@ -11,7 +11,7 @@ use ctx_core::models::{Message, MessageDelivery, MessageRole, SessionEventType};
 use ctx_providers::adapters::ProviderRestartMode;
 
 use crate::daemon::AppState;
-use crate::settings::{ProviderRestartSettings, ResourceGovernanceMode, Settings};
+use ctx_settings_model::{ProviderRestartSettings, ResourceGovernanceMode, Settings};
 
 pub use ctx_provider_runtime::provider_restart::{
     compute_effective_limits, ProviderRestartConfig, ProviderRestartEvent, ProviderRestartLimits,

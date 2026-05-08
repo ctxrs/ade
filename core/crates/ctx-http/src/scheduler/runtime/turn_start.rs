@@ -7,7 +7,6 @@ use chrono::Utc;
 
 use crate::daemon::AppState;
 use crate::scheduler::QueuedMessage;
-use crate::settings::ProviderControlMode;
 use ctx_core::ids::{MessageId, RunId, TurnId};
 use ctx_core::models::{
     ExecutionEnvironment, Message, MessageDelivery, Session, SessionTurnStatus,
@@ -15,6 +14,7 @@ use ctx_core::models::{
 use ctx_core::provider_policy::{CTX_CRP_LAUNCH_POLICY_ENV, CTX_CRP_LAUNCH_POLICY_FULL};
 use ctx_observability::ops_events::OpsEvent;
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
+use ctx_settings_model::ProviderControlMode;
 use serde_json::json;
 
 use super::helpers::compute_context_window_metrics;

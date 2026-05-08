@@ -1,6 +1,6 @@
 use super::*;
-use crate::settings::ContainerMountMode;
 use ctx_harness_setup::{HarnessSetupLogLevel, HarnessSetupObserver, HarnessSetupPhase};
+use ctx_settings_model::ContainerMountMode;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::collections::HashSet;
 #[cfg(any(target_os = "macos", target_os = "windows"))]

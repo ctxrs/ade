@@ -240,7 +240,7 @@ impl ctx_workspace_attachments::WorkspaceAttachmentMountHost for AppState {
     async fn effective_execution_settings(
         &self,
         workspace_id: WorkspaceId,
-    ) -> Result<crate::settings::ExecutionSettings> {
+    ) -> Result<ctx_settings_model::ExecutionSettings> {
         execution_effective::effective_execution_settings(self, workspace_id).await
     }
 
@@ -248,7 +248,7 @@ impl ctx_workspace_attachments::WorkspaceAttachmentMountHost for AppState {
         &self,
         workspace: &Workspace,
         worktree: &Worktree,
-        settings: &crate::settings::ExecutionSettings,
+        settings: &ctx_settings_model::ExecutionSettings,
     ) -> Result<()> {
         self.execution
             .harness

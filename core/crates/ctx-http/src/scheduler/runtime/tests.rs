@@ -7,7 +7,6 @@ use crate::installer::{
     ensure_codex_cli_command_env_for_target, AgentServerCommand, AgentServerConfigFile,
     ManagedInstallMetadata,
 };
-use crate::settings::ProviderControlMode;
 use chrono::Utc;
 use ctx_core::provider_policy::{CTX_CRP_LAUNCH_POLICY_ENV, CTX_CRP_LAUNCH_POLICY_FULL};
 use ctx_harness_sources::{
@@ -20,6 +19,7 @@ use ctx_provider_accounts::{
     CODEX_CREDENTIAL_KIND_API_KEY,
 };
 use ctx_provider_install::install_state::InstallTarget;
+use ctx_settings_model::ProviderControlMode;
 use ctx_workspace_config as workspace_config;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

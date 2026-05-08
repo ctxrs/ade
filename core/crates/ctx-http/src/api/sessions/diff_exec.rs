@@ -1,5 +1,5 @@
 use super::*;
-use crate::settings::ExecutionMode;
+use ctx_settings_model::ExecutionMode;
 use ctx_workspace_services::worktree_vcs::{
     parse_worktree_vcs_diff_summary_counts, WorktreeVcsDiffSummaryCounts,
     WORKTREE_VCS_CONTAINER_DIFF_SCRIPT, WORKTREE_VCS_CONTAINER_DIFF_SUMMARY_SCRIPT,
@@ -32,7 +32,7 @@ async fn ensure_container_for_worktree(
         .await?;
     if matches!(
         effective.container.runtime,
-        crate::settings::ContainerRuntimeKind::SharedVmContainer
+        ctx_settings_model::ContainerRuntimeKind::SharedVmContainer
     ) {
         Ok(SandboxExecTarget::SharedVmContainer)
     } else {

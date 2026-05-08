@@ -5,7 +5,7 @@ use ctx_core::models::{
     AttachmentMode, AttachmentUpdatePolicy, WorkspaceAttachment, WorkspaceAttachmentKind,
     WorkspaceAttachmentStatus,
 };
-use ctx_http::settings::{
+use ctx_settings_model::{
     ContainerExecutionSettings, ContainerRuntimeKind, ExecutionMode, ExecutionSettings, Settings,
 };
 use ctx_workspace_services::workspace_attachments::{self, AttachmentConfig};
@@ -34,7 +34,7 @@ async fn workspace_attachments_are_db_canonical_and_ignore_repo_file() {
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    ctx_http::settings::save_settings(
+    ctx_settings_service::save_settings(
         state.global_store(),
         &Settings {
             execution: Some(ExecutionSettings {

@@ -4,10 +4,10 @@ use std::sync::Arc;
 use anyhow::Context;
 
 use crate::daemon::AppState;
-use crate::settings as user_settings;
 use ctx_core::models::{Session, SessionEventType};
 use ctx_observability::logs;
 use ctx_session_service::title_generation;
+use ctx_settings_model as user_settings;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum TitleGenerationSource {
@@ -33,7 +33,7 @@ pub(crate) struct TitleGenerationOutcome {
 pub(crate) async fn configured_title_generation_settings(
     state: &AppState,
 ) -> Option<user_settings::TitleGenerationSettings> {
-    let settings = match user_settings::load_settings(state.global_store()).await {
+    let settings = match ctx_settings_service::load_settings(state.global_store()).await {
         Ok(settings) => settings,
         Err(err) => {
             tracing::warn!(

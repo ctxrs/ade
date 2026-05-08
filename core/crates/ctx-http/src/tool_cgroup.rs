@@ -7,7 +7,7 @@ use ctx_resource_utilization::tool_limits::{
 pub const TOOL_SLICE_UNIT: &str = ctx_resource_utilization::tool_limits::TOOL_SLICE_UNIT;
 
 use crate::daemon::AppState;
-use crate::settings::{PublicToolLimitsSettings, Settings};
+use ctx_settings_model::{PublicToolLimitsSettings, Settings};
 
 pub async fn build_public_settings(
     state: &AppState,

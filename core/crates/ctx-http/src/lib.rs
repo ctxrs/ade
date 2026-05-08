@@ -17,7 +17,6 @@ pub mod resource_governance;
 pub mod resource_telemetry;
 mod runtime_adapters;
 pub mod scheduler;
-pub mod settings;
 pub mod storage_guard;
 mod terminal_launch;
 mod tool_cgroup;

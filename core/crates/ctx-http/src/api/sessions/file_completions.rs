@@ -27,8 +27,10 @@ pub(crate) async fn session_file_completions(
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let execution_environment = match data_plane.execution_mode {
-        crate::settings::ExecutionMode::Host => ctx_core::models::ExecutionEnvironment::Host,
-        crate::settings::ExecutionMode::Sandbox => ctx_core::models::ExecutionEnvironment::Sandbox,
+        ctx_settings_model::ExecutionMode::Host => ctx_core::models::ExecutionEnvironment::Host,
+        ctx_settings_model::ExecutionMode::Sandbox => {
+            ctx_core::models::ExecutionEnvironment::Sandbox
+        }
     };
     if session.execution_environment != execution_environment {
         tracing::warn!(

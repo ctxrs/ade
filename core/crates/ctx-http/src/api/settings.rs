@@ -8,18 +8,18 @@ use crate::daemon::AppState;
 use crate::provider_guard;
 use crate::provider_restart;
 use crate::resource_governance;
-use crate::settings as user_settings;
 use crate::tool_cgroup;
 use ctx_observability::telemetry::TelemetryConfig;
+use ctx_settings_model as user_settings;
 use ctx_settings_service::HostExecutionPolicy;
 
 pub(super) async fn get_settings(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<user_settings::PublicSettings>, StatusCode> {
-    let settings = user_settings::load_settings(state.global_store())
+    let settings = ctx_settings_service::load_settings(state.global_store())
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let mut public = user_settings::to_public(&settings);
+    let mut public = ctx_settings_service::to_public(&settings);
     public.resource_governance =
         resource_governance::build_public_settings(&state, &settings).await;
     public.tool_limits = tool_cgroup::build_public_settings(&state, &settings).await;
@@ -30,7 +30,7 @@ pub(super) async fn update_settings(
     State(state): State<Arc<AppState>>,
     Json(req): Json<user_settings::UpdateSettingsReq>,
 ) -> Result<Json<user_settings::PublicSettings>, StatusCode> {
-    let current = user_settings::load_settings(state.global_store())
+    let current = ctx_settings_service::load_settings(state.global_store())
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let host_execution_policy =
@@ -44,8 +44,8 @@ pub(super) async fn update_settings(
             .validate_execution_environment(ctx_core::models::ExecutionEnvironment::Host)
             .map_err(|error| crate::api::shared::status_code_for_request_or_policy_error(&error))?;
     }
-    let next = user_settings::apply_update(current, req);
-    user_settings::save_settings(state.global_store(), &next)
+    let next = ctx_settings_service::apply_update(current, req);
+    ctx_settings_service::save_settings(state.global_store(), &next)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let mut telemetry_cfg = TelemetryConfig::default();
@@ -74,7 +74,7 @@ pub(super) async fn update_settings(
     if let Err(err) = tool_cgroup::apply_settings(&state, &next).await {
         tracing::warn!("failed to apply tool cgroup settings: {err:#}");
     }
-    let mut public = user_settings::to_public(&next);
+    let mut public = ctx_settings_service::to_public(&next);
     public.resource_governance = resource_governance::build_public_settings(&state, &next).await;
     public.tool_limits = tool_cgroup::build_public_settings(&state, &next).await;
     Ok(Json(public))

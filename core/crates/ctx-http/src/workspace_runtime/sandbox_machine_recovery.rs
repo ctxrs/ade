@@ -77,7 +77,7 @@ async fn configured_sandbox_machine_memory_mb(
         }
     };
 
-    let loaded = crate::settings::load_settings(&store).await;
+    let loaded = ctx_settings_service::load_settings(&store).await;
     store.close().await;
 
     match loaded {

@@ -11,7 +11,7 @@ use tokio::sync::Mutex;
 
 use crate::api::sessions::AgentInitItem;
 use crate::daemon::AppState;
-use crate::settings::ExecutionSettings;
+use ctx_settings_model::ExecutionSettings;
 
 use super::super::errors::{api_error, internal_api_error, ApiResult, SubagentErrorKind};
 use super::super::request::default_catalog_model_id;

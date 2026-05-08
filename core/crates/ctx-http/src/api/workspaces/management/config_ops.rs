@@ -199,7 +199,7 @@ pub(super) async fn load_workspace_execution_config(
     state: &Arc<AppState>,
     ctx: &WorkspaceRequestContext,
 ) -> WorkspaceApiResult<WorkspaceExecutionConfigResp> {
-    let settings = crate::settings::load_settings(state.global_store())
+    let settings = ctx_settings_service::load_settings(state.global_store())
         .await
         .map_err(|error| {
             (
@@ -239,14 +239,14 @@ pub(super) async fn load_workspace_execution_config(
     }
 
     let environment = match effective.mode {
-        crate::settings::ExecutionMode::Host => "host",
-        crate::settings::ExecutionMode::Sandbox => "sandbox",
+        ctx_settings_model::ExecutionMode::Host => "host",
+        ctx_settings_model::ExecutionMode::Sandbox => "sandbox",
     }
     .to_string();
     let network_mode = match effective.container.network_mode {
-        crate::settings::ContainerNetworkMode::LlmOnly => "llm_only",
-        crate::settings::ContainerNetworkMode::Allowlist => "allowlist",
-        crate::settings::ContainerNetworkMode::All => "all",
+        ctx_settings_model::ContainerNetworkMode::LlmOnly => "llm_only",
+        ctx_settings_model::ContainerNetworkMode::Allowlist => "allowlist",
+        ctx_settings_model::ContainerNetworkMode::All => "all",
     }
     .to_string();
 
@@ -270,7 +270,7 @@ pub(super) async fn update_workspace_execution_config(
             {
                 if !ctx_harness_runtime::local_runtime_available(
                     &state.core.data_root,
-                    &crate::settings::ContainerRuntimeKind::SharedVmContainer,
+                    &ctx_settings_model::ContainerRuntimeKind::SharedVmContainer,
                 ) {
                     return Err((
                         StatusCode::BAD_REQUEST,
@@ -294,9 +294,9 @@ pub(super) async fn update_workspace_execution_config(
 
     let network_mode = match req.network_mode.as_deref().map(|value| value.trim()) {
         None | Some("") => None,
-        Some("llm_only") => Some(crate::settings::ContainerNetworkMode::LlmOnly),
-        Some("allowlist") => Some(crate::settings::ContainerNetworkMode::Allowlist),
-        Some("all") => Some(crate::settings::ContainerNetworkMode::All),
+        Some("llm_only") => Some(ctx_settings_model::ContainerNetworkMode::LlmOnly),
+        Some("allowlist") => Some(ctx_settings_model::ContainerNetworkMode::Allowlist),
+        Some("all") => Some(ctx_settings_model::ContainerNetworkMode::All),
         _ => {
             return Err((
                 StatusCode::BAD_REQUEST,
@@ -315,7 +315,7 @@ pub(super) async fn update_workspace_execution_config(
             .collect::<Vec<String>>()
     });
 
-    let settings = crate::settings::load_settings(state.global_store())
+    let settings = ctx_settings_service::load_settings(state.global_store())
         .await
         .map_err(|error| {
             (
@@ -329,10 +329,10 @@ pub(super) async fn update_workspace_execution_config(
     let requested_override = ctx_workspace_config::ExecutionSettingsOverride {
         mode: Some(match environment {
             ctx_workspace_config::ExecutionEnvironment::Host => {
-                crate::settings::ExecutionMode::Host
+                ctx_settings_model::ExecutionMode::Host
             }
             ctx_workspace_config::ExecutionEnvironment::Sandbox => {
-                crate::settings::ExecutionMode::Sandbox
+                ctx_settings_model::ExecutionMode::Sandbox
             }
         }),
         container: ctx_workspace_config::ContainerExecutionSettingsOverride {

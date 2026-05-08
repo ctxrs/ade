@@ -62,11 +62,11 @@ async fn idle_runtime_reclaim_stops_machine_even_with_running_ctx_harness_contai
     let _available = EnvGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
     manager.set_last_activity_for_test(Instant::now() - Duration::from_secs(600));
     let settings = ContainerExecutionSettings {
-        machine: crate::settings::ContainerMachineSettings {
+        machine: ctx_settings_model::ContainerMachineSettings {
             idle_shutdown_seconds: 60,
-            ..crate::settings::ContainerMachineSettings::default()
+            ..ctx_settings_model::ContainerMachineSettings::default()
         },
-        runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
+        runtime: ctx_settings_model::ContainerRuntimeKind::NativeContainer,
         ..ContainerExecutionSettings::default()
     };
     let stores = StoreManager::open(temp.path()).await.expect("open stores");
@@ -130,11 +130,11 @@ async fn active_prewarm_artifact_activity_suppresses_reclaim() {
     let _available = EnvGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
     manager.set_last_activity_for_test(Instant::now() - Duration::from_secs(600));
     let settings = ContainerExecutionSettings {
-        machine: crate::settings::ContainerMachineSettings {
+        machine: ctx_settings_model::ContainerMachineSettings {
             idle_shutdown_seconds: 60,
-            ..crate::settings::ContainerMachineSettings::default()
+            ..ctx_settings_model::ContainerMachineSettings::default()
         },
-        runtime: crate::settings::ContainerRuntimeKind::NativeContainer,
+        runtime: ctx_settings_model::ContainerRuntimeKind::NativeContainer,
         ..ContainerExecutionSettings::default()
     };
     let stores = StoreManager::open(temp.path()).await.expect("open stores");

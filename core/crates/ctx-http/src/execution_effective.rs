@@ -1,8 +1,8 @@
 use ctx_core::ids::WorkspaceId;
 
 use crate::daemon::AppState;
-use crate::settings::ExecutionSettings;
 use ctx_provider_install::install_state::InstallTarget;
+use ctx_settings_model::ExecutionSettings;
 pub(crate) use ctx_settings_service::{
     apply_workspace_execution_settings_override, validate_workspace_execution_settings_override,
 };

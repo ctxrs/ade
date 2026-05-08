@@ -20,7 +20,7 @@ pub(crate) async fn init_subagents(
         ));
     }
 
-    let settings = user_settings::load_settings(state.global_store())
+    let settings = ctx_settings_service::load_settings(state.global_store())
         .await
         .map_err(internal_api_error)?;
     let max_subagents =
