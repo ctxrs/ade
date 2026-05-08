@@ -320,6 +320,44 @@ test("verify:affected routes ctx-http binary source edits to bin-tests without b
   assert.equal(plan.commands.some((command) => command.includes("--suite base")), false);
 });
 
+test("verify:affected routes split workspace route modules to behavior-owning suites", () => {
+  const cases = [
+    {
+      file: "core/crates/ctx-http/src/api/workspaces/active.rs",
+      suites: ["unit-tests-api", "unit-tests-lib", "unit-tests-lib-session-head-large", "workspace-stream"],
+    },
+    {
+      file: "core/crates/ctx-http/src/api/workspaces/attachments.rs",
+      suites: ["attachments-routing", "unit-tests-api", "unit-tests-lib"],
+    },
+    {
+      file: "core/crates/ctx-http/src/api/workspaces/harness_container.rs",
+      suites: ["sandbox-runtime-simulated", "unit-tests-api", "unit-tests-lib", "unit-tests-workspace-runtime"],
+    },
+    {
+      file: "core/crates/ctx-http/src/api/workspaces/registry.rs",
+      suites: ["repo-vcs", "unit-tests-api", "unit-tests-lib"],
+    },
+  ];
+
+  for (const { file, suites } of cases) {
+    const plan = buildVerificationPlan({
+      intent: "affected",
+      base: "origin/main",
+      changedFiles: [file],
+    });
+
+    for (const suite of suites) {
+      assert.equal(
+        plan.commands.includes(`node scripts/ctx_http_suite_task.cjs --suite ${suite}`),
+        true,
+        `${file} should route to ${suite}`,
+      );
+    }
+    assert.equal(plan.commands.some((command) => command.includes("--suite base")), false);
+  }
+});
+
 test("verify:affected expands ctx-http base children for unmatched ctx-http source edits", () => {
   const plan = buildVerificationPlan({
     intent: "affected",

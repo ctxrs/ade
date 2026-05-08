@@ -1634,6 +1634,9 @@ async fn sandbox_work_activity_counts_container_backed_terminals() {
         "http://localhost".to_string(),
         None,
     ));
+    let cli_path = temp.path().join("container-terminal-cli.sh");
+    std::fs::write(&cli_path, "#!/bin/sh\ntrap 'exit 0' TERM INT\nsleep 60\n").unwrap();
+    std::fs::set_permissions(&cli_path, std::fs::Permissions::from_mode(0o755)).unwrap();
     let terminal = state
         .transport
         .terminals
@@ -1648,7 +1651,7 @@ async fn sandbox_work_activity_counts_container_backed_terminals() {
             rows: None,
             env: HashMap::new(),
             native_container: Some(crate::terminals::NativeContainerTerminalSpec {
-                cli_bin: PathBuf::from("/bin/sh"),
+                cli_bin: cli_path,
                 cli_env: HashMap::new(),
                 container_name: "ctx-harness-terminal".to_string(),
                 workdir: "/workspace".to_string(),
