@@ -61,7 +61,7 @@ pub(crate) async fn create_web_session(
             .await
             .map_err(request_or_policy_error)?;
 
-    let node_runtime = crate::installer::ensure_node_runtime(
+    let node_runtime = crate::daemon::installer::ensure_node_runtime(
         state.as_ref(),
         None,
         "web_session_worker",

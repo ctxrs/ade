@@ -16,7 +16,6 @@ use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::{Store, StoreManager, StoreManagerConfig};
 
 use crate::api;
-use crate::installer;
 use crate::scheduler::reconcile_turn_terminal_state;
 use ctx_observability::telemetry::TelemetryConfig;
 use ctx_provider_install::install_state::InstallTarget;
@@ -25,6 +24,7 @@ use ctx_provider_runtime::provider_usage;
 mod activity;
 mod auth;
 pub(crate) mod execution_effective;
+pub(crate) mod installer;
 mod lifecycle;
 mod listener;
 mod managed_auto_update;

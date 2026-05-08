@@ -103,11 +103,14 @@ pub(in crate::api) async fn load_provider_source_config_with_error(
 
 pub(in crate::api) async fn load_managed_agent_server_config_with_error(
     data_root: &FsPath,
-) -> (crate::installer::AgentServerConfigFile, Option<String>) {
-    match crate::installer::load_agent_server_config(data_root).await {
+) -> (
+    crate::daemon::installer::AgentServerConfigFile,
+    Option<String>,
+) {
+    match crate::daemon::installer::load_agent_server_config(data_root).await {
         Ok(config) => (config, None),
         Err(err) => (
-            crate::installer::AgentServerConfigFile::default(),
+            crate::daemon::installer::AgentServerConfigFile::default(),
             Some(logs::redact_sensitive(&err.to_string())),
         ),
     }
@@ -197,7 +200,7 @@ async fn prepare_provider_runtime_probe(
             .map_err(PreparedProviderRuntimeProbeError::Verify)?;
     let source = probe_context.source;
     let mut env = probe_context.env;
-    crate::installer::prepend_runtime_bin_dirs_to_provider_path_for_target(
+    crate::daemon::installer::prepend_runtime_bin_dirs_to_provider_path_for_target(
         &mut env,
         &cfg,
         provider_id,
@@ -205,7 +208,7 @@ async fn prepare_provider_runtime_probe(
         Some(install_target),
     );
     if is_acp_provider_id(provider_id) {
-        crate::installer::prepend_runtime_bin_dirs_to_provider_path_for_target(
+        crate::daemon::installer::prepend_runtime_bin_dirs_to_provider_path_for_target(
             &mut env,
             &cfg,
             "acp-crp-bridge",
@@ -213,7 +216,7 @@ async fn prepare_provider_runtime_probe(
             Some(install_target),
         );
     }
-    crate::installer::ensure_codex_cli_command_env_for_target(
+    crate::daemon::installer::ensure_codex_cli_command_env_for_target(
         &mut env,
         &cfg,
         provider_id,

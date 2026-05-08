@@ -16,8 +16,8 @@ use ctx_providers::adapters::{
 use ctx_providers::events::NormalizedEvent;
 use ctx_store::Store;
 
+use crate::daemon::installer;
 use crate::daemon::{ensure_provider_adapter_for_target_with_cfg, AppState};
-use crate::installer;
 use ctx_observability::ops_events::OpsEvent;
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
 use ctx_observability::telemetry::TelemetryEvent;

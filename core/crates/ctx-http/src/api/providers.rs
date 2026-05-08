@@ -16,8 +16,8 @@ use tokio::sync::mpsc;
 use url::Url;
 
 use super::errors::ApiErrorResp;
+use crate::daemon::installer;
 use crate::daemon::AppState;
-use crate::installer;
 use ctx_core::ids::WorkspaceId;
 use ctx_core::provider_ids::CODEX_PROVIDER_ID;
 use ctx_harness_sources as harness_sources;

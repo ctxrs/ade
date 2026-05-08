@@ -220,7 +220,7 @@ async fn prepare_session_auth_runtime(
             }
         }
     }
-    crate::installer::ensure_codex_cli_command_env_for_target(
+    crate::daemon::installer::ensure_codex_cli_command_env_for_target(
         &mut provider_env,
         &adapter_cfg,
         &session.provider_id,

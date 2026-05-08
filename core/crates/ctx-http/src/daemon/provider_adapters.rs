@@ -5,7 +5,7 @@ use std::path::Path;
 use anyhow::Result;
 
 #[cfg(test)]
-use crate::installer;
+use crate::daemon::installer;
 #[cfg(test)]
 use ctx_provider_install::install_state::InstallTarget;
 

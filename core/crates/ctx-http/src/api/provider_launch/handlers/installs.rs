@@ -5,14 +5,15 @@ pub(in crate::api) async fn install_provider(
     Path(id): Path<String>,
     Query(query): Query<InstallTargetQuery>,
 ) -> Result<Json<InstallStartResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let target = crate::installer::parse_install_target(query.target.as_deref()).map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "error": e.to_string()
-            })),
-        )
-    })?;
+    let target =
+        crate::daemon::installer::parse_install_target(query.target.as_deref()).map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": e.to_string()
+                })),
+            )
+        })?;
     ctx_settings_service::HostExecutionPolicy::current()
         .map_err(|error| {
             (
@@ -47,14 +48,15 @@ pub(in crate::api) async fn install_all_providers(
     State(state): State<Arc<AppState>>,
     Query(query): Query<InstallTargetQuery>,
 ) -> Result<Json<Vec<InstallStartResponse>>, (StatusCode, Json<serde_json::Value>)> {
-    let target = crate::installer::parse_install_target(query.target.as_deref()).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "error": "invalid install target",
-            })),
-        )
-    })?;
+    let target =
+        crate::daemon::installer::parse_install_target(query.target.as_deref()).map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "invalid install target",
+                })),
+            )
+        })?;
     ctx_settings_service::HostExecutionPolicy::current()
         .map_err(|error| {
             (

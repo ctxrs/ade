@@ -6,7 +6,7 @@ use ctx_providers::adapters::ProviderAdapter;
 use ctx_providers::crp::Tier1CrpAdapter;
 use ctx_providers::fake::FakeProviderAdapter;
 
-use crate::installer;
+use crate::daemon::installer;
 
 use super::provider_adapters::{
     acp_bridge_adapter, acp_status_adapter_acp_command_invalid, acp_status_adapter_bridge_invalid,

@@ -86,7 +86,7 @@ pub(crate) async fn get_codex_accounts_usage(
         )
         .await;
         let mut env = provider_accounts::codex_env_for_account(&state.core.data_root, &account.id);
-        crate::installer::ensure_codex_cli_command_env_for_target(
+        crate::daemon::installer::ensure_codex_cli_command_env_for_target(
             &mut env,
             &cfg,
             CODEX_PROVIDER_ID,
