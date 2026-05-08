@@ -23,7 +23,6 @@ mod terminal_launch;
 mod tool_cgroup;
 mod vcs_hooks;
 mod web_session_launch;
-mod web_sessions;
 pub(crate) mod workspace_provider_model_preferences;
 mod workspace_runtime;
 mod worktree_bootstrap;

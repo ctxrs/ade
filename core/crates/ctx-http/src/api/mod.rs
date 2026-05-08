@@ -94,15 +94,15 @@ use ctx_store::store::MobileDeviceUpsert;
 use crate::daemon::AppState;
 use crate::installer;
 use crate::merge_queue;
-use crate::web_sessions::{
-    render_web_session_view, WebSessionInfo, WebSessionRunRequest, WebSessionRunResponse,
-    WebSessionViewport,
-};
 use ctx_managed_installs::title_generation_local;
 use ctx_observability::logs;
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
 use ctx_provider_install::install_state::InstallId;
 use ctx_providers::adapters::ProviderStatus;
+use ctx_transport_runtime::web_sessions::{
+    render_web_session_view, WebSessionInfo, WebSessionRunRequest, WebSessionRunResponse,
+    WebSessionViewport,
+};
 
 pub(super) fn is_sensitive_key(key: &str) -> bool {
     ctx_core::redaction::is_sensitive_key(key)

@@ -3,15 +3,15 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use ctx_core::models::{ExecutionEnvironment, Worktree};
+use ctx_transport_runtime::web_sessions::{
+    ensure_worker_bundle, validate_web_session_host_session, validate_web_session_host_worktree,
+    validate_web_session_launch_scope, validate_web_session_url, NodeRuntimeSpec,
+    WebSessionCreateRequest, WebSessionInfo, WebSessionLaunchPolicyError,
+    WebSessionLaunchPolicyErrorKind, WebSessionViewport,
+};
 
 use crate::daemon::AppState;
 use crate::settings::ExecutionMode;
-use crate::web_sessions::{
-    validate_web_session_host_session, validate_web_session_host_worktree,
-    validate_web_session_launch_scope, validate_web_session_url, WebSessionCreateRequest,
-    WebSessionInfo, WebSessionLaunchPolicyError, WebSessionLaunchPolicyErrorKind,
-    WebSessionViewport,
-};
 use ctx_core::ids::{SessionId, WorktreeId};
 use ctx_settings_service::HostExecutionPolicy;
 
@@ -71,9 +71,12 @@ pub(crate) async fn create_web_session(
     .await
     .map_err(|e| internal_error(format!("failed to prepare node runtime: {e}")))?;
 
-    let worker_bundle = crate::web_sessions::ensure_worker_bundle_for_node_runtime(
+    let worker_bundle = ensure_worker_bundle(
         &state.core.data_root,
-        &node_runtime,
+        &NodeRuntimeSpec {
+            node_bin: node_runtime.node_bin.clone(),
+            npm_cli_js: node_runtime.npm_cli_js.clone(),
+        },
     )
     .await
     .map_err(|e| internal_error(format!("failed to prepare web session worker: {e}")))?;

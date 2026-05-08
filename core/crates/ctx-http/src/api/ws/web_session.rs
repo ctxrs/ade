@@ -4,6 +4,7 @@ use axum::extract::ws::{CloseFrame, Message as WsMessage, WebSocket, WebSocketUp
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::Response;
+use ctx_transport_runtime::web_sessions::{WebSessionManager, WEB_SESSION_WORKER_AUTH_HEADER};
 use futures::{SinkExt, StreamExt};
 use tokio_tungstenite::{
     connect_async,
@@ -15,7 +16,6 @@ use tokio_tungstenite::{
 
 use super::super::web_sessions::{require_web_session_signal_access, WebSessionStreamAccessQuery};
 use crate::daemon::AppState;
-use crate::web_sessions::WebSessionManager;
 
 pub(crate) async fn web_session_signal(
     State(state): State<Arc<AppState>>,
@@ -58,7 +58,7 @@ async fn handle_web_session_socket(
     if let Ok(value) = handle.worker_auth_secret().parse() {
         request
             .headers_mut()
-            .insert(crate::web_sessions::WEB_SESSION_WORKER_AUTH_HEADER, value);
+            .insert(WEB_SESSION_WORKER_AUTH_HEADER, value);
     }
     let connect = connect_async(request).await;
     let upstream = match connect {

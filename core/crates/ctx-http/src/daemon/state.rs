@@ -14,7 +14,6 @@ use crate::runtime_adapters::{
     CtxExecutionHarness, CtxRuntimeEventSink, CtxRuntimeMetricsSink, DefaultWarmupOperations,
 };
 use crate::scheduler::SchedulerCommand;
-use crate::web_sessions::WebSessionManager;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceAttachmentId, WorkspaceId, WorktreeId};
 use ctx_execution_runtime::ExecutionSetupCoordinator;
 use ctx_observability::ops_events::{OpsEvent, OpsEvents};
@@ -32,6 +31,7 @@ use ctx_resource_utilization::ResourceSampler;
 use ctx_store::{Store, StoreManager};
 use ctx_transport_runtime::mobile_tunnel::MobileTunnelManager;
 use ctx_transport_runtime::terminals::TerminalManager;
+use ctx_transport_runtime::web_sessions::WebSessionManager;
 use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotHub;
 use ctx_workspace_runtime::HarnessRuntimeManager;
 
