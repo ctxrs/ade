@@ -238,5 +238,4 @@ fn sandbox_command(
 }
 
 #[cfg(test)]
-#[path = "vcs_hooks/tests.rs"]
 mod tests;

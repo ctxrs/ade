@@ -55,8 +55,7 @@ impl EnvVarGuard {
 }
 
 fn sandbox_cli_env_test_lock() -> &'static tokio::sync::Mutex<()> {
-    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
-    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+    crate::test_support::sandbox_cli_env_test_lock()
 }
 
 fn daemon_public_base_url_env_test_lock() -> &'static std::sync::Mutex<()> {

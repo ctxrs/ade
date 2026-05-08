@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::api::sessions::diff_worktree_summary_for_session;
+use crate::daemon::workspaces::vcs_hooks;
 use crate::daemon::AppState;
-use crate::vcs_hooks;
 use ctx_core::ids::TaskId;
 use ctx_core::models::{VcsKind, Workspace, Worktree};
 use ctx_fs::vcs;

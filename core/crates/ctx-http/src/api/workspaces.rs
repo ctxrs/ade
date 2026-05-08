@@ -33,10 +33,9 @@ use super::shared::{
     load_and_cache_workspace_files, map_effective_execution_settings_error,
     path_resolves_within_root, store_for_existing_workspace_status, FileCompletionsQuery,
 };
-use crate::daemon::workspaces::{WorkspaceHydrationError, WorkspaceHydrationErrorKind};
+use crate::daemon::workspaces::{vcs_hooks, WorkspaceHydrationError, WorkspaceHydrationErrorKind};
 use crate::daemon::AppState;
 use crate::execution_effective;
-use crate::vcs_hooks;
 use ctx_core::ids::{WorkspaceId, WorktreeId};
 use ctx_core::models::{
     AttachmentMode, AttachmentUpdatePolicy, Workspace, WorkspaceActiveHeadBatch,
