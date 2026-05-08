@@ -22,18 +22,23 @@ use url::Url;
 pub(crate) mod artifacts;
 mod auth;
 mod demo;
+mod diagnostics;
 pub(crate) mod errors;
 mod execution;
+mod health;
+mod logs_api;
 mod mcp_context;
 mod mcp_scope;
 mod merge_queue_api;
 mod mobile_access;
 mod mobile_scopes;
 mod org_policy;
+mod perf;
 mod provider_launch;
 pub(crate) mod provider_probe_auth;
 pub(crate) mod providers;
 mod repo;
+mod resource_utilization;
 mod routes;
 mod run_archive;
 pub(crate) mod sessions;
@@ -42,7 +47,7 @@ pub(crate) mod shared;
 pub(crate) mod tasks;
 mod telemetry;
 mod terminals;
-mod types;
+mod title_generation;
 mod updates;
 mod web_sessions;
 pub(crate) mod workspace_provider_model_preferences;
@@ -58,22 +63,27 @@ pub(crate) use auth::{
 };
 
 use artifacts::*;
+use diagnostics::*;
 use execution::*;
+use health::*;
+use logs_api::*;
 use mcp_context::*;
 use mcp_scope::*;
 use merge_queue_api::*;
 use mobile_access::*;
 use mobile_scopes::*;
 use org_policy::*;
+use perf::*;
 use providers::*;
 use repo::*;
+use resource_utilization::*;
 use run_archive::*;
 use sessions::*;
 use settings::*;
 use tasks::*;
 use telemetry::*;
 use terminals::*;
-use types::*;
+use title_generation::*;
 use updates::*;
 use web_sessions::*;
 use workspaces::*;
@@ -314,37 +324,6 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
     let dist_dir = std::env::var("CTX_WEB_DIST").unwrap_or_else(|_| "apps/web/dist".into());
     let index_path = format!("{dist_dir}/index.html");
     api.fallback_service(ServeDir::new(dist_dir).not_found_service(ServeFile::new(index_path)))
-}
-
-const MOBILE_API_MIN_VERSION: i64 = 1;
-const MOBILE_API_MAX_VERSION: i64 = 1;
-
-#[derive(Debug, Serialize)]
-struct HealthCompatibility {
-    desktop_exact_version: String,
-    desktop_build_id: String,
-    desktop_dev_instance_id: String,
-    protocol_compatibility_token: String,
-    mobile_api_min: i64,
-    mobile_api_max: i64,
-}
-
-#[derive(Debug, Serialize)]
-struct HealthResp {
-    version: String,
-    daemon_version: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pid: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    data_root: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    daemon_url: Option<String>,
-    auth_required: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    open_file_limit: Option<ctx_resource_utilization::process_limits::OpenFileLimitSnapshot>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    storage: Option<crate::daemon::storage_guard::StorageGuardStatus>,
-    compatibility: HealthCompatibility,
 }
 
 #[cfg(test)]

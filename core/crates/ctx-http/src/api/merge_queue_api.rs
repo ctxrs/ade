@@ -1,5 +1,27 @@
 use super::*;
 use crate::api::shared::{path_resolves_within_root, store_for_existing_workspace_status};
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize)]
+pub(in crate::api) struct MergeQueueSubmitReq {
+    #[serde(default)]
+    pub(in crate::api) session_id: Option<String>,
+    #[serde(default)]
+    pub(in crate::api) worktree_id: Option<String>,
+    #[serde(default)]
+    pub(in crate::api) worktree_root: Option<String>,
+    #[serde(default)]
+    pub(in crate::api) target_branch: Option<String>,
+    #[serde(default)]
+    pub(in crate::api) message: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(in crate::api) struct MergeQueueListParams {
+    pub(in crate::api) workspace_id: String,
+    #[serde(default)]
+    pub(in crate::api) limit: Option<i64>,
+}
 
 pub(super) async fn submit_merge_queue_entry(
     State(state): State<Arc<AppState>>,
