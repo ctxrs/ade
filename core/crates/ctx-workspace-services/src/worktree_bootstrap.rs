@@ -432,6 +432,10 @@ pub fn truncate_log(input: &str) -> (String, bool) {
     (out, true)
 }
 
+pub fn prepare_bootstrap_log_for_storage(raw_log: &str) -> (String, bool) {
+    truncate_log(&ctx_core::redaction::redact_sensitive(raw_log))
+}
+
 pub fn bootstrap_logs_dir(data_root: &Path) -> PathBuf {
     data_root.join("logs").join("worktree-bootstrap")
 }
@@ -465,8 +469,9 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        bootstrap_command_env, bootstrap_log_path, build_bootstrap_steps, run_bootstrap_command,
-        shell_bootstrap_command, truncate_log, BootstrapCommandRuntime,
+        bootstrap_command_env, bootstrap_log_path, build_bootstrap_steps,
+        prepare_bootstrap_log_for_storage, run_bootstrap_command, shell_bootstrap_command,
+        truncate_log, BootstrapCommandRuntime,
     };
 
     #[test]
@@ -484,6 +489,16 @@ mod tests {
         let (out, truncated) = truncate_log(&input);
         assert!(truncated);
         assert!(out.contains("...(truncated)"));
+    }
+
+    #[test]
+    fn prepare_bootstrap_log_for_storage_redacts_before_persisting() {
+        let (log, truncated) =
+            prepare_bootstrap_log_for_storage("Authorization: Bearer secret-token\nok");
+
+        assert!(!truncated);
+        assert!(!log.contains("secret-token"));
+        assert!(log.contains("ok"));
     }
 
     #[test]

@@ -10,7 +10,6 @@ use ctx_store::WorktreeBootstrapResultUpdate;
 
 use crate::daemon::AppState;
 use crate::execution_effective;
-use crate::logs;
 use crate::settings::{ContainerRuntimeKind, ExecutionMode};
 use crate::worktree_data_plane::resolve_worktree_data_plane;
 use ctx_workspace_config as workspace_config;
@@ -80,9 +79,10 @@ impl ctx_workspace_services::worktree_bootstrap::WorktreeBootstrapHost for AppSt
         worktree: &Worktree,
         report: ctx_workspace_services::worktree_bootstrap::BootstrapReport,
     ) {
-        let (log, log_truncated) = ctx_workspace_services::worktree_bootstrap::truncate_log(
-            &logs::redact_sensitive(&report.raw_log),
-        );
+        let (log, log_truncated) =
+            ctx_workspace_services::worktree_bootstrap::prepare_bootstrap_log_for_storage(
+                &report.raw_log,
+            );
         let log_path = ctx_workspace_services::worktree_bootstrap::write_bootstrap_log(
             &self.core.data_root,
             worktree.id,
