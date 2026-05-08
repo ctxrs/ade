@@ -23,6 +23,7 @@ rust_library(
         "@crates//:futures",
         "@crates//:hkdf",
         "@crates//:http",
+        "@crates//:jsonwebtoken",
         "@crates//:portable-pty",
         "@crates//:rand_core",
         "@crates//:reqwest",

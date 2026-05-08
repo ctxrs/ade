@@ -93,7 +93,6 @@ hkdf = "0.12"
 rand_core = "0.6"
 url = "2"
 similar = "2"
-jsonwebtoken = "9"
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 fs2 = "0.4"
 which = "7"

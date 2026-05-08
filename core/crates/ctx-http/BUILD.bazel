@@ -313,7 +313,6 @@ CTX_HTTP_SHARED_EXTERNAL_DEPS = [
     "@crates//:httparse",
     "@crates//:hyper",
     "@crates//:hyper-util",
-    "@crates//:jsonwebtoken",
     "@crates//:libc",
     "@crates//:minisign-verify",
     "@crates//:mime_guess",
