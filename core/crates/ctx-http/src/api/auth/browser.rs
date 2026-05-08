@@ -190,8 +190,12 @@ pub(super) fn scoped_mcp_route(req: &Request<Body>) -> Option<ScopedMcpRoute> {
     ) {
         return Some(ScopedMcpRoute::SessionSubagents { session_id });
     }
-    if let Some(session_id) = parse_scoped_mcp_session_id(path, "/api/sessions/", &["artifacts"]) {
-        return Some(ScopedMcpRoute::SessionArtifacts { session_id });
+    if req.method() == Method::POST {
+        if let Some(session_id) =
+            parse_scoped_mcp_session_id(path, "/api/sessions/", &["artifacts"])
+        {
+            return Some(ScopedMcpRoute::SessionArtifacts { session_id });
+        }
     }
     None
 }

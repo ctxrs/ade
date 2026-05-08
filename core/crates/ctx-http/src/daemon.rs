@@ -63,8 +63,8 @@ pub(crate) use lifecycle::{collect_provider_adapters_for_shutdown, shutdown_prov
 pub(crate) use listener::daemon_public_base_url_from_env;
 pub use mcp_auth::issue_provider_session_mcp_token;
 pub(crate) use mcp_auth::{
-    issue_provider_session_mcp_token_with_capabilities, revoke_provider_session_mcp_token,
-    verify_mcp_auth_token, McpAuthCapabilities, McpAuthContext,
+    emit_mcp_token_denied, issue_provider_session_mcp_token_with_capabilities,
+    revoke_provider_session_mcp_token, verify_mcp_auth_token, McpAuthCapabilities, McpAuthContext,
 };
 #[cfg(test)]
 pub(crate) use provider_adapters::runtime_probe_command_as_agent_command;

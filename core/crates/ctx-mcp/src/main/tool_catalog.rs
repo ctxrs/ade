@@ -1,21 +1,54 @@
 use serde_json::{json, Value};
 
-const CTX_MCP_CAPABILITIES_ENV: &str = "CTX_MCP_CAPABILITIES";
-
 #[derive(Clone, Copy, Debug, Default)]
 pub(super) struct ToolCatalogCapabilities {
+    pub(super) subagents: bool,
+    pub(super) artifacts: bool,
     pub(super) merge_queue_submit: bool,
 }
 
-pub(super) fn capabilities_from_env() -> ToolCatalogCapabilities {
-    let raw = std::env::var(CTX_MCP_CAPABILITIES_ENV).unwrap_or_default();
-    let mut capabilities = ToolCatalogCapabilities::default();
-    for part in raw.split([',', ' ', ';']) {
-        if part.trim() == "merge_queue_submit" {
-            capabilities.merge_queue_submit = true;
+impl ToolCatalogCapabilities {
+    pub(super) fn from_mcp_context(context: &super::ResolvedMcpContext) -> Self {
+        Self {
+            subagents: context.has_capability("subagents"),
+            artifacts: context.has_capability("artifacts"),
+            merge_queue_submit: context.has_capability("merge_queue_submit"),
         }
     }
-    capabilities
+
+    pub(super) fn disabled_tool_message(self, name: &str) -> Option<String> {
+        if is_subagent_tool(name) && !self.subagents {
+            return Some(format!(
+                "tool disabled: {name} requires an explicit scoped MCP subagents capability"
+            ));
+        }
+        if name == "artifacts_set" && !self.artifacts {
+            return Some(
+                "tool disabled: artifacts_set requires an explicit scoped MCP artifacts capability"
+                    .to_string(),
+            );
+        }
+        if name == "merge_queue_submit" && !self.merge_queue_submit {
+            return Some(
+                "tool disabled: merge_queue_submit requires an explicit scoped MCP capability"
+                    .to_string(),
+            );
+        }
+        None
+    }
+}
+
+fn is_subagent_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "spawn_agent"
+            | "send_input"
+            | "archive_agent"
+            | "interrupt_agent"
+            | "list_agents"
+            | "get_agent"
+            | "wait_agent"
+    )
 }
 
 pub(super) fn tools_list_response(capabilities: ToolCatalogCapabilities) -> Value {
@@ -278,12 +311,11 @@ pub(super) fn tools_list_response(capabilities: ToolCatalogCapabilities) -> Valu
         }
     }
 
-    if !capabilities.merge_queue_submit {
-        if let Some(tools) = resp.get_mut("tools").and_then(|v| v.as_array_mut()) {
-            tools.retain(|tool| {
-                tool.get("name").and_then(|v| v.as_str()) != Some("merge_queue_submit")
-            });
-        }
+    if let Some(tools) = resp.get_mut("tools").and_then(|v| v.as_array_mut()) {
+        tools.retain(|tool| {
+            let name = tool.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            capabilities.disabled_tool_message(name).is_none()
+        });
     }
 
     resp

@@ -5,7 +5,7 @@ mod build_identity;
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use uuid::Uuid;
 
 use std::collections::HashMap;

@@ -1,10 +1,18 @@
 use std::time::Duration;
 
-use axum::{http::HeaderMap, routing::post, Json, Router};
+use axum::{
+    http::HeaderMap,
+    routing::{get, post},
+    Json, Router,
+};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tower::ServiceBuilder;
+
+const TEST_SESSION_ID: &str = "00000000-0000-0000-0000-000000000001";
+const TEST_WORKSPACE_ID: &str = "00000000-0000-0000-0000-000000000002";
+const TEST_WORKTREE_ID: &str = "00000000-0000-0000-0000-000000000003";
 
 fn mcp_bin() -> &'static str {
     env!("CARGO_BIN_EXE_ctx-mcp")
@@ -66,11 +74,43 @@ async fn wait_for_response(
     panic!("timed out waiting for response id {response_id}");
 }
 
+fn mcp_context_response(capabilities: Vec<&'static str>) -> Value {
+    json!({
+        "session_id": TEST_SESSION_ID,
+        "workspace_id": TEST_WORKSPACE_ID,
+        "worktree_id": TEST_WORKTREE_ID,
+        "capabilities": capabilities,
+    })
+}
+
+async fn serve_context_daemon(capabilities: Vec<&'static str>) -> std::net::SocketAddr {
+    let context = mcp_context_response(capabilities);
+    let app = Router::new().route(
+        "/api/mcp/context",
+        get(move || {
+            let context = context.clone();
+            async move { Json(context) }
+        }),
+    );
+    serve_router(app).await
+}
+
+async fn serve_router(app: Router) -> std::net::SocketAddr {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    addr
+}
+
 #[tokio::test]
 async fn mcp_tools_list_omits_removed_lsp_and_edit_plan_tools() {
+    let addr = serve_context_daemon(vec!["subagents", "artifacts"]).await;
     let mut child = mcp_command()
         .arg("--stdio")
-        .env("CTX_DAEMON_URL", "http://127.0.0.1:9")
+        .env("CTX_DAEMON_URL", format!("http://{addr}"))
+        .env("CTX_MCP_TOKEN", "scoped-mcp-token")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -117,9 +157,11 @@ async fn mcp_tools_list_omits_removed_lsp_and_edit_plan_tools() {
 
 #[tokio::test]
 async fn mcp_tools_list_omits_global_workspace_and_oracle_tools() {
+    let addr = serve_context_daemon(vec!["subagents", "artifacts"]).await;
     let mut child = mcp_command()
         .arg("--stdio")
-        .env("CTX_DAEMON_URL", "http://127.0.0.1:9")
+        .env("CTX_DAEMON_URL", format!("http://{addr}"))
+        .env("CTX_MCP_TOKEN", "scoped-mcp-token")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -168,13 +210,11 @@ async fn mcp_tools_list_omits_global_workspace_and_oracle_tools() {
 
 #[tokio::test]
 async fn mcp_tools_list_includes_merge_queue_submit_with_explicit_capability() {
+    let addr = serve_context_daemon(vec!["subagents", "artifacts", "merge_queue_submit"]).await;
     let mut child = mcp_command()
         .arg("--stdio")
-        .env("CTX_DAEMON_URL", "http://127.0.0.1:9")
-        .env(
-            "CTX_MCP_CAPABILITIES",
-            "subagents,artifacts,merge_queue_submit",
-        )
+        .env("CTX_DAEMON_URL", format!("http://{addr}"))
+        .env("CTX_MCP_TOKEN", "scoped-mcp-token")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -210,12 +250,95 @@ async fn mcp_tools_list_includes_merge_queue_submit_with_explicit_capability() {
 }
 
 #[tokio::test]
-async fn mcp_merge_queue_submit_call_requires_explicit_capability() {
+async fn mcp_tools_list_uses_daemon_context_instead_of_forged_capability_env() {
+    let addr = serve_context_daemon(vec!["subagents", "artifacts"]).await;
     let mut child = mcp_command()
         .arg("--stdio")
-        .env("CTX_DAEMON_URL", "http://127.0.0.1:9")
+        .env("CTX_DAEMON_URL", format!("http://{addr}"))
         .env("CTX_MCP_TOKEN", "scoped-mcp-token")
-        .env("CTX_SESSION_ID", "00000000-0000-0000-0000-000000000000")
+        .env("CTX_MCP_CAPABILITIES", "merge_queue_submit")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout).lines();
+
+    write_mcp_message(
+        &mut stdin,
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}),
+    )
+    .await;
+    let _ = wait_for_response(&mut reader, 1, Duration::from_secs(15)).await;
+    write_mcp_message(
+        &mut stdin,
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}),
+    )
+    .await;
+
+    let v = wait_for_response(&mut reader, 2, Duration::from_secs(15)).await;
+    let tools = v["result"]["tools"].as_array().expect("tools array");
+    let names: Vec<&str> = tools
+        .iter()
+        .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+        .collect();
+    assert!(
+        !names.contains(&"merge_queue_submit"),
+        "forged CTX_MCP_CAPABILITIES must not enable merge queue submit"
+    );
+    let _ = child.kill().await;
+}
+
+#[tokio::test]
+async fn mcp_tools_list_gates_subagent_and_artifact_tools_by_daemon_context() {
+    let addr = serve_context_daemon(vec!["merge_queue_submit"]).await;
+    let mut child = mcp_command()
+        .arg("--stdio")
+        .env("CTX_DAEMON_URL", format!("http://{addr}"))
+        .env("CTX_MCP_TOKEN", "scoped-mcp-token")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout).lines();
+
+    write_mcp_message(
+        &mut stdin,
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}),
+    )
+    .await;
+    let _ = wait_for_response(&mut reader, 1, Duration::from_secs(15)).await;
+    write_mcp_message(
+        &mut stdin,
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}),
+    )
+    .await;
+
+    let v = wait_for_response(&mut reader, 2, Duration::from_secs(15)).await;
+    let tools = v["result"]["tools"].as_array().expect("tools array");
+    let names: Vec<&str> = tools
+        .iter()
+        .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+        .collect();
+    assert!(names.contains(&"merge_queue_submit"));
+    assert!(!names.contains(&"spawn_agent"));
+    assert!(!names.contains(&"list_agents"));
+    assert!(!names.contains(&"artifacts_set"));
+    let _ = child.kill().await;
+}
+
+#[tokio::test]
+async fn mcp_merge_queue_submit_call_requires_explicit_capability() {
+    let addr = serve_context_daemon(vec!["subagents", "artifacts"]).await;
+    let mut child = mcp_command()
+        .arg("--stdio")
+        .env("CTX_DAEMON_URL", format!("http://{addr}"))
+        .env("CTX_MCP_TOKEN", "scoped-mcp-token")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -261,10 +384,153 @@ async fn mcp_merge_queue_submit_call_requires_explicit_capability() {
 }
 
 #[tokio::test]
-async fn mcp_removed_lsp_tool_calls_return_actionable_errors() {
+async fn mcp_tools_call_gates_subagent_and_artifact_capabilities_from_daemon_context() {
+    let addr = serve_context_daemon(vec!["merge_queue_submit"]).await;
     let mut child = mcp_command()
         .arg("--stdio")
-        .env("CTX_DAEMON_URL", "http://127.0.0.1:9")
+        .env("CTX_DAEMON_URL", format!("http://{addr}"))
+        .env("CTX_MCP_TOKEN", "scoped-mcp-token")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout).lines();
+
+    for msg in [
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}),
+        json!({
+            "jsonrpc":"2.0",
+            "id":2,
+            "method":"tools/call",
+            "params":{
+                "name":"ctx.spawn_agent",
+                "arguments":{
+                    "worktree":"inherit",
+                    "prompt":"check foo",
+                    "task_label":"Audit FooAPI"
+                }
+            }
+        }),
+        json!({
+            "jsonrpc":"2.0",
+            "id":3,
+            "method":"tools/call",
+            "params":{
+                "name":"ctx.artifacts_set",
+                "arguments":{
+                    "artifacts":[{"absoluteFilePath":"/tmp/artifact.txt"}]
+                }
+            }
+        }),
+    ] {
+        stdin.write_all(msg.to_string().as_bytes()).await.unwrap();
+        stdin.write_all(b"\n").await.unwrap();
+        stdin.flush().await.unwrap();
+    }
+
+    let _ = wait_for_response(&mut reader, 1, Duration::from_secs(15)).await;
+    let spawn = wait_for_response(&mut reader, 2, Duration::from_secs(15)).await;
+    let spawn_text = spawn["result"]["content"][0]["text"]
+        .as_str()
+        .expect("spawn error text");
+    assert!(
+        spawn_text.contains("subagents capability"),
+        "expected subagents capability error, got: {spawn_text}"
+    );
+    let artifacts = wait_for_response(&mut reader, 3, Duration::from_secs(15)).await;
+    let artifacts_text = artifacts["result"]["content"][0]["text"]
+        .as_str()
+        .expect("artifacts error text");
+    assert!(
+        artifacts_text.contains("artifacts capability"),
+        "expected artifacts capability error, got: {artifacts_text}"
+    );
+    let _ = child.kill().await;
+}
+
+#[tokio::test]
+async fn mcp_artifacts_set_uses_daemon_context_instead_of_forged_session_env() {
+    let seen = std::sync::Arc::new(tokio::sync::Mutex::new(None::<String>));
+    let seen2 = seen.clone();
+    let context = mcp_context_response(vec!["subagents", "artifacts"]);
+    let app = Router::new()
+        .route(
+            "/api/mcp/context",
+            get(move || {
+                let context = context.clone();
+                async move { Json(context) }
+            }),
+        )
+        .route(
+            &format!("/api/sessions/{TEST_SESSION_ID}/artifacts"),
+            post(move |Json(body): Json<Value>| {
+                let seen2 = seen2.clone();
+                async move {
+                    let path = body["artifacts"][0]["absolute_file_path"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_string();
+                    *seen2.lock().await = Some(path);
+                    Json(json!([]))
+                }
+            }),
+        );
+    let addr = serve_router(app).await;
+
+    let mut child = mcp_command()
+        .arg("--stdio")
+        .env("CTX_DAEMON_URL", format!("http://{addr}"))
+        .env("CTX_MCP_TOKEN", "scoped-mcp-token")
+        .env("CTX_SESSION_ID", "ffffffff-ffff-ffff-ffff-ffffffffffff")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout).lines();
+
+    for msg in [
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}),
+        json!({
+            "jsonrpc":"2.0",
+            "id":2,
+            "method":"tools/call",
+            "params":{
+                "name":"ctx.artifacts_set",
+                "arguments":{
+                    "artifacts":[{"absoluteFilePath":"/tmp/artifact.txt"}]
+                }
+            }
+        }),
+    ] {
+        stdin.write_all(msg.to_string().as_bytes()).await.unwrap();
+        stdin.write_all(b"\n").await.unwrap();
+        stdin.flush().await.unwrap();
+    }
+
+    let _ = wait_for_response(&mut reader, 1, Duration::from_secs(15)).await;
+    let response = wait_for_response(&mut reader, 2, Duration::from_secs(15)).await;
+    assert_eq!(response["result"]["isError"].as_bool(), Some(false));
+    assert_eq!(
+        seen.lock().await.as_deref(),
+        Some("/tmp/artifact.txt"),
+        "artifact post must target daemon-derived session route"
+    );
+    let _ = child.kill().await;
+}
+
+#[tokio::test]
+async fn mcp_removed_lsp_tool_calls_return_actionable_errors() {
+    let addr = serve_context_daemon(vec!["subagents", "artifacts"]).await;
+    let mut child = mcp_command()
+        .arg("--stdio")
+        .env("CTX_DAEMON_URL", format!("http://{addr}"))
+        .env("CTX_MCP_TOKEN", "scoped-mcp-token")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -304,9 +570,11 @@ async fn mcp_removed_lsp_tool_calls_return_actionable_errors() {
 
 #[tokio::test]
 async fn mcp_agent_tool_schemas_avoid_top_level_combinators() {
+    let addr = serve_context_daemon(vec!["subagents", "artifacts"]).await;
     let mut child = mcp_command()
         .arg("--stdio")
-        .env("CTX_DAEMON_URL", "http://127.0.0.1:9")
+        .env("CTX_DAEMON_URL", format!("http://{addr}"))
+        .env("CTX_MCP_TOKEN", "scoped-mcp-token")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -366,9 +634,11 @@ async fn mcp_agent_tool_schemas_avoid_top_level_combinators() {
 
 #[tokio::test]
 async fn mcp_global_workspace_tool_call_returns_removed_error() {
+    let addr = serve_context_daemon(vec!["subagents", "artifacts"]).await;
     let mut child = mcp_command()
         .arg("--stdio")
-        .env("CTX_DAEMON_URL", "http://127.0.0.1:9")
+        .env("CTX_DAEMON_URL", format!("http://{addr}"))
+        .env("CTX_MCP_TOKEN", "scoped-mcp-token")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -443,8 +713,6 @@ async fn mcp_daemon_access_requires_scoped_mcp_token() {
         .env("CTX_DATA_DIR", temp_dir.path())
         .env("CTX_DAEMON_URL", format!("http://{addr}"))
         .env("CTX_AUTH_TOKEN", "daemon-secret")
-        .env("CTX_MCP_CAPABILITIES", "merge_queue_submit")
-        .env("CTX_SESSION_ID", "00000000-0000-0000-0000-000000000000")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -478,10 +746,13 @@ async fn mcp_daemon_access_requires_scoped_mcp_token() {
     .await;
 
     let v = wait_for_response(&mut reader, 2, Duration::from_secs(15)).await;
-    assert_eq!(v["result"]["isError"].as_bool(), Some(true));
-    let text = v["result"]["content"][0]["text"]
+    assert_eq!(
+        v["error"]["message"].as_str(),
+        Some("ctx-mcp context unavailable")
+    );
+    let text = v["error"]["data"]["error"]
         .as_str()
-        .expect("tool error text");
+        .expect("context error text");
     assert!(
         text.contains("missing scoped ctx-mcp token"),
         "expected scoped MCP token requirement, got: {text}"
@@ -510,9 +781,7 @@ async fn mcp_daemon_access_requires_explicit_daemon_url() {
     let mut child = mcp_command()
         .arg("--stdio")
         .env("CTX_DATA_DIR", temp_dir.path())
-        .env("CTX_MCP_CAPABILITIES", "merge_queue_submit")
         .env("CTX_MCP_TOKEN", "scoped-mcp-token")
-        .env("CTX_SESSION_ID", "00000000-0000-0000-0000-000000000000")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -546,10 +815,13 @@ async fn mcp_daemon_access_requires_explicit_daemon_url() {
     .await;
 
     let v = wait_for_response(&mut reader, 2, Duration::from_secs(15)).await;
-    assert_eq!(v["result"]["isError"].as_bool(), Some(true));
-    let text = v["result"]["content"][0]["text"]
+    assert_eq!(
+        v["error"]["message"].as_str(),
+        Some("ctx-mcp context unavailable")
+    );
+    let text = v["error"]["data"]["error"]
         .as_str()
-        .expect("tool error text");
+        .expect("context error text");
     assert!(
         text.contains("missing daemon URL"),
         "expected daemon URL requirement, got: {text}"
@@ -566,7 +838,15 @@ async fn mcp_merge_queue_submit_scrubs_internal_ids() {
     let body_tx = std::sync::Arc::new(tokio::sync::Mutex::new(None::<Value>));
     let body_tx2 = body_tx.clone();
 
+    let context = mcp_context_response(vec!["subagents", "artifacts", "merge_queue_submit"]);
     let app = Router::new()
+        .route(
+            "/api/mcp/context",
+            get(move || {
+                let context = context.clone();
+                async move { Json(context) }
+            }),
+        )
         .route(
             "/api/merge-queue/entries",
             post(move |Json(body): Json<Value>| {
@@ -592,18 +872,12 @@ async fn mcp_merge_queue_submit_scrubs_internal_ids() {
         )
         .layer(ServiceBuilder::new());
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
+    let addr = serve_router(app).await;
 
     let mut child = mcp_command()
         .arg("--stdio")
         .env("CTX_DAEMON_URL", format!("http://{addr}"))
-        .env("CTX_MCP_CAPABILITIES", "merge_queue_submit")
         .env("CTX_MCP_TOKEN", "scoped-mcp-token")
-        .env("CTX_SESSION_ID", "00000000-0000-0000-0000-000000000000")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -689,8 +963,13 @@ async fn mcp_merge_queue_submit_scrubs_internal_ids() {
     let body = body_tx.lock().await.clone().expect("missing request body");
     assert_eq!(
         body.get("session_id").and_then(|v| v.as_str()),
-        Some("00000000-0000-0000-0000-000000000000"),
+        Some(TEST_SESSION_ID),
         "expected session context to be passed to daemon"
+    );
+    assert_eq!(
+        body.get("worktree_id").and_then(|v| v.as_str()),
+        Some(TEST_WORKTREE_ID),
+        "expected worktree context to be passed to daemon"
     );
 
     let _ = child.kill().await;
@@ -703,39 +982,44 @@ async fn scoped_mcp_merge_queue_submit_uses_scoped_ids_instead_of_worktree_root(
     let body_tx2 = body_tx.clone();
     let auth_tx2 = auth_tx.clone();
 
-    let app = Router::new().route(
-        "/api/merge-queue/entries",
-        post(move |headers: HeaderMap, Json(body): Json<Value>| {
-            let body_tx2 = body_tx2.clone();
-            let auth_tx2 = auth_tx2.clone();
-            async move {
-                *body_tx2.lock().await = Some(body);
-                *auth_tx2.lock().await = headers
-                    .get(axum::http::header::AUTHORIZATION)
-                    .and_then(|value| value.to_str().ok())
-                    .map(str::to_string);
-                Json(json!({
-                    "id":"entry-1",
-                    "status":"queued",
-                    "target_branch":"main",
-                    "message":"merge it"
-                }))
-            }
-        }),
-    );
+    let context = mcp_context_response(vec!["subagents", "artifacts", "merge_queue_submit"]);
+    let app = Router::new()
+        .route(
+            "/api/mcp/context",
+            get(move || {
+                let context = context.clone();
+                async move { Json(context) }
+            }),
+        )
+        .route(
+            "/api/merge-queue/entries",
+            post(move |headers: HeaderMap, Json(body): Json<Value>| {
+                let body_tx2 = body_tx2.clone();
+                let auth_tx2 = auth_tx2.clone();
+                async move {
+                    *body_tx2.lock().await = Some(body);
+                    *auth_tx2.lock().await = headers
+                        .get(axum::http::header::AUTHORIZATION)
+                        .and_then(|value| value.to_str().ok())
+                        .map(str::to_string);
+                    Json(json!({
+                        "id":"entry-1",
+                        "status":"queued",
+                        "target_branch":"main",
+                        "message":"merge it"
+                    }))
+                }
+            }),
+        );
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
+    let addr = serve_router(app).await;
 
     let mut child = mcp_command()
         .arg("--stdio")
         .env("CTX_DAEMON_URL", format!("http://{addr}"))
-        .env("CTX_MCP_CAPABILITIES", "merge_queue_submit")
         .env("CTX_MCP_TOKEN", "scoped-mcp-token")
-        .env("CTX_SESSION_ID", "00000000-0000-0000-0000-000000000000")
+        .env("CTX_SESSION_ID", "ffffffff-ffff-ffff-ffff-ffffffffffff")
+        .env("CTX_WORKTREE_ID", "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -773,16 +1057,17 @@ async fn scoped_mcp_merge_queue_submit_uses_scoped_ids_instead_of_worktree_root(
     let body = body_tx.lock().await.clone().expect("missing request body");
     assert_eq!(
         body.get("session_id").and_then(|v| v.as_str()),
-        Some("00000000-0000-0000-0000-000000000000"),
+        Some(TEST_SESSION_ID),
         "expected scoped session context to be passed to daemon"
     );
     assert!(
         body.get("worktree_root").is_none(),
         "scoped ctx-mcp should not fall back to worktree_root"
     );
-    assert!(
-        body.get("worktree_id").is_none(),
-        "scoped ctx-mcp may omit worktree_id and rely on the daemon-bound token scope"
+    assert_eq!(
+        body.get("worktree_id").and_then(|v| v.as_str()),
+        Some(TEST_WORKTREE_ID),
+        "expected scoped worktree context to be passed to daemon"
     );
 
     let _ = child.kill().await;
@@ -790,10 +1075,11 @@ async fn scoped_mcp_merge_queue_submit_uses_scoped_ids_instead_of_worktree_root(
 
 #[tokio::test]
 async fn mcp_oracle_tool_call_returns_removed_error() {
+    let addr = serve_context_daemon(vec!["subagents", "artifacts"]).await;
     let mut child = mcp_command()
         .arg("--stdio")
-        .env("CTX_DAEMON_URL", "http://127.0.0.1:9")
-        .env("CTX_SESSION_ID", "00000000-0000-0000-0000-000000000000")
+        .env("CTX_DAEMON_URL", format!("http://{addr}"))
+        .env("CTX_MCP_TOKEN", "scoped-mcp-token")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()

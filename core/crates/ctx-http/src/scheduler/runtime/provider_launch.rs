@@ -67,8 +67,7 @@ async fn issue_mcp_token_if_enabled(
     if mcp_disabled {
         return None;
     }
-    let capabilities =
-        crate::daemon::McpAuthCapabilities::provider_session().with_merge_queue_submit();
+    let capabilities = crate::daemon::McpAuthCapabilities::provider_turn_default();
     let token = crate::daemon::issue_provider_session_mcp_token_with_capabilities(
         state.as_ref(),
         session.id,
@@ -78,7 +77,6 @@ async fn issue_mcp_token_if_enabled(
     )
     .await;
     provider_env.insert("CTX_MCP_TOKEN".to_string(), token.clone());
-    provider_env.insert("CTX_MCP_CAPABILITIES".to_string(), capabilities.env_value());
     Some(token)
 }
 

@@ -4,8 +4,21 @@ use super::*;
 async fn mcp_agent_tools_call_daemon_http() {
     let parent_id = "00000000-0000-0000-0000-000000000001";
     let agent_id = "agent_testopaque";
+    let context = json!({
+        "session_id": parent_id,
+        "workspace_id": "00000000-0000-0000-0000-000000000002",
+        "worktree_id": "00000000-0000-0000-0000-000000000003",
+        "capabilities": ["subagents", "artifacts"],
+    });
 
     let app = Router::new()
+        .route(
+            "/api/mcp/context",
+            get(move || {
+                let context = context.clone();
+                async move { Json(context) }
+            }),
+        )
         .route(
             &format!("/api/mcp/sessions/{parent_id}/spawn_agent"),
             post(move |Json(body): Json<serde_json::Value>| async move {
@@ -109,7 +122,6 @@ async fn mcp_agent_tools_call_daemon_http() {
         .arg("--stdio")
         .env("CTX_DAEMON_URL", format!("http://{addr}"))
         .env("CTX_MCP_TOKEN", "scoped-mcp-token")
-        .env("CTX_SESSION_ID", parent_id)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()

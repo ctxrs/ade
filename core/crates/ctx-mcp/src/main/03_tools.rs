@@ -24,6 +24,14 @@ fn ok(id: Value, result: Value) -> Value {
     })
 }
 
+async fn write_response<W: AsyncWrite + Unpin>(out: &mut W, response: Value) -> Result<()> {
+    let line = serde_json::to_string(&response).context("serializing MCP response")?;
+    out.write_all(line.as_bytes()).await?;
+    out.write_all(b"\n").await?;
+    out.flush().await?;
+    Ok(())
+}
+
 fn error(id: Value, code: i64, message: &str, data: Option<Value>) -> Value {
     json!({
         "jsonrpc": "2.0",
@@ -53,6 +61,22 @@ fn extract_error_message(body: &str) -> Option<String> {
 struct ResolvedDaemonAccess {
     daemon_url: String,
     auth_token: String,
+}
+
+#[derive(Clone, Debug)]
+struct ResolvedMcpContext {
+    session_id: String,
+    _workspace_id: String,
+    worktree_id: String,
+    capabilities: Vec<String>,
+}
+
+impl ResolvedMcpContext {
+    fn has_capability(&self, capability: &str) -> bool {
+        self.capabilities
+            .iter()
+            .any(|candidate| candidate == capability)
+    }
 }
 
 fn explicit_mcp_token() -> Result<Option<String>> {
@@ -103,6 +127,53 @@ async fn daemon_get_json(client: &reqwest::Client, _daemon_url: &str, path: &str
     let value = serde_json::from_str(&text)
         .with_context(|| format!("parsing JSON response from {path}"))?;
     Ok(value)
+}
+
+async fn resolve_mcp_context(client: &reqwest::Client) -> Result<ResolvedMcpContext> {
+    let value = daemon_get_json(client, "", "/api/mcp/context").await?;
+    parse_mcp_context(value)
+}
+
+fn parse_mcp_context(value: Value) -> Result<ResolvedMcpContext> {
+    let obj = value
+        .as_object()
+        .context("scoped ctx-mcp context response must be an object")?;
+    let string_field = |name: &str| -> Result<String> {
+        obj.get(name)
+            .and_then(|value| value.as_str())
+            .map(|value| value.to_string())
+            .with_context(|| format!("scoped ctx-mcp context missing {name}"))
+    };
+    let capabilities = obj
+        .get("capabilities")
+        .and_then(|value| value.as_array())
+        .context("scoped ctx-mcp context missing capabilities")?
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .map(|value| value.to_string())
+                .context("scoped ctx-mcp capability must be a string")
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(ResolvedMcpContext {
+        session_id: string_field("session_id")?,
+        _workspace_id: string_field("workspace_id")?,
+        worktree_id: string_field("worktree_id")?,
+        capabilities,
+    })
+}
+
+async fn cached_mcp_context(
+    client: &reqwest::Client,
+    cached: &mut Option<ResolvedMcpContext>,
+) -> Result<ResolvedMcpContext> {
+    if let Some(context) = cached.clone() {
+        return Ok(context);
+    }
+    let context = resolve_mcp_context(client).await?;
+    *cached = Some(context.clone());
+    Ok(context)
 }
 
 async fn daemon_post_json(
@@ -164,11 +235,9 @@ fn tool_call_id_from_params(params: &Value) -> Option<String> {
 async fn merge_queue_submit_call(
     client: &reqwest::Client,
     daemon_url: &str,
+    context: &ResolvedMcpContext,
     args: &Value,
 ) -> Result<Value> {
-    let session_id =
-        ctx_env_opt("SESSION_ID").context("missing session context for merge queue submit")?;
-    let worktree_id = ctx_env_opt("WORKTREE_ID");
     let target_branch = args
         .get("target_branch")
         .and_then(|v| v.as_str())
@@ -180,12 +249,14 @@ async fn merge_queue_submit_call(
 
     let mut body = json!({});
     if let Some(obj) = body.as_object_mut() {
-        obj.insert("session_id".to_string(), Value::String(session_id));
-    }
-    if let Some(worktree_id) = worktree_id {
-        if let Some(obj) = body.as_object_mut() {
-            obj.insert("worktree_id".to_string(), Value::String(worktree_id));
-        }
+        obj.insert(
+            "session_id".to_string(),
+            Value::String(context.session_id.clone()),
+        );
+        obj.insert(
+            "worktree_id".to_string(),
+            Value::String(context.worktree_id.clone()),
+        );
     }
     if let Some(target_branch) = target_branch {
         if let Some(obj) = body.as_object_mut() {
@@ -209,62 +280,69 @@ async fn merge_queue_submit_call(
 async fn spawn_agent_call(
     client: &reqwest::Client,
     daemon_url: &str,
+    context: &ResolvedMcpContext,
     args: &Value,
 ) -> Result<Value> {
-    let session_id = ctx_env_opt("SESSION_ID").context("missing session context")?;
-    let path = format!("/api/mcp/sessions/{session_id}/spawn_agent");
+    let path = format!("/api/mcp/sessions/{}/spawn_agent", context.session_id);
     daemon_post_json(client, daemon_url, &path, args).await
 }
 
 async fn send_input_call(
     client: &reqwest::Client,
     daemon_url: &str,
+    context: &ResolvedMcpContext,
     args: &Value,
 ) -> Result<Value> {
-    let parent_session_id = ctx_env_opt("SESSION_ID").context("missing session context")?;
-    let path = format!("/api/mcp/sessions/{parent_session_id}/send_input");
+    let path = format!("/api/mcp/sessions/{}/send_input", context.session_id);
     daemon_post_json(client, daemon_url, &path, args).await
 }
 
 async fn archive_agent_call(
     client: &reqwest::Client,
     daemon_url: &str,
+    context: &ResolvedMcpContext,
     args: &Value,
 ) -> Result<Value> {
-    let session_id = ctx_env_opt("SESSION_ID").context("missing session context")?;
-    let path = format!("/api/mcp/sessions/{session_id}/archive_agent");
+    let path = format!("/api/mcp/sessions/{}/archive_agent", context.session_id);
     daemon_post_json(client, daemon_url, &path, args).await
 }
 
-async fn list_agents_call(client: &reqwest::Client, daemon_url: &str) -> Result<Value> {
-    let session_id = ctx_env_opt("SESSION_ID").context("missing session context")?;
-    let path = format!("/api/mcp/sessions/{session_id}/list_agents");
+async fn list_agents_call(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    context: &ResolvedMcpContext,
+) -> Result<Value> {
+    let path = format!("/api/mcp/sessions/{}/list_agents", context.session_id);
     daemon_get_json(client, daemon_url, &path).await
 }
 
-async fn get_agent_call(client: &reqwest::Client, daemon_url: &str, args: &Value) -> Result<Value> {
-    let session_id = ctx_env_opt("SESSION_ID").context("missing session context")?;
-    let path = format!("/api/mcp/sessions/{session_id}/get_agent");
+async fn get_agent_call(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    context: &ResolvedMcpContext,
+    args: &Value,
+) -> Result<Value> {
+    let path = format!("/api/mcp/sessions/{}/get_agent", context.session_id);
     daemon_post_json(client, daemon_url, &path, args).await
 }
 
 async fn wait_agent_call(
     client: &reqwest::Client,
     daemon_url: &str,
+    context: &ResolvedMcpContext,
     args: &Value,
 ) -> Result<Value> {
-    let session_id = ctx_env_opt("SESSION_ID").context("missing session context")?;
-    let path = format!("/api/mcp/sessions/{session_id}/wait_agent");
+    let path = format!("/api/mcp/sessions/{}/wait_agent", context.session_id);
     daemon_post_json(client, daemon_url, &path, args).await
 }
 
 async fn interrupt_agent_call(
     client: &reqwest::Client,
     daemon_url: &str,
+    context: &ResolvedMcpContext,
     args: &Value,
 ) -> Result<Value> {
-    let session_id = ctx_env_opt("SESSION_ID").context("missing session context")?;
-    let path = format!("/api/mcp/sessions/{session_id}/interrupt_agent");
+    let path = format!("/api/mcp/sessions/{}/interrupt_agent", context.session_id);
     daemon_post_json(client, daemon_url, &path, args).await
 }
 

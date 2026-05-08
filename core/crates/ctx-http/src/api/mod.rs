@@ -24,6 +24,8 @@ mod auth;
 mod demo;
 pub(crate) mod errors;
 mod execution;
+mod mcp_context;
+mod mcp_scope;
 mod merge_queue_api;
 mod mobile_access;
 mod mobile_scopes;
@@ -56,6 +58,8 @@ pub(crate) use auth::{
 
 use artifacts::*;
 use execution::*;
+use mcp_context::*;
+use mcp_scope::*;
 use merge_queue_api::*;
 use mobile_access::*;
 use mobile_scopes::*;

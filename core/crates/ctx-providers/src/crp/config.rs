@@ -64,12 +64,6 @@ fn build_crp_session_config_with_mcp(
         if let Some(url) = env.get("CTX_DAEMON_URL") {
             mcp_env.insert("CTX_DAEMON_URL".to_string(), url.clone());
         }
-        if let Some(session_id) = env.get("CTX_SESSION_ID") {
-            mcp_env.insert("CTX_SESSION_ID".to_string(), session_id.clone());
-        }
-        if let Some(worktree_id) = env.get("CTX_WORKTREE_ID") {
-            mcp_env.insert("CTX_WORKTREE_ID".to_string(), worktree_id.clone());
-        }
         if let Some(token) = env.get("CTX_MCP_TOKEN") {
             mcp_env.insert("CTX_MCP_TOKEN".to_string(), token.clone());
         }

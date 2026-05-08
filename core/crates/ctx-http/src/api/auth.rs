@@ -46,6 +46,25 @@ pub(super) async fn auth_middleware(
     if req.extensions().get::<MobileAuthContext>().is_some() {
         return Ok(next.run(req).await);
     }
+    let header_token = req
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(|v| v.to_string());
+    let token = header_token;
+
+    if path == "/api/mcp/context" {
+        let Some(token_value) = token.as_deref() else {
+            return Err(StatusCode::UNAUTHORIZED);
+        };
+        let Some(mcp_auth) = crate::daemon::verify_mcp_auth_token(&state, token_value).await else {
+            return Err(StatusCode::UNAUTHORIZED);
+        };
+        req.extensions_mut().insert(mcp_auth);
+        return Ok(next.run(req).await);
+    }
+
     if state.core.auth_token.is_none() {
         return Ok(next.run(req).await);
     }
@@ -55,13 +74,6 @@ pub(super) async fn auth_middleware(
         return Ok(next.run(req).await);
     }
     let is_mobile_token_route = path == "/api/mobile/register";
-    let header_token = req
-        .headers()
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|h| h.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .map(|v| v.to_string());
-    let token = header_token;
 
     if token.as_deref() == state.core.auth_token.as_deref() {
         return Ok(next.run(req).await);
@@ -94,7 +106,24 @@ pub(super) async fn auth_middleware(
                     req.extensions_mut().insert(mcp_auth);
                     return Ok(next.run(req).await);
                 }
+                crate::daemon::emit_mcp_token_denied(
+                    &state,
+                    mcp_auth,
+                    req.method().as_str(),
+                    path,
+                    "scope_or_capability_mismatch",
+                );
             }
+        } else if let Some(mcp_auth) =
+            crate::daemon::verify_mcp_auth_token(&state, token_value).await
+        {
+            crate::daemon::emit_mcp_token_denied(
+                &state,
+                mcp_auth,
+                req.method().as_str(),
+                path,
+                "route_not_allowed",
+            );
         }
     }
     if is_mobile_token_route {

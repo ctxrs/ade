@@ -3,6 +3,7 @@ use std::time::Duration;
 use sha2::Digest;
 
 use super::*;
+use crate::ops_events::OpsEvent;
 use ctx_core::ids::{SessionId, WorkspaceId, WorktreeId};
 
 const PROVIDER_SESSION_MCP_AUTH_TTL: Duration = Duration::from_secs(12 * 60 * 60);
@@ -23,12 +24,15 @@ impl McpAuthCapabilities {
         }
     }
 
-    pub(crate) fn with_merge_queue_submit(mut self) -> Self {
-        self.merge_queue_submit = true;
-        self
+    pub(crate) fn provider_turn_default() -> Self {
+        Self {
+            subagents: true,
+            artifacts: true,
+            merge_queue_submit: true,
+        }
     }
 
-    pub(crate) fn env_value(self) -> String {
+    pub(crate) fn names(self) -> Vec<&'static str> {
         let mut values = Vec::new();
         if self.subagents {
             values.push("subagents");
@@ -39,7 +43,7 @@ impl McpAuthCapabilities {
         if self.merge_queue_submit {
             values.push("merge_queue_submit");
         }
-        values.join(",")
+        values
     }
 }
 
@@ -105,12 +109,52 @@ fn prune_expired_mcp_auth_entries(registry: &mut HashMap<String, TimedEntry<McpA
 fn revoke_matching_provider_session_mcp_tokens(
     registry: &mut HashMap<String, TimedEntry<McpAuthContext>>,
     ctx: McpAuthContext,
-) {
+) -> usize {
+    let before = registry.len();
     registry.retain(|_, entry| {
         entry.value.session_id != ctx.session_id
             || entry.value.workspace_id != ctx.workspace_id
             || entry.value.worktree_id != ctx.worktree_id
     });
+    before.saturating_sub(registry.len())
+}
+
+fn emit_mcp_token_event(
+    state: &AppState,
+    level: &str,
+    event_name: &str,
+    ctx: McpAuthContext,
+    meta: serde_json::Value,
+) {
+    let mut event = OpsEvent::new(level, event_name);
+    event.session_id = Some(ctx.session_id.0.to_string());
+    event.worktree_id = Some(ctx.worktree_id.0.to_string());
+    event.meta = Some(serde_json::json!({
+        "workspace_id": ctx.workspace_id.0.to_string(),
+        "capabilities": ctx.capabilities.names(),
+        "detail": meta,
+    }));
+    state.telemetry.ops_events.emit(event);
+}
+
+pub(crate) fn emit_mcp_token_denied(
+    state: &AppState,
+    ctx: McpAuthContext,
+    method: &str,
+    path: &str,
+    reason: &str,
+) {
+    emit_mcp_token_event(
+        state,
+        "warn",
+        "mcp_token_denied",
+        ctx,
+        serde_json::json!({
+            "method": method,
+            "path": path,
+            "reason": reason,
+        }),
+    );
 }
 
 pub async fn issue_provider_session_mcp_token(
@@ -141,8 +185,25 @@ pub(crate) async fn issue_provider_session_mcp_token_with_capabilities(
     let ctx = McpAuthContext::provider_session(session_id, workspace_id, worktree_id, capabilities);
     let mut registry = mcp_auth_registry_lock(state).await;
     prune_expired_mcp_auth_entries(&mut registry);
-    revoke_matching_provider_session_mcp_tokens(&mut registry, ctx);
+    let replaced_count = revoke_matching_provider_session_mcp_tokens(&mut registry, ctx);
     registry.insert(token_hash, TimedEntry::new(ctx));
+    drop(registry);
+    if replaced_count > 0 {
+        emit_mcp_token_event(
+            state,
+            "info",
+            "mcp_token_revoked",
+            ctx,
+            serde_json::json!({ "reason": "replaced", "count": replaced_count }),
+        );
+    }
+    emit_mcp_token_event(
+        state,
+        "info",
+        "mcp_token_issued",
+        ctx,
+        serde_json::json!({ "reason": "provider_session" }),
+    );
     token
 }
 
@@ -154,7 +215,19 @@ pub(crate) async fn revoke_provider_session_mcp_token(state: &AppState, token: &
     let token_hash = mcp_token_hash(token);
     let mut registry = mcp_auth_registry_lock(state).await;
     prune_expired_mcp_auth_entries(&mut registry);
-    registry.remove(&token_hash).is_some()
+    let revoked = registry.remove(&token_hash).map(|entry| entry.value);
+    drop(registry);
+    if let Some(ctx) = revoked {
+        emit_mcp_token_event(
+            state,
+            "info",
+            "mcp_token_revoked",
+            ctx,
+            serde_json::json!({ "reason": "explicit" }),
+        );
+        return true;
+    }
+    false
 }
 
 pub(crate) async fn verify_mcp_auth_token(state: &AppState, token: &str) -> Option<McpAuthContext> {

@@ -22,6 +22,7 @@ pub(super) fn api_routes() -> axum::Router<Arc<AppState>> {
 fn core_routes() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
         .route("/api/health", get(health))
+        .route("/api/mcp/context", get(get_mcp_context))
         .route("/api/settings", get(get_settings).post(update_settings))
         .route("/api/orgs/daemon_enrollments", get(list_daemon_enrollments))
         .route(

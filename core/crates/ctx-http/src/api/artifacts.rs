@@ -1,14 +1,14 @@
 use std::path::{Path as StdPath, PathBuf};
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
+use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
 use axum::Json;
 use chrono::Utc;
 use ctx_session_tools::{infer_session_artifact_mime_type, normalize_session_artifact_name};
 use serde::Deserialize;
 
-use super::errors::ApiErrorResp;
+use super::{errors::ApiErrorResp, validate_scoped_mcp_session_context};
 use crate::daemon::AppState;
 use crate::logs;
 use ctx_core::ids::{ArtifactId, SessionId};
@@ -178,6 +178,7 @@ pub(super) async fn list_session_artifacts(
 
 pub(super) async fn set_session_artifacts(
     State(state): State<Arc<AppState>>,
+    mcp_auth: Option<Extension<crate::daemon::McpAuthContext>>,
     Path(id): Path<String>,
     Json(req): Json<SetSessionArtifactsReq>,
 ) -> Result<Json<Vec<Artifact>>, (StatusCode, Json<ApiErrorResp>)> {
@@ -189,6 +190,11 @@ pub(super) async fn set_session_artifacts(
             }),
         )
     })?);
+
+    if let Some(Extension(mcp_auth)) = mcp_auth {
+        validate_scoped_mcp_session_context(&state, mcp_auth, session_id).await?;
+    }
+
     let store = state.store_for_session(session_id).await.map_err(|e| {
         (
             StatusCode::NOT_FOUND,

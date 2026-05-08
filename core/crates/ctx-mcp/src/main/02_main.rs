@@ -38,6 +38,8 @@ async fn main() -> Result<()> {
         build_identity::current_build_version().context("loading ctx-mcp build identity")?;
 
     let daemon_url = ctx_env("DAEMON_URL").unwrap_or_else(|_| "http://127.0.0.1:4399".to_string());
+    let client = reqwest::Client::new();
+    let mut cached_context: Option<ResolvedMcpContext> = None;
 
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
@@ -84,12 +86,21 @@ async fn main() -> Result<()> {
                     }),
                 )
             }
-            "tools/list" => ok(
-                id.clone(),
-                tool_catalog::tools_list_response(tool_catalog::capabilities_from_env()),
-            ),
+            "tools/list" => match cached_mcp_context(&client, &mut cached_context).await {
+                Ok(context) => ok(
+                    id.clone(),
+                    tool_catalog::tools_list_response(
+                        tool_catalog::ToolCatalogCapabilities::from_mcp_context(&context),
+                    ),
+                ),
+                Err(e) => error(
+                    id.clone(),
+                    -32000,
+                    "ctx-mcp context unavailable",
+                    Some(json!({"error": e.to_string()})),
+                ),
+            },
             "tools/call" => {
-                let client = reqwest::Client::new();
                 let params = msg.get("params").cloned().unwrap_or(json!({}));
                 let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 let raw_name = name.to_string();
@@ -103,7 +114,24 @@ async fn main() -> Result<()> {
                     raw_name
                 };
 
-                let tool_capabilities = tool_catalog::capabilities_from_env();
+                let context = match cached_mcp_context(&client, &mut cached_context).await {
+                    Ok(context) => context,
+                    Err(e) => {
+                        write_response(
+                            &mut out,
+                            error(
+                                id.clone(),
+                                -32000,
+                                "ctx-mcp context unavailable",
+                                Some(json!({"error": e.to_string()})),
+                            ),
+                        )
+                        .await?;
+                        continue;
+                    }
+                };
+                let tool_capabilities =
+                    tool_catalog::ToolCatalogCapabilities::from_mcp_context(&context);
                 if !dev_tools_enabled() && name.as_str() == "ping" {
                     ok(
                         id.clone(),
@@ -111,15 +139,10 @@ async fn main() -> Result<()> {
                             "tool disabled: {name} (ping is dev-only; set CTX_MCP_DEV_MODE=1 to enable)"
                         )),
                     )
-                } else if name.as_str() == "merge_queue_submit"
-                    && !tool_capabilities.merge_queue_submit
+                } else if let Some(message) =
+                    tool_capabilities.disabled_tool_message(name.as_str())
                 {
-                    ok(
-                        id.clone(),
-                        tool_err(anyhow::anyhow!(
-                            "tool disabled: merge_queue_submit requires an explicit scoped MCP capability"
-                        )),
-                    )
+                    ok(id.clone(), tool_err(anyhow::anyhow!(message)))
                 } else if let Some(message) = agent_scoped_tool_block_message(name.as_str()) {
                     ok(id.clone(), tool_err(anyhow::anyhow!(message)))
                 } else if let Some(message) = removed_lsp_tool_message(name.as_str()) {
@@ -142,62 +165,74 @@ async fn main() -> Result<()> {
                             }),
                         ),
                         "merge_queue_submit" => {
-                            match merge_queue_submit_call(&client, &daemon_url, &arguments).await {
+                            match merge_queue_submit_call(
+                                &client,
+                                &daemon_url,
+                                &context,
+                                &arguments,
+                            )
+                            .await
+                            {
                                 Ok(val) => ok(id.clone(), tool_ok(val)),
                                 Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "spawn_agent" => {
-                            match spawn_agent_call(&client, &daemon_url, &arguments).await {
+                            match spawn_agent_call(&client, &daemon_url, &context, &arguments).await
+                            {
                                 Ok(val) => ok(id.clone(), tool_ok(val)),
                                 Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "send_input" => {
-                            match send_input_call(&client, &daemon_url, &arguments).await {
+                            match send_input_call(&client, &daemon_url, &context, &arguments).await
+                            {
                                 Ok(val) => ok(id.clone(), tool_ok(val)),
                                 Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "archive_agent" => {
-                            match archive_agent_call(&client, &daemon_url, &arguments).await {
+                            match archive_agent_call(&client, &daemon_url, &context, &arguments)
+                                .await
+                            {
                                 Ok(val) => ok(id.clone(), tool_ok(val)),
                                 Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "wait_agent" => {
-                            match wait_agent_call(&client, &daemon_url, &arguments).await {
+                            match wait_agent_call(&client, &daemon_url, &context, &arguments).await
+                            {
                                 Ok(val) => ok(id.clone(), tool_ok(val)),
                                 Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
                         "interrupt_agent" => {
-                            match interrupt_agent_call(&client, &daemon_url, &arguments).await {
+                            match interrupt_agent_call(&client, &daemon_url, &context, &arguments)
+                                .await
+                            {
                                 Ok(val) => ok(id.clone(), tool_ok(val)),
                                 Err(e) => ok(id.clone(), tool_err(e)),
                             }
                         }
-                        "list_agents" => match list_agents_call(&client, &daemon_url).await {
-                            Ok(val) => ok(id.clone(), tool_ok(val)),
-                            Err(e) => ok(id.clone(), tool_err(e)),
-                        },
-                        "get_agent" => match get_agent_call(&client, &daemon_url, &arguments).await
+                        "list_agents" => {
+                            match list_agents_call(&client, &daemon_url, &context).await {
+                                Ok(val) => ok(id.clone(), tool_ok(val)),
+                                Err(e) => ok(id.clone(), tool_err(e)),
+                            }
+                        }
+                        "get_agent" => match get_agent_call(
+                            &client,
+                            &daemon_url,
+                            &context,
+                            &arguments,
+                        )
+                        .await
                         {
                             Ok(val) => ok(id.clone(), tool_ok(val)),
                             Err(e) => ok(id.clone(), tool_err(e)),
                         },
                         "artifacts_set" => {
-                            let normalized =
-                                (|| -> std::result::Result<(String, Vec<Value>), Value> {
-                                    let session_id =
-                                        ctx_env_opt("SESSION_ID").ok_or_else(|| {
-                                            error(
-                                                id.clone(),
-                                                -32602,
-                                                "Invalid params",
-                                                Some(json!({"missing":"session_context"})),
-                                            )
-                                        })?;
+                            let normalized = (|| -> std::result::Result<Vec<Value>, Value> {
                                     let items = arguments
                                         .get("artifacts")
                                         .and_then(|v| v.as_array())
@@ -254,15 +289,15 @@ async fn main() -> Result<()> {
                                         }));
                                     }
 
-                                    Ok((session_id, normalized))
+                                    Ok(normalized)
                                 })();
 
                             match normalized {
-                                Ok((session_id, normalized)) => {
+                                Ok(normalized) => {
                                     match set_artifacts(
                                         &client,
                                         &daemon_url,
-                                        &session_id,
+                                        &context.session_id,
                                         normalized,
                                     )
                                     .await
@@ -352,10 +387,7 @@ async fn main() -> Result<()> {
             ),
         };
 
-        let line = serde_json::to_string(&response).context("serializing MCP response")?;
-        out.write_all(line.as_bytes()).await?;
-        out.write_all(b"\n").await?;
-        out.flush().await?;
+        write_response(&mut out, response).await?;
     }
 
     Ok(())

@@ -189,13 +189,13 @@ fn build_crp_session_config_scopes_auth_tokens_to_ctx_mcp_server() {
         !mcp_env.contains_key("CTX_AUTH_TOKEN"),
         "ctx-mcp env should not receive the daemon bearer"
     );
-    assert_eq!(
-        mcp_env.get("CTX_SESSION_ID").map(String::as_str),
-        Some("session-123")
+    assert!(
+        !mcp_env.contains_key("CTX_SESSION_ID"),
+        "ctx-mcp env should derive session scope from the daemon token"
     );
-    assert_eq!(
-        mcp_env.get("CTX_WORKTREE_ID").map(String::as_str),
-        Some("worktree-123")
+    assert!(
+        !mcp_env.contains_key("CTX_WORKTREE_ID"),
+        "ctx-mcp env should derive worktree scope from the daemon token"
     );
 }
 

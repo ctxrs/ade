@@ -58,6 +58,7 @@ pub(super) async fn submit_merge_queue_entry(
                 }),
             ));
         }
+        validate_scoped_mcp_session_context(&state, mcp_auth, scoped_session_id).await?;
         session_id = Some(scoped_session_id);
         worktree_id = Some(scoped_worktree_id);
     }
