@@ -79,7 +79,8 @@ test("Linux updater proof pins automation to the repo pnpm even when installer P
   assert.match(scriptText, /repo_pnpm="\$\{CTX_UPDATER_LINUX_PROOF_PNPM:-\}"/);
   assert.match(scriptText, /repo_pnpm="\$\(command -v pnpm \|\| true\)"/);
   assert.match(scriptText, /write_report "infra_unavailable" "missing_pnpm"/);
-  assert.match(scriptText, /"\$\{repo_pnpm\}" -C "\$\{ROOT\}\/core\/apps\/desktop" test:automation:updater-native-smoke/);
+  assert.match(scriptText, /run_repo_pnpm\(\) \{\s+\(\s+cd "\$\{ROOT\}\/core"\s+"\$\{repo_pnpm\}" "\$@"\s+\)\s+\}/);
+  assert.match(scriptText, /run_repo_pnpm -C apps\/desktop test:automation:updater-native-smoke/);
   assert.match(scriptText, /CTX_DESKTOP_SMOKE_PNPM="\$\{repo_pnpm\}"/);
   assert.match(scriptText, /PATH="\$\{home_dir\}\/\.local\/bin:\$\{PATH\}"/);
 });

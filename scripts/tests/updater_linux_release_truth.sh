@@ -574,6 +574,13 @@ if [[ -z "${repo_pnpm}" ]]; then
   exit 1
 fi
 
+run_repo_pnpm() {
+  (
+    cd "${ROOT}/core"
+    "${repo_pnpm}" "$@"
+  )
+}
+
 if [[ "${RUN_CLEAN_WORKSPACE_PHASE}" == "1" && -z "${OPENROUTER_API_KEY:-}" ]]; then
   write_report "infra_unavailable" "missing_openrouter_api_key"
   echo "error: OPENROUTER_API_KEY is required for updater Linux release truth" >&2
@@ -695,7 +702,7 @@ if [[ "${RUN_UPDATER_PHASE}" == "1" ]]; then
   CTX_UPDATER_PROOF_EXPECT_AUTO_READY=1 \
   CTX_UPDATER_PROOF_EXPECT_UPDATE_AVAILABLE=1 \
   CTX_UPDATER_PROOF_APPLY_UPDATE=1 \
-  "${repo_pnpm}" -C "${ROOT}/core/apps/desktop" test:automation:updater-native-smoke; then
+  run_repo_pnpm -C apps/desktop test:automation:updater-native-smoke; then
     write_report "failed" "native_update_smoke_failed"
     exit 1
   fi
@@ -740,7 +747,7 @@ if [[ "${RUN_UPDATER_PHASE}" == "1" ]]; then
   CTX_UPDATER_E2E_CHANNEL="${TARGET_CHANNEL}" \
   CTX_UPDATER_NATIVE_SMOKE_REPORT="${UP_TO_DATE_REPORT}" \
   CTX_UPDATER_PROOF_EXPECT_UP_TO_DATE=1 \
-  "${repo_pnpm}" -C "${ROOT}/core/apps/desktop" test:automation:updater-native-smoke; then
+  run_repo_pnpm -C apps/desktop test:automation:updater-native-smoke; then
     write_report "failed" "native_up_to_date_smoke_failed"
     exit 1
   fi
