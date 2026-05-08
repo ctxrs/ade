@@ -17,7 +17,6 @@ use ctx_store::{Store, StoreManager, StoreManagerConfig};
 
 use crate::api;
 use crate::installer;
-use crate::memleak_debug;
 use crate::provider_guard;
 use crate::provider_restart;
 use crate::resource_telemetry;
@@ -32,6 +31,7 @@ mod lifecycle;
 mod listener;
 mod managed_auto_update;
 mod mcp_auth;
+mod memleak_debug;
 pub(crate) mod merge_queue;
 mod mobile_startup;
 mod provider_adapters;
