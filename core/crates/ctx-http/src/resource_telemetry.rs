@@ -11,7 +11,7 @@ use tokio::time::MissedTickBehavior;
 use ctx_avf_linux_runtime::SubstrateLifecycleRecord;
 use ctx_providers::adapters::ProviderProcessInfo;
 use ctx_resource_utilization::{
-    ProviderMemoryRollup, ResourceProcess, ResourceProcesses, SystemSnapshot,
+    trim_resource_processes, ProviderMemoryRollup, ResourceProcesses, SystemSnapshot,
 };
 
 use crate::daemon::AppState;
@@ -122,7 +122,7 @@ async fn sample_once(
         ctx_harness_runtime::selected_shared_substrate_lifecycle(&state.core.data_root)
             .ok()
             .flatten();
-    let processes = trim_processes(processes, cfg.child_limit);
+    let processes = trim_resource_processes(processes, cfg.child_limit);
     let event = ResourceTelemetryEvent {
         occurred_at: Utc::now(),
         cache_age_ms,
@@ -178,45 +178,6 @@ async fn provider_session_counts(state: &Arc<AppState>) -> HashMap<String, u64> 
         *counts.entry(session.provider_id).or_insert(0) += 1;
     }
     counts
-}
-
-fn trim_processes(processes: ResourceProcesses, child_limit: usize) -> ResourceProcesses {
-    ResourceProcesses {
-        daemon: processes.daemon.map(|proc| trim_process(proc, child_limit)),
-        providers: processes
-            .providers
-            .into_iter()
-            .map(|proc| trim_process(proc, child_limit))
-            .collect(),
-    }
-}
-
-fn trim_process(mut proc: ResourceProcess, child_limit: usize) -> ResourceProcess {
-    if proc.children.is_empty() {
-        return proc;
-    }
-
-    if child_limit == 0 {
-        proc.children.clear();
-        proc.children_truncated = true;
-        return proc;
-    }
-
-    proc.children.sort_by(|a, b| {
-        b.cpu_pct
-            .total_cmp(&a.cpu_pct)
-            .then_with(|| b.memory_bytes.cmp(&a.memory_bytes))
-            .then_with(|| a.pid.cmp(&b.pid))
-    });
-
-    if proc.children.len() > child_limit {
-        proc.children.truncate(child_limit);
-        proc.children_truncated = true;
-    } else if proc.child_count as usize > proc.children.len() {
-        proc.children_truncated = true;
-    }
-
-    proc
 }
 
 fn export_remote_metrics(

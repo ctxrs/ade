@@ -67,6 +67,50 @@ pub struct ResourceProcesses {
     pub providers: Vec<ResourceProcess>,
 }
 
+pub fn trim_resource_processes(
+    processes: ResourceProcesses,
+    child_limit: usize,
+) -> ResourceProcesses {
+    ResourceProcesses {
+        daemon: processes
+            .daemon
+            .map(|proc| trim_resource_process(proc, child_limit)),
+        providers: processes
+            .providers
+            .into_iter()
+            .map(|proc| trim_resource_process(proc, child_limit))
+            .collect(),
+    }
+}
+
+fn trim_resource_process(mut proc: ResourceProcess, child_limit: usize) -> ResourceProcess {
+    if proc.children.is_empty() {
+        return proc;
+    }
+
+    if child_limit == 0 {
+        proc.children.clear();
+        proc.children_truncated = true;
+        return proc;
+    }
+
+    proc.children.sort_by(|a, b| {
+        b.cpu_pct
+            .total_cmp(&a.cpu_pct)
+            .then_with(|| b.memory_bytes.cmp(&a.memory_bytes))
+            .then_with(|| a.pid.cmp(&b.pid))
+    });
+
+    if proc.children.len() > child_limit {
+        proc.children.truncate(child_limit);
+        proc.children_truncated = true;
+    } else if proc.child_count as usize > proc.children.len() {
+        proc.children_truncated = true;
+    }
+
+    proc
+}
+
 #[derive(Debug, Clone)]
 pub struct ProviderMemorySample {
     pub provider_id: String,
@@ -160,6 +204,85 @@ impl ProcMemoryRollup {
             && self.rss_shmem_bytes.is_none()
             && self.vm_hwm_bytes.is_none()
             && self.vm_size_bytes.is_none()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        trim_resource_processes, ResourceChildProcess, ResourceProcess, ResourceProcesses,
+    };
+
+    fn child(pid: u32, cpu_pct: f32, memory_bytes: u64) -> ResourceChildProcess {
+        ResourceChildProcess {
+            pid,
+            parent_pid: Some(1),
+            name: format!("child-{pid}"),
+            cmdline: None,
+            cpu_pct,
+            memory_bytes,
+            virtual_memory_bytes: memory_bytes,
+        }
+    }
+
+    fn process(children: Vec<ResourceChildProcess>, child_count: u64) -> ResourceProcess {
+        ResourceProcess {
+            label: "provider".to_string(),
+            pid: 1,
+            cpu_pct: 0.0,
+            memory_bytes: 0,
+            virtual_memory_bytes: 0,
+            child_count,
+            children,
+            children_truncated: false,
+        }
+    }
+
+    #[test]
+    fn trim_resource_processes_keeps_highest_cost_children() {
+        let processes = ResourceProcesses {
+            daemon: Some(process(
+                vec![child(2, 1.0, 10), child(3, 5.0, 1), child(4, 5.0, 20)],
+                3,
+            )),
+            providers: Vec::new(),
+        };
+
+        let trimmed = trim_resource_processes(processes, 2);
+        let daemon = trimmed.daemon.expect("daemon");
+        let pids = daemon
+            .children
+            .iter()
+            .map(|child| child.pid)
+            .collect::<Vec<_>>();
+
+        assert_eq!(pids, vec![4, 3]);
+        assert!(daemon.children_truncated);
+    }
+
+    #[test]
+    fn trim_resource_processes_marks_truncated_when_snapshot_was_already_partial() {
+        let processes = ResourceProcesses {
+            daemon: None,
+            providers: vec![process(vec![child(2, 1.0, 10)], 3)],
+        };
+
+        let trimmed = trim_resource_processes(processes, 5);
+        assert!(trimmed.providers[0].children_truncated);
+        assert_eq!(trimmed.providers[0].children.len(), 1);
+    }
+
+    #[test]
+    fn trim_resource_processes_zero_limit_removes_children() {
+        let processes = ResourceProcesses {
+            daemon: Some(process(vec![child(2, 1.0, 10)], 1)),
+            providers: Vec::new(),
+        };
+
+        let trimmed = trim_resource_processes(processes, 0);
+        let daemon = trimmed.daemon.expect("daemon");
+        assert!(daemon.children.is_empty());
+        assert!(daemon.children_truncated);
     }
 }
 
