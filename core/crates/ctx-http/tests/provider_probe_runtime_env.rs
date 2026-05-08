@@ -2,6 +2,7 @@ mod common;
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::http::StatusCode;
@@ -321,6 +322,61 @@ fn setup_runtime_command_with_managed_interpreter(
         data_root,
         provider_id,
         r#"{"seq":1,"channel":"control","type":"models.list","models":[{"id":"fixture-model"}],"current_model_id":"fixture-model","catalog_source":"live_remote"}"#,
+    )
+}
+
+#[cfg(unix)]
+fn setup_runtime_command_requiring_crp_handshake(
+    data_root: &Path,
+    provider_id: &str,
+) -> (String, String, PathBuf) {
+    let dep_bin_rel = format!("managed/runtime-node-{provider_id}/bin");
+    std::fs::create_dir_all(data_root.join(&dep_bin_rel)).expect("create dep bin dir");
+
+    let probe_response_path = data_root.join(format!("{provider_id}-handshake-response.json"));
+    let handshake_marker_path = data_root.join(format!("{provider_id}-handshake-observed"));
+    std::fs::write(
+        &probe_response_path,
+        r#"{"seq":1,"channel":"control","type":"models.list","models":[{"id":"fixture-model"}],"current_model_id":"fixture-model","catalog_source":"live_remote"}"#,
+    )
+    .expect("write handshake response");
+
+    let runtime_dir = data_root
+        .join("providers")
+        .join("agent-servers")
+        .join(provider_id)
+        .join("handshake-required")
+        .join("bin");
+    std::fs::create_dir_all(&runtime_dir).expect("create runtime dir");
+    let runtime_cmd = runtime_dir.join(format!("{provider_id}-crp"));
+    write_executable(
+        &runtime_cmd,
+        &format!(
+            r#"#!/bin/sh
+if [ -n "${{CTX_AUTH_TOKEN:-}}" ]; then
+  echo "unexpected CTX_AUTH_TOKEN in probe env" >&2
+  exit 91
+fi
+if IFS= read -r line; then
+  case "$line" in
+    *models.list*)
+      echo observed > '{}'
+      cat '{}'
+      exit 0
+      ;;
+  esac
+fi
+exit 1
+"#,
+            handshake_marker_path.to_string_lossy(),
+            probe_response_path.to_string_lossy()
+        ),
+    );
+
+    (
+        runtime_cmd.to_string_lossy().to_string(),
+        dep_bin_rel,
+        handshake_marker_path,
     )
 }
 
@@ -1472,6 +1528,71 @@ async fn provider_verify_probe_uses_managed_dependency_path() {
         body.get("status").and_then(serde_json::Value::as_str),
         Some("ok"),
         "expected verify status ok with managed runtime path injection: {body:#?}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn provider_verify_selected_endpoint_uses_crp_handshake() {
+    let _env_lock = lock_env().await;
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let _env_guards = configure_hermetic_codex_host_auth(data_dir.path()).await;
+    let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
+    let model_server =
+        common::openai_responses_stub::spawn_openai_responses_sse_stub(Vec::new()).await;
+    let endpoint = upsert_provider_endpoint(
+        data_dir.path(),
+        "codex",
+        HarnessEndpointUpsert {
+            endpoint_id: None,
+            name: "Codex endpoint".to_string(),
+            base_url: Some(format!("{}/v1", model_server.base_url)),
+            api_shape: Some(HarnessApiShape::OpenaiResponses),
+            auth_type: None,
+            model_override: Some("mock-model".to_string()),
+            api_key: Some("sk-test".to_string()),
+            service_account_json: None,
+            project_id: None,
+            location: None,
+        },
+    )
+    .await
+    .expect("upsert codex endpoint");
+    set_provider_source_selection(
+        data_dir.path(),
+        "codex",
+        HarnessSourceKind::Endpoint,
+        Some(endpoint.id.clone()),
+    )
+    .await
+    .expect("select codex endpoint");
+
+    let state = app_state(data_dir.path()).await;
+    let app = api::router(state.clone());
+
+    let (runtime_cmd, dep_bin_rel, handshake_marker) =
+        setup_runtime_command_requiring_crp_handshake(data_dir.path(), "codex");
+    seed_runtime_and_status(&state, "codex", runtime_cmd, dep_bin_rel).await;
+    seed_managed_codex_cli_dependency(&state, "managed/runtime-node-codex/bin").await;
+
+    let ws = common::create_workspace(&app, repo.path(), "ws").await;
+    let (status, body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        axum::http::Method::POST,
+        format!("/api/workspaces/{}/providers/codex/verify", ws.id.0),
+        Some(serde_json::json!({})),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "verify request failed: {body:#?}");
+    assert_eq!(
+        body.get("status").and_then(serde_json::Value::as_str),
+        Some("ok"),
+        "selected endpoint verify should use a CRP request handshake instead of an idle launch: {body:#?}"
+    );
+    assert!(
+        handshake_marker.exists(),
+        "selected endpoint verify returned ok without sending a CRP models.list handshake"
     );
 }
 

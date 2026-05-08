@@ -53,7 +53,7 @@ use ctx_provider_runtime::provider_launch::resolver::{
 use ctx_provider_runtime::provider_usability::{
     provider_status_is_usable, provider_status_unusable_reason,
 };
-use ctx_providers::crp::{probe_crp_models, probe_crp_runtime_launch};
+use ctx_providers::crp::probe_crp_models;
 
 #[derive(Debug, Deserialize)]
 pub(super) struct InstallTargetQuery {

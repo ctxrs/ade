@@ -128,6 +128,10 @@ CTX_HTTP_MANUAL_ONLY_TESTS = [
 ]
 
 CTX_HTTP_INTEGRATION_SOURCE_DEPS = {
+    "provider_target_scoped_installs": [
+        "//core/crates/ctx-settings-model:lib",
+        "//core/crates/ctx-settings-service:lib",
+    ],
     "title_generation_local": ["//core/crates/ctx-session-service:lib"],
     "title_generation_local_e2e": ["//core/crates/ctx-session-service:lib"],
 }

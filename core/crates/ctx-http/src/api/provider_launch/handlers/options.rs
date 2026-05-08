@@ -328,7 +328,7 @@ async fn probe_selected_endpoint_runtime_launch(
 ) -> Result<(bool, bool, Option<String>), (StatusCode, Json<serde_json::Value>)> {
     match prepare_provider_runtime_probe(state, workspace, provider_id, Some(endpoint_id)).await {
         Ok(prepared) => {
-            match probe_crp_runtime_launch(
+            match probe_crp_models(
                 provider_id,
                 prepared.command,
                 prepared.args,
@@ -337,7 +337,7 @@ async fn probe_selected_endpoint_runtime_launch(
             )
             .await
             {
-                Ok(()) => Ok((true, false, None)),
+                Ok(_) => Ok((true, false, None)),
                 Err(err) => {
                     let probe_error = logs::redact_sensitive(&err.to_string());
                     let (_, auth_required, _) = classify_probe_error(&probe_error);

@@ -142,7 +142,7 @@ pub(in crate::api) async fn verify_provider_for_workspace(
             {
                 Ok(prepared) => {
                     selected_endpoint_id = prepared.selected_endpoint_id;
-                    if let Err(err) = probe_crp_runtime_launch(
+                    if let Err(err) = probe_crp_models(
                         &provider_id,
                         prepared.command,
                         prepared.args,
