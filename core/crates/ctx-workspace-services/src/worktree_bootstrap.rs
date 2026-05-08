@@ -1,10 +1,13 @@
+use std::process::Stdio;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::Utc;
 use ctx_core::ids::{WorkspaceId, WorktreeId};
 use ctx_core::models::{Workspace, Worktree, WorktreeBootstrapStatus};
+use tokio::io::AsyncReadExt;
+use tokio::process::Command;
 
 const DEFAULT_TIMEOUT_SEC: u64 = 60;
 const MAX_LOG_BYTES: usize = 200 * 1024;
@@ -28,6 +31,35 @@ pub struct BootstrapCommandResult {
     pub stdout: String,
     pub stderr: String,
     pub timed_out: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BootstrapCommandRuntime {
+    Host,
+    Container,
+}
+
+impl BootstrapCommandRuntime {
+    fn spawn_context(self) -> &'static str {
+        match self {
+            BootstrapCommandRuntime::Host => "spawning bootstrap command",
+            BootstrapCommandRuntime::Container => "spawning bootstrap command (container)",
+        }
+    }
+
+    fn wait_context(self) -> &'static str {
+        match self {
+            BootstrapCommandRuntime::Host => "waiting on bootstrap command",
+            BootstrapCommandRuntime::Container => "waiting on bootstrap command (container)",
+        }
+    }
+
+    fn killed_wait_context(self) -> &'static str {
+        match self {
+            BootstrapCommandRuntime::Host => "waiting on killed bootstrap command",
+            BootstrapCommandRuntime::Container => "waiting on killed bootstrap command (container)",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -277,6 +309,66 @@ fn build_bootstrap_steps(command: &str) -> Result<Vec<BootstrapStep>> {
     Ok(steps)
 }
 
+pub fn shell_bootstrap_command(command: &str) -> Command {
+    if cfg!(windows) {
+        let mut cmd = Command::new("cmd");
+        cmd.arg("/C").arg(command);
+        cmd
+    } else {
+        let mut cmd = Command::new("sh");
+        cmd.arg("-lc").arg(command);
+        cmd
+    }
+}
+
+pub async fn run_bootstrap_command(
+    mut cmd: Command,
+    timeout: Duration,
+    runtime: BootstrapCommandRuntime,
+) -> Result<BootstrapCommandResult> {
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context(runtime.spawn_context())?;
+
+    let mut stdout = child.stdout.take().context("reading stdout")?;
+    let mut stderr = child.stderr.take().context("reading stderr")?;
+
+    let stdout_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        stdout.read_to_end(&mut buf).await?;
+        Ok::<Vec<u8>, std::io::Error>(buf)
+    });
+
+    let stderr_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        stderr.read_to_end(&mut buf).await?;
+        Ok::<Vec<u8>, std::io::Error>(buf)
+    });
+
+    let mut timed_out = false;
+    let status = match tokio::time::timeout(timeout, child.wait()).await {
+        Ok(status) => status.context(runtime.wait_context())?,
+        Err(_) => {
+            timed_out = true;
+            let _ = child.kill().await;
+            child.wait().await.context(runtime.killed_wait_context())?
+        }
+    };
+
+    let stdout = stdout_task.await.unwrap_or_else(|_| Ok(Vec::new()))?;
+    let stderr = stderr_task.await.unwrap_or_else(|_| Ok(Vec::new()))?;
+
+    Ok(BootstrapCommandResult {
+        exit_code: status.code(),
+        stdout: String::from_utf8_lossy(&stdout).to_string(),
+        stderr: String::from_utf8_lossy(&stderr).to_string(),
+        timed_out,
+    })
+}
+
 fn append_output(log: &mut String, output: &str, label: &str) {
     let trimmed = output.trim_end_matches('\n');
     if trimmed.is_empty() {
@@ -298,7 +390,12 @@ pub fn truncate_log(input: &str) -> (String, bool) {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_bootstrap_steps, truncate_log};
+    use std::time::Duration;
+
+    use super::{
+        build_bootstrap_steps, run_bootstrap_command, shell_bootstrap_command, truncate_log,
+        BootstrapCommandRuntime,
+    };
 
     #[test]
     fn build_bootstrap_steps_ignores_blank_commands() {
@@ -315,5 +412,33 @@ mod tests {
         let (out, truncated) = truncate_log(&input);
         assert!(truncated);
         assert!(out.contains("...(truncated)"));
+    }
+
+    #[tokio::test]
+    async fn run_bootstrap_command_captures_stdout_and_stderr() {
+        let cmd = shell_bootstrap_command("printf out; printf err >&2");
+        let result =
+            run_bootstrap_command(cmd, Duration::from_secs(5), BootstrapCommandRuntime::Host)
+                .await
+                .expect("run command");
+
+        assert_eq!(result.exit_code, Some(0));
+        assert_eq!(result.stdout, "out");
+        assert!(result.stderr.contains("err"));
+        assert!(!result.timed_out);
+    }
+
+    #[tokio::test]
+    async fn run_bootstrap_command_marks_timeout() {
+        let cmd = shell_bootstrap_command("sleep 5");
+        let result = run_bootstrap_command(
+            cmd,
+            Duration::from_millis(10),
+            BootstrapCommandRuntime::Host,
+        )
+        .await
+        .expect("run command");
+
+        assert!(result.timed_out);
     }
 }

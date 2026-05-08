@@ -1,5 +1,4 @@
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -8,8 +7,6 @@ use async_trait::async_trait;
 use ctx_core::ids::WorktreeId;
 use ctx_core::models::{Workspace, Worktree, WorktreeBootstrapNotice, WorktreeBootstrapStatus};
 use ctx_store::WorktreeBootstrapResultUpdate;
-use tokio::io::AsyncReadExt;
-use tokio::process::Command;
 
 use crate::daemon::AppState;
 use crate::execution_effective;
@@ -164,10 +161,10 @@ async fn run_bootstrap_step(
         .await;
     }
 
-    let mut cmd = command_for_shell(&step.command);
+    let mut cmd =
+        ctx_workspace_services::worktree_bootstrap::shell_bootstrap_command(&step.command);
 
     cmd.current_dir(&live_worktree_root)
-        .stdin(Stdio::null())
         .env("CTX_WORKSPACE_ROOT", &live_workspace_root)
         .env("CTX_WORKTREE_ROOT", &live_worktree_root)
         .env("CTX_WORKTREE_ID", worktree.id.0.to_string())
@@ -193,51 +190,12 @@ async fn run_bootstrap_step(
                 .as_deref()
                 .unwrap_or(&worktree.base_commit_sha),
         );
-    let mut child = cmd
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("spawning bootstrap command")?;
-
-    let mut stdout = child.stdout.take().context("reading stdout")?;
-    let mut stderr = child.stderr.take().context("reading stderr")?;
-
-    let stdout_task = tokio::spawn(async move {
-        let mut buf = Vec::new();
-        stdout.read_to_end(&mut buf).await?;
-        Ok::<Vec<u8>, std::io::Error>(buf)
-    });
-
-    let stderr_task = tokio::spawn(async move {
-        let mut buf = Vec::new();
-        stderr.read_to_end(&mut buf).await?;
-        Ok::<Vec<u8>, std::io::Error>(buf)
-    });
-
-    let mut timed_out = false;
-    let status = match tokio::time::timeout(timeout, child.wait()).await {
-        Ok(status) => status.context("waiting on bootstrap command")?,
-        Err(_) => {
-            timed_out = true;
-            let _ = child.kill().await;
-            child
-                .wait()
-                .await
-                .context("waiting on killed bootstrap command")?
-        }
-    };
-
-    let stdout = stdout_task.await.unwrap_or_else(|_| Ok(Vec::new()))?;
-    let stderr = stderr_task.await.unwrap_or_else(|_| Ok(Vec::new()))?;
-
-    Ok(
-        ctx_workspace_services::worktree_bootstrap::BootstrapCommandResult {
-            exit_code: status.code(),
-            stdout: String::from_utf8_lossy(&stdout).to_string(),
-            stderr: String::from_utf8_lossy(&stderr).to_string(),
-            timed_out,
-        },
+    ctx_workspace_services::worktree_bootstrap::run_bootstrap_command(
+        cmd,
+        timeout,
+        ctx_workspace_services::worktree_bootstrap::BootstrapCommandRuntime::Host,
     )
+    .await
 }
 
 async fn run_bootstrap_step_in_container(
@@ -293,7 +251,7 @@ async fn run_bootstrap_step_in_container(
             .to_string(),
     );
 
-    let mut cmd = match sandbox.settings.container.runtime {
+    let cmd = match sandbox.settings.container.runtime {
         ContainerRuntimeKind::NativeContainer => {
             let container_name = ctx_workspace_container::workspace_container_name(workspace.id);
             let mut cmd = ctx_harness_runtime::sandbox_container_command(&state.core.data_root)?;
@@ -322,64 +280,12 @@ async fn run_bootstrap_step_in_container(
         )?,
     };
 
-    let mut child = cmd
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("spawning bootstrap command (container)")?;
-
-    let mut stdout = child.stdout.take().context("reading stdout")?;
-    let mut stderr = child.stderr.take().context("reading stderr")?;
-
-    let stdout_task = tokio::spawn(async move {
-        let mut buf = Vec::new();
-        stdout.read_to_end(&mut buf).await?;
-        Ok::<Vec<u8>, std::io::Error>(buf)
-    });
-
-    let stderr_task = tokio::spawn(async move {
-        let mut buf = Vec::new();
-        stderr.read_to_end(&mut buf).await?;
-        Ok::<Vec<u8>, std::io::Error>(buf)
-    });
-
-    let mut timed_out = false;
-    let status = match tokio::time::timeout(timeout, child.wait()).await {
-        Ok(status) => status.context("waiting on bootstrap command (container)")?,
-        Err(_) => {
-            timed_out = true;
-            let _ = child.kill().await;
-            child
-                .wait()
-                .await
-                .context("waiting on killed bootstrap command (container)")?
-        }
-    };
-
-    let stdout = stdout_task.await.unwrap_or_else(|_| Ok(Vec::new()))?;
-    let stderr = stderr_task.await.unwrap_or_else(|_| Ok(Vec::new()))?;
-
-    Ok(
-        ctx_workspace_services::worktree_bootstrap::BootstrapCommandResult {
-            exit_code: status.code(),
-            stdout: String::from_utf8_lossy(&stdout).to_string(),
-            stderr: String::from_utf8_lossy(&stderr).to_string(),
-            timed_out,
-        },
+    ctx_workspace_services::worktree_bootstrap::run_bootstrap_command(
+        cmd,
+        timeout,
+        ctx_workspace_services::worktree_bootstrap::BootstrapCommandRuntime::Container,
     )
-}
-
-fn command_for_shell(command: &str) -> Command {
-    if cfg!(windows) {
-        let mut cmd = Command::new("cmd");
-        cmd.arg("/C").arg(command);
-        cmd
-    } else {
-        let mut cmd = Command::new("sh");
-        cmd.arg("-lc").arg(command);
-        cmd
-    }
+    .await
 }
 
 async fn write_bootstrap_log(
