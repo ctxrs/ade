@@ -6,12 +6,14 @@ use anyhow::Result;
 use serde_json::json;
 
 use ctx_core::ids::SessionId;
-pub use ctx_storage_admission::{
+pub(crate) use ctx_storage_admission::{
     is_storage_exhaustion_error, storage_emergency_message, storage_exhaustion_message,
-    StorageGuardLevel, StorageGuardObservedPath, StorageGuardPathStatus, StorageGuardReserveAction,
+    StorageGuardLevel, StorageGuardObservedPath, StorageGuardReserveAction,
     StorageGuardReserveWarning, StorageGuardRuntime, StorageGuardStatus,
-    STORAGE_GUARD_MONITOR_INTERVAL, STORAGE_GUARD_RESERVE_FILE_NAME,
+    STORAGE_GUARD_MONITOR_INTERVAL,
 };
+#[cfg(test)]
+pub(crate) use ctx_storage_admission::{StorageGuardPathStatus, STORAGE_GUARD_RESERVE_FILE_NAME};
 
 use crate::daemon::AppState;
 use crate::scheduler::SchedulerCommand;

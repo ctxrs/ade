@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use tokio::process::Command;
 
-use ctx_http::resource_governance::{apply_limits, EffectiveResourceLimits};
+use ctx_resource_utilization::resource_governance::{apply_limits, EffectiveResourceLimits};
 use ctx_settings_model::ResourceGovernanceStatusState;
 
 const SCOPE_UNIT: &str = "ctx-daemon.scope";
