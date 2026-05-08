@@ -164,32 +164,14 @@ async fn run_bootstrap_step(
     let mut cmd =
         ctx_workspace_services::worktree_bootstrap::shell_bootstrap_command(&step.command);
 
-    cmd.current_dir(&live_worktree_root)
-        .env("CTX_WORKSPACE_ROOT", &live_workspace_root)
-        .env("CTX_WORKTREE_ROOT", &live_worktree_root)
-        .env("CTX_WORKTREE_ID", worktree.id.0.to_string())
-        .env(
-            "CTX_BRANCH_NAME",
-            worktree
-                .vcs_ref
-                .clone()
-                .or_else(|| worktree.git_branch.clone())
-                .unwrap_or_default(),
-        )
-        .env(
-            "CTX_BASE_REVISION",
-            worktree
-                .base_revision
-                .as_deref()
-                .unwrap_or(&worktree.base_commit_sha),
-        )
-        .env(
-            "CTX_BASE_COMMIT_SHA",
-            worktree
-                .base_revision
-                .as_deref()
-                .unwrap_or(&worktree.base_commit_sha),
-        );
+    cmd.current_dir(&live_worktree_root);
+    for (key, value) in ctx_workspace_services::worktree_bootstrap::bootstrap_command_env(
+        worktree,
+        &live_workspace_root,
+        &live_worktree_root,
+    ) {
+        cmd.env(key, value);
+    }
     ctx_workspace_services::worktree_bootstrap::run_bootstrap_command(
         cmd,
         timeout,
@@ -216,39 +198,10 @@ async fn run_bootstrap_step_in_container(
             &state.core.daemon_url,
         )
         .await?;
-    let mut env = std::collections::HashMap::new();
-    env.insert(
-        "CTX_WORKSPACE_ROOT".to_string(),
-        sandbox.live_workspace_root.to_string_lossy().to_string(),
-    );
-    env.insert(
-        "CTX_WORKTREE_ROOT".to_string(),
-        sandbox.live_worktree_root.to_string_lossy().to_string(),
-    );
-    env.insert("CTX_WORKTREE_ID".to_string(), worktree.id.0.to_string());
-    env.insert(
-        "CTX_BRANCH_NAME".to_string(),
-        worktree
-            .vcs_ref
-            .clone()
-            .or_else(|| worktree.git_branch.clone())
-            .unwrap_or_default(),
-    );
-    env.insert(
-        "CTX_BASE_REVISION".to_string(),
-        worktree
-            .base_revision
-            .as_deref()
-            .unwrap_or(&worktree.base_commit_sha)
-            .to_string(),
-    );
-    env.insert(
-        "CTX_BASE_COMMIT_SHA".to_string(),
-        worktree
-            .base_revision
-            .as_deref()
-            .unwrap_or(&worktree.base_commit_sha)
-            .to_string(),
+    let env = ctx_workspace_services::worktree_bootstrap::bootstrap_command_env(
+        worktree,
+        sandbox.live_workspace_root,
+        sandbox.live_worktree_root,
     );
 
     let cmd = match sandbox.settings.container.runtime {

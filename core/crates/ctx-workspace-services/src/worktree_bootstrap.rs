@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -369,6 +371,48 @@ pub async fn run_bootstrap_command(
     })
 }
 
+pub fn bootstrap_command_env(
+    worktree: &Worktree,
+    live_workspace_root: &Path,
+    live_worktree_root: &Path,
+) -> HashMap<String, String> {
+    HashMap::from([
+        (
+            "CTX_WORKSPACE_ROOT".to_string(),
+            live_workspace_root.to_string_lossy().to_string(),
+        ),
+        (
+            "CTX_WORKTREE_ROOT".to_string(),
+            live_worktree_root.to_string_lossy().to_string(),
+        ),
+        ("CTX_WORKTREE_ID".to_string(), worktree.id.0.to_string()),
+        (
+            "CTX_BRANCH_NAME".to_string(),
+            worktree
+                .vcs_ref
+                .clone()
+                .or_else(|| worktree.git_branch.clone())
+                .unwrap_or_default(),
+        ),
+        (
+            "CTX_BASE_REVISION".to_string(),
+            worktree
+                .base_revision
+                .as_deref()
+                .unwrap_or(&worktree.base_commit_sha)
+                .to_string(),
+        ),
+        (
+            "CTX_BASE_COMMIT_SHA".to_string(),
+            worktree
+                .base_revision
+                .as_deref()
+                .unwrap_or(&worktree.base_commit_sha)
+                .to_string(),
+        ),
+    ])
+}
+
 fn append_output(log: &mut String, output: &str, label: &str) {
     let trimmed = output.trim_end_matches('\n');
     if trimmed.is_empty() {
@@ -390,11 +434,15 @@ pub fn truncate_log(input: &str) -> (String, bool) {
 
 #[cfg(test)]
 mod tests {
+    use chrono::Utc;
+    use ctx_core::ids::{WorkspaceId, WorktreeId};
+    use ctx_core::models::{VcsKind, Worktree};
+    use std::path::Path;
     use std::time::Duration;
 
     use super::{
-        build_bootstrap_steps, run_bootstrap_command, shell_bootstrap_command, truncate_log,
-        BootstrapCommandRuntime,
+        bootstrap_command_env, build_bootstrap_steps, run_bootstrap_command,
+        shell_bootstrap_command, truncate_log, BootstrapCommandRuntime,
     };
 
     #[test]
@@ -440,5 +488,62 @@ mod tests {
         .expect("run command");
 
         assert!(result.timed_out);
+    }
+
+    #[test]
+    fn bootstrap_command_env_uses_live_roots_and_worktree_identity() {
+        let worktree = Worktree {
+            id: WorktreeId::new(),
+            workspace_id: WorkspaceId::new(),
+            root_path: "/host/worktree".to_string(),
+            base_commit_sha: "base-sha".to_string(),
+            git_branch: Some("ctx/test".to_string()),
+            vcs_kind: Some(VcsKind::Git),
+            base_revision: Some("base-rev".to_string()),
+            vcs_ref: Some("vcs-ref".to_string()),
+            created_at: Utc::now(),
+            bootstrap_status: None,
+            bootstrap_started_at: None,
+            bootstrap_finished_at: None,
+            bootstrap_exit_code: None,
+            bootstrap_timeout_sec: None,
+            bootstrap_error: None,
+            bootstrap_log_path: None,
+            bootstrap_log_truncated: None,
+            bootstrap_command: None,
+            bootstrap_script_path: None,
+        };
+
+        let env = bootstrap_command_env(
+            &worktree,
+            Path::new("/live/workspace"),
+            Path::new("/live/worktree"),
+        );
+
+        assert_eq!(
+            env.get("CTX_WORKSPACE_ROOT").map(String::as_str),
+            Some("/live/workspace")
+        );
+        assert_eq!(
+            env.get("CTX_WORKTREE_ROOT").map(String::as_str),
+            Some("/live/worktree")
+        );
+        let worktree_id = worktree.id.0.to_string();
+        assert_eq!(
+            env.get("CTX_WORKTREE_ID").map(String::as_str),
+            Some(worktree_id.as_str())
+        );
+        assert_eq!(
+            env.get("CTX_BRANCH_NAME").map(String::as_str),
+            Some("vcs-ref")
+        );
+        assert_eq!(
+            env.get("CTX_BASE_REVISION").map(String::as_str),
+            Some("base-rev")
+        );
+        assert_eq!(
+            env.get("CTX_BASE_COMMIT_SHA").map(String::as_str),
+            Some("base-rev")
+        );
     }
 }
