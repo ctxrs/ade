@@ -135,6 +135,7 @@ CTX_HTTP_STORAGE_GUARD_UNIT_TEST_ARGS = CTX_HTTP_UNIT_TEST_SERIAL_ARGS + [
 ]
 CTX_HTTP_DAEMON_UNIT_TEST_ARGS = CTX_HTTP_UNIT_TEST_SERIAL_ARGS + [
     "daemon::",
+    "--skip=daemon::execution_effective::",
     "--skip=daemon::installer::",
     "--skip=daemon::merge_queue::",
     "--skip=daemon::provider_launch::",
@@ -142,6 +143,9 @@ CTX_HTTP_DAEMON_UNIT_TEST_ARGS = CTX_HTTP_UNIT_TEST_SERIAL_ARGS + [
     "--skip=daemon::storage_guard::",
     "--skip=daemon::workspace_runtime::",
     "--skip=daemon::workspaces::vcs_hooks::",
+]
+CTX_HTTP_EXECUTION_EFFECTIVE_UNIT_TEST_ARGS = CTX_HTTP_UNIT_TEST_SERIAL_ARGS + [
+    "daemon::execution_effective::",
 ]
 CTX_HTTP_DAEMON_GOLDEN_PATH_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
     "--exact",
@@ -568,6 +572,15 @@ declare_ctx_http_rust_unit_test(
 )
 
 declare_ctx_http_rust_unit_test(
+    name = "unit_tests_execution_effective",
+    args = CTX_HTTP_EXECUTION_EFFECTIVE_UNIT_TEST_ARGS,
+    compile_data = CTX_HTTP_COMPILE_DATA,
+    data = CTX_HTTP_COMPILE_DATA,
+    deps = CTX_HTTP_DIRECT_TEST_DEPS,
+    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
+)
+
+declare_ctx_http_rust_unit_test(
     name = "unit_tests_installer",
     args = CTX_HTTP_TEST_ARGS + ["daemon::installer::"],
     compile_data = CTX_HTTP_COMPILE_DATA,
@@ -980,6 +993,7 @@ test_suite(
     name = "unit-tests-daemon-and-scheduler",
     tests = [
         ":unit_tests_daemon",
+        ":unit_tests_execution_effective",
         ":unit_tests_scheduler",
         ":unit_tests_storage_guard",
         ":unit_tests_daemon_golden_path_with_fake_provider",
