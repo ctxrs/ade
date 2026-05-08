@@ -27,7 +27,7 @@ pub(crate) async fn resolve_existing_worktree_execution(
         .await?
         .ok_or_else(|| anyhow::anyhow!("worktree not found"))?;
     let base_effective =
-        crate::execution_effective::effective_execution_settings(state, workspace.id)
+        crate::daemon::execution_effective::effective_execution_settings(state, workspace.id)
             .await
             .context("loading workspace execution settings")?;
     let data_plane =

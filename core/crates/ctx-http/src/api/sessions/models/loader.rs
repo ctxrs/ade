@@ -263,7 +263,7 @@ pub(crate) async fn load_provider_model_catalog(
     provider_id: &str,
 ) -> Result<Option<ModelCatalog>, String> {
     let install_target =
-        crate::execution_effective::effective_install_target(state.as_ref(), workspace.id)
+        crate::daemon::execution_effective::effective_install_target(state.as_ref(), workspace.id)
             .await
             .map_err(|err| {
                 format!("workspace execution settings unavailable for provider options: {err:#}")
@@ -278,15 +278,16 @@ pub(crate) async fn load_provider_model_catalog_for_execution_environment(
     provider_id: &str,
     execution_environment: ctx_core::models::ExecutionEnvironment,
 ) -> Result<Option<ModelCatalog>, String> {
-    let install_target = crate::execution_effective::effective_install_target_for_environment(
-        state.as_ref(),
-        workspace.id,
-        execution_environment,
-    )
-    .await
-    .map_err(|err| {
-        format!("workspace execution settings unavailable for provider options: {err:#}")
-    })?;
+    let install_target =
+        crate::daemon::execution_effective::effective_install_target_for_environment(
+            state.as_ref(),
+            workspace.id,
+            execution_environment,
+        )
+        .await
+        .map_err(|err| {
+            format!("workspace execution settings unavailable for provider options: {err:#}")
+        })?;
     load_provider_model_catalog_for_install_target(state, workspace, provider_id, install_target)
         .await
 }

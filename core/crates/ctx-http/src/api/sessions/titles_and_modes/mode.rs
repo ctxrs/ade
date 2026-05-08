@@ -46,19 +46,20 @@ pub(crate) async fn set_session_mode(
             "session mode update resolved a different execution_environment than persisted metadata"
         );
     }
-    let install_target = crate::execution_effective::effective_install_target_for_environment(
-        state.as_ref(),
-        worktree.workspace_id,
-        execution_environment,
-    )
-    .await
-    .map_err(|err| {
-        tracing::warn!(
-            workspace_id = %worktree.workspace_id.0,
-            "set_session_mode failed to load execution settings: {err:#}",
-        );
-        crate::api::shared::status_code_for_internal_error(&err)
-    })?;
+    let install_target =
+        crate::daemon::execution_effective::effective_install_target_for_environment(
+            state.as_ref(),
+            worktree.workspace_id,
+            execution_environment,
+        )
+        .await
+        .map_err(|err| {
+            tracing::warn!(
+                workspace_id = %worktree.workspace_id.0,
+                "set_session_mode failed to load execution settings: {err:#}",
+            );
+            crate::api::shared::status_code_for_internal_error(&err)
+        })?;
 
     let adapter = crate::daemon::ensure_provider_adapter_for_target(
         state.as_ref(),

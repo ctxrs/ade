@@ -159,10 +159,12 @@ async fn validate_web_session_worktree(
     worktree: &Worktree,
 ) -> anyhow::Result<()> {
     let has_sandbox_binding = store.get_sandbox_binding(worktree.id).await?.is_some();
-    let effective =
-        crate::execution_effective::effective_execution_settings(state, worktree.workspace_id)
-            .await
-            .context("loading workspace execution settings for web session")?;
+    let effective = crate::daemon::execution_effective::effective_execution_settings(
+        state,
+        worktree.workspace_id,
+    )
+    .await
+    .context("loading workspace execution settings for web session")?;
     validate_web_session_host_worktree(
         has_sandbox_binding,
         matches!(effective.mode, ExecutionMode::Sandbox),

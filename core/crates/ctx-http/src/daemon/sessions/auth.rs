@@ -168,20 +168,21 @@ async fn prepare_session_auth_runtime(
             "session authenticate resolved a different execution_environment than persisted metadata"
         );
     }
-    let install_target = crate::execution_effective::effective_install_target_for_environment(
-        state.as_ref(),
-        worktree.workspace_id,
-        execution_environment,
-    )
-    .await
-    .map_err(|error| {
-        let message = format!("failed to load workspace execution settings: {error:#}");
-        if ctx_settings_service::is_execution_policy_denial(&error) {
-            SessionAuthError::Forbidden(message)
-        } else {
-            SessionAuthError::Internal(message)
-        }
-    })?;
+    let install_target =
+        crate::daemon::execution_effective::effective_install_target_for_environment(
+            state.as_ref(),
+            worktree.workspace_id,
+            execution_environment,
+        )
+        .await
+        .map_err(|error| {
+            let message = format!("failed to load workspace execution settings: {error:#}");
+            if ctx_settings_service::is_execution_policy_denial(&error) {
+                SessionAuthError::Forbidden(message)
+            } else {
+                SessionAuthError::Internal(message)
+            }
+        })?;
     let adapter_cfg = crate::daemon::load_managed_agent_server_config_or_err(&state.core.data_root)
         .await
         .map_err(|err| SessionAuthError::Internal(err.to_string()))?;

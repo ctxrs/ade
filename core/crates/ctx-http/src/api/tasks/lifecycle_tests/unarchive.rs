@@ -140,7 +140,7 @@ async fn unarchive_task_recreates_managed_root_and_keeps_binding_snapshot_runtim
     );
 
     let current_effective =
-        crate::execution_effective::effective_execution_settings(&state, workspace.id)
+        crate::daemon::execution_effective::effective_execution_settings(&state, workspace.id)
             .await
             .expect("load current effective settings");
     assert_eq!(

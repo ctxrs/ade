@@ -8,8 +8,8 @@ use ctx_core::ids::WorktreeId;
 use ctx_core::models::{Workspace, Worktree, WorktreeBootstrapNotice, WorktreeBootstrapStatus};
 use ctx_store::WorktreeBootstrapResultUpdate;
 
+use crate::daemon::execution_effective;
 use crate::daemon::AppState;
-use crate::execution_effective;
 use ctx_settings_model::{ContainerRuntimeKind, ExecutionMode};
 use ctx_workspace_config as workspace_config;
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;

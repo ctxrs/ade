@@ -9,7 +9,7 @@ use ctx_provider_runtime::provider_launch::status::mark_provider_status_with_man
 pub(crate) use ctx_provider_runtime::provider_launch::status::provider_status_for_target;
 use ctx_providers::adapters::{ProviderHealth, ProviderUsability};
 
-use crate::execution_effective;
+use crate::daemon::execution_effective;
 
 async fn provider_status_without_target_bootstrap(
     state: &Arc<AppState>,
