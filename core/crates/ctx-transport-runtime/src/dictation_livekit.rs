@@ -33,6 +33,34 @@ impl LiveKitDictationConfig {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct LiveKitDictationConfigInput {
+    pub api_key: String,
+    pub api_secret: Option<String>,
+    pub base_url: String,
+    pub model: String,
+    pub language: String,
+}
+
+pub fn normalize_livekit_dictation_config(
+    input: LiveKitDictationConfigInput,
+) -> anyhow::Result<LiveKitDictationConfig> {
+    let api_key = input.api_key.trim().to_string();
+    let api_secret = input.api_secret.unwrap_or_default().trim().to_string();
+    anyhow::ensure!(
+        !api_key.is_empty() && !api_secret.is_empty(),
+        "LiveKit API credentials missing. Configure them in Settings."
+    );
+
+    Ok(LiveKitDictationConfig {
+        api_key,
+        api_secret,
+        base_url: input.base_url,
+        model: input.model,
+        language: input.language,
+    })
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct LiveKitInferenceClaims {
     iss: String,
@@ -232,5 +260,50 @@ mod tests {
             cfg.normalized_base_url(),
             DEFAULT_LIVEKIT_INFERENCE_BASE_URL
         );
+    }
+
+    #[test]
+    fn livekit_dictation_config_normalization_requires_credentials() {
+        let error = normalize_livekit_dictation_config(LiveKitDictationConfigInput {
+            api_key: "  ".to_string(),
+            api_secret: Some("secret".to_string()),
+            base_url: String::new(),
+            model: "auto".to_string(),
+            language: String::new(),
+        })
+        .expect_err("api key required");
+        assert!(error
+            .to_string()
+            .contains("LiveKit API credentials missing"));
+
+        let error = normalize_livekit_dictation_config(LiveKitDictationConfigInput {
+            api_key: "key".to_string(),
+            api_secret: None,
+            base_url: String::new(),
+            model: "auto".to_string(),
+            language: String::new(),
+        })
+        .expect_err("api secret required");
+        assert!(error
+            .to_string()
+            .contains("LiveKit API credentials missing"));
+    }
+
+    #[test]
+    fn livekit_dictation_config_normalization_trims_credentials() {
+        let cfg = normalize_livekit_dictation_config(LiveKitDictationConfigInput {
+            api_key: " key ".to_string(),
+            api_secret: Some(" secret ".to_string()),
+            base_url: "https://example.test".to_string(),
+            model: "deepgram/nova-3".to_string(),
+            language: "en".to_string(),
+        })
+        .expect("config");
+
+        assert_eq!(cfg.api_key, "key");
+        assert_eq!(cfg.api_secret, "secret");
+        assert_eq!(cfg.base_url, "https://example.test");
+        assert_eq!(cfg.model, "deepgram/nova-3");
+        assert_eq!(cfg.language, "en");
     }
 }

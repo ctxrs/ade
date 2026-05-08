@@ -7,7 +7,7 @@ use axum::extract::ws::{Message as WsMessage, WebSocket};
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use ctx_transport_runtime::dictation_livekit::{
-    connect_livekit_inference_stt, LiveKitDictationConfig,
+    connect_livekit_inference_stt, normalize_livekit_dictation_config, LiveKitDictationConfigInput,
 };
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -94,34 +94,28 @@ pub async fn dictation_livekit_stream(mut socket: WebSocket, state: std::sync::A
         return;
     };
 
-    if cfg.api_key.trim().is_empty()
-        || cfg
-            .api_secret
-            .as_ref()
-            .map(|s| s.trim().is_empty())
-            .unwrap_or(true)
-    {
-        let _ = socket
-            .send(WsMessage::Text(
-                serde_json::to_string(&ErrorMsg {
-                    r#type: "error",
-                    message: "LiveKit API credentials missing. Configure them in Settings."
-                        .to_string(),
-                })
-                .unwrap_or_else(|_| {
-                    "{\"type\":\"error\",\"message\":\"missing credentials\"}".to_string()
-                }),
-            ))
-            .await;
-        return;
-    }
-
-    let cfg = LiveKitDictationConfig {
+    let cfg = match normalize_livekit_dictation_config(LiveKitDictationConfigInput {
         api_key: cfg.api_key,
-        api_secret: cfg.api_secret.unwrap_or_default(),
+        api_secret: cfg.api_secret,
         base_url: cfg.base_url,
         model: cfg.model,
         language: cfg.language,
+    }) {
+        Ok(cfg) => cfg,
+        Err(err) => {
+            let _ = socket
+                .send(WsMessage::Text(
+                    serde_json::to_string(&ErrorMsg {
+                        r#type: "error",
+                        message: err.to_string(),
+                    })
+                    .unwrap_or_else(|_| {
+                        "{\"type\":\"error\",\"message\":\"missing credentials\"}".to_string()
+                    }),
+                ))
+                .await;
+            return;
+        }
     };
 
     let lk_ws = match connect_livekit_inference_stt(&cfg).await {
