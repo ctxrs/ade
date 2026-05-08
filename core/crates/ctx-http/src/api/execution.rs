@@ -1,24 +1,12 @@
 use std::sync::Arc;
 
-use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
-use axum::extract::{Query, State};
+use axum::extract::State;
 use axum::http::StatusCode;
-use axum::response::IntoResponse;
 use axum::Json;
-use futures::{SinkExt, StreamExt};
 use serde::Deserialize;
-use tokio::sync::broadcast;
 
 use ctx_core::ids::WorkspaceId;
-use ctx_execution_runtime::{
-    ExecutionLaunchSnapshot, ExecutionLaunchState, ExecutionLaunchStreamEvent,
-    ExecutionSetupJobKind, RuntimePrewarmScope,
-};
-use ctx_linux_sandbox_runtime::{
-    linux_sandbox_runtime_status, prepare_linux_sandbox_runtime,
-    stage_linux_sandbox_runtime_downloads, LinuxSandboxActivationMode,
-    LinuxSandboxRuntimePrepareResult, LinuxSandboxRuntimeStatus,
-};
+use ctx_execution_runtime::{ExecutionLaunchSnapshot, ExecutionSetupJobKind, RuntimePrewarmScope};
 
 use crate::daemon::execution_effective;
 use crate::daemon::AppState;
@@ -28,14 +16,13 @@ use ctx_settings_model::ExecutionMode;
 use super::errors::ApiErrorResp;
 use super::shared::map_effective_execution_settings_error;
 
-fn linux_sandbox_user_message(kind: &str) -> String {
-    match kind {
-        "status" => "Linux sandbox runtime status check failed".to_string(),
-        "stage" => "Linux sandbox runtime downloads failed to stage".to_string(),
-        "prepare" => "Preparing Linux sandbox runtime failed".to_string(),
-        _ => "Linux sandbox operation failed".to_string(),
-    }
-}
+mod launch_stream;
+mod linux_sandbox;
+
+pub(super) use launch_stream::{launch_status, launch_stream_ws};
+pub(super) use linux_sandbox::{
+    linux_sandbox_runtime_prepare, linux_sandbox_runtime_stage, linux_sandbox_runtime_status_api,
+};
 
 #[derive(Debug, Deserialize)]
 pub(super) struct ExecutionLaunchStartReq {
@@ -117,214 +104,6 @@ pub(super) async fn launch_start(
         }
     };
     Ok(Json(snapshot))
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct LinuxSandboxRuntimePrepareReq {
-    #[serde(default)]
-    activation_mode: Option<LinuxSandboxActivationMode>,
-    #[serde(default)]
-    sudo_password: Option<String>,
-}
-
-pub(super) async fn linux_sandbox_runtime_status_api(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<LinuxSandboxRuntimeStatus>, (StatusCode, Json<ApiErrorResp>)> {
-    let status = linux_sandbox_runtime_status(&state.core.data_root)
-        .await
-        .map_err(|err| {
-            tracing::warn!(target: "linux_sandbox", error = %logs::redact_sensitive(&err.to_string()), "linux_sandbox_runtime_status_api error");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp { error: linux_sandbox_user_message("status") }),
-            )
-        })?;
-    Ok(Json(status))
-}
-
-pub(super) async fn linux_sandbox_runtime_stage(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<LinuxSandboxRuntimeStatus>, (StatusCode, Json<ApiErrorResp>)> {
-    let status = stage_linux_sandbox_runtime_downloads(&state.core.data_root, None)
-        .await
-        .map_err(|err| {
-            tracing::warn!(target: "linux_sandbox", error = %logs::redact_sensitive(&err.to_string()), "linux_sandbox_runtime_stage error");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp { error: linux_sandbox_user_message("stage") }),
-            )
-        })?;
-    Ok(Json(status))
-}
-
-pub(super) async fn linux_sandbox_runtime_prepare(
-    State(state): State<Arc<AppState>>,
-    Json(req): Json<LinuxSandboxRuntimePrepareReq>,
-) -> Result<Json<LinuxSandboxRuntimePrepareResult>, (StatusCode, Json<ApiErrorResp>)> {
-    if state
-        .core
-        .update_drain
-        .acquire("linux_sandbox_runtime_prepare", "execution_api")
-        .await
-        .is_none()
-    {
-        return Err((
-            StatusCode::CONFLICT,
-            Json(ApiErrorResp {
-                error: "Linux sandbox runtime prepare is already in progress. Retry when current maintenance completes.".to_string(),
-            }),
-        ));
-    }
-    let activity = crate::daemon::daemon_sandbox_work_activity_summary(&state)
-        .await
-        .map_err(|err| {
-            let state = state.clone();
-            tokio::spawn(async move {
-                let _ = state.core.update_drain.release().await;
-            });
-            tracing::warn!(target: "linux_sandbox", error = %logs::redact_sensitive(&err.to_string()), "linux_sandbox_runtime_prepare activity gate error");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp { error: linux_sandbox_user_message("prepare") }),
-            )
-        })?;
-    if activity.active {
-        let _ = state.core.update_drain.release().await;
-        return Err((
-            StatusCode::CONFLICT,
-            Json(ApiErrorResp {
-                error: "Preparing Linux sandbox runtime is blocked while sandbox work is active. Retry when sandbox turns, terminals, containers, and runtime operations are idle.".to_string(),
-            }),
-        ));
-    }
-    let result = prepare_linux_sandbox_runtime(
-        &state.core.data_root,
-        req.activation_mode
-            .unwrap_or(LinuxSandboxActivationMode::Local),
-        req.sudo_password.as_deref(),
-        None,
-    )
-    .await
-    .map_err(|err| {
-        let state = state.clone();
-        tokio::spawn(async move {
-            let _ = state.core.update_drain.release().await;
-        });
-        tracing::warn!(target: "linux_sandbox", error = %logs::redact_sensitive(&err.to_string()), "linux_sandbox_runtime_prepare error");
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp { error: linux_sandbox_user_message("prepare") }),
-        )
-    })?;
-    let _ = state.core.update_drain.release().await;
-    Ok(Json(result))
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct ExecutionLaunchStatusQuery {
-    job_id: String,
-}
-
-pub(super) async fn launch_status(
-    State(state): State<Arc<AppState>>,
-    Query(query): Query<ExecutionLaunchStatusQuery>,
-) -> Result<Json<ExecutionLaunchSnapshot>, StatusCode> {
-    let job_id = query.job_id.trim();
-    if job_id.is_empty() {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-    let snapshot = state
-        .execution
-        .setup
-        .launch_status(job_id)
-        .await
-        .ok_or(StatusCode::NOT_FOUND)?;
-    Ok(Json(snapshot))
-}
-
-pub(super) async fn launch_stream_ws(
-    ws: WebSocketUpgrade,
-    State(state): State<Arc<AppState>>,
-    Query(query): Query<ExecutionLaunchStatusQuery>,
-) -> impl IntoResponse {
-    let job_id = query.job_id.trim().to_string();
-    if job_id.is_empty() {
-        return StatusCode::BAD_REQUEST.into_response();
-    }
-
-    let Some((snapshot, rx)) = state.execution.setup.subscribe_launch(&job_id).await else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-
-    ws.on_upgrade(move |socket| async move {
-        if let Err(err) = handle_launch_stream_ws(socket, snapshot, rx).await {
-            tracing::debug!("execution launch stream ended: {err:#}");
-        }
-    })
-    .into_response()
-}
-
-async fn handle_launch_stream_ws(
-    socket: WebSocket,
-    snapshot: ExecutionLaunchSnapshot,
-    mut rx: broadcast::Receiver<ExecutionLaunchStreamEvent>,
-) -> anyhow::Result<()> {
-    let (mut sender, mut receiver) = socket.split();
-
-    send_event(
-        &mut sender,
-        &ExecutionLaunchStreamEvent::LaunchSnapshot {
-            snapshot: snapshot.clone(),
-        },
-    )
-    .await?;
-
-    if !matches!(snapshot.state, ExecutionLaunchState::Running) {
-        return Ok(());
-    }
-
-    loop {
-        tokio::select! {
-            incoming = receiver.next() => {
-                match incoming {
-                    Some(Ok(WsMessage::Close(_))) | None => break,
-                    Some(Ok(WsMessage::Ping(payload))) => {
-                        let _ = sender.send(WsMessage::Pong(payload)).await;
-                    }
-                    Some(Ok(_)) => {}
-                    Some(Err(_)) => break,
-                }
-            }
-            event = rx.recv() => {
-                match event {
-                    Ok(event) => {
-                        let is_terminal = matches!(event, ExecutionLaunchStreamEvent::LaunchComplete { .. } | ExecutionLaunchStreamEvent::LaunchError { .. });
-                        send_event(&mut sender, &event).await?;
-                        if is_terminal {
-                            break;
-                        }
-                    }
-                    Err(broadcast::error::RecvError::Lagged(_)) => {
-                        continue;
-                    }
-                    Err(broadcast::error::RecvError::Closed) => {
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-async fn send_event<S>(sender: &mut S, event: &ExecutionLaunchStreamEvent) -> anyhow::Result<()>
-where
-    S: futures::Sink<WsMessage, Error = axum::Error> + Unpin,
-{
-    let raw = serde_json::to_string(event)?;
-    sender.send(WsMessage::Text(raw)).await?;
-    Ok(())
 }
 
 async fn resolve_workspace_execution_settings(
