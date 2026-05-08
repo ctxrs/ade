@@ -20,6 +20,7 @@ mod handlers;
 mod task_deletion;
 #[path = "tasks/task_title.rs"]
 mod task_title;
+mod worktree_bootstrap;
 #[path = "tasks/worktree_lifecycle.rs"]
 mod worktree_lifecycle;
 pub(in crate::api) use creation::*;
@@ -46,7 +47,6 @@ use crate::daemon::AppState;
 use crate::execution_effective;
 use crate::scheduler::SchedulerCommand;
 use crate::vcs_hooks;
-use crate::worktree_bootstrap;
 use ctx_core::ids::{MessageId, RunId, SessionId, TaskId, TurnId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     ExecutionEnvironment, Message, MessageDelivery, MessageRole, SandboxBinding, SandboxProfile,
