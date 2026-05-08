@@ -21,6 +21,39 @@ const readTrimmedEnv = (name: string): string | null => {
 
 const normalizeHost = (rawHost: string): string => rawHost.replace(/\/+$/, "");
 
+const stringProperty = (
+  properties: Record<string, unknown> | undefined,
+  key: string,
+): string | null => {
+  const value = properties?.[key];
+  return typeof value === "string" ? value.trim() : null;
+};
+
+const hasLocalBuildVersion = (
+  properties: Record<string, unknown> | undefined,
+): boolean => {
+  for (const key of ["app_version", "current_version", "version"]) {
+    if (stringProperty(properties, key)?.startsWith("0.0.0")) return true;
+  }
+  return false;
+};
+
+const shouldCapturePostHogEvent = (
+  eventName: string,
+  properties: Record<string, unknown> | undefined,
+): boolean => {
+  if (eventName === "analytics_pipeline_smoke") return true;
+  if (stringProperty(properties, "analytics_environment") !== "production") {
+    return false;
+  }
+  if (stringProperty(properties, "traffic_class") !== "user") return false;
+  if (stringProperty(properties, "origin_runtime") !== "desktop") return false;
+  if (stringProperty(properties, "surface") !== "desktop") return false;
+  if (stringProperty(properties, "provider_id") === "fake") return false;
+  if (hasLocalBuildVersion(properties)) return false;
+  return true;
+};
+
 const sanitizeProperties = (
   raw: Record<string, unknown> | undefined,
 ): Record<string, PostHogScalar> => {
@@ -53,6 +86,7 @@ export const capturePostHogEvent = async (
   const eventName = input.event.trim();
   const distinctId = input.distinctId.trim();
   if (!eventName || !distinctId) return;
+  if (!shouldCapturePostHogEvent(eventName, input.properties)) return;
 
   const host = normalizeHost(
     readTrimmedEnv("POSTHOG_HOST") ?? DEFAULT_POSTHOG_HOST,

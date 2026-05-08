@@ -36,6 +36,13 @@ type TelemetryBatch = {
   events?: unknown;
 };
 
+export type TelemetryTrafficClass =
+  | "user"
+  | "synthetic"
+  | "internal"
+  | "load_test"
+  | "ci";
+
 export type TelemetryRow = {
   event_id: string;
   install_id_hash: string | null;
@@ -48,6 +55,8 @@ export type TelemetryRow = {
   broker_runtime: string;
   origin_runtime: string;
   source: string | null;
+  analytics_environment: string | null;
+  traffic_class: TelemetryTrafficClass;
   app_version: string;
   os: string;
   arch: string;
@@ -64,6 +73,7 @@ export type TelemetryRow = {
 };
 
 export type TelemetryPostHogCapture = {
+  eventId: string;
   event: string;
   distinctId: string;
   properties: Record<string, unknown>;
@@ -72,6 +82,14 @@ export type TelemetryPostHogCapture = {
 export type TelemetryIngestPlan = {
   rows: TelemetryRow[];
   posthogCaptures: TelemetryPostHogCapture[];
+};
+
+export const selectPostHogCapturesForInsertedRows = (
+  captures: TelemetryPostHogCapture[],
+  rowsToInsert: TelemetryRow[],
+): TelemetryPostHogCapture[] => {
+  const insertedEventIds = new Set(rowsToInsert.map((row) => row.event_id));
+  return captures.filter((capture) => insertedEventIds.has(capture.eventId));
 };
 
 export class TelemetryIngestError extends Error {
@@ -116,6 +134,14 @@ const FORBIDDEN_KEY_FRAGMENTS = [
   "authorization",
   "cookie",
 ];
+const PIPELINE_SMOKE_EVENT_NAME = "analytics_pipeline_smoke";
+const TRAFFIC_CLASSES = new Set<TelemetryTrafficClass>([
+  "user",
+  "synthetic",
+  "internal",
+  "load_test",
+  "ci",
+]);
 const BATCH_KEYS = new Set([
   "broker_install_id",
   "broker_runtime",
@@ -284,6 +310,58 @@ function pickBoolean(...values: Array<unknown>): boolean | null {
   return null;
 }
 
+function stringProperty(
+  properties: Record<string, unknown>,
+  key: string,
+): string | null {
+  const value = properties[key];
+  return typeof value === "string" ? value.trim() : null;
+}
+
+function normalizeTrafficClass(value: unknown): TelemetryTrafficClass | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  return TRAFFIC_CLASSES.has(normalized as TelemetryTrafficClass)
+    ? normalized as TelemetryTrafficClass
+    : null;
+}
+
+function classifyTraffic(
+  eventName: string,
+  appVersion: string,
+  providerId: string | null,
+  analyticsEnvironment: string | null,
+  properties: Record<string, unknown>,
+): TelemetryTrafficClass {
+  if (eventName === PIPELINE_SMOKE_EVENT_NAME) return "synthetic";
+  const explicit = normalizeTrafficClass(properties.traffic_class);
+  if (explicit && explicit !== "user") return explicit;
+  if (providerId === "fake") return "synthetic";
+  if (appVersion.startsWith("0.0.0")) return "synthetic";
+  if (analyticsEnvironment && analyticsEnvironment !== "production") {
+    return "internal";
+  }
+  return explicit ?? "user";
+}
+
+function shouldMirrorPostHogCapture(
+  eventName: string,
+  properties: Record<string, unknown>,
+): boolean {
+  if (eventName === PIPELINE_SMOKE_EVENT_NAME) return true;
+  if (stringProperty(properties, "analytics_environment") !== "production") {
+    return false;
+  }
+  if (stringProperty(properties, "traffic_class") !== "user") return false;
+  if (stringProperty(properties, "origin_runtime") !== "desktop") return false;
+  if (stringProperty(properties, "surface") !== "desktop") return false;
+  if (stringProperty(properties, "provider_id") === "fake") return false;
+  if (stringProperty(properties, "app_version")?.startsWith("0.0.0")) {
+    return false;
+  }
+  return true;
+}
+
 export async function buildTelemetryIngestPlan(
   payload: unknown,
   opts: { idSalt: string; now?: () => Date },
@@ -421,6 +499,18 @@ export async function buildTelemetryIngestPlan(
     );
     const os = requireString(rawEvent.os ?? brokerOs, 32, "missing_os");
     const arch = requireString(rawEvent.arch ?? brokerArch, 32, "missing_arch");
+    const analyticsEnvironment = pickString(
+      typeof properties.analytics_environment === "string"
+        ? properties.analytics_environment
+        : null,
+    );
+    const trafficClass = classifyTraffic(
+      eventName,
+      appVersion,
+      providerId,
+      analyticsEnvironment,
+      properties,
+    );
 
     const normalizedProperties = sanitizeProperties({
       ...properties,
@@ -428,6 +518,8 @@ export async function buildTelemetryIngestPlan(
       origin_runtime: originRuntime,
       source: sourceName,
       surface,
+      analytics_environment: analyticsEnvironment,
+      traffic_class: trafficClass,
       env_target: envTarget,
       duration_bucket: durationBucket,
       session_root_kind: sessionRootKind,
@@ -446,6 +538,8 @@ export async function buildTelemetryIngestPlan(
       broker_runtime: brokerRuntime,
       origin_runtime: originRuntime,
       source: sourceName,
+      analytics_environment: analyticsEnvironment,
+      traffic_class: trafficClass,
       app_version: appVersion,
       os,
       arch,
@@ -461,29 +555,33 @@ export async function buildTelemetryIngestPlan(
       properties: normalizedProperties,
     });
 
-    posthogCaptures.push({
-      event: eventName,
-      distinctId: `install:${originInstallIdHash}`,
-      properties: {
-        origin_install_id_hash: originInstallIdHash,
-        broker_install_id_hash: brokerInstallIdHash,
-        plane,
-        origin_runtime: originRuntime,
-        broker_runtime: brokerRuntime,
-        source: sourceName ?? "unknown",
-        surface,
-        env_target: envTarget,
-        status,
-        success,
-        duration_ms: durationMs,
-        duration_bucket: durationBucket,
-        session_root_kind: sessionRootKind,
-        app_version: appVersion,
-        os,
-        arch,
-        ...normalizedProperties,
-      },
-    });
+    const posthogProperties = {
+      origin_install_id_hash: originInstallIdHash,
+      broker_install_id_hash: brokerInstallIdHash,
+      plane,
+      origin_runtime: originRuntime,
+      broker_runtime: brokerRuntime,
+      source: sourceName ?? "unknown",
+      surface,
+      env_target: envTarget,
+      status,
+      success,
+      duration_ms: durationMs,
+      duration_bucket: durationBucket,
+      session_root_kind: sessionRootKind,
+      app_version: appVersion,
+      os,
+      arch,
+      ...normalizedProperties,
+    };
+    if (shouldMirrorPostHogCapture(eventName, posthogProperties)) {
+      posthogCaptures.push({
+        eventId,
+        event: eventName,
+        distinctId: `install:${originInstallIdHash}`,
+        properties: posthogProperties,
+      });
+    }
   }
 
   return { rows, posthogCaptures };

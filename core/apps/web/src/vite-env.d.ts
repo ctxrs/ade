@@ -45,3 +45,4 @@ declare module "*.webp" {
 }
 
 declare const __CTX_APP_VERSION__: string;
+declare const __CTX_BUILD_CI__: boolean;

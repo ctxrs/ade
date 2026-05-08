@@ -6,6 +6,7 @@ import { defineConfig } from "vite";
 import type { Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import mkcert from "vite-plugin-mkcert";
+import { validateProductionAnalyticsBuildConfig } from "./src/utils/analytics/config";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -138,6 +139,11 @@ const walPlugin = (enabled: boolean): Plugin => ({
 
 export default defineConfig(({ command }) => {
   const isTest = process.env.VITEST === "true" || process.env.NODE_ENV === "test";
+  validateProductionAnalyticsBuildConfig({
+    explicitAnalyticsEnv: process.env.VITE_POSTHOG_ENV,
+    explicitAppVersion: process.env.VITE_CTX_APP_VERSION,
+    packageVersion: packageJson.version,
+  });
   const auth = command === "serve" ? loadDaemonAuth() : null;
   const daemonUrl =
     process.env.CTX_DAEMON_URL ?? auth?.daemon_url ?? "http://127.0.0.1:4399";
@@ -151,6 +157,9 @@ export default defineConfig(({ command }) => {
         ? false
         : !supabaseUrl.startsWith("http://");
   const appVersion = String(process.env.VITE_CTX_APP_VERSION ?? packageJson.version ?? "0.0.0");
+  const isCi = ["1", "true", "yes", "on"].includes(
+    String(process.env.CI ?? "").trim().toLowerCase(),
+  );
 
   if (command === "serve" && auth?.token) {
     process.env.VITE_CTX_AUTH_TOKEN ??= auth.token;
@@ -200,6 +209,7 @@ export default defineConfig(({ command }) => {
   return {
     define: {
       __CTX_APP_VERSION__: JSON.stringify(appVersion),
+      __CTX_BUILD_CI__: JSON.stringify(isCi),
     },
     plugins: [
       react(),

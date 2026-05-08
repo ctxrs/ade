@@ -12,6 +12,7 @@ describe("buildEventEnvelope", () => {
     expect(typeof envelope.arch).toBe("string");
     expect(typeof envelope.surface).toBe("string");
     expect(typeof envelope.analytics_environment).toBe("string");
+    expect(envelope.traffic_class).toBe("user");
     expect(envelope.provider_id).toBe("codex");
   });
 });

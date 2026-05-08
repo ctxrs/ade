@@ -56,6 +56,7 @@ export const buildEventEnvelope = (
     arch: detectArch(),
     surface: detectSurface(),
     analytics_environment: getAnalyticsEnvironment(),
+    traffic_class: "user",
     ...properties,
   };
 };

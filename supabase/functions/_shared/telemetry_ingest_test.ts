@@ -4,6 +4,7 @@ import {
 } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   buildTelemetryIngestPlan,
+  selectPostHogCapturesForInsertedRows,
   TelemetryIngestError,
 } from "./telemetry_ingest.ts";
 
@@ -31,6 +32,8 @@ const basePayload = () => ({
       source: "app_bridge",
       properties: {
         launch_surface: "desktop",
+        analytics_environment: "production",
+        traffic_class: "user",
         workspace_id: "raw-workspace-id",
       },
     },
@@ -50,7 +53,11 @@ Deno.test("buildTelemetryIngestPlan stores canonical hashed ids and mirrors by o
   assertEquals(Boolean(plan.rows[0].origin_install_id_hash), true);
   assertEquals(Boolean(plan.rows[0].broker_install_id_hash), true);
   assertEquals(plan.rows[0].properties.launch_surface, "desktop");
+  assertEquals(plan.rows[0].analytics_environment, "production");
+  assertEquals(plan.rows[0].traffic_class, "user");
+  assertEquals(plan.rows[0].properties.traffic_class, "user");
   assertEquals("workspace_id" in plan.rows[0].properties, false);
+  assertEquals(plan.posthogCaptures[0].eventId, plan.rows[0].event_id);
   assertEquals(
     plan.posthogCaptures[0].distinctId,
     `install:${plan.rows[0].origin_install_id_hash}`,
@@ -117,4 +124,99 @@ Deno.test("buildTelemetryIngestPlan accepts daemon-origin events by using broker
     plan.rows[0].origin_install_id_hash,
     plan.rows[0].broker_install_id_hash,
   );
+  assertEquals(plan.posthogCaptures.length, 0);
+});
+
+Deno.test("buildTelemetryIngestPlan stores but does not mirror staging client events", async () => {
+  const payload = basePayload();
+  const properties = payload.events[0].properties as Record<string, unknown>;
+  properties.analytics_environment = "staging";
+
+  const plan = await buildTelemetryIngestPlan(payload, { idSalt: "test-salt" });
+
+  assertEquals(plan.rows.length, 1);
+  assertEquals(plan.rows[0].properties.analytics_environment, "staging");
+  assertEquals(plan.rows[0].traffic_class, "internal");
+  assertEquals(plan.posthogCaptures.length, 0);
+});
+
+Deno.test("buildTelemetryIngestPlan stores but does not mirror fake provider events", async () => {
+  const payload = basePayload();
+  const event = payload.events[0] as Record<string, unknown>;
+  event.event_name = "turn_started";
+  event.provider_id = "fake";
+  const properties = payload.events[0].properties as Record<string, unknown>;
+  properties.provider_id = "fake";
+
+  const plan = await buildTelemetryIngestPlan(payload, { idSalt: "test-salt" });
+
+  assertEquals(plan.rows.length, 1);
+  assertEquals(plan.rows[0].provider_id, "fake");
+  assertEquals(plan.rows[0].traffic_class, "synthetic");
+  assertEquals(plan.posthogCaptures.length, 0);
+});
+
+Deno.test("buildTelemetryIngestPlan stores but does not mirror local build events", async () => {
+  const payload = basePayload();
+  payload.events[0].app_version = "0.0.0-dev";
+
+  const plan = await buildTelemetryIngestPlan(payload, { idSalt: "test-salt" });
+
+  assertEquals(plan.rows.length, 1);
+  assertEquals(plan.rows[0].app_version, "0.0.0-dev");
+  assertEquals(plan.rows[0].traffic_class, "synthetic");
+  assertEquals(plan.posthogCaptures.length, 0);
+});
+
+Deno.test("buildTelemetryIngestPlan still mirrors pipeline smoke health events", async () => {
+  const payload = basePayload();
+  const event = payload.events[0] as Record<string, unknown>;
+  event.event_name = "analytics_pipeline_smoke";
+  event.plane = "incident";
+  event.app_version = "0.0.0-smoke";
+  event.properties = {
+    smoke_run_id: "smoke-1",
+    analytics_environment: "pipeline_smoke",
+  };
+
+  const plan = await buildTelemetryIngestPlan(payload, { idSalt: "test-salt" });
+
+  assertEquals(plan.rows.length, 1);
+  assertEquals(plan.rows[0].traffic_class, "synthetic");
+  assertEquals(plan.posthogCaptures.length, 1);
+});
+
+Deno.test("selectPostHogCapturesForInsertedRows matches captures by event id after filtering", async () => {
+  const payload = basePayload() as unknown as Record<string, unknown> & {
+    events: Array<Record<string, unknown>>;
+  };
+  const baseEvent = payload.events[0];
+  const baseProperties = baseEvent.properties as Record<string, unknown>;
+  payload.events = [
+    {
+      ...baseEvent,
+      event_id: "event-fake",
+      event_name: "turn_started",
+      provider_id: "fake",
+      properties: {
+        ...baseProperties,
+        provider_id: "fake",
+      },
+    },
+    {
+      ...baseEvent,
+      event_id: "event-real",
+      event_name: "app_opened",
+    },
+  ];
+  const plan = await buildTelemetryIngestPlan(payload, { idSalt: "test-salt" });
+
+  const captures = selectPostHogCapturesForInsertedRows(
+    plan.posthogCaptures,
+    [plan.rows[1]],
+  );
+
+  assertEquals(plan.posthogCaptures.length, 1);
+  assertEquals(captures.length, 1);
+  assertEquals(captures[0].eventId, "event-real");
 });

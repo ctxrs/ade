@@ -49,6 +49,17 @@ import {
 } from "./updaterEvents";
 import { initializeAppForegroundTracking } from "./windowFocus";
 
+const isLocalWebAnalyticsOrigin = (): boolean => {
+  if (typeof window === "undefined") return false;
+  if (isDesktopApp()) return false;
+  const hostname = window.location.hostname.trim().toLowerCase();
+  return hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname === "[::1]" ||
+    hostname.endsWith(".localhost");
+};
+
 function settingsTargetForPath(pathname: string): string {
   if (pathname.startsWith("/workspaces/")) {
     const wsId = pathname.split("/")[2];
@@ -375,6 +386,9 @@ export function AnalyticsSettingsBridge() {
       settingsLoaded: clientSettingsState.loaded,
       telemetryEnabled: clientSettingsState.settings.telemetry.clientEnabled,
       isDev: import.meta.env.DEV,
+      isTest: import.meta.env.MODE === "test",
+      isCi: __CTX_BUILD_CI__,
+      isLocalWebOrigin: isLocalWebAnalyticsOrigin(),
       devCaptureFlag: import.meta.env.VITE_POSTHOG_CAPTURE_IN_DEV,
     });
     setAnalyticsEnabled(enabled);

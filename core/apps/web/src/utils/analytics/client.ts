@@ -39,6 +39,7 @@ const notifyFeatureFlags = () => {
 };
 
 export const initAnalytics = (): void => {
+  if (!captureEnabled) return;
   if (initAttempted) return;
   initAttempted = true;
 
@@ -73,9 +74,14 @@ export const initAnalytics = (): void => {
 export const setAnalyticsEnabled = (enabled: boolean): void => {
   captureEnabled = enabled;
   setSemanticTelemetryRemoteEnabled(enabled);
-  if (!initAttempted) return;
   if (!enabled) {
-    posthog.opt_out_capturing();
+    if (initAttempted) {
+      posthog.opt_out_capturing();
+    }
+    return;
+  }
+  if (!initAttempted) {
+    initAnalytics();
     return;
   }
   posthog.opt_in_capturing();

@@ -14,6 +14,34 @@ const readTrimmed = (value: string | undefined): string | undefined => {
   return next ? next : undefined;
 };
 
+export type ProductionAnalyticsBuildConfig = {
+  explicitAnalyticsEnv: string | undefined;
+  explicitAppVersion: string | undefined;
+  packageVersion: string | undefined;
+};
+
+export const validateProductionAnalyticsBuildConfig = ({
+  explicitAnalyticsEnv,
+  explicitAppVersion,
+  packageVersion,
+}: ProductionAnalyticsBuildConfig): void => {
+  const analyticsEnv = readTrimmed(explicitAnalyticsEnv)?.toLowerCase();
+  if (analyticsEnv !== "production") return;
+
+  const appVersion = readTrimmed(explicitAppVersion);
+  if (!appVersion) {
+    throw new Error(
+      "VITE_POSTHOG_ENV=production requires VITE_CTX_APP_VERSION to be set to the desktop release version.",
+    );
+  }
+
+  if (appVersion === readTrimmed(packageVersion)) {
+    throw new Error(
+      "VITE_POSTHOG_ENV=production cannot use the web package version as VITE_CTX_APP_VERSION.",
+    );
+  }
+};
+
 export const resolveAnalyticsEnvironment = (
   explicitEnv: string | undefined,
   mode: string | undefined,
@@ -23,7 +51,6 @@ export const resolveAnalyticsEnvironment = (
   const env = readTrimmed(explicitEnv)?.toLowerCase();
   if (env === "production") return "production";
   if (env === "staging") return "staging";
-  if (normalizedMode === "production" || normalizedMode === "prod") return "production";
   return "staging";
 };
 

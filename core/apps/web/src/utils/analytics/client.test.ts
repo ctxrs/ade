@@ -95,6 +95,18 @@ describe("analytics client", () => {
     expect(recordSemanticTelemetryEventMock.mock.calls[0]?.[0].properties).not.toHaveProperty("sessionId");
   });
 
+  it("does not initialize PostHog until analytics is enabled", async () => {
+    const mod = await import("./client");
+
+    mod.initAnalytics();
+
+    expect(initMock).not.toHaveBeenCalled();
+
+    mod.setAnalyticsEnabled(true);
+
+    expect(initMock).toHaveBeenCalledTimes(1);
+  });
+
   it("drops remote captures when analytics is disabled", async () => {
     const mod = await import("./client");
 

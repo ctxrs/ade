@@ -1,6 +1,6 @@
 import { StrictMode, type ReactNode } from "react";
 import { act, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, test, vi } from "vitest";
+import { afterEach, beforeEach, test, vi } from "vitest";
 import App from "./App";
 import { appendDesktopLog } from "./api/client";
 import {
@@ -197,6 +197,7 @@ vi.mock("./state/uiStateStore", () => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubEnv("VITE_POSTHOG_CAPTURE_IN_DEV", "1");
   resetUiDiagnosticsForTests();
   desktopHandlers.clear();
   clientSettingsStore.state.loaded = true;
@@ -219,6 +220,10 @@ beforeEach(() => {
       headers: { "Content-Type": "application/json" },
     });
   });
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 test("app_opened includes pending download attribution id when present", async () => {

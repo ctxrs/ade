@@ -4,6 +4,7 @@ import { corsHeaders } from "../_shared/cors.ts";
 import { capturePostHogEvent } from "../_shared/posthog.ts";
 import {
   buildTelemetryIngestPlan,
+  selectPostHogCapturesForInsertedRows,
   TelemetryIngestError,
 } from "../_shared/telemetry_ingest.ts";
 
@@ -86,10 +87,10 @@ serve(async (req) => {
   const rowsToInsert = ingestPlan.rows.filter((row) =>
     !existingEventIds.has(row.event_id)
   );
-  const capturesToMirror = ingestPlan.posthogCaptures.filter((_, index) => {
-    const row = ingestPlan.rows[index];
-    return row ? !existingEventIds.has(row.event_id) : false;
-  });
+  const capturesToMirror = selectPostHogCapturesForInsertedRows(
+    ingestPlan.posthogCaptures,
+    rowsToInsert,
+  );
 
   if (rowsToInsert.length > 0) {
     const { error } = await client.from("telemetry_event").insert(
