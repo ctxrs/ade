@@ -1,12 +1,10 @@
 use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
 
 use ctx_sandbox_container_runtime::{
-    command_output_message, command_output_with_timeout, sandbox_cli_invocation,
-    sandbox_container_command, SandboxCommandMode,
+    sandbox_cli_invocation, sandbox_container_command, SandboxCommandMode,
 };
-use ctx_transport_runtime::terminal_launch::validate_canonical_container_terminal_cwd;
+use ctx_transport_runtime::terminal_launch::canonicalize_container_terminal_cwd;
 
 use crate::daemon::AppState;
 use crate::settings::{ContainerRuntimeKind, ExecutionMode};
@@ -14,9 +12,7 @@ use crate::terminals::{NativeContainerTerminalSpec, SharedVmContainerTerminalSpe
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{Workspace, Worktree};
 
-use super::{bad_request, internal_error, TerminalLaunchError};
-
-const TERMINAL_CONTAINER_CWD_TIMEOUT: Duration = Duration::from_secs(10);
+use super::{internal_error, TerminalLaunchError};
 
 pub(super) async fn prepare_terminal_container_launch(
     state: &Arc<AppState>,
@@ -53,9 +49,13 @@ pub(super) async fn prepare_terminal_container_launch(
             if worktree.is_none() {
                 ensure_materialized_workspace_root(state, workspace).await?;
             }
-            let canonical_cwd = canonicalize_container_terminal_cwd(
+            let cwd_validation = sandbox_container_command(
                 &state.core.data_root,
                 &SandboxCommandMode::NativeContainer,
+            )
+            .map_err(|e| internal_error(format!("sandbox container CLI unavailable: {e}")))?;
+            let canonical_cwd = canonicalize_container_terminal_cwd(
+                cwd_validation,
                 &container_name,
                 cwd,
                 container_cwd_authority_root,
@@ -108,9 +108,10 @@ pub(super) async fn prepare_terminal_container_launch(
             let command_mode = SandboxCommandMode::SharedVm {
                 helper_path: helper_path.clone(),
             };
+            let cwd_validation = sandbox_container_command(&state.core.data_root, &command_mode)
+                .map_err(|e| internal_error(format!("sandbox container CLI unavailable: {e}")))?;
             let canonical_cwd = canonicalize_container_terminal_cwd(
-                &state.core.data_root,
-                &command_mode,
+                cwd_validation,
                 &container_name,
                 cwd,
                 container_cwd_authority_root,
@@ -145,43 +146,4 @@ async fn ensure_materialized_workspace_root(
     .await
     .map_err(|e| internal_error(format!("failed to materialize sandbox workspace root: {e}")))?;
     Ok(())
-}
-
-async fn canonicalize_container_terminal_cwd(
-    data_root: &FsPath,
-    mode: &SandboxCommandMode,
-    container_name: &str,
-    cwd: &FsPath,
-    live_root: &FsPath,
-) -> Result<PathBuf, TerminalLaunchError> {
-    let mut cmd = sandbox_container_command(data_root, mode)
-        .map_err(|e| internal_error(format!("sandbox container CLI unavailable: {e}")))?;
-    cmd.arg("exec")
-        .arg("--user")
-        .arg("0")
-        .arg(container_name)
-        .arg("realpath")
-        .arg("-e")
-        .arg("--")
-        .arg(cwd);
-    let output = command_output_with_timeout(cmd, TERMINAL_CONTAINER_CWD_TIMEOUT)
-        .await
-        .map_err(|e| internal_error(format!("failed to validate sandbox terminal cwd: {e}")))?;
-    if !output.status.success() {
-        let detail = command_output_message(&output);
-        if detail.is_empty() {
-            return Err(bad_request("cwd does not exist"));
-        }
-        return Err(bad_request(format!("cwd does not exist: {detail}")));
-    }
-    let stdout = String::from_utf8(output.stdout)
-        .map_err(|_| internal_error("sandbox terminal cwd validation returned invalid UTF-8"))?;
-    let canonical = stdout
-        .lines()
-        .next()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(PathBuf::from)
-        .ok_or_else(|| internal_error("sandbox terminal cwd validation returned no path"))?;
-    validate_canonical_container_terminal_cwd(live_root, &canonical)
 }

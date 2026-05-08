@@ -1,5 +1,11 @@
 use std::collections::HashMap;
 use std::path::{Path as FsPath, PathBuf};
+use std::time::Duration;
+
+use ctx_sandbox_container_runtime::{command_output_message, command_output_with_timeout};
+use tokio::process::Command;
+
+const TERMINAL_CONTAINER_CWD_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TerminalLaunchErrorKind {
@@ -154,6 +160,49 @@ pub fn validate_canonical_container_terminal_cwd(
         ));
     }
     Ok(canonical.to_path_buf())
+}
+
+pub async fn canonicalize_container_terminal_cwd(
+    mut cmd: Command,
+    container_name: &str,
+    cwd: &FsPath,
+    live_root: &FsPath,
+) -> Result<PathBuf, TerminalLaunchError> {
+    cmd.arg("exec")
+        .arg("--user")
+        .arg("0")
+        .arg(container_name)
+        .arg("realpath")
+        .arg("-e")
+        .arg("--")
+        .arg(cwd);
+    let output = command_output_with_timeout(cmd, TERMINAL_CONTAINER_CWD_TIMEOUT)
+        .await
+        .map_err(|e| {
+            TerminalLaunchError::internal(format!("failed to validate sandbox terminal cwd: {e}"))
+        })?;
+    if !output.status.success() {
+        let detail = command_output_message(&output);
+        if detail.is_empty() {
+            return Err(TerminalLaunchError::bad_request("cwd does not exist"));
+        }
+        return Err(TerminalLaunchError::bad_request(format!(
+            "cwd does not exist: {detail}"
+        )));
+    }
+    let stdout = String::from_utf8(output.stdout).map_err(|_| {
+        TerminalLaunchError::internal("sandbox terminal cwd validation returned invalid UTF-8")
+    })?;
+    let canonical = stdout
+        .lines()
+        .next()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            TerminalLaunchError::internal("sandbox terminal cwd validation returned no path")
+        })?;
+    validate_canonical_container_terminal_cwd(live_root, &canonical)
 }
 
 pub fn container_terminal_env() -> HashMap<String, String> {

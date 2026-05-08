@@ -270,10 +270,6 @@ fn not_found(error: impl Into<String>) -> TerminalLaunchError {
     TerminalLaunchError::not_found(error)
 }
 
-pub(super) fn bad_request(error: impl Into<String>) -> TerminalLaunchError {
-    TerminalLaunchError::bad_request(error)
-}
-
 pub(super) fn internal_error(error: impl Into<String>) -> TerminalLaunchError {
     TerminalLaunchError::internal(error)
 }
