@@ -411,7 +411,7 @@ async fn handle_mobile_secure_ws(
         Ok::<(), anyhow::Error>(())
     };
 
-    let (send_task, recv_result) = crate::async_util::race_join_handle(send_task, recv_loop).await;
+    let (send_task, recv_result) = super::async_util::race_join_handle(send_task, recv_loop).await;
 
     workspace_stream::notify_workspace_stream_shutdown(&runtime).await;
     if let Some(send_task) = send_task {

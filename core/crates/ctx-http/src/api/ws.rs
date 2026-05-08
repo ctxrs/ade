@@ -21,6 +21,7 @@ use ctx_transport_runtime::terminals::{TerminalClientMessage, TerminalServerMess
 
 use super::SecureEnvelope;
 
+mod async_util;
 mod common;
 mod dictation_livekit;
 mod queue;
