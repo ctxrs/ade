@@ -1,8 +1,8 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use ctx_core::ids::WorktreeId;
 use ctx_core::models::{Workspace, Worktree, WorktreeBootstrapNotice, WorktreeBootstrapStatus};
@@ -83,7 +83,13 @@ impl ctx_workspace_services::worktree_bootstrap::WorktreeBootstrapHost for AppSt
         let (log, log_truncated) = ctx_workspace_services::worktree_bootstrap::truncate_log(
             &logs::redact_sensitive(&report.raw_log),
         );
-        let log_path = write_bootstrap_log(self, worktree.id, &log).await.ok();
+        let log_path = ctx_workspace_services::worktree_bootstrap::write_bootstrap_log(
+            &self.core.data_root,
+            worktree.id,
+            &log,
+        )
+        .await
+        .ok();
 
         update_bootstrap_result(
             self,
@@ -239,22 +245,6 @@ async fn run_bootstrap_step_in_container(
         ctx_workspace_services::worktree_bootstrap::BootstrapCommandRuntime::Container,
     )
     .await
-}
-
-async fn write_bootstrap_log(
-    state: &AppState,
-    worktree_id: WorktreeId,
-    contents: &str,
-) -> Result<PathBuf> {
-    let dir = logs::logs_dir(&state.core.data_root).join("worktree-bootstrap");
-    tokio::fs::create_dir_all(&dir)
-        .await
-        .context("creating bootstrap log dir")?;
-    let path = dir.join(format!("worktree-bootstrap-{}.log", worktree_id.0));
-    tokio::fs::write(&path, contents)
-        .await
-        .with_context(|| format!("writing bootstrap log to {}", path.display()))?;
-    Ok(path)
 }
 
 async fn update_bootstrap_result(state: &AppState, update: WorktreeBootstrapResultUpdate) {

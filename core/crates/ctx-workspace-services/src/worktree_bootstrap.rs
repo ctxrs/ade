@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -432,6 +432,30 @@ pub fn truncate_log(input: &str) -> (String, bool) {
     (out, true)
 }
 
+pub fn bootstrap_logs_dir(data_root: &Path) -> PathBuf {
+    data_root.join("logs").join("worktree-bootstrap")
+}
+
+pub fn bootstrap_log_path(data_root: &Path, worktree_id: WorktreeId) -> PathBuf {
+    bootstrap_logs_dir(data_root).join(format!("worktree-bootstrap-{}.log", worktree_id.0))
+}
+
+pub async fn write_bootstrap_log(
+    data_root: &Path,
+    worktree_id: WorktreeId,
+    contents: &str,
+) -> Result<PathBuf> {
+    let dir = bootstrap_logs_dir(data_root);
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .context("creating bootstrap log dir")?;
+    let path = bootstrap_log_path(data_root, worktree_id);
+    tokio::fs::write(&path, contents)
+        .await
+        .with_context(|| format!("writing bootstrap log to {}", path.display()))?;
+    Ok(path)
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
@@ -441,7 +465,7 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        bootstrap_command_env, build_bootstrap_steps, run_bootstrap_command,
+        bootstrap_command_env, bootstrap_log_path, build_bootstrap_steps, run_bootstrap_command,
         shell_bootstrap_command, truncate_log, BootstrapCommandRuntime,
     };
 
@@ -460,6 +484,19 @@ mod tests {
         let (out, truncated) = truncate_log(&input);
         assert!(truncated);
         assert!(out.contains("...(truncated)"));
+    }
+
+    #[test]
+    fn bootstrap_log_path_uses_worktree_specific_log_file() {
+        let worktree_id = WorktreeId::new();
+        let path = bootstrap_log_path(Path::new("/data"), worktree_id);
+        assert_eq!(
+            path,
+            Path::new("/data")
+                .join("logs")
+                .join("worktree-bootstrap")
+                .join(format!("worktree-bootstrap-{}.log", worktree_id.0))
+        );
     }
 
     #[tokio::test]
