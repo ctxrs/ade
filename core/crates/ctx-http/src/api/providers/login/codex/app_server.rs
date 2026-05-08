@@ -1,3 +1,4 @@
+use super::process::CodexLoginCompletion;
 use super::*;
 
 pub(super) fn spawn_codex_app_server(
