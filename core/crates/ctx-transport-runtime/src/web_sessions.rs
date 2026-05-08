@@ -22,6 +22,7 @@ const WEB_SESSION_STREAM_TOKEN_TTL_SECS: i64 = 30;
 pub const WEB_SESSION_WORKER_AUTH_HEADER: &str = "x-ctx-worker-auth";
 
 mod handle;
+mod launch_policy;
 mod runtime_support;
 mod types;
 mod view;
@@ -32,6 +33,7 @@ mod tests;
 
 pub use handle::WebSessionHandle;
 use handle::WebSessionRuntime;
+pub use launch_policy::validate_web_session_url;
 use runtime_support::{
     allocate_port, build_run_payload, build_signal_connect_path, build_stream_connect_path,
     build_stream_path, log_stream,

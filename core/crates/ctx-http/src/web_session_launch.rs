@@ -3,11 +3,12 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use ctx_core::models::{ExecutionEnvironment, Worktree};
-use url::Url;
 
 use crate::daemon::AppState;
 use crate::settings::ExecutionMode;
-use crate::web_sessions::{WebSessionCreateRequest, WebSessionInfo, WebSessionViewport};
+use crate::web_sessions::{
+    validate_web_session_url, WebSessionCreateRequest, WebSessionInfo, WebSessionViewport,
+};
 use ctx_core::ids::{SessionId, WorktreeId};
 use ctx_settings_service::{ExecutionPolicyDenied, HostExecutionPolicy};
 
@@ -203,17 +204,6 @@ fn request_or_policy_error(error: anyhow::Error) -> WebSessionLaunchError {
 
 fn internal_error(error: impl Into<String>) -> WebSessionLaunchError {
     launch_error(WebSessionLaunchErrorKind::Internal, error)
-}
-
-fn validate_web_session_url(raw: &str) -> anyhow::Result<()> {
-    let parsed = Url::parse(raw).context("url must be an absolute URL")?;
-    if !matches!(parsed.scheme(), "http" | "https") {
-        anyhow::bail!("url must use http:// or https://");
-    }
-    if parsed.host_str().is_none() {
-        anyhow::bail!("url must include host");
-    }
-    Ok(())
 }
 
 #[cfg(test)]
