@@ -2,6 +2,7 @@ use super::*;
 use ctx_transport_runtime::{
     mobile_secure_proxy_allows_request, secure_proxy_path_is_unnormalized,
 };
+use tower::util::ServiceExt;
 
 pub(super) async fn proxy_secure_request(
     state: &Arc<AppState>,
