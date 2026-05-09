@@ -103,6 +103,7 @@ async fn daemon_http_and_ws_streaming() {
     let (mut ws_stream, _) = tokio_tungstenite::connect_async(ws_url).await.unwrap();
     let subscribe = serde_json::json!({
         "type": "subscribe",
+        "include_active_heads": true,
         "sessions": [{
             "session_id": session.id.0,
             "replay": {
@@ -118,6 +119,26 @@ async fn daemon_http_and_ws_streaming() {
         ))
         .await
         .unwrap();
+    let subscribed = tokio::time::timeout(Duration::from_secs(10), async {
+        while let Some(Ok(frame)) = ws_stream.next().await {
+            if let tokio_tungstenite::tungstenite::Message::Text(txt) = frame {
+                let message: ctx_core::models::WorkspaceActiveSnapshotStreamMessage =
+                    serde_json::from_str(&txt).unwrap_or_else(|err| {
+                        panic!("failed to decode workspace stream message: {err}; raw={txt}")
+                    });
+                if workspace_stream_subscription_seed_received(&message, session.id) {
+                    return true;
+                }
+            }
+        }
+        false
+    })
+    .await
+    .expect("timed out waiting for workspace stream subscription seed");
+    assert!(
+        subscribed,
+        "workspace stream ended before subscription seed"
+    );
 
     let _msg: ctx_core::models::Message = client
         .post(format!("{base}/api/sessions/{}/messages", session.id.0))
@@ -244,4 +265,24 @@ async fn daemon_http_and_ws_streaming() {
     assert!(task_after_unread.assistant_seen_at.is_none());
 
     server.abort();
+}
+
+fn workspace_stream_subscription_seed_received(
+    message: &ctx_core::models::WorkspaceActiveSnapshotStreamMessage,
+    session_id: ctx_core::ids::SessionId,
+) -> bool {
+    match message {
+        ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Snapshot { .. } => true,
+        ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event { event, .. } => {
+            matches!(
+                event.as_ref(),
+                ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadSeed { head, .. }
+                    if head.session.id == session_id
+            )
+        }
+        ctx_core::models::WorkspaceActiveSnapshotStreamMessage::HeadsBatch { deltas, .. } => {
+            deltas.iter().any(|delta| delta.session_id == session_id)
+        }
+        _ => false,
+    }
 }

@@ -1,7 +1,12 @@
 use super::*;
 
+mod branches;
 mod probes;
 
+use branches::{
+    env_probe_provider_options, runtime_models_provider_options,
+    selected_endpoint_runtime_launch_provider_options, ProviderOptionsProbeContext,
+};
 use probes::{
     probe_provider_options_env, probe_runtime_models_for_provider_options,
     probe_selected_endpoint_runtime_launch,
@@ -201,6 +206,21 @@ pub(in crate::api) async fn get_provider_options(
     }
 
     let use_crp_probe = provider_supports_runtime_model_catalog(&provider_id);
+    let probe_context = ProviderOptionsProbeContext {
+        state: &state,
+        workspace: &workspace,
+        provider_id: &provider_id,
+        workspace_id: ws_id,
+        provider_status: &provider_status,
+        has_active_auth,
+        auth_mode,
+        source_config: source_config.as_ref(),
+        selected_endpoint: selected_endpoint.as_ref(),
+        cache: &cache,
+        preferred_model_id,
+        verify_ttl: VERIFY_TTL,
+    };
+
     match provider_options_probe_plan(
         use_crp_probe,
         selected_endpoint
@@ -208,112 +228,17 @@ pub(in crate::api) async fn get_provider_options(
             .map(|endpoint| endpoint.id.as_str()),
     ) {
         ProviderOptionsProbePlan::EnvOnly => {
-            let (probe_ok, auth_required, probe_error) =
-                probe_provider_options_env(&state, &workspace, &provider_id).await;
-            let raw_resp = env_probe_provider_options_response(
-                ProviderOptionsResponseBase {
-                    provider_id: &provider_id,
-                    workspace_id: ws_id,
-                    provider_status: &provider_status,
-                    has_active_auth,
-                    auth_mode,
-                    source_config: source_config.as_ref(),
-                },
-                ProviderOptionsProbeResult {
-                    probe_ok,
-                    auth_required,
-                    probe_error,
-                },
-            );
-            let out = finalize_provider_options_response(
-                ProviderOptionsResponseContext {
-                    state: &state,
-                    provider_id: &provider_id,
-                    provider_status: Some(&provider_status),
-                    selected_endpoint: selected_endpoint.as_ref(),
-                    cache: &cache,
-                    preferred_model_id: preferred_model_id.clone(),
-                },
-                raw_resp,
-                true,
-                VERIFY_TTL,
-            )
-            .await;
-            return Ok(Json(out));
+            return env_probe_provider_options(probe_context).await;
         }
         ProviderOptionsProbePlan::SelectedEndpointRuntimeLaunch(endpoint_id) => {
-            let endpoint = selected_endpoint.as_ref().ok_or((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": "selected endpoint missing from provider configuration",
-                })),
-            ))?;
-            let (probe_ok, auth_required, probe_error) = probe_selected_endpoint_runtime_launch(
-                &state,
-                &workspace,
-                &provider_id,
+            return selected_endpoint_runtime_launch_provider_options(
+                probe_context,
                 endpoint_id.to_string(),
             )
-            .await?;
-            let raw_resp = selected_endpoint_runtime_launch_options_response(
-                ProviderOptionsResponseBase {
-                    provider_id: &provider_id,
-                    workspace_id: ws_id,
-                    provider_status: &provider_status,
-                    has_active_auth,
-                    auth_mode,
-                    source_config: source_config.as_ref(),
-                },
-                endpoint,
-                ProviderOptionsProbeResult {
-                    probe_ok,
-                    auth_required,
-                    probe_error,
-                },
-            );
-            let out = finalize_provider_options_response(
-                ProviderOptionsResponseContext {
-                    state: &state,
-                    provider_id: &provider_id,
-                    provider_status: Some(&provider_status),
-                    selected_endpoint: selected_endpoint.as_ref(),
-                    cache: &cache,
-                    preferred_model_id: preferred_model_id.clone(),
-                },
-                raw_resp,
-                true,
-                VERIFY_TTL,
-            )
             .await;
-            return Ok(Json(out));
         }
         ProviderOptionsProbePlan::RuntimeModels => {}
     }
 
-    let probe = probe_runtime_models_for_provider_options(&state, &workspace, &provider_id).await?;
-
-    let raw_resp = runtime_models_provider_options_response(
-        &provider_id,
-        ws_id,
-        &provider_status,
-        probe,
-        has_active_auth,
-        auth_mode,
-        source_config.as_ref(),
-    );
-    let out = finalize_provider_options_response(
-        ProviderOptionsResponseContext {
-            state: &state,
-            provider_id: &provider_id,
-            provider_status: Some(&provider_status),
-            selected_endpoint: selected_endpoint.as_ref(),
-            cache: &cache,
-            preferred_model_id,
-        },
-        raw_resp,
-        true,
-        VERIFY_TTL,
-    )
-    .await;
-    Ok(Json(out))
+    runtime_models_provider_options(probe_context).await
 }

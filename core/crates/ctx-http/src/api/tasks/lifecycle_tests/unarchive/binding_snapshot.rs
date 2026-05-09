@@ -96,6 +96,50 @@ async fn unarchive_task_recreates_managed_root_and_keeps_binding_snapshot_runtim
         &sandbox_cli_path.to_string_lossy(),
     );
     let _sandbox_cli_available = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
+    let workspace_id = workspace.id;
+    let _storage_override =
+        ctx_sandbox_materialization::set_test_preflight_storage_samples_override(Arc::new(
+            move |data_root,
+                  _mode,
+                  container_id,
+                  _estimated_copy_bytes,
+                  destination_probe_root,
+                  operation,
+                  required_bytes| {
+                assert_eq!(
+                    container_id,
+                    ctx_workspace_container::workspace_container_name(workspace_id)
+                );
+                assert_eq!(
+                    operation,
+                    ctx_storage_admission::StorageAdmissionOperation::DiskIsolatedWorktreeMaterialization
+                );
+                assert_eq!(
+                    destination_probe_root,
+                    std::path::Path::new(ctx_sandbox_contract::CTX_CONTAINER_WORKSPACE_ROOT)
+                );
+                let total_bytes =
+                    required_bytes.saturating_add(2 * ctx_storage_admission::STORAGE_BYTES_GIB);
+                Ok((
+                    ctx_storage_admission::StorageAdmissionSample {
+                        label: "CTX data root".to_string(),
+                        path: data_root.to_string_lossy().to_string(),
+                        mount_point: "/".to_string(),
+                        free_bytes: required_bytes
+                            .saturating_add(ctx_storage_admission::STORAGE_BYTES_GIB),
+                        total_bytes,
+                    },
+                    ctx_storage_admission::StorageAdmissionSample {
+                        label: "sandbox workspace volume".to_string(),
+                        path: destination_probe_root.to_string_lossy().to_string(),
+                        mount_point: ctx_sandbox_contract::CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
+                        free_bytes: required_bytes
+                            .saturating_add(ctx_storage_admission::STORAGE_BYTES_GIB),
+                        total_bytes,
+                    },
+                ))
+            },
+        ));
 
     let Json(_) = archive_task(State(Arc::clone(&state)), Path(task.id.0.to_string()))
         .await
@@ -119,7 +163,11 @@ async fn unarchive_task_recreates_managed_root_and_keeps_binding_snapshot_runtim
     let Json(unarchived_task) =
         unarchive_task(State(Arc::clone(&state)), Path(task.id.0.to_string()))
             .await
-            .expect("unarchive task");
+            .unwrap_or_else(|status| {
+                let sandbox_log = std::fs::read_to_string(&log_path)
+                    .unwrap_or_else(|err| format!("failed to read sandbox CLI log: {err}"));
+                panic!("unarchive task: {status}; sandbox log:\n{sandbox_log}");
+            });
 
     assert!(
         unarchived_task.archived_at.is_none(),

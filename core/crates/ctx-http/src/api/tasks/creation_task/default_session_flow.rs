@@ -1,0 +1,149 @@
+use super::*;
+
+async fn rollback_new_task_after_default_session_failure(
+    state: &Arc<AppState>,
+    store: &Store,
+    workspace: &Workspace,
+    task_id: TaskId,
+) {
+    let task = match store.get_task(task_id).await {
+        Ok(Some(task)) => task,
+        Ok(None) => return,
+        Err(err) => {
+            tracing::warn!(
+                task_id = %task_id.0,
+                "failed to load task while rolling back brand-new task: {err:#}"
+            );
+            return;
+        }
+    };
+    match delete_loaded_task_with_cleanup(state, store, workspace, &task).await {
+        Ok(()) | Err(StatusCode::NOT_FOUND) => {}
+        Err(status) => {
+            tracing::warn!(
+                task_id = %task_id.0,
+                ?status,
+                "failed to rollback brand-new task after default-session creation failure"
+            );
+        }
+    }
+}
+
+pub(super) async fn ensure_default_session_for_task(
+    state: Arc<AppState>,
+    store: Store,
+    workspace: Workspace,
+    task: Task,
+    requested_default_session: Option<CreateTaskDefaultSessionReq>,
+    default_session_plan: Option<(ExecutionEnvironment, String, String, Option<String>)>,
+    created_task_in_this_request: bool,
+) -> Result<Task, (StatusCode, Json<ApiErrorResp>)> {
+    if let Some(primary_session_id) = task.primary_session_id {
+        if let Some(default_session_req) = requested_default_session {
+            if let Err(status) =
+                super::super::session_creation::replay_requested_default_session_for_task(
+                    Arc::clone(&state),
+                    store.clone(),
+                    task.clone(),
+                    workspace.clone(),
+                    default_session_req,
+                    primary_session_id,
+                )
+                .await
+            {
+                return Err((
+                    status,
+                    Json(ApiErrorResp {
+                        error: "task id already exists with a different default session"
+                            .to_string(),
+                    }),
+                ));
+            }
+        }
+        emit_task_upsert(&state, task.id).await;
+        return Ok(task);
+    }
+
+    let default_session_result = if let Some(default_session_req) = requested_default_session {
+        super::super::session_creation::create_requested_default_session_for_task(
+            Arc::clone(&state),
+            store.clone(),
+            task.clone(),
+            workspace.clone(),
+            default_session_req,
+        )
+        .await
+    } else {
+        let (execution_environment, provider_id, model_id, reasoning_effort) =
+            match default_session_plan {
+                Some(plan) => plan,
+                None => {
+                    match preflight_default_session_creation(&state, &store, &workspace).await {
+                        Ok(plan) => plan,
+                        Err(err) => {
+                            if created_task_in_this_request {
+                                rollback_new_task_after_default_session_failure(
+                                    &state, &store, &workspace, task.id,
+                                )
+                                .await;
+                            }
+                            return Err(err);
+                        }
+                    }
+                }
+            };
+        create_default_session_for_task(
+            Arc::clone(&state),
+            store.clone(),
+            task.clone(),
+            workspace.clone(),
+            DefaultSessionSeed {
+                provider_id,
+                model_id,
+                reasoning_effort,
+                execution_environment,
+            },
+        )
+        .await
+    };
+    if let Err(status) = default_session_result {
+        if created_task_in_this_request {
+            rollback_new_task_after_default_session_failure(&state, &store, &workspace, task.id)
+                .await;
+        }
+        return Err((
+            status,
+            Json(ApiErrorResp {
+                error: "failed to create default session".to_string(),
+            }),
+        ));
+    }
+
+    let task = match store.get_task_with_activity(task.id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&e.to_string()),
+            }),
+        )
+    })? {
+        Some(task) => task,
+        None => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "task not found".to_string(),
+                }),
+            ))
+        }
+    };
+
+    emit_task_upsert(&state, task.id).await;
+    Ok(task)
+}
+
+async fn emit_task_upsert(state: &Arc<AppState>, task_id: TaskId) {
+    if let Err(e) = state.emit_workspace_task_upsert(task_id).await {
+        tracing::warn!(task_id = %task_id.0, "workspace active snapshot refresh failed: {e:?}");
+    }
+}
