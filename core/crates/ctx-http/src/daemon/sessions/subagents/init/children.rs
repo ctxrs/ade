@@ -6,7 +6,7 @@ use ctx_core::models::{
     ExecutionEnvironment, Session, SubagentInvocationChild, VcsKind, Workspace,
 };
 use ctx_session_service::subagents::SubagentWorktreeSelection;
-use ctx_session_tools::model_resolution::{resolve_model_id, ModelCatalog};
+use ctx_session_tools::model_resolution::ModelCatalog;
 use tokio::sync::Mutex;
 
 use crate::api::sessions::AgentInitItem;
@@ -14,12 +14,18 @@ use crate::daemon::AppState;
 use ctx_settings_model::ExecutionSettings;
 
 use super::super::errors::{api_error, internal_api_error, ApiResult, SubagentErrorKind};
-use super::super::request::default_catalog_model_id;
-use super::super::worktrees::create_subagent_worktree;
 use super::super::{
     dispatch_subagent_prompt, emit_subagent_invocation_notice, persist_subagent_prompt,
     SpawnedChild,
 };
+
+mod model;
+mod session_index;
+mod worktree;
+
+use model::resolve_child_model;
+use session_index::index_child_session;
+use worktree::resolve_child_worktree;
 
 #[derive(Clone)]
 pub(super) struct SubagentChildInit {
@@ -60,21 +66,10 @@ pub(super) async fn create_subagent_child(
         ));
     }
 
-    let provider_id = resolve_provider_id(&init, &item).await;
-    let catalog = init
-        .model_catalogs
-        .get(&provider_id)
-        .and_then(|value| value.as_ref());
-    let fallback_model = fallback_model_id(&init, &item, &provider_id, catalog).await?;
-    let resolved = resolve_model_id(
-        item.agent.model.as_deref(),
-        item.agent.reasoning_effort.as_deref(),
-        fallback_model.as_deref(),
-        catalog,
-    )
-    .map_err(|error| api_error(SubagentErrorKind::BadRequest, error))?;
+    let resolved = resolve_child_model(&init, &item).await?;
 
     let prompt_length = prompt.chars().count() as i64;
+    let provider_id = resolved.provider_id.clone();
     let reasoning_effort = resolved.reasoning_effort.clone();
     let (worktree_id, worktree_path) = resolve_child_worktree(&init, &store).await?;
 
@@ -84,7 +79,7 @@ pub(super) async fn create_subagent_child(
             init.parent.workspace_id,
             worktree_id,
             init.execution_environment,
-            provider_id.clone(),
+            provider_id,
             resolved.model_id.clone(),
             reasoning_effort.clone(),
             "subagent".into(),
@@ -106,7 +101,7 @@ pub(super) async fn create_subagent_child(
         position: item.idx as i64,
         status: "running".to_string(),
         label: Some(item.label),
-        harness: Some(provider_id),
+        harness: Some(resolved.provider_id),
         model: Some(resolved.full_model_id),
         reasoning_effort,
         prompt_length,
@@ -143,118 +138,4 @@ pub(super) async fn create_subagent_child(
         worktree_path,
         last_event_seq: persisted.last_event_seq,
     })
-}
-
-async fn resolve_provider_id(init: &SubagentChildInit, item: &SubagentChildInitItem) -> String {
-    let harness_defaulted = item.agent.harness.is_none();
-    let provider_id = item
-        .agent
-        .harness
-        .as_deref()
-        .unwrap_or(&init.parent.provider_id)
-        .trim()
-        .to_string();
-    if harness_defaulted {
-        init.state
-            .emit_product_fallback_applied_counter(
-                "sessions.subagent_init",
-                "harness_default_parent",
-                None,
-            )
-            .await;
-    }
-    provider_id
-}
-
-async fn fallback_model_id<'a>(
-    init: &'a SubagentChildInit,
-    item: &SubagentChildInitItem,
-    provider_id: &str,
-    catalog: Option<&'a ModelCatalog>,
-) -> ApiResult<Option<String>> {
-    let fallback_model = if item.agent.model.is_none() {
-        if provider_id == init.parent.provider_id {
-            Some(init.parent.model_id.clone())
-        } else {
-            default_catalog_model_id(catalog).map(ToOwned::to_owned)
-        }
-    } else {
-        None
-    };
-    if item.agent.model.is_none() && fallback_model.is_none() {
-        init.state
-            .emit_compat_payload_reject_counter(
-                "sessions.subagent_init",
-                "missing_model_without_default",
-                Some(("provider_id", provider_id)),
-            )
-            .await;
-        return Err(api_error(
-            SubagentErrorKind::BadRequest,
-            format!("model is required for harness '{provider_id}'"),
-        ));
-    }
-    if item.agent.model.is_none() {
-        let fallback = if provider_id == init.parent.provider_id {
-            "model_default_parent"
-        } else {
-            "model_default_catalog"
-        };
-        init.state
-            .emit_product_fallback_applied_counter("sessions.subagent_init", fallback, None)
-            .await;
-    }
-    Ok(fallback_model)
-}
-
-async fn resolve_child_worktree(
-    init: &SubagentChildInit,
-    store: &ctx_store::Store,
-) -> ApiResult<(ctx_core::ids::WorktreeId, Option<String>)> {
-    match init.worktree_selection {
-        SubagentWorktreeSelection::Inherit => Ok((init.parent.worktree_id, None)),
-        SubagentWorktreeSelection::New => {
-            let (vcs_kind, base_commit_sha) = init
-                .worktree_plan
-                .clone()
-                .ok_or_else(|| api_error(SubagentErrorKind::Internal, "worktree plan missing"))?;
-            let worktree = create_subagent_worktree(
-                &init.state,
-                store,
-                &init.workspace,
-                init.parent.task_id,
-                &base_commit_sha,
-                vcs_kind,
-                &init.parent_effective,
-            )
-            .await?;
-            Ok((worktree.id, Some(worktree.root_path)))
-        }
-    }
-}
-
-async fn index_child_session(
-    init: &SubagentChildInit,
-    store: &ctx_store::Store,
-    session: &Session,
-    label: &str,
-) {
-    if let Err(error) = init
-        .state
-        .global_store()
-        .upsert_workspace_session_index(session.id, init.parent.workspace_id)
-        .await
-    {
-        tracing::warn!(
-            session_id = %session.id.0,
-            "failed to update subagent session index: {error:?}"
-        );
-    }
-    if store
-        .update_session_title(session.id, label.to_string())
-        .await
-        .is_err()
-    {
-        tracing::warn!(session_id = %session.id.0, "failed to set subagent label");
-    }
 }
