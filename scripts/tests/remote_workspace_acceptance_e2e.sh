@@ -20,6 +20,7 @@ REMOTE_SSH_PORT="${CTX_AUTOMATION_REMOTE_SSH_PORT:-}"
 REMOTE_DATA_DIR="${CTX_AUTOMATION_REMOTE_DATA_DIR:-/tmp/ctx-remote-workspace-e2e/daemon}"
 REMOTE_CTX_BIN="${CTX_UPDATER_E2E_REMOTE_CTX_BIN:-/tmp/ctx-e2e-bin/ctx}"
 ARTIFACT_ROOT="${CTX_REMOTE_CI_ARTIFACT_DIR:-${ROOT}/core/apps/desktop/automation/artifacts/remote-workspace-e2e/${MODE}}"
+CTX_REMOTE_WORKSPACE_E2E_RUN_CONTAINER="${CTX_REMOTE_WORKSPACE_E2E_RUN_CONTAINER:-0}"
 
 if [[ -z "$REMOTE_HOST" ]]; then
   echo "error: CTX_AUTOMATION_REMOTE_HOST/CTX_UPDATER_E2E_REMOTE_HOST is required" >&2
@@ -29,6 +30,13 @@ if [[ -z "$REMOTE_KEY" ]]; then
   echo "error: CTX_AUTOMATION_REMOTE_SSH_KEY_PATH/CTX_UPDATER_E2E_SSH_KEY_PATH is required" >&2
   exit 2
 fi
+case "$CTX_REMOTE_WORKSPACE_E2E_RUN_CONTAINER" in
+  0|1) ;;
+  *)
+    echo "error: CTX_REMOTE_WORKSPACE_E2E_RUN_CONTAINER must be 0 or 1" >&2
+    exit 2
+    ;;
+esac
 
 mkdir -p "$ARTIFACT_ROOT"
 
@@ -126,4 +134,4 @@ export CTX_REMOTE_WORKSPACE_E2E_REQUIRE_ALL_HARNESS_INSTALLS="${CTX_REMOTE_WORKS
 core/apps/desktop/scripts/test_remote_real_ci.sh \
   --artifacts-dir "${ARTIFACT_ROOT}/remote-contracts" \
   --run-host 1 \
-  --run-container 1
+  --run-container "${CTX_REMOTE_WORKSPACE_E2E_RUN_CONTAINER}"

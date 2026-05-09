@@ -340,6 +340,105 @@ async function getSessionWorktreeRoot(
   return { worktreeId, rootPath };
 }
 
+async function seedRemoteVcsInitialChange(
+  request: APIRequestContext,
+  sessionId: string,
+): Promise<{ worktreeId: string; rootPath: string }> {
+  if (!REMOTE_CHURN_HOST || !REMOTE_CHURN_KEY_PATH) {
+    throw new Error(
+      "VCS seed requires CTX_REMOTE_DAEMON_STREAM_SOAK_SSH_HOST and CTX_REMOTE_DAEMON_STREAM_SOAK_SSH_KEY_PATH",
+    );
+  }
+
+  const { worktreeId, rootPath } = await getSessionWorktreeRoot(request, sessionId);
+  let stdoutTail = "";
+  let stderrTail = "";
+  const child: ChildProcessWithoutNullStreams = spawn(
+    "ssh",
+    [
+      "-o",
+      "StrictHostKeyChecking=no",
+      "-o",
+      "UserKnownHostsFile=/dev/null",
+      "-o",
+      "LogLevel=ERROR",
+      "-i",
+      REMOTE_CHURN_KEY_PATH,
+      `root@${REMOTE_CHURN_HOST}`,
+      "bash",
+      "-s",
+      "--",
+      rootPath,
+    ],
+    { stdio: "pipe" },
+  );
+
+  child.stdout.on("data", (chunk: Buffer) => {
+    stdoutTail = appendTail(stdoutTail, chunk);
+  });
+  child.stderr.on("data", (chunk: Buffer) => {
+    stderrTail = appendTail(stderrTail, chunk);
+  });
+
+  const result = new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout>;
+    const finish = (error: string | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (error) {
+        reject(new Error(error));
+        return;
+      }
+      resolve();
+    };
+    timeout = setTimeout(() => {
+      if (settled) return;
+      child.kill("SIGTERM");
+      const details = [stdoutTail.trim(), stderrTail.trim()].filter(Boolean).join("\n");
+      finish(`remote VCS initial seed timed out after 10000ms${details ? `: ${details}` : ""}`);
+    }, 10_000);
+    child.on("error", (error) => {
+      finish(formatUnknownError(error));
+    });
+    child.on("exit", (code, signal) => {
+      if (code === 0) {
+        finish(null);
+        return;
+      }
+      const details = [stdoutTail.trim(), stderrTail.trim()].filter(Boolean).join("\n");
+      finish(
+        `remote VCS initial seed exited with code ${code ?? "null"} signal ${signal ?? "null"}${
+          details ? `: ${details}` : ""
+        }`,
+      );
+    });
+  });
+
+  child.stdin.end(`#!/usr/bin/env bash
+set -euo pipefail
+worktree_root="$1"
+if [[ ! -d "$worktree_root" ]]; then
+  echo "worktree root missing: $worktree_root" >&2
+  exit 11
+fi
+if [[ ! -d "$worktree_root/.git" && ! -f "$worktree_root/.git" ]]; then
+  echo "not a git worktree: $worktree_root" >&2
+  exit 12
+fi
+mkdir -p "$worktree_root/.ctx-vcs-soak"
+rm -f "$worktree_root/.ctx-vcs-soak/stop-requested"
+seed_marker="$(date +%s%3N)"
+printf 'remote vcs soak seed %s\\n' "$seed_marker" >"$worktree_root/vcs-soak-tracked.txt"
+printf 'remote vcs soak inventory seed %s\\n' "$seed_marker" >"$worktree_root/vcs-soak-initial.txt"
+git -C "$worktree_root" status --short >/dev/null
+`);
+
+  await result;
+  return { worktreeId, rootPath };
+}
+
 async function requestRemoteVcsChurnStop(rootPath: string): Promise<string | null> {
   const stopDirectory = `${rootPath}/.ctx-vcs-soak`;
   const stopFile = `${stopDirectory}/stop-requested`;
@@ -1269,11 +1368,35 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
   });
   await clearDiagnostics(page);
 
-  const vcsChurnController = await startRemoteVcsChurn(request, foregroundSessionId);
+  let vcsChurnController: Awaited<ReturnType<typeof startRemoteVcsChurn>> = null;
   let vcsChurnSummary = vcsChurnController?.summary ?? emptyVcsChurnSummary();
   let vcsTaskSwitch: VcsTaskSwitchSummary | null = null;
   let vcsGitPane: VcsGitPaneSummary | null = null;
   if (VCS_CHURN_ENABLED) {
+    vcsGitPane = {
+      openMs: null,
+      firstFileVisibleMs: null,
+      error: null,
+    };
+    try {
+      await seedRemoteVcsInitialChange(request, foregroundSessionId);
+      const openStartedAt = Date.now();
+      const opened = await page.evaluate(() => window.__ctxE2E?.toggleDiffPane?.() ?? false);
+      expect(opened).toBe(true);
+      await expect(page.locator(".wb-right-pane.wb-diff")).toBeVisible({
+        timeout: MAX_VCS_GIT_PANE_OPEN_MS,
+      });
+      vcsGitPane.openMs = Date.now() - openStartedAt;
+      await expect(page.locator(".cursor-diff-file-header").first()).toBeVisible({
+        timeout: MAX_VCS_GIT_PANE_OPEN_MS,
+      });
+      vcsGitPane.firstFileVisibleMs = Date.now() - openStartedAt;
+    } catch (error) {
+      vcsGitPane.error = formatUnknownError(error);
+    }
+
+    vcsChurnController = await startRemoteVcsChurn(request, foregroundSessionId);
+    vcsChurnSummary = vcsChurnController?.summary ?? emptyVcsChurnSummary();
     vcsTaskSwitch = {
       toBackgroundMs: null,
       backToForegroundMs: null,
@@ -1306,33 +1429,6 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
       vcsTaskSwitch.backToForegroundMs = Date.now() - backStartedAt;
     } catch (error) {
       vcsTaskSwitch.error = formatUnknownError(error);
-    }
-
-    vcsGitPane = {
-      openMs: null,
-      firstFileVisibleMs: null,
-      error: null,
-    };
-    try {
-      await waitForTelemetryMetricSum(
-        request,
-        "workspace.vcs_stream.snapshot_count",
-        Math.min(3, MIN_VCS_SNAPSHOTS),
-        MAX_VCS_GIT_PANE_OPEN_MS,
-      );
-      const openStartedAt = Date.now();
-      const opened = await page.evaluate(() => window.__ctxE2E?.toggleDiffPane?.() ?? false);
-      expect(opened).toBe(true);
-      await expect(page.locator(".wb-right-pane.wb-diff")).toBeVisible({
-        timeout: MAX_VCS_GIT_PANE_OPEN_MS,
-      });
-      vcsGitPane.openMs = Date.now() - openStartedAt;
-      await expect(page.locator(".cursor-diff-file-header").first()).toBeVisible({
-        timeout: MAX_VCS_GIT_PANE_OPEN_MS,
-      });
-      vcsGitPane.firstFileVisibleMs = Date.now() - openStartedAt;
-    } catch (error) {
-      vcsGitPane.error = formatUnknownError(error);
     }
   }
 
