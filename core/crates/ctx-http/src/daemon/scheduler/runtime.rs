@@ -3,18 +3,17 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::Result;
-use serde_json::{json, Value};
+use serde_json::Value;
 use tokio::sync::{mpsc, oneshot, watch, Mutex};
 use tokio::time::Instant as TokioInstant;
 
-use ctx_core::models::{MessageRole, Session};
+use ctx_core::models::Session;
 use ctx_providers::events::NormalizedEvent;
 use ctx_session_tools::model_resolution::compose_model_id;
 use ctx_session_tools::order_seq::OrderSeqState;
 
 use crate::daemon::storage_guard;
 use crate::daemon::AppState;
-use ctx_workspace_config as workspace_config;
 
 mod event_loop;
 mod execution_plan;
