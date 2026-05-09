@@ -10,16 +10,13 @@ use axum::response::{IntoResponse, Response};
 use futures::{Sink, SinkExt, StreamExt};
 use serde_json::Value;
 use tokio::sync::{Mutex, Notify};
-use tokio::task::JoinSet;
 
 use ctx_core::ids::*;
 use ctx_core::models::*;
 use ctx_workspace_active_snapshot::{is_transient_session_delta, SessionReplayCursor};
 
-use crate::daemon::AppState;
-use ctx_transport_runtime::terminals::{TerminalClientMessage, TerminalServerMessage};
-
 use super::SecureEnvelope;
+use crate::daemon::AppState;
 
 mod async_util;
 mod common;
