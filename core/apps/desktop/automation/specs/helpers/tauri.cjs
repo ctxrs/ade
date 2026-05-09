@@ -10,10 +10,11 @@ const waitForTauri = async () => {
 
 const normalizeTauriPathname = (pathname) => String(pathname || "").trim() || "/";
 
-const expectedRouteForTauriUrl = (target) => {
+const expectedRouteForTauriUrl = (target, options = {}) => {
   const url = new URL(target);
   return {
     host: url.host,
+    matchSearch: options.matchSearch !== false,
     pathname: normalizeTauriPathname(url.pathname),
     protocol: url.protocol,
     search: url.search,
@@ -23,7 +24,7 @@ const expectedRouteForTauriUrl = (target) => {
 const errorMessage = (error) => String(error && error.message ? error.message : error);
 
 const navigateToTauriUrl = async (target, options = {}) => {
-  const expected = options.route || expectedRouteForTauriUrl(target);
+  const expected = options.route || expectedRouteForTauriUrl(target, options);
   const timeoutMs = options.timeoutMs || 60000;
   const scriptTimeoutMs = options.scriptTimeoutMs || 10000;
   let lastScriptError = "";
@@ -38,7 +39,7 @@ const navigateToTauriUrl = async (target, options = {}) => {
               window.location.protocol === route.protocol
               && window.location.host === route.host
               && pathname === route.pathname
-              && window.location.search === route.search
+              && (route.matchSearch === false || window.location.search === route.search)
             ) {
               return true;
             }
@@ -74,7 +75,7 @@ const navigateToTauriUrl = async (target, options = {}) => {
               && window.location.protocol === route.protocol
               && window.location.host === route.host
               && pathname === route.pathname
-              && window.location.search === route.search;
+              && (route.matchSearch === false || window.location.search === route.search);
           }, expected);
         } catch (error) {
           lastRouteError = errorMessage(error);

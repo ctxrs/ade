@@ -241,7 +241,7 @@ const getCurrentRoute = async () =>
 
 const ensureWorkspaceRoute = async (workspaceId) => {
   const target = `/workspaces/${workspaceId}`;
-  await navigateToTauriUrl(`tauri://localhost${target}?menu_e2e=${Date.now()}`);
+  await navigateToTauriUrl(`tauri://localhost${target}`, { matchSearch: false });
   await installDialogShims();
   await browser.waitUntil(
     async () => {

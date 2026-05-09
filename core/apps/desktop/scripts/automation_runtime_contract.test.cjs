@@ -256,6 +256,8 @@ test("Tauri route navigation helper does not depend on WebDriver page-load compl
   assert.match(tauriHelper, /const navigateToTauriUrl = async/);
   assert.match(tauriHelper, /window\.location\.assign\(href\)/);
   assert.doesNotMatch(tauriHelper, /browser\.url\(/);
+  assert.match(tauriHelper, /matchSearch: options\.matchSearch !== false/);
+  assert.match(tauriHelper, /route\.matchSearch === false \|\| window\.location\.search === route\.search/);
   assert.match(tauriHelper, /window\.location\.protocol === route\.protocol/);
   assert.match(tauriHelper, /window\.location\.search === route\.search/);
   assert.match(updaterNativeSmoke, /navigateToTauriUrl\("tauri:\/\/localhost\/workspaces"\)/);
