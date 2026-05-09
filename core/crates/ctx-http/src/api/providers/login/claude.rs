@@ -1,7 +1,4 @@
 use super::*;
-use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
-use std::sync::Mutex as StdMutex;
-use tokio::sync::oneshot;
 
 mod auth_url;
 mod runtime;
