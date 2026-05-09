@@ -47,7 +47,6 @@ use self::turn_start::{
     apply_crp_launch_policy_env_for_control_mode, prepare_turn_start, PrepareTurnStartRequest,
 };
 use super::lifecycle::{RunningTurn, TurnStartProgress};
-use super::persistence::append_session_event_with_retry;
 use super::QueuedMessage;
 use ctx_org_policy::admission::{
     admit_runtime_turn, apply_turn_admission_env, RuntimeTurnAdmissionRequest,

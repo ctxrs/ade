@@ -1,6 +1,8 @@
 use super::*;
 use crate::daemon::scheduler::lifecycle::{fail_starting_turn, RunningTurn};
-use ctx_core::models::{ExecutionEnvironment, SessionTurn, VcsKind};
+use ctx_core::models::{
+    ExecutionEnvironment, SessionEventType, SessionTurn, SessionTurnStatus, VcsKind,
+};
 use ctx_providers::adapters::{ProviderAdapter, ProviderRunHooks, TurnInput};
 use ctx_providers::events::NormalizedEvent;
 use ctx_providers::fake::FakeProviderAdapter;
