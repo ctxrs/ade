@@ -1,0 +1,44 @@
+use super::super::super::login::extract_auth_url;
+use super::super::output::{first_email_from_text, CursorLoginOutputLine};
+use super::*;
+
+pub(super) async fn set_cursor_login_error(state: &Arc<AppState>, login_id: &str, error: String) {
+    let mut map = state.providers.cursor_login_sessions.lock().await;
+    if let Some(entry) = map.get_mut(login_id) {
+        entry.status = "failed".to_string();
+        entry.error = Some(error);
+    }
+}
+
+async fn update_cursor_auth_url(state: &Arc<AppState>, login_id: &str, auth_url: String) {
+    let mut map = state.providers.cursor_login_sessions.lock().await;
+    if let Some(entry) = map.get_mut(login_id) {
+        entry.auth_url = Some(auth_url);
+    }
+}
+
+pub(super) async fn record_cursor_login_output(
+    state: &Arc<AppState>,
+    login_id: &str,
+    output_line: CursorLoginOutputLine,
+    transcript: &mut String,
+    observed_email: &mut Option<String>,
+    observed_auth_url: &mut Option<String>,
+) {
+    transcript.push_str(&output_line.line);
+    transcript.push('\n');
+    if !output_line.is_stderr && observed_email.is_none() {
+        *observed_email = first_email_from_text(&output_line.line);
+    }
+    if let Some(candidate) =
+        extract_auth_url(&output_line.line).or_else(|| extract_auth_url(transcript))
+    {
+        let needs_update = observed_auth_url
+            .as_ref()
+            .is_none_or(|current| candidate.len() > current.len());
+        if needs_update {
+            *observed_auth_url = Some(candidate.clone());
+            update_cursor_auth_url(state, login_id, candidate).await;
+        }
+    }
+}

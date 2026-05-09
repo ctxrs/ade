@@ -1,55 +1,19 @@
-use super::super::login::extract_auth_url;
 use super::capture::{
     cursor_login_home, ensure_private_dir, initialize_cursor_capture_file,
     parse_cursor_captured_tokens, write_cursor_capture_hook,
 };
 use super::output::{
-    cursor_login_timeout, first_email_from_text, spawn_cursor_login_reader, CursorLoginOutputLine,
+    cursor_login_timeout, spawn_cursor_login_reader, CursorLoginOutputLine,
     CURSOR_LOGIN_POLL_INTERVAL,
 };
 use super::runtime::resolve_cursor_login_runtime;
 use super::*;
 
-async fn set_cursor_login_error(state: &Arc<AppState>, login_id: &str, error: String) {
-    let mut map = state.providers.cursor_login_sessions.lock().await;
-    if let Some(entry) = map.get_mut(login_id) {
-        entry.status = "failed".to_string();
-        entry.error = Some(error);
-    }
-}
+mod completion;
+mod progress;
 
-async fn update_cursor_auth_url(state: &Arc<AppState>, login_id: &str, auth_url: String) {
-    let mut map = state.providers.cursor_login_sessions.lock().await;
-    if let Some(entry) = map.get_mut(login_id) {
-        entry.auth_url = Some(auth_url);
-    }
-}
-
-async fn record_cursor_login_output(
-    state: &Arc<AppState>,
-    login_id: &str,
-    output_line: CursorLoginOutputLine,
-    transcript: &mut String,
-    observed_email: &mut Option<String>,
-    observed_auth_url: &mut Option<String>,
-) {
-    transcript.push_str(&output_line.line);
-    transcript.push('\n');
-    if !output_line.is_stderr && observed_email.is_none() {
-        *observed_email = first_email_from_text(&output_line.line);
-    }
-    if let Some(candidate) =
-        extract_auth_url(&output_line.line).or_else(|| extract_auth_url(transcript))
-    {
-        let needs_update = observed_auth_url
-            .as_ref()
-            .is_none_or(|current| candidate.len() > current.len());
-        if needs_update {
-            *observed_auth_url = Some(candidate.clone());
-            update_cursor_auth_url(state, login_id, candidate).await;
-        }
-    }
-}
+use completion::complete_cursor_login;
+use progress::{record_cursor_login_output, set_cursor_login_error};
 
 pub(super) async fn monitor_cursor_login(
     state: Arc<AppState>,
@@ -208,75 +172,22 @@ pub(super) async fn monitor_cursor_login(
         }
     }
 
-    let mut final_status = "failed".to_string();
-    let mut final_error = timeout_error;
-    let mut final_account_id: Option<String> = None;
-
-    if final_error.is_none() {
-        match exit_result {
-            Ok(status) if status.success() => {
-                match parse_cursor_captured_tokens(&capture_path).await {
-                    Ok((access_token, refresh_token, api_key)) => {
-                        let auth_token = access_token.or(api_key);
-                        if let Some(auth_token) = auth_token {
-                            match provider_accounts::add_cursor_oauth_account(
-                                &state.core.data_root,
-                                label.clone(),
-                                auth_token,
-                                refresh_token,
-                                observed_email,
-                            )
-                            .await
-                            {
-                                Ok(registry) => {
-                                    final_account_id = registry.active_account_id.clone();
-                                    match super::super::restarts::restart_cursor_providers_for_auth_change(
-                                        &state,
-                                        "cursor auth updated",
-                                    )
-                                    .await
-                                    {
-                                        Ok(()) => {
-                                            final_status = "success".to_string();
-                                        }
-                                        Err(err) => {
-                                            final_error = Some(logs::redact_sensitive(&format!(
-                                                "auth saved but provider restart failed: {err:#}"
-                                            )));
-                                        }
-                                    }
-                                }
-                                Err(err) => {
-                                    final_error = Some(logs::redact_sensitive(&err.to_string()));
-                                }
-                            }
-                        } else {
-                            final_error = Some(
-                                "Cursor login completed but no managed auth token was captured"
-                                    .to_string(),
-                            );
-                        }
-                    }
-                    Err(err) => {
-                        final_error = Some(logs::redact_sensitive(&err.to_string()));
-                    }
-                }
-            }
-            Ok(status) => {
-                final_error = Some(format!("cursor-agent login exited with status {status}"));
-            }
-            Err(err) => {
-                final_error = Some(format!("waiting for cursor-agent login failed: {err}"));
-            }
-        }
-    }
+    let completion = complete_cursor_login(
+        &state,
+        label,
+        &capture_path,
+        observed_email,
+        timeout_error,
+        exit_result,
+    )
+    .await;
 
     let _ = tokio::fs::remove_dir_all(&login_home).await;
     let mut map = state.providers.cursor_login_sessions.lock().await;
     if let Some(entry) = map.get_mut(&login_id) {
-        entry.status = final_status;
-        entry.account_id = final_account_id;
-        entry.error = final_error;
+        entry.status = completion.status;
+        entry.account_id = completion.account_id;
+        entry.error = completion.error;
         if entry.auth_url.is_none() {
             entry.auth_url = observed_auth_url;
         }
