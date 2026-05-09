@@ -145,6 +145,16 @@ fn delta_has_live_context_window(delta: &Value) -> bool {
             == Some(75)
 }
 
+fn task_request_body() -> Value {
+    json!({
+        "title": "task",
+        "default_session": {
+            "provider_id": "fake",
+            "model_id": "fake-model",
+        },
+    })
+}
+
 #[tokio::test]
 async fn workspace_stream_done_delta_carries_context_window_metrics() {
     let (repo, _data_dir, _state, server) = setup().await;
@@ -163,7 +173,7 @@ async fn workspace_stream_done_delta_carries_context_window_metrics() {
 
     let task: ctx_core::models::Task = client
         .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
-        .json(&json!({"title": "task"}))
+        .json(&task_request_body())
         .send()
         .await
         .unwrap()
@@ -299,7 +309,7 @@ async fn workspace_stream_live_context_window_delta_arrives_before_done() {
 
     let task: ctx_core::models::Task = client
         .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
-        .json(&json!({"title": "task"}))
+        .json(&task_request_body())
         .send()
         .await
         .unwrap()
