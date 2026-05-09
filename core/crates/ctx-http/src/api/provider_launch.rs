@@ -1,13 +1,21 @@
-use std::collections::HashMap;
-use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+mod cache_key;
+mod config;
+mod errors;
 mod handlers;
 mod provider_options_response;
+mod runtime_probe;
 
+use cache_key::workspace_provider_cache_key;
+pub(in crate::api) use config::{
+    load_managed_agent_server_config_with_error, load_provider_source_config_with_error,
+};
+use errors::{provider_install_error_response, workspace_execution_settings_error_json};
 pub(in crate::api) use handlers::*;
 use provider_options_response::*;
+use runtime_probe::{prepare_provider_runtime_probe, PreparedProviderRuntimeProbeError};
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -27,7 +35,6 @@ use crate::daemon::provider_launch::status::{
     install_target_for_workspace, provider_status_for_target,
 };
 use crate::daemon::AppState;
-use ctx_core::ids::WorkspaceId;
 use ctx_harness_sources as harness_sources;
 use ctx_harness_sources::{HarnessEndpointVerificationStatus, HarnessSourceKind};
 use ctx_observability::logs;
@@ -47,9 +54,6 @@ use ctx_provider_runtime::provider_launch::options::{
     runtime_probe_models_payload, ProviderOptionsProbePlan,
 };
 use ctx_provider_runtime::provider_launch::probe_error::classify_probe_error;
-use ctx_provider_runtime::provider_launch::resolver::{
-    is_acp_provider_id, runtime_probe_command_as_agent_command_for_target,
-};
 use ctx_provider_runtime::provider_usability::{
     provider_status_is_usable, provider_status_unusable_reason,
 };
@@ -84,194 +88,4 @@ pub(super) struct ProviderAuthCheckResp {
     checked_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     message: Option<String>,
-}
-
-pub(in crate::api) async fn load_provider_source_config_with_error(
-    data_root: &FsPath,
-    provider_id: &str,
-) -> (
-    Option<harness_sources::HarnessProviderSourceConfig>,
-    Option<String>,
-) {
-    if !harness_sources::supports_harness_endpoint(provider_id) {
-        return (None, None);
-    }
-
-    match harness_sources::get_provider_source_config(data_root, provider_id).await {
-        Ok(config) => (Some(config), None),
-        Err(err) => (None, Some(logs::redact_sensitive(&err.to_string()))),
-    }
-}
-
-pub(in crate::api) async fn load_managed_agent_server_config_with_error(
-    data_root: &FsPath,
-) -> (
-    crate::daemon::installer::AgentServerConfigFile,
-    Option<String>,
-) {
-    match crate::daemon::installer::load_agent_server_config(data_root).await {
-        Ok(config) => (config, None),
-        Err(err) => (
-            crate::daemon::installer::AgentServerConfigFile::default(),
-            Some(logs::redact_sensitive(&err.to_string())),
-        ),
-    }
-}
-
-struct PreparedProviderRuntimeProbe {
-    command: String,
-    args: Vec<String>,
-    env: HashMap<String, String>,
-    cwd: PathBuf,
-    selected_endpoint_id: Option<String>,
-}
-
-fn workspace_execution_settings_error_json(
-    error: &anyhow::Error,
-) -> (StatusCode, Json<serde_json::Value>) {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(serde_json::json!({
-            "error": format!("failed to load workspace execution settings: {error:#}"),
-        })),
-    )
-}
-
-fn provider_install_error_response(
-    error: provider_launch_install::StartProviderInstallError,
-) -> (StatusCode, Json<serde_json::Value>) {
-    let status = if error.code.as_deref() == Some("install_target_disabled") {
-        StatusCode::FORBIDDEN
-    } else {
-        StatusCode::BAD_REQUEST
-    };
-    (
-        status,
-        Json(serde_json::json!({
-            "error": logs::redact_sensitive(&error.message),
-            "code": error.code,
-        })),
-    )
-}
-
-enum PreparedProviderRuntimeProbeError {
-    Route((StatusCode, Json<serde_json::Value>)),
-    Verify(String),
-}
-
-async fn prepare_provider_runtime_probe(
-    state: &Arc<AppState>,
-    workspace: &ctx_core::models::Workspace,
-    provider_id: &str,
-    selected_endpoint_id: Option<String>,
-) -> Result<PreparedProviderRuntimeProbe, PreparedProviderRuntimeProbeError> {
-    let install_target = install_target_for_workspace(state, workspace.id)
-        .await
-        .map_err(|error| {
-            PreparedProviderRuntimeProbeError::Route(workspace_execution_settings_error_json(
-                &error,
-            ))
-        })?;
-    let (cfg, config_error) =
-        load_managed_agent_server_config_with_error(&state.core.data_root).await;
-    if let Some(config_error) = config_error {
-        return Err(PreparedProviderRuntimeProbeError::Verify(config_error));
-    }
-    let runtime_command = runtime_probe_command_as_agent_command_for_target(
-        &state.core.data_root,
-        &cfg,
-        provider_id,
-        Some(install_target),
-    )
-    .map_err(|e| {
-        PreparedProviderRuntimeProbeError::Verify(format!(
-            "runtime_command_invalid: provider={provider_id} error={e}"
-        ))
-    })?
-    .ok_or_else(|| {
-        PreparedProviderRuntimeProbeError::Verify(format!(
-            "runtime_command_missing: provider={provider_id} (configure an absolute runtime command)"
-        ))
-    })?;
-    let command = runtime_command.command;
-    let args = runtime_command.args;
-
-    let probe_context =
-        probe::provider_probe_context_for_workspace_runtime(state.as_ref(), workspace, provider_id)
-            .await
-            .map_err(PreparedProviderRuntimeProbeError::Verify)?;
-    let source = probe_context.source;
-    let mut env = probe_context.env;
-    crate::daemon::installer::prepend_runtime_bin_dirs_to_provider_path_for_target(
-        &mut env,
-        &cfg,
-        provider_id,
-        &state.core.data_root,
-        Some(install_target),
-    );
-    if is_acp_provider_id(provider_id) {
-        crate::daemon::installer::prepend_runtime_bin_dirs_to_provider_path_for_target(
-            &mut env,
-            &cfg,
-            "acp-crp-bridge",
-            &state.core.data_root,
-            Some(install_target),
-        );
-    }
-    crate::daemon::installer::ensure_codex_cli_command_env_for_target(
-        &mut env,
-        &cfg,
-        provider_id,
-        Some(install_target),
-    )
-    .map_err(|e| {
-        PreparedProviderRuntimeProbeError::Verify(format!(
-            "codex_cli_command_invalid: provider={provider_id} error={e}"
-        ))
-    })?;
-
-    let selected_endpoint_id = if source.source_kind == HarnessSourceKind::Endpoint {
-        source
-            .endpoint
-            .as_ref()
-            .map(|endpoint| endpoint.id.clone())
-            .or(selected_endpoint_id)
-    } else {
-        None
-    };
-
-    Ok(PreparedProviderRuntimeProbe {
-        command,
-        args,
-        env,
-        cwd: probe_context.cwd,
-        selected_endpoint_id,
-    })
-}
-
-fn workspace_provider_cache_key(
-    workspace_id: WorkspaceId,
-    target: InstallTarget,
-    provider_id: &str,
-) -> String {
-    format!("{}/{}/{}", workspace_id.0, target.as_str(), provider_id)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::provider_install_error_response;
-    use axum::http::StatusCode;
-
-    #[test]
-    fn provider_install_error_response_maps_disabled_install_targets_to_forbidden() {
-        let (status, body) = provider_install_error_response(
-            ctx_provider_runtime::provider_launch::install::StartProviderInstallError {
-                message: "host provider installs are disabled by daemon policy".to_string(),
-                code: Some("install_target_disabled".to_string()),
-            },
-        );
-
-        assert_eq!(status, StatusCode::FORBIDDEN);
-        assert_eq!(body.0["code"], "install_target_disabled");
-    }
 }
