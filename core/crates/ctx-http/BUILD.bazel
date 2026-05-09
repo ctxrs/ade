@@ -471,6 +471,8 @@ rust_binary(
     edition = "2021",
     srcs = [
         "src/cli.rs",
+        "src/logging/heap_profiler.rs",
+        "src/logging/maintenance.rs",
         "src/logging.rs",
         "src/main.rs",
     ],
