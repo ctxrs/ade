@@ -1,3 +1,4 @@
+use super::persistence::{persist_created_session, PersistCreatedSession};
 use super::*;
 
 pub(in crate::api::tasks) async fn create_session_for_loaded_task_inner(
@@ -163,111 +164,23 @@ pub(in crate::api::tasks) async fn create_session_for_loaded_task_inner(
         }
     }
 
-    let requested_session_id = session_id;
-    let session = if let Some(session_id) = requested_session_id {
-        match store
-            .create_session_with_id_and_reasoning_effort(
-                session_id,
-                task_id,
-                task.workspace_id,
-                worktree_id,
-                execution_environment,
-                provider_id.clone(),
-                model_id.clone(),
-                reasoning_effort.clone(),
-                "implementer".to_string(),
-                parent_session_id,
-                relationship.clone(),
-                None,
-            )
-            .await
-        {
-            Ok(session) => session,
-            Err(_) => {
-                if let Some(created_worktree_id) = created_worktree_id {
-                    cleanup_orphaned_provisioned_worktree(
-                        &state,
-                        &store,
-                        &workspace,
-                        task_id,
-                        created_worktree_id,
-                    )
-                    .await;
-                }
-                return Err(StatusCode::INTERNAL_SERVER_ERROR);
-            }
-        }
-    } else {
-        match store
-            .create_session_with_reasoning_effort(
-                task_id,
-                task.workspace_id,
-                worktree_id,
-                execution_environment,
-                provider_id.clone(),
-                model_id.clone(),
-                reasoning_effort.clone(),
-                "implementer".to_string(),
-                parent_session_id,
-                relationship.clone(),
-                None,
-            )
-            .await
-        {
-            Ok(session) => session,
-            Err(_) => {
-                if let Some(created_worktree_id) = created_worktree_id {
-                    cleanup_orphaned_provisioned_worktree(
-                        &state,
-                        &store,
-                        &workspace,
-                        task_id,
-                        created_worktree_id,
-                    )
-                    .await;
-                }
-                return Err(StatusCode::INTERNAL_SERVER_ERROR);
-            }
-        }
-    };
-    if let Some(session_id) = requested_session_id {
-        if session.id != session_id
-            || !session_matches_creation_identity(
-                &session,
-                SessionCreationIdentity {
-                    task_id,
-                    workspace_id: task.workspace_id,
-                    worktree_id,
-                    execution_environment,
-                    provider_id: &provider_id,
-                    model_id: &model_id,
-                    reasoning_effort: reasoning_effort.as_deref(),
-                    parent_session_id,
-                    relationship: requested_relationship.as_deref(),
-                },
-            )
-        {
-            return Err(StatusCode::CONFLICT);
-        }
-    }
-    state.sessions.remember_session_meta(&session).await;
-    if let Err(e) = retry_global_index_write(|| async {
-        state
-            .global_store()
-            .upsert_workspace_session_index(session.id, task.workspace_id)
-            .await
+    let session = persist_created_session(PersistCreatedSession {
+        state: &state,
+        store: &store,
+        task: &task,
+        workspace: &workspace,
+        requested_session_id: session_id,
+        created_worktree_id,
+        worktree_id,
+        execution_environment,
+        provider_id: &provider_id,
+        model_id: &model_id,
+        reasoning_effort: reasoning_effort.as_deref(),
+        parent_session_id,
+        relationship: relationship.as_deref(),
+        requested_relationship: requested_relationship.as_deref(),
     })
-    .await
-    {
-        tracing::warn!(session_id = %session.id.0, "failed to update session index: {e:?}");
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
-    }
-
-    if session.parent_session_id.is_none() && session.relationship.is_none() {
-        let _ = store
-            .set_task_primary_session(task.id, session.id, worktree_id)
-            .await;
-    }
+    .await?;
 
     seed_initial_prompt(
         &state,

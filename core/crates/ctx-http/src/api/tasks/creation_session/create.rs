@@ -2,6 +2,8 @@ use super::*;
 
 #[path = "create/loaded.rs"]
 mod loaded;
+#[path = "create/persistence.rs"]
+mod persistence;
 
 pub(in crate::api::tasks) use loaded::create_session_for_loaded_task_inner;
 
