@@ -1,5 +1,5 @@
 const path = require("path");
-const { waitForTauri, waitForTestId } = require("./helpers/tauri.cjs");
+const { navigateToTauriUrl, waitForTestId } = require("./helpers/tauri.cjs");
 const { daemonJson } = require("./helpers/daemon.cjs");
 
 const DEFAULT_WORKSPACE_PATH = path.resolve(__dirname, "../../../../../");
@@ -154,8 +154,7 @@ const assertNoArchivedLoadFailedDiagnostics = async () => {
 
 describe("desktop archived tasks loading", () => {
   it("loads archived tasks without failure state for a new workspace", async () => {
-    await browser.url("tauri://localhost");
-    await waitForTauri();
+    await navigateToTauriUrl("tauri://localhost");
     await connectLocal();
 
     const workspaceId = await createWorkspace(WORKSPACE_PATH);

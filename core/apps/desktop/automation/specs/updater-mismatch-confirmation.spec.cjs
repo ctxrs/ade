@@ -1,4 +1,4 @@
-const { waitForTauri } = require("./helpers/tauri.cjs");
+const { navigateToTauriUrl } = require("./helpers/tauri.cjs");
 
 const tauriInvoke = async (command, args) => {
   let result;
@@ -28,8 +28,7 @@ const tauriInvoke = async (command, args) => {
 
 describe("updater mismatch actions require explicit confirmation", () => {
   it("rejects local daemon restart when confirm=false", async () => {
-    await browser.url("tauri://localhost/workspaces");
-    await waitForTauri();
+    await navigateToTauriUrl("tauri://localhost/workspaces");
 
     const resp = await tauriInvoke("desktop_restart_local_daemon", { req: { confirm: false } });
     const message = String(resp.error || "").toLowerCase();
@@ -39,8 +38,7 @@ describe("updater mismatch actions require explicit confirmation", () => {
   });
 
   it("rejects remote daemon update when confirm=false", async () => {
-    await browser.url("tauri://localhost/workspaces");
-    await waitForTauri();
+    await navigateToTauriUrl("tauri://localhost/workspaces");
 
     const resp = await tauriInvoke("desktop_update_remote_daemon", { req: { confirm: false } });
     const message = String(resp.error || "").toLowerCase();

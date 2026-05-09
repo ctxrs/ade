@@ -2,7 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const { spawnSync } = require("child_process");
 
-const { waitForTauri } = require("./helpers/tauri.cjs");
+const { navigateToTauriUrl } = require("./helpers/tauri.cjs");
 const {
   resolveNotificationPermissionAction,
 } = require("../notification_permission_policy.cjs");
@@ -154,8 +154,7 @@ describe("signed macOS notification smoke", () => {
 
     requireSignedAppPath();
 
-    await browser.url("tauri://localhost");
-    await waitForTauri();
+    await navigateToTauriUrl("tauri://localhost");
     await waitForDesktopAppReady();
     const permission = await resolveNotificationPermissionForSmoke();
     await requireTauriValue("desktop_clear_notification_automation_snapshot");

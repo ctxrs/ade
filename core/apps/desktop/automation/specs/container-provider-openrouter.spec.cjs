@@ -1,7 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const { waitForTauri } = require("./helpers/tauri.cjs");
+const { navigateToTauriUrl } = require("./helpers/tauri.cjs");
 const { daemonJson } = require("./helpers/daemon.cjs");
 const { sampleDaemonHealth } = require("./helpers/daemon.cjs");
 const {
@@ -129,8 +129,7 @@ describe("container provider OpenRouter (desktop e2e)", () => {
   };
 
   before(async () => {
-    await browser.url(`tauri://localhost/workspace-setup?containerProviderOpenrouter=${Date.now()}`);
-    await waitForTauri();
+    await navigateToTauriUrl(`tauri://localhost/workspace-setup?containerProviderOpenrouter=${Date.now()}`);
   });
 
   after(async () => {

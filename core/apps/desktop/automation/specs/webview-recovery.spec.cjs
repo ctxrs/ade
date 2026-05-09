@@ -1,4 +1,4 @@
-const { waitForTauri } = require("./helpers/tauri.cjs");
+const { navigateToTauriUrl } = require("./helpers/tauri.cjs");
 const {
   tauriInvoke,
   waitForDesktopAppReady,
@@ -109,8 +109,7 @@ const injectRecoveryFault = async (kind) => {
 
 describe("desktop webview recovery", () => {
   it("reloads then recreates the main webview while preserving the route", async () => {
-    await browser.url("tauri://localhost");
-    await waitForTauri();
+    await navigateToTauriUrl("tauri://localhost");
     await waitForDesktopAppReady();
 
     const trackedRoute = await openSettingsRoute();

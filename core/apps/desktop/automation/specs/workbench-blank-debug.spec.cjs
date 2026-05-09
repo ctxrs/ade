@@ -2,7 +2,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
-const { waitForTauri, waitForTestId } = require("./helpers/tauri.cjs");
+const { navigateToTauriUrl, waitForTestId } = require("./helpers/tauri.cjs");
 
 const runChecked = (cmd, args) => {
   const res = spawnSync(cmd, args, { encoding: "utf8" });
@@ -134,8 +134,7 @@ describe("workbench blank debug (e2e)", () => {
   });
 
   it("creates a local workspace and asserts workbench renders", async () => {
-    await browser.url(`tauri://localhost/workspace-setup?debug=${Date.now()}`);
-    await waitForTauri();
+    await navigateToTauriUrl(`tauri://localhost/workspace-setup?debug=${Date.now()}`);
     await waitForTestId("workspace-setup", 60000);
 
     await browser.execute(() => {

@@ -2,7 +2,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
-const { waitForTauri, getConnectionInfo } = require("./helpers/tauri.cjs");
+const { navigateToTauriUrl, getConnectionInfo } = require("./helpers/tauri.cjs");
 const { daemonJson } = require("./helpers/daemon.cjs");
 
 const runChecked = (cmd, args) => {
@@ -418,8 +418,7 @@ describe("desktop workbench image drag drop", () => {
   });
 
   it("attaches dropped images in new-task and active-session desktop composers", async () => {
-    await browser.url("tauri://localhost?ctxE2E=1");
-    await waitForTauri();
+    await navigateToTauriUrl("tauri://localhost?ctxE2E=1");
 
     const workspaceId = await createWorkspace(repoRoot);
     await browser.execute((id) => {

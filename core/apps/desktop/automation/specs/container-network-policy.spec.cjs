@@ -1,7 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const { waitForTauri } = require("./helpers/tauri.cjs");
+const { navigateToTauriUrl } = require("./helpers/tauri.cjs");
 const { daemonJson } = require("./helpers/daemon.cjs");
 const {
   mkTempDir,
@@ -123,8 +123,7 @@ describe("container network policy (desktop e2e)", function () {
   const localBase = mkTempDir(`ctx-container-network-policy-${runId}-`);
 
   before(async () => {
-    await browser.url(`tauri://localhost/workspace-setup?containerNetworkPolicy=${Date.now()}`);
-    await waitForTauri();
+    await navigateToTauriUrl(`tauri://localhost/workspace-setup?containerNetworkPolicy=${Date.now()}`);
   });
 
   after(async () => {

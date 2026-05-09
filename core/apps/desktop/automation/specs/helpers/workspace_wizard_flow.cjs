@@ -3,7 +3,7 @@ const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
 const {
-  waitForTauri,
+  navigateToTauriUrl,
   selectorForTestId,
   waitForTestId,
   clickTestId,
@@ -2285,8 +2285,7 @@ const runWizardScenario = async (scenario) => {
     container: scenario.container || null,
     source_kind: scenario.source?.kind || null,
   });
-  await browser.url(`tauri://localhost/workspace-setup?e2e=${Date.now()}`);
-  await waitForTauri();
+  await navigateToTauriUrl(`tauri://localhost/workspace-setup?e2e=${Date.now()}`);
   // Hard-reset wizard UI state between scenarios.
   // The wizard persists progress in webview storage; without clearing, the app can reopen mid-step.
   await browser.execute(() => {

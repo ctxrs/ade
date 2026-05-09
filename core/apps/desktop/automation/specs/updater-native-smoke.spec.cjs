@@ -2,7 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const { resolveBoolishFlag } = require("../../../../scripts/lib/boolish.cjs");
-const { waitForTauri } = require("./helpers/tauri.cjs");
+const { navigateToTauriUrl } = require("./helpers/tauri.cjs");
 const {
   tauriInvoke,
   normalizePhase,
@@ -94,8 +94,7 @@ const finalizePayload = async ({ check, state, attempt, apply, autoState }) => (
 
 describe("desktop updater native state smoke", () => {
   it("proves native updater state and manual-check/apply behavior deterministically", async () => {
-    await browser.url("tauri://localhost/workspaces");
-    await waitForTauri();
+    await navigateToTauriUrl("tauri://localhost/workspaces");
 
     let autoState = null;
     let state = await readState(specChannel);

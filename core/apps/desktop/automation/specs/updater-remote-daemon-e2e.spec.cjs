@@ -1,7 +1,7 @@
 const path = require("node:path");
 
 const { resolveBoolishFlag } = require("../../../../scripts/lib/boolish.cjs");
-const { waitForTauri } = require("./helpers/tauri.cjs");
+const { navigateToTauriUrl } = require("./helpers/tauri.cjs");
 const { createRemoteContractRecorder, resolveRemoteFixtureEnv } = require("../helpers/remote_fixture_contract.cjs");
 const {
   REMOTE_HOST,
@@ -164,8 +164,7 @@ describe("updater remote daemon e2e", () => {
   });
 
   it("proves real remote daemon update flows across configured scenarios", async () => {
-    await browser.url("tauri://localhost/workspaces");
-    await waitForTauri();
+    await navigateToTauriUrl("tauri://localhost/workspaces");
 
     const fixture = remoteFixture();
     const recorder = createRemoteContractRecorder({

@@ -24,6 +24,16 @@ const LINUX_LOCAL_TRUTH_WRAPPER = path.join(REPO_ROOT, "scripts", "tests", "linu
 const UPDATER_LINUX_PROOF_WRAPPER = path.join(REPO_ROOT, "scripts", "tests", "updater_linux_release_truth.sh");
 const MAC_REMOTE_TRUTH_WRAPPER = path.join(REPO_ROOT, "scripts", "tests", "macos_remote_ubuntu_sandbox_release_truth.sh");
 const UPDATER_REMOTE_WRAPPER = path.join(REPO_ROOT, "scripts", "tests", "updater_remote_daemon_e2e.sh");
+const AUTOMATION_SPECS_DIR = path.join(ROOT, "automation", "specs");
+
+const collectCjsFiles = (dir) => {
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  return entries.flatMap((entry) => {
+    const entryPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) return collectCjsFiles(entryPath);
+    return entry.name.endsWith(".cjs") ? [entryPath] : [];
+  });
+};
 
 test("production desktop build keeps automation runtime available", () => {
   const cargo = fs.readFileSync(TAURI_CARGO, "utf8");
@@ -225,14 +235,38 @@ test("mac WDIO automation targets the app executable and performs a real session
   );
 });
 
-test("Tauri route navigation does not depend on WebDriver page-load completion", () => {
+test("Tauri route navigation helper does not depend on WebDriver page-load completion", () => {
   const wdio = fs.readFileSync(WDIO_CONF, "utf8");
-  assert.match(wdio, /pageLoadStrategy:\s*"none"/);
-  assert.match(wdio, /const installTauriNavigationWait = \(browser\) => \{/);
-  assert.match(wdio, /browser\.url = async \(target, \.\.\.args\) => \{/);
-  assert.match(wdio, /await waitForTauriRoute\(browser, target\);/);
-  assert.match(wdio, /installTauriNavigationWait\(browser\);/);
+  const tauriHelper = fs.readFileSync(path.join(ROOT, "automation", "specs", "helpers", "tauri.cjs"), "utf8");
+  const updaterNativeSmoke = fs.readFileSync(
+    path.join(ROOT, "automation", "specs", "updater-native-smoke.spec.cjs"),
+    "utf8",
+  );
+  const updaterRemoteDaemon = fs.readFileSync(
+    path.join(ROOT, "automation", "specs", "updater-remote-daemon-e2e.spec.cjs"),
+    "utf8",
+  );
+  const workspaceWizard = fs.readFileSync(
+    path.join(ROOT, "automation", "specs", "workspace-wizard.spec.cjs"),
+    "utf8",
+  );
+  assert.doesNotMatch(wdio, /pageLoadStrategy:\s*"none"/);
+  assert.doesNotMatch(wdio, /installTauriNavigationWait/);
   assert.match(wdio, /timeouts:\s*\{[\s\S]*pageLoad:\s*300000/);
+  assert.match(tauriHelper, /const navigateToTauriUrl = async/);
+  assert.match(tauriHelper, /window\.location\.assign\(href\)/);
+  assert.doesNotMatch(tauriHelper, /browser\.url\(/);
+  assert.match(tauriHelper, /window\.location\.protocol === route\.protocol/);
+  assert.match(tauriHelper, /window\.location\.search === route\.search/);
+  assert.match(updaterNativeSmoke, /navigateToTauriUrl\("tauri:\/\/localhost\/workspaces"\)/);
+  assert.match(updaterRemoteDaemon, /navigateToTauriUrl\("tauri:\/\/localhost\/workspaces"\)/);
+  assert.match(workspaceWizard, /navigateToTauriUrl\(`tauri:\/\/localhost\/workspace-setup\?e2e=\$\{Date\.now\(\)\}`\)/);
+  const rawTauriNavigations = collectCjsFiles(AUTOMATION_SPECS_DIR)
+    .flatMap((filePath) => {
+      const text = fs.readFileSync(filePath, "utf8");
+      return /browser\.url\([^;\n]*tauri:\/\//.test(text) ? [path.relative(ROOT, filePath)] : [];
+    });
+  assert.deepEqual(rawTauriNavigations, []);
 });
 
 test("macOS automation launcher treats CrabNebula backend as fixed-port", () => {

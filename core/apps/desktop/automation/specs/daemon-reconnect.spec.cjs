@@ -1,4 +1,4 @@
-const { waitForTauri, getConnectionInfo } = require("./helpers/tauri.cjs");
+const { navigateToTauriUrl, getConnectionInfo } = require("./helpers/tauri.cjs");
 const { daemonJson } = require("./helpers/daemon.cjs");
 const { assertDesktopConnectionStable } = require("./helpers/workspace_wizard_flow.cjs");
 
@@ -54,8 +54,7 @@ const requestDeepLinkToken = async () => {
 
 describe("desktop daemon reconnect + deep-link token", () => {
   it("auto-reconnects on daemon request after disconnect and returns deep-link token", async () => {
-    await browser.url("tauri://localhost");
-    await waitForTauri();
+    await navigateToTauriUrl("tauri://localhost");
 
     const first = await connectLocal();
     if (!first || first.kind !== "local") {

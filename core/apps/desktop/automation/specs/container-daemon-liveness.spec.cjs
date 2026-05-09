@@ -1,7 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const { waitForTauri } = require("./helpers/tauri.cjs");
+const { navigateToTauriUrl } = require("./helpers/tauri.cjs");
 const { daemonJson, sampleDaemonHealth } = require("./helpers/daemon.cjs");
 const {
   getProviderStatus,
@@ -335,8 +335,7 @@ describe("sandbox daemon liveness", () => {
   const localBase = mkTempDir(`ctx-container-daemon-liveness-${runId}-`);
 
   before(async () => {
-    await browser.url(`tauri://localhost/workspace-setup?containerDaemonLiveness=${Date.now()}`);
-    await waitForTauri();
+    await navigateToTauriUrl(`tauri://localhost/workspace-setup?containerDaemonLiveness=${Date.now()}`);
   });
 
   after(async () => {

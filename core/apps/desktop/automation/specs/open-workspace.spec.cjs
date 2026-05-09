@@ -1,5 +1,5 @@
 const path = require("path");
-const { waitForTauri, getConnectionInfo } = require("./helpers/tauri.cjs");
+const { navigateToTauriUrl, getConnectionInfo } = require("./helpers/tauri.cjs");
 const { daemonJson } = require("./helpers/daemon.cjs");
 const { assertWorkbenchUsable } = require("./helpers/workspace_wizard_flow.cjs");
 
@@ -35,8 +35,7 @@ const createWorkspace = async (rootPath) => {
 
 describe("desktop automation", () => {
   it("opens a workspace in the Tauri app", async () => {
-    await browser.url("tauri://localhost");
-    await waitForTauri();
+    await navigateToTauriUrl("tauri://localhost");
 
     const workspaceId = await createWorkspace(WORKSPACE_PATH);
     await browser.execute((id) => {

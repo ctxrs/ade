@@ -3,7 +3,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { chromium } = require("playwright");
 
-const { waitForTauri } = require("./helpers/tauri.cjs");
+const { navigateToTauriUrl } = require("./helpers/tauri.cjs");
 const { daemonJson } = require("./helpers/daemon.cjs");
 const {
   mkTempDir,
@@ -701,8 +701,7 @@ describe("codex oauth harness framework (desktop e2e)", () => {
   const localBase = mkTempDir(`ctx-codex-oauth-framework-${runId}-`);
 
   before(async () => {
-    await browser.url(`tauri://localhost/workspace-setup?codexOauthFramework=${runId}`);
-    await waitForTauri();
+    await navigateToTauriUrl(`tauri://localhost/workspace-setup?codexOauthFramework=${runId}`);
   });
 
   after(async () => {

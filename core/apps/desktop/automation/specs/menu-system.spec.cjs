@@ -1,5 +1,5 @@
 const path = require("path");
-const { waitForTauri } = require("./helpers/tauri.cjs");
+const { navigateToTauriUrl } = require("./helpers/tauri.cjs");
 const { daemonJson } = require("./helpers/daemon.cjs");
 
 const DEFAULT_WORKSPACE_PATH = path.resolve(__dirname, "../../../../../");
@@ -241,8 +241,7 @@ const getCurrentRoute = async () =>
 
 const ensureWorkspaceRoute = async (workspaceId) => {
   const target = `/workspaces/${workspaceId}`;
-  await browser.url(`tauri://localhost${target}?menu_e2e=${Date.now()}`);
-  await waitForTauri();
+  await navigateToTauriUrl(`tauri://localhost${target}?menu_e2e=${Date.now()}`);
   await installDialogShims();
   await browser.waitUntil(
     async () => {
@@ -278,8 +277,7 @@ describe("desktop menu automation", () => {
   it("executes every menu command through the Tauri bridge", async () => {
     assertSetEqual(ALL_MENU_COMMAND_IDS, MENU_TEST_ORDER, "menu command coverage");
 
-    await browser.url(`tauri://localhost/workspace-setup?menu_e2e=${Date.now()}`);
-    await waitForTauri();
+    await navigateToTauriUrl(`tauri://localhost/workspace-setup?menu_e2e=${Date.now()}`);
     await installDialogShims();
 
     const workspaceId = await createWorkspaceAndTask(WORKSPACE_PATH);

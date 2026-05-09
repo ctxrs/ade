@@ -3,7 +3,7 @@ const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
 
-const { waitForTauri } = require("./helpers/tauri.cjs");
+const { navigateToTauriUrl } = require("./helpers/tauri.cjs");
 const { daemonJson } = require("./helpers/daemon.cjs");
 const {
   mkTempDir,
@@ -196,8 +196,7 @@ describe("cursor oauth shell open (desktop e2e)", () => {
   const localBase = mkTempDir(`ctx-cursor-oauth-shell-open-${runId}-`);
 
   before(async () => {
-    await browser.url(`tauri://localhost/workspace-setup?cursorOauthShellOpen=${runId}`);
-    await waitForTauri();
+    await navigateToTauriUrl(`tauri://localhost/workspace-setup?cursorOauthShellOpen=${runId}`);
   });
 
   after(async () => {

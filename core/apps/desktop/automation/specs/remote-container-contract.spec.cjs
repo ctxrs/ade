@@ -3,7 +3,7 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const { tauriInvoke, connectSshWithPolling } = require("./helpers/desktop_connection.cjs");
-const { waitForTauri } = require("./helpers/tauri.cjs");
+const { navigateToTauriUrl } = require("./helpers/tauri.cjs");
 const { daemonJson, safeDaemonJson } = require("./helpers/daemon.cjs");
 const {
   mkTempDir,
@@ -497,8 +497,7 @@ describe("remote sandbox contract (env-gated desktop e2e)", () => {
         throw new Error(`expected managed binary to be missing before connect, got '${beforeState}'`);
       }
 
-      await browser.url(`tauri://localhost/workspace-setup?remoteContainerContract=${Date.now()}`);
-      await waitForTauri();
+      await navigateToTauriUrl(`tauri://localhost/workspace-setup?remoteContainerContract=${Date.now()}`);
 
       const sandboxCliProbe = remoteSsh(
         "if { [ -n \"${CTX_HARNESS_SANDBOX_CLI_PATH:-}\" ] && [ -x \"${CTX_HARNESS_SANDBOX_CLI_PATH}\" ]; } || command -v nerdctl >/dev/null 2>&1; then echo yes; else echo no; fi",

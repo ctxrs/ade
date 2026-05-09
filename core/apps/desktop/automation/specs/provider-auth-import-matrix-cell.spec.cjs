@@ -1,7 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const { waitForTauri } = require("./helpers/tauri.cjs");
+const { navigateToTauriUrl } = require("./helpers/tauri.cjs");
 const { daemonJson, safeDaemonJson, checkDaemonHealth } = require("./helpers/daemon.cjs");
 const {
   mkTempDir,
@@ -84,8 +84,7 @@ describe("provider auth import matrix cell (desktop e2e)", () => {
   const localBase = mkTempDir(`ctx-provider-auth-import-${runId}-`);
 
   before(async () => {
-    await browser.url(`tauri://localhost/workspace-setup?providerAuthImportMatrixCell=${Date.now()}`);
-    await waitForTauri();
+    await navigateToTauriUrl(`tauri://localhost/workspace-setup?providerAuthImportMatrixCell=${Date.now()}`);
   });
 
   after(async () => {

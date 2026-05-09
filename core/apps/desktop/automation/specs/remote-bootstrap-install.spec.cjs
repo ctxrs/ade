@@ -3,7 +3,7 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const { tauriInvoke, connectSshWithPolling } = require("./helpers/desktop_connection.cjs");
-const { waitForTauri } = require("./helpers/tauri.cjs");
+const { navigateToTauriUrl } = require("./helpers/tauri.cjs");
 const { daemonJson, safeDaemonJson } = require("./helpers/daemon.cjs");
 const { assertWorkspaceTerminalCwdPrefix } = require("./helpers/workspace_wizard_flow.cjs");
 const {
@@ -517,8 +517,7 @@ describe("remote bootstrap install e2e", () => {
     try {
       contractRecorder.recordAssertion("fixture_preflight", "pass", "resolved remote fixture contract");
 
-      await browser.url("tauri://localhost/workspaces");
-      await waitForTauri();
+      await navigateToTauriUrl("tauri://localhost/workspaces");
 
       if (!SKIP_MANAGED_BINARY_RESET) {
         removeManagedBinary();

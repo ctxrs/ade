@@ -8,6 +8,90 @@ const waitForTauri = async () => {
   );
 };
 
+const normalizeTauriPathname = (pathname) => String(pathname || "").trim() || "/";
+
+const expectedRouteForTauriUrl = (target) => {
+  const url = new URL(target);
+  return {
+    host: url.host,
+    pathname: normalizeTauriPathname(url.pathname),
+    protocol: url.protocol,
+    search: url.search,
+  };
+};
+
+const errorMessage = (error) => String(error && error.message ? error.message : error);
+
+const navigateToTauriUrl = async (target, options = {}) => {
+  const expected = options.route || expectedRouteForTauriUrl(target);
+  const timeoutMs = options.timeoutMs || 60000;
+  const scriptTimeoutMs = options.scriptTimeoutMs || 10000;
+  let lastScriptError = "";
+  try {
+    await browser.waitUntil(
+      async () => {
+        try {
+          return Boolean(await browser.execute((href, route) => {
+            if (!window.location) return false;
+            const pathname = String(window.location.pathname || "").trim() || "/";
+            if (
+              window.location.protocol === route.protocol
+              && window.location.host === route.host
+              && pathname === route.pathname
+              && window.location.search === route.search
+            ) {
+              return true;
+            }
+            window.location.assign(href);
+            return true;
+          }, target, expected));
+        } catch (error) {
+          lastScriptError = errorMessage(error);
+          return false;
+        }
+      },
+      {
+        interval: 250,
+        timeout: scriptTimeoutMs,
+        timeoutMsg: `Tauri script navigation did not start for ${target}`,
+      },
+    );
+  } catch (error) {
+    const detail = lastScriptError || errorMessage(error);
+    throw new Error(
+      `Tauri script navigation failed for ${target}: ${detail}`,
+    );
+  }
+  let lastRouteError = "";
+  try {
+    await browser.waitUntil(
+      async () => {
+        try {
+          return await browser.execute((route) => {
+            const pathname = String(window.location.pathname || "").trim() || "/";
+            return Boolean(window.__TAURI__)
+              && document.readyState !== "loading"
+              && window.location.protocol === route.protocol
+              && window.location.host === route.host
+              && pathname === route.pathname
+              && window.location.search === route.search;
+          }, expected);
+        } catch (error) {
+          lastRouteError = errorMessage(error);
+          return false;
+        }
+      },
+      {
+        timeout: timeoutMs,
+        timeoutMsg: `Tauri route did not reach ${target}`,
+      },
+    );
+  } catch (error) {
+    const detail = lastRouteError || errorMessage(error);
+    throw new Error(`Tauri route did not reach ${target}: ${detail}`);
+  }
+};
+
 const selectorForTestId = (id) => `[data-testid="${id}"]`;
 
 const waitForTestId = async (id, timeoutMs = 30000) => {
@@ -69,6 +153,7 @@ const getConnectionInfo = async () => {
 
 module.exports = {
   waitForTauri,
+  navigateToTauriUrl,
   selectorForTestId,
   waitForTestId,
   clickTestId,

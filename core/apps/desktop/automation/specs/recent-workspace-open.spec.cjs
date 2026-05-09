@@ -3,7 +3,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
-const { waitForTauri } = require("./helpers/tauri.cjs");
+const { navigateToTauriUrl } = require("./helpers/tauri.cjs");
 const { resolveRemoteFixtureEnv } = require("../helpers/remote_fixture_contract.cjs");
 
 const LAUNCHER_RECENTS_KEY = "wb.launcher_recents";
@@ -151,8 +151,7 @@ const readLauncherRecents = async () => {
 };
 
 const openLauncher = async (tag) => {
-  await browser.url(`tauri://localhost/?recent_open_e2e=${encodeURIComponent(String(tag || Date.now()))}`);
-  await waitForTauri();
+  await navigateToTauriUrl(`tauri://localhost/?recent_open_e2e=${encodeURIComponent(String(tag || Date.now()))}`);
   await browser.waitUntil(
     async () => await browser.execute(() => Boolean(document.querySelector(".launcher-panel"))),
     { timeout: 30000, timeoutMsg: "launcher did not render" },

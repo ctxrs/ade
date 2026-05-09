@@ -1,7 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const { waitForTauri } = require("./helpers/tauri.cjs");
+const { navigateToTauriUrl } = require("./helpers/tauri.cjs");
 const {
   mkTempDir,
   runWizardScenario,
@@ -49,8 +49,7 @@ describe("harness install/probe matrix (desktop e2e)", () => {
   const localBase = mkTempDir(`ctx-harness-install-probe-${runId}-`);
 
   before(async () => {
-    await browser.url(`tauri://localhost/workspace-setup?harnessInstallProbeMatrix=${Date.now()}`);
-    await waitForTauri();
+    await navigateToTauriUrl(`tauri://localhost/workspace-setup?harnessInstallProbeMatrix=${Date.now()}`);
   });
 
   after(async () => {
