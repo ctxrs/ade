@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -7,7 +7,7 @@ use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use futures::{Sink, SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt};
 use serde_json::Value;
 use tokio::sync::{Mutex, Notify};
 
@@ -15,7 +15,6 @@ use ctx_core::ids::*;
 use ctx_core::models::*;
 use ctx_workspace_active_snapshot::{is_transient_session_delta, SessionReplayCursor};
 
-use super::SecureEnvelope;
 use crate::daemon::AppState;
 
 mod async_util;
