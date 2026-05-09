@@ -1,9 +1,14 @@
 use super::*;
 use ctx_provider_runtime::provider_launch::options::{
     provider_options_cache_entry_is_authoritative, provider_supports_runtime_model_catalog,
-    runtime_probe_models_payload,
 };
 use ctx_session_tools::model_resolution::{build_model_catalog, ModelCatalog};
+
+mod endpoint;
+mod runtime;
+
+use endpoint::{load_endpoint_model_catalog, EndpointModelCatalog};
+use runtime::load_runtime_model_catalog;
 
 async fn load_pinned_subscription_model_catalog(
     state: &Arc<AppState>,
@@ -38,18 +43,26 @@ async fn load_pinned_subscription_model_catalog(
     Ok(models_value.and_then(|value| build_model_catalog(&value)))
 }
 
+fn provider_model_cache_key(
+    workspace: &Workspace,
+    provider_id: &str,
+    install_target: ctx_provider_install::install_state::InstallTarget,
+) -> String {
+    format!(
+        "{}/{}/{}",
+        workspace.id.0,
+        install_target.as_str(),
+        provider_id
+    )
+}
+
 async fn load_provider_model_catalog_for_install_target(
     state: &Arc<AppState>,
     workspace: &Workspace,
     provider_id: &str,
     install_target: ctx_provider_install::install_state::InstallTarget,
 ) -> Result<Option<ModelCatalog>, String> {
-    let cache_key = format!(
-        "{}/{}/{}",
-        workspace.id.0,
-        install_target.as_str(),
-        provider_id
-    );
+    let cache_key = provider_model_cache_key(workspace, provider_id, install_target);
     if let Some(entry) = state
         .providers
         .options_cache
@@ -65,76 +78,9 @@ async fn load_provider_model_catalog_for_install_target(
         }
     }
 
-    let (source_config, source_config_error) =
-        crate::api::provider_launch::load_provider_source_config_with_error(
-            &state.core.data_root,
-            provider_id,
-        )
-        .await;
-    if let Some(config_error) = source_config_error {
-        return Err(config_error);
-    }
-    if let Some(config) = source_config.as_ref() {
-        if config.selected_source_kind == harness_sources::HarnessSourceKind::Endpoint {
-            let selected_endpoint_id = config.selected_endpoint_id.as_deref().ok_or_else(|| {
-                format!(
-                    "selected source is endpoint for '{provider_id}' but no endpoint is selected"
-                )
-            })?;
-            let endpoint = config
-                .endpoints
-                .iter()
-                .find(|candidate| candidate.id == selected_endpoint_id)
-                .ok_or_else(|| {
-                    format!(
-                        "selected endpoint '{selected_endpoint_id}' for '{provider_id}' was not found"
-                    )
-                })?;
-
-            let now = chrono::Utc::now();
-            if harness_sources::endpoint_model_catalog_is_stale(endpoint, now) {
-                let data_root = state.core.data_root.clone();
-                let provider_id_for_refresh = provider_id.to_string();
-                let endpoint_id_for_refresh = endpoint.id.clone();
-                tokio::spawn(async move {
-                    let _ = harness_sources::refresh_provider_endpoint_model_catalog(
-                        &data_root,
-                        &provider_id_for_refresh,
-                        &endpoint_id_for_refresh,
-                    )
-                    .await;
-                });
-            }
-
-            let models_value = serde_json::json!({
-                "models": endpoint.model_catalog_models,
-                "current_model_id": endpoint.model_override,
-            });
-            if let Some(models) = build_model_catalog(&models_value) {
-                let mut value = serde_json::json!({
-                    "provider_id": provider_id,
-                    "workspace_id": workspace.id.0,
-                    "installed": true,
-                    "probe_ok": true,
-                    "supports_load": false,
-                    "auth_required": false,
-                    "models": models_value,
-                    "probed_at": now.to_rfc3339(),
-                });
-                value["source"] = serde_json::to_value(config).unwrap_or(serde_json::Value::Null);
-                value = redact_json_value(value);
-                state.providers.options_cache.lock().await.insert(
-                    cache_key,
-                    crate::daemon::CachedProviderOptions {
-                        cached_at: std::time::Instant::now(),
-                        value,
-                    },
-                );
-                return Ok(Some(models));
-            }
-
-            return Ok(None);
-        }
+    match load_endpoint_model_catalog(state, workspace, provider_id, cache_key.clone()).await? {
+        EndpointModelCatalog::Loaded(catalog) => return Ok(catalog),
+        EndpointModelCatalog::NotEndpointSource => {}
     }
 
     if !provider_supports_runtime_model_catalog(provider_id) {
@@ -143,117 +89,15 @@ async fn load_provider_model_catalog_for_install_target(
 
     let pinned_catalog =
         load_pinned_subscription_model_catalog(state, provider_id, install_target).await?;
-
-    let (cfg, config_error) =
-        crate::api::provider_launch::load_managed_agent_server_config_with_error(
-            &state.core.data_root,
-        )
-        .await;
-    if let Some(config_error) = config_error {
-        return Err(config_error);
-    }
-    let runtime_command = match installer::resolve_runtime_provider_command_for_target(
-        &cfg,
+    load_runtime_model_catalog(
+        state,
+        workspace,
         provider_id,
-        Some(install_target),
-    ) {
-        Ok(Some(command)) => command,
-        Ok(None) => return Ok(pinned_catalog),
-        Err(err) => {
-            tracing::warn!(
-                provider_id = provider_id,
-                "provider runtime command resolution failed: {}",
-                logs::redact_sensitive(&err.to_string())
-            );
-            return Ok(pinned_catalog);
-        }
-    };
-    let command = runtime_command.command_abs_path;
-    let args = runtime_command.args;
-
-    let probe_context =
-        match crate::daemon::provider_launch::probe::provider_probe_context_for_workspace_runtime(
-            state.as_ref(),
-            workspace,
-            provider_id,
-        )
-        .await
-        {
-            Ok(context) => context,
-            Err(err) => {
-                tracing::warn!(
-                    provider_id = provider_id,
-                    "provider probe runtime context failed: {}",
-                    logs::redact_sensitive(&err)
-                );
-                return Ok(pinned_catalog);
-            }
-        };
-    let mut env = probe_context.env;
-    installer::prepend_runtime_bin_dirs_to_provider_path_for_target(
-        &mut env,
-        &cfg,
-        provider_id,
-        &state.core.data_root,
-        Some(install_target),
-    );
-    if let Err(err) = installer::ensure_codex_cli_command_env_for_target(
-        &mut env,
-        &cfg,
-        provider_id,
-        Some(install_target),
-    ) {
-        tracing::warn!(
-            provider_id = provider_id,
-            "provider codex-cli runtime path resolution failed: {}",
-            logs::redact_sensitive(&err.to_string())
-        );
-        return Ok(pinned_catalog);
-    }
-
-    let probe = match probe_crp_models(provider_id, command, args, probe_context.cwd, env).await {
-        Ok(probe) => probe,
-        Err(e) => {
-            tracing::warn!(
-                provider_id = provider_id,
-                "provider options probe failed: {}",
-                logs::redact_sensitive(&e.to_string())
-            );
-            return Ok(pinned_catalog);
-        }
-    };
-
-    let fallback_current_model_id = pinned_catalog
-        .as_ref()
-        .and_then(ModelCatalog::default_model_id);
-    let Some(models_value) =
-        runtime_probe_models_payload(provider_id, &probe, fallback_current_model_id)
-    else {
-        return Ok(pinned_catalog);
-    };
-    if let Some(models) = build_model_catalog(&models_value) {
-        let mut value = serde_json::json!({
-            "provider_id": provider_id,
-            "workspace_id": workspace.id.0,
-            "installed": true,
-            "probe_ok": true,
-            "supports_load": false,
-            "auth_required": false,
-            "models": models_value,
-            "probed_at": chrono::Utc::now().to_rfc3339(),
-        });
-        value = redact_json_value(value);
-        state.providers.options_cache.lock().await.insert(
-            cache_key,
-            crate::daemon::CachedProviderOptions {
-                cached_at: std::time::Instant::now(),
-                value,
-            },
-        );
-        return Ok(Some(models));
-    }
-
-    Ok(pinned_catalog)
+        install_target,
+        cache_key,
+        pinned_catalog,
+    )
+    .await
 }
 
 #[cfg(test)]
