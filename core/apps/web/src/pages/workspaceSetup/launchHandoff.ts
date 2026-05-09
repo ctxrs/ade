@@ -20,6 +20,11 @@ type LaunchCallbacks = {
   appendLines: (lines: ExecutionLaunchLogLine[]) => void;
 };
 
+type LaunchHandoffOptions = {
+  reconnectDelayMs?: number;
+  maxReconnects?: number;
+};
+
 type LaunchLogBatcherOptions = {
   scheduleFlush?: (flush: () => void) => number;
   cancelFlush?: (handle: number) => void;
@@ -86,6 +91,7 @@ export const launchErrorFromSnapshot = (snapshot: ExecutionLaunchSnapshot): stri
 export const waitForLaunchHandoffTerminal = async (
   initial: ExecutionLaunchSnapshot,
   callbacks: LaunchCallbacks,
+  options: LaunchHandoffOptions = {},
 ): Promise<void> => {
   callbacks.applySnapshot(initial);
 
@@ -93,13 +99,21 @@ export const waitForLaunchHandoffTerminal = async (
   if (initial.state === "error") throw new Error(launchErrorFromSnapshot(initial));
 
   await new Promise<void>((resolve, reject) => {
+    const reconnectDelayMs = Math.max(0, options.reconnectDelayMs ?? 750);
+    const maxReconnects = Math.max(0, options.maxReconnects ?? 4);
+    let reconnects = 0;
     let settled = false;
     const logBatcher = createLaunchLogBatcher(callbacks.appendLines);
     let ws: WebSocket | null = null;
+    let reconnectHandle: number | null = null;
 
     const settle = (error?: Error) => {
       if (settled) return;
       settled = true;
+      if (reconnectHandle !== null) {
+        window.clearTimeout(reconnectHandle);
+        reconnectHandle = null;
+      }
       logBatcher.flush();
       logBatcher.dispose();
       ws?.close();
@@ -107,8 +121,8 @@ export const waitForLaunchHandoffTerminal = async (
       else resolve();
     };
 
-    void buildExecutionLaunchWsUrl(initial.job_id)
-      .then((wsUrl) => {
+    const connect = () => {
+      void buildExecutionLaunchWsUrl(initial.job_id).then((wsUrl) => {
         if (settled) return;
         ws = new WebSocket(wsUrl);
 
@@ -152,6 +166,12 @@ export const waitForLaunchHandoffTerminal = async (
                 settle();
               } else if (latest.state === "error") {
                 settle(new Error(launchErrorFromSnapshot(latest)));
+              } else if (reconnects < maxReconnects) {
+                reconnects += 1;
+                reconnectHandle = window.setTimeout(() => {
+                  reconnectHandle = null;
+                  connect();
+                }, reconnectDelayMs);
               } else {
                 settle(new Error("Lost workspace launch stream before setup finished."));
               }
@@ -164,6 +184,9 @@ export const waitForLaunchHandoffTerminal = async (
       .catch((error: unknown) => {
         settle(new Error(messageFromError(error)));
       });
+    };
+
+    connect();
   });
 };
 

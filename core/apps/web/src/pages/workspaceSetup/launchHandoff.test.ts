@@ -1,5 +1,66 @@
-import { describe, expect, it } from "vitest";
-import { createLaunchLogBatcher, launchErrorFromSnapshot } from "./launchHandoff";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ExecutionLaunchSnapshot, ExecutionLaunchStreamEvent } from "../../api/client";
+
+const clientMocks = vi.hoisted(() => ({
+  buildExecutionLaunchWsUrl: vi.fn(),
+  getExecutionLaunchStatus: vi.fn(),
+  startWorkspaceSetupLaunchHandoff: vi.fn(),
+}));
+
+vi.mock("../../api/client", () => ({
+  buildExecutionLaunchWsUrl: clientMocks.buildExecutionLaunchWsUrl,
+  getExecutionLaunchStatus: clientMocks.getExecutionLaunchStatus,
+  startWorkspaceSetupLaunchHandoff: clientMocks.startWorkspaceSetupLaunchHandoff,
+}));
+
+import {
+  createLaunchLogBatcher,
+  launchErrorFromSnapshot,
+  waitForLaunchHandoffTerminal,
+} from "./launchHandoff";
+
+const launchSnapshot = (state: ExecutionLaunchSnapshot["state"]): ExecutionLaunchSnapshot => ({
+  job_id: "job_123",
+  workspace_id: "ws_123",
+  kind: "workspace_launch",
+  state,
+  created_at: "2026-03-09T00:00:00Z",
+  started_at: "2026-03-09T00:00:01Z",
+  current_phase: "container_start_or_create",
+  phases: [],
+  logs: [],
+});
+
+class FakeWebSocket {
+  static instances: FakeWebSocket[] = [];
+
+  onmessage: ((event: { data: string }) => void) | null = null;
+  onclose: (() => void) | null = null;
+  closed = false;
+
+  constructor(readonly url: string) {
+    FakeWebSocket.instances.push(this);
+  }
+
+  close() {
+    this.closed = true;
+  }
+
+  emitMessage(event: ExecutionLaunchStreamEvent) {
+    this.onmessage?.({ data: JSON.stringify(event) });
+  }
+
+  emitClose() {
+    this.onclose?.();
+  }
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  vi.clearAllMocks();
+  FakeWebSocket.instances = [];
+});
 
 describe("launchHandoff", () => {
   it("preserves the current launch phase in extracted error messages", () => {
@@ -99,5 +160,34 @@ describe("launchHandoff", () => {
 
     expect(canceled).toBe(true);
     expect(appended).toEqual([[3]]);
+  });
+
+  it("reconnects the launch stream when the socket closes before the launch is terminal", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    clientMocks.buildExecutionLaunchWsUrl.mockResolvedValue("ws://launch/job_123");
+    clientMocks.getExecutionLaunchStatus.mockResolvedValue(launchSnapshot("running"));
+    const applySnapshot = vi.fn();
+    const appendLines = vi.fn();
+
+    const completion = waitForLaunchHandoffTerminal(
+      launchSnapshot("running"),
+      { applySnapshot, appendLines },
+      { maxReconnects: 1, reconnectDelayMs: 0 },
+    );
+
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    FakeWebSocket.instances[0]?.emitClose();
+    await vi.runOnlyPendingTimersAsync();
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2));
+    FakeWebSocket.instances[1]?.emitMessage({
+      type: "launch_complete",
+      snapshot: launchSnapshot("ready"),
+    });
+
+    await expect(completion).resolves.toBeUndefined();
+    expect(clientMocks.getExecutionLaunchStatus).toHaveBeenCalledWith("job_123");
+    expect(applySnapshot).toHaveBeenCalledWith(expect.objectContaining({ state: "running" }));
+    expect(applySnapshot).toHaveBeenCalledWith(expect.objectContaining({ state: "ready" }));
   });
 });
