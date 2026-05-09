@@ -1,12 +1,19 @@
 use super::*;
 
 mod branches;
+mod errors;
+mod load;
 mod probes;
 
 use branches::{
     env_probe_provider_options, runtime_models_provider_options,
     selected_endpoint_runtime_launch_provider_options, ProviderOptionsProbeContext,
 };
+use errors::{
+    auth_config_error_provider_options, managed_config_error_provider_options,
+    source_config_error_provider_options, unusable_provider_options,
+};
+use load::{load_provider_options_inputs, ProviderOptionsInputs, ProviderOptionsLoadOutcome};
 use probes::{
     probe_provider_options_env, probe_runtime_models_for_provider_options,
     probe_selected_endpoint_runtime_launch,
@@ -19,87 +26,36 @@ pub(in crate::api) async fn get_provider_options(
     const CACHE_TTL: Duration = Duration::from_secs(30);
     const VERIFY_TTL: Duration = Duration::from_secs(30 * 60);
 
-    let ws_id = parse_workspace_id(&ws_id)?;
-    let install_target = install_target_for_workspace(&state, ws_id)
-        .await
-        .map_err(|error| workspace_execution_settings_error_json(&error))?;
-    let (managed, managed_config_error) =
-        load_managed_agent_server_config_with_error(&state.core.data_root).await;
-    let matrix = ctx_provider_matrix::load_matrix_cached(
-        &state.core.data_root,
-        &state.providers.matrix_cache,
-    )
-    .await;
-    let known = {
-        let map = state.providers.statuses.lock().await;
-        map.contains_key(&provider_id)
-            || ctx_provider_matrix::get_entry(&matrix, &provider_id).is_some()
-    };
-    let (source_config, source_config_error) =
-        load_provider_source_config_with_error(&state.core.data_root, &provider_id).await;
-    let skip_cached_config_surfaces =
-        managed_config_error.is_some() || source_config_error.is_some();
-    let cache = ProviderOptionsCacheSnapshot::load(
-        &state,
-        ws_id,
+    let inputs =
+        match load_provider_options_inputs(&state, &ws_id, &provider_id, CACHE_TTL, VERIFY_TTL)
+            .await?
+        {
+            ProviderOptionsLoadOutcome::Cached(out) => return Ok(Json(out)),
+            ProviderOptionsLoadOutcome::Ready(inputs) => inputs,
+        };
+    let ProviderOptionsInputs {
+        workspace_id: ws_id,
         install_target,
-        &provider_id,
-        skip_cached_config_surfaces,
-    )
-    .await;
-    if let Some(out) = cache.fresh_authoritative_response(CACHE_TTL, VERIFY_TTL) {
-        return Ok(Json(out));
-    }
-    if !known {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "error": format!("unsupported provider id: {provider_id}"),
-            })),
-        ));
-    }
-
-    let workspace = state
-        .global_store()
-        .get_workspace(ws_id)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": "failed to load workspace",
-                })),
-            )
-        })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({
-                "error": "workspace not found",
-            })),
-        ))?;
-    let preferred_model_id = load_workspace_preferred_model_id(&state, ws_id, &provider_id).await?;
-    let selected_endpoint = selected_endpoint_record_from_harness_config(source_config.as_ref());
+        managed,
+        managed_config_error,
+        matrix,
+        source_config,
+        source_config_error,
+        cache,
+        workspace,
+        preferred_model_id,
+        selected_endpoint,
+    } = inputs;
 
     if let Some(config_error) = managed_config_error.as_ref() {
-        let raw_resp = config_error_provider_options_response(
+        let out = managed_config_error_provider_options(
+            &state,
             &provider_id,
             ws_id,
-            None,
-            provider_auth_mode(false, source_config.as_ref()),
             config_error,
             source_config.as_ref(),
-        );
-        let out = finalize_provider_options_response(
-            ProviderOptionsResponseContext {
-                state: &state,
-                provider_id: &provider_id,
-                provider_status: None,
-                selected_endpoint: None,
-                cache: &cache,
-                preferred_model_id: preferred_model_id.clone(),
-            },
-            raw_resp,
-            false,
+            &cache,
+            preferred_model_id.clone(),
             VERIFY_TTL,
         )
         .await;
@@ -116,25 +72,15 @@ pub(in crate::api) async fn get_provider_options(
     .await;
 
     if let Some(config_error) = source_config_error.as_ref() {
-        let raw_resp = config_error_provider_options_response(
+        let out = source_config_error_provider_options(
+            &state,
             &provider_id,
             ws_id,
-            Some(provider_status.installed),
-            provider_auth_mode(false, source_config.as_ref()),
+            &provider_status,
             config_error,
-            None,
-        );
-        let out = finalize_provider_options_response(
-            ProviderOptionsResponseContext {
-                state: &state,
-                provider_id: &provider_id,
-                provider_status: Some(&provider_status),
-                selected_endpoint: None,
-                cache: &cache,
-                preferred_model_id: preferred_model_id.clone(),
-            },
-            raw_resp,
-            false,
+            source_config.as_ref(),
+            &cache,
+            preferred_model_id.clone(),
             VERIFY_TTL,
         )
         .await;
@@ -152,25 +98,14 @@ pub(in crate::api) async fn get_provider_options(
         Ok(value) => value,
         Err(config_error) => {
             let config_error = logs::redact_sensitive(&config_error);
-            let raw_resp = config_error_provider_options_response(
+            let out = auth_config_error_provider_options(
+                &state,
                 &provider_id,
                 ws_id,
-                Some(provider_status.installed),
-                "none",
+                &provider_status,
                 &config_error,
-                None,
-            );
-            let out = finalize_provider_options_response(
-                ProviderOptionsResponseContext {
-                    state: &state,
-                    provider_id: &provider_id,
-                    provider_status: Some(&provider_status),
-                    selected_endpoint: None,
-                    cache: &cache,
-                    preferred_model_id: preferred_model_id.clone(),
-                },
-                raw_resp,
-                false,
+                &cache,
+                preferred_model_id.clone(),
                 VERIFY_TTL,
             )
             .await;
@@ -180,25 +115,17 @@ pub(in crate::api) async fn get_provider_options(
     let auth_mode = provider_auth_mode(has_active_auth, source_config.as_ref());
 
     if !provider_status_is_usable(&provider_status) {
-        let raw_base_resp = unusable_provider_options_response(
+        let out = unusable_provider_options(
+            &state,
             &provider_id,
             ws_id,
             &provider_status,
             has_active_auth,
             auth_mode,
             source_config.as_ref(),
-        );
-        let out = finalize_provider_options_response(
-            ProviderOptionsResponseContext {
-                state: &state,
-                provider_id: &provider_id,
-                provider_status: Some(&provider_status),
-                selected_endpoint: selected_endpoint.as_ref(),
-                cache: &cache,
-                preferred_model_id: preferred_model_id.clone(),
-            },
-            raw_base_resp,
-            true,
+            selected_endpoint.as_ref(),
+            &cache,
+            preferred_model_id.clone(),
             VERIFY_TTL,
         )
         .await;
