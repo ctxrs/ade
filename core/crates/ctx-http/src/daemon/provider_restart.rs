@@ -1,17 +1,18 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use chrono::Utc;
-use serde_json::json;
-use sysinfo::{Pid, Signal, System};
 use tokio::sync::{broadcast, Mutex};
 
-use ctx_core::ids::MessageId;
-use ctx_core::models::{Message, MessageDelivery, MessageRole, SessionEventType};
 use ctx_providers::adapters::ProviderRestartMode;
 
 use crate::daemon::AppState;
 use ctx_settings_model::{ProviderRestartSettings, ResourceGovernanceMode, Settings};
+
+mod notices;
+mod processes;
+
+use notices::notify_sessions;
+use processes::{list_provider_processes, signal_pids};
 
 pub use ctx_provider_runtime::provider_restart::{
     compute_effective_limits, ProviderRestartConfig, ProviderRestartEvent, ProviderRestartLimits,
@@ -98,7 +99,7 @@ impl ctx_provider_runtime::provider_restart::ProviderRestartHost for AppState {
         }
 
         if needs_kill {
-            let killed = signal_pids(&[pid], Signal::Kill);
+            let killed = signal_pids(&[pid], processes::PROCESS_KILL_SIGNAL);
             if killed == 0 {
                 tracing::warn!(provider_id, pid, "provider restart failed to kill process");
             }
@@ -122,132 +123,4 @@ fn map_config(settings: &ProviderRestartSettings) -> ProviderRestartConfig {
         interval_ms: settings.interval_ms,
         grace_period_ms: settings.grace_period_ms,
     }
-}
-
-async fn notify_sessions(
-    state: &Arc<AppState>,
-    event: &ctx_provider_runtime::provider_restart::ProviderRestartEvent,
-) {
-    let message_text = match event.kind {
-        "provider_restart_warning" => {
-            "Provider memory is high; restart scheduled if it stays elevated."
-        }
-        "provider_restart" => "Provider restart requested after sustained high memory usage.",
-        _ => "Provider restart notice.",
-    };
-    let session_ids = state.sessions.list_running_sessions().await;
-    for session_id in session_ids {
-        let store = match state.store_for_session(session_id).await {
-            Ok(store) => store,
-            Err(_) => continue,
-        };
-        let session = store.get_session(session_id).await.ok().flatten();
-        let Some(session) = session else {
-            continue;
-        };
-        if session.provider_id != event.sample.provider_id {
-            continue;
-        }
-
-        let message_id = insert_system_message(state, &store, &session, message_text).await;
-        let payload = json!({
-            "provider": event.sample.provider_id,
-            "kind": event.kind,
-            "stage": event.stage,
-            "pid": event.sample.pid,
-            "memory_mb": bytes_to_mb(event.sample.memory_bytes),
-            "tool_memory_mb": bytes_to_mb(event.sample.tool_memory_bytes),
-            "system_total_mb": bytes_to_mb(event.system.memory_total_bytes),
-            "system_used_mb": bytes_to_mb(event.system.memory_used_bytes),
-            "limit_high_mb": event.limits.memory_high_mb,
-            "limit_max_mb": event.limits.memory_max_mb,
-            "grace_period_ms": event.limits.grace_period.as_millis() as u64,
-            "restart_at_ms": event.restart_at_ms,
-            "message": message_text,
-            "message_id": message_id.map(|id| id.0),
-        });
-        match store
-            .append_session_event(session_id, None, None, SessionEventType::Notice, payload)
-            .await
-        {
-            Ok(event) => state.publish_event(event).await,
-            Err(err) => tracing::warn!(
-                provider_id = %event.sample.provider_id,
-                session_id = %session_id.0,
-                "provider restart failed to append session event: {err:#}"
-            ),
-        }
-    }
-}
-
-async fn insert_system_message(
-    state: &AppState,
-    store: &ctx_store::Store,
-    session: &ctx_core::models::Session,
-    content: &str,
-) -> Option<MessageId> {
-    let now = Utc::now();
-    let message_id = MessageId::new();
-    let order_seq_state = state.sessions.get_order_seq_state(store, session.id).await;
-    let order_seq = {
-        let mut order_seq_state = order_seq_state.lock().await;
-        order_seq_state.get_or_assign(format!("message:{}", message_id.0), None)
-    };
-    let msg = Message {
-        id: message_id,
-        session_id: session.id,
-        task_id: session.task_id,
-        run_id: None,
-        turn_id: None,
-        turn_sequence: None,
-        order_seq: Some(order_seq),
-        role: MessageRole::System,
-        content: content.to_string(),
-        attachments: vec![],
-        delivery: MessageDelivery::Immediate,
-        delivered_at: Some(now),
-        created_at: now,
-    };
-    match store.insert_message(msg).await {
-        Ok(saved) => Some(saved.id),
-        Err(err) => {
-            tracing::warn!(
-                session_id = %session.id.0,
-                "provider restart failed to insert system message: {err:#}"
-            );
-            None
-        }
-    }
-}
-
-fn signal_pids(pids: &[u32], signal: Signal) -> usize {
-    let mut system = System::new();
-    system.refresh_processes();
-    let mut killed = 0usize;
-    for pid in pids {
-        if let Some(process) = system.process(Pid::from_u32(*pid)) {
-            if process.kill_with(signal).unwrap_or(false) {
-                killed += 1;
-            }
-        }
-    }
-    killed
-}
-
-async fn list_provider_processes(
-    state: &AppState,
-) -> Vec<ctx_providers::adapters::ProviderProcessInfo> {
-    let providers = {
-        let providers = state.providers.adapters.lock().await;
-        providers.values().cloned().collect::<Vec<_>>()
-    };
-    let mut processes = Vec::new();
-    for adapter in providers {
-        processes.extend(adapter.list_processes().await);
-    }
-    processes
-}
-
-fn bytes_to_mb(value: u64) -> u64 {
-    value / (1024 * 1024)
 }
