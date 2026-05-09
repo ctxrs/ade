@@ -46,15 +46,15 @@ const MESSAGE_BYTES = envNumber(
 const STREAMERS = envNumber("CTX_REMOTE_DAEMON_STREAM_SOAK_STREAMERS", 6);
 const STREAM_INTERVAL_MS = envNumber("CTX_REMOTE_DAEMON_STREAM_SOAK_STREAM_INTERVAL_MS", 5);
 const STREAM_TIMEOUT_MS = envNumber("CTX_REMOTE_DAEMON_STREAM_SOAK_STREAM_TIMEOUT_MS", 75_000);
-const MIN_STREAM_EVENTS = envNumber(
-  "CTX_REMOTE_DAEMON_STREAM_SOAK_MIN_EVENTS",
-  LONG_FOREGROUND_RECOVERY ? 20 : 2000,
-);
 const DAEMON_REPO_ROOT =
   process.env.CTX_REMOTE_DAEMON_STREAM_SOAK_REPO_ROOT?.trim() || undefined;
 const MIN_SESSION_HEAD_DELTAS = envNumber(
   "CTX_REMOTE_DAEMON_STREAM_SOAK_MIN_SESSION_HEAD_DELTAS",
   LONG_FOREGROUND_RECOVERY ? 12 : 1000,
+);
+const MIN_STREAM_EVENTS = envNumber(
+  "CTX_REMOTE_DAEMON_STREAM_SOAK_MIN_EVENTS",
+  LONG_FOREGROUND_RECOVERY ? 20 : Math.max(1200, MIN_SESSION_HEAD_DELTAS + 200),
 );
 const PROBE_COUNT = envNumber("CTX_REMOTE_DAEMON_STREAM_SOAK_PROBES", 4);
 const PROBE_TIMEOUT_MS = envNumber("CTX_REMOTE_DAEMON_STREAM_SOAK_PROBE_TIMEOUT_MS", 35_000);
@@ -179,6 +179,23 @@ type WorktreeResponse = {
   root_path?: string;
 };
 
+type WorktreeVcsSnapshotLike = {
+  worktree_id?: string | null;
+  compute_state?: string | null;
+  summary?: {
+    file_count?: number | null;
+    line_count?: number | null;
+  } | null;
+  git_status?: {
+    entries?: Array<{ path?: string | null }> | null;
+  } | null;
+  touched_files?: {
+    items?: Array<{ path?: string | null }> | null;
+    total_count?: number | null;
+  } | null;
+  touched_files_state?: string | null;
+};
+
 type VcsChurnSummary = {
   enabled: boolean;
   worktreeId: string | null;
@@ -270,6 +287,8 @@ type RemoteDaemonLoadWindow = Window & {
       getConnectionState?: () => string | null;
       setDropMessages?: (drop: boolean) => void;
     };
+    getVcsSnapshot?: (worktreeId: string) => WorktreeVcsSnapshotLike | null;
+    refreshVcsDetails?: (worktreeId: string) => boolean;
   };
 };
 
@@ -338,6 +357,55 @@ async function getSessionWorktreeRoot(
     throw new Error(`worktree ${worktreeId} response did not include a root path`);
   }
   return { worktreeId, rootPath };
+}
+
+async function waitForBrowserWorktreeVcsSummary(
+  page: Page,
+  worktreeId: string,
+  timeoutMs: number,
+): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        return page.evaluate((id) => {
+          const snapshot = (window as RemoteDaemonLoadWindow).__ctxE2E?.getVcsSnapshot?.(id) ?? null;
+          if (!snapshot || snapshot.compute_state !== "ready") return null;
+          const fileCount = snapshot.summary?.file_count ?? null;
+          const lineCount = snapshot.summary?.line_count ?? null;
+          if (fileCount === null && lineCount === null) return null;
+          return Number(fileCount ?? lineCount);
+        }, worktreeId);
+      },
+      { timeout: timeoutMs },
+    )
+    .toBeGreaterThan(0);
+}
+
+async function waitForBrowserWorktreeVcsInventoryPath(
+  page: Page,
+  worktreeId: string,
+  expectedPath: string,
+  timeoutMs: number,
+): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        return page.evaluate(
+          ({ id, path }) => {
+            const snapshot = (window as RemoteDaemonLoadWindow).__ctxE2E?.getVcsSnapshot?.(id) ?? null;
+            if (!snapshot || snapshot.compute_state !== "ready") return false;
+            const inventoryPaths = [
+              ...(snapshot.git_status?.entries ?? []),
+              ...(snapshot.touched_files?.items ?? []),
+            ].map((item) => String(item.path ?? ""));
+            return inventoryPaths.includes(path);
+          },
+          { id: worktreeId, path: expectedPath },
+        );
+      },
+      { timeout: timeoutMs },
+    )
+    .toBe(true);
 }
 
 async function seedRemoteVcsInitialChange(
@@ -1387,7 +1455,7 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
       const snapshotBaseline = sumMetricEntries(
         await readTelemetryMetricEntries(request, "workspace.vcs_stream.snapshot_count", 180_000),
       );
-      await seedRemoteVcsInitialChange(request, foregroundSessionId);
+      const seededWorktree = await seedRemoteVcsInitialChange(request, foregroundSessionId);
       const snapshotCountAfterSeed = await waitForTelemetryMetricSum(
         request,
         "workspace.vcs_stream.snapshot_count",
@@ -1401,10 +1469,26 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
       await expect(page.locator(".wb-right-pane.wb-diff")).toBeVisible({
         timeout: MAX_VCS_GIT_PANE_OPEN_MS,
       });
-      vcsGitPane.openMs = Date.now() - openStartedAt;
-      await expect(page.locator(".cursor-diff-file-header").first()).toBeVisible({
+      const refreshed = await page.evaluate(
+        (worktreeId) => window.__ctxE2E?.refreshVcsDetails?.(worktreeId) ?? false,
+        seededWorktree.worktreeId,
+      );
+      expect(refreshed).toBe(true);
+      await waitForBrowserWorktreeVcsSummary(
+        page,
+        seededWorktree.worktreeId,
+        MAX_VCS_GIT_PANE_OPEN_MS,
+      );
+      await waitForBrowserWorktreeVcsInventoryPath(
+        page,
+        seededWorktree.worktreeId,
+        "vcs-soak-tracked.txt",
+        MAX_VCS_GIT_PANE_OPEN_MS,
+      );
+      await expect(page.locator(".cursor-diff-file-header").filter({ hasText: "vcs-soak-tracked.txt" })).toBeVisible({
         timeout: MAX_VCS_GIT_PANE_OPEN_MS,
       });
+      vcsGitPane.openMs = Date.now() - openStartedAt;
       vcsGitPane.firstFileVisibleMs = Date.now() - openStartedAt;
     } catch (error) {
       vcsGitPane.error = formatUnknownError(error);

@@ -1,5 +1,6 @@
 import { render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { WorktreeVcsSnapshot } from "@ctx/types";
 import { useWorkbenchE2EBridge } from "./useWorkbenchE2EBridge";
 
 vi.mock("../../utils/desktop", () => ({
@@ -25,6 +26,8 @@ type E2EWindow = Window & {
     clearDraftHarness?: () => boolean;
     focusTask?: (taskId: string, sessionId?: string | null) => boolean;
     getActiveTask?: () => { taskId: string | null; sessionId: string | null };
+    getVcsSnapshot?: (worktreeId: string) => WorktreeVcsSnapshot | null;
+    refreshVcsDetails?: (worktreeId: string) => boolean;
     toggleDiffPane?: () => boolean;
     toggleArtifactsPane?: () => boolean;
     pasteImageIntoComposer?: (
@@ -58,6 +61,8 @@ function TestBridge(props: {
   clearDraftHarness: () => void;
   focusTask: (taskId: string, sessionId?: string | null) => boolean;
   getActiveTask: () => { taskId: string | null; sessionId: string | null };
+  getVcsSnapshot?: (worktreeId: string) => WorktreeVcsSnapshot | null;
+  refreshVcsDetails?: (worktreeId: string) => boolean;
   toggleDiffPane: () => void;
   toggleArtifactsPane: () => void;
 }) {
@@ -81,6 +86,10 @@ describe("useWorkbenchE2EBridge", () => {
     const clearDraftHarness = vi.fn();
     const focusTask = vi.fn(() => true);
     const getActiveTask = vi.fn(() => ({ taskId: "task-live", sessionId: "session-live" }));
+    const getVcsSnapshot = vi.fn((worktreeId: string) =>
+      ({ worktree_id: worktreeId, rev: 7 }) as unknown as WorktreeVcsSnapshot,
+    );
+    const refreshVcsDetails = vi.fn(() => true);
     const toggleDiffPane = vi.fn();
     const toggleArtifactsPane = vi.fn();
     const e2eWindow = window as E2EWindow;
@@ -91,6 +100,8 @@ describe("useWorkbenchE2EBridge", () => {
         clearDraftHarness={clearDraftHarness}
         focusTask={focusTask}
         getActiveTask={getActiveTask}
+        getVcsSnapshot={getVcsSnapshot}
+        refreshVcsDetails={refreshVcsDetails}
         toggleDiffPane={toggleDiffPane}
         toggleArtifactsPane={toggleArtifactsPane}
       />,
@@ -100,6 +111,8 @@ describe("useWorkbenchE2EBridge", () => {
     expect(typeof e2eWindow.__ctxE2E?.clearDraftHarness).toBe("function");
     expect(typeof e2eWindow.__ctxE2E?.focusTask).toBe("function");
     expect(typeof e2eWindow.__ctxE2E?.getActiveTask).toBe("function");
+    expect(typeof e2eWindow.__ctxE2E?.getVcsSnapshot).toBe("function");
+    expect(typeof e2eWindow.__ctxE2E?.refreshVcsDetails).toBe("function");
     expect(typeof e2eWindow.__ctxE2E?.toggleDiffPane).toBe("function");
     expect(typeof e2eWindow.__ctxE2E?.toggleArtifactsPane).toBe("function");
     expect(typeof e2eWindow.__ctxE2E?.pasteImageIntoComposer).toBe("function");
@@ -118,12 +131,16 @@ describe("useWorkbenchE2EBridge", () => {
     expect(e2eWindow.__ctxE2E?.clearDraftHarness?.()).toBe(true);
     expect(e2eWindow.__ctxE2E?.focusTask?.("task-1", "session-1")).toBe(true);
     expect(e2eWindow.__ctxE2E?.getActiveTask?.()).toEqual({ taskId: "task-live", sessionId: "session-live" });
+    expect(e2eWindow.__ctxE2E?.getVcsSnapshot?.("worktree-live")).toEqual({ worktree_id: "worktree-live", rev: 7 });
+    expect(e2eWindow.__ctxE2E?.refreshVcsDetails?.("worktree-live")).toBe(true);
     expect(e2eWindow.__ctxE2E?.toggleDiffPane?.()).toBe(true);
     expect(e2eWindow.__ctxE2E?.toggleArtifactsPane?.()).toBe(true);
     expect(focusNewTask).toHaveBeenCalledTimes(1);
     expect(clearDraftHarness).toHaveBeenCalledTimes(1);
     expect(focusTask).toHaveBeenCalledWith("task-1", "session-1");
     expect(getActiveTask).toHaveBeenCalledTimes(1);
+    expect(getVcsSnapshot).toHaveBeenCalledWith("worktree-live");
+    expect(refreshVcsDetails).toHaveBeenCalledWith("worktree-live");
     expect(toggleDiffPane).toHaveBeenCalledTimes(1);
     expect(toggleArtifactsPane).toHaveBeenCalledTimes(1);
 
@@ -132,6 +149,8 @@ describe("useWorkbenchE2EBridge", () => {
     expect(e2eWindow.__ctxE2E?.clearDraftHarness).toBeUndefined();
     expect(e2eWindow.__ctxE2E?.focusTask).toBeUndefined();
     expect(e2eWindow.__ctxE2E?.getActiveTask).toBeUndefined();
+    expect(e2eWindow.__ctxE2E?.getVcsSnapshot).toBeUndefined();
+    expect(e2eWindow.__ctxE2E?.refreshVcsDetails).toBeUndefined();
     expect(e2eWindow.__ctxE2E?.toggleDiffPane).toBeUndefined();
     expect(e2eWindow.__ctxE2E?.toggleArtifactsPane).toBeUndefined();
     expect(e2eWindow.__ctxE2E?.pasteImageIntoComposer).toBeUndefined();

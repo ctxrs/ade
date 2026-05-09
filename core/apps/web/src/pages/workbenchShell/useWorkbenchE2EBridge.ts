@@ -28,6 +28,7 @@ import {
   type WorkbenchRowParityMeasurement,
   type WorkbenchTurnHeaderParityParams,
 } from "./workbenchE2ETranscriptParity";
+import type { WorktreeVcsSnapshot } from "@ctx/types";
 
 const E2E_IMAGE_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+lmZYAAAAASUVORK5CYII=";
@@ -149,6 +150,8 @@ type WorkbenchE2EWindow = Window & {
     clearDraftHarness?: () => boolean;
     focusTask?: (taskId: string, sessionId?: string | null) => boolean;
     getActiveTask?: () => { taskId: string | null; sessionId: string | null };
+    getVcsSnapshot?: (worktreeId: string) => WorktreeVcsSnapshot | null;
+    refreshVcsDetails?: (worktreeId: string) => boolean;
     toggleDiffPane?: () => boolean;
     toggleArtifactsPane?: () => boolean;
     pasteImageIntoComposer?: (
@@ -188,6 +191,8 @@ type WorkbenchE2EBridgeOptions = {
   clearDraftHarness: () => void;
   focusTask: (taskId: string, sessionId?: string | null) => boolean;
   getActiveTask: () => { taskId: string | null; sessionId: string | null };
+  getVcsSnapshot?: (worktreeId: string) => WorktreeVcsSnapshot | null;
+  refreshVcsDetails?: (worktreeId: string) => boolean;
   toggleDiffPane: () => void;
   toggleArtifactsPane: () => void;
 };
@@ -197,6 +202,8 @@ export function useWorkbenchE2EBridge({
   clearDraftHarness,
   focusTask,
   getActiveTask,
+  getVcsSnapshot,
+  refreshVcsDetails,
   toggleDiffPane,
   toggleArtifactsPane,
 }: WorkbenchE2EBridgeOptions) {
@@ -217,6 +224,12 @@ export function useWorkbenchE2EBridge({
     };
     win.__ctxE2E.focusTask = (taskId: string, sessionId?: string | null) => focusTask(taskId, sessionId);
     win.__ctxE2E.getActiveTask = () => getActiveTask();
+    if (getVcsSnapshot) {
+      win.__ctxE2E.getVcsSnapshot = (worktreeId: string) => getVcsSnapshot(worktreeId);
+    }
+    if (refreshVcsDetails) {
+      win.__ctxE2E.refreshVcsDetails = (worktreeId: string) => refreshVcsDetails(worktreeId);
+    }
     win.__ctxE2E.toggleDiffPane = () => {
       toggleDiffPane();
       return true;
@@ -303,6 +316,8 @@ export function useWorkbenchE2EBridge({
       delete win.__ctxE2E.clearDraftHarness;
       delete win.__ctxE2E.focusTask;
       delete win.__ctxE2E.getActiveTask;
+      delete win.__ctxE2E.getVcsSnapshot;
+      delete win.__ctxE2E.refreshVcsDetails;
       delete win.__ctxE2E.toggleDiffPane;
       delete win.__ctxE2E.toggleArtifactsPane;
       delete win.__ctxE2E.pasteImageIntoComposer;
@@ -320,5 +335,14 @@ export function useWorkbenchE2EBridge({
       delete win.__ctxE2E.installMarkdownScrollProbe;
       delete win.__ctxE2E.removeMarkdownScrollProbe;
     };
-  }, [clearDraftHarness, focusNewTask, focusTask, getActiveTask, toggleArtifactsPane, toggleDiffPane]);
+  }, [
+    clearDraftHarness,
+    focusNewTask,
+    focusTask,
+    getActiveTask,
+    getVcsSnapshot,
+    refreshVcsDetails,
+    toggleArtifactsPane,
+    toggleDiffPane,
+  ]);
 }

@@ -1,5 +1,6 @@
 import type { WorkspaceActiveSnapshotState } from "../../state/workspaceActiveSnapshotStore";
 import type { SessionSupervisorSnapshot } from "../../state/sessionSupervisor";
+import { useWorkspaceVcsStore } from "../../state/workspaceVcsStore";
 import { useWarmSessionTranscriptRuntimes } from "./useWarmSessionTranscriptRuntimes";
 import { useWorkbenchE2EBridge } from "./useWorkbenchE2EBridge";
 
@@ -24,6 +25,8 @@ export function useWorkbenchShellIntegrations({
   toggleDiffPane: () => void;
   toggleArtifactsPane: () => void;
 }) {
+  const workspaceVcsStore = useWorkspaceVcsStore();
+
   useWarmSessionTranscriptRuntimes({
     workspaceSnapshot,
     sessionSnap,
@@ -35,6 +38,11 @@ export function useWorkbenchShellIntegrations({
     clearDraftHarness,
     focusTask,
     getActiveTask: () => ({ taskId: activeTaskId, sessionId: activeSessionId }),
+    getVcsSnapshot: (worktreeId) => workspaceVcsStore.getWorktreeVcsSnapshot(worktreeId),
+    refreshVcsDetails: (worktreeId) => {
+      workspaceVcsStore.refresh([worktreeId], "details");
+      return true;
+    },
     toggleDiffPane,
     toggleArtifactsPane,
   });
