@@ -225,6 +225,12 @@ test("mac WDIO automation targets the app executable and performs a real session
   );
 });
 
+test("Tauri route navigation does not depend on WebDriver page-load completion", () => {
+  const wdio = fs.readFileSync(WDIO_CONF, "utf8");
+  assert.match(wdio, /pageLoadStrategy:\s*"none"/);
+  assert.match(wdio, /timeouts:\s*\{[\s\S]*pageLoad:\s*300000/);
+});
+
 test("macOS automation launcher treats CrabNebula backend as fixed-port", () => {
   const wdio = fs.readFileSync(path.join(ROOT, "automation", "wdio.conf.cjs"), "utf8");
   assert.match(wdio, /const FIXED_MACOS_CN_BACKEND_PORT = 3000;/);

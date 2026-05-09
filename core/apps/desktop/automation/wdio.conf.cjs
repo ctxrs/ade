@@ -1777,6 +1777,7 @@ exports.config = {
   capabilities: [
     {
       maxInstances: 1,
+      pageLoadStrategy: "none",
       timeouts: {
         script: 180000,
         pageLoad: 300000,
