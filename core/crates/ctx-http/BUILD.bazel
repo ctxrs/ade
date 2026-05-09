@@ -17,11 +17,15 @@ CTX_HTTP_RUSTC_ENV = {
     "CARGO_PKG_VERSION": "0.64.6",
 }
 
-CTX_HTTP_COMPILE_DATA = [
+CTX_HTTP_RUNTIME_COMPILE_DATA = [
     "//core/apps/desktop/src-tauri/config:updater_pubkey.txt",
     "//core/packages:web-session-worker/bin/auth.mjs",
     "//core/packages:web-session-worker/bin/worker.mjs",
     "//core/packages:web-session-worker/package.json",
+]
+
+CTX_HTTP_COMPILE_DATA = CTX_HTTP_RUNTIME_COMPILE_DATA + [
+    "src/daemon/workspace_runtime/tests/avf_fixtures/sandbox_cli_shim.sh",
 ]
 
 CTX_HTTP_TEST_COMMON_SRCS = glob(["tests/common/**/*.rs"])
@@ -444,7 +448,7 @@ rust_library(
         ["src/**/*.rs"],
         exclude = ["src/main.rs"],
     ),
-    compile_data = CTX_HTTP_COMPILE_DATA,
+    compile_data = CTX_HTTP_RUNTIME_COMPILE_DATA,
     rustc_env = CTX_HTTP_RUSTC_ENV,
     deps = CTX_HTTP_LIB_DEPS,
     proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
