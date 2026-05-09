@@ -1,11 +1,8 @@
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Result;
-use serde_json::json;
 
-use ctx_core::ids::SessionId;
 pub(crate) use ctx_storage_admission::{
     is_storage_exhaustion_error, storage_emergency_message, storage_exhaustion_message,
     StorageGuardLevel, StorageGuardObservedPath, StorageGuardReserveAction,
@@ -17,12 +14,19 @@ pub(crate) use ctx_storage_admission::{StorageGuardPathStatus, STORAGE_GUARD_RES
 
 use crate::daemon::scheduler::SchedulerCommand;
 use crate::daemon::AppState;
-use ctx_observability::ops_events::OpsEvent;
 
 #[cfg(test)]
 const GIB: u64 = ctx_storage_admission::STORAGE_BYTES_GIB;
 #[cfg(test)]
 const MIB: u64 = ctx_storage_admission::STORAGE_BYTES_MIB;
+
+mod observations;
+mod publication;
+
+use observations::{collect_observed_paths, sample_storage_disks};
+#[cfg(test)]
+use publication::dispatch_storage_emergency_interrupt;
+use publication::{emit_reserve_warnings, publish_storage_guard_snapshot};
 
 pub fn spawn_storage_guard(state: Arc<AppState>) {
     let mut shutdown_rx = state.core.shutdown_tx.subscribe();
@@ -86,150 +90,6 @@ async fn refresh_preflight_storage_guard(
             .sample_preflight(&state.core.data_root, &observed_paths, &disks);
     publish_storage_guard_snapshot(state, &previous, &snapshot).await;
     snapshot
-}
-
-async fn publish_storage_guard_snapshot(
-    state: &Arc<AppState>,
-    previous: &StorageGuardStatus,
-    snapshot: &StorageGuardStatus,
-) {
-    let should_interrupt = previous.level != StorageGuardLevel::Emergency
-        && snapshot.level == StorageGuardLevel::Emergency;
-    if !snapshot.same_meaningful_state(previous) {
-        emit_storage_guard_transition(state, snapshot);
-    }
-    state.core.storage_guard.publish(snapshot.clone());
-    if should_interrupt {
-        dispatch_storage_emergency_interrupts(state, snapshot).await;
-    }
-}
-
-fn emit_storage_guard_transition(state: &AppState, snapshot: &StorageGuardStatus) {
-    let mut event = OpsEvent::new(
-        match snapshot.level {
-            StorageGuardLevel::Emergency => "error",
-            StorageGuardLevel::Warning => "warning",
-            StorageGuardLevel::Normal => "info",
-        },
-        "storage_guard_state_changed",
-    );
-    event.meta = Some(json!({
-        "level": snapshot.level,
-        "reserve_file_active": snapshot.reserve_file_active,
-        "active": snapshot.active,
-    }));
-    state.telemetry.ops_events.emit(event);
-}
-
-fn emit_reserve_warnings(warnings: Vec<StorageGuardReserveWarning>) {
-    for warning in warnings {
-        match warning.action {
-            StorageGuardReserveAction::Allocate => {
-                tracing::warn!(
-                    reserve_file = %warning.reserve_file_path.to_string_lossy(),
-                    "failed to allocate storage reserve file: {:#}",
-                    warning.message
-                );
-            }
-            StorageGuardReserveAction::Release => {
-                tracing::warn!(
-                    reserve_file = %warning.reserve_file_path.to_string_lossy(),
-                    "failed to release storage reserve file: {:#}",
-                    warning.message
-                );
-            }
-        }
-    }
-}
-
-async fn dispatch_storage_emergency_interrupts(
-    state: &Arc<AppState>,
-    snapshot: &StorageGuardStatus,
-) {
-    let running_sessions = state.sessions.list_running_sessions().await;
-    let mut interrupted = 0usize;
-    for session_id in running_sessions {
-        if dispatch_storage_emergency_interrupt(state, session_id).await {
-            interrupted += 1;
-        }
-    }
-
-    tracing::warn!(
-        interrupted_sessions = interrupted,
-        level = ?snapshot.level,
-        active_path = snapshot.active.as_ref().map(|path| path.path.as_str()),
-        "storage emergency interrupted active sessions"
-    );
-}
-
-async fn dispatch_storage_emergency_interrupt(
-    state: &Arc<AppState>,
-    session_id: SessionId,
-) -> bool {
-    let Some(tx) = state.sessions.scheduler_sender(session_id).await else {
-        return false;
-    };
-    tx.send(SchedulerCommand::StorageEmergency).await.is_ok()
-}
-
-async fn sample_storage_disks(
-    state: &Arc<AppState>,
-) -> Vec<ctx_resource_utilization::DiskSnapshot> {
-    let mut sampler = state.telemetry.resource_sampler.lock().await;
-    let (_system, disks, _cache_age_ms) = sampler.system_snapshot();
-    disks
-}
-
-async fn collect_observed_paths(
-    state: &Arc<AppState>,
-    extra_paths: &[PathBuf],
-) -> Vec<StorageGuardObservedPath> {
-    let mut paths = Vec::new();
-    let mut seen = HashSet::new();
-    push_observed_path(
-        &mut paths,
-        &mut seen,
-        "CTX data root",
-        state.core.data_root.clone(),
-    );
-    push_observed_path(&mut paths, &mut seen, "temp storage", std::env::temp_dir());
-
-    for workdir in running_session_workdirs(state).await {
-        push_observed_path(&mut paths, &mut seen, "active worktree", workdir);
-    }
-    for workdir in extra_paths {
-        push_observed_path(&mut paths, &mut seen, "active worktree", workdir.clone());
-    }
-    paths
-}
-
-fn push_observed_path(
-    paths: &mut Vec<StorageGuardObservedPath>,
-    seen: &mut HashSet<PathBuf>,
-    label: &'static str,
-    path: PathBuf,
-) {
-    if !seen.insert(path.clone()) {
-        return;
-    }
-    paths.push(StorageGuardObservedPath::new(label, path));
-}
-
-async fn running_session_workdirs(state: &Arc<AppState>) -> Vec<PathBuf> {
-    let mut workdirs = Vec::new();
-    for session_id in state.sessions.list_running_sessions().await {
-        let Ok(store) = state.store_for_session(session_id).await else {
-            continue;
-        };
-        let Ok(Some(session)) = store.get_session(session_id).await else {
-            continue;
-        };
-        let Ok(Some(worktree)) = store.get_worktree(session.worktree_id).await else {
-            continue;
-        };
-        workdirs.push(PathBuf::from(worktree.root_path));
-    }
-    workdirs
 }
 
 impl AppState {
