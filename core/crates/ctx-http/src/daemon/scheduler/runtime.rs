@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::Result;
-use serde_json::Value;
 use tokio::sync::{mpsc, oneshot, watch, Mutex};
 use tokio::time::Instant as TokioInstant;
 
@@ -20,6 +19,7 @@ mod execution_plan;
 mod helpers;
 mod provider_env;
 mod provider_launch;
+mod provider_setup;
 mod provider_spawn;
 #[cfg(test)]
 mod tests;
@@ -29,27 +29,13 @@ mod turn_input;
 mod turn_start;
 
 use self::event_loop::{spawn_turn_event_loop_for_session, TurnEventLoopSpawnRequest};
-use self::execution_plan::prepare_turn_execution_plan;
-use self::helpers::runtime_provider_id_for_session_provider;
-use self::provider_env::{
-    apply_runtime_source_env, build_base_provider_env, emit_provider_run_env_ready_event,
-    prepare_provider_runtime_environment, BaseProviderEnvRequest, ProviderRunEnvReadyEvent,
-    ProviderRuntimeEnvironmentRequest,
-};
 use self::provider_launch::prepare_provider_launch_environment;
-use self::provider_spawn::{
-    prepare_provider_adapter_for_turn, spawn_provider_turn, ProviderTurnSpawnRequest,
-};
-use self::turn_failure::emit_turn_start_failed;
+use self::provider_setup::{prepare_provider_turn_runtime, ProviderTurnRuntimeSetupRequest};
+use self::provider_spawn::{spawn_provider_turn, ProviderTurnSpawnRequest};
 use self::turn_input::prepare_turn_input;
-use self::turn_start::{
-    apply_crp_launch_policy_env_for_control_mode, prepare_turn_start, PrepareTurnStartRequest,
-};
+use self::turn_start::{prepare_turn_start, PrepareTurnStartRequest};
 use super::lifecycle::{RunningTurn, TurnStartProgress};
 use super::QueuedMessage;
-use ctx_org_policy::admission::{
-    admit_runtime_turn, apply_turn_admission_env, RuntimeTurnAdmissionRequest,
-};
 
 pub(crate) async fn start_turn(
     state: &Arc<AppState>,
@@ -95,125 +81,29 @@ pub(crate) async fn start_turn(
     let (start_progress_tx, start_progress_rx) = watch::channel(TurnStartProgress::Pending);
     let event_tx = ev_tx.clone();
 
-    let settings = ctx_settings_service::load_settings(state.global_store()).await?;
-    let provider_control_mode = settings
-        .sandboxing
-        .as_ref()
-        .map(|s| s.provider_control_mode.clone())
-        .unwrap_or_default();
-    let mut provider_env = build_base_provider_env(BaseProviderEnvRequest {
-        daemon_url: &state.core.daemon_url,
-        data_root: &state.core.data_root,
-        session,
-        full_model_id: &full_model_id,
-        provider_control_mode: &provider_control_mode,
-    });
-
-    let execution_plan =
-        match prepare_turn_execution_plan(state, &store, session, execution_environment).await {
-            Ok(execution_plan) => execution_plan,
-            Err(err) => {
-                emit_turn_start_failed(state, session, run_id, turn_id, message_id, &err).await;
-                return Err(err);
-            }
-        };
-    let execution_settings = execution_plan.execution_settings;
-    let runtime_plan = execution_plan.runtime_plan;
-    let is_linux_sandbox = runtime_plan.is_linux_sandbox();
-    let source_env = match apply_runtime_source_env(
-        &state.core.data_root,
-        &session.provider_id,
-        &runtime_plan,
-        &mut provider_env,
-    )
-    .await
-    {
-        Ok(source_env) => source_env,
-        Err(err) => {
-            emit_turn_start_failed(state, session, run_id, turn_id, message_id, &err).await;
-            return Err(err);
-        }
-    };
-    let resolved_source = source_env.resolved_source;
-    let runtime_source_mode = source_env.runtime_source_mode;
-    let using_endpoint_source = source_env.using_endpoint_source;
-
-    let admission = match admit_runtime_turn(
-        state.global_store(),
-        &store,
-        RuntimeTurnAdmissionRequest {
-            session,
-            run_id,
-            provider_id: &session.provider_id,
-            model_id: &full_model_id,
-            execution_environment,
-            container_network_mode: execution_settings.container.network_mode.clone(),
-            source_kind: resolved_source.source_kind,
-        },
-    )
-    .await
-    {
-        Ok(admission) => admission,
-        Err(err) => {
-            emit_turn_start_failed(state, session, run_id, turn_id, message_id, &err).await;
-            return Err(err);
-        }
-    };
-    apply_turn_admission_env(&mut provider_env, &admission);
-
-    let runtime_provider_id =
-        runtime_provider_id_for_session_provider(&session.provider_id, &resolved_source);
-    if runtime_provider_id != session.provider_id {
-        provider_env.insert(
-            "CTX_PROVIDER_RUNTIME_ID".to_string(),
-            runtime_provider_id.to_string(),
-        );
-    }
-    let prepared_adapter =
-        match prepare_provider_adapter_for_turn(state, runtime_provider_id, is_linux_sandbox).await
-        {
-            Ok(prepared_adapter) => prepared_adapter,
-            Err(err) => {
-                emit_turn_start_failed(state, session, run_id, turn_id, message_id, &err).await;
-                return Err(err);
-            }
-        };
-
-    prepare_provider_runtime_environment(ProviderRuntimeEnvironmentRequest {
+    let provider_runtime = prepare_provider_turn_runtime(ProviderTurnRuntimeSetupRequest {
         state,
-        provider_env: &mut provider_env,
-        runtime_provider_id,
-        runtime_plan: &runtime_plan,
-        is_linux_sandbox,
-        runtime_source_mode,
-        adapter_cfg: &prepared_adapter.adapter_cfg,
-        install_target: prepared_adapter.install_target,
-    })
-    .await?;
-    apply_crp_launch_policy_env_for_control_mode(&mut provider_env, &provider_control_mode);
-
-    emit_provider_run_env_ready_event(ProviderRunEnvReadyEvent {
-        state,
+        store: &store,
         session,
         run_id,
         turn_id,
+        message_id,
         workdir_str: &workdir_str,
         full_model_id: &full_model_id,
-        execution_environment: execution_environment.as_str(),
+        execution_environment,
         session_root_kind,
-        runtime_provider_id,
-        using_endpoint_source,
-        is_linux_sandbox,
-        runtime_plan: &runtime_plan,
-        provider_env: &provider_env,
-    });
+    })
+    .await?;
+    let mut provider_env = provider_runtime.provider_env;
+    let runtime_provider_id = provider_runtime.runtime_provider_id;
+    let adapter = provider_runtime.adapter;
 
     let turn_input =
         prepare_turn_input(&store, session, &message, &full_model_id, &mut provider_env).await?;
     let launch_environment = prepare_provider_launch_environment(
         state,
         session,
-        runtime_provider_id,
+        &runtime_provider_id,
         workdir,
         &mut provider_env,
     )
@@ -227,7 +117,7 @@ pub(crate) async fn start_turn(
         state,
         store: &store,
         session,
-        adapter: prepared_adapter.adapter.clone(),
+        adapter: Arc::clone(&adapter),
         turn_input,
         workdir,
         provider_env,
@@ -270,7 +160,7 @@ pub(crate) async fn start_turn(
     });
 
     Ok(RunningTurn {
-        adapter: prepared_adapter.adapter,
+        adapter,
         handle,
         run_id,
         turn_id,
