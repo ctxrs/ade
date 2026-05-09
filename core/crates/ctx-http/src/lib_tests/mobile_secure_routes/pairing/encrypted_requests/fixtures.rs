@@ -1,0 +1,149 @@
+use super::*;
+
+pub(super) struct EncryptedPairingHarness {
+    pub(super) app: axum::Router,
+    pub(super) state: Arc<AppState>,
+    pub(super) token: &'static str,
+    pub(super) token_hash: String,
+    pub(super) daemon_public_key: String,
+    _home_guard: EnvVarGuard,
+    _home: tempfile::TempDir,
+    _data_dir: tempfile::TempDir,
+    _serial: tokio::sync::MutexGuard<'static, ()>,
+}
+
+pub(super) struct PairingKeyMaterial {
+    pub(super) device_id: &'static str,
+    pub(super) device_public_key: String,
+    device_secret_key: String,
+    daemon_public_key: String,
+}
+
+impl PairingKeyMaterial {
+    pub(super) fn generate(daemon_public_key: &str) -> Self {
+        let (device_public_key, device_secret_key) =
+            ctx_transport_runtime::mobile_e2ee::generate_keypair();
+        Self {
+            device_id: "33333333-3333-3333-3333-333333333333",
+            device_public_key,
+            device_secret_key,
+            daemon_public_key: daemon_public_key.to_string(),
+        }
+    }
+}
+
+pub(super) async fn encrypted_pairing_harness() -> EncryptedPairingHarness {
+    let serial = home_env_test_lock().lock().await;
+    let home = tempfile::tempdir().unwrap();
+    let home_guard = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
+
+    let data_dir = tempfile::tempdir().unwrap();
+    let stores = StoreManager::open(data_dir.path()).await.unwrap();
+    let state = Arc::new(AppState::new(
+        data_dir.path().to_path_buf(),
+        stores,
+        HashMap::new(),
+        "http://127.0.0.1:4399".to_string(),
+        None,
+    ));
+    let profile_id = insert_mobile_profile(&state).await;
+    let (daemon_public_key, daemon_private_key) =
+        ctx_transport_runtime::mobile_e2ee::generate_keypair();
+    state
+        .global_store()
+        .upsert_mobile_access_config(MobileAccessConfig {
+            id: "default".to_string(),
+            profile_id,
+            tunnel_id: "tunnel-1".to_string(),
+            public_base_url: "https://example.com".to_string(),
+            relay_base_url: "https://relay.example.com".to_string(),
+            tunnel_secret: "secret".to_string(),
+            daemon_public_key: daemon_public_key.clone(),
+            daemon_private_key,
+            enabled: true,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        })
+        .await
+        .unwrap();
+
+    let token = "valid-pairing-token";
+    let token_hash = pairing_token_hash(token);
+    state
+        .global_store()
+        .insert_mobile_pairing_token(
+            "pair-1",
+            &token_hash,
+            chrono::Utc::now() + chrono::Duration::minutes(5),
+        )
+        .await
+        .unwrap();
+
+    EncryptedPairingHarness {
+        app: api::router(state.clone()),
+        state,
+        token,
+        token_hash,
+        daemon_public_key,
+        _home_guard: home_guard,
+        _home: home,
+        _data_dir: data_dir,
+        _serial: serial,
+    }
+}
+
+pub(super) fn valid_encrypted_pair_request(
+    harness: &EncryptedPairingHarness,
+    key_material: &PairingKeyMaterial,
+) -> serde_json::Value {
+    encrypted_pair_request_value(
+        harness.token,
+        key_material.device_id,
+        &key_material.daemon_public_key,
+        &key_material.device_public_key,
+        &key_material.device_secret_key,
+    )
+}
+
+pub(super) async fn post_mobile_pair(
+    app: &axum::Router,
+    body: serde_json::Value,
+) -> axum::response::Response {
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/mobile/pair")
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    app.clone().oneshot(req).await.unwrap()
+}
+
+pub(super) fn decrypt_pairing_response(
+    envelope: &serde_json::Value,
+    key_material: &PairingKeyMaterial,
+) -> serde_json::Value {
+    let key = ctx_transport_runtime::mobile_e2ee::derive_client_key(
+        key_material.device_id,
+        &key_material.device_secret_key,
+        &key_material.daemon_public_key,
+    )
+    .unwrap();
+    let plaintext = ctx_transport_runtime::mobile_e2ee::decrypt(
+        &key,
+        key_material.device_id,
+        envelope["seq"].as_i64().unwrap(),
+        envelope["nonce"].as_str().unwrap(),
+        envelope["ciphertext"].as_str().unwrap(),
+    )
+    .unwrap();
+    serde_json::from_slice(&plaintext).unwrap()
+}
+
+pub(super) async fn assert_pairing_token_consumable(harness: &EncryptedPairingHarness) -> bool {
+    harness
+        .state
+        .global_store()
+        .consume_mobile_pairing_token(&harness.token_hash)
+        .await
+        .unwrap()
+}
