@@ -469,7 +469,11 @@ rust_binary(
     name = "ctx",
     crate_root = "src/main.rs",
     edition = "2021",
-    srcs = ["src/main.rs"],
+    srcs = [
+        "src/cli.rs",
+        "src/logging.rs",
+        "src/main.rs",
+    ],
     rustc_env = CTX_HTTP_RUSTC_ENV,
     deps = [
         ":lib",
