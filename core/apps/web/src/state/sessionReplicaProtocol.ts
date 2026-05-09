@@ -144,6 +144,13 @@ export type SessionReplicaFreshnessEvent =
       dimension: "last_event_seq" | "projection_rev";
       incoming: number;
       existing: number;
+    }
+  | {
+      type: "stale_head_delta_dropped";
+      sessionId: string;
+      dimension: "last_event_seq" | "projection_rev";
+      incoming: number;
+      existing: number;
     };
 
 export type SessionReplicaWorkerMessage =

@@ -12,6 +12,7 @@ const noteGapRecoveryStartedMock = vi.hoisted(() => vi.fn());
 const noteFinalDeltaReceivedMock = vi.hoisted(() => vi.fn());
 const noteSessionReplicaApplyLagMock = vi.hoisted(() => vi.fn());
 const noteSessionReplicaApplyDurationMock = vi.hoisted(() => vi.fn());
+const noteStaleHeadDeltaDroppedMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../utils/desktop", () => ({
   isDesktopApp: () => false,
@@ -33,6 +34,7 @@ vi.mock("./foregroundFreshnessTelemetry", () => ({
   noteProjectionOrSeqRegression: vi.fn(),
   noteSessionReplicaApplyDuration: noteSessionReplicaApplyDurationMock,
   noteSessionReplicaApplyLag: noteSessionReplicaApplyLagMock,
+  noteStaleHeadDeltaDropped: noteStaleHeadDeltaDroppedMock,
 }));
 
 describe("SessionReplicaBridge", () => {
@@ -87,5 +89,22 @@ describe("SessionReplicaBridge", () => {
       last_event_seq: 3,
       event_type: "session_head_delta",
     });
+  });
+
+  it("records dropped stale head deltas separately from hard regressions", () => {
+    handleSessionReplicaFreshnessEvent({
+      type: "stale_head_delta_dropped",
+      sessionId: "session-1",
+      dimension: "last_event_seq",
+      incoming: 2,
+      existing: 7,
+    });
+
+    expect(noteStaleHeadDeltaDroppedMock).toHaveBeenCalledWith(
+      "session-1",
+      "last_event_seq",
+      2,
+      7,
+    );
   });
 });

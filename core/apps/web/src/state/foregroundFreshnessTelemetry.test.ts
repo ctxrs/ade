@@ -55,6 +55,7 @@ import {
   noteSessionSwitchStarted,
   noteSessionReplicaApplyDuration,
   noteSessionReplicaApplyLag,
+  noteStaleHeadDeltaDropped,
   noteWorkspaceStreamEventObserved,
   noteSwitchStaleVisible,
   resetForegroundFreshnessTelemetryForTests,
@@ -231,6 +232,7 @@ describe("foregroundFreshnessTelemetry", () => {
     noteLateChunkAfterTerminal("turn-1");
     noteLateChunkAfterTerminal("turn-1");
     noteProjectionOrSeqRegression("session-1", "last_event_seq", 3, 7);
+    noteStaleHeadDeltaDropped("session-1", "last_event_seq", 3, 7);
     noteGapRepairMismatch("session-1", 9, 5);
     noteSwitchStaleVisible("task-1", "session-old", "session-new");
     noteNavThreadActivityMismatch("task-1", "session-new", true, false);
@@ -241,6 +243,10 @@ describe("foregroundFreshnessTelemetry", () => {
     );
     expect(clientMocks.recordClientCounterMetric).toHaveBeenCalledWith(
       "workbench.projection_or_seq_regression_count",
+      { dimension: "last_event_seq" },
+    );
+    expect(clientMocks.recordClientCounterMetric).toHaveBeenCalledWith(
+      "workbench.stale_head_delta_dropped_count",
       { dimension: "last_event_seq" },
     );
     expect(clientMocks.recordClientCounterMetric).toHaveBeenCalledWith(
@@ -255,7 +261,7 @@ describe("foregroundFreshnessTelemetry", () => {
       "workbench.nav_thread_activity_mismatch_count",
       undefined,
     );
-    expect(clientMocks.recordClientCounterMetric).toHaveBeenCalledTimes(5);
+    expect(clientMocks.recordClientCounterMetric).toHaveBeenCalledTimes(6);
   });
 
   it("dedupes degraded backlog observations within the same severity bucket and bounds gauge sampling", () => {

@@ -2818,14 +2818,9 @@ describe("SessionReplicaCore", () => {
     expect(latest.data.lastEventSeq).toBe(10);
     expect(latest.data.turns?.[0]?.status).toBe("interrupted");
     expect(latest.data.messages?.[0]?.content).toBe("interrupted visibly");
-    expect(freshnessEvents).toEqual(expect.arrayContaining([
-      {
-        type: "projection_or_seq_regression",
-        sessionId,
-        dimension: "last_event_seq",
-        incoming: 8,
-        existing: 10,
-      },
+    expect(freshnessEvents).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "projection_or_seq_regression" }),
+      expect.objectContaining({ type: "stale_head_delta_dropped" }),
     ]));
   });
 
@@ -3163,14 +3158,9 @@ describe("SessionReplicaCore", () => {
     expect(latest.data.projectionRev).toBe(10);
     expect(latest.data.activity).toBeUndefined();
     expect(latest.data.turns?.[0]?.status).toBe("running");
-    expect(freshnessEvents).toEqual(expect.arrayContaining([
-      {
-        type: "projection_or_seq_regression",
-        sessionId,
-        dimension: "projection_rev",
-        incoming: 9,
-        existing: 10,
-      },
+    expect(freshnessEvents).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "projection_or_seq_regression" }),
+      expect.objectContaining({ type: "stale_head_delta_dropped" }),
     ]));
   });
 
@@ -3411,16 +3401,19 @@ describe("SessionReplicaCore", () => {
     });
 
     expect(patches).toEqual([]);
+    expect(freshnessEvents).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "projection_or_seq_regression" }),
+    ]));
     expect(freshnessEvents).toEqual(expect.arrayContaining([
       {
-        type: "projection_or_seq_regression",
+        type: "stale_head_delta_dropped",
         sessionId,
         dimension: "last_event_seq",
         incoming: 3,
         existing: 8,
       },
       {
-        type: "projection_or_seq_regression",
+        type: "stale_head_delta_dropped",
         sessionId,
         dimension: "projection_rev",
         incoming: 3,

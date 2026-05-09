@@ -566,6 +566,21 @@ export const noteProjectionOrSeqRegression = (
   );
 };
 
+export const noteStaleHeadDeltaDropped = (
+  sessionId: string,
+  dimension: "last_event_seq" | "projection_rev",
+  incoming: number,
+  existing: number,
+): void => {
+  const normalizedSessionId = String(sessionId).trim();
+  if (!normalizedSessionId) return;
+  recordInvariantCounter(
+    "workbench.stale_head_delta_dropped_count",
+    `${normalizedSessionId}:${dimension}:${incoming}:${existing}`,
+    { dimension },
+  );
+};
+
 export const noteGapRepairMismatch = (
   sessionId: string,
   baselineLastEventSeq: number | null,

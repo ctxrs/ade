@@ -390,10 +390,13 @@ const applySessionReplicaHeadDelta = (
   const existingProjectionRev =
     typeof entry.projectionRev === "number" ? entry.projectionRev : null;
   let staleDelta = false;
+  const staleDimensions: Array<{
+    dimension: "last_event_seq" | "projection_rev";
+    incoming: number;
+    existing: number;
+  }> = [];
   if (incomingSeq !== null && existingSeq !== null && incomingSeq < existingSeq) {
-    host.emitFreshnessEvent({
-      type: "projection_or_seq_regression",
-      sessionId,
+    staleDimensions.push({
       dimension: "last_event_seq",
       incoming: incomingSeq,
       existing: existingSeq,
@@ -406,9 +409,7 @@ const applySessionReplicaHeadDelta = (
     incomingProjectionRev < existingProjectionRev &&
     (incomingSeq === null || existingSeq === null || incomingSeq <= existingSeq)
   ) {
-    host.emitFreshnessEvent({
-      type: "projection_or_seq_regression",
-      sessionId,
+    staleDimensions.push({
       dimension: "projection_rev",
       incoming: incomingProjectionRev,
       existing: existingProjectionRev,
@@ -416,6 +417,13 @@ const applySessionReplicaHeadDelta = (
     staleDelta = true;
   }
   if (staleDelta && !staleDeltaHasVisibleForwardProgress(entry, delta, rawEvent, toolSummaries)) {
+    for (const staleDimension of staleDimensions) {
+      host.emitFreshnessEvent({
+        type: "stale_head_delta_dropped",
+        sessionId,
+        ...staleDimension,
+      });
+    }
     return;
   }
 

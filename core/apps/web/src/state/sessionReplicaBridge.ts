@@ -22,6 +22,7 @@ import {
   noteProjectionOrSeqRegression,
   noteSessionReplicaApplyDuration,
   noteSessionReplicaApplyLag,
+  noteStaleHeadDeltaDropped,
 } from "./foregroundFreshnessTelemetry";
 
 const shouldUseWorker = (): boolean => {
@@ -172,6 +173,14 @@ export const handleSessionReplicaFreshnessEvent = (event: SessionReplicaFreshnes
       return;
     case "projection_or_seq_regression":
       noteProjectionOrSeqRegression(
+        event.sessionId,
+        event.dimension,
+        event.incoming,
+        event.existing,
+      );
+      return;
+    case "stale_head_delta_dropped":
+      noteStaleHeadDeltaDropped(
         event.sessionId,
         event.dimension,
         event.incoming,

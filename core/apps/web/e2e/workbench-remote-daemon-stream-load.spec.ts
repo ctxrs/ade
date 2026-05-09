@@ -430,6 +430,11 @@ fi
 mkdir -p "$worktree_root/.ctx-vcs-soak"
 rm -f "$worktree_root/.ctx-vcs-soak/stop-requested"
 seed_marker="$(date +%s%3N)"
+if ! git -C "$worktree_root" ls-files --error-unmatch vcs-soak-tracked.txt >/dev/null 2>&1; then
+  printf 'remote vcs soak baseline\\n' >"$worktree_root/vcs-soak-tracked.txt"
+  git -C "$worktree_root" add vcs-soak-tracked.txt
+  git -C "$worktree_root" -c user.name='ctx e2e' -c user.email='ctx-e2e@example.invalid' commit --no-gpg-sign --no-verify -m 'seed remote vcs soak file' >/dev/null
+fi
 printf 'remote vcs soak seed %s\\n' "$seed_marker" >"$worktree_root/vcs-soak-tracked.txt"
 printf 'remote vcs soak inventory seed %s\\n' "$seed_marker" >"$worktree_root/vcs-soak-initial.txt"
 git -C "$worktree_root" status --short >/dev/null
@@ -1479,6 +1484,7 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
     clickToRequestMs: null as number | null,
     clickToPendingMs: null as number | null,
     clickToTerminalMs: null as number | null,
+    waitFinishedAtMs: null as number | null,
   };
 
   let forcedGapRecovery: Awaited<ReturnType<typeof runForcedForegroundGapRecovery>> | null = null;
@@ -1505,9 +1511,12 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
     const interruptMarker = `remote-ui-interrupt-${Date.now()}`;
     interrupt.marker = interruptMarker;
     try {
-      await sendSessionMessage(request, foregroundSessionId, buildSlowPrompt(interruptMarker), {
-        retryBusyForMs: 5000,
-      });
+      await sendSessionMessage(
+        request,
+        foregroundSessionId,
+        buildSlowPrompt(interruptMarker, { bodyLines: 120, toolCount: 14 }),
+        { retryBusyForMs: 5000 },
+      );
       const stopButton = page.getByRole("button", { name: "Stop" });
       await expect(stopButton).toBeVisible({ timeout: 20_000 });
       interrupt.clickAtMs = Date.now();
@@ -1526,6 +1535,8 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
       interrupt.terminalStatus = terminal.status;
     } catch (error) {
       interrupt.error = formatUnknownError(error);
+    } finally {
+      interrupt.waitFinishedAtMs = Date.now();
     }
 
     const streamDeadline = Date.now() + STREAM_TIMEOUT_MS;
@@ -1568,7 +1579,10 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
   await sleep(1500);
   const visibleSnapshot = await stopVisibleProgressProbe(page);
   const streamTelemetrySamples = await readWorkspaceStreamTelemetrySamples(page);
-  const visibleCadence = summarizeVisibleCadence(visibleSnapshot, interrupt.terminalAtMs);
+  const visibleCadence = summarizeVisibleCadence(
+    visibleSnapshot,
+    interrupt.terminalAtMs ?? interrupt.waitFinishedAtMs,
+  );
   const backendToDomMs = probes
     .map((probe) => probe.backendToDomMs)
     .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
