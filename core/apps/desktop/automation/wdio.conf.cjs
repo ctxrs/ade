@@ -1761,6 +1761,73 @@ const cnSharedBackendTestHooks = {
 const DESKTOP_APP_LAUNCH_ENV = buildDesktopAppLaunchEnv();
 const WDIO_APPLICATION_PATH = resolveAutomationApplicationPath(APP_PATH);
 
+const resolveTauriNavigationTimeoutMs = () => {
+  const raw = String(process.env.CTX_AUTOMATION_TAURI_NAVIGATION_TIMEOUT_MS || "60000").trim();
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error("CTX_AUTOMATION_TAURI_NAVIGATION_TIMEOUT_MS must be a positive finite number");
+  }
+  return value;
+};
+
+const TAURI_NAVIGATION_TIMEOUT_MS = resolveTauriNavigationTimeoutMs();
+
+const normalizeTauriPathname = (pathname) => String(pathname || "").trim() || "/";
+
+const parseTauriNavigationTarget = (target) => {
+  const raw = String(target || "").trim();
+  if (!raw.startsWith("tauri://")) return null;
+  const parsed = new URL(raw);
+  return {
+    host: parsed.host,
+    pathname: normalizeTauriPathname(parsed.pathname),
+    protocol: parsed.protocol,
+    search: parsed.search,
+  };
+};
+
+const sameTauriRoute = (current, expected) => {
+  if (!expected) return true;
+  try {
+    const parsed = new URL(String(current || ""));
+    return parsed.protocol === expected.protocol
+      && parsed.host === expected.host
+      && normalizeTauriPathname(parsed.pathname) === expected.pathname
+      && parsed.search === expected.search;
+  } catch {
+    return false;
+  }
+};
+
+const waitForTauriRoute = async (browser, target) => {
+  const expected = parseTauriNavigationTarget(target);
+  if (!expected) return;
+  await browser.waitUntil(
+    async () => {
+      try {
+        return sameTauriRoute(await browser.getUrl(), expected);
+      } catch {
+        return false;
+      }
+    },
+    {
+      timeout: TAURI_NAVIGATION_TIMEOUT_MS,
+      timeoutMsg: `Tauri route did not reach ${target}`,
+    },
+  );
+};
+
+const installTauriNavigationWait = (browser) => {
+  if (browser.__ctxTauriNavigationWaitInstalled) return;
+  const originalUrl = browser.url.bind(browser);
+  browser.url = async (target, ...args) => {
+    const result = await originalUrl(target, ...args);
+    await waitForTauriRoute(browser, target);
+    return result;
+  };
+  browser.__ctxTauriNavigationWaitInstalled = true;
+};
+
 exports.config = {
   runner: "local",
   framework: "mocha",
@@ -1795,6 +1862,7 @@ exports.config = {
     process.env.CTX_AUTOMATION_WORKSPACE_PATH = WORKSPACE_PATH;
   },
   before: async (_capabilities, _specs, browser) => {
+    installTauriNavigationWait(browser);
     if (process.platform === "darwin") {
       await browser.getWindowHandle();
       if (!process.env.CTX_AUTOMATION_APP_OPEN_OBSERVED_AT) {

@@ -228,6 +228,10 @@ test("mac WDIO automation targets the app executable and performs a real session
 test("Tauri route navigation does not depend on WebDriver page-load completion", () => {
   const wdio = fs.readFileSync(WDIO_CONF, "utf8");
   assert.match(wdio, /pageLoadStrategy:\s*"none"/);
+  assert.match(wdio, /const installTauriNavigationWait = \(browser\) => \{/);
+  assert.match(wdio, /browser\.url = async \(target, \.\.\.args\) => \{/);
+  assert.match(wdio, /await waitForTauriRoute\(browser, target\);/);
+  assert.match(wdio, /installTauriNavigationWait\(browser\);/);
   assert.match(wdio, /timeouts:\s*\{[\s\S]*pageLoad:\s*300000/);
 });
 
