@@ -15,7 +15,7 @@ use serde::Serialize;
 use sha2::Digest;
 use tokio_util::io::ReaderStream;
 
-use super::ApiErrorResp;
+use super::super::errors::ApiErrorResp;
 use crate::daemon::AppState;
 
 #[derive(Debug, Serialize)]

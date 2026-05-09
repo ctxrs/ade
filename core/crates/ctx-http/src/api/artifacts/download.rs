@@ -15,7 +15,9 @@ use ctx_session_tools::{
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::ReaderStream;
 
-use super::{open_canonical_session_artifact_file, resolve_session_artifact_accessible_path};
+use super::access::{
+    open_canonical_session_artifact_file, resolve_session_artifact_accessible_path,
+};
 use crate::daemon::AppState;
 
 fn apply_session_artifact_response_headers(headers: &mut HeaderMap) {
