@@ -8,7 +8,7 @@ use anyhow::{bail, Context};
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
@@ -21,7 +21,9 @@ use crate::daemon::AppState;
 use ctx_core::ids::WorkspaceId;
 use ctx_core::provider_ids::CODEX_PROVIDER_ID;
 use ctx_harness_sources as harness_sources;
-use ctx_harness_sources::{HarnessApiShape, HarnessEndpointUpsert, HarnessSourceKind};
+use ctx_harness_sources::HarnessEndpointUpsert;
+#[cfg(test)]
+use ctx_harness_sources::{HarnessApiShape, HarnessSourceKind};
 use ctx_observability::logs;
 use ctx_provider_accounts as provider_accounts;
 use ctx_provider_auth_import as provider_auth_import;
@@ -43,6 +45,7 @@ mod login;
 mod probe;
 mod restarts;
 mod status;
+mod types;
 
 pub(super) use accounts::{
     delete_amp_account, delete_claude_account, delete_codex_account, delete_copilot_account,
@@ -78,6 +81,7 @@ pub(super) use status::{get_provider, get_provider_usage, list_providers};
 pub(crate) use status::{
     install_target_for_workspace, provider_status_for_target, providers_statuses_response,
 };
+use types::*;
 
 #[cfg(test)]
 use imports::import_result_requires_provider_restart;
@@ -91,308 +95,6 @@ use login::{
 use probe::*;
 #[cfg(test)]
 use restarts::*;
-
-#[derive(Debug, Default, Deserialize)]
-pub(super) struct InstallTargetQuery {
-    target: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct ProviderUsageQuery {
-    refresh: Option<bool>,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct CodexAccountsResponse {
-    active_account_id: Option<String>,
-    accounts: Vec<provider_accounts::CodexAccountEntry>,
-    logins: Vec<provider_accounts::CodexLoginStatus>,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct ClaudeAccountsResponse {
-    active_account_id: Option<String>,
-    accounts: Vec<provider_accounts::ClaudeAccountEntry>,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct GeminiAccountsResponse {
-    active_account_id: Option<String>,
-    accounts: Vec<provider_accounts::GeminiAccountEntry>,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct QwenAccountsResponse {
-    active_account_id: Option<String>,
-    accounts: Vec<provider_accounts::QwenAccountEntry>,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct KimiAccountsResponse {
-    active_account_id: Option<String>,
-    accounts: Vec<provider_accounts::KimiAccountEntry>,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct MistralAccountsResponse {
-    active_account_id: Option<String>,
-    accounts: Vec<provider_accounts::MistralAccountEntry>,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct CopilotAccountsResponse {
-    active_account_id: Option<String>,
-    accounts: Vec<provider_accounts::CopilotAccountEntry>,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct CursorAccountsResponse {
-    active_account_id: Option<String>,
-    accounts: Vec<provider_accounts::CursorAccountEntry>,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct ProvidersBootstrapResponse {
-    providers: Vec<ProviderStatus>,
-    provider_options: HashMap<String, serde_json::Value>,
-    provider_harness_config: HashMap<String, harness_sources::HarnessProviderSourceConfig>,
-    codex_accounts: CodexAccountsResponse,
-    claude_accounts: ClaudeAccountsResponse,
-    gemini_accounts: GeminiAccountsResponse,
-    qwen_accounts: QwenAccountsResponse,
-    kimi_accounts: KimiAccountsResponse,
-    mistral_accounts: MistralAccountsResponse,
-    copilot_accounts: CopilotAccountsResponse,
-    cursor_accounts: CursorAccountsResponse,
-    amp_accounts: AmpAccountsResponse,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct AmpAccountsResponse {
-    active_account_id: Option<String>,
-    accounts: Vec<provider_accounts::AmpAccountEntry>,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct CodexAccountUsageEntry {
-    account_id: Option<String>,
-    label: String,
-    email: Option<String>,
-    plan_type: Option<String>,
-    last_used_at: Option<DateTime<Utc>>,
-    usage: provider_usage::ProviderUsageSnapshot,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct CodexAccountsUsageResponse {
-    entries: Vec<CodexAccountUsageEntry>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct CodexActiveAccountReq {
-    account_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct ClaudeAccountUpsertReq {
-    label: Option<String>,
-    #[serde(alias = "auth_token")]
-    setup_token: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct ClaudeActiveAccountReq {
-    account_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct GeminiAccountUpsertReq {
-    label: Option<String>,
-    oauth_creds_json: String,
-    #[serde(default)]
-    google_accounts_json: Option<String>,
-    #[serde(default)]
-    email: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct QwenAccountUpsertReq {
-    label: Option<String>,
-    oauth_creds_json: String,
-    #[serde(default)]
-    email: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct AmpAccountUpsertReq {
-    label: Option<String>,
-    #[serde(default)]
-    email: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct MistralAccountUpsertReq {
-    label: Option<String>,
-    #[serde(default)]
-    email: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct GeminiActiveAccountReq {
-    account_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct QwenActiveAccountReq {
-    account_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct KimiAccountUpsertReq {
-    label: Option<String>,
-    #[serde(default)]
-    provider: Option<String>,
-    credentials_json: String,
-    #[serde(default)]
-    config_toml: Option<String>,
-    #[serde(default)]
-    email: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct KimiActiveAccountReq {
-    account_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct MistralActiveAccountReq {
-    account_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct CopilotAccountUpsertReq {
-    label: Option<String>,
-    token: String,
-    #[serde(default)]
-    email: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct CopilotActiveAccountReq {
-    account_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct CursorAccountUpsertReq {
-    label: Option<String>,
-    token: String,
-    #[serde(default)]
-    email: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct CursorActiveAccountReq {
-    account_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct AmpActiveAccountReq {
-    account_id: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct ProviderAuthImportCandidatesResponse {
-    candidates: Vec<provider_auth_import::ProviderAuthImportCandidate>,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct ProviderAuthImportProfilesResponse {
-    profiles: Vec<provider_auth_import::ProviderImportedAuthProfile>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct ProviderAuthImportReq {
-    candidate_ids: Vec<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct ProviderAuthImportResponse {
-    results: Vec<provider_auth_import::ProviderAuthImportResult>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct CodexHostImportReq {
-    label: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct SelectHarnessSourceReq {
-    source_kind: HarnessSourceKind,
-    #[serde(default)]
-    endpoint_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct UpsertHarnessEndpointReq {
-    #[serde(default)]
-    endpoint_id: Option<String>,
-    name: String,
-    #[serde(default)]
-    base_url: Option<String>,
-    #[serde(default)]
-    api_shape: Option<HarnessApiShape>,
-    #[serde(default)]
-    auth_type: Option<String>,
-    #[serde(default)]
-    model_override: Option<String>,
-    #[serde(default)]
-    api_key: Option<String>,
-    #[serde(default)]
-    service_account_json: Option<String>,
-    #[serde(default)]
-    project_id: Option<String>,
-    #[serde(default)]
-    location: Option<String>,
-    #[serde(default)]
-    manual_model_ids: Option<Vec<String>>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct SetEndpointManualModelsReq {
-    #[serde(default)]
-    model_ids: Vec<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct MatrixRefreshResponse {
-    provider_count: usize,
-    generated_at: Option<String>,
-    source: String,
-    degraded: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    last_error: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct DevRestartProvidersReq {
-    mode: String,
-    #[serde(default)]
-    reason: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct DevRestartProvidersResp {
-    mode: String,
-    results: Vec<DevRestartProvidersResult>,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct DevRestartProvidersResult {
-    provider_id: String,
-    status: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    message: Option<String>,
-}
 
 #[cfg(test)]
 mod tests;
