@@ -1,9 +1,8 @@
 use std::path::{Path as StdPath, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
 
 use axum::body::Body;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::{header, StatusCode};
 use axum::response::Response;
 use axum::Json;
@@ -30,8 +29,8 @@ pub(super) use worktrees::{get_worktree, get_worktree_bootstrap_logs};
 
 use super::errors::ApiErrorResp;
 use super::shared::{
-    load_and_cache_workspace_files, map_effective_execution_settings_error,
-    path_resolves_within_root, store_for_existing_workspace_status, FileCompletionsQuery,
+    map_effective_execution_settings_error, path_resolves_within_root,
+    store_for_existing_workspace_status,
 };
 use crate::daemon::execution_effective;
 use crate::daemon::workspaces::{vcs_hooks, WorkspaceHydrationError, WorkspaceHydrationErrorKind};
@@ -41,14 +40,12 @@ use ctx_core::models::{
     AttachmentMode, AttachmentUpdatePolicy, Workspace, WorkspaceActiveHeadBatch,
     WorkspaceActiveSnapshot, WorkspaceAttachment, WorkspaceAttachmentKind, Worktree,
 };
-use ctx_fs::git::assert_git_repo;
 use ctx_fs::vcs;
 use ctx_observability::logs;
 use ctx_observability::telemetry::TelemetryEvent;
 use ctx_workspace_attachments::AttachmentConfig;
 use ctx_workspace_config as workspace_config;
 use ctx_workspace_container::WorkspaceContainerStatus as HarnessContainerStatus;
-use ctx_workspace_services::file_completions;
 use ctx_workspace_services::workspace_registration::detect_workspace_primary_branch;
 
 #[derive(Debug, Deserialize)]
