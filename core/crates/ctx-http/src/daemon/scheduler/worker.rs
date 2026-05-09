@@ -1,14 +1,11 @@
-use std::collections::VecDeque;
-use std::path::PathBuf;
 use std::sync::{Arc, Weak};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::json;
 use tokio::sync::mpsc;
 use tokio::time::Instant as TokioInstant;
 
 use ctx_core::models::{MessageDelivery, Session, SessionEventType};
-use ctx_observability::ops_events::OpsEvent;
 
 use crate::daemon::AppState;
 
@@ -18,10 +15,12 @@ use super::lifecycle::{
 };
 use super::persistence::emit_event;
 use super::runtime::start_turn;
-use super::{QueuedMessage, SchedulerCommand};
+use super::SchedulerCommand;
 
+mod bootstrap;
 mod commands;
 
+use self::bootstrap::{bootstrap_worker, WorkerBootstrap};
 use self::commands::{handle_scheduler_command, SchedulerCommandAction};
 
 pub(super) async fn session_worker(
@@ -35,54 +34,22 @@ pub(super) async fn session_worker(
         return;
     };
     let mut session = session;
-    let mut queue: VecDeque<QueuedMessage> = VecDeque::new();
-    let store = match state.store_for_session(session.id).await {
-        Ok(store) => store,
-        Err(_) => return,
+    let Some(bootstrap) = bootstrap_worker(&state, &session).await else {
+        return;
     };
-    let order_seq_state = state.sessions.get_order_seq_state(&store, session.id).await;
-    if let Ok(mut queued) = store.list_queued_messages_for_session(session.id).await {
-        for m in queued.drain(..) {
-            queue.push_back(QueuedMessage {
-                message: m,
-                enqueued_at: Instant::now(),
-                run_id: None,
-            });
-        }
-    }
+    let WorkerBootstrap {
+        store,
+        order_seq_state,
+        mut queue,
+        mut event_head_rx,
+        workdir,
+        session_root_kind,
+    } = bootstrap;
     let mut running: Option<RunningTurn> = None;
     let mut running_inactivity_timeout: Option<Duration> = None;
     let mut running_inactivity_deadline: Option<TokioInstant> = None;
     let mut running_start_deadline: Option<TokioInstant> = None;
     let mut suspend_queue = false;
-    let mut event_head_rx = state
-        .sessions
-        .subscribe_session_event_head(session.id)
-        .await;
-
-    let worktree = match store.get_worktree(session.worktree_id).await {
-        Ok(Some(wt)) => wt,
-        _ => return,
-    };
-    let workdir = PathBuf::from(worktree.root_path.clone());
-    let is_worktree = worktree.vcs_ref.is_some() || worktree.git_branch.is_some();
-    let session_root_kind = if is_worktree {
-        "worktree".to_string()
-    } else {
-        "workspace_root".to_string()
-    };
-    let mut worktree_event = OpsEvent::new("info", "worktree_resolved");
-    worktree_event.session_id = Some(session.id.0.to_string());
-    worktree_event.worktree_id = Some(session.worktree_id.0.to_string());
-    worktree_event.worktree_root = Some(workdir.to_string_lossy().to_string());
-    worktree_event.meta = Some(json!({
-        "execution_environment": session.execution_environment.as_str(),
-        "session_root_kind": session_root_kind.clone(),
-        "vcs_kind": worktree.vcs_kind,
-        "vcs_ref": worktree.vcs_ref,
-        "git_branch": worktree.git_branch,
-    }));
-    state.telemetry.ops_events.emit(worktree_event);
     drop(state);
 
     loop {
