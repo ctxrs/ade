@@ -14,11 +14,15 @@ use crate::daemon::AppState;
 
 use super::lifecycle::{
     fail_starting_turn, finalize_start_failure_if_needed, handle_provider_exit,
-    handle_provider_stall, stop_running_turn, RunningTurn, StopReason, TurnStartProgress,
+    handle_provider_stall, RunningTurn, TurnStartProgress,
 };
 use super::persistence::emit_event;
 use super::runtime::start_turn;
 use super::{QueuedMessage, SchedulerCommand};
+
+mod commands;
+
+use self::commands::{handle_scheduler_command, SchedulerCommandAction};
 
 pub(super) async fn session_worker(
     state_weak: Weak<AppState>,
@@ -159,75 +163,20 @@ pub(super) async fn session_worker(
 
         tokio::select! {
             cmd = rx.recv() => {
-                match cmd {
-                    Some(SchedulerCommand::Enqueue(msg)) => {
-                        if running.is_some() {
-                            queue.push_back(msg);
-                        } else {
-                            if matches!(msg.message.delivery, MessageDelivery::Immediate) {
-                                suspend_queue = false;
-                            }
-                            queue.push_front(msg);
-                        }
-                    }
-                    Some(SchedulerCommand::RemoveQueued(id)) => {
-                        let mut next = VecDeque::new();
-                        while let Some(m) = queue.pop_front() {
-                            if m.message.id != id {
-                                next.push_back(m);
-                            }
-                        }
-                        queue = next;
-                    }
-                    Some(SchedulerCommand::Cancel) => {
-                        if let Some(turn) = running.take() {
-                            running_start_deadline = None;
-                            let Some(state) = state_weak.upgrade() else {
-                                break;
-                            };
-                            suspend_queue = stop_running_turn(
-                                &state,
-                                session.id,
-                                turn,
-                                StopReason::Cancel,
-                                None,
-                            )
-                            .await;
-                        }
-                    }
-                    Some(SchedulerCommand::Interrupt(interrupt)) => {
-                        if let Some(turn) = running.take() {
-                            running_start_deadline = None;
-                            let Some(state) = state_weak.upgrade() else {
-                                break;
-                            };
-                            suspend_queue = stop_running_turn(
-                                &state,
-                                session.id,
-                                turn,
-                                StopReason::Interrupt,
-                                Some(interrupt),
-                            )
-                            .await;
-                        }
-                    }
-                    Some(SchedulerCommand::StorageEmergency) => {
-                        if let Some(turn) = running.take() {
-                            running_start_deadline = None;
-                            let Some(state) = state_weak.upgrade() else {
-                                break;
-                            };
-                            suspend_queue = stop_running_turn(
-                                &state,
-                                session.id,
-                                turn,
-                                StopReason::StorageEmergency,
-                                None,
-                            )
-                            .await;
-                        }
-                    }
-                    None => break,
+                if matches!(
+                    handle_scheduler_command(
+                        cmd,
+                        &state_weak,
+                        session.id,
+                        &mut queue,
+                        &mut running,
+                        &mut running_start_deadline,
+                        &mut suspend_queue,
+                    )
+                    .await,
+                    SchedulerCommandAction::Break
+                ) {
+                    break;
                 }
             }
             _ = async {
