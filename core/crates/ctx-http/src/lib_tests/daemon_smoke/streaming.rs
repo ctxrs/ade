@@ -1,105 +1,24 @@
 use super::*;
 
+mod assertions;
+mod fixture;
+
+use assertions::{
+    assert_task_read_unread_round_trip, assert_user_message_persisted, wait_for_done_event,
+    wait_for_subscription_seed,
+};
+use fixture::{create_default_task_session, start_streaming_server};
+
 #[tokio::test]
 async fn daemon_http_and_ws_streaming() {
     let _serial = home_env_test_lock().lock().await;
-    let git_repo = setup_git_repo().await;
-    let home = tempfile::tempdir().unwrap();
-    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
+    let harness = start_streaming_server().await;
+    let (workspace, task, session) = create_default_task_session(&harness).await;
 
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-
-    let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
-        HashMap::new();
-    providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-
-    let state = Arc::new(AppState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    ));
-    {
-        let mut statuses = HashMap::new();
-        statuses.insert(
-            "fake".into(),
-            ProviderStatus {
-                provider_id: "fake".into(),
-                installed: true,
-                detected_path: None,
-                version: Some("0.1.0".into()),
-                capabilities: None,
-                health: ctx_providers::adapters::ProviderHealth::Ok,
-                diagnostics: vec![],
-                details: HashMap::new(),
-                usability: ctx_providers::adapters::ProviderUsability::default(),
-            },
-        );
-        *state.providers.statuses.lock().await = statuses;
-    }
-
-    let app = api::router(state.clone());
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-
-    let base = format!("http://{addr}");
-    let client = reqwest::Client::new();
-
-    let providers_res: Vec<ProviderStatus> = client
-        .get(format!("{base}/api/providers"))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    assert_eq!(providers_res.len(), 1);
-
-    let ws: ctx_core::models::Workspace = client
-        .post(format!("{base}/api/workspaces"))
-        .json(&json!({
-            "root_path": git_repo.path().to_string_lossy(),
-            "name": "ws"
-        }))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-
-    let task: ctx_core::models::Task = client
-        .post(format!("{base}/api/workspaces/{}/tasks", ws.id.0))
-        .json(&json!({
-            "title": "t1",
-            "default_session": fake_default_session_payload(),
-        }))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-
-    let sessions: Vec<ctx_core::models::Session> = client
-        .get(format!("{base}/api/tasks/{}/sessions", task.id.0))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    let session = sessions
-        .into_iter()
-        .find(|session| Some(session.id) == task.primary_session_id)
-        .expect("created task should list its default session");
-
-    let ws_url = format!("ws://{}/api/workspaces/{}/stream", addr, ws.id.0);
+    let ws_url = format!(
+        "ws://{}/api/workspaces/{}/stream",
+        harness.addr, workspace.id.0
+    );
     let (mut ws_stream, _) = tokio_tungstenite::connect_async(ws_url).await.unwrap();
     let subscribe = serde_json::json!({
         "type": "subscribe",
@@ -119,29 +38,14 @@ async fn daemon_http_and_ws_streaming() {
         ))
         .await
         .unwrap();
-    let subscribed = tokio::time::timeout(Duration::from_secs(10), async {
-        while let Some(Ok(frame)) = ws_stream.next().await {
-            if let tokio_tungstenite::tungstenite::Message::Text(txt) = frame {
-                let message: ctx_core::models::WorkspaceActiveSnapshotStreamMessage =
-                    serde_json::from_str(&txt).unwrap_or_else(|err| {
-                        panic!("failed to decode workspace stream message: {err}; raw={txt}")
-                    });
-                if workspace_stream_subscription_seed_received(&message, session.id) {
-                    return true;
-                }
-            }
-        }
-        false
-    })
-    .await
-    .expect("timed out waiting for workspace stream subscription seed");
-    assert!(
-        subscribed,
-        "workspace stream ended before subscription seed"
-    );
+    wait_for_subscription_seed(&mut ws_stream, session.id).await;
 
-    let _msg: ctx_core::models::Message = client
-        .post(format!("{base}/api/sessions/{}/messages", session.id.0))
+    let _msg: ctx_core::models::Message = harness
+        .client
+        .post(format!(
+            "{}/api/sessions/{}/messages",
+            harness.base, session.id.0
+        ))
         .json(&json!({"content":"hello"}))
         .send()
         .await
@@ -150,139 +54,7 @@ async fn daemon_http_and_ws_streaming() {
         .await
         .unwrap();
 
-    let seen_done = tokio::time::timeout(Duration::from_secs(20), async {
-        let mut seen_done = false;
-        while let Some(Ok(frame)) = ws_stream.next().await {
-            if let tokio_tungstenite::tungstenite::Message::Text(txt) = frame {
-                let message: ctx_core::models::WorkspaceActiveSnapshotStreamMessage =
-                    serde_json::from_str(&txt).unwrap_or_else(|err| {
-                        panic!("failed to decode workspace stream message: {err}; raw={txt}")
-                    });
-                match message {
-                    ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event {
-                        event, ..
-                    } => match event.as_ref() {
-                        ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadDelta {
-                            delta,
-                            ..
-                        } => {
-                            let is_done = delta.session_id == session.id
-                                && delta
-                                    .event
-                                    .as_ref()
-                                    .map(|event| {
-                                        matches!(
-                                            event.event_type,
-                                            ctx_core::models::SessionEventType::Done
-                                        )
-                                    })
-                                    .unwrap_or(false);
-                            if is_done {
-                                seen_done = true;
-                                break;
-                            }
-                        }
-                        ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadSeed {
-                            head,
-                            ..
-                        } => {
-                            let is_done = head.session.id == session.id
-                                && head.events.iter().any(|event| {
-                                    matches!(
-                                        event.event_type,
-                                        ctx_core::models::SessionEventType::Done
-                                    )
-                                });
-                            if is_done {
-                                seen_done = true;
-                                break;
-                            }
-                        }
-                        _ => {}
-                    },
-                    ctx_core::models::WorkspaceActiveSnapshotStreamMessage::HeadsBatch {
-                        deltas,
-                        ..
-                    } => {
-                        for delta in deltas {
-                            if delta.session_id != session.id {
-                                continue;
-                            }
-                            let is_done = delta
-                                .event
-                                .as_ref()
-                                .map(|event| {
-                                    matches!(
-                                        event.event_type,
-                                        ctx_core::models::SessionEventType::Done
-                                    )
-                                })
-                                .unwrap_or(false);
-                            if is_done {
-                                seen_done = true;
-                                break;
-                            }
-                        }
-                        if seen_done {
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-        seen_done
-    })
-    .await
-    .expect("timed out waiting for Done event");
-    assert!(seen_done);
-
-    let store = state.store_for_session(session.id).await.unwrap();
-    let events = store.list_session_events(session.id).await.unwrap();
-    assert!(events.iter().any(|e| matches!(
-        e.event_type,
-        ctx_core::models::SessionEventType::UserMessage
-    )));
-
-    let task_after_read: ctx_core::models::Task = client
-        .post(format!("{base}/api/tasks/{}/mark_read", task.id.0))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    assert!(task_after_read.assistant_seen_at.is_some());
-
-    let task_after_unread: ctx_core::models::Task = client
-        .post(format!("{base}/api/tasks/{}/mark_unread", task.id.0))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    assert!(task_after_unread.assistant_seen_at.is_none());
-
-    server.abort();
-}
-
-fn workspace_stream_subscription_seed_received(
-    message: &ctx_core::models::WorkspaceActiveSnapshotStreamMessage,
-    session_id: ctx_core::ids::SessionId,
-) -> bool {
-    match message {
-        ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Snapshot { .. } => true,
-        ctx_core::models::WorkspaceActiveSnapshotStreamMessage::Event { event, .. } => {
-            matches!(
-                event.as_ref(),
-                ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadSeed { head, .. }
-                    if head.session.id == session_id
-            )
-        }
-        ctx_core::models::WorkspaceActiveSnapshotStreamMessage::HeadsBatch { deltas, .. } => {
-            deltas.iter().any(|delta| delta.session_id == session_id)
-        }
-        _ => false,
-    }
+    wait_for_done_event(&mut ws_stream, session.id).await;
+    assert_user_message_persisted(&harness.state, session.id).await;
+    assert_task_read_unread_round_trip(&harness.client, &harness.base, task.id).await;
 }
