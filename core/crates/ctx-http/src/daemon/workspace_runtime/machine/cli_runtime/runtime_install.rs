@@ -1,14 +1,17 @@
 use super::*;
 
+mod archive;
+mod helpers;
 mod paths;
 #[cfg(test)]
 mod tests;
 
+use archive::{acquire_managed_sandbox_cli_archive, install_managed_sandbox_cli_archive};
+use helpers::{download_managed_sandbox_cli_helpers, mark_runtime_artifacts_executable};
 use paths::{
-    managed_sandbox_cli_helper_path, managed_sandbox_cli_install_lock,
-    managed_sandbox_cli_runtime_bin_path, managed_sandbox_cli_runtime_is_ready,
-    managed_sandbox_cli_runtime_root, managed_sandbox_cli_runtime_source,
-    mark_managed_sandbox_cli_runtime_ready,
+    managed_sandbox_cli_install_lock, managed_sandbox_cli_runtime_bin_path,
+    managed_sandbox_cli_runtime_is_ready, managed_sandbox_cli_runtime_root,
+    managed_sandbox_cli_runtime_source, mark_managed_sandbox_cli_runtime_ready,
 };
 
 pub(in crate::daemon::workspace_runtime) async fn ensure_managed_sandbox_cli_runtime(
@@ -64,177 +67,21 @@ async fn ensure_managed_sandbox_cli_runtime_with_override(
         &format!("installing managed sandbox CLI runtime {}", source.version),
     );
 
-    let final_archive = managed_sandbox_cli_archive_path(data_root, &source);
-    let partial_archive = managed_artifact_partial_path(&final_archive);
-    if final_archive.exists() {
-        let digest = updates::sha256_hex_file(&final_archive)
-            .await
-            .with_context(|| format!("computing sha256 for {}", final_archive.display()))?;
-        if !digest.eq_ignore_ascii_case(source.sha256.trim()) {
-            let _ = fs::remove_file(&final_archive).await;
-        } else {
-            let _ = fs::remove_file(&partial_archive).await;
-        }
-    }
-    if !final_archive.exists() {
-        let Some(parent) = final_archive.parent() else {
-            anyhow::bail!(
-                "managed sandbox CLI archive path has no parent: {}",
-                final_archive.display()
-            );
-        };
-        fs::create_dir_all(parent)
-            .await
-            .with_context(|| format!("creating {}", parent.display()))?;
-        download_managed_artifact(
-            &source.uri,
-            &partial_archive,
-            Some(ManagedArtifactDownloadReporter::new(
-                observer,
-                download_aggregate.clone(),
-                HarnessSetupPhase::ArtifactDownload,
-                "Sandbox CLI runtime",
-            )),
-        )
-        .await?;
-        let digest = updates::sha256_hex_file(&partial_archive)
-            .await
-            .with_context(|| format!("computing sha256 for {}", partial_archive.display()))?;
-        if !digest.eq_ignore_ascii_case(source.sha256.trim()) {
-            let _ = fs::remove_file(&partial_archive).await;
-            anyhow::bail!(
-                "managed sandbox CLI runtime checksum mismatch: expected {}, got {}",
-                source.sha256.trim(),
-                digest
-            );
-        }
-        finalize_managed_artifact_download(
-            &partial_archive,
-            &final_archive,
-            &source.sha256,
-            "managed sandbox CLI runtime archive",
-        )
-        .await?;
-    }
-
-    let Some(parent) = runtime_root.parent() else {
-        anyhow::bail!(
-            "managed runtime root has no parent: {}",
-            runtime_root.display()
-        );
-    };
-    fs::create_dir_all(parent)
-        .await
-        .with_context(|| format!("creating {}", parent.display()))?;
-    let staging_dir = parent.join(format!(
-        ".sandbox-cli-staging-{}",
-        uuid::Uuid::new_v4().simple()
-    ));
-    if staging_dir.exists() {
-        let _ = fs::remove_dir_all(&staging_dir).await;
-    }
-    fs::create_dir_all(&staging_dir)
-        .await
-        .with_context(|| format!("creating {}", staging_dir.display()))?;
-    let extract_dir = staging_dir.join("extract");
-    fs::create_dir_all(&extract_dir)
-        .await
-        .with_context(|| format!("creating {}", extract_dir.display()))?;
-    let archive_for_extract = final_archive.clone();
-    let uri_for_extract = source.uri.clone();
-    let extract_dir_for_extract = extract_dir.clone();
-    tokio::task::spawn_blocking(move || {
-        extract_archive_to_dir(
-            &archive_for_extract,
-            &uri_for_extract,
-            &extract_dir_for_extract,
-        )
-    })
-    .await
-    .context("joining managed sandbox CLI extract task")??;
-    let extracted_root = tokio::task::spawn_blocking({
-        let extract_dir = extract_dir.clone();
-        move || resolve_single_extracted_root(&extract_dir)
-    })
-    .await
-    .context("joining managed sandbox CLI extraction root task")??;
-
-    if runtime_root.exists() {
-        let _ = fs::remove_dir_all(&runtime_root).await;
-    }
-    fs::rename(&extracted_root, &runtime_root)
-        .await
-        .with_context(|| {
-            format!(
-                "moving extracted sandbox CLI runtime into place: {} -> {}",
-                extracted_root.display(),
-                runtime_root.display()
-            )
-        })?;
-    let _ = fs::remove_dir_all(&staging_dir).await;
-
-    let mut helper_downloads = Vec::new();
-    for (name, helper) in &source.helpers {
-        let Some(path) = managed_sandbox_cli_helper_path(&runtime_root, name) else {
-            continue;
-        };
-        let helper_name = name.to_string();
-        let helper_source = helper.clone();
-        let helper_path = path.clone();
-        let aggregate = download_aggregate.clone();
-        helper_downloads.push(async move {
-            if let Some(parent) = helper_path.parent() {
-                fs::create_dir_all(parent)
-                    .await
-                    .with_context(|| format!("creating {}", parent.display()))?;
-            }
-            if helper_path.exists() {
-                let digest = updates::sha256_hex_file(&helper_path)
-                    .await
-                    .with_context(|| format!("computing sha256 for {}", helper_path.display()))?;
-                if digest.eq_ignore_ascii_case(helper_source.sha256.trim()) {
-                    let _ = fs::remove_file(managed_artifact_partial_path(&helper_path)).await;
-                    return Ok(()) as Result<()>;
-                }
-                let _ = fs::remove_file(&helper_path).await;
-            }
-            let tmp = managed_artifact_partial_path(&helper_path);
-            download_managed_artifact(
-                &helper_source.uri,
-                &tmp,
-                Some(ManagedArtifactDownloadReporter::new(
-                    observer,
-                    aggregate,
-                    HarnessSetupPhase::ArtifactDownload,
-                    format!("Sandbox helper ({helper_name})"),
-                )),
-            )
-            .await?;
-            let digest = updates::sha256_hex_file(&tmp)
-                .await
-                .with_context(|| format!("computing sha256 for {}", tmp.display()))?;
-            if !digest.eq_ignore_ascii_case(helper_source.sha256.trim()) {
-                let _ = fs::remove_file(&tmp).await;
-                anyhow::bail!(
-                    "managed sandbox helper checksum mismatch ({}): expected {}, got {}",
-                    helper_name,
-                    helper_source.sha256.trim(),
-                    digest
-                );
-            }
-            fs::rename(&tmp, &helper_path).await.with_context(|| {
-                format!(
-                    "moving managed sandbox helper into place: {} -> {}",
-                    tmp.display(),
-                    helper_path.display()
-                )
-            })?;
-            Ok(())
-        });
-    }
-    for result in futures::future::join_all(helper_downloads).await {
-        result?;
-    }
+    let final_archive = acquire_managed_sandbox_cli_archive(
+        data_root,
+        &source,
+        observer,
+        download_aggregate.clone(),
+    )
+    .await?;
+    install_managed_sandbox_cli_archive(&final_archive, &source, &runtime_root).await?;
+    download_managed_sandbox_cli_helpers(
+        &source,
+        &runtime_root,
+        observer,
+        download_aggregate.clone(),
+    )
+    .await?;
 
     if !runtime_bin.exists() {
         anyhow::bail!(
@@ -242,31 +89,7 @@ async fn ensure_managed_sandbox_cli_runtime_with_override(
             runtime_bin.display()
         );
     }
-    #[cfg(unix)]
-    {
-        let mut perms = fs::metadata(&runtime_bin)
-            .await
-            .with_context(|| format!("metadata {}", runtime_bin.display()))?
-            .permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&runtime_bin, perms)
-            .await
-            .with_context(|| format!("chmod {}", runtime_bin.display()))?;
-        for name in source.helpers.keys() {
-            if let Some(helper_path) = managed_sandbox_cli_helper_path(&runtime_root, name) {
-                if helper_path.exists() {
-                    let mut helper_perms = fs::metadata(&helper_path)
-                        .await
-                        .with_context(|| format!("metadata {}", helper_path.display()))?
-                        .permissions();
-                    helper_perms.set_mode(0o755);
-                    fs::set_permissions(&helper_path, helper_perms)
-                        .await
-                        .with_context(|| format!("chmod {}", helper_path.display()))?;
-                }
-            }
-        }
-    }
+    mark_runtime_artifacts_executable(&runtime_root, &runtime_bin, &source).await?;
     mark_managed_sandbox_cli_runtime_ready(&runtime_root).await?;
     Ok(runtime_bin)
 }

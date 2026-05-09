@@ -17,8 +17,6 @@ use ctx_runtime_assets::{
 use ctx_update_service as updates;
 #[cfg(test)]
 use sha2::Digest;
-#[cfg(all(test, unix))]
-use std::os::unix::fs::PermissionsExt;
 #[cfg(test)]
 use std::path::{Path, PathBuf};
 #[cfg(test)]
