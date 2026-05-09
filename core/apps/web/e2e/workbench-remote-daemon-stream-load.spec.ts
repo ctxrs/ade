@@ -1379,7 +1379,17 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
       error: null,
     };
     try {
+      const snapshotBaseline = sumMetricEntries(
+        await readTelemetryMetricEntries(request, "workspace.vcs_stream.snapshot_count", 180_000),
+      );
       await seedRemoteVcsInitialChange(request, foregroundSessionId);
+      const snapshotCountAfterSeed = await waitForTelemetryMetricSum(
+        request,
+        "workspace.vcs_stream.snapshot_count",
+        snapshotBaseline + 1,
+        MAX_VCS_GIT_PANE_OPEN_MS,
+      );
+      expect(snapshotCountAfterSeed).toBeGreaterThan(snapshotBaseline);
       const openStartedAt = Date.now();
       const opened = await page.evaluate(() => window.__ctxE2E?.toggleDiffPane?.() ?? false);
       expect(opened).toBe(true);
