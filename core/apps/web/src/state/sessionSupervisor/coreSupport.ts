@@ -284,6 +284,8 @@ export const createWorkspaceAuthorityHost = (supervisor: SessionSupervisorCoreLi
     setWorkspaceActivePrimarySessionIds: (sessionIds: string[]) => {
       supervisor.workspaceActivePrimarySessionIds = sessionIds;
     },
+    getActiveTaskSessionIds: () => supervisor.activeTaskSessionIds,
+    getWarmSessionIds: () => supervisor.warmSessionIds,
     mapConnection: (connection: WorkspaceActiveSnapshotState["connection"]) =>
       supervisor.mapConnection(connection),
     setConnection: (next: ReturnType<typeof supervisor.mapConnection>) => supervisor.setConnection(next),

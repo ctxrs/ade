@@ -311,6 +311,107 @@ mod delta_tests {
     }
 
     #[test]
+    fn apply_head_delta_keeps_activity_and_turn_lifecycle_monotonic_for_stale_visible_delta() {
+        let session = test_session(None);
+        let mut head = new_head_snapshot(&session);
+        let turn_id = TurnId::new();
+        let now = Utc.timestamp_opt(0, 0).unwrap();
+        head.last_event_seq = 10;
+        head.projection_rev = 10;
+        head.state_rev = 10;
+        head.activity = SessionActivityState {
+            is_working: true,
+            last_turn_status: Some(SessionTurnStatus::Running),
+        };
+        head.turns.push(SessionTurn {
+            turn_id,
+            session_id: session.id,
+            run_id: None,
+            user_message_id: None,
+            status: SessionTurnStatus::Running,
+            start_seq: Some(6),
+            end_seq: None,
+            started_at: now,
+            updated_at: now,
+            assistant_partial: None,
+            thought_partial: None,
+            metrics_json: None,
+            failure: None,
+            tool_total: 1,
+            tool_pending: 0,
+            tool_running: 1,
+            tool_completed: 0,
+            tool_failed: 0,
+        });
+
+        let delta = SessionHeadDelta {
+            session_id: session.id,
+            last_event_seq: 8,
+            projection_rev: 8,
+            state_rev: 8,
+            emitted_at_ms: None,
+            session: None,
+            activity: Some(SessionActivityState {
+                is_working: false,
+                last_turn_status: Some(SessionTurnStatus::Completed),
+            }),
+            event: None,
+            turn: Some(SessionTurn {
+                turn_id,
+                session_id: session.id,
+                run_id: None,
+                user_message_id: None,
+                status: SessionTurnStatus::Completed,
+                start_seq: Some(6),
+                end_seq: Some(8),
+                started_at: now,
+                updated_at: now,
+                assistant_partial: None,
+                thought_partial: None,
+                metrics_json: None,
+                failure: None,
+                tool_total: 1,
+                tool_pending: 0,
+                tool_running: 0,
+                tool_completed: 1,
+                tool_failed: 0,
+            }),
+            message: Some(Message {
+                id: MessageId::new(),
+                session_id: session.id,
+                task_id: session.task_id,
+                run_id: None,
+                turn_id: Some(turn_id),
+                turn_sequence: Some(0),
+                order_seq: Some(1),
+                role: MessageRole::Assistant,
+                content: "older visible message".to_string(),
+                attachments: Vec::new(),
+                delivery: MessageDelivery::Immediate,
+                delivered_at: Some(now),
+                created_at: now,
+            }),
+            tool_summaries: Vec::new(),
+        };
+
+        apply_head_delta(&mut head, &delta);
+
+        assert_eq!(head.last_event_seq, 10);
+        assert_eq!(head.projection_rev, 10);
+        assert_eq!(head.state_rev, 10);
+        assert!(head.activity.is_working);
+        assert_eq!(
+            head.activity.last_turn_status,
+            Some(SessionTurnStatus::Running)
+        );
+        assert_eq!(head.turns[0].status, SessionTurnStatus::Running);
+        assert_eq!(head.turns[0].end_seq, None);
+        assert_eq!(head.turns[0].tool_running, 1);
+        assert_eq!(head.messages.len(), 1);
+        assert_eq!(head.messages[0].content, "older visible message");
+    }
+
+    #[test]
     fn apply_session_summary_delta_updates_activity_from_activity_only_event() {
         let session = test_session(None);
         let mut summary = SessionSnapshotSummary {

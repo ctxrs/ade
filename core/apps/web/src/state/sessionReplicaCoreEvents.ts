@@ -105,10 +105,39 @@ const TERMINAL_VISIBLE_EVENT_TYPES = new Set([
   "turn_interrupted",
 ]);
 
+const TURN_LIFECYCLE_EVENT_TYPES = new Set([
+  "done",
+  "turn_queued",
+  "turn_started",
+  "turn_finished",
+  "turn_interrupted",
+]);
+
 const findReplicaTurn = (
   turns: readonly SessionTurn[],
   turnId: string,
 ): SessionTurn | null => turns.find((turn) => idToString(turn.turn_id) === turnId) ?? null;
+
+const preserveStaleTurnLifecycle = (
+  entry: SessionReplicaEntry,
+  turn: SessionTurn,
+): SessionTurn => {
+  const existingTurn = findReplicaTurn(entry.turns, normalizeReplicaId(turn.turn_id ?? ""));
+  if (!existingTurn) return turn;
+  return {
+    ...turn,
+    status: existingTurn.status,
+    end_seq: existingTurn.end_seq ?? null,
+    tool_total: existingTurn.tool_total,
+    tool_pending: existingTurn.tool_pending,
+    tool_running: existingTurn.tool_running,
+    tool_completed: existingTurn.tool_completed,
+    tool_failed: existingTurn.tool_failed,
+  };
+};
+
+const isTurnLifecycleEvent = (event: SessionEvent): boolean =>
+  TURN_LIFECYCLE_EVENT_TYPES.has(String(event.event_type ?? ""));
 
 const hasReplicaEventSeq = (
   events: readonly SessionEvent[],
@@ -375,7 +404,7 @@ const applySessionReplicaHeadDelta = (
     incomingProjectionRev !== null &&
     existingProjectionRev !== null &&
     incomingProjectionRev < existingProjectionRev &&
-    (incomingSeq === null || existingSeq === null || incomingSeq < existingSeq)
+    (incomingSeq === null || existingSeq === null || incomingSeq <= existingSeq)
   ) {
     host.emitFreshnessEvent({
       type: "projection_or_seq_regression",
@@ -409,8 +438,11 @@ const applySessionReplicaHeadDelta = (
   const streamOnlyAssistantChunk = event ? isStreamOnlyAssistantChunk(event) : false;
   if (event && !streamOnlyAssistantChunk) events.push(event);
 
-  if (turns.length > 0) {
-    mergeReplicaTurnsIntoEntry(entry, turns, { authoritative: true });
+  const turnsForMerge = staleDelta
+    ? turns.map((turn) => preserveStaleTurnLifecycle(entry, turn))
+    : turns;
+  if (turnsForMerge.length > 0) {
+    mergeReplicaTurnsIntoEntry(entry, turnsForMerge, { authoritative: !staleDelta });
   }
   if (messages.length > 0) {
     mergeReplicaMessagesIntoEntry(entry, messages);
@@ -419,7 +451,10 @@ const applySessionReplicaHeadDelta = (
     events.length > 0
       ? mergeReplicaEventsIntoEntry(entry, events, host.config.eventBufferLimit)
       : { newEvents: [] as SessionEvent[] };
-  for (const nextEvent of newEvents) {
+  const projectionEvents = staleDelta
+    ? newEvents.filter((nextEvent) => !isTurnLifecycleEvent(nextEvent))
+    : newEvents;
+  for (const nextEvent of projectionEvents) {
     applyReplicaTranscriptEvent(entry, nextEvent);
   }
   if (event && streamOnlyAssistantChunk) {
@@ -451,24 +486,26 @@ const applySessionReplicaHeadDelta = (
   }
 
   const previousFreshness = entry.freshness;
-  if (previousFreshness !== "recovering") {
+  if (!staleDelta && previousFreshness !== "recovering") {
     entry.freshness = "authoritative";
   }
-  if (typeof delta.projection_rev === "number") {
+  if (!staleDelta && typeof delta.projection_rev === "number") {
     entry.projectionRev =
       typeof entry.projectionRev === "number"
         ? Math.max(entry.projectionRev, delta.projection_rev)
         : delta.projection_rev;
   }
-  entry.lastEventSeq = Math.max(existingSeq ?? -1, incomingSeq ?? -1);
-  if (typeof delta.state_rev === "number") {
+  if (!staleDelta) {
+    entry.lastEventSeq = Math.max(existingSeq ?? -1, incomingSeq ?? -1);
+  }
+  if (!staleDelta && typeof delta.state_rev === "number") {
     entry.stateRev =
       typeof entry.stateRev === "number" ? Math.max(entry.stateRev, delta.state_rev) : delta.state_rev;
   }
-  if (delta.session) {
+  if (!staleDelta && delta.session) {
     entry.session = delta.session;
   }
-  if (delta.activity !== undefined && delta.activity !== null) {
+  if (!staleDelta && delta.activity !== undefined && delta.activity !== null) {
     entry.activity = delta.activity;
     if (typeof delta.last_event_seq === "number") {
       entry.activityLastEventSeq =
@@ -494,8 +531,8 @@ const applySessionReplicaHeadDelta = (
     removedMessageIds: removedMessageIdsById(previousMessages, entry.messages),
     events: newEvents,
     toolSummaries: changedToolSummariesById(previousToolSummaries, entry.toolSummaries),
-    includeSession: Boolean(delta.session && entry.session !== previousSession),
-    includeActivity: delta.activity !== undefined || entry.activity !== previousActivity,
+    includeSession: Boolean(!staleDelta && delta.session && entry.session !== previousSession),
+    includeActivity: (!staleDelta && delta.activity !== undefined) || entry.activity !== previousActivity,
     includeAssistantStreaming: entry.assistantStreamingRev !== previousAssistantStreamingRev,
   }));
   void host.persistHead(entry);

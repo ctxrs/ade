@@ -21,6 +21,8 @@ type SessionSupervisorWorkspaceAuthorityHost = {
   setWorkspaceSessionHeadsById(heads: Map<string, SessionHeadSnapshot>): void;
   getWorkspaceActivePrimarySessionIds(): string[];
   setWorkspaceActivePrimarySessionIds(sessionIds: string[]): void;
+  getActiveTaskSessionIds(): string[];
+  getWarmSessionIds(): string[];
   mapConnection(connection: WorkspaceActiveSnapshotState["connection"]): ConnectionStatus;
   setConnection(next: ConnectionStatus): void;
   syncActiveSnapshot(state: WorkspaceActiveSnapshotState): void;
@@ -50,6 +52,31 @@ const shouldApplyWorkspaceSessionHeadMode = (
   recovering: boolean,
 ): boolean =>
   mode === "bootstrap_seed" || mode === "repair_replace" || recovering;
+
+const workspaceReplicaEventSessionId = (evt: SessionSupervisorWorkspaceEvent): string => {
+  switch (evt.type) {
+    case "session_head_delta":
+      return idToString(evt.delta.session_id);
+    case "session_head_seed":
+      return idToString(evt.head.session.id);
+    case "session_gap":
+      return idToString(evt.session_id);
+    default:
+      return "";
+  }
+};
+
+const isRetainedReplicaSession = (
+  host: SessionSupervisorWorkspaceAuthorityHost,
+  sessionId: string,
+): boolean => {
+  const entry = host.entries.get(sessionId);
+  if ((entry?.refCount ?? 0) > 0 || entry?.subscribed) return true;
+  return (
+    host.getActiveTaskSessionIds().includes(sessionId) ||
+    host.getWarmSessionIds().includes(sessionId)
+  );
+};
 
 export const setWorkspaceSnapshotState = (
   host: SessionSupervisorWorkspaceAuthorityHost,
@@ -190,6 +217,12 @@ export const ingestWorkspaceEvent = (
   }
   if (subscriptionCursorsChanged) {
     host.emitSubscribedSessions();
+  }
+  // The workspace stream carries all active-task deltas, but the session replica
+  // should only spend transcript work on sessions the workbench is retaining.
+  const replicaSessionId = workspaceReplicaEventSessionId(evt);
+  if (!replicaSessionId || !isRetainedReplicaSession(host, replicaSessionId)) {
+    return;
   }
   host.replicaDispatch({
     type: "workspace_event",

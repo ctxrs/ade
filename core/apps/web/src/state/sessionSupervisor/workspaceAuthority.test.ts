@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Message, Session, SessionHeadSnapshot, SessionTurn } from "@ctx/types";
 import type { InternalEntry } from "./entryState";
-import { syncActiveSnapshot, upsertWorkspaceSessionHead } from "./workspaceAuthority";
+import {
+  ingestWorkspaceEvent,
+  syncActiveSnapshot,
+  upsertWorkspaceSessionHead,
+} from "./workspaceAuthority";
+import type { SessionSupervisorWorkspaceEvent } from "./workspaceInputs";
 
 const now = "2026-05-05T00:00:00.000Z";
 
@@ -94,6 +99,44 @@ describe("workspaceAuthority", () => {
     has_more_history: false,
     history_cursor: null,
   };
+
+  const makeDeltaEvent = (sessionId = "session-1"): SessionSupervisorWorkspaceEvent =>
+    ({
+      type: "session_head_delta",
+      workspace_id: "workspace-1",
+      snapshot_rev: 1,
+      delta: {
+        session_id: sessionId,
+        last_event_seq: 8,
+        projection_rev: 8,
+        state_rev: 8,
+        turn: { ...completedTurn, session_id: sessionId },
+        message: { ...assistantMessage, session_id: sessionId },
+        activity: { is_working: false, last_turn_status: "completed" },
+      },
+    }) as unknown as SessionSupervisorWorkspaceEvent;
+
+  const makeIngestHost = ({
+    entries = new Map<string, InternalEntry>(),
+    activeTaskSessionIds = [],
+    warmSessionIds = [],
+    replicaDispatch = vi.fn(),
+  }: {
+    entries?: Map<string, InternalEntry>;
+    activeTaskSessionIds?: string[];
+    warmSessionIds?: string[];
+    replicaDispatch?: ReturnType<typeof vi.fn>;
+  } = {}) =>
+    ({
+      entries,
+      getActiveTaskSessionIds: () => activeTaskSessionIds,
+      getWarmSessionIds: () => warmSessionIds,
+      replicaDispatch,
+      publish: vi.fn(),
+      emitSubscribedSessions: vi.fn(),
+      clearTaskThoughts: vi.fn(async () => {}),
+      setSessionLoadState: vi.fn(),
+    }) as unknown as Parameters<typeof ingestWorkspaceEvent>[0];
 
   it("repair-replaces an open stale foreground entry with a newer authoritative head", () => {
     let heads = new Map<string, SessionHeadSnapshot>();
@@ -229,6 +272,49 @@ describe("workspaceAuthority", () => {
     upsertWorkspaceSessionHead(host, "session-1", partialHead);
 
     expect(replicaDispatch).not.toHaveBeenCalled();
+  });
+
+  it("does not forward unretained active stream deltas to the session replica", () => {
+    const replicaDispatch = vi.fn();
+    const host = makeIngestHost({ replicaDispatch });
+
+    ingestWorkspaceEvent(host, makeDeltaEvent("session-background"));
+
+    expect(replicaDispatch).not.toHaveBeenCalled();
+  });
+
+  it("forwards retained foreground stream deltas to the session replica", () => {
+    const replicaDispatch = vi.fn();
+    const event = makeDeltaEvent("session-foreground");
+    const host = makeIngestHost({
+      activeTaskSessionIds: ["session-foreground"],
+      replicaDispatch,
+    });
+
+    ingestWorkspaceEvent(host, event);
+
+    expect(replicaDispatch).toHaveBeenCalledWith({
+      type: "workspace_event",
+      event,
+      receivedAtMs: null,
+    });
+  });
+
+  it("keeps subscribed warm stream deltas on the normal replica lane", () => {
+    const replicaDispatch = vi.fn();
+    const event = makeDeltaEvent("session-warm");
+    const host = makeIngestHost({
+      warmSessionIds: ["session-warm"],
+      replicaDispatch,
+    });
+
+    ingestWorkspaceEvent(host, event);
+
+    expect(replicaDispatch).toHaveBeenCalledWith({
+      type: "workspace_event",
+      event,
+      receivedAtMs: null,
+    });
   });
 
   it("repair-replaces stale entries during active snapshot sync", () => {

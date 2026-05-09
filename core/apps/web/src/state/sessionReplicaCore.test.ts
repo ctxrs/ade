@@ -2829,6 +2829,351 @@ describe("SessionReplicaCore", () => {
     ]));
   });
 
+  it("merges visible stale deltas without regressing running activity", () => {
+    const sessionId = "session-stale-visible-running-activity";
+    const patches: SessionReplicaPatch[] = [];
+    const core = new SessionReplicaCore({
+      api: { getSessionHead: vi.fn() },
+      emit: (next) => patches.push(...next),
+    });
+    const createdAt = new Date().toISOString();
+
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 100, headLimit: 50 } });
+    core.handleCommand({
+      type: "seed_head",
+      sessionId,
+      head: {
+        session: mkSession(sessionId),
+        turns: [{
+          turn_id: "turn-live",
+          session_id: sessionId,
+          run_id: "run-live",
+          user_message_id: "message-user",
+          status: "running",
+          start_seq: 6,
+          end_seq: null,
+          started_at: createdAt,
+          updated_at: createdAt,
+          assistant_partial: null,
+          thought_partial: "",
+          metrics_json: null,
+          tool_total: 1,
+          tool_pending: 0,
+          tool_running: 1,
+          tool_completed: 0,
+          tool_failed: 0,
+        }],
+        events: [],
+        messages: [],
+        activity: { is_working: true, last_turn_status: "running" },
+        last_event_seq: 10,
+        projection_rev: 10,
+        state_rev: 10,
+        has_more_turns: false,
+        has_more_history: false,
+        history_cursor: null,
+      },
+      mode: "repair_replace",
+    });
+    patches.length = 0;
+
+    core.handleCommand({
+      type: "workspace_event",
+      event: {
+        type: "session_head_delta",
+        workspace_id: "ws-1",
+        snapshot_rev: 11,
+        delta: {
+          session_id: sessionId,
+          last_event_seq: 8,
+          projection_rev: 8,
+          state_rev: 8,
+          activity: { is_working: false, last_turn_status: "completed" },
+          turn: {
+            turn_id: "turn-live",
+            session_id: sessionId,
+            run_id: "run-live",
+            user_message_id: "message-user",
+            status: "completed",
+            start_seq: 6,
+            end_seq: 8,
+            started_at: createdAt,
+            updated_at: createdAt,
+            assistant_partial: null,
+            thought_partial: "",
+            metrics_json: null,
+            tool_total: 1,
+            tool_pending: 0,
+            tool_running: 0,
+            tool_completed: 1,
+            tool_failed: 0,
+          },
+          event: {
+            seq: 8,
+            id: "event-assistant-message-8",
+            session_id: sessionId,
+            run_id: "run-live",
+            turn_id: "turn-live",
+            event_type: "assistant_message_inserted",
+            payload_json: {
+              message_id: "message-live",
+              content: "visible but older",
+            },
+            transient: false,
+            created_at: createdAt,
+          },
+        },
+      },
+    });
+
+    const latest = [...patches].reverse().find(
+      (patch) =>
+        patch.sessionId === sessionId &&
+        patch.op === "append" &&
+        patch.data.appendMode === "stream_delta",
+    );
+    if (!latest || latest.op === "evict") {
+      throw new Error("expected visible stream delta patch");
+    }
+    expect(latest.data.messages?.[0]?.content).toBe("visible but older");
+    expect(latest.data.lastEventSeq).toBe(10);
+    expect(latest.data.projectionRev).toBe(10);
+    expect(latest.data.activity).toBeUndefined();
+    expect(latest.data.turns?.[0]?.status).toBe("running");
+    expect(latest.data.turns?.[0]?.tool_running).toBe(1);
+  });
+
+  it("does not project stale lifecycle events onto newer running turns", () => {
+    const sessionId = "session-stale-lifecycle-event";
+    const patches: SessionReplicaPatch[] = [];
+    const core = new SessionReplicaCore({
+      api: { getSessionHead: vi.fn() },
+      emit: (next) => patches.push(...next),
+    });
+    const createdAt = new Date().toISOString();
+
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 100, headLimit: 50 } });
+    core.handleCommand({
+      type: "seed_head",
+      sessionId,
+      head: {
+        session: mkSession(sessionId),
+        turns: [{
+          turn_id: "turn-live",
+          session_id: sessionId,
+          run_id: "run-live",
+          user_message_id: "message-user",
+          status: "running",
+          start_seq: 6,
+          end_seq: null,
+          started_at: createdAt,
+          updated_at: createdAt,
+          assistant_partial: null,
+          thought_partial: "",
+          metrics_json: null,
+          tool_total: 1,
+          tool_pending: 0,
+          tool_running: 1,
+          tool_completed: 0,
+          tool_failed: 0,
+        }],
+        events: [],
+        messages: [],
+        activity: { is_working: true, last_turn_status: "running" },
+        last_event_seq: 10,
+        projection_rev: 10,
+        state_rev: 10,
+        has_more_turns: false,
+        has_more_history: false,
+        history_cursor: null,
+      },
+      mode: "repair_replace",
+    });
+    patches.length = 0;
+
+    core.handleCommand({
+      type: "workspace_event",
+      event: {
+        type: "session_head_delta",
+        workspace_id: "ws-1",
+        snapshot_rev: 11,
+        delta: {
+          session_id: sessionId,
+          last_event_seq: 8,
+          projection_rev: 8,
+          state_rev: 8,
+          activity: { is_working: false, last_turn_status: "completed" },
+          turn: {
+            turn_id: "turn-live",
+            session_id: sessionId,
+            run_id: "run-live",
+            user_message_id: "message-user",
+            status: "completed",
+            start_seq: 6,
+            end_seq: 8,
+            started_at: createdAt,
+            updated_at: createdAt,
+            assistant_partial: null,
+            thought_partial: "",
+            metrics_json: null,
+            tool_total: 1,
+            tool_pending: 0,
+            tool_running: 0,
+            tool_completed: 1,
+            tool_failed: 0,
+          },
+          event: {
+            seq: 8,
+            id: "event-turn-finished-8",
+            session_id: sessionId,
+            run_id: "run-live",
+            turn_id: "turn-live",
+            event_type: "turn_finished",
+            payload_json: { status: "completed" },
+            transient: false,
+            created_at: createdAt,
+          },
+        },
+      },
+    });
+
+    const latest = [...patches].reverse().find(
+      (patch) =>
+        patch.sessionId === sessionId &&
+        patch.op === "append" &&
+        patch.data.appendMode === "stream_delta",
+    );
+    if (!latest || latest.op === "evict") {
+      throw new Error("expected stale lifecycle stream delta patch");
+    }
+    expect(latest.data.lastEventSeq).toBe(10);
+    expect(latest.data.projectionRev).toBe(10);
+    expect(latest.data.activity).toBeUndefined();
+    expect(latest.data.turns?.[0]?.status).toBe("running");
+    expect(latest.data.turns?.[0]?.end_seq).toBeNull();
+    expect(latest.data.turns?.[0]?.tool_running).toBe(1);
+  });
+
+  it("treats same-sequence lower-projection visible deltas as stale", () => {
+    const sessionId = "session-same-seq-stale-projection";
+    const patches: SessionReplicaPatch[] = [];
+    const freshnessEvents: SessionReplicaFreshnessEvent[] = [];
+    const core = new SessionReplicaCore({
+      api: { getSessionHead: vi.fn() },
+      emit: (next) => patches.push(...next),
+      emitFreshness: (event) => freshnessEvents.push(event),
+    });
+    const createdAt = new Date().toISOString();
+
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 100, headLimit: 50 } });
+    core.handleCommand({
+      type: "seed_head",
+      sessionId,
+      head: {
+        session: mkSession(sessionId),
+        turns: [{
+          turn_id: "turn-live",
+          session_id: sessionId,
+          run_id: "run-live",
+          user_message_id: "message-user",
+          status: "running",
+          start_seq: 6,
+          end_seq: null,
+          started_at: createdAt,
+          updated_at: createdAt,
+          assistant_partial: null,
+          thought_partial: "",
+          metrics_json: null,
+          tool_total: 1,
+          tool_pending: 0,
+          tool_running: 1,
+          tool_completed: 0,
+          tool_failed: 0,
+        }],
+        events: [],
+        messages: [],
+        activity: { is_working: true, last_turn_status: "running" },
+        last_event_seq: 10,
+        projection_rev: 10,
+        state_rev: 10,
+        has_more_turns: false,
+        has_more_history: false,
+        history_cursor: null,
+      },
+      mode: "repair_replace",
+    });
+    patches.length = 0;
+
+    core.handleCommand({
+      type: "workspace_event",
+      event: {
+        type: "session_head_delta",
+        workspace_id: "ws-1",
+        snapshot_rev: 11,
+        delta: {
+          session_id: sessionId,
+          last_event_seq: 10,
+          projection_rev: 9,
+          state_rev: 9,
+          activity: { is_working: false, last_turn_status: "completed" },
+          turn: {
+            turn_id: "turn-live",
+            session_id: sessionId,
+            run_id: "run-live",
+            user_message_id: "message-user",
+            status: "completed",
+            start_seq: 6,
+            end_seq: 10,
+            started_at: createdAt,
+            updated_at: createdAt,
+            assistant_partial: null,
+            thought_partial: "",
+            metrics_json: null,
+            tool_total: 1,
+            tool_pending: 0,
+            tool_running: 0,
+            tool_completed: 1,
+            tool_failed: 0,
+          },
+          message: {
+            id: "message-same-seq",
+            session_id: sessionId,
+            task_id: "task-1",
+            turn_id: "turn-live",
+            role: "assistant",
+            content: "same sequence older projection",
+            delivery: "immediate",
+            created_at: createdAt,
+          },
+        },
+      },
+    });
+
+    const latest = [...patches].reverse().find(
+      (patch) =>
+        patch.sessionId === sessionId &&
+        patch.op === "append" &&
+        patch.data.appendMode === "stream_delta",
+    );
+    if (!latest || latest.op === "evict") {
+      throw new Error("expected same-sequence stale stream delta patch");
+    }
+    expect(latest.data.messages?.[0]?.content).toBe("same sequence older projection");
+    expect(latest.data.lastEventSeq).toBe(10);
+    expect(latest.data.projectionRev).toBe(10);
+    expect(latest.data.activity).toBeUndefined();
+    expect(latest.data.turns?.[0]?.status).toBe("running");
+    expect(freshnessEvents).toEqual(expect.arrayContaining([
+      {
+        type: "projection_or_seq_regression",
+        sessionId,
+        dimension: "projection_rev",
+        incoming: 9,
+        existing: 10,
+      },
+    ]));
+  });
+
   it("keeps foreground transcript updates moving through a ctx-ui sized stale repair backlog", () => {
     const sessionId = "session-stale-backlog-foreground";
     const patches: SessionReplicaPatch[] = [];
