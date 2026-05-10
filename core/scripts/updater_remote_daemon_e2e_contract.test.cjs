@@ -35,11 +35,13 @@ test("remote updater proof keeps shipped-app automation state inside the artifac
   assert.match(scriptText, /attempt_xdg_token="\$\(printf '%s' "\$\{BUILDKITE_JOB_ID:-local\}-\$\{attempt\}-\$\$" \| tr -c 'A-Za-z0-9\._-' '_'\)"/);
   assert.match(scriptText, /local attempt_xdg_dir="\/tmp\/ctx-updater-remote-xdg-\$\{attempt_xdg_token\}"/);
   assert.match(scriptText, /local attempt_xdg_runtime_dir="\$\{attempt_xdg_dir\}\/runtime"/);
-  assert.match(scriptText, /local attempt_corepack_home="\$\{COREPACK_HOME:-\$\{HOME:\?set HOME\}\/\.cache\/node\/corepack\}"/);
+  assert.match(scriptText, /local attempt_home_dir="\$\{attempt_xdg_dir\}\/home"/);
+  assert.match(scriptText, /local attempt_corepack_home="\$\{COREPACK_HOME:-\$\{ORIGINAL_HOME\}\/\.cache\/node\/corepack\}"/);
   assert.match(scriptText, /export CTX_AUTOMATION_TMPDIR="\$\{attempt_tmp_dir\}"/);
   assert.match(scriptText, /export CTX_AUTOMATION_CN_BACKEND_LOG="\$\{attempt_dir\}\/crabnebula-backend\.log"/);
   assert.match(scriptText, /export CTX_AUTOMATION_CN_DRIVER_LOG="\$\{attempt_dir\}\/tauri-driver\.log"/);
   assert.match(scriptText, /export CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR="\$\{attempt_dir\}\/controller-daemon-data"/);
+  assert.match(scriptText, /export HOME="\$\{attempt_home_dir\}"/);
   assert.match(scriptText, /export XDG_RUNTIME_DIR="\$\{attempt_xdg_runtime_dir\}"/);
   assert.match(scriptText, /export XDG_CONFIG_HOME="\$\{attempt_xdg_dir\}\/config"/);
   assert.match(scriptText, /export XDG_CACHE_HOME="\$\{attempt_xdg_dir\}\/cache"/);
@@ -50,8 +52,23 @@ test("remote updater proof keeps shipped-app automation state inside the artifac
   assert.match(scriptText, /is_retryable_wdio_session_start_failure "\$attempt_log"; then\s+rm -rf "\$\{attempt_xdg_dir\}"/);
   assert.match(scriptText, /fi\s+rm -rf "\$\{attempt_xdg_dir\}"\s+return "\$status"/);
   assert.match(scriptText, /"\$\{attempt_tmp_dir\}"/);
+  assert.match(scriptText, /"\$\{HOME\}"/);
   assert.match(scriptText, /"\$\{XDG_RUNTIME_DIR\}"/);
   assert.match(scriptText, /chmod 700 "\$\{XDG_RUNTIME_DIR\}"/);
+});
+
+test("remote updater proof sweeps scoped AppImage helper processes between attempts", () => {
+  assert.match(scriptText, /write_process_snapshot\(\) \{/);
+  assert.match(scriptText, /sweep_controller_app_processes\(\) \{/);
+  assert.match(scriptText, /local app_path="\$\{RESOLVED_CONTROLLER_AUTOMATION_APP_PATH:-\}"/);
+  assert.match(scriptText, /app_dir="\$\(cd "\$\(dirname "\$\{app_path\}"\)" 2>\/dev\/null && pwd -P \|\| dirname "\$\{app_path\}"\)"/);
+  assert.match(scriptText, /ps -Ao pid=,command=/);
+  assert.match(scriptText, /case "\$\{cmd\}" in\s+\*"\$\{app_dir\}"\*\) pids\+=\("\$\{pid\}"\) ;;\s+esac/);
+  assert.match(scriptText, /kill -9 "\$\{pids\[@\]\}"/);
+  assert.match(scriptText, /write_process_snapshot "\$\{attempt_dir\}\/processes-before-sweep\.log"/);
+  assert.match(scriptText, /write_process_snapshot "\$\{attempt_dir\}\/processes-after-preflight-sweep\.log"/);
+  assert.match(scriptText, /write_process_snapshot "\$\{attempt_dir\}\/processes-after-automation\.log"/);
+  assert.match(scriptText, /write_process_snapshot "\$\{attempt_dir\}\/processes-after-automation-sweep\.log"/);
 });
 
 test("remote updater proof retries startup-only WebDriver session failures with preserved logs", () => {

@@ -20,6 +20,7 @@ TAURI_DRIVER_PORT_VALUE="${CTX_UPDATER_REMOTE_E2E_DRIVER_PORT:-${TAURI_DRIVER_PO
 TAURI_TEST_BACKEND_PORT_VALUE="${CTX_UPDATER_REMOTE_E2E_BACKEND_PORT:-${TAURI_TEST_BACKEND_PORT:-$((PORT_BASE + 1))}}"
 WDIO_CONNECTION_RETRY_TIMEOUT_MS="${CTX_UPDATER_REMOTE_E2E_WDIO_CONNECTION_RETRY_TIMEOUT_MS:-300000}"
 RESOLVED_CONTROLLER_AUTOMATION_APP_PATH=""
+ORIGINAL_HOME="${HOME:?set HOME}"
 
 resolve_download_base_url() {
   if [[ -n "${CTX_UPDATER_E2E_DOWNLOAD_BASE_URL:-}" ]]; then
@@ -120,6 +121,44 @@ resolve_controller_app_for_automation() {
   RESOLVED_CONTROLLER_AUTOMATION_APP_PATH="${app_run}"
 }
 
+write_process_snapshot() {
+  local out_path="$1"
+  if ! command -v ps >/dev/null 2>&1; then
+    return 0
+  fi
+  ps -Ao pid=,ppid=,stat=,etime=,command= >"${out_path}" 2>&1 || true
+}
+
+sweep_controller_app_processes() {
+  local app_path="${RESOLVED_CONTROLLER_AUTOMATION_APP_PATH:-}"
+  if [[ -z "${app_path}" ]]; then
+    return 0
+  fi
+  local app_dir
+  app_dir="$(cd "$(dirname "${app_path}")" 2>/dev/null && pwd -P || dirname "${app_path}")"
+  if [[ -z "${app_dir}" || ! -d "${app_dir}" ]]; then
+    return 0
+  fi
+  if ! command -v ps >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local pids=()
+  local pid cmd
+  while read -r pid cmd; do
+    if [[ -z "${pid}" || -z "${cmd:-}" ]]; then
+      continue
+    fi
+    case "${cmd}" in
+      *"${app_dir}"*) pids+=("${pid}") ;;
+    esac
+  done < <(ps -Ao pid=,command= 2>/dev/null || true)
+
+  if [[ "${#pids[@]}" -gt 0 ]]; then
+    kill -9 "${pids[@]}" >/dev/null 2>&1 || true
+  fi
+}
+
 if [[ -n "${CTX_DESKTOP_APP_PATH:-}" && "$STRICT_PUBLISHED_ARTIFACTS" == "1" ]]; then
   echo "error: strict published-artifact remote proof forbids CTX_DESKTOP_APP_PATH/local AppDir input" >&2
   exit 2
@@ -185,7 +224,8 @@ run_updater_remote_automation() {
     # WebKit helpers place Unix sockets under XDG_RUNTIME_DIR, so keep this path short.
     local attempt_xdg_dir="/tmp/ctx-updater-remote-xdg-${attempt_xdg_token}"
     local attempt_xdg_runtime_dir="${attempt_xdg_dir}/runtime"
-    local attempt_corepack_home="${COREPACK_HOME:-${HOME:?set HOME}/.cache/node/corepack}"
+    local attempt_home_dir="${attempt_xdg_dir}/home"
+    local attempt_corepack_home="${COREPACK_HOME:-${ORIGINAL_HOME}/.cache/node/corepack}"
     local attempt_driver_port=$((TAURI_DRIVER_PORT_VALUE + (attempt - 1) * 2))
     local attempt_backend_port=$((TAURI_TEST_BACKEND_PORT_VALUE + (attempt - 1) * 2))
 
@@ -193,6 +233,7 @@ run_updater_remote_automation() {
     export CTX_AUTOMATION_CN_BACKEND_LOG="${attempt_dir}/crabnebula-backend.log"
     export CTX_AUTOMATION_CN_DRIVER_LOG="${attempt_dir}/tauri-driver.log"
     export CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR="${attempt_dir}/controller-daemon-data"
+    export HOME="${attempt_home_dir}"
     export XDG_RUNTIME_DIR="${attempt_xdg_runtime_dir}"
     export XDG_CONFIG_HOME="${attempt_xdg_dir}/config"
     export XDG_CACHE_HOME="${attempt_xdg_dir}/cache"
@@ -205,17 +246,24 @@ run_updater_remote_automation() {
     mkdir -p \
       "${attempt_tmp_dir}" \
       "${attempt_dir}/controller-daemon-data" \
+      "${HOME}" \
       "${XDG_RUNTIME_DIR}" \
       "${XDG_CONFIG_HOME}" \
       "${XDG_CACHE_HOME}" \
       "${XDG_DATA_HOME}"
     chmod 700 "${XDG_RUNTIME_DIR}"
+    write_process_snapshot "${attempt_dir}/processes-before-sweep.log"
+    sweep_controller_app_processes
+    write_process_snapshot "${attempt_dir}/processes-after-preflight-sweep.log"
 
     echo "[updater-remote-proof] automation attempt ${attempt}/${max_attempts} using driver port ${TAURI_DRIVER_PORT} and backend port ${TAURI_TEST_BACKEND_PORT}" >&2
     set +e
     pnpm -C "${ROOT}/core/apps/desktop" test:automation:updater-remote 2>&1 | tee "$attempt_log"
     status="${PIPESTATUS[0]}"
     set -e
+    write_process_snapshot "${attempt_dir}/processes-after-automation.log"
+    sweep_controller_app_processes
+    write_process_snapshot "${attempt_dir}/processes-after-automation-sweep.log"
 
     if [[ "$status" -eq 0 ]]; then
       rm -rf "${attempt_xdg_dir}"
