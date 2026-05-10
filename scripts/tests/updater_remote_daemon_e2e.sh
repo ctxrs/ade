@@ -179,17 +179,35 @@ run_updater_remote_automation() {
   while [[ "$attempt" -le "$max_attempts" ]]; do
     local attempt_dir="${artifact_dir}/automation-attempt-${attempt}"
     local attempt_log="${attempt_dir}/updater-remote-automation.log"
+    local attempt_tmp_dir="${attempt_dir}/tmp"
+    local attempt_xdg_token
+    attempt_xdg_token="$(printf '%s' "${BUILDKITE_JOB_ID:-local}-${attempt}-$$" | tr -c 'A-Za-z0-9._-' '_')"
+    # WebKit helpers place Unix sockets under XDG_RUNTIME_DIR, so keep this path short.
+    local attempt_xdg_dir="/tmp/ctx-updater-remote-xdg-${attempt_xdg_token}"
+    local attempt_xdg_runtime_dir="${attempt_xdg_dir}/runtime"
     local attempt_driver_port=$((TAURI_DRIVER_PORT_VALUE + (attempt - 1) * 2))
     local attempt_backend_port=$((TAURI_TEST_BACKEND_PORT_VALUE + (attempt - 1) * 2))
 
-    export CTX_AUTOMATION_TMPDIR="${attempt_dir}/tmp"
+    export CTX_AUTOMATION_TMPDIR="${attempt_tmp_dir}"
     export CTX_AUTOMATION_CN_BACKEND_LOG="${attempt_dir}/crabnebula-backend.log"
     export CTX_AUTOMATION_CN_DRIVER_LOG="${attempt_dir}/tauri-driver.log"
     export CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR="${attempt_dir}/controller-daemon-data"
+    export XDG_RUNTIME_DIR="${attempt_xdg_runtime_dir}"
+    export XDG_CONFIG_HOME="${attempt_xdg_dir}/config"
+    export XDG_CACHE_HOME="${attempt_xdg_dir}/cache"
+    export XDG_DATA_HOME="${attempt_xdg_dir}/data"
     export TAURI_DRIVER_PORT="${attempt_driver_port}"
     export TAURI_TEST_BACKEND_PORT="${attempt_backend_port}"
     unset CTX_BUNDLE_DIR
-    mkdir -p "${attempt_dir}/tmp" "${attempt_dir}/controller-daemon-data"
+    rm -rf "${attempt_xdg_dir}"
+    mkdir -p \
+      "${attempt_tmp_dir}" \
+      "${attempt_dir}/controller-daemon-data" \
+      "${XDG_RUNTIME_DIR}" \
+      "${XDG_CONFIG_HOME}" \
+      "${XDG_CACHE_HOME}" \
+      "${XDG_DATA_HOME}"
+    chmod 700 "${XDG_RUNTIME_DIR}"
 
     echo "[updater-remote-proof] automation attempt ${attempt}/${max_attempts} using driver port ${TAURI_DRIVER_PORT} and backend port ${TAURI_TEST_BACKEND_PORT}" >&2
     set +e
@@ -198,13 +216,16 @@ run_updater_remote_automation() {
     set -e
 
     if [[ "$status" -eq 0 ]]; then
+      rm -rf "${attempt_xdg_dir}"
       return 0
     fi
     if [[ "$attempt" -lt "$max_attempts" ]] && is_retryable_wdio_session_start_failure "$attempt_log"; then
+      rm -rf "${attempt_xdg_dir}"
       echo "[updater-remote-proof] retrying startup-only WebDriver session failure after attempt ${attempt}; log: ${attempt_log}" >&2
       attempt=$((attempt + 1))
       continue
     fi
+    rm -rf "${attempt_xdg_dir}"
     return "$status"
   done
   return "$status"

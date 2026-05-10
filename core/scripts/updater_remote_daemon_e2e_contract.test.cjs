@@ -31,11 +31,25 @@ test("remote updater proof gives WebDriver enough time to launch published AppIm
 
 test("remote updater proof keeps shipped-app automation state inside the artifact directory", () => {
   assert.match(scriptText, /local attempt_dir="\$\{artifact_dir\}\/automation-attempt-\$\{attempt\}"/);
-  assert.match(scriptText, /export CTX_AUTOMATION_TMPDIR="\$\{attempt_dir\}\/tmp"/);
+  assert.match(scriptText, /local attempt_tmp_dir="\$\{attempt_dir\}\/tmp"/);
+  assert.match(scriptText, /attempt_xdg_token="\$\(printf '%s' "\$\{BUILDKITE_JOB_ID:-local\}-\$\{attempt\}-\$\$" \| tr -c 'A-Za-z0-9\._-' '_'\)"/);
+  assert.match(scriptText, /local attempt_xdg_dir="\/tmp\/ctx-updater-remote-xdg-\$\{attempt_xdg_token\}"/);
+  assert.match(scriptText, /local attempt_xdg_runtime_dir="\$\{attempt_xdg_dir\}\/runtime"/);
+  assert.match(scriptText, /export CTX_AUTOMATION_TMPDIR="\$\{attempt_tmp_dir\}"/);
   assert.match(scriptText, /export CTX_AUTOMATION_CN_BACKEND_LOG="\$\{attempt_dir\}\/crabnebula-backend\.log"/);
   assert.match(scriptText, /export CTX_AUTOMATION_CN_DRIVER_LOG="\$\{attempt_dir\}\/tauri-driver\.log"/);
   assert.match(scriptText, /export CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR="\$\{attempt_dir\}\/controller-daemon-data"/);
-  assert.match(scriptText, /mkdir -p "\$\{attempt_dir\}\/tmp" "\$\{attempt_dir\}\/controller-daemon-data"/);
+  assert.match(scriptText, /export XDG_RUNTIME_DIR="\$\{attempt_xdg_runtime_dir\}"/);
+  assert.match(scriptText, /export XDG_CONFIG_HOME="\$\{attempt_xdg_dir\}\/config"/);
+  assert.match(scriptText, /export XDG_CACHE_HOME="\$\{attempt_xdg_dir\}\/cache"/);
+  assert.match(scriptText, /export XDG_DATA_HOME="\$\{attempt_xdg_dir\}\/data"/);
+  assert.match(scriptText, /rm -rf "\$\{attempt_xdg_dir\}"/);
+  assert.match(scriptText, /if \[\[ "\$status" -eq 0 \]\]; then\s+rm -rf "\$\{attempt_xdg_dir\}"/);
+  assert.match(scriptText, /is_retryable_wdio_session_start_failure "\$attempt_log"; then\s+rm -rf "\$\{attempt_xdg_dir\}"/);
+  assert.match(scriptText, /fi\s+rm -rf "\$\{attempt_xdg_dir\}"\s+return "\$status"/);
+  assert.match(scriptText, /"\$\{attempt_tmp_dir\}"/);
+  assert.match(scriptText, /"\$\{XDG_RUNTIME_DIR\}"/);
+  assert.match(scriptText, /chmod 700 "\$\{XDG_RUNTIME_DIR\}"/);
 });
 
 test("remote updater proof retries startup-only WebDriver session failures with preserved logs", () => {
@@ -46,7 +60,7 @@ test("remote updater proof retries startup-only WebDriver session failures with 
   assert.match(scriptText, /automation-attempt-\$\{attempt\}/);
   assert.match(scriptText, /attempt_driver_port=\$\(\(TAURI_DRIVER_PORT_VALUE \+ \(attempt - 1\) \* 2\)\)/);
   assert.match(scriptText, /attempt_backend_port=\$\(\(TAURI_TEST_BACKEND_PORT_VALUE \+ \(attempt - 1\) \* 2\)\)/);
-  assert.match(scriptText, /export CTX_AUTOMATION_TMPDIR="\$\{attempt_dir\}\/tmp"/);
+  assert.match(scriptText, /export CTX_AUTOMATION_TMPDIR="\$\{attempt_tmp_dir\}"/);
   assert.match(scriptText, /export CTX_AUTOMATION_CN_DRIVER_LOG="\$\{attempt_dir\}\/tauri-driver\.log"/);
   assert.match(scriptText, /tee "\$attempt_log"/);
 });
