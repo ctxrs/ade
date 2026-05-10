@@ -7,22 +7,20 @@ use axum::response::IntoResponse;
 use futures::StreamExt;
 
 use ctx_core::ids::*;
-use ctx_core::models::*;
-use ctx_transport_runtime::mobile_e2ee;
 
 use crate::daemon::AppState;
 
 #[path = "secure_mobile/access.rs"]
 mod access;
+#[path = "secure_mobile/context.rs"]
+mod context;
 #[path = "secure_mobile/send_loop.rs"]
 mod send_loop;
 
-use super::super::{
-    load_mobile_auth_context_for_profile, MobileScope, MobileSecureEnvelope,
-    MobileSecureStreamQuery,
-};
+use super::super::MobileSecureStreamQuery;
 use super::workspace_stream;
 use access::require_mobile_secure_stream_access;
+use context::{decode_mobile_secure_client_message, load_mobile_secure_stream_context};
 
 pub(in crate::api) async fn mobile_secure_workspace_stream_ws(
     ws: WebSocketUpgrade,
@@ -55,40 +53,7 @@ async fn handle_mobile_secure_ws(
     device_id: String,
 ) -> Result<(), anyhow::Error> {
     let (sender, mut receiver) = socket.split();
-    let device_uuid = uuid::Uuid::parse_str(&device_id)?;
-    let cfg = state.global_store().get_mobile_access_config().await?;
-    let cfg = cfg.ok_or_else(|| anyhow::anyhow!("mobile access not configured"))?;
-    if !cfg.enabled {
-        return Err(anyhow::anyhow!("mobile access not enabled"));
-    }
-    let Some(mobile_auth) = load_mobile_auth_context_for_profile(&state, cfg.profile_id)
-        .await
-        .map_err(|status| anyhow::anyhow!("failed to load mobile access profile: {status}"))?
-    else {
-        return Err(anyhow::anyhow!(
-            "{}",
-            MobileScope::WorkspaceStream.missing_error()
-        ));
-    };
-    if !mobile_auth.allows(MobileScope::WorkspaceStream) {
-        return Err(anyhow::anyhow!(
-            "{}",
-            MobileScope::WorkspaceStream.missing_error()
-        ));
-    }
-    let device = state
-        .global_store()
-        .get_mobile_device(MobileDeviceId(device_uuid))
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("device not registered"))?;
-    if device.profile_id != cfg.profile_id {
-        return Err(anyhow::anyhow!("device not authorized for tunnel"));
-    }
-    let device_public_key = device
-        .public_key
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("device missing public key"))?;
-    let key = mobile_e2ee::derive_key(&device_id, device_public_key, &cfg.daemon_private_key)?;
+    let stream_context = load_mobile_secure_stream_context(&state, device_id).await?;
 
     let labels = workspace_stream::WorkspaceStreamLabels {
         ready_queue_label: "ready_secure",
@@ -113,8 +78,8 @@ async fn handle_mobile_secure_ws(
     let send_task = send_loop::spawn_mobile_secure_send_loop(
         sender,
         workspace_id,
-        device_id.clone(),
-        key.clone(),
+        stream_context.device_id.clone(),
+        stream_context.key.clone(),
         &runtime,
     );
 
@@ -124,19 +89,11 @@ async fn handle_mobile_secure_ws(
                 msg = receiver.next() => {
                     match msg {
                         Some(Ok(WsMessage::Text(text))) => {
-                            let frame: MobileSecureEnvelope = match serde_json::from_str(&text) {
-                                Ok(v) => v,
-                                Err(_) => continue,
+                            let Some(message) =
+                                decode_mobile_secure_client_message(&stream_context, &text)?
+                            else {
+                                continue;
                             };
-                            let payload = mobile_e2ee::decrypt(
-                                &key,
-                                &device_id,
-                                frame.seq,
-                                &frame.nonce,
-                                &frame.ciphertext,
-                            )?;
-                            let message: WorkspaceActiveSnapshotClientMessage =
-                                serde_json::from_slice(&payload)?;
                             if workspace_stream::handle_workspace_stream_subscription(
                                 &state,
                                 workspace_id,

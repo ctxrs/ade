@@ -1,11 +1,16 @@
 use std::time::Instant;
 
+use axum::extract::ws::{Message as WsMessage, WebSocket};
+use ctx_core::ids::WorkspaceId;
+use ctx_core::models::WorkspaceActiveSnapshotStreamMessage;
+use ctx_transport_runtime::mobile_e2ee;
+
 use super::super::common::{bump_latest_snapshot_rev, send_secure_ws, HEAD_BATCH_FLUSH_INTERVAL};
 use super::super::queue::{
     take_next_workspace_stream_item, workspace_stream_is_idle, NextWorkspaceStreamItem,
 };
 use super::super::replay::with_stream_rev;
-use super::*;
+use super::super::workspace_stream;
 
 pub(super) fn spawn_mobile_secure_send_loop(
     sender: futures::stream::SplitSink<WebSocket, WsMessage>,
