@@ -498,6 +498,25 @@ const killStaleAutomationHelpers = () => {
   killProcesses((_pid, cmd) => commandMatchesStaleAutomationHelperProcess(cmd));
 };
 
+const commandHasPortArg = (cmd, port) => {
+  const normalizedPort = String(port || "").trim();
+  if (!normalizedPort) return false;
+  return cmd.includes(`--port ${normalizedPort}`) || cmd.includes(`--port=${normalizedPort}`);
+};
+
+const commandLooksLikeTauriDriver = (cmd) =>
+  /\btauri-driver\b/.test(cmd) ||
+  /\bctx-tdrv-cli\b/.test(cmd) ||
+  /@crabnebula[+/]tauri-driver/.test(cmd);
+
+const killCurrentAutomationInfrastructure = () => {
+  const currentTmpDir = path.resolve(automationTmpDir);
+  killProcesses((_pid, cmd) =>
+    (commandLooksLikeTauriDriver(cmd) && commandHasPortArg(cmd, activeTauriDriverPort)) ||
+    (process.platform !== "darwin" && /\bXvfb\b/.test(cmd) && cmd.includes(currentTmpDir)),
+  );
+};
+
 const ensureDesktopDevBinDir = () => {
   if (USING_SHIPPED_APP_MODE) return;
   const configured = String(process.env.CTX_DESKTOP_DEV_BIN_DIR || "").trim();
@@ -2179,6 +2198,7 @@ exports.config = {
       backendProcess.kill();
       backendProcess = null;
     }
+    killCurrentAutomationInfrastructure();
     if (ALLOW_STALE_HELPER_SWEEP && !usesSharedCnBackend) {
       // WebKit's webdriver helper can survive backend shutdown and keep stdio pipes open.
       killStaleAutomationHelpers();

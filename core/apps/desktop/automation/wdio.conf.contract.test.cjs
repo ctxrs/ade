@@ -152,3 +152,12 @@ test("wdio chooses an unused tauri-driver port on every platform by default", ()
   assert.match(script, /const DEFAULT_DRIVER_PORT = pickUnusedPortSync\(4444\);/);
   assert.doesNotMatch(script, /process\.platform === "darwin"\s*\?\s*pickUnusedPortSync\(4444\)\s*:\s*4444/);
 });
+
+test("wdio completion reaps current tauri-driver and xvfb infrastructure", () => {
+  const script = fs.readFileSync(configPath, "utf8");
+
+  assert.match(script, /const killCurrentAutomationInfrastructure = \(\) => \{/);
+  assert.match(script, /commandLooksLikeTauriDriver\(cmd\) && commandHasPortArg\(cmd, activeTauriDriverPort\)/);
+  assert.match(script, /process\.platform !== "darwin" && \S+Xvfb\S+\.test\(cmd\) && cmd\.includes\(currentTmpDir\)/);
+  assert.match(script, /killCurrentAutomationInfrastructure\(\);[\s\S]*if \(ALLOW_STALE_HELPER_SWEEP && !usesSharedCnBackend\)/);
+});
