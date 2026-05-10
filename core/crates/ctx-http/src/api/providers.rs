@@ -21,7 +21,6 @@ use crate::daemon::AppState;
 use ctx_core::ids::WorkspaceId;
 use ctx_core::provider_ids::CODEX_PROVIDER_ID;
 use ctx_harness_sources as harness_sources;
-use ctx_harness_sources::HarnessEndpointUpsert;
 #[cfg(test)]
 use ctx_harness_sources::{HarnessApiShape, HarnessSourceKind};
 use ctx_observability::logs;
