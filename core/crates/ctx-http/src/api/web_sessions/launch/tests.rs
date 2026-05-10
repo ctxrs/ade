@@ -1,6 +1,7 @@
 use super::*;
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use chrono::Utc;
 use ctx_core::models::{ExecutionEnvironment, VcsKind, Worktree};
