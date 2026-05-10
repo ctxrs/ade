@@ -77,7 +77,7 @@ fn bootstrap_wrapper_restricts_root_materialization_to_workspace_paths() {
 #[test]
 fn bootstrap_script_prefers_verified_staged_debs_before_network_refresh() {
     let install_idx = BOOTSTRAP_SCRIPT
-        .find("if [[ ${#verified_debs[@]} -eq 2 ]]; then")
+        .find("if [[ ${#verified_debs[@]} -eq ${#required_packages[@]} ]]; then")
         .expect("verified deb branch should exist");
     let update_idx = BOOTSTRAP_SCRIPT
         .rfind("apt-get update")
@@ -86,6 +86,20 @@ fn bootstrap_script_prefers_verified_staged_debs_before_network_refresh() {
         install_idx < update_idx,
         "activation should try verified staged debs before refreshing apt metadata"
     );
+}
+
+#[test]
+fn bootstrap_script_preserves_existing_containerd_provider() {
+    assert!(BOOTSTRAP_SCRIPT.contains("resolve_cni_plugin_source_dir()"));
+    assert!(BOOTSTRAP_SCRIPT.contains("containerd_provider_available()"));
+    assert!(BOOTSTRAP_SCRIPT.contains("systemctl cat containerd.service"));
+    assert!(BOOTSTRAP_SCRIPT.contains("if ! containerd_provider_available; then"));
+    assert!(BOOTSTRAP_SCRIPT.contains("if ! resolve_cni_plugin_source_dir >/dev/null 2>&1; then"));
+    assert!(BOOTSTRAP_SCRIPT.contains("required_packages+=(containerd)"));
+    assert!(BOOTSTRAP_SCRIPT.contains("required_packages+=(containernetworking-plugins)"));
+    assert!(BOOTSTRAP_SCRIPT.contains("apt-get install -y \"${required_packages[@]}\""));
+    assert!(!BOOTSTRAP_SCRIPT.contains("for package in containerd containernetworking-plugins; do"));
+    assert!(!BOOTSTRAP_SCRIPT.contains("apt-get install -y containerd containernetworking-plugins"));
 }
 
 #[test]

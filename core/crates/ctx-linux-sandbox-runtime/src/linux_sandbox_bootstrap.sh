@@ -54,6 +54,8 @@ wrapper_path="/usr/local/bin/ctx-rootful-nerdctl"
 system_containerd_address="/run/containerd/containerd.sock"
 system_containerd_namespace="default"
 nerdctl_version="v2.2.1"
+cni_plugin_dir="/opt/cni/bin"
+cni_bridge_plugin_path="${cni_plugin_dir}/bridge"
 
 mkdir -p "${bootstrap_root}" "${downloads_dir}" "${debs_dir}"
 
@@ -238,17 +240,53 @@ copy_verified_staged_deb() {
   printf '%s\n' "${verified_copy}"
 }
 
+resolve_cni_plugin_source_dir() {
+  local candidate
+  for candidate in \
+    "/usr/lib/cni" \
+    "/usr/libexec/cni" \
+    "${cni_plugin_dir}"
+  do
+    if [[ -x "${candidate}/bridge" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+containerd_provider_available() {
+  if ! command -v containerd >/dev/null 2>&1; then
+    return 1
+  fi
+  if command -v systemctl >/dev/null 2>&1 && ! systemctl cat containerd.service >/dev/null 2>&1; then
+    return 1
+  fi
+  return 0
+}
+
 install_apt_requirements() {
   if ! command -v apt-get >/dev/null 2>&1; then
     echo "error: apt-get is required for Linux sandbox activation" >&2
     exit 1
   fi
 
+  local required_packages=()
+  if ! containerd_provider_available; then
+    required_packages+=(containerd)
+  fi
+  if ! resolve_cni_plugin_source_dir >/dev/null 2>&1; then
+    required_packages+=(containernetworking-plugins)
+  fi
+  if [[ ${#required_packages[@]} -eq 0 ]]; then
+    return 0
+  fi
+
   local tmp_dir
   tmp_dir="$(mktemp -d)"
   local verified_debs=()
   local package
-  for package in containerd containernetworking-plugins; do
+  for package in "${required_packages[@]}"; do
     local verified_deb
     if ! verified_deb="$(copy_verified_staged_deb "${package}" "${tmp_dir}")"; then
       verified_debs=()
@@ -257,11 +295,11 @@ install_apt_requirements() {
     verified_debs+=("${verified_deb}")
   done
 
-  if [[ ${#verified_debs[@]} -eq 2 ]]; then
+  if [[ ${#verified_debs[@]} -eq ${#required_packages[@]} ]]; then
     apt-get install -y "${verified_debs[@]}"
   else
     apt-get update
-    apt-get install -y containerd containernetworking-plugins
+    apt-get install -y "${required_packages[@]}"
   fi
   rm -rf "${tmp_dir}"
 }
