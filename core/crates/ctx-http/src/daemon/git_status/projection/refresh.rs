@@ -1,22 +1,17 @@
 use std::sync::Arc;
-use std::time::Instant;
 
 use anyhow::Result;
 use ctx_core::models::{Worktree, WorktreeVcsBaseResolutionKind};
 use ctx_workspace_services::worktree_vcs::{
     build_git_status_entries, build_git_status_summary, finish_worktree_vcs_refresh,
-    is_no_vcs_repo_error, load_diff_file_count_from_source, load_diff_touched_entries_from_source,
-    plan_worktree_vcs_summary_refresh, plan_worktree_vcs_touched_files_refresh,
+    is_no_vcs_repo_error, plan_worktree_vcs_touched_files_refresh,
     resolve_worktree_diff_base_from_source, worktree_vcs_projection_cache_state,
-    worktree_vcs_summary_refresh_error_fallback, worktree_vcs_summary_refresh_from_file_count,
-    worktree_vcs_summary_refresh_no_repo, worktree_vcs_touched_files_error_fallback,
-    worktree_vcs_touched_files_from_entries, worktree_vcs_touched_files_large_change_set,
-    worktree_vcs_touched_files_reuse, WorktreeDiffBaseResolution, WorktreeVcsDiffBaseQuery,
-    WorktreeVcsSummaryRefreshPlan, WorktreeVcsTouchedFilesRefreshPlan,
+    WorktreeDiffBaseResolution, WorktreeVcsDiffBaseQuery,
 };
 
 use crate::daemon::AppState;
 
+use self::touched::{refresh_touched_files_projection, TouchedFilesRefreshOutcome};
 use super::super::snapshot::{
     build_worktree_vcs_snapshot_from_parts, publish_no_repo_snapshot, publish_unavailable_snapshot,
 };
@@ -24,6 +19,9 @@ use super::super::source::HttpWorktreeVcsSource;
 use super::super::worktree_has_vcs_repo;
 use super::loading::load_git_status_snapshot;
 use super::publish::publish_worktree_vcs_snapshot;
+
+mod summary;
+mod touched;
 
 pub(in crate::daemon::git_status) async fn refresh_worktree_vcs_projection(
     state: &Arc<AppState>,
@@ -76,28 +74,8 @@ pub(in crate::daemon::git_status) async fn refresh_worktree_vcs_projection(
         return publish_unavailable_snapshot(state, worktree, resolution, force_emit, reason).await;
     }
 
-    let summary_plan = plan_worktree_vcs_summary_refresh(&cached, refresh_summary);
-    let (summary_result, summary_at) = match summary_plan {
-        WorktreeVcsSummaryRefreshPlan::LoadFileCount => {
-            match load_diff_file_count_from_source(&source, &resolution.base_commit_sha).await {
-                Ok(file_count) => (
-                    worktree_vcs_summary_refresh_from_file_count(file_count),
-                    Some(Instant::now()),
-                ),
-                Err(err) if is_no_vcs_repo_error(&err) => {
-                    (worktree_vcs_summary_refresh_no_repo(), None)
-                }
-                Err(err) => {
-                    tracing::warn!(
-                        worktree_id = %worktree.id.0,
-                        "worktree diff file-count refresh failed: {err:#}"
-                    );
-                    (worktree_vcs_summary_refresh_error_fallback(&cached), None)
-                }
-            }
-        }
-        WorktreeVcsSummaryRefreshPlan::Reuse(result) => (result, None),
-    };
+    let (summary_result, summary_at) =
+        summary::refresh_summary(&source, worktree, &resolution, &cached, refresh_summary).await;
 
     let touched_plan =
         plan_worktree_vcs_touched_files_refresh(&summary_result.summary, refresh_touched_files);
@@ -126,27 +104,19 @@ pub(in crate::daemon::git_status) async fn refresh_worktree_vcs_projection(
         },
     );
 
-    let touched_result = match touched_plan {
-        WorktreeVcsTouchedFilesRefreshPlan::LargeChangeSet { file_count } => {
-            worktree_vcs_touched_files_large_change_set(file_count)
+    let touched_result = match refresh_touched_files_projection(
+        &source,
+        worktree,
+        &resolution,
+        &cached,
+        touched_plan,
+    )
+    .await
+    {
+        TouchedFilesRefreshOutcome::Ready(result) => result,
+        TouchedFilesRefreshOutcome::NoRepo => {
+            return publish_no_repo_snapshot(state, worktree, resolution, force_emit).await;
         }
-        WorktreeVcsTouchedFilesRefreshPlan::LoadDiff => {
-            match load_diff_touched_entries_from_source(&source, &resolution.base_commit_sha).await
-            {
-                Ok(entries) => worktree_vcs_touched_files_from_entries(&entries),
-                Err(err) if is_no_vcs_repo_error(&err) => {
-                    return publish_no_repo_snapshot(state, worktree, resolution, force_emit).await;
-                }
-                Err(err) => {
-                    tracing::warn!(
-                        worktree_id = %worktree.id.0,
-                        "worktree touched-file refresh failed: {err:#}"
-                    );
-                    worktree_vcs_touched_files_error_fallback(&cached)
-                }
-            }
-        }
-        WorktreeVcsTouchedFilesRefreshPlan::Reuse => worktree_vcs_touched_files_reuse(&cached),
     };
 
     let snapshot = build_worktree_vcs_snapshot_from_parts(
