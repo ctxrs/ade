@@ -12,6 +12,9 @@ use super::super::queue::{
 use super::super::replay::with_stream_rev;
 use super::super::workspace_stream;
 
+#[path = "send_loop/telemetry.rs"]
+mod telemetry;
+
 pub(super) fn spawn_mobile_secure_send_loop(
     sender: futures::stream::SplitSink<WebSocket, WsMessage>,
     workspace_id: WorkspaceId,
@@ -68,7 +71,7 @@ pub(super) fn spawn_mobile_secure_send_loop(
                             break;
                         }
                         if is_snapshot {
-                            log_secure_snapshot_sent(
+                            telemetry::log_secure_snapshot_sent(
                                 workspace_id,
                                 queued_ms,
                                 send_start.elapsed().as_millis(),
@@ -149,36 +152,4 @@ pub(super) fn spawn_mobile_secure_send_loop(
             }
         }
     })
-}
-
-fn log_secure_snapshot_sent(
-    workspace_id: WorkspaceId,
-    queued_ms: u128,
-    send_ms: u128,
-    message: &WorkspaceActiveSnapshotStreamMessage,
-) {
-    let payload_bytes = serde_json::to_vec(message)
-        .map(|data| data.len())
-        .unwrap_or(0);
-    let (task_count, head_count) = match message {
-        WorkspaceActiveSnapshotStreamMessage::Snapshot {
-            active_snapshot,
-            active_heads,
-            ..
-        } => (
-            active_snapshot.active.tasks.len(),
-            active_heads.as_ref().map(|h| h.heads.len()).unwrap_or(0),
-        ),
-        _ => (0, 0),
-    };
-    tracing::info!(
-        target: "ctx_http.ws_active_snapshot",
-        workspace_id = %workspace_id.0,
-        snapshot_bytes = payload_bytes,
-        snapshot_queue_ms = queued_ms,
-        snapshot_send_ms = send_ms,
-        active_tasks = task_count,
-        active_heads = head_count,
-        "workspace snapshot sent (secure)",
-    );
 }

@@ -13,6 +13,9 @@ use super::super::workspace_stream;
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::WorkspaceActiveSnapshotStreamMessage;
 
+#[path = "send_loop/telemetry.rs"]
+mod telemetry;
+
 pub(super) fn spawn_workspace_active_send_loop(
     sender: futures::stream::SplitSink<WebSocket, WsMessage>,
     workspace_id: WorkspaceId,
@@ -67,7 +70,7 @@ pub(super) fn spawn_workspace_active_send_loop(
                             break;
                         }
                         if is_snapshot {
-                            log_workspace_snapshot_sent(
+                            telemetry::log_workspace_snapshot_sent(
                                 workspace_id,
                                 payload_bytes,
                                 queued_ms,
@@ -148,36 +151,4 @@ pub(super) fn spawn_workspace_active_send_loop(
             }
         }
     })
-}
-
-fn log_workspace_snapshot_sent(
-    workspace_id: WorkspaceId,
-    payload_bytes: usize,
-    queued_ms: u128,
-    encode_ms: u128,
-    send_ms: u128,
-    message: &WorkspaceActiveSnapshotStreamMessage,
-) {
-    let (task_count, head_count) = match message {
-        WorkspaceActiveSnapshotStreamMessage::Snapshot {
-            active_snapshot,
-            active_heads,
-            ..
-        } => (
-            active_snapshot.active.tasks.len(),
-            active_heads.as_ref().map(|h| h.heads.len()).unwrap_or(0),
-        ),
-        _ => (0, 0),
-    };
-    tracing::info!(
-        target: "ctx_http.ws_active_snapshot",
-        workspace_id = %workspace_id.0,
-        snapshot_bytes = payload_bytes,
-        snapshot_queue_ms = queued_ms,
-        snapshot_encode_ms = encode_ms,
-        snapshot_send_ms = send_ms,
-        active_tasks = task_count,
-        active_heads = head_count,
-        "workspace snapshot sent",
-    );
 }
