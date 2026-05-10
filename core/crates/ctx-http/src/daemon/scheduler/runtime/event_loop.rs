@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::sync::Weak;
 
 mod assistant;
+mod dispatch;
 mod driver;
 mod failure;
 mod provider_events;

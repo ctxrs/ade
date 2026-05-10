@@ -1,6 +1,5 @@
 use super::super::super::persistence::append_session_event_with_retry;
-use super::super::helpers::should_track_thought_chunk;
-use super::assistant::handle_assistant_complete;
+use super::dispatch::handle_persisted_provider_event;
 use super::failure::fail_turn;
 use super::provider_events::{
     claim_init_provider_session_ref, enrich_done_payload, record_first_provider_event_metric,
@@ -9,16 +8,11 @@ use super::state::{
     should_check_store_terminal_status, should_drop_post_terminal_event,
     should_process_post_terminal_assistant_complete, EventLoopRuntimeState,
 };
-use super::terminal::{
-    handle_done_event, handle_session_gap_notice, handle_turn_finished, handle_turn_interrupted,
-    is_truthful_start_activity,
-};
-use super::tools::{handle_persisted_tool_event, prepare_tool_event_payload};
+use super::terminal::is_truthful_start_activity;
+use super::tools::prepare_tool_event_payload;
 use super::TurnEventLoop;
 use ctx_core::models::{SessionEventType, SessionTurnStatus};
-use ctx_session_tools::normalize_tool_event;
-use ctx_session_tools::order_seq::attach_order_seq;
-use serde_json::Value;
+use ctx_session_tools::{normalize_tool_event, order_seq::attach_order_seq};
 
 pub(super) async fn run_turn_event_loop(mut ctx: TurnEventLoop) {
     let mut runtime = EventLoopRuntimeState::default();
@@ -148,66 +142,14 @@ pub(super) async fn run_turn_event_loop(mut ctx: TurnEventLoop) {
                 .await;
         }
 
-        match &event.event_type {
-            SessionEventType::AssistantChunk => {
-                if let Some(fragment) = raw_payload.get("content_fragment").and_then(Value::as_str)
-                {
-                    runtime.assistant_partial.push_str(fragment);
-                    if let Some(message_id) = raw_payload
-                        .get("message_id")
-                        .and_then(Value::as_str)
-                        .map(|value| value.to_string())
-                    {
-                        runtime.assistant_partial_message_id = Some(message_id);
-                    }
-                }
-            }
-            SessionEventType::ThoughtChunk if should_track_thought_chunk(&raw_payload) => {
-                if let Some(fragment) = raw_payload.get("content_fragment").and_then(Value::as_str)
-                {
-                    runtime.thought_partial.push_str(fragment);
-                    let _ = ctx
-                        .store
-                        .update_session_turn_partial(
-                            ctx.session_id,
-                            ctx.turn_id,
-                            None,
-                            Some(&runtime.thought_partial),
-                            event.created_at,
-                        )
-                        .await;
-                }
-            }
-            SessionEventType::Notice
-                if event
-                    .payload_json
-                    .get("kind")
-                    .and_then(Value::as_str)
-                    .is_some_and(|kind| kind == "session_gap") =>
-            {
-                handle_session_gap_notice(&ctx, &event).await;
-            }
-            SessionEventType::ToolCall
-            | SessionEventType::ToolCallUpdate
-            | SessionEventType::ToolResult => {
-                if let Some(tool_event) = normalized_tool_event.as_ref() {
-                    handle_persisted_tool_event(&ctx, &mut runtime, &event, tool_event).await;
-                }
-            }
-            SessionEventType::AssistantComplete => {
-                handle_assistant_complete(&ctx, &mut runtime, &event).await;
-            }
-            SessionEventType::Done => {
-                handle_done_event(&ctx, &mut runtime).await;
-            }
-            SessionEventType::TurnInterrupted => {
-                handle_turn_interrupted(&ctx, &mut runtime, &event).await;
-            }
-            SessionEventType::TurnFinished => {
-                handle_turn_finished(&ctx, &mut runtime, &event).await;
-            }
-            _ => {}
-        }
+        handle_persisted_provider_event(
+            &ctx,
+            &mut runtime,
+            &event,
+            &raw_payload,
+            normalized_tool_event.as_ref(),
+        )
+        .await;
 
         if publish_after_persist {
             state.publish_event(event.clone()).await;
