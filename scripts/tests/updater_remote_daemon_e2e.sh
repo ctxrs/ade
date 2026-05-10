@@ -185,6 +185,7 @@ run_updater_remote_automation() {
     # WebKit helpers place Unix sockets under XDG_RUNTIME_DIR, so keep this path short.
     local attempt_xdg_dir="/tmp/ctx-updater-remote-xdg-${attempt_xdg_token}"
     local attempt_xdg_runtime_dir="${attempt_xdg_dir}/runtime"
+    local attempt_corepack_home="${COREPACK_HOME:-${HOME:?set HOME}/.cache/node/corepack}"
     local attempt_driver_port=$((TAURI_DRIVER_PORT_VALUE + (attempt - 1) * 2))
     local attempt_backend_port=$((TAURI_TEST_BACKEND_PORT_VALUE + (attempt - 1) * 2))
 
@@ -196,6 +197,7 @@ run_updater_remote_automation() {
     export XDG_CONFIG_HOME="${attempt_xdg_dir}/config"
     export XDG_CACHE_HOME="${attempt_xdg_dir}/cache"
     export XDG_DATA_HOME="${attempt_xdg_dir}/data"
+    export COREPACK_HOME="${attempt_corepack_home}"
     export TAURI_DRIVER_PORT="${attempt_driver_port}"
     export TAURI_TEST_BACKEND_PORT="${attempt_backend_port}"
     unset CTX_BUNDLE_DIR

@@ -35,6 +35,7 @@ test("remote updater proof keeps shipped-app automation state inside the artifac
   assert.match(scriptText, /attempt_xdg_token="\$\(printf '%s' "\$\{BUILDKITE_JOB_ID:-local\}-\$\{attempt\}-\$\$" \| tr -c 'A-Za-z0-9\._-' '_'\)"/);
   assert.match(scriptText, /local attempt_xdg_dir="\/tmp\/ctx-updater-remote-xdg-\$\{attempt_xdg_token\}"/);
   assert.match(scriptText, /local attempt_xdg_runtime_dir="\$\{attempt_xdg_dir\}\/runtime"/);
+  assert.match(scriptText, /local attempt_corepack_home="\$\{COREPACK_HOME:-\$\{HOME:\?set HOME\}\/\.cache\/node\/corepack\}"/);
   assert.match(scriptText, /export CTX_AUTOMATION_TMPDIR="\$\{attempt_tmp_dir\}"/);
   assert.match(scriptText, /export CTX_AUTOMATION_CN_BACKEND_LOG="\$\{attempt_dir\}\/crabnebula-backend\.log"/);
   assert.match(scriptText, /export CTX_AUTOMATION_CN_DRIVER_LOG="\$\{attempt_dir\}\/tauri-driver\.log"/);
@@ -43,6 +44,7 @@ test("remote updater proof keeps shipped-app automation state inside the artifac
   assert.match(scriptText, /export XDG_CONFIG_HOME="\$\{attempt_xdg_dir\}\/config"/);
   assert.match(scriptText, /export XDG_CACHE_HOME="\$\{attempt_xdg_dir\}\/cache"/);
   assert.match(scriptText, /export XDG_DATA_HOME="\$\{attempt_xdg_dir\}\/data"/);
+  assert.match(scriptText, /export COREPACK_HOME="\$\{attempt_corepack_home\}"/);
   assert.match(scriptText, /rm -rf "\$\{attempt_xdg_dir\}"/);
   assert.match(scriptText, /if \[\[ "\$status" -eq 0 \]\]; then\s+rm -rf "\$\{attempt_xdg_dir\}"/);
   assert.match(scriptText, /is_retryable_wdio_session_start_failure "\$attempt_log"; then\s+rm -rf "\$\{attempt_xdg_dir\}"/);
