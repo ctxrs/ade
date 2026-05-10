@@ -12,6 +12,9 @@ use crate::api::errors::ApiErrorResp;
 use crate::daemon::AppState;
 use ctx_core::ids::SessionId;
 
+#[path = "seed_transcript/metadata.rs"]
+mod metadata;
+
 pub(crate) async fn dev_seed_session_transcript(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -92,62 +95,8 @@ pub(crate) async fn dev_seed_session_transcript(
         ));
     }
 
-    if let Some(session_title) = req
-        .session_title
-        .as_ref()
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty())
-    {
-        store
-            .update_session_title(session_id, session_title.to_string())
-            .await
-            .map_err(|_| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: "failed to update session title".to_string(),
-                    }),
-                )
-            })?;
-    }
-
-    if let Some(task_title) = req
-        .task_title
-        .as_ref()
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty())
-    {
-        store
-            .update_task_title(session.task_id, task_title.to_string())
-            .await
-            .map_err(|_| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: "failed to update task title".to_string(),
-                    }),
-                )
-            })?;
-    }
-
-    let session = store
-        .get_session(session_id)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to reload session".to_string(),
-                }),
-            )
-        })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "session not found".to_string(),
-            }),
-        ))?;
-    state.sessions.remember_session_meta(&session).await;
+    let session =
+        metadata::apply_seed_transcript_metadata(&state, &store, session_id, session, &req).await?;
 
     let mut seeded_messages = 0usize;
     let mut seeded_events = 0usize;
