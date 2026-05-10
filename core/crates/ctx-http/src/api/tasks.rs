@@ -53,7 +53,6 @@ use ctx_core::models::{
     Session, SessionEventType, SessionTurn, SessionTurnStatus, Task, TaskDeltaKind, VcsKind,
     Workspace, WorkspaceArchivedPage, WorkspaceIndexCursor, Worktree,
 };
-use ctx_fs::git::delete_branch;
 use ctx_fs::vcs;
 use ctx_fs::worktrees::{create_worktree, managed_worktree_path};
 use ctx_observability::logs;
