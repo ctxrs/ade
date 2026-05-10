@@ -1,7 +1,4 @@
-use super::capture::{
-    cursor_login_home, ensure_private_dir, initialize_cursor_capture_file,
-    parse_cursor_captured_tokens, write_cursor_capture_hook,
-};
+use super::capture::parse_cursor_captured_tokens;
 use super::output::{
     cursor_login_timeout, spawn_cursor_login_reader, CursorLoginOutputLine,
     CURSOR_LOGIN_POLL_INTERVAL,
@@ -11,9 +8,12 @@ use super::*;
 
 mod completion;
 mod progress;
+#[path = "session/workspace.rs"]
+mod workspace;
 
 use completion::complete_cursor_login;
 use progress::{record_cursor_login_output, set_cursor_login_error};
+use workspace::prepare_cursor_login_workspace;
 
 pub(super) async fn monitor_cursor_login(
     state: Arc<AppState>,
@@ -29,44 +29,17 @@ pub(super) async fn monitor_cursor_login(
         }
     };
 
-    let login_home = cursor_login_home(&state.core.data_root, &login_id);
-    let workdir = login_home.join("workspace");
-    let hook_path = login_home.join("capture-hook.cjs");
-    let capture_path = login_home.join("captured_tokens.jsonl");
+    let workspace = match prepare_cursor_login_workspace(&state.core.data_root, &login_id).await {
+        Ok(workspace) => workspace,
+        Err(err) => {
+            let login_home = err.login_home().to_path_buf();
+            set_cursor_login_error(&state, &login_id, err.into_status_error()).await;
+            let _ = tokio::fs::remove_dir_all(&login_home).await;
+            return;
+        }
+    };
 
-    if let Err(err) = async {
-        ensure_private_dir(&login_home).await?;
-        ensure_private_dir(&workdir).await
-    }
-    .await
-    {
-        set_cursor_login_error(
-            &state,
-            &login_id,
-            format!("failed to prepare login workspace: {err}"),
-        )
-        .await;
-        let _ = tokio::fs::remove_dir_all(&login_home).await;
-        return;
-    }
-
-    if let Err(err) = write_cursor_capture_hook(&hook_path).await {
-        set_cursor_login_error(&state, &login_id, logs::redact_sensitive(&err.to_string())).await;
-        let _ = tokio::fs::remove_dir_all(&login_home).await;
-        return;
-    }
-    if let Err(err) = initialize_cursor_capture_file(&capture_path).await {
-        set_cursor_login_error(
-            &state,
-            &login_id,
-            format!("failed to initialize capture file: {err}"),
-        )
-        .await;
-        let _ = tokio::fs::remove_dir_all(&login_home).await;
-        return;
-    }
-
-    let hook_require = format!("--require {}", hook_path.to_string_lossy());
+    let hook_require = format!("--require {}", workspace.hook_path.to_string_lossy());
     let node_options = match std::env::var("NODE_OPTIONS") {
         Ok(existing) if !existing.trim().is_empty() => {
             format!("{} {}", existing.trim(), hook_require)
@@ -82,14 +55,14 @@ pub(super) async fn monitor_cursor_login(
         cmd.arg(arg);
     }
     cmd.arg("login");
-    cmd.current_dir(&workdir);
+    cmd.current_dir(&workspace.workdir);
     cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
     cmd.env("NO_OPEN_BROWSER", "1");
     cmd.env(
         "CTX_CURSOR_CAPTURE_FILE",
-        capture_path.to_string_lossy().to_string(),
+        workspace.capture_path.to_string_lossy().to_string(),
     );
     cmd.env("NODE_OPTIONS", node_options);
 
@@ -102,7 +75,7 @@ pub(super) async fn monitor_cursor_login(
                 format!("failed to launch cursor-agent login: {err}"),
             )
             .await;
-            let _ = tokio::fs::remove_dir_all(&login_home).await;
+            let _ = tokio::fs::remove_dir_all(&workspace.login_home).await;
             return;
         }
     };
@@ -175,14 +148,14 @@ pub(super) async fn monitor_cursor_login(
     let completion = complete_cursor_login(
         &state,
         label,
-        &capture_path,
+        &workspace.capture_path,
         observed_email,
         timeout_error,
         exit_result,
     )
     .await;
 
-    let _ = tokio::fs::remove_dir_all(&login_home).await;
+    let _ = tokio::fs::remove_dir_all(&workspace.login_home).await;
     let mut map = state.providers.cursor_login_sessions.lock().await;
     if let Some(entry) = map.get_mut(&login_id) {
         entry.status = completion.status;
