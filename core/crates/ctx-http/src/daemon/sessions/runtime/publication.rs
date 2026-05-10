@@ -1,20 +1,19 @@
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 
-use ctx_core::ids::{SessionId, TaskId, TurnId, WorkspaceId};
+use ctx_core::ids::{SessionId, TurnId, WorkspaceId};
 use ctx_core::models::{
     Session, SessionEvent, SessionHeadDelta, SessionSummaryDelta, SessionTurn,
-    SessionTurnToolSummary, TaskDeltaKind,
+    SessionTurnToolSummary,
 };
-use ctx_session_service::runtime::{
-    SessionEventPublicationHost, SessionReplayCursor, SessionTaskDeltaRefreshHost,
-};
+use ctx_session_service::runtime::{SessionEventPublicationHost, SessionReplayCursor};
 
 use crate::daemon::state::AppState;
 
+mod task_delta;
+use task_delta::HttpTaskDeltaRefreshHost;
+
 pub async fn publish_event(state: &Arc<AppState>, event: SessionEvent) {
-    let task_delta_refresh_host = Arc::new(HttpTaskDeltaRefreshHost {
-        state: Arc::downgrade(state),
-    });
+    let task_delta_refresh_host = Arc::new(HttpTaskDeltaRefreshHost::new(state));
     let host = HttpSessionPublicationHost {
         state: Arc::clone(state),
         task_delta_refresh_host,
@@ -25,10 +24,6 @@ pub async fn publish_event(state: &Arc<AppState>, event: SessionEvent) {
 struct HttpSessionPublicationHost {
     state: Arc<AppState>,
     task_delta_refresh_host: Arc<HttpTaskDeltaRefreshHost>,
-}
-
-struct HttpTaskDeltaRefreshHost {
-    state: Weak<AppState>,
 }
 
 #[async_trait::async_trait]
@@ -126,52 +121,5 @@ impl SessionEventPublicationHost for HttpSessionPublicationHost {
             .workspace_active_snapshot
             .publish_session_summary_delta(workspace_id, delta)
             .await;
-    }
-}
-
-#[async_trait::async_trait]
-impl SessionTaskDeltaRefreshHost for HttpTaskDeltaRefreshHost {
-    async fn emit_task_delta_refresh(&self, task_id: TaskId) {
-        let Some(state) = self.state.upgrade() else {
-            return;
-        };
-        match state.store_for_task(task_id).await {
-            Ok(store) => match store.get_workspace_active_task_summary(task_id).await {
-                Ok(Some(summary)) => {
-                    let _ = state
-                        .emit_workspace_task_delta(summary.task, TaskDeltaKind::Updated)
-                        .await;
-                }
-                Ok(None) => match store.get_task(task_id).await {
-                    Ok(Some(task)) => {
-                        let kind = if task.archived_at.is_some() {
-                            TaskDeltaKind::Archived
-                        } else {
-                            TaskDeltaKind::Updated
-                        };
-                        let _ = state.emit_workspace_task_delta(task, kind).await;
-                    }
-                    Ok(None) => {}
-                    Err(err) => {
-                        tracing::warn!(
-                            task_id = %task_id.0,
-                            "workspace task delta refresh read failed: {err:?}"
-                        );
-                    }
-                },
-                Err(err) => {
-                    tracing::warn!(
-                        task_id = %task_id.0,
-                        "workspace task delta refresh summary read failed: {err:?}"
-                    );
-                }
-            },
-            Err(err) => {
-                tracing::warn!(
-                    task_id = %task_id.0,
-                    "workspace task delta refresh store lookup failed: {err:?}"
-                );
-            }
-        }
     }
 }
