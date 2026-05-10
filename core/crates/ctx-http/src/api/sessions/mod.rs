@@ -1,7 +1,6 @@
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-use anyhow::Context;
 use base64::Engine;
 use sha2::Digest;
 
@@ -14,24 +13,20 @@ use super::artifacts::persist_blob_bytes;
 use super::errors::ApiErrorResp;
 use super::redact_json_value;
 use super::shared::{load_and_cache_worktree_files, FileCompletionsQuery};
-use crate::daemon::execution_effective;
 use crate::daemon::git_status::GitStatusEntry;
 use crate::daemon::installer;
 use crate::daemon::scheduler::SchedulerCommand;
 use crate::daemon::AppState;
 use ctx_core::ids::*;
 use ctx_core::models::*;
-use ctx_harness_runtime::sandbox_container_command;
 use ctx_observability::logs;
 use ctx_providers::{
     ask_user_question::{AskUserQuestionAnswer, AskUserQuestionOutcome},
     crp::probe_crp_models,
 };
-use ctx_sandbox_container_runtime::command_output_with_timeout;
 #[cfg(test)]
 use ctx_settings_model as user_settings;
 use ctx_store::is_unique_constraint_violation;
-use ctx_workspace_container::workspace_container_name;
 use ctx_workspace_services::file_completions as workspace_file_completions;
 
 mod subagents;
