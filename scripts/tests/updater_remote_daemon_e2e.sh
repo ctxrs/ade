@@ -262,6 +262,71 @@ sweep_xvfb_processes_for_tmp_dir() {
   fi
 }
 
+sweep_webkit_automation_helpers() {
+  if ! command -v ps >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local pids=()
+  local pid cmd
+  while read -r pid cmd; do
+    if [[ -z "${pid}" || -z "${cmd:-}" ]]; then
+      continue
+    fi
+    case "${cmd}" in
+      *WebKitWebDriver*|*wkwebdriver*|*WebKitWebProcess*|*WebKitNetworkProcess*|*WebKitGPUProcess*|*WebKitPluginProcess*|*WebKitStorageProcess*|*WebKitWebExtension*)
+        pids+=("${pid}")
+        ;;
+    esac
+  done < <(ps -Ao pid=,command= 2>/dev/null || true)
+
+  if [[ "${#pids[@]}" -gt 0 ]]; then
+    kill -9 "${pids[@]}" >/dev/null 2>&1 || true
+  fi
+}
+
+sweep_local_automation_daemons() {
+  if ! command -v ps >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local pids=()
+  local pid cmd
+  while read -r pid cmd; do
+    if [[ -z "${pid}" || -z "${cmd:-}" ]]; then
+      continue
+    fi
+    case "${cmd}" in
+      *ctx-daemon*" serve "*) ;;
+      *) continue ;;
+    esac
+    case "${cmd}" in
+      *"--data-dir "*"ctx-desktop-e2e-app-daemon-"*)
+        pids+=("${pid}")
+        ;;
+      *"--data-dir="*"ctx-desktop-e2e-app-daemon-"*)
+        pids+=("${pid}")
+        ;;
+      *"--data-dir "*"${artifact_dir}/automation-attempt-"*"/controller-daemon-data"*)
+        pids+=("${pid}")
+        ;;
+      *"--data-dir="*"${artifact_dir}/automation-attempt-"*"/controller-daemon-data"*)
+        pids+=("${pid}")
+        ;;
+    esac
+  done < <(ps -Ao pid=,command= 2>/dev/null || true)
+
+  if [[ "${#pids[@]}" -gt 0 ]]; then
+    kill -9 "${pids[@]}" >/dev/null 2>&1 || true
+  fi
+}
+
+sweep_local_automation_processes() {
+  sweep_controller_app_processes
+  sweep_webkit_automation_helpers
+  sweep_local_automation_daemons
+}
+
 if [[ -n "${CTX_DESKTOP_APP_PATH:-}" && "$STRICT_PUBLISHED_ARTIFACTS" == "1" ]]; then
   echo "error: strict published-artifact remote proof forbids CTX_DESKTOP_APP_PATH/local AppDir input" >&2
   exit 2
@@ -357,7 +422,7 @@ run_updater_remote_automation() {
     chmod 700 "${XDG_RUNTIME_DIR}"
     write_process_snapshot "${attempt_dir}/processes-before-sweep.log"
     sweep_stale_xvfb_processes
-    sweep_controller_app_processes
+    sweep_local_automation_processes
     write_process_snapshot "${attempt_dir}/processes-after-preflight-sweep.log"
 
     echo "[updater-remote-proof] automation attempt ${attempt}/${max_attempts} using driver port ${TAURI_DRIVER_PORT} and backend port ${TAURI_TEST_BACKEND_PORT}" >&2
@@ -368,7 +433,7 @@ run_updater_remote_automation() {
     write_process_snapshot "${attempt_dir}/processes-after-automation.log"
     sweep_xvfb_processes_for_tmp_dir "${attempt_tmp_dir}"
     sweep_stale_xvfb_processes
-    sweep_controller_app_processes
+    sweep_local_automation_processes
     write_process_snapshot "${attempt_dir}/processes-after-automation-sweep.log"
 
     if [[ "$status" -eq 0 ]]; then

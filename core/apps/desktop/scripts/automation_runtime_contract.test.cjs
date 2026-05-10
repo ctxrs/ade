@@ -162,6 +162,11 @@ test("updater remote wrapper uses shipped app without source-side provisioning",
   assert.match(script, /CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR="\$\{attempt_dir\}\/controller-daemon-data"/);
   assert.match(script, /CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP="\$\{CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP:-1\}"/);
   assert.match(script, /CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP="\$\{CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP:-1\}"/);
+  assert.match(script, /sweep_webkit_automation_helpers\(\) \{/);
+  assert.match(script, /sweep_local_automation_daemons\(\) \{/);
+  assert.match(script, /sweep_local_automation_processes/);
+  assert.match(script, /ctx-desktop-e2e-app-daemon-/);
+  assert.match(script, /controller-daemon-data/);
   assert.match(script, /unset CTX_BUNDLE_DIR/);
 });
 

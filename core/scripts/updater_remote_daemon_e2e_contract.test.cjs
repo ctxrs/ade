@@ -86,7 +86,7 @@ test("remote updater proof preflight sweeps stale automation Xvfb processes", ()
   assert.match(scriptText, /\*Xvfb\*\/core\/apps\/desktop\/automation\/artifacts\/updater-remote-proof\/automation-attempt-\*\/tmp\/xvfb-run\.\*\/Xauthority\*/);
   assert.match(scriptText, /\*Xvfb\*\/core\/apps\/desktop\/automation\/artifacts\/updater-linux-proof\/\*\/volatile\/artifacts\/ctx-desktop-e2e\/\*\/xvfb-run\.\*\/Xauthority\*/);
   assert.match(scriptText, /\*Xvfb\*\/\.ctx\/volatile\/artifacts\/ctx-desktop-e2e\/\*\/xvfb-run\.\*\/Xauthority\*/);
-  assert.match(scriptText, /write_process_snapshot "\$\{attempt_dir\}\/processes-before-sweep\.log"\s+sweep_stale_xvfb_processes\s+sweep_controller_app_processes/s);
+  assert.match(scriptText, /write_process_snapshot "\$\{attempt_dir\}\/processes-before-sweep\.log"\s+sweep_stale_xvfb_processes\s+sweep_local_automation_processes/s);
 });
 
 test("remote updater proof sweeps exact current attempt Xvfb after automation", () => {
@@ -94,7 +94,20 @@ test("remote updater proof sweeps exact current attempt Xvfb after automation", 
   assert.match(scriptText, /resolved_tmp_dir="\$\(cd "\$tmp_dir" 2>\/dev\/null && pwd -P \|\| printf '%s' "\$tmp_dir"\)"/);
   assert.match(scriptText, /ps -Ao pid=,command=/);
   assert.match(scriptText, /\*Xvfb\*"\$\{tmp_dir\}"\* \| \*Xvfb\*"\$\{resolved_tmp_dir\}"\*/);
-  assert.match(scriptText, /write_process_snapshot "\$\{attempt_dir\}\/processes-after-automation\.log"\s+sweep_xvfb_processes_for_tmp_dir "\$\{attempt_tmp_dir\}"\s+sweep_stale_xvfb_processes\s+sweep_controller_app_processes/s);
+  assert.match(scriptText, /write_process_snapshot "\$\{attempt_dir\}\/processes-after-automation\.log"\s+sweep_xvfb_processes_for_tmp_dir "\$\{attempt_tmp_dir\}"\s+sweep_stale_xvfb_processes\s+sweep_local_automation_processes/s);
+});
+
+test("remote updater proof sweeps local WebKit helpers and e2e daemons between attempts", () => {
+  assert.match(scriptText, /sweep_webkit_automation_helpers\(\) \{/);
+  assert.match(scriptText, /\*WebKitWebDriver\*\|\*wkwebdriver\*\|\*WebKitWebProcess\*/);
+  assert.match(scriptText, /sweep_local_automation_daemons\(\) \{/);
+  assert.match(scriptText, /\*ctx-daemon\*" serve "\*\) ;;/);
+  assert.match(scriptText, /\*"--data-dir "\*"ctx-desktop-e2e-app-daemon-"\*/);
+  assert.match(scriptText, /\*"--data-dir "\*"\$\{artifact_dir\}\/automation-attempt-"\*"\/controller-daemon-data"\*/);
+  assert.match(scriptText, /sweep_local_automation_processes\(\) \{/);
+  assert.match(scriptText, /sweep_controller_app_processes\s+sweep_webkit_automation_helpers\s+sweep_local_automation_daemons/);
+  assert.match(scriptText, /write_process_snapshot "\$\{attempt_dir\}\/processes-before-sweep\.log"[\s\S]*sweep_stale_xvfb_processes[\s\S]*sweep_local_automation_processes[\s\S]*write_process_snapshot "\$\{attempt_dir\}\/processes-after-preflight-sweep\.log"/);
+  assert.match(scriptText, /write_process_snapshot "\$\{attempt_dir\}\/processes-after-automation\.log"[\s\S]*sweep_xvfb_processes_for_tmp_dir "\$\{attempt_tmp_dir\}"[\s\S]*sweep_stale_xvfb_processes[\s\S]*sweep_local_automation_processes[\s\S]*write_process_snapshot "\$\{attempt_dir\}\/processes-after-automation-sweep\.log"/);
 });
 
 test("remote updater proof retries startup-only WebDriver session failures with preserved logs", () => {
