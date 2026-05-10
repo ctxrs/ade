@@ -2,49 +2,30 @@ use super::*;
 
 mod children;
 mod invocation;
+mod request;
+mod spawning;
 
 use children::{create_subagent_child, SubagentChildInit, SubagentChildInitItem};
 use invocation::{
     mark_subagent_invocation_failed, start_subagent_invocation, StartedSubagentInvocation,
 };
+use request::{
+    build_subagent_request_agents, prepare_subagent_init_request, PreparedSubagentInitRequest,
+};
+use spawning::spawn_subagent_completion_tasks;
 
 pub(crate) async fn init_subagents(
     state: Arc<AppState>,
     parent_id: SessionId,
     req: AgentInitReq,
 ) -> ApiResult<Vec<SpawnedChild>> {
-    if req.agents.is_empty() {
-        return Err(api_error(
-            SubagentErrorKind::BadRequest,
-            "agents is required",
-        ));
-    }
-
-    let settings = ctx_settings_service::load_settings(state.global_store())
-        .await
-        .map_err(internal_api_error)?;
-    let max_subagents =
-        resolve_max_subagents_per_call(settings.subagents.as_ref().and_then(|s| s.max_per_call));
-    if req.agents.len() > max_subagents {
-        return Err(api_error(
-            SubagentErrorKind::BadRequest,
-            format!("max {max_subagents} subagents per call"),
-        ));
-    }
-    if req
-        .response_mode
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .is_some()
-    {
-        return Err(api_error(
-            SubagentErrorKind::BadRequest,
-            "response_mode is not supported; use wait_agent to await",
-        ));
-    }
-    let worktree_selection = parse_subagent_worktree(req.worktree.as_deref())
-        .map_err(|error| api_error(SubagentErrorKind::BadRequest, error))?;
+    let PreparedSubagentInitRequest {
+        agents,
+        labels,
+        request_json,
+        tool_call_id,
+        worktree_selection,
+    } = prepare_subagent_init_request(&state, &req).await?;
 
     let (store, parent) = load_parent_session(state.as_ref(), parent_id).await?;
     let creation_lock = state
@@ -65,7 +46,7 @@ pub(crate) async fn init_subagents(
         .count_active_subagent_sessions(parent.id)
         .await
         .map_err(internal_api_error)?;
-    if existing_active + req.agents.len() > DEFAULT_MAX_ACTIVE_SUBAGENTS_PER_PARENT {
+    if existing_active + agents.len() > DEFAULT_MAX_ACTIVE_SUBAGENTS_PER_PARENT {
         return Err(api_error(
             SubagentErrorKind::BadRequest,
             format!(
@@ -81,20 +62,8 @@ pub(crate) async fn init_subagents(
         .map_err(internal_api_error)?
         .ok_or_else(|| api_error(SubagentErrorKind::NotFound, "workspace not found"))?;
 
-    let request_agents = req
-        .agents
-        .iter()
-        .map(|agent| SubagentRequestAgent {
-            prompt: &agent.prompt,
-            label: agent.label.as_deref(),
-            harness: agent.harness.as_deref(),
-            model: agent.model.as_deref(),
-            reasoning_effort: agent.reasoning_effort.as_deref(),
-        })
-        .collect::<Vec<_>>();
-    let labels = normalize_subagent_labels(&request_agents)
-        .map_err(|error| api_error(SubagentErrorKind::BadRequest, error))?;
     ensure_requested_labels_available(&store, parent.task_id, &labels).await?;
+    let request_agents = build_subagent_request_agents(&agents);
     let provider_ids = collect_provider_ids(&request_agents, &parent.provider_id)
         .map_err(|error| api_error(SubagentErrorKind::BadRequest, error))?;
 
@@ -127,7 +96,6 @@ pub(crate) async fn init_subagents(
     let worktree_plan =
         plan_subagent_worktree_creation(&state, &parent_worktree, worktree_selection).await?;
 
-    let request_json = Some(build_subagent_request_json(&request_agents));
     let StartedSubagentInvocation {
         invocation_id,
         tool_call_id,
@@ -136,9 +104,9 @@ pub(crate) async fn init_subagents(
         &state,
         &store,
         &parent,
-        req.agents.len(),
-        request_json,
-        req.tool_call_id.as_deref(),
+        agents.len(),
+        Some(request_json),
+        tool_call_id.as_deref(),
     )
     .await?;
 
@@ -158,8 +126,8 @@ pub(crate) async fn init_subagents(
         execution_environment: resolved_parent_execution_environment,
     };
 
-    let mut futures = Vec::with_capacity(req.agents.len());
-    for (idx, agent) in req.agents.into_iter().enumerate() {
+    let mut futures = Vec::with_capacity(agents.len());
+    for (idx, agent) in agents.into_iter().enumerate() {
         let label = labels
             .get(idx)
             .cloned()
@@ -190,33 +158,15 @@ pub(crate) async fn init_subagents(
         }
     };
 
-    for spawned in spawned_children.iter().cloned() {
-        let state_weak = Arc::downgrade(&state);
-        let invocation_id = invocation_id.clone();
-        let tool_call_id = tool_call_id.clone();
-        let parent_id = parent.id;
-        let parent_worktree_id = parent.worktree_id;
-        tokio::spawn(async move {
-            if let Err(error) =
-                run_subagent_child(&state_weak, spawned.child, parent_worktree_id).await
-            {
-                tracing::warn!(error = %error, "subagent execution failed");
-            }
-            if let Some(state) = state_weak.upgrade() {
-                if let Err(error) = finalize_subagent_invocation(
-                    &state,
-                    &invocation_id,
-                    &tool_call_id,
-                    parent_id,
-                    parent_turn_id,
-                )
-                .await
-                {
-                    tracing::warn!(error = %error, "failed to finalize subagent invocation");
-                }
-            }
-        });
-    }
+    spawn_subagent_completion_tasks(
+        &state,
+        &spawned_children,
+        invocation_id,
+        tool_call_id,
+        parent.id,
+        parent_turn_id,
+        parent.worktree_id,
+    );
 
     Ok(spawned_children)
 }

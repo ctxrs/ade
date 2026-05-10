@@ -12,10 +12,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ctx_session_service::subagents::{
-    build_subagent_request_json, collect_provider_ids, normalize_subagent_labels,
-    normalize_wait_agent_ids, parse_subagent_worktree, parse_wait_mode, parse_wait_until,
-    resolve_max_subagents_per_call, wait_predicate_satisfied, AgentWaitDetail, AgentWaitUntil,
-    SubagentRequestAgent, DEFAULT_MAX_ACTIVE_SUBAGENTS_PER_PARENT, DEFAULT_MAX_SUBAGENT_DEPTH,
+    collect_provider_ids, normalize_wait_agent_ids, parse_wait_mode, parse_wait_until,
+    wait_predicate_satisfied, AgentWaitDetail, AgentWaitUntil,
+    DEFAULT_MAX_ACTIVE_SUBAGENTS_PER_PARENT, DEFAULT_MAX_SUBAGENT_DEPTH,
 };
 use ctx_session_tools::interrupt_telemetry::InterruptTelemetryContext;
 
