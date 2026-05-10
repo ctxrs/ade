@@ -29,7 +29,6 @@ use ctx_provider_auth_import as provider_auth_import;
 #[cfg(test)]
 use ctx_provider_install::install_state::InstallId;
 use ctx_provider_install::install_state::InstallTarget;
-use ctx_provider_runtime::provider_usage;
 use ctx_providers::adapters::{ProviderRestartMode, ProviderStatus};
 
 mod accounts;
