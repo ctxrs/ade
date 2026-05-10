@@ -18,6 +18,17 @@ use tokio_util::io::ReaderStream;
 use super::super::errors::ApiErrorResp;
 use crate::daemon::AppState;
 
+#[path = "blob/errors.rs"]
+mod errors;
+#[path = "blob/storage.rs"]
+mod storage;
+
+use errors::{
+    blob_upload_api_error, blob_upload_multipart_rejection_error, blob_upload_status_error,
+};
+use storage::blobs_dir;
+pub(in crate::api) use storage::persist_blob_bytes;
+
 #[derive(Debug, Serialize)]
 pub(in crate::api) struct BlobUploadResp {
     pub(in crate::api) blob_id: String,
@@ -31,102 +42,6 @@ pub(in crate::api) struct BlobUploadResp {
 pub(super) const MAX_BLOB_BYTES: usize = SESSION_IMAGE_BLOB_MAX_BYTES;
 pub(in crate::api) const MAX_BLOB_MULTIPART_BODY_BYTES: usize =
     SESSION_IMAGE_BLOB_MULTIPART_MAX_BYTES;
-
-fn blob_upload_api_error(
-    status: StatusCode,
-    error: impl Into<String>,
-) -> (StatusCode, Json<ApiErrorResp>) {
-    (
-        status,
-        Json(ApiErrorResp {
-            error: error.into(),
-        }),
-    )
-}
-
-fn blob_upload_status_error(status: StatusCode) -> (StatusCode, Json<ApiErrorResp>) {
-    match status {
-        StatusCode::PAYLOAD_TOO_LARGE => {
-            blob_upload_api_error(status, SESSION_IMAGE_BLOB_TOO_LARGE_MESSAGE)
-        }
-        StatusCode::UNSUPPORTED_MEDIA_TYPE => {
-            blob_upload_api_error(status, "Only image attachments are supported.")
-        }
-        StatusCode::INTERNAL_SERVER_ERROR => {
-            blob_upload_api_error(status, "Failed to store image attachment.")
-        }
-        _ => blob_upload_api_error(status, "Image attachment upload failed."),
-    }
-}
-
-fn blob_upload_multipart_rejection_error(status: StatusCode) -> (StatusCode, Json<ApiErrorResp>) {
-    if status == StatusCode::PAYLOAD_TOO_LARGE {
-        return blob_upload_api_error(status, SESSION_IMAGE_BLOB_TOO_LARGE_MESSAGE);
-    }
-    blob_upload_api_error(
-        StatusCode::BAD_REQUEST,
-        "Image attachment upload was not valid multipart form data.",
-    )
-}
-
-fn blobs_dir(data_root: &StdPath) -> PathBuf {
-    data_root.join("blobs")
-}
-
-pub(in crate::api) async fn persist_blob_bytes(
-    state: &AppState,
-    bytes: &[u8],
-    mime_type: &str,
-    name: Option<&str>,
-) -> Result<BlobUploadResp, StatusCode> {
-    if bytes.len() > MAX_BLOB_BYTES {
-        return Err(StatusCode::PAYLOAD_TOO_LARGE);
-    }
-    if !mime_type.starts_with("image/") {
-        return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE);
-    }
-
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(bytes);
-    let sha256 = hex::encode(hasher.finalize());
-
-    let blob_id = uuid::Uuid::new_v4().to_string();
-
-    let dir = blobs_dir(&state.core.data_root);
-    tokio::fs::create_dir_all(&dir)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let path = dir.join(&blob_id);
-    let tmp = dir.join(format!("{blob_id}.tmp"));
-
-    tokio::fs::write(&tmp, bytes)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    tokio::fs::rename(&tmp, &path)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    state
-        .global_store()
-        .insert_blob(
-            &blob_id,
-            &sha256,
-            bytes.len() as i64,
-            mime_type,
-            name,
-            Utc::now(),
-        )
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    Ok(BlobUploadResp {
-        blob_id,
-        sha256,
-        bytes: bytes.len() as i64,
-        mime_type: mime_type.to_string(),
-        name: name.map(|s| s.to_string()),
-    })
-}
 
 pub(in crate::api) async fn upload_blob(
     State(state): State<Arc<AppState>>,
