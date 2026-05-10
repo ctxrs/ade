@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) enum EndpointModelCatalog {
-    Loaded(Option<ModelCatalog>),
+    Loaded(Option<Box<ModelCatalog>>),
     NotEndpointSource,
 }
 
@@ -80,5 +80,5 @@ pub(super) async fn load_endpoint_model_catalog(
             value,
         },
     );
-    Ok(EndpointModelCatalog::Loaded(Some(models)))
+    Ok(EndpointModelCatalog::Loaded(Some(Box::new(models))))
 }

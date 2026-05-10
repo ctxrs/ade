@@ -107,13 +107,15 @@ fn main() {
     // behavior remains gated behind `feature = "automation"`.
     builder = builder.plugin(automation_init());
 
-    // Keep single-instance behavior for normal desktop usage. Automation builds need
+    // Keep single-instance behavior for normal desktop usage. Automation runs need
     // isolated instances so tests don't attach to a long-running interactive app.
     #[cfg(not(feature = "automation"))]
     {
-        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            focus_app_window(app);
-        }));
+        if !desktop_automation_runtime_enabled() {
+            builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+                focus_app_window(app);
+            }));
+        }
     }
 
     builder = builder
@@ -273,6 +275,13 @@ fn main() {
             manager.disconnect_all();
         }
     });
+}
+
+fn desktop_automation_runtime_enabled() -> bool {
+    std::env::var("TAURI_WEBVIEW_AUTOMATION")
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+        || std::env::var_os("AUTOMATION_LIBRARY_PATH").is_some()
 }
 
 #[cfg(all(target_os = "windows", feature = "stt"))]

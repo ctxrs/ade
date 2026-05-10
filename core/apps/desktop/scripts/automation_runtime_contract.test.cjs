@@ -46,7 +46,11 @@ test("production desktop build keeps automation runtime available", () => {
   assert.match(main, /builder = builder\.plugin\(automation_init\(\)\);/);
   assert.match(
     main,
-    /#\[cfg\(not\(feature = "automation"\)\)\]\s*\{\s*builder = builder\.plugin\(tauri_plugin_single_instance::init/s,
+    /fn desktop_automation_runtime_enabled\(\) -> bool[\s\S]*TAURI_WEBVIEW_AUTOMATION[\s\S]*AUTOMATION_LIBRARY_PATH/,
+  );
+  assert.match(
+    main,
+    /#\[cfg\(not\(feature = "automation"\)\)\]\s*\{\s*if !desktop_automation_runtime_enabled\(\) \{\s*builder = builder\.plugin\(tauri_plugin_single_instance::init/s,
   );
   assert.doesNotMatch(
     main,
@@ -152,6 +156,9 @@ test("updater remote wrapper uses shipped app without source-side provisioning",
   assert.match(script, /CTX_AUTOMATION_SHIPPED_APP="\$\{CTX_AUTOMATION_SHIPPED_APP:-1\}"/);
   assert.match(script, /CTX_AUTOMATION_SKIP_APP_BUILD="\$\{CTX_AUTOMATION_SKIP_APP_BUILD:-1\}"/);
   assert.match(script, /CTX_AUTOMATION_SKIP_REMOTE_CTX_PROVISION="\$\{CTX_AUTOMATION_SKIP_REMOTE_CTX_PROVISION:-1\}"/);
+  assert.match(script, /local attempt_dir="\$\{artifact_dir\}\/automation-attempt-\$\{attempt\}"/);
+  assert.match(script, /CTX_AUTOMATION_TMPDIR="\$\{attempt_dir\}\/tmp"/);
+  assert.match(script, /CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR="\$\{attempt_dir\}\/controller-daemon-data"/);
   assert.match(script, /CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP="\$\{CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP:-1\}"/);
   assert.match(script, /CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP="\$\{CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP:-1\}"/);
   assert.match(script, /unset CTX_BUNDLE_DIR/);
@@ -287,6 +294,9 @@ test("desktop smoke wrapper preserves CrabNebula backend and driver logs by defa
   assert.match(wrapper, /DEFAULT_CN_DRIVER_LOG="\$\{AUTOMATION_TMPDIR\}\/tauri-driver\.log"/);
   assert.match(wrapper, /CTX_AUTOMATION_CN_BACKEND_LOG="\$\{CTX_AUTOMATION_CN_BACKEND_LOG:-\$\{DEFAULT_CN_BACKEND_LOG\}\}"/);
   assert.match(wrapper, /CTX_AUTOMATION_CN_DRIVER_LOG="\$\{CTX_AUTOMATION_CN_DRIVER_LOG:-\$\{DEFAULT_CN_DRIVER_LOG\}\}"/);
+  assert.match(wrapper, /AUTOMATION_FAILED=0/);
+  assert.match(wrapper, /AUTOMATION_FAILED=1/);
+  assert.match(wrapper, /\[desktop-smoke\] preserving failed automation tmpdir \$\{AUTOMATION_TMPDIR\}/);
   assert.match(wrapper, /\[desktop-smoke\] CrabNebula backend log: \$\{CTX_AUTOMATION_CN_BACKEND_LOG\}/);
   assert.match(wrapper, /\[desktop-smoke\] CrabNebula driver log: \$\{CTX_AUTOMATION_CN_DRIVER_LOG\}/);
 });

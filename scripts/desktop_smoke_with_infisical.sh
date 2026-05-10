@@ -17,6 +17,7 @@ PNPM_BIN="${CTX_DESKTOP_SMOKE_PNPM:-pnpm}"
 DEFAULT_AUTOMATION_TMP_BASE_DIR="${CTX_AUTOMATION_TMP_BASE_DIR:-${VOLATILE_ARTIFACTS_DIR}/ctx-desktop-e2e}"
 mkdir -p "${DEFAULT_AUTOMATION_TMP_BASE_DIR}"
 AUTOMATION_TMPDIR_CREATED=0
+AUTOMATION_FAILED=0
 if [[ -n "${CTX_AUTOMATION_TMPDIR:-}" ]]; then
   AUTOMATION_TMPDIR="${CTX_AUTOMATION_TMPDIR}"
 else
@@ -74,6 +75,10 @@ cleanup_automation_tmpdir() {
     echo "[desktop-smoke] preserving automation tmpdir ${AUTOMATION_TMPDIR}" >&2
     return
   fi
+  if [[ "${AUTOMATION_FAILED}" == "1" ]]; then
+    echo "[desktop-smoke] preserving failed automation tmpdir ${AUTOMATION_TMPDIR}" >&2
+    return
+  fi
   rm -rf "${AUTOMATION_TMPDIR}"
 }
 
@@ -83,6 +88,7 @@ run_wdio() {
   local status=0
   "$@" || status=$?
   if [[ "${status}" -ne 0 ]]; then
+    AUTOMATION_FAILED=1
     echo "[desktop-smoke] CrabNebula backend log: ${CTX_AUTOMATION_CN_BACKEND_LOG}" >&2
     echo "[desktop-smoke] CrabNebula driver log: ${CTX_AUTOMATION_CN_DRIVER_LOG}" >&2
   fi

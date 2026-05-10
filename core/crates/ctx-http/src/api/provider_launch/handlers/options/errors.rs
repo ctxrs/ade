@@ -6,19 +6,23 @@ use ctx_providers::adapters::ProviderStatus;
 
 use super::*;
 
+pub(super) struct ProviderOptionsErrorContext<'a> {
+    pub(super) state: &'a Arc<AppState>,
+    pub(super) provider_id: &'a str,
+    pub(super) workspace_id: WorkspaceId,
+    pub(super) cache: &'a ProviderOptionsCacheSnapshot,
+    pub(super) preferred_model_id: Option<String>,
+    pub(super) verify_ttl: Duration,
+}
+
 pub(super) async fn managed_config_error_provider_options(
-    state: &Arc<AppState>,
-    provider_id: &str,
-    workspace_id: WorkspaceId,
+    context: ProviderOptionsErrorContext<'_>,
     config_error: &str,
     source_config: Option<&harness_sources::HarnessProviderSourceConfig>,
-    cache: &ProviderOptionsCacheSnapshot,
-    preferred_model_id: Option<String>,
-    verify_ttl: Duration,
 ) -> serde_json::Value {
     let raw_resp = config_error_provider_options_response(
-        provider_id,
-        workspace_id,
+        context.provider_id,
+        context.workspace_id,
         None,
         provider_auth_mode(false, source_config),
         config_error,
@@ -26,34 +30,29 @@ pub(super) async fn managed_config_error_provider_options(
     );
     finalize_provider_options_response(
         ProviderOptionsResponseContext {
-            state,
-            provider_id,
+            state: context.state,
+            provider_id: context.provider_id,
             provider_status: None,
             selected_endpoint: None,
-            cache,
-            preferred_model_id,
+            cache: context.cache,
+            preferred_model_id: context.preferred_model_id,
         },
         raw_resp,
         false,
-        verify_ttl,
+        context.verify_ttl,
     )
     .await
 }
 
 pub(super) async fn source_config_error_provider_options(
-    state: &Arc<AppState>,
-    provider_id: &str,
-    workspace_id: WorkspaceId,
+    context: ProviderOptionsErrorContext<'_>,
     provider_status: &ProviderStatus,
     config_error: &str,
     source_config: Option<&harness_sources::HarnessProviderSourceConfig>,
-    cache: &ProviderOptionsCacheSnapshot,
-    preferred_model_id: Option<String>,
-    verify_ttl: Duration,
 ) -> serde_json::Value {
     let raw_resp = config_error_provider_options_response(
-        provider_id,
-        workspace_id,
+        context.provider_id,
+        context.workspace_id,
         Some(provider_status.installed),
         provider_auth_mode(false, source_config),
         config_error,
@@ -61,33 +60,28 @@ pub(super) async fn source_config_error_provider_options(
     );
     finalize_provider_options_response(
         ProviderOptionsResponseContext {
-            state,
-            provider_id,
+            state: context.state,
+            provider_id: context.provider_id,
             provider_status: Some(provider_status),
             selected_endpoint: None,
-            cache,
-            preferred_model_id,
+            cache: context.cache,
+            preferred_model_id: context.preferred_model_id,
         },
         raw_resp,
         false,
-        verify_ttl,
+        context.verify_ttl,
     )
     .await
 }
 
 pub(super) async fn auth_config_error_provider_options(
-    state: &Arc<AppState>,
-    provider_id: &str,
-    workspace_id: WorkspaceId,
+    context: ProviderOptionsErrorContext<'_>,
     provider_status: &ProviderStatus,
     config_error: &str,
-    cache: &ProviderOptionsCacheSnapshot,
-    preferred_model_id: Option<String>,
-    verify_ttl: Duration,
 ) -> serde_json::Value {
     let raw_resp = config_error_provider_options_response(
-        provider_id,
-        workspace_id,
+        context.provider_id,
+        context.workspace_id,
         Some(provider_status.installed),
         "none",
         config_error,
@@ -95,36 +89,31 @@ pub(super) async fn auth_config_error_provider_options(
     );
     finalize_provider_options_response(
         ProviderOptionsResponseContext {
-            state,
-            provider_id,
+            state: context.state,
+            provider_id: context.provider_id,
             provider_status: Some(provider_status),
             selected_endpoint: None,
-            cache,
-            preferred_model_id,
+            cache: context.cache,
+            preferred_model_id: context.preferred_model_id,
         },
         raw_resp,
         false,
-        verify_ttl,
+        context.verify_ttl,
     )
     .await
 }
 
 pub(super) async fn unusable_provider_options(
-    state: &Arc<AppState>,
-    provider_id: &str,
-    workspace_id: WorkspaceId,
+    context: ProviderOptionsErrorContext<'_>,
     provider_status: &ProviderStatus,
     has_active_auth: bool,
     auth_mode: &str,
     source_config: Option<&harness_sources::HarnessProviderSourceConfig>,
     selected_endpoint: Option<&HarnessEndpointRecord>,
-    cache: &ProviderOptionsCacheSnapshot,
-    preferred_model_id: Option<String>,
-    verify_ttl: Duration,
 ) -> serde_json::Value {
     let raw_base_resp = unusable_provider_options_response(
-        provider_id,
-        workspace_id,
+        context.provider_id,
+        context.workspace_id,
         provider_status,
         has_active_auth,
         auth_mode,
@@ -132,16 +121,16 @@ pub(super) async fn unusable_provider_options(
     );
     finalize_provider_options_response(
         ProviderOptionsResponseContext {
-            state,
-            provider_id,
+            state: context.state,
+            provider_id: context.provider_id,
             provider_status: Some(provider_status),
             selected_endpoint,
-            cache,
-            preferred_model_id,
+            cache: context.cache,
+            preferred_model_id: context.preferred_model_id,
         },
         raw_base_resp,
         true,
-        verify_ttl,
+        context.verify_ttl,
     )
     .await
 }

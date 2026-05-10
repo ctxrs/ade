@@ -8,16 +8,31 @@ mod session;
 use cursor::{resume_replay_cursor, skip_replay_sessions_after_snapshot};
 use session::replay_workspace_session;
 
+pub(super) struct WorkspaceStreamReplayRequest<'a> {
+    pub(super) state: &'a Arc<AppState>,
+    pub(super) workspace_id: WorkspaceId,
+    pub(super) runtime: &'a mut WorkspaceStreamRuntime,
+    pub(super) labels: &'a WorkspaceStreamLabels,
+    pub(super) resolved_sessions: &'a [ResolvedWorkspaceActiveSessionSubscription],
+    pub(super) next_state: &'a WorkspaceActiveSubscriptionState,
+    pub(super) include_initial_snapshot: bool,
+    pub(super) active_head_cursors: &'a HashMap<SessionId, SessionReplayCursor>,
+}
+
 pub(super) async fn replay_workspace_stream_subscriptions(
-    state: &Arc<AppState>,
-    workspace_id: WorkspaceId,
-    runtime: &mut WorkspaceStreamRuntime,
-    labels: &WorkspaceStreamLabels,
-    resolved_sessions: &[ResolvedWorkspaceActiveSessionSubscription],
-    next_state: &WorkspaceActiveSubscriptionState,
-    include_initial_snapshot: bool,
-    active_head_cursors: &HashMap<SessionId, SessionReplayCursor>,
+    request: WorkspaceStreamReplayRequest<'_>,
 ) -> Result<Option<HashMap<SessionId, SessionCursor>>, ()> {
+    let WorkspaceStreamReplayRequest {
+        state,
+        workspace_id,
+        runtime,
+        labels,
+        resolved_sessions,
+        next_state,
+        include_initial_snapshot,
+        active_head_cursors,
+    } = request;
+
     let skip_replay_sessions = skip_replay_sessions_after_snapshot(
         state,
         workspace_id,

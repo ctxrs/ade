@@ -11,7 +11,7 @@ use branches::{
 };
 use errors::{
     auth_config_error_provider_options, managed_config_error_provider_options,
-    source_config_error_provider_options, unusable_provider_options,
+    source_config_error_provider_options, unusable_provider_options, ProviderOptionsErrorContext,
 };
 use load::{load_provider_options_inputs, ProviderOptionsInputs, ProviderOptionsLoadOutcome};
 use probes::{
@@ -31,7 +31,7 @@ pub(in crate::api) async fn get_provider_options(
             .await?
         {
             ProviderOptionsLoadOutcome::Cached(out) => return Ok(Json(out)),
-            ProviderOptionsLoadOutcome::Ready(inputs) => inputs,
+            ProviderOptionsLoadOutcome::Ready(inputs) => *inputs,
         };
     let ProviderOptionsInputs {
         workspace_id: ws_id,
@@ -49,14 +49,16 @@ pub(in crate::api) async fn get_provider_options(
 
     if let Some(config_error) = managed_config_error.as_ref() {
         let out = managed_config_error_provider_options(
-            &state,
-            &provider_id,
-            ws_id,
+            ProviderOptionsErrorContext {
+                state: &state,
+                provider_id: &provider_id,
+                workspace_id: ws_id,
+                cache: &cache,
+                preferred_model_id: preferred_model_id.clone(),
+                verify_ttl: VERIFY_TTL,
+            },
             config_error,
             source_config.as_ref(),
-            &cache,
-            preferred_model_id.clone(),
-            VERIFY_TTL,
         )
         .await;
         return Ok(Json(out));
@@ -73,15 +75,17 @@ pub(in crate::api) async fn get_provider_options(
 
     if let Some(config_error) = source_config_error.as_ref() {
         let out = source_config_error_provider_options(
-            &state,
-            &provider_id,
-            ws_id,
+            ProviderOptionsErrorContext {
+                state: &state,
+                provider_id: &provider_id,
+                workspace_id: ws_id,
+                cache: &cache,
+                preferred_model_id: preferred_model_id.clone(),
+                verify_ttl: VERIFY_TTL,
+            },
             &provider_status,
             config_error,
             source_config.as_ref(),
-            &cache,
-            preferred_model_id.clone(),
-            VERIFY_TTL,
         )
         .await;
         return Ok(Json(out));
@@ -99,14 +103,16 @@ pub(in crate::api) async fn get_provider_options(
         Err(config_error) => {
             let config_error = logs::redact_sensitive(&config_error);
             let out = auth_config_error_provider_options(
-                &state,
-                &provider_id,
-                ws_id,
+                ProviderOptionsErrorContext {
+                    state: &state,
+                    provider_id: &provider_id,
+                    workspace_id: ws_id,
+                    cache: &cache,
+                    preferred_model_id: preferred_model_id.clone(),
+                    verify_ttl: VERIFY_TTL,
+                },
                 &provider_status,
                 &config_error,
-                &cache,
-                preferred_model_id.clone(),
-                VERIFY_TTL,
             )
             .await;
             return Ok(Json(out));
@@ -116,17 +122,19 @@ pub(in crate::api) async fn get_provider_options(
 
     if !provider_status_is_usable(&provider_status) {
         let out = unusable_provider_options(
-            &state,
-            &provider_id,
-            ws_id,
+            ProviderOptionsErrorContext {
+                state: &state,
+                provider_id: &provider_id,
+                workspace_id: ws_id,
+                cache: &cache,
+                preferred_model_id: preferred_model_id.clone(),
+                verify_ttl: VERIFY_TTL,
+            },
             &provider_status,
             has_active_auth,
             auth_mode,
             source_config.as_ref(),
             selected_endpoint.as_ref(),
-            &cache,
-            preferred_model_id.clone(),
-            VERIFY_TTL,
         )
         .await;
         return Ok(Json(out));

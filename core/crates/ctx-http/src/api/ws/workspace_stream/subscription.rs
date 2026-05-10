@@ -3,7 +3,7 @@ use super::*;
 
 mod replay;
 
-use replay::replay_workspace_stream_subscriptions;
+use replay::{replay_workspace_stream_subscriptions, WorkspaceStreamReplayRequest};
 
 pub(crate) async fn handle_workspace_stream_subscription(
     state: &Arc<AppState>,
@@ -84,16 +84,16 @@ pub(crate) async fn handle_workspace_stream_subscription(
         HashMap::new()
     };
 
-    let Some(next_map) = replay_workspace_stream_subscriptions(
+    let Some(next_map) = replay_workspace_stream_subscriptions(WorkspaceStreamReplayRequest {
         state,
         workspace_id,
         runtime,
         labels,
-        &resolved_sessions,
-        &next_state,
+        resolved_sessions: &resolved_sessions,
+        next_state: &next_state,
         include_initial_snapshot,
-        &active_head_cursors,
-    )
+        active_head_cursors: &active_head_cursors,
+    })
     .await?
     else {
         return Ok(());

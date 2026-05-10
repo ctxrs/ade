@@ -9,7 +9,7 @@ use super::*;
 
 pub(super) enum ProviderOptionsLoadOutcome {
     Cached(serde_json::Value),
-    Ready(ProviderOptionsInputs),
+    Ready(Box<ProviderOptionsInputs>),
 }
 
 pub(super) struct ProviderOptionsInputs {
@@ -68,19 +68,21 @@ pub(super) async fn load_provider_options_inputs(
         load_workspace_preferred_model_id(state, workspace_id, provider_id).await?;
     let selected_endpoint = selected_endpoint_record_from_harness_config(source_config.as_ref());
 
-    Ok(ProviderOptionsLoadOutcome::Ready(ProviderOptionsInputs {
-        workspace_id,
-        install_target,
-        managed,
-        managed_config_error,
-        matrix,
-        source_config,
-        source_config_error,
-        cache,
-        workspace,
-        preferred_model_id,
-        selected_endpoint,
-    }))
+    Ok(ProviderOptionsLoadOutcome::Ready(Box::new(
+        ProviderOptionsInputs {
+            workspace_id,
+            install_target,
+            managed,
+            managed_config_error,
+            matrix,
+            source_config,
+            source_config_error,
+            cache,
+            workspace,
+            preferred_model_id,
+            selected_endpoint,
+        },
+    )))
 }
 
 async fn provider_is_known(

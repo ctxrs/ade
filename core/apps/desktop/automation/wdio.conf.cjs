@@ -406,6 +406,27 @@ const commandMatchesScopedAppProcess = (cmd, appPath) => {
   return resourceBinPrefixes.some((prefix) => resourcePrefixMatchesProcessCommand(cmd, prefix));
 };
 
+const collectAutomationAppProcessSweepPaths = () => {
+  const linuxAppName = process.platform === "win32" ? "ctx.exe" : "ctx";
+  const shippedAppDir = path.dirname(APP_PATH);
+  const candidates = new Set([
+    APP_PATH,
+    path.resolve(shippedAppDir, "usr", "bin", linuxAppName),
+    path.resolve(shippedAppDir, "usr", "lib", "ctx", linuxAppName),
+    defaultAppPath,
+    path.resolve(TAURI_TARGET_DIR, "debug", linuxAppName),
+    path.resolve(TAURI_TARGET_DIR, "release", linuxAppName),
+    path.resolve(ROOT, "src-tauri", "target", "debug", linuxAppName),
+    path.resolve(ROOT, "src-tauri", "target", "release", linuxAppName),
+    path.resolve(CORE_ROOT, "target", "debug", linuxAppName),
+    path.resolve(CORE_ROOT, "target", "release", linuxAppName),
+  ]);
+  return Array.from(candidates).filter((candidate) => String(candidate || "").trim());
+};
+
+const commandMatchesAutomationAppProcess = (cmd) =>
+  collectAutomationAppProcessSweepPaths().some((candidate) => commandMatchesScopedAppProcess(cmd, candidate));
+
 const killProcesses = (matcher) => {
   const out = spawnSync("ps", ["-Ao", "pid=,command="], { encoding: "utf8" });
   if (out.status !== 0) return;
@@ -424,7 +445,6 @@ const killProcesses = (matcher) => {
 };
 
 const killExistingAppProcesses = () => {
-  if (!fs.existsSync(APP_PATH)) return;
   const out = spawnSync("ps", ["-Ao", "pid=,command="], { encoding: "utf8" });
   if (out.status !== 0) return;
   const lines = String(out.stdout || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
@@ -436,7 +456,7 @@ const killExistingAppProcesses = () => {
     const cmd = m[2] || "";
     if (!pid || !cmd) continue;
     // Sweep stale automation app instances and bundle-scoped helper children from prior runs.
-    if (commandMatchesScopedAppProcess(cmd, APP_PATH)) {
+    if (commandMatchesAutomationAppProcess(cmd)) {
       pids.push(pid);
     }
   }
@@ -2237,6 +2257,8 @@ exports.__desktopAutomationConfigTestHooks = {
   resolveConnectionRetryCount,
   resolveConnectionRetryTimeoutMs,
   commandMatchesScopedAppProcess,
+  collectAutomationAppProcessSweepPaths,
+  commandMatchesAutomationAppProcess,
   createAppBuildInvocation,
   buildAppIfMissing,
 };

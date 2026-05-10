@@ -157,8 +157,57 @@ export CTX_AUTOMATION_SKIP_REMOTE_CTX_PROVISION="${CTX_AUTOMATION_SKIP_REMOTE_CT
 export CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP="${CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP:-1}"
 export CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP="${CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP:-1}"
 export CTX_AUTOMATION_CONNECTION_RETRY_TIMEOUT_MS="${CTX_AUTOMATION_CONNECTION_RETRY_TIMEOUT_MS:-${WDIO_CONNECTION_RETRY_TIMEOUT_MS}}"
-export TAURI_DRIVER_PORT="${TAURI_DRIVER_PORT_VALUE}"
-export TAURI_TEST_BACKEND_PORT="${TAURI_TEST_BACKEND_PORT_VALUE}"
-unset CTX_BUNDLE_DIR
 
-pnpm -C "${ROOT}/core/apps/desktop" test:automation:updater-remote
+is_retryable_wdio_session_start_failure() {
+  local log_path="$1"
+  if [[ ! -f "$log_path" ]]; then
+    return 1
+  fi
+  grep -Eq 'Failed to create a session|/session' "$log_path" || return 1
+  grep -Eq 'UND_ERR_HEADERS_TIMEOUT|WebDriverError.*(/session|Failed to create a session)|Request failed.*/session|Failed to create a session' "$log_path"
+}
+
+run_updater_remote_automation() {
+  local max_attempts="${CTX_UPDATER_REMOTE_E2E_AUTOMATION_ATTEMPTS:-2}"
+  if ! [[ "$max_attempts" =~ ^[0-9]+$ ]] || [[ "$max_attempts" -lt 1 ]]; then
+    echo "error: CTX_UPDATER_REMOTE_E2E_AUTOMATION_ATTEMPTS must be a positive integer" >&2
+    return 2
+  fi
+
+  local attempt=1
+  local status=0
+  while [[ "$attempt" -le "$max_attempts" ]]; do
+    local attempt_dir="${artifact_dir}/automation-attempt-${attempt}"
+    local attempt_log="${attempt_dir}/updater-remote-automation.log"
+    local attempt_driver_port=$((TAURI_DRIVER_PORT_VALUE + (attempt - 1) * 2))
+    local attempt_backend_port=$((TAURI_TEST_BACKEND_PORT_VALUE + (attempt - 1) * 2))
+
+    export CTX_AUTOMATION_TMPDIR="${attempt_dir}/tmp"
+    export CTX_AUTOMATION_CN_BACKEND_LOG="${attempt_dir}/crabnebula-backend.log"
+    export CTX_AUTOMATION_CN_DRIVER_LOG="${attempt_dir}/tauri-driver.log"
+    export CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR="${attempt_dir}/controller-daemon-data"
+    export TAURI_DRIVER_PORT="${attempt_driver_port}"
+    export TAURI_TEST_BACKEND_PORT="${attempt_backend_port}"
+    unset CTX_BUNDLE_DIR
+    mkdir -p "${attempt_dir}/tmp" "${attempt_dir}/controller-daemon-data"
+
+    echo "[updater-remote-proof] automation attempt ${attempt}/${max_attempts} using driver port ${TAURI_DRIVER_PORT} and backend port ${TAURI_TEST_BACKEND_PORT}" >&2
+    set +e
+    pnpm -C "${ROOT}/core/apps/desktop" test:automation:updater-remote 2>&1 | tee "$attempt_log"
+    status="${PIPESTATUS[0]}"
+    set -e
+
+    if [[ "$status" -eq 0 ]]; then
+      return 0
+    fi
+    if [[ "$attempt" -lt "$max_attempts" ]] && is_retryable_wdio_session_start_failure "$attempt_log"; then
+      echo "[updater-remote-proof] retrying startup-only WebDriver session failure after attempt ${attempt}; log: ${attempt_log}" >&2
+      attempt=$((attempt + 1))
+      continue
+    fi
+    return "$status"
+  done
+  return "$status"
+}
+
+run_updater_remote_automation

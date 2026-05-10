@@ -79,7 +79,7 @@ async fn load_provider_model_catalog_for_install_target(
     }
 
     match load_endpoint_model_catalog(state, workspace, provider_id, cache_key.clone()).await? {
-        EndpointModelCatalog::Loaded(catalog) => return Ok(catalog),
+        EndpointModelCatalog::Loaded(catalog) => return Ok(catalog.map(|catalog| *catalog)),
         EndpointModelCatalog::NotEndpointSource => {}
     }
 

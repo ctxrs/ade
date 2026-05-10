@@ -622,3 +622,58 @@ test("scoped app sweep matcher accepts canonical bundle paths for a symlinked ap
     fs.rmSync(stateDir, { recursive: true, force: true });
   }
 });
+
+test("shipped-app process sweep also matches stale source-built desktop binaries", async () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-process-sweep-"));
+  const targetDir = path.join(tempRoot, "target");
+  const shippedDir = path.join(tempRoot, "appimage", "squashfs-root");
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-state-"));
+  const shippedApp = path.join(shippedDir, "AppRun");
+  const shippedInnerApp = path.join(shippedDir, "usr", "bin", process.platform === "win32" ? "ctx.exe" : "ctx");
+  const shippedHelper = path.join(shippedDir, "usr", "lib", "ctx", "bin", "ctx-mcp");
+  const sourceDebugApp = path.join(targetDir, "debug", process.platform === "win32" ? "ctx.exe" : "ctx");
+  try {
+    fs.mkdirSync(path.dirname(shippedApp), { recursive: true });
+    fs.mkdirSync(path.dirname(shippedInnerApp), { recursive: true });
+    fs.mkdirSync(path.dirname(shippedHelper), { recursive: true });
+    fs.mkdirSync(path.dirname(sourceDebugApp), { recursive: true });
+    fs.writeFileSync(shippedApp, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+    fs.writeFileSync(shippedInnerApp, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+    fs.writeFileSync(shippedHelper, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+    fs.writeFileSync(sourceDebugApp, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+
+    await withEnv(
+      {
+        CARGO_TARGET_DIR: targetDir,
+        CTX_AUTOMATION_CN_BACKEND_STATE_DIR: stateDir,
+        CTX_AUTOMATION_SHIPPED_APP: "1",
+        CTX_DESKTOP_APP_PATH: shippedApp,
+      },
+      (mod) => {
+        const hooks = mod.__desktopAutomationConfigTestHooks;
+        assert.ok(hooks.collectAutomationAppProcessSweepPaths().includes(shippedApp));
+        assert.ok(hooks.collectAutomationAppProcessSweepPaths().includes(shippedInnerApp));
+        assert.ok(hooks.collectAutomationAppProcessSweepPaths().includes(sourceDebugApp));
+        assert.equal(
+          hooks.commandMatchesAutomationAppProcess(`${shippedInnerApp} --automation`),
+          true,
+        );
+        assert.equal(
+          hooks.commandMatchesAutomationAppProcess(`${shippedHelper} mcp`),
+          true,
+        );
+        assert.equal(
+          hooks.commandMatchesAutomationAppProcess(`${sourceDebugApp} --automation`),
+          true,
+        );
+        assert.equal(
+          hooks.commandMatchesAutomationAppProcess("/usr/bin/ctx --unrelated"),
+          false,
+        );
+      },
+    );
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  }
+});
