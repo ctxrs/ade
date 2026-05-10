@@ -1,9 +1,14 @@
 use super::*;
 
+#[path = "idempotency/identity.rs"]
+mod identity;
 #[path = "idempotency/request.rs"]
 mod request;
 
 pub(super) use self::request::CreateTaskRequestParts;
+use identity::{
+    internal_store_error, task_id_conflict, task_not_found, validate_requested_task_identity,
+};
 
 pub(super) struct PersistedTaskForCreate {
     pub(super) task: Task,
@@ -150,51 +155,4 @@ pub(super) async fn reload_or_retry_task_for_request(
         task: retry.task,
         created_in_this_request: retry.created,
     })
-}
-
-fn validate_requested_task_identity(
-    task: &Task,
-    ws_id: WorkspaceId,
-    request: &CreateTaskRequestParts,
-) -> Result<(), CreateTaskApiError> {
-    if request.task_id.is_none() {
-        return Ok(());
-    }
-    if task.workspace_id != ws_id
-        || !task_request_matches(
-            task,
-            &request.requested_title,
-            &request.requested_description,
-        )
-    {
-        return Err(task_id_conflict());
-    }
-    Ok(())
-}
-
-fn internal_store_error(error: impl std::fmt::Display) -> CreateTaskApiError {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(ApiErrorResp {
-            error: logs::redact_sensitive(&error.to_string()),
-        }),
-    )
-}
-
-fn task_id_conflict() -> CreateTaskApiError {
-    (
-        StatusCode::CONFLICT,
-        Json(ApiErrorResp {
-            error: "task id already exists".to_string(),
-        }),
-    )
-}
-
-fn task_not_found() -> CreateTaskApiError {
-    (
-        StatusCode::NOT_FOUND,
-        Json(ApiErrorResp {
-            error: "task not found".to_string(),
-        }),
-    )
 }
