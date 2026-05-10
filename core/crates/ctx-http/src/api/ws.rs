@@ -7,7 +7,7 @@ use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use futures::{SinkExt, StreamExt};
+use futures::StreamExt;
 use serde_json::Value;
 use tokio::sync::{Mutex, Notify};
 

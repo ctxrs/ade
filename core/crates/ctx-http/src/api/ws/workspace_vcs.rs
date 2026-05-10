@@ -4,6 +4,7 @@ use super::*;
 
 mod buffer;
 mod metrics;
+mod send_loop;
 mod subscription;
 #[cfg(test)]
 #[path = "workspace_vcs/tests.rs"]
@@ -11,6 +12,7 @@ mod tests;
 
 use self::buffer::VcsPendingBuffer;
 use self::metrics::{record_workspace_vcs_stream_metrics, VcsStreamMetrics};
+use self::send_loop::spawn_workspace_vcs_send_loop;
 use self::subscription::{
     handle_workspace_vcs_client_message, release_workspace_vcs_demand, WorkspaceVcsRuntime,
 };
@@ -61,26 +63,8 @@ async fn handle_workspace_vcs_ws(
         })
         .await;
 
-    let send_task = {
-        let pending = Arc::clone(&pending);
-        let metrics = Arc::clone(&metrics);
-        tokio::spawn(async move {
-            let mut sender = sender;
-            loop {
-                if let Some(message) = pending.pop().await {
-                    let Ok(text) = serde_json::to_string(&message) else {
-                        break;
-                    };
-                    if sender.send(WsMessage::Text(text)).await.is_err() {
-                        break;
-                    }
-                    metrics.message_sent(&message);
-                    continue;
-                }
-                pending.wait_for_message().await;
-            }
-        })
-    };
+    let send_task =
+        spawn_workspace_vcs_send_loop(sender, Arc::clone(&pending), Arc::clone(&metrics));
 
     let mut runtime = WorkspaceVcsRuntime::default();
     let mut rx = state.workspaces.worktree_vcs_events.subscribe();
