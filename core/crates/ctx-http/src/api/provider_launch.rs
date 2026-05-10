@@ -50,7 +50,7 @@ use ctx_provider_runtime::provider_launch::models::{
 };
 use ctx_provider_runtime::provider_launch::options::{
     endpoint_supports_model_catalog_verify, provider_options_cache_entry_is_authoritative,
-    provider_options_probe_plan, provider_supports_runtime_model_catalog, ProviderOptionsProbePlan,
+    provider_supports_runtime_model_catalog,
 };
 use ctx_provider_runtime::provider_launch::probe_error::classify_probe_error;
 use ctx_provider_runtime::provider_usability::{

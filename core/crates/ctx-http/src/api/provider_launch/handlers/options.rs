@@ -1,14 +1,13 @@
 use super::*;
 
 mod branches;
+mod dispatch;
 mod errors;
 mod load;
 mod probes;
 
-use branches::{
-    env_probe_provider_options, runtime_models_provider_options,
-    selected_endpoint_runtime_launch_provider_options, ProviderOptionsProbeContext,
-};
+use branches::ProviderOptionsProbeContext;
+use dispatch::dispatch_provider_options_probe;
 use errors::{
     auth_config_error_provider_options, managed_config_error_provider_options,
     source_config_error_provider_options, unusable_provider_options, ProviderOptionsErrorContext,
@@ -156,24 +155,5 @@ pub(in crate::api) async fn get_provider_options(
         verify_ttl: VERIFY_TTL,
     };
 
-    match provider_options_probe_plan(
-        use_crp_probe,
-        selected_endpoint
-            .as_ref()
-            .map(|endpoint| endpoint.id.as_str()),
-    ) {
-        ProviderOptionsProbePlan::EnvOnly => {
-            return env_probe_provider_options(probe_context).await;
-        }
-        ProviderOptionsProbePlan::SelectedEndpointRuntimeLaunch(endpoint_id) => {
-            return selected_endpoint_runtime_launch_provider_options(
-                probe_context,
-                endpoint_id.to_string(),
-            )
-            .await;
-        }
-        ProviderOptionsProbePlan::RuntimeModels => {}
-    }
-
-    runtime_models_provider_options(probe_context).await
+    dispatch_provider_options_probe(use_crp_probe, selected_endpoint.as_ref(), probe_context).await
 }
