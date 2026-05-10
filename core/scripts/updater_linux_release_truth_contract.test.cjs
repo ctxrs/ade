@@ -85,6 +85,19 @@ test("Linux updater proof pins automation to the repo pnpm even when installer P
   assert.match(scriptText, /PATH="\$\{home_dir\}\/\.local\/bin:\$\{PATH\}"/);
 });
 
+test("Linux updater proof opts sequential native updater WDIO runs into WebKit helper cleanup", () => {
+  const nativeSmokeEnvBlocks = scriptText.match(
+    /HOME="\$\{home_dir\}" \\\n[\s\S]*?run_repo_pnpm -C apps\/desktop test:automation:updater-native-smoke/g,
+  ) || [];
+  assert.equal(nativeSmokeEnvBlocks.length, 2);
+  for (const block of nativeSmokeEnvBlocks) {
+    assert.match(
+      block,
+      /CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP="\$\{CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP:-1\}" \\/,
+    );
+  }
+});
+
 test("Linux clean workspace proof uploads provider diagnostics when the wizard fails", () => {
   assert.match(scriptText, /collect_clean_workspace_diagnostics\(\) \{/);
   assert.match(scriptText, /shipped-app\.summary\.json/);
