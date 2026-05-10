@@ -104,7 +104,6 @@ use ctx_core::{ids::*, models::*};
 use ctx_store::store::MobileDeviceUpsert;
 
 use crate::daemon::installer;
-use crate::daemon::merge_queue;
 use crate::daemon::AppState;
 use ctx_managed_installs::title_generation_local;
 use ctx_observability::logs;
