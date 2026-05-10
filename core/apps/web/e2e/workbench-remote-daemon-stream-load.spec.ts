@@ -374,8 +374,9 @@ async function waitForBrowserWorktreeVcsSummary(
           if (!snapshot || snapshot.compute_state !== "ready") return null;
           const fileCount = snapshot.summary?.file_count ?? null;
           const lineCount = snapshot.summary?.line_count ?? null;
-          if (fileCount === null && lineCount === null) return null;
-          return Number(fileCount ?? lineCount);
+          const inventoryCount =
+            (snapshot.git_status?.entries ?? []).length + (snapshot.touched_files?.items ?? []).length;
+          return Math.max(Number(fileCount ?? 0), Number(lineCount ?? 0), inventoryCount);
         }, worktreeId);
       },
       { timeout: timeoutMs },
