@@ -1,6 +1,5 @@
 use super::*;
 use std::collections::HashMap;
-use std::process::Stdio;
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 
 mod helper_cleanup;
@@ -41,5 +40,4 @@ use ctx_harness_setup::{
     HarnessSetupProgressUpdate,
 };
 use ctx_store::Store;
-use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
