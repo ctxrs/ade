@@ -1,27 +1,25 @@
-use std::sync::{Arc, Weak};
+use std::sync::Weak;
 use std::time::Duration;
 
-use serde_json::json;
 use tokio::sync::mpsc;
 use tokio::time::Instant as TokioInstant;
 
-use ctx_core::models::{MessageDelivery, Session, SessionEventType};
+use ctx_core::models::Session;
 
 use crate::daemon::AppState;
 
 use super::lifecycle::{
-    fail_starting_turn, finalize_start_failure_if_needed, handle_provider_exit,
-    handle_provider_stall, RunningTurn, TurnStartProgress,
+    fail_starting_turn, handle_provider_exit, handle_provider_stall, RunningTurn, TurnStartProgress,
 };
-use super::persistence::emit_event;
-use super::runtime::start_turn;
 use super::SchedulerCommand;
 
 mod bootstrap;
 mod commands;
+mod queue;
 
 use self::bootstrap::{bootstrap_worker, WorkerBootstrap};
 use self::commands::{handle_scheduler_command, SchedulerCommandAction};
+use self::queue::{start_next_queued_turn, QueueStartContext, QueueStartOutcome};
 
 pub(super) async fn session_worker(
     state_weak: Weak<AppState>,
@@ -54,77 +52,24 @@ pub(super) async fn session_worker(
 
     loop {
         if running.is_none() && !suspend_queue {
-            if let Some(msg) = queue.pop_front() {
-                let Some(state) = state_weak.upgrade() else {
-                    break;
-                };
-                let msg_id = msg.message.id;
-                let msg_run_id = msg.message.run_id;
-                let msg_turn_id = msg.message.turn_id;
-                let session_for_turn = match store.get_session(session.id).await {
-                    Ok(Some(fresh)) => {
-                        session = fresh.clone();
-                        fresh
-                    }
-                    _ => session.clone(),
-                };
-                if matches!(msg.message.delivery, MessageDelivery::Queued) {
-                    let _ = emit_event(
-                        &state,
-                        session.id,
-                        msg.message.run_id,
-                        msg.message.turn_id,
-                        SessionEventType::MessageQueuePromoted,
-                        json!({
-                            "message_id": msg.message.id.0,
-                            "previous_position": 0,
-                        }),
-                    )
-                    .await;
-                }
-                // The runtime module owns provider/env/event-pump side effects so this loop stays
-                // focused on queue progression and running-turn lifecycle.
-                match start_turn(
-                    &state,
-                    &session_for_turn,
-                    &workdir,
-                    &session_root_kind,
-                    msg,
-                    Arc::clone(&order_seq_state),
-                )
-                .await
-                {
-                    Ok(turn) => {
-                        state.set_running(session.id, true).await;
-                        let timeout = state.sessions.provider_inactivity_timeout().await;
-                        running_inactivity_timeout = Some(timeout);
-                        running_inactivity_deadline = Some(TokioInstant::now() + timeout);
-                        running_start_deadline = Some(turn.start_deadline);
-                        running = Some(turn);
-                    }
-                    Err(err) => {
-                        let err_string = format!("{err:#}");
-                        tracing::error!(
-                            session_id = %session.id.0,
-                            "failed to start turn: {err:#}"
-                        );
-                        if let Some(turn_id) = msg_turn_id {
-                            finalize_start_failure_if_needed(
-                                &state,
-                                session.id,
-                                msg_run_id,
-                                turn_id,
-                                msg_id,
-                                &err_string,
-                            )
-                            .await;
-                        }
-                        state.set_running(session.id, false).await;
-                        running = None;
-                        running_start_deadline = None;
-                    }
-                }
-                continue;
+            match start_next_queued_turn(QueueStartContext {
+                state_weak: &state_weak,
+                session: &mut session,
+                store: &store,
+                queue: &mut queue,
+                workdir: &workdir,
+                session_root_kind: &session_root_kind,
+                order_seq_state: &order_seq_state,
+                running: &mut running,
+                running_inactivity_timeout: &mut running_inactivity_timeout,
+                running_inactivity_deadline: &mut running_inactivity_deadline,
+                running_start_deadline: &mut running_start_deadline,
+            })
+            .await
+            {
+                QueueStartOutcome::Idle => {}
+                QueueStartOutcome::StartedOrFailed => continue,
+                QueueStartOutcome::StopWorker => break,
             }
         }
 
