@@ -368,7 +368,9 @@ async function waitForBrowserWorktreeVcsSummary(
     .poll(
       async () => {
         return page.evaluate((id) => {
-          const snapshot = (window as RemoteDaemonLoadWindow).__ctxE2E?.getVcsSnapshot?.(id) ?? null;
+          const bridge = (window as RemoteDaemonLoadWindow).__ctxE2E;
+          bridge?.refreshVcsDetails?.(id);
+          const snapshot = bridge?.getVcsSnapshot?.(id) ?? null;
           if (!snapshot || snapshot.compute_state !== "ready") return null;
           const fileCount = snapshot.summary?.file_count ?? null;
           const lineCount = snapshot.summary?.line_count ?? null;
@@ -392,7 +394,9 @@ async function waitForBrowserWorktreeVcsInventoryPath(
       async () => {
         return page.evaluate(
           ({ id, path }) => {
-            const snapshot = (window as RemoteDaemonLoadWindow).__ctxE2E?.getVcsSnapshot?.(id) ?? null;
+            const bridge = (window as RemoteDaemonLoadWindow).__ctxE2E;
+            bridge?.refreshVcsDetails?.(id);
+            const snapshot = bridge?.getVcsSnapshot?.(id) ?? null;
             if (!snapshot || snapshot.compute_state !== "ready") return false;
             const inventoryPaths = [
               ...(snapshot.git_status?.entries ?? []),
