@@ -7,9 +7,13 @@ use ctx_core::models::{SandboxBinding, Workspace, Worktree};
 use super::{is_git_worktree, prune_worktrees, remove_worktree};
 use crate::daemon::workspaces::vcs_hooks;
 use crate::daemon::AppState;
-use ctx_fs::git::delete_branch;
+use branches::{
+    cleanup_collected_worktree_branches, collect_worktree_branch_for_cleanup, WorktreeBranchCleanup,
+};
 use sandbox::{cleanup_sandbox_materialization, SandboxCleanupOutcome};
 
+#[path = "cleanup/branches.rs"]
+mod branches;
 #[path = "cleanup/sandbox.rs"]
 mod sandbox;
 
@@ -35,8 +39,7 @@ pub(crate) async fn cleanup_task_worktrees(
     branch_cleanup_error_mode: BranchCleanupErrorMode,
 ) -> Vec<anyhow::Error> {
     let mut errors = Vec::new();
-    let mut needs_prune = false;
-    let mut branches_to_delete = Vec::new();
+    let mut branch_cleanup = WorktreeBranchCleanup::default();
     let workspace_root_exists = tokio::fs::metadata(&workspace.root_path).await.is_ok();
     for target in targets {
         let worktree = &target.worktree;
@@ -90,10 +93,10 @@ pub(crate) async fn cleanup_task_worktrees(
         }
         if tokio::fs::metadata(root).await.is_err() {
             if branch.is_some() {
-                needs_prune = true;
+                branch_cleanup.mark_needs_prune();
             }
             if let Some(branch) = branch {
-                branches_to_delete.push(branch.to_string());
+                collect_worktree_branch_for_cleanup(&mut branch_cleanup, branch);
             }
             continue;
         }
@@ -103,7 +106,7 @@ pub(crate) async fn cleanup_task_worktrees(
             .unwrap_or(false);
         let is_git = embedded_git_dir || is_git_worktree(root).await.unwrap_or(false);
         if embedded_git_dir {
-            needs_prune = true;
+            branch_cleanup.mark_needs_prune();
             if let Err(err) = tokio::fs::remove_dir_all(root).await.with_context(|| {
                 format!("removing standalone managed worktree at {}", root.display())
             }) {
@@ -115,7 +118,7 @@ pub(crate) async fn cleanup_task_worktrees(
                 errors.push(err);
             }
         } else if is_git {
-            needs_prune = true;
+            branch_cleanup.mark_needs_prune();
             if let Err(err) = remove_worktree(&workspace.root_path, root).await {
                 tracing::warn!(
                     task_id = %task_id.0,
@@ -150,28 +153,16 @@ pub(crate) async fn cleanup_task_worktrees(
             errors.push(err);
         }
         if let Some(branch) = branch {
-            branches_to_delete.push(branch.to_string());
+            collect_worktree_branch_for_cleanup(&mut branch_cleanup, branch);
         }
     }
-    if needs_prune {
-        if let Err(err) = prune_worktrees(&workspace.root_path).await {
-            tracing::warn!(task_id = %task_id.0, "failed to prune worktrees: {err:#}");
-            errors.push(err);
-        }
-    }
-    branches_to_delete.sort();
-    branches_to_delete.dedup();
-    for branch in branches_to_delete {
-        if let Err(err) = delete_branch(&workspace.root_path, &branch).await {
-            tracing::warn!(
-                task_id = %task_id.0,
-                branch,
-                "failed to delete worktree branch: {err:#}"
-            );
-            if matches!(branch_cleanup_error_mode, BranchCleanupErrorMode::Report) {
-                errors.push(err);
-            }
-        }
-    }
+    cleanup_collected_worktree_branches(
+        &workspace.root_path,
+        task_id,
+        branch_cleanup,
+        branch_cleanup_error_mode,
+        &mut errors,
+    )
+    .await;
     errors
 }
