@@ -1,10 +1,12 @@
-use super::line_observation::append_claude_login_line;
 use super::*;
 
 #[path = "monitor/finalization.rs"]
 mod finalization;
+#[path = "monitor/output.rs"]
+mod output;
 
 use finalization::finalize_claude_login;
+use output::{drain_claude_login_output, observe_claude_login_line, ClaudeLoginOutputDrainMode};
 
 pub(in crate::api::providers::login::claude::session) async fn kill_claude_login_process(
     killer: Arc<StdMutex<Box<dyn portable_pty::ChildKiller + Send + Sync>>>,
@@ -36,24 +38,20 @@ pub(in crate::api::providers::login::claude::session) async fn monitor_claude_lo
     let mut terminal_error: Option<String> = None;
 
     for line in std::mem::take(&mut login.buffered_lines) {
-        let had_auth_url = observed_auth_url.is_some();
-        append_claude_login_line(
+        let outcome = observe_claude_login_line(
             &state,
             &login_id,
             &mut observed_auth_url,
             &mut transcript,
+            &login.browser_open_capture_path,
             line,
         )
         .await;
-        let _ = refresh_claude_auth_url_from_capture_path(
-            &mut observed_auth_url,
-            &login.browser_open_capture_path,
-        );
-        if claude_manual_fallback_is_terminal(&transcript, &login.browser_open_capture_path) {
-            terminal_error = Some(CLAUDE_UNSUPPORTED_MANUAL_FALLBACK_ERROR.to_string());
+        if let Some(error) = outcome.terminal_error {
+            terminal_error = Some(error);
             break;
         }
-        if !had_auth_url && observed_auth_url.is_some() {
+        if outcome.auth_url_became_observed {
             completion_deadline = Some(Instant::now() + CLAUDE_LOGIN_COMPLETION_TIMEOUT);
         }
     }
@@ -80,27 +78,20 @@ pub(in crate::api::providers::login::claude::session) async fn monitor_claude_lo
             maybe_line = login.line_rx.recv(), if !output_closed => {
                 match maybe_line {
                     Some(line) => {
-                        let had_auth_url = observed_auth_url.is_some();
-                        append_claude_login_line(
+                        let outcome = observe_claude_login_line(
                             &state,
                             &login_id,
                             &mut observed_auth_url,
                             &mut transcript,
+                            &login.browser_open_capture_path,
                             line,
                         )
                         .await;
-                        let _ = refresh_claude_auth_url_from_capture_path(
-                            &mut observed_auth_url,
-                            &login.browser_open_capture_path,
-                        );
-                        if claude_manual_fallback_is_terminal(
-                            &transcript,
-                            &login.browser_open_capture_path,
-                        ) {
-                            terminal_error = Some(CLAUDE_UNSUPPORTED_MANUAL_FALLBACK_ERROR.to_string());
+                        if let Some(error) = outcome.terminal_error {
+                            terminal_error = Some(error);
                             break;
                         }
-                        if !had_auth_url && observed_auth_url.is_some() {
+                        if outcome.auth_url_became_observed {
                             completion_deadline = Some(Instant::now() + CLAUDE_LOGIN_COMPLETION_TIMEOUT);
                         }
                     }
@@ -127,39 +118,21 @@ pub(in crate::api::providers::login::claude::session) async fn monitor_claude_lo
         }
     }
 
-    if exit_result.is_some() {
-        for line in
-            read_trailing_claude_login_lines(&mut login.line_rx, CLAUDE_LOGIN_EXIT_GRACE_WAIT).await
-        {
-            append_claude_login_line(
-                &state,
-                &login_id,
-                &mut observed_auth_url,
-                &mut transcript,
-                line,
-            )
-            .await;
-            let _ = refresh_claude_auth_url_from_capture_path(
-                &mut observed_auth_url,
-                &login.browser_open_capture_path,
-            );
-        }
+    let drain_mode = if exit_result.is_some() {
+        ClaudeLoginOutputDrainMode::TrailingGrace
     } else {
-        while let Ok(line) = login.line_rx.try_recv() {
-            append_claude_login_line(
-                &state,
-                &login_id,
-                &mut observed_auth_url,
-                &mut transcript,
-                line,
-            )
-            .await;
-            let _ = refresh_claude_auth_url_from_capture_path(
-                &mut observed_auth_url,
-                &login.browser_open_capture_path,
-            );
-        }
-    }
+        ClaudeLoginOutputDrainMode::PendingOnly
+    };
+    drain_claude_login_output(
+        &state,
+        &login_id,
+        &mut observed_auth_url,
+        &mut transcript,
+        &login.browser_open_capture_path,
+        &mut login.line_rx,
+        drain_mode,
+    )
+    .await;
 
     if terminal_error.is_some() {
         if let Err(err) = kill_claude_login_process(Arc::clone(&login.killer)).await {
