@@ -1,3 +1,6 @@
+#[cfg(not(test))]
+mod startup;
+
 use super::*;
 
 impl AppState {
@@ -94,39 +97,7 @@ impl AppState {
             warmup_operations,
         ));
         #[cfg(not(test))]
-        {
-            let execution_setup = Arc::clone(&execution_setup);
-            let startup_data_root = data_root.clone();
-            tokio::spawn(async move {
-                let db_path = startup_data_root.join("db").join("db.sqlite");
-                match Store::open_sqlite(&db_path, None).await {
-                    Ok(store) => {
-                        let loaded = ctx_settings_service::load_settings(&store).await;
-                        store.close().await;
-                        match loaded {
-                            Ok(settings) => {
-                                execution_setup
-                                    .spawn_startup_prewarm(settings.execution.unwrap_or_default());
-                            }
-                            Err(err) => {
-                                execution_setup
-                                    .record_startup_prewarm_error(format!(
-                                        "failed to load execution settings: {err:#}"
-                                    ))
-                                    .await;
-                            }
-                        }
-                    }
-                    Err(err) => {
-                        execution_setup
-                            .record_startup_prewarm_error(format!(
-                                "failed to open global settings store: {err:#}"
-                            ))
-                            .await;
-                    }
-                }
-            });
-        }
+        startup::spawn_startup_prewarm_loader(data_root.clone(), Arc::clone(&execution_setup));
         let workspace_active_snapshot = Arc::new(WorkspaceActiveSnapshotHub::new());
         let web_sessions = Arc::new(WebSessionManager::new());
         Self {
