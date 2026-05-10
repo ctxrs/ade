@@ -677,3 +677,39 @@ test("shipped-app process sweep also matches stale source-built desktop binaries
     fs.rmSync(stateDir, { recursive: true, force: true });
   }
 });
+
+test("stale helper sweep matches WebKit child helpers that can outlive Linux automation", async () => {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-state-"));
+  try {
+    await withEnv(
+      {
+        CTX_AUTOMATION_CN_BACKEND_STATE_DIR: stateDir,
+      },
+      (mod) => {
+        const hooks = mod.__desktopAutomationConfigTestHooks;
+        assert.equal(
+          hooks.commandMatchesStaleAutomationHelperProcess("/usr/lib/webkit2gtk-4.1/WebKitWebDriver --port 4445"),
+          true,
+        );
+        assert.equal(
+          hooks.commandMatchesStaleAutomationHelperProcess("/usr/lib/webkit2gtk-4.1/WebKitWebProcess 42"),
+          true,
+        );
+        assert.equal(
+          hooks.commandMatchesStaleAutomationHelperProcess("/usr/lib/webkit2gtk-4.1/WebKitNetworkProcess 42"),
+          true,
+        );
+        assert.equal(
+          hooks.commandMatchesStaleAutomationHelperProcess("/usr/lib/webkit2gtk-4.1/WebKitGPUProcess 42"),
+          true,
+        );
+        assert.equal(
+          hooks.commandMatchesStaleAutomationHelperProcess("/usr/bin/ctx --automation"),
+          false,
+        );
+      },
+    );
+  } finally {
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  }
+});

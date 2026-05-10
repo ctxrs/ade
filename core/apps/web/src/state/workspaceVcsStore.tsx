@@ -153,6 +153,15 @@ export class WorkspaceVcsStore {
     });
   };
 
+  ensureDetailsDemand = (worktreeIds: readonly string[]): void => {
+    const ids = normalizeIds(worktreeIds);
+    if (ids.length === 0) return;
+    this.setDemand({
+      summaryWorktreeIds: [...this.demand.summaryWorktreeIds, ...ids],
+      detailWorktreeIds: [...this.demand.detailWorktreeIds, ...ids],
+    });
+  };
+
   private publish(): void {
     for (const listener of this.listeners) {
       listener();

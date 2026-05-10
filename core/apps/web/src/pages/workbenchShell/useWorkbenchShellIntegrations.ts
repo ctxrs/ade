@@ -40,6 +40,7 @@ export function useWorkbenchShellIntegrations({
     getActiveTask: () => ({ taskId: activeTaskId, sessionId: activeSessionId }),
     getVcsSnapshot: (worktreeId) => workspaceVcsStore.getWorktreeVcsSnapshot(worktreeId),
     refreshVcsDetails: (worktreeId) => {
+      workspaceVcsStore.ensureDetailsDemand([worktreeId]);
       workspaceVcsStore.refresh([worktreeId], "details");
       return true;
     },

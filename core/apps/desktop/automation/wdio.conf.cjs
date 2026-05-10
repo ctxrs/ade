@@ -483,12 +483,19 @@ const ensureAppExecutable = () => {
   }
 };
 
+const commandMatchesStaleAutomationHelperProcess = (cmd) =>
+  /\bWebKitWebDriver\b/.test(cmd) ||
+  /\bwkwebdriver\b/.test(cmd) ||
+  /\bWebKitWebProcess\b/.test(cmd) ||
+  /\bWebKitNetworkProcess\b/.test(cmd) ||
+  /\bWebKitGPUProcess\b/.test(cmd) ||
+  /\bWebKitPluginProcess\b/.test(cmd) ||
+  /\bWebKitStorageProcess\b/.test(cmd) ||
+  /\bWebKitWebExtension\b/.test(cmd);
+
 const killStaleAutomationHelpers = () => {
-  // WebKit webdriver helpers can survive backend shutdown and keep pipes open.
-  killProcesses((_pid, cmd) =>
-    /\bWebKitWebDriver\b/.test(cmd) ||
-    /\bwkwebdriver\b/.test(cmd),
-  );
+  // WebKit child helpers can survive backend shutdown and keep pipes open.
+  killProcesses((_pid, cmd) => commandMatchesStaleAutomationHelperProcess(cmd));
 };
 
 const ensureDesktopDevBinDir = () => {
@@ -2259,6 +2266,7 @@ exports.__desktopAutomationConfigTestHooks = {
   commandMatchesScopedAppProcess,
   collectAutomationAppProcessSweepPaths,
   commandMatchesAutomationAppProcess,
+  commandMatchesStaleAutomationHelperProcess,
   createAppBuildInvocation,
   buildAppIfMissing,
 };

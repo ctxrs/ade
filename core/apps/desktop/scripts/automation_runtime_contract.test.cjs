@@ -157,7 +157,8 @@ test("updater remote wrapper uses shipped app without source-side provisioning",
   assert.match(script, /CTX_AUTOMATION_SKIP_APP_BUILD="\$\{CTX_AUTOMATION_SKIP_APP_BUILD:-1\}"/);
   assert.match(script, /CTX_AUTOMATION_SKIP_REMOTE_CTX_PROVISION="\$\{CTX_AUTOMATION_SKIP_REMOTE_CTX_PROVISION:-1\}"/);
   assert.match(script, /local attempt_dir="\$\{artifact_dir\}\/automation-attempt-\$\{attempt\}"/);
-  assert.match(script, /CTX_AUTOMATION_TMPDIR="\$\{attempt_dir\}\/tmp"/);
+  assert.match(script, /local attempt_tmp_dir="\$\{attempt_dir\}\/tmp"/);
+  assert.match(script, /CTX_AUTOMATION_TMPDIR="\$\{attempt_tmp_dir\}"/);
   assert.match(script, /CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR="\$\{attempt_dir\}\/controller-daemon-data"/);
   assert.match(script, /CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP="\$\{CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP:-1\}"/);
   assert.match(script, /CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP="\$\{CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP:-1\}"/);

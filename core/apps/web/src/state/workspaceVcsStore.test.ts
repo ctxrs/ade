@@ -327,4 +327,54 @@ describe("WorkspaceVcsStore", () => {
     expect((newerSummarySnapshot?.touched_files.items ?? [])[0]?.path).toBe("src/app.ts");
     store.destroy();
   });
+
+  it("can pin detail demand for a specific worktree before UI-derived demand catches up", async () => {
+    globalThis.WebSocket = MockWebSocket as unknown as typeof WebSocket;
+    const store = new WorkspaceVcsStore("workspace-1");
+    store.init();
+    await Promise.resolve();
+    await Promise.resolve();
+    const socket = mockSockets[0];
+    socket.open();
+
+    store.ensureDetailsDemand(["worktree-1"]);
+
+    expect(JSON.parse(socket.sent.at(-1) ?? "{}")).toEqual({
+      type: "replace_subscription",
+      summary_worktree_ids: ["worktree-1"],
+      detail_worktree_ids: ["worktree-1"],
+    });
+
+    socket.emit({
+      type: "details_snapshot",
+      workspace_id: "workspace-1",
+      worktree_id: "worktree-1",
+      demand_generation: 1,
+      snapshot: makeDetailSnapshot("worktree-1", 1, "vcs-soak-tracked.txt"),
+    });
+    await Promise.resolve();
+    expect(store.getWorktreeVcsSnapshot("worktree-1")).toBeNull();
+
+    socket.emit({
+      type: "subscribed",
+      workspace_id: "workspace-1",
+      demand_generation: 1,
+      summary_worktree_ids: ["worktree-1"],
+      detail_worktree_ids: ["worktree-1"],
+    });
+    await Promise.resolve();
+    socket.emit({
+      type: "details_snapshot",
+      workspace_id: "workspace-1",
+      worktree_id: "worktree-1",
+      demand_generation: 1,
+      snapshot: makeDetailSnapshot("worktree-1", 1, "vcs-soak-tracked.txt"),
+    });
+    await Promise.resolve();
+
+    expect(store.getWorktreeVcsSnapshot("worktree-1")?.touched_files.items?.[0]?.path ?? null).toBe(
+      "vcs-soak-tracked.txt",
+    );
+    store.destroy();
+  });
 });
