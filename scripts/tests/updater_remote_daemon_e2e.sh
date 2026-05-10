@@ -159,6 +159,109 @@ sweep_controller_app_processes() {
   fi
 }
 
+process_elapsed_seconds() {
+  local elapsed="$1"
+  local days=0
+  local time_part="$elapsed"
+  if [[ "$time_part" == *-* ]]; then
+    days="${time_part%%-*}"
+    time_part="${time_part#*-}"
+  fi
+
+  local first="" second="" third=""
+  IFS=: read -r first second third <<<"$time_part"
+  local hours=0
+  local minutes="$first"
+  local seconds="$second"
+  if [[ -n "${third:-}" ]]; then
+    hours="$first"
+    minutes="$second"
+    seconds="$third"
+  fi
+
+  if ! [[ "$days" =~ ^[0-9]+$ && "$hours" =~ ^[0-9]+$ && "$minutes" =~ ^[0-9]+$ && "$seconds" =~ ^[0-9]+$ ]]; then
+    return 1
+  fi
+  printf '%s\n' $((10#$days * 86400 + 10#$hours * 3600 + 10#$minutes * 60 + 10#$seconds))
+}
+
+command_is_ctx_automation_xvfb() {
+  local cmd="$1"
+  case "${cmd}" in
+    *Xvfb*/ctx-nightly/.artifacts/buildkite/ctx-nightly/*/updater-proof/automation-attempt-*/tmp/xvfb-run.*/Xauthority* | \
+    *Xvfb*/core/apps/desktop/automation/artifacts/updater-remote-proof/automation-attempt-*/tmp/xvfb-run.*/Xauthority* | \
+    *Xvfb*/core/apps/desktop/automation/artifacts/updater-linux-proof/*/volatile/artifacts/ctx-desktop-e2e/*/xvfb-run.*/Xauthority* | \
+    *Xvfb*/.ctx/volatile/artifacts/ctx-desktop-e2e/*/xvfb-run.*/Xauthority*) return 0 ;;
+  esac
+  return 1
+}
+
+sweep_stale_xvfb_processes() {
+  if [[ "${CTX_UPDATER_REMOTE_E2E_SWEEP_STALE_XVFB:-1}" != "1" ]]; then
+    return 0
+  fi
+  local min_age_seconds="${CTX_UPDATER_REMOTE_E2E_STALE_XVFB_MIN_AGE_SECONDS:-900}"
+  if ! [[ "$min_age_seconds" =~ ^[0-9]+$ ]]; then
+    echo "error: CTX_UPDATER_REMOTE_E2E_STALE_XVFB_MIN_AGE_SECONDS must be a non-negative integer" >&2
+    return 2
+  fi
+  if ! command -v ps >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local pids=()
+  local pid ppid elapsed cmd age_seconds
+  while read -r pid ppid elapsed cmd; do
+    if [[ -z "${pid}" || -z "${ppid}" || -z "${elapsed}" || -z "${cmd:-}" ]]; then
+      continue
+    fi
+    if [[ "$ppid" != "1" ]]; then
+      continue
+    fi
+    if ! command_is_ctx_automation_xvfb "$cmd"; then
+      continue
+    fi
+    if ! age_seconds="$(process_elapsed_seconds "$elapsed")"; then
+      continue
+    fi
+    if [[ "$age_seconds" -lt "$min_age_seconds" ]]; then
+      continue
+    fi
+    pids+=("${pid}")
+  done < <(ps -Ao pid=,ppid=,etime=,command= 2>/dev/null || true)
+
+  if [[ "${#pids[@]}" -gt 0 ]]; then
+    kill -9 "${pids[@]}" >/dev/null 2>&1 || true
+  fi
+}
+
+sweep_xvfb_processes_for_tmp_dir() {
+  local tmp_dir="$1"
+  if [[ -z "$tmp_dir" ]]; then
+    return 0
+  fi
+  if ! command -v ps >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local resolved_tmp_dir
+  resolved_tmp_dir="$(cd "$tmp_dir" 2>/dev/null && pwd -P || printf '%s' "$tmp_dir")"
+  local pids=()
+  local pid cmd
+  while read -r pid cmd; do
+    if [[ -z "${pid}" || -z "${cmd:-}" ]]; then
+      continue
+    fi
+    case "${cmd}" in
+      *Xvfb*"${tmp_dir}"* | *Xvfb*"${resolved_tmp_dir}"*) pids+=("${pid}") ;;
+    esac
+  done < <(ps -Ao pid=,command= 2>/dev/null || true)
+
+  if [[ "${#pids[@]}" -gt 0 ]]; then
+    kill -9 "${pids[@]}" >/dev/null 2>&1 || true
+  fi
+}
+
 if [[ -n "${CTX_DESKTOP_APP_PATH:-}" && "$STRICT_PUBLISHED_ARTIFACTS" == "1" ]]; then
   echo "error: strict published-artifact remote proof forbids CTX_DESKTOP_APP_PATH/local AppDir input" >&2
   exit 2
@@ -253,6 +356,7 @@ run_updater_remote_automation() {
       "${XDG_DATA_HOME}"
     chmod 700 "${XDG_RUNTIME_DIR}"
     write_process_snapshot "${attempt_dir}/processes-before-sweep.log"
+    sweep_stale_xvfb_processes
     sweep_controller_app_processes
     write_process_snapshot "${attempt_dir}/processes-after-preflight-sweep.log"
 
@@ -262,6 +366,8 @@ run_updater_remote_automation() {
     status="${PIPESTATUS[0]}"
     set -e
     write_process_snapshot "${attempt_dir}/processes-after-automation.log"
+    sweep_xvfb_processes_for_tmp_dir "${attempt_tmp_dir}"
+    sweep_stale_xvfb_processes
     sweep_controller_app_processes
     write_process_snapshot "${attempt_dir}/processes-after-automation-sweep.log"
 

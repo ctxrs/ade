@@ -71,6 +71,32 @@ test("remote updater proof sweeps scoped AppImage helper processes between attem
   assert.match(scriptText, /write_process_snapshot "\$\{attempt_dir\}\/processes-after-automation-sweep\.log"/);
 });
 
+test("remote updater proof preflight sweeps stale automation Xvfb processes", () => {
+  assert.match(scriptText, /process_elapsed_seconds\(\) \{/);
+  assert.match(scriptText, /command_is_ctx_automation_xvfb\(\) \{/);
+  assert.match(scriptText, /sweep_stale_xvfb_processes\(\) \{/);
+  assert.match(scriptText, /CTX_UPDATER_REMOTE_E2E_SWEEP_STALE_XVFB:-1/);
+  assert.match(scriptText, /CTX_UPDATER_REMOTE_E2E_STALE_XVFB_MIN_AGE_SECONDS:-900/);
+  assert.match(scriptText, /ps -Ao pid=,ppid=,etime=,command=/);
+  assert.match(scriptText, /"\$ppid" != "1"/);
+  assert.match(scriptText, /command_is_ctx_automation_xvfb "\$cmd"/);
+  assert.match(scriptText, /process_elapsed_seconds "\$elapsed"/);
+  assert.match(scriptText, /"\$age_seconds" -lt "\$min_age_seconds"/);
+  assert.match(scriptText, /\*Xvfb\*\/ctx-nightly\/\.artifacts\/buildkite\/ctx-nightly\/\*\/updater-proof\/automation-attempt-\*\/tmp\/xvfb-run\.\*\/Xauthority\*/);
+  assert.match(scriptText, /\*Xvfb\*\/core\/apps\/desktop\/automation\/artifacts\/updater-remote-proof\/automation-attempt-\*\/tmp\/xvfb-run\.\*\/Xauthority\*/);
+  assert.match(scriptText, /\*Xvfb\*\/core\/apps\/desktop\/automation\/artifacts\/updater-linux-proof\/\*\/volatile\/artifacts\/ctx-desktop-e2e\/\*\/xvfb-run\.\*\/Xauthority\*/);
+  assert.match(scriptText, /\*Xvfb\*\/\.ctx\/volatile\/artifacts\/ctx-desktop-e2e\/\*\/xvfb-run\.\*\/Xauthority\*/);
+  assert.match(scriptText, /write_process_snapshot "\$\{attempt_dir\}\/processes-before-sweep\.log"\s+sweep_stale_xvfb_processes\s+sweep_controller_app_processes/s);
+});
+
+test("remote updater proof sweeps exact current attempt Xvfb after automation", () => {
+  assert.match(scriptText, /sweep_xvfb_processes_for_tmp_dir\(\) \{/);
+  assert.match(scriptText, /resolved_tmp_dir="\$\(cd "\$tmp_dir" 2>\/dev\/null && pwd -P \|\| printf '%s' "\$tmp_dir"\)"/);
+  assert.match(scriptText, /ps -Ao pid=,command=/);
+  assert.match(scriptText, /\*Xvfb\*"\$\{tmp_dir\}"\* \| \*Xvfb\*"\$\{resolved_tmp_dir\}"\*/);
+  assert.match(scriptText, /write_process_snapshot "\$\{attempt_dir\}\/processes-after-automation\.log"\s+sweep_xvfb_processes_for_tmp_dir "\$\{attempt_tmp_dir\}"\s+sweep_stale_xvfb_processes\s+sweep_controller_app_processes/s);
+});
+
 test("remote updater proof retries startup-only WebDriver session failures with preserved logs", () => {
   assert.match(scriptText, /CTX_UPDATER_REMOTE_E2E_AUTOMATION_ATTEMPTS:-2/);
   assert.match(scriptText, /is_retryable_wdio_session_start_failure\(\) \{/);
