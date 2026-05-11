@@ -1,65 +1,19 @@
 use super::*;
 
+#[path = "idempotency/existing.rs"]
+mod existing;
 #[path = "idempotency/identity.rs"]
 mod identity;
 #[path = "idempotency/request.rs"]
 mod request;
 
 pub(super) use self::request::CreateTaskRequestParts;
-use identity::{
-    internal_store_error, task_id_conflict, task_not_found, validate_requested_task_identity,
-};
+pub(super) use existing::load_existing_task_for_request;
+use identity::{internal_store_error, task_not_found, validate_requested_task_identity};
 
 pub(super) struct PersistedTaskForCreate {
     pub(super) task: Task,
     pub(super) created_in_this_request: bool,
-}
-
-pub(super) async fn load_existing_task_for_request(
-    state: &Arc<AppState>,
-    store: &Store,
-    ws_id: WorkspaceId,
-    request: &CreateTaskRequestParts,
-) -> Result<Option<Task>, CreateTaskApiError> {
-    let Some(task_id) = request.task_id else {
-        return Ok(None);
-    };
-    let existing_ws = state
-        .global_store()
-        .get_workspace_id_for_task(task_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
-    let Some(existing_ws) = existing_ws else {
-        return Ok(None);
-    };
-    if existing_ws != ws_id {
-        return Err(task_id_conflict());
-    }
-    let existing = store.get_task(task_id).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
-    let Some(existing) = existing else {
-        return Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: "task index exists but task missing".to_string(),
-            }),
-        ));
-    };
-    validate_requested_task_identity(&existing, ws_id, request)?;
-    Ok(Some(existing))
 }
 
 pub(super) async fn persist_task_for_request(
