@@ -36,6 +36,8 @@ export type DesktopAppUpdateAttemptResp = { attempt_id: string, channel: string,
 
 export type DesktopAppUpdateCheckReq = { channel?: string | null, };
 
+export type DesktopUpdateChannelSettings = { channel: string, };
+
 export type DesktopAppUpdateCheckResp = { available: boolean, configured: boolean, current_version: string, endpoint: string, last_attempt_id?: string | null, last_error?: string | null, latest_version?: string | null, message?: string | null, phase: string, restart_required: boolean, staged: boolean, target: string, };
 
 export type DesktopAppUpdateStateResp = { available: boolean, configured: boolean, current_version: string, endpoint: string, last_attempt_id?: string | null, last_error?: string | null, latest_version?: string | null, message?: string | null, phase: string, restart_required: boolean, staged: boolean, target: string, };

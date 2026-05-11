@@ -8,6 +8,7 @@ const path = require("node:path");
 const childProcess = require("node:child_process");
 
 const ARTIFACT_IDENTITY_FILENAME = "artifact_identity.json";
+const PROVIDER_MATRIX_FILENAME = "provider_matrix.json";
 const HEALTH_TIMEOUT_MS = parsePositiveIntegerEnv("CTX_DESKTOP_IDENTITY_GATE_HEALTH_TIMEOUT_MS", 45_000);
 const HEALTH_RETRY_MS = 250;
 const AUTH_FILENAME = "daemon_auth.json";
@@ -138,7 +139,25 @@ function readArtifactIdentity(bundleDir) {
       fail(`artifact identity missing ${key} in ${identityPath}`);
     }
   }
+  if (Object.prototype.hasOwnProperty.call(identity, "channel")) {
+    fail(`artifact identity contains legacy routing field channel in ${identityPath}; use provenanceChannel only`);
+  }
   return identity;
+}
+
+function readBundledProviderManifestPolicy(bundleDir) {
+  const manifestPath = path.join(bundleDir, PROVIDER_MATRIX_FILENAME);
+  if (!fs.existsSync(manifestPath)) {
+    fail(`missing bundled provider manifest: ${manifestPath}`);
+  }
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
+    fail(`invalid bundled provider manifest in ${manifestPath}`);
+  }
+  if (Object.prototype.hasOwnProperty.call(manifest, "release_channel")) {
+    fail(`bundled provider manifest contains routing field release_channel in ${manifestPath}`);
+  }
+  return manifest;
 }
 
 function formatExecFailure(result, label, timeoutMs) {
@@ -397,6 +416,7 @@ async function main() {
     fail(`missing bundled AVF helper binary: ${avfLinuxHelper}`);
   }
   const identity = readArtifactIdentity(bundleDir);
+  readBundledProviderManifestPolicy(bundleDir);
   if (shouldUseStaticOnlyValidation({ platform: args.platform })) {
     console.log(
       `release_desktop_identity_gate: OK (static_only=1 reason=host_cannot_execute_target version=${identity.exactVersion} build_id=${identity.buildId} compatibility_token=${identity.compatibilityToken})`,

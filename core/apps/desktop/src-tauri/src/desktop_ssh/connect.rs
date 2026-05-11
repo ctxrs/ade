@@ -346,8 +346,7 @@ async fn desktop_connect_ssh_inner(
     }
     let expected_identity = load_desktop_build_identity(&app)
         .map_err(|err| format!("failed to load desktop identity: {err:#}"))?;
-    let channel =
-        normalize_update_channel_with_identity(None, expected_identity.channel.as_deref())?;
+    let channel = resolve_desktop_update_channel(&app, None)?;
     let prepared = tauri::async_runtime::spawn_blocking({
         let target = target.clone();
         let job_id = job_id.clone();

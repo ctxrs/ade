@@ -60,6 +60,7 @@ mod desktop_runtime;
 mod desktop_shared;
 mod desktop_ssh;
 mod desktop_storage;
+mod desktop_update_channel;
 mod desktop_updater;
 mod desktop_webview_recovery;
 mod desktop_windows;
@@ -81,6 +82,7 @@ use desktop_runtime::*;
 use desktop_shared::*;
 use desktop_ssh::*;
 use desktop_storage::*;
+use desktop_update_channel::*;
 use desktop_updater::*;
 use desktop_webview_recovery::*;
 use desktop_windows::*;
@@ -148,6 +150,8 @@ fn main() {
             desktop_save_text_file,
             desktop_get_editor_settings,
             desktop_update_editor_settings,
+            desktop_get_update_channel,
+            desktop_update_update_channel,
             desktop_open_file,
             desktop_open_path,
             desktop_open_deep_link,

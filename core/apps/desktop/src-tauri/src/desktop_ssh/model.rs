@@ -101,36 +101,10 @@ pub(super) fn normalize_update_channel_with_env(
     normalize_update_channel_with_sources(raw, env_channel, None)
 }
 
-pub(crate) fn normalize_update_channel_with_identity(
-    raw: Option<&str>,
-    identity_channel: Option<&str>,
-) -> Result<String, String> {
-    let env_channel = std::env::var("CTX_DESKTOP_CHANNEL").ok();
-    normalize_update_channel_with_sources(raw, env_channel.as_deref(), identity_channel)
-}
-
 pub(super) fn normalize_update_channel_with_sources(
     raw: Option<&str>,
     env_channel: Option<&str>,
-    identity_channel: Option<&str>,
+    preference_channel: Option<&str>,
 ) -> Result<String, String> {
-    let channel = raw
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .or_else(|| env_channel.map(str::trim).filter(|v| !v.is_empty()))
-        .or_else(|| identity_channel.map(str::trim).filter(|v| !v.is_empty()))
-        .unwrap_or("stable");
-    if channel.len() > 64 {
-        return Err("invalid channel (must be 64 characters or fewer)".to_string());
-    }
-    if matches!(channel, "." | "..") {
-        return Err("invalid channel (must not be '.' or '..')".to_string());
-    }
-    let valid = channel
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.');
-    if !valid {
-        return Err("invalid channel (expected [A-Za-z0-9._-])".to_string());
-    }
-    Ok(channel.to_string())
+    normalize_desktop_update_channel_with_sources(raw, env_channel, preference_channel)
 }

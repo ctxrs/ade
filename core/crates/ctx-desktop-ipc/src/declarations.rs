@@ -23,6 +23,7 @@ pub fn typescript_declarations() -> String {
     push_decl::<DesktopAppUpdateAttemptStageResp>(&mut out);
     push_decl::<DesktopAppUpdateAttemptResp>(&mut out);
     push_decl::<DesktopAppUpdateCheckReq>(&mut out);
+    push_decl::<DesktopUpdateChannelSettings>(&mut out);
     push_decl::<DesktopAppUpdateCheckResp>(&mut out);
     push_decl::<DesktopAppUpdateStateResp>(&mut out);
     push_decl::<DesktopAppUpdateApplyReq>(&mut out);

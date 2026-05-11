@@ -378,8 +378,17 @@ fn update_channel_validation() {
         "stable"
     );
     assert_eq!(
-        super::model::normalize_update_channel_with_sources(None, None, Some("e2e"))
-            .expect("identity"),
+        super::model::normalize_update_channel_with_sources(None, None, Some("canary"))
+            .expect("preference"),
+        "canary"
+    );
+    assert_eq!(
+        super::model::normalize_update_channel_with_sources(None, None, None).expect("default"),
+        "stable"
+    );
+    assert_eq!(
+        super::model::normalize_update_channel_with_sources(Some("e2e"), None, Some("canary"))
+            .expect("explicit"),
         "e2e"
     );
     assert_eq!(
@@ -388,12 +397,8 @@ fn update_channel_validation() {
         "canary"
     );
     assert_eq!(
-        super::model::normalize_update_channel_with_sources(
-            Some("beta"),
-            Some("canary"),
-            Some("e2e")
-        )
-        .expect("explicit"),
+        super::model::normalize_update_channel_with_sources(Some("beta"), Some("canary"), None)
+            .expect("explicit"),
         "beta"
     );
     assert!(

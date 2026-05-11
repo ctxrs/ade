@@ -6,10 +6,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../../components/ui/select";
-import type { DesktopEditorSettings } from "../../../utils/desktop";
+import type { DesktopEditorSettings, DesktopUpdateChannelSettings } from "../../../utils/desktop";
 import { TextInput } from "../../../components/ui/text-input";
 import type { ThemeMode } from "../../../utils/theme";
-import { EDITOR_OPTIONS } from "../SettingsPage.constants";
+import { EDITOR_OPTIONS, UPDATE_CHANNEL_OPTIONS } from "../SettingsPage.constants";
 import { Row } from "../SettingsPage.components";
 import { GeneralSection } from "./GeneralSection";
 
@@ -20,6 +20,10 @@ type GeneralSettingsSectionProps = {
   setEditorSettings: Dispatch<SetStateAction<DesktopEditorSettings>>;
   editorLoaded: boolean;
   editorError: string | null;
+  updateChannel: DesktopUpdateChannelSettings["channel"];
+  setUpdateChannel: (channel: DesktopUpdateChannelSettings["channel"]) => void;
+  updateChannelLoaded: boolean;
+  updateChannelError: string | null;
   clientSettingsError: string | null;
   showRemoteAuthority: boolean;
   isDesktopApp: () => boolean;
@@ -32,6 +36,10 @@ export function GeneralSettingsSection({
   setEditorSettings,
   editorLoaded,
   editorError,
+  updateChannel,
+  setUpdateChannel,
+  updateChannelLoaded,
+  updateChannelError,
   clientSettingsError,
   showRemoteAuthority,
   isDesktopApp,
@@ -84,6 +92,28 @@ export function GeneralSettingsSection({
               </Select>
             }
           />
+          <Row
+            title="Update channel"
+            description={isDesktopApp() ? "Stable is recommended for most installs." : "Available in the desktop app."}
+            control={
+              <Select
+                value={updateChannel}
+                onValueChange={(value) => setUpdateChannel(value as DesktopUpdateChannelSettings["channel"])}
+                disabled={!isDesktopApp() || !updateChannelLoaded}
+              >
+                <SelectTrigger className="settings-control settings-select tw-min-w-[10rem]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {UPDATE_CHANNEL_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            }
+          />
           {editorSettings.target === "custom" ? (
             <Row
               title="Custom IDE command"
@@ -117,6 +147,7 @@ export function GeneralSettingsSection({
         </div>
       </div>
       {editorError ? <div className="settings-banner settings-banner-error">{editorError}</div> : null}
+      {updateChannelError ? <div className="settings-banner settings-banner-error">{updateChannelError}</div> : null}
       {clientSettingsError ? <div className="settings-banner settings-banner-error">{clientSettingsError}</div> : null}
     </GeneralSection>
   );

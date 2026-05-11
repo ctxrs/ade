@@ -1,4 +1,4 @@
-import type { DesktopEditorSettings } from "../../utils/desktop";
+import type { DesktopEditorSettings, DesktopUpdateChannelSettings } from "../../utils/desktop";
 import type { SectionId } from "./SettingsPage.types";
 
 export const AGENT_PROMPT_DEFAULT = "You are working inside ctx, an agent development environment. Use ctx MCP tools to attach photos/videos as artifacts, start persistent web sessions (Playwright REPL/scripts), and run sub-agents for research or well-scoped implementations. Check `.ctx/attachments/refs/` and `.ctx/attachments/docs/` for extra reference repos and docs." as const;
@@ -30,6 +30,11 @@ export const EDITOR_OPTIONS: Array<{ value: DesktopEditorSettings["target"]; lab
   { value: "pycharm", label: "PyCharm" },
   { value: "xcode", label: "Xcode" },
   { value: "android_studio", label: "Android Studio" },
+];
+
+export const UPDATE_CHANNEL_OPTIONS: Array<{ value: DesktopUpdateChannelSettings["channel"]; label: string }> = [
+  { value: "stable", label: "Stable" },
+  { value: "canary", label: "Canary" },
 ];
 
 export const SECTIONS: Array<{

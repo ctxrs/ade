@@ -2,9 +2,17 @@ use super::*;
 
 #[path = "desktop_editor/opener.rs"]
 mod opener;
+#[path = "desktop_editor/settings.rs"]
+mod settings;
 pub(super) use ctx_desktop_ipc::{
     DesktopEditorSettings, DesktopEditorTarget, DesktopGitCloneReq, DesktopOpenFileReq,
     DesktopOpenPathReq, DesktopReadBinaryFileResp, DesktopSaveTextFileReq,
+    DesktopUpdateChannelSettings,
+};
+pub(super) use settings::{
+    desktop_get_editor_settings, desktop_get_update_channel, desktop_update_editor_settings,
+    desktop_update_update_channel, load_desktop_settings, load_desktop_update_channel_preference,
+    DEFAULT_DESKTOP_UPDATE_CHANNEL,
 };
 
 pub(super) fn open_in_editor(
@@ -19,12 +27,6 @@ pub(super) fn open_in_editor(
 
 pub(super) fn open_with_system(target: &str) -> Result<()> {
     opener::open_with_system(target)
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub(super) struct DesktopSettings {
-    #[serde(default)]
-    pub(super) editor: DesktopEditorSettings,
 }
 
 #[tauri::command]
@@ -74,24 +76,6 @@ pub(super) async fn desktop_save_text_file(
     .await
     .map_err(|e| format!("save file dialog failed: {e}"))??;
     Ok(picked)
-}
-
-#[tauri::command]
-pub(super) fn desktop_get_editor_settings(
-    app: tauri::AppHandle,
-) -> Result<DesktopEditorSettings, String> {
-    Ok(load_desktop_settings(&app).editor)
-}
-
-#[tauri::command]
-pub(super) fn desktop_update_editor_settings(
-    app: tauri::AppHandle,
-    req: DesktopEditorSettings,
-) -> Result<DesktopEditorSettings, String> {
-    let mut current = load_desktop_settings(&app);
-    current.editor = validate_renderer_editor_settings(req).map_err(to_err)?;
-    save_desktop_settings(&app, &current).map_err(to_err)?;
-    Ok(current.editor)
 }
 
 #[tauri::command]
@@ -196,70 +180,6 @@ pub(super) async fn desktop_git_clone(req: DesktopGitCloneReq) -> Result<String,
     .map_err(|e| format!("git clone failed: {e}"))?
 }
 
-fn desktop_settings_path(_app: &tauri::AppHandle) -> Result<PathBuf> {
-    let root = desktop_local_data_root()?;
-    Ok(ctx_fs::paths::ui_root(root).join("desktop-settings.json"))
-}
-
-pub(super) fn load_desktop_settings(app: &tauri::AppHandle) -> DesktopSettings {
-    let path = match desktop_settings_path(app) {
-        Ok(path) => path,
-        Err(_) => return DesktopSettings::default(),
-    };
-    let data = match std::fs::read_to_string(&path) {
-        Ok(data) => data,
-        Err(_) => return DesktopSettings::default(),
-    };
-    serde_json::from_str::<DesktopSettings>(&data)
-        .map(sanitize_persisted_desktop_settings)
-        .unwrap_or_default()
-}
-
-fn sanitize_persisted_desktop_settings(mut settings: DesktopSettings) -> DesktopSettings {
-    settings.editor = sanitize_persisted_editor_settings(settings.editor);
-    settings
-}
-
-fn sanitize_persisted_editor_settings(
-    mut settings: DesktopEditorSettings,
-) -> DesktopEditorSettings {
-    if matches!(settings.target, DesktopEditorTarget::Custom) {
-        settings.target = DesktopEditorTarget::System;
-    }
-    settings.custom_command = None;
-    settings.remote_authority = settings
-        .remote_authority
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string);
-    settings
-}
-
-fn validate_renderer_editor_settings(
-    mut settings: DesktopEditorSettings,
-) -> Result<DesktopEditorSettings> {
-    if matches!(settings.target, DesktopEditorTarget::Custom) {
-        anyhow::bail!("custom editor commands cannot be configured from the renderer");
-    }
-    if settings
-        .custom_command
-        .as_deref()
-        .map(str::trim)
-        .is_some_and(|value| !value.is_empty())
-    {
-        anyhow::bail!("custom editor commands cannot be configured from the renderer");
-    }
-    settings.custom_command = None;
-    settings.remote_authority = settings
-        .remote_authority
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string);
-    Ok(settings)
-}
-
 fn resolve_desktop_image_path(req: &DesktopOpenPathReq) -> Result<PathBuf, String> {
     const MAX_DESKTOP_IMAGE_BYTES: u64 = 25 * 1024 * 1024;
     const ALLOWED_EXTENSIONS: &[&str] = &[
@@ -332,16 +252,6 @@ fn is_supported_iso_bmff_image(bytes: &[u8]) -> bool {
     SUPPORTED_BRANDS.contains(&brand)
 }
 
-fn save_desktop_settings(app: &tauri::AppHandle, settings: &DesktopSettings) -> Result<()> {
-    let path = desktop_settings_path(app)?;
-    save_desktop_settings_to_path(&path, settings)
-}
-
-fn save_desktop_settings_to_path(path: &Path, settings: &DesktopSettings) -> Result<()> {
-    let bytes = serde_json::to_vec_pretty(settings)?;
-    ctx_fs::permissions::write_private_file_atomic_sync(path, &bytes)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -351,27 +261,6 @@ mod tests {
             std::env::temp_dir().join(format!("ctx-desktop-editor-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn save_desktop_settings_writes_private_file() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let dir = temp_test_dir();
-        let path = dir.join("ui").join("desktop-settings.json");
-
-        save_desktop_settings_to_path(&path, &DesktopSettings::default()).unwrap();
-
-        let dir_mode = std::fs::metadata(path.parent().unwrap())
-            .unwrap()
-            .permissions()
-            .mode()
-            & 0o777;
-        let file_mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-        assert_eq!(dir_mode, 0o700);
-        assert_eq!(file_mode, 0o600);
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -458,46 +347,6 @@ mod tests {
 
         assert!(err.contains("25 MiB"));
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn renderer_editor_settings_reject_custom_target_and_command() {
-        let custom_target = validate_renderer_editor_settings(DesktopEditorSettings {
-            target: DesktopEditorTarget::Custom,
-            custom_command: Some("code --goto {path}:{line}:{col}".to_string()),
-            remote_authority: None,
-        })
-        .unwrap_err();
-        assert!(
-            format!("{custom_target:#}").contains("custom editor commands"),
-            "unexpected error: {custom_target:#}"
-        );
-
-        let custom_command = validate_renderer_editor_settings(DesktopEditorSettings {
-            target: DesktopEditorTarget::Cursor,
-            custom_command: Some("cursor {path}".to_string()),
-            remote_authority: None,
-        })
-        .unwrap_err();
-        assert!(
-            format!("{custom_command:#}").contains("custom editor commands"),
-            "unexpected error: {custom_command:#}"
-        );
-    }
-
-    #[test]
-    fn persisted_editor_settings_drop_legacy_custom_command() {
-        let sanitized = sanitize_persisted_editor_settings(DesktopEditorSettings {
-            target: DesktopEditorTarget::Custom,
-            custom_command: Some("code {path}".to_string()),
-            remote_authority: Some(" ssh-remote+devbox ".to_string()),
-        });
-        assert_eq!(sanitized.target, DesktopEditorTarget::System);
-        assert_eq!(sanitized.custom_command, None);
-        assert_eq!(
-            sanitized.remote_authority.as_deref(),
-            Some("ssh-remote+devbox")
-        );
     }
 
     #[test]

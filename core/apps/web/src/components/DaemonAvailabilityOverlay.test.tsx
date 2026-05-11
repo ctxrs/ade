@@ -258,7 +258,7 @@ describe("DaemonAvailabilityOverlay", () => {
     expect(await screen.findByRole("button", { name: "Update desktop app" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Update desktop app" }));
     await waitFor(() => {
-      expect(vi.mocked(desktopApplyAppUpdate)).toHaveBeenCalledWith("stable");
+      expect(vi.mocked(desktopApplyAppUpdate)).toHaveBeenCalledWith();
     });
     expect(
       await screen.findByText(/restart the desktop app to apply the update/i),

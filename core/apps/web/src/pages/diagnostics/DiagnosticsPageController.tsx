@@ -129,7 +129,7 @@ export default function DiagnosticsPage() {
       if (desktop && !nextIsLinux) {
         try {
           const [nativeInfo, attempt] = await Promise.all([
-            desktopCheckAppUpdate("stable"),
+            desktopCheckAppUpdate(),
             desktopGetLastAppUpdateAttempt().catch(() => null),
           ]);
           setDesktopAppUpdateInfo(nativeInfo);
@@ -190,14 +190,14 @@ export default function DiagnosticsPage() {
     const downloadId = createDownloadAttributionId();
     try {
       await setPendingDownloadAttributionId(downloadId);
-      const resp = await desktopApplyAppUpdate("stable", downloadId);
+      const resp = await desktopApplyAppUpdate({ downloadId });
       if (!resp.applied) {
         await clearPendingDownloadAttributionId();
       }
       setNotice(resp.message);
       try {
         const [nativeInfo, attempt] = await Promise.all([
-          desktopCheckAppUpdate("stable"),
+          desktopCheckAppUpdate(),
           desktopGetLastAppUpdateAttempt().catch(() => null),
         ]);
         setDesktopAppUpdateInfo(nativeInfo);

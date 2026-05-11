@@ -8,7 +8,7 @@ import {
   useThemeVariant,
 } from "../../../utils/theme";
 import { errorMessage } from "../../../utils/errorMessage";
-import { isDesktopApp, type DesktopEditorSettings } from "../../../utils/desktop";
+import { isDesktopApp, type DesktopEditorSettings, type DesktopUpdateChannelSettings } from "../../../utils/desktop";
 import {
   getDesktopNotificationPermission,
   requestDesktopNotificationPermission,
@@ -22,6 +22,7 @@ import {
   type ClientSettingsState,
 } from "../../../state/clientSettings";
 import { useDesktopEditorSettingsController } from "./useDesktopEditorSettingsController";
+import { useDesktopUpdateChannelController } from "./useDesktopUpdateChannelController";
 
 type SettingsGeneralPreferencesController = {
   theme: ThemeMode;
@@ -30,6 +31,10 @@ type SettingsGeneralPreferencesController = {
   setEditorSettings: Dispatch<SetStateAction<DesktopEditorSettings>>;
   editorLoaded: boolean;
   editorError: string | null;
+  updateChannel: DesktopUpdateChannelSettings["channel"];
+  setUpdateChannel: (channel: DesktopUpdateChannelSettings["channel"]) => void;
+  updateChannelLoaded: boolean;
+  updateChannelError: string | null;
   showRemoteAuthority: boolean;
   isDesktopApp: () => boolean;
 };
@@ -83,6 +88,12 @@ export function useSettingsLocalPreferencesController(): SettingsLocalPreference
     editorLoaded,
     editorError,
   } = useDesktopEditorSettingsController(isDesktopApp());
+  const {
+    updateChannel,
+    setUpdateChannel,
+    updateChannelLoaded,
+    updateChannelError,
+  } = useDesktopUpdateChannelController(isDesktopApp());
 
   const clientSettingsState = useSyncExternalStore(
     subscribeClientSettings,
@@ -174,6 +185,10 @@ export function useSettingsLocalPreferencesController(): SettingsLocalPreference
       setEditorSettings,
       editorLoaded,
       editorError,
+      updateChannel,
+      setUpdateChannel,
+      updateChannelLoaded,
+      updateChannelError,
       showRemoteAuthority: vscodeRemoteTargets.includes(editorSettings.target),
       isDesktopApp,
     },

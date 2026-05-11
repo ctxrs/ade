@@ -30,6 +30,7 @@ import type {
   DesktopWebviewRecoveryHeartbeatReq,
   DesktopWebviewRecoveryIncident,
   DesktopGitCloneReq,
+  DesktopUpdateChannelSettings,
 } from "../generated/desktop-ipc";
 import { invoke, invokeDesktopReq, isDesktopApp } from "./desktopCore";
 
@@ -73,6 +74,17 @@ export const desktopUpdateEditorSettings = async (
 ): Promise<DesktopEditorSettings> =>
   invokeDesktopReq<DesktopEditorSettings, DesktopEditorSettings>(
     "desktop_update_editor_settings",
+    settings,
+  );
+
+export const desktopGetUpdateChannel = async (): Promise<DesktopUpdateChannelSettings> =>
+  invoke<DesktopUpdateChannelSettings>("desktop_get_update_channel");
+
+export const desktopUpdateUpdateChannel = async (
+  settings: DesktopUpdateChannelSettings,
+): Promise<DesktopUpdateChannelSettings> =>
+  invokeDesktopReq<DesktopUpdateChannelSettings, DesktopUpdateChannelSettings>(
+    "desktop_update_update_channel",
     settings,
   );
 

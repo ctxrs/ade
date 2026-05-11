@@ -43,6 +43,11 @@ pub struct DesktopAppUpdateCheckReq {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct DesktopUpdateChannelSettings {
+    pub channel: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct DesktopAppUpdateCheckResp {
     pub available: bool,
     pub configured: bool,

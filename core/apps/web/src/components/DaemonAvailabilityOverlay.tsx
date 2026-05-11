@@ -165,7 +165,7 @@ export default function DaemonAvailabilityOverlay() {
     setActionError(null);
     setNotice(null);
     try {
-      const resp = await desktopApplyAppUpdate("stable");
+      const resp = await desktopApplyAppUpdate();
       if (resp.needs_restart) {
         const details = String(resp.message || "").trim();
         const guidance = details

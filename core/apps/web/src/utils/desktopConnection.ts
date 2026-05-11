@@ -33,6 +33,19 @@ const sleep = (ms: number) =>
     globalThis.setTimeout(resolve, ms);
   });
 
+type DesktopUpdateChannelOverride = {
+  channel?: string | null;
+};
+
+type DesktopAppUpdateApplyOptions = DesktopUpdateChannelOverride & {
+  downloadId?: string | null;
+};
+
+const optionalText = (value: string | null | undefined): string | undefined => {
+  const normalized = String(value ?? "").trim();
+  return normalized.length > 0 ? normalized : undefined;
+};
+
 const consumeDesktopSshConnectJob = async (jobId: string) => {
   try {
     const req: DesktopSshConnectPollReq = { job_id: jobId, consume: true };
@@ -91,32 +104,45 @@ export const desktopConnectSsh = async (req: SshConnectReq): Promise<DesktopConn
   throw new Error("desktop_connect_ssh timed out waiting for completion");
 };
 
-export const desktopUpdateRemoteDaemon = async (channel?: string): Promise<DesktopRemoteDaemonUpdateResp> =>
-  invokeDesktopReq<DesktopRemoteDaemonUpdateReq, DesktopRemoteDaemonUpdateResp>(
+export const desktopUpdateRemoteDaemon = async (
+  options?: DesktopUpdateChannelOverride,
+): Promise<DesktopRemoteDaemonUpdateResp> => {
+  const channel = optionalText(options?.channel);
+  return invokeDesktopReq<DesktopRemoteDaemonUpdateReq, DesktopRemoteDaemonUpdateResp>(
     "desktop_update_remote_daemon",
     {
       confirm: true,
       ...(channel ? { channel } : {}),
     },
   );
+};
 
-export const desktopCheckAppUpdate = async (channel?: string): Promise<DesktopAppUpdateCheckResp> =>
-  invokeDesktopReq<DesktopAppUpdateCheckReq, DesktopAppUpdateCheckResp>(
+export const desktopCheckAppUpdate = async (
+  options?: DesktopUpdateChannelOverride,
+): Promise<DesktopAppUpdateCheckResp> => {
+  const channel = optionalText(options?.channel);
+  return invokeDesktopReq<DesktopAppUpdateCheckReq, DesktopAppUpdateCheckResp>(
     "desktop_check_app_update",
     channel ? { channel } : {},
   );
+};
 
-export const desktopGetAppUpdateState = async (channel?: string): Promise<DesktopAppUpdateStateResp> =>
-  invokeDesktopReq<DesktopAppUpdateCheckReq, DesktopAppUpdateStateResp>(
+export const desktopGetAppUpdateState = async (
+  options?: DesktopUpdateChannelOverride,
+): Promise<DesktopAppUpdateStateResp> => {
+  const channel = optionalText(options?.channel);
+  return invokeDesktopReq<DesktopAppUpdateCheckReq, DesktopAppUpdateStateResp>(
     "desktop_get_app_update_state",
     channel ? { channel } : {},
   );
+};
 
 export const desktopApplyAppUpdate = async (
-  channel?: string,
-  downloadId?: string,
-): Promise<DesktopAppUpdateApplyResp> =>
-  invokeDesktopReq<DesktopAppUpdateApplyReq, DesktopAppUpdateApplyResp>(
+  options?: DesktopAppUpdateApplyOptions,
+): Promise<DesktopAppUpdateApplyResp> => {
+  const channel = optionalText(options?.channel);
+  const downloadId = optionalText(options?.downloadId);
+  return invokeDesktopReq<DesktopAppUpdateApplyReq, DesktopAppUpdateApplyResp>(
     "desktop_apply_app_update",
     {
       confirm: true,
@@ -124,6 +150,7 @@ export const desktopApplyAppUpdate = async (
       ...(downloadId ? { download_id: downloadId } : {}),
     },
   );
+};
 
 export const desktopRestartApp = async (): Promise<DesktopAppRestartResp> =>
   invoke<DesktopAppRestartResp>("desktop_restart_app");

@@ -13,6 +13,7 @@ export type {
   DesktopDeepLinkToken,
   DesktopDockRecentLocalWorkspace,
   DesktopEditorSettings,
+  DesktopUpdateChannelSettings,
   DesktopHttpResponse,
   DesktopLinuxSandboxEnsureResp,
   DesktopMenuItemStateUpdate,

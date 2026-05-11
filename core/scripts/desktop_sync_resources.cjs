@@ -1424,13 +1424,30 @@ const resolveBundleProviderMatrixSource = (env = process.env) => {
   return path.join(coreRoot, "crates", "ctx-provider-accounts", "src", "provider_matrix.json");
 };
 
+const sanitizeBundledProviderManifest = (sourcePath) => {
+  let manifest;
+  try {
+    manifest = JSON.parse(fs.readFileSync(sourcePath, "utf8"));
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`failed to parse provider manifest for bundle sync ${sourcePath}: ${detail}`);
+  }
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
+    throw new Error(`provider manifest for bundle sync must be a JSON object: ${sourcePath}`);
+  }
+  const bundledManifest = { ...manifest };
+  delete bundledManifest.release_channel;
+  return bundledManifest;
+};
+
 const writeBundledProviderManifest = (bundleDir = destBundleDir, env = process.env) => {
   const sourcePath = resolveBundleProviderMatrixSource(env);
   if (!fs.existsSync(sourcePath)) {
     throw new Error(`missing provider manifest for bundle sync: ${sourcePath}`);
   }
   const targetPath = path.join(bundleDir, PROVIDER_MATRIX_FILENAME);
-  fs.copyFileSync(sourcePath, targetPath);
+  const bundledManifest = sanitizeBundledProviderManifest(sourcePath);
+  fs.writeFileSync(targetPath, `${JSON.stringify(bundledManifest, null, 2)}\n`, "utf8");
   return targetPath;
 };
 

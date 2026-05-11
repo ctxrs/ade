@@ -94,18 +94,18 @@ describe("desktop request envelopes", () => {
 
     const desktop = await import("./desktop");
 
-    await desktop.desktopUpdateRemoteDaemon("canary");
-    await desktop.desktopCheckAppUpdate("stable");
-    await desktop.desktopGetAppUpdateState("stable");
-    await desktop.desktopApplyAppUpdate("stable", "download-42");
+    await desktop.desktopUpdateRemoteDaemon({ channel: "canary" });
+    await desktop.desktopCheckAppUpdate();
+    await desktop.desktopGetAppUpdateState({ channel: "canary" });
+    await desktop.desktopApplyAppUpdate({ downloadId: "download-42" });
 
     expect(invokeMock.mock.calls).toEqual([
       ["desktop_update_remote_daemon", { req: { confirm: true, channel: "canary" } }],
-      ["desktop_check_app_update", { req: { channel: "stable" } }],
-      ["desktop_get_app_update_state", { req: { channel: "stable" } }],
+      ["desktop_check_app_update", { req: {} }],
+      ["desktop_get_app_update_state", { req: { channel: "canary" } }],
       [
         "desktop_apply_app_update",
-        { req: { confirm: true, channel: "stable", download_id: "download-42" } },
+        { req: { confirm: true, download_id: "download-42" } },
       ],
     ]);
   });

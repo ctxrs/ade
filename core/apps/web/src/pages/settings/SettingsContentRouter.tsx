@@ -73,6 +73,10 @@ export function SettingsContentRouter(props: {
         setEditorSettings={general.setEditorSettings}
         editorLoaded={general.editorLoaded}
         editorError={general.editorError}
+        updateChannel={general.updateChannel}
+        setUpdateChannel={general.setUpdateChannel}
+        updateChannelLoaded={general.updateChannelLoaded}
+        updateChannelError={general.updateChannelError}
         clientSettingsError={notifications.clientSettingsError}
         showRemoteAuthority={general.showRemoteAuthority}
         isDesktopApp={general.isDesktopApp}

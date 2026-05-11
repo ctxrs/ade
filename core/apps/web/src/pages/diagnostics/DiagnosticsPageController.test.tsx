@@ -290,7 +290,7 @@ describe("DiagnosticsPage updates", () => {
     fireEvent.click(installButton);
 
     await waitFor(() => {
-      expect(desktopApplyAppUpdate).toHaveBeenCalledWith("stable", expect.any(String));
+      expect(desktopApplyAppUpdate).toHaveBeenCalledWith({ downloadId: expect.any(String) });
     });
   });
 

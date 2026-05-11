@@ -38,22 +38,7 @@ fn resolve_app_update_channel(
     app: &tauri::AppHandle,
     requested: Option<&str>,
 ) -> Result<String, String> {
-    let requested_present = requested
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .is_some();
-    let env_present = std::env::var("CTX_DESKTOP_CHANNEL")
-        .ok()
-        .map(|value| !value.trim().is_empty())
-        .unwrap_or(false);
-    let identity_channel = if requested_present || env_present {
-        None
-    } else {
-        load_desktop_build_identity(app)
-            .map_err(|err| format!("failed to load desktop identity: {err:#}"))?
-            .channel
-    };
-    desktop_ssh::normalize_update_channel_with_identity(requested, identity_channel.as_deref())
+    resolve_desktop_update_channel(app, requested)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

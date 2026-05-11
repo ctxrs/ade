@@ -55,13 +55,15 @@ describe("desktop IPC corpus", () => {
           result = await desktop.desktopGetConnection();
           break;
         case "desktopCheckAppUpdate":
-          result = await desktop.desktopCheckAppUpdate(testCase.call?.channel);
+          result = await desktop.desktopCheckAppUpdate(
+            testCase.call?.channel ? { channel: testCase.call.channel } : undefined,
+          );
           break;
         case "desktopApplyAppUpdate":
-          result = await desktop.desktopApplyAppUpdate(
-            testCase.call?.channel,
-            testCase.call?.download_id,
-          );
+          result = await desktop.desktopApplyAppUpdate({
+            channel: testCase.call?.channel,
+            downloadId: testCase.call?.download_id,
+          });
           break;
         case "desktopGetLastAppUpdateAttempt":
           result = await desktop.desktopGetLastAppUpdateAttempt();

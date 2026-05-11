@@ -65,6 +65,34 @@ test("desktop sync resources maps explicit Rust target triples to bundle os/arch
   );
 });
 
+test("desktop sync resources strips provider release channel from bundled manifest", () => {
+  const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-bundle-provider-matrix-"));
+  const sourceDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-source-provider-matrix-"));
+  try {
+    const matrixPath = path.join(sourceDir, "provider_matrix.json");
+    fs.writeFileSync(
+      matrixPath,
+      `${JSON.stringify({
+        version: 3,
+        release_channel: "canary",
+        providers: [{ id: "codex", display_name: "Codex" }],
+      }, null, 2)}\n`,
+      "utf8",
+    );
+
+    const targetPath = __desktopSyncResourcesTestHooks.writeBundledProviderManifest(bundleDir, {
+      CTX_BUNDLE_MATRIX_JSON: matrixPath,
+    });
+    const bundled = JSON.parse(fs.readFileSync(targetPath, "utf8"));
+
+    assert.equal(Object.prototype.hasOwnProperty.call(bundled, "release_channel"), false);
+    assert.deepEqual(bundled.providers, [{ id: "codex", display_name: "Codex" }]);
+  } finally {
+    fs.rmSync(bundleDir, { recursive: true, force: true });
+    fs.rmSync(sourceDir, { recursive: true, force: true });
+  }
+});
+
 test("linux ctx-mcp runtime bundling follows the target app arch instead of the build host arch", () => {
   assert.equal(
     __desktopSyncResourcesTestHooks.resolveLinuxCtxMcpRuntimeArch({

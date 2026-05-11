@@ -200,7 +200,7 @@ function resolveDesktopBuildIdentity({
     exactVersion,
     buildId,
     compatibilityToken,
-    channel,
+    provenanceChannel: channel,
     sourceCommit: sourceCommit || null,
     mode: normalizedMode,
     checkedInVersion,
