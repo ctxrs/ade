@@ -3,23 +3,23 @@ use std::sync::Arc;
 use anyhow::Result;
 use ctx_core::models::{Worktree, WorktreeVcsBaseResolutionKind};
 use ctx_workspace_services::worktree_vcs::{
-    build_git_status_entries, build_git_status_summary, finish_worktree_vcs_refresh,
-    is_no_vcs_repo_error, plan_worktree_vcs_touched_files_refresh,
+    finish_worktree_vcs_refresh, plan_worktree_vcs_touched_files_refresh,
     resolve_worktree_diff_base_from_source, worktree_vcs_projection_cache_state,
     WorktreeDiffBaseResolution, WorktreeVcsDiffBaseQuery,
 };
 
 use crate::daemon::AppState;
 
+use self::status::{load_status_projection, StatusProjectionOutcome};
 use self::touched::{refresh_touched_files_projection, TouchedFilesRefreshOutcome};
 use super::super::snapshot::{
     build_worktree_vcs_snapshot_from_parts, publish_no_repo_snapshot, publish_unavailable_snapshot,
 };
 use super::super::source::HttpWorktreeVcsSource;
 use super::super::worktree_has_vcs_repo;
-use super::loading::load_git_status_snapshot;
 use super::publish::publish_worktree_vcs_snapshot;
 
+mod status;
 mod summary;
 mod touched;
 
@@ -80,29 +80,13 @@ pub(in crate::daemon::git_status) async fn refresh_worktree_vcs_projection(
     let touched_plan =
         plan_worktree_vcs_touched_files_refresh(&summary_result.summary, refresh_touched_files);
     let include_status_inventory = touched_plan.include_status_inventory();
-    let git_snapshot = match load_git_status_snapshot(
-        state,
-        worktree,
-        include_status_inventory,
-        include_status_inventory,
-    )
-    .await
-    {
-        Ok(snapshot) => snapshot,
-        Err(err) if is_no_vcs_repo_error(&err) => {
-            return publish_no_repo_snapshot(state, worktree, resolution, force_emit).await;
-        }
-        Err(err) => return Err(err),
-    };
-
-    let git_status = build_git_status_summary(
-        &git_snapshot,
-        if include_status_inventory {
-            build_git_status_entries(&git_snapshot.entries)
-        } else {
-            Vec::new()
-        },
-    );
+    let status_projection =
+        match load_status_projection(state, worktree, include_status_inventory).await? {
+            StatusProjectionOutcome::Ready(status_projection) => status_projection,
+            StatusProjectionOutcome::NoRepo => {
+                return publish_no_repo_snapshot(state, worktree, resolution, force_emit).await;
+            }
+        };
 
     let touched_result = match refresh_touched_files_projection(
         &source,
@@ -122,7 +106,7 @@ pub(in crate::daemon::git_status) async fn refresh_worktree_vcs_projection(
     let snapshot = build_worktree_vcs_snapshot_from_parts(
         state,
         worktree,
-        git_status,
+        status_projection.git_status,
         touched_result.touched_files.clone(),
         touched_result.touched_files_state.clone(),
         summary_result.summary.clone(),
@@ -139,7 +123,7 @@ pub(in crate::daemon::git_status) async fn refresh_worktree_vcs_projection(
     let entry = runtime.entry(worktree.id).or_default();
     finish_worktree_vcs_refresh(
         entry,
-        git_snapshot,
+        status_projection.git_snapshot,
         touched_result.touched_files,
         touched_result.touched_files_state,
     );
