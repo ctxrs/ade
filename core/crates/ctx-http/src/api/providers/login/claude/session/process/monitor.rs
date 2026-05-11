@@ -4,22 +4,13 @@ use super::*;
 mod finalization;
 #[path = "monitor/output.rs"]
 mod output;
+#[path = "monitor/termination.rs"]
+mod termination;
 
 use finalization::finalize_claude_login;
 use output::{drain_claude_login_output, observe_claude_login_line, ClaudeLoginOutputDrainMode};
-
-pub(in crate::api::providers::login::claude::session) async fn kill_claude_login_process(
-    killer: Arc<StdMutex<Box<dyn portable_pty::ChildKiller + Send + Sync>>>,
-) -> anyhow::Result<()> {
-    tokio::task::spawn_blocking(move || {
-        let mut guard = killer
-            .lock()
-            .map_err(|_| anyhow::anyhow!("claude setup-token killer lock poisoned"))?;
-        guard.kill().context("killing claude setup-token process")
-    })
-    .await
-    .context("joining claude setup-token kill task")?
-}
+pub(in crate::api::providers::login::claude::session) use termination::kill_claude_login_process;
+use termination::terminate_claude_login_after_error;
 
 pub(in crate::api::providers::login::claude::session) async fn monitor_claude_login(
     state: Arc<AppState>,
@@ -135,25 +126,13 @@ pub(in crate::api::providers::login::claude::session) async fn monitor_claude_lo
     .await;
 
     if terminal_error.is_some() {
-        if let Err(err) = kill_claude_login_process(Arc::clone(&login.killer)).await {
-            let suffix = format!("; failed to terminate setup-token process cleanly: {err}");
-            terminal_error = Some(match terminal_error.take() {
-                Some(base) => format!("{base}{suffix}"),
-                None => suffix,
-            });
-        }
-        if exit_result.is_none() {
-            if let Ok(exit) =
-                tokio::time::timeout(CLAUDE_LOGIN_EXIT_GRACE_WAIT, &mut login.exit_rx).await
-            {
-                exit_result = Some(match exit {
-                    Ok(result) => result,
-                    Err(err) => Err(anyhow::anyhow!(
-                        "claude setup-token exit channel closed: {err}"
-                    )),
-                });
-            }
-        }
+        terminate_claude_login_after_error(
+            Arc::clone(&login.killer),
+            &mut login.exit_rx,
+            &mut terminal_error,
+            &mut exit_result,
+        )
+        .await;
     }
 
     finalize_claude_login(
