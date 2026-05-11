@@ -5,6 +5,10 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 
+mod relay;
+
+use relay::spawn_avf_daemon_gateway_proxy;
+
 struct AvfDaemonGatewayProxy {
     gateway_addr: String,
     backend_addr: String,
@@ -82,49 +86,8 @@ async fn ensure_avf_guest_gateway_proxy(
 
     let gateway_addr = gateway_addr.to_string();
     let backend_addr = backend_addr.to_string();
-    let gateway_addr_for_task = gateway_addr.clone();
-    let backend_addr_for_task = backend_addr.clone();
-    let handle = tokio::spawn(async move {
-        loop {
-            let (mut inbound, peer_addr) = match listener.accept().await {
-                Ok(parts) => parts,
-                Err(err) => {
-                    tracing::warn!(
-                        gateway_addr = gateway_addr_for_task,
-                        backend_addr = backend_addr_for_task,
-                        "AVF daemon gateway proxy accept failed: {err}"
-                    );
-                    break;
-                }
-            };
-            let backend_addr = backend_addr_for_task.clone();
-            let gateway_addr = gateway_addr_for_task.clone();
-            tokio::spawn(async move {
-                match tokio::net::TcpStream::connect(&backend_addr).await {
-                    Ok(mut outbound) => {
-                        if let Err(err) =
-                            tokio::io::copy_bidirectional(&mut inbound, &mut outbound).await
-                        {
-                            tracing::debug!(
-                                gateway_addr,
-                                backend_addr,
-                                %peer_addr,
-                                "AVF daemon gateway proxy relay closed with error: {err}"
-                            );
-                        }
-                    }
-                    Err(err) => {
-                        tracing::warn!(
-                            gateway_addr,
-                            backend_addr,
-                            %peer_addr,
-                            "AVF daemon gateway proxy could not connect to backend: {err}"
-                        );
-                    }
-                }
-            });
-        }
-    });
+    let handle =
+        spawn_avf_daemon_gateway_proxy(listener, gateway_addr.clone(), backend_addr.clone());
     let mut proxies = avf_daemon_gateway_proxies()
         .lock()
         .map_err(|_| anyhow!("AVF daemon gateway proxy mutex poisoned"))?;
