@@ -1,14 +1,15 @@
 use ctx_core::models::SessionEvent;
 use ctx_session_tools::interrupt_telemetry::{latency_bucket, metric_labels};
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use crate::daemon::AppState;
-use ctx_observability::ops_events::OpsEvent;
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
 use ctx_observability::telemetry::TelemetryEvent;
 
 use super::state::EventLoopRuntimeState;
 use super::TurnEventLoop;
+
+mod failed_turn;
 
 pub(super) async fn record_terminal_run_telemetry(
     ctx: &TurnEventLoop,
@@ -137,22 +138,5 @@ pub(super) async fn record_failed_turn_telemetry(
     kind: Option<Value>,
 ) {
     record_terminal_run_telemetry(ctx, runtime, state, "run_failed", false, "failed").await;
-
-    let mut fail_event = OpsEvent::new("error", "provider_run_failed");
-    fail_event.session_id = Some(ctx.session_id.0.to_string());
-    fail_event.worktree_id = Some(ctx.worktree_id.0.to_string());
-    fail_event.run_id = Some(ctx.run_id.0.to_string());
-    fail_event.turn_id = Some(ctx.turn_id.0.to_string());
-    fail_event.provider_id = Some(ctx.provider_id.clone());
-    fail_event.cwd = Some(ctx.workdir_str.clone());
-    fail_event.worktree_root = Some(ctx.workdir_str.clone());
-    fail_event.meta = Some(json!({
-        "model_id": ctx.model_id.clone(),
-        "execution_environment": ctx.execution_environment_label.clone(),
-        "session_root_kind": ctx.session_root_kind.clone(),
-        "error": error_message,
-        "details": details,
-        "kind": kind,
-    }));
-    state.telemetry.ops_events.emit(fail_event);
+    failed_turn::emit_failed_turn_ops_event(ctx, state, error_message, details, kind);
 }
