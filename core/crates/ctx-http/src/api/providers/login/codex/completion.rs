@@ -1,5 +1,10 @@
 use super::*;
 
+#[path = "completion/replay.rs"]
+mod replay;
+
+use replay::replay_codex_callback;
+
 async fn restore_completion_token(state: &Arc<AppState>, id: &str, completion_token: &str) {
     let mut map = state.providers.codex_login_sessions.lock().await;
     if let Some(status) = map.get_mut(id) {
@@ -64,76 +69,17 @@ pub(crate) async fn complete_codex_login(
         ));
     }
 
-    let parsed_callback = Url::parse(&req.callback_url).map_err(|err| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: format!("invalid callback_url: {err}"),
-            }),
-        )
-    })?;
-    let callback_host = parsed_callback
-        .host_str()
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let client = if callback_host == "localhost" {
-        reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .resolve(
-                "localhost",
-                std::net::SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 0),
-            )
-            .build()
-            .map_err(|err| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: format!("failed to build callback replay client: {err}"),
-                    }),
-                )
-            })?
-    } else {
-        reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|err| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: format!("failed to build callback replay client: {err}"),
-                    }),
-                )
-            })?
-    };
-
-    let response = match client
-        .get(&req.callback_url)
-        .timeout(Duration::from_secs(20))
-        .send()
-        .await
-    {
-        Ok(response) => response,
+    let status_code = match replay_codex_callback(&req.callback_url).await {
+        Ok(status_code) => status_code,
         Err(err) => {
-            restore_completion_token(&state, &id, &req.completion_token).await;
-            return Err((
-                StatusCode::BAD_GATEWAY,
-                Json(ApiErrorResp {
-                    error: format!("failed to replay callback: {err}"),
-                }),
-            ));
+            if err.should_restore_completion_token() {
+                restore_completion_token(&state, &id, &req.completion_token).await;
+            }
+            let status = err.status_code();
+            let error = err.into_message();
+            return Err((status, Json(ApiErrorResp { error })));
         }
     };
-    let status = response.status();
-    if !status.is_success() {
-        restore_completion_token(&state, &id, &req.completion_token).await;
-        return Err((
-            StatusCode::BAD_GATEWAY,
-            Json(ApiErrorResp {
-                error: format!("callback replay returned {status}"),
-            }),
-        ));
-    }
-    let status_code = status.as_u16();
 
     Ok(Json(CodexLoginCompleteResp {
         accepted: true,
