@@ -8,10 +8,8 @@ use tokio::time::Instant as TokioInstant;
 
 use ctx_core::models::Session;
 use ctx_providers::events::NormalizedEvent;
-use ctx_session_tools::model_resolution::compose_model_id;
 use ctx_session_tools::order_seq::OrderSeqState;
 
-use crate::daemon::storage_guard;
 use crate::daemon::AppState;
 
 mod event_loop;
@@ -24,6 +22,7 @@ mod provider_spawn;
 #[cfg(test)]
 mod tests;
 mod tool_runtime;
+mod turn_context;
 mod turn_failure;
 mod turn_input;
 mod turn_start;
@@ -32,6 +31,7 @@ use self::event_loop::{spawn_turn_event_loop_for_session, TurnEventLoopSpawnRequ
 use self::provider_launch::prepare_provider_launch_environment;
 use self::provider_setup::{prepare_provider_turn_runtime, ProviderTurnRuntimeSetupRequest};
 use self::provider_spawn::{spawn_provider_turn, ProviderTurnSpawnRequest};
+use self::turn_context::{prepare_turn_runtime_context, TurnRuntimeContext};
 use self::turn_input::prepare_turn_input;
 use self::turn_start::{prepare_turn_start, PrepareTurnStartRequest};
 use super::lifecycle::{RunningTurn, TurnStartProgress};
@@ -45,17 +45,14 @@ pub(crate) async fn start_turn(
     queued: QueuedMessage,
     order_seq_state: Arc<Mutex<OrderSeqState>>,
 ) -> Result<RunningTurn> {
-    state.wait_for_worktree_bootstrap(session.worktree_id).await;
-    state.core.update_drain.reject_if_draining().await?;
-    storage_guard::preflight_turn_start(state, workdir).await?;
-
-    let store = state.store_for_session(session.id).await?;
-
-    let workdir_root = workdir.to_path_buf();
-    let workdir_canonical = tokio::fs::canonicalize(&workdir_root).await.ok();
-    let workdir_str = workdir_root.to_string_lossy().to_string();
-    let execution_environment = session.execution_environment;
-    let full_model_id = compose_model_id(&session.model_id, session.reasoning_effort.as_deref());
+    let TurnRuntimeContext {
+        store,
+        workdir_root,
+        workdir_canonical,
+        workdir_str,
+        execution_environment,
+        full_model_id,
+    } = prepare_turn_runtime_context(state, session, workdir).await?;
 
     let turn_start = prepare_turn_start(PrepareTurnStartRequest {
         state,
