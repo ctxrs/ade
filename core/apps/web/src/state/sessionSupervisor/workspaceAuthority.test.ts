@@ -239,12 +239,57 @@ describe("workspaceAuthority", () => {
     });
   });
 
-  it("does not repair-replace with a partial head window", () => {
+  it("repair-replaces with an overlapping partial head window that advances the foreground tail", () => {
     let heads = new Map<string, SessionHeadSnapshot>();
     const entry = makeStaleEntry();
     const replicaDispatch = vi.fn();
     const partialHead: SessionHeadSnapshot = {
       ...completedHead,
+      has_more_turns: true,
+      has_more_history: true,
+      head_window: {
+        turn_limit: 60,
+        message_limit: 200,
+        event_limit: 200,
+        byte_limit: 256000,
+        turn_count: 60,
+        message_count: 200,
+        event_count: 200,
+        bytes: 256000,
+        truncated: true,
+      },
+    };
+    const host = {
+      getWorkspaceSessionHeadsById: () => heads,
+      setWorkspaceSessionHeadsById: (next: Map<string, SessionHeadSnapshot>) => {
+        heads = next;
+      },
+      entries: new Map([["session-1", entry]]),
+      replicaDispatch,
+      syncSupportLoadsForOpenSession: vi.fn(),
+    } as unknown as Parameters<typeof upsertWorkspaceSessionHead>[0];
+
+    upsertWorkspaceSessionHead(host, "session-1", partialHead);
+
+    expect(replicaDispatch).toHaveBeenCalledWith({
+      type: "seed_head",
+      sessionId: "session-1",
+      head: partialHead,
+      mode: "repair_replace",
+    });
+  });
+
+  it("does not repair-replace with a disjoint partial head window", () => {
+    let heads = new Map<string, SessionHeadSnapshot>();
+    const entry = makeStaleEntry();
+    const replicaDispatch = vi.fn();
+    const partialHead: SessionHeadSnapshot = {
+      ...completedHead,
+      turns: [{ ...completedTurn, turn_id: "turn-2", user_message_id: "message-user-2" }],
+      messages: [
+        { ...userMessage, id: "message-user-2", turn_id: "turn-2", content: "new user" },
+        { ...assistantMessage, id: "message-assistant-2", turn_id: "turn-2", content: "new assistant" },
+      ],
       has_more_turns: true,
       has_more_history: true,
       head_window: {

@@ -2,7 +2,7 @@ import { idToString, type SessionHeadSnapshot } from "../../api/client";
 import type { WorkspaceActiveSnapshotState } from "../workspaceActiveSnapshotStore";
 import { collectWorkspaceActivePrimarySessionIds } from "../workspaceActiveSnapshot/projection";
 import type { SessionReplicaCommand, SessionReplicaHeadSeedMode } from "../sessionReplicaProtocol";
-import { isPartialSessionHead } from "../sessionHeadRepair";
+import { canRepairFromPartialSessionHead } from "../sessionHeadRepair";
 import { readWorkspaceEventReceivedAt } from "../workspaceEventTelemetry";
 import { classifyActiveSnapshotSeedMode } from "./activeSnapshotSeed";
 import type { ConnectionStatus, InternalEntry } from "./entryState";
@@ -40,11 +40,12 @@ type SessionSupervisorWorkspaceAuthorityHost = {
 };
 
 const canApplyWorkspaceSessionHeadMode = (
+  entry: InternalEntry,
   mode: SessionReplicaHeadSeedMode,
   head: SessionHeadSnapshot,
 ): boolean => {
   if (mode !== "repair_replace") return true;
-  return !isPartialSessionHead(head);
+  return canRepairFromPartialSessionHead(entry, head);
 };
 
 const shouldApplyWorkspaceSessionHeadMode = (
@@ -118,7 +119,7 @@ export const setWorkspaceSessionHeads = (
     const mode = classifyActiveSnapshotSeedMode(entry, head, { allowRecoveringRefresh: true });
     if (
       !mode ||
-      !canApplyWorkspaceSessionHeadMode(mode, head) ||
+      !canApplyWorkspaceSessionHeadMode(entry, mode, head) ||
       !shouldApplyWorkspaceSessionHeadMode(mode, recovering)
     ) {
       continue;
@@ -145,7 +146,7 @@ export const upsertWorkspaceSessionHead = (
   if (entry) {
     const recovering = entry.freshness === "recovering" || entry.loadState === "recovering";
     const mode = classifyActiveSnapshotSeedMode(entry, head, { allowRecoveringRefresh: true });
-    const canApply = Boolean(mode && canApplyWorkspaceSessionHeadMode(mode, head));
+    const canApply = Boolean(mode && canApplyWorkspaceSessionHeadMode(entry, mode, head));
     const shouldApply = Boolean(mode && shouldApplyWorkspaceSessionHeadMode(mode, recovering));
     if (
       mode &&
@@ -251,7 +252,7 @@ export const syncActiveSnapshot = (
     const mode = classifyActiveSnapshotSeedMode(entry, head, { allowRecoveringRefresh: true });
     const recovering = entry.freshness === "recovering" || entry.loadState === "recovering";
     if (!mode) continue;
-    if (!canApplyWorkspaceSessionHeadMode(mode, head)) continue;
+    if (!canApplyWorkspaceSessionHeadMode(entry, mode, head)) continue;
     if (!shouldApplyWorkspaceSessionHeadMode(mode, recovering)) continue;
     host.replicaDispatch({ type: "seed_head", sessionId, head, mode });
   }

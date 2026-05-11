@@ -108,6 +108,15 @@ export function shouldPreserveExistingTranscriptWindow(
   return !coversTurns(entry, head) || !coversMessages(entry, head);
 }
 
+export function canRepairFromPartialSessionHead(
+  entry: TranscriptCoverageEntry,
+  head: SessionHead | SessionHeadSnapshot,
+): boolean {
+  if (!isPartialSessionHead(head)) return true;
+  if (entry.freshness === "recovering" || entry.loadState === "recovering") return false;
+  return hasTurnOverlap(entry, head) || hasMessageOverlap(entry, head);
+}
+
 export function shouldRepairSessionHeadReplace(
   entry: TranscriptCoverageEntry,
   head: SessionHead | SessionHeadSnapshot,

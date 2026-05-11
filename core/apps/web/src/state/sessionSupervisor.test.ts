@@ -2716,6 +2716,115 @@ describe("SessionSupervisor", () => {
     expect(entry?.projectionRev).toBe(7);
   });
 
+  it("promotes an overlapping partial authoritative head into an open active transcript", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-open-partial-tail-repair";
+    const probe2Turn = mkTurn({ sessionId, turnId: "turn-probe-2", status: "completed", startSeq: 20 });
+    const probe2User: Message = {
+      id: "m-probe-2-user",
+      session_id: sessionId,
+      task_id: "task-1",
+      turn_id: "turn-probe-2",
+      role: "user",
+      content: "remote-ui-progress-2",
+      delivery: "immediate",
+      created_at: "2026-03-09T00:00:20.000Z",
+    };
+    const probe2Assistant: Message = {
+      ...probe2User,
+      id: "m-probe-2-assistant",
+      role: "assistant",
+      content: "remote-ui-progress-2 complete",
+      created_at: "2026-03-09T00:00:21.000Z",
+    };
+    const probe3Turn = mkTurn({ sessionId, turnId: "turn-probe-3", status: "running", startSeq: 30 });
+    const probe3User: Message = {
+      id: "m-probe-3-user",
+      session_id: sessionId,
+      task_id: "task-1",
+      turn_id: "turn-probe-3",
+      role: "user",
+      content: "remote-ui-progress-3",
+      delivery: "immediate",
+      created_at: "2026-03-09T00:00:30.000Z",
+    };
+    const partialHead: SessionHeadSnapshot = {
+      session: mkSession(sessionId),
+      turns: [probe2Turn, probe3Turn],
+      events: [] as SessionEvent[],
+      messages: [probe2User, probe2Assistant, probe3User],
+      activity: { is_working: true, last_turn_status: "running" },
+      last_event_seq: 31,
+      projection_rev: 31,
+      state_rev: 31,
+      has_more_turns: true,
+      has_more_history: true,
+      history_cursor: 1,
+      head_window: {
+        turn_limit: 60,
+        message_limit: 200,
+        event_limit: 200,
+        byte_limit: 256_000,
+        turn_count: 60,
+        message_count: 200,
+        event_count: 200,
+        bytes: 256_000,
+        truncated: true,
+      },
+    };
+    getSessionHeadMock.mockImplementationOnce(() => new Promise<SessionHeadSnapshot>(() => {}));
+
+    const sup = new SessionSupervisor();
+    sup.openSession(sessionId, { mode: "active" });
+    await waitForCondition(() => getSessionHeadMock.mock.calls.length === 1);
+
+    const internals = asSupervisorInternals(sup);
+    internals.handleReplicaPatches([
+      {
+        op: "replace",
+        sessionId,
+        data: {
+          session: mkSession(sessionId),
+          freshness: "authoritative",
+          turns: [probe2Turn],
+          messages: [probe2User, probe2Assistant],
+          events: [] as SessionEvent[],
+          activity: { is_working: false, last_turn_status: "completed" },
+          lastEventSeq: 22,
+          projectionRev: 22,
+          stateRev: 22,
+          turnsHydrated: true,
+          loading: false,
+        },
+      },
+    ]);
+
+    await waitForCondition(() => {
+      const entry = sup.getSnapshot().sessions[sessionId];
+      return entry?.messages.some((message) => message.content === "remote-ui-progress-2 complete");
+    });
+
+    sup.setWorkspaceSessionHeads({ [sessionId]: partialHead });
+
+    await waitForCondition(() => {
+      const entry = sup.getSnapshot().sessions[sessionId];
+      return Boolean(entry?.messages.some((message) => message.content === "remote-ui-progress-3"));
+    });
+
+    const entry = sup.getSnapshot().sessions[sessionId];
+    expect(entry?.freshness).toBe("replica");
+    expect(entry?.messages.map((message) => message.id)).toEqual([
+      "m-probe-2-user",
+      "m-probe-2-assistant",
+      "m-probe-3-user",
+    ]);
+    expect(entry?.turns.map((turn) => turn.turn_id)).toEqual(["turn-probe-2", "turn-probe-3"]);
+    expect(entry?.lastEventSeq).toBe(31);
+    expect(entry?.projectionRev).toBe(31);
+    expect(entry?.activity).toEqual({ is_working: true, last_turn_status: "running" });
+  });
+
   it("repairs a newly promoted active session from a fresher workspace head", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 
