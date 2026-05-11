@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use ctx_core::ids::{RunId, TurnId};
@@ -7,15 +6,11 @@ use ctx_core::models::{Message, MessageDelivery, MessageRole, SessionEvent, Sess
 
 use crate::daemon::AppState;
 
-pub(crate) const STORE_WRITE_RETRY_LIMIT: usize = 3;
-pub(crate) const STORE_WRITE_RETRY_BASE_MS: u64 = 40;
+mod retry;
 
-pub(crate) fn is_transient_store_error(err: &anyhow::Error) -> bool {
-    let msg = err.to_string().to_lowercase();
-    msg.contains("database is locked")
-        || msg.contains("sqlite_busy")
-        || msg.contains("database is busy")
-}
+pub(crate) use retry::{
+    is_transient_store_error, sleep_store_write_retry, STORE_WRITE_RETRY_LIMIT,
+};
 
 fn maybe_fail_persist_assistant_message() -> Result<()> {
     if let Err(err) =
@@ -52,8 +47,7 @@ pub(crate) async fn append_session_event_with_retry(
                     return Err(err);
                 }
                 attempt += 1;
-                let backoff_ms = STORE_WRITE_RETRY_BASE_MS.saturating_mul(attempt as u64);
-                tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                sleep_store_write_retry(attempt).await;
             }
         }
     }
@@ -122,8 +116,7 @@ pub(crate) async fn persist_assistant_message(
                 return Err(err);
             }
             attempt += 1;
-            let backoff_ms = STORE_WRITE_RETRY_BASE_MS.saturating_mul(attempt as u64);
-            tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+            sleep_store_write_retry(attempt).await;
             continue;
         }
         match store.insert_message(msg.clone()).await {
@@ -134,8 +127,7 @@ pub(crate) async fn persist_assistant_message(
                     return Err(err);
                 }
                 attempt += 1;
-                let backoff_ms = STORE_WRITE_RETRY_BASE_MS.saturating_mul(attempt as u64);
-                tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                sleep_store_write_retry(attempt).await;
             }
         }
     }

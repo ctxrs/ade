@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::Result;
 use serde_json::Value;
@@ -10,7 +9,7 @@ use ctx_core::models::{RunStatus, SessionEvent, SessionEventType};
 use crate::daemon::AppState;
 
 use super::super::persistence::{
-    is_transient_store_error, STORE_WRITE_RETRY_BASE_MS, STORE_WRITE_RETRY_LIMIT,
+    is_transient_store_error, sleep_store_write_retry, STORE_WRITE_RETRY_LIMIT,
 };
 
 async fn publish_persisted_events(state: &Arc<AppState>, events: Vec<SessionEvent>) {
@@ -59,8 +58,7 @@ async fn persist_turn_terminal_events_with_retry(
                     return Err(err);
                 }
                 attempt += 1;
-                let backoff_ms = STORE_WRITE_RETRY_BASE_MS.saturating_mul(attempt as u64);
-                tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                sleep_store_write_retry(attempt).await;
             }
         }
     }
