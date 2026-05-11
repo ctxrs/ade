@@ -85,7 +85,7 @@ CTX_HTTP_LIB_UNIT_TEST_ARGS = CTX_HTTP_UNIT_TEST_SERIAL_ARGS + [
     "lib_tests::",
     "--skip=lib_tests::daemon_smoke::golden_path::daemon_golden_path_with_fake_provider",
     "--skip=lib_tests::daemon_smoke::streaming::daemon_http_and_ws_streaming",
-    "--skip=lib_tests::execution_launch::execution_launch_startup_prewarm_kind_supported",
+    "--skip=lib_tests::execution_launch::startup_prewarm::execution_launch_startup_prewarm_kind_supported",
     "--skip=lib_tests::mobile_secure_routes::",
     "--skip=lib_tests::provider_routes::",
     "--skip=lib_tests::session_artifacts::",
@@ -161,7 +161,7 @@ CTX_HTTP_DAEMON_HTTP_AND_WS_STREAMING_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
 ]
 CTX_HTTP_LIB_STARTUP_PREWARM_KIND_SUPPORTED_TEST_ARGS = CTX_HTTP_TEST_ARGS + [
     "--exact",
-    "lib_tests::execution_launch::execution_launch_startup_prewarm_kind_supported",
+    "lib_tests::execution_launch::startup_prewarm::execution_launch_startup_prewarm_kind_supported",
 ]
 CTX_HTTP_WORKSPACE_RUNTIME_UNIT_TEST_ARGS = CTX_HTTP_UNIT_TEST_SERIAL_ARGS + [
     "daemon::workspace_runtime::",
