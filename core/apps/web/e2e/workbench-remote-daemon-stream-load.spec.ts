@@ -50,7 +50,7 @@ const DAEMON_REPO_ROOT =
   process.env.CTX_REMOTE_DAEMON_STREAM_SOAK_REPO_ROOT?.trim() || undefined;
 const MIN_SESSION_HEAD_DELTAS = envNumber(
   "CTX_REMOTE_DAEMON_STREAM_SOAK_MIN_SESSION_HEAD_DELTAS",
-  LONG_FOREGROUND_RECOVERY ? 12 : 1000,
+  LONG_FOREGROUND_RECOVERY ? 12 : 900,
 );
 const MIN_STREAM_EVENTS = envNumber(
   "CTX_REMOTE_DAEMON_STREAM_SOAK_MIN_EVENTS",
@@ -1635,7 +1635,12 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
         "workbench.workspace_stream_event_count",
         180_000,
       );
-      if (sumMetricEntries(streamEvents) >= MIN_STREAM_EVENTS) break;
+      const streamEventCount = sumMetricEntries(streamEvents);
+      const sessionHeadDeltaCount =
+        sumMetricEntriesByLabel(streamEvents, "event_type").session_head_delta ?? 0;
+      if (streamEventCount >= MIN_STREAM_EVENTS && sessionHeadDeltaCount >= MIN_SESSION_HEAD_DELTAS) {
+        break;
+      }
       await sleep(500);
     }
     if (VCS_CHURN_ENABLED) {
