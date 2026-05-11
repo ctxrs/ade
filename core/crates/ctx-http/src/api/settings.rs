@@ -3,11 +3,14 @@ use std::sync::Arc;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
+use effects::{apply_settings_side_effects, public_settings_for_response};
 
-use crate::daemon::{provider_guard, provider_restart, resource_governance, tool_cgroup, AppState};
-use ctx_observability::telemetry::TelemetryConfig;
+use crate::daemon::AppState;
 use ctx_settings_model as user_settings;
 use ctx_settings_service::HostExecutionPolicy;
+
+#[path = "settings/effects.rs"]
+mod effects;
 
 pub(super) async fn get_settings(
     State(state): State<Arc<AppState>>,
@@ -15,11 +18,7 @@ pub(super) async fn get_settings(
     let settings = ctx_settings_service::load_settings(state.global_store())
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let mut public = ctx_settings_service::to_public(&settings);
-    public.resource_governance =
-        resource_governance::build_public_settings(&state, &settings).await;
-    public.tool_limits = tool_cgroup::build_public_settings(&state, &settings).await;
-    Ok(Json(public))
+    Ok(Json(public_settings_for_response(&state, &settings).await))
 }
 
 pub(super) async fn update_settings(
@@ -44,36 +43,8 @@ pub(super) async fn update_settings(
     ctx_settings_service::save_settings(state.global_store(), &next)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let mut telemetry_cfg = TelemetryConfig::default();
-    if let Some(telemetry) = next.telemetry.as_ref() {
-        telemetry_cfg.enabled = telemetry.enabled;
-        if !telemetry.endpoint.trim().is_empty() {
-            telemetry_cfg.endpoint = telemetry.endpoint.clone();
-        }
-    }
-    state.telemetry.telemetry.update_config(telemetry_cfg).await;
-    let perf_enabled = next.telemetry.as_ref().map(|t| t.enabled).unwrap_or(true);
-    state
-        .telemetry
-        .perf_telemetry
-        .update_remote_enabled(perf_enabled)
-        .await;
-    if let Err(err) = resource_governance::apply_settings(&state, &next).await {
-        tracing::warn!("failed to apply resource governance settings: {err:#}");
-    }
-    if let Err(err) = provider_guard::apply_settings(&state, &next).await {
-        tracing::warn!("failed to apply provider guard settings: {err:#}");
-    }
-    if let Err(err) = provider_restart::apply_settings(&state, &next).await {
-        tracing::warn!("failed to apply provider restart settings: {err:#}");
-    }
-    if let Err(err) = tool_cgroup::apply_settings(&state, &next).await {
-        tracing::warn!("failed to apply tool cgroup settings: {err:#}");
-    }
-    let mut public = ctx_settings_service::to_public(&next);
-    public.resource_governance = resource_governance::build_public_settings(&state, &next).await;
-    public.tool_limits = tool_cgroup::build_public_settings(&state, &next).await;
-    Ok(Json(public))
+    apply_settings_side_effects(&state, &next).await;
+    Ok(Json(public_settings_for_response(&state, &next).await))
 }
 
 #[cfg(test)]
