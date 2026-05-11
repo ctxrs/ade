@@ -1,33 +1,9 @@
 use super::*;
 
-async fn rollback_new_task_after_default_session_failure(
-    state: &Arc<AppState>,
-    store: &Store,
-    workspace: &Workspace,
-    task_id: TaskId,
-) {
-    let task = match store.get_task(task_id).await {
-        Ok(Some(task)) => task,
-        Ok(None) => return,
-        Err(err) => {
-            tracing::warn!(
-                task_id = %task_id.0,
-                "failed to load task while rolling back brand-new task: {err:#}"
-            );
-            return;
-        }
-    };
-    match delete_loaded_task_with_cleanup(state, store, workspace, &task).await {
-        Ok(()) | Err(StatusCode::NOT_FOUND) => {}
-        Err(status) => {
-            tracing::warn!(
-                task_id = %task_id.0,
-                ?status,
-                "failed to rollback brand-new task after default-session creation failure"
-            );
-        }
-    }
-}
+#[path = "default_session_flow/effects.rs"]
+mod effects;
+
+use effects::{emit_task_upsert, rollback_new_task_after_default_session_failure};
 
 pub(super) async fn ensure_default_session_for_task(
     state: Arc<AppState>,
@@ -140,10 +116,4 @@ pub(super) async fn ensure_default_session_for_task(
 
     emit_task_upsert(&state, task.id).await;
     Ok(task)
-}
-
-async fn emit_task_upsert(state: &Arc<AppState>, task_id: TaskId) {
-    if let Err(e) = state.emit_workspace_task_upsert(task_id).await {
-        tracing::warn!(task_id = %task_id.0, "workspace active snapshot refresh failed: {e:?}");
-    }
 }
