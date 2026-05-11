@@ -4,32 +4,18 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
 use chrono::{DateTime, Utc};
-use serde::Deserialize;
 use serde::Serialize;
 
 use super::errors::ApiErrorResp;
 use crate::daemon::AppState;
-use ctx_core::ids::{SessionId, TaskId, TerminalId, WorkspaceId, WorktreeId};
+use ctx_core::ids::{TerminalId, WorkspaceId};
 use ctx_core::models::TerminalSession;
 use ctx_transport_runtime::terminal_launch::{TerminalLaunchError, TerminalLaunchErrorKind};
 
 mod launch;
+mod request;
 
-use self::launch::CreateTerminalLaunchRequest;
-
-#[derive(Debug, Deserialize)]
-pub(super) struct CreateTerminalReq {
-    #[serde(default)]
-    task_id: Option<String>,
-    #[serde(default)]
-    session_id: Option<String>,
-    #[serde(default)]
-    worktree_id: Option<String>,
-    #[serde(default)]
-    cwd: Option<String>,
-    #[serde(default)]
-    shell: Option<String>,
-}
+use self::request::{parse_create_terminal_launch_request, CreateTerminalReq};
 
 pub(super) async fn list_workspace_terminals(
     State(state): State<Arc<AppState>>,
@@ -45,66 +31,10 @@ pub(super) async fn create_workspace_terminal(
     Path(id): Path<String>,
     Json(req): Json<CreateTerminalReq>,
 ) -> Result<Json<TerminalSession>, (StatusCode, Json<ApiErrorResp>)> {
-    let workspace_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid workspace id".to_string(),
-            }),
-        )
-    })?);
-
-    let task_id = match req.task_id {
-        Some(raw) => Some(TaskId(uuid::Uuid::parse_str(raw.trim()).map_err(|_| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(ApiErrorResp {
-                    error: "invalid task_id".to_string(),
-                }),
-            )
-        })?)),
-        None => None,
-    };
-    let session_id = match req.session_id {
-        Some(raw) => Some(SessionId(uuid::Uuid::parse_str(raw.trim()).map_err(
-            |_| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(ApiErrorResp {
-                        error: "invalid session_id".to_string(),
-                    }),
-                )
-            },
-        )?)),
-        None => None,
-    };
-    let worktree_id = match req.worktree_id {
-        Some(raw) => Some(WorktreeId(uuid::Uuid::parse_str(raw.trim()).map_err(
-            |_| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(ApiErrorResp {
-                        error: "invalid worktree_id".to_string(),
-                    }),
-                )
-            },
-        )?)),
-        None => None,
-    };
-
-    let session = launch::create_workspace_terminal(
-        &state,
-        CreateTerminalLaunchRequest {
-            workspace_id,
-            task_id,
-            session_id,
-            worktree_id,
-            cwd: req.cwd,
-            shell: req.shell,
-        },
-    )
-    .await
-    .map_err(terminal_launch_error_response)?;
+    let launch_req = parse_create_terminal_launch_request(&id, req)?;
+    let session = launch::create_workspace_terminal(&state, launch_req)
+        .await
+        .map_err(terminal_launch_error_response)?;
 
     Ok(Json(session))
 }
