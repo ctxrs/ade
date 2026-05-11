@@ -3,7 +3,7 @@ use crate::api::MobileAuthContext;
 use axum::Extension;
 use ctx_core::provider_policy::CODEX_APP_SERVER_ARGS;
 use std::path::PathBuf;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, BufReader};
 
 mod auth_url;
 mod browser;
