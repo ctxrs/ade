@@ -57,6 +57,57 @@ async fn head_buffer_drops_session_deltas_at_or_before_resume_cursor() {
 }
 
 #[tokio::test]
+async fn head_buffer_take_chunk_keeps_remaining_deltas() {
+    let buffer = HeadBatchBuffer::new();
+    let session_id = SessionId::new();
+
+    buffer
+        .push(10, cursor_delta(session_id, 1))
+        .await
+        .expect("first delta should enqueue");
+    buffer
+        .push(11, cursor_delta(session_id, 2))
+        .await
+        .expect("second delta should enqueue");
+    buffer
+        .push(12, cursor_delta(session_id, 3))
+        .await
+        .expect("third delta should enqueue");
+
+    let first = buffer.take_chunk_with_meta(2).await;
+    assert_eq!(first.snapshot_rev, 12);
+    assert_eq!(first.deltas.len(), 2);
+    assert_eq!(first.deltas[0].last_event_seq, 1);
+    assert_eq!(first.deltas[1].last_event_seq, 2);
+
+    let second = buffer.take_chunk_with_meta(2).await;
+    assert_eq!(second.snapshot_rev, 12);
+    assert_eq!(second.deltas.len(), 1);
+    assert_eq!(second.deltas[0].last_event_seq, 3);
+
+    let empty = buffer.take_chunk_with_meta(2).await;
+    assert!(empty.deltas.is_empty());
+}
+
+#[tokio::test]
+async fn head_buffer_zero_chunk_does_not_drop_pending_deltas() {
+    let buffer = HeadBatchBuffer::new();
+    let session_id = SessionId::new();
+
+    buffer
+        .push(10, cursor_delta(session_id, 1))
+        .await
+        .expect("delta should enqueue");
+
+    let skipped = buffer.take_chunk_with_meta(0).await;
+    assert!(skipped.deltas.is_empty());
+
+    let drained = buffer.take_chunk_with_meta(1).await;
+    assert_eq!(drained.deltas.len(), 1);
+    assert_eq!(drained.deltas[0].last_event_seq, 1);
+}
+
+#[tokio::test]
 async fn summary_buffer_drops_session_events_at_or_before_resume_cursor() {
     let buffer = SummaryBatchBuffer::new(8);
     let workspace_id = WorkspaceId::new();

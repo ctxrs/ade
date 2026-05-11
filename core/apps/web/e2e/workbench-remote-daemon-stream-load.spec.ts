@@ -7,6 +7,11 @@ import {
   postImmediateMessageAndWaitForCompletion,
   seedDummyWorkspace,
 } from "./utils/seedDummyWorkspace";
+import {
+  minSamplesForDistinctPercentile,
+  percentile,
+  percentileSelectsMaximum,
+} from "../src/utils/perfPercentile";
 
 const ENABLED = process.env.CTX_REMOTE_DAEMON_STREAM_SOAK === "1";
 const FAULT_MODE = process.env.CTX_REMOTE_DAEMON_STREAM_SOAK_FAULT ?? "";
@@ -293,13 +298,6 @@ type RemoteDaemonLoadWindow = Window & {
 };
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-
-const percentile = (values: number[], p: number): number | null => {
-  if (values.length === 0) return null;
-  const sorted = values.slice().sort((left, right) => left - right);
-  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * p) - 1));
-  return Math.round(sorted[index]! * 10) / 10;
-};
 
 const metricRollupEmpty = (): MetricRollup => ({
   count: 0,
@@ -1680,6 +1678,7 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
   const backendToDomMs = probes
     .map((probe) => probe.backendToDomMs)
     .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  const backendToDomP95SelectsMax = percentileSelectsMaximum(backendToDomMs.length, 0.95);
   const sendToFirstVisibleMs = probes
     .map((probe) => probe.sendToFirstVisibleMs)
     .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
@@ -1804,6 +1803,8 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
       backendToDomMs,
       p50BackendToDomMs: percentile(backendToDomMs, 0.5),
       p95BackendToDomMs: percentile(backendToDomMs, 0.95),
+      p95BackendToDomBudgetApplies: !backendToDomP95SelectsMax,
+      minBackendToDomP95SampleCount: minSamplesForDistinctPercentile(0.95),
       maxBackendToDomMs: backendToDomMs.length > 0 ? Math.max(...backendToDomMs) : null,
       sendToFirstVisibleMs,
       p95SendToFirstVisibleMs: percentile(sendToFirstVisibleMs, 0.95),
@@ -1856,9 +1857,11 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
   expect(sendToFirstVisibleMs.length > 0 ? Math.max(...sendToFirstVisibleMs) : Infinity).toBeLessThanOrEqual(
     MAX_SEND_TO_VISIBLE_MS,
   );
-  expect(percentile(backendToDomMs, 0.95) ?? Infinity).toBeLessThanOrEqual(
-    MAX_BACKEND_TO_DOM_P95_MS,
-  );
+  if (!backendToDomP95SelectsMax) {
+    expect(percentile(backendToDomMs, 0.95) ?? Infinity).toBeLessThanOrEqual(
+      MAX_BACKEND_TO_DOM_P95_MS,
+    );
+  }
   expect(backendToDomMs.length > 0 ? Math.max(...backendToDomMs) : Infinity).toBeLessThanOrEqual(
     MAX_BACKEND_TO_DOM_MS,
   );

@@ -52,18 +52,33 @@ pub(super) fn spawn_mobile_secure_send_loop(
                         }
                     }
                     NextWorkspaceStreamItem::HeadsBatch {
+                        lane,
                         snapshot_rev,
                         deltas,
+                        oldest_queued_ms,
                     } => {
                         envelope_seq += 1;
+                        let delta_count = deltas.len();
                         let message =
                             sequencer.sequence_heads_batch(&runtime, snapshot_rev, deltas);
+                        let payload_bytes = serde_json::to_vec(&message)
+                            .map(|data| data.len())
+                            .unwrap_or(0);
+                        let send_start = Instant::now();
                         if send_secure_ws(&mut sender, &key, &device_id, envelope_seq, &message)
                             .await
                             .is_err()
                         {
                             break;
                         }
+                        telemetry::log_secure_heads_batch_sent(
+                            workspace_id,
+                            lane.as_str(),
+                            delta_count,
+                            payload_bytes,
+                            oldest_queued_ms,
+                            send_start.elapsed().as_millis(),
+                        );
                     }
                     NextWorkspaceStreamItem::SummaryBatch { events } => {
                         let mut send_failed = false;

@@ -7,6 +7,8 @@ mod stream;
 pub(super) use buffers::{
     HeadBatchBuffer, NextWorkspaceStreamItem, SummaryBatchBuffer, HEAD_BATCH_TOTAL_LIMIT,
 };
+#[cfg(test)]
+pub(super) use buffers::{HeadBatchLane, BACKGROUND_HEAD_BATCH_CHUNK_LIMIT};
 pub(super) use partials::{
     filter_partial_delta_for_active_tasks, is_foreground_session, is_priority_control_event,
     should_stream_head_delta,

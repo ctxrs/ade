@@ -32,3 +32,23 @@ pub(super) fn log_secure_snapshot_sent(
         "workspace snapshot sent (secure)",
     );
 }
+
+pub(super) fn log_secure_heads_batch_sent(
+    workspace_id: WorkspaceId,
+    lane: &'static str,
+    delta_count: usize,
+    payload_bytes: usize,
+    oldest_queued_ms: u128,
+    send_ms: u128,
+) {
+    tracing::info!(
+        target: "ctx_http.ws_active_snapshot",
+        workspace_id = %workspace_id.0,
+        lane = lane,
+        head_batch_deltas = delta_count,
+        head_batch_bytes = payload_bytes,
+        head_batch_oldest_queue_ms = oldest_queued_ms,
+        head_batch_send_ms = send_ms,
+        "workspace heads batch sent (secure)",
+    );
+}

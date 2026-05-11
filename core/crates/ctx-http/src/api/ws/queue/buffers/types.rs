@@ -1,10 +1,27 @@
 use super::*;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum HeadBatchLane {
+    Foreground,
+    Background,
+}
+
+impl HeadBatchLane {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Foreground => "foreground",
+            Self::Background => "background",
+        }
+    }
+}
+
 pub(crate) enum NextWorkspaceStreamItem {
     Control(StreamQueueEntry<WorkspaceActiveSnapshotStreamMessage>),
     HeadsBatch {
+        lane: HeadBatchLane,
         snapshot_rev: i64,
         deltas: Vec<SessionHeadDelta>,
+        oldest_queued_ms: u128,
     },
     SummaryBatch {
         events: Vec<WorkspaceActiveSnapshotEvent>,

@@ -2,7 +2,7 @@ use super::super::*;
 
 #[cfg(test)]
 pub(super) use self::coalesce::merge_partial_fragment;
-pub(super) use self::coalesce::try_coalesce_partial_delta;
+pub(super) use self::coalesce::try_coalesce_partial_delta_tail;
 
 #[path = "partials/coalesce.rs"]
 mod coalesce;

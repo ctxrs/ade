@@ -1,6 +1,7 @@
 use super::bounded::StreamQueue;
 use crate::api::ws::queue::buffers::{
-    HeadBatchBuffer, NextWorkspaceStreamItem, SummaryBatchBuffer,
+    HeadBatchBuffer, HeadBatchLane, NextWorkspaceStreamItem, SummaryBatchBuffer,
+    BACKGROUND_HEAD_BATCH_CHUNK_LIMIT,
 };
 use ctx_core::models::WorkspaceActiveSnapshotStreamMessage;
 
@@ -21,21 +22,27 @@ pub(crate) async fn take_next_workspace_stream_item(
     if let Some(entry) = priority_control.pop().await {
         return Some(NextWorkspaceStreamItem::Control(entry));
     }
-    let (snapshot_rev, deltas) = foreground_head_buffer.take().await;
-    if !deltas.is_empty() {
+    let foreground = foreground_head_buffer.take_with_meta().await;
+    if !foreground.deltas.is_empty() {
         return Some(NextWorkspaceStreamItem::HeadsBatch {
-            snapshot_rev,
-            deltas,
+            lane: HeadBatchLane::Foreground,
+            snapshot_rev: foreground.snapshot_rev,
+            deltas: foreground.deltas,
+            oldest_queued_ms: foreground.oldest_queued_ms,
         });
     }
     if let Some(entry) = control.pop().await {
         return Some(NextWorkspaceStreamItem::Control(entry));
     }
-    let (snapshot_rev, deltas) = background_head_buffer.take().await;
-    if !deltas.is_empty() {
+    let background = background_head_buffer
+        .take_chunk_with_meta(BACKGROUND_HEAD_BATCH_CHUNK_LIMIT)
+        .await;
+    if !background.deltas.is_empty() {
         return Some(NextWorkspaceStreamItem::HeadsBatch {
-            snapshot_rev,
-            deltas,
+            lane: HeadBatchLane::Background,
+            snapshot_rev: background.snapshot_rev,
+            deltas: background.deltas,
+            oldest_queued_ms: background.oldest_queued_ms,
         });
     }
     let events = summary_buffer.take().await;

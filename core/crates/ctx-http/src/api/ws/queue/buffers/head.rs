@@ -1,13 +1,26 @@
-use super::super::partials::try_coalesce_partial_delta;
+use super::super::partials::try_coalesce_partial_delta_tail;
 use super::types::HeadBatchPushError;
 use super::*;
+use std::time::Instant;
 
 pub(crate) const HEAD_BATCH_TOTAL_LIMIT: usize = 1000;
+pub(crate) const BACKGROUND_HEAD_BATCH_CHUNK_LIMIT: usize = 100;
+
+struct QueuedHeadDelta {
+    enqueued_at: Instant,
+    delta: SessionHeadDelta,
+}
+
+pub(crate) struct HeadBatchDrain {
+    pub(crate) snapshot_rev: i64,
+    pub(crate) deltas: Vec<SessionHeadDelta>,
+    pub(crate) oldest_queued_ms: u128,
+}
 
 struct HeadBatchState {
     snapshot_rev: i64,
     total_len: usize,
-    deltas: HashMap<SessionId, Vec<SessionHeadDelta>>,
+    deltas: HashMap<SessionId, Vec<QueuedHeadDelta>>,
 }
 
 pub(crate) struct HeadBatchBuffer {
@@ -36,9 +49,11 @@ impl HeadBatchBuffer {
         let session_id = delta.session_id;
         state.snapshot_rev = state.snapshot_rev.max(snapshot_rev);
         if let Some(entry) = state.deltas.get_mut(&session_id) {
-            if try_coalesce_partial_delta(entry.as_mut_slice(), &delta) {
-                self.notify.notify_one();
-                return Ok(());
+            if let Some(prev) = entry.last_mut() {
+                if try_coalesce_partial_delta_tail(&mut prev.delta, &delta) {
+                    self.notify.notify_one();
+                    return Ok(());
+                }
             }
         }
         if state.total_len >= HEAD_BATCH_TOTAL_LIMIT {
@@ -54,27 +69,83 @@ impl HeadBatchBuffer {
                     limit: super::super::super::HEAD_BATCH_SESSION_LIMIT,
                 });
             }
-            entry.push(delta);
+            entry.push(QueuedHeadDelta {
+                enqueued_at: Instant::now(),
+                delta,
+            });
         }
         state.total_len += 1;
         self.notify.notify_one();
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) async fn take(&self) -> (i64, Vec<SessionHeadDelta>) {
+        let drained = self.take_with_meta().await;
+        (drained.snapshot_rev, drained.deltas)
+    }
+
+    pub(crate) async fn take_with_meta(&self) -> HeadBatchDrain {
+        self.take_chunk_with_meta(usize::MAX).await
+    }
+
+    pub(crate) async fn take_chunk_with_meta(&self, limit: usize) -> HeadBatchDrain {
         let mut state = self.state.lock().await;
         if state.deltas.is_empty() {
             state.total_len = 0;
-            return (state.snapshot_rev, Vec::new());
+            return HeadBatchDrain {
+                snapshot_rev: state.snapshot_rev,
+                deltas: Vec::new(),
+                oldest_queued_ms: 0,
+            };
+        }
+        if limit == 0 {
+            return HeadBatchDrain {
+                snapshot_rev: state.snapshot_rev,
+                deltas: Vec::new(),
+                oldest_queued_ms: 0,
+            };
         }
         let snapshot_rev = state.snapshot_rev;
-        let mut deltas = Vec::with_capacity(state.total_len);
-        for (_, mut per_session) in state.deltas.drain() {
-            deltas.append(&mut per_session);
+        let mut deltas = Vec::with_capacity(state.total_len.min(limit));
+        let mut oldest_enqueued_at: Option<Instant> = None;
+        let mut empty_sessions = Vec::new();
+        let session_ids: Vec<SessionId> = state.deltas.keys().copied().collect();
+        for session_id in session_ids {
+            if deltas.len() >= limit {
+                break;
+            }
+            let Some(per_session) = state.deltas.get_mut(&session_id) else {
+                continue;
+            };
+            let take_count = (limit - deltas.len()).min(per_session.len());
+            for queued in per_session.drain(..take_count) {
+                if oldest_enqueued_at
+                    .map(|current| queued.enqueued_at < current)
+                    .unwrap_or(true)
+                {
+                    oldest_enqueued_at = Some(queued.enqueued_at);
+                }
+                deltas.push(queued.delta);
+            }
+            if per_session.is_empty() {
+                empty_sessions.push(session_id);
+            }
         }
-        state.total_len = 0;
-        state.snapshot_rev = 0;
-        (snapshot_rev, deltas)
+        for session_id in empty_sessions {
+            state.deltas.remove(&session_id);
+        }
+        state.total_len = state.total_len.saturating_sub(deltas.len());
+        if state.total_len == 0 {
+            state.snapshot_rev = 0;
+        }
+        HeadBatchDrain {
+            snapshot_rev,
+            deltas,
+            oldest_queued_ms: oldest_enqueued_at
+                .map(|enqueued_at| enqueued_at.elapsed().as_millis())
+                .unwrap_or(0),
+        }
     }
 
     pub(crate) async fn clear(&self) {
@@ -93,7 +164,7 @@ impl HeadBatchBuffer {
         let mut remove_entry = false;
         let removed = if let Some(entry) = state.deltas.get_mut(&session_id) {
             let before = entry.len();
-            entry.retain(|delta| SessionReplayCursor::from_delta(delta) > cursor);
+            entry.retain(|queued| SessionReplayCursor::from_delta(&queued.delta) > cursor);
             remove_entry = entry.is_empty();
             before.saturating_sub(entry.len())
         } else {

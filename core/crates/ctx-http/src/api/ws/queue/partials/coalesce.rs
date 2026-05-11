@@ -38,13 +38,10 @@ pub(in crate::api::ws::queue) fn merge_partial_fragment(prev: &str, next: &str) 
     format!("{prev}{next}")
 }
 
-pub(in crate::api::ws::queue) fn try_coalesce_partial_delta(
-    entry: &mut [SessionHeadDelta],
+pub(in crate::api::ws::queue) fn try_coalesce_partial_delta_tail(
+    prev: &mut SessionHeadDelta,
     next: &SessionHeadDelta,
 ) -> bool {
-    let Some(prev) = entry.last_mut() else {
-        return false;
-    };
     if prev.turn.is_some()
         || prev.message.is_some()
         || next.turn.is_some()

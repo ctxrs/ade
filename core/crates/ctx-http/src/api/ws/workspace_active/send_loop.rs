@@ -34,6 +34,7 @@ pub(super) fn spawn_workspace_active_send_loop(
                         let Ok(text) = serde_json::to_string(&message) else {
                             break;
                         };
+                        let encode_ms = serialize_start.elapsed().as_millis();
                         let payload_bytes = text.len();
                         let send_start = Instant::now();
                         if sender.send(WsMessage::Text(text)).await.is_err() {
@@ -44,7 +45,7 @@ pub(super) fn spawn_workspace_active_send_loop(
                                 workspace_id,
                                 payload_bytes,
                                 queued_ms,
-                                serialize_start.elapsed().as_millis(),
+                                encode_ms,
                                 send_start.elapsed().as_millis(),
                                 &message,
                             );
@@ -52,17 +53,33 @@ pub(super) fn spawn_workspace_active_send_loop(
                         }
                     }
                     NextWorkspaceStreamItem::HeadsBatch {
+                        lane,
                         snapshot_rev,
                         deltas,
+                        oldest_queued_ms,
                     } => {
+                        let delta_count = deltas.len();
                         let message =
                             sequencer.sequence_heads_batch(&runtime, snapshot_rev, deltas);
+                        let serialize_start = Instant::now();
                         let Ok(text) = serde_json::to_string(&message) else {
                             break;
                         };
+                        let encode_ms = serialize_start.elapsed().as_millis();
+                        let payload_bytes = text.len();
+                        let send_start = Instant::now();
                         if sender.send(WsMessage::Text(text)).await.is_err() {
                             break;
                         }
+                        telemetry::log_workspace_heads_batch_sent(
+                            workspace_id,
+                            lane.as_str(),
+                            delta_count,
+                            payload_bytes,
+                            oldest_queued_ms,
+                            encode_ms,
+                            send_start.elapsed().as_millis(),
+                        );
                     }
                     NextWorkspaceStreamItem::SummaryBatch { events } => {
                         let mut send_failed = false;
