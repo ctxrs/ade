@@ -32,8 +32,7 @@ pub(super) async fn open_session(
     let mut client = AppServerClient::start(&workdir, &launch_config_overrides).await?;
     let developer_instructions =
         normalize_ctx_system_prompt_append(std::env::var("CTX_SYSTEM_PROMPT_APPEND").ok());
-    let open_config_overrides = session_open_config_overrides(&session_config, options);
-    let turn_config_overrides = turn_config_overrides(&session_config, options);
+    let config_overrides = session_config_overrides(&session_config, options);
     let effort = session_effort(&session_config);
     let (thread_response, thread_id, resumed_from_provider_session) = if let Some(
         provider_session_id,
@@ -50,7 +49,7 @@ pub(super) async fn open_session(
                         "modelProvider": session_config.model_provider,
                         "approvalPolicy": session_config.approval_policy,
                         "sandbox": session_config.sandbox_mode,
-                        "config": open_config_overrides,
+                        "config": config_overrides,
                         "developerInstructions": developer_instructions,
                         "personality": session_config.personality,
                         "persistExtendedHistory": false,
@@ -92,7 +91,6 @@ pub(super) async fn open_session(
         default_cwd: PathBuf::from(thread_response.cwd),
         default_model: thread_response.model,
         default_effort: thread_response.reasoning_effort,
-        turn_config_overrides,
         opened_commands,
         opened_slash_commands,
         turn_aliases: TurnAliasState::new(),
@@ -131,7 +129,7 @@ async fn start_thread(
     developer_instructions: Option<String>,
     options: &RuntimeOptions,
 ) -> Result<ThreadStartLikeResponse> {
-    let config_overrides = session_open_config_overrides(session_config, options);
+    let config_overrides = session_config_overrides(session_config, options);
     client
         .request::<ThreadStartLikeResponse>(
             "thread/start",
@@ -153,19 +151,7 @@ async fn start_thread(
         .await
 }
 
-fn session_open_config_overrides(
-    session_config: &CrpSessionConfig,
-    options: &RuntimeOptions,
-) -> Option<Value> {
-    let mut open_config = session_config.clone();
-    open_config.mcp_servers = None;
-    merge_config_overrides(
-        options.config_overrides.clone(),
-        build_app_server_config_overrides(&open_config),
-    )
-}
-
-fn turn_config_overrides(
+fn session_config_overrides(
     session_config: &CrpSessionConfig,
     options: &RuntimeOptions,
 ) -> Option<Value> {

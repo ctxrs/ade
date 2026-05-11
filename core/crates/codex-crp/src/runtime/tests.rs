@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use tokio::sync::{mpsc, Mutex};
 
@@ -89,7 +89,6 @@ fn replay_fixture(file: &str) -> SnapshotOutput {
         default_cwd: PathBuf::from("/tmp"),
         default_model: "gpt-5.4".to_string(),
         default_effort: Some("medium".to_string()),
-        turn_config_overrides: None,
         opened_commands: Vec::new(),
         opened_slash_commands: Vec::new(),
         turn_aliases: TurnAliasState::new(),
@@ -405,7 +404,6 @@ async fn session_authenticate_emits_explicit_unsupported_notice() {
         default_cwd: PathBuf::from("/tmp"),
         default_model: "gpt-5.4".to_string(),
         default_effort: Some("medium".to_string()),
-        turn_config_overrides: None,
         opened_commands: Vec::new(),
         opened_slash_commands: Vec::new(),
         turn_aliases: TurnAliasState::new(),
@@ -453,13 +451,8 @@ async fn session_authenticate_emits_explicit_unsupported_notice() {
     }
 }
 
-#[tokio::test]
-async fn open_session_defers_mcp_overrides_until_turn_start() {
-    let _env_lock = codex_bin_env_lock().lock().await;
-    let tempdir = tempfile::tempdir().expect("tempdir");
-    let workdir = tempdir.path().to_path_buf();
+fn write_fake_codex_app_server(workdir: &Path, log_path: &Path) -> PathBuf {
     let script_path = workdir.join("fake-codex.py");
-    let log_path = workdir.join("app-server.log");
     fs::write(
         &script_path,
         format!(
@@ -479,8 +472,9 @@ for raw in sys.stdin:
         resp = {{"jsonrpc":"2.0","id":ident,"result":{{"protocolVersion":"0.1","capabilities":{{}},"serverInfo":{{"name":"fake-codex","version":"test"}}}}}}
         sys.stdout.write(json.dumps(resp) + "\n")
         sys.stdout.flush()
-    elif method == "thread/start":
-        resp = {{"jsonrpc":"2.0","id":ident,"result":{{"thread":{{"id":"new-thread"}},"model":"gpt-5.4","cwd":"{}","approvalPolicy":{{}},"sandbox":{{}},"reasoningEffort":"medium"}}}}
+    elif method == "thread/start" or method == "thread/resume":
+        thread_id = "resumed-thread" if method == "thread/resume" else "new-thread"
+        resp = {{"jsonrpc":"2.0","id":ident,"result":{{"thread":{{"id":thread_id}},"model":"gpt-5.4","cwd":"{}","approvalPolicy":{{}},"sandbox":{{}},"reasoningEffort":"medium"}}}}
         sys.stdout.write(json.dumps(resp) + "\n")
         sys.stdout.flush()
     elif method == "turn/start":
@@ -498,13 +492,34 @@ for raw in sys.stdin:
         .permissions();
     permissions.set_mode(0o755);
     fs::set_permissions(&script_path, permissions).expect("script perms");
+    script_path
+}
 
-    let _codex_bin = EnvGuard::set("CTX_CODEX_BIN_PATH", &script_path.to_string_lossy());
-    let (control_tx, _control_rx) = mpsc::unbounded_channel();
-    let (data_tx, _data_rx) = mpsc::channel(1);
-    let router = CrpEventRouter::new(control_tx, data_tx);
-    let mut session = None;
+fn read_logged_app_server_requests(log_path: &Path) -> Vec<Value> {
+    fs::read_to_string(log_path)
+        .expect("read fake codex log")
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("app-server request should parse"))
+        .collect()
+}
 
+fn logged_request<'a>(requests: &'a [Value], method: &str) -> &'a Value {
+    requests
+        .iter()
+        .find(|request| request.get("method").and_then(Value::as_str) == Some(method))
+        .unwrap_or_else(|| panic!("missing logged app-server request `{method}`: {requests:#?}"))
+}
+
+fn assert_no_logged_request(requests: &[Value], method: &str) {
+    assert!(
+        requests
+            .iter()
+            .all(|request| request.get("method").and_then(Value::as_str) != Some(method)),
+        "unexpected logged app-server request `{method}`: {requests:#?}"
+    );
+}
+
+fn crp_config_with_ctx_mcp(workdir: &Path) -> crate::protocol::CrpSessionConfig {
     let mut mcp_servers = HashMap::new();
     mcp_servers.insert(
         "ctx".to_string(),
@@ -514,20 +529,55 @@ for raw in sys.stdin:
             ..Default::default()
         },
     );
+    crate::protocol::CrpSessionConfig {
+        cwd: Some(workdir.to_path_buf()),
+        mcp_servers: Some(mcp_servers),
+        ..Default::default()
+    }
+}
 
+fn assert_thread_request_bootstraps_ctx_mcp(request: &Value) {
+    let ctx_mcp = request
+        .pointer("/params/config/mcp_servers.ctx")
+        .unwrap_or_else(|| panic!("thread request missing ctx MCP config: {request:#?}"));
+    assert_eq!(
+        ctx_mcp.get("command").and_then(Value::as_str),
+        Some("ctx-mcp")
+    );
+    assert_eq!(
+        ctx_mcp.pointer("/args/0").and_then(Value::as_str),
+        Some("--stdio")
+    );
+    assert_eq!(
+        request.pointer("/params/config/show_raw_agent_reasoning"),
+        Some(&json!(true)),
+        "thread bootstrap should preserve normal config overrides alongside MCP"
+    );
+}
+
+fn assert_turn_start_has_no_generic_config(request: &Value) {
+    assert!(
+        request.pointer("/params/config").is_none(),
+        "turn/start must not carry unsupported generic config: {request:#?}"
+    );
+}
+
+async fn send_open_and_prompt(
+    session: &mut Option<AppServerSessionState>,
+    router: &CrpEventRouter,
+    options: &RuntimeOptions,
+    workdir: &Path,
+    provider_session_id: Option<String>,
+) {
     handle_parsed_command(
         CrpCommand::SessionOpen {
             session_id: Some("fixture-session".to_string()),
-            provider_session_id: None,
-            config: Some(crate::protocol::CrpSessionConfig {
-                cwd: Some(workdir.clone()),
-                mcp_servers: Some(mcp_servers),
-                ..Default::default()
-            }),
+            provider_session_id,
+            config: Some(crp_config_with_ctx_mcp(workdir)),
         },
-        &mut session,
-        &router,
-        &RuntimeOptions::default(),
+        session,
+        router,
+        options,
     )
     .await
     .expect("session open should succeed");
@@ -542,31 +592,78 @@ for raw in sys.stdin:
             reasoning_effort: None,
             cwd: None,
         },
-        &mut session,
-        &router,
-        &RuntimeOptions::default(),
+        session,
+        router,
+        options,
     )
     .await
     .expect("session prompt should succeed");
+}
 
-    let log = fs::read_to_string(&log_path).expect("read fake codex log");
-    let thread_start = log
-        .lines()
-        .find(|line| line.contains(r#""method":"thread/start""#))
-        .expect("thread/start request logged");
-    let turn_start = log
-        .lines()
-        .find(|line| line.contains(r#""method":"turn/start""#))
-        .expect("turn/start request logged");
+#[tokio::test]
+async fn open_session_bootstraps_mcp_on_thread_start_not_turn_start() {
+    let _env_lock = codex_bin_env_lock().lock().await;
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let workdir = tempdir.path().to_path_buf();
+    let log_path = workdir.join("app-server.log");
+    let script_path = write_fake_codex_app_server(&workdir, &log_path);
+    let _codex_bin = EnvGuard::set("CTX_CODEX_BIN_PATH", &script_path.to_string_lossy());
+    let (control_tx, _control_rx) = mpsc::unbounded_channel();
+    let (data_tx, _data_rx) = mpsc::channel(1);
+    let router = CrpEventRouter::new(control_tx, data_tx);
+    let mut session = None;
+    let options = RuntimeOptions {
+        config_overrides: Some(json!({"show_raw_agent_reasoning": true})),
+    };
 
-    assert!(
-        !thread_start.contains("mcp_servers.ctx"),
-        "thread/start must not bootstrap ctx MCP: {thread_start}"
+    send_open_and_prompt(&mut session, &router, &options, &workdir, None).await;
+
+    let requests = read_logged_app_server_requests(&log_path);
+    assert_no_logged_request(&requests, "thread/resume");
+    assert_thread_request_bootstraps_ctx_mcp(logged_request(&requests, "thread/start"));
+    assert_turn_start_has_no_generic_config(logged_request(&requests, "turn/start"));
+
+    if let Some(state) = session.as_mut() {
+        state.client.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn resume_session_bootstraps_mcp_on_thread_resume_not_turn_start() {
+    let _env_lock = codex_bin_env_lock().lock().await;
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let workdir = tempdir.path().to_path_buf();
+    let log_path = workdir.join("app-server.log");
+    let script_path = write_fake_codex_app_server(&workdir, &log_path);
+    let _codex_bin = EnvGuard::set("CTX_CODEX_BIN_PATH", &script_path.to_string_lossy());
+    let (control_tx, _control_rx) = mpsc::unbounded_channel();
+    let (data_tx, _data_rx) = mpsc::channel(1);
+    let router = CrpEventRouter::new(control_tx, data_tx);
+    let mut session = None;
+    let options = RuntimeOptions {
+        config_overrides: Some(json!({"show_raw_agent_reasoning": true})),
+    };
+
+    send_open_and_prompt(
+        &mut session,
+        &router,
+        &options,
+        &workdir,
+        Some("existing-codex-thread".to_string()),
+    )
+    .await;
+
+    let requests = read_logged_app_server_requests(&log_path);
+    assert_no_logged_request(&requests, "thread/start");
+    let thread_resume = logged_request(&requests, "thread/resume");
+    assert_eq!(
+        thread_resume
+            .pointer("/params/threadId")
+            .and_then(Value::as_str),
+        Some("existing-codex-thread")
     );
-    assert!(
-        turn_start.contains("mcp_servers.ctx"),
-        "turn/start must include deferred ctx MCP config: {turn_start}"
-    );
+    assert_thread_request_bootstraps_ctx_mcp(thread_resume);
+    assert_turn_start_has_no_generic_config(logged_request(&requests, "turn/start"));
 
     if let Some(state) = session.as_mut() {
         state.client.shutdown().await;

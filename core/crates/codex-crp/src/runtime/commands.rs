@@ -157,7 +157,6 @@ pub(super) async fn handle_parsed_command(
                         "cwd": cwd.to_string_lossy().to_string(),
                         "model": model,
                         "effort": effort,
-                        "config": state.turn_config_overrides.clone(),
                     }),
                 )
                 .await

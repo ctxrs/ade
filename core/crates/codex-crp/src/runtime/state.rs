@@ -135,7 +135,6 @@ pub(super) struct AppServerSessionState {
     pub(super) default_cwd: PathBuf,
     pub(super) default_model: String,
     pub(super) default_effort: Option<String>,
-    pub(super) turn_config_overrides: Option<Value>,
     pub(super) opened_commands: Vec<crate::protocol::CrpCommandInfo>,
     pub(super) opened_slash_commands: Vec<String>,
     pub(super) turn_aliases: TurnAliasState,
