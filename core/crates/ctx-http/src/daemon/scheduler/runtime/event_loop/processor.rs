@@ -1,5 +1,6 @@
+mod effects;
+
 use super::super::super::persistence::append_session_event_with_retry;
-use super::dispatch::handle_persisted_provider_event;
 use super::failure::fail_turn;
 use super::provider_events::{
     claim_init_provider_session_ref, enrich_done_payload, record_first_provider_event_metric,
@@ -8,12 +9,13 @@ use super::state::{
     should_check_store_terminal_status, should_drop_post_terminal_event,
     should_process_post_terminal_assistant_complete, EventLoopRuntimeState,
 };
-use super::terminal::is_truthful_start_activity;
 use super::tools::prepare_tool_event_payload;
 use super::TurnEventLoop;
-use ctx_core::models::{SessionEventType, SessionTurnStatus};
+use ctx_core::models::SessionEventType;
 use ctx_providers::events::NormalizedEvent;
 use ctx_session_tools::{normalize_tool_event, order_seq::attach_order_seq};
+
+use self::effects::handle_persisted_provider_event_effects;
 
 pub(super) enum ProviderEventProcessingOutcome {
     Continue,
@@ -121,44 +123,15 @@ pub(super) async fn process_provider_event(
         }
     };
 
-    let publish_after_persist = matches!(
-        &event.event_type,
-        SessionEventType::ToolCall
-            | SessionEventType::ToolCallUpdate
-            | SessionEventType::ToolResult
-    );
-    if !publish_after_persist {
-        state.publish_event(event.clone()).await;
-    }
-
-    if is_truthful_start_activity(&event.event_type)
-        && runtime.promote_started_if_pending(&ctx.start_progress_tx)
-    {
-        let _ = ctx
-            .store
-            .update_session_turn_status(
-                ctx.session_id,
-                ctx.turn_id,
-                SessionTurnStatus::Running,
-                None,
-                None,
-                event.created_at,
-            )
-            .await;
-    }
-
-    handle_persisted_provider_event(
+    handle_persisted_provider_event_effects(
         ctx,
+        &state,
         runtime,
-        &event,
-        &raw_payload,
+        event,
+        raw_payload,
         normalized_tool_event.as_ref(),
     )
     .await;
-
-    if publish_after_persist {
-        state.publish_event(event.clone()).await;
-    }
 
     ProviderEventProcessingOutcome::Continue
 }
