@@ -1,9 +1,6 @@
 use std::sync::Arc;
 
 use axum::http::StatusCode;
-use base64::Engine;
-use rand_core::RngCore;
-use sha2::Digest;
 
 use crate::daemon::AppState;
 use ctx_core::ids::ConnectionProfileId;
@@ -12,6 +9,13 @@ use ctx_core::models::MobileConnectionProfile;
 use super::super::{
     default_mobile_profile_scopes, mobile_scope_set_from_strings, MobileScope, MobileScopeSet,
 };
+
+pub(in crate::api) use self::tokens::{
+    generate_mobile_api_token, generate_pairing_token, hash_api_token, hash_pairing_token,
+};
+
+#[path = "mobile/tokens.rs"]
+mod tokens;
 
 #[derive(Clone, Copy)]
 pub(in crate::api) struct MobileAuthContext {
@@ -142,26 +146,4 @@ pub(super) async fn verify_mobile_api_token(
     } else {
         Ok(None)
     }
-}
-
-pub(in crate::api) fn hash_api_token(token: &str) -> String {
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(token.as_bytes());
-    hex::encode(hasher.finalize())
-}
-
-pub(in crate::api) fn hash_pairing_token(token: &str) -> String {
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(token.as_bytes());
-    hex::encode(hasher.finalize())
-}
-
-pub(in crate::api) fn generate_mobile_api_token() -> String {
-    format!("ctxm_{}", uuid::Uuid::new_v4().to_string().replace('-', ""))
-}
-
-pub(in crate::api) fn generate_pairing_token() -> String {
-    let mut bytes = [0u8; 32];
-    rand_core::OsRng.fill_bytes(&mut bytes);
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
