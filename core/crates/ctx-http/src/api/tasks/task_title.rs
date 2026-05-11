@@ -1,5 +1,10 @@
 use super::*;
 
+#[path = "task_title/effects.rs"]
+mod effects;
+
+use effects::emit_task_title_update_effects;
+
 #[derive(Debug, Deserialize)]
 pub(in crate::api) struct UpdateTaskTitleReq {
     title: String,
@@ -80,56 +85,6 @@ pub(in crate::api) async fn update_task_title(
         }
     };
 
-    let _ = state
-        .emit_workspace_task_delta(task.clone(), TaskDeltaKind::Updated)
-        .await;
-    if let Err(e) = state.emit_workspace_task_upsert(task_id).await {
-        tracing::warn!(task_id = %task_id.0, "workspace active snapshot refresh failed: {e:?}");
-    }
-    let sessions = match store.list_sessions_for_task(task_id).await {
-        Ok(sessions) => sessions,
-        Err(e) => {
-            tracing::warn!(task_id = %task_id.0, "failed to list sessions for archived task: {e:?}");
-            Vec::new()
-        }
-    };
-    let mut worktree_ids: HashSet<WorktreeId> = sessions.iter().map(|s| s.worktree_id).collect();
-    if let Some(primary_worktree_id) = task.primary_worktree_id {
-        worktree_ids.insert(primary_worktree_id);
-    }
-    let mut worktree_id_strings = HashSet::new();
-    for worktree_id in worktree_ids {
-        match store.get_worktree(worktree_id).await {
-            Ok(Some(worktree)) => {
-                worktree_id_strings.insert(worktree.id.0.to_string());
-            }
-            Ok(None) => {
-                tracing::warn!(
-                    task_id = %task_id.0,
-                    worktree_id = %worktree_id.0,
-                    "worktree missing for archived task"
-                );
-            }
-            Err(e) => {
-                tracing::warn!(
-                    task_id = %task_id.0,
-                    worktree_id = %worktree_id.0,
-                    "failed to load worktree for archived task: {e:?}"
-                );
-            }
-        }
-    }
-    let session_ids: HashSet<String> = sessions
-        .iter()
-        .map(|session| session.id.0.to_string())
-        .collect();
-    if let Err(e) = state
-        .transport
-        .web_sessions
-        .close_for_task(&session_ids, &worktree_id_strings)
-        .await
-    {
-        tracing::warn!(task_id = %task_id.0, "failed to close web sessions for archived task: {e:?}");
-    }
+    emit_task_title_update_effects(&state, &store, &task).await;
     Ok(Json(task))
 }
