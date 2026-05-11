@@ -1,7 +1,5 @@
 use std::time::Duration;
 
-use anyhow::Context;
-use axum::http::StatusCode;
 use chrono::Utc;
 use serde::Deserialize;
 
@@ -9,6 +7,11 @@ const KIMI_CODE_CLIENT_ID: &str = "17e5f671-d194-4dfb-9706-5516cb48c098";
 const KIMI_LOGIN_TIMEOUT_DEFAULT: Duration = Duration::from_secs(300);
 const KIMI_LOGIN_POLL_INTERVAL_FALLBACK: Duration = Duration::from_secs(5);
 const KIMI_DEFAULT_OAUTH_HOST: &str = "https://auth.kimi.com";
+
+#[path = "oauth/client.rs"]
+mod client;
+
+pub(super) use client::{poll_kimi_token, request_kimi_device_authorization};
 
 #[derive(Debug, Deserialize)]
 pub(super) struct KimiDeviceAuthorizationResp {
@@ -75,62 +78,6 @@ fn kimi_login_timeout() -> Duration {
         .filter(|value| *value > 0)
         .unwrap_or(KIMI_LOGIN_TIMEOUT_DEFAULT.as_secs());
     Duration::from_secs(seconds)
-}
-
-pub(super) async fn request_kimi_device_authorization(
-) -> anyhow::Result<KimiDeviceAuthorizationResp> {
-    let url = format!(
-        "{}/api/oauth/device_authorization",
-        kimi_oauth_host().trim_end_matches('/')
-    );
-    let response = reqwest::Client::new()
-        .post(&url)
-        .form(&[("client_id", KIMI_CODE_CLIENT_ID)])
-        .send()
-        .await
-        .context("requesting Kimi device authorization")?;
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    if !status.is_success() {
-        anyhow::bail!("Kimi device authorization failed ({status}): {body}");
-    }
-    serde_json::from_str::<KimiDeviceAuthorizationResp>(&body)
-        .context("parsing Kimi device authorization response")
-}
-
-pub(super) async fn poll_kimi_token(
-    device_code: &str,
-) -> anyhow::Result<Result<KimiTokenSuccessResp, KimiTokenErrorResp>> {
-    let url = format!(
-        "{}/api/oauth/token",
-        kimi_oauth_host().trim_end_matches('/')
-    );
-    let response = reqwest::Client::new()
-        .post(&url)
-        .form(&[
-            ("client_id", KIMI_CODE_CLIENT_ID),
-            ("device_code", device_code),
-            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
-        ])
-        .send()
-        .await
-        .context("polling Kimi token endpoint")?;
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    if status == StatusCode::OK {
-        let token = serde_json::from_str::<KimiTokenSuccessResp>(&body)
-            .context("parsing Kimi token success response")?;
-        return Ok(Ok(token));
-    }
-    if status.is_client_error() {
-        let error =
-            serde_json::from_str::<KimiTokenErrorResp>(&body).unwrap_or(KimiTokenErrorResp {
-                error: Some("oauth_error".to_string()),
-                error_description: Some(body),
-            });
-        return Ok(Err(error));
-    }
-    anyhow::bail!("Kimi token polling failed ({status}): {body}");
 }
 
 pub(super) fn kimi_token_json(token: &KimiTokenSuccessResp) -> String {
