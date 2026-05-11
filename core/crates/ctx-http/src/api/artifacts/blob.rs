@@ -1,15 +1,15 @@
 use std::path::{Path as StdPath, PathBuf};
 use std::sync::Arc;
 
-use axum::body::{Body, Bytes};
-use axum::extract::{FromRequest, Multipart, Path, Request, State};
+use axum::body::Body;
+use axum::extract::{Path, Request, State};
 use axum::http::{header, StatusCode};
 use axum::response::Response;
 use axum::Json;
 use chrono::Utc;
 use ctx_session_tools::{
-    infer_session_upload_blob_mime_type, SESSION_IMAGE_BLOB_MAX_BYTES,
-    SESSION_IMAGE_BLOB_MULTIPART_MAX_BYTES, SESSION_IMAGE_BLOB_TOO_LARGE_MESSAGE,
+    SESSION_IMAGE_BLOB_MAX_BYTES, SESSION_IMAGE_BLOB_MULTIPART_MAX_BYTES,
+    SESSION_IMAGE_BLOB_TOO_LARGE_MESSAGE,
 };
 use serde::Serialize;
 use sha2::Digest;
@@ -22,12 +22,15 @@ use crate::daemon::AppState;
 mod errors;
 #[path = "blob/storage.rs"]
 mod storage;
+#[path = "blob/upload.rs"]
+mod upload;
 
 use errors::{
     blob_upload_api_error, blob_upload_multipart_rejection_error, blob_upload_status_error,
 };
 use storage::blobs_dir;
 pub(in crate::api) use storage::persist_blob_bytes;
+use upload::parse_blob_upload_file;
 
 #[derive(Debug, Serialize)]
 pub(in crate::api) struct BlobUploadResp {
@@ -47,53 +50,8 @@ pub(in crate::api) async fn upload_blob(
     State(state): State<Arc<AppState>>,
     req: Request,
 ) -> Result<Json<BlobUploadResp>, (StatusCode, Json<ApiErrorResp>)> {
-    let mut multipart = Multipart::from_request(req, &state)
-        .await
-        .map_err(|rejection| blob_upload_multipart_rejection_error(rejection.status()))?;
-    let mut file_name: Option<String> = None;
-    let mut mime_type: Option<String> = None;
-    let mut bytes: Option<Bytes> = None;
-
-    while let Some(field) = multipart.next_field().await.map_err(|_| {
-        blob_upload_api_error(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            SESSION_IMAGE_BLOB_TOO_LARGE_MESSAGE,
-        )
-    })? {
-        let name = field.name().map(|s| s.to_string()).unwrap_or_default();
-        if name != "file" {
-            continue;
-        }
-        let mut field = field;
-        file_name = field.file_name().map(|s| s.to_string());
-        mime_type = field.content_type().map(|s| s.to_string());
-        let mut field_bytes = Vec::new();
-        while let Some(chunk) = field.chunk().await.map_err(|_| {
-            blob_upload_api_error(
-                StatusCode::PAYLOAD_TOO_LARGE,
-                SESSION_IMAGE_BLOB_TOO_LARGE_MESSAGE,
-            )
-        })? {
-            if field_bytes.len().saturating_add(chunk.len()) > MAX_BLOB_BYTES {
-                return Err(blob_upload_api_error(
-                    StatusCode::PAYLOAD_TOO_LARGE,
-                    SESSION_IMAGE_BLOB_TOO_LARGE_MESSAGE,
-                ));
-            }
-            field_bytes.extend_from_slice(&chunk);
-        }
-        bytes = Some(Bytes::from(field_bytes));
-        break;
-    }
-
-    let Some(bytes) = bytes else {
-        return Err(blob_upload_api_error(
-            StatusCode::BAD_REQUEST,
-            "Image attachment upload requires a file field.",
-        ));
-    };
-    let mime_type = infer_session_upload_blob_mime_type(file_name.as_deref(), mime_type);
-    let resp = persist_blob_bytes(&state, &bytes, &mime_type, file_name.as_deref())
+    let file = parse_blob_upload_file(req, &state).await?;
+    let resp = persist_blob_bytes(&state, &file.bytes, &file.mime_type, file.name.as_deref())
         .await
         .map_err(blob_upload_status_error)?;
     Ok(Json(resp))
