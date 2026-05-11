@@ -10,6 +10,10 @@ use ctx_core::models::{
     SessionTurnStatus,
 };
 
+use self::queue_events::append_and_publish_queued_prompt_events;
+
+mod queue_events;
+
 pub(in crate::daemon::sessions::subagents) async fn persist_subagent_prompt(
     state: &Arc<AppState>,
     session: &Session,
@@ -108,59 +112,10 @@ pub(in crate::daemon::sessions::subagents) async fn persist_subagent_prompt(
     let _ = store.insert_session_turn(turn).await;
     state.publish_event(event).await;
     if matches!(saved.delivery, MessageDelivery::Queued) {
-        let queued = store
-            .append_session_event(
-                session.id,
-                Some(run_id),
-                Some(turn_id),
-                SessionEventType::InputQueued,
-                serde_json::json!({"message_id": saved.id.0}),
-            )
-            .await
-            .map_err(internal_api_error)?;
-        state.publish_event(queued).await;
-
-        let queue_position = store
-            .list_queued_messages_for_session(session.id)
-            .await
-            .ok()
-            .and_then(|messages| {
-                messages
-                    .iter()
-                    .position(|message| message.id == saved.id)
-                    .map(|idx| idx as i64)
-            });
-
-        let queue_added = store
-            .append_session_event(
-                session.id,
-                Some(run_id),
-                Some(turn_id),
-                SessionEventType::MessageQueueAdded,
-                serde_json::json!({
-                    "message_id": saved.id.0,
-                    "queue_position": queue_position,
-                }),
-            )
-            .await
-            .map_err(internal_api_error)?;
-        state.publish_event(queue_added).await;
-
-        let turn_queued = store
-            .append_session_event(
-                session.id,
-                Some(run_id),
-                Some(turn_id),
-                SessionEventType::TurnQueued,
-                serde_json::json!({
-                    "message_id": saved.id.0,
-                    "queue_position": queue_position,
-                }),
-            )
-            .await
-            .map_err(internal_api_error)?;
-        last_event_seq = turn_queued.seq;
-        state.publish_event(turn_queued).await;
+        last_event_seq = append_and_publish_queued_prompt_events(
+            state, &store, session, run_id, turn_id, &saved,
+        )
+        .await?;
     }
 
     Ok(PersistedSubagentPrompt {
