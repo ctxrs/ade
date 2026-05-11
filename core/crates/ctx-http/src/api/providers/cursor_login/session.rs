@@ -1,20 +1,18 @@
 use super::capture::parse_cursor_captured_tokens;
-use super::output::{
-    cursor_login_timeout, spawn_cursor_login_reader, CursorLoginOutputLine,
-    CURSOR_LOGIN_POLL_INTERVAL,
-};
 use super::runtime::resolve_cursor_login_runtime;
 use super::*;
 
 mod command;
 mod completion;
+mod output_loop;
 mod progress;
 #[path = "session/workspace.rs"]
 mod workspace;
 
 use command::spawn_cursor_login_child;
 use completion::complete_cursor_login;
-use progress::{record_cursor_login_output, set_cursor_login_error};
+use output_loop::collect_cursor_login_output;
+use progress::set_cursor_login_error;
 use workspace::prepare_cursor_login_workspace;
 
 pub(super) async fn monitor_cursor_login(
@@ -55,78 +53,15 @@ pub(super) async fn monitor_cursor_login(
         }
     };
 
-    let mut transcript = String::new();
-    let mut observed_auth_url = None::<String>;
-    let mut observed_email = None::<String>;
-    let (line_tx, mut line_rx) = mpsc::unbounded_channel::<CursorLoginOutputLine>();
-    if let Some(stdout) = child.stdout.take() {
-        spawn_cursor_login_reader(stdout, false, line_tx.clone());
-    }
-    if let Some(stderr) = child.stderr.take() {
-        spawn_cursor_login_reader(stderr, true, line_tx.clone());
-    }
-    drop(line_tx);
-
-    let started_at = Instant::now();
-    let timeout = cursor_login_timeout();
-    let mut timeout_error: Option<String> = None;
-    let exit_result: std::io::Result<std::process::ExitStatus> = loop {
-        if started_at.elapsed() >= timeout {
-            timeout_error = Some("timed out waiting for Cursor OAuth completion".to_string());
-            let _ = child.kill().await;
-            break child.wait().await;
-        }
-
-        tokio::select! {
-            maybe_line = line_rx.recv() => {
-                if let Some(output_line) = maybe_line {
-                    record_cursor_login_output(
-                        &state,
-                        &login_id,
-                        output_line,
-                        &mut transcript,
-                        &mut observed_email,
-                        &mut observed_auth_url,
-                    )
-                    .await;
-                }
-            }
-            wait = child.wait() => {
-                break wait;
-            }
-            _ = tokio::time::sleep(CURSOR_LOGIN_POLL_INTERVAL) => {}
-        }
-    };
-
-    let drain_deadline = Instant::now() + std::time::Duration::from_millis(200);
-    loop {
-        match tokio::time::timeout(std::time::Duration::from_millis(20), line_rx.recv()).await {
-            Ok(Some(output_line)) => {
-                record_cursor_login_output(
-                    &state,
-                    &login_id,
-                    output_line,
-                    &mut transcript,
-                    &mut observed_email,
-                    &mut observed_auth_url,
-                )
-                .await;
-            }
-            Ok(None) => break,
-            Err(_) if Instant::now() >= drain_deadline => break,
-            Err(_) => {
-                continue;
-            }
-        }
-    }
+    let output = collect_cursor_login_output(&state, &login_id, &mut child).await;
 
     let completion = complete_cursor_login(
         &state,
         label,
         &workspace.capture_path,
-        observed_email,
-        timeout_error,
-        exit_result,
+        output.observed_email,
+        output.timeout_error,
+        output.exit_result,
     )
     .await;
 
@@ -137,7 +72,7 @@ pub(super) async fn monitor_cursor_login(
         entry.account_id = completion.account_id;
         entry.error = completion.error;
         if entry.auth_url.is_none() {
-            entry.auth_url = observed_auth_url;
+            entry.auth_url = output.observed_auth_url;
         }
     }
 }
