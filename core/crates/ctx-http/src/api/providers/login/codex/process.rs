@@ -1,12 +1,13 @@
-use super::app_server::{
-    fetch_codex_account_details, send_codex_jsonrpc, spawn_codex_app_server,
-    wait_for_codex_login_completion, wait_for_codex_response,
-};
+use super::app_server::{send_codex_jsonrpc, spawn_codex_app_server, wait_for_codex_response};
 use super::*;
 
+#[path = "process/monitor.rs"]
+mod monitor;
 #[path = "process/persistence.rs"]
 mod persistence;
 
+pub(super) use monitor::monitor_codex_login;
+#[cfg(test)]
 pub(super) use persistence::persist_successful_codex_login;
 
 pub(super) struct CodexLoginProcess {
@@ -91,50 +92,4 @@ pub(super) async fn start_codex_login_process(
         stdin,
         reader,
     })
-}
-
-pub(super) async fn monitor_codex_login(
-    state: Arc<AppState>,
-    account_id: String,
-    label: String,
-    mut login: CodexLoginProcess,
-) {
-    let completion = wait_for_codex_login_completion(&mut login.reader, &login.login_id).await;
-    let mut status = match completion {
-        Ok(completion) => completion,
-        Err(err) => CodexLoginCompletion {
-            success: false,
-            error: Some(err.to_string()),
-        },
-    };
-
-    if status.success {
-        let (email, plan_type) = fetch_codex_account_details(&mut login.stdin, &mut login.reader)
-            .await
-            .unwrap_or((None, None));
-        if let Err(err) =
-            persist_successful_codex_login(&state, &account_id, label, email, plan_type).await
-        {
-            status.success = false;
-            status.error = Some(err.to_string());
-            let _ = tokio::fs::remove_dir_all(&login.account_dir).await;
-        }
-    } else {
-        let _ = tokio::fs::remove_dir_all(&login.account_dir).await;
-    }
-
-    {
-        let mut map = state.providers.codex_login_sessions.lock().await;
-        if let Some(entry) = map.get_mut(&account_id) {
-            entry.status = if status.success {
-                "success".to_string()
-            } else {
-                "failed".to_string()
-            };
-            entry.completion_token = None;
-            entry.error = status.error;
-        }
-    }
-
-    let _ = login.child.kill().await;
 }
