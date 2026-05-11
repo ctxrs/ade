@@ -6,11 +6,13 @@ mod finalization;
 mod output;
 #[path = "monitor/termination.rs"]
 mod termination;
+#[path = "monitor/wait_loop.rs"]
+mod wait_loop;
 
 use finalization::finalize_claude_login;
-use output::{drain_claude_login_output, observe_claude_login_line, ClaudeLoginOutputDrainMode};
 pub(in crate::api::providers::login::claude::session) use termination::kill_claude_login_process;
 use termination::terminate_claude_login_after_error;
+use wait_loop::wait_for_claude_login_observation;
 
 pub(in crate::api::providers::login::claude::session) async fn monitor_claude_login(
     state: Arc<AppState>,
@@ -18,119 +20,14 @@ pub(in crate::api::providers::login::claude::session) async fn monitor_claude_lo
     label: Option<String>,
     mut login: ClaudeLoginProcess,
 ) {
-    let mut transcript = String::new();
-    let mut observed_auth_url = login.auth_url.clone();
-    let mut output_closed = false;
-    let auth_url_deadline = Instant::now() + CLAUDE_LOGIN_NO_AUTH_URL_TIMEOUT;
-    let mut completion_deadline = observed_auth_url
-        .as_ref()
-        .map(|_| Instant::now() + CLAUDE_LOGIN_COMPLETION_TIMEOUT);
-    let mut exit_result: Option<anyhow::Result<portable_pty::ExitStatus>> = None;
-    let mut terminal_error: Option<String> = None;
+    let mut observation = wait_for_claude_login_observation(&state, &login_id, &mut login).await;
 
-    for line in std::mem::take(&mut login.buffered_lines) {
-        let outcome = observe_claude_login_line(
-            &state,
-            &login_id,
-            &mut observed_auth_url,
-            &mut transcript,
-            &login.browser_open_capture_path,
-            line,
-        )
-        .await;
-        if let Some(error) = outcome.terminal_error {
-            terminal_error = Some(error);
-            break;
-        }
-        if outcome.auth_url_became_observed {
-            completion_deadline = Some(Instant::now() + CLAUDE_LOGIN_COMPLETION_TIMEOUT);
-        }
-    }
-
-    while terminal_error.is_none() {
-        let _ = refresh_claude_auth_url_from_capture_path(
-            &mut observed_auth_url,
-            &login.browser_open_capture_path,
-        );
-        let deadline = completion_deadline.unwrap_or(auth_url_deadline);
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            terminal_error = Some(if observed_auth_url.is_some() {
-                "claude setup-token timed out waiting for browser sign-in completion".to_string()
-            } else {
-                "claude setup-token did not emit an authentication URL".to_string()
-            });
-            break;
-        }
-        let timeout_future = tokio::time::sleep(remaining);
-        tokio::pin!(timeout_future);
-
-        tokio::select! {
-            maybe_line = login.line_rx.recv(), if !output_closed => {
-                match maybe_line {
-                    Some(line) => {
-                        let outcome = observe_claude_login_line(
-                            &state,
-                            &login_id,
-                            &mut observed_auth_url,
-                            &mut transcript,
-                            &login.browser_open_capture_path,
-                            line,
-                        )
-                        .await;
-                        if let Some(error) = outcome.terminal_error {
-                            terminal_error = Some(error);
-                            break;
-                        }
-                        if outcome.auth_url_became_observed {
-                            completion_deadline = Some(Instant::now() + CLAUDE_LOGIN_COMPLETION_TIMEOUT);
-                        }
-                    }
-                    None => {
-                        output_closed = true;
-                    }
-                }
-            }
-            exit = &mut login.exit_rx => {
-                exit_result = Some(match exit {
-                    Ok(result) => result,
-                    Err(err) => Err(anyhow::anyhow!("claude setup-token exit channel closed: {err}")),
-                });
-                break;
-            }
-            _ = &mut timeout_future => {
-                terminal_error = Some(if observed_auth_url.is_some() {
-                    "claude setup-token timed out waiting for browser sign-in completion".to_string()
-                } else {
-                    "claude setup-token did not emit an authentication URL".to_string()
-                });
-                break;
-            }
-        }
-    }
-
-    let drain_mode = if exit_result.is_some() {
-        ClaudeLoginOutputDrainMode::TrailingGrace
-    } else {
-        ClaudeLoginOutputDrainMode::PendingOnly
-    };
-    drain_claude_login_output(
-        &state,
-        &login_id,
-        &mut observed_auth_url,
-        &mut transcript,
-        &login.browser_open_capture_path,
-        &mut login.line_rx,
-        drain_mode,
-    )
-    .await;
-
-    if terminal_error.is_some() {
+    if observation.terminal_error.is_some() {
         terminate_claude_login_after_error(
             Arc::clone(&login.killer),
             &mut login.exit_rx,
-            &mut terminal_error,
-            &mut exit_result,
+            &mut observation.terminal_error,
+            &mut observation.exit_result,
         )
         .await;
     }
@@ -139,10 +36,10 @@ pub(in crate::api::providers::login::claude::session) async fn monitor_claude_lo
         &state,
         &login_id,
         label,
-        observed_auth_url,
-        terminal_error,
-        exit_result,
-        &transcript,
+        observation.observed_auth_url,
+        observation.terminal_error,
+        observation.exit_result,
+        &observation.transcript,
     )
     .await;
 }
