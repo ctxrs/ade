@@ -3,6 +3,7 @@ use crate::daemon::git_status::emit_worktree_vcs_snapshot_for_worktree;
 use ctx_workspace_config as workspace_config;
 
 mod attachment_ops;
+mod attachment_routes;
 mod config_ops;
 mod file_completions;
 mod prompt_config;
@@ -10,6 +11,10 @@ mod provider_model_preferences;
 mod worktree_bootstrap;
 
 use attachment_ops::*;
+pub(in crate::api) use attachment_routes::{
+    create_workspace_attachment, delete_workspace_attachment,
+};
+pub(super) use attachment_routes::{CreateWorkspaceAttachmentReq, DeleteWorkspaceAttachmentReq};
 use config_ops::*;
 pub(in crate::api) use file_completions::workspace_file_completions;
 pub(in crate::api) use prompt_config::*;
@@ -92,67 +97,6 @@ pub(in crate::api) async fn update_execution_config(
 ) -> Result<Json<UpdateWorkspaceConfigResp>, (StatusCode, Json<ApiErrorResp>)> {
     let ctx = require_workspace_ctx(&state, &id).await?;
     update_workspace_execution_config(&state, &ctx, req)
-        .await
-        .map(Json)
-}
-
-#[derive(Debug, Deserialize)]
-pub(in crate::api) struct CreateWorkspaceAttachmentReq {
-    kind: WorkspaceAttachmentKind,
-    name: String,
-    source: String,
-    #[serde(default)]
-    revision: Option<String>,
-    #[serde(default)]
-    subpath: Option<String>,
-    #[serde(default)]
-    mount_relpath: Option<String>,
-    #[serde(default)]
-    mode: Option<AttachmentMode>,
-    #[serde(default)]
-    update_policy: Option<AttachmentUpdatePolicy>,
-}
-
-pub(in crate::api) async fn create_workspace_attachment(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Json(req): Json<CreateWorkspaceAttachmentReq>,
-) -> Result<Json<Vec<WorkspaceAttachment>>, (StatusCode, Json<ApiErrorResp>)> {
-    if req.name.trim().is_empty() || req.source.trim().is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "name and source are required".to_string(),
-            }),
-        ));
-    }
-    let ctx = require_workspace_ctx(&state, &id).await?;
-    create_and_sync_workspace_attachment(&state, &ctx, req)
-        .await
-        .map(Json)
-}
-
-#[derive(Debug, Deserialize)]
-pub(in crate::api) struct DeleteWorkspaceAttachmentReq {
-    kind: WorkspaceAttachmentKind,
-    name: String,
-}
-
-pub(in crate::api) async fn delete_workspace_attachment(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Json(req): Json<DeleteWorkspaceAttachmentReq>,
-) -> Result<Json<Vec<WorkspaceAttachment>>, (StatusCode, Json<ApiErrorResp>)> {
-    if req.name.trim().is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "name is required".to_string(),
-            }),
-        ));
-    }
-    let ctx = require_workspace_ctx(&state, &id).await?;
-    delete_and_sync_workspace_attachment(&state, &ctx, req)
         .await
         .map(Json)
 }
