@@ -47,11 +47,11 @@ use crate::daemon::execution_effective;
 use crate::daemon::scheduler::SchedulerCommand;
 use crate::daemon::workspaces::vcs_hooks;
 use crate::daemon::AppState;
-use ctx_core::ids::{MessageId, RunId, SessionId, TaskId, TurnId, WorkspaceId, WorktreeId};
+use ctx_core::ids::{RunId, SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
-    ExecutionEnvironment, Message, MessageDelivery, MessageRole, SandboxBinding, SandboxProfile,
-    Session, SessionEventType, SessionTurn, SessionTurnStatus, Task, TaskDeltaKind, VcsKind,
-    Workspace, WorkspaceArchivedPage, WorkspaceIndexCursor, Worktree,
+    ExecutionEnvironment, MessageDelivery, SandboxBinding, SandboxProfile, Session,
+    SessionEventType, Task, TaskDeltaKind, VcsKind, Workspace, WorkspaceArchivedPage,
+    WorkspaceIndexCursor, Worktree,
 };
 use ctx_fs::vcs;
 use ctx_fs::worktrees::{create_worktree, managed_worktree_path};

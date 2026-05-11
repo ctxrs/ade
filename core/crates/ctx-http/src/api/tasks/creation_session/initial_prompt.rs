@@ -1,6 +1,14 @@
 use super::*;
 use crate::api::sessions;
 
+#[path = "initial_prompt/records.rs"]
+mod records;
+
+use self::records::{
+    existing_initial_prompt_message_matches, initial_prompt_turn,
+    initial_prompt_user_event_payload, new_initial_prompt_message, parse_initial_prompt_ids,
+};
+
 pub(super) struct InitialPromptSeed {
     pub(super) prompt: Option<String>,
     pub(super) message_id: Option<String>,
@@ -18,28 +26,17 @@ pub(super) async fn seed_initial_prompt(
         return Ok(());
     };
 
-    let (message_id, turn_id) = match (seed.message_id.as_deref(), seed.turn_id.as_deref()) {
-        (Some(message_id), Some(turn_id)) => (
-            MessageId(uuid::Uuid::parse_str(message_id).map_err(|_| StatusCode::BAD_REQUEST)?),
-            TurnId(uuid::Uuid::parse_str(turn_id).map_err(|_| StatusCode::BAD_REQUEST)?),
-        ),
-        _ => return Err(StatusCode::BAD_REQUEST),
-    };
+    let ids = parse_initial_prompt_ids(seed.message_id.as_deref(), seed.turn_id.as_deref())?;
+    let message_id = ids.message_id;
+    let turn_id = ids.turn_id;
 
     let delivery = MessageDelivery::Immediate;
-    let attachments = Vec::new();
     if let Some(existing) = store
         .get_message(message_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     {
-        let matches = existing.session_id == session.id
-            && existing.turn_id == Some(turn_id)
-            && matches!(existing.role, MessageRole::User)
-            && existing.content == prompt
-            && existing.attachments.is_empty()
-            && matches!(existing.delivery, MessageDelivery::Immediate);
-        if matches {
+        if existing_initial_prompt_message_matches(&existing, session, turn_id, &prompt) {
             sessions::ensure_session_turn_for_message(store, session.id, turn_id, &existing)
                 .await?;
         } else {
@@ -54,21 +51,7 @@ pub(super) async fn seed_initial_prompt(
             let mut order_seq_state = order_seq_state.lock().await;
             order_seq_state.get_or_assign(format!("message:{}", message_id.0), None)
         };
-        let msg = Message {
-            id: message_id,
-            session_id: session.id,
-            task_id: session.task_id,
-            run_id: Some(run_id),
-            turn_id: Some(turn_id),
-            turn_sequence: Some(0),
-            order_seq: Some(order_seq),
-            role: MessageRole::User,
-            content: prompt,
-            attachments: attachments.clone(),
-            delivery,
-            delivered_at: None,
-            created_at: chrono::Utc::now(),
-        };
+        let msg = new_initial_prompt_message(session, ids, run_id, prompt, order_seq, delivery);
 
         let saved = match store.insert_message(msg).await {
             Ok(saved) => saved,
@@ -80,13 +63,12 @@ pub(super) async fn seed_initial_prompt(
                 else {
                     return Err(StatusCode::INTERNAL_SERVER_ERROR);
                 };
-                let matches = existing.session_id == session.id
-                    && existing.turn_id == Some(turn_id)
-                    && matches!(existing.role, MessageRole::User)
-                    && existing.content == prompt_for_idempotency
-                    && existing.attachments.is_empty()
-                    && matches!(existing.delivery, MessageDelivery::Immediate);
-                if matches {
+                if existing_initial_prompt_message_matches(
+                    &existing,
+                    session,
+                    turn_id,
+                    &prompt_for_idempotency,
+                ) {
                     existing
                 } else {
                     return Err(StatusCode::CONFLICT);
@@ -101,38 +83,13 @@ pub(super) async fn seed_initial_prompt(
                 Some(run_id),
                 Some(turn_id),
                 SessionEventType::UserMessage,
-                serde_json::json!({
-                    "message_id": saved.id.0,
-                    "content": saved.content.clone(),
-                    "delivery": saved.delivery.clone(),
-                    "attachments": saved.attachments,
-                    "order_seq": order_seq,
-                }),
+                initial_prompt_user_event_payload(&saved, order_seq),
             )
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         let start_seq = event.seq;
 
-        let turn = SessionTurn {
-            turn_id,
-            session_id: session.id,
-            run_id: Some(run_id),
-            user_message_id: Some(saved.id),
-            status: SessionTurnStatus::Starting,
-            start_seq: Some(start_seq),
-            end_seq: None,
-            started_at: saved.created_at,
-            updated_at: saved.created_at,
-            assistant_partial: None,
-            thought_partial: None,
-            metrics_json: None,
-            failure: None,
-            tool_total: 0,
-            tool_pending: 0,
-            tool_running: 0,
-            tool_completed: 0,
-            tool_failed: 0,
-        };
+        let turn = initial_prompt_turn(session, ids, run_id, &saved, start_seq);
 
         if let Err(err) = store.insert_session_turn(turn).await {
             if !is_unique_constraint_violation(&err) {
