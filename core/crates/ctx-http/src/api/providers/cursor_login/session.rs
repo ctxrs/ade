@@ -6,11 +6,13 @@ use super::output::{
 use super::runtime::resolve_cursor_login_runtime;
 use super::*;
 
+mod command;
 mod completion;
 mod progress;
 #[path = "session/workspace.rs"]
 mod workspace;
 
+use command::spawn_cursor_login_child;
 use completion::complete_cursor_login;
 use progress::{record_cursor_login_output, set_cursor_login_error};
 use workspace::prepare_cursor_login_workspace;
@@ -39,34 +41,7 @@ pub(super) async fn monitor_cursor_login(
         }
     };
 
-    let hook_require = format!("--require {}", workspace.hook_path.to_string_lossy());
-    let node_options = match std::env::var("NODE_OPTIONS") {
-        Ok(existing) if !existing.trim().is_empty() => {
-            format!("{} {}", existing.trim(), hook_require)
-        }
-        _ => hook_require,
-    };
-
-    let mut cmd = Command::new(&cursor_runtime.command_abs_path);
-    for key in ctx_core::env::DAEMON_AUTH_ENV_VARS {
-        cmd.env_remove(key);
-    }
-    for arg in &cursor_runtime.args {
-        cmd.arg(arg);
-    }
-    cmd.arg("login");
-    cmd.current_dir(&workspace.workdir);
-    cmd.stdin(Stdio::null());
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
-    cmd.env("NO_OPEN_BROWSER", "1");
-    cmd.env(
-        "CTX_CURSOR_CAPTURE_FILE",
-        workspace.capture_path.to_string_lossy().to_string(),
-    );
-    cmd.env("NODE_OPTIONS", node_options);
-
-    let mut child = match cmd.spawn() {
+    let mut child = match spawn_cursor_login_child(&cursor_runtime, &workspace) {
         Ok(child) => child,
         Err(err) => {
             set_cursor_login_error(
