@@ -1,13 +1,14 @@
 use std::sync::Arc;
 
 mod context;
+mod worker;
 
 use context::resolve_web_session_launch_context;
 use ctx_transport_runtime::web_sessions::{
-    ensure_worker_bundle, validate_web_session_url, NodeRuntimeSpec, WebSessionCreateRequest,
-    WebSessionInfo, WebSessionLaunchPolicyError, WebSessionLaunchPolicyErrorKind,
-    WebSessionViewport,
+    validate_web_session_url, WebSessionCreateRequest, WebSessionInfo, WebSessionLaunchPolicyError,
+    WebSessionLaunchPolicyErrorKind, WebSessionViewport,
 };
+use worker::prepare_web_session_worker;
 
 use crate::daemon::AppState;
 use ctx_core::ids::{SessionId, WorktreeId};
@@ -54,25 +55,7 @@ pub(crate) async fn create_web_session(
             .await
             .map_err(request_or_policy_error)?;
 
-    let node_runtime = crate::daemon::installer::ensure_node_runtime(
-        state.as_ref(),
-        None,
-        "web_session_worker",
-        &state.core.data_root,
-        ctx_provider_install::install_state::InstallTarget::Host,
-    )
-    .await
-    .map_err(|e| internal_error(format!("failed to prepare node runtime: {e}")))?;
-
-    let worker_bundle = ensure_worker_bundle(
-        &state.core.data_root,
-        &NodeRuntimeSpec {
-            node_bin: node_runtime.node_bin.clone(),
-            npm_cli_js: node_runtime.npm_cli_js.clone(),
-        },
-    )
-    .await
-    .map_err(|e| internal_error(format!("failed to prepare web session worker: {e}")))?;
+    let worker = prepare_web_session_worker(state).await?;
 
     let handle = state
         .transport
@@ -84,9 +67,9 @@ pub(crate) async fn create_web_session(
             work_dir: launch_context.work_dir,
             session_id: request.session_id.map(|id| id.0.to_string()),
             worktree_id: request.worktree_id.map(|id| id.0.to_string()),
-            node_bin: node_runtime.node_bin,
-            worker_path: worker_bundle.worker_path,
-            node_modules_path: worker_bundle.node_modules_path,
+            node_bin: worker.node_runtime.node_bin,
+            worker_path: worker.bundle.worker_path,
+            node_modules_path: worker.bundle.node_modules_path,
         })
         .await
         .map_err(|e| internal_error(format!("failed to create web session: {e}")))?;
