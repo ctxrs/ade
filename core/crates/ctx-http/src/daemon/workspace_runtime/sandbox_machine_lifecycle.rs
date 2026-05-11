@@ -5,7 +5,7 @@ use ctx_settings_model::ContainerMountMode;
 use std::collections::HashSet;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use tokio::sync::Mutex;
 
