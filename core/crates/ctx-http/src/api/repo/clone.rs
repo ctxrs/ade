@@ -1,4 +1,12 @@
 use super::*;
+use destination::prepare_clone_destination;
+use process::{canonical_clone_dest, run_git_clone};
+
+#[path = "clone/destination.rs"]
+mod destination;
+
+#[path = "clone/process.rs"]
+mod process;
 
 #[derive(Debug, Deserialize)]
 pub(in crate::api) struct RepoCloneReq {
@@ -34,101 +42,17 @@ pub(in crate::api) async fn repo_clone(
         ));
     }
 
-    let dest_parent = expand_tilde(&req.dest_parent)
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(ApiErrorResp { error: e })))?;
-
-    validate_absolute_path(&dest_parent, "dest_parent")
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(ApiErrorResp { error: e })))?;
-
-    // Allow cloning into a destination parent that doesn't exist yet by creating it.
-    // This keeps the wizard UX simple (users can type a new folder path).
-    if !dest_parent.exists() {
-        tokio::fs::create_dir_all(&dest_parent).await.map_err(|e| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(ApiErrorResp {
-                    error: format!(
-                        "failed to create dest_parent '{}': {e}",
-                        dest_parent.to_string_lossy()
-                    ),
-                }),
-            )
-        })?;
-    }
-
-    let dest_parent = tokio::fs::canonicalize(&dest_parent).await.map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: format!(
-                    "invalid dest_parent '{}': {}",
-                    dest_parent.to_string_lossy(),
-                    e
-                ),
-            }),
-        )
-    })?;
-
-    let name = req
-        .dest_name
-        .as_ref()
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
-        .or_else(|| derive_repo_name(&repo_url))
-        .ok_or((
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "could not derive repo name".to_string(),
-            }),
-        ))?;
-
-    if let Err(e) = validate_dest_name(&name) {
-        return Err((StatusCode::BAD_REQUEST, Json(ApiErrorResp { error: e })));
-    }
-
-    let dest = dest_parent.join(&name);
-    if dest.exists() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: format!("destination already exists: {}", dest.display()),
-            }),
-        ));
-    }
-
-    let mut cmd = Command::new("git");
-    cmd.arg("clone");
-    if let Some(branch) = req
-        .branch
-        .as_ref()
-        .map(|v| v.trim())
-        .filter(|v| !v.is_empty())
-    {
-        cmd.arg("--branch").arg(branch).arg("--single-branch");
-    }
-    cmd.arg("--").arg(&repo_url).arg(&dest);
-
-    let output = cmd.output().await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: format!("failed to spawn git: {e}"),
-            }),
-        )
-    })?;
-    if !output.status.success() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&format!(
-                    "git clone failed: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                )),
-            }),
-        ));
-    }
-
-    let canonical_dest = tokio::fs::canonicalize(&dest).await.unwrap_or(dest);
+    let dest = prepare_clone_destination(&req, &repo_url).await?;
+    run_git_clone(
+        &repo_url,
+        req.branch
+            .as_ref()
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty()),
+        &dest,
+    )
+    .await?;
+    let canonical_dest = canonical_clone_dest(dest).await;
 
     Ok(Json(RepoCloneResp {
         path: canonical_dest.to_string_lossy().to_string(),
