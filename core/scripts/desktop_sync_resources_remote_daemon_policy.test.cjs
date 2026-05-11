@@ -62,6 +62,55 @@ test("remote daemon bundle target arches reject unsupported values", () => {
   );
 });
 
+test("remote daemon cargo job cap uses scoped env before generic cargo env", () => {
+  assert.equal(
+    __desktopSyncResourcesTestHooks.resolveRemoteDaemonCargoBuildJobs({
+      CTX_BUNDLE_REMOTE_DAEMON_CARGO_BUILD_JOBS: "2",
+      CARGO_BUILD_JOBS: "8",
+    }),
+    "2",
+  );
+  assert.equal(
+    __desktopSyncResourcesTestHooks.resolveRemoteDaemonCargoBuildJobs({
+      CARGO_BUILD_JOBS: "3",
+    }),
+    "3",
+  );
+  assert.equal(__desktopSyncResourcesTestHooks.resolveRemoteDaemonCargoBuildJobs({}), "");
+});
+
+test("remote daemon cargo job cap rejects non-positive values", () => {
+  assert.throws(
+    () => __desktopSyncResourcesTestHooks.resolveRemoteDaemonCargoBuildJobs({
+      CTX_BUNDLE_REMOTE_DAEMON_CARGO_BUILD_JOBS: "0",
+    }),
+    /CTX_BUNDLE_REMOTE_DAEMON_CARGO_BUILD_JOBS must be a positive integer/,
+  );
+  assert.throws(
+    () => __desktopSyncResourcesTestHooks.resolveRemoteDaemonCargoBuildJobs({
+      CARGO_BUILD_JOBS: "two",
+    }),
+    /CARGO_BUILD_JOBS must be a positive integer/,
+  );
+});
+
+test("linux ctx-mcp cargo job cap uses scoped env before generic cargo env", () => {
+  assert.equal(
+    __desktopSyncResourcesTestHooks.resolveLinuxCtxMcpCargoBuildJobs({
+      CTX_BUNDLE_LINUX_CTX_MCP_CARGO_BUILD_JOBS: "2",
+      CARGO_BUILD_JOBS: "8",
+    }),
+    "2",
+  );
+  assert.equal(
+    __desktopSyncResourcesTestHooks.resolveLinuxCtxMcpCargoBuildJobs({
+      CARGO_BUILD_JOBS: "3",
+    }),
+    "3",
+  );
+  assert.equal(__desktopSyncResourcesTestHooks.resolveLinuxCtxMcpCargoBuildJobs({}), "");
+});
+
 test("remote daemon container build command creates /out before install", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "desktop-sync-test-"));
   const daemonsDir = path.join(tempRoot, "daemons");
@@ -85,6 +134,7 @@ test("remote daemon container build command creates /out before install", () => 
     },
     hostOs: "linux",
     hostArch: "x86_64",
+    cargoBuildJobs: "1",
   });
 
   assert.equal(spawnCmd, "docker");
@@ -93,7 +143,7 @@ test("remote daemon container build command creates /out before install", () => 
   assert.match(args.join(" "), new RegExp(`--user ${process.getuid()}:${process.getgid()}`));
   assert.match(args.join(" "), /rustup toolchain install stable --profile minimal --no-self-update/);
   assert.match(args.join(" "), /rustup target add --toolchain stable x86_64-unknown-linux-gnu/);
-  assert.match(args.join(" "), /cargo \+stable build --manifest-path \/src\/Cargo\.toml -p ctx-http --bin ctx --release --target x86_64-unknown-linux-gnu/);
+  assert.match(args.join(" "), /cargo \+stable build --manifest-path \/src\/Cargo\.toml -p ctx-http --bin ctx --release --target x86_64-unknown-linux-gnu --jobs 1/);
   assert.match(args.join(" "), /-v \/cargo-home-host:\/cargo-home/);
   assert.match(args.join(" "), /-v \/rustup-home-host:\/rustup-home/);
   assert.match(args.join(" "), /-e CARGO_HOME=\/cargo-home/);
@@ -104,6 +154,34 @@ test("remote daemon container build command creates /out before install", () => 
   assert.match(args.join(" "), /install -Dm0755 .* \/out\/ctx-daemon-linux-x86_64/);
   assert.doesNotMatch(args.join(" "), /\/usr\/local\/cargo\/registry/);
   assert.doesNotMatch(args.join(" "), /\/usr\/local\/cargo\/git/);
+
+  fs.rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test("remote daemon container build command rejects invalid direct cargo job cap", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "desktop-sync-test-"));
+  const daemonsDir = path.join(tempRoot, "daemons");
+
+  assert.throws(
+    () => __desktopSyncResourcesTestHooks.buildRemoteDaemonContainerArgs({
+      runtime: "docker",
+      builderImage: "rust:test",
+      coreDir: "/src-host",
+      daemonsDir,
+      targetCache: "/target-host",
+      cargoHome: "/cargo-home-host",
+      rustupHome: "/rustup-home-host",
+      target: {
+        platform: "linux/amd64",
+        rustTarget: "x86_64-unknown-linux-gnu",
+        fileName: "ctx-daemon-linux-x86_64",
+      },
+      hostOs: "linux",
+      hostArch: "x86_64",
+      cargoBuildJobs: "1; echo nope",
+    }),
+    /cargoBuildJobs must be a positive integer/,
+  );
 
   fs.rmSync(tempRoot, { recursive: true, force: true });
 });
@@ -127,6 +205,7 @@ test("aarch64 remote daemon builds cross-compile from amd64 instead of using qem
     },
     hostOs: "linux",
     hostArch: "x86_64",
+    cargoBuildJobs: "2",
   });
   const commandText = args.join(" ");
 
@@ -145,7 +224,7 @@ test("aarch64 remote daemon builds cross-compile from amd64 instead of using qem
   assert.match(commandText, /CXX_aarch64_unknown_linux_gnu='aarch64-linux-gnu-g\+\+'/);
   assert.match(commandText, /AR_aarch64_unknown_linux_gnu='aarch64-linux-gnu-ar'/);
   assert.match(commandText, /rustup target add --toolchain stable aarch64-unknown-linux-gnu/);
-  assert.match(commandText, /cargo \+stable build --manifest-path \/src\/Cargo\.toml -p ctx-http --bin ctx --release --target aarch64-unknown-linux-gnu/);
+  assert.match(commandText, /cargo \+stable build --manifest-path \/src\/Cargo\.toml -p ctx-http --bin ctx --release --target aarch64-unknown-linux-gnu --jobs 2/);
   assert.match(commandText, /install -Dm0755 .* \/out\/ctx-daemon-linux-aarch64/);
 
   fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -175,6 +254,7 @@ test("linux ctx-mcp container build command stages runtime into bundle tree", ()
     },
     hostOs: "linux",
     hostArch: "aarch64",
+    cargoBuildJobs: "1",
   });
 
   assert.equal(spawnCmd, "docker");
@@ -184,7 +264,7 @@ test("linux ctx-mcp container build command stages runtime into bundle tree", ()
   assert.match(args.join(" "), /-p ctx-mcp/);
   assert.match(args.join(" "), /rustup toolchain install stable --profile minimal --no-self-update/);
   assert.match(args.join(" "), /rustup target add --toolchain stable aarch64-unknown-linux-gnu/);
-  assert.match(args.join(" "), /cargo \+stable build --manifest-path \/src\/Cargo\.toml -p ctx-mcp --bin ctx-mcp --release --target aarch64-unknown-linux-gnu/);
+  assert.match(args.join(" "), /cargo \+stable build --manifest-path \/src\/Cargo\.toml -p ctx-mcp --bin ctx-mcp --release --target aarch64-unknown-linux-gnu --jobs 1/);
   assert.match(args.join(" "), /-v \/cargo-home-host:\/cargo-home/);
   assert.match(args.join(" "), /-v \/rustup-home-host:\/rustup-home/);
   assert.match(args.join(" "), /-e CARGO_HOME=\/cargo-home/);
@@ -222,6 +302,7 @@ test("aarch64 linux ctx-mcp builds cross-compile from amd64 instead of using qem
     runtimeVersion: "0.1.0",
     hostOs: "linux",
     hostArch: "x86_64",
+    cargoBuildJobs: "2",
   });
   const commandText = args.join(" ");
 
@@ -233,7 +314,7 @@ test("aarch64 linux ctx-mcp builds cross-compile from amd64 instead of using qem
   assert.match(commandText, /; else /);
   assert.match(commandText, /su -s \/bin\/bash "\$CTX_CONTAINER_HOST_USER" -c 'set -euo pipefail;/);
   assert.match(commandText, /apt-get install -y --no-install-recommends .*gcc-aarch64-linux-gnu/);
-  assert.match(commandText, /cargo \+stable build --manifest-path \/src\/Cargo\.toml -p ctx-mcp --bin ctx-mcp --release --target aarch64-unknown-linux-gnu/);
+  assert.match(commandText, /cargo \+stable build --manifest-path \/src\/Cargo\.toml -p ctx-mcp --bin ctx-mcp --release --target aarch64-unknown-linux-gnu --jobs 2/);
   assert.match(
     commandText,
     /install -Dm0755 .* \/out\/runtimes\/ctx-mcp\/linux\/aarch64\/0\.1\.0\/ctx-mcp/,

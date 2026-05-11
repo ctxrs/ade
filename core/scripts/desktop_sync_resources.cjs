@@ -344,6 +344,33 @@ const shouldBundleLinuxCtxMcpRuntime = (platform = process.platform, env = proce
   return platform === "darwin" || platform === "linux";
 };
 
+const normalizePositiveInteger = (rawValue, name) => {
+  const raw = String(rawValue || "").trim();
+  if (!raw) return "";
+  if (!/^[1-9]\d*$/.test(raw)) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  return raw;
+};
+
+const readPositiveIntegerEnv = (env, name) => {
+  return normalizePositiveInteger(env[name], name);
+};
+
+const resolveContainerCargoBuildJobs = (env, primaryName) => {
+  const primary = readPositiveIntegerEnv(env, primaryName);
+  if (primary) return primary;
+  return readPositiveIntegerEnv(env, "CARGO_BUILD_JOBS");
+};
+
+const resolveRemoteDaemonCargoBuildJobs = (env = process.env) => {
+  return resolveContainerCargoBuildJobs(env, "CTX_BUNDLE_REMOTE_DAEMON_CARGO_BUILD_JOBS");
+};
+
+const resolveLinuxCtxMcpCargoBuildJobs = (env = process.env) => {
+  return resolveContainerCargoBuildJobs(env, "CTX_BUNDLE_LINUX_CTX_MCP_CARGO_BUILD_JOBS");
+};
+
 const readCargoPackageVersion = (cargoTomlPath) => {
   if (!fs.existsSync(cargoTomlPath)) {
     throw new Error(`missing Cargo.toml for version lookup: ${cargoTomlPath}`);
@@ -935,9 +962,12 @@ const buildRemoteDaemonContainerArgs = ({
   identity = {},
   hostOs = hostManifestOs,
   hostArch = hostManifestArch,
+  cargoBuildJobs = resolveRemoteDaemonCargoBuildJobs(),
 }) => {
   const preparedDaemonsDir = ensureContainerCacheDir(daemonsDir, hostOs);
   const crossToolchain = containerCrossToolchainForTarget({ target, hostArch });
+  const normalizedCargoBuildJobs = normalizePositiveInteger(cargoBuildJobs, "cargoBuildJobs");
+  const cargoJobsArg = normalizedCargoBuildJobs ? ` --jobs ${normalizedCargoBuildJobs}` : "";
   const buildInnerCommand =
     "export CARGO_HOME=\"/cargo-home\"; " +
     "export RUSTUP_HOME=\"/rustup-home\"; " +
@@ -945,7 +975,7 @@ const buildRemoteDaemonContainerArgs = ({
     "rustup toolchain install stable --profile minimal --no-self-update >/dev/null 2>&1 || true; " +
     `rustup target add --toolchain stable ${target.rustTarget} >/dev/null 2>&1 || true; ` +
     containerCrossToolchainEnvCommand(crossToolchain) +
-    `cargo +stable build --manifest-path /src/Cargo.toml -p ctx-http --bin ctx --release --target ${target.rustTarget}; ` +
+    `cargo +stable build --manifest-path /src/Cargo.toml -p ctx-http --bin ctx --release --target ${target.rustTarget}${cargoJobsArg}; ` +
     `install -Dm0755 /target/${target.rustTarget}/release/ctx /out/${target.fileName}`;
   const buildCmd =
     "set -euo pipefail; " +
@@ -1035,6 +1065,7 @@ const buildLinuxCtxMcpContainerArgs = ({
   identity = {},
   hostOs = hostManifestOs,
   hostArch = hostManifestArch,
+  cargoBuildJobs = resolveLinuxCtxMcpCargoBuildJobs(),
 }) => {
   const preparedRuntimesDir = ensureContainerCacheDir(runtimesDir, hostOs);
   ensureContainerCacheDir(path.join(preparedRuntimesDir, "runtimes"), hostOs);
@@ -1046,6 +1077,8 @@ const buildLinuxCtxMcpContainerArgs = ({
     runtimeVersion,
   );
   const crossToolchain = containerCrossToolchainForTarget({ target, hostArch });
+  const normalizedCargoBuildJobs = normalizePositiveInteger(cargoBuildJobs, "cargoBuildJobs");
+  const cargoJobsArg = normalizedCargoBuildJobs ? ` --jobs ${normalizedCargoBuildJobs}` : "";
   const buildInnerCommand =
     "export CARGO_HOME=\"/cargo-home\"; " +
     "export RUSTUP_HOME=\"/rustup-home\"; " +
@@ -1053,7 +1086,7 @@ const buildLinuxCtxMcpContainerArgs = ({
     "rustup toolchain install stable --profile minimal --no-self-update >/dev/null 2>&1 || true; " +
     `rustup target add --toolchain stable ${target.rustTarget} >/dev/null 2>&1 || true; ` +
     containerCrossToolchainEnvCommand(crossToolchain) +
-    `cargo +stable build --manifest-path /src/Cargo.toml -p ctx-mcp --bin ctx-mcp --release --target ${target.rustTarget}; ` +
+    `cargo +stable build --manifest-path /src/Cargo.toml -p ctx-mcp --bin ctx-mcp --release --target ${target.rustTarget}${cargoJobsArg}; ` +
     `install -Dm0755 /target/${target.rustTarget}/release/ctx-mcp /out/${runtimeRootRel}/ctx-mcp; ` +
     `chmod -R 0777 /out/runtimes/${CTX_MCP_RUNTIME_ID}`;
   const buildCmd =
@@ -1879,7 +1912,9 @@ if (require.main === module) {
       resolvePrimaryBundleTargetEnv,
       resolveBundleCacheRoot,
       resolveArtifactIdentityMode,
+      resolveLinuxCtxMcpCargoBuildJobs,
       resolveLinuxAppendBundleRequests,
+      resolveRemoteDaemonCargoBuildJobs,
       shouldBundleLinuxCtxMcpRuntime,
       buildContainerWritableMountPrepareArgs,
       writeBundledProviderManifest,
