@@ -219,6 +219,7 @@ mod compact_head_tests {
 
 mod delta_tests {
     use super::super::delta::{apply_head_delta, apply_session_summary_delta};
+    use super::super::entry::WORKSPACE_ACTIVE_SNAPSHOT_STREAM_BUFFER_CAPACITY;
     use super::super::trim::{new_head_snapshot, session_metadata_from_session};
     use super::super::*;
     use chrono::{TimeZone, Utc};
@@ -579,6 +580,59 @@ mod delta_tests {
             .expect("hydrated head should become serveable");
         assert_eq!(cached.last_event_seq, hydrated.last_event_seq);
         assert_eq!(cached.projection_rev, hydrated.projection_rev);
+    }
+
+    #[tokio::test]
+    async fn workspace_stream_buffer_holds_remote_soak_delta_burst_without_lag() {
+        let hub = WorkspaceActiveSnapshotHub::new();
+        let session = test_session(None);
+        let mut rx = hub.subscribe(session.workspace_id).await;
+        let burst_len = WORKSPACE_ACTIVE_SNAPSHOT_STREAM_BUFFER_CAPACITY / 2;
+
+        for offset in 0..burst_len {
+            let seq = i64::try_from(offset + 1).expect("burst sequence fits in i64");
+            hub.publish_session_head_delta(
+                session.workspace_id,
+                &session,
+                SessionHeadDelta {
+                    session_id: session.id,
+                    last_event_seq: seq,
+                    projection_rev: seq,
+                    state_rev: seq,
+                    emitted_at_ms: None,
+                    session: None,
+                    activity: Some(SessionActivityState {
+                        is_working: true,
+                        last_turn_status: Some(SessionTurnStatus::Running),
+                    }),
+                    event: None,
+                    turn: None,
+                    message: None,
+                    tool_summaries: Vec::new(),
+                },
+                true,
+            )
+            .await;
+        }
+
+        let mut received = 0;
+        loop {
+            match rx.try_recv() {
+                Ok(WorkspaceActiveSnapshotEvent::SessionHeadDelta { .. }) => {
+                    received += 1;
+                }
+                Ok(other) => panic!("unexpected workspace event in burst drain: {other:?}"),
+                Err(tokio::sync::broadcast::error::TryRecvError::Empty) => break,
+                Err(tokio::sync::broadcast::error::TryRecvError::Lagged(skipped)) => {
+                    panic!("workspace stream subscriber lagged by {skipped} events during burst")
+                }
+                Err(tokio::sync::broadcast::error::TryRecvError::Closed) => {
+                    panic!("workspace stream closed during burst drain")
+                }
+            }
+        }
+
+        assert_eq!(received, burst_len);
     }
 
     #[tokio::test]

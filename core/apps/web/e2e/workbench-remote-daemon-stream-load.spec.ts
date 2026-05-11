@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
 import fs from "fs/promises";
-import type { APIRequestContext, Page, Request } from "playwright/test";
+import type { APIRequestContext, Page, Request, TestInfo } from "playwright/test";
 import { test, expect } from "./fixtures";
 import { clearDiagnostics, getDiagnostics } from "./utils/diagnostics";
 import {
@@ -63,7 +63,11 @@ const MIN_STREAM_EVENTS = envNumber(
 );
 const PROBE_COUNT = envNumber("CTX_REMOTE_DAEMON_STREAM_SOAK_PROBES", 4);
 const PROBE_TIMEOUT_MS = envNumber("CTX_REMOTE_DAEMON_STREAM_SOAK_PROBE_TIMEOUT_MS", 35_000);
-const HEAD_POLL_MS = envNumber("CTX_REMOTE_DAEMON_STREAM_SOAK_HEAD_POLL_MS", 75);
+const HEAD_POLL_MS = envNumber("CTX_REMOTE_DAEMON_STREAM_SOAK_HEAD_POLL_MS", REMOTE_MODE ? 250 : 75);
+const TEST_TIMEOUT_MS = envNumber(
+  "CTX_REMOTE_DAEMON_STREAM_SOAK_TEST_TIMEOUT_MS",
+  Math.max(480_000, 180_000 + PROBE_COUNT * PROBE_TIMEOUT_MS),
+);
 const CLOCK_SAMPLES = envNumber("CTX_REMOTE_DAEMON_STREAM_SOAK_CLOCK_SAMPLES", 7);
 const MAX_CLOCK_UNCERTAINTY_MS = envNumber(
   "CTX_REMOTE_DAEMON_STREAM_SOAK_MAX_CLOCK_UNCERTAINTY_MS",
@@ -1108,6 +1112,64 @@ async function readTelemetryMetrics(
   return Object.fromEntries(entries);
 }
 
+async function attachPartialRemoteDaemonStreamLoadMetrics(
+  testInfo: TestInfo,
+  request: APIRequestContext,
+  reason: string,
+  context: Record<string, unknown>,
+): Promise<void> {
+  const captureErrors: string[] = [];
+  const streamEventMetricEntries = await readTelemetryMetricEntries(
+    request,
+    "workbench.workspace_stream_event_count",
+    180_000,
+  ).catch((error: unknown): TelemetryMetricSummary[] => {
+    captureErrors.push(`stream events: ${formatUnknownError(error)}`);
+    return [];
+  });
+  const metrics = await readTelemetryMetrics(
+    request,
+    [
+      "workbench.workspace_stream_event_count",
+      "workbench.client_receive_lag_ms",
+      "workbench.session_replica_apply_lag_ms",
+      "workbench.final_ws_to_dom_ms",
+      "workbench.final_ingress_to_dom_ms",
+      "workbench.foreground_queue_age_ms",
+      "workspace.stream.receiver_drain_event_count",
+      "workspace.vcs_stream.snapshot_count",
+      "workspace.vcs_stream.receive_lag_ms",
+    ],
+    180_000,
+  ).catch((error: unknown): Record<string, MetricRollup> => {
+    captureErrors.push(`metrics: ${formatUnknownError(error)}`);
+    return {};
+  });
+  const summary = {
+    status: "failed",
+    reason,
+    capturedAtMs: Date.now(),
+    context,
+    load: {
+      streamEventCount: sumMetricEntries(streamEventMetricEntries),
+      streamEventCountsByType: sumMetricEntriesByLabel(streamEventMetricEntries, "event_type"),
+      streamEventCountsByLane: sumMetricEntriesByLabel(streamEventMetricEntries, "lane"),
+    },
+    metrics,
+    captureErrors,
+  };
+  const body = JSON.stringify(summary, null, 2);
+  await testInfo.attach("remote-daemon-stream-load-partial-metrics.json", {
+    body,
+    contentType: "application/json",
+  });
+  await fs.writeFile(
+    testInfo.outputPath("remote-daemon-stream-load-partial-metrics.json"),
+    body,
+    "utf8",
+  );
+}
+
 async function calibrateClock(request: APIRequestContext): Promise<ClockCalibration> {
   const samples: ClockSample[] = [];
   for (let index = 0; index < CLOCK_SAMPLES; index += 1) {
@@ -1385,7 +1447,7 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
   request,
 }, testInfo) => {
   test.skip(!ENABLED, "Set CTX_REMOTE_DAEMON_STREAM_SOAK=1 to run the remote daemon stream load proof.");
-  test.setTimeout(480_000);
+  test.setTimeout(TEST_TIMEOUT_MS);
 
   const clock = await calibrateClock(request);
 
@@ -1591,7 +1653,22 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
 
     for (let index = 0; index < PROBE_COUNT; index += 1) {
       const marker = `remote-ui-progress-${index + 1}-${Date.now()}`;
-      probes.push(await runForegroundProbe(page, request, foregroundSessionId, marker));
+      const probe = await runForegroundProbe(page, request, foregroundSessionId, marker);
+      probes.push(probe);
+      if (probe.timedOut) {
+        await attachPartialRemoteDaemonStreamLoadMetrics(
+          testInfo,
+          request,
+          "foreground probe timed out",
+          {
+            probeIndex: index + 1,
+            probeCount: PROBE_COUNT,
+            probe,
+            probes,
+          },
+        );
+        throw new Error(`foreground probe ${index + 1}/${PROBE_COUNT} timed out: ${probe.error}`);
+      }
       await sleep(250);
     }
 
@@ -1722,6 +1799,7 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
       "workspace.vcs_stream.server_snapshot_coalesced_count",
       "workspace.vcs_stream.server_message_sent_count",
       "workspace.vcs_stream.server_snapshot_sent_count",
+      "workspace.stream.receiver_drain_event_count",
     ],
     180_000,
   );
@@ -1751,6 +1829,8 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
     budgets: {
       minStreamEvents: MIN_STREAM_EVENTS,
       minSessionHeadDeltas: MIN_SESSION_HEAD_DELTAS,
+      testTimeoutMs: TEST_TIMEOUT_MS,
+      headPollMs: HEAD_POLL_MS,
       maxClockUncertaintyMs: MAX_CLOCK_UNCERTAINTY_MS,
       maxVisibleSilenceMs: MAX_VISIBLE_SILENCE_MS,
       maxHardVisibleSilenceMs: MAX_HARD_VISIBLE_SILENCE_MS,

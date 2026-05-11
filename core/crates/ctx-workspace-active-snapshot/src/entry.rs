@@ -10,6 +10,11 @@ use ctx_core::models::{
 use crate::replay_state::{SessionReplayResult, SessionReplayState};
 use crate::SessionReplayCursor;
 
+// The workspace stream fanout is upstream of per-socket coalescing. It must absorb
+// a remote soak sized burst long enough for socket tasks to drain into their
+// foreground/background queues without broadcast receiver loss.
+pub(crate) const WORKSPACE_ACTIVE_SNAPSHOT_STREAM_BUFFER_CAPACITY: usize = 4096;
+
 pub(super) struct WorkspaceActiveSnapshotEntry {
     pub(super) tx: broadcast::Sender<WorkspaceActiveSnapshotEvent>,
     pub(super) snapshot_rev: i64,
@@ -22,7 +27,7 @@ pub(super) struct WorkspaceActiveSnapshotEntry {
 
 impl WorkspaceActiveSnapshotEntry {
     pub(super) fn new() -> Self {
-        let (tx, _) = broadcast::channel(512);
+        let (tx, _) = broadcast::channel(WORKSPACE_ACTIVE_SNAPSHOT_STREAM_BUFFER_CAPACITY);
         Self {
             tx,
             snapshot_rev: 0,

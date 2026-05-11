@@ -6,7 +6,10 @@ mod events;
 mod lifecycle;
 mod subscription;
 
-pub(super) use events::{handle_workspace_stream_event, handle_workspace_stream_lagged};
+pub(super) use events::{
+    handle_workspace_stream_lagged, handle_workspace_stream_receiver_burst,
+    take_workspace_stream_receiver_burst,
+};
 pub(super) use lifecycle::{
     initialize_workspace_stream, notify_workspace_stream_shutdown, release_workspace_stream,
 };

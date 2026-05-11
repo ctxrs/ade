@@ -77,10 +77,11 @@ pub(super) async fn handle_mobile_secure_ws(
                 event = rx.recv() => {
                     match event {
                         Ok(event) => {
-                            if workspace_stream::handle_workspace_stream_event(
+                            let burst = workspace_stream::take_workspace_stream_receiver_burst(&mut rx, event);
+                            if workspace_stream::handle_workspace_stream_receiver_burst(
                                 &state,
                                 workspace_id,
-                                event,
+                                burst,
                                 &mut runtime,
                                 &labels,
                             )
