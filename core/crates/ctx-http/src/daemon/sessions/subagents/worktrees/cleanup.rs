@@ -2,6 +2,12 @@ use std::sync::Arc;
 
 use crate::daemon::AppState;
 
+mod context;
+mod references;
+
+use context::load_archived_worktree_cleanup_context;
+use references::archived_worktree_has_other_references;
+
 pub(in crate::daemon::sessions::subagents) async fn cleanup_archived_subagent_worktree(
     state: &Arc<AppState>,
     store: &ctx_store::Store,
@@ -12,124 +18,28 @@ pub(in crate::daemon::sessions::subagents) async fn cleanup_archived_subagent_wo
         return false;
     }
 
-    let mut cleanup_failed = false;
-    let sharing_sessions = match store
-        .list_all_sessions_for_worktree(child.worktree_id)
-        .await
-    {
-        Ok(sessions) => sessions,
-        Err(error) => {
-            tracing::warn!(
-                parent_session_id = %parent.id.0,
-                child_session_id = %child.id.0,
-                worktree_id = %child.worktree_id.0,
-                "failed to load archived subagent worktree session references: {error:#}"
-            );
-            return true;
-        }
-    };
-    if sharing_sessions
-        .iter()
-        .any(|session| session.id != child.id)
-    {
-        tracing::warn!(
-            parent_session_id = %parent.id.0,
-            child_session_id = %child.id.0,
-            worktree_id = %child.worktree_id.0,
-            "archived subagent worktree is still referenced by another session"
-        );
+    if archived_worktree_has_other_references(store, parent, child).await {
         return true;
     }
 
-    let other_tasks = match store
-        .count_tasks_for_worktree(child.worktree_id, Some(child.task_id))
-        .await
-    {
-        Ok(count) => count,
-        Err(error) => {
-            tracing::warn!(
-                parent_session_id = %parent.id.0,
-                child_session_id = %child.id.0,
-                worktree_id = %child.worktree_id.0,
-                "failed to load archived subagent worktree task references: {error:#}"
-            );
-            return true;
-        }
-    };
-    if other_tasks > 0 {
-        tracing::warn!(
-            parent_session_id = %parent.id.0,
-            child_session_id = %child.id.0,
-            worktree_id = %child.worktree_id.0,
-            other_tasks,
-            "archived subagent worktree is still referenced by another task"
-        );
+    let Some(cleanup_context) =
+        load_archived_worktree_cleanup_context(state, store, parent, child).await
+    else {
         return true;
-    }
-
-    let worktree = match store.get_worktree(child.worktree_id).await {
-        Ok(Some(worktree)) => worktree,
-        Ok(None) => {
-            tracing::warn!(
-                parent_session_id = %parent.id.0,
-                child_session_id = %child.id.0,
-                worktree_id = %child.worktree_id.0,
-                "archived subagent worktree metadata was missing during cleanup"
-            );
-            return true;
-        }
-        Err(error) => {
-            tracing::warn!(
-                parent_session_id = %parent.id.0,
-                child_session_id = %child.id.0,
-                worktree_id = %child.worktree_id.0,
-                "failed to load archived subagent worktree metadata: {error:#}"
-            );
-            return true;
-        }
     };
-    let workspace = match state.global_store().get_workspace(child.workspace_id).await {
-        Ok(Some(workspace)) => workspace,
-        Ok(None) => {
-            tracing::warn!(
-                parent_session_id = %parent.id.0,
-                child_session_id = %child.id.0,
-                workspace_id = %child.workspace_id.0,
-                "workspace not found while cleaning archived subagent worktree"
-            );
-            return true;
-        }
-        Err(error) => {
-            tracing::warn!(
-                parent_session_id = %parent.id.0,
-                child_session_id = %child.id.0,
-                workspace_id = %child.workspace_id.0,
-                "failed to load workspace while cleaning archived subagent worktree: {error:#}"
-            );
-            return true;
-        }
-    };
-    let sandbox_binding = match store.get_sandbox_binding(worktree.id).await {
-        Ok(binding) => binding,
-        Err(error) => {
-            tracing::warn!(
-                parent_session_id = %parent.id.0,
-                child_session_id = %child.id.0,
-                worktree_id = %worktree.id.0,
-                "failed to load archived subagent sandbox binding for cleanup: {error:#}"
-            );
-            cleanup_failed = true;
-            None
-        }
-    };
+    let mut cleanup_failed = cleanup_context.cleanup_failed;
     let cleanup_errors = crate::api::tasks::cleanup_task_worktrees(
         state.as_ref(),
-        &workspace,
+        &cleanup_context.workspace,
         child.task_id,
         &[crate::api::tasks::TaskWorktreeCleanupTarget {
-            managed_root: crate::api::tasks::managed_worktree_root(state, &workspace, &worktree),
-            sandbox_binding,
-            worktree,
+            managed_root: crate::api::tasks::managed_worktree_root(
+                state,
+                &cleanup_context.workspace,
+                &cleanup_context.worktree,
+            ),
+            sandbox_binding: cleanup_context.sandbox_binding,
+            worktree: cleanup_context.worktree,
             destroy_worktree_on_cleanup: true,
         }],
         crate::api::tasks::BranchCleanupErrorMode::Report,
