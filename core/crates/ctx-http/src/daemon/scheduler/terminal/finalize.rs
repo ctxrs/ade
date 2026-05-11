@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use serde_json::json;
 
 use ctx_core::ids::{MessageId, RunId, SessionId, TurnId};
 use ctx_core::models::{RunStatus, SessionEventType};
@@ -11,6 +10,12 @@ use crate::daemon::AppState;
 
 use super::persistence::persist_terminal_events;
 use super::types::{FailedTurnTerminalization, InterruptedTurnTerminalization};
+
+use self::events::{
+    completed_turn_finished_event, failed_turn_finished_event, interrupted_turn_events,
+};
+
+mod events;
 
 pub(crate) async fn finalize_completed_turn(
     state: &Arc<AppState>,
@@ -29,13 +34,7 @@ pub(crate) async fn finalize_completed_turn(
             SessionEventType::ThoughtChunk,
             SessionEventType::ContextWindowUpdate,
         ],
-        vec![(
-            SessionEventType::TurnFinished,
-            json!({
-                "message_id": message_id.0,
-                "status": "completed",
-            }),
-        )],
+        vec![completed_turn_finished_event(message_id)],
     )
     .await
 }
@@ -48,27 +47,6 @@ pub(crate) async fn finalize_interrupted_turn(
     message_id: MessageId,
     interruption: InterruptedTurnTerminalization<'_>,
 ) -> Result<()> {
-    let mut events = Vec::new();
-    if interruption.emit_interrupt_event {
-        events.push((
-            SessionEventType::TurnInterrupted,
-            json!({
-                "reason": interruption.reason,
-                "provider_cancelled": interruption.provider_cancelled,
-                "status": "interrupted",
-            }),
-        ));
-    }
-    events.push((
-        SessionEventType::TurnFinished,
-        json!({
-            "message_id": message_id.0,
-            "status": "interrupted",
-            "reason": interruption.reason,
-            "provider_cancelled": interruption.provider_cancelled,
-        }),
-    ));
-
     persist_terminal_events(
         state,
         session_id,
@@ -80,7 +58,7 @@ pub(crate) async fn finalize_interrupted_turn(
             SessionEventType::ThoughtChunk,
             SessionEventType::ContextWindowUpdate,
         ],
-        events,
+        interrupted_turn_events(message_id, interruption),
     )
     .await
 }
@@ -93,23 +71,6 @@ pub(crate) async fn finalize_failed_turn(
     message_id: MessageId,
     failure: FailedTurnTerminalization<'_>,
 ) -> Result<()> {
-    let mut finished = json!({
-        "message_id": message_id.0,
-        "status": "failed",
-    });
-    if let Some(obj) = finished.as_object_mut() {
-        if let Some(reason) = failure.reason {
-            obj.insert("reason".to_string(), json!(reason));
-        }
-        obj.insert("message".to_string(), json!(failure.message));
-        if let Some(details) = failure.details {
-            obj.insert("details".to_string(), details);
-        }
-        if let Some(kind) = failure.kind {
-            obj.insert("kind".to_string(), kind);
-        }
-    }
-
     persist_terminal_events(
         state,
         session_id,
@@ -121,7 +82,7 @@ pub(crate) async fn finalize_failed_turn(
             SessionEventType::ThoughtChunk,
             SessionEventType::ContextWindowUpdate,
         ],
-        vec![(SessionEventType::TurnFinished, finished)],
+        vec![failed_turn_finished_event(message_id, failure)],
     )
     .await
 }
