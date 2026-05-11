@@ -2,6 +2,7 @@ use super::*;
 
 mod children;
 mod invocation;
+mod parent;
 mod request;
 mod spawning;
 
@@ -9,6 +10,7 @@ use children::{create_subagent_child, SubagentChildInit, SubagentChildInitItem};
 use invocation::{
     mark_subagent_invocation_failed, start_subagent_invocation, StartedSubagentInvocation,
 };
+use parent::{load_parent_worktree_context, validate_parent_spawn_capacity};
 use request::{
     build_subagent_request_agents, prepare_subagent_init_request, PreparedSubagentInitRequest,
 };
@@ -33,68 +35,25 @@ pub(crate) async fn init_subagents(
         .task_session_creation_lock(parent.task_id)
         .await;
     let _creation_guard = creation_lock.lock().await;
-    if parent.parent_session_id.is_some() {
-        return Err(api_error(
-            SubagentErrorKind::BadRequest,
-            format!(
-                "subagents cannot spawn child agents; max depth is {}",
-                DEFAULT_MAX_SUBAGENT_DEPTH
-            ),
-        ));
-    }
-    let existing_active = store
-        .count_active_subagent_sessions(parent.id)
-        .await
-        .map_err(internal_api_error)?;
-    if existing_active + agents.len() > DEFAULT_MAX_ACTIVE_SUBAGENTS_PER_PARENT {
-        return Err(api_error(
-            SubagentErrorKind::BadRequest,
-            format!(
-                "max {} active child agents per parent",
-                DEFAULT_MAX_ACTIVE_SUBAGENTS_PER_PARENT
-            ),
-        ));
-    }
-    let workspace = state
-        .global_store()
-        .get_workspace(parent.workspace_id)
-        .await
-        .map_err(internal_api_error)?
-        .ok_or_else(|| api_error(SubagentErrorKind::NotFound, "workspace not found"))?;
+    validate_parent_spawn_capacity(&store, &parent, agents.len()).await?;
 
     ensure_requested_labels_available(&store, parent.task_id, &labels).await?;
     let request_agents = build_subagent_request_agents(&agents);
     let provider_ids = collect_provider_ids(&request_agents, &parent.provider_id)
         .map_err(|error| api_error(SubagentErrorKind::BadRequest, error))?;
 
-    let parent_worktree_execution = crate::api::tasks::resolve_existing_worktree_execution(
-        &state,
-        &store,
-        &workspace,
-        parent.worktree_id,
-    )
-    .await
-    .map_err(internal_api_error)?;
-    let parent_worktree = parent_worktree_execution.worktree.clone();
-    let resolved_parent_execution_environment = parent_worktree_execution.execution_environment();
-    if parent.execution_environment != resolved_parent_execution_environment {
-        tracing::warn!(
-            session_id = %parent.id.0,
-            stored = parent.execution_environment.as_str(),
-            resolved = resolved_parent_execution_environment.as_str(),
-            "parent session execution_environment drifted from resolved worktree identity"
-        );
-    }
+    let parent_context = load_parent_worktree_context(&state, &store, &parent).await?;
 
     let model_catalogs = load_requested_model_catalogs(
         &state,
-        &workspace,
+        &parent_context.workspace,
         &provider_ids,
-        resolved_parent_execution_environment,
+        parent_context.execution_environment,
     )
     .await?;
     let worktree_plan =
-        plan_subagent_worktree_creation(&state, &parent_worktree, worktree_selection).await?;
+        plan_subagent_worktree_creation(&state, &parent_context.worktree, worktree_selection)
+            .await?;
 
     let StartedSubagentInvocation {
         invocation_id,
@@ -114,7 +73,7 @@ pub(crate) async fn init_subagents(
     let child_init = SubagentChildInit {
         state: state.clone(),
         parent: parent.clone(),
-        workspace: workspace.clone(),
+        workspace: parent_context.workspace.clone(),
         model_catalogs,
         invocation_id: invocation_id.clone(),
         tool_call_id: tool_call_id.clone(),
@@ -122,8 +81,8 @@ pub(crate) async fn init_subagents(
         parent_turn_id,
         worktree_selection,
         worktree_plan,
-        parent_effective: parent_worktree_execution.effective.clone(),
-        execution_environment: resolved_parent_execution_environment,
+        parent_effective: parent_context.effective.clone(),
+        execution_environment: parent_context.execution_environment,
     };
 
     let mut futures = Vec::with_capacity(agents.len());
