@@ -8,17 +8,20 @@ use ctx_core::models::Session;
 
 use crate::daemon::AppState;
 
-use super::lifecycle::{
-    fail_starting_turn, handle_provider_exit, handle_provider_stall, RunningTurn, TurnStartProgress,
-};
+use super::lifecycle::{handle_provider_exit, RunningTurn};
 use super::SchedulerCommand;
 
 mod bootstrap;
 mod commands;
+mod deadlines;
 mod queue;
 
 use self::bootstrap::{bootstrap_worker, WorkerBootstrap};
 use self::commands::{handle_scheduler_command, SchedulerCommandAction};
+use self::deadlines::{
+    handle_inactivity_deadline_elapsed, handle_start_deadline_elapsed, refresh_inactivity_deadline,
+    WorkerDeadlineAction,
+};
 use self::queue::{start_next_queued_turn, QueueStartContext, QueueStartOutcome};
 
 pub(super) async fn session_worker(
@@ -117,37 +120,27 @@ pub(super) async fn session_worker(
                 if changed.is_err() {
                     event_head_rx = state.sessions.subscribe_session_event_head(session.id).await;
                 }
-                if let Some(timeout) = running_inactivity_timeout {
-                    running_inactivity_deadline = Some(TokioInstant::now() + timeout);
-                }
+                refresh_inactivity_deadline(
+                    running_inactivity_timeout,
+                    &mut running_inactivity_deadline,
+                );
             }
             _ = async {
                 if let Some(deadline) = running_start_deadline {
                     tokio::time::sleep_until(deadline).await;
                 }
             }, if running.is_some() && running_start_deadline.is_some() => {
-                let start_still_pending = running
-                    .as_ref()
-                    .is_some_and(|turn| *turn.start_progress.borrow() == TurnStartProgress::Pending);
-                running_start_deadline = None;
-                if start_still_pending {
-                    if let Some(turn) = running.take() {
-                        let Some(state) = state_weak.upgrade() else {
-                            break;
-                        };
-                        fail_starting_turn(
-                            &state,
-                            session.id,
-                            turn,
-                            "provider did not report turn start before deadline",
-                        )
-                        .await;
-                        state.set_running(session.id, false).await;
-                    } else if let Some(state) = state_weak.upgrade() {
-                        state.set_running(session.id, false).await;
-                    } else {
-                        break;
-                    }
+                if matches!(
+                    handle_start_deadline_elapsed(
+                        &state_weak,
+                        session.id,
+                        &mut running,
+                        &mut running_start_deadline,
+                    )
+                    .await,
+                    WorkerDeadlineAction::Break
+                ) {
+                    break;
                 }
             }
             _ = async {
@@ -155,17 +148,17 @@ pub(super) async fn session_worker(
                     tokio::time::sleep_until(deadline).await;
                 }
             }, if running.is_some() && running_inactivity_deadline.is_some() => {
-                if let Some(turn) = running.take() {
-                    running_start_deadline = None;
-                    let Some(state) = state_weak.upgrade() else {
-                        break;
-                    };
-                    let finalized = handle_provider_stall(&state, session.id, turn).await;
-                    suspend_queue = !finalized;
-                    state.set_running(session.id, false).await;
-                } else if let Some(state) = state_weak.upgrade() {
-                    state.set_running(session.id, false).await;
-                } else {
+                if matches!(
+                    handle_inactivity_deadline_elapsed(
+                        &state_weak,
+                        session.id,
+                        &mut running,
+                        &mut running_start_deadline,
+                        &mut suspend_queue,
+                    )
+                    .await,
+                    WorkerDeadlineAction::Break
+                ) {
                     break;
                 }
             }
