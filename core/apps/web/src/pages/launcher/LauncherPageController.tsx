@@ -337,7 +337,7 @@ export default function LauncherPage() {
     navigate("/workspace-setup");
   };
 
-  const displayRecents = recents.slice(0, 8);
+  const displayRecents = recents;
 
   return (
     <div className="launcher-shell launcher-shell--crt">
@@ -361,7 +361,7 @@ export default function LauncherPage() {
             <div className="launcher-recents-header">
               <strong>Recent Workspaces</strong>
             </div>
-            <div className="launcher-recents-list">
+            <div className="launcher-recents-list" tabIndex={0} aria-label="Recent workspaces list">
               {displayRecents.map((r) => {
                 const key = recentRenderKey(r);
                 const location = recentLocationDisplay(r);

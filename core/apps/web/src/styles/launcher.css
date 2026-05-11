@@ -363,6 +363,32 @@
   display: grid;
   gap: 6px;
   width: 100%;
+  max-height: min(420px, calc(100vh - var(--launcher-stack-padding-top) - var(--launcher-stack-padding-bottom) - 128px));
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  padding-right: 6px;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--launcher-muted) 65%, transparent) transparent;
+}
+
+.launcher-recents-list:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--launcher-muted) 70%, transparent);
+  outline-offset: 4px;
+}
+
+.launcher-recents-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.launcher-recents-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.launcher-recents-list::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--launcher-muted) 45%, transparent);
+  border-radius: 999px;
 }
 
 .launcher-recent-item {

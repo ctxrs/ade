@@ -124,6 +124,28 @@ describe("LauncherPage recents", () => {
     expect(loadLauncherRecents).toHaveBeenCalled();
   });
 
+  it("renders all recent workspaces in a scrollable recents list", async () => {
+    const entries = Array.from({ length: 12 }, (_, index) => {
+      const ordinal = index + 1;
+      return {
+        kind: "local" as const,
+        label: `workspace-${ordinal}`,
+        root_path: `/Users/example-user/code/workspace-${ordinal}`,
+        updated_at_ms: 2000 - ordinal,
+      };
+    });
+    vi.mocked(loadLauncherRecents).mockResolvedValueOnce(entries);
+
+    render(<LauncherPage />);
+
+    const recentsList = await screen.findByLabelText("Recent workspaces list");
+    expect(recentsList).toHaveClass("launcher-recents-list");
+    expect(recentsList.querySelectorAll(".launcher-recent-item")).toHaveLength(entries.length);
+    for (const entry of entries) {
+      expect(screen.getByText(entry.label)).toBeInTheDocument();
+    }
+  });
+
   it("falls back to existing workspaces when persisted launcher recents are empty", async () => {
     vi.mocked(loadLauncherRecents).mockResolvedValueOnce([]);
     vi.mocked(listWorkspaces).mockResolvedValueOnce([
