@@ -1,37 +1,13 @@
 use super::*;
 use std::process::Stdio;
-use tokio::io::AsyncReadExt;
+
+mod output;
+
+use output::{collect_child_output, read_child_pipe};
 
 pub(in crate::daemon::workspace_runtime) struct SandboxMachineInitOutcome {
     pub(in crate::daemon::workspace_runtime) output: std::process::Output,
     pub(in crate::daemon::workspace_runtime) continued_after_machine_present: bool,
-}
-
-async fn read_child_pipe<R>(mut reader: R) -> std::io::Result<Vec<u8>>
-where
-    R: tokio::io::AsyncRead + Unpin,
-{
-    let mut buf = Vec::new();
-    reader.read_to_end(&mut buf).await?;
-    Ok(buf)
-}
-
-async fn collect_child_output(
-    status: std::process::ExitStatus,
-    stdout_task: tokio::task::JoinHandle<std::io::Result<Vec<u8>>>,
-    stderr_task: tokio::task::JoinHandle<std::io::Result<Vec<u8>>>,
-) -> Result<std::process::Output> {
-    let stdout = stdout_task
-        .await
-        .context("joining sandbox machine init stdout capture")??;
-    let stderr = stderr_task
-        .await
-        .context("joining sandbox machine init stderr capture")??;
-    Ok(std::process::Output {
-        status,
-        stdout,
-        stderr,
-    })
 }
 
 pub(in crate::daemon::workspace_runtime) async fn run_sandbox_machine_init(
