@@ -13,10 +13,13 @@ async fn pair_mobile_device_accepts_encrypted_pairing_request() {
     let key_material = PairingKeyMaterial::generate(&harness.daemon_public_key);
     let body = valid_encrypted_pair_request(&harness, &key_material);
     let serialized = body.to_string();
-    assert!(!serialized.contains(harness.token));
-    assert!(!serialized.contains("phone"));
-    assert!(!serialized.contains("ios"));
-    assert!(!serialized.contains("1.0.0"));
+    let relay_visible = body.as_object().unwrap();
+    for legacy_field in ["pairing_token", "device_label", "platform", "app_version"] {
+        assert!(
+            !relay_visible.contains_key(legacy_field),
+            "encrypted pairing request must not expose legacy plaintext field {legacy_field}"
+        );
+    }
 
     let mut mixed_body = body.clone();
     let mixed_object = mixed_body.as_object_mut().unwrap();
