@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use anyhow::{bail, Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use ctx_core::models::{Workspace, Worktree};
 use ctx_settings_model::{ContainerRuntimeKind, ExecutionMode};
@@ -10,9 +10,11 @@ use ctx_workspace_services::vcs_hooks::{
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
 use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
 
-use super::sandbox::sandbox_command;
 use crate::daemon::execution_effective;
 use crate::daemon::AppState;
+
+#[path = "host/git_config.rs"]
+mod git_config;
 
 #[async_trait]
 impl VcsHooksHost for AppState {
@@ -75,35 +77,7 @@ impl VcsHooksHost for AppState {
         execution: &WorktreeHookExecution,
         key: &str,
     ) -> Result<Option<String>> {
-        let mut cmd = sandbox_command(
-            self,
-            workspace,
-            worktree,
-            execution,
-            "git",
-            &[
-                "config".to_string(),
-                "--worktree".to_string(),
-                "--get".to_string(),
-                key.to_string(),
-            ],
-        )?;
-        let output = cmd
-            .output()
-            .await
-            .context("running sandbox git config --get")?;
-        if output.status.success() {
-            return Ok(Some(
-                String::from_utf8_lossy(&output.stdout).trim().to_string(),
-            ));
-        }
-        if output.status.code() == Some(1) {
-            return Ok(None);
-        }
-        bail!(
-            "sandbox git config --get failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        )
+        git_config::sandbox_git_config_get(self, workspace, worktree, execution, key).await
     }
 
     async fn sandbox_git_config_set(
@@ -114,27 +88,7 @@ impl VcsHooksHost for AppState {
         key: &str,
         value: &str,
     ) -> Result<()> {
-        let mut cmd = sandbox_command(
-            self,
-            workspace,
-            worktree,
-            execution,
-            "git",
-            &[
-                "config".to_string(),
-                "--worktree".to_string(),
-                key.to_string(),
-                value.to_string(),
-            ],
-        )?;
-        let output = cmd.output().await.context("running sandbox git config")?;
-        if !output.status.success() {
-            bail!(
-                "sandbox git config --worktree failed: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            );
-        }
-        Ok(())
+        git_config::sandbox_git_config_set(self, workspace, worktree, execution, key, value).await
     }
 
     async fn sandbox_git_config_unset(
@@ -144,29 +98,6 @@ impl VcsHooksHost for AppState {
         execution: &WorktreeHookExecution,
         key: &str,
     ) -> Result<()> {
-        let mut cmd = sandbox_command(
-            self,
-            workspace,
-            worktree,
-            execution,
-            "git",
-            &[
-                "config".to_string(),
-                "--worktree".to_string(),
-                "--unset-all".to_string(),
-                key.to_string(),
-            ],
-        )?;
-        let output = cmd
-            .output()
-            .await
-            .context("running sandbox git config --unset-all")?;
-        if output.status.success() || matches!(output.status.code(), Some(1)) {
-            return Ok(());
-        }
-        bail!(
-            "sandbox git config --unset-all failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        )
+        git_config::sandbox_git_config_unset(self, workspace, worktree, execution, key).await
     }
 }
