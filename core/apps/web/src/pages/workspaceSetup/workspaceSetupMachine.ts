@@ -337,12 +337,6 @@ export const workspaceSetupMachineReducer = (
             command: { kind: "advance_auth_import" },
           });
         case "harness-downloads":
-          if (snapshot.selectedHarnessReadyToStartCount === 0) {
-            return appendEffect(state, {
-              kind: "go_to_step",
-              stepKey: nextAfterHarnessDownloads(snapshot.routePlan),
-            });
-          }
           return appendEffect(state, {
             kind: "run_command",
             command: { kind: "advance_harness_downloads" },

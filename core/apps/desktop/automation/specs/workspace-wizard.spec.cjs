@@ -979,6 +979,9 @@ const syncHarnessSelections = async (providerIds, timeoutMs = 10_000) => {
       const checked = [];
       const disabled = [];
       const ready = [];
+      const startableSelected = [];
+      const next = document.querySelector('[data-testid="wizard-next"]');
+      const nextLabel = next ? String(next.textContent || "").trim() : "";
       for (const node of inputs) {
         if (!(node instanceof HTMLInputElement) || node.type !== "checkbox") continue;
         const testId = String(node.getAttribute("data-testid") || "");
@@ -994,8 +997,9 @@ const syncHarnessSelections = async (providerIds, timeoutMs = 10_000) => {
         if (node.disabled) disabled.push(providerId);
         if (statusText.startsWith("Installed")) ready.push(providerId);
         if (node.checked) checked.push(providerId);
+        if (node.checked && !statusText.startsWith("Installed")) startableSelected.push(providerId);
       }
-      return { seen, checked, disabled, ready };
+      return { seen, checked, disabled, ready, startableSelected, nextLabel };
     }, [selected]);
     lastState = result;
     if (!result || !Array.isArray(result.seen) || result.seen.length === 0) {
@@ -1006,7 +1010,13 @@ const syncHarnessSelections = async (providerIds, timeoutMs = 10_000) => {
     if (missing.length > 0) {
       throw new Error(`expected harness row(s) ${JSON.stringify(missing)} to be present`);
     }
-    if (selected.every((providerId) => result.checked.includes(providerId) || result.ready.includes(providerId))) {
+    if (
+      selected.every((providerId) => result.checked.includes(providerId) || result.ready.includes(providerId))
+      && (
+        result.startableSelected.length === 0
+        || result.nextLabel === "Start and continue"
+      )
+    ) {
       return {
         checked: result.checked,
         ready: result.ready,

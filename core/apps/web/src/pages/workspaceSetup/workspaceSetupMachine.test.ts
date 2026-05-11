@@ -230,7 +230,7 @@ describe("workspaceSetupMachine", () => {
     ]);
   });
 
-  it("skips harness downloads immediately when nothing remains startable", () => {
+  it("routes harness downloads through provisioning even when a stale snapshot reports nothing startable", () => {
     const state = workspaceSetupMachineReducer(
       createInitialWorkspaceSetupMachineState(),
       {
@@ -248,8 +248,10 @@ describe("workspaceSetupMachine", () => {
     expect(state.pendingEffects).toEqual([
       {
         id: 1,
-        kind: "go_to_step",
-        stepKey: "auth-import",
+        kind: "run_command",
+        command: {
+          kind: "advance_harness_downloads",
+        },
       },
     ]);
   });

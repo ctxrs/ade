@@ -130,7 +130,13 @@ describe("useWorkspaceSetupWorkflow", () => {
       refreshAuthImportForRouteScope: vi.fn().mockResolvedValue(undefined),
       ensureRoutePlanForSelection: vi.fn().mockResolvedValue(null),
       advanceFromAuthImportStep: vi.fn().mockResolvedValue(null),
-      advanceFromHarnessDownloadsStep: vi.fn().mockResolvedValue(null),
+      advanceFromHarnessDownloadsStep: vi.fn().mockResolvedValue({
+        targetKey: "local-route",
+        containerSelection: "sandbox",
+        includeHarnessDownloads: true,
+        includeAuthImport: false,
+        includeTitling: false,
+      }),
       onSelectTitlingLocal: vi.fn().mockReturnValue(false),
       invalidateTitlingPersisted: vi.fn(),
       setTitlingMode: vi.fn(),
@@ -151,6 +157,10 @@ describe("useWorkspaceSetupWorkflow", () => {
 
     fireEvent.click(screen.getByTestId("workflow-next"));
 
+    await waitFor(() => {
+      expect(vi.mocked(useWorkspaceSetupProvisioning).mock.results[0]?.value.advanceFromHarnessDownloadsStep)
+        .toHaveBeenCalled();
+    });
     await waitFor(() => {
       expect(vi.mocked(useWorkspaceSetupFlow).mock.results[0]?.value.goToStepKey)
         .toHaveBeenCalledWith("source");
