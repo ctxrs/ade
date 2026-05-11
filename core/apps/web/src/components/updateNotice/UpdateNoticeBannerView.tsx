@@ -4,6 +4,7 @@ import { ExternalLink } from "../ExternalLink";
 
 type UpdateNoticeBannerViewProps = {
   applyingUpdate: boolean;
+  canDismissBanner: boolean;
   effectiveError: string | null;
   forcedUpdate: boolean;
   latest: string;
@@ -31,6 +32,7 @@ type UpdateNoticeBannerViewProps = {
 
 export function UpdateNoticeBannerView({
   applyingUpdate,
+  canDismissBanner,
   effectiveError,
   forcedUpdate,
   latest,
@@ -158,15 +160,17 @@ export function UpdateNoticeBannerView({
               </button>
             </div>
           ) : null}
-          <button
-            type="button"
-            className="wb-snackbar-close"
-            onClick={dismissForLater}
-            aria-label="Dismiss update notice"
-            disabled={applyingUpdate || restartRequired}
-          >
-            <X size={14} aria-hidden="true" />
-          </button>
+          {canDismissBanner ? (
+            <button
+              type="button"
+              className="wb-snackbar-close"
+              onClick={dismissForLater}
+              aria-label="Dismiss update notice"
+              disabled={applyingUpdate}
+            >
+              <X size={14} aria-hidden="true" />
+            </button>
+          ) : null}
         </div>
       ) : null}
       {showInfoModal ? (

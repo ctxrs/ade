@@ -48,6 +48,8 @@ const PROMPT_SNOOZE_STORAGE_KEY = "ctx_update_prompt_next_allowed_at_v1";
 const IDLE_UPDATE_VERSION_STORAGE_KEY = "ctx_update_prompt_idle_versions_v1";
 const AUTO_APPLY_ON_LAUNCH_STORAGE_KEY = "ctx_update_auto_apply_on_launch_v1";
 const RESTART_REQUIRED_VERSION_STORAGE_KEY = "ctx_update_restart_required_version_v1";
+const RESTART_READY_DISMISSED_VERSION_STORAGE_KEY =
+  "ctx_update_restart_ready_dismissed_version_v1";
 
 const baseUpdate = {
   channel: "stable",
@@ -100,6 +102,7 @@ describe("UpdateNoticeBanner", () => {
     window.localStorage.removeItem(IDLE_UPDATE_VERSION_STORAGE_KEY);
     window.localStorage.removeItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY);
     window.sessionStorage.removeItem(RESTART_REQUIRED_VERSION_STORAGE_KEY);
+    window.sessionStorage.removeItem(RESTART_READY_DISMISSED_VERSION_STORAGE_KEY);
     vi.mocked(isDesktopApp).mockReturnValue(false);
     vi.mocked(downloadAppImageUpdate).mockResolvedValue({
       downloaded_path: "/tmp/ctx.AppImage.new",
@@ -856,6 +859,26 @@ describe("UpdateNoticeBanner", () => {
     expect(screen.getByTestId("update-available-snackbar")).toBeInTheDocument();
   });
 
+  it("does not show a close control for manual-install forced update notices", () => {
+    vi.mocked(isDesktopApp).mockReturnValue(false);
+    vi.mocked(readCachedUpdateCheck).mockReturnValue({
+      ...baseUpdate,
+      current_version: "1.0.0",
+      latest_version: "1.2.0",
+      min_supported_version: "1.1.0",
+      in_place_update_supported: false,
+      in_place_update_reason: "Install manually.",
+    });
+    vi.mocked(refreshUpdateCheck).mockResolvedValue(null);
+
+    renderBanner({ allTasksIdle: false });
+
+    expect(screen.queryByRole("dialog", { name: "Update required" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("update-available-snackbar")).toBeInTheDocument();
+    expect(screen.getByText(/Install manually/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Dismiss update notice" })).not.toBeInTheDocument();
+  });
+
   it.each([
     {
       name: "requires actionable update and stays non-blocking when update is unavailable",
@@ -1120,6 +1143,232 @@ describe("UpdateNoticeBanner", () => {
     expect(screen.getByText(/Update takes ~1 second and preserves data\. Active agents will be paused\./i)).toBeInTheDocument();
     expect(vi.mocked(desktopApplyAppUpdate)).not.toHaveBeenCalled();
     expect(vi.mocked(writeCachedUpdateCheck)).not.toHaveBeenCalled();
+  });
+
+  it("dismisses ready-to-relaunch without clearing restart authority or desktop menu state", async () => {
+    window.localStorage.setItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, "0");
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(readCachedUpdateCheck).mockReturnValue(null);
+    vi.mocked(refreshUpdateCheck).mockResolvedValue({
+      ...baseUpdate,
+      latest_version: "2.2.2",
+      min_supported_version: null,
+    });
+    vi.mocked(desktopGetAppUpdateState).mockResolvedValue(
+      makeDesktopUpdateState({
+        restart_required: true,
+        current_version: "1.0.0",
+        latest_version: "2.2.2",
+        endpoint: "https://api.ctx.rs/functions/v1/releases/stable/latest-tauri.json",
+      }),
+    );
+    const onMenuState = vi.fn();
+    window.addEventListener(DESKTOP_UPDATE_MENU_STATE_EVENT, onMenuState as EventListener);
+
+    try {
+      renderBanner({ allTasksIdle: false });
+      await waitFor(() => {
+        expect(screen.getByText(/Ready to relaunch:\s*2.2.2/)).toBeInTheDocument();
+      });
+      await waitFor(() => {
+        expect(onMenuState).toHaveBeenCalledWith(
+          expect.objectContaining({ detail: { state: "restart" } }),
+        );
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "Dismiss update notice" }));
+
+      expect(screen.queryByTestId("update-available-snackbar")).not.toBeInTheDocument();
+      expect(window.sessionStorage.getItem(RESTART_REQUIRED_VERSION_STORAGE_KEY)).toBe("2.2.2");
+      expect(window.sessionStorage.getItem(RESTART_READY_DISMISSED_VERSION_STORAGE_KEY)).toBe("2.2.2");
+      expect(vi.mocked(desktopRestartApp)).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener(DESKTOP_UPDATE_MENU_STATE_EVENT, onMenuState as EventListener);
+    }
+  });
+
+  it("keeps ready-to-relaunch dismissed across same-window remount after hydration", async () => {
+    window.localStorage.setItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, "0");
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(readCachedUpdateCheck).mockReturnValue(null);
+    vi.mocked(refreshUpdateCheck).mockResolvedValue({
+      ...baseUpdate,
+      latest_version: "2.2.20",
+      min_supported_version: null,
+    });
+    vi.mocked(desktopGetAppUpdateState).mockResolvedValue(
+      makeDesktopUpdateState({
+        restart_required: true,
+        current_version: "1.0.0",
+        latest_version: "2.2.20",
+        endpoint: "https://api.ctx.rs/functions/v1/releases/stable/latest-tauri.json",
+      }),
+    );
+
+    const firstRender = renderBanner({ allTasksIdle: false });
+    await waitFor(() => {
+      expect(screen.getByText(/Ready to relaunch:\s*2.2.20/)).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss update notice" }));
+    expect(screen.queryByTestId("update-available-snackbar")).not.toBeInTheDocument();
+    expect(window.sessionStorage.getItem(RESTART_READY_DISMISSED_VERSION_STORAGE_KEY)).toBe("2.2.20");
+
+    await act(async () => {
+      firstRender.unmount();
+    });
+
+    renderBanner({ allTasksIdle: false });
+    await waitFor(() => {
+      expect(vi.mocked(desktopGetAppUpdateState)).toHaveBeenCalledTimes(2);
+    });
+    expect(screen.queryByTestId("update-available-snackbar")).not.toBeInTheDocument();
+    expect(window.sessionStorage.getItem(RESTART_READY_DISMISSED_VERSION_STORAGE_KEY)).toBe("2.2.20");
+    expect(window.sessionStorage.getItem(RESTART_REQUIRED_VERSION_STORAGE_KEY)).toBe("2.2.20");
+  });
+
+  it("redisplays dismissed ready-to-relaunch after a manual update check", async () => {
+    window.localStorage.setItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, "0");
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(readCachedUpdateCheck).mockReturnValue(null);
+    vi.mocked(refreshUpdateCheck).mockResolvedValue({
+      ...baseUpdate,
+      latest_version: "2.2.3",
+      min_supported_version: null,
+    });
+    vi.mocked(desktopGetAppUpdateState).mockResolvedValue(
+      makeDesktopUpdateState({
+        restart_required: true,
+        current_version: "1.0.0",
+        latest_version: "2.2.3",
+        endpoint: "https://api.ctx.rs/functions/v1/releases/stable/latest-tauri.json",
+      }),
+    );
+
+    renderBanner({ allTasksIdle: false });
+    await waitFor(() => {
+      expect(screen.getByText(/Ready to relaunch:\s*2.2.3/)).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss update notice" }));
+    expect(screen.queryByTestId("update-available-snackbar")).not.toBeInTheDocument();
+
+    act(() => {
+      window.dispatchEvent(new Event(REQUEST_UPDATE_CHECK_EVENT));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Ready to relaunch:\s*2.2.3/)).toBeInTheDocument();
+    });
+    expect(window.sessionStorage.getItem(RESTART_READY_DISMISSED_VERSION_STORAGE_KEY)).toBeNull();
+  });
+
+  it("redisplays dismissed ready-to-relaunch when restart fails", async () => {
+    window.localStorage.setItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, "0");
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(readCachedUpdateCheck).mockReturnValue(null);
+    vi.mocked(refreshUpdateCheck).mockResolvedValue({
+      ...baseUpdate,
+      latest_version: "2.2.4",
+      min_supported_version: null,
+    });
+    vi.mocked(desktopGetAppUpdateState).mockResolvedValue(
+      makeDesktopUpdateState({
+        restart_required: true,
+        current_version: "1.0.0",
+        latest_version: "2.2.4",
+        endpoint: "https://api.ctx.rs/functions/v1/releases/stable/latest-tauri.json",
+      }),
+    );
+    vi.mocked(desktopRestartApp).mockRejectedValue(new Error("Restart denied"));
+
+    renderBanner({ allTasksIdle: false });
+    await waitFor(() => {
+      expect(screen.getByText(/Ready to relaunch:\s*2.2.4/)).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss update notice" }));
+    expect(screen.queryByTestId("update-available-snackbar")).not.toBeInTheDocument();
+
+    act(() => {
+      window.dispatchEvent(new Event(REQUEST_UPDATE_RESTART_EVENT));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Restart denied/)).toBeInTheDocument();
+    });
+    expect(screen.getByText(/Ready to relaunch:\s*2.2.4/)).toBeInTheDocument();
+    expect(window.sessionStorage.getItem(RESTART_READY_DISMISSED_VERSION_STORAGE_KEY)).toBeNull();
+  });
+
+  it("does not let a dismissed ready-to-relaunch version hide a newer pending restart", async () => {
+    window.localStorage.setItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, "0");
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(readCachedUpdateCheck).mockReturnValue(null);
+    vi.mocked(refreshUpdateCheck).mockResolvedValue({
+      ...baseUpdate,
+      latest_version: "2.2.6",
+      min_supported_version: null,
+    });
+    vi.mocked(desktopGetAppUpdateState).mockResolvedValue(
+      makeDesktopUpdateState({
+        restart_required: true,
+        current_version: "1.0.0",
+        latest_version: "2.2.6",
+        endpoint: "https://api.ctx.rs/functions/v1/releases/stable/latest-tauri.json",
+      }),
+    );
+
+    const firstRender = renderBanner({ allTasksIdle: false });
+    await waitFor(() => {
+      expect(screen.getByText(/Ready to relaunch:\s*2.2.6/)).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss update notice" }));
+    expect(window.sessionStorage.getItem(RESTART_READY_DISMISSED_VERSION_STORAGE_KEY)).toBe("2.2.6");
+    await act(async () => {
+      firstRender.unmount();
+    });
+
+    vi.mocked(refreshUpdateCheck).mockResolvedValue({
+      ...baseUpdate,
+      latest_version: "2.2.7",
+      min_supported_version: null,
+    });
+    vi.mocked(desktopGetAppUpdateState).mockResolvedValue(
+      makeDesktopUpdateState({
+        restart_required: true,
+        current_version: "1.0.0",
+        latest_version: "2.2.7",
+        endpoint: "https://api.ctx.rs/functions/v1/releases/stable/latest-tauri.json",
+      }),
+    );
+
+    renderBanner({ allTasksIdle: false });
+    await waitFor(() => {
+      expect(screen.getByText(/Ready to relaunch:\s*2.2.7/)).toBeInTheDocument();
+    });
+  });
+
+  it("does not show a close control for ready-to-relaunch without a known version", async () => {
+    window.localStorage.setItem(AUTO_APPLY_ON_LAUNCH_STORAGE_KEY, "0");
+    vi.mocked(isDesktopApp).mockReturnValue(true);
+    vi.mocked(readCachedUpdateCheck).mockReturnValue(null);
+    vi.mocked(refreshUpdateCheck).mockResolvedValue({
+      ...baseUpdate,
+      latest_version: null,
+      update_available: false,
+    });
+    vi.mocked(desktopGetAppUpdateState).mockResolvedValue(
+      makeDesktopUpdateState({
+        restart_required: true,
+        current_version: "1.0.0",
+        latest_version: null,
+        endpoint: "https://api.ctx.rs/functions/v1/releases/stable/latest-tauri.json",
+      }),
+    );
+
+    renderBanner({ allTasksIdle: false });
+    await waitFor(() => {
+      expect(screen.getByText(/Ready to relaunch:\s*unknown/)).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("button", { name: "Dismiss update notice" })).not.toBeInTheDocument();
   });
 
   it("restarts on next idle in restart-required desktop state", async () => {

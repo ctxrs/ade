@@ -17,7 +17,14 @@ import { useUpdateNoticeVersionState } from "../../utils/useUpdateNoticeVersionS
 import { UPDATER_REFRESH_BROADCAST_STORAGE_KEY, writeUpdaterRefreshBroadcast } from "../../utils/updaterEvents";
 import { IDLE_UPDATE_VERSION_STORAGE_KEY, POLL_INTERVAL_MS, PROMPT_SNOOZE_STORAGE_KEY, RESTART_READY_MESSAGE } from "./constants";
 import { initialNoticeUiState, noticeUiReducer, type UpdateApplySource } from "./state";
-import { readIdleUpdateVersions, readPromptSnoozeByVersion, readRestartRequiredVersion, writeIdleUpdateVersions } from "./storage";
+import {
+  readIdleUpdateVersions,
+  readPromptSnoozeByVersion,
+  readRestartRequiredVersion,
+  writeIdleUpdateVersions,
+} from "./storage";
+import type { UpdateNoticeBannerModel, UpdateNoticeBannerProps } from "./types";
+import { useRestartReadyDismissal } from "./useRestartReadyDismissal";
 import {
   areUpdateChecksEqual,
   getInPlaceCapability,
@@ -27,36 +34,7 @@ import {
   normalizeOptionalString,
 } from "./version";
 
-export type UpdateNoticeBannerProps = {
-  allTasksIdle?: boolean;
-};
-
-export type UpdateNoticeBannerModel = {
-  applyingUpdate: boolean;
-  effectiveError: string | null;
-  forcedUpdate: boolean;
-  latest: string;
-  latestKnownVersion: string;
-  minimumSupportedVersion: string;
-  releaseNotesUrl: string;
-  restartRequired: boolean;
-  shouldRenderBanner: boolean;
-  showInfoModal: boolean;
-  showUpdateActions: boolean;
-  snackbarTitle: string;
-  updateActionDisabled: boolean;
-  updateActionLabel: string;
-  updateError: string | null;
-  updateInfo: UpdateCheck | null;
-  updateStatus: string | null;
-  dismissForLater: () => void;
-  onForcedUpdateNow: () => void;
-  onRestartNow: () => void;
-  onUpdateNow: () => void;
-  openInfoModal: () => void;
-  closeInfoModal: () => void;
-  requestUpdateOnNextIdle: () => void;
-};
+export type { UpdateNoticeBannerModel, UpdateNoticeBannerProps } from "./types";
 
 export function useUpdateNoticeBanner({
   allTasksIdle = true,
@@ -95,13 +73,25 @@ export function useUpdateNoticeBanner({
   }, [desktopNativeState]);
 
   const {
+    clearDismissedRestartReadyVersion,
+    dismissedRestartReadyVersion,
+    dismissRestartReady,
+    restartReadyDismissKey,
+  } = useRestartReadyDismissal({
+    desktopStateHydrated: !isDesktop || desktopNativeState !== null,
+    isDesktop,
+    latestVersion: updateInfo?.latest_version,
+    restartRequired: uiState.phase === "restart_required",
+  });
+
+  const {
     applyingUpdate,
     desktopStagedReady,
     desktopStaging,
     desktopUpdateMenuState,
     effectiveError,
     forcedUpdate,
-    forcedUpdateNeedsManualInstall,
+    canDismissBanner,
     latest,
     latestKnownVersion,
     minimumSupportedVersion,
@@ -117,6 +107,8 @@ export function useUpdateNoticeBanner({
     updateInfo,
     desktopNativeState,
     promptSnoozeByVersion,
+    dismissedRestartReadyVersion,
+    restartReadyDismissKey,
     restartingApp,
     uiState,
   });
@@ -125,10 +117,19 @@ export function useUpdateNoticeBanner({
   const updateStatus = uiState.status;
 
   const dismissForLater = useCallback(() => {
+    if (restartRequired) {
+      dismissRestartReady();
+      return;
+    }
     if (!latestKnownVersion) return;
     snoozeVersionPrompt(latestKnownVersion);
     writeUpdaterRefreshBroadcast("dismiss-for-later");
-  }, [latestKnownVersion, snoozeVersionPrompt]);
+  }, [
+    latestKnownVersion,
+    dismissRestartReady,
+    restartRequired,
+    snoozeVersionPrompt,
+  ]);
 
   const reconcileRestartRequiredState = useCallback(
     (info: UpdateCheck | null): boolean => {
@@ -320,6 +321,7 @@ export function useUpdateNoticeBanner({
     const onRequestUpdateCheck = () => {
       if (manualCheckInFlightRef.current) return;
       manualCheckInFlightRef.current = true;
+      clearDismissedRestartReadyVersion();
       dispatchUi({ type: "manual_check_started" });
       void (async () => {
         try {
@@ -382,7 +384,7 @@ export function useUpdateNoticeBanner({
         onRequestUpdateCheck as EventListener,
       );
     };
-  }, [refresh]);
+  }, [clearDismissedRestartReadyVersion, refresh]);
 
   useEffect(() => {
     if (uiState.phase !== "up_to_date" && uiState.phase !== "manual_failed") return;
@@ -482,6 +484,7 @@ export function useUpdateNoticeBanner({
     setRestartingApp(true);
     void desktopRestartApp()
       .catch((err: unknown) => {
+        clearDismissedRestartReadyVersion();
         dispatchUi({
           type: "restart_failed",
           message: messageFromUnknownError(err, "Failed to restart app."),
@@ -490,7 +493,7 @@ export function useUpdateNoticeBanner({
       .finally(() => {
         setRestartingApp(false);
       });
-  }, [isDesktop, restartingApp]);
+  }, [clearDismissedRestartReadyVersion, isDesktop, restartingApp]);
 
   useEffect(() => {
     const onRequestUpdateRestart = () => {
@@ -558,6 +561,7 @@ export function useUpdateNoticeBanner({
 
   return {
     applyingUpdate,
+    canDismissBanner,
     effectiveError,
     forcedUpdate,
     latest,

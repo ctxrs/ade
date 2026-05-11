@@ -1,6 +1,7 @@
 import {
   IDLE_UPDATE_VERSION_STORAGE_KEY,
   PROMPT_SNOOZE_STORAGE_KEY,
+  RESTART_READY_DISMISSED_VERSION_STORAGE_KEY,
   RESTART_REQUIRED_VERSION_STORAGE_KEY,
 } from "./constants";
 
@@ -55,6 +56,40 @@ export const clearRestartRequiredVersion = (): void => {
   if (typeof window === "undefined") return;
   try {
     window.sessionStorage.removeItem(RESTART_REQUIRED_VERSION_STORAGE_KEY);
+  } catch {
+    // ignore storage failures
+  }
+};
+
+export const readRestartReadyDismissedVersion = (): string => {
+  if (typeof window === "undefined") return "";
+  try {
+    return String(
+      window.sessionStorage.getItem(RESTART_READY_DISMISSED_VERSION_STORAGE_KEY) ?? "",
+    ).trim();
+  } catch {
+    return "";
+  }
+};
+
+export const writeRestartReadyDismissedVersion = (version: string): void => {
+  if (typeof window === "undefined") return;
+  const normalized = String(version || "").trim();
+  if (!normalized) return;
+  try {
+    window.sessionStorage.setItem(
+      RESTART_READY_DISMISSED_VERSION_STORAGE_KEY,
+      normalized,
+    );
+  } catch {
+    // ignore storage failures
+  }
+};
+
+export const clearRestartReadyDismissedVersion = (): void => {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(RESTART_READY_DISMISSED_VERSION_STORAGE_KEY);
   } catch {
     // ignore storage failures
   }

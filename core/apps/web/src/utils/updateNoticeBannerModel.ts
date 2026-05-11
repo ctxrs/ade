@@ -14,6 +14,8 @@ type DeriveUpdateNoticeBannerStateArgs = {
   updateInfo: UpdateCheck | null;
   desktopNativeState: DesktopAppUpdateStateResp | null;
   promptSnoozeByVersion: Record<string, number>;
+  dismissedRestartReadyVersion: string;
+  restartReadyDismissKey: string;
   uiState: NoticeUiState;
   restartingApp: boolean;
   nowMs?: number;
@@ -32,6 +34,7 @@ export type UpdateNoticeBannerDerivedState = {
   minimumSupportedVersion: string;
   releaseNotesUrl: string;
   restartRequired: boolean;
+  canDismissBanner: boolean;
   shouldRenderBanner: boolean;
   showUpdateActions: boolean;
   snackbarTitle: string;
@@ -67,6 +70,8 @@ export const deriveUpdateNoticeBannerState = ({
   updateInfo,
   desktopNativeState,
   promptSnoozeByVersion,
+  dismissedRestartReadyVersion,
+  restartReadyDismissKey,
   uiState,
   restartingApp,
   nowMs = Date.now(),
@@ -91,8 +96,16 @@ export const deriveUpdateNoticeBannerState = ({
   const canApplyFromCurrentClient = isDesktop || inPlaceCapability.supported;
   const forcedUpdateNeedsManualInstall =
     isForcedUpdate(updateInfo) && !canApplyFromCurrentClient;
+  const normalizedRestartReadyDismissKey = normalizeOptionalString(restartReadyDismissKey);
+  const restartReadyDismissed =
+    isDesktop &&
+    uiState.phase === "restart_required" &&
+    Boolean(normalizedRestartReadyDismissKey) &&
+    normalizeOptionalString(dismissedRestartReadyVersion) ===
+      normalizedRestartReadyDismissKey;
   const shouldShow = isDesktop
-    ? uiState.phase === "restart_required" || manualTransient
+    ? (uiState.phase === "restart_required" && !restartReadyDismissed) ||
+      manualTransient
     : Boolean(updateInfo?.update_available) && nowMs >= nextPromptAtMs;
   const forcedUpdate = isForcedUpdate(updateInfo) && canApplyFromCurrentClient;
   const applyingUpdate = uiState.phase === "applying";
@@ -116,6 +129,13 @@ export const deriveUpdateNoticeBannerState = ({
     forcedUpdateNeedsManualInstall ||
     shouldShow ||
     (!isDesktop && (applyingUpdate || restartRequired));
+  const canDismissBanner =
+    !applyingUpdate &&
+    !forcedUpdateNeedsManualInstall &&
+    shouldRenderBanner &&
+    (restartRequired
+      ? isDesktop && Boolean(normalizedRestartReadyDismissKey)
+      : !isDesktop && Boolean(updateInfo?.update_available) && nowMs >= nextPromptAtMs);
   const restartActionEnabled = restartRequired && isDesktop;
   const updateActionDisabled =
     applyingUpdate || (restartRequired && (!restartActionEnabled || restartingApp));
@@ -141,6 +161,7 @@ export const deriveUpdateNoticeBannerState = ({
     minimumSupportedVersion,
     releaseNotesUrl: `https://ctx.rs/release-notes/${encodeURIComponent(latest)}`,
     restartRequired,
+    canDismissBanner,
     shouldRenderBanner,
     showUpdateActions,
     snackbarTitle,
