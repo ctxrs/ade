@@ -1,70 +1,20 @@
-use std::io;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use anyhow::Result;
 use chrono::Utc;
-use tracing::Metadata;
-use tracing_subscriber::fmt::writer::MakeWriter;
 use tracing_subscriber::Layer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::cli::Commands;
 
+mod conditional_writer;
 mod heap_profiler;
 mod maintenance;
 
+use self::conditional_writer::ConditionalMakeWriter;
 use self::heap_profiler::spawn_daemon_heap_profiler;
 use self::maintenance::{daemon_log_path_for_date, spawn_daemon_log_maintenance, DaemonLogConfig};
-
-struct ConditionalWriter<W> {
-    inner: W,
-    blocked: Arc<AtomicBool>,
-}
-
-impl<W: io::Write> io::Write for ConditionalWriter<W> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        if self.blocked.load(Ordering::Relaxed) {
-            Ok(buf.len())
-        } else {
-            self.inner.write(buf)
-        }
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        if self.blocked.load(Ordering::Relaxed) {
-            Ok(())
-        } else {
-            self.inner.flush()
-        }
-    }
-}
-
-struct ConditionalMakeWriter<W> {
-    inner: W,
-    blocked: Arc<AtomicBool>,
-}
-
-impl<'a, W> MakeWriter<'a> for ConditionalMakeWriter<W>
-where
-    W: MakeWriter<'a>,
-{
-    type Writer = ConditionalWriter<W::Writer>;
-
-    fn make_writer(&'a self) -> Self::Writer {
-        ConditionalWriter {
-            inner: self.inner.make_writer(),
-            blocked: Arc::clone(&self.blocked),
-        }
-    }
-
-    fn make_writer_for(&'a self, meta: &Metadata<'_>) -> Self::Writer {
-        ConditionalWriter {
-            inner: self.inner.make_writer_for(meta),
-            blocked: Arc::clone(&self.blocked),
-        }
-    }
-}
 
 fn env_bool(key: &str) -> Option<bool> {
     std::env::var(key)

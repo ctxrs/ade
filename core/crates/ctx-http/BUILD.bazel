@@ -475,6 +475,7 @@ rust_binary(
     edition = "2021",
     srcs = [
         "src/cli.rs",
+        "src/logging/conditional_writer.rs",
         "src/logging/heap_profiler.rs",
         "src/logging/maintenance.rs",
         "src/logging.rs",
