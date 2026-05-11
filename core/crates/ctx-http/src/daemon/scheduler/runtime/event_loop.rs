@@ -10,6 +10,7 @@ mod assistant;
 mod dispatch;
 mod driver;
 mod failure;
+mod processor;
 mod provider_events;
 mod state;
 mod telemetry;
