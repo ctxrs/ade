@@ -1,4 +1,8 @@
 use super::super::*;
+use worktrees::load_archive_worktrees;
+
+#[path = "archive/worktrees.rs"]
+mod worktrees;
 
 #[derive(Debug, Serialize)]
 pub(in crate::api) struct ArchiveTaskResponse {
@@ -41,23 +45,7 @@ pub(in crate::api) async fn archive_task(
     for session in &sessions {
         state.cleanup_session(session.id).await;
     }
-    let mut worktree_ids: HashSet<WorktreeId> = sessions.iter().map(|s| s.worktree_id).collect();
-    if let Some(primary_worktree_id) = task.primary_worktree_id {
-        worktree_ids.insert(primary_worktree_id);
-    }
-    let mut seen = HashSet::new();
-    let mut worktrees = Vec::new();
-    for worktree_id in worktree_ids {
-        if !seen.insert(worktree_id) {
-            continue;
-        }
-        let worktree = store
-            .get_worktree(worktree_id)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-            .ok_or(StatusCode::NOT_FOUND)?;
-        worktrees.push(worktree);
-    }
+    let worktrees = load_archive_worktrees(&store, &task, &sessions).await?;
 
     let updated = store
         .archive_task(task_id)
