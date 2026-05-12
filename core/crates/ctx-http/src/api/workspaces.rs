@@ -1,4 +1,4 @@
-use std::path::{Path as StdPath, PathBuf};
+use std::path::Path as StdPath;
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -46,7 +46,6 @@ use ctx_observability::telemetry::TelemetryEvent;
 use ctx_workspace_attachments::AttachmentConfig;
 use ctx_workspace_config as workspace_config;
 use ctx_workspace_container::WorkspaceContainerStatus as HarnessContainerStatus;
-use ctx_workspace_services::workspace_registration::detect_workspace_primary_branch;
 
 #[derive(Debug, Deserialize)]
 pub(super) struct UpdateMergeQueueConfigReq {

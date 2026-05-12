@@ -6,8 +6,8 @@ pub async fn init_workspace(root: Option<String>) -> Result<()> {
     let root_path = root
         .map(PathBuf::from)
         .unwrap_or(std::env::current_dir().context("getting current dir")?);
-    let vcs = ctx_fs::vcs::driver_for_path(&root_path).await?;
-    vcs.assert_repo(&root_path).await?;
+    ctx_workspace_services::workspace_registration::validate_workspace_root_repo(&root_path)
+        .await?;
 
     let context_dir = root_path.join(".ctx");
     let pack_dir = context_dir.join("ctx-pack");

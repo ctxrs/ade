@@ -8,22 +8,16 @@ async fn validate_workspace_root_is_repo(
     workspace: &Workspace,
 ) -> Result<(), (StatusCode, Json<ApiErrorResp>)> {
     let workspace_root = StdPath::new(&workspace.root_path);
-    let vcs = vcs::driver_for_path(workspace_root).await.map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: e.to_string(),
-            }),
-        )
-    })?;
-    vcs.assert_repo(workspace_root).await.map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: e.to_string(),
-            }),
-        )
-    })?;
+    ctx_workspace_services::workspace_registration::validate_workspace_root_repo(workspace_root)
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: error.to_string(),
+                }),
+            )
+        })?;
     Ok(())
 }
 
