@@ -2,7 +2,7 @@ use super::*;
 use crate::daemon::AppState;
 use ctx_core::models::VcsKind;
 use ctx_store::{Store, StoreManager};
-use ctx_workspace_services::worktree_vcs::managed_worktree_path;
+use ctx_workspace_services::worktree_vcs::{managed_worktree_path, standaloneize_worktree_git_dir};
 use std::collections::HashMap;
 
 fn git(args: &[&str], cwd: &StdPath) {
@@ -137,7 +137,7 @@ async fn delete_task_prunes_and_deletes_branch_for_standalone_managed_worktree()
         .git_branch
         .clone()
         .expect("managed worktree branch should exist");
-    ctx_fs::worktrees::standaloneize_worktree_git_dir(&managed_root)
+    standaloneize_worktree_git_dir(&managed_root)
         .await
         .expect("standaloneize managed worktree");
 

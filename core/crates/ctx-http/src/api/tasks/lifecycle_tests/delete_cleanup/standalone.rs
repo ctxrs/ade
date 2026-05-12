@@ -39,7 +39,7 @@ async fn delete_task_removes_standalone_managed_worktree_when_workspace_root_is_
         &base_commit,
     )
     .await;
-    ctx_fs::worktrees::standaloneize_worktree_git_dir(&managed_root)
+    standaloneize_worktree_git_dir(&managed_root)
         .await
         .expect("standaloneize managed worktree");
     tokio::fs::remove_dir_all(&repo_root)

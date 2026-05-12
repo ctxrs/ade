@@ -166,6 +166,10 @@ pub async fn delete_worktree_branch(
     ctx_fs::git::delete_branch(workspace_root, branch_name).await
 }
 
+pub async fn standaloneize_worktree_git_dir(worktree_path: impl AsRef<Path>) -> anyhow::Result<()> {
+    ctx_fs::worktrees::standaloneize_worktree_git_dir(worktree_path).await
+}
+
 fn normalize_path_for_comparison(path: &Path) -> PathBuf {
     let mut suffix = Vec::new();
     let mut cursor = path;

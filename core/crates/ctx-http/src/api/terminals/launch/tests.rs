@@ -6,6 +6,7 @@ use ctx_core::models::{VcsKind, Workspace, Worktree};
 use ctx_sandbox_contract::{container_worktree_root, sandbox_worktree_root};
 use ctx_store::StoreManager;
 use ctx_transport_runtime::terminal_launch::TerminalLaunchErrorKind;
+use ctx_workspace_services::worktree_vcs::managed_worktree_path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -58,8 +59,7 @@ fn sandbox_worktree_root_maps_managed_host_worktree_to_container_root() {
     let data_root = tempfile::tempdir().unwrap();
     let workspace = sample_workspace("/host/ws");
     let worktree_id = WorktreeId(uuid::Uuid::new_v4());
-    let managed_root =
-        ctx_fs::worktrees::managed_worktree_path(data_root.path(), workspace.id, worktree_id);
+    let managed_root = managed_worktree_path(data_root.path(), workspace.id, worktree_id);
     let mut worktree = sample_worktree(&workspace, managed_root);
     worktree.id = worktree_id;
 

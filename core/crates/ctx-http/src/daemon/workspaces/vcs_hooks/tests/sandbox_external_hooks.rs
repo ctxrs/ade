@@ -9,7 +9,6 @@ use ctx_core::models::{
     sandbox_instance_id_for_workspace, SandboxBinding, SandboxGuestIdentity, SandboxProfile,
     SandboxSubstrate, VcsKind, Worktree,
 };
-use ctx_fs::worktrees::managed_worktree_path;
 use ctx_settings_model::{
     ContainerExecutionSettings, ContainerNetworkMode, ContainerRuntimeKind, ExecutionMode,
     ExecutionSettings,
@@ -19,6 +18,7 @@ use ctx_workspace_services::vcs_hooks::{
     get_git_config, set_git_config, worktree_hooks_dir, CORE_HOOKS_PATH_KEY,
     CTX_PREV_HOOKS_PATH_KEY, CTX_TASK_ID_KEY,
 };
+use ctx_workspace_services::worktree_vcs::managed_worktree_path;
 
 #[tokio::test]
 async fn sandbox_hooks_live_under_external_vcs_hooks_root_and_cleanup_restores_config() {
