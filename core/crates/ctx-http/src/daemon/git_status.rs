@@ -14,12 +14,9 @@ mod watch;
 use ctx_workspace_services::worktree_vcs::{
     mark_worktree_vcs_runtime_dirty, queue_worktree_vcs_refresh, worktree_has_vcs_repo_from_source,
     worktree_vcs_dirty_transient_snapshot, worktree_vcs_driver_for_kind,
-    worktree_vcs_refresh_transient_snapshot, WorktreeVcsDriver,
+    worktree_vcs_refresh_transient_snapshot, WorktreeVcsDirtyBits, WorktreeVcsDriver,
 };
-pub use ctx_workspace_services::worktree_vcs::{
-    GitStatusEntry, GitStatusSnapshot, WorktreeVcsDirtyBits,
-};
-pub use projection::load_git_status_snapshot;
+pub(crate) use projection::load_git_status_snapshot;
 use projection::{publish_transient_worktree_vcs_snapshot, refresh_worktree_vcs_projection};
 use scheduler::ensure_worktree_vcs_scheduler_started;
 pub(crate) use source::HttpWorktreeVcsSource;

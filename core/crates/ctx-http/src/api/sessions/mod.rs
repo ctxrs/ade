@@ -13,7 +13,6 @@ use super::artifacts::persist_blob_bytes;
 use super::errors::ApiErrorResp;
 use super::redact_json_value;
 use super::shared::{load_and_cache_worktree_files, FileCompletionsQuery};
-use crate::daemon::git_status::GitStatusEntry;
 use crate::daemon::scheduler::SchedulerCommand;
 use crate::daemon::AppState;
 use ctx_core::ids::*;
@@ -28,6 +27,7 @@ use ctx_providers::{
 use ctx_settings_model as user_settings;
 use ctx_store::is_unique_constraint_violation;
 use ctx_workspace_services::file_completions as workspace_file_completions;
+use ctx_workspace_services::worktree_vcs::GitStatusEntry;
 
 mod subagents;
 pub(crate) use subagents::{

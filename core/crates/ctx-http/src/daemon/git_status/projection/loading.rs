@@ -10,7 +10,7 @@ use crate::daemon::AppState;
 
 use super::super::source::HttpWorktreeVcsSource;
 
-pub async fn load_git_status_snapshot(
+pub(crate) async fn load_git_status_snapshot(
     state: &Arc<AppState>,
     worktree: &Worktree,
     include_untracked_files: bool,
