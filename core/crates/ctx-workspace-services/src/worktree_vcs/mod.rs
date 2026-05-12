@@ -11,6 +11,7 @@ mod runtime;
 mod sandbox_source;
 mod session_diff;
 mod session_diff_exec;
+mod session_patch;
 mod snapshot;
 mod status;
 mod watch;
@@ -39,7 +40,8 @@ pub use git_commands::{
 };
 pub use local_source::LocalWorktreeVcsSource;
 pub use managed_worktree::{
-    branch_exists, ensure_worktree_attached, is_git_worktree, prune_worktrees, remove_worktree,
+    branch_exists, create_managed_worktree, ensure_worktree_attached, is_git_worktree,
+    managed_worktree_path, matching_managed_worktree_path, prune_worktrees, remove_worktree,
 };
 pub use projection::{
     plan_worktree_vcs_summary_refresh, plan_worktree_vcs_touched_files_refresh,
@@ -76,6 +78,7 @@ pub use session_diff_exec::{
     load_worktree_vcs_session_diff_summary_from_sandbox, WorktreeVcsSessionDiffCommand,
     WorktreeVcsSessionDiffSandboxExecutor,
 };
+pub use session_patch::apply_worktree_vcs_session_patch;
 pub use snapshot::{
     build_git_status_entries, build_git_status_summary, build_large_change_set_touched_files,
     build_touched_files, build_worktree_vcs_snapshot, build_worktree_vcs_snapshot_from_source,

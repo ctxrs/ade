@@ -57,13 +57,11 @@ pub(crate) async fn provision_worktree_for_execution(
     branch_name: &str,
     effective: &ExecutionSettings,
 ) -> anyhow::Result<(PathBuf, Option<SandboxBinding>)> {
-    let canonical_root = managed_worktree_path(&state.core.data_root, workspace.id, worktree_id);
-    if let Some(parent) = canonical_root.parent() {
-        tokio::fs::create_dir_all(parent).await?;
-    }
-    create_worktree(
+    let canonical_root = ctx_workspace_services::worktree_vcs::create_managed_worktree(
+        &state.core.data_root,
         &workspace.root_path,
-        &canonical_root,
+        workspace.id,
+        worktree_id,
         base_commit_sha,
         branch_name,
     )

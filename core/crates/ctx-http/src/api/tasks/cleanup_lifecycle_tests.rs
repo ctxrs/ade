@@ -2,6 +2,7 @@ use super::*;
 use crate::daemon::AppState;
 use ctx_core::models::VcsKind;
 use ctx_store::{Store, StoreManager};
+use ctx_workspace_services::worktree_vcs::managed_worktree_path;
 use std::collections::HashMap;
 
 fn git(args: &[&str], cwd: &StdPath) {

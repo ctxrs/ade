@@ -51,7 +51,6 @@ use ctx_core::models::{
     SessionEventType, Task, TaskDeltaKind, VcsKind, Workspace, WorkspaceArchivedPage,
     WorkspaceIndexCursor, Worktree,
 };
-use ctx_fs::worktrees::{create_worktree, managed_worktree_path};
 use ctx_observability::logs;
 use ctx_observability::ops_events::OpsEvent;
 use ctx_observability::telemetry::TelemetryEvent;

@@ -1,6 +1,7 @@
 use super::context::load_session_vcs_context;
 use super::*;
 use crate::api::sessions::diff_exec::diff_worktree_for_session;
+use ctx_workspace_services::worktree_vcs::apply_worktree_vcs_session_patch;
 
 pub(crate) async fn apply_session_diff_patch(
     State(state): State<Arc<AppState>>,
@@ -39,10 +40,9 @@ pub(crate) async fn apply_session_diff_patch(
     };
 
     let (store, ctx) = load_session_vcs_context(&state, session_id).await?;
-    ctx_fs::git::git_apply_patch(
-        &ctx.worktree.root_path,
+    apply_worktree_vcs_session_patch(
+        std::path::Path::new(&ctx.worktree.root_path),
         &req.patch,
-        ctx_fs::git::ApplyPatchTarget::Worktree,
         reverse,
     )
     .await

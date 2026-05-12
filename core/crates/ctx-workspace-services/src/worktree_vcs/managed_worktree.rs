@@ -1,8 +1,55 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use anyhow::{bail, Context};
+use ctx_core::ids::{WorkspaceId, WorktreeId};
 use tokio::process::Command;
+
+pub fn managed_worktree_path(
+    data_root: impl AsRef<Path>,
+    workspace_id: WorkspaceId,
+    worktree_id: WorktreeId,
+) -> PathBuf {
+    ctx_fs::worktrees::managed_worktree_path(data_root, workspace_id, worktree_id)
+}
+
+pub fn matching_managed_worktree_path(
+    data_root: impl AsRef<Path>,
+    workspace_id: WorkspaceId,
+    worktree_id: WorktreeId,
+    worktree_root: impl AsRef<Path>,
+) -> Option<PathBuf> {
+    let expected = managed_worktree_path(data_root, workspace_id, worktree_id);
+    if normalize_path_for_comparison(worktree_root.as_ref())
+        == normalize_path_for_comparison(&expected)
+    {
+        Some(expected)
+    } else {
+        None
+    }
+}
+
+pub async fn create_managed_worktree(
+    data_root: impl AsRef<Path>,
+    workspace_root: impl AsRef<Path>,
+    workspace_id: WorkspaceId,
+    worktree_id: WorktreeId,
+    base_commit_sha: &str,
+    branch_name: &str,
+) -> anyhow::Result<PathBuf> {
+    let canonical_root = managed_worktree_path(data_root, workspace_id, worktree_id);
+    if let Some(parent) = canonical_root.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    ctx_fs::worktrees::create_worktree(
+        workspace_root,
+        &canonical_root,
+        base_commit_sha,
+        branch_name,
+    )
+    .await?;
+    Ok(canonical_root)
+}
 
 pub async fn branch_exists(
     workspace_root: impl AsRef<Path>,
@@ -77,6 +124,70 @@ pub async fn remove_worktree(
             .context("removing worktree dir")?;
     }
     Ok(())
+}
+
+fn normalize_path_for_comparison(path: &Path) -> PathBuf {
+    let mut suffix = Vec::new();
+    let mut cursor = path;
+    loop {
+        match std::fs::canonicalize(cursor) {
+            Ok(canonical) => {
+                let mut normalized = canonical;
+                for component in suffix.iter().rev() {
+                    normalized.push(component);
+                }
+                return normalized;
+            }
+            Err(_) => {
+                let Some(parent) = cursor.parent() else {
+                    return path.to_path_buf();
+                };
+                let Some(name) = cursor.file_name() else {
+                    return path.to_path_buf();
+                };
+                suffix.push(name.to_os_string());
+                cursor = parent;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn matching_managed_worktree_path_accepts_equivalent_existing_parent() {
+        let data_root = tempfile::tempdir().expect("data root");
+        let workspace_id = WorkspaceId::new();
+        let worktree_id = WorktreeId::new();
+        let expected = managed_worktree_path(data_root.path(), workspace_id, worktree_id);
+        std::fs::create_dir_all(expected.parent().expect("parent")).expect("create parent");
+
+        let matched = matching_managed_worktree_path(
+            data_root.path(),
+            workspace_id,
+            worktree_id,
+            expected.as_path(),
+        )
+        .expect("managed path");
+
+        assert_eq!(matched, expected);
+    }
+
+    #[test]
+    fn matching_managed_worktree_path_rejects_external_root() {
+        let data_root = tempfile::tempdir().expect("data root");
+        let external_root = tempfile::tempdir().expect("external root");
+
+        assert!(matching_managed_worktree_path(
+            data_root.path(),
+            WorkspaceId::new(),
+            WorktreeId::new(),
+            external_root.path(),
+        )
+        .is_none());
+    }
 }
 
 pub async fn prune_worktrees(workspace_root: impl AsRef<Path>) -> anyhow::Result<()> {

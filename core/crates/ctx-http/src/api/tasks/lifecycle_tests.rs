@@ -1,5 +1,6 @@
 use super::*;
 use ctx_core::models::{SandboxGuestIdentity, SandboxSubstrate, VcsKind};
+use ctx_workspace_services::worktree_vcs::managed_worktree_path;
 
 #[path = "lifecycle_tests/archive.rs"]
 mod archive;
