@@ -5,10 +5,27 @@ mod replay;
 
 use replay::{replay_workspace_stream_subscriptions, WorkspaceStreamReplayRequest};
 
+fn merge_replayed_and_live_subscriptions(
+    live_subscriptions: &HashMap<SessionId, SessionCursor>,
+    replayed_subscriptions: HashMap<SessionId, SessionCursor>,
+) -> HashMap<SessionId, SessionCursor> {
+    live_subscriptions
+        .iter()
+        .map(|(session_id, live_cursor)| {
+            let last_sent = replayed_subscriptions
+                .get(session_id)
+                .map(|replayed_cursor| replayed_cursor.last_sent.cover(live_cursor.last_sent))
+                .unwrap_or(live_cursor.last_sent);
+            (*session_id, SessionCursor { last_sent })
+        })
+        .collect()
+}
+
 pub(crate) async fn handle_workspace_stream_subscription(
     state: &Arc<AppState>,
     workspace_id: WorkspaceId,
     message: WorkspaceActiveSnapshotClientMessage,
+    live_rx: &mut tokio::sync::broadcast::Receiver<WorkspaceActiveSnapshotEvent>,
     runtime: &mut WorkspaceStreamRuntime,
     labels: &WorkspaceStreamLabels,
 ) -> Result<(), ()> {
@@ -59,10 +76,38 @@ pub(crate) async fn handle_workspace_stream_subscription(
         sessions: resolved_sessions,
         state: next_state,
     } = resolved;
+    let previous_subscription_ids = runtime.subscriptions.keys().copied().collect::<Vec<_>>();
+    let mut provisional_subscriptions = HashMap::new();
+    for subscription in &resolved_sessions {
+        let ResolvedWorkspaceActiveSessionReplay::Resume {
+            after_seq,
+            after_projection_rev,
+        } = subscription.replay
+        else {
+            continue;
+        };
+        provisional_subscriptions.insert(
+            subscription.session_id,
+            SessionCursor {
+                last_sent: SessionReplayCursor {
+                    last_event_seq: after_seq.max(0),
+                    projection_rev: after_projection_rev.max(0),
+                },
+            },
+        );
+    }
 
     clear_runtime_queues(runtime).await;
     runtime.reset_queued = false;
     runtime.send_control.clear_disconnect_after_flush();
+    runtime.subscriptions = provisional_subscriptions;
+    runtime.subscription_state = next_state.clone();
+    sync_workspace_stream_session_pins(
+        state,
+        previous_subscription_ids.into_iter(),
+        runtime.subscriptions.keys().copied(),
+    )
+    .await;
     let active_head_cursors = if include_initial_snapshot {
         runtime.send_control.set_hydrating();
         if queue_snapshot_payload(&runtime.control, state, workspace_id)
@@ -90,7 +135,7 @@ pub(crate) async fn handle_workspace_stream_subscription(
         runtime,
         labels,
         resolved_sessions: &resolved_sessions,
-        next_state: &next_state,
+        live_rx,
         include_initial_snapshot,
         active_head_cursors: &active_head_cursors,
     })
@@ -99,13 +144,70 @@ pub(crate) async fn handle_workspace_stream_subscription(
         return Ok(());
     };
 
+    let final_map = merge_replayed_and_live_subscriptions(&runtime.subscriptions, next_map);
+
     sync_workspace_stream_session_pins(
         state,
         runtime.subscriptions.keys().copied(),
-        next_map.keys().copied(),
+        final_map.keys().copied(),
     )
     .await;
-    runtime.subscriptions = next_map;
-    runtime.subscription_state = next_state;
+    runtime.subscriptions = final_map;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cursor(last_event_seq: i64, projection_rev: i64) -> SessionCursor {
+        SessionCursor {
+            last_sent: SessionReplayCursor {
+                last_event_seq,
+                projection_rev,
+            },
+        }
+    }
+
+    #[test]
+    fn merge_replayed_and_live_subscriptions_keeps_live_only_sessions_and_drops_removed_sessions() {
+        let replayed_session_id = SessionId::new();
+        let live_only_session_id = SessionId::new();
+        let removed_session_id = SessionId::new();
+        let live_subscriptions = HashMap::from([
+            (replayed_session_id, cursor(15, 15)),
+            (live_only_session_id, cursor(7, 7)),
+        ]);
+        let replayed_subscriptions = HashMap::from([
+            (replayed_session_id, cursor(12, 12)),
+            (removed_session_id, cursor(20, 20)),
+        ]);
+
+        let merged =
+            merge_replayed_and_live_subscriptions(&live_subscriptions, replayed_subscriptions);
+
+        assert_eq!(merged.len(), 2);
+        assert_eq!(
+            merged
+                .get(&replayed_session_id)
+                .map(|subscription| subscription.last_sent),
+            Some(SessionReplayCursor {
+                last_event_seq: 15,
+                projection_rev: 15,
+            })
+        );
+        assert_eq!(
+            merged
+                .get(&live_only_session_id)
+                .map(|subscription| subscription.last_sent),
+            Some(SessionReplayCursor {
+                last_event_seq: 7,
+                projection_rev: 7,
+            })
+        );
+        assert!(
+            !merged.contains_key(&removed_session_id),
+            "live subscription state must remain authoritative for removed sessions",
+        );
+    }
 }

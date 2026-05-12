@@ -24,7 +24,7 @@ pub struct ResolvedWorkspaceActiveSessionSubscription {
     pub replay: ResolvedWorkspaceActiveSessionReplay,
 }
 
-#[derive(Default, Debug, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceActiveSubscriptionState {
     pub active_scope: bool,
     pub explicit_sessions: HashSet<SessionId>,
@@ -158,7 +158,24 @@ where
         let replay = resolve_session_replay(replay, existing_last_sent, current_tail);
         next.push(ResolvedWorkspaceActiveSessionSubscription { session_id, replay });
     }
-    next.sort_by_key(|subscription| subscription.session_id.0);
+    let active_primary_session_ids = active_task_sessions
+        .values()
+        .copied()
+        .collect::<HashSet<_>>();
+    next.sort_by_key(|subscription| {
+        let session_id = subscription.session_id;
+        let replay_rank = if foreground_session_ids
+            .as_ref()
+            .is_some_and(|foreground| foreground.contains(&session_id))
+        {
+            0
+        } else if active_primary_session_ids.contains(&session_id) {
+            1
+        } else {
+            2
+        };
+        (replay_rank, session_id.0)
+    });
     let subscription_state = WorkspaceActiveSubscriptionState {
         active_scope,
         explicit_sessions,
@@ -200,6 +217,122 @@ pub fn resolve_session_replay(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{TimeZone, Utc};
+    use ctx_core::ids::WorktreeId;
+    use ctx_core::models::{
+        ExecutionEnvironment, SessionActivityState, SessionSnapshotSummary, SessionStatus, Task,
+        TaskStatus,
+    };
+    use uuid::Uuid;
+
+    fn deterministic_session_id(value: u128) -> SessionId {
+        SessionId(Uuid::from_u128(value))
+    }
+
+    fn active_task_summary(
+        workspace_id: WorkspaceId,
+        task_id: TaskId,
+        session_id: SessionId,
+    ) -> WorkspaceActiveTaskSummary {
+        let now = Utc.timestamp_opt(0, 0).unwrap();
+        let worktree_id = WorktreeId::new();
+        let session = ctx_core::models::SessionMetadata {
+            id: session_id,
+            task_id,
+            workspace_id,
+            worktree_id,
+            execution_environment: ExecutionEnvironment::Host,
+            parent_session_id: None,
+            relationship: None,
+            provider_id: "test".to_string(),
+            model_id: "test-model".to_string(),
+            reasoning_effort: None,
+            title: "session".to_string(),
+            agent_role: "assistant".to_string(),
+            status: SessionStatus::Active,
+            provider_session_ref: None,
+            created_at: now,
+            updated_at: now,
+        };
+        let session_summary = SessionSnapshotSummary {
+            session,
+            last_message_at: None,
+            last_message_preview: None,
+            last_event_seq: Some(0),
+            projection_rev: 0,
+            state_rev: 0,
+            activity: SessionActivityState::default(),
+            unread: None,
+        };
+        WorkspaceActiveTaskSummary {
+            task: Task {
+                id: task_id,
+                workspace_id,
+                title: "task".to_string(),
+                description: None,
+                status: TaskStatus::Running,
+                created_at: now,
+                updated_at: now,
+                exec_plan_id: None,
+                primary_session_id: Some(session_id),
+                primary_worktree_id: Some(worktree_id),
+                archived_at: None,
+                assistant_seen_at: None,
+                last_activity_at: None,
+                last_assistant_message_at: None,
+                has_active_session: true,
+            },
+            primary_session: session_summary.clone(),
+            primary_session_head: None,
+            sessions: vec![session_summary],
+            sort_at: now,
+        }
+    }
+
+    struct TestSubscriptionSource {
+        workspace_id: WorkspaceId,
+        sessions: HashSet<SessionId>,
+        active_tasks: Vec<WorkspaceActiveTaskSummary>,
+        task_sessions: HashMap<TaskId, SessionId>,
+    }
+
+    impl WorkspaceActiveSubscriptionSource for TestSubscriptionSource {
+        async fn session_belongs_to_workspace(
+            &self,
+            workspace_id: WorkspaceId,
+            session_id: SessionId,
+        ) -> bool {
+            workspace_id == self.workspace_id && self.sessions.contains(&session_id)
+        }
+
+        async fn active_tasks(&self, workspace_id: WorkspaceId) -> Vec<WorkspaceActiveTaskSummary> {
+            if workspace_id == self.workspace_id {
+                self.active_tasks.clone()
+            } else {
+                Vec::new()
+            }
+        }
+
+        async fn primary_session_id_for_task(
+            &self,
+            workspace_id: WorkspaceId,
+            task_id: TaskId,
+        ) -> Result<Option<SessionId>, ()> {
+            if workspace_id == self.workspace_id {
+                Ok(self.task_sessions.get(&task_id).copied())
+            } else {
+                Ok(None)
+            }
+        }
+
+        async fn session_replay_cursor(
+            &self,
+            _workspace_id: WorkspaceId,
+            _session_id: SessionId,
+        ) -> SessionReplayCursor {
+            SessionReplayCursor::default()
+        }
+    }
 
     #[test]
     fn replay_resolution_uses_existing_cursor_for_auto() {
@@ -303,6 +436,61 @@ mod tests {
                 after_seq: 14,
                 after_projection_rev: 20,
             }
+        );
+    }
+
+    #[tokio::test]
+    async fn subscription_resolution_replays_foreground_then_active_then_background_sessions() {
+        let workspace_id = WorkspaceId::new();
+        let background_session_id = deterministic_session_id(1);
+        let foreground_session_id = deterministic_session_id(2);
+        let active_session_id = deterministic_session_id(3);
+        let active_task_id = TaskId::new();
+        let source = TestSubscriptionSource {
+            workspace_id,
+            sessions: [
+                background_session_id,
+                foreground_session_id,
+                active_session_id,
+            ]
+            .into_iter()
+            .collect(),
+            active_tasks: vec![active_task_summary(
+                workspace_id,
+                active_task_id,
+                active_session_id,
+            )],
+            task_sessions: HashMap::new(),
+        };
+
+        let resolved = resolve_workspace_active_snapshot_subscriptions(
+            &source,
+            workspace_id,
+            WorkspaceActiveSnapshotClientMessage::Subscribe {
+                session_ids: vec![background_session_id, foreground_session_id],
+                sessions: Vec::new(),
+                task_ids: Vec::new(),
+                foreground_session_id: Some(foreground_session_id),
+                scope: Some(WorkspaceActiveSnapshotSubscribeScope::Active),
+                include_active_heads: false,
+            },
+            &HashMap::new(),
+        )
+        .await
+        .expect("subscription resolution succeeds");
+
+        let ordered_session_ids = resolved
+            .sessions
+            .iter()
+            .map(|subscription| subscription.session_id)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ordered_session_ids,
+            vec![
+                foreground_session_id,
+                active_session_id,
+                background_session_id,
+            ]
         );
     }
 }

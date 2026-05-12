@@ -170,6 +170,19 @@ test("updater remote wrapper uses shipped app without source-side provisioning",
   assert.match(script, /unset CTX_BUNDLE_DIR/);
 });
 
+test("remote real CI wrapper retries startup-only WebDriver session failures", () => {
+  const script = fs.readFileSync(REMOTE_REAL_CI_WRAPPER, "utf8");
+  assert.match(script, /CTX_REMOTE_REAL_CI_AUTOMATION_ATTEMPTS/);
+  assert.match(script, /is_retryable_wdio_session_start_failure\(\) \{/);
+  assert.match(script, /UND_ERR_HEADERS_TIMEOUT/);
+  assert.match(script, /hyper::Error\\?\(IncompleteMessage\\?\)/);
+  assert.match(script, /Could not start a new session/);
+  assert.match(script, /\[\[ -f "\$\{report_path\}" \]\]/);
+  assert.match(script, /wdio-attempt-\$\{attempt\}\.log/);
+  assert.match(script, /retrying startup-only WebDriver session failure/);
+  assert.match(script, /rm -f "\$\{report_path\}"/);
+});
+
 test("updater Linux proof targets storage channel for stable dry-run proofs", () => {
   const script = fs.readFileSync(UPDATER_LINUX_PROOF_WRAPPER, "utf8");
   assert.match(script, /TARGET_CHANNEL="\$\{CTX_UPDATER_LINUX_PROOF_TARGET_CHANNEL:-\$\{RELEASE_STORAGE_CHANNEL:-\$\{RELEASE_CHANNEL:-e2e\}\}\}"/);

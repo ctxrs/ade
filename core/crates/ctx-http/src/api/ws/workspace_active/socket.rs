@@ -49,6 +49,7 @@ pub(super) async fn handle_workspace_active_snapshot_ws(
                                     &state,
                                     workspace_id,
                                     message,
+                                    &mut rx,
                                     &mut runtime,
                                     &labels,
                                 )
@@ -68,6 +69,7 @@ pub(super) async fn handle_workspace_active_snapshot_ws(
                                         &state,
                                         workspace_id,
                                         message,
+                                        &mut rx,
                                         &mut runtime,
                                         &labels,
                                     )

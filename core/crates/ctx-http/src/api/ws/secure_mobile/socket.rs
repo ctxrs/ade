@@ -59,6 +59,7 @@ pub(super) async fn handle_mobile_secure_ws(
                                 &state,
                                 workspace_id,
                                 message,
+                                &mut rx,
                                 &mut runtime,
                                 &labels,
                             )

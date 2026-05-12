@@ -7,7 +7,9 @@ mod route;
 mod subscriptions;
 
 pub(crate) use receiver::{
-    handle_workspace_stream_receiver_burst, take_workspace_stream_receiver_burst,
+    drain_pending_workspace_stream_receiver_burst_deferring,
+    flush_deferred_workspace_stream_receiver_events, handle_workspace_stream_receiver_burst,
+    take_workspace_stream_receiver_burst,
 };
 use route::route_workspace_stream_event;
 use subscriptions::update_workspace_stream_subscriptions_for_event;

@@ -213,6 +213,13 @@ process.stdout.write(`fail\t1\t${reason || result || "report marked failed"}\n`)
 ' "${report_path}" "${allow_skip}"
 }
 
+is_retryable_wdio_session_start_failure() {
+  local log_path="$1"
+  [[ -f "${log_path}" ]] || return 1
+  grep -Eq 'Failed to create a session|Could not start a new session|POST[[:space:]]+/session|/session[[:space:]]' "${log_path}" || return 1
+  grep -Eq 'UND_ERR_HEADERS_TIMEOUT|hyper::Error\(IncompleteMessage\)' "${log_path}"
+}
+
 printf "lane\tstatus\texit_code\tartifact_dir\treason\n" >"${SUMMARY_TSV}"
 
 run_lane() {
@@ -225,6 +232,12 @@ run_lane() {
   local status="pass"
   local lane_exit=0
   local reason=""
+  local max_attempts="${CTX_REMOTE_REAL_CI_AUTOMATION_ATTEMPTS:-${CTX_REMOTE_WORKSPACE_E2E_AUTOMATION_ATTEMPTS:-2}}"
+
+  if ! [[ "${max_attempts}" =~ ^[0-9]+$ ]] || [[ "${max_attempts}" -lt 1 ]]; then
+    echo "error: CTX_REMOTE_REAL_CI_AUTOMATION_ATTEMPTS must be a positive integer" >&2
+    return 2
+  fi
 
   if [[ "${DRY_RUN}" == "1" ]]; then
     printf "dry-run lane=%s cmd=%s\n" "${lane}" "${cmd[*]}" >"${wdio_log}"
@@ -232,17 +245,38 @@ run_lane() {
     lane_exit=0
     reason="dry-run"
   else
-    touch "${wdio_log}"
-    set +e
-    (
-      cd "${ROOT}"
-      "${cmd[@]}"
-    ) >"${wdio_log}" 2>&1 &
-    local cmd_pid="$!"
-    stream_log_until_pid_exits "${cmd_pid}" "${wdio_log}"
-    wait "${cmd_pid}"
-    local cmd_exit="$?"
-    set -e
+    local attempt=1
+    local cmd_exit=0
+    while true; do
+      local attempt_log="${lane_dir}/wdio-attempt-${attempt}.log"
+      rm -f "${report_path}"
+      touch "${attempt_log}"
+      set +e
+      (
+        cd "${ROOT}"
+        "${cmd[@]}"
+      ) >"${attempt_log}" 2>&1 &
+      local cmd_pid="$!"
+      stream_log_until_pid_exits "${cmd_pid}" "${attempt_log}"
+      wait "${cmd_pid}"
+      cmd_exit="$?"
+      set -e
+      cp "${attempt_log}" "${wdio_log}"
+      if [[ "${cmd_exit}" -eq 0 ]]; then
+        break
+      fi
+      if [[ "${attempt}" -ge "${max_attempts}" ]]; then
+        break
+      fi
+      if [[ -f "${report_path}" ]]; then
+        break
+      fi
+      if ! is_retryable_wdio_session_start_failure "${attempt_log}"; then
+        break
+      fi
+      echo "[remote-contracts] ${lane}: retrying startup-only WebDriver session failure after attempt ${attempt}; log: ${attempt_log}" >&2
+      attempt=$((attempt + 1))
+    done
 
     if [[ -f "${report_path}" ]]; then
       local parsed_status=""
