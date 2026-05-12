@@ -3,8 +3,9 @@ use std::future::Future;
 
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId};
 use ctx_core::models::{
-    WorkspaceActiveSnapshotClientMessage, WorkspaceActiveSnapshotSessionReplay,
-    WorkspaceActiveSnapshotSubscribeScope, WorkspaceActiveTaskSummary,
+    WorkspaceActiveSnapshotClientMessage, WorkspaceActiveSnapshotEvent,
+    WorkspaceActiveSnapshotSessionReplay, WorkspaceActiveSnapshotSubscribeScope,
+    WorkspaceActiveTaskSummary,
 };
 
 use crate::SessionReplayCursor;
@@ -68,6 +69,53 @@ pub fn primary_session_id_for_active_task(task: &WorkspaceActiveTaskSummary) -> 
         .primary_session_id
         .unwrap_or(task.primary_session.session.id)
 }
+
+pub fn replay_cursor_after_live_progress(
+    live_cursor: Option<SessionReplayCursor>,
+    requested_cursor: SessionReplayCursor,
+) -> Option<SessionReplayCursor> {
+    live_cursor.map(|cursor| cursor.cover(requested_cursor))
+}
+
+pub fn workspace_stream_event_blocks_pending_replay(
+    event: &WorkspaceActiveSnapshotEvent,
+    pending_replay_sessions: &HashSet<SessionId>,
+    active_task_sessions: &HashMap<TaskId, SessionId>,
+) -> bool {
+    match event {
+        WorkspaceActiveSnapshotEvent::ActiveTaskUpsert { task, .. } => {
+            pending_replay_sessions.contains(&primary_session_id_for_active_task(task))
+        }
+        WorkspaceActiveSnapshotEvent::ActiveTaskDelete { task_id, .. } => active_task_sessions
+            .get(task_id)
+            .is_some_and(|session_id| pending_replay_sessions.contains(session_id)),
+        WorkspaceActiveSnapshotEvent::TaskDelta { delta, .. } => delta
+            .task
+            .primary_session_id
+            .is_some_and(|session_id| pending_replay_sessions.contains(&session_id)),
+        WorkspaceActiveSnapshotEvent::SessionSummary { summary, .. } => {
+            pending_replay_sessions.contains(&summary.session.id)
+        }
+        WorkspaceActiveSnapshotEvent::SessionSummaryDelta { delta, .. } => {
+            pending_replay_sessions.contains(&delta.session_id)
+        }
+        WorkspaceActiveSnapshotEvent::SessionRemoved { session_id, .. }
+        | WorkspaceActiveSnapshotEvent::SessionGap { session_id, .. } => {
+            pending_replay_sessions.contains(session_id)
+        }
+        WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } => {
+            pending_replay_sessions.contains(&delta.session_id)
+        }
+        WorkspaceActiveSnapshotEvent::SessionHeadSeed { head, .. } => {
+            pending_replay_sessions.contains(&head.session.id)
+        }
+        WorkspaceActiveSnapshotEvent::Ready { .. }
+        | WorkspaceActiveSnapshotEvent::WorktreeBootstrap { .. }
+        | WorkspaceActiveSnapshotEvent::ArchivedTaskUpsert { .. }
+        | WorkspaceActiveSnapshotEvent::ArchivedTaskDelete { .. } => false,
+    }
+}
+
 pub async fn resolve_workspace_active_snapshot_subscriptions<S>(
     source: &S,
     workspace_id: WorkspaceId,
@@ -491,6 +539,81 @@ mod tests {
                 active_session_id,
                 background_session_id,
             ]
+        );
+    }
+
+    fn replay_cursor(last_event_seq: i64, projection_rev: i64) -> SessionReplayCursor {
+        SessionReplayCursor {
+            last_event_seq,
+            projection_rev,
+        }
+    }
+
+    #[test]
+    fn workspace_stream_event_blocks_pending_replay_for_session_events() {
+        let pending_session_id = SessionId::new();
+        let other_session_id = SessionId::new();
+        let pending_task_id = TaskId::new();
+        let pending = HashSet::from([pending_session_id]);
+        let active_task_sessions = HashMap::from([(pending_task_id, pending_session_id)]);
+
+        assert!(workspace_stream_event_blocks_pending_replay(
+            &WorkspaceActiveSnapshotEvent::SessionGap {
+                workspace_id: WorkspaceId::new(),
+                snapshot_rev: 1,
+                session_id: pending_session_id,
+                after_seq: 3,
+                reason: None,
+                seed_follows: false,
+            },
+            &pending,
+            &HashMap::new(),
+        ));
+        assert!(workspace_stream_event_blocks_pending_replay(
+            &WorkspaceActiveSnapshotEvent::ActiveTaskDelete {
+                workspace_id: WorkspaceId::new(),
+                snapshot_rev: 1,
+                task_id: pending_task_id,
+            },
+            &pending,
+            &active_task_sessions,
+        ));
+        assert!(!workspace_stream_event_blocks_pending_replay(
+            &WorkspaceActiveSnapshotEvent::SessionGap {
+                workspace_id: WorkspaceId::new(),
+                snapshot_rev: 1,
+                session_id: other_session_id,
+                after_seq: 3,
+                reason: None,
+                seed_follows: false,
+            },
+            &pending,
+            &HashMap::new(),
+        ));
+        assert!(!workspace_stream_event_blocks_pending_replay(
+            &WorkspaceActiveSnapshotEvent::Ready {
+                workspace_id: WorkspaceId::new(),
+                snapshot_rev: 1,
+                archived_rev: 0,
+            },
+            &pending,
+            &HashMap::new(),
+        ));
+    }
+
+    #[test]
+    fn replay_cursor_after_live_progress_starts_after_live_cursor_and_skips_removed_sessions() {
+        assert_eq!(
+            replay_cursor_after_live_progress(Some(replay_cursor(15, 16)), replay_cursor(10, 12)),
+            Some(replay_cursor(15, 16)),
+        );
+        assert_eq!(
+            replay_cursor_after_live_progress(Some(replay_cursor(15, 16)), replay_cursor(20, 12)),
+            Some(replay_cursor(20, 16)),
+        );
+        assert_eq!(
+            replay_cursor_after_live_progress(None, replay_cursor(10, 12)),
+            None,
         );
     }
 }

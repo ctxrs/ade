@@ -40,10 +40,11 @@ pub use replay_state::{
 };
 pub use stats::WorkspaceActiveSnapshotStats;
 pub use subscriptions::{
-    primary_session_id_for_active_task, resolve_session_replay,
-    resolve_workspace_active_snapshot_subscriptions, ResolvedWorkspaceActiveSessionReplay,
-    ResolvedWorkspaceActiveSessionSubscription, ResolvedWorkspaceActiveSubscriptions,
-    WorkspaceActiveSubscriptionSource, WorkspaceActiveSubscriptionState,
+    primary_session_id_for_active_task, replay_cursor_after_live_progress, resolve_session_replay,
+    resolve_workspace_active_snapshot_subscriptions, workspace_stream_event_blocks_pending_replay,
+    ResolvedWorkspaceActiveSessionReplay, ResolvedWorkspaceActiveSessionSubscription,
+    ResolvedWorkspaceActiveSubscriptions, WorkspaceActiveSubscriptionSource,
+    WorkspaceActiveSubscriptionState,
 };
 pub use trim::session_metadata_from_session;
 
