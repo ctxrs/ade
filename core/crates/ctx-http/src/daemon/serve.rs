@@ -14,16 +14,7 @@ pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
             base.home_dir().join(".ctx")
         }
     };
-    ctx_fs::permissions::ensure_private_dir(&data_root).await?;
-    // Canonicalize so legacy machine mount sources resolve under shared roots on macOS
-    // (e.g. /tmp -> /private/tmp). This also reduces accidental duplicate state roots.
-    let data_root = tokio::fs::canonicalize(&data_root)
-        .await
-        .unwrap_or(data_root);
-    ctx_fs::permissions::ensure_private_dir(&data_root).await?;
-    ctx_fs::permissions::ensure_private_dir(&data_root.join("logs"))
-        .await
-        .ok();
+    let data_root = daemon_auth::prepare_daemon_data_root(data_root)?;
 
     let _daemon_lock = daemon_auth::acquire_daemon_lock(&data_root)?;
 

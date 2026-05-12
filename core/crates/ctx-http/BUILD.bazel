@@ -482,7 +482,6 @@ rust_binary(
         "src/cli.rs",
         "src/logging/conditional_writer.rs",
         "src/logging/heap_profiler.rs",
-        "src/logging/maintenance.rs",
         "src/logging.rs",
         "src/main.rs",
     ],
@@ -490,7 +489,7 @@ rust_binary(
     deps = [
         ":lib",
         "//core/crates/ctx-core:lib",
-        "//core/crates/ctx-fs:lib",
+        "//core/crates/ctx-observability:lib",
         "//core/crates/ctx-resource-utilization:lib",
         "//core/crates/ctx-update-service:lib",
         "@crates//:anyhow",

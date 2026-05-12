@@ -65,3 +65,15 @@ fn acquire_daemon_lock_rejects_symlinked_lock_file() {
 
     assert!(format!("{err:#}").contains("must not be a symlink"));
 }
+
+#[test]
+fn prepare_daemon_data_root_creates_private_root_and_logs_dir() {
+    let temp = tempfile::tempdir().unwrap();
+    let data_root = temp.path().join("ctx-data");
+
+    let prepared = super::prepare_daemon_data_root(data_root.clone()).unwrap();
+
+    assert!(prepared.is_absolute());
+    assert_eq!(mode(&prepared), 0o700);
+    assert_eq!(mode(&prepared.join("logs")), 0o700);
+}

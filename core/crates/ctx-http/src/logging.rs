@@ -2,7 +2,10 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use anyhow::Result;
-use chrono::Utc;
+use ctx_observability::logs::{
+    default_ctx_logs_dir, prepare_daemon_log_file_for_today_sync, spawn_daemon_log_maintenance,
+    DaemonLogConfig,
+};
 use tracing_subscriber::Layer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -10,12 +13,11 @@ use crate::cli::Commands;
 
 mod conditional_writer;
 mod heap_profiler;
-mod maintenance;
 
 use self::conditional_writer::ConditionalMakeWriter;
 use self::heap_profiler::spawn_daemon_heap_profiler;
-use self::maintenance::{daemon_log_path_for_date, spawn_daemon_log_maintenance, DaemonLogConfig};
 
+#[cfg(feature = "daemon-heap-prof")]
 fn env_bool(key: &str) -> Option<bool> {
     std::env::var(key)
         .ok()
@@ -23,6 +25,7 @@ fn env_bool(key: &str) -> Option<bool> {
         .and_then(ctx_core::boolish::parse_boolish)
 }
 
+#[cfg(feature = "daemon-heap-prof")]
 fn env_u64(key: &str) -> Option<u64> {
     std::env::var(key)
         .ok()
@@ -44,7 +47,7 @@ pub(crate) fn init_logging_for_command(
             let data_root = if let Some(p) = data_dir {
                 std::path::PathBuf::from(p)
             } else {
-                ctx_fs::paths::default_ctx_home()?
+                return Ok(Some(init_daemon_file_logging(default_ctx_logs_dir()?)?));
             };
             Some(data_root.join("logs"))
         }
@@ -58,12 +61,15 @@ pub(crate) fn init_logging_for_command(
         return Ok(None);
     };
 
-    ctx_fs::permissions::ensure_private_dir_sync(&logs_dir).ok();
+    Ok(Some(init_daemon_file_logging(logs_dir)?))
+}
+
+fn init_daemon_file_logging(
+    logs_dir: std::path::PathBuf,
+) -> Result<tracing_appender::non_blocking::WorkerGuard> {
     let daemon_log_config = DaemonLogConfig::from_env();
     let file_blocked = Arc::new(AtomicBool::new(false));
-    let today = Utc::now().format("%Y-%m-%d").to_string();
-    let _ =
-        ctx_fs::permissions::open_private_append_sync(&daemon_log_path_for_date(&logs_dir, &today));
+    prepare_daemon_log_file_for_today_sync(&logs_dir);
     let appender = tracing_appender::rolling::daily(&logs_dir, "daemon.log");
     let (file_writer, file_guard) = tracing_appender::non_blocking(appender);
     let file_writer = ConditionalMakeWriter {
@@ -96,5 +102,5 @@ pub(crate) fn init_logging_for_command(
 
     spawn_daemon_log_maintenance(logs_dir.clone(), daemon_log_config, file_blocked);
     spawn_daemon_heap_profiler(&logs_dir);
-    Ok(Some(file_guard))
+    Ok(file_guard)
 }

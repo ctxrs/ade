@@ -4,12 +4,23 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use ctx_fs::permissions::{
-    read_private_file_to_string_sync, reject_symlink_sync, write_private_file_atomic_sync,
+    ensure_private_dir_sync, read_private_file_to_string_sync, reject_symlink_sync,
+    write_private_file_atomic_sync,
 };
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
 const DAEMON_AUTH_FILENAME: &str = "daemon_auth.json";
+
+pub fn prepare_daemon_data_root(data_root: PathBuf) -> Result<PathBuf> {
+    ensure_private_dir_sync(&data_root)?;
+    // Canonicalize so legacy machine mount sources resolve under shared roots on macOS
+    // (e.g. /tmp -> /private/tmp). This also reduces accidental duplicate state roots.
+    let data_root = std::fs::canonicalize(&data_root).unwrap_or(data_root);
+    ensure_private_dir_sync(&data_root)?;
+    let _ = ensure_private_dir_sync(&data_root.join("logs"));
+    Ok(data_root)
+}
 
 pub fn acquire_daemon_lock(data_root: &Path) -> Result<std::fs::File> {
     let path = data_root.join("daemon.lock");
