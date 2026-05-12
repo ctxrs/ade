@@ -111,12 +111,17 @@ pub(super) async fn load_runtime_model_catalog(
         "probed_at": chrono::Utc::now().to_rfc3339(),
     });
     value = redact_json_value(value);
-    state.providers.options_cache.lock().await.insert(
-        cache_key,
-        crate::daemon::CachedProviderOptions {
-            cached_at: std::time::Instant::now(),
-            value,
-        },
-    );
+    state
+        .providers
+        .with_provider_options_cache(|cache| {
+            cache.insert(
+                cache_key,
+                crate::daemon::CachedProviderOptions {
+                    cached_at: std::time::Instant::now(),
+                    value,
+                },
+            );
+        })
+        .await;
     Ok(Some(models))
 }

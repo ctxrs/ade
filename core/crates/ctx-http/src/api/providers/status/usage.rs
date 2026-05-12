@@ -52,8 +52,10 @@ pub(crate) async fn get_provider_usage(
     let refresh = query.refresh.unwrap_or(false);
     let env = provider_usage_env_for_request(&state, &id).await?;
     let snapshot = if !refresh {
-        let cache = state.providers.usage_cache.lock().await;
-        cache.get(&id).cloned()
+        state
+            .providers
+            .with_provider_usage_cache(|cache| cache.get(&id).cloned())
+            .await
     } else {
         None
     };

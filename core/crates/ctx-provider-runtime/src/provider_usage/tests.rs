@@ -30,7 +30,7 @@ impl Drop for EnvVarGuard {
 
 struct TestUsageHost {
     data_root: PathBuf,
-    usage_cache: Mutex<HashMap<String, ProviderUsageSnapshot>>,
+    provider_runtime: ProviderRuntime,
     shutdown_tx: broadcast::Sender<()>,
 }
 
@@ -39,7 +39,7 @@ impl TestUsageHost {
         let (shutdown_tx, _) = broadcast::channel(1);
         Self {
             data_root,
-            usage_cache: Mutex::new(HashMap::new()),
+            provider_runtime: ProviderRuntime::new(HashMap::new()),
             shutdown_tx,
         }
     }
@@ -50,8 +50,8 @@ impl ProviderUsageHost for TestUsageHost {
         &self.data_root
     }
 
-    fn usage_cache(&self) -> &Mutex<HashMap<String, ProviderUsageSnapshot>> {
-        &self.usage_cache
+    fn provider_runtime(&self) -> &ProviderRuntime {
+        &self.provider_runtime
     }
 
     fn subscribe_shutdown(&self) -> broadcast::Receiver<()> {
@@ -95,25 +95,30 @@ async fn refresh_provider_usage_replaces_stale_cache_with_error_snapshot_on_conf
     std::fs::write(&config_path, "{ not valid json").expect("write invalid config");
 
     let host = TestUsageHost::new(data_root.path().to_path_buf());
-    host.usage_cache.lock().await.insert(
-        "codex".to_string(),
-        ProviderUsageSnapshot {
-            provider_id: "codex".to_string(),
-            source: "oauth".to_string(),
-            fetched_at: Utc::now(),
-            payload: Some(serde_json::json!({"cached": true})),
-            error: None,
-        },
-    );
+    host.provider_runtime
+        .with_provider_usage_cache(|cache| {
+            cache.insert(
+                "codex".to_string(),
+                ProviderUsageSnapshot {
+                    provider_id: "codex".to_string(),
+                    source: "oauth".to_string(),
+                    fetched_at: Utc::now(),
+                    payload: Some(serde_json::json!({"cached": true})),
+                    error: None,
+                },
+            );
+        })
+        .await;
 
     let err = refresh_provider_usage(&host)
         .await
         .expect_err("invalid managed config should fail usage refresh");
     assert!(err.to_string().contains("loading agent server config"));
 
-    let cache = host.usage_cache.lock().await;
-    let snapshot = cache
-        .get("codex")
+    let snapshot = host
+        .provider_runtime
+        .with_provider_usage_cache(|cache| cache.get("codex").cloned())
+        .await
         .expect("usage cache entry should be replaced with an error snapshot");
     assert_eq!(snapshot.source, "error");
     assert!(snapshot.payload.is_none());

@@ -1,6 +1,36 @@
 use super::support::{RestartFailingAdapter, RestartTrackingAdapter, UnsupportedRestartAdapter};
 use super::*;
 
+async fn insert_options_cache(state: &Arc<AppState>, key: &str, value: serde_json::Value) {
+    state
+        .providers
+        .with_provider_options_cache(|cache| {
+            cache.insert(
+                key.to_string(),
+                crate::daemon::CachedProviderOptions {
+                    cached_at: std::time::Instant::now(),
+                    value,
+                },
+            );
+        })
+        .await;
+}
+
+async fn insert_verify_cache(state: &Arc<AppState>, key: &str, value: serde_json::Value) {
+    state
+        .providers
+        .with_provider_verify_cache(|cache| {
+            cache.insert(
+                key.to_string(),
+                crate::daemon::CachedProviderVerify {
+                    cached_at: std::time::Instant::now(),
+                    value,
+                },
+            );
+        })
+        .await;
+}
+
 #[tokio::test]
 async fn restart_provider_for_auth_change_invalidates_only_matching_provider_probe_caches() {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -17,48 +47,58 @@ async fn restart_provider_for_auth_change_invalidates_only_matching_provider_pro
         None,
     ));
 
-    state.providers.options_cache.lock().await.insert(
-        "ws-a/host/codex".to_string(),
-        crate::daemon::CachedProviderOptions {
-            cached_at: std::time::Instant::now(),
-            value: serde_json::json!({ "provider_id": "codex", "probe_ok": false }),
-        },
-    );
-    state.providers.options_cache.lock().await.insert(
-        "ws-b/container/claude-crp".to_string(),
-        crate::daemon::CachedProviderOptions {
-            cached_at: std::time::Instant::now(),
-            value: serde_json::json!({ "provider_id": "claude-crp", "probe_ok": true }),
-        },
-    );
-    state.providers.verify_cache.lock().await.insert(
-        "ws-a/host/codex".to_string(),
-        crate::daemon::CachedProviderVerify {
-            cached_at: std::time::Instant::now(),
-            value: serde_json::json!({ "status": "error" }),
-        },
-    );
-    state.providers.verify_cache.lock().await.insert(
-        "ws-b/container/claude-crp".to_string(),
-        crate::daemon::CachedProviderVerify {
-            cached_at: std::time::Instant::now(),
-            value: serde_json::json!({ "status": "ok" }),
-        },
-    );
+    insert_options_cache(
+        &state,
+        "ws-a/host/codex",
+        serde_json::json!({ "provider_id": "codex", "probe_ok": false }),
+    )
+    .await;
+    insert_options_cache(
+        &state,
+        "ws-b/container/claude-crp",
+        serde_json::json!({ "provider_id": "claude-crp", "probe_ok": true }),
+    )
+    .await;
+    insert_verify_cache(
+        &state,
+        "ws-a/host/codex",
+        serde_json::json!({ "status": "error" }),
+    )
+    .await;
+    insert_verify_cache(
+        &state,
+        "ws-b/container/claude-crp",
+        serde_json::json!({ "status": "ok" }),
+    )
+    .await;
 
     restart_provider_for_auth_change(&state, "codex", "test auth updated")
         .await
         .expect("restart should succeed");
 
-    let options_cache = state.providers.options_cache.lock().await;
-    assert!(!options_cache.contains_key("ws-a/host/codex"));
-    assert!(options_cache.contains_key("ws-b/container/claude-crp"));
-    drop(options_cache);
+    let (codex_options_cached, claude_options_cached) = state
+        .providers
+        .with_provider_options_cache(|cache| {
+            (
+                cache.contains_key("ws-a/host/codex"),
+                cache.contains_key("ws-b/container/claude-crp"),
+            )
+        })
+        .await;
+    assert!(!codex_options_cached);
+    assert!(claude_options_cached);
 
-    let verify_cache = state.providers.verify_cache.lock().await;
-    assert!(!verify_cache.contains_key("ws-a/host/codex"));
-    assert!(verify_cache.contains_key("ws-b/container/claude-crp"));
-    drop(verify_cache);
+    let (codex_verify_cached, claude_verify_cached) = state
+        .providers
+        .with_provider_verify_cache(|cache| {
+            (
+                cache.contains_key("ws-a/host/codex"),
+                cache.contains_key("ws-b/container/claude-crp"),
+            )
+        })
+        .await;
+    assert!(!codex_verify_cached);
+    assert!(claude_verify_cached);
 
     assert_eq!(adapter.restart_calls.load(Ordering::SeqCst), 1);
 }
@@ -79,13 +119,12 @@ async fn restart_provider_for_auth_change_returns_error_when_adapter_restart_fai
         None,
     ));
 
-    state.providers.options_cache.lock().await.insert(
-        "ws-a/host/codex".to_string(),
-        crate::daemon::CachedProviderOptions {
-            cached_at: std::time::Instant::now(),
-            value: serde_json::json!({ "provider_id": "codex", "probe_ok": false }),
-        },
-    );
+    insert_options_cache(
+        &state,
+        "ws-a/host/codex",
+        serde_json::json!({ "provider_id": "codex", "probe_ok": false }),
+    )
+    .await;
 
     let err = restart_provider_for_auth_change(&state, "codex", "test auth updated")
         .await
@@ -94,9 +133,11 @@ async fn restart_provider_for_auth_change_returns_error_when_adapter_restart_fai
         .to_string()
         .contains("provider auth updated but drain-restart failed for codex"));
 
-    let options_cache = state.providers.options_cache.lock().await;
-    assert!(!options_cache.contains_key("ws-a/host/codex"));
-    drop(options_cache);
+    let options_cached = state
+        .providers
+        .with_provider_options_cache(|cache| cache.contains_key("ws-a/host/codex"))
+        .await;
+    assert!(!options_cached);
 
     assert_eq!(adapter.restart_calls.load(Ordering::SeqCst), 1);
 }
@@ -116,20 +157,22 @@ async fn restart_provider_for_auth_change_skips_adapters_without_drain_restart()
         None,
     ));
 
-    state.providers.options_cache.lock().await.insert(
-        "ws-a/host/codex".to_string(),
-        crate::daemon::CachedProviderOptions {
-            cached_at: std::time::Instant::now(),
-            value: serde_json::json!({ "provider_id": "codex", "probe_ok": false }),
-        },
-    );
+    insert_options_cache(
+        &state,
+        "ws-a/host/codex",
+        serde_json::json!({ "provider_id": "codex", "probe_ok": false }),
+    )
+    .await;
 
     restart_provider_for_auth_change(&state, "codex", "test auth updated")
         .await
         .expect("unsupported restart should be skipped");
 
-    let options_cache = state.providers.options_cache.lock().await;
-    assert!(!options_cache.contains_key("ws-a/host/codex"));
+    let options_cached = state
+        .providers
+        .with_provider_options_cache(|cache| cache.contains_key("ws-a/host/codex"))
+        .await;
+    assert!(!options_cached);
 }
 
 #[tokio::test]

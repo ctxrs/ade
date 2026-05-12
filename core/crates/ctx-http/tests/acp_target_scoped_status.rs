@@ -425,32 +425,37 @@ async fn workspace_options_use_workspace_target_status_for_acp_provider() {
 
     let cache_key_host = format!("{}/host/{provider_id}", ws.id.0);
     let cache_key_container = format!("{}/container/{provider_id}", ws.id.0);
-    state.providers.options_cache.lock().await.insert(
-        cache_key_host,
-        ctx_http::daemon::CachedProviderOptions {
-            cached_at: Instant::now(),
-            value: serde_json::json!({
-                "provider_id": provider_id,
-                "workspace_id": ws.id.0,
-                "installed": false,
-                "probe_ok": false,
-                "probe_error": "provider not installed or unhealthy",
-            }),
-        },
-    );
-    state.providers.options_cache.lock().await.insert(
-        cache_key_container,
-        ctx_http::daemon::CachedProviderOptions {
-            cached_at: Instant::now(),
-            value: serde_json::json!({
-                "provider_id": provider_id,
-                "workspace_id": ws.id.0,
-                "installed": true,
-                "probe_ok": true,
-                "probe_error": serde_json::Value::Null,
-            }),
-        },
-    );
+    state
+        .providers
+        .with_provider_options_cache(|cache| {
+            cache.insert(
+                cache_key_host,
+                ctx_http::daemon::CachedProviderOptions {
+                    cached_at: Instant::now(),
+                    value: serde_json::json!({
+                        "provider_id": provider_id,
+                        "workspace_id": ws.id.0,
+                        "installed": false,
+                        "probe_ok": false,
+                        "probe_error": "provider not installed or unhealthy",
+                    }),
+                },
+            );
+            cache.insert(
+                cache_key_container,
+                ctx_http::daemon::CachedProviderOptions {
+                    cached_at: Instant::now(),
+                    value: serde_json::json!({
+                        "provider_id": provider_id,
+                        "workspace_id": ws.id.0,
+                        "installed": true,
+                        "probe_ok": true,
+                        "probe_error": serde_json::Value::Null,
+                    }),
+                },
+            );
+        })
+        .await;
 
     let (status, body): (StatusCode, serde_json::Value) = common::json_request(
         &app,

@@ -771,31 +771,36 @@ async fn assert_live_crp_session_model_switch_case(
         providers,
         "http://127.0.0.1:0",
     );
-    state.providers.options_cache.lock().await.insert(
-        format!("{}/host/{provider_id}", workspace.id.0),
-        ctx_http::daemon::CachedProviderOptions {
-            cached_at: std::time::Instant::now(),
-            value: json!({
-                "models": {
-                    "models": [
-                        {
-                            "id": format!("{initial_model_id}/{initial_reasoning_effort}"),
-                            "name": format!("{provider_id} initial")
-                        },
-                        {
-                            "id": format!("{next_model_id}/{next_reasoning_effort}"),
-                            "name": format!("{provider_id} next")
+    state
+        .providers
+        .with_provider_options_cache(|cache| {
+            cache.insert(
+                format!("{}/host/{provider_id}", workspace.id.0),
+                ctx_http::daemon::CachedProviderOptions {
+                    cached_at: std::time::Instant::now(),
+                    value: json!({
+                        "models": {
+                            "models": [
+                                {
+                                    "id": format!("{initial_model_id}/{initial_reasoning_effort}"),
+                                    "name": format!("{provider_id} initial")
+                                },
+                                {
+                                    "id": format!("{next_model_id}/{next_reasoning_effort}"),
+                                    "name": format!("{provider_id} next")
+                                }
+                            ],
+                            "current_model_id": format!("{initial_model_id}/{initial_reasoning_effort}"),
+                            "meta": {
+                                "source_kind": "subscription",
+                                "refresh_pending": false
+                            }
                         }
-                    ],
-                    "current_model_id": format!("{initial_model_id}/{initial_reasoning_effort}"),
-                    "meta": {
-                        "source_kind": "subscription",
-                        "refresh_pending": false
-                    }
-                }
-            }),
-        },
-    );
+                    }),
+                },
+            );
+        })
+        .await;
     let app = common::router(state);
     let server = common::spawn_http_server(app).await;
     let base = &server.base_url;
@@ -960,24 +965,29 @@ async fn set_session_model_allows_explicit_model_outside_cached_catalog() {
         .await
         .expect("workspace json");
 
-    state.providers.options_cache.lock().await.insert(
-        format!("{}/host/fake-set-model", workspace.id.0),
-        ctx_http::daemon::CachedProviderOptions {
-            cached_at: std::time::Instant::now(),
-            value: json!({
-                "models": {
-                    "models": [
-                        { "id": "known-model" }
-                    ],
-                    "current_model_id": "known-model",
-                    "meta": {
-                        "source_kind": "subscription",
-                        "refresh_pending": false
-                    }
-                }
-            }),
-        },
-    );
+    state
+        .providers
+        .with_provider_options_cache(|cache| {
+            cache.insert(
+                format!("{}/host/fake-set-model", workspace.id.0),
+                ctx_http::daemon::CachedProviderOptions {
+                    cached_at: std::time::Instant::now(),
+                    value: json!({
+                        "models": {
+                            "models": [
+                                { "id": "known-model" }
+                            ],
+                            "current_model_id": "known-model",
+                            "meta": {
+                                "source_kind": "subscription",
+                                "refresh_pending": false
+                            }
+                        }
+                    }),
+                },
+            );
+        })
+        .await;
 
     let (_task, session) = create_task_with_default_session(
         client,

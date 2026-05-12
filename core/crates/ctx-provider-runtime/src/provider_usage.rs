@@ -9,7 +9,9 @@ use ctx_managed_installs as installer;
 use ctx_provider_accounts as provider_accounts;
 use ctx_provider_install::install_state::InstallTarget;
 use serde::Serialize;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::broadcast;
+
+use crate::ProviderRuntime;
 
 #[path = "provider_usage/oauth.rs"]
 mod oauth;
@@ -21,7 +23,7 @@ mod tests;
 
 pub trait ProviderUsageHost: Send + Sync + 'static {
     fn data_root(&self) -> &Path;
-    fn usage_cache(&self) -> &Mutex<HashMap<String, ProviderUsageSnapshot>>;
+    fn provider_runtime(&self) -> &ProviderRuntime;
     fn subscribe_shutdown(&self) -> broadcast::Receiver<()>;
 }
 
@@ -49,8 +51,12 @@ where
         payload: None,
         error: Some(error),
     };
-    let mut cache = state.usage_cache().lock().await;
-    cache.insert(provider_id.to_string(), snapshot);
+    state
+        .provider_runtime()
+        .with_provider_usage_cache(|cache| {
+            cache.insert(provider_id.to_string(), snapshot);
+        })
+        .await;
 }
 
 pub fn spawn_provider_usage_poller<H>(state: std::sync::Arc<H>)
@@ -125,8 +131,12 @@ where
             });
         }
     };
-    let mut cache = state.usage_cache().lock().await;
-    cache.insert(provider_id.to_string(), snapshot.clone());
+    state
+        .provider_runtime()
+        .with_provider_usage_cache(|cache| {
+            cache.insert(provider_id.to_string(), snapshot.clone());
+        })
+        .await;
     Ok(snapshot)
 }
 

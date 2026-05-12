@@ -104,14 +104,14 @@ pub(in crate::daemon) fn spawn_endpoint_model_catalog_sweeper(state: Arc<AppStat
                     if !refreshed_provider_ids.is_empty() {
                         state
                             .providers
-                            .options_cache
-                            .lock()
-                            .await
-                            .retain(|cache_key, _| {
+                            .with_provider_options_cache(|cache| {
+                                cache.retain(|cache_key, _| {
                                 !refreshed_provider_ids
                                     .iter()
                                     .any(|provider_id| cache_key_matches_provider(cache_key, provider_id))
-                            });
+                                });
+                            })
+                            .await;
                     }
 
                     if refreshed > 0 || failed > 0 {

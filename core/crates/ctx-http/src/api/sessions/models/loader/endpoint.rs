@@ -73,12 +73,17 @@ pub(super) async fn load_endpoint_model_catalog(
     });
     value["source"] = serde_json::to_value(config).unwrap_or(serde_json::Value::Null);
     value = redact_json_value(value);
-    state.providers.options_cache.lock().await.insert(
-        cache_key,
-        crate::daemon::CachedProviderOptions {
-            cached_at: std::time::Instant::now(),
-            value,
-        },
-    );
+    state
+        .providers
+        .with_provider_options_cache(|cache| {
+            cache.insert(
+                cache_key,
+                crate::daemon::CachedProviderOptions {
+                    cached_at: std::time::Instant::now(),
+                    value,
+                },
+            );
+        })
+        .await;
     Ok(EndpointModelCatalog::Loaded(Some(Box::new(models))))
 }

@@ -1,7 +1,35 @@
+use std::collections::HashMap;
+
 use ctx_core::ids::WorkspaceId;
 use ctx_provider_install::install_state::InstallTarget;
 
-use crate::ProviderRuntime;
+use crate::{provider_usage, CachedProviderOptions, CachedProviderVerify, ProviderRuntime};
+
+impl ProviderRuntime {
+    pub async fn with_provider_options_cache<R>(
+        &self,
+        f: impl FnOnce(&mut HashMap<String, CachedProviderOptions>) -> R,
+    ) -> R {
+        let mut cache = self.options_cache.lock().await;
+        f(&mut cache)
+    }
+
+    pub async fn with_provider_verify_cache<R>(
+        &self,
+        f: impl FnOnce(&mut HashMap<String, CachedProviderVerify>) -> R,
+    ) -> R {
+        let mut cache = self.verify_cache.lock().await;
+        f(&mut cache)
+    }
+
+    pub async fn with_provider_usage_cache<R>(
+        &self,
+        f: impl FnOnce(&mut HashMap<String, provider_usage::ProviderUsageSnapshot>) -> R,
+    ) -> R {
+        let mut cache = self.usage_cache.lock().await;
+        f(&mut cache)
+    }
+}
 
 pub fn workspace_provider_cache_key(
     workspace_id: WorkspaceId,

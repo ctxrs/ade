@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
+use ctx_provider_runtime::ProviderRuntime;
 use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
 use tokio::sync::{broadcast, Mutex};
 
@@ -40,10 +41,8 @@ impl ctx_provider_runtime::provider_usage::ProviderUsageHost for AppState {
         &self.core.data_root
     }
 
-    fn usage_cache(
-        &self,
-    ) -> &Mutex<HashMap<String, ctx_provider_runtime::provider_usage::ProviderUsageSnapshot>> {
-        &self.providers.usage_cache
+    fn provider_runtime(&self) -> &ProviderRuntime {
+        &self.providers
     }
 
     fn subscribe_shutdown(&self) -> broadcast::Receiver<()> {

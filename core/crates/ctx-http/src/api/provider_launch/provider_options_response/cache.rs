@@ -25,28 +25,30 @@ impl ProviderOptionsCacheSnapshot {
         } else {
             state
                 .providers
-                .verify_cache
-                .lock()
-                .await
-                .get(&cache_key)
-                .map(|c| CachedProviderOptionsSnapshot {
-                    cached_at: c.cached_at,
-                    value: c.value.clone(),
+                .with_provider_verify_cache(|cache| {
+                    cache
+                        .get(&cache_key)
+                        .map(|c| CachedProviderOptionsSnapshot {
+                            cached_at: c.cached_at,
+                            value: c.value.clone(),
+                        })
                 })
+                .await
         };
         let cached_entry = if skip_cached_config_surfaces {
             None
         } else {
             state
                 .providers
-                .options_cache
-                .lock()
-                .await
-                .get(&cache_key)
-                .map(|c| CachedProviderOptionsSnapshot {
-                    cached_at: c.cached_at,
-                    value: c.value.clone(),
+                .with_provider_options_cache(|cache| {
+                    cache
+                        .get(&cache_key)
+                        .map(|c| CachedProviderOptionsSnapshot {
+                            cached_at: c.cached_at,
+                            value: c.value.clone(),
+                        })
                 })
+                .await
         };
         let authoritative_entry = cached_entry
             .filter(|entry| entry.value.get("config_error").is_none())
@@ -96,13 +98,18 @@ impl ProviderOptionsCacheSnapshot {
         state: &Arc<AppState>,
         value: serde_json::Value,
     ) {
-        state.providers.options_cache.lock().await.insert(
-            self.cache_key.clone(),
-            crate::daemon::CachedProviderOptions {
-                cached_at: std::time::Instant::now(),
-                value,
-            },
-        );
+        state
+            .providers
+            .with_provider_options_cache(|cache| {
+                cache.insert(
+                    self.cache_key.clone(),
+                    crate::daemon::CachedProviderOptions {
+                        cached_at: std::time::Instant::now(),
+                        value,
+                    },
+                );
+            })
+            .await;
     }
 
     pub(in crate::api::provider_launch) fn attach_verify_cache(

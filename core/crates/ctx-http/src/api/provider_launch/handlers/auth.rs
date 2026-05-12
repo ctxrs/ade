@@ -107,13 +107,18 @@ pub(in crate::api) async fn authenticate_provider_for_workspace(
     let verify_value =
         redact_json_value(serde_json::to_value(&resp).unwrap_or(serde_json::Value::Null));
     let cache_key = workspace_provider_cache_key(ws_id, install_target, &provider_id);
-    state.providers.verify_cache.lock().await.insert(
-        cache_key,
-        crate::daemon::CachedProviderVerify {
-            cached_at: std::time::Instant::now(),
-            value: verify_value,
-        },
-    );
+    state
+        .providers
+        .with_provider_verify_cache(|cache| {
+            cache.insert(
+                cache_key,
+                crate::daemon::CachedProviderVerify {
+                    cached_at: std::time::Instant::now(),
+                    value: verify_value,
+                },
+            );
+        })
+        .await;
 
     Ok(Json(resp))
 }

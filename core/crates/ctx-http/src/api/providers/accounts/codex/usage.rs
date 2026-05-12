@@ -13,8 +13,10 @@ pub(crate) async fn get_codex_accounts_usage(
         .map_err(internal_error)?;
     let active_id = registry.active_account_id.clone();
     let cached_active = if !refresh {
-        let cache = state.providers.usage_cache.lock().await;
-        cache.get(CODEX_PROVIDER_ID).cloned()
+        state
+            .providers
+            .with_provider_usage_cache(|cache| cache.get(CODEX_PROVIDER_ID).cloned())
+            .await
     } else {
         None
     };
