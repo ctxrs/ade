@@ -66,9 +66,7 @@ async fn setup_state(data_root: &std::path::Path, prewarm_statuses: bool) -> Arc
     };
     state
         .providers
-        .with_provider_statuses(|statuses| {
-            statuses.insert("fake".into(), status);
-        })
+        .upsert_provider_status("fake".into(), status)
         .await;
     state
 }

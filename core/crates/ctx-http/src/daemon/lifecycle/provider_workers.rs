@@ -63,28 +63,7 @@ pub(in crate::daemon) fn spawn_provider_worker_sweeper(state: Arc<AppState>) {
 pub(crate) async fn collect_provider_adapters_for_shutdown(
     state: &Arc<AppState>,
 ) -> Vec<(String, Arc<dyn ProviderAdapter>)> {
-    let mut adapters = {
-        state
-            .providers
-            .with_provider_adapters(|map| {
-                map.iter()
-                    .map(|(id, adapter)| (id.clone(), Arc::clone(adapter)))
-                    .collect::<Vec<_>>()
-            })
-            .await
-    };
-    let target_adapters = {
-        state
-            .providers
-            .with_target_provider_adapters(|map| {
-                map.iter()
-                    .map(|(id, adapter)| (id.clone(), Arc::clone(adapter)))
-                    .collect::<Vec<_>>()
-            })
-            .await
-    };
-    adapters.extend(target_adapters);
-    adapters
+    state.providers.all_provider_adapter_entries().await
 }
 
 pub(crate) async fn shutdown_provider_adapters(state: &Arc<AppState>, reason: &str) {

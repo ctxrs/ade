@@ -29,12 +29,12 @@ pub(in crate::api) async fn resource_utilization(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let provider_adapters = {
-        state
-            .providers
-            .with_provider_adapters(|providers| providers.values().cloned().collect::<Vec<_>>())
-            .await
-    };
+    let provider_adapters = state
+        .providers
+        .provider_adapter_entries()
+        .await
+        .into_iter()
+        .map(|(_, adapter)| adapter);
     let mut provider_processes = Vec::new();
     for adapter in provider_adapters {
         provider_processes.extend(adapter.list_processes().await);

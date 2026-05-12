@@ -58,9 +58,7 @@ async fn seed_provider_status(state: &Arc<AppState>, status: ProviderStatus) {
     let provider_id = status.provider_id.clone();
     state
         .providers
-        .with_provider_statuses(|statuses| {
-            statuses.insert(provider_id, status);
-        })
+        .upsert_provider_status(provider_id, status)
         .await;
 }
 

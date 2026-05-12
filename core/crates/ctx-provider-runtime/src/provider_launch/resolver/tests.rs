@@ -72,14 +72,16 @@ async fn ensure_provider_adapter_for_target_surfaces_agent_server_config_errors_
     assert!(err.to_string().contains("loading agent server config"));
     assert!(
         host.provider_runtime
-            .with_target_provider_adapters(|adapters| adapters.get("codex@container").is_none())
-            .await,
+            .target_provider_adapter("codex@container")
+            .await
+            .is_none(),
         "invalid managed config should not seed target adapter cache"
     );
     assert!(
         host.provider_runtime
-            .with_provider_adapters(|adapters| adapters.get("codex").is_none())
-            .await,
+            .provider_adapter("codex")
+            .await
+            .is_none(),
         "invalid managed config should not seed provider adapter cache"
     );
 }

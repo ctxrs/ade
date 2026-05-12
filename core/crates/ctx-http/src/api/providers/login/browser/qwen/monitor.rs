@@ -14,10 +14,7 @@ pub(super) async fn monitor_qwen_login(
     login_id: String,
     label: Option<String>,
 ) {
-    let adapter = state
-        .providers
-        .with_provider_adapters(|map| map.get("qwen").cloned())
-        .await;
+    let adapter = state.providers.provider_adapter("qwen").await;
     let Some(adapter) = adapter else {
         status::set_failed(
             &state,

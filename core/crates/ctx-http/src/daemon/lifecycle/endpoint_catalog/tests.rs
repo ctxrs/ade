@@ -26,22 +26,20 @@ async fn endpoint_model_sweeper_counts_harness_config_load_failures() {
     ));
     state
         .providers
-        .with_provider_statuses(|statuses| {
-            statuses.insert(
-                "qwen".to_string(),
-                ProviderStatus {
-                    provider_id: "qwen".to_string(),
-                    installed: true,
-                    detected_path: None,
-                    version: None,
-                    capabilities: None,
-                    health: ProviderHealth::Ok,
-                    diagnostics: Vec::new(),
-                    details: HashMap::new(),
-                    usability: ProviderUsability::default(),
-                },
-            );
-        })
+        .upsert_provider_status(
+            "qwen".to_string(),
+            ProviderStatus {
+                provider_id: "qwen".to_string(),
+                installed: true,
+                detected_path: None,
+                version: None,
+                capabilities: None,
+                health: ProviderHealth::Ok,
+                diagnostics: Vec::new(),
+                details: HashMap::new(),
+                usability: ProviderUsability::default(),
+            },
+        )
         .await;
 
     let (refreshed, failed, refreshed_provider_ids) =

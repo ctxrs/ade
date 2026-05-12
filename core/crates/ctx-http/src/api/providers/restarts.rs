@@ -10,33 +10,10 @@ pub(super) async fn restart_provider_for_auth_change(
     reason: &str,
 ) -> anyhow::Result<()> {
     invalidate_provider_runtime_state(state, provider_id).await;
-    let target_prefix = format!("{provider_id}@");
-    let mut adapters = {
-        state
-            .providers
-            .with_provider_adapters(|map| {
-                [provider_id]
-                    .iter()
-                    .filter_map(|id| {
-                        map.get(*id)
-                            .map(|adapter| (id.to_string(), Arc::clone(adapter)))
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .await
-    };
-    let target_adapters = {
-        state
-            .providers
-            .with_target_provider_adapters(|map| {
-                map.iter()
-                    .filter(|(id, _)| id.starts_with(&target_prefix))
-                    .map(|(id, adapter)| (id.clone(), Arc::clone(adapter)))
-                    .collect::<Vec<_>>()
-            })
-            .await
-    };
-    adapters.extend(target_adapters);
+    let adapters = state
+        .providers
+        .provider_adapter_entries_for_provider(provider_id)
+        .await;
     let mut failures = Vec::new();
     for (id, adapter) in adapters {
         if !adapter.supports_restart_mode(ProviderRestartMode::Drain) {

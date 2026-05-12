@@ -158,7 +158,7 @@ pub async fn ensure_provider_adapter_for_target_with_cfg(
     if let Some(cache_key) = target_adapter_cache_key(provider_id, target) {
         if let Some(adapter) = state
             .provider_runtime()
-            .with_target_provider_adapters(|adapters| adapters.get(&cache_key).cloned())
+            .target_provider_adapter(&cache_key)
             .await
         {
             return adapter;
@@ -167,26 +167,18 @@ pub async fn ensure_provider_adapter_for_target_with_cfg(
             build_provider_adapter_for_target(state.data_root(), cfg, provider_id, target);
         state
             .provider_runtime()
-            .with_target_provider_adapters(|adapters| {
-                adapters.insert(cache_key, adapter.clone());
-            })
+            .upsert_target_provider_adapter(cache_key, adapter.clone())
             .await;
         return adapter;
     }
 
-    if let Some(adapter) = state
-        .provider_runtime()
-        .with_provider_adapters(|adapters| adapters.get(provider_id).cloned())
-        .await
-    {
+    if let Some(adapter) = state.provider_runtime().provider_adapter(provider_id).await {
         return adapter;
     }
     let adapter = build_provider_adapter_for_target(state.data_root(), cfg, provider_id, target);
     state
         .provider_runtime()
-        .with_provider_adapters(|adapters| {
-            adapters.insert(provider_id.to_string(), adapter.clone());
-        })
+        .upsert_provider_adapter(provider_id.to_string(), adapter.clone())
         .await;
     adapter
 }

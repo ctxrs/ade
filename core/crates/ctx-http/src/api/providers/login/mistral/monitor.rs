@@ -14,10 +14,7 @@ pub(super) async fn monitor_mistral_login(
     login_id: String,
     label: Option<String>,
 ) {
-    let adapter = state
-        .providers
-        .with_provider_adapters(|map| map.get("mistral").cloned())
-        .await;
+    let adapter = state.providers.provider_adapter("mistral").await;
     let Some(adapter) = adapter else {
         status::set_failed(
             &state,

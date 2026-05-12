@@ -31,14 +31,8 @@ async fn require_known_provider(
         .load_provider_matrix(&state.core.data_root)
         .await;
     let known = ctx_provider_matrix::get_entry(&matrix, provider_id).is_some()
-        || state
-            .providers
-            .with_provider_statuses(|statuses| statuses.contains_key(provider_id))
-            .await
-        || state
-            .providers
-            .with_provider_adapters(|adapters| adapters.contains_key(provider_id))
-            .await;
+        || state.providers.has_provider_status(provider_id).await
+        || state.providers.has_provider_adapter(provider_id).await;
     if known {
         return Ok(());
     }

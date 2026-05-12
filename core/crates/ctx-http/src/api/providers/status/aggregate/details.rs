@@ -11,7 +11,7 @@ pub(in crate::api::providers::status) async fn provider_status_without_target_bo
     if matches!(target, InstallTarget::Host) {
         return state
             .providers
-            .with_provider_statuses(|statuses| statuses.get(provider_id).cloned())
+            .provider_status(provider_id)
             .await
             .unwrap_or_else(|| missing_provider_status(provider_id));
     }

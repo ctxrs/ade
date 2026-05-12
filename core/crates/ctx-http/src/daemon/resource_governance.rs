@@ -59,13 +59,7 @@ pub async fn build_public_settings(
 }
 
 async fn has_running_children(state: &AppState) -> bool {
-    let providers = {
-        state
-            .providers
-            .with_provider_adapters(|map| map.values().cloned().collect::<Vec<_>>())
-            .await
-    };
-    for adapter in providers {
+    for (_, adapter) in state.providers.provider_adapter_entries().await {
         if !adapter.list_processes().await.is_empty() {
             return true;
         }

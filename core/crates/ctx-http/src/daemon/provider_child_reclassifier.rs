@@ -15,13 +15,9 @@ impl ctx_provider_runtime::provider_child_reclassifier::ProviderChildReclassifie
     }
 
     async fn provider_process_pids(&self) -> Vec<u32> {
-        let providers = {
-            self.providers
-                .with_provider_adapters(|providers| providers.values().cloned().collect::<Vec<_>>())
-                .await
-        };
+        let providers = self.providers.provider_adapter_entries().await;
         let mut pids = Vec::new();
-        for adapter in providers {
+        for (_, adapter) in providers {
             pids.extend(
                 adapter
                     .list_processes()

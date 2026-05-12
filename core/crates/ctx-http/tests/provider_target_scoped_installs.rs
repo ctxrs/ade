@@ -106,9 +106,7 @@ async fn seed_provider_status(state: &Arc<AppState>, status: ProviderStatus) {
     let provider_id = status.provider_id.clone();
     state
         .providers
-        .with_provider_statuses(|statuses| {
-            statuses.insert(provider_id, status);
-        })
+        .upsert_provider_status(provider_id, status)
         .await;
 }
 
@@ -525,15 +523,17 @@ async fn assert_target_adapter_not_cached(
 ) {
     let cache_key = target_adapter_cache_key(provider_id, target)
         .expect("non-host target should have a target adapter cache key");
-    let (cached, keys) = state
+    let cached = state
         .providers
-        .with_target_provider_adapters(|adapters| {
-            (
-                adapters.contains_key(&cache_key),
-                adapters.keys().cloned().collect::<Vec<_>>(),
-            )
-        })
+        .has_target_provider_adapter(&cache_key)
         .await;
+    let keys = state
+        .providers
+        .target_provider_adapter_entries()
+        .await
+        .into_iter()
+        .map(|(key, _)| key)
+        .collect::<Vec<_>>();
     assert!(
         !cached,
         "{context}: invalid managed config should not seed target adapter cache entry {cache_key}; keys={keys:?}"

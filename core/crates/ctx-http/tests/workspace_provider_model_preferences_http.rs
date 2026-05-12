@@ -43,9 +43,7 @@ async fn build_state_with_fake_codex(
     };
     state
         .providers
-        .with_provider_statuses(|statuses| {
-            statuses.insert("codex".into(), status);
-        })
+        .upsert_provider_status("codex".into(), status)
         .await;
     state
 }

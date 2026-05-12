@@ -8,22 +8,9 @@ use crate::daemon::state::AppState;
 
 impl AppState {
     async fn propagate_provider_session_pin_by_key(&self, session_key: String, pinned: bool) {
-        let adapters = {
-            let mut adapters = {
-                self.providers
-                    .with_provider_adapters(|map| map.values().cloned().collect::<Vec<_>>())
-                    .await
-            };
-            let target_adapters = {
-                self.providers
-                    .with_target_provider_adapters(|map| map.values().cloned().collect::<Vec<_>>())
-                    .await
-            };
-            adapters.extend(target_adapters);
-            adapters
-        };
+        let adapters = self.providers.all_provider_adapter_entries().await;
         let mut seen = HashSet::<usize>::new();
-        for adapter in adapters {
+        for (_, adapter) in adapters {
             let identity = (Arc::as_ptr(&adapter) as *const ()) as usize;
             if !seen.insert(identity) {
                 continue;

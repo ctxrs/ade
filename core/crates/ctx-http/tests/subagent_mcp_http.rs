@@ -153,9 +153,7 @@ async fn setup_state_with_providers(
         let status = provider.inspect().await.unwrap();
         state
             .providers
-            .with_provider_statuses(|statuses| {
-                statuses.insert(provider_id, status);
-            })
+            .upsert_provider_status(provider_id, status)
             .await;
     }
     let app = common::router(state.clone());

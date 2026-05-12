@@ -32,11 +32,7 @@ pub(super) async fn prepare_loaded_session_request(
         .and_then(|v| v.to_str().ok())
         .map(|v| v.to_string());
     let provider_id = req.provider_id.trim().to_string();
-    if !state
-        .providers
-        .with_provider_adapters(|adapters| adapters.contains_key(&provider_id))
-        .await
-    {
+    if !state.providers.has_provider_adapter(&provider_id).await {
         return Err(StatusCode::BAD_REQUEST);
     }
     let session_request = match validate_create_session_request(CreateSessionRequestPolicy {

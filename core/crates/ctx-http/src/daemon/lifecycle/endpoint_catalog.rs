@@ -21,10 +21,7 @@ fn endpoint_model_sweep_interval() -> Duration {
 async fn refresh_stale_selected_endpoint_model_catalogs(
     state: &Arc<AppState>,
 ) -> (usize, usize, HashSet<String>) {
-    let provider_ids = state
-        .providers
-        .with_provider_statuses(|statuses| statuses.keys().cloned().collect::<Vec<_>>())
-        .await;
+    let provider_ids = state.providers.provider_status_ids().await;
     let now = Utc::now();
     let mut refreshed = 0usize;
     let mut failed = 0usize;

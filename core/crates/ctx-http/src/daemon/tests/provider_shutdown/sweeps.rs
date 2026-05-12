@@ -31,9 +31,7 @@ async fn sweep_provider_workers_once_dedupes_shared_adapters_and_aggregates_stat
     ));
     state
         .providers
-        .with_target_provider_adapters(|adapters| {
-            adapters.insert("root@host".into(), shared_adapter.clone());
-        })
+        .upsert_target_provider_adapter("root@host".into(), shared_adapter.clone())
         .await;
 
     let config = ProviderSessionSweepConfig {

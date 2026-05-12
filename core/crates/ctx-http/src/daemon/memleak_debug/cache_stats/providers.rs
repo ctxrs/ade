@@ -3,14 +3,8 @@ use crate::daemon::AppState;
 use super::ProviderCacheStats;
 
 pub(super) async fn collect_provider_cache_stats(state: &AppState) -> ProviderCacheStats {
-    let adapters = state
-        .providers
-        .with_provider_adapters(|adapters| adapters.len())
-        .await;
-    let statuses = state
-        .providers
-        .with_provider_statuses(|statuses| statuses.len())
-        .await;
+    let adapters = state.providers.provider_adapter_count().await;
+    let statuses = state.providers.provider_status_count().await;
     let options_cache = state
         .providers
         .with_provider_options_cache(|cache| cache.len())

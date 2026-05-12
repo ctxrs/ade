@@ -17,9 +17,7 @@ async fn collect_provider_adapters_for_shutdown_includes_root_and_target_adapter
     ));
     state
         .providers
-        .with_target_provider_adapters(|adapters| {
-            adapters.insert("root@host".into(), target_adapter.clone());
-        })
+        .upsert_target_provider_adapter("root@host".into(), target_adapter.clone())
         .await;
 
     let adapters = collect_provider_adapters_for_shutdown(&state).await;
@@ -46,9 +44,7 @@ async fn shutdown_provider_adapters_requests_immediate_restart_for_all_adapters(
     ));
     state
         .providers
-        .with_target_provider_adapters(|adapters| {
-            adapters.insert("root@host".into(), target_adapter.clone());
-        })
+        .upsert_target_provider_adapter("root@host".into(), target_adapter.clone())
         .await;
 
     shutdown_provider_adapters(&state, "test shutdown").await;

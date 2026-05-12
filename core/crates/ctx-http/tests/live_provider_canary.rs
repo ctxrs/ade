@@ -141,22 +141,20 @@ async fn seed_claude_runtime_config(data_root: &Path, command_abs_path: &str) {
 async fn seed_provider_status_ok(state: &Arc<AppState>, provider_id: &str) {
     state
         .providers
-        .with_provider_statuses(|statuses| {
-            statuses.insert(
-                provider_id.to_string(),
-                ProviderStatus {
-                    provider_id: provider_id.to_string(),
-                    installed: true,
-                    detected_path: None,
-                    version: None,
-                    capabilities: None,
-                    health: ProviderHealth::Ok,
-                    diagnostics: Vec::new(),
-                    details: HashMap::new(),
-                    usability: ctx_providers::adapters::ProviderUsability::default(),
-                },
-            );
-        })
+        .upsert_provider_status(
+            provider_id.to_string(),
+            ProviderStatus {
+                provider_id: provider_id.to_string(),
+                installed: true,
+                detected_path: None,
+                version: None,
+                capabilities: None,
+                health: ProviderHealth::Ok,
+                diagnostics: Vec::new(),
+                details: HashMap::new(),
+                usability: ctx_providers::adapters::ProviderUsability::default(),
+            },
+        )
         .await;
 }
 
