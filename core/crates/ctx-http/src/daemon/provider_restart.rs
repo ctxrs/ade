@@ -72,27 +72,29 @@ impl ctx_provider_runtime::provider_restart::ProviderRestartHost for AppState {
     }
 
     async fn restart_provider(&self, provider_id: &str, pid: u32) {
-        let adapter = self.providers.provider_adapter(provider_id).await;
         let mut needs_kill = true;
-        if let Some(adapter) = adapter {
-            match adapter
-                .restart(
-                    "provider restart: sustained memory usage",
-                    ProviderRestartMode::Immediate,
-                )
-                .await
-            {
-                Ok(()) => needs_kill = false,
-                Err(err) => {
-                    tracing::warn!(provider_id, pid, "provider restart hook failed: {err:#}")
-                }
-            }
-        } else {
-            tracing::warn!(
+        match self
+            .providers
+            .restart_provider_adapter_by_id(
                 provider_id,
-                pid,
-                "provider restart failed: provider adapter missing"
-            );
+                "provider restart: sustained memory usage",
+                ProviderRestartMode::Immediate,
+            )
+            .await
+        {
+            ctx_provider_runtime::provider_workers::ProviderAdapterRestartAttempt::Restarted => {
+                needs_kill = false
+            }
+            ctx_provider_runtime::provider_workers::ProviderAdapterRestartAttempt::Failed(err) => {
+                tracing::warn!(provider_id, pid, "provider restart hook failed: {err}")
+            }
+            ctx_provider_runtime::provider_workers::ProviderAdapterRestartAttempt::Missing => {
+                tracing::warn!(
+                    provider_id,
+                    pid,
+                    "provider restart failed: provider adapter missing"
+                );
+            }
         }
 
         if needs_kill {

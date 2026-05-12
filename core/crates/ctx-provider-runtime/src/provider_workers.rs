@@ -31,6 +31,13 @@ pub struct ProviderAdapterRestartResult {
     pub message: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProviderAdapterRestartAttempt {
+    Restarted,
+    Missing,
+    Failed(String),
+}
+
 impl ProviderRuntime {
     pub async fn provider_worker_adapters_for_shutdown(
         &self,
@@ -89,6 +96,21 @@ impl ProviderRuntime {
             results.push(restart_provider_adapter(provider_id, adapter, reason, mode).await);
         }
         results
+    }
+
+    pub async fn restart_provider_adapter_by_id(
+        &self,
+        provider_id: &str,
+        reason: &str,
+        mode: ProviderRestartMode,
+    ) -> ProviderAdapterRestartAttempt {
+        let Some(adapter) = self.provider_adapter(provider_id).await else {
+            return ProviderAdapterRestartAttempt::Missing;
+        };
+        match adapter.restart(reason, mode).await {
+            Ok(()) => ProviderAdapterRestartAttempt::Restarted,
+            Err(err) => ProviderAdapterRestartAttempt::Failed(format!("{err:#}")),
+        }
     }
 
     pub async fn drain_restart_provider_adapters_for_auth_change(
@@ -484,6 +506,63 @@ mod tests {
                     Some("provider does not support drain restart".to_string()),
                 ),
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn restart_provider_adapter_by_id_reports_success_missing_and_failure() {
+        let ok_adapter = Arc::new(RecordingProviderAdapter::default());
+        let failing_adapter = Arc::new(RecordingProviderAdapter::default());
+        failing_adapter.set_restart_error("restart failed");
+
+        let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
+        providers.insert("ok".into(), ok_adapter.clone());
+        providers.insert("failing".into(), failing_adapter.clone());
+        let runtime = ProviderRuntime::new(providers);
+
+        assert_eq!(
+            runtime
+                .restart_provider_adapter_by_id(
+                    "ok",
+                    "memory pressure",
+                    ProviderRestartMode::Immediate
+                )
+                .await,
+            ProviderAdapterRestartAttempt::Restarted
+        );
+        assert_eq!(
+            runtime
+                .restart_provider_adapter_by_id(
+                    "missing",
+                    "memory pressure",
+                    ProviderRestartMode::Immediate
+                )
+                .await,
+            ProviderAdapterRestartAttempt::Missing
+        );
+        assert_eq!(
+            runtime
+                .restart_provider_adapter_by_id(
+                    "failing",
+                    "memory pressure",
+                    ProviderRestartMode::Immediate
+                )
+                .await,
+            ProviderAdapterRestartAttempt::Failed("restart failed".to_string())
+        );
+        assert_eq!(
+            ok_adapter.restart_calls(),
+            vec![(
+                "memory pressure".to_string(),
+                ProviderRestartMode::Immediate
+            )]
+        );
+        assert_eq!(
+            failing_adapter.restart_calls(),
+            vec![(
+                "memory pressure".to_string(),
+                ProviderRestartMode::Immediate
+            )]
         );
     }
 
