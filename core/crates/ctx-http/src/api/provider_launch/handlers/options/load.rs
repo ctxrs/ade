@@ -15,7 +15,7 @@ pub(super) enum ProviderOptionsLoadOutcome {
 pub(super) struct ProviderOptionsInputs {
     pub(super) workspace_id: WorkspaceId,
     pub(super) install_target: InstallTarget,
-    pub(super) managed: crate::daemon::installer::AgentServerConfigFile,
+    pub(super) managed: ctx_managed_installs::AgentServerConfigFile,
     pub(super) managed_config_error: Option<String>,
     pub(super) matrix: ctx_provider_matrix::ProviderMatrix,
     pub(super) source_config: Option<harness_sources::HarnessProviderSourceConfig>,

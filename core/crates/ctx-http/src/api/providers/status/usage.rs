@@ -34,7 +34,7 @@ async fn provider_usage_env_for_request(
     if let Some(config_error) = config_error {
         return Err(provider_usage_internal_error(config_error));
     }
-    crate::daemon::installer::ensure_codex_cli_command_env_for_target(
+    ctx_managed_installs::ensure_codex_cli_command_env_for_target(
         &mut env,
         &cfg,
         CODEX_PROVIDER_ID,

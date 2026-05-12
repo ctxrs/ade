@@ -1,4 +1,5 @@
 use super::*;
+use ctx_managed_installs as installer;
 use ctx_provider_runtime::provider_launch::resolver::{
     normalize_acp_provider_command, runtime_probe_command_as_agent_command_for_target,
 };

@@ -8,8 +8,8 @@ use ctx_harness_sources::HarnessRuntimeSourceMode;
 use ctx_provider_accounts as provider_accounts;
 use ctx_provider_install::install_state::InstallTarget;
 
-use crate::daemon::installer;
 use crate::daemon::AppState;
+use ctx_managed_installs as installer;
 
 #[path = "credentials/codex.rs"]
 mod codex;

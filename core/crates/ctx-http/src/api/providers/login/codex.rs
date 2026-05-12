@@ -66,7 +66,7 @@ pub(crate) async fn start_codex_login(
             Json(ApiErrorResp { error }),
         ));
     }
-    let codex_bin = crate::daemon::installer::require_codex_cli_command_path_for_target(
+    let codex_bin = ctx_managed_installs::require_codex_cli_command_path_for_target(
         &cfg,
         Some(ctx_provider_install::install_state::InstallTarget::Host),
     )

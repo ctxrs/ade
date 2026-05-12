@@ -103,8 +103,8 @@ use ws::{
 use ctx_core::{ids::*, models::*};
 use ctx_store::store::MobileDeviceUpsert;
 
-use crate::daemon::installer;
 use crate::daemon::AppState;
+use ctx_managed_installs as installer;
 use ctx_managed_installs::title_generation_local;
 use ctx_observability::logs;
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};

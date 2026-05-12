@@ -16,13 +16,13 @@ use tokio::sync::mpsc;
 use url::Url;
 
 use super::errors::ApiErrorResp;
-use crate::daemon::installer;
 use crate::daemon::AppState;
 use ctx_core::ids::WorkspaceId;
 use ctx_core::provider_ids::CODEX_PROVIDER_ID;
 use ctx_harness_sources as harness_sources;
 #[cfg(test)]
 use ctx_harness_sources::{HarnessApiShape, HarnessSourceKind};
+use ctx_managed_installs as installer;
 use ctx_observability::logs;
 use ctx_provider_accounts as provider_accounts;
 use ctx_provider_auth_import as provider_auth_import;

@@ -14,11 +14,11 @@ use super::errors::ApiErrorResp;
 use super::redact_json_value;
 use super::shared::{load_and_cache_worktree_files, FileCompletionsQuery};
 use crate::daemon::git_status::GitStatusEntry;
-use crate::daemon::installer;
 use crate::daemon::scheduler::SchedulerCommand;
 use crate::daemon::AppState;
 use ctx_core::ids::*;
 use ctx_core::models::*;
+use ctx_managed_installs as installer;
 use ctx_observability::logs;
 use ctx_providers::{
     ask_user_question::{AskUserQuestionAnswer, AskUserQuestionOutcome},

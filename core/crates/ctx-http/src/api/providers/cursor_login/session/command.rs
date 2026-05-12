@@ -3,7 +3,7 @@ use std::process::Stdio;
 use tokio::process::{Child, Command};
 
 use super::workspace::CursorLoginWorkspace;
-use crate::daemon::installer;
+use ctx_managed_installs as installer;
 
 fn cursor_login_node_options(workspace: &CursorLoginWorkspace) -> String {
     let hook_require = format!("--require {}", workspace.hook_path.to_string_lossy());

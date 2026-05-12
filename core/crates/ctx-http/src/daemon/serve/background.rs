@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::daemon::{
-    installer, lifecycle, managed_auto_update, memleak_debug, merge_queue, mobile_startup,
+    lifecycle, managed_auto_update, memleak_debug, merge_queue, mobile_startup,
     provider_child_reclassifier, provider_guard, provider_restart, provider_usage,
     resource_telemetry, storage_guard, AppState,
 };
@@ -25,7 +25,7 @@ pub(super) fn spawn_daemon_background_services(state: Arc<AppState>, requested_b
 
 pub(in crate::daemon) fn spawn_startup_provider_status_refresh(state: Arc<AppState>) {
     tokio::spawn(async move {
-        if let Err(err) = installer::refresh_provider_statuses(state.as_ref()).await {
+        if let Err(err) = ctx_managed_installs::refresh_provider_statuses(state.as_ref()).await {
             tracing::warn!("startup provider status refresh failed: {err:#}");
         }
     });

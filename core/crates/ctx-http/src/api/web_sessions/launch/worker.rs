@@ -4,14 +4,14 @@ use ctx_provider_install::install_state::InstallTarget;
 use ctx_transport_runtime::web_sessions::{ensure_worker_bundle, NodeRuntimeSpec, WorkerBundle};
 
 pub(super) struct PreparedWebSessionWorker {
-    pub(super) node_runtime: crate::daemon::installer::NodeRuntime,
+    pub(super) node_runtime: ctx_managed_installs::NodeRuntime,
     pub(super) bundle: WorkerBundle,
 }
 
 pub(super) async fn prepare_web_session_worker(
     state: &Arc<AppState>,
 ) -> Result<PreparedWebSessionWorker, WebSessionLaunchError> {
-    let node_runtime = crate::daemon::installer::ensure_node_runtime(
+    let node_runtime = ctx_managed_installs::ensure_node_runtime(
         state.as_ref(),
         None,
         "web_session_worker",

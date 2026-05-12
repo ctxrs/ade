@@ -6,7 +6,7 @@ use anyhow::Context;
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use tokio::sync::{mpsc, oneshot};
 
-use crate::daemon::installer;
+use ctx_managed_installs as installer;
 
 use super::shim::create_claude_browser_open_shim;
 use output::pump_claude_login_output;

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::api::providers::login::resolve_runtime_provider_command_from_config;
-use crate::daemon::installer;
 use crate::daemon::AppState;
+use ctx_managed_installs as installer;
 
 mod process;
 mod shim;

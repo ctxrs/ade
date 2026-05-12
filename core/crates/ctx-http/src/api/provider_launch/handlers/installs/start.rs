@@ -6,7 +6,7 @@ pub(in crate::api) async fn install_provider(
     Query(query): Query<InstallTargetQuery>,
 ) -> Result<Json<InstallStartResponse>, (StatusCode, Json<serde_json::Value>)> {
     let target =
-        crate::daemon::installer::parse_install_target(query.target.as_deref()).map_err(|e| {
+        ctx_managed_installs::parse_install_target(query.target.as_deref()).map_err(|e| {
             (
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({
@@ -32,7 +32,7 @@ pub(in crate::api) async fn install_all_providers(
     Query(query): Query<InstallTargetQuery>,
 ) -> Result<Json<Vec<InstallStartResponse>>, (StatusCode, Json<serde_json::Value>)> {
     let target =
-        crate::daemon::installer::parse_install_target(query.target.as_deref()).map_err(|_| {
+        ctx_managed_installs::parse_install_target(query.target.as_deref()).map_err(|_| {
             (
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({
