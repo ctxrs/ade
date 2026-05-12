@@ -15,6 +15,7 @@ pub mod provider_adapters;
 pub mod provider_auth;
 pub mod provider_cache;
 pub mod provider_child_reclassifier;
+pub mod provider_endpoint_catalog;
 pub mod provider_guard;
 pub mod provider_install_tracker;
 pub mod provider_launch;
