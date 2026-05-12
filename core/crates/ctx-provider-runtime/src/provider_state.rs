@@ -121,6 +121,11 @@ impl ProviderRuntime {
         self.statuses.lock().await.contains_key(provider_id)
     }
 
+    pub async fn is_known_provider_id(&self, matrix: &ProviderMatrix, provider_id: &str) -> bool {
+        self.has_provider_status(provider_id).await
+            || ctx_provider_matrix::get_entry(matrix, provider_id).is_some()
+    }
+
     pub async fn provider_status_count(&self) -> usize {
         self.statuses.lock().await.len()
     }
@@ -147,5 +152,72 @@ impl ProviderRuntime {
     ) -> MatrixRefreshOutcome {
         self.invalidate_provider_matrix_cache().await;
         ctx_provider_matrix::refresh_matrix_from_local_sources(data_root, &self.matrix_cache).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use ctx_provider_matrix::{ProviderMatrix, ProviderMatrixEntry, ProviderMatrixEntryKind};
+    use ctx_providers::adapters::{ProviderHealth, ProviderStatus, ProviderUsability};
+
+    use super::*;
+
+    fn test_matrix(provider_id: &str) -> ProviderMatrix {
+        ProviderMatrix {
+            version: 3,
+            generated_at: None,
+            providers: vec![ProviderMatrixEntry {
+                id: provider_id.to_string(),
+                kind: ProviderMatrixEntryKind::Harness,
+                display_name: None,
+                tier: None,
+                command: None,
+                managed_install: None,
+                provider_dependencies: Vec::new(),
+                dependencies: Vec::new(),
+                version_probe: None,
+                releases: Vec::new(),
+            }],
+        }
+    }
+
+    fn provider_status(provider_id: &str) -> ProviderStatus {
+        ProviderStatus {
+            provider_id: provider_id.to_string(),
+            installed: true,
+            detected_path: None,
+            version: None,
+            capabilities: None,
+            health: ProviderHealth::Ok,
+            diagnostics: Vec::new(),
+            details: HashMap::new(),
+            usability: ProviderUsability::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn known_provider_id_accepts_status_or_matrix_entry() {
+        let runtime = ProviderRuntime::new(HashMap::new());
+        let matrix = test_matrix("matrix-provider");
+        runtime
+            .upsert_provider_status(
+                "status-provider".to_string(),
+                provider_status("status-provider"),
+            )
+            .await;
+
+        assert!(
+            runtime
+                .is_known_provider_id(&matrix, "status-provider")
+                .await
+        );
+        assert!(
+            runtime
+                .is_known_provider_id(&matrix, "matrix-provider")
+                .await
+        );
+        assert!(!runtime.is_known_provider_id(&matrix, "missing").await);
     }
 }

@@ -58,9 +58,11 @@ async fn ensure_known_provider(
     matrix: &ctx_provider_matrix::ProviderMatrix,
     provider_id: &str,
 ) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
-    let known = state.providers.has_provider_status(provider_id).await
-        || ctx_provider_matrix::get_entry(matrix, provider_id).is_some();
-    if known {
+    if state
+        .providers
+        .is_known_provider_id(matrix, provider_id)
+        .await
+    {
         return Ok(());
     }
 

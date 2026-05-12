@@ -43,7 +43,6 @@ pub(super) async fn load_provider_options_inputs(
         .providers
         .load_provider_matrix(&state.core.data_root)
         .await;
-    let known = provider_is_known(state, &matrix, provider_id).await;
     let (source_config, source_config_error) =
         load_provider_source_config_with_error(&state.core.data_root, provider_id).await;
     let skip_cached_config_surfaces =
@@ -60,7 +59,13 @@ pub(super) async fn load_provider_options_inputs(
     if let Some(out) = cache.fresh_authoritative_response(cache_ttl, verify_ttl) {
         return Ok(ProviderOptionsLoadOutcome::Cached(out));
     }
-    ensure_known_provider(provider_id, known)?;
+    ensure_known_provider(
+        provider_id,
+        state
+            .providers
+            .is_known_provider_id(&matrix, provider_id)
+            .await,
+    )?;
 
     let workspace = load_workspace(state, workspace_id).await?;
     let preferred_model_id =
@@ -82,15 +87,6 @@ pub(super) async fn load_provider_options_inputs(
             selected_endpoint,
         },
     )))
-}
-
-async fn provider_is_known(
-    state: &Arc<AppState>,
-    matrix: &ctx_provider_matrix::ProviderMatrix,
-    provider_id: &str,
-) -> bool {
-    state.providers.has_provider_status(provider_id).await
-        || ctx_provider_matrix::get_entry(matrix, provider_id).is_some()
 }
 
 fn ensure_known_provider(
