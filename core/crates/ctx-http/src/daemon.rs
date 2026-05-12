@@ -11,8 +11,6 @@ use serde_json::json;
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{ExecutionEnvironment, SessionTurn, SessionTurnStatus};
 use ctx_providers::adapters::ProviderAdapter;
-use ctx_providers::crp::Tier1CrpAdapter;
-use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::{Store, StoreManager, StoreManagerConfig};
 
 use crate::api;
@@ -33,12 +31,10 @@ mod mcp_auth;
 mod memleak_debug;
 pub(crate) mod merge_queue;
 mod mobile_startup;
-mod provider_adapters;
 mod provider_bootstrap;
 mod provider_child_reclassifier;
 pub mod provider_guard;
 pub(crate) mod provider_launch;
-mod provider_registry;
 pub mod provider_restart;
 mod provider_runtime;
 pub(crate) mod resource_governance;
@@ -77,17 +73,9 @@ pub(crate) use mcp_auth::{
     emit_mcp_token_denied, issue_provider_session_mcp_token_with_capabilities,
     revoke_provider_session_mcp_token, verify_mcp_auth_token, McpAuthCapabilities, McpAuthContext,
 };
-#[cfg(test)]
-pub(crate) use provider_adapters::runtime_probe_command_as_agent_command;
-pub(crate) use provider_adapters::{acp_bridge_adapter, acp_bridge_command, is_acp_provider_id};
-use provider_adapters::{
-    acp_status_adapter_acp_command_invalid, acp_status_adapter_bridge_invalid,
-    acp_status_adapter_bridge_missing, runtime_command_as_agent_command_for_target,
-    runtime_command_invalid_adapter, runtime_command_missing_adapter, target_adapter_cache_key,
-};
 pub(crate) use provider_bootstrap::{
     ensure_provider_adapter_for_target, ensure_provider_adapter_for_target_with_cfg,
-    load_managed_agent_server_config_or_err, normalize_acp_provider_command,
+    load_managed_agent_server_config_or_err,
 };
 #[cfg(test)]
 pub(crate) use retention::prune_archived_session_data_for_all_workspaces;

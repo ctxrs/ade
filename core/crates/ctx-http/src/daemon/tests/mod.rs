@@ -11,6 +11,7 @@ use ctx_providers::adapters::{
     ProviderSessionSweepConfig, ProviderSessionSweepStats, ProviderStatus, ProviderUsability,
     RunHandle, TurnInput,
 };
+use ctx_providers::fake::FakeProviderAdapter;
 #[cfg(unix)]
 use ctx_sandbox_container_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV;
 use ctx_store::manager::WorkspaceStoreAccessKind;

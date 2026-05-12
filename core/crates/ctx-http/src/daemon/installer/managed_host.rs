@@ -13,7 +13,7 @@ use ctx_provider_install::install_state::{
 };
 use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
 
-use crate::daemon::{self, AppState as HttpAppState};
+use crate::daemon::AppState as HttpAppState;
 
 #[async_trait]
 impl ctx_managed_installs::ManagedInstallHost for HttpAppState {
@@ -134,7 +134,7 @@ impl ctx_managed_installs::ManagedInstallHost for HttpAppState {
     }
 
     fn is_acp_provider_id(&self, provider_id: &str) -> bool {
-        daemon::is_acp_provider_id(provider_id)
+        ctx_provider_runtime::provider_launch::resolver::is_acp_provider_id(provider_id)
     }
 
     fn normalize_acp_provider_command(
@@ -143,7 +143,11 @@ impl ctx_managed_installs::ManagedInstallHost for HttpAppState {
         provider_id: &str,
         cmd: ctx_managed_installs::AgentServerCommand,
     ) -> Result<ctx_managed_installs::AgentServerCommand> {
-        daemon::normalize_acp_provider_command(data_root, provider_id, cmd)
+        ctx_provider_runtime::provider_launch::resolver::normalize_acp_provider_command(
+            data_root,
+            provider_id,
+            cmd,
+        )
     }
 
     fn acp_bridge_command(
@@ -151,6 +155,6 @@ impl ctx_managed_installs::ManagedInstallHost for HttpAppState {
         bridge_cmd: &ctx_managed_installs::AgentServerCommand,
         acp_cmd: ctx_managed_installs::AgentServerCommand,
     ) -> ctx_managed_installs::AgentServerCommand {
-        daemon::acp_bridge_command(bridge_cmd, acp_cmd)
+        ctx_provider_runtime::provider_launch::resolver::acp_bridge_command(bridge_cmd, acp_cmd)
     }
 }

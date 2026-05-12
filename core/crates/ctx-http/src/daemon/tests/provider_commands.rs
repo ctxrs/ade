@@ -1,4 +1,7 @@
 use super::*;
+use ctx_provider_runtime::provider_launch::resolver::{
+    normalize_acp_provider_command, runtime_probe_command_as_agent_command_for_target,
+};
 
 #[test]
 fn normalizes_qwen_command_with_openai_auth_type() {
@@ -73,9 +76,10 @@ fn runtime_probe_command_wraps_acp_provider_with_bridge() {
         managed_install_targets: HashMap::new(),
     };
 
-    let resolved = runtime_probe_command_as_agent_command(temp.path(), &cfg, "cursor")
-        .expect("probe command")
-        .expect("runtime command");
+    let resolved =
+        runtime_probe_command_as_agent_command_for_target(temp.path(), &cfg, "cursor", None)
+            .expect("probe command")
+            .expect("runtime command");
 
     assert_eq!(
         PathBuf::from(&resolved.command)
@@ -119,9 +123,10 @@ fn runtime_probe_command_keeps_native_crp_provider_unwrapped() {
         managed_install_targets: HashMap::new(),
     };
 
-    let resolved = runtime_probe_command_as_agent_command(temp.path(), &cfg, "codex")
-        .expect("probe command")
-        .expect("runtime command");
+    let resolved =
+        runtime_probe_command_as_agent_command_for_target(temp.path(), &cfg, "codex", None)
+            .expect("probe command")
+            .expect("runtime command");
 
     assert_eq!(
         PathBuf::from(&resolved.command)

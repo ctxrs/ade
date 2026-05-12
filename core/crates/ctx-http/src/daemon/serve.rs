@@ -45,7 +45,9 @@ pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
 
     let agent_cfg = load_managed_agent_server_config_or_err(&data_root).await?;
 
-    let providers = provider_registry::build_startup_provider_adapters(&data_root, &agent_cfg);
+    let providers = ctx_provider_runtime::provider_adapters::build_startup_provider_adapters(
+        &data_root, &agent_cfg,
+    );
 
     let bound = listener::bind_daemon_listeners(bind).await?;
     let daemon_url = bound.daemon_url.clone();
