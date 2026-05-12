@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-pub(in crate::api::repo) fn expand_tilde(raw: &str) -> Result<PathBuf, String> {
+pub fn expand_tilde(raw: &str) -> Result<PathBuf, String> {
     let raw = raw.trim();
     if raw == "~" || raw.starts_with("~/") {
         let base = directories::BaseDirs::new()
@@ -14,14 +14,14 @@ pub(in crate::api::repo) fn expand_tilde(raw: &str) -> Result<PathBuf, String> {
     Ok(PathBuf::from(raw))
 }
 
-pub(in crate::api::repo) fn validate_absolute_path(path: &Path, field: &str) -> Result<(), String> {
+pub fn validate_absolute_path(path: &Path, field: &str) -> Result<(), String> {
     if !path.is_absolute() {
         return Err(format!("{field} must be an absolute path"));
     }
     Ok(())
 }
 
-pub(in crate::api::repo) fn derive_repo_name(repo_url: &str) -> Option<String> {
+pub fn derive_repo_name(repo_url: &str) -> Option<String> {
     let url = repo_url.trim().trim_end_matches('/');
     if url.is_empty() {
         return None;
@@ -41,7 +41,7 @@ pub(in crate::api::repo) fn derive_repo_name(repo_url: &str) -> Option<String> {
     }
 }
 
-pub(in crate::api::repo) fn validate_dest_name(name: &str) -> Result<(), String> {
+pub fn validate_dest_name(name: &str) -> Result<(), String> {
     let s = name.trim();
     if s.is_empty() {
         return Err("dest_name must be non-empty".to_string());
@@ -63,6 +63,8 @@ pub(in crate::api::repo) fn validate_dest_name(name: &str) -> Result<(), String>
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
 
     #[test]
@@ -80,7 +82,27 @@ mod tests {
 
     #[test]
     fn validate_absolute_path_rejects_relative() {
-        let p = PathBuf::from("relative/path");
-        assert!(validate_absolute_path(&p, "path").is_err());
+        let path = PathBuf::from("relative/path");
+        assert_eq!(
+            validate_absolute_path(&path, "path").expect_err("relative path"),
+            "path must be an absolute path"
+        );
+    }
+
+    #[test]
+    fn validate_dest_name_rejects_paths() {
+        assert!(validate_dest_name("repo").is_ok());
+        assert_eq!(
+            validate_dest_name("").expect_err("empty"),
+            "dest_name must be non-empty"
+        );
+        assert_eq!(
+            validate_dest_name("/tmp/repo").expect_err("absolute"),
+            "dest_name must be a single path segment"
+        );
+        assert_eq!(
+            validate_dest_name("org/repo").expect_err("nested"),
+            "dest_name must be a single path segment"
+        );
     }
 }

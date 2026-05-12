@@ -12,13 +12,15 @@ use crate::api::MobileAuthContext;
 use crate::daemon::AppState;
 use ctx_fs::vcs;
 use ctx_observability::logs;
+use ctx_workspace_services::repo_onboarding::{
+    derive_repo_name, expand_tilde, validate_absolute_path, validate_dest_name,
+};
 
 mod auth;
 mod clone;
 mod destination;
 mod git;
 mod init;
-mod path;
 mod status;
 
 use auth::reject_mobile_auth;
@@ -28,5 +30,4 @@ pub(super) use destination::{
 };
 use git::ensure_git_usable;
 pub(super) use init::repo_init;
-use path::{derive_repo_name, expand_tilde, validate_absolute_path, validate_dest_name};
 pub(super) use status::repo_status;
