@@ -3,7 +3,6 @@ use std::sync::Arc;
 use anyhow::Result;
 
 use ctx_core::models::Worktree;
-use ctx_fs::vcs::{self, VcsDriver};
 
 use crate::daemon::AppState;
 mod projection;
@@ -14,7 +13,8 @@ mod source;
 mod watch;
 use ctx_workspace_services::worktree_vcs::{
     mark_worktree_vcs_runtime_dirty, queue_worktree_vcs_refresh, worktree_has_vcs_repo_from_source,
-    worktree_vcs_dirty_transient_snapshot, worktree_vcs_refresh_transient_snapshot,
+    worktree_vcs_dirty_transient_snapshot, worktree_vcs_driver_for_kind,
+    worktree_vcs_refresh_transient_snapshot, WorktreeVcsDriver,
 };
 pub use ctx_workspace_services::worktree_vcs::{GitStatusEntry, GitStatusSnapshot};
 pub use projection::load_git_status_snapshot;
@@ -22,8 +22,8 @@ use projection::{publish_transient_worktree_vcs_snapshot, refresh_worktree_vcs_p
 use scheduler::ensure_worktree_vcs_scheduler_started;
 pub(crate) use source::HttpWorktreeVcsSource;
 
-fn vcs_driver_for_worktree(worktree: &Worktree) -> Arc<dyn VcsDriver> {
-    vcs::driver_for_kind(worktree.vcs_kind.clone())
+fn vcs_driver_for_worktree(worktree: &Worktree) -> Arc<WorktreeVcsDriver> {
+    worktree_vcs_driver_for_kind(worktree.vcs_kind.clone())
 }
 
 pub(crate) async fn worktree_has_vcs_repo(

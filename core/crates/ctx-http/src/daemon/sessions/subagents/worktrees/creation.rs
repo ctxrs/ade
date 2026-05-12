@@ -5,9 +5,10 @@ use crate::daemon::workspaces::vcs_hooks;
 use crate::daemon::AppState;
 use ctx_core::ids::TaskId;
 use ctx_core::models::{VcsKind, Workspace, Worktree};
-use ctx_fs::vcs;
 use ctx_settings_model::ExecutionSettings;
-use ctx_workspace_services::worktree_vcs::WorktreeVcsCommitLookupSource;
+use ctx_workspace_services::worktree_vcs::{
+    effective_worktree_vcs_kind, WorktreeVcsCommitLookupSource,
+};
 
 use super::super::errors::{
     api_error, internal_api_error, internal_request_or_policy_error, ApiResult, SubagentErrorKind,
@@ -36,7 +37,7 @@ pub(in crate::daemon::sessions::subagents) async fn plan_subagent_worktree_creat
         }
         internal_api_error(error)
     })?;
-    let vcs = vcs::driver_for_kind(parent_worktree.vcs_kind.clone());
+    let vcs_kind = effective_worktree_vcs_kind(parent_worktree.vcs_kind.clone());
     let dirty_counts = diff_worktree_summary_for_session(state, parent_worktree, &base_commit_sha)
         .await
         .map_err(internal_api_error)?;
@@ -50,7 +51,7 @@ pub(in crate::daemon::sessions::subagents) async fn plan_subagent_worktree_creat
         ));
     }
 
-    Ok(Some((vcs.kind(), base_commit_sha)))
+    Ok(Some((vcs_kind, base_commit_sha)))
 }
 
 pub(in crate::daemon::sessions::subagents) async fn create_subagent_worktree(
