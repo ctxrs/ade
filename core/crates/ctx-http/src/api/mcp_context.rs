@@ -9,7 +9,7 @@ pub(crate) struct McpContextResponse {
 }
 
 pub(crate) async fn get_mcp_context(
-    Extension(mcp_auth): Extension<crate::daemon::McpAuthContext>,
+    Extension(mcp_auth): Extension<ctx_mcp_auth::McpAuthContext>,
 ) -> Json<McpContextResponse> {
     Json(McpContextResponse {
         session_id: mcp_auth.session_id.0.to_string(),

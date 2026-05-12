@@ -2,7 +2,7 @@ use super::*;
 
 pub(in crate::api) async fn validate_scoped_mcp_session_context(
     state: &Arc<AppState>,
-    mcp_auth: crate::daemon::McpAuthContext,
+    mcp_auth: ctx_mcp_auth::McpAuthContext,
     session_id: SessionId,
 ) -> Result<(), (StatusCode, Json<ApiErrorResp>)> {
     if mcp_auth.session_id != session_id {

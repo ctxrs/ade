@@ -53,7 +53,7 @@ async fn scoped_mcp_merge_queue_submit_is_bound_to_current_session_worktree() {
         session_id,
         WorkspaceId::new(),
         worktree_id,
-        crate::daemon::McpAuthCapabilities::provider_turn_default(),
+        ctx_mcp_auth::McpAuthCapabilities::provider_turn_default(),
     )
     .await;
 

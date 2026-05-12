@@ -1,8 +1,7 @@
+use ctx_mcp_auth::McpAuthContext;
 use ctx_observability::ops_events::OpsEvent;
 
 use crate::daemon::AppState;
-
-use super::McpAuthContext;
 
 pub(super) fn emit_mcp_token_event(
     state: &AppState,

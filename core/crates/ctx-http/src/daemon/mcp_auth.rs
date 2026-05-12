@@ -4,7 +4,7 @@ use crate::daemon::AppState;
 
 mod events;
 
-pub(crate) use ctx_mcp_auth::{McpAuthCapabilities, McpAuthContext};
+use ctx_mcp_auth::{McpAuthCapabilities, McpAuthContext};
 pub(crate) use events::emit_mcp_token_denied;
 use events::emit_mcp_token_event;
 

@@ -6,7 +6,6 @@ mod sandbox;
 use anyhow::Result;
 use ctx_core::ids::TaskId;
 use ctx_core::models::{Workspace, Worktree};
-pub(crate) use ctx_workspace_services::vcs_hooks::cleanup_workspace_hooks;
 
 use crate::daemon::AppState;
 

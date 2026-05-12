@@ -23,7 +23,7 @@ async fn mcp_context_endpoint_requires_scoped_mcp_token() {
         session_id,
         workspace_id,
         worktree_id,
-        crate::daemon::McpAuthCapabilities::provider_turn_default(),
+        ctx_mcp_auth::McpAuthCapabilities::provider_turn_default(),
     )
     .await;
     let app = api::router(state);

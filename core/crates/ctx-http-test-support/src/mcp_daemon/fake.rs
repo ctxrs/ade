@@ -27,13 +27,16 @@ pub(crate) async fn setup_fake_provider_parent_session() -> Result<DaemonBackedP
         base_url.clone(),
         Some("daemon-secret".to_string()),
     ));
-    state.providers.statuses.lock().await.insert(
-        "fake".into(),
-        FakeProviderAdapter::new()
-            .inspect()
-            .await
-            .context("inspect fake provider")?,
-    );
+    state
+        .providers
+        .upsert_provider_status(
+            "fake".into(),
+            FakeProviderAdapter::new()
+                .inspect()
+                .await
+                .context("inspect fake provider")?,
+        )
+        .await;
     router::spawn_router(listener, state.clone());
 
     let workspace = create_workspace_record(&stores, repo.path()).await?;

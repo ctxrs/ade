@@ -4,7 +4,7 @@ use axum::extract::Extension;
 
 pub(super) async fn resolve_scoped_parent_session_id(
     state: &Arc<AppState>,
-    mcp_auth: Option<Extension<crate::daemon::McpAuthContext>>,
+    mcp_auth: Option<Extension<ctx_mcp_auth::McpAuthContext>>,
     id: String,
 ) -> Result<SessionId, (StatusCode, Json<ApiErrorResp>)> {
     let parent_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| {

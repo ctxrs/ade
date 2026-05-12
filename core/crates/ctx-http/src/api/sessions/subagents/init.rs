@@ -4,7 +4,7 @@ use axum::extract::Extension;
 
 pub(crate) async fn mcp_spawn_agent(
     State(state): State<Arc<AppState>>,
-    mcp_auth: Option<Extension<crate::daemon::McpAuthContext>>,
+    mcp_auth: Option<Extension<ctx_mcp_auth::McpAuthContext>>,
     Path(id): Path<String>,
     Json(req): Json<SpawnAgentReq>,
 ) -> Result<Json<SpawnAgentResp>, (StatusCode, Json<ApiErrorResp>)> {

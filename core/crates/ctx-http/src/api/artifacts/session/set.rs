@@ -22,7 +22,7 @@ pub(in crate::api) struct SetSessionArtifactsReq {
 
 pub(in crate::api) async fn set_session_artifacts(
     State(state): State<Arc<AppState>>,
-    mcp_auth: Option<Extension<crate::daemon::McpAuthContext>>,
+    mcp_auth: Option<Extension<ctx_mcp_auth::McpAuthContext>>,
     Path(id): Path<String>,
     Json(req): Json<SetSessionArtifactsReq>,
 ) -> Result<Json<Vec<Artifact>>, (StatusCode, Json<ApiErrorResp>)> {

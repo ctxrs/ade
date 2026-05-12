@@ -1,4 +1,5 @@
 use super::*;
+use ctx_workspace_services::vcs_hooks::cleanup_workspace_hooks;
 
 pub(in crate::api) async fn delete_workspace(
     State(state): State<Arc<AppState>>,
@@ -44,7 +45,7 @@ pub(in crate::api) async fn delete_workspace(
     .await;
     state.core.stores.finish_workspace_delete(id).await;
     delete_result?;
-    if let Err(err) = vcs_hooks::cleanup_workspace_hooks(&state.core.data_root, id).await {
+    if let Err(err) = cleanup_workspace_hooks(&state.core.data_root, id).await {
         tracing::warn!(
             workspace_id = %id.0,
             "failed to remove vcs hooks: {err:#}"

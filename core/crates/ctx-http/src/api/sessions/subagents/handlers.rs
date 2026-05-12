@@ -7,7 +7,7 @@ mod parent_session;
 
 pub(crate) async fn mcp_send_input(
     State(state): State<Arc<AppState>>,
-    mcp_auth: Option<Extension<crate::daemon::McpAuthContext>>,
+    mcp_auth: Option<Extension<ctx_mcp_auth::McpAuthContext>>,
     Path(id): Path<String>,
     Json(req): Json<SendInputReq>,
 ) -> Result<Json<SendInputResp>, (StatusCode, Json<ApiErrorResp>)> {
@@ -21,7 +21,7 @@ pub(crate) async fn mcp_send_input(
 
 pub(crate) async fn mcp_archive_agent(
     State(state): State<Arc<AppState>>,
-    mcp_auth: Option<Extension<crate::daemon::McpAuthContext>>,
+    mcp_auth: Option<Extension<ctx_mcp_auth::McpAuthContext>>,
     Path(id): Path<String>,
     Json(req): Json<ArchiveAgentReq>,
 ) -> Result<Json<ArchiveAgentResp>, (StatusCode, Json<ApiErrorResp>)> {
@@ -35,7 +35,7 @@ pub(crate) async fn mcp_archive_agent(
 
 pub(crate) async fn mcp_list_agents(
     State(state): State<Arc<AppState>>,
-    mcp_auth: Option<Extension<crate::daemon::McpAuthContext>>,
+    mcp_auth: Option<Extension<ctx_mcp_auth::McpAuthContext>>,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<AgentSummary>>, (StatusCode, Json<ApiErrorResp>)> {
     let parent_id = resolve_scoped_parent_session_id(&state, mcp_auth, id).await?;
@@ -48,7 +48,7 @@ pub(crate) async fn mcp_list_agents(
 
 pub(crate) async fn mcp_get_agent(
     State(state): State<Arc<AppState>>,
-    mcp_auth: Option<Extension<crate::daemon::McpAuthContext>>,
+    mcp_auth: Option<Extension<ctx_mcp_auth::McpAuthContext>>,
     Path(id): Path<String>,
     Json(req): Json<GetAgentReq>,
 ) -> Result<Json<GetAgentResp>, (StatusCode, Json<ApiErrorResp>)> {
@@ -62,7 +62,7 @@ pub(crate) async fn mcp_get_agent(
 
 pub(crate) async fn mcp_interrupt_agent(
     State(state): State<Arc<AppState>>,
-    mcp_auth: Option<Extension<crate::daemon::McpAuthContext>>,
+    mcp_auth: Option<Extension<ctx_mcp_auth::McpAuthContext>>,
     Path(id): Path<String>,
     Json(req): Json<InterruptAgentReq>,
 ) -> Result<Json<InterruptAgentResp>, (StatusCode, Json<ApiErrorResp>)> {
@@ -76,7 +76,7 @@ pub(crate) async fn mcp_interrupt_agent(
 
 pub(crate) async fn mcp_wait_agent(
     State(state): State<Arc<AppState>>,
-    mcp_auth: Option<Extension<crate::daemon::McpAuthContext>>,
+    mcp_auth: Option<Extension<ctx_mcp_auth::McpAuthContext>>,
     Path(id): Path<String>,
     Json(req): Json<WaitAgentReq>,
 ) -> Result<Json<WaitAgentResp>, (StatusCode, Json<ApiErrorResp>)> {

@@ -13,7 +13,7 @@ use crate::daemon::{merge_queue, AppState};
 
 pub(in crate::api) async fn submit_merge_queue_entry(
     State(state): State<Arc<AppState>>,
-    mcp_auth: Option<Extension<crate::daemon::McpAuthContext>>,
+    mcp_auth: Option<Extension<ctx_mcp_auth::McpAuthContext>>,
     Json(req): Json<MergeQueueSubmitReq>,
 ) -> Result<Json<ctx_core::models::MergeQueueEntry>, (StatusCode, Json<ApiErrorResp>)> {
     let mut session_id = match req.session_id {
