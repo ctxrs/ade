@@ -141,7 +141,6 @@ CTX_HTTP_DAEMON_UNIT_TEST_ARGS = CTX_HTTP_UNIT_TEST_SERIAL_ARGS + [
     "daemon::",
     "--skip=daemon::execution_effective::",
     "--skip=daemon::merge_queue::",
-    "--skip=daemon::provider_launch::",
     "--skip=daemon::scheduler::",
     "--skip=daemon::storage_guard::",
     "--skip=daemon::workspace_runtime::",
@@ -724,15 +723,6 @@ declare_ctx_http_rust_unit_test(
 )
 
 declare_ctx_http_rust_unit_test(
-    name = "unit_tests_provider_launch",
-    args = CTX_HTTP_TEST_ARGS + ["daemon::provider_launch::"],
-    compile_data = CTX_HTTP_COMPILE_DATA,
-    data = CTX_HTTP_COMPILE_DATA,
-    deps = CTX_HTTP_DIRECT_TEST_DEPS,
-    proc_macro_deps = CTX_HTTP_TEST_PROC_MACRO_DEPS,
-)
-
-declare_ctx_http_rust_unit_test(
     name = "unit_tests_scheduler",
     args = CTX_HTTP_TEST_ARGS + ["daemon::scheduler::"],
     compile_data = CTX_HTTP_COMPILE_DATA,
@@ -1023,9 +1013,9 @@ test_suite(
 test_suite(
     name = "unit-tests-provider-and-settings",
     tests = [
-        ":unit_tests_provider_launch",
         "//core/crates/ctx-managed-installs:unit_tests",
         "//core/crates/ctx-provider-matrix:unit_tests",
+        "//core/crates/ctx-provider-runtime:unit_tests",
         "//core/crates/ctx-settings-model:unit_tests",
         "//core/crates/ctx-settings-service:unit_tests",
     ],

@@ -30,7 +30,7 @@ pub(crate) mod merge_queue;
 mod mobile_startup;
 mod provider_child_reclassifier;
 pub mod provider_guard;
-pub(crate) mod provider_launch;
+mod provider_launch_host;
 pub mod provider_restart;
 mod provider_runtime;
 pub(crate) mod resource_governance;
