@@ -1,4 +1,5 @@
 use super::super::*;
+use ctx_workspace_services::worktree_vcs::ensure_worktree_attached;
 use worktrees::{load_unarchive_worktree_plan, UnarchiveWorktreePlan};
 
 #[path = "unarchive/worktrees.rs"]

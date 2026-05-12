@@ -3,8 +3,8 @@ use std::path::Path;
 use anyhow::Context;
 use ctx_core::ids::TaskId;
 use ctx_core::models::{Workspace, Worktree};
+use ctx_workspace_services::worktree_vcs::remove_worktree;
 
-use super::super::super::remove_worktree;
 use super::super::branches::WorktreeBranchCleanup;
 
 pub(super) async fn remove_orphaned_worktree_dir(

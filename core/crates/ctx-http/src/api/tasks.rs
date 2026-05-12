@@ -29,11 +29,9 @@ pub(in crate::api) use execution::*;
 pub(in crate::api) use handlers::*;
 pub(super) use task_deletion::{delete_loaded_task_with_cleanup, delete_task};
 pub(super) use task_title::update_task_title;
-#[cfg(test)]
-pub(crate) use worktree_lifecycle::branch_exists;
 pub(crate) use worktree_lifecycle::{
-    cleanup_task_worktrees, ensure_worktree_attached, execution_environment_from_settings,
-    managed_worktree_root, persist_provisioned_worktree, provision_worktree_for_execution,
+    cleanup_task_worktrees, execution_environment_from_settings, managed_worktree_root,
+    persist_provisioned_worktree, provision_worktree_for_execution,
     rematerialize_sandbox_binding_for_worktree, retry_global_index_write, BranchCleanupErrorMode,
     TaskWorktreeCleanupTarget,
 };

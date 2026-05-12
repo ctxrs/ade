@@ -12,7 +12,7 @@ mod diff;
 mod git_status;
 
 pub(crate) use apply::apply_session_diff_patch;
-pub(crate) use base::{is_no_vcs_repo_error, resolve_session_diff_base};
+pub(crate) use base::resolve_session_diff_base;
 pub(crate) use diff::{get_session_diff, get_session_diff_summary};
 pub(crate) use git_status::get_session_git_status;
 

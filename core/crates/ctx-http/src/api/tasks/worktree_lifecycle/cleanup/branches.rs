@@ -1,7 +1,7 @@
 use ctx_core::ids::TaskId;
-use ctx_workspace_services::worktree_vcs::delete_worktree_branch;
+use ctx_workspace_services::worktree_vcs::{delete_worktree_branch, prune_worktrees};
 
-use super::{prune_worktrees, BranchCleanupErrorMode};
+use super::BranchCleanupErrorMode;
 
 #[derive(Default)]
 pub(super) struct WorktreeBranchCleanup {

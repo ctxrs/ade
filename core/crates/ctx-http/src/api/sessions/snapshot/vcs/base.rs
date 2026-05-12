@@ -1,8 +1,7 @@
 use super::*;
 use crate::daemon::git_status::HttpWorktreeVcsSource;
-pub(crate) use ctx_workspace_services::worktree_vcs::{
-    is_no_vcs_repo_error, resolve_worktree_diff_base_from_source, WorktreeDiffBaseResolution,
-    WorktreeVcsDiffBaseQuery,
+use ctx_workspace_services::worktree_vcs::{
+    resolve_worktree_diff_base_from_source, WorktreeDiffBaseResolution, WorktreeVcsDiffBaseQuery,
 };
 
 pub(crate) async fn resolve_diff_base_with_meta(

@@ -2,9 +2,10 @@ use super::*;
 use crate::api::sessions::diff_exec::diff_worktree_summary_for_session;
 use crate::daemon::git_status::HttpWorktreeVcsSource;
 use ctx_workspace_services::worktree_vcs::{
-    worktree_vcs_diff_summary_mismatch, worktree_vcs_session_diff_summary_available,
-    worktree_vcs_session_diff_summary_no_repo, worktree_vcs_session_diff_summary_unavailable,
-    WorktreeVcsCommitLookupSource, WorktreeVcsSessionDiffSummaryOutcome,
+    is_no_vcs_repo_error, worktree_vcs_diff_summary_mismatch,
+    worktree_vcs_session_diff_summary_available, worktree_vcs_session_diff_summary_no_repo,
+    worktree_vcs_session_diff_summary_unavailable, WorktreeVcsCommitLookupSource,
+    WorktreeVcsSessionDiffSummaryOutcome,
 };
 
 pub(super) fn session_diff_summary_no_repo_response(

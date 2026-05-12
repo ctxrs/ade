@@ -2,8 +2,8 @@ use std::path::Path;
 
 use ctx_core::ids::TaskId;
 use ctx_core::models::{Workspace, Worktree};
+use ctx_workspace_services::worktree_vcs::is_git_worktree;
 
-use super::super::is_git_worktree;
 use super::branches::{collect_worktree_branch_for_cleanup, WorktreeBranchCleanup};
 use removal::{
     remove_git_worktree, remove_non_git_worktree_dir, remove_orphaned_worktree_dir,
