@@ -7,7 +7,7 @@ use axum::http::StatusCode;
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{ExecutionEnvironment, Worktree};
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
-use ctx_workspace_services::file_completions;
+use ctx_workspace_services::file_completions::{self, CachedFileCompletions};
 use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
 
 use crate::daemon::AppState;
@@ -37,7 +37,7 @@ pub(crate) async fn load_and_cache_worktree_files(
     let mut cache = state.workspaces.file_completions_cache.lock().await;
     cache.insert(
         worktree.id,
-        crate::daemon::TimedEntry::new(crate::daemon::CachedFileCompletions {
+        crate::daemon::TimedEntry::new(CachedFileCompletions {
             cached_at: now,
             files: files.clone(),
         }),
@@ -62,7 +62,7 @@ pub(crate) async fn load_and_cache_workspace_files(
         .await;
     cache.insert(
         ws_id,
-        crate::daemon::TimedEntry::new(crate::daemon::CachedFileCompletions {
+        crate::daemon::TimedEntry::new(CachedFileCompletions {
             cached_at: now,
             files: files.clone(),
         }),

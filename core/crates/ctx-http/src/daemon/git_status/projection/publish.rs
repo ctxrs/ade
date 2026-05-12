@@ -58,7 +58,7 @@ async fn upsert_worktree_vcs_snapshot(
     }
     let mut cache = state.workspaces.worktree_vcs_snapshots.lock().await;
     let entry = cache.entry(snapshot.worktree_id).or_insert_with(|| {
-        crate::daemon::TimedEntry::new(pending_worktree_vcs_snapshot_cache_entry(
+        crate::daemon::state::TimedEntry::new(pending_worktree_vcs_snapshot_cache_entry(
             snapshot.clone(),
             now,
             policy,

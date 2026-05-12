@@ -56,9 +56,7 @@ pub use activity::{
     daemon_sandbox_work_activity_summary, daemon_turn_activity_summary, ActiveTurnRecord,
     DaemonSandboxWorkActivitySummary, DaemonTurnActivitySummary,
 };
-pub use ctx_provider_runtime::{CachedProviderOptions, CachedProviderVerify};
 pub use ctx_update_service::UpdateDrainState;
-pub use ctx_workspace_services::file_completions::CachedFileCompletions;
 pub(crate) use lifecycle::spawn_deferred_daemon_shutdown;
 #[cfg(test)]
 pub(crate) use listener::daemon_public_base_url_from_env;
@@ -70,7 +68,6 @@ pub(crate) use mcp_auth::{
 #[cfg(test)]
 pub(crate) use retention::prune_archived_session_data_for_all_workspaces;
 pub(crate) use state::AttachmentMaterializationTask;
-pub(crate) use state::WorktreeVcsDirtyBits;
 pub use state::{
     AppRuntimeFlags, AppState, CacheSweepConfig, CacheSweepStats, GitStatusSnapshotCacheEntry,
     SessionHeadCacheKey, StoreLookup, TimedEntry, WorkspaceActiveHeadCacheEntry,

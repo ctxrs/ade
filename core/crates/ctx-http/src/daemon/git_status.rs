@@ -16,7 +16,9 @@ use ctx_workspace_services::worktree_vcs::{
     worktree_vcs_dirty_transient_snapshot, worktree_vcs_driver_for_kind,
     worktree_vcs_refresh_transient_snapshot, WorktreeVcsDriver,
 };
-pub use ctx_workspace_services::worktree_vcs::{GitStatusEntry, GitStatusSnapshot};
+pub use ctx_workspace_services::worktree_vcs::{
+    GitStatusEntry, GitStatusSnapshot, WorktreeVcsDirtyBits,
+};
 pub use projection::load_git_status_snapshot;
 use projection::{publish_transient_worktree_vcs_snapshot, refresh_worktree_vcs_projection};
 use scheduler::ensure_worktree_vcs_scheduler_started;
@@ -88,7 +90,7 @@ async fn request_worktree_vcs_refresh_inner(
 pub async fn mark_worktree_vcs_dirty(
     state: &Arc<AppState>,
     worktree: &Worktree,
-    dirty_bits: crate::daemon::WorktreeVcsDirtyBits,
+    dirty_bits: WorktreeVcsDirtyBits,
     candidate_paths: Vec<String>,
 ) -> Result<()> {
     if !state.worktree_vcs_enabled() {

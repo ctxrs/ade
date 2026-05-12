@@ -42,7 +42,6 @@ pub use ctx_workspace_active_snapshot::{
 };
 pub(crate) use ctx_workspace_services::worktree_vcs::{
     worktree_vcs_enabled_from_env, worktree_vcs_scheduler_concurrency_from_env,
-    WorktreeVcsDirtyBits,
 };
 pub use ctx_workspace_services::worktree_vcs::{
     GitStatusSnapshotCacheEntry, WorktreeVcsSnapshotCacheEntry,

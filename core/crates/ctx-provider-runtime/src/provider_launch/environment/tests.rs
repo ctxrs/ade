@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::path::PathBuf;
+
 use anyhow::Context;
 use ctx_core::provider_ids::CODEX_PROVIDER_ID;
 

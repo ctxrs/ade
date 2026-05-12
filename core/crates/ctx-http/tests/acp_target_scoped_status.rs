@@ -15,6 +15,7 @@ use ctx_managed_installs::{
 };
 use ctx_provider_install::install_state::InstallTarget;
 use ctx_provider_matrix::{builtin_matrix, get_entry, recommended_release, ProviderInstall};
+use ctx_provider_runtime::CachedProviderOptions;
 use ctx_providers::adapters::{ProviderHealth, ProviderStatus};
 
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -424,7 +425,7 @@ async fn workspace_options_use_workspace_target_status_for_acp_provider() {
         .with_provider_options_cache(|cache| {
             cache.insert(
                 cache_key_host,
-                ctx_http::daemon::CachedProviderOptions {
+                CachedProviderOptions {
                     cached_at: Instant::now(),
                     value: serde_json::json!({
                         "provider_id": provider_id,
@@ -437,7 +438,7 @@ async fn workspace_options_use_workspace_target_status_for_acp_provider() {
             );
             cache.insert(
                 cache_key_container,
-                ctx_http::daemon::CachedProviderOptions {
+                CachedProviderOptions {
                     cached_at: Instant::now(),
                     value: serde_json::json!({
                         "provider_id": provider_id,

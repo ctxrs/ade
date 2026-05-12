@@ -8,6 +8,7 @@ use serde_json::json;
 use tokio::sync::{mpsc, Mutex as AsyncMutex};
 
 use ctx_core::models::{Session, SessionEventType, SessionHeadSnapshot};
+use ctx_provider_runtime::CachedProviderOptions;
 use ctx_providers::adapters::{
     ProviderAdapter, ProviderCapabilities, ProviderHealth, ProviderProcessInfo,
     ProviderRestartMode, ProviderStatus, RunHandle, TurnInput,
@@ -776,7 +777,7 @@ async fn assert_live_crp_session_model_switch_case(
         .with_provider_options_cache(|cache| {
             cache.insert(
                 format!("{}/host/{provider_id}", workspace.id.0),
-                ctx_http::daemon::CachedProviderOptions {
+                CachedProviderOptions {
                     cached_at: std::time::Instant::now(),
                     value: json!({
                         "models": {
@@ -970,7 +971,7 @@ async fn set_session_model_allows_explicit_model_outside_cached_catalog() {
         .with_provider_options_cache(|cache| {
             cache.insert(
                 format!("{}/host/fake-set-model", workspace.id.0),
-                ctx_http::daemon::CachedProviderOptions {
+                CachedProviderOptions {
                     cached_at: std::time::Instant::now(),
                     value: json!({
                         "models": {

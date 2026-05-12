@@ -12,9 +12,6 @@ use crate::daemon::AppState;
 use super::turn_start::turn_start_deadline;
 
 mod mcp;
-mod openhands;
-#[cfg(test)]
-mod tests;
 
 pub(super) struct PreparedProviderLaunchEnvironment {
     pub(super) mcp_token: Option<String>,
@@ -29,7 +26,12 @@ pub(super) async fn prepare_provider_launch_environment(
     workdir: &Path,
     provider_env: &mut HashMap<String, String>,
 ) -> Result<PreparedProviderLaunchEnvironment> {
-    apply_provider_launch_overrides(runtime_provider_id, workdir, provider_env).await?;
+    ctx_provider_runtime::provider_launch::environment::apply_provider_launch_overrides(
+        runtime_provider_id,
+        workdir,
+        provider_env,
+    )
+    .await?;
     let mcp_disabled = provider_env
         .get("CTX_MCP_DISABLED")
         .and_then(|value| ctx_core::boolish::parse_boolish(value))
@@ -46,20 +48,4 @@ pub(super) async fn prepare_provider_launch_environment(
         codex_home,
         start_deadline_duration,
     })
-}
-
-pub(super) async fn apply_provider_launch_overrides(
-    provider_id: &str,
-    workdir: &Path,
-    provider_env: &mut HashMap<String, String>,
-) -> Result<()> {
-    mcp::apply_provider_mcp_command_overrides(provider_id, provider_env);
-
-    if provider_id == "openhands" {
-        openhands::apply_openhands_launch_overrides(workdir, provider_env).await?;
-        return Ok(());
-    }
-
-    mcp::strip_unused_daemon_auth_from_provider_env(provider_env);
-    Ok(())
 }

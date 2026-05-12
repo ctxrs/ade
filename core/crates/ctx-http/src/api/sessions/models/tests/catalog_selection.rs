@@ -1,4 +1,5 @@
 use super::*;
+use ctx_provider_runtime::CachedProviderOptions;
 
 #[tokio::test]
 async fn load_provider_model_catalog_reads_target_scoped_options_cache() {
@@ -11,7 +12,7 @@ async fn load_provider_model_catalog_reads_target_scoped_options_cache() {
         .with_provider_options_cache(|cache| {
             cache.insert(
                 format!("{}/container/codex", workspace.id.0),
-                crate::daemon::CachedProviderOptions {
+                CachedProviderOptions {
                     cached_at: std::time::Instant::now(),
                     value: serde_json::json!({
                         "models": {

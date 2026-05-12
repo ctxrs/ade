@@ -1,4 +1,5 @@
 use super::*;
+use ctx_provider_runtime::{CachedProviderOptions, CachedProviderVerify};
 
 async fn insert_options_cache(state: &Arc<AppState>, key: &str, value: serde_json::Value) {
     state
@@ -6,7 +7,7 @@ async fn insert_options_cache(state: &Arc<AppState>, key: &str, value: serde_jso
         .with_provider_options_cache(|cache| {
             cache.insert(
                 key.to_string(),
-                crate::daemon::CachedProviderOptions {
+                CachedProviderOptions {
                     cached_at: std::time::Instant::now(),
                     value,
                 },
@@ -21,7 +22,7 @@ async fn insert_verify_cache(state: &Arc<AppState>, key: &str, value: serde_json
         .with_provider_verify_cache(|cache| {
             cache.insert(
                 key.to_string(),
-                crate::daemon::CachedProviderVerify {
+                CachedProviderVerify {
                     cached_at: std::time::Instant::now(),
                     value,
                 },
