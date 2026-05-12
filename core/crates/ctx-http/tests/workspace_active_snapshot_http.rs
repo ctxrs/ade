@@ -2051,7 +2051,7 @@ async fn worktree_vcs_activity_eviction_drops_refresh_lock() {
 }
 
 #[tokio::test]
-async fn workspace_stream_emits_gap_on_large_replay() {
+async fn workspace_stream_emits_gap_when_replay_exceeds_daemon_head_window() {
     let (repo, _data_dir, state, server) = setup().await;
     let base = &server.base_url;
     let client = &server.client;
@@ -2078,7 +2078,7 @@ async fn workspace_stream_emits_gap_on_large_replay() {
         "expected session to be stored"
     );
 
-    for _ in 0..2105 {
+    for _ in 0..65 {
         let event = store
             .append_session_event(
                 session.id,
@@ -2152,10 +2152,13 @@ async fn workspace_stream_emits_gap_on_large_replay() {
         }
     }
 
-    assert!(seen_gap, "expected session_gap for large replay");
+    assert!(
+        seen_gap,
+        "expected session_gap when replay exceeds daemon head window"
+    );
     assert!(
         seen_seed_after_gap,
-        "expected session_head_seed after session_gap for large replay"
+        "expected session_head_seed after daemon head-window replay gap"
     );
 }
 

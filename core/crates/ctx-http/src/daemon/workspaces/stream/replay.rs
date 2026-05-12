@@ -13,7 +13,12 @@ pub(crate) enum ReplayOutcome {
     ResetRequired,
 }
 
-const SESSION_REPLAY_MAX_EVENTS: usize = 2000;
+const SESSION_REPLAY_HEAD_SEED_LIMIT: u32 = 60;
+// Workspace streams render a bounded session head, not an audit-log replay. If a
+// subscriber misses more deltas than a recoverable head window, replaying each
+// stale delta floods the per-socket head queue and delays fresh foreground
+// traffic. Let replay_session_stream turn larger gaps into gap+seed recovery.
+const SESSION_REPLAY_DELTA_LIMIT: usize = SESSION_REPLAY_HEAD_SEED_LIMIT as usize;
 
 pub(crate) async fn replay_session_events<F, Fut>(
     state: &Arc<AppState>,
@@ -41,7 +46,7 @@ where
             session_id,
             after_cursor.last_event_seq,
             after_cursor.projection_rev,
-            SESSION_REPLAY_MAX_EVENTS,
+            SESSION_REPLAY_DELTA_LIMIT,
         )
         .await;
     match replay {
@@ -57,7 +62,9 @@ where
                 .any(|item| matches!(item, WorkspaceSessionReplayItem::Seed(_)));
             if saw_gap && !saw_seed {
                 let store = state.store_for_session(session_id).await.map_err(|_| ())?;
-                if let Ok(Some(head)) = store.get_session_head_snapshot(session_id, 60, true).await
+                if let Ok(Some(head)) = store
+                    .get_session_head_snapshot(session_id, SESSION_REPLAY_HEAD_SEED_LIMIT, true)
+                    .await
                 {
                     state
                         .workspaces
