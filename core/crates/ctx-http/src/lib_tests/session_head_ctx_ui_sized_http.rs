@@ -1,10 +1,10 @@
-use ctx_providers::adapters::ProviderAdapter;
-use serde::de::DeserializeOwned;
 use std::time::{Duration, Instant};
 
 use super::*;
+use fixtures::CtxUiSizedHeadFixture;
 use seed::{latest_turn_id, seed_ctx_ui_sized_session, tail_turn_ids, CtxUiSizedSeed};
 
+mod fixtures;
 mod seed;
 
 #[tokio::test]
@@ -19,41 +19,11 @@ async fn ctx_ui_sized_active_session_head_recovery_is_bounded() {
     const HEAD_BYTE_LIMIT: usize = 256_000;
     let head_recovery_budget = Duration::from_secs(2);
     let step_timeout = Duration::from_secs(180);
-    let _serial = home_env_test_lock().lock().await;
 
-    let repo = setup_git_repo().await;
-    let _projection_flush_ms = EnvVarGuard::set("CTX_ACTIVE_HEAD_PROJECTION_FLUSH_MS", "600000");
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
-    providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-    let state = Arc::new(AppState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:0".to_string(),
-        None,
-    ));
-    let app = api::router(state.clone());
+    let fixture = CtxUiSizedHeadFixture::new().await;
+    let (workspace, task, session) = fixture.create_default_session().await;
 
-    let workspace = create_workspace_via_api(&app, &repo.path().to_string_lossy()).await;
-    let (task_status, task): (StatusCode, ctx_core::models::Task) = json_request(
-        &app,
-        Method::POST,
-        format!("/api/workspaces/{}/tasks", workspace.id.0),
-        Some(json!({
-            "title": "ctx-ui sized active recovery",
-            "default_session": {
-                "provider_id": "fake",
-                "model_id": "fake-model"
-            }
-        })),
-    )
-    .await;
-    assert_eq!(task_status, StatusCode::OK);
-    let session = load_primary_session_via_api(&app, &task).await;
-
-    let store = state.store_for_session(session.id).await.unwrap();
+    let store = fixture.state.store_for_session(session.id).await.unwrap();
     seed_ctx_ui_sized_session(
         &store,
         session.id,
@@ -98,7 +68,9 @@ async fn ctx_ui_sized_active_session_head_recovery_is_bounded() {
     .unwrap();
     tokio::time::timeout(
         step_timeout,
-        state.ensure_workspace_active_snapshot_hydrated(workspace.id),
+        fixture
+            .state
+            .ensure_workspace_active_snapshot_hydrated(workspace.id),
     )
     .await
     .unwrap_or_else(|_| panic!("timed out hydrating workspace active snapshot"))
@@ -107,8 +79,7 @@ async fn ctx_ui_sized_active_session_head_recovery_is_bounded() {
     let started = Instant::now();
     let (head_status, head_body): (StatusCode, serde_json::Value) = tokio::time::timeout(
         step_timeout,
-        json_request(
-            &app,
+        fixture.json_request(
             Method::GET,
             format!(
                 "/api/sessions/{}/head?limit={HEAD_LIMIT}&include_events=true",
@@ -196,32 +167,4 @@ async fn ctx_ui_sized_active_session_head_recovery_is_bounded() {
         oldest_loaded_order_seq >= TOOL_COUNT - (TOOL_SUMMARY_LIMIT as i64 + 1),
         "tool-summary recovery must seek into the latest hot rows, not load the long tail"
     );
-}
-
-async fn json_request<T: DeserializeOwned>(
-    app: &axum::Router,
-    method: Method,
-    uri: impl Into<String>,
-    body: Option<serde_json::Value>,
-) -> (StatusCode, T) {
-    let req = Request::builder()
-        .method(method)
-        .uri(uri.into())
-        .header("content-type", "application/json")
-        .body(Body::from(
-            body.unwrap_or(serde_json::Value::Null).to_string(),
-        ))
-        .unwrap();
-    let res = app.clone().oneshot(req).await.unwrap();
-    let status = res.status();
-    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    let parsed = serde_json::from_slice(&body).unwrap_or_else(|err| {
-        panic!(
-            "failed to parse JSON response (status {}): {}\nbody: {}",
-            status,
-            err,
-            String::from_utf8_lossy(&body)
-        )
-    });
-    (status, parsed)
 }
