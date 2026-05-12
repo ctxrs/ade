@@ -1,5 +1,5 @@
 use super::*;
-use crate::daemon::ensure_provider_adapter_for_target;
+use crate::daemon::installer::ensure_provider_adapter_for_target;
 
 mod verify;
 

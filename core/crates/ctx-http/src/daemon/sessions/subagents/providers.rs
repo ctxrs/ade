@@ -29,9 +29,10 @@ pub(super) async fn load_requested_model_catalogs(
     )
     .await
     .map_err(internal_request_or_policy_error)?;
-    let managed = crate::daemon::load_managed_agent_server_config_or_err(&state.core.data_root)
-        .await
-        .map_err(internal_api_error)?;
+    let managed =
+        crate::daemon::installer::load_managed_agent_server_config_or_err(&state.core.data_root)
+            .await
+            .map_err(internal_api_error)?;
     let matrix = ctx_provider_matrix::load_matrix_cached(
         &state.core.data_root,
         &state.providers.matrix_cache,

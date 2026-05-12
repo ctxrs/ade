@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -10,13 +10,11 @@ use serde_json::json;
 
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{ExecutionEnvironment, SessionTurn, SessionTurnStatus};
-use ctx_providers::adapters::ProviderAdapter;
 use ctx_store::{Store, StoreManager, StoreManagerConfig};
 
 use crate::api;
 use crate::daemon::scheduler::reconcile_turn_terminal_state;
 use ctx_observability::telemetry::TelemetryConfig;
-use ctx_provider_install::install_state::InstallTarget;
 use ctx_provider_runtime::provider_usage;
 
 mod activity;
@@ -31,7 +29,6 @@ mod mcp_auth;
 mod memleak_debug;
 pub(crate) mod merge_queue;
 mod mobile_startup;
-mod provider_bootstrap;
 mod provider_child_reclassifier;
 pub mod provider_guard;
 pub(crate) mod provider_launch;
@@ -72,10 +69,6 @@ pub use mcp_auth::issue_provider_session_mcp_token;
 pub(crate) use mcp_auth::{
     emit_mcp_token_denied, issue_provider_session_mcp_token_with_capabilities,
     revoke_provider_session_mcp_token, verify_mcp_auth_token, McpAuthCapabilities, McpAuthContext,
-};
-pub(crate) use provider_bootstrap::{
-    ensure_provider_adapter_for_target, ensure_provider_adapter_for_target_with_cfg,
-    load_managed_agent_server_config_or_err,
 };
 #[cfg(test)]
 pub(crate) use retention::prune_archived_session_data_for_all_workspaces;

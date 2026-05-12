@@ -5,7 +5,7 @@ use ctx_provider_install::install_state::InstallTarget;
 use ctx_providers::adapters::ProviderAdapter;
 
 use crate::daemon::installer;
-use crate::daemon::{ensure_provider_adapter_for_target_with_cfg, AppState};
+use crate::daemon::AppState;
 
 pub(in crate::daemon::scheduler::runtime) struct PreparedProviderAdapter {
     pub(in crate::daemon::scheduler::runtime) adapter: Arc<dyn ProviderAdapter>,
@@ -19,10 +19,10 @@ pub(in crate::daemon::scheduler::runtime) async fn prepare_provider_adapter_for_
     is_linux_sandbox: bool,
 ) -> Result<PreparedProviderAdapter> {
     let install_target = provider_install_target_for_runtime(is_linux_sandbox);
-    let adapter_cfg = crate::daemon::load_managed_agent_server_config_or_err(&state.core.data_root)
+    let adapter_cfg = installer::load_managed_agent_server_config_or_err(&state.core.data_root)
         .await
         .map_err(|err| anyhow!(err.to_string()))?;
-    let adapter = ensure_provider_adapter_for_target_with_cfg(
+    let adapter = installer::ensure_provider_adapter_for_target_with_cfg(
         state.as_ref(),
         &adapter_cfg,
         runtime_provider_id,

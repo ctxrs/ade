@@ -61,7 +61,7 @@ pub(crate) async fn set_session_mode(
             crate::api::shared::status_code_for_internal_error(&err)
         })?;
 
-    let adapter = crate::daemon::ensure_provider_adapter_for_target(
+    let adapter = crate::daemon::installer::ensure_provider_adapter_for_target(
         state.as_ref(),
         &session.provider_id,
         install_target,

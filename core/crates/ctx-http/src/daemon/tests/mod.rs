@@ -7,9 +7,9 @@ use ctx_core::models::{
 };
 use ctx_managed_installs::ManagedInstallHost;
 use ctx_providers::adapters::{
-    ProviderCapabilities, ProviderHealth, ProviderProcessInfo, ProviderRestartMode,
-    ProviderSessionSweepConfig, ProviderSessionSweepStats, ProviderStatus, ProviderUsability,
-    RunHandle, TurnInput,
+    ProviderAdapter, ProviderCapabilities, ProviderHealth, ProviderProcessInfo,
+    ProviderRestartMode, ProviderSessionSweepConfig, ProviderSessionSweepStats, ProviderStatus,
+    ProviderUsability, RunHandle, TurnInput,
 };
 use ctx_providers::fake::FakeProviderAdapter;
 #[cfg(unix)]
