@@ -40,8 +40,9 @@ pub use git_commands::{
 };
 pub use local_source::LocalWorktreeVcsSource;
 pub use managed_worktree::{
-    branch_exists, create_managed_worktree, ensure_worktree_attached, is_git_worktree,
-    managed_worktree_path, matching_managed_worktree_path, prune_worktrees, remove_worktree,
+    branch_exists, create_managed_worktree, delete_worktree_branch, ensure_worktree_attached,
+    is_git_worktree, managed_worktree_path, matching_managed_worktree_path, prune_worktrees,
+    remove_worktree,
 };
 pub use projection::{
     plan_worktree_vcs_summary_refresh, plan_worktree_vcs_touched_files_refresh,

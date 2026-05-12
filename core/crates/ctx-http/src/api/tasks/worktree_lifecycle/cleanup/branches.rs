@@ -1,5 +1,5 @@
 use ctx_core::ids::TaskId;
-use ctx_fs::git::delete_branch;
+use ctx_workspace_services::worktree_vcs::delete_worktree_branch;
 
 use super::{prune_worktrees, BranchCleanupErrorMode};
 
@@ -38,7 +38,7 @@ pub(super) async fn cleanup_collected_worktree_branches(
     cleanup.branches_to_delete.sort();
     cleanup.branches_to_delete.dedup();
     for branch in cleanup.branches_to_delete {
-        if let Err(err) = delete_branch(workspace_root, &branch).await {
+        if let Err(err) = delete_worktree_branch(workspace_root, &branch).await {
             tracing::warn!(
                 task_id = %task_id.0,
                 branch,

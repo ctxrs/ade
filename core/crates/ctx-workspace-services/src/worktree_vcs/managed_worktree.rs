@@ -126,6 +126,13 @@ pub async fn remove_worktree(
     Ok(())
 }
 
+pub async fn delete_worktree_branch(
+    workspace_root: impl AsRef<Path>,
+    branch_name: &str,
+) -> anyhow::Result<()> {
+    ctx_fs::git::delete_branch(workspace_root, branch_name).await
+}
+
 fn normalize_path_for_comparison(path: &Path) -> PathBuf {
     let mut suffix = Vec::new();
     let mut cursor = path;
@@ -155,6 +162,15 @@ fn normalize_path_for_comparison(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn git(args: &[&str], cwd: &Path) {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .status()
+            .expect("run git");
+        assert!(status.success(), "git {args:?} failed");
+    }
 
     #[test]
     fn matching_managed_worktree_path_accepts_equivalent_existing_parent() {
@@ -187,6 +203,30 @@ mod tests {
             external_root.path(),
         )
         .is_none());
+    }
+
+    #[tokio::test]
+    async fn delete_worktree_branch_removes_existing_branch() {
+        let repo = tempfile::tempdir().expect("repo");
+        git(&["init"], repo.path());
+        git(&["symbolic-ref", "HEAD", "refs/heads/main"], repo.path());
+        git(&["config", "user.email", "ctx@example.com"], repo.path());
+        git(&["config", "user.name", "Ctx Test"], repo.path());
+        std::fs::write(repo.path().join("README.md"), "hello\n").expect("write readme");
+        git(&["add", "README.md"], repo.path());
+        git(&["commit", "-m", "initial"], repo.path());
+        git(&["branch", "stale"], repo.path());
+        assert!(branch_exists(repo.path(), "stale")
+            .await
+            .expect("branch exists"));
+
+        delete_worktree_branch(repo.path(), "stale")
+            .await
+            .expect("delete branch");
+
+        assert!(!branch_exists(repo.path(), "stale")
+            .await
+            .expect("branch removed"));
     }
 }
 
