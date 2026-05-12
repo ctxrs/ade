@@ -9,7 +9,10 @@ fn next_stream_only_event_seq() -> i64 {
 }
 
 fn is_terminal_session_event(event_type: &SessionEventType) -> bool {
-    matches!(event_type, SessionEventType::TurnFinished)
+    matches!(
+        event_type,
+        SessionEventType::TurnFinished | SessionEventType::TurnInterrupted
+    )
 }
 
 fn ensure_supported_session_event_type(event_type: &SessionEventType) -> Result<()> {

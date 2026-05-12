@@ -97,8 +97,28 @@ const pickUnusedPortSync = (fallback) => {
   return parsePort(String(out.stdout || "").trim(), fallback);
 };
 
+const pickUnusedPortExcludingSync = (fallback, excludedPorts) => {
+  for (let offset = 0; offset < 10; offset += 1) {
+    const candidate = pickUnusedPortSync(fallback + offset);
+    if (!excludedPorts.has(candidate)) {
+      return candidate;
+    }
+  }
+  for (let candidate = fallback; candidate <= 65535; candidate += 1) {
+    if (!excludedPorts.has(candidate)) {
+      return candidate;
+    }
+  }
+  return fallback;
+};
+
 const DEFAULT_DRIVER_PORT = pickUnusedPortSync(4444);
 const TAURI_DRIVER_PORT = parsePort(process.env.TAURI_DRIVER_PORT, DEFAULT_DRIVER_PORT);
+const DEFAULT_NATIVE_DRIVER_PORT = pickUnusedPortExcludingSync(4445, new Set([TAURI_DRIVER_PORT]));
+const TAURI_DRIVER_NATIVE_PORT = parsePort(
+  process.env.TAURI_DRIVER_NATIVE_PORT,
+  DEFAULT_NATIVE_DRIVER_PORT,
+);
 const TEST_BACKEND_PORT = parsePort(process.env.TAURI_TEST_BACKEND_PORT, 3000);
 const FIXED_MACOS_CN_BACKEND_PORT = 3000;
 const REQUESTED_MACOS_CN_BACKEND_PORT = parsePort(
@@ -110,6 +130,14 @@ const HAS_EXPLICIT_MACOS_CN_BACKEND_PORT =
 if (!String(process.env.TAURI_DRIVER_PORT || "").trim()) {
   // WDIO forks workers that reload this config; pin the chosen dynamic port for all children.
   process.env.TAURI_DRIVER_PORT = String(TAURI_DRIVER_PORT);
+}
+if (!String(process.env.TAURI_DRIVER_NATIVE_PORT || "").trim()) {
+  process.env.TAURI_DRIVER_NATIVE_PORT = String(TAURI_DRIVER_NATIVE_PORT);
+}
+if (process.platform !== "darwin" && TAURI_DRIVER_NATIVE_PORT === TAURI_DRIVER_PORT) {
+  throw new Error(
+    `TAURI_DRIVER_NATIVE_PORT must differ from TAURI_DRIVER_PORT on ${process.platform}; both resolved to ${TAURI_DRIVER_PORT}`,
+  );
 }
 
 const CTX_BIN = process.env.CTX_AUTOMATION_CTX_BIN ||
@@ -315,6 +343,7 @@ let daemonLogPath = null;
 let internalDaemonDataDir = null;
 let activeTestBackendPort = TEST_BACKEND_PORT;
 let activeTauriDriverPort = TAURI_DRIVER_PORT;
+let activeTauriDriverNativePort = TAURI_DRIVER_NATIVE_PORT;
 let cnBackendLeaseId = null;
 let cnBackendOwnedBySharedManager = false;
 
@@ -1855,8 +1884,9 @@ exports.config = {
     );
     console.error(`[wdio] app path=${APP_PATH}`);
     activeTauriDriverPort = TAURI_DRIVER_PORT;
+    activeTauriDriverNativePort = TAURI_DRIVER_NATIVE_PORT;
     console.error(
-      `[wdio] ports driver(requested)=${String(TAURI_DRIVER_PORT)} driver(effective)=${String(activeTauriDriverPort)} backend(requested)=${isDarwin ? String(HAS_EXPLICIT_MACOS_CN_BACKEND_PORT ? REQUESTED_MACOS_CN_BACKEND_PORT : FIXED_MACOS_CN_BACKEND_PORT) : String(TEST_BACKEND_PORT)} backend(effective)=${isDarwin ? String(FIXED_MACOS_CN_BACKEND_PORT) : String(TEST_BACKEND_PORT)}`,
+      `[wdio] ports driver(requested)=${String(TAURI_DRIVER_PORT)} driver(effective)=${String(activeTauriDriverPort)} native_driver(requested)=${String(TAURI_DRIVER_NATIVE_PORT)} native_driver(effective)=${String(activeTauriDriverNativePort)} backend(requested)=${isDarwin ? String(HAS_EXPLICIT_MACOS_CN_BACKEND_PORT ? REQUESTED_MACOS_CN_BACKEND_PORT : FIXED_MACOS_CN_BACKEND_PORT) : String(TEST_BACKEND_PORT)} backend(effective)=${isDarwin ? String(FIXED_MACOS_CN_BACKEND_PORT) : String(TEST_BACKEND_PORT)}`,
     );
     if (isDarwin && !process.env.CN_API_KEY) {
       throw new Error(
@@ -2108,6 +2138,7 @@ exports.config = {
     const driverEnv = {
       ...process.env,
       TAURI_DRIVER_PORT: String(activeTauriDriverPort),
+      TAURI_DRIVER_NATIVE_PORT: String(activeTauriDriverNativePort),
     };
     if (isDarwin) {
       // On macOS, tauri-driver talks to CrabNebula's local backend.
@@ -2130,6 +2161,7 @@ exports.config = {
         platform: process.platform,
         hasDisplay: Boolean(process.env.DISPLAY),
         port: activeTauriDriverPort,
+        nativePort: activeTauriDriverNativePort,
       });
       driverCmd = nonDarwinLaunch.command;
       driverArgs = nonDarwinLaunch.args;
@@ -2176,7 +2208,7 @@ exports.config = {
         proc: driverProcess,
         name: "tauri-driver",
         readyPromise: waitTauriDriverReady(driverHost, activeTauriDriverPort),
-        detail: `Requested TAURI_DRIVER_PORT=${String(TAURI_DRIVER_PORT)} effective=${String(activeTauriDriverPort)}.`,
+        detail: `Requested TAURI_DRIVER_PORT=${String(TAURI_DRIVER_PORT)} effective=${String(activeTauriDriverPort)} native=${String(activeTauriDriverNativePort)}.`,
       });
     }
   },

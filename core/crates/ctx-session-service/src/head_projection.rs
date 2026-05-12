@@ -123,6 +123,11 @@ pub fn patch_turn_from_event(turn: &mut SessionTurn, event: &SessionEvent) {
         SessionEventType::TurnStarted => {
             turn.status = SessionTurnStatus::Running;
         }
+        SessionEventType::TurnInterrupted => {
+            turn.status = SessionTurnStatus::Interrupted;
+            turn.end_seq = Some(event.seq);
+            turn.failure = None;
+        }
         SessionEventType::TurnFinished => {
             let Some(status) = terminal_status_from_finished_event(event) else {
                 return;
@@ -148,6 +153,10 @@ pub fn derive_summary_activity(event: &SessionEvent) -> Option<SessionActivitySt
         SessionEventType::TurnStarted => Some(SessionActivityState {
             is_working: true,
             last_turn_status: Some(SessionTurnStatus::Running),
+        }),
+        SessionEventType::TurnInterrupted => Some(SessionActivityState {
+            is_working: false,
+            last_turn_status: Some(SessionTurnStatus::Interrupted),
         }),
         SessionEventType::TurnFinished => {
             terminal_status_from_finished_event(event).map(|status| SessionActivityState {
@@ -441,14 +450,51 @@ mod tests {
     }
 
     #[test]
-    fn raw_terminal_events_do_not_publish_terminal_summary_activity() {
+    fn turn_interrupted_projects_immediate_terminal_activity_and_turn() {
+        let created_at = Utc::now();
+        let mut turn = SessionTurn {
+            turn_id: TurnId::new(),
+            session_id: SessionId::new(),
+            run_id: None,
+            user_message_id: None,
+            status: SessionTurnStatus::Running,
+            start_seq: Some(1),
+            end_seq: None,
+            started_at: created_at,
+            updated_at: created_at,
+            assistant_partial: None,
+            thought_partial: None,
+            metrics_json: None,
+            failure: None,
+            tool_total: 0,
+            tool_pending: 0,
+            tool_running: 0,
+            tool_completed: 0,
+            tool_failed: 0,
+        };
+        let event = test_event(SessionEventType::TurnInterrupted, json!({"reason": "user"}));
+
+        patch_turn_from_event(&mut turn, &event);
+
+        assert_eq!(turn.status, SessionTurnStatus::Interrupted);
+        assert_eq!(turn.end_seq, Some(event.seq));
+        assert_eq!(turn.failure, None);
+        assert_eq!(turn.updated_at, event.created_at);
+
+        let activity = derive_summary_activity(&event)
+            .expect("interrupt should publish terminal summary activity");
+        assert!(!activity.is_working);
+        assert_eq!(
+            activity.last_turn_status,
+            Some(SessionTurnStatus::Interrupted)
+        );
+    }
+
+    #[test]
+    fn raw_non_lifecycle_events_do_not_publish_terminal_summary_activity() {
         assert!(derive_summary_activity(&test_event(SessionEventType::Done, json!({}))).is_none());
         assert!(
             derive_summary_activity(&test_event(SessionEventType::Notice, json!({}))).is_none()
-        );
-        assert!(
-            derive_summary_activity(&test_event(SessionEventType::TurnInterrupted, json!({})))
-                .is_none()
         );
     }
 

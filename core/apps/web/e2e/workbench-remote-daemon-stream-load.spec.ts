@@ -159,6 +159,31 @@ type SessionHeadResponse = {
   }>;
 };
 
+type PostedMessage = {
+  id?: string;
+  turn_id?: string | null;
+};
+
+type SessionEventRecord = {
+  seq?: number;
+  event_type?: string;
+  turn_id?: string | null;
+  payload_json?: unknown;
+  created_at?: string | null;
+};
+
+type SessionEventsPage = {
+  events?: SessionEventRecord[];
+  next_cursor?: number | null;
+  has_more?: boolean;
+};
+
+type TurnTerminalObservation = {
+  observedAtMs: number;
+  status: string | null;
+  terminalAtMs: number | null;
+};
+
 type TelemetryMetricSummary = {
   name?: string;
   count?: number;
@@ -320,6 +345,9 @@ const formatUnknownError = (error: unknown): string => {
   if (error instanceof Error && error.message) return error.message;
   return String(error);
 };
+
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 
 const appendTail = (current: string, chunk: Buffer, maxLength = 12_000): string => {
   const next = `${current}${chunk.toString("utf8")}`;
@@ -817,7 +845,7 @@ function startBoundedBackgroundWriters(
             request,
             sessionId,
             buildBackgroundPrompt(label),
-            { timeoutMs: 30_000 },
+            { timeoutMs: 30_000, pollMs: 250 },
           );
           sent += 1;
         } catch (error) {
@@ -850,7 +878,8 @@ async function sendSessionMessage(
   sessionId: string,
   content: string,
   opts?: { retryBusyForMs?: number },
-): Promise<string> {
+): Promise<{ messageId: string; turnId: string; afterSeq: number }> {
+  const afterSeq = await currentSessionEventSeq(request, sessionId);
   const deadline = Date.now() + Math.max(0, opts?.retryBusyForMs ?? 0);
   while (true) {
     const response = await request.post(`/api/sessions/${sessionId}/messages`, {
@@ -860,8 +889,13 @@ async function sendSessionMessage(
       },
     });
     if (response.ok()) {
-      const payload = (await response.json()) as { id?: string };
-      return String(payload.id ?? "");
+      const payload = (await response.json()) as PostedMessage;
+      const messageId = String(payload.id ?? "");
+      const turnId = String(payload.turn_id ?? "");
+      if (!messageId || !turnId) {
+        throw new Error(`message send did not return message id and turn id for session ${sessionId}`);
+      }
+      return { messageId, turnId, afterSeq };
     }
     const body = await response.text().catch(() => "");
     const retryableBusy =
@@ -878,45 +912,106 @@ async function sendSessionMessage(
   }
 }
 
-async function waitForForegroundTurnCompletion(
+function terminalStatusFromEvent(event: SessionEventRecord): string | null {
+  if (event.event_type === "turn_interrupted") return "interrupted";
+  if (event.event_type !== "turn_finished") return null;
+  const status = asRecord(event.payload_json).status;
+  return typeof status === "string" ? status.toLowerCase() : null;
+}
+
+function eventCreatedAtMs(event: SessionEventRecord): number | null {
+  if (!event.created_at) return null;
+  const parsed = Date.parse(event.created_at);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function pageNextSeq(page: SessionEventsPage, events: SessionEventRecord[]): number | null {
+  if (typeof page.next_cursor === "number" && Number.isFinite(page.next_cursor)) {
+    return page.next_cursor;
+  }
+  const seqs = events
+    .map((event) => event.seq)
+    .filter((seq): seq is number => typeof seq === "number" && Number.isFinite(seq));
+  return seqs.length > 0 ? Math.max(...seqs) : null;
+}
+
+async function currentSessionEventSeq(
   request: APIRequestContext,
   sessionId: string,
-  marker: string,
+): Promise<number> {
+  const response = await request.get(`/api/sessions/${sessionId}/events?tail=1&include_transient=1`);
+  expect(response.ok(), `events cursor request failed: ${response.url()}`).toBeTruthy();
+  const payload = (await response.json()) as SessionEventsPage;
+  const events = Array.isArray(payload.events) ? payload.events : [];
+  return pageNextSeq(payload, events) ?? 0;
+}
+
+async function waitForTurnTerminalEvent(
+  request: APIRequestContext,
+  sessionId: string,
+  turnId: string,
+  statuses: ReadonlySet<string>,
   timeoutMs: number,
-): Promise<{ backendReadyAtMs: number; turnId: string }> {
+  startAfterSeq?: number,
+): Promise<TurnTerminalObservation> {
   const deadline = Date.now() + timeoutMs;
+  let afterSeq: number | null = startAfterSeq ?? null;
+  let useTail = afterSeq === null;
   while (Date.now() < deadline) {
-    const response = await request.get(`/api/sessions/${sessionId}/head`);
-    expect(response.ok(), `head request failed: ${response.url()}`).toBeTruthy();
-    const payload = (await response.json()) as SessionHeadResponse;
-    const messages = Array.isArray(payload.messages) ? payload.messages : [];
-    const turns = Array.isArray(payload.turns) ? payload.turns : [];
-    const userMessage = messages.find(
-      (message) =>
-        message?.role === "user" &&
-        typeof message.content === "string" &&
-        message.content.includes(marker),
-    );
-    if (userMessage?.id) {
-      const turn = turns.find((entry) => entry?.user_message_id === userMessage.id);
-      const assistantMessage = messages.find(
-        (message) =>
-          message?.turn_id === turn?.turn_id &&
-          message?.role === "assistant" &&
-          typeof message.content === "string" &&
-          message.content.includes(marker),
-      );
-      const status = String(turn?.status ?? "").toLowerCase();
-      if (assistantMessage?.content && (status === "completed" || status === "done")) {
+    const eventsUrl = useTail
+      ? `/api/sessions/${sessionId}/events?tail=1000&include_transient=1`
+      : `/api/sessions/${sessionId}/events?after_seq=${afterSeq ?? 0}&limit=1000&include_transient=1`;
+    const response = await request.get(eventsUrl);
+    expect(response.ok(), `events request failed: ${response.url()}`).toBeTruthy();
+    const payload = (await response.json()) as SessionEventsPage;
+    const wasTail = useTail;
+    useTail = false;
+    const events = Array.isArray(payload.events) ? payload.events : [];
+    for (const event of events) {
+      if (String(event.turn_id ?? "") !== turnId) continue;
+      const status = terminalStatusFromEvent(event);
+      if (status && statuses.has(status)) {
         return {
-          backendReadyAtMs: Date.now(),
-          turnId: String(turn?.turn_id ?? ""),
+          observedAtMs: Date.now(),
+          status,
+          terminalAtMs: eventCreatedAtMs(event),
         };
       }
     }
+    const nextSeq = pageNextSeq(payload, events);
+    if (nextSeq !== null) {
+      afterSeq = Math.max(afterSeq ?? nextSeq, nextSeq);
+    }
+    if (!wasTail && payload.has_more) {
+      continue;
+    }
     await sleep(HEAD_POLL_MS);
   }
-  throw new Error(`foreground turn did not complete for marker ${marker}`);
+  return { observedAtMs: Date.now(), status: null, terminalAtMs: null };
+}
+
+async function waitForForegroundTurnCompletion(
+  request: APIRequestContext,
+  sessionId: string,
+  turnId: string,
+  startAfterSeq: number,
+  timeoutMs: number,
+): Promise<{ backendReadyAtMs: number; turnId: string }> {
+  const terminal = await waitForTurnTerminalEvent(
+    request,
+    sessionId,
+    turnId,
+    new Set(["completed", "done"]),
+    timeoutMs,
+    startAfterSeq,
+  );
+  if (terminal.status) {
+    return {
+      backendReadyAtMs: terminal.terminalAtMs ?? terminal.observedAtMs,
+      turnId,
+    };
+  }
+  throw new Error(`foreground turn did not complete for turn ${turnId}`);
 }
 
 async function waitForVisibleMarker(
@@ -939,6 +1034,27 @@ async function waitForVisibleMarker(
   return value;
 }
 
+async function waitForVisibleTerminalStatus(
+  page: Page,
+  marker: string,
+  timeoutMs: number,
+): Promise<number> {
+  const handle = await page.waitForFunction(
+    ({ text }) => {
+      const session = document.querySelector('.wb-session-slot[aria-hidden="false"]');
+      const content = session?.textContent ?? "";
+      return content.includes(text) && /Interrupted|Cancelled|Canceled/.test(content) ? Date.now() : null;
+    },
+    { text: marker },
+    { timeout: timeoutMs },
+  );
+  const value = await handle.jsonValue();
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`marker ${marker} did not expose a visible terminal status`);
+  }
+  return value;
+}
+
 async function runForegroundProbe(
   page: Page,
   request: APIRequestContext,
@@ -947,7 +1063,7 @@ async function runForegroundProbe(
 ): Promise<ProbeOutcome> {
   let sentAtMs: number | null = null;
   try {
-    await sendSessionMessage(
+    const sent = await sendSessionMessage(
       request,
       sessionId,
       buildSlowPrompt(marker, { bodyLines: 24, toolCount: 2 }),
@@ -958,7 +1074,8 @@ async function runForegroundProbe(
     const { backendReadyAtMs, turnId } = await waitForForegroundTurnCompletion(
       request,
       sessionId,
-      marker,
+      sent.turnId,
+      sent.afterSeq,
       PROBE_TIMEOUT_MS,
     );
     const firstVisibleAtMs = await firstVisiblePromise;
@@ -992,32 +1109,36 @@ async function runForegroundProbe(
 }
 
 async function waitForTerminalInterrupted(
+  page: Page,
   request: APIRequestContext,
   sessionId: string,
+  turnId: string,
+  startAfterSeq: number,
   marker: string,
   timeoutMs: number,
-): Promise<{ terminalAtMs: number | null; status: string | null }> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const response = await request.get(`/api/sessions/${sessionId}/head`);
-    expect(response.ok(), `head request failed: ${response.url()}`).toBeTruthy();
-    const payload = (await response.json()) as SessionHeadResponse;
-    const messages = Array.isArray(payload.messages) ? payload.messages : [];
-    const turns = Array.isArray(payload.turns) ? payload.turns : [];
-    const userMessage = messages.find(
-      (message) =>
-        message?.role === "user" &&
-        typeof message.content === "string" &&
-        message.content.includes(marker),
-    );
-    const turn = turns.find((entry) => entry?.user_message_id === userMessage?.id);
-    const status = String(turn?.status ?? "").toLowerCase();
-    if (status === "interrupted" || status === "cancelled" || status === "canceled") {
-      return { terminalAtMs: Date.now(), status };
-    }
-    await sleep(HEAD_POLL_MS);
-  }
-  return { terminalAtMs: null, status: null };
+): Promise<{
+  terminalAtMs: number | null;
+  status: string | null;
+  terminalEventAtMs: number | null;
+  terminalEventObservedAtMs: number | null;
+}> {
+  const [terminalEvent, visibleAtMs] = await Promise.all([
+    waitForTurnTerminalEvent(
+      request,
+      sessionId,
+      turnId,
+      new Set(["interrupted", "cancelled", "canceled"]),
+      timeoutMs,
+      startAfterSeq,
+    ),
+    waitForVisibleTerminalStatus(page, marker, timeoutMs),
+  ]);
+  return {
+    terminalAtMs: visibleAtMs,
+    status: terminalEvent.status,
+    terminalEventAtMs: terminalEvent.terminalAtMs,
+    terminalEventObservedAtMs: terminalEvent.observedAtMs,
+  };
 }
 
 async function readTelemetryMetric(
@@ -1351,7 +1472,7 @@ async function runForcedForegroundGapRecovery(
   await waitForWorkspaceStreamConnected(page);
   const missedMarker = `remote-ui-gap-missed-${Date.now()}`;
   await setWorkspaceStreamDrop(page, true);
-  await sendSessionMessage(
+  const missed = await sendSessionMessage(
     request,
     sessionId,
     buildSlowPrompt(missedMarker, { bodyLines: 4, toolCount: 0 }),
@@ -1360,7 +1481,8 @@ async function runForcedForegroundGapRecovery(
   const missedCompletion = await waitForForegroundTurnCompletion(
     request,
     sessionId,
-    missedMarker,
+    missed.turnId,
+    missed.afterSeq,
     PROBE_TIMEOUT_MS,
   );
   await setWorkspaceStreamDrop(page, false);
@@ -1648,10 +1770,13 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
     requestAtMs: null as number | null,
     pendingAtMs: null as number | null,
     terminalAtMs: null as number | null,
+    terminalEventAtMs: null as number | null,
+    terminalEventObservedAtMs: null as number | null,
     terminalStatus: null as string | null,
     clickToRequestMs: null as number | null,
     clickToPendingMs: null as number | null,
     clickToTerminalMs: null as number | null,
+    clickToTerminalEventMs: null as number | null,
     waitFinishedAtMs: null as number | null,
   };
 
@@ -1694,7 +1819,7 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
     const interruptMarker = `remote-ui-interrupt-${Date.now()}`;
     interrupt.marker = interruptMarker;
     try {
-      await sendSessionMessage(
+      const sent = await sendSessionMessage(
         request,
         foregroundSessionId,
         buildSlowPrompt(interruptMarker, { bodyLines: 120, toolCount: 14 }),
@@ -1709,12 +1834,17 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
       });
       interrupt.pendingAtMs = Date.now();
       const terminal = await waitForTerminalInterrupted(
+        page,
         request,
         foregroundSessionId,
+        sent.turnId,
+        sent.afterSeq,
         interruptMarker,
         MAX_CLICK_TO_TERMINAL_MS + 5000,
       );
       interrupt.terminalAtMs = terminal.terminalAtMs;
+      interrupt.terminalEventAtMs = terminal.terminalEventAtMs;
+      interrupt.terminalEventObservedAtMs = terminal.terminalEventObservedAtMs;
       interrupt.terminalStatus = terminal.status;
     } catch (error) {
       interrupt.error = formatUnknownError(error);
@@ -1766,6 +1896,9 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
   }
   if (interrupt.clickAtMs !== null && interrupt.terminalAtMs !== null) {
     interrupt.clickToTerminalMs = interrupt.terminalAtMs - interrupt.clickAtMs;
+  }
+  if (interrupt.clickAtMs !== null && interrupt.terminalEventAtMs !== null) {
+    interrupt.clickToTerminalEventMs = interrupt.terminalEventAtMs - interrupt.clickAtMs;
   }
 
   await sleep(1500);

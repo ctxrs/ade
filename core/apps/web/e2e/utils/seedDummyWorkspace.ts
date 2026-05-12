@@ -65,6 +65,24 @@ type StreamStats = {
   failures: string[];
 };
 
+type PostedMessage = {
+  id?: string;
+  turn_id?: string | null;
+};
+
+type SessionEventRecord = {
+  seq?: number;
+  event_type?: string;
+  turn_id?: string | null;
+  payload_json?: unknown;
+};
+
+type SessionEventsPage = {
+  events?: SessionEventRecord[];
+  next_cursor?: number | null;
+  has_more?: boolean;
+};
+
 const parseCount = (value: number | NumberRange, index: number): number => {
   if (typeof value === "number") return value;
   const span = Math.max(0, value.max - value.min);
@@ -160,12 +178,95 @@ async function apiGet<T>(request: APIRequestContext, url: string): Promise<T> {
   return (await resp.json()) as T;
 }
 
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+
+const turnFinishedStatus = (event: SessionEventRecord): string | null => {
+  if (event.event_type === "turn_interrupted") return "interrupted";
+  if (event.event_type !== "turn_finished") return null;
+  const status = asRecord(event.payload_json).status;
+  return typeof status === "string" ? status.toLowerCase() : null;
+};
+
+const pageNextSeq = (page: SessionEventsPage, events: SessionEventRecord[]): number | null => {
+  if (typeof page.next_cursor === "number" && Number.isFinite(page.next_cursor)) {
+    return page.next_cursor;
+  }
+  const seqs = events
+    .map((event) => event.seq)
+    .filter((seq): seq is number => typeof seq === "number" && Number.isFinite(seq));
+  return seqs.length > 0 ? Math.max(...seqs) : null;
+};
+
+async function currentSessionEventSeq(
+  request: APIRequestContext,
+  sessionId: string,
+): Promise<number> {
+  const eventsPage = await apiGet<SessionEventsPage>(
+    request,
+    `/api/sessions/${sessionId}/events?tail=1&include_transient=1`,
+  );
+  const events = Array.isArray(eventsPage.events) ? eventsPage.events : [];
+  return pageNextSeq(eventsPage, events) ?? 0;
+}
+
+async function waitForTurnFinishedEvent(
+  request: APIRequestContext,
+  sessionId: string,
+  turnId: string,
+  opts?: { timeoutMs?: number; shouldStop?: () => boolean; pollMs?: number; afterSeq?: number },
+): Promise<void> {
+  const timeoutMs = opts?.timeoutMs ?? 15_000;
+  const pollMs = opts?.pollMs ?? 100;
+  const start = Date.now();
+  let afterSeq: number | null = opts?.afterSeq ?? null;
+  let useTail = afterSeq === null;
+  while (true) {
+    if (opts?.shouldStop?.()) {
+      return;
+    }
+    const eventsUrl = useTail
+      ? `/api/sessions/${sessionId}/events?tail=1000&include_transient=1`
+      : `/api/sessions/${sessionId}/events?after_seq=${afterSeq ?? 0}&limit=1000&include_transient=1`;
+    const eventsPage = await apiGet<SessionEventsPage>(
+      request,
+      eventsUrl,
+    );
+    const wasTail = useTail;
+    useTail = false;
+    const events = Array.isArray(eventsPage.events) ? eventsPage.events : [];
+    const completed = events.some((event) => {
+      if (String(event.turn_id ?? "") !== turnId) return false;
+      const status = turnFinishedStatus(event);
+      return status === "completed" || status === "done";
+    });
+    if (completed) {
+      return;
+    }
+    const nextSeq = pageNextSeq(eventsPage, events);
+    if (nextSeq !== null) {
+      afterSeq = Math.max(afterSeq ?? nextSeq, nextSeq);
+    }
+    if (!wasTail && eventsPage.has_more) {
+      continue;
+    }
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(`turn completion timeout for session ${sessionId} turn ${turnId}`);
+    }
+    await sleep(pollMs);
+  }
+}
+
 export async function waitForMessageTurnCompletion(
   request: APIRequestContext,
   sessionId: string,
   messageId: string,
-  opts?: { timeoutMs?: number; shouldStop?: () => boolean },
+  opts?: { timeoutMs?: number; shouldStop?: () => boolean; pollMs?: number; turnId?: string; afterSeq?: number },
 ): Promise<void> {
+  if (opts?.turnId) {
+    await waitForTurnFinishedEvent(request, sessionId, opts.turnId, opts);
+    return;
+  }
   const timeoutMs = opts?.timeoutMs ?? 15_000;
   const start = Date.now();
   while (true) {
@@ -184,7 +285,7 @@ export async function waitForMessageTurnCompletion(
     if (Date.now() - start > timeoutMs) {
       throw new Error(`turn completion timeout for session ${sessionId} message ${messageId}`);
     }
-    await sleep(50);
+    await sleep(opts?.pollMs ?? 100);
   }
 }
 
@@ -192,17 +293,25 @@ export async function postImmediateMessageAndWaitForCompletion(
   request: APIRequestContext,
   sessionId: string,
   content: string,
-  opts?: { timeoutMs?: number },
+  opts?: { timeoutMs?: number; pollMs?: number },
 ): Promise<{ id: string }> {
-  const savedMessage = await apiPost<{ id: string }>(request, `/api/sessions/${sessionId}/messages`, {
+  const afterSeq = await currentSessionEventSeq(request, sessionId);
+  const savedMessage = await apiPost<PostedMessage>(request, `/api/sessions/${sessionId}/messages`, {
     content,
     delivery: "immediate",
   });
   if (!savedMessage.id) {
     throw new Error(`seeded message for session ${sessionId} did not include an id`);
   }
-  await waitForMessageTurnCompletion(request, sessionId, savedMessage.id, opts);
-  return savedMessage;
+  if (!savedMessage.turn_id) {
+    throw new Error(`seeded message for session ${sessionId} did not include a turn_id`);
+  }
+  await waitForMessageTurnCompletion(request, sessionId, savedMessage.id, {
+    ...opts,
+    afterSeq,
+    turnId: savedMessage.turn_id,
+  });
+  return { id: savedMessage.id };
 }
 
 export async function seedDummyWorkspace(

@@ -204,13 +204,15 @@ async fn terminal_event_flush_updates_turn_and_summary_in_one_persist_path() {
 }
 
 #[tokio::test]
-async fn raw_provider_terminal_events_do_not_complete_turn_until_turn_finished_persists() {
+async fn provider_terminal_events_project_read_model_before_turn_finished_persists() {
     let (_dir, store) = setup_store().await;
     let cases = [
         (
             SessionEventType::Done,
             json!({"context_window": {"total_tokens": 7}}),
             json!({"status": "completed"}),
+            SessionTurnStatus::Running,
+            false,
             SessionTurnStatus::Completed,
             Some(json!({"total_tokens": 7})),
         ),
@@ -219,11 +221,22 @@ async fn raw_provider_terminal_events_do_not_complete_turn_until_turn_finished_p
             json!({"reason": "cancelled", "provider_cancelled": true}),
             json!({"status": "interrupted", "reason": "cancelled", "provider_cancelled": true}),
             SessionTurnStatus::Interrupted,
+            true,
+            SessionTurnStatus::Interrupted,
             None,
         ),
     ];
 
-    for (event_type, event_payload, finished_payload, expected_status, expected_metrics) in cases {
+    for (
+        event_type,
+        event_payload,
+        finished_payload,
+        expected_raw_status,
+        expected_raw_end_seq_present,
+        expected_status,
+        expected_metrics,
+    ) in cases
+    {
         let (session, turn_id) = create_session_with_turn(&store, None).await;
 
         let terminal = store
@@ -237,8 +250,11 @@ async fn raw_provider_terminal_events_do_not_complete_turn_until_turn_finished_p
             .await
             .unwrap()
             .expect("turn exists");
-        assert_eq!(running_turn.status, SessionTurnStatus::Running);
-        assert_eq!(running_turn.end_seq, None);
+        assert_eq!(running_turn.status, expected_raw_status);
+        assert_eq!(
+            running_turn.end_seq,
+            expected_raw_end_seq_present.then_some(terminal.seq)
+        );
 
         let persisted = store
             .persist_turn_terminal_events(

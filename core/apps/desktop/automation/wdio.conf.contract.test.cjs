@@ -150,6 +150,10 @@ test("wdio chooses an unused tauri-driver port on every platform by default", ()
   const script = fs.readFileSync(configPath, "utf8");
 
   assert.match(script, /const DEFAULT_DRIVER_PORT = pickUnusedPortSync\(4444\);/);
+  assert.match(script, /const DEFAULT_NATIVE_DRIVER_PORT = pickUnusedPortExcludingSync\(4445, new Set\(\[TAURI_DRIVER_PORT\]\)\);/);
+  assert.match(script, /TAURI_DRIVER_NATIVE_PORT/);
+  assert.match(script, /native_driver\(requested\)=/);
+  assert.match(script, /nativePort: activeTauriDriverNativePort/);
   assert.doesNotMatch(script, /process\.platform === "darwin"\s*\?\s*pickUnusedPortSync\(4444\)\s*:\s*4444/);
 });
 

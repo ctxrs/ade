@@ -19,6 +19,7 @@ const LINUX_SANDBOX_LOCAL = path.join(ROOT, "src-tauri", "src", "linux_sandbox",
 const DESKTOP_LOCAL_DAEMON = path.join(ROOT, "src-tauri", "src", "desktop_local_daemon.rs");
 const REMOTE_REAL_CI_WRAPPER = path.join(ROOT, "scripts", "test_remote_real_ci.sh");
 const REMOTE_DOCKER_WRAPPER = path.join(ROOT, "scripts", "test_remote_docker_contracts.sh");
+const LINUX_BUNDLED_LAUNCH_SMOKE = path.join(ROOT, "scripts", "linux_bundled_launch_smoke.mjs");
 const DESKTOP_SMOKE_WRAPPER = path.join(REPO_ROOT, "scripts", "desktop_smoke_with_infisical.sh");
 const LINUX_LOCAL_TRUTH_WRAPPER = path.join(REPO_ROOT, "scripts", "tests", "linux_local_install_sandbox_release_truth.sh");
 const UPDATER_LINUX_PROOF_WRAPPER = path.join(REPO_ROOT, "scripts", "tests", "updater_linux_release_truth.sh");
@@ -177,10 +178,25 @@ test("remote real CI wrapper retries startup-only WebDriver session failures", (
   assert.match(script, /UND_ERR_HEADERS_TIMEOUT/);
   assert.match(script, /hyper::Error\\?\(IncompleteMessage\\?\)/);
   assert.match(script, /Could not start a new session/);
+  assert.match(script, /sweep_webkit_automation_helpers\(\) \{/);
+  assert.match(script, /attempt_daemon_data_dir="\$\{attempt_dir\}\/controller-daemon-data"/);
+  assert.match(script, /CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP="\$\{CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP:-1\}"/);
+  assert.match(script, /CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP="\$\{CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP:-1\}"/);
+  assert.match(script, /CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR="\$\{attempt_daemon_data_dir\}"/);
+  assert.match(script, /XDG_RUNTIME_DIR="\$\{attempt_xdg_runtime_dir\}"/);
+  assert.match(script, /sweep_webkit_automation_helpers/);
   assert.match(script, /\[\[ -f "\$\{report_path\}" \]\]/);
   assert.match(script, /wdio-attempt-\$\{attempt\}\.log/);
   assert.match(script, /retrying startup-only WebDriver session failure/);
   assert.match(script, /rm -f "\$\{report_path\}"/);
+});
+
+test("linux bundled launch smoke passes explicit tauri-driver native port", () => {
+  const script = fs.readFileSync(LINUX_BUNDLED_LAUNCH_SMOKE, "utf8");
+
+  assert.match(script, /--native-port/);
+  assert.match(script, /TAURI_DRIVER_NATIVE_PORT: String\(nativePort\)/);
+  assert.match(script, /failed to allocate distinct tauri-driver native port/);
 });
 
 test("updater Linux proof targets storage channel for stable dry-run proofs", () => {

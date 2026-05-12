@@ -189,6 +189,29 @@ stream_log_until_pid_exits() {
   fi
 }
 
+sweep_webkit_automation_helpers() {
+  if ! command -v ps >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local pids=()
+  local pid cmd
+  while read -r pid cmd; do
+    if [[ -z "${pid}" || -z "${cmd:-}" ]]; then
+      continue
+    fi
+    case "${cmd}" in
+      *WebKitWebDriver*|*wkwebdriver*|*WebKitWebProcess*|*WebKitNetworkProcess*|*WebKitGPUProcess*|*WebKitPluginProcess*|*WebKitStorageProcess*|*WebKitWebExtension*)
+        pids+=("${pid}")
+        ;;
+    esac
+  done < <(ps -Ao pid=,command= 2>/dev/null || true)
+
+  if [[ "${#pids[@]}" -gt 0 ]]; then
+    kill -9 "${pids[@]}" >/dev/null 2>&1 || true
+  fi
+}
+
 classify_report() {
   local report_path="$1"
   local allow_skip="$2"
@@ -248,12 +271,27 @@ run_lane() {
     local attempt=1
     local cmd_exit=0
     while true; do
+      local attempt_dir="${lane_dir}/automation-attempt-${attempt}"
       local attempt_log="${lane_dir}/wdio-attempt-${attempt}.log"
+      local attempt_tmp_dir="${attempt_dir}/tmp"
+      local attempt_daemon_data_dir="${attempt_dir}/controller-daemon-data"
+      local attempt_xdg_token
+      attempt_xdg_token="$(printf '%s' "${BUILDKITE_JOB_ID:-local}-${lane}-${attempt}-$$" | tr -c 'A-Za-z0-9._-' '_')"
+      local attempt_xdg_runtime_dir="/tmp/ctx-remote-real-xdg-${attempt_xdg_token}"
       rm -f "${report_path}"
+      rm -rf "${attempt_xdg_runtime_dir}"
+      mkdir -p "${attempt_tmp_dir}" "${attempt_daemon_data_dir}" "${attempt_xdg_runtime_dir}"
+      chmod 700 "${attempt_xdg_runtime_dir}"
       touch "${attempt_log}"
+      sweep_webkit_automation_helpers
       set +e
       (
         cd "${ROOT}"
+        export CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP="${CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP:-1}"
+        export CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP="${CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP:-1}"
+        export CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR="${attempt_daemon_data_dir}"
+        export CTX_AUTOMATION_TMPDIR="${attempt_tmp_dir}"
+        export XDG_RUNTIME_DIR="${attempt_xdg_runtime_dir}"
         "${cmd[@]}"
       ) >"${attempt_log}" 2>&1 &
       local cmd_pid="$!"
@@ -261,6 +299,8 @@ run_lane() {
       wait "${cmd_pid}"
       cmd_exit="$?"
       set -e
+      sweep_webkit_automation_helpers
+      rm -rf "${attempt_xdg_runtime_dir}"
       cp "${attempt_log}" "${wdio_log}"
       if [[ "${cmd_exit}" -eq 0 ]]; then
         break

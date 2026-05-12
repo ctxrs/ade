@@ -5,7 +5,7 @@ use chrono::Utc;
 use ctx_core::ids::{MessageId, SessionEventId, TurnId, WorktreeId};
 use ctx_core::models::{
     ExecutionEnvironment, SessionActivityState, SessionHeadDelta, SessionHeadWindow, SessionStatus,
-    SessionSummaryDelta, SessionTurnStatus,
+    SessionSummaryDelta, SessionTurn, SessionTurnStatus,
 };
 use serde_json::json;
 
@@ -174,6 +174,92 @@ async fn publish_user_message_materializes_head_summary_and_task_delta() {
 }
 
 #[tokio::test]
+async fn publish_turn_interrupted_materializes_immediate_terminal_head_state() {
+    let runtime = SessionRuntime::<()>::new(Duration::from_secs(60));
+    let session = test_session();
+    let host = RecordingPublicationHost::new(session.clone());
+    *host.projection_rev.lock().await = Some(44);
+    let turn_id = TurnId::new();
+    *host.turn.lock().await = Some(SessionTurn {
+        turn_id,
+        session_id: session.id,
+        run_id: None,
+        user_message_id: None,
+        status: SessionTurnStatus::Running,
+        start_seq: Some(12),
+        end_seq: None,
+        started_at: Utc::now(),
+        updated_at: Utc::now(),
+        assistant_partial: None,
+        thought_partial: None,
+        metrics_json: None,
+        failure: None,
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+    });
+    let mut event = test_event(
+        session.id,
+        SessionEventType::TurnInterrupted,
+        json!({"reason": "user"}),
+    );
+    event.turn_id = Some(turn_id);
+    event.seq = 45;
+
+    runtime.publish_event_with_host(&host, event).await;
+
+    let head_deltas = host.head_deltas.lock().await;
+    assert_eq!(head_deltas.len(), 1);
+    let published = &head_deltas[0];
+    assert!(published.durable);
+    assert_eq!(published.delta.last_event_seq, 45);
+    assert_eq!(published.delta.projection_rev, 44);
+    assert_eq!(
+        published
+            .delta
+            .turn
+            .as_ref()
+            .map(|turn| turn.status.clone()),
+        Some(SessionTurnStatus::Interrupted)
+    );
+    assert_eq!(
+        published.delta.turn.as_ref().and_then(|turn| turn.end_seq),
+        Some(45)
+    );
+    assert_eq!(
+        published
+            .delta
+            .activity
+            .as_ref()
+            .map(|activity| activity.last_turn_status.clone()),
+        Some(Some(SessionTurnStatus::Interrupted))
+    );
+    assert_eq!(
+        published
+            .delta
+            .activity
+            .as_ref()
+            .map(|activity| activity.is_working),
+        Some(false)
+    );
+    drop(head_deltas);
+
+    let summary_deltas = host.summary_deltas.lock().await;
+    assert_eq!(summary_deltas.len(), 1);
+    let activity = summary_deltas[0]
+        .activity
+        .as_ref()
+        .expect("summary activity");
+    assert!(!activity.is_working);
+    assert_eq!(
+        activity.last_turn_status,
+        Some(SessionTurnStatus::Interrupted)
+    );
+}
+
+#[tokio::test]
 async fn stream_only_event_uses_replay_cursor_and_stays_transient() {
     let runtime = SessionRuntime::<()>::new(Duration::from_secs(60));
     let session = test_session();
@@ -311,6 +397,7 @@ fn test_head_snapshot(session: &Session) -> SessionHeadSnapshot {
 #[derive(Default)]
 struct RecordingPublicationHost {
     session: Mutex<Option<Session>>,
+    turn: Mutex<Option<SessionTurn>>,
     task_delta_refresh_host: Arc<RecordingTaskDeltaRefreshHost>,
     replay_cursor: Mutex<SessionReplayCursor>,
     projection_rev: Mutex<Option<i64>>,
@@ -361,11 +448,11 @@ impl SessionEventPublicationHost for RecordingPublicationHost {
         _session_id: SessionId,
         _turn_id: TurnId,
     ) -> Option<SessionTurn> {
-        None
+        self.turn.lock().await.clone()
     }
 
     async fn load_turn(&self, _session_id: SessionId, _turn_id: TurnId) -> Option<SessionTurn> {
-        None
+        self.turn.lock().await.clone()
     }
 
     async fn session_replay_cursor(

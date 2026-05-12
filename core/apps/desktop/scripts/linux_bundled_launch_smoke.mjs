@@ -131,21 +131,23 @@ async function readLaunchState(browser) {
   }));
 }
 
-function spawnDriver({ port, artifactDir }) {
+function spawnDriver({ port, nativePort, artifactDir }) {
   const driverLogPath = path.join(artifactDir, "tauri-driver.log");
   fs.mkdirSync(path.dirname(driverLogPath), { recursive: true });
   const driverLogFd = fs.openSync(driverLogPath, "a");
   const useXvfb = process.platform === "linux" && !String(process.env.DISPLAY || "").trim();
   const command = useXvfb ? "xvfb-run" : "pnpm";
+  const portArgs = ["--port", String(port), "--native-port", String(nativePort)];
   const args = useXvfb
-    ? ["-a", "pnpm", "exec", "tauri-driver", "--port", String(port)]
-    : ["exec", "tauri-driver", "--port", String(port)];
+    ? ["-a", "pnpm", "exec", "tauri-driver", ...portArgs]
+    : ["exec", "tauri-driver", ...portArgs];
   const proc = spawn(command, args, {
     cwd: DESKTOP_ROOT,
     stdio: ["ignore", driverLogFd, driverLogFd],
     env: {
       ...process.env,
       TAURI_DRIVER_PORT: String(port),
+      TAURI_DRIVER_NATIVE_PORT: String(nativePort),
     },
   });
   return {
@@ -166,7 +168,18 @@ async function main() {
   }
   const artifactDir = options.artifactDir || fs.mkdtempSync(path.join(os.tmpdir(), "ctx-linux-launch-smoke-"));
   const driverPort = await pickUnusedPort();
-  const { proc, driverLogFd, driverLogPath } = spawnDriver({ port: driverPort, artifactDir });
+  let nativeDriverPort = await pickUnusedPort();
+  for (let attempt = 0; nativeDriverPort === driverPort && attempt < 5; attempt += 1) {
+    nativeDriverPort = await pickUnusedPort();
+  }
+  if (nativeDriverPort === driverPort) {
+    fail(`failed to allocate distinct tauri-driver native port: ${nativeDriverPort}`);
+  }
+  const { proc, driverLogFd, driverLogPath } = spawnDriver({
+    port: driverPort,
+    nativePort: nativeDriverPort,
+    artifactDir,
+  });
 
   let browser = null;
   try {
