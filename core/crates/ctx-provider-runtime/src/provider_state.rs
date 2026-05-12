@@ -37,6 +37,10 @@ impl ProviderRuntime {
         self.adapters.lock().await.contains_key(provider_id)
     }
 
+    pub async fn can_create_loaded_session_for_provider(&self, provider_id: &str) -> bool {
+        self.has_provider_adapter(provider_id).await
+    }
+
     pub async fn provider_adapter_count(&self) -> usize {
         self.adapters.lock().await.len()
     }
@@ -292,6 +296,25 @@ mod tests {
         assert!(
             !runtime
                 .is_configurable_provider_id(&matrix, "missing")
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn loaded_session_provider_requires_root_adapter() {
+        let adapter = Arc::new(ctx_providers::fake::FakeProviderAdapter::new());
+        let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
+        providers.insert("adapter-provider".to_string(), adapter);
+        let runtime = ProviderRuntime::new(providers);
+
+        assert!(
+            runtime
+                .can_create_loaded_session_for_provider("adapter-provider")
+                .await
+        );
+        assert!(
+            !runtime
+                .can_create_loaded_session_for_provider("missing-provider")
                 .await
         );
     }
