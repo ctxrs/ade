@@ -1,14 +1,10 @@
 use super::*;
-
-pub(super) struct CachedProviderOptionsSnapshot {
-    pub(super) cached_at: std::time::Instant,
-    pub(super) value: serde_json::Value,
-}
+use ctx_provider_runtime::provider_cache::CachedProviderJsonSnapshot;
 
 pub(in crate::api::provider_launch) struct ProviderOptionsCacheSnapshot {
     cache_key: String,
-    verify_entry: Option<CachedProviderOptionsSnapshot>,
-    authoritative_entry: Option<CachedProviderOptionsSnapshot>,
+    verify_entry: Option<CachedProviderJsonSnapshot>,
+    authoritative_entry: Option<CachedProviderJsonSnapshot>,
 }
 
 impl ProviderOptionsCacheSnapshot {
@@ -25,14 +21,7 @@ impl ProviderOptionsCacheSnapshot {
         } else {
             state
                 .providers
-                .with_provider_verify_cache(|cache| {
-                    cache
-                        .get(&cache_key)
-                        .map(|c| CachedProviderOptionsSnapshot {
-                            cached_at: c.cached_at,
-                            value: c.value.clone(),
-                        })
-                })
+                .provider_verify_cache_entry(&cache_key)
                 .await
         };
         let cached_entry = if skip_cached_config_surfaces {
@@ -40,14 +29,7 @@ impl ProviderOptionsCacheSnapshot {
         } else {
             state
                 .providers
-                .with_provider_options_cache(|cache| {
-                    cache
-                        .get(&cache_key)
-                        .map(|c| CachedProviderOptionsSnapshot {
-                            cached_at: c.cached_at,
-                            value: c.value.clone(),
-                        })
-                })
+                .provider_options_cache_entry(&cache_key)
                 .await
         };
         let authoritative_entry = cached_entry
@@ -100,15 +82,7 @@ impl ProviderOptionsCacheSnapshot {
     ) {
         state
             .providers
-            .with_provider_options_cache(|cache| {
-                cache.insert(
-                    self.cache_key.clone(),
-                    crate::daemon::CachedProviderOptions {
-                        cached_at: std::time::Instant::now(),
-                        value,
-                    },
-                );
-            })
+            .store_provider_options_cache_value(self.cache_key.clone(), value)
             .await;
     }
 
@@ -123,7 +97,7 @@ impl ProviderOptionsCacheSnapshot {
 
 fn attach_verify_cache(
     value: &mut serde_json::Value,
-    verify_entry: Option<&CachedProviderOptionsSnapshot>,
+    verify_entry: Option<&CachedProviderJsonSnapshot>,
     verify_ttl: Duration,
 ) {
     if let Some(verify_entry) = verify_entry {

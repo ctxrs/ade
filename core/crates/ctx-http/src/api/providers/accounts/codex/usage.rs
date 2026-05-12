@@ -15,7 +15,7 @@ pub(crate) async fn get_codex_accounts_usage(
     let cached_active = if !refresh {
         state
             .providers
-            .with_provider_usage_cache(|cache| cache.get(CODEX_PROVIDER_ID).cloned())
+            .provider_usage_cache_entry(CODEX_PROVIDER_ID)
             .await
     } else {
         None

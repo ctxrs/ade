@@ -1,9 +1,27 @@
 use std::collections::HashMap;
+use std::time::Instant;
 
 use ctx_core::ids::WorkspaceId;
 use ctx_provider_install::install_state::InstallTarget;
+use serde_json::Value;
 
 use crate::{provider_usage, CachedProviderOptions, CachedProviderVerify, ProviderRuntime};
+
+#[derive(Debug, Clone)]
+pub struct CachedProviderJsonSnapshot {
+    pub cached_at: Instant,
+    pub value: Value,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProviderRuntimeCacheStats {
+    pub adapters: usize,
+    pub statuses: usize,
+    pub options_cache: usize,
+    pub verify_cache: usize,
+    pub usage_cache: usize,
+    pub installs: usize,
+}
 
 impl ProviderRuntime {
     pub async fn with_provider_options_cache<R>(
@@ -28,6 +46,72 @@ impl ProviderRuntime {
     ) -> R {
         let mut cache = self.usage_cache.lock().await;
         f(&mut cache)
+    }
+
+    pub async fn provider_options_cache_entry(
+        &self,
+        cache_key: &str,
+    ) -> Option<CachedProviderJsonSnapshot> {
+        self.options_cache
+            .lock()
+            .await
+            .get(cache_key)
+            .map(|entry| CachedProviderJsonSnapshot {
+                cached_at: entry.cached_at,
+                value: entry.value.clone(),
+            })
+    }
+
+    pub async fn provider_verify_cache_entry(
+        &self,
+        cache_key: &str,
+    ) -> Option<CachedProviderJsonSnapshot> {
+        self.verify_cache
+            .lock()
+            .await
+            .get(cache_key)
+            .map(|entry| CachedProviderJsonSnapshot {
+                cached_at: entry.cached_at,
+                value: entry.value.clone(),
+            })
+    }
+
+    pub async fn store_provider_options_cache_value(&self, cache_key: String, value: Value) {
+        self.options_cache.lock().await.insert(
+            cache_key,
+            CachedProviderOptions {
+                cached_at: Instant::now(),
+                value,
+            },
+        );
+    }
+
+    pub async fn store_provider_verify_cache_value(&self, cache_key: String, value: Value) {
+        self.verify_cache.lock().await.insert(
+            cache_key,
+            CachedProviderVerify {
+                cached_at: Instant::now(),
+                value,
+            },
+        );
+    }
+
+    pub async fn provider_usage_cache_entry(
+        &self,
+        provider_id: &str,
+    ) -> Option<provider_usage::ProviderUsageSnapshot> {
+        self.usage_cache.lock().await.get(provider_id).cloned()
+    }
+
+    pub async fn cache_stats(&self) -> ProviderRuntimeCacheStats {
+        ProviderRuntimeCacheStats {
+            adapters: self.adapters.lock().await.len(),
+            statuses: self.statuses.lock().await.len(),
+            options_cache: self.options_cache.lock().await.len(),
+            verify_cache: self.verify_cache.lock().await.len(),
+            usage_cache: self.usage_cache.lock().await.len(),
+            installs: self.installs.lock().await.len(),
+        }
     }
 }
 
@@ -75,6 +159,43 @@ pub async fn invalidate_workspace_provider_options_cache(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn provider_json_cache_entries_round_trip_through_owner_apis() {
+        let runtime = ProviderRuntime::new(HashMap::new());
+
+        runtime
+            .store_provider_options_cache_value(
+                "workspace/host/codex".to_string(),
+                serde_json::json!({"models": []}),
+            )
+            .await;
+        runtime
+            .store_provider_verify_cache_value(
+                "workspace/host/codex".to_string(),
+                serde_json::json!({"status": "ok"}),
+            )
+            .await;
+
+        let options = runtime
+            .provider_options_cache_entry("workspace/host/codex")
+            .await
+            .expect("options cache entry");
+        assert_eq!(options.value, serde_json::json!({"models": []}));
+        let verify = runtime
+            .provider_verify_cache_entry("workspace/host/codex")
+            .await
+            .expect("verify cache entry");
+        assert_eq!(verify.value, serde_json::json!({"status": "ok"}));
+        assert!(runtime
+            .provider_options_cache_entry("workspace/host/missing")
+            .await
+            .is_none());
+
+        let stats = runtime.cache_stats().await;
+        assert_eq!(stats.options_cache, 1);
+        assert_eq!(stats.verify_cache, 1);
+    }
 
     #[test]
     fn cache_key_provider_match_only_checks_provider_segment() {

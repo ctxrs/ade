@@ -75,15 +75,7 @@ pub(super) async fn load_endpoint_model_catalog(
     value = redact_json_value(value);
     state
         .providers
-        .with_provider_options_cache(|cache| {
-            cache.insert(
-                cache_key,
-                crate::daemon::CachedProviderOptions {
-                    cached_at: std::time::Instant::now(),
-                    value,
-                },
-            );
-        })
+        .store_provider_options_cache_value(cache_key, value)
         .await;
     Ok(EndpointModelCatalog::Loaded(Some(Box::new(models))))
 }

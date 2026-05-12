@@ -64,15 +64,11 @@ async fn load_provider_model_catalog_for_install_target(
     let cache_key = provider_model_cache_key(workspace, provider_id, install_target);
     let cached_models = state
         .providers
-        .with_provider_options_cache(|cache| {
-            cache
-                .get(&cache_key)
-                .filter(|entry| {
-                    provider_options_cache_entry_is_authoritative(provider_id, &entry.value)
-                })
-                .and_then(|entry| entry.value.get("models").cloned())
-        })
+        .provider_options_cache_entry(&cache_key)
         .await;
+    let cached_models = cached_models
+        .filter(|entry| provider_options_cache_entry_is_authoritative(provider_id, &entry.value))
+        .and_then(|entry| entry.value.get("models").cloned());
     if let Some(models) = cached_models {
         if let Some(catalog) = build_model_catalog(&models) {
             return Ok(Some(catalog));

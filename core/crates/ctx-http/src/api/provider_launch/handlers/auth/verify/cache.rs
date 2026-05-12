@@ -14,14 +14,6 @@ pub(super) async fn store_provider_verify_cache(
     let cache_key = workspace_provider_cache_key(ws_id, install_target, provider_id);
     state
         .providers
-        .with_provider_verify_cache(|cache| {
-            cache.insert(
-                cache_key,
-                crate::daemon::CachedProviderVerify {
-                    cached_at: std::time::Instant::now(),
-                    value: verify_value,
-                },
-            );
-        })
+        .store_provider_verify_cache_value(cache_key, verify_value)
         .await;
 }
