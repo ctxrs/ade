@@ -32,7 +32,6 @@ mod mobile_scopes;
 mod org_policy;
 mod perf;
 mod provider_launch;
-pub(crate) mod provider_probe_auth;
 pub(crate) mod providers;
 mod repo;
 mod request_base;

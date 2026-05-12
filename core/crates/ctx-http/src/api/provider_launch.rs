@@ -21,7 +21,6 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use super::errors::ApiErrorResp;
-use super::provider_probe_auth::provider_auth_mode;
 use super::providers::{install_target_for_workspace, provider_status_for_target};
 use super::redact_json_value;
 use crate::daemon::AppState;
@@ -33,7 +32,8 @@ use ctx_provider_install::install_state::{
 };
 use ctx_provider_runtime::model_preferences::inject_preferred_model_id;
 use ctx_provider_runtime::provider_auth::{
-    selected_endpoint_from_harness_config, selected_endpoint_record_from_harness_config,
+    provider_auth_mode, selected_endpoint_from_harness_config,
+    selected_endpoint_record_from_harness_config,
 };
 use ctx_provider_runtime::provider_cache::workspace_provider_cache_key;
 use ctx_provider_runtime::provider_launch::config::{

@@ -1,8 +1,3 @@
-#[cfg(test)]
-pub(super) use super::super::provider_probe_auth::endpoint_selection_is_active;
-pub(super) use super::super::provider_probe_auth::provider_auth_mode;
-#[cfg(test)]
-pub(super) use super::super::provider_probe_auth::provider_has_active_auth_config;
 use super::*;
 use ctx_provider_runtime::provider_usability::{
     provider_status_is_usable, provider_status_unusable_reason,

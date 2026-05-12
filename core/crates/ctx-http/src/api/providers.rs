@@ -82,6 +82,10 @@ pub(crate) use status::{
 use types::*;
 
 #[cfg(test)]
+use ctx_provider_runtime::provider_auth::{
+    endpoint_selection_is_active, provider_auth_mode, provider_has_active_auth_config,
+};
+#[cfg(test)]
 use imports::import_result_requires_provider_restart;
 #[cfg(test)]
 use login::{
@@ -89,8 +93,6 @@ use login::{
     extract_auth_url_from_value, normalize_claude_login_line, read_trailing_claude_login_lines,
     resolve_claude_login_runtime_from_config, validate_callback_url,
 };
-#[cfg(test)]
-use probe::*;
 #[cfg(test)]
 use restarts::*;
 

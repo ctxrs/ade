@@ -1,6 +1,9 @@
 use ctx_harness_sources::HarnessProviderSourceConfig;
 use ctx_provider_runtime::model_preferences::preferred_model_id_from_available_models;
-use ctx_provider_runtime::provider_auth::selected_endpoint_record_from_harness_config;
+use ctx_provider_runtime::provider_auth::{
+    provider_auth_mode, provider_has_active_auth_config_with_runtime_root,
+    selected_endpoint_record_from_harness_config,
+};
 use ctx_provider_runtime::provider_launch::models::{
     endpoint_models_payload, subscription_models_payload_from_status,
 };
@@ -88,7 +91,7 @@ async fn provider_auth_summary(
         return (false, "none", None);
     }
 
-    match crate::api::provider_probe_auth::provider_has_active_auth_config_with_runtime_root(
+    match provider_has_active_auth_config_with_runtime_root(
         &state.core.data_root,
         None,
         provider_id,
@@ -98,7 +101,7 @@ async fn provider_auth_summary(
     {
         Ok(has_active_auth) => (
             has_active_auth,
-            probe::provider_auth_mode(has_active_auth, source_config),
+            provider_auth_mode(has_active_auth, source_config),
             None,
         ),
         Err(err) => (false, "none", Some(logs::redact_sensitive(&err))),

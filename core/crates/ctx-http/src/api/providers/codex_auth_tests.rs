@@ -1,5 +1,5 @@
-use super::probe::provider_has_active_auth_config;
 use ctx_harness_sources::{self as harness_sources, HarnessSourceKind};
+use ctx_provider_runtime::provider_auth::provider_has_active_auth_config;
 
 static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
