@@ -62,30 +62,12 @@ pub(in crate::api) async fn repo_staging_path(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<RepoStagingPathResp>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let staging_dir = state
-        .core
-        .data_root
-        .join("workspaces")
-        .join("staging")
-        .join(Uuid::new_v4().to_string());
+    let path =
+        ctx_workspace_services::repo_onboarding::create_repo_staging_path(&state.core.data_root)
+            .await
+            .map_err(repo_staging_path_error_response)?;
 
-    tokio::fs::create_dir_all(&staging_dir).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: format!(
-                    "failed to create staging dir '{}': {e}",
-                    staging_dir.display()
-                ),
-            }),
-        )
-    })?;
-
-    let path = tokio::fs::canonicalize(&staging_dir)
-        .await
-        .unwrap_or(staging_dir)
-        .to_string_lossy()
-        .to_string();
-
-    Ok(Json(RepoStagingPathResp { path }))
+    Ok(Json(RepoStagingPathResp {
+        path: path.to_string_lossy().to_string(),
+    }))
 }

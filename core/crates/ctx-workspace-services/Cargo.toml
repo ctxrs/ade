@@ -16,3 +16,4 @@ tempfile = "3"
 tokio.workspace = true
 toml = "0.8"
 tracing.workspace = true
+uuid.workspace = true

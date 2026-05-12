@@ -4,16 +4,13 @@ use axum::extract::{Extension, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use super::errors::ApiErrorResp;
 use crate::api::MobileAuthContext;
 use crate::daemon::AppState;
-use ctx_fs::vcs;
 use ctx_observability::logs;
 use ctx_workspace_services::repo_onboarding::{
-    ensure_git_usable, expand_tilde, validate_absolute_path, RepoGitCommandError,
-    RepoOnboardingPathError,
+    ensure_git_usable, RepoGitCommandError, RepoOnboardingPathError,
 };
 
 mod auth;
@@ -57,6 +54,17 @@ fn repo_onboarding_path_error_response(
 ) -> (StatusCode, Json<ApiErrorResp>) {
     (
         StatusCode::BAD_REQUEST,
+        Json(ApiErrorResp {
+            error: error.message().to_string(),
+        }),
+    )
+}
+
+fn repo_staging_path_error_response(
+    error: RepoOnboardingPathError,
+) -> (StatusCode, Json<ApiErrorResp>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
         Json(ApiErrorResp {
             error: error.message().to_string(),
         }),

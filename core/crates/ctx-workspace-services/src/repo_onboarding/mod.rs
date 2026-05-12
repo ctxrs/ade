@@ -1,6 +1,8 @@
 mod destination;
 mod git;
 mod path_policy;
+mod staging;
+mod status;
 
 pub use destination::{
     prepare_clone_destination, prepare_repo_init_path, validate_repo_destination,
@@ -12,3 +14,5 @@ pub use git::{
     RepoGitCommandError,
 };
 pub use path_policy::{derive_repo_name, expand_tilde, validate_absolute_path, validate_dest_name};
+pub use staging::create_repo_staging_path;
+pub use status::{repo_status, RepoStatusCheck};

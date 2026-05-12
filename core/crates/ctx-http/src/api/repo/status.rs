@@ -22,49 +22,12 @@ pub(in crate::api) async fn repo_status(
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(ApiErrorResp { error: e })))?;
 
-    let raw = req.path.trim();
-    if raw.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "path is required".to_string(),
-            }),
-        ));
-    }
-    let expanded = expand_tilde(raw)
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(ApiErrorResp { error: e })))?;
-    validate_absolute_path(&expanded, "path")
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(ApiErrorResp { error: e })))?;
-    let canonical = tokio::fs::canonicalize(&expanded).await.map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: format!("invalid path '{}': {e}", expanded.to_string_lossy()),
-            }),
-        )
-    })?;
-
-    let canonical_str = canonical.to_string_lossy().to_string();
-    let driver = match vcs::driver_for_path(&canonical).await {
-        Ok(d) => d,
-        Err(err) => {
-            return Ok(Json(RepoStatusResp {
-                canonical_path: canonical_str,
-                is_repo: false,
-                error: Some(logs::redact_sensitive(&err.to_string())),
-            }));
-        }
-    };
-    match driver.assert_repo(&canonical).await {
-        Ok(()) => Ok(Json(RepoStatusResp {
-            canonical_path: canonical_str,
-            is_repo: true,
-            error: None,
-        })),
-        Err(err) => Ok(Json(RepoStatusResp {
-            canonical_path: canonical_str,
-            is_repo: false,
-            error: Some(logs::redact_sensitive(&err.to_string())),
-        })),
-    }
+    let status = ctx_workspace_services::repo_onboarding::repo_status(&req.path)
+        .await
+        .map_err(repo_onboarding_path_error_response)?;
+    Ok(Json(RepoStatusResp {
+        canonical_path: status.canonical_path.to_string_lossy().to_string(),
+        is_repo: status.is_repo,
+        error: status.error.map(|error| logs::redact_sensitive(&error)),
+    }))
 }
