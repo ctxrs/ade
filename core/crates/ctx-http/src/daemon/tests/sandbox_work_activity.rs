@@ -1,22 +1,17 @@
 use super::*;
 
+mod fixtures;
+
+use fixtures::SandboxWorkActivityFixture;
+
 #[tokio::test]
 async fn sandbox_work_activity_ignores_host_turns() {
-    let _serial = sandbox_cli_env_test_lock().lock().await;
-    let _disable = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "0");
-    let temp = tempdir().unwrap();
-    let stores = StoreManager::open(temp.path()).await.unwrap();
-    let state = Arc::new(AppState::new(
-        temp.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://localhost".to_string(),
-        None,
-    ));
+    let fixture = SandboxWorkActivityFixture::new().await;
+    let state = fixture.state();
 
     let _ = create_session_with_turn_status(
         &state,
-        temp.path(),
+        fixture.root(),
         ExecutionEnvironment::Host,
         SessionTurnStatus::Running,
     )
@@ -31,28 +26,19 @@ async fn sandbox_work_activity_ignores_host_turns() {
 
 #[tokio::test]
 async fn sandbox_work_activity_counts_sandbox_turns() {
-    let _serial = sandbox_cli_env_test_lock().lock().await;
-    let _disable = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "0");
-    let temp = tempdir().unwrap();
-    let stores = StoreManager::open(temp.path()).await.unwrap();
-    let state = Arc::new(AppState::new(
-        temp.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://localhost".to_string(),
-        None,
-    ));
+    let fixture = SandboxWorkActivityFixture::new().await;
+    let state = fixture.state();
 
     let _ = create_session_with_turn_status(
         &state,
-        temp.path(),
+        fixture.root(),
         ExecutionEnvironment::Sandbox,
         SessionTurnStatus::Queued,
     )
     .await;
     let _ = create_session_with_turn_status(
         &state,
-        temp.path(),
+        fixture.root(),
         ExecutionEnvironment::Sandbox,
         SessionTurnStatus::Running,
     )
@@ -68,17 +54,8 @@ async fn sandbox_work_activity_counts_sandbox_turns() {
 
 #[tokio::test]
 async fn sandbox_work_activity_counts_runtime_operations() {
-    let _serial = sandbox_cli_env_test_lock().lock().await;
-    let _disable = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "0");
-    let temp = tempdir().unwrap();
-    let stores = StoreManager::open(temp.path()).await.unwrap();
-    let state = Arc::new(AppState::new(
-        temp.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://localhost".to_string(),
-        None,
-    ));
+    let fixture = SandboxWorkActivityFixture::new().await;
+    let state = fixture.state();
 
     let _runtime_guard = state.execution.harness.begin_runtime_operation();
 
@@ -89,17 +66,8 @@ async fn sandbox_work_activity_counts_runtime_operations() {
 
 #[tokio::test]
 async fn sandbox_work_activity_counts_prewarm_operations() {
-    let _serial = sandbox_cli_env_test_lock().lock().await;
-    let _disable = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "0");
-    let temp = tempdir().unwrap();
-    let stores = StoreManager::open(temp.path()).await.unwrap();
-    let state = Arc::new(AppState::new(
-        temp.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://localhost".to_string(),
-        None,
-    ));
+    let fixture = SandboxWorkActivityFixture::new().await;
+    let state = fixture.state();
 
     let _prewarm_guard = state.execution.harness.begin_prewarm_artifact_activity();
 
@@ -111,18 +79,9 @@ async fn sandbox_work_activity_counts_prewarm_operations() {
 #[cfg(unix)]
 #[tokio::test]
 async fn sandbox_work_activity_counts_container_backed_terminals() {
-    let _serial = sandbox_cli_env_test_lock().lock().await;
-    let _disable = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "0");
-    let temp = tempdir().unwrap();
-    let stores = StoreManager::open(temp.path()).await.unwrap();
-    let state = Arc::new(AppState::new(
-        temp.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://localhost".to_string(),
-        None,
-    ));
-    let cli_path = temp.path().join("container-terminal-cli.sh");
+    let fixture = SandboxWorkActivityFixture::new().await;
+    let state = fixture.state();
+    let cli_path = fixture.root().join("container-terminal-cli.sh");
     std::fs::write(&cli_path, "#!/bin/sh\ntrap 'exit 0' TERM INT\nsleep 60\n").unwrap();
     std::fs::set_permissions(&cli_path, std::fs::Permissions::from_mode(0o755)).unwrap();
     let terminal = state
@@ -133,7 +92,7 @@ async fn sandbox_work_activity_counts_container_backed_terminals() {
             task_id: Some(TaskId::new()),
             session_id: None,
             worktree_id: Some(WorktreeId::new()),
-            cwd: temp.path().to_path_buf(),
+            cwd: fixture.root().to_path_buf(),
             shell: "/bin/sh".to_string(),
             cols: None,
             rows: None,
@@ -172,11 +131,9 @@ async fn sandbox_work_activity_counts_container_backed_terminals() {
 #[cfg(unix)]
 #[tokio::test]
 async fn sandbox_work_activity_counts_running_workspace_containers() {
-    let _serial = sandbox_cli_env_test_lock().lock().await;
-    let _disable = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "0");
-    let temp = tempdir().unwrap();
-    let cli_path = temp.path().join("sandbox-cli.sh");
-    let log_path = temp.path().join("sandbox-cli.log");
+    let fixture = SandboxWorkActivityFixture::new().await;
+    let cli_path = fixture.root().join("sandbox-cli.sh");
+    let log_path = fixture.root().join("sandbox-cli.log");
     std::fs::write(
         &cli_path,
         format!(
@@ -190,14 +147,7 @@ async fn sandbox_work_activity_counts_running_workspace_containers() {
         CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
         &cli_path.to_string_lossy(),
     );
-    let stores = StoreManager::open(temp.path()).await.unwrap();
-    let state = Arc::new(AppState::new(
-        temp.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://localhost".to_string(),
-        None,
-    ));
+    let state = fixture.state();
 
     let activity = daemon_sandbox_work_activity_summary(&state).await.unwrap();
     assert!(activity.active);
