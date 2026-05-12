@@ -15,6 +15,7 @@ fi
 artifact_dir="${CTX_REMOTE_CI_ARTIFACT_DIR:-${ROOT}/core/apps/desktop/automation/artifacts/updater-remote-proof}"
 mkdir -p "${artifact_dir}"
 STRICT_PUBLISHED_ARTIFACTS="${CTX_UPDATER_REMOTE_E2E_STRICT_PUBLISHED_ARTIFACTS:-${CTX_UPDATER_E2E_STRICT_PUBLISHED_ARTIFACTS:-0}}"
+FORBID_PUBLISHED_FALLBACK="${CTX_UPDATER_REMOTE_E2E_FORBID_PUBLISHED_FALLBACK:-0}"
 PORT_BASE="${CTX_UPDATER_REMOTE_E2E_PORT_BASE:-$((34000 + RANDOM % 20000))}"
 TAURI_DRIVER_PORT_VALUE="${CTX_UPDATER_REMOTE_E2E_DRIVER_PORT:-${TAURI_DRIVER_PORT:-${PORT_BASE}}}"
 TAURI_TEST_BACKEND_PORT_VALUE="${CTX_UPDATER_REMOTE_E2E_BACKEND_PORT:-${TAURI_TEST_BACKEND_PORT:-$((PORT_BASE + 1))}}"
@@ -384,6 +385,13 @@ if [[ -n "${CTX_DESKTOP_APP_PATH:-}" && "$STRICT_PUBLISHED_ARTIFACTS" == "1" ]];
   echo "error: strict published-artifact remote proof forbids CTX_DESKTOP_APP_PATH/local AppDir input" >&2
   exit 2
 fi
+case "$FORBID_PUBLISHED_FALLBACK" in
+  0|1) ;;
+  *)
+    echo "error: CTX_UPDATER_REMOTE_E2E_FORBID_PUBLISHED_FALLBACK must be 0 or 1" >&2
+    exit 2
+    ;;
+esac
 
 if [[ -z "${CTX_DESKTOP_APP_PATH:-}" ]]; then
   if [[ "$STRICT_PUBLISHED_ARTIFACTS" == "1" ]]; then
@@ -392,6 +400,10 @@ if [[ -z "${CTX_DESKTOP_APP_PATH:-}" ]]; then
     echo "[updater-remote-proof] strict published-artifact mode; downloading controller AppImage for ${target_channel}" >&2
     resolved_app_path="$(download_published_controller_app "$download_base_url" "$target_channel")"
   elif ! resolved_app_path="$(resolve_local_smoke_app_path "${ROOT}")"; then
+    if [[ "$FORBID_PUBLISHED_FALLBACK" == "1" ]]; then
+      echo "error: source/staged remote proof requires CTX_DESKTOP_APP_PATH or a local AppDir; published artifact fallback is disabled" >&2
+      exit 2
+    fi
     download_base_url="$(resolve_download_base_url)"
     target_channel="$(resolve_target_channel)"
     echo "[updater-remote-proof] local AppDir unavailable; downloading published controller AppImage for ${target_channel}" >&2

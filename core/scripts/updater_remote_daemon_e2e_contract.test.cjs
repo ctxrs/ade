@@ -29,6 +29,16 @@ test("remote updater proof gives WebDriver enough time to launch published AppIm
   );
 });
 
+test("remote updater proof can fail closed instead of falling back to published artifacts", () => {
+  assert.match(scriptText, /FORBID_PUBLISHED_FALLBACK="\$\{CTX_UPDATER_REMOTE_E2E_FORBID_PUBLISHED_FALLBACK:-0\}"/);
+  assert.match(scriptText, /CTX_UPDATER_REMOTE_E2E_FORBID_PUBLISHED_FALLBACK must be 0 or 1/);
+  assert.match(
+    scriptText,
+    /elif ! resolved_app_path="\$\(resolve_local_smoke_app_path "\$\{ROOT\}"\)"; then\s+if \[\[ "\$FORBID_PUBLISHED_FALLBACK" == "1" \]\]; then\s+echo "error: source\/staged remote proof requires CTX_DESKTOP_APP_PATH or a local AppDir; published artifact fallback is disabled"/,
+  );
+  assert.match(scriptText, /local AppDir unavailable; downloading published controller AppImage/);
+});
+
 test("remote updater proof keeps shipped-app automation state inside the artifact directory", () => {
   assert.match(scriptText, /local attempt_dir="\$\{artifact_dir\}\/automation-attempt-\$\{attempt\}"/);
   assert.match(scriptText, /local attempt_tmp_dir="\$\{attempt_dir\}\/tmp"/);

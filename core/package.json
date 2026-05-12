@@ -32,6 +32,7 @@
     "buildkite:mac-provider-auth-x64": "node scripts/trigger_buildkite_mac_provider_auth.cjs --pipeline ctx-mac-provider-auth-x64 --branch ctx-mac-provider-auth-x64-manual-only",
     "release:buildkite": "node scripts/run_buildkite_release_controller.cjs",
     "release:buildkite:rehearsal": "node scripts/run_buildkite_release_rehearsal.cjs",
+    "release:buildkite:rc-proof": "BUILD_BUDDY_RELEASE_COMMIT=${BUILD_BUDDY_RELEASE_COMMIT:?set BUILD_BUDDY_RELEASE_COMMIT} node scripts/run_buildkite_release_controller.cjs --commit \"$BUILD_BUDDY_RELEASE_COMMIT\" --release-pipeline ctx-release-candidate-proof --skip-preview",
     "release:buildkite:provider-deps:verify": "BUILD_BUDDY_RELEASE_COMMIT=${BUILD_BUDDY_RELEASE_COMMIT:?set BUILD_BUDDY_RELEASE_COMMIT} node scripts/trigger_buildkite_provider_deps.cjs --commit \"$BUILD_BUDDY_RELEASE_COMMIT\" --no-publish",
     "release:buildkite:provider-deps:publish": "BUILD_BUDDY_RELEASE_COMMIT=${BUILD_BUDDY_RELEASE_COMMIT:?set BUILD_BUDDY_RELEASE_COMMIT} node scripts/trigger_buildkite_provider_deps.cjs --commit \"$BUILD_BUDDY_RELEASE_COMMIT\" --publish",
     "managed-runtime:mirror:check": "node scripts/managed_runtime_mirror.cjs --check-presence",
