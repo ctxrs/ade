@@ -5,7 +5,6 @@ use ctx_core::ids::{RunId, TaskId, TurnId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     ExecutionEnvironment, SessionEventType, SessionTurn, SessionTurnStatus, VcsKind,
 };
-use ctx_managed_installs::ManagedInstallHost;
 use ctx_providers::adapters::{
     ProviderAdapter, ProviderCapabilities, ProviderHealth, ProviderProcessInfo,
     ProviderRestartMode, ProviderSessionSweepConfig, ProviderSessionSweepStats, ProviderStatus,

@@ -54,6 +54,16 @@ async fn env_lock() -> tokio::sync::OwnedMutexGuard<()> {
         .await
 }
 
+async fn seed_provider_status(state: &Arc<AppState>, status: ProviderStatus) {
+    let provider_id = status.provider_id.clone();
+    state
+        .providers
+        .with_provider_statuses(|statuses| {
+            statuses.insert(provider_id, status);
+        })
+        .await;
+}
+
 fn ensure_test_build_identity() {
     static INIT: OnceLock<()> = OnceLock::new();
     INIT.get_or_init(|| {
@@ -312,8 +322,8 @@ async fn container_provider_status_fails_closed_when_hybrid_artifact_is_missing(
     );
     let app = common::router(state.clone());
 
-    state.providers.statuses.lock().await.insert(
-        "gemini".to_string(),
+    seed_provider_status(
+        &state,
         ProviderStatus {
             provider_id: "gemini".to_string(),
             installed: false,
@@ -325,7 +335,8 @@ async fn container_provider_status_fails_closed_when_hybrid_artifact_is_missing(
             details: HashMap::new(),
             usability: ctx_providers::adapters::ProviderUsability::default(),
         },
-    );
+    )
+    .await;
 
     let (status, body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -436,8 +447,8 @@ async fn host_provider_status_surfaces_stale_installs_for_current_ctx_build() {
         ("gemini", "0.33.1"),
         ("cursor", "0.7.1"),
     ] {
-        state.providers.statuses.lock().await.insert(
-            provider_id.to_string(),
+        seed_provider_status(
+            &state,
             ProviderStatus {
                 provider_id: provider_id.to_string(),
                 installed: true,
@@ -449,7 +460,8 @@ async fn host_provider_status_surfaces_stale_installs_for_current_ctx_build() {
                 details: HashMap::new(),
                 usability: ctx_providers::adapters::ProviderUsability::default(),
             },
-        );
+        )
+        .await;
     }
 
     let (status, body): (StatusCode, serde_json::Value) = common::json_request(

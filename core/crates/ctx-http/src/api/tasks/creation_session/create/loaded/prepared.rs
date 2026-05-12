@@ -34,10 +34,8 @@ pub(super) async fn prepare_loaded_session_request(
     let provider_id = req.provider_id.trim().to_string();
     if !state
         .providers
-        .adapters
-        .lock()
+        .with_provider_adapters(|adapters| adapters.contains_key(&provider_id))
         .await
-        .contains_key(&provider_id)
     {
         return Err(StatusCode::BAD_REQUEST);
     }

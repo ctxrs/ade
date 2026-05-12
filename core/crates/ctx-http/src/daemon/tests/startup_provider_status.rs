@@ -27,7 +27,10 @@ async fn startup_provider_status_refresh_runs_in_background() {
 
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert!(
-        state.provider_statuses().lock().await.is_empty(),
+        state
+            .providers
+            .with_provider_statuses(|statuses| statuses.is_empty())
+            .await,
         "provider status refresh should no longer block startup"
     );
 
@@ -36,10 +39,9 @@ async fn startup_provider_status_refresh_runs_in_background() {
     tokio::time::timeout(Duration::from_secs(1), async {
         loop {
             if state
-                .provider_statuses()
-                .lock()
+                .providers
+                .with_provider_statuses(|statuses| statuses.contains_key("blocking"))
                 .await
-                .contains_key("blocking")
             {
                 break;
             }

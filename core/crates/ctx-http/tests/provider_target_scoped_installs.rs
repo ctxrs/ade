@@ -102,6 +102,16 @@ async fn write_invalid_agent_server_config(data_root: &Path) {
         .expect("write invalid agent server config");
 }
 
+async fn seed_provider_status(state: &Arc<AppState>, status: ProviderStatus) {
+    let provider_id = status.provider_id.clone();
+    state
+        .providers
+        .with_provider_statuses(|statuses| {
+            statuses.insert(provider_id, status);
+        })
+        .await;
+}
+
 fn write_fake_node_runtime(path: &Path, tag: &str) {
     let script = format!(
         r#"#!/bin/sh
@@ -1376,8 +1386,8 @@ async fn acp_container_install_surfaces_bridge_as_installable_prerequisite() {
     );
     let app = common::router(state.clone());
 
-    state.providers.statuses.lock().await.insert(
-        "kimi".to_string(),
+    seed_provider_status(
+        &state,
         ProviderStatus {
             provider_id: "kimi".to_string(),
             installed: false,
@@ -1389,7 +1399,8 @@ async fn acp_container_install_surfaces_bridge_as_installable_prerequisite() {
             details: HashMap::new(),
             usability: ctx_providers::adapters::ProviderUsability::default(),
         },
-    );
+    )
+    .await;
 
     let (provider_status, provider_body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -1479,8 +1490,8 @@ async fn acp_host_install_surfaces_bridge_as_installable_prerequisite() {
     );
     let app = common::router(state.clone());
 
-    state.providers.statuses.lock().await.insert(
-        "kimi".to_string(),
+    seed_provider_status(
+        &state,
         ProviderStatus {
             provider_id: "kimi".to_string(),
             installed: false,
@@ -1492,7 +1503,8 @@ async fn acp_host_install_surfaces_bridge_as_installable_prerequisite() {
             details: HashMap::new(),
             usability: ctx_providers::adapters::ProviderUsability::default(),
         },
-    );
+    )
+    .await;
 
     let (provider_status, provider_body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -1584,8 +1596,8 @@ async fn acp_container_install_keeps_invalid_bridge_runtime_repairable_before_st
 
     save_invalid_container_bridge_runtime(data_dir.path()).await;
 
-    state.providers.statuses.lock().await.insert(
-        "kimi".to_string(),
+    seed_provider_status(
+        &state,
         ProviderStatus {
             provider_id: "kimi".to_string(),
             installed: false,
@@ -1597,7 +1609,8 @@ async fn acp_container_install_keeps_invalid_bridge_runtime_repairable_before_st
             details: HashMap::new(),
             usability: ctx_providers::adapters::ProviderUsability::default(),
         },
-    );
+    )
+    .await;
 
     let (provider_status, provider_body): (StatusCode, serde_json::Value) = common::json_request(
         &app,

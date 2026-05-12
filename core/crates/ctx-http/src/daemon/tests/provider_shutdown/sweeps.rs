@@ -31,10 +31,10 @@ async fn sweep_provider_workers_once_dedupes_shared_adapters_and_aggregates_stat
     ));
     state
         .providers
-        .target_adapters
-        .lock()
-        .await
-        .insert("root@host".into(), shared_adapter.clone());
+        .with_target_provider_adapters(|adapters| {
+            adapters.insert("root@host".into(), shared_adapter.clone());
+        })
+        .await;
 
     let config = ProviderSessionSweepConfig {
         idle_ttl: Duration::from_secs(7),

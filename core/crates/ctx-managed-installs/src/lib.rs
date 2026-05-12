@@ -125,11 +125,17 @@ pub trait ManagedInstallHost: Send + Sync + 'static {
 
     fn provider_matrix_cache(&self) -> &Mutex<provider_matrix::ProviderMatrixCache>;
 
-    fn provider_adapters(&self) -> &Mutex<HashMap<String, Arc<dyn ProviderAdapter>>>;
+    async fn inspect_provider_adapters(&self) -> Vec<(String, Result<ProviderStatus, String>)>;
 
-    fn target_provider_adapters(&self) -> &Mutex<HashMap<String, Arc<dyn ProviderAdapter>>>;
+    async fn upsert_provider_adapter(&self, provider_id: String, adapter: Arc<dyn ProviderAdapter>);
 
-    fn provider_statuses(&self) -> &Mutex<HashMap<String, ProviderStatus>>;
+    async fn upsert_target_provider_adapter(
+        &self,
+        cache_key: String,
+        adapter: Arc<dyn ProviderAdapter>,
+    );
+
+    async fn replace_provider_statuses(&self, statuses: HashMap<String, ProviderStatus>);
 
     fn validate_install_target_allowed(&self, _target: InstallTarget) -> Result<()> {
         Ok(())

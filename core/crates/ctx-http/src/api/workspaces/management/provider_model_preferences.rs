@@ -34,16 +34,12 @@ async fn require_known_provider(
     let known = ctx_provider_matrix::get_entry(&matrix, provider_id).is_some()
         || state
             .providers
-            .statuses
-            .lock()
+            .with_provider_statuses(|statuses| statuses.contains_key(provider_id))
             .await
-            .contains_key(provider_id)
         || state
             .providers
-            .adapters
-            .lock()
-            .await
-            .contains_key(provider_id);
+            .with_provider_adapters(|adapters| adapters.contains_key(provider_id))
+            .await;
     if known {
         return Ok(());
     }

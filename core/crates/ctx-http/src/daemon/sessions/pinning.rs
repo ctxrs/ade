@@ -10,12 +10,14 @@ impl AppState {
     async fn propagate_provider_session_pin_by_key(&self, session_key: String, pinned: bool) {
         let adapters = {
             let mut adapters = {
-                let map = self.providers.adapters.lock().await;
-                map.values().cloned().collect::<Vec<_>>()
+                self.providers
+                    .with_provider_adapters(|map| map.values().cloned().collect::<Vec<_>>())
+                    .await
             };
             let target_adapters = {
-                let map = self.providers.target_adapters.lock().await;
-                map.values().cloned().collect::<Vec<_>>()
+                self.providers
+                    .with_target_provider_adapters(|map| map.values().cloned().collect::<Vec<_>>())
+                    .await
             };
             adapters.extend(target_adapters);
             adapters

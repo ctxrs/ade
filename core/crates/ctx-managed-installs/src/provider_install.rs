@@ -257,13 +257,12 @@ async fn refresh_provider_statuses_with_cfg(
         provider_matrix::load_matrix_cached(state.data_root(), state.provider_matrix_cache()).await;
     let current_ctx_version = state.current_ctx_version();
 
-    let map = state.provider_adapters().lock().await;
     let mut statuses = HashMap::new();
-    for (id, adapter) in map.iter() {
-        match adapter.inspect().await {
+    for (id, inspected_status) in state.inspect_provider_adapters().await {
+        match inspected_status {
             Ok(mut status) => {
                 apply_managed_install_details(&mut status, &cfg);
-                if let Some(entry) = provider_matrix::get_entry(&matrix, id) {
+                if let Some(entry) = provider_matrix::get_entry(&matrix, &id) {
                     crate::provider_status_matrix::apply_matrix_to_status(
                         state.data_root(),
                         &cfg,
@@ -293,7 +292,6 @@ async fn refresh_provider_statuses_with_cfg(
             }
         }
     }
-    drop(map);
-    *state.provider_statuses().lock().await = statuses;
+    state.replace_provider_statuses(statuses).await;
     Ok(())
 }

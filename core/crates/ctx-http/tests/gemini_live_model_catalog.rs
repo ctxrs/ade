@@ -136,6 +136,16 @@ async fn app_state(data_root: &Path) -> Arc<AppState> {
     ))
 }
 
+async fn seed_provider_status(state: &Arc<AppState>, status: ProviderStatus) {
+    let provider_id = status.provider_id.clone();
+    state
+        .providers
+        .with_provider_statuses(|statuses| {
+            statuses.insert(provider_id, status);
+        })
+        .await;
+}
+
 #[tokio::test]
 async fn live_gemini_model_catalog_matches_pinned_snapshot() {
     let Some(node_path) =
@@ -205,8 +215,8 @@ async fn live_gemini_model_catalog_matches_pinned_snapshot() {
         .await
         .expect("save live gemini runtime config");
 
-    state.providers.statuses.lock().await.insert(
-        "gemini".to_string(),
+    seed_provider_status(
+        &state,
         ProviderStatus {
             provider_id: "gemini".to_string(),
             installed: true,
@@ -218,7 +228,8 @@ async fn live_gemini_model_catalog_matches_pinned_snapshot() {
             diagnostics: Vec::new(),
             details: HashMap::new(),
         },
-    );
+    )
+    .await;
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (bootstrap_status, bootstrap): (StatusCode, serde_json::Value) = common::json_request(

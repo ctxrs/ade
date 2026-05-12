@@ -73,8 +73,9 @@ impl ctx_provider_runtime::provider_restart::ProviderRestartHost for AppState {
 
     async fn restart_provider(&self, provider_id: &str, pid: u32) {
         let adapter = {
-            let providers = self.providers.adapters.lock().await;
-            providers.get(provider_id).cloned()
+            self.providers
+                .with_provider_adapters(|providers| providers.get(provider_id).cloned())
+                .await
         };
         let mut needs_kill = true;
         if let Some(adapter) = adapter {

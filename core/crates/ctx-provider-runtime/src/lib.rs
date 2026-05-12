@@ -44,9 +44,9 @@ pub struct CachedProviderVerify {
 }
 
 pub struct ProviderRuntime {
-    pub adapters: Mutex<HashMap<String, Arc<dyn ProviderAdapter>>>,
-    pub target_adapters: Mutex<HashMap<String, Arc<dyn ProviderAdapter>>>,
-    pub statuses: Mutex<HashMap<String, ProviderStatus>>,
+    adapters: Mutex<HashMap<String, Arc<dyn ProviderAdapter>>>,
+    target_adapters: Mutex<HashMap<String, Arc<dyn ProviderAdapter>>>,
+    statuses: Mutex<HashMap<String, ProviderStatus>>,
     pub matrix_cache: Mutex<ProviderMatrixCache>,
     options_cache: Mutex<HashMap<String, CachedProviderOptions>>,
     verify_cache: Mutex<HashMap<String, CachedProviderVerify>>,

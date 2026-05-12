@@ -42,10 +42,10 @@ async fn setup_state() -> (tempfile::TempDir, Arc<AppState>, common::TestServer)
     };
     state
         .providers
-        .statuses
-        .lock()
-        .await
-        .insert("fake".into(), status);
+        .with_provider_statuses(|statuses| {
+            statuses.insert("fake".into(), status);
+        })
+        .await;
     let server = common::spawn_http_server(common::router(state.clone())).await;
     (data_dir, state, server)
 }

@@ -258,11 +258,16 @@ pub(crate) async fn install_provider_impl(
         );
 
         if matches!(target, InstallTarget::Host) {
-            let mut map = state.provider_adapters().lock().await;
-            map.insert(provider_id.clone(), adapter.clone());
+            state
+                .upsert_provider_adapter(provider_id.clone(), adapter.clone())
+                .await;
         } else {
-            let mut map = state.target_provider_adapters().lock().await;
-            map.insert(format!("{provider_id}@{}", target.as_str()), adapter.clone());
+            state
+                .upsert_target_provider_adapter(
+                    format!("{provider_id}@{}", target.as_str()),
+                    adapter.clone(),
+                )
+                .await;
         }
 
         stage = "refresh";

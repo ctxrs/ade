@@ -4,10 +4,11 @@ mod common;
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
 use axum::http::StatusCode;
+use ctx_http::daemon::AppState;
 use ctx_managed_installs::{
     resolve_matrix_target_key, save_agent_server_config, AgentServerCommand, AgentServerConfigFile,
     ManagedInstallMetadata,
@@ -50,6 +51,16 @@ fn helper_env_test_lock() -> &'static tokio::sync::Mutex<()> {
 
 fn write_runtime_fixture(path: &Path) {
     std::fs::write(path, "#!/bin/sh\nexit 0\n").expect("write runtime fixture");
+}
+
+async fn seed_provider_status(state: &Arc<AppState>, status: ProviderStatus) {
+    let provider_id = status.provider_id.clone();
+    state
+        .providers
+        .with_provider_statuses(|statuses| {
+            statuses.insert(provider_id, status);
+        })
+        .await;
 }
 
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -214,12 +225,7 @@ async fn host_target_reports_target_mismatch_for_container_only_acp_installs() {
 
     for provider_id in ["kimi", "mistral", "qwen"] {
         let _command_path = seed_container_only_install(data_dir.path(), provider_id).await;
-        state
-            .providers
-            .statuses
-            .lock()
-            .await
-            .insert(provider_id.to_string(), bridge_missing_status(provider_id));
+        seed_provider_status(&state, bridge_missing_status(provider_id)).await;
 
         let (status, body): (StatusCode, serde_json::Value) = common::json_request(
             &app,
@@ -285,12 +291,7 @@ async fn acp_provider_reports_missing_bridge_as_blocking_dependency() {
     );
     let app = common::router(state.clone());
 
-    state
-        .providers
-        .statuses
-        .lock()
-        .await
-        .insert("qwen".to_string(), bridge_missing_status("qwen"));
+    seed_provider_status(&state, bridge_missing_status("qwen")).await;
 
     let (status, body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -370,12 +371,7 @@ async fn workspace_options_use_workspace_target_status_for_acp_provider() {
 
     let provider_id = "mistral";
     let _command_path = seed_container_only_install(data_dir.path(), provider_id).await;
-    state
-        .providers
-        .statuses
-        .lock()
-        .await
-        .insert(provider_id.to_string(), bridge_missing_status(provider_id));
+    seed_provider_status(&state, bridge_missing_status(provider_id)).await;
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (host_status, host_body): (StatusCode, serde_json::Value) = common::json_request(

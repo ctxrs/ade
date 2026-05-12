@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::path::Path;
 use std::process::Output;
 use std::sync::Arc;
@@ -35,16 +34,35 @@ impl ctx_managed_installs::ManagedInstallHost for HttpAppState {
         &self.providers.matrix_cache
     }
 
-    fn provider_adapters(&self) -> &Mutex<HashMap<String, Arc<dyn ProviderAdapter>>> {
-        &self.providers.adapters
+    async fn inspect_provider_adapters(&self) -> Vec<(String, Result<ProviderStatus, String>)> {
+        self.providers.inspect_provider_adapters().await
     }
 
-    fn target_provider_adapters(&self) -> &Mutex<HashMap<String, Arc<dyn ProviderAdapter>>> {
-        &self.providers.target_adapters
+    async fn upsert_provider_adapter(
+        &self,
+        provider_id: String,
+        adapter: Arc<dyn ProviderAdapter>,
+    ) {
+        self.providers
+            .upsert_provider_adapter(provider_id, adapter)
+            .await;
     }
 
-    fn provider_statuses(&self) -> &Mutex<HashMap<String, ProviderStatus>> {
-        &self.providers.statuses
+    async fn upsert_target_provider_adapter(
+        &self,
+        cache_key: String,
+        adapter: Arc<dyn ProviderAdapter>,
+    ) {
+        self.providers
+            .upsert_target_provider_adapter(cache_key, adapter)
+            .await;
+    }
+
+    async fn replace_provider_statuses(
+        &self,
+        statuses: std::collections::HashMap<String, ProviderStatus>,
+    ) {
+        self.providers.replace_provider_statuses(statuses).await;
     }
 
     fn validate_install_target_allowed(&self, target: InstallTarget) -> Result<()> {

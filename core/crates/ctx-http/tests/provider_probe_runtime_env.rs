@@ -392,6 +392,16 @@ async fn app_state(data_root: &Path) -> Arc<AppState> {
     ))
 }
 
+async fn seed_provider_status(state: &Arc<AppState>, status: ProviderStatus) {
+    let provider_id = status.provider_id.clone();
+    state
+        .providers
+        .with_provider_statuses(|statuses| {
+            statuses.insert(provider_id, status);
+        })
+        .await;
+}
+
 async fn seed_runtime_and_status(
     state: &Arc<AppState>,
     provider_id: &str,
@@ -429,8 +439,8 @@ async fn seed_runtime_and_status(
         .await
         .expect("save runtime config");
 
-    state.providers.statuses.lock().await.insert(
-        provider_id.to_string(),
+    seed_provider_status(
+        state,
         ProviderStatus {
             provider_id: provider_id.to_string(),
             installed: true,
@@ -442,7 +452,8 @@ async fn seed_runtime_and_status(
             details: HashMap::new(),
             usability: ctx_providers::adapters::ProviderUsability::default(),
         },
-    );
+    )
+    .await;
 }
 
 #[cfg(unix)]
@@ -852,8 +863,8 @@ async fn codex_provider_options_surface_stale_selected_endpoint_errors() {
     write_stale_codex_endpoint_selection(data_dir.path()).await;
 
     let state = app_state(data_dir.path()).await;
-    state.providers.statuses.lock().await.insert(
-        "codex".to_string(),
+    seed_provider_status(
+        &state,
         ProviderStatus {
             provider_id: "codex".to_string(),
             installed: true,
@@ -865,7 +876,8 @@ async fn codex_provider_options_surface_stale_selected_endpoint_errors() {
             details: HashMap::new(),
             usability: ctx_providers::adapters::ProviderUsability::default(),
         },
-    );
+    )
+    .await;
     let app = api::router(state.clone());
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (status, body): (StatusCode, serde_json::Value) = common::json_request(
@@ -899,8 +911,8 @@ async fn provider_bootstrap_surfaces_stale_selected_endpoint_errors() {
     write_stale_codex_endpoint_selection(data_dir.path()).await;
 
     let state = app_state(data_dir.path()).await;
-    state.providers.statuses.lock().await.insert(
-        "codex".to_string(),
+    seed_provider_status(
+        &state,
         ProviderStatus {
             provider_id: "codex".to_string(),
             installed: true,
@@ -912,7 +924,8 @@ async fn provider_bootstrap_surfaces_stale_selected_endpoint_errors() {
             details: HashMap::new(),
             usability: ctx_providers::adapters::ProviderUsability::default(),
         },
-    );
+    )
+    .await;
     let app = api::router(state.clone());
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (status, body): (StatusCode, serde_json::Value) = common::json_request(
@@ -1107,8 +1120,8 @@ async fn copilot_provider_options_include_pinned_model_catalog_when_live_probe_i
         setup_runtime_command_with_managed_interpreter(data_dir.path(), "acp-crp-bridge");
     seed_runtime_and_status(&state, "acp-crp-bridge", bridge_cmd, bridge_dep_bin_rel).await;
 
-    state.providers.statuses.lock().await.insert(
-        "copilot".to_string(),
+    seed_provider_status(
+        &state,
         ProviderStatus {
             provider_id: "copilot".to_string(),
             installed: true,
@@ -1120,7 +1133,8 @@ async fn copilot_provider_options_include_pinned_model_catalog_when_live_probe_i
             details: HashMap::new(),
             usability: ctx_providers::adapters::ProviderUsability::default(),
         },
-    );
+    )
+    .await;
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (status, body): (StatusCode, serde_json::Value) = common::json_request(
@@ -1177,8 +1191,8 @@ async fn providers_bootstrap_includes_pinned_codex_claude_and_gemini_catalogs() 
     let state = app_state(data_dir.path()).await;
     let app = api::router(state.clone());
 
-    state.providers.statuses.lock().await.insert(
-        "codex".to_string(),
+    seed_provider_status(
+        &state,
         ProviderStatus {
             provider_id: "codex".to_string(),
             installed: true,
@@ -1190,9 +1204,10 @@ async fn providers_bootstrap_includes_pinned_codex_claude_and_gemini_catalogs() 
             details: HashMap::new(),
             usability: ctx_providers::adapters::ProviderUsability::default(),
         },
-    );
-    state.providers.statuses.lock().await.insert(
-        "claude-crp".to_string(),
+    )
+    .await;
+    seed_provider_status(
+        &state,
         ProviderStatus {
             provider_id: "claude-crp".to_string(),
             installed: true,
@@ -1204,9 +1219,10 @@ async fn providers_bootstrap_includes_pinned_codex_claude_and_gemini_catalogs() 
             details: HashMap::new(),
             usability: ctx_providers::adapters::ProviderUsability::default(),
         },
-    );
-    state.providers.statuses.lock().await.insert(
-        "gemini".to_string(),
+    )
+    .await;
+    seed_provider_status(
+        &state,
         ProviderStatus {
             provider_id: "gemini".to_string(),
             installed: true,
@@ -1218,7 +1234,8 @@ async fn providers_bootstrap_includes_pinned_codex_claude_and_gemini_catalogs() 
             details: HashMap::new(),
             usability: ctx_providers::adapters::ProviderUsability::default(),
         },
-    );
+    )
+    .await;
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (status, body): (StatusCode, serde_json::Value) = common::json_request(
@@ -1323,8 +1340,8 @@ async fn gemini_provider_options_use_live_acp_catalog_when_probe_succeeds() {
         .await
         .expect("save gemini runtime config");
     seed_acp_bridge_runtime(data_dir.path()).await;
-    state.providers.statuses.lock().await.insert(
-        "gemini".to_string(),
+    seed_provider_status(
+        &state,
         ProviderStatus {
             provider_id: "gemini".to_string(),
             installed: true,
@@ -1336,7 +1353,8 @@ async fn gemini_provider_options_use_live_acp_catalog_when_probe_succeeds() {
             details: HashMap::new(),
             usability: ctx_providers::adapters::ProviderUsability::default(),
         },
-    );
+    )
+    .await;
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (status, body): (StatusCode, serde_json::Value) = common::json_request(
@@ -1382,8 +1400,8 @@ async fn fake_provider_bootstrap_and_options_are_ready_without_browser_rewrite()
     let state = app_state(data_dir.path()).await;
     let app = api::router(state.clone());
 
-    state.providers.statuses.lock().await.insert(
-        "fake".to_string(),
+    seed_provider_status(
+        &state,
         ProviderStatus {
             provider_id: "fake".to_string(),
             installed: true,
@@ -1395,7 +1413,8 @@ async fn fake_provider_bootstrap_and_options_are_ready_without_browser_rewrite()
             details: HashMap::new(),
             usability: ctx_providers::adapters::ProviderUsability::default(),
         },
-    );
+    )
+    .await;
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (status, options): (StatusCode, serde_json::Value) = common::json_request(
