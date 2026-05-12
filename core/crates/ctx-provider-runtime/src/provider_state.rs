@@ -2,10 +2,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use ctx_provider_install::install_state::{InstallId, InstallState};
 use ctx_provider_matrix::{MatrixRefreshOutcome, ProviderMatrix};
 use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
-use tokio::sync::MutexGuard;
 
 use crate::ProviderRuntime;
 
@@ -56,18 +54,6 @@ impl ProviderRuntime {
     ) -> MatrixRefreshOutcome {
         self.invalidate_provider_matrix_cache().await;
         ctx_provider_matrix::refresh_matrix_from_local_sources(data_root, &self.matrix_cache).await
-    }
-
-    pub async fn acquire_install_start_gate(&self) -> MutexGuard<'_, ()> {
-        self.install_start_gate.lock().await
-    }
-
-    pub async fn with_provider_installs<R>(
-        &self,
-        f: impl FnOnce(&mut HashMap<InstallId, InstallState>) -> R,
-    ) -> R {
-        let mut installs = self.installs.lock().await;
-        f(&mut installs)
     }
 
     pub async fn with_provider_adapters<R>(

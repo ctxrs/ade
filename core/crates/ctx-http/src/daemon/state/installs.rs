@@ -4,4 +4,3 @@ mod lifecycle;
 mod mirrors;
 mod progress;
 mod queries;
-mod stale;

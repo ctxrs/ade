@@ -15,8 +15,7 @@ use ctx_observability::ops_events::{OpsEvent, OpsEvents};
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
 use ctx_observability::telemetry::Telemetry;
 use ctx_provider_install::install_state::{
-    InstallErrorCode, InstallEventLevel, InstallId, InstallProgressEvent, InstallState,
-    InstallStateKind, InstallTarget,
+    InstallErrorCode, InstallId, InstallProgressEvent, InstallStateKind, InstallTarget,
 };
 use ctx_providers::adapters::ProviderAdapter;
 use ctx_providers::ask_user_question::AskUserQuestionBroker;

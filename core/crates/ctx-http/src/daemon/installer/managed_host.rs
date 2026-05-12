@@ -126,15 +126,7 @@ impl ctx_managed_installs::ManagedInstallHost for HttpAppState {
         only_if_default: bool,
     ) {
         self.providers
-            .with_provider_installs(|installs| {
-                let Some(install) = installs.get_mut(&install_id) else {
-                    return;
-                };
-                if only_if_default && !install.canonical_start_event_is_default() {
-                    return;
-                }
-                let _ = install.update_canonical_start_event(provider_id, target, message);
-            })
+            .update_install_start_event(install_id, provider_id, target, message, only_if_default)
             .await;
     }
 

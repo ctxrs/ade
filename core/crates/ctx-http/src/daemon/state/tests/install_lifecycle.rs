@@ -24,9 +24,7 @@ async fn find_running_install_reconciles_stale_running_venv_install() {
     });
     state
         .providers
-        .with_provider_installs(|installs| {
-            installs.insert(install_id, install);
-        })
+        .insert_install_state_for_testing(install_id, install)
         .await;
 
     let running = state
@@ -70,9 +68,7 @@ async fn get_install_info_preserves_recent_running_install() {
     });
     state
         .providers
-        .with_provider_installs(|installs| {
-            installs.insert(install_id, install);
-        })
+        .insert_install_state_for_testing(install_id, install)
         .await;
 
     let info = state

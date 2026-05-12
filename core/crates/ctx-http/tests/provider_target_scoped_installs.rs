@@ -1023,13 +1023,10 @@ async fn wait_for_tracked_install_id(
     loop {
         if let Some(install_id) = state
             .providers
-            .with_provider_installs(|installs| {
-                installs.iter().find_map(|(install_id, install)| {
-                    (install.provider_id == provider_id && install.target == target)
-                        .then_some(*install_id)
-                })
-            })
+            .tracked_install_ids(provider_id, target)
             .await
+            .into_iter()
+            .next()
         {
             return install_id;
         }
@@ -2051,16 +2048,7 @@ async fn provider_target_scoped_installs_install_all_repairs_invalid_bridge_when
 
     let bridge_install_ids = state
         .providers
-        .with_provider_installs(|installs| {
-            installs
-                .iter()
-                .filter_map(|(id, install)| {
-                    (install.provider_id == "acp-crp-bridge"
-                        && install.target == Some(InstallTarget::Container))
-                    .then_some(*id)
-                })
-                .collect::<Vec<_>>()
-        })
+        .tracked_install_ids("acp-crp-bridge", Some(InstallTarget::Container))
         .await;
     assert_eq!(
         bridge_install_ids,
@@ -2120,15 +2108,15 @@ async fn acp_container_install_happy_path_installs_bridge_prerequisite_and_keeps
         "kimi install should succeed with bridge prerequisite: {install_info:#?}"
     );
 
-    let bridge_install = state
+    let bridge_install_id = state
         .providers
-        .with_provider_installs(|installs| {
-            installs.iter().find_map(|(id, install)| {
-                (install.provider_id == "acp-crp-bridge"
-                    && install.target == Some(InstallTarget::Container))
-                .then(|| install.info(*id))
-            })
-        })
+        .tracked_install_ids("acp-crp-bridge", Some(InstallTarget::Container))
+        .await
+        .into_iter()
+        .next()
+        .expect("bridge prerequisite install entry");
+    let bridge_install = state
+        .get_install_info(bridge_install_id)
         .await
         .expect("bridge prerequisite install entry");
     assert!(
@@ -2780,16 +2768,7 @@ async fn acp_container_install_joins_existing_bridge_install_and_surfaces_short_
 
     let bridge_install_ids = state
         .providers
-        .with_provider_installs(|installs| {
-            installs
-                .iter()
-                .filter_map(|(id, install)| {
-                    (install.provider_id == "acp-crp-bridge"
-                        && install.target == Some(InstallTarget::Container))
-                    .then_some(*id)
-                })
-                .collect::<Vec<_>>()
-        })
+        .tracked_install_ids("acp-crp-bridge", Some(InstallTarget::Container))
         .await;
     assert_eq!(
         bridge_install_ids,

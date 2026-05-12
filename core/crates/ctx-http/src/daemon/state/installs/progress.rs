@@ -1,52 +1,59 @@
 use super::*;
 
-const PREREQUISITE_PROGRESS_STAGE_FLOOR: &str = "start";
-const PREREQUISITE_PROGRESS_VISIBILITY_MS: i64 = 1_200;
-
 impl AppState {
-    pub(super) fn push_install_event_locked(st: &mut InstallState, event: InstallProgressEvent) {
-        st.progress_pct = ctx_provider_install::install_state::heuristic_progress_pct_from_event(
-            &event,
-            st.progress_pct,
-        );
-        if st.events.len() >= 256 {
-            st.events.pop_front();
-        }
-        st.events.push_back(event.clone());
-        let _ = st.tx.send(event);
-    }
-
-    pub(super) fn set_install_info_event_override_locked(
-        st: &mut InstallState,
-        event: &InstallProgressEvent,
+    pub(super) fn emit_provider_install_ops_events(
+        &self,
+        events: Vec<ctx_provider_runtime::provider_install_tracker::ProviderInstallOpsEvent>,
     ) {
-        st.info_event_override = Some(event.clone());
-        st.info_event_override_until =
-            Some(event.at + chrono::Duration::milliseconds(PREREQUISITE_PROGRESS_VISIBILITY_MS));
+        for event in events {
+            self.emit_provider_install_ops_event(event);
+        }
     }
 
-    pub(super) fn mirrored_install_event(
-        source_install_id: InstallId,
-        source_provider_id: &str,
-        source_event: &InstallProgressEvent,
-        mirror_install_id: InstallId,
-        mirror_state: &InstallState,
-    ) -> InstallProgressEvent {
-        InstallProgressEvent {
-            install_id: mirror_install_id,
-            provider_id: mirror_state.provider_id.clone(),
-            target: mirror_state.target,
-            at: chrono::Utc::now(),
-            stage: PREREQUISITE_PROGRESS_STAGE_FLOOR.to_string(),
-            message: format!(
-                "Prerequisite {source_provider_id} (install {source_install_id}, stage {}): {}",
-                source_event.stage, source_event.message
-            ),
-            level: source_event.level,
-            bytes: None,
-            total_bytes: None,
-            attempt: None,
-            error_code: source_event.error_code,
+    pub(super) fn emit_provider_install_ops_event(
+        &self,
+        event: ctx_provider_runtime::provider_install_tracker::ProviderInstallOpsEvent,
+    ) {
+        let mut ops_event = OpsEvent::new(event.level, event.name);
+        ops_event.provider_id = Some(event.provider_id);
+        let mut meta = serde_json::Map::new();
+        meta.insert(
+            "install_id".to_string(),
+            serde_json::Value::String(event.install_id.to_string()),
+        );
+        if let Some(target) = event.target {
+            meta.insert(
+                "target".to_string(),
+                serde_json::Value::String(target.as_str().to_string()),
+            );
         }
+        if let Some(state) = event.state {
+            meta.insert(
+                "state".to_string(),
+                serde_json::Value::String(
+                    match state {
+                        InstallStateKind::Running => "running",
+                        InstallStateKind::Succeeded => "succeeded",
+                        InstallStateKind::Failed => "failed",
+                        InstallStateKind::Cancelled => "cancelled",
+                    }
+                    .to_string(),
+                ),
+            );
+        }
+        if let Some(error) = event.error {
+            meta.insert("error".to_string(), serde_json::Value::String(error));
+        }
+        if let Some(error_code) = event
+            .error_code
+            .and_then(|value| serde_json::to_value(value).ok())
+        {
+            meta.insert("error_code".to_string(), error_code);
+        }
+        if let Some(ok) = event.ok {
+            meta.insert("ok".to_string(), serde_json::Value::Bool(ok));
+        }
+        ops_event.meta = Some(serde_json::Value::Object(meta));
+        self.telemetry.ops_events.emit(ops_event);
     }
 }
