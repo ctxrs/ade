@@ -1,2 +1,2 @@
-pub mod install;
-pub mod probe;
+mod install;
+mod probe;

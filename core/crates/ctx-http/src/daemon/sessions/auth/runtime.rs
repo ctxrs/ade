@@ -83,7 +83,7 @@ pub(super) async fn prepare_session_auth_runtime(
     )
     .await;
     let probe_context =
-        crate::daemon::provider_launch::probe::provider_auth_context_for_worktree_runtime(
+        ctx_provider_runtime::provider_launch::probe::provider_auth_context_for_worktree_runtime(
             state.as_ref(),
             &resolved_worktree.worktree,
             &session.provider_id,

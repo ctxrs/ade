@@ -6,16 +6,9 @@ use ctx_core::models::{Workspace, Worktree};
 
 use crate::daemon::AppState;
 use ctx_observability::logs;
+use ctx_provider_runtime::provider_launch::probe::PreparedWorkspaceProbeRuntime;
 
 mod runtime;
-
-#[allow(unused_imports)]
-pub(crate) use ctx_provider_runtime::provider_launch::probe::{
-    provider_auth_context_for_workspace_runtime, provider_auth_context_for_worktree_runtime,
-    provider_has_active_auth_for_workspace_runtime, provider_probe_context_for_workspace_runtime,
-    provider_probe_env, provider_probe_env_for_workspace_runtime, PreparedWorkspaceProbeRuntime,
-    WorkspaceRuntimeProbeContext,
-};
 
 #[async_trait]
 impl ctx_provider_runtime::provider_launch::probe::ProviderProbeHost for AppState {

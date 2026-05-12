@@ -24,8 +24,6 @@ use super::errors::ApiErrorResp;
 use super::provider_probe_auth::provider_auth_mode;
 use super::providers::{install_target_for_workspace, provider_status_for_target};
 use super::redact_json_value;
-use crate::daemon::provider_launch::install as provider_launch_install;
-use crate::daemon::provider_launch::probe;
 use crate::daemon::AppState;
 use ctx_harness_sources as harness_sources;
 use ctx_harness_sources::{HarnessEndpointVerificationStatus, HarnessSourceKind};
@@ -41,6 +39,7 @@ use ctx_provider_runtime::provider_cache::workspace_provider_cache_key;
 use ctx_provider_runtime::provider_launch::config::{
     load_managed_agent_server_config_with_error, load_provider_source_config_with_error,
 };
+use ctx_provider_runtime::provider_launch::install as provider_launch_install;
 use ctx_provider_runtime::provider_launch::models::{
     endpoint_catalog_runtime_probe_failure, endpoint_catalog_verify_outcome,
 };
@@ -48,6 +47,7 @@ use ctx_provider_runtime::provider_launch::options::{
     endpoint_supports_model_catalog_verify, provider_options_cache_entry_is_authoritative,
     provider_supports_runtime_model_catalog,
 };
+use ctx_provider_runtime::provider_launch::probe;
 use ctx_provider_runtime::provider_launch::probe_error::classify_probe_error;
 use ctx_provider_runtime::provider_usability::{
     provider_status_is_usable, provider_status_unusable_reason,

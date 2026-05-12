@@ -2,7 +2,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use ctx_observability::logs;
 
-use crate::daemon::provider_launch::install as provider_launch_install;
+use ctx_provider_runtime::provider_launch::install as provider_launch_install;
 
 pub(in crate::api::provider_launch) fn workspace_execution_settings_error_json(
     error: &anyhow::Error,

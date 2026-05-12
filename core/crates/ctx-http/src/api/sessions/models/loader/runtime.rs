@@ -36,14 +36,13 @@ pub(super) async fn load_runtime_model_catalog(
     let command = runtime_command.command_abs_path;
     let args = runtime_command.args;
 
-    let probe_context =
-        match crate::daemon::provider_launch::probe::provider_probe_context_for_workspace_runtime(
-            state.as_ref(),
-            workspace,
-            provider_id,
-        )
-        .await
-        {
+    let probe_context = match ctx_provider_runtime::provider_launch::probe::provider_probe_context_for_workspace_runtime(
+        state.as_ref(),
+        workspace,
+        provider_id,
+    )
+    .await
+    {
             Ok(context) => context,
             Err(err) => {
                 tracing::warn!(
