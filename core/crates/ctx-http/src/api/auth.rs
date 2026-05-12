@@ -6,26 +6,20 @@ use axum::http::StatusCode;
 use axum::http::{Method, Request};
 use axum::middleware::Next;
 use axum::response::IntoResponse;
+use ctx_http_auth::{
+    browser_capability_query_token_is_valid, browser_query_secret_bearer_is_valid,
+    browser_stream_query_token_is_valid, is_websocket_upgrade, scoped_mcp_route, ScopedMcpRoute,
+};
 
 use crate::daemon::AppState;
 
-mod browser;
 mod mobile;
 
-#[cfg(test)]
-pub(crate) use browser::{
-    derive_browser_capability_token, derive_browser_query_secret, derive_browser_stream_token,
-    BrowserCapabilityAuthScope, BrowserStreamAuthScope,
-};
 pub(in crate::api) use mobile::{
     generate_mobile_api_token, generate_pairing_token, hash_api_token, hash_pairing_token,
     load_mobile_auth_context_for_profile, MobileAuthContext,
 };
 
-use browser::{
-    browser_capability_query_token_is_valid, browser_query_secret_bearer_is_valid,
-    browser_stream_query_token_is_valid, is_websocket_upgrade, scoped_mcp_route, ScopedMcpRoute,
-};
 use mobile::verify_mobile_api_token;
 
 pub(super) async fn auth_middleware(
@@ -79,18 +73,23 @@ pub(super) async fn auth_middleware(
         return Ok(next.run(req).await);
     }
     if let Some(auth_token) = state.core.auth_token.as_deref() {
-        if browser_query_secret_bearer_is_valid(&req, auth_token) {
+        if browser_query_secret_bearer_is_valid(path, token.as_deref(), auth_token) {
             return Ok(next.run(req).await);
         }
-        if browser_stream_query_token_is_valid(&req, auth_token) {
+        if browser_stream_query_token_is_valid(req.method(), path, req.uri().query(), auth_token) {
             return Ok(next.run(req).await);
         }
-        if browser_capability_query_token_is_valid(&req, auth_token) {
+        if browser_capability_query_token_is_valid(
+            req.method(),
+            path,
+            req.uri().query(),
+            auth_token,
+        ) {
             return Ok(next.run(req).await);
         }
     }
     if let Some(token_value) = token.as_deref() {
-        if let Some(route) = scoped_mcp_route(&req) {
+        if let Some(route) = scoped_mcp_route(req.method(), path) {
             if let Some(mcp_auth) = crate::daemon::verify_mcp_auth_token(&state, token_value).await
             {
                 let allowed = match route {

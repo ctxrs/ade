@@ -1010,6 +1010,7 @@ dependencies = [
  "ctx-harness-runtime",
  "ctx-harness-setup",
  "ctx-harness-sources",
+ "ctx-http-auth",
  "ctx-linux-sandbox-runtime",
  "ctx-managed-installs",
  "ctx-mcp-auth",
@@ -1094,6 +1095,19 @@ dependencies = [
  "x25519-dalek",
  "zip",
  "zstd",
+]
+
+[[package]]
+name = "ctx-http-auth"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "ctx-core",
+ "hex",
+ "http 1.4.0",
+ "sha2",
+ "url",
+ "uuid",
 ]
 
 [[package]]

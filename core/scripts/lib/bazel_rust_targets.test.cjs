@@ -45,6 +45,7 @@ test("Bazel-covered crates stay on the intended explicit Rust slice", () => {
     "ctx-harness-setup",
     "ctx-harness-sources",
     "ctx-http",
+    "ctx-http-auth",
     "ctx-http-test-support",
     "ctx-linux-sandbox-runtime",
     "ctx-llm-relay-authority",

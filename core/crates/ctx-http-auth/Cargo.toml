@@ -1,0 +1,13 @@
+[package]
+name = "ctx-http-auth"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+chrono.workspace = true
+ctx-core = { path = "../ctx-core" }
+hex = "0.4"
+http = "1"
+sha2 = "0.10"
+url = "2"
+uuid.workspace = true

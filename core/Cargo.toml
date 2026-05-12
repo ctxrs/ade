@@ -11,6 +11,7 @@ members = [
   "crates/ctx-events",
   "crates/ctx-providers",
   "crates/codex-crp",
+  "crates/ctx-http-auth",
   "crates/ctx-mcp-auth",
   "crates/ctx-mcp",
   "crates/ctx-http-test-support",

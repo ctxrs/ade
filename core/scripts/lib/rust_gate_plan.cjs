@@ -11,6 +11,7 @@ const AGENT_GATE_CRATES = [
   "ctx-harness-runtime",
   "ctx-harness-sources",
   "ctx-http",
+  "ctx-http-auth",
   "ctx-http-test-support",
   "ctx-linux-sandbox-runtime",
   "ctx-llm-relay-authority",

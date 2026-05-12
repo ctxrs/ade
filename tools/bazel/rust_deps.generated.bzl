@@ -70,6 +70,21 @@ RUST_BAZEL_DEPS = {
         dev_proc_macro_deps = [],
         proc_macro_deps = [],
     ),
+    "ctx-http-auth": struct(
+        build_deps = [],
+        deps = [
+            "//core/crates/ctx-core:lib",
+            "@crates//:chrono",
+            "@crates//:hex",
+            "@crates//:http",
+            "@crates//:sha2",
+            "@crates//:url",
+            "@crates//:uuid",
+        ],
+        dev_deps = [],
+        dev_proc_macro_deps = [],
+        proc_macro_deps = [],
+    ),
     "ctx-http-test-support": struct(
         build_deps = [],
         deps = [
