@@ -6,50 +6,15 @@ async fn unarchive_task_recreates_managed_root_and_keeps_binding_snapshot_runtim
         .lock()
         .await;
     let temp = tempfile::tempdir().expect("tempdir");
-    let repo_root = temp.path().join("repo");
-    std::fs::create_dir_all(&repo_root).expect("create repo root");
-    let base_commit = init_git_workspace(&repo_root);
-    let state = test_state(temp.path()).await;
-    let workspace = state
-        .global_store()
-        .create_workspace(
-            "ws".to_string(),
-            repo_root.to_string_lossy().to_string(),
-            VcsKind::Git,
-        )
-        .await
-        .expect("create workspace");
-    let store = state
-        .store_for_workspace(workspace.id)
-        .await
-        .expect("workspace store");
-    let task = store
-        .create_task(workspace.id, "task".to_string(), None)
-        .await
-        .expect("create task");
-    state
-        .global_store()
-        .upsert_workspace_task_index(task.id, workspace.id)
-        .await
-        .expect("upsert task index");
-    let (worktree, managed_root) = insert_managed_worktree(
-        &store,
-        temp.path(),
-        &workspace,
-        task.id,
-        &repo_root,
-        &base_commit,
-    )
-    .await;
-    state
-        .global_store()
-        .upsert_workspace_worktree_index(worktree.id, workspace.id)
-        .await
-        .expect("upsert worktree index");
-    store
-        .set_task_primary_worktree(task.id, worktree.id)
-        .await
-        .expect("set primary worktree");
+    let ManagedTaskFixture {
+        repo_root,
+        state,
+        workspace,
+        store,
+        task,
+        worktree,
+        managed_root,
+    } = create_managed_task_fixture(temp.path()).await;
 
     let persisted_snapshot = ctx_settings_model::ExecutionSettings {
         mode: ctx_settings_model::ExecutionMode::Sandbox,
