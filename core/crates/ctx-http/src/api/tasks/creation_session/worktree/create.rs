@@ -8,25 +8,22 @@ pub(super) async fn create_session_execution_worktree(
     workspace_effective: &ExecutionSettings,
 ) -> Result<WorktreeId, StatusCode> {
     let workspace_root = StdPath::new(&workspace.root_path);
-    let vcs = vcs::driver_for_path(workspace_root)
+    let base = ctx_workspace_services::worktree_vcs::resolve_worktree_creation_base(workspace_root)
         .await
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
-    let base_commit_sha = vcs.rev_parse_head(workspace_root).await.map_err(|e| {
-        let msg = e.to_string().to_lowercase();
-        if msg.contains("ambiguous argument 'head'")
-            || msg.contains("unknown revision or path not in the working tree")
-        {
-            return StatusCode::BAD_REQUEST;
-        }
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+        .map_err(|error| {
+            if error.is_client_error() {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
+        })?;
     let worktree_id = WorktreeId::new();
     let branch_name = format!("ctx/{}/{}", task.id.0, worktree_id.0);
     let (wt_path, sandbox_binding) = provision_worktree_for_execution(
         state,
         workspace,
         worktree_id,
-        &base_commit_sha,
+        &base.base_commit_sha,
         &branch_name,
         workspace_effective,
     )
@@ -44,10 +41,10 @@ pub(super) async fn create_session_execution_worktree(
         id: worktree_id,
         workspace_id: task.workspace_id,
         root_path: wt_path.to_string_lossy().to_string(),
-        base_commit_sha: base_commit_sha.clone(),
-        git_branch: (vcs.kind() == VcsKind::Git).then(|| branch_name.clone()),
-        vcs_kind: Some(vcs.kind()),
-        base_revision: Some(base_commit_sha.clone()),
+        base_commit_sha: base.base_commit_sha.clone(),
+        git_branch: (base.vcs_kind == VcsKind::Git).then(|| branch_name.clone()),
+        vcs_kind: Some(base.vcs_kind),
+        base_revision: Some(base.base_commit_sha.clone()),
         vcs_ref: Some(branch_name.clone()),
         created_at: chrono::Utc::now(),
         bootstrap_status: None,
