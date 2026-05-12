@@ -30,6 +30,7 @@ import type {
 import { isAuthoritativeSessionReplicaReplace } from "./sessionReplicaProtocol";
 import { buildCanonicalReplicaPatch } from "./sessionReplicaPatches";
 import {
+  clearSessionReplicaGapRepairBaseline,
   createSessionReplicaEntry,
   headToReplicaData,
   isOlderReplicaVersion,
@@ -43,6 +44,7 @@ import {
   type SessionReplicaApi,
   type SessionReplicaApplyHeadOptions,
   type SessionReplicaEntry,
+  type SessionReplicaGapRepairBaseline,
 } from "./sessionReplicaCoreSupport";
 import { handleSessionReplicaWorkspaceEvent } from "./sessionReplicaCoreEvents";
 
@@ -55,7 +57,7 @@ export class SessionReplicaCore {
     recoveryHeadIncludeEvents: false,
   };
   private gapAlertedSessionIds = new Set<string>();
-  private gapRepairBaselineBySessionId = new Map<string, { lastEventSeq: number | null }>();
+  private gapRepairBaselineBySessionId = new Map<string, SessionReplicaGapRepairBaseline>();
   private gapRepairInFlightSessionIds = new Set<string>();
   private gapRepairPendingSessionIds = new Set<string>();
 
@@ -188,6 +190,13 @@ export class SessionReplicaCore {
     const id = normalizeReplicaId(sessionId);
     if (!id) return;
     this.entries.delete(id);
+    this.clearGapRepairBaseline(id);
+    this.gapRepairInFlightSessionIds.delete(id);
+    this.gapRepairPendingSessionIds.delete(id);
+  }
+
+  private clearGapRepairBaseline(sessionId: string): void {
+    clearSessionReplicaGapRepairBaseline(this.gapRepairBaselineBySessionId, sessionId);
   }
 
   private applyHead(
@@ -268,6 +277,15 @@ export class SessionReplicaCore {
         const baseline = this.gapRepairBaselineBySessionId.get(entry.sessionId);
         const repairedLastEventSeq = incomingSeq >= 0 ? incomingSeq : null;
         const authoritativeRepair = opts.freshness === "authoritative";
+        const repairEpoch =
+          typeof opts.gapRepairEpoch === "number" && Number.isFinite(opts.gapRepairEpoch)
+            ? opts.gapRepairEpoch
+            : null;
+        const staleEpochRepair =
+          baseline &&
+          repairEpoch !== null &&
+          typeof baseline.epoch === "number" &&
+          baseline.epoch !== repairEpoch;
         const repairMissedBaseline =
           baseline &&
           typeof baseline.lastEventSeq === "number" &&
@@ -275,7 +293,7 @@ export class SessionReplicaCore {
             repairedLastEventSeq < baseline.lastEventSeq);
         if (!authoritativeRepair) {
           nextFreshness = "recovering";
-        } else if (repairMissedBaseline) {
+        } else if (repairMissedBaseline && !staleEpochRepair) {
           this.emitFreshnessEvent({
             type: "gap_repair_mismatch",
             sessionId: entry.sessionId,
@@ -283,8 +301,10 @@ export class SessionReplicaCore {
             repairedLastEventSeq,
           });
           nextFreshness = "recovering";
+        } else if (repairMissedBaseline && staleEpochRepair) {
+          nextFreshness = "recovering";
         } else {
-          this.gapRepairBaselineBySessionId.delete(entry.sessionId);
+          this.clearGapRepairBaseline(entry.sessionId);
           this.emitFreshnessEvent({ type: "gap_recovery_finished", sessionId: entry.sessionId });
         }
       }
@@ -470,6 +490,7 @@ export class SessionReplicaCore {
       headLimit?: number;
       includeEvents?: boolean;
       coalesce?: boolean;
+      gapRepairEpoch?: number;
     },
   ): Promise<void> {
     const id = normalizeReplicaId(sessionId);
@@ -482,6 +503,10 @@ export class SessionReplicaCore {
     if (entry.loading && !opts?.force) return;
     if (!opts?.force && entry.hydrated) return;
 
+    const gapRepairEpoch =
+      typeof opts?.gapRepairEpoch === "number" && Number.isFinite(opts.gapRepairEpoch)
+        ? opts.gapRepairEpoch
+        : undefined;
     const token = ++entry.requestToken;
     if (opts?.coalesce) {
       this.gapRepairInFlightSessionIds.add(id);
@@ -511,6 +536,7 @@ export class SessionReplicaCore {
               ? undefined
               : this.authoritativeReplaceModeForHead(entry, sessionHead),
           freshness: "authoritative",
+          gapRepairEpoch,
         });
         await this.persistHead(entry);
       }
@@ -545,7 +571,11 @@ export class SessionReplicaCore {
           (this.gapRepairBaselineBySessionId.has(id) ||
             this.entries.get(id)?.freshness === "recovering");
         if (shouldRunPendingRepair) {
-          void this.hydrateSessionHead(id, opts).catch(() => {});
+          const pendingBaseline = this.gapRepairBaselineBySessionId.get(id);
+          void this.hydrateSessionHead(id, {
+            ...opts,
+            gapRepairEpoch: pendingBaseline?.epoch ?? opts.gapRepairEpoch,
+          }).catch(() => {});
         }
       }
     }

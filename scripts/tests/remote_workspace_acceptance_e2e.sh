@@ -40,6 +40,121 @@ esac
 
 mkdir -p "$ARTIFACT_ROOT"
 
+cleanup_pids=()
+cleanup_ports=()
+
+add_cleanup_port() {
+  local port="${1:-}"
+  if ! [[ "$port" =~ ^[0-9]+$ ]]; then
+    return 0
+  fi
+  local existing
+  for existing in "${cleanup_ports[@]}"; do
+    if [[ "$existing" == "$port" ]]; then
+      return 0
+    fi
+  done
+  cleanup_ports+=("$port")
+}
+
+extract_webdriver_port() {
+  local cmd="$1"
+  if [[ "$cmd" =~ --port=([0-9]+) ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  if [[ "$cmd" =~ --port[[:space:]]+([0-9]+) ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  return 1
+}
+
+cleanup_local_desktop_automation_processes() {
+  if ! command -v ps >/dev/null 2>&1; then
+    return 0
+  fi
+
+  cleanup_pids=()
+  cleanup_ports=()
+  add_cleanup_port "${TAURI_DRIVER_PORT:-}"
+  local pid cmd port
+  while read -r pid cmd; do
+    if [[ -z "${pid}" || -z "${cmd:-}" ]]; then
+      continue
+    fi
+    case "${cmd}" in
+      *WebKitWebDriver*|*wkwebdriver*|*WebKitWebProcess*|*WebKitNetworkProcess*|*WebKitGPUProcess*|*WebKitPluginProcess*|*WebKitStorageProcess*|*WebKitWebExtension*)
+        cleanup_pids+=("${pid}")
+        if port="$(extract_webdriver_port "$cmd")"; then
+          add_cleanup_port "$port"
+        fi
+        ;;
+      *"ctx-daemon serve "*"ctx-desktop-e2e-app-daemon-"*|*"ctx-daemon serve "*"remote-workspace-e2e"*)
+        cleanup_pids+=("${pid}")
+        ;;
+      *Xvfb*".ctx/volatile/artifacts/ctx-desktop-e2e"*|*Xvfb*"remote-workspace-e2e"*)
+        cleanup_pids+=("${pid}")
+        ;;
+    esac
+  done < <(ps -Ao pid=,command= 2>/dev/null || true)
+
+  if [[ "${#cleanup_pids[@]}" -gt 0 ]]; then
+    kill -9 "${cleanup_pids[@]}" >/dev/null 2>&1 || true
+  fi
+}
+
+wait_for_local_pids_gone() {
+  local attempts="${1:-50}"
+  shift || true
+  if [[ "$#" -eq 0 ]]; then
+    return 0
+  fi
+  local attempt=1
+  local pid alive
+  while [[ "$attempt" -le "$attempts" ]]; do
+    alive=0
+    for pid in "$@"; do
+      if kill -0 "$pid" >/dev/null 2>&1; then
+        alive=1
+        break
+      fi
+    done
+    if [[ "$alive" -eq 0 ]]; then
+      return 0
+    fi
+    sleep 0.2
+    attempt=$((attempt + 1))
+  done
+  return 1
+}
+
+wait_for_local_port_closed() {
+  local port="$1"
+  local attempts="${2:-50}"
+  local attempt=1
+  while [[ "$attempt" -le "$attempts" ]]; do
+    if ! (true >/dev/tcp/127.0.0.1/"$port") >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.2
+    attempt=$((attempt + 1))
+  done
+  return 1
+}
+
+cleanup_local_desktop_automation() {
+  cleanup_local_desktop_automation_processes
+  wait_for_local_pids_gone 50 "${cleanup_pids[@]}" || true
+  local port
+  for port in "${cleanup_ports[@]}"; do
+    wait_for_local_port_closed "$port" 50 || true
+  done
+}
+
+trap cleanup_local_desktop_automation EXIT
+cleanup_local_desktop_automation
+
 ssh_base_args=(
   -i "$REMOTE_KEY"
   -F /dev/null

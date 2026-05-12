@@ -69,6 +69,35 @@ export type SessionReplicaApplyHeadOptions = {
   appendMode?: SessionReplicaCanonicalAppendMode;
   replaceMode?: SessionReplicaReplaceMode;
   freshness?: SessionReplicaFreshnessState;
+  gapRepairEpoch?: number;
+};
+
+export type SessionReplicaGapRepairBaseline = {
+  epoch: number;
+  lastEventSeq: number | null;
+  seedFollows: boolean;
+  httpRepairStarted: boolean;
+  seedFallbackTimer: ReturnType<typeof globalThis.setTimeout> | null;
+};
+
+export const clearSessionReplicaGapRepairBaseline = (
+  baselines: Map<string, SessionReplicaGapRepairBaseline>,
+  sessionId: string,
+): void => {
+  const baseline = baselines.get(sessionId);
+  if (baseline?.seedFallbackTimer != null) {
+    globalThis.clearTimeout(baseline.seedFallbackTimer);
+  }
+  baselines.delete(sessionId);
+};
+
+export const replaceSessionReplicaGapRepairBaseline = (
+  baselines: Map<string, SessionReplicaGapRepairBaseline>,
+  sessionId: string,
+  baseline: SessionReplicaGapRepairBaseline,
+): void => {
+  clearSessionReplicaGapRepairBaseline(baselines, sessionId);
+  baselines.set(sessionId, baseline);
 };
 
 export const normalizeReplicaId = (value: unknown): string =>

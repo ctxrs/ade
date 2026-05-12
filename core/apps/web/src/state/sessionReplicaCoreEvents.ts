@@ -39,9 +39,11 @@ import {
 import type {
   SessionReplicaApplyHeadOptions,
   SessionReplicaEntry,
+  SessionReplicaGapRepairBaseline,
 } from "./sessionReplicaCoreSupport";
 import {
   normalizeReplicaId,
+  replaceSessionReplicaGapRepairBaseline,
   resolveFinalReplicaDeltaTurnId,
   SHOULD_EMIT_REPLICA_DEV_DIAGNOSTICS,
 } from "./sessionReplicaCoreSupport";
@@ -53,7 +55,10 @@ type SessionReplicaHydrateOptions = {
   headLimit?: number;
   includeEvents?: boolean;
   coalesce?: boolean;
+  gapRepairEpoch?: number;
 };
+
+const SEEDED_GAP_HTTP_REPAIR_GRACE_MS = 100;
 
 const changedItemsById = <T>(
   previous: readonly T[],
@@ -219,7 +224,7 @@ export type SessionReplicaEventHost = {
   entries: Map<string, SessionReplicaEntry>;
   config: SessionReplicaConfig;
   gapAlertedSessionIds: Set<string>;
-  gapRepairBaselineBySessionId: Map<string, { lastEventSeq: number | null }>;
+  gapRepairBaselineBySessionId: Map<string, SessionReplicaGapRepairBaseline>;
   ensureEntry(sessionId: string): SessionReplicaEntry;
   applyHead(
     entry: SessionReplicaEntry,
@@ -241,6 +246,35 @@ const emittedAtMsForDelta = (delta: SessionHeadDelta): number | null =>
   typeof delta.emitted_at_ms === "number" && Number.isFinite(delta.emitted_at_ms)
     ? delta.emitted_at_ms
     : null;
+
+const hydrateSessionGapRepair = (
+  host: SessionReplicaEventHost,
+  sessionId: string,
+): Promise<void> => {
+  const baseline = host.gapRepairBaselineBySessionId.get(sessionId);
+  return host.hydrateSessionHead(sessionId, {
+    force: true,
+    emitOp: "replace",
+    headLimit: host.config.recoveryHeadLimit ?? Math.min(5, host.config.headLimit),
+    includeEvents: host.config.recoveryHeadIncludeEvents ?? false,
+    coalesce: true,
+    gapRepairEpoch: baseline?.epoch,
+  });
+};
+
+const armSeededGapFallbackTimer = (
+  host: SessionReplicaEventHost,
+  sessionId: string,
+  baseline: SessionReplicaGapRepairBaseline,
+): void => {
+  baseline.seedFallbackTimer = globalThis.setTimeout(() => {
+    const current = host.gapRepairBaselineBySessionId.get(sessionId);
+    if (current !== baseline || current.httpRepairStarted) return;
+    current.seedFallbackTimer = null;
+    current.httpRepairStarted = true;
+    void hydrateSessionGapRepair(host, sessionId).catch(() => {});
+  }, SEEDED_GAP_HTTP_REPAIR_GRACE_MS);
+};
 
 export const handleSessionReplicaWorkspaceEvent = (
   host: SessionReplicaEventHost,
@@ -281,11 +315,37 @@ export const handleSessionReplicaWorkspaceEvent = (
     const sessionId = normalizeReplicaId(head?.session?.id ?? "");
     if (!head || !sessionId) return;
     const entry = host.ensureEntry(sessionId);
+    const replaceMode =
+      isBoundedSessionHead(head) || shouldRepairSessionHeadReplace(entry, head)
+        ? "repair_replace"
+        : "authoritative_replace";
+    const baseline = host.gapRepairBaselineBySessionId.get(sessionId);
+    const seedLastEventSeq =
+      typeof head.last_event_seq === "number" && Number.isFinite(head.last_event_seq)
+        ? head.last_event_seq
+        : null;
+    const seedMissedExpectedGap =
+      baseline?.seedFollows === true &&
+      typeof baseline.lastEventSeq === "number" &&
+      (typeof seedLastEventSeq !== "number" || seedLastEventSeq < baseline.lastEventSeq);
+    if (seedMissedExpectedGap) {
+      if (baseline.seedFallbackTimer != null) {
+        globalThis.clearTimeout(baseline.seedFallbackTimer);
+        baseline.seedFallbackTimer = null;
+      }
+      host.applyHead(entry, head, "replace", {
+        replaceMode,
+        freshness: "recovering",
+      });
+      if (!baseline.httpRepairStarted) {
+        baseline.httpRepairStarted = true;
+        host.gapRepairBaselineBySessionId.set(sessionId, baseline);
+        void hydrateSessionGapRepair(host, sessionId).catch(() => {});
+      }
+      return;
+    }
     host.applyHead(entry, head, "replace", {
-      replaceMode:
-        isBoundedSessionHead(head) || shouldRepairSessionHeadReplace(entry, head)
-          ? "repair_replace"
-          : "authoritative_replace",
+      replaceMode,
       freshness: "authoritative",
     });
     return;
@@ -319,9 +379,15 @@ export const handleSessionReplicaWorkspaceEvent = (
   );
   const requiredLastEventSeq =
     requiredSeqCandidates.length > 0 ? Math.max(...requiredSeqCandidates) : null;
-  host.gapRepairBaselineBySessionId.set(sessionId, {
+  const existingBaseline = host.gapRepairBaselineBySessionId.get(sessionId);
+  const baseline: SessionReplicaGapRepairBaseline = {
+    epoch: (existingBaseline?.epoch ?? 0) + 1,
     lastEventSeq: requiredLastEventSeq,
-  });
+    seedFollows,
+    httpRepairStarted: !seedFollows || existingBaseline?.httpRepairStarted === true,
+    seedFallbackTimer: null,
+  };
+  replaceSessionReplicaGapRepairBaseline(host.gapRepairBaselineBySessionId, sessionId, baseline);
 
   if (typeof window !== "undefined" && SHOULD_EMIT_REPLICA_DEV_DIAGNOSTICS) {
     const prevSeq = host.entries.get(sessionId)?.lastEventSeq;
@@ -351,14 +417,12 @@ export const handleSessionReplicaWorkspaceEvent = (
     error: null,
     appendMode: "metadata_update",
   });
-  if (!seedFollows) {
-    void host.hydrateSessionHead(sessionId, {
-      force: true,
-      emitOp: "replace",
-      headLimit: host.config.recoveryHeadLimit ?? Math.min(5, host.config.headLimit),
-      includeEvents: host.config.recoveryHeadIncludeEvents ?? false,
-      coalesce: true,
-    }).catch(() => {});
+  if (baseline.httpRepairStarted) {
+    void hydrateSessionGapRepair(host, sessionId).catch(() => {});
+  } else if (seedFollows) {
+    armSeededGapFallbackTimer(host, sessionId, baseline);
+  } else {
+    void hydrateSessionGapRepair(host, sessionId).catch(() => {});
   }
 };
 
