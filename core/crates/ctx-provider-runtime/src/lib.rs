@@ -9,6 +9,7 @@ use ctx_provider_matrix::ProviderMatrixCache;
 use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
 use tokio::sync::Mutex;
 
+pub mod login_sessions;
 pub mod model_preferences;
 pub mod provider_adapters;
 pub mod provider_auth;
@@ -55,14 +56,14 @@ pub struct ProviderRuntime {
     pub guard: Mutex<provider_guard::ProviderGuardRuntime>,
     pub restart: Mutex<provider_restart::ProviderRestartRuntime>,
     pub usage_cache: Mutex<HashMap<String, provider_usage::ProviderUsageSnapshot>>,
-    pub codex_login_sessions: Mutex<HashMap<String, provider_accounts::CodexLoginStatus>>,
-    pub claude_login_sessions: Mutex<HashMap<String, provider_accounts::ClaudeLoginStatus>>,
-    pub gemini_login_sessions: Mutex<HashMap<String, provider_accounts::GeminiLoginStatus>>,
-    pub qwen_login_sessions: Mutex<HashMap<String, provider_accounts::QwenLoginStatus>>,
-    pub kimi_login_sessions: Mutex<HashMap<String, provider_accounts::KimiLoginStatus>>,
-    pub cursor_login_sessions: Mutex<HashMap<String, provider_accounts::CursorLoginStatus>>,
-    pub amp_login_sessions: Mutex<HashMap<String, provider_accounts::AmpLoginStatus>>,
-    pub mistral_login_sessions: Mutex<HashMap<String, provider_accounts::MistralLoginStatus>>,
+    codex_login_sessions: Mutex<HashMap<String, provider_accounts::CodexLoginStatus>>,
+    claude_login_sessions: Mutex<HashMap<String, provider_accounts::ClaudeLoginStatus>>,
+    gemini_login_sessions: Mutex<HashMap<String, provider_accounts::GeminiLoginStatus>>,
+    qwen_login_sessions: Mutex<HashMap<String, provider_accounts::QwenLoginStatus>>,
+    kimi_login_sessions: Mutex<HashMap<String, provider_accounts::KimiLoginStatus>>,
+    cursor_login_sessions: Mutex<HashMap<String, provider_accounts::CursorLoginStatus>>,
+    amp_login_sessions: Mutex<HashMap<String, provider_accounts::AmpLoginStatus>>,
+    mistral_login_sessions: Mutex<HashMap<String, provider_accounts::MistralLoginStatus>>,
     pub install_start_gate: Mutex<()>,
     pub installs: Mutex<HashMap<InstallId, InstallState>>,
 }

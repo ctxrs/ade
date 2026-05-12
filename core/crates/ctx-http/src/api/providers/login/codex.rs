@@ -101,10 +101,12 @@ pub(crate) async fn start_codex_login(
         status: "pending".to_string(),
         error: None,
     };
-    {
-        let mut map = state.providers.codex_login_sessions.lock().await;
-        map.insert(account_id.clone(), status);
-    }
+    state
+        .providers
+        .with_codex_login_sessions(|map| {
+            map.insert(account_id.clone(), status);
+        })
+        .await;
     let state_clone = Arc::clone(&state);
     let account_id_for_task = account_id.clone();
     tokio::spawn(async move {
@@ -125,15 +127,18 @@ pub(crate) async fn get_codex_login(
     Path(id): Path<String>,
 ) -> Result<Json<provider_accounts::CodexLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let map = state.providers.codex_login_sessions.lock().await;
-    let status = map.get(&id).cloned().ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "login not found".to_string(),
-            }),
-        )
-    })?;
+    let status = state
+        .providers
+        .with_codex_login_sessions(|map| map.get(&id).cloned())
+        .await
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "login not found".to_string(),
+                }),
+            )
+        })?;
     Ok(Json(status))
 }
 

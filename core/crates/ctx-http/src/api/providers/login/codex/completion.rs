@@ -6,12 +6,16 @@ mod replay;
 use replay::replay_codex_callback;
 
 async fn restore_completion_token(state: &Arc<AppState>, id: &str, completion_token: &str) {
-    let mut map = state.providers.codex_login_sessions.lock().await;
-    if let Some(status) = map.get_mut(id) {
-        if status.status == "pending" && status.completion_token.is_none() {
-            status.completion_token = Some(completion_token.to_string());
-        }
-    }
+    state
+        .providers
+        .with_codex_login_sessions(|map| {
+            if let Some(status) = map.get_mut(id) {
+                if status.status == "pending" && status.completion_token.is_none() {
+                    status.completion_token = Some(completion_token.to_string());
+                }
+            }
+        })
+        .await;
 }
 
 pub(crate) async fn complete_codex_login(
@@ -21,43 +25,45 @@ pub(crate) async fn complete_codex_login(
     Json(req): Json<CodexLoginCompleteReq>,
 ) -> Result<Json<CodexLoginCompleteResp>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let expected_callback = {
-        let mut map = state.providers.codex_login_sessions.lock().await;
-        let Some(status) = map.get_mut(&id) else {
-            return Err((
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: "login not found".to_string(),
-                }),
-            ));
-        };
-        if status.status != "pending" {
-            return Err((
-                StatusCode::CONFLICT,
-                Json(ApiErrorResp {
-                    error: "login is not pending".to_string(),
-                }),
-            ));
-        }
-        if status.completion_token.as_deref() != Some(req.completion_token.as_str()) {
-            return Err((
-                StatusCode::UNAUTHORIZED,
-                Json(ApiErrorResp {
-                    error: "invalid completion token".to_string(),
-                }),
-            ));
-        }
-        let Some(expected_callback) = status.expected_callback_url.clone() else {
-            return Err((
-                StatusCode::CONFLICT,
-                Json(ApiErrorResp {
-                    error: "login is missing expected callback metadata".to_string(),
-                }),
-            ));
-        };
-        status.completion_token = None;
-        expected_callback
-    };
+    let expected_callback = state
+        .providers
+        .with_codex_login_sessions(|map| {
+            let Some(status) = map.get_mut(&id) else {
+                return Err((
+                    StatusCode::NOT_FOUND,
+                    Json(ApiErrorResp {
+                        error: "login not found".to_string(),
+                    }),
+                ));
+            };
+            if status.status != "pending" {
+                return Err((
+                    StatusCode::CONFLICT,
+                    Json(ApiErrorResp {
+                        error: "login is not pending".to_string(),
+                    }),
+                ));
+            }
+            if status.completion_token.as_deref() != Some(req.completion_token.as_str()) {
+                return Err((
+                    StatusCode::UNAUTHORIZED,
+                    Json(ApiErrorResp {
+                        error: "invalid completion token".to_string(),
+                    }),
+                ));
+            }
+            let Some(expected_callback) = status.expected_callback_url.clone() else {
+                return Err((
+                    StatusCode::CONFLICT,
+                    Json(ApiErrorResp {
+                        error: "login is missing expected callback metadata".to_string(),
+                    }),
+                ));
+            };
+            status.completion_token = None;
+            Ok(expected_callback)
+        })
+        .await?;
 
     if let Err(err) = validate_callback_url(&req.callback_url, Some(expected_callback.as_str())) {
         restore_completion_token(&state, &id, &req.completion_token).await;

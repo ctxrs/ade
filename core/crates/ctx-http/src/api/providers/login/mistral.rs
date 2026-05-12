@@ -23,18 +23,20 @@ pub(crate) async fn start_mistral_login(
     reject_mobile_auth(mobile_auth)?;
     let label = req.label;
     let login_id = uuid::Uuid::new_v4().to_string();
-    {
-        let mut map = state.providers.mistral_login_sessions.lock().await;
-        map.insert(
-            login_id.clone(),
-            provider_accounts::MistralLoginStatus {
-                login_id: login_id.clone(),
-                auth_url: None,
-                status: "pending".to_string(),
-                error: None,
-            },
-        );
-    }
+    state
+        .providers
+        .with_mistral_login_sessions(|map| {
+            map.insert(
+                login_id.clone(),
+                provider_accounts::MistralLoginStatus {
+                    login_id: login_id.clone(),
+                    auth_url: None,
+                    status: "pending".to_string(),
+                    error: None,
+                },
+            );
+        })
+        .await;
 
     let state_clone = Arc::clone(&state);
     let login_id_for_task = login_id.clone();
@@ -54,14 +56,17 @@ pub(crate) async fn get_mistral_login(
     Path(id): Path<String>,
 ) -> Result<Json<provider_accounts::MistralLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let map = state.providers.mistral_login_sessions.lock().await;
-    let status = map.get(&id).cloned().ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "login not found".to_string(),
-            }),
-        )
-    })?;
+    let status = state
+        .providers
+        .with_mistral_login_sessions(|map| map.get(&id).cloned())
+        .await
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "login not found".to_string(),
+                }),
+            )
+        })?;
     Ok(Json(status))
 }

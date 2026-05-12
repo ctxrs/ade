@@ -41,20 +41,22 @@ pub(crate) async fn start_kimi_login(
         .clone()
         .or(auth.verification_uri.clone());
     let device_code = Some(auth.user_code.clone());
-    {
-        let mut map = state.providers.kimi_login_sessions.lock().await;
-        map.insert(
-            login_id.clone(),
-            provider_accounts::KimiLoginStatus {
-                login_id: login_id.clone(),
-                status: "pending".to_string(),
-                account_id: None,
-                auth_url: auth_url.clone(),
-                device_code: device_code.clone(),
-                error: None,
-            },
-        );
-    }
+    state
+        .providers
+        .with_kimi_login_sessions(|map| {
+            map.insert(
+                login_id.clone(),
+                provider_accounts::KimiLoginStatus {
+                    login_id: login_id.clone(),
+                    status: "pending".to_string(),
+                    account_id: None,
+                    auth_url: auth_url.clone(),
+                    device_code: device_code.clone(),
+                    error: None,
+                },
+            );
+        })
+        .await;
 
     let state_clone = Arc::clone(&state);
     let login_id_for_task = login_id.clone();
@@ -85,14 +87,17 @@ pub(crate) async fn get_kimi_login(
     Path(id): Path<String>,
 ) -> Result<Json<provider_accounts::KimiLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let map = state.providers.kimi_login_sessions.lock().await;
-    let status = map.get(&id).cloned().ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "login not found".to_string(),
-            }),
-        )
-    })?;
+    let status = state
+        .providers
+        .with_kimi_login_sessions(|map| map.get(&id).cloned())
+        .await
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "login not found".to_string(),
+                }),
+            )
+        })?;
     Ok(Json(status))
 }

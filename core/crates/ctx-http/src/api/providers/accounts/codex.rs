@@ -10,10 +10,10 @@ pub(crate) async fn codex_accounts_response(
     state: &Arc<AppState>,
 ) -> anyhow::Result<CodexAccountsResponse> {
     let registry = provider_accounts::load_codex_registry(&state.core.data_root).await?;
-    let logins = {
-        let map = state.providers.codex_login_sessions.lock().await;
-        map.values().cloned().collect::<Vec<_>>()
-    };
+    let logins = state
+        .providers
+        .with_codex_login_sessions(|map| map.values().cloned().collect::<Vec<_>>())
+        .await;
     Ok(CodexAccountsResponse {
         active_account_id: registry.active_account_id,
         accounts: registry.accounts,
@@ -91,10 +91,10 @@ pub(crate) async fn set_codex_active_account(
     restarts::restart_codex_providers_for_auth_change(&state, "codex auth updated")
         .await
         .map_err(internal_error)?;
-    let logins = {
-        let map = state.providers.codex_login_sessions.lock().await;
-        map.values().cloned().collect::<Vec<_>>()
-    };
+    let logins = state
+        .providers
+        .with_codex_login_sessions(|map| map.values().cloned().collect::<Vec<_>>())
+        .await;
     Ok(Json(CodexAccountsResponse {
         active_account_id: registry.active_account_id,
         accounts: registry.accounts,
@@ -112,11 +112,13 @@ pub(crate) async fn delete_codex_account(
     restarts::restart_codex_providers_for_auth_change(&state, "codex auth updated")
         .await
         .map_err(internal_error)?;
-    let logins = {
-        let mut map = state.providers.codex_login_sessions.lock().await;
-        map.remove(&id);
-        map.values().cloned().collect::<Vec<_>>()
-    };
+    let logins = state
+        .providers
+        .with_codex_login_sessions(|map| {
+            map.remove(&id);
+            map.values().cloned().collect::<Vec<_>>()
+        })
+        .await;
     Ok(Json(CodexAccountsResponse {
         active_account_id: registry.active_account_id,
         accounts: registry.accounts,

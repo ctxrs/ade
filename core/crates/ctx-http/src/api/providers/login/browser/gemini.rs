@@ -23,19 +23,21 @@ pub(crate) async fn start_gemini_login(
 ) -> Result<Json<GeminiLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
     let login_id = uuid::Uuid::new_v4().to_string();
-    {
-        let mut map = state.providers.gemini_login_sessions.lock().await;
-        map.insert(
-            login_id.clone(),
-            provider_accounts::GeminiLoginStatus {
-                login_id: login_id.clone(),
-                auth_url: None,
-                status: "pending".to_string(),
-                account_id: None,
-                error: None,
-            },
-        );
-    }
+    state
+        .providers
+        .with_gemini_login_sessions(|map| {
+            map.insert(
+                login_id.clone(),
+                provider_accounts::GeminiLoginStatus {
+                    login_id: login_id.clone(),
+                    auth_url: None,
+                    status: "pending".to_string(),
+                    account_id: None,
+                    error: None,
+                },
+            );
+        })
+        .await;
 
     let state_clone = Arc::clone(&state);
     let login_id_for_task = login_id.clone();
@@ -55,14 +57,17 @@ pub(crate) async fn get_gemini_login(
     Path(id): Path<String>,
 ) -> Result<Json<provider_accounts::GeminiLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let map = state.providers.gemini_login_sessions.lock().await;
-    let status = map.get(&id).cloned().ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "login not found".to_string(),
-            }),
-        )
-    })?;
+    let status = state
+        .providers
+        .with_gemini_login_sessions(|map| map.get(&id).cloned())
+        .await
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiErrorResp {
+                    error: "login not found".to_string(),
+                }),
+            )
+        })?;
     Ok(Json(status))
 }

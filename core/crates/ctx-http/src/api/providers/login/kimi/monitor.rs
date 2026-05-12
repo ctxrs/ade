@@ -20,13 +20,18 @@ pub(super) async fn monitor_kimi_login(
 
     loop {
         if started_at.elapsed() >= timeout {
-            let mut map = state.providers.kimi_login_sessions.lock().await;
-            if let Some(entry) = map.get_mut(&login_id) {
-                entry.status = "timeout".to_string();
-                if entry.error.is_none() {
-                    entry.error = Some("timed out waiting for Kimi sign-in completion".to_string());
-                }
-            }
+            state
+                .providers
+                .with_kimi_login_sessions(|map| {
+                    if let Some(entry) = map.get_mut(&login_id) {
+                        entry.status = "timeout".to_string();
+                        if entry.error.is_none() {
+                            entry.error =
+                                Some("timed out waiting for Kimi sign-in completion".to_string());
+                        }
+                    }
+                })
+                .await;
             return;
         }
 
@@ -46,29 +51,37 @@ pub(super) async fn monitor_kimi_login(
                             "kimi auth updated",
                         )
                         .await;
-                        let mut map = state.providers.kimi_login_sessions.lock().await;
-                        if let Some(entry) = map.get_mut(&login_id) {
-                            entry.account_id = registry.active_account_id.clone();
-                            match restart_result {
-                                Ok(()) => {
-                                    entry.status = "success".to_string();
-                                    entry.error = None;
+                        state
+                            .providers
+                            .with_kimi_login_sessions(|map| {
+                                if let Some(entry) = map.get_mut(&login_id) {
+                                    entry.account_id = registry.active_account_id.clone();
+                                    match restart_result {
+                                        Ok(()) => {
+                                            entry.status = "success".to_string();
+                                            entry.error = None;
+                                        }
+                                        Err(err) => {
+                                            entry.status = "failed".to_string();
+                                            entry.error = Some(logs::redact_sensitive(&format!(
+                                                "auth saved but provider restart failed: {err:#}"
+                                            )));
+                                        }
+                                    }
                                 }
-                                Err(err) => {
-                                    entry.status = "failed".to_string();
-                                    entry.error = Some(logs::redact_sensitive(&format!(
-                                        "auth saved but provider restart failed: {err:#}"
-                                    )));
-                                }
-                            }
-                        }
+                            })
+                            .await;
                     }
                     Err(err) => {
-                        let mut map = state.providers.kimi_login_sessions.lock().await;
-                        if let Some(entry) = map.get_mut(&login_id) {
-                            entry.status = "failed".to_string();
-                            entry.error = Some(logs::redact_sensitive(&err.to_string()));
-                        }
+                        state
+                            .providers
+                            .with_kimi_login_sessions(|map| {
+                                if let Some(entry) = map.get_mut(&login_id) {
+                                    entry.status = "failed".to_string();
+                                    entry.error = Some(logs::redact_sensitive(&err.to_string()));
+                                }
+                            })
+                            .await;
                     }
                 }
                 return;
@@ -80,41 +93,51 @@ pub(super) async fn monitor_kimi_login(
                     "authorization_pending" | "slow_down" | "access_denied"
                 ) {
                     if error_code == "access_denied" {
-                        let mut map = state.providers.kimi_login_sessions.lock().await;
-                        if let Some(entry) = map.get_mut(&login_id) {
-                            entry.status = "failed".to_string();
-                            entry.error = Some(
-                                error
-                                    .error_description
-                                    .unwrap_or_else(|| "Kimi sign-in was denied.".to_string()),
-                            );
-                        }
+                        state
+                            .providers
+                            .with_kimi_login_sessions(|map| {
+                                if let Some(entry) = map.get_mut(&login_id) {
+                                    entry.status = "failed".to_string();
+                                    entry.error =
+                                        Some(error.error_description.unwrap_or_else(|| {
+                                            "Kimi sign-in was denied.".to_string()
+                                        }));
+                                }
+                            })
+                            .await;
                         return;
                     }
                     tokio::time::sleep(poll_interval).await;
                     continue;
                 }
-                let mut map = state.providers.kimi_login_sessions.lock().await;
-                if let Some(entry) = map.get_mut(&login_id) {
-                    entry.status = if error_code == "expired_token" {
-                        "timeout".to_string()
-                    } else {
-                        "failed".to_string()
-                    };
-                    entry.error = Some(
-                        error
-                            .error_description
-                            .unwrap_or_else(|| format!("Kimi sign-in failed: {error_code}")),
-                    );
-                }
+                state
+                    .providers
+                    .with_kimi_login_sessions(|map| {
+                        if let Some(entry) = map.get_mut(&login_id) {
+                            entry.status = if error_code == "expired_token" {
+                                "timeout".to_string()
+                            } else {
+                                "failed".to_string()
+                            };
+                            entry.error =
+                                Some(error.error_description.unwrap_or_else(|| {
+                                    format!("Kimi sign-in failed: {error_code}")
+                                }));
+                        }
+                    })
+                    .await;
                 return;
             }
             Err(err) => {
-                let mut map = state.providers.kimi_login_sessions.lock().await;
-                if let Some(entry) = map.get_mut(&login_id) {
-                    entry.status = "failed".to_string();
-                    entry.error = Some(logs::redact_sensitive(&err.to_string()));
-                }
+                state
+                    .providers
+                    .with_kimi_login_sessions(|map| {
+                        if let Some(entry) = map.get_mut(&login_id) {
+                            entry.status = "failed".to_string();
+                            entry.error = Some(logs::redact_sensitive(&err.to_string()));
+                        }
+                    })
+                    .await;
                 return;
             }
         }

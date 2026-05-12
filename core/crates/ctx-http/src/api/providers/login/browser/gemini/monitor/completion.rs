@@ -53,22 +53,26 @@ pub(super) async fn complete_gemini_login_if_credentials_exist(
             let restart_result =
                 restarts::restart_gemini_providers_for_auth_change(state, "gemini auth updated")
                     .await;
-            let mut map = state.providers.gemini_login_sessions.lock().await;
-            if let Some(entry) = map.get_mut(login_id) {
-                entry.account_id = registry.active_account_id.clone();
-                match restart_result {
-                    Ok(()) => {
-                        entry.status = "success".to_string();
-                        entry.error = None;
+            state
+                .providers
+                .with_gemini_login_sessions(|map| {
+                    if let Some(entry) = map.get_mut(login_id) {
+                        entry.account_id = registry.active_account_id.clone();
+                        match restart_result {
+                            Ok(()) => {
+                                entry.status = "success".to_string();
+                                entry.error = None;
+                            }
+                            Err(err) => {
+                                entry.status = "failed".to_string();
+                                entry.error = Some(logs::redact_sensitive(&format!(
+                                    "auth saved but provider restart failed: {err:#}"
+                                )));
+                            }
+                        }
                     }
-                    Err(err) => {
-                        entry.status = "failed".to_string();
-                        entry.error = Some(logs::redact_sensitive(&format!(
-                            "auth saved but provider restart failed: {err:#}"
-                        )));
-                    }
-                }
-            }
+                })
+                .await;
         }
         Err(err) => {
             status::set_failed(state, login_id, logs::redact_sensitive(&err.to_string())).await;

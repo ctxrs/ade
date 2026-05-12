@@ -66,13 +66,17 @@ pub(super) async fn monitor_cursor_login(
     .await;
 
     let _ = tokio::fs::remove_dir_all(&workspace.login_home).await;
-    let mut map = state.providers.cursor_login_sessions.lock().await;
-    if let Some(entry) = map.get_mut(&login_id) {
-        entry.status = completion.status;
-        entry.account_id = completion.account_id;
-        entry.error = completion.error;
-        if entry.auth_url.is_none() {
-            entry.auth_url = output.observed_auth_url;
-        }
-    }
+    state
+        .providers
+        .with_cursor_login_sessions(|map| {
+            if let Some(entry) = map.get_mut(&login_id) {
+                entry.status = completion.status;
+                entry.account_id = completion.account_id;
+                entry.error = completion.error;
+                if entry.auth_url.is_none() {
+                    entry.auth_url = output.observed_auth_url;
+                }
+            }
+        })
+        .await;
 }

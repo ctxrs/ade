@@ -122,32 +122,52 @@ async fn mobile_secure_proxy_rejects_provider_login_routes() {
     let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(payload["error"], "secure proxy path must be normalized");
 
-    assert!(state
-        .providers
-        .gemini_login_sessions
-        .lock()
-        .await
-        .is_empty());
-    assert!(state.providers.qwen_login_sessions.lock().await.is_empty());
-    assert!(state.providers.amp_login_sessions.lock().await.is_empty());
-    assert!(state
-        .providers
-        .mistral_login_sessions
-        .lock()
-        .await
-        .is_empty());
-    assert!(state.providers.kimi_login_sessions.lock().await.is_empty());
-    assert!(state
-        .providers
-        .claude_login_sessions
-        .lock()
-        .await
-        .is_empty());
-    assert!(state.providers.codex_login_sessions.lock().await.is_empty());
-    assert!(state
-        .providers
-        .cursor_login_sessions
-        .lock()
-        .await
-        .is_empty());
+    assert!(
+        state
+            .providers
+            .with_gemini_login_sessions(|map| map.is_empty())
+            .await
+    );
+    assert!(
+        state
+            .providers
+            .with_qwen_login_sessions(|map| map.is_empty())
+            .await
+    );
+    assert!(
+        state
+            .providers
+            .with_amp_login_sessions(|map| map.is_empty())
+            .await
+    );
+    assert!(
+        state
+            .providers
+            .with_mistral_login_sessions(|map| map.is_empty())
+            .await
+    );
+    assert!(
+        state
+            .providers
+            .with_kimi_login_sessions(|map| map.is_empty())
+            .await
+    );
+    assert!(
+        state
+            .providers
+            .with_claude_login_sessions(|map| map.is_empty())
+            .await
+    );
+    assert!(
+        state
+            .providers
+            .with_codex_login_sessions(|map| map.is_empty())
+            .await
+    );
+    assert!(
+        state
+            .providers
+            .with_cursor_login_sessions(|map| map.is_empty())
+            .await
+    );
 }

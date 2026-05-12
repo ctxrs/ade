@@ -131,18 +131,22 @@ async fn insert_pending_login(
     completion_token: &str,
     expected_callback_url: &str,
 ) {
-    let mut map = state.providers.codex_login_sessions.lock().await;
-    map.insert(
-        account_id.to_string(),
-        CodexLoginStatus {
-            account_id: account_id.to_string(),
-            auth_url: "https://chat.openai.com/oauth/authorize".to_string(),
-            expected_callback_url: Some(expected_callback_url.to_string()),
-            completion_token: Some(completion_token.to_string()),
-            status: "pending".to_string(),
-            error: None,
-        },
-    );
+    state
+        .providers
+        .with_codex_login_sessions(|map| {
+            map.insert(
+                account_id.to_string(),
+                CodexLoginStatus {
+                    account_id: account_id.to_string(),
+                    auth_url: "https://chat.openai.com/oauth/authorize".to_string(),
+                    expected_callback_url: Some(expected_callback_url.to_string()),
+                    completion_token: Some(completion_token.to_string()),
+                    status: "pending".to_string(),
+                    error: None,
+                },
+            );
+        })
+        .await;
 }
 
 #[tokio::test]
@@ -173,13 +177,15 @@ async fn complete_login_replays_loopback_callback_and_clears_token() {
     assert!(body.accepted);
     assert_eq!(body.status_code, 200);
 
-    let map = state.providers.codex_login_sessions.lock().await;
-    let status = map.get(account_id).expect("login status");
+    let status = state
+        .providers
+        .with_codex_login_sessions(|map| map.get(account_id).cloned())
+        .await
+        .expect("login status");
     assert!(
         status.completion_token.is_none(),
         "completion token should be single-use"
     );
-    drop(map);
 
     callback_handle.abort();
     server_handle.abort();
@@ -258,20 +264,22 @@ async fn complete_login_rejects_missing_expected_callback_metadata() {
     let callback_url = format!("{callback_base}/auth/callback?code=abc");
     let account_id = "acct-missing-expected-callback";
     let token = "token-missing-expected-callback";
-    {
-        let mut map = state.providers.codex_login_sessions.lock().await;
-        map.insert(
-            account_id.to_string(),
-            CodexLoginStatus {
-                account_id: account_id.to_string(),
-                auth_url: "https://chat.openai.com/oauth/authorize".to_string(),
-                expected_callback_url: None,
-                completion_token: Some(token.to_string()),
-                status: "pending".to_string(),
-                error: None,
-            },
-        );
-    }
+    state
+        .providers
+        .with_codex_login_sessions(|map| {
+            map.insert(
+                account_id.to_string(),
+                CodexLoginStatus {
+                    account_id: account_id.to_string(),
+                    auth_url: "https://chat.openai.com/oauth/authorize".to_string(),
+                    expected_callback_url: None,
+                    completion_token: Some(token.to_string()),
+                    status: "pending".to_string(),
+                    error: None,
+                },
+            );
+        })
+        .await;
     let (base, client, server_handle) = start_http_app(state.clone()).await;
 
     let resp = client
@@ -289,10 +297,12 @@ async fn complete_login_rejects_missing_expected_callback_metadata() {
     let body: ErrorResp = resp.json().await.unwrap();
     assert!(body.error.contains("expected callback"));
 
-    let map = state.providers.codex_login_sessions.lock().await;
-    let status = map.get(account_id).expect("login status");
+    let status = state
+        .providers
+        .with_codex_login_sessions(|map| map.get(account_id).cloned())
+        .await
+        .expect("login status");
     assert_eq!(status.completion_token.as_deref(), Some(token));
-    drop(map);
     assert_eq!(callback_hits.load(Ordering::SeqCst), 0);
 
     callback_handle.abort();
