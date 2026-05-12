@@ -12,6 +12,7 @@ members = [
   "crates/ctx-providers",
   "crates/codex-crp",
   "crates/ctx-mcp",
+  "crates/ctx-http-test-support",
   "crates/ctx-provider-accounts",
   "crates/ctx-provider-matrix",
   "crates/ctx-provider-auth-import",

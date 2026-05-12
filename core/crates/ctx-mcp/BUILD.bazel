@@ -63,9 +63,7 @@ rust_test(
     rustc_env = CTX_MCP_TEST_RUSTC_ENV,
     deps = CTX_MCP_TEST_DEPS + [
         "//core/crates/ctx-core:lib",
-        "//core/crates/ctx-http:lib",
-        "//core/crates/ctx-providers:lib",
-        "//core/crates/ctx-store:lib",
+        "//core/crates/ctx-http-test-support:lib",
         "@crates//:reqwest",
         "@crates//:uuid",
     ],

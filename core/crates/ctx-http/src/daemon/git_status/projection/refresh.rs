@@ -82,7 +82,7 @@ pub(in crate::daemon::git_status) async fn refresh_worktree_vcs_projection(
     let include_status_inventory = touched_plan.include_status_inventory();
     let status_projection =
         match load_status_projection(state, worktree, include_status_inventory).await? {
-            StatusProjectionOutcome::Ready(status_projection) => status_projection,
+            StatusProjectionOutcome::Ready(status_projection) => *status_projection,
             StatusProjectionOutcome::NoRepo => {
                 return publish_no_repo_snapshot(state, worktree, resolution, force_emit).await;
             }

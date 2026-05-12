@@ -70,6 +70,24 @@ RUST_BAZEL_DEPS = {
         dev_proc_macro_deps = [],
         proc_macro_deps = [],
     ),
+    "ctx-http-test-support": struct(
+        build_deps = [],
+        deps = [
+            "//core/crates/ctx-core:lib",
+            "//core/crates/ctx-http:lib",
+            "//core/crates/ctx-providers:lib",
+            "//core/crates/ctx-store:lib",
+            "@crates//:anyhow",
+            "@crates//:axum",
+            "@crates//:reqwest",
+            "@crates//:serde_json",
+            "@crates//:tempfile",
+            "@crates//:tokio",
+        ],
+        dev_deps = [],
+        dev_proc_macro_deps = [],
+        proc_macro_deps = [],
+    ),
     "ctx-llm-relay-authority": struct(
         build_deps = [],
         deps = [

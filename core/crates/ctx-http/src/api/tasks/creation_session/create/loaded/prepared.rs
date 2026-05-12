@@ -1,5 +1,5 @@
 use super::*;
-use model::{resolve_loaded_session_model, ResolvedLoadedSessionModel};
+use model::{resolve_loaded_session_model, LoadedSessionModelRequest, ResolvedLoadedSessionModel};
 
 #[path = "prepared/model.rs"]
 mod model;
@@ -94,17 +94,17 @@ pub(super) async fn prepare_loaded_session_request(
         model_id,
         reasoning_effort,
         preferred_model_id,
-    } = resolve_loaded_session_model(
+    } = resolve_loaded_session_model(LoadedSessionModelRequest {
         state,
         store,
         workspace,
-        task.id,
-        &provider_id,
+        task_id: task.id,
+        provider_id: &provider_id,
         execution_environment,
-        req.model_id.as_str(),
-        req.reasoning_effort.as_deref(),
+        requested_model_id: req.model_id.as_str(),
+        requested_reasoning_effort: req.reasoning_effort.as_deref(),
         created_worktree_id,
-    )
+    })
     .await?;
 
     Ok(PreparedLoadedSessionRequest {

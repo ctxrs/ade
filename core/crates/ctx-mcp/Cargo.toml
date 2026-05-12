@@ -20,9 +20,7 @@ tracing-subscriber.workspace = true
 
 [dev-dependencies]
 axum.workspace = true
-ctx-http = { path = "../ctx-http" }
-ctx-providers = { path = "../ctx-providers" }
-ctx-store = { path = "../ctx-store" }
+ctx-http-test-support = { path = "../ctx-http-test-support" }
 tempfile = "3"
 tower = "0.5"
 rand = "0.8"

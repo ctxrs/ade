@@ -22,6 +22,7 @@ test("agent gate crate list keeps the expected ctx-http-centered fast gate", () 
     "ctx-harness-runtime",
     "ctx-harness-sources",
     "ctx-http",
+    "ctx-http-test-support",
     "ctx-linux-sandbox-runtime",
     "ctx-llm-relay-authority",
     "ctx-llm-relay-contract",

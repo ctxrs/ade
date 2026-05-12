@@ -2,13 +2,12 @@ use super::*;
 
 #[tokio::test]
 async fn mcp_agent_tools_work_end_to_end_against_real_daemon_router() {
-    let (_repo, _data_dir, _state, base_url, _parent_id, mcp_token) =
-        setup_daemon_backed_parent_session().await;
+    let fixture = setup_fake_provider_parent_session().await.unwrap();
 
     let mut child = mcp_command()
         .arg("--stdio")
-        .env("CTX_DAEMON_URL", &base_url)
-        .env("CTX_MCP_TOKEN", &mcp_token)
+        .env("CTX_DAEMON_URL", fixture.base_url())
+        .env("CTX_MCP_TOKEN", fixture.mcp_token())
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()

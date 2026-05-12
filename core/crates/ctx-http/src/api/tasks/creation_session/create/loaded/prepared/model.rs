@@ -6,17 +6,33 @@ pub(super) struct ResolvedLoadedSessionModel {
     pub(super) preferred_model_id: String,
 }
 
+pub(super) struct LoadedSessionModelRequest<'a> {
+    pub(super) state: &'a Arc<AppState>,
+    pub(super) store: &'a Store,
+    pub(super) workspace: &'a Workspace,
+    pub(super) task_id: TaskId,
+    pub(super) provider_id: &'a str,
+    pub(super) execution_environment: ExecutionEnvironment,
+    pub(super) requested_model_id: &'a str,
+    pub(super) requested_reasoning_effort: Option<&'a str>,
+    pub(super) created_worktree_id: Option<WorktreeId>,
+}
+
 pub(super) async fn resolve_loaded_session_model(
-    state: &Arc<AppState>,
-    store: &Store,
-    workspace: &Workspace,
-    task_id: TaskId,
-    provider_id: &str,
-    execution_environment: ExecutionEnvironment,
-    requested_model_id: &str,
-    requested_reasoning_effort: Option<&str>,
-    created_worktree_id: Option<WorktreeId>,
+    request: LoadedSessionModelRequest<'_>,
 ) -> Result<ResolvedLoadedSessionModel, StatusCode> {
+    let LoadedSessionModelRequest {
+        state,
+        store,
+        workspace,
+        task_id,
+        provider_id,
+        execution_environment,
+        requested_model_id,
+        requested_reasoning_effort,
+        created_worktree_id,
+    } = request;
+
     let catalog = match sessions::load_provider_model_catalog_for_execution_environment(
         state,
         workspace,

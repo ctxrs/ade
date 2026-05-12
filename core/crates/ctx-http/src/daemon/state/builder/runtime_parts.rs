@@ -1,4 +1,5 @@
 use super::super::*;
+use std::path::Path;
 
 mod defaults;
 
@@ -27,7 +28,7 @@ pub(super) struct BuilderRuntimeParts {
     pub(super) web_sessions: Arc<WebSessionManager>,
 }
 
-pub(super) fn build_tool_output_spool(data_root: &PathBuf) -> ToolOutputSpool {
+pub(super) fn build_tool_output_spool(data_root: &Path) -> ToolOutputSpool {
     // Internal spool-path mechanics remain experimental, but once output is
     // promoted into the session artifact list it follows the normal
     // SessionState/artifact client contract.
@@ -48,9 +49,10 @@ pub(super) fn build_tool_output_spool(data_root: &PathBuf) -> ToolOutputSpool {
     ToolOutputSpool { enabled, dir }
 }
 
-pub(super) fn build_runtime_parts(data_root: &PathBuf) -> BuilderRuntimeParts {
+pub(super) fn build_runtime_parts(data_root: &Path) -> BuilderRuntimeParts {
     let (shutdown_tx, _) = broadcast::channel(8);
     let ask_user_question = Arc::new(AskUserQuestionBroker::new());
+    let data_root = data_root.to_path_buf();
     let telemetry = Telemetry::new(data_root.clone());
     let provider_unknown_events =
         ctx_observability::provider_unknown_events::ProviderUnknownEvents::new(

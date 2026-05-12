@@ -11,7 +11,7 @@ use crate::daemon::AppState;
 use super::super::loading::load_git_status_snapshot;
 
 pub(super) enum StatusProjectionOutcome {
-    Ready(StatusProjection),
+    Ready(Box<StatusProjection>),
     NoRepo,
 }
 
@@ -44,8 +44,8 @@ pub(super) async fn load_status_projection(
     };
     let git_status = build_git_status_summary(&git_snapshot, entries);
 
-    Ok(StatusProjectionOutcome::Ready(StatusProjection {
+    Ok(StatusProjectionOutcome::Ready(Box::new(StatusProjection {
         git_snapshot,
         git_status,
-    }))
+    })))
 }

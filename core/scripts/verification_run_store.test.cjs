@@ -216,6 +216,10 @@ test("run store preserves explicit zero-valued telemetry", () => {
 
 test("run store finalization reclaims stale legacy lock directories", () => {
   const layout = tempLayout();
+  const env = {
+    ...process.env,
+    CTX_VERIFICATION_RUN_MAX_AGE_DAYS: "3650",
+  };
   const rootDir = path.join(layout.artifactsDir, "verification-runs");
   const lockPath = path.join(rootDir, ".lock");
   fs.mkdirSync(lockPath, { recursive: true });
@@ -224,7 +228,7 @@ test("run store finalization reclaims stale legacy lock directories", () => {
 
   const run = createRunArtifacts({
     cwd: process.cwd(),
-    env: process.env,
+    env,
     entrypoint: "verify:agent-remote",
     kind: "router",
     layout,
@@ -236,7 +240,7 @@ test("run store finalization reclaims stale legacy lock directories", () => {
     completedAt: "2026-04-25T00:00:01.000Z",
     durationMs: 1000,
     success: true,
-  }, { env: process.env });
+  }, { env });
 
   assert.equal(summary.runId, "stale-legacy-lock");
   assert.equal(fs.existsSync(lockPath), false);
