@@ -141,6 +141,31 @@ find_appdir_path() {
   find "$appimage_bundle_dir" "$fallback_appimage_bundle_dir" -maxdepth 1 -type d -name '*.AppDir' 2>/dev/null | head -n 1 || true
 }
 
+prepare_appdir_for_linuxdeploy_retry() {
+  local appdir="$1"
+  local libdir="$appdir/usr/lib"
+  if [[ ! -d "$libdir" ]]; then
+    return 0
+  fi
+  local appdir_abs
+  appdir_abs="$(cd "$appdir" && pwd)"
+  local stale_link target_abs
+  while IFS= read -r stale_link; do
+    target_abs="$(readlink -f "$stale_link" 2>/dev/null || true)"
+    case "$target_abs" in
+      "$appdir_abs"/usr/lib/*/gdk-pixbuf-2.0/*/loaders/*.so | \
+        "$appdir_abs"/usr/lib/*/gio/modules/*.so | \
+        "$appdir_abs"/usr/lib/*/gtk-3.0/3.0.0/immodules/*.so | \
+        "$appdir_abs"/usr/lib/*/gtk-3.0/3.0.0/printbackends/*.so)
+        echo "removing stale linuxdeploy GTK plugin retry symlink: $stale_link -> $target_abs"
+        rm -f "$stale_link"
+        ;;
+    esac
+  done < <(
+    find "$libdir" -maxdepth 1 -type l -name '*.so' -print 2>/dev/null | LC_ALL=C sort
+  )
+}
+
 rewrite_appdir_bundle_manifest_digests() {
   local appdir="$1"
   local manifest_path bundle_dir
@@ -276,6 +301,7 @@ if ! \
     fi
     echo "::endgroup::"
     if [[ -x "$linuxdeploy_path" ]]; then
+      prepare_appdir_for_linuxdeploy_retry "$appdir_path"
       if "$linuxdeploy_path" --appimage-extract-and-run --verbosity 3 --appdir "$appdir_path" --plugin gtk --output appimage; then
         manual_linuxdeploy_ok=1
       fi
