@@ -14,10 +14,10 @@ pub(super) async fn monitor_amp_login(
     login_id: String,
     label: Option<String>,
 ) {
-    let adapter = {
-        let map = state.providers.adapters.lock().await;
-        map.get("amp").cloned()
-    };
+    let adapter = state
+        .providers
+        .with_provider_adapters(|map| map.get("amp").cloned())
+        .await;
     let Some(adapter) = adapter else {
         status::set_failed(
             &state,

@@ -171,11 +171,9 @@ pub async fn provider_status_for_target(
         status
     } else if matches!(target, InstallTarget::Host) {
         state
-            .provider_statuses()
-            .lock()
+            .provider_runtime()
+            .with_provider_statuses(|statuses| statuses.get(provider_id).cloned())
             .await
-            .get(provider_id)
-            .cloned()
             .unwrap_or_else(|| ProviderStatus {
                 provider_id: provider_id.to_string(),
                 installed: false,

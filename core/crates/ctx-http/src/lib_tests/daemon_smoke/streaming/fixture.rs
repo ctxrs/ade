@@ -143,5 +143,10 @@ async fn install_fake_provider_status(state: &Arc<AppState>) {
             usability: ctx_providers::adapters::ProviderUsability::default(),
         },
     );
-    *state.providers.statuses.lock().await = statuses;
+    state
+        .providers
+        .with_provider_statuses(|map| {
+            *map = statuses;
+        })
+        .await;
 }

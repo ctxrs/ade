@@ -24,20 +24,25 @@ async fn endpoint_model_sweeper_counts_harness_config_load_failures() {
         "http://127.0.0.1:4399".to_string(),
         None,
     ));
-    state.providers.statuses.lock().await.insert(
-        "qwen".to_string(),
-        ProviderStatus {
-            provider_id: "qwen".to_string(),
-            installed: true,
-            detected_path: None,
-            version: None,
-            capabilities: None,
-            health: ProviderHealth::Ok,
-            diagnostics: Vec::new(),
-            details: HashMap::new(),
-            usability: ProviderUsability::default(),
-        },
-    );
+    state
+        .providers
+        .with_provider_statuses(|statuses| {
+            statuses.insert(
+                "qwen".to_string(),
+                ProviderStatus {
+                    provider_id: "qwen".to_string(),
+                    installed: true,
+                    detected_path: None,
+                    version: None,
+                    capabilities: None,
+                    health: ProviderHealth::Ok,
+                    diagnostics: Vec::new(),
+                    details: HashMap::new(),
+                    usability: ProviderUsability::default(),
+                },
+            );
+        })
+        .await;
 
     let (refreshed, failed, refreshed_provider_ids) =
         refresh_stale_selected_endpoint_model_catalogs(&state).await;

@@ -64,16 +64,24 @@ pub(crate) async fn collect_provider_adapters_for_shutdown(
     state: &Arc<AppState>,
 ) -> Vec<(String, Arc<dyn ProviderAdapter>)> {
     let mut adapters = {
-        let map = state.providers.adapters.lock().await;
-        map.iter()
-            .map(|(id, adapter)| (id.clone(), Arc::clone(adapter)))
-            .collect::<Vec<_>>()
+        state
+            .providers
+            .with_provider_adapters(|map| {
+                map.iter()
+                    .map(|(id, adapter)| (id.clone(), Arc::clone(adapter)))
+                    .collect::<Vec<_>>()
+            })
+            .await
     };
     let target_adapters = {
-        let map = state.providers.target_adapters.lock().await;
-        map.iter()
-            .map(|(id, adapter)| (id.clone(), Arc::clone(adapter)))
-            .collect::<Vec<_>>()
+        state
+            .providers
+            .with_target_provider_adapters(|map| {
+                map.iter()
+                    .map(|(id, adapter)| (id.clone(), Arc::clone(adapter)))
+                    .collect::<Vec<_>>()
+            })
+            .await
     };
     adapters.extend(target_adapters);
     adapters

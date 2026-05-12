@@ -10,10 +10,10 @@ pub(super) async fn monitor_gemini_login(
     login_id: String,
     label: Option<String>,
 ) {
-    let adapter = {
-        let map = state.providers.adapters.lock().await;
-        map.get("gemini").cloned()
-    };
+    let adapter = state
+        .providers
+        .with_provider_adapters(|map| map.get("gemini").cloned())
+        .await;
     let Some(adapter) = adapter else {
         status::set_failed(
             &state,

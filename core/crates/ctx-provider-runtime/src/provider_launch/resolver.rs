@@ -157,39 +157,37 @@ pub async fn ensure_provider_adapter_for_target_with_cfg(
 ) -> Arc<dyn ProviderAdapter> {
     if let Some(cache_key) = target_adapter_cache_key(provider_id, target) {
         if let Some(adapter) = state
-            .target_provider_adapters()
-            .lock()
+            .provider_runtime()
+            .with_target_provider_adapters(|adapters| adapters.get(&cache_key).cloned())
             .await
-            .get(&cache_key)
-            .cloned()
         {
             return adapter;
         }
         let adapter =
             build_provider_adapter_for_target(state.data_root(), cfg, provider_id, target);
         state
-            .target_provider_adapters()
-            .lock()
-            .await
-            .insert(cache_key, adapter.clone());
+            .provider_runtime()
+            .with_target_provider_adapters(|adapters| {
+                adapters.insert(cache_key, adapter.clone());
+            })
+            .await;
         return adapter;
     }
 
     if let Some(adapter) = state
-        .provider_adapters()
-        .lock()
+        .provider_runtime()
+        .with_provider_adapters(|adapters| adapters.get(provider_id).cloned())
         .await
-        .get(provider_id)
-        .cloned()
     {
         return adapter;
     }
     let adapter = build_provider_adapter_for_target(state.data_root(), cfg, provider_id, target);
     state
-        .provider_adapters()
-        .lock()
-        .await
-        .insert(provider_id.to_string(), adapter.clone());
+        .provider_runtime()
+        .with_provider_adapters(|adapters| {
+            adapters.insert(provider_id.to_string(), adapter.clone());
+        })
+        .await;
     adapter
 }
 

@@ -18,6 +18,7 @@ pub mod provider_child_reclassifier;
 pub mod provider_guard;
 pub mod provider_launch;
 pub mod provider_restart;
+pub mod provider_state;
 pub mod provider_usability;
 pub mod provider_usage;
 pub mod resource_governance;
@@ -27,11 +28,7 @@ pub trait ProviderRuntimeHost: Send + Sync + 'static {
 
     fn current_ctx_version(&self) -> Option<String>;
 
-    fn provider_adapters(&self) -> &Mutex<HashMap<String, Arc<dyn ProviderAdapter>>>;
-
-    fn target_provider_adapters(&self) -> &Mutex<HashMap<String, Arc<dyn ProviderAdapter>>>;
-
-    fn provider_statuses(&self) -> &Mutex<HashMap<String, ProviderStatus>>;
+    fn provider_runtime(&self) -> &ProviderRuntime;
 }
 
 pub type AppState = dyn ProviderRuntimeHost;

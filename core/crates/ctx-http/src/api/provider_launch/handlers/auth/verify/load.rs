@@ -33,11 +33,13 @@ pub(super) async fn ensure_known_provider(
     matrix: &ProviderMatrix,
     provider_id: &str,
 ) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
-    let known = {
-        let map = state.providers.statuses.lock().await;
-        map.contains_key(provider_id)
-            || ctx_provider_matrix::get_entry(matrix, provider_id).is_some()
-    };
+    let known = state
+        .providers
+        .with_provider_statuses(|map| {
+            map.contains_key(provider_id)
+                || ctx_provider_matrix::get_entry(matrix, provider_id).is_some()
+        })
+        .await;
     if known {
         return Ok(());
     }

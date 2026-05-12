@@ -1,28 +1,21 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use tempfile::tempdir;
-use tokio::sync::Mutex;
 
 use super::*;
-use crate::ProviderRuntimeHost;
-use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
+use crate::{ProviderRuntime, ProviderRuntimeHost};
 
 struct TestRuntimeHost {
     data_root: PathBuf,
-    provider_adapters: Mutex<HashMap<String, Arc<dyn ProviderAdapter>>>,
-    target_provider_adapters: Mutex<HashMap<String, Arc<dyn ProviderAdapter>>>,
-    provider_statuses: Mutex<HashMap<String, ProviderStatus>>,
+    provider_runtime: ProviderRuntime,
 }
 
 impl TestRuntimeHost {
     fn new(data_root: PathBuf) -> Self {
         Self {
             data_root,
-            provider_adapters: Mutex::new(HashMap::new()),
-            target_provider_adapters: Mutex::new(HashMap::new()),
-            provider_statuses: Mutex::new(HashMap::new()),
+            provider_runtime: ProviderRuntime::new(HashMap::new()),
         }
     }
 }
@@ -36,16 +29,8 @@ impl ProviderRuntimeHost for TestRuntimeHost {
         None
     }
 
-    fn provider_adapters(&self) -> &Mutex<HashMap<String, Arc<dyn ProviderAdapter>>> {
-        &self.provider_adapters
-    }
-
-    fn target_provider_adapters(&self) -> &Mutex<HashMap<String, Arc<dyn ProviderAdapter>>> {
-        &self.target_provider_adapters
-    }
-
-    fn provider_statuses(&self) -> &Mutex<HashMap<String, ProviderStatus>> {
-        &self.provider_statuses
+    fn provider_runtime(&self) -> &ProviderRuntime {
+        &self.provider_runtime
     }
 }
 
@@ -86,15 +71,15 @@ async fn ensure_provider_adapter_for_target_surfaces_agent_server_config_errors_
 
     assert!(err.to_string().contains("loading agent server config"));
     assert!(
-        host.target_provider_adapters
-            .lock()
-            .await
-            .get("codex@container")
-            .is_none(),
+        host.provider_runtime
+            .with_target_provider_adapters(|adapters| adapters.get("codex@container").is_none())
+            .await,
         "invalid managed config should not seed target adapter cache"
     );
     assert!(
-        host.provider_adapters.lock().await.get("codex").is_none(),
+        host.provider_runtime
+            .with_provider_adapters(|adapters| adapters.get("codex").is_none())
+            .await,
         "invalid managed config should not seed provider adapter cache"
     );
 }

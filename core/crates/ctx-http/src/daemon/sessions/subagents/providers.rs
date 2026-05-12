@@ -38,10 +38,10 @@ pub(super) async fn load_requested_model_catalogs(
         &state.providers.matrix_cache,
     )
     .await;
-    let mut known_providers = {
-        let statuses = state.providers.statuses.lock().await;
-        statuses.keys().cloned().collect::<HashSet<_>>()
-    };
+    let mut known_providers = state
+        .providers
+        .with_provider_statuses(|statuses| statuses.keys().cloned().collect::<HashSet<_>>())
+        .await;
     for entry in &matrix.providers {
         if entry.kind == ProviderMatrixEntryKind::Harness {
             known_providers.insert(entry.id.clone());

@@ -39,7 +39,12 @@ async fn spawn_agent_surfaces_agent_server_config_errors() {
                 usability: ctx_providers::adapters::ProviderUsability::default(),
             },
         );
-        *state.providers.statuses.lock().await = statuses;
+        state
+            .providers
+            .with_provider_statuses(|map| {
+                *map = statuses;
+            })
+            .await;
     }
     write_invalid_agent_server_config(data_dir.path());
 

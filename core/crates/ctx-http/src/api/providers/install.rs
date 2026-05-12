@@ -72,18 +72,25 @@ pub(crate) async fn dev_restart_providers(
         .unwrap_or_else(|| format!("dev restart ({})", mode.as_str()));
 
     let adapters = {
-        let providers = state.providers.adapters.lock().await;
-        let mut adapters = providers
-            .iter()
-            .map(|(id, adapter)| (id.clone(), Arc::clone(adapter)))
-            .collect::<Vec<_>>();
-        drop(providers);
-        let target_adapters = state.providers.target_adapters.lock().await;
-        adapters.extend(
-            target_adapters
-                .iter()
-                .map(|(id, adapter)| (id.clone(), Arc::clone(adapter))),
-        );
+        let mut adapters = state
+            .providers
+            .with_provider_adapters(|providers| {
+                providers
+                    .iter()
+                    .map(|(id, adapter)| (id.clone(), Arc::clone(adapter)))
+                    .collect::<Vec<_>>()
+            })
+            .await;
+        let target_adapters = state
+            .providers
+            .with_target_provider_adapters(|target_adapters| {
+                target_adapters
+                    .iter()
+                    .map(|(id, adapter)| (id.clone(), Arc::clone(adapter)))
+                    .collect::<Vec<_>>()
+            })
+            .await;
+        adapters.extend(target_adapters);
         adapters
     };
 

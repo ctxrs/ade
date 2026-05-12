@@ -7,8 +7,10 @@ use crate::daemon::AppState;
 
 pub(super) async fn list_provider_processes(state: &Arc<AppState>) -> Vec<ProviderProcessInfo> {
     let providers = {
-        let providers = state.providers.adapters.lock().await;
-        providers.values().cloned().collect::<Vec<_>>()
+        state
+            .providers
+            .with_provider_adapters(|providers| providers.values().cloned().collect::<Vec<_>>())
+            .await
     };
     let mut processes = Vec::new();
     for adapter in providers {

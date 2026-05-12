@@ -40,20 +40,25 @@ pub(super) async fn save_sandbox_execution_mode(state: &AppState) {
 }
 
 pub(super) async fn seed_ready_gemini_status(state: &AppState) {
-    state.providers.statuses.lock().await.insert(
-        "gemini".to_string(),
-        ctx_providers::adapters::ProviderStatus {
-            provider_id: "gemini".to_string(),
-            installed: true,
-            detected_path: None,
-            version: Some("0.33.1".to_string()),
-            capabilities: None,
-            health: ctx_providers::adapters::ProviderHealth::Ok,
-            diagnostics: Vec::new(),
-            details: HashMap::new(),
-            usability: ctx_providers::adapters::ProviderUsability::default(),
-        },
-    );
+    state
+        .providers
+        .with_provider_statuses(|statuses| {
+            statuses.insert(
+                "gemini".to_string(),
+                ctx_providers::adapters::ProviderStatus {
+                    provider_id: "gemini".to_string(),
+                    installed: true,
+                    detected_path: None,
+                    version: Some("0.33.1".to_string()),
+                    capabilities: None,
+                    health: ctx_providers::adapters::ProviderHealth::Ok,
+                    diagnostics: Vec::new(),
+                    details: HashMap::new(),
+                    usability: ctx_providers::adapters::ProviderUsability::default(),
+                },
+            );
+        })
+        .await;
 }
 
 pub(super) fn write_invalid_harness_registry(data_root: &Path) {

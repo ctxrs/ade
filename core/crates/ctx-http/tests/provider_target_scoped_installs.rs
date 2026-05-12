@@ -515,11 +515,18 @@ async fn assert_target_adapter_not_cached(
 ) {
     let cache_key = target_adapter_cache_key(provider_id, target)
         .expect("non-host target should have a target adapter cache key");
-    let adapters = state.providers.target_adapters.lock().await;
+    let (cached, keys) = state
+        .providers
+        .with_target_provider_adapters(|adapters| {
+            (
+                adapters.contains_key(&cache_key),
+                adapters.keys().cloned().collect::<Vec<_>>(),
+            )
+        })
+        .await;
     assert!(
-        !adapters.contains_key(&cache_key),
-        "{context}: invalid managed config should not seed target adapter cache entry {cache_key}; keys={:?}",
-        adapters.keys().collect::<Vec<_>>()
+        !cached,
+        "{context}: invalid managed config should not seed target adapter cache entry {cache_key}; keys={keys:?}"
     );
 }
 

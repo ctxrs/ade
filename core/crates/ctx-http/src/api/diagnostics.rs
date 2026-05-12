@@ -37,9 +37,10 @@ pub(in crate::api) async fn diagnostics(
     let managed_installs = redact_json_value(managed_installs);
 
     let providers = {
-        let map = state.providers.statuses.lock().await;
-        let mut providers = map.values().cloned().collect::<Vec<_>>();
-        drop(map);
+        let mut providers = state
+            .providers
+            .with_provider_statuses(|map| map.values().cloned().collect::<Vec<_>>())
+            .await;
         if let Some(config_error) = managed_config_error.as_deref() {
             for status in &mut providers {
                 mark_provider_status_with_managed_config_error(status, config_error);

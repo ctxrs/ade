@@ -90,8 +90,13 @@ async fn provider_is_known(
     matrix: &ctx_provider_matrix::ProviderMatrix,
     provider_id: &str,
 ) -> bool {
-    let map = state.providers.statuses.lock().await;
-    map.contains_key(provider_id) || ctx_provider_matrix::get_entry(matrix, provider_id).is_some()
+    state
+        .providers
+        .with_provider_statuses(|map| {
+            map.contains_key(provider_id)
+                || ctx_provider_matrix::get_entry(matrix, provider_id).is_some()
+        })
+        .await
 }
 
 fn ensure_known_provider(

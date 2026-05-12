@@ -1,10 +1,7 @@
-use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Arc;
 
 use ctx_provider_runtime::ProviderRuntime;
-use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::broadcast;
 
 use super::AppState;
 
@@ -23,16 +20,8 @@ impl ctx_provider_runtime::ProviderRuntimeHost for AppState {
         }
     }
 
-    fn provider_adapters(&self) -> &Mutex<HashMap<String, Arc<dyn ProviderAdapter>>> {
-        &self.providers.adapters
-    }
-
-    fn target_provider_adapters(&self) -> &Mutex<HashMap<String, Arc<dyn ProviderAdapter>>> {
-        &self.providers.target_adapters
-    }
-
-    fn provider_statuses(&self) -> &Mutex<HashMap<String, ProviderStatus>> {
-        &self.providers.statuses
+    fn provider_runtime(&self) -> &ProviderRuntime {
+        &self.providers
     }
 }
 
