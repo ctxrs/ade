@@ -30,7 +30,10 @@ struct AvfDaemonGatewayProxy {
 static AVF_DAEMON_GATEWAY_PROXIES: OnceLock<StdMutex<HashMap<u16, AvfDaemonGatewayProxy>>> =
     OnceLock::new();
 
-pub use self::materialization::{materialize_sandbox_worktree, SandboxWorktreeMaterialization};
+pub use self::materialization::{
+    materialize_sandbox_binding, materialize_sandbox_worktree,
+    sandbox_binding_from_materialization, SandboxWorktreeMaterialization,
+};
 pub(crate) use ctx_avf_linux_runtime::SharedVmLifecycleOrchestrator;
 use ctx_avf_linux_runtime::AVF_LINUX_HELPER_PATH_ENV;
 use ctx_avf_linux_runtime::{

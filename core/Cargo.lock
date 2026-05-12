@@ -1843,6 +1843,7 @@ dependencies = [
  "ctx-store",
  "ctx-workspace-container",
  "ctx-worktree-data-plane",
+ "serde_json",
  "tempfile",
  "tokio",
  "tracing",

@@ -17,7 +17,7 @@ pub(crate) async fn materialize_sandbox_binding_for_worktree(
     effective: &ExecutionSettings,
     created_at: DateTime<Utc>,
 ) -> anyhow::Result<Option<SandboxBinding>> {
-    let Some(materialization) = ctx_workspace_runtime::materialize_sandbox_worktree(
+    Ok(ctx_workspace_runtime::materialize_sandbox_binding(
         &state.core.data_root,
         &state.core.daemon_url,
         state.execution.harness.as_ref(),
@@ -25,33 +25,9 @@ pub(crate) async fn materialize_sandbox_binding_for_worktree(
         worktree,
         canonical_root,
         effective,
-    )
-    .await?
-    else {
-        return Ok(None);
-    };
-
-    Ok(Some(SandboxBinding {
-        worktree_id: worktree.id,
-        workspace_id: workspace.id,
-        sandbox_instance_id: materialization.sandbox_instance_id,
-        substrate: materialization.substrate.substrate,
-        guest_identity: materialization.substrate.guest_identity,
-        profile: SandboxProfile::Standard,
-        live_workspace_root: ctx_sandbox_contract::CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
-        live_worktree_root: materialization
-            .live_worktree_root
-            .to_string_lossy()
-            .to_string(),
-        execution_settings_json: Some(serde_json::to_string(effective)?),
-        container_name: Some(ctx_workspace_container::workspace_container_name(
-            workspace.id,
-        )),
-        host_materialization_root: materialization
-            .host_materialization_root
-            .map(|path| path.to_string_lossy().to_string()),
         created_at,
-    }))
+    )
+    .await?)
 }
 
 pub(crate) async fn rematerialize_sandbox_binding_for_worktree(

@@ -47,9 +47,8 @@ use crate::daemon::workspaces::vcs_hooks;
 use crate::daemon::AppState;
 use ctx_core::ids::{RunId, SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
-    ExecutionEnvironment, MessageDelivery, SandboxBinding, SandboxProfile, Session,
-    SessionEventType, Task, TaskDeltaKind, VcsKind, Workspace, WorkspaceArchivedPage,
-    WorkspaceIndexCursor, Worktree,
+    ExecutionEnvironment, MessageDelivery, SandboxBinding, Session, SessionEventType, Task,
+    TaskDeltaKind, VcsKind, Workspace, WorkspaceArchivedPage, WorkspaceIndexCursor, Worktree,
 };
 use ctx_observability::logs;
 use ctx_observability::ops_events::OpsEvent;

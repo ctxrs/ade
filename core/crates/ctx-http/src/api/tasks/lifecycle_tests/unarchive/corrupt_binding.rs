@@ -1,4 +1,5 @@
 use super::super::*;
+use ctx_core::models::SandboxProfile;
 
 #[tokio::test]
 async fn unarchive_task_fails_closed_for_corrupt_binding_snapshot() {

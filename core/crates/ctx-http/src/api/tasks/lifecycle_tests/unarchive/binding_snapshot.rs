@@ -1,4 +1,5 @@
 use super::super::*;
+use ctx_core::models::SandboxProfile;
 
 #[tokio::test]
 async fn unarchive_task_recreates_managed_root_and_keeps_binding_snapshot_runtime() {

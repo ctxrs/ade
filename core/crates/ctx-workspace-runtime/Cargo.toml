@@ -8,6 +8,7 @@ test-support = []
 
 [dependencies]
 anyhow.workspace = true
+chrono.workspace = true
 ctx-avf-linux-runtime = { path = "../ctx-avf-linux-runtime" }
 ctx-core = { path = "../ctx-core" }
 ctx-execution-runtime = { path = "../ctx-execution-runtime" }
@@ -20,10 +21,10 @@ ctx-sandbox-materialization = { path = "../ctx-sandbox-materialization" }
 ctx-store = { path = "../ctx-store" }
 ctx-worktree-data-plane = { path = "../ctx-worktree-data-plane" }
 ctx-workspace-container = { path = "../ctx-workspace-container" }
+serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 url = "2"
 
 [dev-dependencies]
-chrono.workspace = true
 tempfile = "3"

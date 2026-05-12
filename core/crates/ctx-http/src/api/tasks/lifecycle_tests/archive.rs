@@ -1,4 +1,5 @@
 use super::*;
+use ctx_core::models::SandboxProfile;
 
 #[tokio::test]
 async fn archive_task_reclaims_managed_worktree_but_preserves_rematerialization_state() {
