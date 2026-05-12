@@ -1,8 +1,10 @@
 mod cache;
 mod diff_output;
 mod diff_paths;
+mod driver;
 mod git_commands;
 mod local_source;
+mod managed_worktree;
 mod projection;
 mod resolution;
 mod runtime;
@@ -29,11 +31,15 @@ pub use diff_paths::{
     build_diff_path_states, count_diff_paths, load_diff_file_count_from_source,
     load_diff_touched_entries_from_source, WorktreeVcsDiffPathSource,
 };
+pub use driver::{effective_worktree_vcs_kind, worktree_vcs_driver_for_kind, WorktreeVcsDriver};
 pub use git_commands::{
     parse_git_diff_name_status, parse_git_list_untracked, parse_git_refs, parse_git_single_ref,
     WorktreeVcsGitCommand,
 };
 pub use local_source::LocalWorktreeVcsSource;
+pub use managed_worktree::{
+    branch_exists, ensure_worktree_attached, is_git_worktree, prune_worktrees, remove_worktree,
+};
 pub use projection::{
     plan_worktree_vcs_summary_refresh, plan_worktree_vcs_touched_files_refresh,
     worktree_vcs_dirty_transient_snapshot, worktree_vcs_projection_cache_state,
