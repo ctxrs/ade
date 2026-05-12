@@ -26,7 +26,7 @@ pub fn spawn_provider_guard(state: Arc<AppState>) {
 #[async_trait::async_trait]
 impl ctx_provider_runtime::provider_guard::ProviderGuardHost for AppState {
     fn provider_guard_runtime(&self) -> &Mutex<ProviderGuardRuntime> {
-        &self.providers.guard
+        self.providers.provider_guard_runtime()
     }
 
     fn subscribe_shutdown(&self) -> broadcast::Receiver<()> {

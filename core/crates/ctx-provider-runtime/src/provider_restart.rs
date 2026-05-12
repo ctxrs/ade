@@ -7,6 +7,7 @@ use tokio::sync::{broadcast, Mutex};
 
 pub use crate::resource_governance::ResourceGovernanceMode;
 use crate::resource_governance::{ProviderMemorySample, SystemSnapshot};
+use crate::ProviderRuntime;
 
 const DEFAULT_INTERVAL_MS: u64 = 5_000;
 const DEFAULT_GRACE_PERIOD_MS: u64 = 300_000;
@@ -65,6 +66,12 @@ pub trait ProviderRestartHost: Send + Sync + 'static {
     async fn provider_memory_snapshot(&self) -> Vec<ProviderMemorySample>;
     async fn restart_provider(&self, provider_id: &str, pid: u32);
     async fn on_provider_restart_notice(state: &Arc<Self>, event: ProviderRestartEvent);
+}
+
+impl ProviderRuntime {
+    pub fn provider_restart_runtime(&self) -> &Mutex<ProviderRestartRuntime> {
+        &self.restart
+    }
 }
 
 pub fn compute_effective_limits(

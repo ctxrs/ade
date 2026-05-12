@@ -31,7 +31,7 @@ pub fn spawn_provider_restart(state: Arc<AppState>) {
 #[async_trait::async_trait]
 impl ctx_provider_runtime::provider_restart::ProviderRestartHost for AppState {
     fn provider_restart_runtime(&self) -> &Mutex<ProviderRestartRuntime> {
-        &self.providers.restart
+        self.providers.provider_restart_runtime()
     }
 
     fn subscribe_shutdown(&self) -> broadcast::Receiver<()> {
