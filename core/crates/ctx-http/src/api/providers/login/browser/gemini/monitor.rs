@@ -10,17 +10,6 @@ pub(super) async fn monitor_gemini_login(
     login_id: String,
     label: Option<String>,
 ) {
-    let adapter = state.providers.provider_adapter("gemini").await;
-    let Some(adapter) = adapter else {
-        status::set_failed(
-            &state,
-            &login_id,
-            "provider adapter not available".to_string(),
-        )
-        .await;
-        return;
-    };
-
     let paths = match setup::prepare_gemini_login_paths(&state, &login_id).await {
         Ok(paths) => paths,
         Err(err) => {
@@ -31,8 +20,10 @@ pub(super) async fn monitor_gemini_login(
     let provider_env = setup::gemini_provider_env(&state, &paths.login_home);
 
     let (event_tx, mut event_rx) = mpsc::channel(64);
-    let auth_result = adapter
-        .authenticate_session(
+    let auth_result = state
+        .providers
+        .authenticate_provider_session(
+            "gemini",
             format!("gemini-login-{login_id}"),
             paths.workdir.clone(),
             provider_env,
@@ -41,10 +32,23 @@ pub(super) async fn monitor_gemini_login(
             ctx_providers::adapters::ProviderRunHooks::default(),
         )
         .await;
-    if let Err(err) = auth_result {
-        status::set_failed(&state, &login_id, logs::redact_sensitive(&err.to_string())).await;
-        status::cleanup_login_home(&paths.login_home).await;
-        return;
+    match auth_result {
+        Ok(()) => {}
+        Err(ctx_provider_runtime::provider_session_auth::ProviderSessionAuthenticationError::AdapterUnavailable) => {
+            status::set_failed(
+                &state,
+                &login_id,
+                "provider adapter not available".to_string(),
+            )
+            .await;
+            status::cleanup_login_home(&paths.login_home).await;
+            return;
+        }
+        Err(ctx_provider_runtime::provider_session_auth::ProviderSessionAuthenticationError::Authenticate(err)) => {
+            status::set_failed(&state, &login_id, logs::redact_sensitive(&err.to_string())).await;
+            status::cleanup_login_home(&paths.login_home).await;
+            return;
+        }
     }
 
     let started_at = Instant::now();

@@ -20,6 +20,7 @@ pub mod provider_install_tracker;
 pub mod provider_launch;
 pub mod provider_processes;
 pub mod provider_restart;
+pub mod provider_session_auth;
 pub mod provider_state;
 pub mod provider_usability;
 pub mod provider_usage;
