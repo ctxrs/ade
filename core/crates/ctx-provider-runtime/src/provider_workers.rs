@@ -53,6 +53,27 @@ impl ProviderRuntime {
             }
         }
     }
+
+    pub async fn set_provider_session_pinned(&self, session_key: String, pinned: bool) {
+        let mut seen = HashSet::<usize>::new();
+        for (_, adapter) in self.provider_worker_adapters_for_shutdown().await {
+            let identity = (Arc::as_ptr(&adapter) as *const ()) as usize;
+            if !seen.insert(identity) {
+                continue;
+            }
+            if let Err(err) = adapter
+                .set_session_pinned(session_key.clone(), pinned)
+                .await
+            {
+                tracing::debug!(
+                    session_id = %session_key,
+                    pinned,
+                    err = %err,
+                    "failed to update provider worker pin state"
+                );
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -76,6 +97,7 @@ mod tests {
         restart_calls: StdMutex<Vec<(String, ProviderRestartMode)>>,
         reap_calls: StdMutex<Vec<ProviderSessionSweepConfig>>,
         reap_result: StdMutex<ProviderSessionSweepStats>,
+        pin_calls: StdMutex<Vec<(String, bool)>>,
     }
 
     impl RecordingProviderAdapter {
@@ -98,6 +120,13 @@ mod tests {
                 .reap_result
                 .lock()
                 .expect("recording adapter reap result lock") = stats;
+        }
+
+        fn pin_calls(&self) -> Vec<(String, bool)> {
+            self.pin_calls
+                .lock()
+                .expect("recording adapter pin lock")
+                .clone()
         }
     }
 
@@ -156,6 +185,14 @@ mod tests {
                 .reap_result
                 .lock()
                 .expect("recording adapter reap result lock"))
+        }
+
+        async fn set_session_pinned(&self, session_key: String, pinned: bool) -> Result<()> {
+            self.pin_calls
+                .lock()
+                .expect("recording adapter pin lock")
+                .push((session_key, pinned));
+            Ok(())
         }
     }
 
@@ -253,5 +290,31 @@ mod tests {
             config.max_idle_sessions
         );
         assert_eq!(shared_adapter.reap_calls()[0].interval, config.interval);
+    }
+
+    #[tokio::test]
+    async fn pin_propagation_dedupes_shared_worker_adapters() {
+        let shared_adapter = Arc::new(RecordingProviderAdapter::default());
+        let other_adapter = Arc::new(RecordingProviderAdapter::default());
+        let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
+        providers.insert("root".into(), shared_adapter.clone());
+        providers.insert("other".into(), other_adapter.clone());
+        let runtime = ProviderRuntime::new(providers);
+        runtime
+            .upsert_target_provider_adapter("root@host".into(), shared_adapter.clone())
+            .await;
+
+        runtime
+            .set_provider_session_pinned("session-1".to_string(), true)
+            .await;
+
+        assert_eq!(
+            shared_adapter.pin_calls(),
+            vec![("session-1".to_string(), true)]
+        );
+        assert_eq!(
+            other_adapter.pin_calls(),
+            vec![("session-1".to_string(), true)]
+        );
     }
 }

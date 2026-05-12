@@ -1,6 +1,3 @@
-use std::collections::HashSet;
-use std::sync::Arc;
-
 use ctx_core::ids::SessionId;
 use ctx_session_service::runtime::SessionLifecycleHost;
 
@@ -8,25 +5,9 @@ use crate::daemon::state::AppState;
 
 impl AppState {
     async fn propagate_provider_session_pin_by_key(&self, session_key: String, pinned: bool) {
-        let adapters = self.providers.all_provider_adapter_entries().await;
-        let mut seen = HashSet::<usize>::new();
-        for (_, adapter) in adapters {
-            let identity = (Arc::as_ptr(&adapter) as *const ()) as usize;
-            if !seen.insert(identity) {
-                continue;
-            }
-            if let Err(err) = adapter
-                .set_session_pinned(session_key.clone(), pinned)
-                .await
-            {
-                tracing::debug!(
-                    session_id = %session_key,
-                    pinned,
-                    err = %err,
-                    "failed to update provider worker pin state"
-                );
-            }
-        }
+        self.providers
+            .set_provider_session_pinned(session_key, pinned)
+            .await;
     }
 
     async fn propagate_provider_session_pin(&self, session_id: SessionId, pinned: bool) {
