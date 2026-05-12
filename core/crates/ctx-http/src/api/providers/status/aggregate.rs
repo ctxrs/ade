@@ -17,11 +17,10 @@ pub(crate) async fn providers_statuses_response(
             &state.core.data_root,
         )
         .await;
-    let matrix = ctx_provider_matrix::load_matrix_cached(
-        &state.core.data_root,
-        &state.providers.matrix_cache,
-    )
-    .await;
+    let matrix = state
+        .providers
+        .load_provider_matrix(&state.core.data_root)
+        .await;
     let provider_ids = provider_status_ids(state, &matrix, include_matrix_providers).await;
     let mut out = Vec::with_capacity(provider_ids.len());
     for provider_id in provider_ids {

@@ -39,11 +39,10 @@ pub(super) async fn load_provider_options_inputs(
         .map_err(|error| workspace_execution_settings_error_json(&error))?;
     let (managed, managed_config_error) =
         load_managed_agent_server_config_with_error(&state.core.data_root).await;
-    let matrix = ctx_provider_matrix::load_matrix_cached(
-        &state.core.data_root,
-        &state.providers.matrix_cache,
-    )
-    .await;
+    let matrix = state
+        .providers
+        .load_provider_matrix(&state.core.data_root)
+        .await;
     let known = provider_is_known(state, &matrix, provider_id).await;
     let (source_config, source_config_error) =
         load_provider_source_config_with_error(&state.core.data_root, provider_id).await;

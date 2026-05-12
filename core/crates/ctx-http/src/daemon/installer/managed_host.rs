@@ -5,7 +5,6 @@ use std::time::Duration;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use tokio::sync::Mutex;
 
 use ctx_provider_install::install_state::{
     InstallErrorCode, InstallId, InstallInfo, InstallProgressEvent, InstallTarget,
@@ -30,8 +29,14 @@ impl ctx_managed_installs::ManagedInstallHost for HttpAppState {
         }
     }
 
-    fn provider_matrix_cache(&self) -> &Mutex<ctx_provider_matrix::ProviderMatrixCache> {
-        &self.providers.matrix_cache
+    async fn load_provider_matrix(&self) -> ctx_provider_matrix::ProviderMatrix {
+        self.providers
+            .load_provider_matrix(&self.core.data_root)
+            .await
+    }
+
+    async fn invalidate_provider_matrix_cache(&self) {
+        self.providers.invalidate_provider_matrix_cache().await;
     }
 
     async fn inspect_provider_adapters(&self) -> Vec<(String, Result<ProviderStatus, String>)> {

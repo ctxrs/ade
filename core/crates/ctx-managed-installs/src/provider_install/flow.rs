@@ -23,11 +23,7 @@ pub(crate) async fn install_provider_impl(
     let mut error_install_dir_rel: Option<String> = None;
 
     let res: Result<()> = async {
-        let matrix = provider_matrix::load_matrix_cached(
-            state.data_root(),
-            state.provider_matrix_cache(),
-        )
-        .await;
+        let matrix = state.load_provider_matrix().await;
         let current_ctx_version_raw = state
             .current_ctx_version()
             .ok_or_else(|| anyhow::anyhow!("current ctx build version unavailable"))?;

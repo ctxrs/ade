@@ -23,11 +23,10 @@ async fn load_pinned_subscription_model_catalog(
     if let Some(config_error) = config_error {
         return Err(config_error);
     }
-    let matrix = ctx_provider_matrix::load_matrix_cached(
-        &state.core.data_root,
-        &state.providers.matrix_cache,
-    )
-    .await;
+    let matrix = state
+        .providers
+        .load_provider_matrix(&state.core.data_root)
+        .await;
     let provider_status = crate::api::providers::provider_status_for_target(
         state.as_ref(),
         &managed,

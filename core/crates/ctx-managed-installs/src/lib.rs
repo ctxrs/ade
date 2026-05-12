@@ -123,7 +123,9 @@ pub trait ManagedInstallHost: Send + Sync + 'static {
 
     fn current_ctx_version(&self) -> Option<String>;
 
-    fn provider_matrix_cache(&self) -> &Mutex<provider_matrix::ProviderMatrixCache>;
+    async fn load_provider_matrix(&self) -> provider_matrix::ProviderMatrix;
+
+    async fn invalidate_provider_matrix_cache(&self);
 
     async fn inspect_provider_adapters(&self) -> Vec<(String, Result<ProviderStatus, String>)>;
 

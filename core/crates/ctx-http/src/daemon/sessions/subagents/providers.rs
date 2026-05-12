@@ -33,11 +33,10 @@ pub(super) async fn load_requested_model_catalogs(
         crate::daemon::installer::load_managed_agent_server_config_or_err(&state.core.data_root)
             .await
             .map_err(internal_api_error)?;
-    let matrix = ctx_provider_matrix::load_matrix_cached(
-        &state.core.data_root,
-        &state.providers.matrix_cache,
-    )
-    .await;
+    let matrix = state
+        .providers
+        .load_provider_matrix(&state.core.data_root)
+        .await;
     let mut known_providers = state
         .providers
         .with_provider_statuses(|statuses| statuses.keys().cloned().collect::<HashSet<_>>())

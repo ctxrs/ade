@@ -31,11 +31,7 @@ where
 {
     validate_install_target_allowed(state, target)?;
     let mut out = Vec::new();
-    let matrix = provider_matrix::load_matrix_cached(
-        installer::ManagedInstallHost::data_root(state.as_ref()),
-        state.provider_matrix_cache(),
-    )
-    .await;
+    let matrix = installer::ManagedInstallHost::load_provider_matrix(state.as_ref()).await;
     let current_ctx_version = installer::ManagedInstallHost::current_ctx_version(state.as_ref());
     let managed = installer::load_agent_server_config(installer::ManagedInstallHost::data_root(
         state.as_ref(),

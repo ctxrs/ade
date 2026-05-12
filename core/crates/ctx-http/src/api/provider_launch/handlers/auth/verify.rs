@@ -21,11 +21,10 @@ pub(in crate::api) async fn verify_provider_for_workspace(
         .map_err(|error| workspace_execution_settings_error_json(&error))?;
     let (managed, managed_config_error) =
         load_managed_agent_server_config_with_error(&state.core.data_root).await;
-    let matrix = ctx_provider_matrix::load_matrix_cached(
-        &state.core.data_root,
-        &state.providers.matrix_cache,
-    )
-    .await;
+    let matrix = state
+        .providers
+        .load_provider_matrix(&state.core.data_root)
+        .await;
     ensure_known_provider(&state, &matrix, &provider_id).await?;
     let checked_at = Utc::now().to_rfc3339();
     let (source_config, source_config_error) =

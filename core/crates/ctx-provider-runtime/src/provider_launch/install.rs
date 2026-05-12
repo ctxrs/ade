@@ -3,7 +3,6 @@ use async_trait::async_trait;
 use ctx_managed_installs as installer;
 use ctx_managed_installs::provider_install_contract;
 use ctx_provider_install::install_state::{InstallId, InstallTarget};
-use ctx_provider_matrix as provider_matrix;
 use std::sync::Arc;
 
 use crate::ProviderRuntimeHost;
@@ -93,11 +92,7 @@ where
     H: ProviderInstallHost,
 {
     validate_install_target_allowed(state, target)?;
-    let matrix = provider_matrix::load_matrix_cached(
-        installer::ManagedInstallHost::data_root(state.as_ref()),
-        state.provider_matrix_cache(),
-    )
-    .await;
+    let matrix = installer::ManagedInstallHost::load_provider_matrix(state.as_ref()).await;
     let current_ctx_version = installer::ManagedInstallHost::current_ctx_version(state.as_ref());
     let managed = installer::load_agent_server_config(installer::ManagedInstallHost::data_root(
         state.as_ref(),

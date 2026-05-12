@@ -89,7 +89,7 @@ pub(super) async fn run_tracked_provider_install(
     provider_id: &str,
     target: InstallTarget,
 ) -> Result<()> {
-    provider_matrix::invalidate_matrix_cache(state.provider_matrix_cache()).await;
+    state.invalidate_provider_matrix_cache().await;
     let res = Box::pin(install_provider_impl(
         state,
         provider_id,
@@ -111,7 +111,7 @@ pub(super) async fn run_tracked_provider_install(
                 .await
         }
     }
-    provider_matrix::invalidate_matrix_cache(state.provider_matrix_cache()).await;
+    state.invalidate_provider_matrix_cache().await;
     res
 }
 
@@ -253,8 +253,7 @@ async fn refresh_provider_statuses_with_cfg(
     state: &AppState,
     cfg: AgentServerConfigFile,
 ) -> Result<()> {
-    let matrix =
-        provider_matrix::load_matrix_cached(state.data_root(), state.provider_matrix_cache()).await;
+    let matrix = state.load_provider_matrix().await;
     let current_ctx_version = state.current_ctx_version();
 
     let mut statuses = HashMap::new();
