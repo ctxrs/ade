@@ -32,27 +32,7 @@ pub(in crate::daemon::state::builder) fn build_workspace_runtime(
 pub(in crate::daemon::state::builder) fn build_provider_runtime(
     providers: HashMap<String, Arc<dyn ProviderAdapter>>,
 ) -> ProviderRuntime {
-    ProviderRuntime {
-        adapters: Mutex::new(providers),
-        target_adapters: Mutex::new(HashMap::new()),
-        statuses: Mutex::new(HashMap::new()),
-        matrix_cache: Mutex::new(ctx_provider_matrix::ProviderMatrixCache::default()),
-        options_cache: Mutex::new(HashMap::new()),
-        verify_cache: Mutex::new(HashMap::new()),
-        guard: Mutex::new(provider_guard::ProviderGuardRuntime::default()),
-        restart: Mutex::new(provider_restart::ProviderRestartRuntime::default()),
-        usage_cache: Mutex::new(HashMap::new()),
-        codex_login_sessions: Mutex::new(HashMap::new()),
-        claude_login_sessions: Mutex::new(HashMap::new()),
-        gemini_login_sessions: Mutex::new(HashMap::new()),
-        qwen_login_sessions: Mutex::new(HashMap::new()),
-        kimi_login_sessions: Mutex::new(HashMap::new()),
-        cursor_login_sessions: Mutex::new(HashMap::new()),
-        amp_login_sessions: Mutex::new(HashMap::new()),
-        mistral_login_sessions: Mutex::new(HashMap::new()),
-        install_start_gate: Mutex::new(()),
-        installs: Mutex::new(HashMap::new()),
-    }
+    ProviderRuntime::new(providers)
 }
 
 pub(in crate::daemon::state::builder) fn build_telemetry_runtime(

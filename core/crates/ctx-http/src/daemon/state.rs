@@ -7,8 +7,6 @@ use anyhow::{Context, Result};
 use tokio::sync::{broadcast, watch, Mutex};
 use tokio::task::JoinHandle;
 
-use crate::daemon::provider_guard;
-use crate::daemon::provider_restart;
 use crate::daemon::resource_governance::ResourceGovernanceRuntime;
 use crate::daemon::scheduler::SchedulerCommand;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceAttachmentId, WorkspaceId, WorktreeId};
@@ -16,13 +14,11 @@ use ctx_execution_runtime::ExecutionSetupCoordinator;
 use ctx_observability::ops_events::{OpsEvent, OpsEvents};
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
 use ctx_observability::telemetry::Telemetry;
-use ctx_provider_accounts as provider_accounts;
 use ctx_provider_install::install_state::{
     InstallErrorCode, InstallEventLevel, InstallId, InstallProgressEvent, InstallState,
     InstallStateKind, InstallTarget,
 };
-use ctx_provider_runtime::provider_usage;
-use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
+use ctx_providers::adapters::ProviderAdapter;
 use ctx_providers::ask_user_question::AskUserQuestionBroker;
 use ctx_resource_utilization::ResourceSampler;
 use ctx_store::{Store, StoreManager};

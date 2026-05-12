@@ -2,7 +2,6 @@ use super::*;
 use ctx_core::models::WorktreeVcsSnapshot;
 use ctx_execution_runtime::ExecutionSetupCoordinator;
 use ctx_mcp_auth::McpAuthRegistry;
-use ctx_provider_runtime::{CachedProviderOptions, CachedProviderVerify};
 use ctx_update_service::UpdateDrainCoordinator;
 use ctx_workspace_active_snapshot::{
     WorkspaceActiveHeadCacheEntry, WorkspaceActiveSnapshotCacheEntry,
@@ -60,27 +59,7 @@ pub struct WorkspaceRuntime {
     pub(crate) attachment_materialization_generation: AtomicU64,
 }
 
-pub struct ProviderRuntime {
-    pub adapters: Mutex<HashMap<String, Arc<dyn ProviderAdapter>>>,
-    pub target_adapters: Mutex<HashMap<String, Arc<dyn ProviderAdapter>>>,
-    pub statuses: Mutex<HashMap<String, ProviderStatus>>,
-    pub matrix_cache: Mutex<ctx_provider_matrix::ProviderMatrixCache>,
-    pub options_cache: Mutex<HashMap<String, CachedProviderOptions>>,
-    pub verify_cache: Mutex<HashMap<String, CachedProviderVerify>>,
-    pub guard: Mutex<provider_guard::ProviderGuardRuntime>,
-    pub restart: Mutex<provider_restart::ProviderRestartRuntime>,
-    pub usage_cache: Mutex<HashMap<String, provider_usage::ProviderUsageSnapshot>>,
-    pub codex_login_sessions: Mutex<HashMap<String, provider_accounts::CodexLoginStatus>>,
-    pub claude_login_sessions: Mutex<HashMap<String, provider_accounts::ClaudeLoginStatus>>,
-    pub gemini_login_sessions: Mutex<HashMap<String, provider_accounts::GeminiLoginStatus>>,
-    pub qwen_login_sessions: Mutex<HashMap<String, provider_accounts::QwenLoginStatus>>,
-    pub kimi_login_sessions: Mutex<HashMap<String, provider_accounts::KimiLoginStatus>>,
-    pub cursor_login_sessions: Mutex<HashMap<String, provider_accounts::CursorLoginStatus>>,
-    pub amp_login_sessions: Mutex<HashMap<String, provider_accounts::AmpLoginStatus>>,
-    pub mistral_login_sessions: Mutex<HashMap<String, provider_accounts::MistralLoginStatus>>,
-    pub install_start_gate: Mutex<()>,
-    pub installs: Mutex<HashMap<InstallId, InstallState>>,
-}
+pub type ProviderRuntime = ctx_provider_runtime::ProviderRuntime;
 
 pub struct TelemetryRuntime {
     pub telemetry: Telemetry,
