@@ -4,7 +4,6 @@ use axum::extract::{Extension, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
-use tokio::process::Command;
 use uuid::Uuid;
 
 use super::errors::ApiErrorResp;
@@ -13,13 +12,13 @@ use crate::daemon::AppState;
 use ctx_fs::vcs;
 use ctx_observability::logs;
 use ctx_workspace_services::repo_onboarding::{
-    derive_repo_name, expand_tilde, validate_absolute_path, validate_dest_name,
+    derive_repo_name, ensure_git_usable, expand_tilde, validate_absolute_path, validate_dest_name,
+    RepoGitCommandError,
 };
 
 mod auth;
 mod clone;
 mod destination;
-mod git;
 mod init;
 mod status;
 
@@ -28,6 +27,27 @@ pub(super) use clone::repo_clone;
 pub(super) use destination::{
     repo_staging_path, repo_validate_destination, repo_validate_destination_get,
 };
-use git::ensure_git_usable;
 pub(super) use init::repo_init;
 pub(super) use status::repo_status;
+
+fn repo_git_command_error_response(error: RepoGitCommandError) -> (StatusCode, Json<ApiErrorResp>) {
+    if let Some(message) = error.spawn_message() {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: format!("failed to spawn git: {message}"),
+            }),
+        );
+    }
+
+    (
+        StatusCode::BAD_REQUEST,
+        Json(ApiErrorResp {
+            error: logs::redact_sensitive(
+                &error
+                    .failed_message()
+                    .unwrap_or_else(|| "git command failed".to_string()),
+            ),
+        }),
+    )
+}

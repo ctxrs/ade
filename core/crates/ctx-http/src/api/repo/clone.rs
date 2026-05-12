@@ -1,12 +1,8 @@
 use super::*;
 use destination::prepare_clone_destination;
-use process::{canonical_clone_dest, run_git_clone};
 
 #[path = "clone/destination.rs"]
 mod destination;
-
-#[path = "clone/process.rs"]
-mod process;
 
 #[derive(Debug, Deserialize)]
 pub(in crate::api) struct RepoCloneReq {
@@ -43,7 +39,7 @@ pub(in crate::api) async fn repo_clone(
     }
 
     let dest = prepare_clone_destination(&req, &repo_url).await?;
-    run_git_clone(
+    ctx_workspace_services::repo_onboarding::run_git_clone(
         &repo_url,
         req.branch
             .as_ref()
@@ -51,8 +47,9 @@ pub(in crate::api) async fn repo_clone(
             .filter(|v| !v.is_empty()),
         &dest,
     )
-    .await?;
-    let canonical_dest = canonical_clone_dest(dest).await;
+    .await
+    .map_err(repo_git_command_error_response)?;
+    let canonical_dest = ctx_workspace_services::repo_onboarding::canonical_clone_dest(dest).await;
 
     Ok(Json(RepoCloneResp {
         path: canonical_dest.to_string_lossy().to_string(),
