@@ -1,8 +1,9 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 
-use ctx_provider_matrix::{MatrixRefreshOutcome, ProviderMatrix};
+use ctx_provider_matrix::{MatrixRefreshOutcome, ProviderMatrix, ProviderMatrixEntryKind};
 use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
 
 use crate::ProviderRuntime;
@@ -126,6 +127,57 @@ impl ProviderRuntime {
             || ctx_provider_matrix::get_entry(matrix, provider_id).is_some()
     }
 
+    pub async fn is_configurable_provider_id(
+        &self,
+        matrix: &ProviderMatrix,
+        provider_id: &str,
+    ) -> bool {
+        self.is_known_provider_id(matrix, provider_id).await
+            || self.has_provider_adapter(provider_id).await
+    }
+
+    pub async fn visible_provider_status_ids(
+        &self,
+        matrix: &ProviderMatrix,
+        include_matrix_providers: bool,
+    ) -> Vec<String> {
+        let mut seen = HashSet::new();
+        let mut provider_ids = Vec::new();
+        for provider_id in self.provider_status_ids().await {
+            if !ctx_provider_matrix::is_user_facing_harness_id(matrix, &provider_id) {
+                continue;
+            }
+            if seen.insert(provider_id.clone()) {
+                provider_ids.push(provider_id);
+            }
+        }
+        if include_matrix_providers {
+            for entry in &matrix.providers {
+                if entry.kind != ProviderMatrixEntryKind::Harness {
+                    continue;
+                }
+                if seen.insert(entry.id.clone()) {
+                    provider_ids.push(entry.id.clone());
+                }
+            }
+        }
+        provider_ids
+    }
+
+    pub async fn known_harness_provider_ids(&self, matrix: &ProviderMatrix) -> HashSet<String> {
+        let mut provider_ids = self
+            .provider_status_ids()
+            .await
+            .into_iter()
+            .collect::<HashSet<_>>();
+        for entry in &matrix.providers {
+            if entry.kind == ProviderMatrixEntryKind::Harness {
+                provider_ids.insert(entry.id.clone());
+            }
+        }
+        provider_ids
+    }
+
     pub async fn provider_status_count(&self) -> usize {
         self.statuses.lock().await.len()
     }
@@ -164,22 +216,25 @@ mod tests {
 
     use super::*;
 
-    fn test_matrix(provider_id: &str) -> ProviderMatrix {
+    fn test_matrix(entries: &[(&str, ProviderMatrixEntryKind)]) -> ProviderMatrix {
         ProviderMatrix {
             version: 3,
             generated_at: None,
-            providers: vec![ProviderMatrixEntry {
-                id: provider_id.to_string(),
-                kind: ProviderMatrixEntryKind::Harness,
-                display_name: None,
-                tier: None,
-                command: None,
-                managed_install: None,
-                provider_dependencies: Vec::new(),
-                dependencies: Vec::new(),
-                version_probe: None,
-                releases: Vec::new(),
-            }],
+            providers: entries
+                .iter()
+                .map(|(provider_id, kind)| ProviderMatrixEntry {
+                    id: (*provider_id).to_string(),
+                    kind: *kind,
+                    display_name: None,
+                    tier: None,
+                    command: None,
+                    managed_install: None,
+                    provider_dependencies: Vec::new(),
+                    dependencies: Vec::new(),
+                    version_probe: None,
+                    releases: Vec::new(),
+                })
+                .collect(),
         }
     }
 
@@ -200,7 +255,7 @@ mod tests {
     #[tokio::test]
     async fn known_provider_id_accepts_status_or_matrix_entry() {
         let runtime = ProviderRuntime::new(HashMap::new());
-        let matrix = test_matrix("matrix-provider");
+        let matrix = test_matrix(&[("matrix-provider", ProviderMatrixEntryKind::Harness)]);
         runtime
             .upsert_provider_status(
                 "status-provider".to_string(),
@@ -219,5 +274,80 @@ mod tests {
                 .await
         );
         assert!(!runtime.is_known_provider_id(&matrix, "missing").await);
+    }
+
+    #[tokio::test]
+    async fn configurable_provider_id_accepts_adapter_presence() {
+        let adapter = Arc::new(ctx_providers::fake::FakeProviderAdapter::new());
+        let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
+        providers.insert("adapter-provider".to_string(), adapter);
+        let runtime = ProviderRuntime::new(providers);
+        let matrix = test_matrix(&[]);
+
+        assert!(
+            runtime
+                .is_configurable_provider_id(&matrix, "adapter-provider")
+                .await
+        );
+        assert!(
+            !runtime
+                .is_configurable_provider_id(&matrix, "missing")
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn visible_provider_status_ids_filter_statuses_and_optionally_include_matrix() {
+        let runtime = ProviderRuntime::new(HashMap::new());
+        let matrix = test_matrix(&[
+            ("codex", ProviderMatrixEntryKind::Harness),
+            ("codex-crp", ProviderMatrixEntryKind::Dependency),
+            ("gemini", ProviderMatrixEntryKind::Harness),
+        ]);
+        runtime
+            .upsert_provider_status("codex".to_string(), provider_status("codex"))
+            .await;
+        runtime
+            .upsert_provider_status("codex-crp".to_string(), provider_status("codex-crp"))
+            .await;
+        runtime
+            .upsert_provider_status("local-only".to_string(), provider_status("local-only"))
+            .await;
+
+        let status_only = runtime.visible_provider_status_ids(&matrix, false).await;
+        assert_eq!(
+            status_only.into_iter().collect::<HashSet<_>>(),
+            HashSet::from(["codex".to_string(), "local-only".to_string()])
+        );
+        let with_matrix = runtime.visible_provider_status_ids(&matrix, true).await;
+        assert_eq!(
+            with_matrix.into_iter().collect::<HashSet<_>>(),
+            HashSet::from([
+                "codex".to_string(),
+                "local-only".to_string(),
+                "gemini".to_string()
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn known_harness_provider_ids_include_statuses_and_matrix_harness_entries() {
+        let runtime = ProviderRuntime::new(HashMap::new());
+        let matrix = test_matrix(&[
+            ("gemini", ProviderMatrixEntryKind::Harness),
+            ("codex-crp", ProviderMatrixEntryKind::Dependency),
+        ]);
+        runtime
+            .upsert_provider_status(
+                "status-provider".to_string(),
+                provider_status("status-provider"),
+            )
+            .await;
+
+        let provider_ids = runtime.known_harness_provider_ids(&matrix).await;
+
+        assert!(provider_ids.contains("status-provider"));
+        assert!(provider_ids.contains("gemini"));
+        assert!(!provider_ids.contains("codex-crp"));
     }
 }

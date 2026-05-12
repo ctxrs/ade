@@ -6,7 +6,6 @@ use crate::api::sessions::load_provider_model_catalog_for_execution_environment;
 use crate::daemon::execution_effective;
 use crate::daemon::AppState;
 use ctx_core::models::{ExecutionEnvironment, Workspace};
-use ctx_provider_matrix::ProviderMatrixEntryKind;
 use ctx_provider_runtime::provider_usability::{
     provider_status_is_usable, provider_status_unusable_reason,
 };
@@ -37,13 +36,7 @@ pub(super) async fn load_requested_model_catalogs(
         .providers
         .load_provider_matrix(&state.core.data_root)
         .await;
-    let known_providers = state.providers.provider_status_ids().await;
-    let mut known_providers = known_providers.into_iter().collect::<HashSet<_>>();
-    for entry in &matrix.providers {
-        if entry.kind == ProviderMatrixEntryKind::Harness {
-            known_providers.insert(entry.id.clone());
-        }
-    }
+    let known_providers = state.providers.known_harness_provider_ids(&matrix).await;
 
     let mut available_providers = known_providers.iter().cloned().collect::<Vec<_>>();
     available_providers.sort();

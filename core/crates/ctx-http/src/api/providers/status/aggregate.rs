@@ -41,27 +41,10 @@ async fn provider_status_ids(
     matrix: &ctx_provider_matrix::ProviderMatrix,
     include_matrix_providers: bool,
 ) -> Vec<String> {
-    let mut seen = HashSet::new();
-    let mut provider_ids = Vec::new();
-    for provider_id in state.providers.provider_status_ids().await {
-        if !ctx_provider_matrix::is_user_facing_harness_id(matrix, &provider_id) {
-            continue;
-        }
-        if seen.insert(provider_id.clone()) {
-            provider_ids.push(provider_id);
-        }
-    }
-    if include_matrix_providers {
-        for entry in &matrix.providers {
-            if entry.kind != ctx_provider_matrix::ProviderMatrixEntryKind::Harness {
-                continue;
-            }
-            if seen.insert(entry.id.clone()) {
-                provider_ids.push(entry.id.clone());
-            }
-        }
-    }
-    provider_ids
+    state
+        .providers
+        .visible_provider_status_ids(matrix, include_matrix_providers)
+        .await
 }
 
 async fn decorate_provider_statuses(
