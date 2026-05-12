@@ -1,9 +1,9 @@
 use axum::http::StatusCode;
 use axum::Json;
 use ctx_observability::logs;
+use ctx_settings_service::EffectiveExecutionSettingsError;
 
 use crate::api::errors::ApiErrorResp;
-use crate::daemon::execution_effective;
 
 pub(crate) fn status_code_for_internal_error(err: &anyhow::Error) -> StatusCode {
     if ctx_settings_service::is_execution_policy_denial(err) {
@@ -48,15 +48,13 @@ pub(crate) fn map_internal_api_error(err: &anyhow::Error) -> (StatusCode, Json<A
 }
 
 pub(crate) fn map_effective_execution_settings_error(
-    err: execution_effective::EffectiveExecutionSettingsError,
+    err: EffectiveExecutionSettingsError,
 ) -> (StatusCode, Json<ApiErrorResp>) {
     let (status, error) = match err {
-        execution_effective::EffectiveExecutionSettingsError::InvalidWorkspaceOverride(err) => {
+        EffectiveExecutionSettingsError::InvalidWorkspaceOverride(err) => {
             (status_code_for_request_or_policy_error(&err), err)
         }
-        execution_effective::EffectiveExecutionSettingsError::Internal(err) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, err)
-        }
+        EffectiveExecutionSettingsError::Internal(err) => (StatusCode::INTERNAL_SERVER_ERROR, err),
     };
     (
         status,
@@ -137,7 +135,7 @@ mod tests {
             .validate_execution_environment(ctx_core::models::ExecutionEnvironment::Host)
             .expect_err("host execution should be denied");
         let (status, _) = map_effective_execution_settings_error(
-            execution_effective::EffectiveExecutionSettingsError::InvalidWorkspaceOverride(err),
+            EffectiveExecutionSettingsError::InvalidWorkspaceOverride(err),
         );
 
         assert_eq!(status, StatusCode::FORBIDDEN);

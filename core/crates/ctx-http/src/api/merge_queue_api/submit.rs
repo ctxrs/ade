@@ -4,6 +4,7 @@ use axum::extract::{Extension, State};
 use axum::http::StatusCode;
 use axum::Json;
 use ctx_core::ids::{SessionId, WorktreeId};
+use ctx_merge_queue::MergeQueueSubmitParams;
 
 use super::request::MergeQueueSubmitReq;
 use crate::api::errors::ApiErrorResp;
@@ -72,7 +73,7 @@ pub(in crate::api) async fn submit_merge_queue_entry(
         worktree_id = Some(scoped_worktree_id);
     }
 
-    let params = merge_queue::MergeQueueSubmitParams {
+    let params = MergeQueueSubmitParams {
         session_id,
         worktree_id,
         worktree_root,

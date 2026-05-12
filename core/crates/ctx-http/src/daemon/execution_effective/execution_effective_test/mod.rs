@@ -1,7 +1,6 @@
 use super::{
     effective_execution_settings, effective_execution_settings_classified,
     effective_execution_settings_for_environment, effective_install_target,
-    install_target_for_settings, validate_workspace_execution_settings_override,
 };
 
 use std::collections::HashMap;
@@ -15,7 +14,10 @@ use ctx_workspace_config::{ExecutionConfigUpdate, ExecutionEnvironment};
 use crate::daemon::AppState;
 use ctx_provider_install::install_state::InstallTarget;
 use ctx_settings_model::{self, ContainerNetworkMode, ExecutionMode, ExecutionSettings, Settings};
-use ctx_settings_service::EXECUTION_POLICY_TEST_ENV_LOCK;
+use ctx_settings_service::{
+    install_target_for_settings, validate_workspace_execution_settings_override,
+    EXECUTION_POLICY_TEST_ENV_LOCK,
+};
 
 static STORE_MANAGER_OPEN_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 

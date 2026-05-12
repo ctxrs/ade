@@ -1,4 +1,5 @@
 use super::*;
+use ctx_merge_queue::WorkspaceDrainStop;
 
 #[tokio::test]
 async fn disabled_workspace_with_queued_rows_are_cancelled_after_activation() {

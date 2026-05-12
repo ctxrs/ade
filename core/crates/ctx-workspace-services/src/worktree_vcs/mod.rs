@@ -97,8 +97,8 @@ pub use status::{
 };
 pub use watch::{
     normalize_worktree_vcs_watch_path, resolve_worktree_vcs_metadata_roots,
-    worktree_vcs_invalidation_for_watch_paths, WORKTREE_VCS_POLL_INTERVAL_MS,
-    WORKTREE_VCS_WATCH_DEBOUNCE_MS,
+    worktree_vcs_invalidation_for_watch_paths, WorktreeVcsWatchDebounceState,
+    WORKTREE_VCS_POLL_INTERVAL_MS, WORKTREE_VCS_WATCH_DEBOUNCE_MS,
 };
 pub use worktree_creation::{
     resolve_worktree_creation_base, WorktreeCreationBase, WorktreeCreationBaseError,

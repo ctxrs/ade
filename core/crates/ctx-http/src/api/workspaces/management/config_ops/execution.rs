@@ -7,6 +7,9 @@ use codec::{
     build_workspace_execution_config_override, normalize_execution_allowlist,
     parse_execution_environment, parse_execution_network_mode, project_workspace_execution_config,
 };
+use ctx_settings_service::{
+    apply_workspace_execution_settings_override, validate_workspace_execution_settings_override,
+};
 
 pub(in crate::api::workspaces::management) async fn load_workspace_execution_config(
     state: &Arc<AppState>,
@@ -26,18 +29,16 @@ pub(in crate::api::workspaces::management) async fn load_workspace_execution_con
     let mut source = "daemon_default".to_string();
     match workspace_config::load_execution_settings_override(&ctx.store).await {
         Ok(Some(override_config)) => {
-            execution_effective::apply_workspace_execution_settings_override(
-                &mut effective,
-                &override_config,
-            )
-            .map_err(|error| {
-                (
-                    crate::api::shared::status_code_for_request_or_policy_error(&error),
-                    Json(ApiErrorResp {
-                        error: logs::redact_sensitive(&error.to_string()),
-                    }),
-                )
-            })?;
+            apply_workspace_execution_settings_override(&mut effective, &override_config).map_err(
+                |error| {
+                    (
+                        crate::api::shared::status_code_for_request_or_policy_error(&error),
+                        Json(ApiErrorResp {
+                            error: logs::redact_sensitive(&error.to_string()),
+                        }),
+                    )
+                },
+            )?;
             source = "workspace".to_string();
         }
         Ok(None) => {}
@@ -79,18 +80,16 @@ pub(in crate::api::workspaces::management) async fn update_workspace_execution_c
         network_mode.clone(),
         allowlist.clone(),
     );
-    execution_effective::validate_workspace_execution_settings_override(
-        &effective,
-        &requested_override,
-    )
-    .map_err(|error| {
-        (
-            crate::api::shared::status_code_for_request_or_policy_error(&error),
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&error.to_string()),
-            }),
-        )
-    })?;
+    validate_workspace_execution_settings_override(&effective, &requested_override).map_err(
+        |error| {
+            (
+                crate::api::shared::status_code_for_request_or_policy_error(&error),
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&error.to_string()),
+                }),
+            )
+        },
+    )?;
 
     workspace_config::update_execution_config(
         &ctx.store,

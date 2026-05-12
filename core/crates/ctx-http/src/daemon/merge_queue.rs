@@ -5,9 +5,9 @@ use anyhow::Result;
 use ctx_core::ids::{MergeQueueEntryId, WorkspaceId};
 use ctx_core::models::MergeQueueEntry;
 
-pub use ctx_merge_queue::MergeQueueSubmitParams;
+use ctx_merge_queue::MergeQueueSubmitParams;
 #[cfg(test)]
-pub(crate) use ctx_merge_queue::WorkspaceDrainStop;
+use ctx_merge_queue::WorkspaceDrainStop;
 
 use crate::daemon::AppState;
 

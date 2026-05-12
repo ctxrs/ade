@@ -9,6 +9,40 @@ use super::WorktreeVcsInvalidation;
 pub const WORKTREE_VCS_WATCH_DEBOUNCE_MS: u64 = 500;
 pub const WORKTREE_VCS_POLL_INTERVAL_MS: u64 = 60_000;
 
+#[derive(Debug, Default)]
+pub struct WorktreeVcsWatchDebounceState {
+    invalidation: WorktreeVcsInvalidation,
+    scheduled: bool,
+}
+
+impl WorktreeVcsWatchDebounceState {
+    pub fn merge_invalidation(&mut self, invalidation: WorktreeVcsInvalidation) -> bool {
+        if !invalidation.any() {
+            return false;
+        }
+        self.invalidation.merge(invalidation);
+        if self.scheduled {
+            false
+        } else {
+            self.scheduled = true;
+            true
+        }
+    }
+
+    pub fn take_invalidation(&mut self) -> WorktreeVcsInvalidation {
+        std::mem::take(&mut self.invalidation)
+    }
+
+    pub fn finish_dispatch_cycle(&mut self) -> bool {
+        if self.invalidation.any() {
+            true
+        } else {
+            self.scheduled = false;
+            false
+        }
+    }
+}
+
 pub fn normalize_worktree_vcs_watch_path(path: &Path) -> PathBuf {
     let mut suffix = Vec::new();
     let mut cursor = path;
@@ -207,5 +241,39 @@ mod tests {
             normalized.ends_with(Path::new(".git/refs/heads/missing")),
             "missing suffix should be preserved after normalization",
         );
+    }
+
+    #[test]
+    fn debounce_state_coalesces_and_preserves_pending_follow_up() {
+        let mut state = WorktreeVcsWatchDebounceState::default();
+        let mut first = WorktreeVcsInvalidation::default();
+        first.mark_worktree_fs_path("src/lib.rs");
+
+        assert!(state.merge_invalidation(first));
+
+        let mut coalesced = WorktreeVcsInvalidation::default();
+        coalesced.mark_vcs_meta();
+        assert!(!state.merge_invalidation(coalesced));
+
+        let dispatch = state.take_invalidation();
+        assert!(dispatch.dirty_bits.worktree_fs);
+        assert!(dispatch.dirty_bits.vcs_meta);
+        assert!(dispatch.candidate_paths.contains("src/lib.rs"));
+        assert!(!state.finish_dispatch_cycle());
+
+        let mut next = WorktreeVcsInvalidation::default();
+        next.mark_worktree_fs_path("src/main.rs");
+        assert!(state.merge_invalidation(next));
+
+        let _dispatch = state.take_invalidation();
+        let mut follow_up = WorktreeVcsInvalidation::default();
+        follow_up.mark_vcs_meta();
+        assert!(!state.merge_invalidation(follow_up));
+
+        assert!(state.finish_dispatch_cycle());
+        let dispatch = state.take_invalidation();
+        assert!(!dispatch.dirty_bits.worktree_fs);
+        assert!(dispatch.dirty_bits.vcs_meta);
+        assert!(!state.finish_dispatch_cycle());
     }
 }

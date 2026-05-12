@@ -6,7 +6,7 @@ use anyhow::Result;
 use ctx_core::models::Worktree;
 use ctx_workspace_services::worktree_vcs::{
     normalize_worktree_vcs_watch_path, worktree_vcs_invalidation_for_watch_paths,
-    WorktreeVcsInvalidation,
+    WorktreeVcsInvalidation, WorktreeVcsWatchDebounceState,
 };
 use notify::{Event, RecommendedWatcher};
 
@@ -14,15 +14,9 @@ use crate::daemon::AppState;
 
 use super::super::mark_worktree_vcs_dirty;
 
-#[derive(Default)]
-struct WatchPendingState {
-    invalidation: WorktreeVcsInvalidation,
-    scheduled: bool,
-}
-
 fn lock_watch_pending<'a>(
-    pending: &'a Arc<StdMutex<WatchPendingState>>,
-) -> StdMutexGuard<'a, WatchPendingState> {
+    pending: &'a Arc<StdMutex<WorktreeVcsWatchDebounceState>>,
+) -> StdMutexGuard<'a, WorktreeVcsWatchDebounceState> {
     match pending.lock() {
         Ok(guard) => guard,
         Err(poisoned) => {
@@ -56,7 +50,7 @@ pub(super) fn build_git_status_watcher(
     debounce: Duration,
 ) -> Result<RecommendedWatcher> {
     let handle = tokio::runtime::Handle::current();
-    let pending = Arc::new(StdMutex::new(WatchPendingState::default()));
+    let pending = Arc::new(StdMutex::new(WorktreeVcsWatchDebounceState::default()));
     let worktree_root = normalize_worktree_vcs_watch_path(&worktree_root);
     let metadata_roots = metadata_roots
         .into_iter()
@@ -72,13 +66,7 @@ pub(super) fn build_git_status_watcher(
             if invalidation.any() {
                 let should_spawn = {
                     let mut guard = lock_watch_pending(&pending);
-                    guard.invalidation.merge(invalidation);
-                    if guard.scheduled {
-                        false
-                    } else {
-                        guard.scheduled = true;
-                        true
-                    }
+                    guard.merge_invalidation(invalidation)
                 };
                 if should_spawn {
                     let pending = pending.clone();
@@ -90,14 +78,13 @@ pub(super) fn build_git_status_watcher(
                             tokio::time::sleep(debounce).await;
                             let next = {
                                 let mut guard = lock_watch_pending(&pending);
-                                std::mem::take(&mut guard.invalidation)
+                                guard.take_invalidation()
                             };
                             dispatch_invalidation(&state, &worktree, next).await;
                             let mut guard = lock_watch_pending(&pending);
-                            if guard.invalidation.any() {
+                            if guard.finish_dispatch_cycle() {
                                 continue;
                             }
-                            guard.scheduled = false;
                             break;
                         }
                     });
