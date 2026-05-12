@@ -1,8 +1,5 @@
 use super::*;
-use destination::prepare_clone_destination;
-
-#[path = "clone/destination.rs"]
-mod destination;
+use ctx_workspace_services::repo_onboarding::RepoCloneDestinationRequest;
 
 #[derive(Debug, Deserialize)]
 pub(in crate::api) struct RepoCloneReq {
@@ -38,7 +35,15 @@ pub(in crate::api) async fn repo_clone(
         ));
     }
 
-    let dest = prepare_clone_destination(&req, &repo_url).await?;
+    let dest = ctx_workspace_services::repo_onboarding::prepare_clone_destination(
+        RepoCloneDestinationRequest {
+            repo_url: &repo_url,
+            dest_parent: &req.dest_parent,
+            dest_name: req.dest_name.as_deref(),
+        },
+    )
+    .await
+    .map_err(repo_onboarding_path_error_response)?;
     ctx_workspace_services::repo_onboarding::run_git_clone(
         &repo_url,
         req.branch

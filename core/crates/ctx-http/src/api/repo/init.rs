@@ -1,8 +1,5 @@
 use super::*;
-use prepare::prepare_repo_init_path;
-
-#[path = "init/prepare.rs"]
-mod prepare;
+use ctx_workspace_services::repo_onboarding::RepoInitPathRequest;
 
 #[derive(Debug, Deserialize)]
 pub(in crate::api) struct RepoInitReq {
@@ -27,7 +24,14 @@ pub(in crate::api) async fn repo_init(
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(ApiErrorResp { error: e })))?;
 
-    let path = prepare_repo_init_path(req).await?;
+    let path =
+        ctx_workspace_services::repo_onboarding::prepare_repo_init_path(RepoInitPathRequest {
+            path: &req.path,
+            allow_existing: req.allow_existing,
+            allow_non_empty: req.allow_non_empty,
+        })
+        .await
+        .map_err(repo_onboarding_path_error_response)?;
 
     // Worktrees require a base commit to diff against. `git init` alone yields a repo with no
     // commits, which breaks the out-of-the-box wizard path ("New repo").

@@ -1,8 +1,5 @@
 use super::*;
-use validation::validate_destination;
-
-#[path = "destination/validation.rs"]
-mod validation;
+use ctx_workspace_services::repo_onboarding::RepoValidateDestinationRequest;
 
 #[derive(Debug, Deserialize)]
 pub(in crate::api) struct RepoValidateDestinationReq {
@@ -32,6 +29,24 @@ pub(in crate::api) async fn repo_validate_destination_get(
 ) -> Result<Json<RepoValidateDestinationResp>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
     validate_destination(req).await
+}
+
+async fn validate_destination(
+    req: RepoValidateDestinationReq,
+) -> Result<Json<RepoValidateDestinationResp>, (StatusCode, Json<ApiErrorResp>)> {
+    let path = ctx_workspace_services::repo_onboarding::validate_repo_destination(
+        RepoValidateDestinationRequest {
+            path: &req.path,
+            must_not_exist: req.must_not_exist,
+            require_empty_if_exists: req.require_empty_if_exists,
+        },
+    )
+    .await
+    .map_err(repo_onboarding_path_error_response)?;
+
+    Ok(Json(RepoValidateDestinationResp {
+        path: path.to_string_lossy().to_string(),
+    }))
 }
 
 #[derive(Debug, Serialize)]

@@ -12,8 +12,8 @@ use crate::daemon::AppState;
 use ctx_fs::vcs;
 use ctx_observability::logs;
 use ctx_workspace_services::repo_onboarding::{
-    derive_repo_name, ensure_git_usable, expand_tilde, validate_absolute_path, validate_dest_name,
-    RepoGitCommandError,
+    ensure_git_usable, expand_tilde, validate_absolute_path, RepoGitCommandError,
+    RepoOnboardingPathError,
 };
 
 mod auth;
@@ -48,6 +48,17 @@ fn repo_git_command_error_response(error: RepoGitCommandError) -> (StatusCode, J
                     .failed_message()
                     .unwrap_or_else(|| "git command failed".to_string()),
             ),
+        }),
+    )
+}
+
+fn repo_onboarding_path_error_response(
+    error: RepoOnboardingPathError,
+) -> (StatusCode, Json<ApiErrorResp>) {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(ApiErrorResp {
+            error: error.message().to_string(),
         }),
     )
 }
