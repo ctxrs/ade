@@ -23,7 +23,10 @@ pub(super) async fn collect_provider_cache_stats(state: &AppState) -> ProviderCa
         .providers
         .with_provider_usage_cache(|cache| cache.len())
         .await;
-    let installs = state.providers.installs.lock().await.len();
+    let installs = state
+        .providers
+        .with_provider_installs(|installs| installs.len())
+        .await;
 
     ProviderCacheStats {
         adapters,

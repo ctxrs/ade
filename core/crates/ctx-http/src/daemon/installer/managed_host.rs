@@ -120,14 +120,17 @@ impl ctx_managed_installs::ManagedInstallHost for HttpAppState {
         message: String,
         only_if_default: bool,
     ) {
-        let mut installs = self.providers.installs.lock().await;
-        let Some(install) = installs.get_mut(&install_id) else {
-            return;
-        };
-        if only_if_default && !install.canonical_start_event_is_default() {
-            return;
-        }
-        let _ = install.update_canonical_start_event(provider_id, target, message);
+        self.providers
+            .with_provider_installs(|installs| {
+                let Some(install) = installs.get_mut(&install_id) else {
+                    return;
+                };
+                if only_if_default && !install.canonical_start_event_is_default() {
+                    return;
+                }
+                let _ = install.update_canonical_start_event(provider_id, target, message);
+            })
+            .await;
     }
 
     async fn ensure_builder_ready(&self) -> Result<()> {

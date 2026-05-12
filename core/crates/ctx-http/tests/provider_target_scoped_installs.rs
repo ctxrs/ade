@@ -1021,13 +1021,18 @@ async fn wait_for_tracked_install_id(
 ) -> InstallId {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     loop {
-        let installs = state.providers.installs.lock().await;
-        if let Some(install_id) = installs.iter().find_map(|(install_id, install)| {
-            (install.provider_id == provider_id && install.target == target).then_some(*install_id)
-        }) {
+        if let Some(install_id) = state
+            .providers
+            .with_provider_installs(|installs| {
+                installs.iter().find_map(|(install_id, install)| {
+                    (install.provider_id == provider_id && install.target == target)
+                        .then_some(*install_id)
+                })
+            })
+            .await
+        {
             return install_id;
         }
-        drop(installs);
         assert!(
             tokio::time::Instant::now() < deadline,
             "timed out waiting for tracked install {provider_id} with target {target:?}"
@@ -2044,21 +2049,24 @@ async fn provider_target_scoped_installs_install_all_repairs_invalid_bridge_when
         );
     }
 
-    let installs = state.providers.installs.lock().await;
-    let bridge_install_ids = installs
-        .iter()
-        .filter_map(|(id, install)| {
-            (install.provider_id == "acp-crp-bridge"
-                && install.target == Some(InstallTarget::Container))
-            .then_some(*id)
+    let bridge_install_ids = state
+        .providers
+        .with_provider_installs(|installs| {
+            installs
+                .iter()
+                .filter_map(|(id, install)| {
+                    (install.provider_id == "acp-crp-bridge"
+                        && install.target == Some(InstallTarget::Container))
+                    .then_some(*id)
+                })
+                .collect::<Vec<_>>()
         })
-        .collect::<Vec<_>>();
+        .await;
     assert_eq!(
         bridge_install_ids,
         vec![bridge_install_id],
         "deferred ACP installs should reuse one tracked bridge repair install even when the bridge is listed after them"
     );
-    drop(installs);
 }
 
 #[tokio::test]
@@ -2112,21 +2120,21 @@ async fn acp_container_install_happy_path_installs_bridge_prerequisite_and_keeps
         "kimi install should succeed with bridge prerequisite: {install_info:#?}"
     );
 
-    let installs = state.providers.installs.lock().await;
-    let bridge_install = installs
-        .iter()
-        .find_map(|(id, install)| {
-            (install.provider_id == "acp-crp-bridge"
-                && install.target == Some(InstallTarget::Container))
-            .then(|| install.info(*id))
+    let bridge_install = state
+        .providers
+        .with_provider_installs(|installs| {
+            installs.iter().find_map(|(id, install)| {
+                (install.provider_id == "acp-crp-bridge"
+                    && install.target == Some(InstallTarget::Container))
+                .then(|| install.info(*id))
+            })
         })
+        .await
         .expect("bridge prerequisite install entry");
     assert!(
         matches!(bridge_install.state, InstallStateKind::Succeeded),
         "bridge prerequisite install should be tracked and succeed: {bridge_install:#?}"
     );
-    drop(installs);
-
     let cfg = load_agent_server_config(data_dir.path())
         .await
         .expect("load agent server config");
@@ -2770,15 +2778,19 @@ async fn acp_container_install_joins_existing_bridge_install_and_surfaces_short_
         "bridge prerequisite install should remain tracked as succeeded: {bridge_info:#?}"
     );
 
-    let installs = state.providers.installs.lock().await;
-    let bridge_install_ids = installs
-        .iter()
-        .filter_map(|(id, install)| {
-            (install.provider_id == "acp-crp-bridge"
-                && install.target == Some(InstallTarget::Container))
-            .then_some(*id)
+    let bridge_install_ids = state
+        .providers
+        .with_provider_installs(|installs| {
+            installs
+                .iter()
+                .filter_map(|(id, install)| {
+                    (install.provider_id == "acp-crp-bridge"
+                        && install.target == Some(InstallTarget::Container))
+                    .then_some(*id)
+                })
+                .collect::<Vec<_>>()
         })
-        .collect::<Vec<_>>();
+        .await;
     assert_eq!(
         bridge_install_ids,
         vec![bridge_install_id],

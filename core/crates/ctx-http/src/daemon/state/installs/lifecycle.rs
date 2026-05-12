@@ -8,8 +8,11 @@ impl AppState {
         provider_id: &str,
         target: Option<InstallTarget>,
     ) -> Option<InstallId> {
-        let mut map = self.providers.installs.lock().await;
-        self.find_running_install_locked(&mut map, provider_id, target)
+        self.providers
+            .with_provider_installs(|installs| {
+                self.find_running_install_locked(installs, provider_id, target)
+            })
+            .await
     }
 
     pub async fn start_install(
@@ -17,11 +20,13 @@ impl AppState {
         provider_id: String,
         target: Option<InstallTarget>,
     ) -> (InstallId, bool) {
-        let _start_gate = self.providers.install_start_gate.lock().await;
-        let existing = {
-            let mut installs = self.providers.installs.lock().await;
-            self.find_running_install_locked(&mut installs, &provider_id, target)
-        };
+        let _start_gate = self.providers.acquire_install_start_gate().await;
+        let existing = self
+            .providers
+            .with_provider_installs(|installs| {
+                self.find_running_install_locked(installs, &provider_id, target)
+            })
+            .await;
         if let Some(existing) = existing {
             let mut event = OpsEvent::new("info", "provider_install_joined");
             event.provider_id = Some(provider_id.clone());
@@ -38,10 +43,10 @@ impl AppState {
         Self::push_install_event_locked(&mut state, start_event);
         let (provider_id, target) = (state.provider_id.clone(), state.target);
         self.providers
-            .installs
-            .lock()
-            .await
-            .insert(install_id, state);
+            .with_provider_installs(|installs| {
+                installs.insert(install_id, state);
+            })
+            .await;
         let mut event = OpsEvent::new("info", "provider_install_started");
         event.provider_id = Some(provider_id);
         event.meta = Some(serde_json::json!({
@@ -56,41 +61,62 @@ impl AppState {
         &self,
         install_id: InstallId,
     ) -> Option<ctx_provider_install::install_state::InstallInfo> {
-        let mut map = self.providers.installs.lock().await;
-        let st = map.get_mut(&install_id)?;
-        if !matches!(st.state, InstallStateKind::Running) {
-            return Some(st.info(install_id));
+        enum CancelInstallOutcome {
+            AlreadyFinished(ctx_provider_install::install_state::InstallInfo),
+            Cancelled {
+                provider_id: String,
+                target: Option<InstallTarget>,
+            },
         }
 
-        st.state = InstallStateKind::Cancelled;
-        st.error = Some("Install canceled by user".to_string());
-        st.error_code = Some(InstallErrorCode::Cancelled);
-        st.progress_pct_override = None;
-        st.info_event_override = None;
-        st.info_event_override_until = None;
-        st.finished_at = Some(chrono::Utc::now());
+        let outcome = self
+            .providers
+            .with_provider_installs(|map| {
+                let st = map.get_mut(&install_id)?;
+                if !matches!(st.state, InstallStateKind::Running) {
+                    return Some(CancelInstallOutcome::AlreadyFinished(st.info(install_id)));
+                }
 
-        let event = InstallProgressEvent {
-            install_id,
-            provider_id: st.provider_id.clone(),
-            target: st.target,
-            at: chrono::Utc::now(),
-            stage: "cancelled".to_string(),
-            message: "Install canceled by user".to_string(),
-            level: InstallEventLevel::Warning,
-            bytes: None,
-            total_bytes: None,
-            attempt: None,
-            error_code: Some(InstallErrorCode::Cancelled),
+                st.state = InstallStateKind::Cancelled;
+                st.error = Some("Install canceled by user".to_string());
+                st.error_code = Some(InstallErrorCode::Cancelled);
+                st.progress_pct_override = None;
+                st.info_event_override = None;
+                st.info_event_override_until = None;
+                st.finished_at = Some(chrono::Utc::now());
+
+                let event = InstallProgressEvent {
+                    install_id,
+                    provider_id: st.provider_id.clone(),
+                    target: st.target,
+                    at: chrono::Utc::now(),
+                    stage: "cancelled".to_string(),
+                    message: "Install canceled by user".to_string(),
+                    level: InstallEventLevel::Warning,
+                    bytes: None,
+                    total_bytes: None,
+                    attempt: None,
+                    error_code: Some(InstallErrorCode::Cancelled),
+                };
+                if st.events.len() >= 256 {
+                    st.events.pop_front();
+                }
+                st.events.push_back(event.clone());
+                let _ = st.tx.send(event);
+                Some(CancelInstallOutcome::Cancelled {
+                    provider_id: st.provider_id.clone(),
+                    target: st.target,
+                })
+            })
+            .await?;
+
+        let (provider_id, target) = match outcome {
+            CancelInstallOutcome::AlreadyFinished(info) => return Some(info),
+            CancelInstallOutcome::Cancelled {
+                provider_id,
+                target,
+            } => (provider_id, target),
         };
-        if st.events.len() >= 256 {
-            st.events.pop_front();
-        }
-        st.events.push_back(event.clone());
-        let _ = st.tx.send(event);
-        let provider_id = st.provider_id.clone();
-        let target = st.target;
-        drop(map);
 
         let mut ops_event = OpsEvent::new("info", "provider_install_cancel_requested");
         ops_event.provider_id = Some(provider_id);

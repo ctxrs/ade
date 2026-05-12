@@ -24,10 +24,10 @@ async fn find_running_install_reconciles_stale_running_venv_install() {
     });
     state
         .providers
-        .installs
-        .lock()
-        .await
-        .insert(install_id, install);
+        .with_provider_installs(|installs| {
+            installs.insert(install_id, install);
+        })
+        .await;
 
     let running = state
         .find_running_install("mistral", Some(InstallTarget::Container))
@@ -70,10 +70,10 @@ async fn get_install_info_preserves_recent_running_install() {
     });
     state
         .providers
-        .installs
-        .lock()
-        .await
-        .insert(install_id, install);
+        .with_provider_installs(|installs| {
+            installs.insert(install_id, install);
+        })
+        .await;
 
     let info = state
         .get_install_info(install_id)

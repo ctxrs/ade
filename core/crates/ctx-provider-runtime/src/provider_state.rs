@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use ctx_provider_install::install_state::{InstallId, InstallState};
 use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
+use tokio::sync::MutexGuard;
 
 use crate::ProviderRuntime;
 
@@ -36,6 +38,18 @@ impl ProviderRuntime {
 
     pub async fn replace_provider_statuses(&self, statuses: HashMap<String, ProviderStatus>) {
         *self.statuses.lock().await = statuses;
+    }
+
+    pub async fn acquire_install_start_gate(&self) -> MutexGuard<'_, ()> {
+        self.install_start_gate.lock().await
+    }
+
+    pub async fn with_provider_installs<R>(
+        &self,
+        f: impl FnOnce(&mut HashMap<InstallId, InstallState>) -> R,
+    ) -> R {
+        let mut installs = self.installs.lock().await;
+        f(&mut installs)
     }
 
     pub async fn with_provider_adapters<R>(
