@@ -1,25 +1,13 @@
 use super::*;
 
+mod fixtures;
+
+use fixtures::WebSessionRouteFixture;
+
 #[tokio::test]
 async fn web_session_routes_are_registered() {
-    let _serial = home_env_test_lock().lock().await;
-    let home = tempfile::tempdir().unwrap();
-    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
-
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-
-    let providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
-        HashMap::new();
-
-    let state = Arc::new(AppState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    ));
-    let app = api::router(state);
+    let fixture = WebSessionRouteFixture::new(None).await;
+    let app = fixture.app();
 
     let req = Request::builder()
         .method("POST")
@@ -109,24 +97,8 @@ async fn web_session_routes_are_registered() {
 
 #[tokio::test]
 async fn missing_web_session_api_routes_return_not_found() {
-    let _serial = home_env_test_lock().lock().await;
-    let home = tempfile::tempdir().unwrap();
-    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
-
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-
-    let providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
-        HashMap::new();
-
-    let state = Arc::new(AppState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:4399".to_string(),
-        Some("daemon-secret".to_string()),
-    ));
-    let app = api::router(state);
+    let fixture = WebSessionRouteFixture::new(Some("daemon-secret")).await;
+    let app = fixture.app();
 
     let req = Request::builder()
         .method("POST")
@@ -177,24 +149,8 @@ async fn missing_web_session_api_routes_return_not_found() {
 
 #[tokio::test]
 async fn web_session_list_rejects_invalid_session_filter() {
-    let _serial = home_env_test_lock().lock().await;
-    let home = tempfile::tempdir().unwrap();
-    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
-
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-
-    let providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
-        HashMap::new();
-
-    let state = Arc::new(AppState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:4399".to_string(),
-        Some("daemon-secret".to_string()),
-    ));
-    let app = api::router(state);
+    let fixture = WebSessionRouteFixture::new(Some("daemon-secret")).await;
+    let app = fixture.app();
 
     let req = Request::builder()
         .method("GET")
