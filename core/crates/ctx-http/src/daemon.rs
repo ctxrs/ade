@@ -18,7 +18,6 @@ use ctx_observability::telemetry::TelemetryConfig;
 use ctx_provider_runtime::provider_usage;
 
 mod activity;
-mod auth;
 pub(crate) mod execution_effective;
 pub mod git_status;
 pub(crate) mod installer;

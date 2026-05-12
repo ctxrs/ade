@@ -2,7 +2,9 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use anyhow::{bail, Context};
+use chrono::{DateTime, Utc};
 use ctx_core::ids::{WorkspaceId, WorktreeId};
+use ctx_core::models::{VcsKind, Worktree};
 use tokio::process::Command;
 
 pub fn managed_worktree_path(
@@ -49,6 +51,37 @@ pub async fn create_managed_worktree(
     )
     .await?;
     Ok(canonical_root)
+}
+
+pub fn managed_worktree_record(
+    workspace_id: WorkspaceId,
+    worktree_id: WorktreeId,
+    root_path: impl AsRef<Path>,
+    base_commit_sha: &str,
+    branch_name: &str,
+    created_at: DateTime<Utc>,
+) -> Worktree {
+    Worktree {
+        id: worktree_id,
+        workspace_id,
+        root_path: root_path.as_ref().to_string_lossy().to_string(),
+        base_commit_sha: base_commit_sha.to_string(),
+        git_branch: Some(branch_name.to_string()),
+        vcs_kind: Some(VcsKind::Git),
+        base_revision: Some(base_commit_sha.to_string()),
+        vcs_ref: Some(branch_name.to_string()),
+        created_at,
+        bootstrap_status: None,
+        bootstrap_started_at: None,
+        bootstrap_finished_at: None,
+        bootstrap_exit_code: None,
+        bootstrap_timeout_sec: None,
+        bootstrap_error: None,
+        bootstrap_log_path: None,
+        bootstrap_log_truncated: None,
+        bootstrap_command: None,
+        bootstrap_script_path: None,
+    }
 }
 
 pub async fn branch_exists(
@@ -203,6 +236,36 @@ mod tests {
             external_root.path(),
         )
         .is_none());
+    }
+
+    #[test]
+    fn managed_worktree_record_sets_git_metadata_and_bootstrap_defaults() {
+        let workspace_id = WorkspaceId::new();
+        let worktree_id = WorktreeId::new();
+        let created_at = DateTime::parse_from_rfc3339("2026-05-12T00:00:00Z")
+            .expect("timestamp")
+            .with_timezone(&Utc);
+
+        let record = managed_worktree_record(
+            workspace_id,
+            worktree_id,
+            "/tmp/ctx/worktree",
+            "abc123",
+            "ctx/task",
+            created_at,
+        );
+
+        assert_eq!(record.id, worktree_id);
+        assert_eq!(record.workspace_id, workspace_id);
+        assert_eq!(record.root_path, "/tmp/ctx/worktree");
+        assert_eq!(record.base_commit_sha, "abc123");
+        assert_eq!(record.git_branch.as_deref(), Some("ctx/task"));
+        assert_eq!(record.vcs_kind, Some(VcsKind::Git));
+        assert_eq!(record.base_revision.as_deref(), Some("abc123"));
+        assert_eq!(record.vcs_ref.as_deref(), Some("ctx/task"));
+        assert_eq!(record.created_at, created_at);
+        assert!(record.bootstrap_status.is_none());
+        assert!(record.bootstrap_command.is_none());
     }
 
     #[tokio::test]

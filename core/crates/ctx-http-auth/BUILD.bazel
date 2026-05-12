@@ -17,4 +17,5 @@ rust_library(
 rust_test(
     name = "unit_tests",
     crate = ":lib",
+    deps = _CTX_HTTP_AUTH_DEPS.dev_deps,
 )

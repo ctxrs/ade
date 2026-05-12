@@ -3,6 +3,8 @@ use http::{HeaderMap, Method};
 use sha2::Digest;
 use url::form_urlencoded;
 
+pub mod daemon;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BrowserCapabilityAuthScope {
     Blob {

@@ -1,4 +1,5 @@
 use super::*;
+use ctx_http_auth::daemon as daemon_auth;
 
 #[path = "serve/background.rs"]
 mod background;
@@ -24,7 +25,7 @@ pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
         .await
         .ok();
 
-    let _daemon_lock = auth::acquire_daemon_lock(&data_root)?;
+    let _daemon_lock = daemon_auth::acquire_daemon_lock(&data_root)?;
 
     let global_db_path = data_root.join("db").join("db.sqlite");
     let bootstrap_store = Store::open_sqlite(&global_db_path, None).await?;
@@ -55,11 +56,11 @@ pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
     let listeners = bound.listeners;
     let public_base_url = listener::daemon_public_base_url_from_env()?;
 
-    let mut auth = auth::load_or_init_daemon_auth(&data_root)?;
+    let mut auth = daemon_auth::load_or_init_daemon_auth(&data_root)?;
     let auth_token = Some(auth.token.clone());
 
     auth.daemon_url = Some(daemon_url.clone());
-    auth::write_daemon_auth_file(&auth::daemon_auth_path(&data_root), &auth)?;
+    daemon_auth::write_daemon_auth_file(&daemon_auth::daemon_auth_path(&data_root), &auth)?;
 
     let state = Arc::new(AppState::new_with_public_base_url(
         data_root,

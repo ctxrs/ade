@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 const DAEMON_AUTH_FILENAME: &str = "daemon_auth.json";
 
-pub(super) fn acquire_daemon_lock(data_root: &Path) -> Result<std::fs::File> {
+pub fn acquire_daemon_lock(data_root: &Path) -> Result<std::fs::File> {
     let path = data_root.join("daemon.lock");
     reject_symlink_if_exists(&path)?;
     let mut options = OpenOptions::new();
@@ -49,13 +49,13 @@ pub(super) fn acquire_daemon_lock(data_root: &Path) -> Result<std::fs::File> {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(super) struct DaemonAuthFile {
-    pub(super) token: String,
+pub struct DaemonAuthFile {
+    pub token: String,
     #[serde(default)]
-    pub(super) daemon_url: Option<String>,
+    pub daemon_url: Option<String>,
 }
 
-pub(super) fn daemon_auth_path(data_root: &Path) -> PathBuf {
+pub fn daemon_auth_path(data_root: &Path) -> PathBuf {
     data_root.join(DAEMON_AUTH_FILENAME)
 }
 
@@ -79,7 +79,7 @@ fn reject_symlink_if_exists(path: &Path) -> Result<Option<()>> {
     }
 }
 
-pub(super) fn write_daemon_auth_file(path: &Path, auth: &DaemonAuthFile) -> Result<()> {
+pub fn write_daemon_auth_file(path: &Path, auth: &DaemonAuthFile) -> Result<()> {
     let tmp = path.with_extension("json.tmp");
     let bytes = serde_json::to_vec_pretty(auth)?;
     let _ = std::fs::remove_file(&tmp);
@@ -87,7 +87,7 @@ pub(super) fn write_daemon_auth_file(path: &Path, auth: &DaemonAuthFile) -> Resu
     Ok(())
 }
 
-pub(super) fn load_or_init_daemon_auth(data_root: &Path) -> Result<DaemonAuthFile> {
+pub fn load_or_init_daemon_auth(data_root: &Path) -> Result<DaemonAuthFile> {
     let path = daemon_auth_path(data_root);
     if let Some(auth) = read_daemon_auth_file(&path)? {
         return Ok(auth);

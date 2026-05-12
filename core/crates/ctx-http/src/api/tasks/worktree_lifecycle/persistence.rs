@@ -67,34 +67,22 @@ pub(crate) async fn provision_worktree_for_execution(
     )
     .await?;
 
-    let worktree = Worktree {
-        id: worktree_id,
-        workspace_id: workspace.id,
-        root_path: canonical_root.to_string_lossy().to_string(),
-        base_commit_sha: base_commit_sha.to_string(),
-        git_branch: Some(branch_name.to_string()),
-        vcs_kind: Some(VcsKind::Git),
-        base_revision: Some(base_commit_sha.to_string()),
-        vcs_ref: Some(branch_name.to_string()),
-        created_at: Utc::now(),
-        bootstrap_status: None,
-        bootstrap_started_at: None,
-        bootstrap_finished_at: None,
-        bootstrap_exit_code: None,
-        bootstrap_timeout_sec: None,
-        bootstrap_error: None,
-        bootstrap_log_path: None,
-        bootstrap_log_truncated: None,
-        bootstrap_command: None,
-        bootstrap_script_path: None,
-    };
+    let created_at = Utc::now();
+    let worktree = ctx_workspace_services::worktree_vcs::managed_worktree_record(
+        workspace.id,
+        worktree_id,
+        &canonical_root,
+        base_commit_sha,
+        branch_name,
+        created_at,
+    );
     let binding = super::sandbox_binding::materialize_sandbox_binding_for_worktree(
         state,
         workspace,
         &worktree,
         &canonical_root,
         effective,
-        Utc::now(),
+        created_at,
     )
     .await?;
 

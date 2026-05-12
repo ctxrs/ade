@@ -1101,11 +1101,18 @@ dependencies = [
 name = "ctx-http-auth"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "chrono",
  "ctx-core",
+ "ctx-fs",
+ "fs2",
  "hex",
  "http 1.4.0",
+ "libc",
+ "serde",
+ "serde_json",
  "sha2",
+ "tempfile",
  "url",
  "uuid",
 ]
