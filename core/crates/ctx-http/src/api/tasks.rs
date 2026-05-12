@@ -23,7 +23,6 @@ mod worktree_bootstrap;
 mod worktree_lifecycle;
 pub(in crate::api) use creation::*;
 pub(crate) use execution::resolve_existing_worktree_execution;
-pub(crate) use execution::sandbox_execution_settings_from_binding;
 #[allow(unused_imports)]
 pub(in crate::api) use execution::*;
 pub(in crate::api) use handlers::*;

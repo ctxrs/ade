@@ -173,7 +173,7 @@ async fn unarchive_task_recreates_managed_root_and_keeps_binding_snapshot_runtim
         binding.sandbox_instance_id,
         ctx_core::models::sandbox_instance_id_for_workspace(workspace.id)
     );
-    let parsed = crate::api::tasks::sandbox_execution_settings_from_binding(&binding)
+    let parsed = ctx_sandbox_contract::sandbox_execution_settings_from_binding(&binding)
         .expect("parse rematerialized binding snapshot");
     assert_eq!(
         parsed.container.runtime,

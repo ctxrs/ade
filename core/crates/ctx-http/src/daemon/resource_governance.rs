@@ -1,9 +1,7 @@
 use anyhow::Result;
 use ctx_resource_utilization::resource_governance::{
-    apply_limits, compute_effective_limits, public_settings, status_for,
+    apply_limits, compute_effective_limits, public_settings, status_for, ResourceGovernanceRuntime,
 };
-
-pub(crate) use ctx_resource_utilization::resource_governance::ResourceGovernanceRuntime;
 
 use crate::daemon::AppState;
 use ctx_settings_model::{

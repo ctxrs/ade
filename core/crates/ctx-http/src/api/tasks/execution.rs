@@ -1,6 +1,7 @@
 use super::*;
 
-pub(crate) use ctx_sandbox_contract::sandbox_execution_settings_from_binding;
+#[cfg(test)]
+use ctx_sandbox_contract::sandbox_execution_settings_from_binding;
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
 
 #[cfg(test)]
