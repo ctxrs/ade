@@ -1,12 +1,37 @@
 use std::cmp::Ordering;
 use std::cmp::Reverse;
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, HashSet};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
 pub struct CachedFileCompletions {
     pub cached_at: Instant,
     pub files: Arc<Vec<String>>,
+}
+
+pub async fn workspace_has_git_repo(root: impl AsRef<Path>) -> bool {
+    ctx_fs::git::assert_git_repo(root).await.is_ok()
+}
+
+pub async fn list_host_git_files(root: impl AsRef<Path>) -> anyhow::Result<Vec<String>> {
+    let root = root.as_ref();
+    let tracked = ctx_fs::git::list_tracked_files(root).await?;
+    let untracked = ctx_fs::git::list_untracked_files(root).await?;
+    Ok(merge_and_sort_git_paths(tracked, untracked))
+}
+
+pub fn merge_and_sort_git_paths(mut tracked: Vec<String>, untracked: Vec<String>) -> Vec<String> {
+    if !untracked.is_empty() {
+        let mut seen: HashSet<String> = tracked.iter().cloned().collect();
+        for path in untracked {
+            if seen.insert(path.clone()) {
+                tracked.push(path);
+            }
+        }
+    }
+    tracked.sort();
+    tracked
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -153,5 +178,52 @@ mod tests {
         let paths = vec!["src/main.rs".to_string(), "Cargo.toml".to_string()];
         let out = filter_and_rank_paths(&paths, "does-not-exist", 10);
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn merge_and_sort_git_paths_dedupes_untracked_after_tracked() {
+        let out = merge_and_sort_git_paths(
+            vec!["src/main.rs".to_string(), "README.md".to_string()],
+            vec!["src/main.rs".to_string(), "notes/todo.md".to_string()],
+        );
+
+        assert_eq!(
+            out,
+            vec![
+                "README.md".to_string(),
+                "notes/todo.md".to_string(),
+                "src/main.rs".to_string(),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn host_git_listing_returns_tracked_and_untracked_paths() {
+        let repo = tempfile::tempdir().expect("repo");
+        git(&["init"], repo.path());
+        git(&["symbolic-ref", "HEAD", "refs/heads/main"], repo.path());
+        git(&["config", "user.email", "ctx@example.com"], repo.path());
+        git(&["config", "user.name", "Ctx Test"], repo.path());
+        std::fs::create_dir_all(repo.path().join("src")).expect("create src");
+        std::fs::write(repo.path().join("src/lib.rs"), "pub fn ok() {}\n").expect("tracked file");
+        git(&["add", "src/lib.rs"], repo.path());
+        git(&["commit", "-m", "initial"], repo.path());
+        std::fs::write(repo.path().join("README.md"), "hello\n").expect("untracked file");
+
+        assert!(workspace_has_git_repo(repo.path()).await);
+        let out = list_host_git_files(repo.path())
+            .await
+            .expect("list git files");
+
+        assert_eq!(out, vec!["README.md".to_string(), "src/lib.rs".to_string()]);
+    }
+
+    fn git(args: &[&str], cwd: &Path) {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .status()
+            .expect("run git");
+        assert!(status.success(), "git {args:?} failed");
     }
 }

@@ -6,7 +6,6 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
 use ctx_core::ids::WorkspaceId;
-use ctx_fs::git::assert_git_repo;
 use ctx_workspace_services::file_completions;
 
 use crate::api::shared::{load_and_cache_workspace_files, FileCompletionsQuery};
@@ -30,7 +29,7 @@ pub(in crate::api) async fn workspace_file_completions(
         .ok_or(StatusCode::NOT_FOUND)?;
 
     let root = PathBuf::from(&ws.root_path);
-    if assert_git_repo(&root).await.is_err() {
+    if !file_completions::workspace_has_git_repo(&root).await {
         return Ok(Json(Vec::new()));
     }
 

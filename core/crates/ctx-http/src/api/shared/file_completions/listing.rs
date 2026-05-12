@@ -6,8 +6,8 @@ use std::time::Instant;
 use axum::http::StatusCode;
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{ExecutionEnvironment, Worktree};
-use ctx_fs::git::{list_tracked_files, list_untracked_files};
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
+use ctx_workspace_services::file_completions;
 use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
 
 use crate::daemon::AppState;
@@ -72,29 +72,9 @@ pub(crate) async fn load_and_cache_workspace_files(
 }
 
 pub(super) async fn list_host_git_files(root: &PathBuf) -> Result<Vec<String>, StatusCode> {
-    let tracked = list_tracked_files(root)
+    file_completions::list_host_git_files(root)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let untracked = list_untracked_files(root)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(merge_and_sort_git_paths(tracked, untracked))
-}
-
-pub(super) fn merge_and_sort_git_paths(
-    mut tracked: Vec<String>,
-    untracked: Vec<String>,
-) -> Vec<String> {
-    if !untracked.is_empty() {
-        let mut seen: std::collections::HashSet<String> = tracked.iter().cloned().collect();
-        for p in untracked {
-            if seen.insert(p.clone()) {
-                tracked.push(p);
-            }
-        }
-    }
-    tracked.sort();
-    tracked
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 async fn record_list_files_metric(state: &Arc<AppState>, event: &'static str, started_at: Instant) {

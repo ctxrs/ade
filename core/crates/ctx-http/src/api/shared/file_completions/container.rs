@@ -2,14 +2,13 @@ use std::sync::Arc;
 
 use axum::http::StatusCode;
 use ctx_core::models::{ExecutionEnvironment, Worktree};
+use ctx_workspace_services::file_completions::merge_and_sort_git_paths;
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
 use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
 
 use crate::api::shared::errors::status_code_for_internal_error;
 use crate::daemon::execution_effective;
 use crate::daemon::AppState;
-
-use super::listing::merge_and_sort_git_paths;
 
 #[path = "container_git.rs"]
 mod container_git;
