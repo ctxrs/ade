@@ -40,7 +40,6 @@ use ctx_core::models::{
     AttachmentMode, AttachmentUpdatePolicy, Workspace, WorkspaceActiveHeadBatch,
     WorkspaceActiveSnapshot, WorkspaceAttachment, WorkspaceAttachmentKind, Worktree,
 };
-use ctx_fs::vcs;
 use ctx_observability::logs;
 use ctx_observability::telemetry::TelemetryEvent;
 use ctx_workspace_attachments::AttachmentConfig;

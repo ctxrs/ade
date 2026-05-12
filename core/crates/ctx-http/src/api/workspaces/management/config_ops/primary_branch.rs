@@ -27,35 +27,17 @@ pub(in crate::api::workspaces::management) async fn update_workspace_primary_bra
     ctx: &WorkspaceRequestContext,
     req: UpdateWorkspacePrimaryBranchReq,
 ) -> WorkspaceApiResult<WorkspacePrimaryBranchResp> {
-    let primary_branch = req.primary_branch.trim().to_string();
-    if primary_branch.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "primary_branch is required".to_string(),
-            }),
-        ));
-    }
-    let driver = vcs::driver_for_path(StdPath::new(&ctx.workspace.root_path))
+    let primary_branch =
+        ctx_workspace_services::workspace_registration::validate_workspace_primary_branch(
+            StdPath::new(&ctx.workspace.root_path),
+            &req.primary_branch,
+        )
         .await
         .map_err(|error| {
             (
                 StatusCode::BAD_REQUEST,
                 Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&error.to_string()),
-                }),
-            )
-        })?;
-    driver
-        .rev_parse_ref(StdPath::new(&ctx.workspace.root_path), &primary_branch)
-        .await
-        .map_err(|error| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&format!(
-                        "primary_branch `{primary_branch}` does not resolve: {error}"
-                    )),
+                    error: logs::redact_sensitive(error.message()),
                 }),
             )
         })?;

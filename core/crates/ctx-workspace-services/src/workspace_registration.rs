@@ -75,6 +75,31 @@ pub async fn validate_workspace_root_repo(root_path: &Path) -> anyhow::Result<Vc
     Ok(driver.kind())
 }
 
+pub async fn validate_workspace_primary_branch(
+    root_path: &Path,
+    primary_branch: &str,
+) -> Result<String, WorkspaceRegistrationError> {
+    let primary_branch = primary_branch.trim();
+    if primary_branch.is_empty() {
+        return Err(WorkspaceRegistrationError::new(
+            "primary_branch is required",
+        ));
+    }
+
+    let driver = vcs::driver_for_path(root_path)
+        .await
+        .map_err(|error| WorkspaceRegistrationError::new(error.to_string()))?;
+    driver
+        .rev_parse_ref(root_path, primary_branch)
+        .await
+        .map_err(|error| {
+            WorkspaceRegistrationError::new(format!(
+                "primary_branch `{primary_branch}` does not resolve: {error}"
+            ))
+        })?;
+    Ok(primary_branch.to_string())
+}
+
 fn expand_workspace_root(raw_root_path: &str) -> Result<PathBuf, WorkspaceRegistrationError> {
     let raw = raw_root_path.trim();
     if raw.is_empty() {
@@ -126,7 +151,11 @@ fn normalize_detected_primary_branch(branch: &str) -> anyhow::Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{expand_workspace_root, normalize_detected_primary_branch};
+    use std::path::Path;
+
+    use super::{
+        expand_workspace_root, normalize_detected_primary_branch, validate_workspace_primary_branch,
+    };
 
     #[test]
     fn normalize_detected_primary_branch_trims_git_output() {
@@ -144,5 +173,13 @@ mod tests {
     fn expand_workspace_root_rejects_empty_input() {
         let error = expand_workspace_root(" \n").expect_err("empty root");
         assert_eq!(error.message(), "root_path is required");
+    }
+
+    #[tokio::test]
+    async fn validate_workspace_primary_branch_rejects_empty_branch() {
+        let error = validate_workspace_primary_branch(Path::new("/tmp"), " \n")
+            .await
+            .expect_err("empty branch");
+        assert_eq!(error.message(), "primary_branch is required");
     }
 }
