@@ -1,11 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::api::providers::provider_status_for_target;
 use crate::api::sessions::load_provider_model_catalog_for_execution_environment;
 use crate::daemon::execution_effective;
 use crate::daemon::AppState;
 use ctx_core::models::{ExecutionEnvironment, Workspace};
+use ctx_provider_runtime::provider_launch::status::provider_status_for_target;
 use ctx_provider_runtime::provider_usability::{
     provider_status_is_usable, provider_status_unusable_reason,
 };

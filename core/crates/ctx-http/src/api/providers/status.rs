@@ -1,8 +1,6 @@
 use super::*;
 
-#[cfg(test)]
-pub(crate) use ctx_provider_runtime::provider_launch::status::apply_target_aware_provider_status;
-pub(crate) use ctx_provider_runtime::provider_launch::status::provider_status_for_target;
+use ctx_provider_runtime::provider_launch::status::provider_status_for_target;
 
 mod aggregate;
 mod routes;

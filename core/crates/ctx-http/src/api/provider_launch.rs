@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use super::errors::ApiErrorResp;
-use super::providers::{install_target_for_workspace, provider_status_for_target};
+use super::providers::install_target_for_workspace;
 use super::redact_json_value;
 use crate::daemon::AppState;
 use ctx_harness_sources as harness_sources;
@@ -49,6 +49,7 @@ use ctx_provider_runtime::provider_launch::options::{
 };
 use ctx_provider_runtime::provider_launch::probe;
 use ctx_provider_runtime::provider_launch::probe_error::classify_probe_error;
+use ctx_provider_runtime::provider_launch::status::provider_status_for_target;
 use ctx_provider_runtime::provider_usability::{
     provider_status_is_usable, provider_status_unusable_reason,
 };

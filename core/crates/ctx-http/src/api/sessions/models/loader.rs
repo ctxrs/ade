@@ -2,6 +2,7 @@ use super::*;
 use ctx_provider_runtime::provider_launch::options::{
     provider_options_cache_entry_is_authoritative, provider_supports_runtime_model_catalog,
 };
+use ctx_provider_runtime::provider_launch::status::provider_status_for_target;
 use ctx_session_tools::model_resolution::{build_model_catalog, ModelCatalog};
 
 mod endpoint;
@@ -27,7 +28,7 @@ async fn load_pinned_subscription_model_catalog(
         .providers
         .load_provider_matrix(&state.core.data_root)
         .await;
-    let provider_status = crate::api::providers::provider_status_for_target(
+    let provider_status = provider_status_for_target(
         state.as_ref(),
         &managed,
         &matrix,

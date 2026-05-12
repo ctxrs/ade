@@ -76,9 +76,7 @@ pub(super) use login::{
     start_codex_login, start_gemini_login, start_kimi_login, start_mistral_login, start_qwen_login,
 };
 pub(super) use status::{get_provider, get_provider_usage, list_providers};
-pub(crate) use status::{
-    install_target_for_workspace, provider_status_for_target, providers_statuses_response,
-};
+pub(crate) use status::{install_target_for_workspace, providers_statuses_response};
 use types::*;
 
 #[cfg(test)]
