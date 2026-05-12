@@ -4,22 +4,8 @@ use anyhow::Result;
 use ctx_core::ids::WorkspaceId;
 
 use crate::daemon::AppState;
+use ctx_provider_runtime::provider_cache;
 use ctx_workspace_config as workspace_config;
-
-async fn invalidate_provider_options_cache(
-    state: &AppState,
-    workspace_id: WorkspaceId,
-    provider_id: &str,
-) {
-    let key_prefix = format!("{}/", workspace_id.0);
-    let key_suffix = format!("/{provider_id}");
-    state
-        .providers
-        .options_cache
-        .lock()
-        .await
-        .retain(|key, _| !(key.starts_with(&key_prefix) && key.ends_with(&key_suffix)));
-}
 
 pub(crate) async fn update_workspace_provider_preferred_model_id(
     state: &Arc<AppState>,
@@ -34,6 +20,11 @@ pub(crate) async fn update_workspace_provider_preferred_model_id(
         preferred_model_id,
     )
     .await?;
-    invalidate_provider_options_cache(state.as_ref(), workspace_id, provider_id).await;
+    provider_cache::invalidate_workspace_provider_options_cache(
+        &state.providers,
+        workspace_id,
+        provider_id,
+    )
+    .await;
     Ok(())
 }

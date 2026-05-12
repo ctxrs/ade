@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
+use ctx_provider_runtime::provider_cache::cache_key_matches_provider;
 
 use crate::daemon::AppState;
 
@@ -127,12 +128,6 @@ pub(in crate::daemon) fn spawn_endpoint_model_catalog_sweeper(state: Arc<AppStat
             }
         }
     });
-}
-
-fn cache_key_matches_provider(cache_key: &str, provider_id: &str) -> bool {
-    cache_key
-        .rsplit_once('/')
-        .is_some_and(|(_, key_provider)| key_provider == provider_id)
 }
 
 #[cfg(test)]

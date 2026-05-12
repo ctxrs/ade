@@ -8,26 +8,12 @@ use ctx_provider_runtime::provider_usability::{
     provider_status_is_usable, provider_status_unusable_reason,
 };
 
-pub(super) fn cache_key_matches_provider(cache_key: &str, provider_id: &str) -> bool {
-    cache_key
-        .rsplit('/')
-        .next()
-        .is_some_and(|key_provider| key_provider == provider_id)
-}
-
 pub(super) async fn invalidate_provider_probe_caches(state: &Arc<AppState>, provider_id: &str) {
-    state
-        .providers
-        .options_cache
-        .lock()
-        .await
-        .retain(|cache_key, _| !cache_key_matches_provider(cache_key, provider_id));
-    state
-        .providers
-        .verify_cache
-        .lock()
-        .await
-        .retain(|cache_key, _| !cache_key_matches_provider(cache_key, provider_id));
+    ctx_provider_runtime::provider_cache::invalidate_provider_probe_caches(
+        &state.providers,
+        provider_id,
+    )
+    .await;
 }
 
 pub(super) fn bootstrap_provider_probe_summary(

@@ -1,23 +1,6 @@
 use super::*;
 
 #[test]
-fn cache_key_provider_matcher_works() {
-    assert!(cache_key_matches_provider(
-        "7f72430e-4c43-499f-b54d-6ce2deaed4a0/host/codex",
-        "codex"
-    ));
-    assert!(!cache_key_matches_provider(
-        "7f72430e-4c43-499f-b54d-6ce2deaed4a0/host/codex",
-        "codex-crp"
-    ));
-    assert!(!cache_key_matches_provider(
-        "7f72430e-4c43-499f-b54d-6ce2deaed4a0/container/claude-crp",
-        "codex"
-    ));
-    assert!(!cache_key_matches_provider("not-a-key", "codex"));
-}
-
-#[test]
 fn classify_probe_error_detects_auth_required_messages() {
     let (status, auth_required, endpoint_status) =
         classify_probe_error("401 unauthorized: missing api key");
