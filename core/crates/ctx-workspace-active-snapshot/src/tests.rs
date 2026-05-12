@@ -1280,6 +1280,77 @@ mod replay_tests {
     }
 
     #[tokio::test]
+    async fn replay_session_stream_gap_seed_does_not_regress_resume_cursor() {
+        let hub = WorkspaceActiveSnapshotHub::new();
+        let session = replay_session(SessionId::new());
+
+        for seq in 1..=80 {
+            hub.publish_session_head_delta(
+                session.workspace_id,
+                &session,
+                SessionHeadDelta {
+                    session_id: session.id,
+                    last_event_seq: seq,
+                    projection_rev: seq,
+                    state_rev: seq,
+                    emitted_at_ms: None,
+                    session: None,
+                    activity: None,
+                    event: None,
+                    turn: None,
+                    message: None,
+                    tool_summaries: Vec::new(),
+                },
+                true,
+            )
+            .await;
+        }
+
+        let mut stale_head = new_head_snapshot(&session);
+        stale_head.last_event_seq = 30;
+        stale_head.projection_rev = 30;
+        hub.update_session_head(stale_head).await;
+
+        match hub
+            .replay_session_stream(session.workspace_id, session.id, 70, 70, 2)
+            .await
+        {
+            WorkspaceSessionReplay::Replay { items, last_sent } => {
+                assert_eq!(
+                    last_sent,
+                    SessionReplayCursor {
+                        last_event_seq: 80,
+                        projection_rev: 80,
+                    },
+                    "paired stale seeds must not move the server subscription cursor behind the requested replay cursor"
+                );
+                assert_eq!(items.len(), 2);
+                match &items[0] {
+                    WorkspaceSessionReplayItem::Gap {
+                        session_id,
+                        after_seq,
+                        reason,
+                    } => {
+                        assert_eq!(*session_id, session.id);
+                        assert_eq!(*after_seq, 70);
+                        assert_eq!(reason.as_deref(), Some("replay_limit_exceeded"));
+                    }
+                    other => panic!("expected gap, got {other:?}"),
+                }
+                match &items[1] {
+                    WorkspaceSessionReplayItem::Seed(seed) => {
+                        assert_eq!(seed.session.id, session.id);
+                        assert_eq!(seed.last_event_seq, 30);
+                        assert_eq!(seed.projection_rev, 30);
+                    }
+                    other => panic!("expected seed, got {other:?}"),
+                }
+            }
+            other => panic!("expected replay, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn replay_session_stream_emits_gap_then_seed_for_resuming_cursor() {
         let hub = WorkspaceActiveSnapshotHub::new();
         let session = replay_session(SessionId::new());

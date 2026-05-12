@@ -110,6 +110,19 @@ test("remote updater proof sweeps local WebKit helpers and e2e daemons between a
   assert.match(scriptText, /write_process_snapshot "\$\{attempt_dir\}\/processes-after-automation\.log"[\s\S]*sweep_xvfb_processes_for_tmp_dir "\$\{attempt_tmp_dir\}"[\s\S]*sweep_stale_xvfb_processes[\s\S]*sweep_local_automation_processes[\s\S]*write_process_snapshot "\$\{attempt_dir\}\/processes-after-automation-sweep\.log"/);
 });
 
+test("remote updater proof sweeps stale automation egress proxies", () => {
+  assert.match(scriptText, /command_is_ctx_automation_egress_proxy\(\) \{/);
+  assert.match(scriptText, /sweep_stale_egress_proxy_processes\(\) \{/);
+  assert.match(scriptText, /CTX_UPDATER_REMOTE_E2E_SWEEP_STALE_EGRESS_PROXY:-1/);
+  assert.match(scriptText, /CTX_UPDATER_REMOTE_E2E_STALE_EGRESS_PROXY_MIN_AGE_SECONDS:-900/);
+  assert.match(scriptText, /ps -Ao pid=,etime=,command=/);
+  assert.match(scriptText, /ctx-egress-proxy\*" --config "\*\/core\/apps\/desktop\/automation\/artifacts\/updater-linux-proof\/\*\/workspace-home\/\.ctx\/containers\/workspaces\/\*\/data\/egress-proxy\.json/);
+  assert.match(scriptText, /ctx-egress-proxy\*" --config "\*\/ctx-nightly\/\.artifacts\/buildkite\/ctx-nightly\/\*\/updater-proof\/\*\/\.ctx\/containers\/workspaces\/\*\/data\/egress-proxy\.json/);
+  assert.match(scriptText, /\*"\$\{artifact_dir\}"\*\) continue ;;/);
+  assert.match(scriptText, /process_elapsed_seconds "\$elapsed"/);
+  assert.match(scriptText, /sweep_controller_app_processes\s+sweep_webkit_automation_helpers\s+sweep_local_automation_daemons\s+sweep_stale_egress_proxy_processes/);
+});
+
 test("remote updater proof retries startup-only WebDriver session failures with preserved logs", () => {
   assert.match(scriptText, /CTX_UPDATER_REMOTE_E2E_AUTOMATION_ATTEMPTS:-2/);
   assert.match(scriptText, /is_retryable_wdio_session_start_failure\(\) \{/);

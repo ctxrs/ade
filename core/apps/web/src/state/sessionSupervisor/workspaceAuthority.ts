@@ -67,6 +67,9 @@ const workspaceReplicaEventSessionId = (evt: SessionSupervisorWorkspaceEvent): s
   }
 };
 
+const sessionGapSeedFollows = (evt: SessionSupervisorWorkspaceEvent): boolean =>
+  evt.type === "session_gap" && (evt as { seed_follows?: unknown }).seed_follows === true;
+
 const isRetainedReplicaSession = (
   host: SessionSupervisorWorkspaceAuthorityHost,
   sessionId: string,
@@ -178,14 +181,16 @@ export const ingestWorkspaceEvent = (
   } else if (evt.type === "session_gap") {
     const sessionId = idToString(evt.session_id);
     if (sessionId) {
+      const seedFollows = sessionGapSeedFollows(evt);
       const entry = host.entries.get(sessionId);
       if (entry) {
+        entry.recoverySubscriptionPolicy = seedFollows ? "preserve" : "reset";
         host.setSessionLoadState(entry, "recovering");
         entry.error = undefined;
         entry.turnsHydrated = false;
         entry.updatedAtMs = Date.now();
         changed = true;
-        if (entry.subscribed) {
+        if (entry.subscribed && !seedFollows) {
           subscriptionCursorsChanged = true;
         }
       }

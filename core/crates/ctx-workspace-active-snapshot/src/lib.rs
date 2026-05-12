@@ -202,7 +202,7 @@ impl WorkspaceActiveSnapshotHub {
                     projection_rev: cursor.projection_rev.max(after_projection_rev.max(0)),
                 };
                 if let Some(head) = self.get_session_head(session_id).await {
-                    last_sent = SessionReplayCursor::from_head(&head);
+                    last_sent = last_sent.cover(SessionReplayCursor::from_head(&head));
                     items.push(WorkspaceSessionReplayItem::Seed(Box::new(head)));
                 }
                 WorkspaceSessionReplay::Replay { items, last_sent }

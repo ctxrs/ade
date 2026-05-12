@@ -15,10 +15,22 @@ export function buildSubscribedSessions(
     const head = workspaceSessionHeadsById.get(sessionId);
     const headSeq = head?.last_event_seq;
     const headProjectionRev = head?.projection_rev;
-    if (entry?.freshness === "recovering" || entry?.loadState === "recovering") {
+    if (
+      (entry?.freshness === "recovering" || entry?.loadState === "recovering") &&
+      entry?.recoverySubscriptionPolicy !== "preserve"
+    ) {
       return {
         sessionId,
         replay: { kind: "reset" },
+      };
+    }
+    if (
+      (entry?.freshness === "recovering" || entry?.loadState === "recovering") &&
+      entry?.recoverySubscriptionPolicy === "preserve"
+    ) {
+      return {
+        sessionId,
+        replay: { kind: "auto" },
       };
     }
     const afterSeq =
@@ -199,6 +211,10 @@ export function markOpenSessionsRecovering(host: SessionSupervisorRecoveryHost) 
   for (const entry of host.entries.values()) {
     if (entry.refCount <= 0) continue;
     if (entry.loadState === "fatal") continue;
+    if (entry.recoverySubscriptionPolicy !== "reset") {
+      entry.recoverySubscriptionPolicy = "reset";
+      changed = true;
+    }
     if (entry.loadState !== "recovering") {
       entry.loadState = "recovering";
       changed = true;

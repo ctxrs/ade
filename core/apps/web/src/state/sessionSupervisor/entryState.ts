@@ -23,6 +23,8 @@ export type SessionLoadState = "pending_hydration" | "live" | "recovering" | "fa
 
 export type SessionFreshnessState = "bootstrap" | "authoritative" | "replica" | "recovering";
 
+export type SessionRecoverySubscriptionPolicy = "reset" | "preserve";
+
 export type SessionSupportLoadErrorKey = "state" | "subagentInvocations";
 
 export type SessionSupportLoadErrors = Partial<Record<SessionSupportLoadErrorKey, string>>;
@@ -162,6 +164,7 @@ type InternalEntryBase = Omit<
 
 export type InternalEntry = InternalEntryBase & {
   refCount: number;
+  recoverySubscriptionPolicy?: SessionRecoverySubscriptionPolicy;
   warmUntilMs: number;
   historyExtended: boolean;
   acpMetaUpdatedAtMs?: number;
@@ -224,6 +227,7 @@ export function createInternalEntry(
     loading: false,
     error: undefined,
     subscribed: false,
+    recoverySubscriptionPolicy: undefined,
     updatedAtMs: Date.now(),
     refCount: 0,
     warmUntilMs: Date.now() + opts.warmTtlMs,

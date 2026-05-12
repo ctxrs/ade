@@ -257,6 +257,9 @@ export const applyCanonicalTranscriptPatch = (
       entry.freshness = normalizedFreshness;
       changed = true;
     }
+    if (normalizedFreshness !== "recovering") {
+      entry.recoverySubscriptionPolicy = undefined;
+    }
   }
   if (data.projectionRev !== undefined) {
     const nextProjectionRev =

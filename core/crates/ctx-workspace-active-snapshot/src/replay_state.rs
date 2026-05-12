@@ -19,6 +19,13 @@ pub fn is_transient_session_delta(delta: &SessionHeadDelta) -> bool {
 }
 
 impl SessionReplayCursor {
+    pub fn cover(self, other: Self) -> Self {
+        Self {
+            last_event_seq: self.last_event_seq.max(other.last_event_seq),
+            projection_rev: self.projection_rev.max(other.projection_rev),
+        }
+    }
+
     pub fn from_delta(delta: &SessionHeadDelta) -> Self {
         Self {
             last_event_seq: delta.last_event_seq.max(0),

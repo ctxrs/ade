@@ -173,6 +173,9 @@ const notifyRecoverableSessionStreamGap = (
   }
 };
 
+const sessionGapSeedFollows = (evt: WorkspaceActiveSnapshotEvent): boolean =>
+  evt.type === "session_gap" && (evt as { seed_follows?: unknown }).seed_follows === true;
+
 export const applyWorkspaceSnapshot = (
   host: WorkspaceActiveSnapshotStreamHost,
   snapshot: WorkspaceActiveSnapshot,
@@ -593,7 +596,9 @@ export const handleStreamMessage = async (
       }
       break;
     case "session_gap":
-      flushAfterNotifyReason = "session_gap";
+      if (!sessionGapSeedFollows(evt)) {
+        flushAfterNotifyReason = "session_gap";
+      }
       break;
     case "worktree_bootstrap":
       if (

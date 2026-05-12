@@ -196,6 +196,19 @@ command_is_ctx_automation_xvfb() {
   return 1
 }
 
+command_is_ctx_automation_egress_proxy() {
+  local cmd="$1"
+  case "${cmd}" in
+    *ctx-egress-proxy*" --config "*/core/apps/desktop/automation/artifacts/updater-linux-proof/*/workspace-home/.ctx/containers/workspaces/*/data/egress-proxy.json | \
+    *ctx-egress-proxy*" --config "*/core/apps/desktop/automation/artifacts/updater-remote-proof/*/.ctx/containers/workspaces/*/data/egress-proxy.json | \
+    *ctx-egress-proxy*" --config "*/ctx-nightly/.artifacts/buildkite/ctx-nightly/*/updater-proof/*/.ctx/containers/workspaces/*/data/egress-proxy.json | \
+    *ctx-egress-proxy*" --config "*/ctx-release/.artifacts/buildkite/ctx-release/*/updater-proof/*/.ctx/containers/workspaces/*/data/egress-proxy.json)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 sweep_stale_xvfb_processes() {
   if [[ "${CTX_UPDATER_REMOTE_E2E_SWEEP_STALE_XVFB:-1}" != "1" ]]; then
     return 0
@@ -229,6 +242,45 @@ sweep_stale_xvfb_processes() {
     fi
     pids+=("${pid}")
   done < <(ps -Ao pid=,ppid=,etime=,command= 2>/dev/null || true)
+
+  if [[ "${#pids[@]}" -gt 0 ]]; then
+    kill -9 "${pids[@]}" >/dev/null 2>&1 || true
+  fi
+}
+
+sweep_stale_egress_proxy_processes() {
+  if [[ "${CTX_UPDATER_REMOTE_E2E_SWEEP_STALE_EGRESS_PROXY:-1}" != "1" ]]; then
+    return 0
+  fi
+  local min_age_seconds="${CTX_UPDATER_REMOTE_E2E_STALE_EGRESS_PROXY_MIN_AGE_SECONDS:-900}"
+  if ! [[ "$min_age_seconds" =~ ^[0-9]+$ ]]; then
+    echo "error: CTX_UPDATER_REMOTE_E2E_STALE_EGRESS_PROXY_MIN_AGE_SECONDS must be a non-negative integer" >&2
+    return 2
+  fi
+  if ! command -v ps >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local pids=()
+  local pid elapsed cmd age_seconds
+  while read -r pid elapsed cmd; do
+    if [[ -z "${pid}" || -z "${elapsed}" || -z "${cmd:-}" ]]; then
+      continue
+    fi
+    if ! command_is_ctx_automation_egress_proxy "$cmd"; then
+      continue
+    fi
+    case "${cmd}" in
+      *"${artifact_dir}"*) continue ;;
+    esac
+    if ! age_seconds="$(process_elapsed_seconds "$elapsed")"; then
+      continue
+    fi
+    if [[ "$age_seconds" -lt "$min_age_seconds" ]]; then
+      continue
+    fi
+    pids+=("${pid}")
+  done < <(ps -Ao pid=,etime=,command= 2>/dev/null || true)
 
   if [[ "${#pids[@]}" -gt 0 ]]; then
     kill -9 "${pids[@]}" >/dev/null 2>&1 || true
@@ -325,6 +377,7 @@ sweep_local_automation_processes() {
   sweep_controller_app_processes
   sweep_webkit_automation_helpers
   sweep_local_automation_daemons
+  sweep_stale_egress_proxy_processes
 }
 
 if [[ -n "${CTX_DESKTOP_APP_PATH:-}" && "$STRICT_PUBLISHED_ARTIFACTS" == "1" ]]; then

@@ -204,6 +204,11 @@ export const setSupervisorSessionLoadState = (
   entry: InternalEntry,
   next: SessionLoadState,
 ): void => {
+  if (next === "recovering" && entry.recoverySubscriptionPolicy === undefined) {
+    entry.recoverySubscriptionPolicy = "reset";
+  } else if (next !== "recovering" && entry.freshness !== "recovering") {
+    entry.recoverySubscriptionPolicy = undefined;
+  }
   if (entry.loadState === next) return;
   entry.loadState = next;
 };

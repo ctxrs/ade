@@ -641,6 +641,146 @@ describe("SessionSupervisor", () => {
     expect(sup.getSnapshot().sessions[sessionId]?.freshness).toBe("recovering");
   });
 
+  it("keeps subscription cursors stable when session_gap declares a paired seed", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-gap-seed-cursor";
+    const sink = vi.fn();
+    const head: SessionHeadSnapshot = {
+      session: mkSession(sessionId),
+      turns: [] as SessionTurn[],
+      events: [] as SessionEvent[],
+      messages: [] as Message[],
+      last_event_seq: 7,
+      state_rev: 7,
+      has_more_turns: false,
+      has_more_history: false,
+      history_cursor: null,
+    };
+    const activeState: WorkspaceActiveSnapshotState = {
+      ...mkWorkspaceSnapshotState(),
+      activeIds: ["task-gap-seed-cursor"],
+      tasksById: {
+        "task-gap-seed-cursor": {
+          ...mkWorkspaceTaskSummary({
+            taskId: "task-gap-seed-cursor",
+            primarySessionId: sessionId,
+            sessionIds: [sessionId],
+          }),
+          primarySessionHead: head,
+        },
+      },
+      totalActive: 1,
+    };
+
+    const sup = new SessionSupervisor();
+    sup.setSubscribedSessionIdsSink(sink);
+    sup.setWorkspaceSessionHeads({ [sessionId]: head });
+    sup.setWorkspaceSnapshotState(activeState);
+    sup.openSession(sessionId, { mode: "active" });
+
+    await waitForCondition(() =>
+      sink.mock.calls.some(
+        (call) =>
+          call[0]?.[0]?.sessionId === sessionId &&
+          call[0]?.[0]?.replay?.kind === "resume" &&
+          call[0]?.[0]?.replay?.afterSeq === 7,
+      ),
+    );
+    sink.mockClear();
+
+    sup.handleWorkspaceEvent({
+      type: "session_gap",
+      workspace_id: "ws-1",
+      snapshot_rev: 8,
+      session_id: sessionId,
+      after_seq: 7,
+      reason: "replay_limit_exceeded",
+      seed_follows: true,
+    });
+
+    expect(sink).not.toHaveBeenCalled();
+    expect(sup.getSnapshot().sessions[sessionId]?.freshness).toBe("recovering");
+
+    const seedHead: SessionHeadSnapshot = {
+      ...head,
+      last_event_seq: 8,
+      state_rev: 8,
+    };
+    sup.setWorkspaceSessionHeads({ [sessionId]: seedHead });
+
+    const replayCursors = sink.mock.calls
+      .map((call) => call[0]?.[0])
+      .filter((cursor) => cursor?.sessionId === sessionId);
+    expect(replayCursors.length).toBeGreaterThan(0);
+    expect(replayCursors.some((cursor) => cursor?.replay?.kind === "reset")).toBe(false);
+    expect(replayCursors.at(-1)?.replay).toEqual({ kind: "auto" });
+  });
+
+  it("resets subscription cursors for unseeded session_gap recovery", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-gap-reset-cursor";
+    const sink = vi.fn();
+    const head: SessionHeadSnapshot = {
+      session: mkSession(sessionId),
+      turns: [] as SessionTurn[],
+      events: [] as SessionEvent[],
+      messages: [] as Message[],
+      last_event_seq: 7,
+      state_rev: 7,
+      has_more_turns: false,
+      has_more_history: false,
+      history_cursor: null,
+    };
+    const activeState: WorkspaceActiveSnapshotState = {
+      ...mkWorkspaceSnapshotState(),
+      activeIds: ["task-gap-reset-cursor"],
+      tasksById: {
+        "task-gap-reset-cursor": {
+          ...mkWorkspaceTaskSummary({
+            taskId: "task-gap-reset-cursor",
+            primarySessionId: sessionId,
+            sessionIds: [sessionId],
+          }),
+          primarySessionHead: head,
+        },
+      },
+      totalActive: 1,
+    };
+
+    const sup = new SessionSupervisor();
+    sup.setSubscribedSessionIdsSink(sink);
+    sup.setWorkspaceSessionHeads({ [sessionId]: head });
+    sup.setWorkspaceSnapshotState(activeState);
+    sup.openSession(sessionId, { mode: "active" });
+
+    await waitForCondition(() =>
+      sink.mock.calls.some(
+        (call) =>
+          call[0]?.[0]?.sessionId === sessionId &&
+          call[0]?.[0]?.replay?.kind === "resume" &&
+          call[0]?.[0]?.replay?.afterSeq === 7,
+      ),
+    );
+    sink.mockClear();
+
+    sup.handleWorkspaceEvent({
+      type: "session_gap",
+      workspace_id: "ws-1",
+      snapshot_rev: 8,
+      session_id: sessionId,
+      after_seq: 7,
+      reason: "stream_seq_gap",
+    });
+
+    expect(sink).toHaveBeenCalledTimes(1);
+    expect(sink.mock.calls[0]?.[0]?.[0]).toMatchObject({
+      sessionId,
+      replay: { kind: "reset" },
+    });
+  });
+
   it("hydrates protocol-derived slash command metadata from archived init events", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 

@@ -329,6 +329,41 @@ describe("WorkspaceActiveSnapshotStore", () => {
     expect(payload.include_active_heads).toBe(true);
   });
 
+  it("does not resubscribe on paired seed-following session_gap", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    const ws = mkOpenWs();
+    const events: Array<{ type: string; session_id?: string }> = [];
+    asStoreInternals(store).ws = ws;
+    const unsubscribe = store.subscribeEvents((event) => {
+      if (event.type === "session_gap") {
+        events.push({ type: event.type, session_id: event.session_id });
+      }
+    });
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 1,
+        event: {
+          type: "session_gap",
+          workspace_id: "ws-1",
+          snapshot_rev: 1,
+          session_id: "session-1",
+          after_seq: 5,
+          reason: "replay_limit_exceeded",
+          seed_follows: true,
+        },
+      }),
+    );
+
+    expect(events).toEqual([{ type: "session_gap", session_id: "session-1" }]);
+    expect(ws.send).not.toHaveBeenCalled();
+    unsubscribe();
+    store.destroy();
+  });
+
   it("marks live sessions recovering when the workspace stream sequence has a gap", async () => {
     const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
 
