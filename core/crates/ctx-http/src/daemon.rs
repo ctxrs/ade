@@ -62,8 +62,6 @@ pub use ctx_update_service::UpdateDrainState;
 pub use ctx_workspace_services::file_completions::CachedFileCompletions;
 pub(crate) use lifecycle::spawn_deferred_daemon_shutdown;
 #[cfg(test)]
-pub(crate) use lifecycle::{collect_provider_adapters_for_shutdown, shutdown_provider_adapters};
-#[cfg(test)]
 pub(crate) use listener::daemon_public_base_url_from_env;
 pub use mcp_auth::issue_provider_session_mcp_token;
 pub(crate) use mcp_auth::{

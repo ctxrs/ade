@@ -3,7 +3,6 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-use super::provider_workers::shutdown_provider_adapters;
 use crate::daemon::{reconcile_running_turns_with_reason, AppState};
 
 pub(crate) async fn shutdown_shared_substrate(
@@ -42,7 +41,7 @@ async fn trigger_daemon_shutdown(state: Arc<AppState>, reason: &str) {
     if let Err(err) = reconcile_running_turns_with_reason(&state, reason).await {
         tracing::warn!("failed to reconcile running turns during daemon shutdown: {err:#}");
     }
-    shutdown_provider_adapters(&state, reason).await;
+    state.providers.shutdown_provider_adapters(reason).await;
     if let Err(err) = shutdown_shared_substrate(&state, reason).await {
         tracing::warn!("failed to save-or-stop shared substrate during daemon shutdown: {err:#}");
     }

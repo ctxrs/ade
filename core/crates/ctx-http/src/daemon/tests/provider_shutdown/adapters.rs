@@ -20,7 +20,10 @@ async fn collect_provider_adapters_for_shutdown_includes_root_and_target_adapter
         .upsert_target_provider_adapter("root@host".into(), target_adapter.clone())
         .await;
 
-    let adapters = collect_provider_adapters_for_shutdown(&state).await;
+    let adapters = state
+        .providers
+        .provider_worker_adapters_for_shutdown()
+        .await;
     let mut ids = adapters.into_iter().map(|(id, _)| id).collect::<Vec<_>>();
     ids.sort();
 
@@ -47,7 +50,10 @@ async fn shutdown_provider_adapters_requests_immediate_restart_for_all_adapters(
         .upsert_target_provider_adapter("root@host".into(), target_adapter.clone())
         .await;
 
-    shutdown_provider_adapters(&state, "test shutdown").await;
+    state
+        .providers
+        .shutdown_provider_adapters("test shutdown")
+        .await;
 
     assert_eq!(
         root_adapter.restart_calls(),

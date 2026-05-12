@@ -39,7 +39,7 @@ async fn sweep_provider_workers_once_dedupes_shared_adapters_and_aggregates_stat
         max_idle_sessions: 3,
         interval: Duration::from_secs(11),
     };
-    let stats = crate::daemon::lifecycle::sweep_provider_workers_once(&state, config).await;
+    let stats = state.providers.sweep_provider_workers_once(config).await;
 
     assert_eq!(
         stats,

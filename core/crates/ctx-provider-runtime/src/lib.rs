@@ -22,6 +22,7 @@ pub mod provider_restart;
 pub mod provider_state;
 pub mod provider_usability;
 pub mod provider_usage;
+pub mod provider_workers;
 pub mod resource_governance;
 
 pub trait ProviderRuntimeHost: Send + Sync + 'static {
