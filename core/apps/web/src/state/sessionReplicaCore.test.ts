@@ -491,6 +491,79 @@ describe("SessionReplicaCore", () => {
     alertSpy.mockRestore();
   });
 
+  it("waits for the paired stream seed when replay session_gap declares seed_follows", async () => {
+    const sessionId = "session-gap-replay-seed";
+    const initialHead = mkHead(sessionId, "before-gap", 3);
+    const seededHead = mkHead(sessionId, "seeded-recovery", 8);
+    const getSessionHead = vi.fn(async () => initialHead);
+    const patches: SessionReplicaPatch[] = [];
+    const freshnessEvents: SessionReplicaFreshnessEvent[] = [];
+    const core = new SessionReplicaCore({
+      api: { getSessionHead },
+      emit: (next) => patches.push(...next),
+      emitFreshness: (event) => freshnessEvents.push(event),
+    });
+
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 100, headLimit: 50 } });
+    core.handleCommand({ type: "open_session", sessionId });
+    core.handleCommand({ type: "hydrate_session_head", sessionId });
+
+    await waitForCondition(() => getSessionHead.mock.calls.length === 1);
+
+    core.handleCommand({
+      type: "workspace_event",
+      event: {
+        type: "session_gap",
+        workspace_id: "ws-1",
+        snapshot_rev: 2,
+        session_id: sessionId,
+        after_seq: 5,
+        reason: "replay_limit_exceeded",
+        seed_follows: true,
+      },
+    });
+
+    await waitForCondition(() =>
+      freshnessEvents.some(
+        (event) =>
+          event.type === "gap_recovery_started" &&
+          event.sessionId === sessionId &&
+          event.reason === "replay_limit_exceeded",
+      ),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(getSessionHead).toHaveBeenCalledTimes(1);
+    expect(freshnessEvents).not.toEqual(
+      expect.arrayContaining([{ type: "gap_recovery_finished", sessionId }]),
+    );
+
+    core.handleCommand({
+      type: "workspace_event",
+      event: {
+        type: "session_head_seed",
+        workspace_id: "ws-1",
+        snapshot_rev: 3,
+        head: seededHead,
+      },
+    });
+
+    await waitForCondition(() =>
+      freshnessEvents.some((event) => event.type === "gap_recovery_finished" && event.sessionId === sessionId),
+    );
+
+    expect(getSessionHead).toHaveBeenCalledTimes(1);
+    const seedPatch = [...patches].reverse().find(
+      (patch) =>
+        patch.sessionId === sessionId &&
+        patch.op === "replace" &&
+        patch.data.messages?.some((message) => message.content === "seeded-recovery"),
+    );
+    if (!seedPatch || seedPatch.op === "evict") {
+      throw new Error("expected stream seed repair patch");
+    }
+    expect(seedPatch.data.freshness).toBe("authoritative");
+  });
+
   it("repairs session_gap with compact active tail instead of full event head", async () => {
     const sessionId = "session-gap-compact-tail";
     const initialHead = mkHead(sessionId, "before-gap", 100);

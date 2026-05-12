@@ -364,6 +364,7 @@ export type WorkspaceActiveSnapshotEvent =
       session_id: string;
       after_seq: number;
       reason?: string | null;
+      seed_follows?: boolean;
     }
   | {
       type: "worktree_bootstrap";

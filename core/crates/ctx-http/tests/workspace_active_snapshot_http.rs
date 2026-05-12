@@ -2117,6 +2117,7 @@ async fn workspace_stream_emits_gap_when_replay_exceeds_daemon_head_window() {
         .unwrap();
 
     let mut seen_gap = false;
+    let mut seen_seed_follows = false;
     let mut seen_seed_after_gap = false;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(6);
     while tokio::time::Instant::now() < deadline {
@@ -2135,9 +2136,11 @@ async fn workspace_stream_emits_gap_when_replay_exceeds_daemon_head_window() {
                 match event.as_ref() {
                     ctx_core::models::WorkspaceActiveSnapshotEvent::SessionGap {
                         session_id,
+                        seed_follows,
                         ..
                     } if *session_id == session.id => {
                         seen_gap = true;
+                        seen_seed_follows = *seed_follows;
                     }
                     ctx_core::models::WorkspaceActiveSnapshotEvent::SessionHeadSeed {
                         head,
@@ -2155,6 +2158,10 @@ async fn workspace_stream_emits_gap_when_replay_exceeds_daemon_head_window() {
     assert!(
         seen_gap,
         "expected session_gap when replay exceeds daemon head window"
+    );
+    assert!(
+        seen_seed_follows,
+        "expected replay session_gap to declare the paired session_head_seed"
     );
     assert!(
         seen_seed_after_gap,

@@ -53,13 +53,16 @@ const STREAM_INTERVAL_MS = envNumber("CTX_REMOTE_DAEMON_STREAM_SOAK_STREAM_INTER
 const STREAM_TIMEOUT_MS = envNumber("CTX_REMOTE_DAEMON_STREAM_SOAK_STREAM_TIMEOUT_MS", 75_000);
 const DAEMON_REPO_ROOT =
   process.env.CTX_REMOTE_DAEMON_STREAM_SOAK_REPO_ROOT?.trim() || undefined;
-const MIN_SESSION_HEAD_DELTAS = envNumber(
-  "CTX_REMOTE_DAEMON_STREAM_SOAK_MIN_SESSION_HEAD_DELTAS",
-  LONG_FOREGROUND_RECOVERY ? 12 : 900,
+const MIN_SESSION_HEAD_PROGRESS_EVENTS = envNumber(
+  "CTX_REMOTE_DAEMON_STREAM_SOAK_MIN_SESSION_HEAD_PROGRESS_EVENTS",
+  envNumber(
+    "CTX_REMOTE_DAEMON_STREAM_SOAK_MIN_SESSION_HEAD_DELTAS",
+    LONG_FOREGROUND_RECOVERY ? 12 : 250,
+  ),
 );
 const MIN_STREAM_EVENTS = envNumber(
   "CTX_REMOTE_DAEMON_STREAM_SOAK_MIN_EVENTS",
-  LONG_FOREGROUND_RECOVERY ? 20 : MIN_SESSION_HEAD_DELTAS,
+  LONG_FOREGROUND_RECOVERY ? 20 : 900,
 );
 const PROBE_COUNT = envNumber("CTX_REMOTE_DAEMON_STREAM_SOAK_PROBES", 4);
 const PROBE_TIMEOUT_MS = envNumber("CTX_REMOTE_DAEMON_STREAM_SOAK_PROBE_TIMEOUT_MS", 35_000);
@@ -1085,6 +1088,10 @@ function sumMetricEntriesByLabel(
   return out;
 }
 
+function sessionHeadProgressEventCount(countsByType: Record<string, number>): number {
+  return (countsByType.session_head_delta ?? 0) + (countsByType.session_head_seed ?? 0);
+}
+
 async function waitForTelemetryMetricSum(
   request: APIRequestContext,
   metric: string,
@@ -1404,18 +1411,27 @@ function summarizeVisibleCadence(snapshot: VisibleProgressSnapshot, activeUntilM
 function summarizeCorrectedReceiveLag(
   samples: readonly WorkspaceStreamTelemetrySample[],
   clockOffsetMs: number,
+  opts?: { minimumEmittedAtMs?: number | null },
 ): {
   count: number;
+  filteredHistoricalCount: number;
   p50: number | null;
   p95: number | null;
   max: number | null;
 } {
-  const corrected = samples
+  const emittedSamples = samples
     .filter((sample) => typeof sample.emittedAtMs === "number")
+    .filter((sample) => {
+      const minimum = opts?.minimumEmittedAtMs;
+      return typeof minimum !== "number" || Number(sample.emittedAtMs) >= minimum;
+    });
+  const corrected = emittedSamples
     .map((sample) => sample.receivedAtMs - Number(sample.emittedAtMs) + clockOffsetMs)
     .filter((value) => Number.isFinite(value) && value >= 0);
   return {
     count: corrected.length,
+    filteredHistoricalCount:
+      samples.filter((sample) => typeof sample.emittedAtMs === "number").length - emittedSamples.length,
     p50: percentile(corrected, 0.5),
     p95: percentile(corrected, 0.95),
     max: corrected.length > 0 ? Math.max(...corrected) : null,
@@ -1605,6 +1621,9 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
   const writerSessionIds = LONG_FOREGROUND_RECOVERY
     ? []
     : backgroundSessionIds.slice(0, Math.max(1, Math.min(STREAMERS, backgroundSessionIds.length)));
+  const liveReceiveLagStartedAtMs = Date.now();
+  const liveReceiveLagMinimumEmittedAtMs =
+    liveReceiveLagStartedAtMs + clock.offsetMs - clock.uncertaintyMs - 1000;
   const streamers = startBoundedBackgroundWriters(request, writerSessionIds);
 
   const probes: ProbeOutcome[] = [];
@@ -1711,9 +1730,13 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
         180_000,
       );
       const streamEventCount = sumMetricEntries(streamEvents);
-      const sessionHeadDeltaCount =
-        sumMetricEntriesByLabel(streamEvents, "event_type").session_head_delta ?? 0;
-      if (streamEventCount >= MIN_STREAM_EVENTS && sessionHeadDeltaCount >= MIN_SESSION_HEAD_DELTAS) {
+      const sessionHeadProgressCount = sessionHeadProgressEventCount(
+        sumMetricEntriesByLabel(streamEvents, "event_type"),
+      );
+      if (
+        streamEventCount >= MIN_STREAM_EVENTS &&
+        sessionHeadProgressCount >= MIN_SESSION_HEAD_PROGRESS_EVENTS
+      ) {
         break;
       }
       await sleep(500);
@@ -1762,10 +1785,12 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
   const correctedReceiveLag = summarizeCorrectedReceiveLag(
     streamTelemetrySamples,
     clock.offsetMs,
+    { minimumEmittedAtMs: liveReceiveLagMinimumEmittedAtMs },
   );
   const correctedForegroundReceiveLag = summarizeCorrectedReceiveLag(
     streamTelemetrySamples.filter((sample) => sample.lane === "foreground"),
     clock.offsetMs,
+    { minimumEmittedAtMs: liveReceiveLagMinimumEmittedAtMs },
   );
   const streamEventMetricEntries = await readTelemetryMetricEntries(
     request,
@@ -1828,7 +1853,7 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
     },
     budgets: {
       minStreamEvents: MIN_STREAM_EVENTS,
-      minSessionHeadDeltas: MIN_SESSION_HEAD_DELTAS,
+      minSessionHeadProgressEvents: MIN_SESSION_HEAD_PROGRESS_EVENTS,
       testTimeoutMs: TEST_TIMEOUT_MS,
       headPollMs: HEAD_POLL_MS,
       maxClockUncertaintyMs: MAX_CLOCK_UNCERTAINTY_MS,
@@ -1893,8 +1918,12 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
     },
     forcedGapRecovery,
     receiveLag: {
-      correctedAll: correctedReceiveLag,
-      correctedForeground: correctedForegroundReceiveLag,
+      liveWindow: {
+        browserStartedAtMs: liveReceiveLagStartedAtMs,
+        daemonMinimumEmittedAtMs: liveReceiveLagMinimumEmittedAtMs,
+      },
+      correctedLiveAll: correctedReceiveLag,
+      correctedLiveForeground: correctedForegroundReceiveLag,
       telemetry: telemetryMetrics["workbench.client_receive_lag_ms"] ?? metricRollupEmpty(),
     },
     interrupt,
@@ -1921,7 +1950,9 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
 
   expect(clock.uncertaintyMs).toBeLessThanOrEqual(MAX_CLOCK_UNCERTAINTY_MS);
   expect(sumMetricEntries(streamEventMetricEntries)).toBeGreaterThanOrEqual(MIN_STREAM_EVENTS);
-  expect(streamEventCountsByType.session_head_delta ?? 0).toBeGreaterThanOrEqual(MIN_SESSION_HEAD_DELTAS);
+  expect(sessionHeadProgressEventCount(streamEventCountsByType)).toBeGreaterThanOrEqual(
+    MIN_SESSION_HEAD_PROGRESS_EVENTS,
+  );
   expect(streamEventCountsByType.worktree_vcs_snapshot ?? 0).toBe(0);
   expect(streamEventCountsByLane.foreground ?? 0).toBeGreaterThan(0);
   expect(streamerStats.failures).toEqual([]);

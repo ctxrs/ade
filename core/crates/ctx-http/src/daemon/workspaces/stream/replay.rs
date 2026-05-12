@@ -75,6 +75,13 @@ where
                     items.push(WorkspaceSessionReplayItem::Seed(Box::new(head)));
                 }
             }
+            let seeded_session_ids = items
+                .iter()
+                .filter_map(|item| match item {
+                    WorkspaceSessionReplayItem::Seed(head) => Some(head.session.id),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
             for item in items {
                 if matches!(item, WorkspaceSessionReplayItem::Delta(_)) {
                     if let Some(label) = send_failpoint {
@@ -99,6 +106,7 @@ where
                         session_id,
                         after_seq,
                         reason,
+                        seed_follows: seeded_session_ids.contains(&session_id),
                     },
                     WorkspaceSessionReplayItem::Seed(head) => {
                         WorkspaceActiveSnapshotEvent::SessionHeadSeed {

@@ -54,6 +54,7 @@ pub(super) async fn push_control_gap(
                 session_id,
                 after_seq,
                 reason: Some(reason.to_string()),
+                seed_follows: false,
             }),
         },
     )

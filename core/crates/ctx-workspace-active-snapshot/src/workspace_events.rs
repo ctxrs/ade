@@ -28,6 +28,7 @@ impl WorkspaceActiveSnapshotHub {
             session_id,
             after_seq,
             reason,
+            seed_follows: false,
         });
     }
 

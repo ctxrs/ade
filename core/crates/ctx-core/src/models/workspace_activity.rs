@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use crate::ids::*;
 
 use super::{
-    is_false, Artifact, Message, Session, SessionActivityState, SessionEvent, SessionMetadata,
-    SessionTurn, SessionTurnToolSummary, Task, WorkspaceTaskSummary, WorktreeBootstrapStatus,
+    Artifact, Message, Session, SessionActivityState, SessionEvent, SessionMetadata, SessionTurn,
+    SessionTurnToolSummary, Task, WorkspaceTaskSummary, WorktreeBootstrapStatus,
     WorktreeVcsSnapshot,
 };
 
@@ -162,7 +162,7 @@ pub struct SessionHeadWindow {
     pub message_count: i64,
     pub event_count: i64,
     pub bytes: i64,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default, skip_serializing_if = "super::is_false")]
     pub truncated: bool,
 }
 
@@ -373,6 +373,8 @@ pub enum WorkspaceActiveSnapshotEvent {
         after_seq: i64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
+        #[serde(default, skip_serializing_if = "super::is_false")]
+        seed_follows: bool,
     },
     WorktreeBootstrap {
         workspace_id: WorkspaceId,
@@ -453,7 +455,7 @@ pub enum WorkspaceActiveSnapshotClientMessage {
         foreground_session_id: Option<SessionId>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         scope: Option<WorkspaceActiveSnapshotSubscribeScope>,
-        #[serde(default, skip_serializing_if = "is_false")]
+        #[serde(default, skip_serializing_if = "super::is_false")]
         include_active_heads: bool,
     },
 }

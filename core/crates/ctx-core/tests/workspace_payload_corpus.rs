@@ -120,6 +120,7 @@ fn workspace_stream_session_gap_corpus_roundtrips() {
                     session_id,
                     after_seq,
                     reason,
+                    seed_follows,
                 } => {
                     assert_eq!(
                         workspace_id.0.to_string(),
@@ -132,6 +133,7 @@ fn workspace_stream_session_gap_corpus_roundtrips() {
                     );
                     assert_eq!(after_seq, 99);
                     assert_eq!(reason.as_deref(), Some("lagged"));
+                    assert!(!seed_follows);
                 }
                 other => panic!("expected session_gap event, got {other:?}"),
             }

@@ -297,7 +297,12 @@ export const handleSessionReplicaWorkspaceEvent = (
     typeof (evt as { after_seq?: number }).after_seq === "number"
       ? (evt as { after_seq?: number }).after_seq
       : undefined;
+  const seedFollows = (evt as { seed_follows?: unknown }).seed_follows === true;
   if (!sessionId) return;
+  const previousEntry = host.entries.get(sessionId);
+  void clearSessionHeadV1(sessionId).catch(() => {});
+  void clearSessionHistoryPagesV1(sessionId).catch(() => {});
+  if (!previousEntry) return;
   host.emitFreshnessEvent({
     type: "gap_recovery_started",
     sessionId,
@@ -306,7 +311,6 @@ export const handleSessionReplicaWorkspaceEvent = (
         ? String((evt as { reason?: unknown }).reason)
         : null,
   });
-  const previousEntry = host.entries.get(sessionId);
   const previousLastEventSeq =
     typeof previousEntry?.lastEventSeq === "number" ? previousEntry.lastEventSeq : null;
   const gapAfterSeq = typeof afterSeq === "number" ? afterSeq : null;
@@ -339,10 +343,7 @@ export const handleSessionReplicaWorkspaceEvent = (
     console.warn(message);
   }
 
-  void clearSessionHeadV1(sessionId).catch(() => {});
-  void clearSessionHistoryPagesV1(sessionId).catch(() => {});
-  const entry = host.entries.get(sessionId);
-  if (!entry) return;
+  const entry = previousEntry;
   entry.hydrated = false;
   entry.freshness = "recovering";
   host.emitAppendPatch(sessionId, {
@@ -350,13 +351,15 @@ export const handleSessionReplicaWorkspaceEvent = (
     error: null,
     appendMode: "metadata_update",
   });
-  void host.hydrateSessionHead(sessionId, {
-    force: true,
-    emitOp: "replace",
-    headLimit: host.config.recoveryHeadLimit ?? Math.min(5, host.config.headLimit),
-    includeEvents: host.config.recoveryHeadIncludeEvents ?? false,
-    coalesce: true,
-  }).catch(() => {});
+  if (!seedFollows) {
+    void host.hydrateSessionHead(sessionId, {
+      force: true,
+      emitOp: "replace",
+      headLimit: host.config.recoveryHeadLimit ?? Math.min(5, host.config.headLimit),
+      includeEvents: host.config.recoveryHeadIncludeEvents ?? false,
+      coalesce: true,
+    }).catch(() => {});
+  }
 };
 
 const applySessionReplicaHeadDelta = (

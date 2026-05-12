@@ -13,6 +13,7 @@ async fn priority_control_event_detection_only_matches_foreground_session() {
         session_id: foreground_session_id,
         after_seq: 1,
         reason: Some("foreground".to_string()),
+        seed_follows: false,
     };
     let background_gap = WorkspaceActiveSnapshotEvent::SessionGap {
         workspace_id,
@@ -20,6 +21,7 @@ async fn priority_control_event_detection_only_matches_foreground_session() {
         session_id: background_session_id,
         after_seq: 1,
         reason: Some("background".to_string()),
+        seed_follows: false,
     };
 
     assert!(is_priority_control_event(
@@ -76,6 +78,7 @@ async fn hydrating_keeps_snapshot_control_ahead_of_priority_lane() {
                 session_id: foreground_session_id,
                 after_seq: 1,
                 reason: Some("foreground".to_string()),
+                seed_follows: false,
             }),
         },
     )
