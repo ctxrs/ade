@@ -6,8 +6,9 @@ use ctx_core::models::Worktree;
 use ctx_harness_runtime::sandbox_container_command;
 use ctx_sandbox_container_runtime::command_output_with_timeout;
 use ctx_workspace_services::worktree_vcs::{
-    parse_worktree_vcs_diff_summary_counts, WorktreeVcsDiffSummaryCounts,
-    WORKTREE_VCS_CONTAINER_DIFF_SCRIPT, WORKTREE_VCS_CONTAINER_DIFF_SUMMARY_SCRIPT,
+    load_worktree_vcs_session_diff_from_sandbox,
+    load_worktree_vcs_session_diff_summary_from_sandbox, WorktreeVcsDiffSummaryCounts,
+    WorktreeVcsSessionDiffCommand, WorktreeVcsSessionDiffSandboxExecutor,
 };
 use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
 
@@ -17,11 +18,23 @@ use target::{ensure_container_for_worktree, SandboxExecTarget};
 #[path = "sandbox/target.rs"]
 mod target;
 
+struct HttpSandboxSessionDiffExecutor<'a> {
+    state: &'a Arc<AppState>,
+    worktree: &'a Worktree,
+}
+
+#[async_trait::async_trait]
+impl WorktreeVcsSessionDiffSandboxExecutor for HttpSandboxSessionDiffExecutor<'_> {
+    async fn stdout(&self, command: WorktreeVcsSessionDiffCommand) -> anyhow::Result<Vec<u8>> {
+        container_exec_stdout(self.state, self.worktree, command.program(), command.args()).await
+    }
+}
+
 async fn container_exec_stdout(
     state: &Arc<AppState>,
     worktree: &Worktree,
     program: &str,
-    args: &[&str],
+    args: &[String],
 ) -> anyhow::Result<Vec<u8>> {
     const SANDBOX_EXEC_TIMEOUT: Duration = Duration::from_secs(30);
     let target = ensure_container_for_worktree(state, worktree).await?;
@@ -45,10 +58,7 @@ async fn container_exec_stdout(
             worktree.id,
             &data_plane.live_worktree_root,
             program,
-            &args
-                .iter()
-                .map(|arg| (*arg).to_string())
-                .collect::<Vec<_>>(),
+            args,
             &std::collections::HashMap::new(),
             None,
             false,
@@ -78,19 +88,8 @@ pub(super) async fn container_diff_worktree(
     worktree: &Worktree,
     base_commit_sha: &str,
 ) -> anyhow::Result<String> {
-    let bytes = container_exec_stdout(
-        state,
-        worktree,
-        "bash",
-        &[
-            "-lc",
-            WORKTREE_VCS_CONTAINER_DIFF_SCRIPT,
-            "--",
-            base_commit_sha,
-        ],
-    )
-    .await?;
-    Ok(String::from_utf8_lossy(&bytes).to_string())
+    let executor = HttpSandboxSessionDiffExecutor { state, worktree };
+    load_worktree_vcs_session_diff_from_sandbox(&executor, base_commit_sha).await
 }
 
 pub(super) async fn container_diff_worktree_summary(
@@ -98,17 +97,6 @@ pub(super) async fn container_diff_worktree_summary(
     worktree: &Worktree,
     base_commit_sha: &str,
 ) -> anyhow::Result<WorktreeVcsDiffSummaryCounts> {
-    let bytes = container_exec_stdout(
-        state,
-        worktree,
-        "bash",
-        &[
-            "-lc",
-            WORKTREE_VCS_CONTAINER_DIFF_SUMMARY_SCRIPT,
-            "--",
-            base_commit_sha,
-        ],
-    )
-    .await?;
-    parse_worktree_vcs_diff_summary_counts(&bytes)
+    let executor = HttpSandboxSessionDiffExecutor { state, worktree };
+    load_worktree_vcs_session_diff_summary_from_sandbox(&executor, base_commit_sha).await
 }

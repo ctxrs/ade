@@ -10,6 +10,7 @@ mod resolution;
 mod runtime;
 mod sandbox_source;
 mod session_diff;
+mod session_diff_exec;
 mod snapshot;
 mod status;
 mod watch;
@@ -68,6 +69,12 @@ pub use session_diff::{
     worktree_vcs_session_diff_summary_unavailable, worktree_vcs_session_diff_unavailable,
     WorktreeVcsDiffSummaryMismatch, WorktreeVcsSessionDiffOutcome,
     WorktreeVcsSessionDiffSummaryOutcome,
+};
+pub use session_diff_exec::{
+    load_worktree_vcs_session_diff_from_host, load_worktree_vcs_session_diff_from_sandbox,
+    load_worktree_vcs_session_diff_summary_from_host,
+    load_worktree_vcs_session_diff_summary_from_sandbox, WorktreeVcsSessionDiffCommand,
+    WorktreeVcsSessionDiffSandboxExecutor,
 };
 pub use snapshot::{
     build_git_status_entries, build_git_status_summary, build_large_change_set_touched_files,
