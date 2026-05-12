@@ -7,7 +7,7 @@ use std::collections::{BTreeSet, HashMap};
 use crate::provider_usability::{
     apply_install_viability_details, apply_provider_usability_details,
 };
-use crate::ProviderRuntimeHost;
+use crate::{ProviderRuntime, ProviderRuntimeHost};
 use ctx_managed_installs as installer;
 use ctx_provider_install::install_state::InstallTarget;
 use ctx_provider_matrix as provider_matrix;
@@ -25,6 +25,50 @@ fn inspect_error_status(provider_id: &str, err: anyhow::Error) -> ProviderStatus
         diagnostics: vec![err.to_string()],
         details: HashMap::new(),
         usability: ctx_providers::adapters::ProviderUsability::default(),
+    }
+}
+
+fn missing_provider_status(provider_id: &str) -> ProviderStatus {
+    ProviderStatus {
+        provider_id: provider_id.to_string(),
+        installed: false,
+        detected_path: None,
+        version: None,
+        capabilities: None,
+        health: ProviderHealth::Missing,
+        diagnostics: vec![format!("provider not available: {provider_id}")],
+        details: HashMap::new(),
+        usability: ProviderUsability::default(),
+    }
+}
+
+impl ProviderRuntime {
+    pub async fn provider_status_without_target_bootstrap(
+        &self,
+        provider_id: &str,
+        target: InstallTarget,
+    ) -> ProviderStatus {
+        if matches!(target, InstallTarget::Host) {
+            return self
+                .provider_status(provider_id)
+                .await
+                .unwrap_or_else(|| missing_provider_status(provider_id));
+        }
+
+        ProviderStatus {
+            provider_id: provider_id.to_string(),
+            installed: false,
+            detected_path: None,
+            version: None,
+            capabilities: None,
+            health: ProviderHealth::Missing,
+            diagnostics: vec![format!(
+                "provider not available for target '{}'",
+                target.as_str()
+            )],
+            details: HashMap::new(),
+            usability: ProviderUsability::default(),
+        }
     }
 }
 
@@ -174,17 +218,7 @@ pub async fn provider_status_for_target(
             .provider_runtime()
             .provider_status(provider_id)
             .await
-            .unwrap_or_else(|| ProviderStatus {
-                provider_id: provider_id.to_string(),
-                installed: false,
-                detected_path: None,
-                version: None,
-                capabilities: None,
-                health: ctx_providers::adapters::ProviderHealth::Missing,
-                diagnostics: vec![format!("provider not available: {provider_id}")],
-                details: HashMap::new(),
-                usability: ctx_providers::adapters::ProviderUsability::default(),
-            })
+            .unwrap_or_else(|| missing_provider_status(provider_id))
     } else {
         let adapter =
             ensure_provider_adapter_for_target_with_cfg(state, managed, provider_id, target).await;
@@ -268,6 +302,41 @@ mod tests {
         assert_eq!(
             status.usability.recommended_action,
             ProviderRecommendedAction::ConfigureRuntime
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_status_without_target_bootstrap_uses_host_status_or_missing_target() {
+        let runtime = ProviderRuntime::new(HashMap::new());
+        runtime
+            .upsert_provider_status(
+                "codex".to_string(),
+                ProviderStatus {
+                    provider_id: "codex".to_string(),
+                    installed: true,
+                    detected_path: None,
+                    version: Some("1.2.3".to_string()),
+                    capabilities: None,
+                    health: ProviderHealth::Ok,
+                    diagnostics: Vec::new(),
+                    details: HashMap::new(),
+                    usability: ProviderUsability::default(),
+                },
+            )
+            .await;
+
+        let host = runtime
+            .provider_status_without_target_bootstrap("codex", InstallTarget::Host)
+            .await;
+        assert_eq!(host.version.as_deref(), Some("1.2.3"));
+
+        let target = runtime
+            .provider_status_without_target_bootstrap("codex", InstallTarget::Container)
+            .await;
+        assert_eq!(target.health, ProviderHealth::Missing);
+        assert_eq!(
+            target.diagnostics,
+            vec!["provider not available for target 'container'".to_string()]
         );
     }
 }
