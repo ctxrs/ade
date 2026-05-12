@@ -27,6 +27,7 @@ test("agent gate crate list keeps the expected ctx-http-centered fast gate", () 
     "ctx-llm-relay-authority",
     "ctx-llm-relay-contract",
     "ctx-mcp",
+    "ctx-mcp-auth",
     "ctx-mcp-command",
     "ctx-managed-installs",
     "ctx-observability",

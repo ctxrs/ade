@@ -16,6 +16,7 @@ const AGENT_GATE_CRATES = [
   "ctx-llm-relay-authority",
   "ctx-llm-relay-contract",
   "ctx-mcp",
+  "ctx-mcp-auth",
   "ctx-mcp-command",
   "ctx-managed-installs",
   "ctx-observability",

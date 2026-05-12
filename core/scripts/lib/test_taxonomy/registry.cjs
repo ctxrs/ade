@@ -153,6 +153,7 @@ const RUST_FAMILY_BY_CRATE = {
   "ctx-load-test": "resilience-performance",
   "ctx-managed-installs": "distribution-install",
   "ctx-mcp": "subagents-orchestration",
+  "ctx-mcp-auth": "subagents-orchestration",
   "ctx-mcp-command": "subagents-orchestration",
   "ctx-merge-queue": "repo-vcs",
   "ctx-observability": "resilience-performance",

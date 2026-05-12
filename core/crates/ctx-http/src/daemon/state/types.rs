@@ -1,7 +1,7 @@
 use super::*;
-use crate::daemon::McpAuthContext;
 use ctx_core::models::WorktreeVcsSnapshot;
 use ctx_execution_runtime::ExecutionSetupCoordinator;
+use ctx_mcp_auth::McpAuthRegistry;
 use ctx_provider_runtime::{CachedProviderOptions, CachedProviderVerify};
 use ctx_update_service::UpdateDrainCoordinator;
 use ctx_workspace_active_snapshot::{
@@ -22,7 +22,7 @@ pub struct CoreState {
     pub public_base_url: Option<String>,
     pub auth_token: Option<String>,
     pub local_shutdown_token: Option<String>,
-    pub(crate) mcp_auth: Mutex<HashMap<String, TimedEntry<McpAuthContext>>>,
+    pub(crate) mcp_auth: McpAuthRegistry,
     pub ask_user_question: Arc<AskUserQuestionBroker>,
     pub shutdown_tx: broadcast::Sender<()>,
     pub update_drain: Arc<UpdateDrainCoordinator>,

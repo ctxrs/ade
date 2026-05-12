@@ -8,6 +8,7 @@ const GENERATED_DEP_CONSUMER_CRATES = Object.freeze([
   "ctx-llm-relay-authority",
   "ctx-llm-relay-contract",
   "ctx-mcp-command",
+  "ctx-mcp-auth",
   "ctx-http-test-support",
   "ctx-observability",
   "ctx-org-policy",

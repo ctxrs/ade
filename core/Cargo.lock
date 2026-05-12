@@ -1012,6 +1012,7 @@ dependencies = [
  "ctx-harness-sources",
  "ctx-linux-sandbox-runtime",
  "ctx-managed-installs",
+ "ctx-mcp-auth",
  "ctx-mcp-command",
  "ctx-merge-queue",
  "ctx-observability",
@@ -1229,6 +1230,17 @@ dependencies = [
  "tower 0.5.3",
  "tracing",
  "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "ctx-mcp-auth"
+version = "0.1.0"
+dependencies = [
+ "ctx-core",
+ "hex",
+ "sha2",
+ "tokio",
  "uuid",
 ]
 

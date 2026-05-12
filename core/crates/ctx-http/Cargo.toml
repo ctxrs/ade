@@ -21,6 +21,7 @@ ctx-harness-setup = { path = "../ctx-harness-setup" }
 ctx-harness-runtime = { path = "../ctx-harness-runtime" }
 ctx-managed-installs = { path = "../ctx-managed-installs" }
 ctx-linux-sandbox-runtime = { path = "../ctx-linux-sandbox-runtime" }
+ctx-mcp-auth = { path = "../ctx-mcp-auth" }
 ctx-mcp-command = { path = "../ctx-mcp-command" }
 ctx-merge-queue = { path = "../ctx-merge-queue" }
 ctx-observability = { path = "../ctx-observability" }

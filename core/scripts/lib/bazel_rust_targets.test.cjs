@@ -52,6 +52,7 @@ test("Bazel-covered crates stay on the intended explicit Rust slice", () => {
     "ctx-load-test",
     "ctx-managed-installs",
     "ctx-mcp",
+    "ctx-mcp-auth",
     "ctx-mcp-command",
     "ctx-merge-queue",
     "ctx-observability",

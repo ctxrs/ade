@@ -3,16 +3,10 @@ use ctx_core::ids::{SessionId, WorkspaceId, WorktreeId};
 use crate::daemon::AppState;
 
 mod events;
-mod registry;
-mod types;
 
+pub(crate) use ctx_mcp_auth::{McpAuthCapabilities, McpAuthContext};
 pub(crate) use events::emit_mcp_token_denied;
 use events::emit_mcp_token_event;
-use registry::{
-    insert_provider_session_mcp_token, mcp_token_hash, remove_provider_session_mcp_token,
-    verify_provider_session_mcp_token,
-};
-pub(crate) use types::{McpAuthCapabilities, McpAuthContext};
 
 pub async fn issue_provider_session_mcp_token(
     state: &AppState,
@@ -37,37 +31,42 @@ pub(crate) async fn issue_provider_session_mcp_token_with_capabilities(
     worktree_id: WorktreeId,
     capabilities: McpAuthCapabilities,
 ) -> String {
-    let token = format!("ctxmcp_{}", uuid::Uuid::new_v4().simple());
-    let token_hash = mcp_token_hash(&token);
-    let ctx = McpAuthContext::provider_session(session_id, workspace_id, worktree_id, capabilities);
-    let replaced_count = insert_provider_session_mcp_token(state, token_hash, ctx).await;
-    if replaced_count > 0 {
+    let issued = state
+        .core
+        .mcp_auth
+        .issue_provider_session_token_with_capabilities(
+            session_id,
+            workspace_id,
+            worktree_id,
+            capabilities,
+        )
+        .await;
+    if issued.replaced_count > 0 {
         emit_mcp_token_event(
             state,
             "info",
             "mcp_token_revoked",
-            ctx,
-            serde_json::json!({ "reason": "replaced", "count": replaced_count }),
+            issued.context,
+            serde_json::json!({ "reason": "replaced", "count": issued.replaced_count }),
         );
     }
     emit_mcp_token_event(
         state,
         "info",
         "mcp_token_issued",
-        ctx,
+        issued.context,
         serde_json::json!({ "reason": "provider_session" }),
     );
-    token
+    issued.token
 }
 
 pub(crate) async fn revoke_provider_session_mcp_token(state: &AppState, token: &str) -> bool {
-    let token = token.trim();
-    if token.is_empty() {
-        return false;
-    }
-    let token_hash = mcp_token_hash(token);
-    let revoked = remove_provider_session_mcp_token(state, &token_hash).await;
-    if let Some(ctx) = revoked {
+    if let Some(ctx) = state
+        .core
+        .mcp_auth
+        .revoke_provider_session_token(token)
+        .await
+    {
         emit_mcp_token_event(
             state,
             "info",
@@ -81,6 +80,5 @@ pub(crate) async fn revoke_provider_session_mcp_token(state: &AppState, token: &
 }
 
 pub(crate) async fn verify_mcp_auth_token(state: &AppState, token: &str) -> Option<McpAuthContext> {
-    let token_hash = mcp_token_hash(token);
-    verify_provider_session_mcp_token(state, &token_hash).await
+    state.core.mcp_auth.verify_token(token).await
 }
