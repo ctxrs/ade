@@ -26,12 +26,10 @@ use tokio::sync::mpsc;
 
 use super::errors::ApiErrorResp;
 use super::provider_probe_auth::provider_auth_mode;
+use super::providers::{install_target_for_workspace, provider_status_for_target};
 use super::redact_json_value;
 use crate::daemon::provider_launch::install as provider_launch_install;
 use crate::daemon::provider_launch::probe;
-use crate::daemon::provider_launch::status::{
-    install_target_for_workspace, provider_status_for_target,
-};
 use crate::daemon::AppState;
 use ctx_harness_sources as harness_sources;
 use ctx_harness_sources::{HarnessEndpointVerificationStatus, HarnessSourceKind};
