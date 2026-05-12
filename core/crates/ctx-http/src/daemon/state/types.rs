@@ -9,6 +9,7 @@ use ctx_workspace_active_snapshot::{
 use ctx_workspace_services::file_completions::CachedFileCompletions;
 use ctx_workspace_services::worktree_vcs::{
     GitStatusSnapshotCacheEntry, WorktreeVcsRuntimeState, WorktreeVcsSchedulerRuntime,
+    WorktreeVcsSnapshotCacheEntry,
 };
 
 pub struct CoreState {
@@ -28,8 +29,6 @@ pub struct CoreState {
 }
 
 pub type SessionRuntime = ctx_session_service::runtime::SessionRuntime<SchedulerCommand>;
-
-pub use ctx_session_service::runtime::SessionHeadCacheKey;
 
 pub struct WorkspaceRuntime {
     pub worktree_vcs_enabled: bool,

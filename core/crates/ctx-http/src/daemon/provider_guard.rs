@@ -9,9 +9,8 @@ use ctx_settings_model::{ProviderGuardSettings, ResourceGovernanceMode, Settings
 mod events;
 mod snapshot;
 
-pub use ctx_provider_runtime::provider_guard::{
-    compute_effective_limits, ProviderGuardConfig, ProviderGuardLimits, ProviderGuardRuntime,
-    ResourceGovernanceMode as GuardMode,
+use ctx_provider_runtime::provider_guard::{
+    ProviderGuardConfig, ProviderGuardRuntime, ResourceGovernanceMode as GuardMode,
 };
 
 pub async fn apply_settings(state: &AppState, settings: &Settings) -> Result<()> {

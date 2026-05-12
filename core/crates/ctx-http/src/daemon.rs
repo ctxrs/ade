@@ -56,7 +56,6 @@ pub use activity::{
     daemon_sandbox_work_activity_summary, daemon_turn_activity_summary, ActiveTurnRecord,
     DaemonSandboxWorkActivitySummary, DaemonTurnActivitySummary,
 };
-pub use ctx_update_service::UpdateDrainState;
 pub(crate) use lifecycle::spawn_deferred_daemon_shutdown;
 #[cfg(test)]
 pub(crate) use listener::daemon_public_base_url_from_env;
@@ -67,12 +66,8 @@ pub(crate) use mcp_auth::{
 };
 #[cfg(test)]
 pub(crate) use retention::prune_archived_session_data_for_all_workspaces;
-pub(crate) use state::AttachmentMaterializationTask;
-pub use state::{
-    AppRuntimeFlags, AppState, CacheSweepConfig, CacheSweepStats, GitStatusSnapshotCacheEntry,
-    SessionHeadCacheKey, StoreLookup, TimedEntry, WorkspaceActiveHeadCacheEntry,
-    WorkspaceActiveSnapshotCacheEntry, WorktreeVcsSnapshotCacheEntry,
-};
+pub use state::{AppRuntimeFlags, AppState};
+pub(crate) use state::{AttachmentMaterializationTask, CacheSweepConfig, StoreLookup, TimedEntry};
 pub use workspace_init::init_workspace;
 
 #[cfg(test)]

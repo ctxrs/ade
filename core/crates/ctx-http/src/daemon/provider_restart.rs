@@ -14,9 +14,9 @@ mod processes;
 use notices::notify_sessions;
 use processes::signal_pids;
 
-pub use ctx_provider_runtime::provider_restart::{
-    compute_effective_limits, ProviderRestartConfig, ProviderRestartEvent, ProviderRestartLimits,
-    ProviderRestartRuntime, ResourceGovernanceMode as RestartGovernanceMode,
+use ctx_provider_runtime::provider_restart::{
+    ProviderRestartConfig, ProviderRestartEvent, ProviderRestartRuntime,
+    ResourceGovernanceMode as RestartGovernanceMode,
 };
 
 pub async fn apply_settings(state: &AppState, settings: &Settings) -> Result<()> {
