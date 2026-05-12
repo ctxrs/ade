@@ -25,7 +25,7 @@ impl From<String> for RepoOnboardingPathError {
     }
 }
 
-pub struct RepoInitPathRequest<'a> {
+pub(super) struct RepoInitPathRequest<'a> {
     pub path: &'a str,
     pub allow_existing: bool,
     pub allow_non_empty: bool,
@@ -37,13 +37,13 @@ pub struct RepoValidateDestinationRequest<'a> {
     pub require_empty_if_exists: bool,
 }
 
-pub struct RepoCloneDestinationRequest<'a> {
+pub(super) struct RepoCloneDestinationRequest<'a> {
     pub repo_url: &'a str,
     pub dest_parent: &'a str,
     pub dest_name: Option<&'a str>,
 }
 
-pub async fn prepare_repo_init_path(
+pub(super) async fn prepare_repo_init_path(
     req: RepoInitPathRequest<'_>,
 ) -> Result<PathBuf, RepoOnboardingPathError> {
     let raw = req.path.trim();
@@ -126,7 +126,7 @@ pub async fn validate_repo_destination(
     Ok(tokio::fs::canonicalize(&expanded).await.unwrap_or(expanded))
 }
 
-pub async fn prepare_clone_destination(
+pub(super) async fn prepare_clone_destination(
     req: RepoCloneDestinationRequest<'_>,
 ) -> Result<PathBuf, RepoOnboardingPathError> {
     let dest_parent = expand_tilde(req.dest_parent)?;

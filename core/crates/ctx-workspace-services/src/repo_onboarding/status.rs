@@ -9,7 +9,7 @@ pub struct RepoStatusCheck {
     pub error: Option<String>,
 }
 
-pub async fn repo_status(path: &str) -> Result<RepoStatusCheck, RepoOnboardingPathError> {
+pub(super) async fn repo_status(path: &str) -> Result<RepoStatusCheck, RepoOnboardingPathError> {
     let raw = path.trim();
     if raw.is_empty() {
         return Err(RepoOnboardingPathError::new("path is required"));

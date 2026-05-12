@@ -10,7 +10,7 @@ use crate::api::MobileAuthContext;
 use crate::daemon::AppState;
 use ctx_observability::logs;
 use ctx_workspace_services::repo_onboarding::{
-    ensure_git_usable, RepoGitCommandError, RepoOnboardingPathError,
+    RepoGitCommandError, RepoOnboardingPathError, RepoOnboardingWorkflowError,
 };
 
 mod auth;
@@ -69,4 +69,16 @@ fn repo_staging_path_error_response(
             error: error.message().to_string(),
         }),
     )
+}
+
+fn repo_onboarding_workflow_error_response(
+    error: RepoOnboardingWorkflowError,
+) -> (StatusCode, Json<ApiErrorResp>) {
+    match error {
+        RepoOnboardingWorkflowError::GitPreflight(error) => {
+            (StatusCode::BAD_REQUEST, Json(ApiErrorResp { error }))
+        }
+        RepoOnboardingWorkflowError::GitCommand(error) => repo_git_command_error_response(error),
+        RepoOnboardingWorkflowError::Path(error) => repo_onboarding_path_error_response(error),
+    }
 }

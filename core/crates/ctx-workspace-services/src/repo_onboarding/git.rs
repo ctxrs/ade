@@ -31,7 +31,7 @@ impl RepoGitCommandError {
     }
 }
 
-pub async fn ensure_git_usable() -> Result<(), String> {
+pub(super) async fn ensure_git_usable() -> Result<(), String> {
     let output = Command::new("git")
         .arg("--version")
         .output()
@@ -52,7 +52,7 @@ pub async fn ensure_git_usable() -> Result<(), String> {
     Err(format!("git is required but appears unusable: {msg}"))
 }
 
-pub async fn run_git_clone(
+pub(super) async fn run_git_clone(
     repo_url: &str,
     branch: Option<&str>,
     dest: &Path,
@@ -66,7 +66,9 @@ pub async fn run_git_clone(
     run_git_command(cmd, "git clone").await
 }
 
-pub async fn init_git_repo_with_initial_commit(path: &Path) -> Result<(), RepoGitCommandError> {
+pub(super) async fn init_git_repo_with_initial_commit(
+    path: &Path,
+) -> Result<(), RepoGitCommandError> {
     let mut init = Command::new("git");
     init.arg("init").arg("--").arg(path);
     run_git_command(init, "git init").await?;
@@ -86,7 +88,7 @@ pub async fn init_git_repo_with_initial_commit(path: &Path) -> Result<(), RepoGi
     run_git_command(commit, "git commit").await
 }
 
-pub async fn canonical_clone_dest(dest: PathBuf) -> PathBuf {
+pub(super) async fn canonical_clone_dest(dest: PathBuf) -> PathBuf {
     tokio::fs::canonicalize(&dest).await.unwrap_or(dest)
 }
 
