@@ -159,7 +159,7 @@ export const handleSessionReplicaFreshnessEvent = (event: SessionReplicaFreshnes
       return;
     }
     case "gap_recovery_started":
-      noteGapRecoveryStarted(event.sessionId, event.reason);
+      noteGapRecoveryStarted(event.sessionId, event.reason, event.lane);
       return;
     case "gap_recovery_finished":
       noteGapRecoveryFinished(event.sessionId);

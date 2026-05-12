@@ -30,6 +30,7 @@ import type {
   SessionReplicaConfig,
   SessionReplicaData,
   SessionReplicaFreshnessEvent,
+  SessionReplicaStreamLane,
 } from "./sessionReplicaProtocol";
 import {
   buildCanonicalReplicaPatch,
@@ -280,6 +281,7 @@ export const handleSessionReplicaWorkspaceEvent = (
   host: SessionReplicaEventHost,
   evt: WorkspaceActiveSnapshotEvent,
   receivedAtMs?: number | null,
+  lane?: SessionReplicaStreamLane,
 ): void => {
   const evtType = (evt as { type?: string }).type;
   if (evtType === "session_head_delta" || evtType === "session_delta") {
@@ -366,6 +368,7 @@ export const handleSessionReplicaWorkspaceEvent = (
   host.emitFreshnessEvent({
     type: "gap_recovery_started",
     sessionId,
+    ...(lane ? { lane } : {}),
     reason:
       typeof (evt as { reason?: unknown }).reason === "string"
         ? String((evt as { reason?: unknown }).reason)

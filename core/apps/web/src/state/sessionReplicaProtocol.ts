@@ -20,6 +20,8 @@ export type SessionReplicaConfig = {
   recoveryHeadIncludeEvents?: boolean;
 };
 
+export type SessionReplicaStreamLane = "foreground" | "workspace";
+
 export type SessionReplicaFreshnessState = "bootstrap" | "authoritative" | "recovering";
 
 export type SessionReplicaHeadSeedMode = "bootstrap_seed" | "repair_replace";
@@ -68,7 +70,12 @@ export type SessionReplicaCommand =
   | { type: "refresh_session"; sessionId: string }
   | { type: "hydrate_session_head"; sessionId: string; force?: boolean; silent?: boolean }
   | { type: "seed_head"; sessionId: string; head: SessionHeadSnapshot; mode: SessionReplicaHeadSeedMode }
-  | { type: "workspace_event"; event: WorkspaceActiveSnapshotEvent; receivedAtMs?: number | null }
+  | {
+      type: "workspace_event";
+      event: WorkspaceActiveSnapshotEvent;
+      lane?: SessionReplicaStreamLane;
+      receivedAtMs?: number | null;
+    }
   | { type: "set_session"; session: Session };
 
 export type SessionReplicaData = {
@@ -130,7 +137,12 @@ export type SessionReplicaFreshnessEvent =
       lastEventSeq: number | null;
       eventType: string;
     }
-  | { type: "gap_recovery_started"; sessionId: string; reason: string | null }
+  | {
+      type: "gap_recovery_started";
+      sessionId: string;
+      reason: string | null;
+      lane?: SessionReplicaStreamLane;
+    }
   | { type: "gap_recovery_finished"; sessionId: string }
   | {
       type: "gap_repair_mismatch";

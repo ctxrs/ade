@@ -230,9 +230,13 @@ export const ingestWorkspaceEvent = (
   if (!replicaSessionId || !isRetainedReplicaSession(host, replicaSessionId)) {
     return;
   }
+  const lane = host.getActiveTaskSessionIds().includes(replicaSessionId)
+    ? "foreground"
+    : "workspace";
   host.replicaDispatch({
     type: "workspace_event",
     event: evt,
+    lane,
     receivedAtMs: readWorkspaceEventReceivedAt(evt),
   });
 };

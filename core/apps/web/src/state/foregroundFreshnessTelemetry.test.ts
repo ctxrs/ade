@@ -228,6 +228,32 @@ describe("foregroundFreshnessTelemetry", () => {
     noteGapRecoveryFinished("session-1");
   });
 
+  it("keeps workspace gap recovery timeout metrics out of the foreground lane", () => {
+    vi.useFakeTimers();
+    noteGapRecoveryStarted("session-warm", "session_gap", "workspace");
+
+    vi.advanceTimersByTime(1000);
+
+    expect(clientMocks.recordClientCounterMetric).toHaveBeenCalledWith(
+      "workbench.workspace_gap_recovery_timeout_count",
+    );
+    expect(clientMocks.recordClientCounterMetric).not.toHaveBeenCalledWith(
+      "workbench.foreground_gap_recovery_timeout_count",
+    );
+    expect(analyticsMocks.trackForegroundGapRecoveryObserved).not.toHaveBeenCalledWith({
+      result: "timeout",
+    });
+
+    vi.spyOn(performance, "now").mockReturnValue(1200);
+    noteGapRecoveryFinished("session-warm");
+
+    expect(clientMocks.recordClientHistogramMetric).toHaveBeenCalledWith(
+      "workbench.workspace_gap_recovery_ms",
+      "ms",
+      expect.any(Number),
+    );
+  });
+
   it("records invariant counters once per dedupe key", () => {
     noteLateChunkAfterTerminal("turn-1");
     noteLateChunkAfterTerminal("turn-1");

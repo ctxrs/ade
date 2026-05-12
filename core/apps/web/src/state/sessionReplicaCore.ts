@@ -26,6 +26,7 @@ import type {
   SessionReplicaHeadSeedMode,
   SessionReplicaPatch,
   SessionReplicaReplaceMode,
+  SessionReplicaStreamLane,
 } from "./sessionReplicaProtocol";
 import { isAuthoritativeSessionReplicaReplace } from "./sessionReplicaProtocol";
 import { buildCanonicalReplicaPatch } from "./sessionReplicaPatches";
@@ -111,7 +112,7 @@ export class SessionReplicaCore {
         this.seedHead(cmd.sessionId, cmd.head, cmd.mode);
         return;
       case "workspace_event":
-        this.handleWorkspaceEvent(cmd.event, cmd.receivedAtMs);
+        this.handleWorkspaceEvent(cmd.event, cmd.receivedAtMs, cmd.lane);
         return;
       case "set_session":
         this.setSession(cmd.session);
@@ -599,6 +600,7 @@ export class SessionReplicaCore {
   private handleWorkspaceEvent(
     evt: WorkspaceActiveSnapshotEvent,
     receivedAtMs?: number | null,
+    lane?: SessionReplicaStreamLane,
   ): void {
     handleSessionReplicaWorkspaceEvent(
       {
@@ -616,6 +618,7 @@ export class SessionReplicaCore {
       },
       evt,
       receivedAtMs,
+      lane,
     );
   }
 

@@ -341,11 +341,12 @@ describe("workspaceAuthority", () => {
     expect(replicaDispatch).toHaveBeenCalledWith({
       type: "workspace_event",
       event,
+      lane: "foreground",
       receivedAtMs: null,
     });
   });
 
-  it("keeps subscribed warm stream deltas on the normal replica lane", () => {
+  it("keeps subscribed warm stream deltas on the workspace replica lane", () => {
     const replicaDispatch = vi.fn();
     const event = makeDeltaEvent("session-warm");
     const host = makeIngestHost({
@@ -358,6 +359,7 @@ describe("workspaceAuthority", () => {
     expect(replicaDispatch).toHaveBeenCalledWith({
       type: "workspace_event",
       event,
+      lane: "workspace",
       receivedAtMs: null,
     });
   });

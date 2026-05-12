@@ -47,6 +47,7 @@ describe("SessionReplicaBridge", () => {
       type: "gap_recovery_started",
       sessionId: "session-1",
       reason: "session_gap",
+      lane: "workspace",
     });
     handleSessionReplicaFreshnessEvent({
       type: "final_delta_received",
@@ -56,7 +57,7 @@ describe("SessionReplicaBridge", () => {
       lastEventSeq: 3,
     });
 
-    expect(noteGapRecoveryStartedMock).toHaveBeenCalledWith("session-1", "session_gap");
+    expect(noteGapRecoveryStartedMock).toHaveBeenCalledWith("session-1", "session_gap", "workspace");
     expect(noteFinalDeltaReceivedMock).toHaveBeenCalledWith({
       sessionId: "session-1",
       turnId: "turn-1",

@@ -56,6 +56,11 @@ type PendingInterrupt = {
   source: "thread_header" | "queued_action";
 };
 
+type PendingGapRecovery = {
+  startedAtMs: number;
+  lane: QueueLane;
+};
+
 type DesktopStartupState = {
   windowCreatedAtMs: number | null;
   rendererPingAtMs: number | null;
@@ -65,7 +70,7 @@ type DesktopStartupState = {
 const pendingSwitches = new Map<string, PendingSwitch>();
 const pendingFinals = new Map<string, PendingFinal>();
 const pendingInterrupts = new Map<string, PendingInterrupt>();
-const pendingGapRecoveries = new Map<string, number>();
+const pendingGapRecoveries = new Map<string, PendingGapRecovery>();
 const pendingGapRecoveryTimeouts = new Map<string, ReturnType<typeof globalThis.setTimeout>>();
 const lastSlaDiagnosticByKey = new Map<string, number>();
 const lastGaugeSampleByMetric = new Map<string, number>();
@@ -86,6 +91,12 @@ const nowMs = (): number => {
 };
 
 const finalKey = (sessionId: string, turnId: string): string => `${sessionId}:${turnId}`;
+
+const normalizeGapRecoveryLane = (lane?: QueueLane | null): QueueLane =>
+  lane === "workspace" ? "workspace" : "foreground";
+
+const gapRecoveryMetric = (lane: QueueLane, suffix: "ms" | "timeout_count"): string =>
+  `workbench.${lane}_gap_recovery_${suffix}`;
 
 const shouldEmitSlaDiagnostic = (key: string): boolean => {
   const currentMs = nowMs();
@@ -434,36 +445,49 @@ export const noteFinalVisible = (sessionId: string, turnIds: readonly string[]):
   }
 };
 
-export const noteGapRecoveryStarted = (sessionId: string, reason?: string | null): void => {
+export const noteGapRecoveryStarted = (
+  sessionId: string,
+  reason?: string | null,
+  lane?: QueueLane | null,
+): void => {
   const normalizedSessionId = String(sessionId).trim();
   if (!normalizedSessionId) return;
+  const recoveryLane = normalizeGapRecoveryLane(lane);
   const existingTimeout = pendingGapRecoveryTimeouts.get(normalizedSessionId);
   if (existingTimeout) {
     globalThis.clearTimeout(existingTimeout);
   }
-  pendingGapRecoveries.set(normalizedSessionId, nowMs());
+  pendingGapRecoveries.set(normalizedSessionId, { startedAtMs: nowMs(), lane: recoveryLane });
   pendingGapRecoveryTimeouts.set(
     normalizedSessionId,
     globalThis.setTimeout(() => {
-      if (!pendingGapRecoveries.has(normalizedSessionId)) {
+      const pending = pendingGapRecoveries.get(normalizedSessionId);
+      if (!pending) {
         pendingGapRecoveryTimeouts.delete(normalizedSessionId);
         return;
       }
-      recordClientCounterMetric("workbench.foreground_gap_recovery_timeout_count");
-      trackForegroundGapRecoveryObserved({ result: "timeout" });
-      trackForegroundFreshnessSlaMissed({
-        metric: "workbench.foreground_gap_recovery_timeout_count",
-        surface: "gap_recovery",
-        bucket: "severe",
-      });
-      if (shouldEmitSlaDiagnostic(`foreground_gap_recovery.timeout:${normalizedSessionId}`)) {
+      const metric = gapRecoveryMetric(pending.lane, "timeout_count");
+      recordClientCounterMetric(metric);
+      if (pending.lane === "foreground") {
+        trackForegroundGapRecoveryObserved({ result: "timeout" });
+        trackForegroundFreshnessSlaMissed({
+          metric,
+          surface: "gap_recovery",
+          bucket: "severe",
+        });
+      }
+      if (shouldEmitSlaDiagnostic(`${pending.lane}_gap_recovery.timeout:${normalizedSessionId}`)) {
         emitUiDiagnostic({
           source: "foreground_freshness",
-          code: "foreground_gap_recovery.timeout",
+          code: `${pending.lane}_gap_recovery.timeout`,
           severity: "error",
-          message: "Foreground session gap recovery exceeded the timeout budget.",
+          message:
+            pending.lane === "foreground"
+              ? "Foreground session gap recovery exceeded the timeout budget."
+              : "Workspace session gap recovery exceeded the timeout budget.",
           context: {
             session_id: normalizedSessionId,
+            lane: pending.lane,
             threshold_ms: GAP_RECOVERY_SLA_MS,
           },
         });
@@ -471,15 +495,21 @@ export const noteGapRecoveryStarted = (sessionId: string, reason?: string | null
       pendingGapRecoveryTimeouts.delete(normalizedSessionId);
     }, GAP_RECOVERY_SLA_MS),
   );
-  recordClientCounterMetric("workbench.foreground_rehydrate_count");
-  trackForegroundGapRecoveryObserved({ result: "started" });
+  recordClientCounterMetric(`workbench.${recoveryLane}_rehydrate_count`);
+  if (recoveryLane === "foreground") {
+    trackForegroundGapRecoveryObserved({ result: "started" });
+  }
   emitUiDiagnostic({
     source: "foreground_freshness",
-    code: "foreground_gap_recovery.started",
+    code: `${recoveryLane}_gap_recovery.started`,
     severity: "info",
-    message: "Foreground session entered gap recovery.",
+    message:
+      recoveryLane === "foreground"
+        ? "Foreground session entered gap recovery."
+        : "Workspace session entered gap recovery.",
     context: {
       session_id: normalizedSessionId,
+      lane: recoveryLane,
       ...(reason ? { reason } : {}),
     },
   });
@@ -487,29 +517,53 @@ export const noteGapRecoveryStarted = (sessionId: string, reason?: string | null
 
 export const noteGapRecoveryFinished = (sessionId: string): void => {
   const normalizedSessionId = String(sessionId).trim();
-  const startedAtMs = pendingGapRecoveries.get(normalizedSessionId);
+  const pending = pendingGapRecoveries.get(normalizedSessionId);
   const timeoutId = pendingGapRecoveryTimeouts.get(normalizedSessionId);
   if (timeoutId) {
     globalThis.clearTimeout(timeoutId);
     pendingGapRecoveryTimeouts.delete(normalizedSessionId);
   }
-  if (typeof startedAtMs !== "number") return;
-  const durationMs = nowMs() - startedAtMs;
-  recordLatencyMetric({
-    metric: "workbench.foreground_gap_recovery_ms",
-    valueMs: durationMs,
-    thresholdMs: GAP_RECOVERY_SLA_MS,
-    surface: "gap_recovery",
-    diagnosticCode: "foreground_gap_recovery.sla_missed",
-    message: "Foreground session gap recovery missed the freshness budget.",
-    context: {
-      session_id: normalizedSessionId,
-    },
-  });
-  trackForegroundGapRecoveryObserved({
-    result: "recovered",
-    bucket: gapBucketForDuration(durationMs),
-  });
+  if (!pending) return;
+  const durationMs = nowMs() - pending.startedAtMs;
+  const metric = gapRecoveryMetric(pending.lane, "ms");
+  if (pending.lane === "foreground") {
+    recordLatencyMetric({
+      metric,
+      valueMs: durationMs,
+      thresholdMs: GAP_RECOVERY_SLA_MS,
+      surface: "gap_recovery",
+      diagnosticCode: "foreground_gap_recovery.sla_missed",
+      message: "Foreground session gap recovery missed the freshness budget.",
+      context: {
+        session_id: normalizedSessionId,
+        lane: pending.lane,
+      },
+    });
+    trackForegroundGapRecoveryObserved({
+      result: "recovered",
+      bucket: gapBucketForDuration(durationMs),
+    });
+  } else {
+    recordClientHistogramMetric(metric, "ms", durationMs);
+    if (
+      durationMs > GAP_RECOVERY_SLA_MS &&
+      shouldEmitSlaDiagnostic(`workspace_gap_recovery.sla_missed:${normalizedSessionId}`)
+    ) {
+      emitUiDiagnostic({
+        source: "foreground_freshness",
+        code: "workspace_gap_recovery.sla_missed",
+        severity: durationMs >= GAP_RECOVERY_SLA_MS * 4 ? "error" : "warning",
+        message: "Workspace session gap recovery missed the freshness budget.",
+        context: {
+          metric,
+          session_id: normalizedSessionId,
+          lane: pending.lane,
+          value_ms: Math.round(durationMs),
+          threshold_ms: GAP_RECOVERY_SLA_MS,
+        },
+      });
+    }
+  }
   pendingGapRecoveries.delete(normalizedSessionId);
 };
 
