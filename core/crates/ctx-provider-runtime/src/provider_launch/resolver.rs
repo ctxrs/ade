@@ -188,7 +188,7 @@ pub async fn ensure_provider_adapter_for_target(
     provider_id: &str,
     target: InstallTarget,
 ) -> Result<Arc<dyn ProviderAdapter>> {
-    let cfg = installer::load_agent_server_config(state.data_root())
+    let cfg = super::config::load_managed_agent_server_config_or_err(state.data_root())
         .await
         .context("loading agent server config for provider adapter resolution")?;
     Ok(ensure_provider_adapter_for_target_with_cfg(state, &cfg, provider_id, target).await)

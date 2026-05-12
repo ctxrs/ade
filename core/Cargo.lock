@@ -1408,6 +1408,7 @@ dependencies = [
  "ctx-core",
  "ctx-harness-sources",
  "ctx-managed-installs",
+ "ctx-observability",
  "ctx-provider-accounts",
  "ctx-provider-install",
  "ctx-provider-matrix",

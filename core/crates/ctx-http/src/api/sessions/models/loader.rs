@@ -16,7 +16,7 @@ async fn load_pinned_subscription_model_catalog(
     install_target: ctx_provider_install::install_state::InstallTarget,
 ) -> Result<Option<ModelCatalog>, String> {
     let (managed, config_error) =
-        crate::api::provider_launch::load_managed_agent_server_config_with_error(
+        ctx_provider_runtime::provider_launch::config::load_managed_agent_server_config_with_error(
             &state.core.data_root,
         )
         .await;

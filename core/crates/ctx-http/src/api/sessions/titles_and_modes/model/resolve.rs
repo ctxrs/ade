@@ -18,7 +18,7 @@ pub(super) async fn ensure_session_model_adapter(
     session: &Session,
     install_target: InstallTarget,
 ) -> SessionModelResult<Arc<dyn ProviderAdapter>> {
-    crate::daemon::installer::ensure_provider_adapter_for_target(
+    ctx_provider_runtime::provider_launch::resolver::ensure_provider_adapter_for_target(
         state.as_ref(),
         &session.provider_id,
         install_target,

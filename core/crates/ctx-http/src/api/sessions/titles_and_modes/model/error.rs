@@ -18,6 +18,6 @@ pub(super) fn session_model_error(
 pub(super) fn internal_session_model_error(error: impl std::fmt::Display) -> SessionModelHttpError {
     session_model_error(
         StatusCode::INTERNAL_SERVER_ERROR,
-        logs::redact_sensitive(&error.to_string()),
+        logs::redact_sensitive(&format!("{error:#}")),
     )
 }

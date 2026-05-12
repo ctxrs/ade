@@ -70,10 +70,12 @@ pub(super) async fn prepare_session_auth_runtime(
             }
         })?;
     let adapter_cfg =
-        crate::daemon::installer::load_managed_agent_server_config_or_err(&state.core.data_root)
-            .await
-            .map_err(|err| SessionAuthError::Internal(err.to_string()))?;
-    let adapter = crate::daemon::installer::ensure_provider_adapter_for_target_with_cfg(
+        ctx_provider_runtime::provider_launch::config::load_managed_agent_server_config_or_err(
+            &state.core.data_root,
+        )
+        .await
+        .map_err(|err| SessionAuthError::Internal(err.to_string()))?;
+    let adapter = ctx_provider_runtime::provider_launch::resolver::ensure_provider_adapter_for_target_with_cfg(
         state.as_ref(),
         &adapter_cfg,
         &session.provider_id,

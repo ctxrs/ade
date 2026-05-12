@@ -1,3 +1,4 @@
+pub mod config;
 pub mod install;
 pub mod models;
 pub mod options;

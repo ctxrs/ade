@@ -61,13 +61,14 @@ pub(crate) async fn set_session_mode(
             crate::api::shared::status_code_for_internal_error(&err)
         })?;
 
-    let adapter = crate::daemon::installer::ensure_provider_adapter_for_target(
-        state.as_ref(),
-        &session.provider_id,
-        install_target,
-    )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let adapter =
+        ctx_provider_runtime::provider_launch::resolver::ensure_provider_adapter_for_target(
+            state.as_ref(),
+            &session.provider_id,
+            install_target,
+        )
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     adapter
         .set_session_mode(session.id.0.to_string(), req.mode_id.clone())

@@ -10,6 +10,7 @@ chrono.workspace = true
 ctx-core = { path = "../ctx-core" }
 ctx-harness-sources = { path = "../ctx-harness-sources" }
 ctx-managed-installs = { path = "../ctx-managed-installs" }
+ctx-observability = { path = "../ctx-observability" }
 ctx-provider-accounts = { path = "../ctx-provider-accounts" }
 ctx-provider-install = { path = "../ctx-provider-install" }
 ctx-provider-matrix = { path = "../ctx-provider-matrix" }

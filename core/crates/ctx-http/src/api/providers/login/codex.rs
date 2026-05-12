@@ -55,7 +55,7 @@ pub(crate) async fn start_codex_login(
                 )
             })?;
     let (cfg, managed_config_error) =
-        crate::api::provider_launch::load_managed_agent_server_config_with_error(
+        ctx_provider_runtime::provider_launch::config::load_managed_agent_server_config_with_error(
             &state.core.data_root,
         )
         .await;

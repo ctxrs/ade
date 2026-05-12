@@ -1,15 +1,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-mod config;
 mod errors;
 mod handlers;
 mod provider_options_response;
 mod runtime_probe;
 
-pub(in crate::api) use config::{
-    load_managed_agent_server_config_with_error, load_provider_source_config_with_error,
-};
 use errors::{provider_install_error_response, workspace_execution_settings_error_json};
 pub(in crate::api) use handlers::*;
 use provider_options_response::*;
@@ -42,6 +38,9 @@ use ctx_provider_runtime::provider_auth::{
     selected_endpoint_from_harness_config, selected_endpoint_record_from_harness_config,
 };
 use ctx_provider_runtime::provider_cache::workspace_provider_cache_key;
+use ctx_provider_runtime::provider_launch::config::{
+    load_managed_agent_server_config_with_error, load_provider_source_config_with_error,
+};
 use ctx_provider_runtime::provider_launch::models::{
     endpoint_catalog_runtime_probe_failure, endpoint_catalog_verify_outcome,
 };

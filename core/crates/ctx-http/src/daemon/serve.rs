@@ -35,7 +35,11 @@ pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
 
     retention::spawn_archived_session_data_pruner(stores.clone());
 
-    let agent_cfg = installer::load_managed_agent_server_config_or_err(&data_root).await?;
+    let agent_cfg =
+        ctx_provider_runtime::provider_launch::config::load_managed_agent_server_config_or_err(
+            &data_root,
+        )
+        .await?;
 
     let providers = ctx_provider_runtime::provider_adapters::build_startup_provider_adapters(
         &data_root, &agent_cfg,

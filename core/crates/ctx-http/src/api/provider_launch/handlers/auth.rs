@@ -1,5 +1,4 @@
 use super::*;
-use crate::daemon::installer::ensure_provider_adapter_for_target;
 
 mod verify;
 
@@ -60,27 +59,28 @@ pub(in crate::api) async fn authenticate_provider_for_workspace(
     let (event_tx, mut event_rx) = mpsc::channel(32);
     tokio::spawn(async move { while event_rx.recv().await.is_some() {} });
     let checked_at = Utc::now().to_rfc3339();
-    let result = match ensure_provider_adapter_for_target(
-        state.as_ref(),
-        &provider_id,
-        install_target,
-    )
-    .await
-    {
-        Ok(adapter) => {
-            adapter
-                .authenticate_session(
-                    format!("auth-{}", uuid::Uuid::new_v4()),
-                    probe_context.cwd,
-                    probe_context.env,
-                    method_id,
-                    event_tx,
-                    ctx_providers::adapters::ProviderRunHooks::default(),
-                )
-                .await
-        }
-        Err(err) => Err(err),
-    };
+    let result =
+        match ctx_provider_runtime::provider_launch::resolver::ensure_provider_adapter_for_target(
+            state.as_ref(),
+            &provider_id,
+            install_target,
+        )
+        .await
+        {
+            Ok(adapter) => {
+                adapter
+                    .authenticate_session(
+                        format!("auth-{}", uuid::Uuid::new_v4()),
+                        probe_context.cwd,
+                        probe_context.env,
+                        method_id,
+                        event_tx,
+                        ctx_providers::adapters::ProviderRunHooks::default(),
+                    )
+                    .await
+            }
+            Err(err) => Err(err),
+        };
 
     let resp = match result {
         Ok(()) => ProviderAuthCheckResp {
@@ -92,7 +92,7 @@ pub(in crate::api) async fn authenticate_provider_for_workspace(
             message: None,
         },
         Err(err) => {
-            let msg = logs::redact_sensitive(&err.to_string());
+            let msg = logs::redact_sensitive(&format!("{err:#}"));
             let (status, auth_required, _) = classify_probe_error(&msg);
             ProviderAuthCheckResp {
                 provider_id: provider_id.clone(),

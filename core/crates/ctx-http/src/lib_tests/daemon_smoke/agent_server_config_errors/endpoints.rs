@@ -103,9 +103,11 @@ async fn authenticate_session_surfaces_agent_server_config_errors() {
     assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
     let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
     let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert!(payload["error"]
-        .as_str()
-        .is_some_and(|value| value.contains("parsing agent server config")));
+    let error = payload["error"].as_str().unwrap_or("");
+    assert!(
+        error.contains("parsing agent server config"),
+        "unexpected error: {error}"
+    );
 }
 
 #[tokio::test]
@@ -143,7 +145,9 @@ async fn set_session_model_surfaces_agent_server_config_errors() {
     assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
     let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
     let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert!(payload["error"]
-        .as_str()
-        .is_some_and(|value| value.contains("parsing agent server config")));
+    let error = payload["error"].as_str().unwrap_or("");
+    assert!(
+        error.contains("parsing agent server config"),
+        "unexpected error: {error}"
+    );
 }

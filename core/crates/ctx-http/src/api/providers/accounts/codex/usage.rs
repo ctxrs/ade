@@ -25,7 +25,7 @@ pub(crate) async fn get_codex_accounts_usage(
 
     let mut entries = Vec::new();
     let (cfg, config_error) =
-        crate::api::provider_launch::load_managed_agent_server_config_with_error(
+        ctx_provider_runtime::provider_launch::config::load_managed_agent_server_config_with_error(
             &state.core.data_root,
         )
         .await;

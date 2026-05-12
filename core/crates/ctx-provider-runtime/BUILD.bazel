@@ -12,6 +12,7 @@ rust_library(
         "//core/crates/ctx-core:lib",
         "//core/crates/ctx-harness-sources:lib",
         "//core/crates/ctx-managed-installs:lib",
+        "//core/crates/ctx-observability:lib",
         "//core/crates/ctx-provider-accounts:lib",
         "//core/crates/ctx-provider-install:lib",
         "//core/crates/ctx-provider-matrix:lib",
