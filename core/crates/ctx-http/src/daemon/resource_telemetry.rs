@@ -20,7 +20,7 @@ mod providers;
 mod remote_metrics;
 
 use event::ResourceTelemetryEvent;
-use providers::{list_provider_processes, provider_session_counts};
+use providers::provider_session_counts;
 use remote_metrics::export_remote_metrics;
 
 pub fn spawn_resource_telemetry(state: Arc<AppState>) {
@@ -60,7 +60,7 @@ async fn sample_once(
     cfg: &ResourceTelemetryConfig,
     last_cleanup: &mut Option<String>,
 ) -> Result<()> {
-    let provider_processes = list_provider_processes(state).await;
+    let provider_processes = state.providers.list_provider_processes().await;
     let (system, cache_age_ms, processes, provider_memory_rollups) = {
         let mut sampler = state.telemetry.resource_sampler.lock().await;
         let (system, _disks, cache_age_ms) = sampler.system_snapshot();

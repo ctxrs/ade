@@ -18,6 +18,7 @@ pub mod provider_child_reclassifier;
 pub mod provider_guard;
 pub mod provider_install_tracker;
 pub mod provider_launch;
+pub mod provider_processes;
 pub mod provider_restart;
 pub mod provider_state;
 pub mod provider_usability;

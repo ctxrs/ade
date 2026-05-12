@@ -15,18 +15,7 @@ impl ctx_provider_runtime::provider_child_reclassifier::ProviderChildReclassifie
     }
 
     async fn provider_process_pids(&self) -> Vec<u32> {
-        let providers = self.providers.provider_adapter_entries().await;
-        let mut pids = Vec::new();
-        for (_, adapter) in providers {
-            pids.extend(
-                adapter
-                    .list_processes()
-                    .await
-                    .into_iter()
-                    .map(|proc| proc.pid),
-            );
-        }
-        pids
+        self.providers.provider_process_pids().await
     }
 
     fn tool_slice_unit(&self) -> &'static str {

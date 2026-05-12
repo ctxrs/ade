@@ -59,10 +59,6 @@ pub async fn build_public_settings(
 }
 
 async fn has_running_children(state: &AppState) -> bool {
-    for (_, adapter) in state.providers.provider_adapter_entries().await {
-        if !adapter.list_processes().await.is_empty() {
-            return true;
-        }
-    }
-    state.transport.terminals.has_running().await
+    state.providers.has_running_provider_processes().await
+        || state.transport.terminals.has_running().await
 }

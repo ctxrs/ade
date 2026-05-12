@@ -29,16 +29,7 @@ pub(in crate::api) async fn resource_utilization(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let provider_adapters = state
-        .providers
-        .provider_adapter_entries()
-        .await
-        .into_iter()
-        .map(|(_, adapter)| adapter);
-    let mut provider_processes = Vec::new();
-    for adapter in provider_adapters {
-        provider_processes.extend(adapter.list_processes().await);
-    }
+    let provider_processes = state.providers.list_provider_processes().await;
 
     let (system, disks, cache_age_ms, processes, disk_cache) = {
         let mut sampler = state.telemetry.resource_sampler.lock().await;

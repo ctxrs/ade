@@ -1,18 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use ctx_providers::adapters::ProviderProcessInfo;
-
 use crate::daemon::AppState;
-
-pub(super) async fn list_provider_processes(state: &Arc<AppState>) -> Vec<ProviderProcessInfo> {
-    let providers = state.providers.provider_adapter_entries().await;
-    let mut processes = Vec::new();
-    for (_, adapter) in providers {
-        processes.extend(adapter.list_processes().await);
-    }
-    processes
-}
 
 pub(super) async fn provider_session_counts(state: &Arc<AppState>) -> HashMap<String, u64> {
     let session_ids = state.sessions.list_running_sessions().await;

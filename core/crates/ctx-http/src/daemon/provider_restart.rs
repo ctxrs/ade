@@ -12,7 +12,7 @@ mod notices;
 mod processes;
 
 use notices::notify_sessions;
-use processes::{list_provider_processes, signal_pids};
+use processes::signal_pids;
 
 pub use ctx_provider_runtime::provider_restart::{
     compute_effective_limits, ProviderRestartConfig, ProviderRestartEvent, ProviderRestartLimits,
@@ -52,7 +52,7 @@ impl ctx_provider_runtime::provider_restart::ProviderRestartHost for AppState {
     async fn provider_memory_snapshot(
         &self,
     ) -> Vec<ctx_provider_runtime::provider_guard::ProviderMemorySample> {
-        let provider_processes = list_provider_processes(self).await;
+        let provider_processes = self.providers.list_provider_processes().await;
         let samples = {
             let mut sampler = self.telemetry.resource_sampler.lock().await;
             sampler.provider_memory_snapshot(&provider_processes)

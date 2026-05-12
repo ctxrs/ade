@@ -7,7 +7,6 @@ use crate::daemon::AppState;
 use ctx_settings_model::{ProviderGuardSettings, ResourceGovernanceMode, Settings};
 
 mod events;
-mod processes;
 mod snapshot;
 
 pub use ctx_provider_runtime::provider_guard::{
@@ -48,7 +47,7 @@ impl ctx_provider_runtime::provider_guard::ProviderGuardHost for AppState {
     async fn provider_memory_snapshot(
         &self,
     ) -> Vec<ctx_provider_runtime::provider_guard::ProviderMemorySample> {
-        let provider_processes = processes::list_provider_processes(self).await;
+        let provider_processes = self.providers.list_provider_processes().await;
         let samples = {
             let mut sampler = self.telemetry.resource_sampler.lock().await;
             sampler.provider_memory_snapshot(&provider_processes)
