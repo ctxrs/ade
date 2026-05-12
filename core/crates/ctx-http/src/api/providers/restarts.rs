@@ -10,29 +10,10 @@ pub(super) async fn restart_provider_for_auth_change(
     reason: &str,
 ) -> anyhow::Result<()> {
     invalidate_provider_runtime_state(state, provider_id).await;
-    let adapters = state
+    state
         .providers
-        .provider_adapter_entries_for_provider(provider_id)
-        .await;
-    let mut failures = Vec::new();
-    for (id, adapter) in adapters {
-        if !adapter.supports_restart_mode(ProviderRestartMode::Drain) {
-            tracing::info!("skipping drain-restart for {id} after auth change: adapter does not support drain restart");
-            continue;
-        }
-        if let Err(err) = adapter.restart(reason, ProviderRestartMode::Drain).await {
-            tracing::warn!("failed to drain-restart {id} after auth change: {err}");
-            failures.push(format!("{id}: {err:#}"));
-        }
-    }
-    if failures.is_empty() {
-        Ok(())
-    } else {
-        anyhow::bail!(
-            "provider auth updated but drain-restart failed for {provider_id}: {}",
-            failures.join("; ")
-        );
-    }
+        .drain_restart_provider_adapters_for_auth_change(provider_id, reason)
+        .await
 }
 
 pub(super) async fn restart_codex_providers_for_auth_change(

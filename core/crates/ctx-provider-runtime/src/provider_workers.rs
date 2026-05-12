@@ -7,6 +7,30 @@ use ctx_providers::adapters::{
 
 use crate::ProviderRuntime;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderAdapterRestartStatus {
+    Ok,
+    Unsupported,
+    Error,
+}
+
+impl ProviderAdapterRestartStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Unsupported => "unsupported",
+            Self::Error => "error",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderAdapterRestartResult {
+    pub provider_id: String,
+    pub status: ProviderAdapterRestartStatus,
+    pub message: Option<String>,
+}
+
 impl ProviderRuntime {
     pub async fn provider_worker_adapters_for_shutdown(
         &self,
@@ -54,6 +78,48 @@ impl ProviderRuntime {
         }
     }
 
+    pub async fn restart_all_provider_adapters(
+        &self,
+        reason: &str,
+        mode: ProviderRestartMode,
+    ) -> Vec<ProviderAdapterRestartResult> {
+        let adapters = self.provider_worker_adapters_for_shutdown().await;
+        let mut results = Vec::with_capacity(adapters.len());
+        for (provider_id, adapter) in adapters {
+            results.push(restart_provider_adapter(provider_id, adapter, reason, mode).await);
+        }
+        results
+    }
+
+    pub async fn drain_restart_provider_adapters_for_auth_change(
+        &self,
+        provider_id: &str,
+        reason: &str,
+    ) -> anyhow::Result<()> {
+        let adapters = self
+            .provider_adapter_entries_for_provider(provider_id)
+            .await;
+        let mut failures = Vec::new();
+        for (id, adapter) in adapters {
+            if !adapter.supports_restart_mode(ProviderRestartMode::Drain) {
+                tracing::info!("skipping drain-restart for {id} after auth change: adapter does not support drain restart");
+                continue;
+            }
+            if let Err(err) = adapter.restart(reason, ProviderRestartMode::Drain).await {
+                tracing::warn!("failed to drain-restart {id} after auth change: {err}");
+                failures.push(format!("{id}: {err:#}"));
+            }
+        }
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            anyhow::bail!(
+                "provider auth updated but drain-restart failed for {provider_id}: {}",
+                failures.join("; ")
+            );
+        }
+    }
+
     pub async fn set_provider_session_pinned(&self, session_key: String, pinned: bool) {
         let mut seen = HashSet::<usize>::new();
         for (_, adapter) in self.provider_worker_adapters_for_shutdown().await {
@@ -71,6 +137,34 @@ impl ProviderRuntime {
                     err = %err,
                     "failed to update provider worker pin state"
                 );
+            }
+        }
+    }
+}
+
+async fn restart_provider_adapter(
+    provider_id: String,
+    adapter: Arc<dyn ProviderAdapter>,
+    reason: &str,
+    mode: ProviderRestartMode,
+) -> ProviderAdapterRestartResult {
+    match adapter.restart(reason, mode).await {
+        Ok(()) => ProviderAdapterRestartResult {
+            provider_id,
+            status: ProviderAdapterRestartStatus::Ok,
+            message: None,
+        },
+        Err(err) => {
+            let message = err.to_string();
+            let status = if message.to_lowercase().contains("does not support") {
+                ProviderAdapterRestartStatus::Unsupported
+            } else {
+                ProviderAdapterRestartStatus::Error
+            };
+            ProviderAdapterRestartResult {
+                provider_id,
+                status,
+                message: Some(message),
             }
         }
     }
@@ -98,6 +192,8 @@ mod tests {
         reap_calls: StdMutex<Vec<ProviderSessionSweepConfig>>,
         reap_result: StdMutex<ProviderSessionSweepStats>,
         pin_calls: StdMutex<Vec<(String, bool)>>,
+        restart_error: StdMutex<Option<String>>,
+        supports_drain_restart: bool,
     }
 
     impl RecordingProviderAdapter {
@@ -128,6 +224,20 @@ mod tests {
                 .expect("recording adapter pin lock")
                 .clone()
         }
+
+        fn set_restart_error(&self, error: &str) {
+            *self
+                .restart_error
+                .lock()
+                .expect("recording adapter restart error lock") = Some(error.to_string());
+        }
+    }
+
+    fn recording_adapter_with_drain_restart() -> Arc<RecordingProviderAdapter> {
+        Arc::new(RecordingProviderAdapter {
+            supports_drain_restart: true,
+            ..RecordingProviderAdapter::default()
+        })
     }
 
     #[async_trait]
@@ -170,7 +280,22 @@ mod tests {
                 .lock()
                 .expect("recording adapter restart lock")
                 .push((reason.to_string(), mode));
+            if let Some(error) = self
+                .restart_error
+                .lock()
+                .expect("recording adapter restart error lock")
+                .clone()
+            {
+                anyhow::bail!("{error}");
+            }
             Ok(())
+        }
+
+        fn supports_restart_mode(&self, mode: ProviderRestartMode) -> bool {
+            match mode {
+                ProviderRestartMode::Immediate => true,
+                ProviderRestartMode::Drain => self.supports_drain_restart,
+            }
         }
 
         async fn reap_idle_sessions(
@@ -315,6 +440,100 @@ mod tests {
         assert_eq!(
             other_adapter.pin_calls(),
             vec![("session-1".to_string(), true)]
+        );
+    }
+
+    #[tokio::test]
+    async fn restart_all_provider_adapters_reports_ok_unsupported_and_error() {
+        let ok_adapter = Arc::new(RecordingProviderAdapter::default());
+        let unsupported_adapter = Arc::new(RecordingProviderAdapter::default());
+        unsupported_adapter.set_restart_error("provider does not support drain restart");
+        let error_adapter = Arc::new(RecordingProviderAdapter::default());
+        error_adapter.set_restart_error("boom");
+
+        let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
+        providers.insert("ok".into(), ok_adapter);
+        providers.insert("unsupported".into(), unsupported_adapter);
+        providers.insert("error".into(), error_adapter);
+        let runtime = ProviderRuntime::new(providers);
+
+        let mut results = runtime
+            .restart_all_provider_adapters("dev restart", ProviderRestartMode::Drain)
+            .await;
+        results.sort_by(|left, right| left.provider_id.cmp(&right.provider_id));
+
+        assert_eq!(
+            results
+                .into_iter()
+                .map(|result| (
+                    result.provider_id,
+                    result.status,
+                    result.message.as_deref().map(str::to_string),
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    "error".to_string(),
+                    ProviderAdapterRestartStatus::Error,
+                    Some("boom".to_string()),
+                ),
+                ("ok".to_string(), ProviderAdapterRestartStatus::Ok, None),
+                (
+                    "unsupported".to_string(),
+                    ProviderAdapterRestartStatus::Unsupported,
+                    Some("provider does not support drain restart".to_string()),
+                ),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn drain_restart_for_auth_change_targets_provider_adapters_only() {
+        let root_adapter = recording_adapter_with_drain_restart();
+        let target_adapter = recording_adapter_with_drain_restart();
+        let skipped_adapter = Arc::new(RecordingProviderAdapter::default());
+        let unrelated_adapter = recording_adapter_with_drain_restart();
+        let failing_adapter = recording_adapter_with_drain_restart();
+        failing_adapter.set_restart_error("target failed");
+
+        let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
+        providers.insert("root".into(), root_adapter.clone());
+        providers.insert("other".into(), unrelated_adapter.clone());
+        let runtime = ProviderRuntime::new(providers);
+        runtime
+            .upsert_target_provider_adapter("root@host".into(), target_adapter.clone())
+            .await;
+        runtime
+            .upsert_target_provider_adapter("root@skipped".into(), skipped_adapter.clone())
+            .await;
+        runtime
+            .upsert_target_provider_adapter("root@failing".into(), failing_adapter.clone())
+            .await;
+
+        let err = runtime
+            .drain_restart_provider_adapters_for_auth_change("root", "auth updated")
+            .await
+            .expect_err("failing target adapter should fail aggregate restart");
+
+        assert_eq!(
+            root_adapter.restart_calls(),
+            vec![("auth updated".to_string(), ProviderRestartMode::Drain)]
+        );
+        assert_eq!(
+            target_adapter.restart_calls(),
+            vec![("auth updated".to_string(), ProviderRestartMode::Drain)]
+        );
+        assert!(skipped_adapter.restart_calls().is_empty());
+        assert!(unrelated_adapter.restart_calls().is_empty());
+        assert_eq!(
+            failing_adapter.restart_calls(),
+            vec![("auth updated".to_string(), ProviderRestartMode::Drain)]
+        );
+        assert!(
+            err.to_string().contains(
+                "provider auth updated but drain-restart failed for root: root@failing: target failed"
+            ),
+            "{err:#}"
         );
     }
 }

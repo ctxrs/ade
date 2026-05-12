@@ -69,31 +69,17 @@ pub(crate) async fn dev_restart_providers(
         .reason
         .unwrap_or_else(|| format!("dev restart ({})", mode.as_str()));
 
-    let adapters = state.providers.all_provider_adapter_entries().await;
-
-    let mut results = Vec::with_capacity(adapters.len());
-    for (provider_id, adapter) in adapters {
-        match adapter.restart(&reason, mode).await {
-            Ok(()) => results.push(DevRestartProvidersResult {
-                provider_id,
-                status: "ok".to_string(),
-                message: None,
-            }),
-            Err(err) => {
-                let message = err.to_string();
-                let status = if message.to_lowercase().contains("does not support") {
-                    "unsupported"
-                } else {
-                    "error"
-                };
-                results.push(DevRestartProvidersResult {
-                    provider_id,
-                    status: status.to_string(),
-                    message: Some(message),
-                });
-            }
-        }
-    }
+    let results = state
+        .providers
+        .restart_all_provider_adapters(&reason, mode)
+        .await
+        .into_iter()
+        .map(|result| DevRestartProvidersResult {
+            provider_id: result.provider_id,
+            status: result.status.as_str().to_string(),
+            message: result.message,
+        })
+        .collect();
 
     Ok(Json(DevRestartProvidersResp {
         mode: mode.as_str().to_string(),
