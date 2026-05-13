@@ -2,6 +2,7 @@ mod active_snapshot_state;
 mod app_state;
 pub(crate) mod attachments;
 mod cache_stats;
+mod deletion;
 mod diff_exec;
 mod execution;
 mod file_completions;
@@ -18,6 +19,7 @@ mod worktree_provision;
 
 pub(crate) use active_snapshot_state::load_workspace_active_snapshot_state;
 pub(crate) use cache_stats::WorkspaceCacheDebugStats;
+pub(crate) use deletion::{delete_workspace, WorkspaceDeleteError};
 pub(crate) use diff_exec::{diff_worktree_for_session, diff_worktree_summary_for_session};
 pub(crate) use execution::{
     execution_environment_from_settings, resolve_existing_worktree_execution,
