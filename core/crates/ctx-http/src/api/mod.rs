@@ -105,28 +105,3 @@ use ctx_transport_runtime::web_sessions::{
     render_web_session_view, WebSessionInfo, WebSessionRunRequest, WebSessionRunResponse,
     WebSessionViewport,
 };
-
-pub(super) fn is_sensitive_key(key: &str) -> bool {
-    ctx_core::redaction::is_sensitive_key(key)
-}
-
-pub(super) fn redact_json_value(value: serde_json::Value) -> serde_json::Value {
-    match value {
-        serde_json::Value::Object(map) => {
-            let mut out = serde_json::Map::with_capacity(map.len());
-            for (k, v) in map {
-                if is_sensitive_key(&k) {
-                    out.insert(k, serde_json::Value::String("[REDACTED]".to_string()));
-                    continue;
-                }
-                out.insert(k, redact_json_value(v));
-            }
-            serde_json::Value::Object(out)
-        }
-        serde_json::Value::Array(arr) => {
-            serde_json::Value::Array(arr.into_iter().map(redact_json_value).collect())
-        }
-        serde_json::Value::String(s) => serde_json::Value::String(logs::redact_sensitive(&s)),
-        other => other,
-    }
-}

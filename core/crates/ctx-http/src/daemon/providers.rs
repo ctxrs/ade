@@ -1,5 +1,6 @@
 mod accounts;
 mod auth;
+mod auth_check;
 mod auth_import;
 mod bootstrap;
 mod diagnostics;
@@ -41,6 +42,10 @@ pub(crate) use accounts::{
 };
 pub(crate) use auth::{
     authenticate_provider_for_workspace_runtime, ProviderWorkspaceAuthenticationError,
+};
+pub(crate) use auth_check::{
+    authenticate_provider_for_workspace, verify_provider_for_workspace, ProviderAuthCheckError,
+    ProviderAuthCheckSnapshot,
 };
 #[cfg(test)]
 pub(crate) use auth_import::provider_auth_import_result_requires_restart;

@@ -16,32 +16,19 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::Json;
-use chrono::Utc;
 use futures::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 
 use super::errors::ApiErrorResp;
-use super::redact_json_value;
 use crate::daemon::providers::{
-    authenticate_provider_for_workspace_runtime, cancel_provider_install,
-    get_provider_install_info, install_target_for_workspace, list_provider_install_events,
-    load_provider_launch_config_snapshot, parse_provider_install_target,
-    provider_install_event_sender, start_all_provider_installs, start_provider_install,
-    store_provider_verify_cache_value, ProviderWorkspaceAuthenticationError,
+    cancel_provider_install, get_provider_install_info, list_provider_install_events,
+    parse_provider_install_target, provider_install_event_sender, start_all_provider_installs,
+    start_provider_install,
 };
 use crate::daemon::AppState;
-use ctx_harness_sources::HarnessEndpointVerificationStatus;
 use ctx_observability::logs;
 use ctx_provider_install::install_state::{
     InstallId, InstallInfo, InstallProgressEvent, InstallTarget,
-};
-use ctx_provider_runtime::provider_launch::models::{
-    endpoint_catalog_runtime_probe_failure, endpoint_catalog_verify_outcome,
-};
-use ctx_provider_runtime::provider_launch::options::endpoint_supports_model_catalog_verify;
-use ctx_provider_runtime::provider_launch::probe_error::classify_probe_error;
-use ctx_provider_runtime::provider_usability::{
-    provider_status_is_usable, provider_status_unusable_reason,
 };
 
 #[derive(Debug, Deserialize)]
@@ -73,4 +60,17 @@ pub(super) struct ProviderAuthCheckResp {
     checked_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     message: Option<String>,
+}
+
+impl From<crate::daemon::providers::ProviderAuthCheckSnapshot> for ProviderAuthCheckResp {
+    fn from(value: crate::daemon::providers::ProviderAuthCheckSnapshot) -> Self {
+        Self {
+            provider_id: value.provider_id,
+            workspace_id: value.workspace_id,
+            status: value.status,
+            auth_required: value.auth_required,
+            checked_at: value.checked_at,
+            message: value.message,
+        }
+    }
 }

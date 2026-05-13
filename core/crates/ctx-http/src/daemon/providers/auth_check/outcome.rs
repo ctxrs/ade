@@ -10,6 +10,7 @@ pub(super) struct ProviderVerifyOutcome {
     message: Option<String>,
     endpoint_status: HarnessEndpointVerificationStatus,
     selected_endpoint_id: Option<String>,
+    endpoint_catalog_result: bool,
 }
 
 impl ProviderVerifyOutcome {
@@ -21,6 +22,7 @@ impl ProviderVerifyOutcome {
             message: None,
             endpoint_status: HarnessEndpointVerificationStatus::Valid,
             selected_endpoint_id,
+            endpoint_catalog_result: false,
         }
     }
 
@@ -40,6 +42,10 @@ impl ProviderVerifyOutcome {
         self.message.as_ref()
     }
 
+    pub(super) fn has_endpoint_catalog_result(&self) -> bool {
+        self.endpoint_catalog_result
+    }
+
     pub(super) fn set_selected_endpoint_id(&mut self, selected_endpoint_id: Option<String>) {
         self.selected_endpoint_id = selected_endpoint_id;
     }
@@ -55,6 +61,7 @@ impl ProviderVerifyOutcome {
         &mut self,
         refreshed_endpoint: HarnessEndpointRecord,
     ) {
+        self.endpoint_catalog_result = true;
         self.selected_endpoint_id = Some(refreshed_endpoint.id.clone());
         let (status, auth_required, message, endpoint_status) =
             endpoint_catalog_verify_outcome(&refreshed_endpoint);
@@ -81,12 +88,12 @@ impl ProviderVerifyOutcome {
         self.endpoint_status = endpoint_status;
     }
 
-    pub(super) fn into_response(
+    pub(super) fn into_snapshot(
         self,
         provider_id: &str,
         ws_id: WorkspaceId,
-    ) -> ProviderAuthCheckResp {
-        ProviderAuthCheckResp {
+    ) -> ProviderAuthCheckSnapshot {
+        ProviderAuthCheckSnapshot {
             provider_id: provider_id.to_string(),
             workspace_id: ws_id.0.to_string(),
             status: self.status,
@@ -97,13 +104,13 @@ impl ProviderVerifyOutcome {
     }
 }
 
-pub(super) fn config_error_response(
+pub(super) fn config_error_snapshot(
     provider_id: &str,
     ws_id: WorkspaceId,
     checked_at: &str,
     message: String,
-) -> ProviderAuthCheckResp {
-    ProviderAuthCheckResp {
+) -> ProviderAuthCheckSnapshot {
+    ProviderAuthCheckSnapshot {
         provider_id: provider_id.to_string(),
         workspace_id: ws_id.0.to_string(),
         status: "error".to_string(),
