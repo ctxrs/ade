@@ -1,6 +1,6 @@
 use super::access::mobile_public_url_is_allowed;
 use super::*;
-use ctx_transport_runtime::{mobile_e2ee, mobile_tunnel};
+use ctx_transport_runtime::mobile_e2ee;
 
 mod entitlement;
 mod pairing;

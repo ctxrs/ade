@@ -27,6 +27,7 @@ mod managed_installs_host;
 mod mcp_auth;
 mod memleak_debug;
 pub(crate) mod merge_queue;
+pub(crate) mod mobile_access;
 mod mobile_startup;
 mod provider_child_reclassifier;
 pub mod provider_guard;

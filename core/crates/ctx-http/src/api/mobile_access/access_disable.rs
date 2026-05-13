@@ -1,4 +1,5 @@
 use super::*;
+use crate::daemon::mobile_access as daemon_mobile_access;
 
 pub(in crate::api) async fn disable_mobile_access(
     State(state): State<Arc<AppState>>,
@@ -26,67 +27,33 @@ pub(in crate::api) async fn disable_mobile_access(
             .await;
     }
 
-    let cfg = state
-        .global_store()
-        .get_mobile_access_config()
+    daemon_mobile_access::disable_mobile_access_runtime(&state)
         .await
-        .map_err(|e| {
-            tracing::error!(
-                "failed to read mobile access config while disabling mobile access: {e:?}"
-            );
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to read mobile access config".into(),
-                }),
-            )
-        })?;
-
-    state.transport.mobile_tunnel.stop().await;
-    state
-        .global_store()
-        .clear_mobile_pairing_tokens()
-        .await
-        .map_err(|e| {
-            tracing::error!("failed to clear pairing tokens while disabling mobile access: {e:?}");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to clear pairing tokens".into(),
-                }),
-            )
-        })?;
-    if let Some(cfg) = cfg {
-        state
-            .global_store()
-            .delete_mobile_access_config()
-            .await
-            .map_err(|e| {
-                tracing::error!(
-                    "failed to delete mobile access config while disabling mobile access: {e:?}"
-                );
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: "failed to delete mobile access config".into(),
-                    }),
-                )
-            })?;
-        state
-            .global_store()
-            .delete_mobile_connection_profile(cfg.profile_id)
-            .await
-            .map_err(|e| {
-                tracing::error!(
-                    "failed to delete mobile connection profile while disabling mobile access: {e:?}"
-                );
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: "failed to delete mobile connection profile".into(),
-                    }),
-                )
-            })?;
-    }
+        .map_err(disable_mobile_access_error)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+fn disable_mobile_access_error(
+    error: daemon_mobile_access::DisableMobileAccessError,
+) -> (StatusCode, Json<ApiErrorResp>) {
+    let message = match error {
+        daemon_mobile_access::DisableMobileAccessError::ReadConfig => {
+            "failed to read mobile access config"
+        }
+        daemon_mobile_access::DisableMobileAccessError::ClearPairingTokens => {
+            "failed to clear pairing tokens"
+        }
+        daemon_mobile_access::DisableMobileAccessError::DeleteConfig => {
+            "failed to delete mobile access config"
+        }
+        daemon_mobile_access::DisableMobileAccessError::DeleteConnectionProfile => {
+            "failed to delete mobile connection profile"
+        }
+    };
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ApiErrorResp {
+            error: message.into(),
+        }),
+    )
 }
