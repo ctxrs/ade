@@ -1,10 +1,12 @@
 mod agent_control;
 mod child_runs;
+mod context;
 mod details;
 mod errors;
 mod init;
 mod providers;
 mod request;
+mod types;
 mod worktrees;
 
 use std::collections::HashMap;
@@ -18,10 +20,11 @@ use ctx_session_service::subagents::{
 };
 use ctx_session_tools::interrupt_telemetry::InterruptTelemetryContext;
 
-use crate::api::sessions::{
-    AgentDetail, AgentInitReq, AgentSummary, ArchiveAgentReq, ArchiveAgentResp, GetAgentReq,
-    GetAgentResp, InterruptAgentReq, InterruptAgentResp, SendInputReq, SendInputResp,
-    SpawnAgentReq, SpawnAgentResp, WaitAgentReq, WaitAgentResp,
+pub(crate) use self::types::{
+    AgentDetail, AgentInitItem, AgentInitReq, AgentResult, AgentSummary, ArchiveAgentReq,
+    ArchiveAgentResp, ContextWindowSummary, GetAgentReq, GetAgentResp, InterruptAgentReq,
+    InterruptAgentResp, SendInputReq, SendInputResp, SpawnAgentReq, SpawnAgentResp, WaitAgentReq,
+    WaitAgentResp,
 };
 use crate::daemon::scheduler::SchedulerCommand;
 use crate::daemon::AppState;

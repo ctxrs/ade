@@ -34,7 +34,7 @@ where
     Fut: std::future::Future<Output = Result<(), ()>>,
 {
     let (snapshot_rev, _) =
-        crate::api::tasks::load_workspace_active_snapshot_state(state, workspace_id).await;
+        crate::daemon::workspaces::load_workspace_active_snapshot_state(state, workspace_id).await;
     if crate::fault_injection::maybe_fail(list_failpoint).is_err() {
         return Ok(ReplayOutcome::ResetRequired);
     }

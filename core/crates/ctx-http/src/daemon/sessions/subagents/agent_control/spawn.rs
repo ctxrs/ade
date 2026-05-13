@@ -27,7 +27,7 @@ pub(crate) async fn spawn_agent(
             tool_call_id: req.tool_call_id,
             response_mode: None,
             worktree: req.worktree,
-            agents: vec![crate::api::sessions::AgentInitItem {
+            agents: vec![AgentInitItem {
                 prompt,
                 label: Some(task_label.clone()),
                 harness: req.harness,

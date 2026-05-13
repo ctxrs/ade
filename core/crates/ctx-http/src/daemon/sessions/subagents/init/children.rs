@@ -9,14 +9,13 @@ use ctx_session_service::subagents::SubagentWorktreeSelection;
 use ctx_session_tools::model_resolution::ModelCatalog;
 use tokio::sync::Mutex;
 
-use crate::api::sessions::AgentInitItem;
 use crate::daemon::AppState;
 use ctx_settings_model::ExecutionSettings;
 
 use super::super::errors::{api_error, internal_api_error, ApiResult, SubagentErrorKind};
 use super::super::{
     dispatch_subagent_prompt, emit_subagent_invocation_notice, persist_subagent_prompt,
-    SpawnedChild,
+    AgentInitItem, SpawnedChild,
 };
 
 mod model;

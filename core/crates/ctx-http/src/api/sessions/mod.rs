@@ -30,12 +30,6 @@ use ctx_workspace_services::file_completions as workspace_file_completions;
 use ctx_workspace_services::worktree_vcs::GitStatusEntry;
 
 mod subagents;
-pub(crate) use subagents::{
-    context_window_for_run, worktree_path_for_child, AgentDetail, AgentInitItem, AgentInitReq,
-    AgentResult, AgentSummary, ArchiveAgentReq, ArchiveAgentResp, GetAgentReq, GetAgentResp,
-    InterruptAgentReq, InterruptAgentResp, SendInputReq, SendInputResp, SpawnAgentReq,
-    SpawnAgentResp, WaitAgentReq, WaitAgentResp,
-};
 pub(super) use subagents::{
     get_session_subagent_invocation, list_session_subagent_invocations, list_session_subagents,
     mcp_archive_agent, mcp_get_agent, mcp_interrupt_agent, mcp_list_agents, mcp_send_input,

@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
-use crate::daemon::AppState;
 use ctx_core::ids::WorkspaceId;
+
+use crate::daemon::AppState;
 
 pub(crate) async fn load_workspace_active_snapshot_state(
     state: &Arc<AppState>,

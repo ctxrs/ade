@@ -1,19 +1,19 @@
 use super::*;
-use crate::daemon::sessions::subagents::{SubagentError, SubagentErrorKind};
+pub(crate) use crate::daemon::sessions::subagents::{
+    AgentSummary, ArchiveAgentReq, ArchiveAgentResp, GetAgentReq, GetAgentResp, InterruptAgentReq,
+    InterruptAgentResp, SendInputReq, SendInputResp, SpawnAgentReq, SpawnAgentResp, SubagentError,
+    SubagentErrorKind, WaitAgentReq, WaitAgentResp,
+};
 
-mod context;
 mod handlers;
 mod init;
 mod listings;
-mod types;
 
-pub(crate) use context::{context_window_for_run, worktree_path_for_child};
 pub(crate) use handlers::*;
 pub(crate) use init::*;
 pub(crate) use listings::{
     get_session_subagent_invocation, list_session_subagent_invocations, list_session_subagents,
 };
-pub(crate) use types::*;
 
 fn subagent_error_response(error: SubagentError) -> (StatusCode, Json<ApiErrorResp>) {
     let status = match error.kind() {

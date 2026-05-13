@@ -1,14 +1,12 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::api::sessions::{
-    context_window_for_run, worktree_path_for_child, AgentDetail, AgentResult, AgentSummary,
-};
 use crate::daemon::AppState;
 
+use super::super::context::{context_window_for_run, worktree_path_for_child};
 use super::super::{
-    internal_api_error, wait_for_run_assistant_message, ApiResult, PersistedSubagentPrompt,
-    SpawnedChild,
+    internal_api_error, wait_for_run_assistant_message, AgentDetail, AgentResult, AgentSummary,
+    ApiResult, PersistedSubagentPrompt, SpawnedChild,
 };
 use super::refs::{encode_agent_ref, encode_run_ref};
 use super::summary::{agent_active_state, agent_terminal_result_status, build_agent_summary};

@@ -5,7 +5,7 @@ use ctx_core::models::SessionTurn;
 
 use super::super::{api_error, internal_api_error, ApiResult, SubagentErrorKind};
 use super::refs::{decode_agent_ref, encode_agent_ref, encode_run_ref};
-use crate::api::sessions::AgentSummary;
+use crate::daemon::sessions::subagents::AgentSummary;
 
 pub(super) use self::turns::{agent_active_state, agent_terminal_result_status};
 pub(in crate::daemon::sessions::subagents) use self::turns::{

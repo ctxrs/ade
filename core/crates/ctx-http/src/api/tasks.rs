@@ -70,9 +70,6 @@ pub(super) struct CreateTaskReq {
 fn task_request_matches(existing: &Task, title: &str, description: &Option<String>) -> bool {
     existing.title == title && existing.description.as_deref() == description.as_deref()
 }
-mod snapshot_state;
-pub(crate) use snapshot_state::load_workspace_active_snapshot_state;
-
 #[cfg(test)]
 mod cleanup_lifecycle_tests;
 

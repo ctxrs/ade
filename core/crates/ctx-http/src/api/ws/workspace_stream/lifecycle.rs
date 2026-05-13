@@ -27,7 +27,7 @@ pub(crate) async fn initialize_workspace_stream(
     let summary_buffer = Arc::new(SummaryBatchBuffer::new(HEAD_BATCH_TOTAL_LIMIT));
     let send_control = Arc::new(StreamSendControl::new());
     let (snapshot_rev, archived_rev) =
-        super::super::super::tasks::load_workspace_active_snapshot_state(state, workspace_id).await;
+        crate::daemon::workspaces::load_workspace_active_snapshot_state(state, workspace_id).await;
     let ready = WorkspaceActiveSnapshotEvent::Ready {
         workspace_id,
         snapshot_rev,

@@ -41,7 +41,7 @@ pub(super) async fn queue_reset_required(
     workspace_id: WorkspaceId,
 ) -> Result<(), ()> {
     let (snapshot_rev, _) =
-        super::super::tasks::load_workspace_active_snapshot_state(state, workspace_id).await;
+        crate::daemon::workspaces::load_workspace_active_snapshot_state(state, workspace_id).await;
     if crate::fault_injection::maybe_fail("ctx_http.send_workspace_active_reset").is_err() {
         return Err(());
     }

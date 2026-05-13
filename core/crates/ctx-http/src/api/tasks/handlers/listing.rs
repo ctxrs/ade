@@ -55,7 +55,8 @@ pub(in crate::api) async fn list_workspace_archived_task_summaries(
         .workspace_task_counts(workspace_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let (_, archived_rev) = load_workspace_active_snapshot_state(&state, workspace_id).await;
+    let (_, archived_rev) =
+        crate::daemon::workspaces::load_workspace_active_snapshot_state(&state, workspace_id).await;
 
     Ok(Json(WorkspaceArchivedPage {
         workspace_id,
