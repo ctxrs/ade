@@ -39,3 +39,22 @@ pub(super) fn resume_replay_cursor(
         },
     }
 }
+
+pub(super) async fn skipped_initial_snapshot_cursor(
+    state: &Arc<AppState>,
+    workspace_id: WorkspaceId,
+    session_id: SessionId,
+    replay_cursor: SessionReplayCursor,
+) -> SessionCursor {
+    let last_sent = state
+        .workspaces
+        .workspace_active_snapshot
+        .session_replay_cursor(workspace_id, session_id)
+        .await;
+    SessionCursor {
+        last_sent: SessionReplayCursor {
+            last_event_seq: last_sent.last_event_seq.max(replay_cursor.last_event_seq),
+            projection_rev: last_sent.projection_rev.max(replay_cursor.projection_rev),
+        },
+    }
+}
