@@ -21,6 +21,12 @@ const REMOTE_REAL_CI_WRAPPER = path.join(ROOT, "scripts", "test_remote_real_ci.s
 const REMOTE_DOCKER_WRAPPER = path.join(ROOT, "scripts", "test_remote_docker_contracts.sh");
 const LINUX_BUNDLED_LAUNCH_SMOKE = path.join(ROOT, "scripts", "linux_bundled_launch_smoke.mjs");
 const REMOTE_WORKSPACE_WRAPPER = path.join(REPO_ROOT, "scripts", "buildkite", "run_remote_workspace_e2e.sh");
+const RELEASE_CANDIDATE_REMOTE_WORKSPACE_WRAPPER = path.join(
+  REPO_ROOT,
+  "scripts",
+  "buildkite",
+  "run_release_candidate_remote_workspace_e2e.sh",
+);
 const DESKTOP_SMOKE_WRAPPER = path.join(REPO_ROOT, "scripts", "desktop_smoke_with_infisical.sh");
 const LINUX_LOCAL_TRUTH_WRAPPER = path.join(REPO_ROOT, "scripts", "tests", "linux_local_install_sandbox_release_truth.sh");
 const UPDATER_LINUX_PROOF_WRAPPER = path.join(REPO_ROOT, "scripts", "tests", "updater_linux_release_truth.sh");
@@ -240,6 +246,21 @@ test("linux bundled launch smoke passes explicit tauri-driver native port", () =
   assert.match(script, /app-launch\.log/);
   assert.match(script, /processes-before-session\.log/);
   assert.match(script, /processes-after-session\.log/);
+  assert.match(script, /processes-after-cleanup\.log/);
+  assert.match(script, /detached: process\.platform !== "win32"/);
+  assert.match(script, /terminateDriverProcess\(proc\)/);
+  assert.match(script, /const DESKTOP_APP_LAUNCH_ENV_KEYS = \[/);
+  assert.match(
+    script,
+    /DESKTOP_APP_LAUNCH_ENV_KEYS[\s\S]*"CTX_BUNDLE_DIR"[\s\S]*"CTX_DESKTOP_DAEMON_DATA_DIR"[\s\S]*"CTX_DESKTOP_SSH_NO_START_REMOTE"[\s\S]*"CTX_DESKTOP_SSH_START_REMOTE"/,
+  );
+  assert.match(
+    script,
+    /DESKTOP_APP_LAUNCH_ENV_KEYS[\s\S]*"HOME"[\s\S]*"TMPDIR"[\s\S]*"XDG_CACHE_HOME"[\s\S]*"XDG_CONFIG_HOME"[\s\S]*"XDG_DATA_HOME"[\s\S]*"XDG_RUNTIME_DIR"/,
+  );
+  assert.match(script, /for \(const key of DESKTOP_APP_LAUNCH_ENV_KEYS\)[\s\S]*process\.env\[key\]/);
+  assert.match(script, /process\.env\.CTX_AUTOMATION_SHIPPED_APP_BUNDLES_DIR/);
+  assert.match(script, /process\.env\.CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR/);
   assert.match(script, /connectBrowser\(\{ driverPort, appPath: applicationPath \}\)/);
   assert.match(remoteWorkspace, /prepare_smoke_corepack\(\)/);
   assert.match(remoteWorkspace, /prepare_smoke_corepack "\$smoke_corepack_home" \|\| return \$\?/);
@@ -545,6 +566,18 @@ test("linux local install truth wrapper validates the installed AppImage through
   assert.match(wrapper, /workspace-wizard\.spec\.cjs/);
   assert.match(wrapper, /CTX_AUTOMATION_SCENARIOS="\$\{CTX_AUTOMATION_SCENARIOS:-local-codex-smoke\}"/);
   assert.match(wrapper, /runtime_bootstrap_missing/);
+  const spec = fs.readFileSync(WORKSPACE_WIZARD_SPEC, "utf8");
+  assert.match(spec, /requireSelectedHarnessInstallsNonBlocking: true/);
+  assert.match(spec, /requireExactSelectedHarnessInstallProof: true/);
+  assert.match(spec, /allowInstall: true/);
+  assert.match(spec, /local sandbox preparation may restart the pre-workspace daemon/);
+});
+
+test("release candidate remote workspace keeps standalone Linux launch smoke opt-in", () => {
+  const wrapper = fs.readFileSync(RELEASE_CANDIDATE_REMOTE_WORKSPACE_WRAPPER, "utf8");
+  assert.match(wrapper, /CTX_REMOTE_WORKSPACE_DESKTOP_FEED_MODE=stage/);
+  assert.match(wrapper, /CTX_REMOTE_WORKSPACE_DESKTOP_LAUNCH_SMOKE="\$\{CTX_REMOTE_WORKSPACE_DESKTOP_LAUNCH_SMOKE:-0\}"/);
+  assert.doesNotMatch(wrapper, /CTX_REMOTE_WORKSPACE_DESKTOP_LAUNCH_SMOKE="\$\{CTX_REMOTE_WORKSPACE_DESKTOP_LAUNCH_SMOKE:-1\}"/);
 });
 
 test("mac remote truth wrapper runs the real remote matrix and rejects docker-backed proof scopes", () => {

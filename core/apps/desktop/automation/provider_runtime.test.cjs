@@ -256,6 +256,115 @@ test("ensureCodexOpenRouterWorkspaceReady waits for target readiness before work
   );
 });
 
+test("ensureCodexOpenRouterWorkspaceReady can repair a lost nonblocking install kickoff", async () => {
+  process.env.OPENROUTER_API_KEY = "openrouter-key";
+  global.browser = { pause: async () => {} };
+  const calls = [];
+  const installedStatus = {
+    provider_id: "codex",
+    installed: true,
+    detected_path: "/tmp/ctx/codex-crp",
+    health: "ok",
+    diagnostics: [],
+    details: {
+      install_supported: "true",
+      ready_for_use: "true",
+    },
+  };
+  const statuses = [
+    {
+      provider_id: "codex",
+      installed: false,
+      health: "missing",
+      diagnostics: [
+        "runtime command is not configured for provider 'codex'",
+        "provider is not ready until required dependencies are installed: codex-cli",
+      ],
+      details: {
+        install_supported: "true",
+        ready_for_use: "false",
+        required_dependency_ids: "codex-cli",
+        pending_dependency_ids: "codex-cli",
+      },
+    },
+    installedStatus,
+  ];
+
+  const { ensureCodexOpenRouterWorkspaceReady } = loadHelper({
+    daemonJson: async (method, requestPath, body) => {
+      calls.push({ method, requestPath, body });
+      if (method === "GET" && requestPath === "/api/health") {
+        return {
+          status: 200,
+          payload: {
+            daemon_version: "0.65.8",
+            pid: 101,
+            daemon_url: "http://127.0.0.1:64000",
+            data_root: "/home/example-user/.ctx",
+            compatibility: { desktop_build_id: "build-a" },
+          },
+        };
+      }
+      if (method === "GET" && requestPath === "/api/providers/codex?target=container") {
+        return { status: 200, payload: statuses.shift() || installedStatus };
+      }
+      if (method === "POST" && requestPath === "/api/providers/codex/install?target=container") {
+        return { status: 200, payload: { install_id: "install-1", target: "container" } };
+      }
+      if (method === "GET" && requestPath === "/api/providers/install/install-1") {
+        return { status: 200, payload: { state: "succeeded" } };
+      }
+      if (method === "POST" && requestPath === "/api/providers/codex/harness_config/endpoints") {
+        return {
+          status: 200,
+          payload: {
+            selected_endpoint_id: "endpoint-1",
+            endpoints: [{ id: "endpoint-1", name: "codex-openrouter-desktop-smoke" }],
+          },
+        };
+      }
+      if (method === "POST" && requestPath === "/api/providers/codex/harness_config/select") {
+        return { status: 200, payload: { ok: true } };
+      }
+      if (method === "POST" && requestPath === "/api/workspaces/ws-1/providers/codex/verify") {
+        return { status: 200, payload: { status: "ok" } };
+      }
+      if (method === "GET" && requestPath === "/api/workspaces/ws-1/providers/codex/options") {
+        return {
+          status: 200,
+          payload: {
+            models: {
+              current_model_id: "google/gemini-2.5-flash",
+            },
+          },
+        };
+      }
+      throw new Error(`unexpected daemonJson call: ${method} ${requestPath}`);
+    },
+    getDesktopConnection: async () => ({
+      kind: "local",
+      base_url: "http://127.0.0.1:47001",
+      browser_query_secret: "browser-secret",
+    }),
+  });
+
+  await ensureCodexOpenRouterWorkspaceReady("ws-1", {
+    installTarget: "container",
+    installTimeoutMs: 1000,
+    pollMs: 1,
+    allowInstall: true,
+  });
+
+  const installCallIndex = calls.findIndex(
+    (entry) => entry.method === "POST" && entry.requestPath === "/api/providers/codex/install?target=container",
+  );
+  const verifyCallIndex = calls.findIndex(
+    (entry) => entry.method === "POST" && entry.requestPath === "/api/workspaces/ws-1/providers/codex/verify",
+  );
+  assert.ok(installCallIndex >= 0, "expected a repair install after the missing dependency status");
+  assert.ok(verifyCallIndex > installCallIndex, "workspace verify must wait for the repair install");
+});
+
 test("waitForProviderInstallCompletion keeps waiting while dependencies are pending", async () => {
   const calls = [];
   global.browser = { pause: async () => {} };

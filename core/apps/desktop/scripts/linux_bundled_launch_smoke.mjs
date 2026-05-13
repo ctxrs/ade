@@ -20,8 +20,39 @@ const {
   resolveLinuxAppDirFromPath,
 } = require("../automation/helpers/linux_appdir_launch_env.cjs");
 
+const DESKTOP_APP_LAUNCH_ENV_KEYS = [
+  "APPDIR",
+  "APPIMAGE",
+  "APPIMAGE_EXTRACT_AND_RUN",
+  "ARGV0",
+  "CTX_APPIMAGE_PATH",
+  "CTX_BUNDLE_DIR",
+  "CTX_DESKTOP_DAEMON_DATA_DIR",
+  "CTX_DESKTOP_SSH_NO_START_REMOTE",
+  "CTX_DESKTOP_SSH_START_REMOTE",
+  "DISPLAY",
+  "HOME",
+  "TMP",
+  "TEMP",
+  "TMPDIR",
+  "XDG_CACHE_HOME",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "XDG_RUNTIME_DIR",
+];
+
 function fail(message) {
   throw new Error(message);
+}
+
+function resolveConfiguredPath(rawValue) {
+  const configured = String(rawValue || "").trim();
+  if (!configured) return "";
+  return path.isAbsolute(configured) ? configured : path.resolve(configured);
+}
+
+function isTruthyEnv(value) {
+  return /^(1|true|yes)$/i.test(String(value || "").trim());
 }
 
 function parseArgs(argv = process.argv.slice(2)) {
@@ -235,6 +266,51 @@ function writeLaunchDiagnostics({
   writeProcessSnapshot(path.join(artifactDir, "processes-before-session.log"));
 }
 
+function buildDesktopAppLaunchEnv({ appPath, artifactDir }) {
+  const env = {
+    TAURI_WEBVIEW_AUTOMATION: "true",
+  };
+  for (const key of DESKTOP_APP_LAUNCH_ENV_KEYS) {
+    const value = String(process.env[key] || "").trim();
+    if (value) {
+      env[key] = value;
+    }
+  }
+  Object.assign(
+    env,
+    buildLinuxAppDirLaunchEnv({
+      appPath,
+      env: {
+        ...process.env,
+        ...env,
+      },
+    }),
+  );
+  if (
+    !String(env.CTX_DESKTOP_SSH_NO_START_REMOTE || "").trim()
+    && !String(env.CTX_DESKTOP_SSH_START_REMOTE || "").trim()
+  ) {
+    env.CTX_DESKTOP_SSH_NO_START_REMOTE = "1";
+    env.CTX_DESKTOP_SSH_START_REMOTE = "0";
+  }
+  if (isTruthyEnv(process.env.CTX_AUTOMATION_SHIPPED_APP)) {
+    const bundleDir = resolveConfiguredPath(process.env.CTX_AUTOMATION_SHIPPED_APP_BUNDLES_DIR);
+    if (bundleDir && !String(env.CTX_BUNDLE_DIR || "").trim()) {
+      env.CTX_BUNDLE_DIR = bundleDir;
+    }
+    const daemonDataDir = resolveConfiguredPath(
+      process.env.CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR,
+    );
+    if (daemonDataDir && !String(env.CTX_DESKTOP_DAEMON_DATA_DIR || "").trim()) {
+      env.CTX_DESKTOP_DAEMON_DATA_DIR = daemonDataDir;
+    }
+  }
+  const appLaunchLog = String(process.env.CTX_AUTOMATION_APP_LAUNCH_LOG || "").trim()
+    || path.join(artifactDir, "app-launch.log");
+  env.CTX_AUTOMATION_APP_LAUNCH_LOG = appLaunchLog;
+  return { appLaunchEnv: env, appLaunchLog };
+}
+
 function requireWorkspacePackage(specifier) {
   try {
     const resolved = require.resolve(specifier, {
@@ -300,6 +376,7 @@ function spawnDriver({ port, nativePort, artifactDir, appLaunchEnv }) {
   const proc = spawn(command, args, {
     cwd: DESKTOP_ROOT,
     stdio: ["ignore", driverLogFd, driverLogFd],
+    detached: process.platform !== "win32",
     env: {
       ...process.env,
       ...appLaunchEnv,
@@ -314,6 +391,23 @@ function spawnDriver({ port, nativePort, artifactDir, appLaunchEnv }) {
   };
 }
 
+async function terminateDriverProcess(proc) {
+  if (!proc || !proc.pid) return;
+  const killTarget = process.platform === "win32" ? proc.pid : -proc.pid;
+  const sendSignal = (signal) => {
+    try {
+      process.kill(killTarget, signal);
+    } catch (error) {
+      if (!error || error.code !== "ESRCH") {
+        throw error;
+      }
+    }
+  };
+  sendSignal("SIGTERM");
+  await sleep(1000);
+  sendSignal("SIGKILL");
+}
+
 async function main() {
   if (process.platform !== "linux") {
     fail(`linux bundled launch smoke only supports Linux, got ${process.platform}`);
@@ -324,11 +418,10 @@ async function main() {
     fail(`bundled app not found: ${options.appPath}`);
   }
   const artifactDir = options.artifactDir || fs.mkdtempSync(path.join(os.tmpdir(), "ctx-linux-launch-smoke-"));
-  const appLaunchEnv = buildLinuxAppDirLaunchEnv({ appPath: options.appPath });
-  appLaunchEnv.TAURI_WEBVIEW_AUTOMATION = "true";
-  const appLaunchLog = String(process.env.CTX_AUTOMATION_APP_LAUNCH_LOG || "").trim()
-    || path.join(artifactDir, "app-launch.log");
-  appLaunchEnv.CTX_AUTOMATION_APP_LAUNCH_LOG = appLaunchLog;
+  const { appLaunchEnv, appLaunchLog } = buildDesktopAppLaunchEnv({
+    appPath: options.appPath,
+    artifactDir,
+  });
   const applicationPath = createLinuxAppDirLaunchWrapper({
     appPath: options.appPath,
     env: appLaunchEnv,
@@ -429,9 +522,8 @@ async function main() {
         // ignore cleanup failures
       }
     }
-    if (proc && !proc.killed) {
-      proc.kill("SIGTERM");
-    }
+    await terminateDriverProcess(proc);
+    writeProcessSnapshot(path.join(artifactDir, "processes-after-cleanup.log"));
     fs.closeSync(driverLogFd);
   }
 }

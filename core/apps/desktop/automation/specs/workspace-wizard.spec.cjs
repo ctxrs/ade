@@ -2170,11 +2170,14 @@ describe("launcher workspace wizard (e2e)", () => {
 
     await assertConnectedLocalAndListening();
     await assertExpectedDaemonIdentity({ label: "release_clean_workspace_codex_sandbox" });
-    await waitForProviderInstallCompletion("codex", "container", { timeoutMs: 10 * 60_000, pollMs: 2_000 });
+    // The wizard path above proves selected harness downloads kick off without
+    // blocking source selection. Exact install proof runs after workspace launch
+    // because local sandbox preparation may restart the pre-workspace daemon.
     const provider = await ensureCodexOpenRouterWorkspaceReady(id, {
       installTarget: "container",
       endpointName: `sandbox-codex-openrouter-${Date.now()}`,
-      allowInstall: false,
+      allowInstall: true,
+      installTimeoutMs: 10 * 60_000,
     });
     await runCodexFirstTurnApiSmoke(id, {
       providerId: provider.providerId,
