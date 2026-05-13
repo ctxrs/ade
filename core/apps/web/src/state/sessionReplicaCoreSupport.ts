@@ -27,8 +27,17 @@ import type {
   SessionReplicaReplaceMode,
 } from "./sessionReplicaProtocol";
 
+export type SessionReplicaHeadRequestOptions = {
+  minEventSeq?: number;
+};
+
 export type SessionReplicaApi = {
-  getSessionHead: (sessionId: string, limit?: number, includeEvents?: boolean) => Promise<SessionHeadSnapshot | null>;
+  getSessionHead: (
+    sessionId: string,
+    limit?: number,
+    includeEvents?: boolean,
+    opts?: SessionReplicaHeadRequestOptions,
+  ) => Promise<SessionHeadSnapshot | null>;
   getSessionState?: (sessionId: string) => Promise<SessionState | null>;
   getSessionSnapshot?: (sessionId: string, limit?: number, includeEvents?: boolean) => Promise<SessionSnapshot | null>;
   setAuth?: (baseUrl?: string | null, authToken?: string | null, runId?: string | null) => void;

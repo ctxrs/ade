@@ -178,6 +178,15 @@ rewrite_appdir_bundle_manifest_digests() {
   node core/scripts/verify_bundle_manifest_closure.cjs --rewrite-digests "$bundle_dir"
 }
 
+patch_appdir_linuxdeploy_gtk_hook() {
+  local appdir="$1"
+  local hook_path="$appdir/apprun-hooks/linuxdeploy-plugin-gtk.sh"
+  if [[ ! -f "$hook_path" ]]; then
+    return 0
+  fi
+  node core/scripts/patch_linuxdeploy_gtk_hook.cjs "$hook_path"
+}
+
 repack_appimage_from_appdir() {
   local appimage="$1"
   local appdir="$2"
@@ -346,6 +355,7 @@ if [[ -z "$appdir_path" || ! -d "$appdir_path" ]]; then
   exit 1
 fi
 
+patch_appdir_linuxdeploy_gtk_hook "$appdir_path"
 rewrite_appdir_bundle_manifest_digests "$appdir_path"
 appimage_bundle="$(repack_appimage_from_appdir "$appimage_bundle" "$appdir_path")"
 verify_appimage_bundle_manifest_closure "$appimage_bundle" "/tmp/ctx-rebuilt-appimage-verify-${platform}-$$"

@@ -5,6 +5,7 @@ use crate::api::sessions::snapshot::head_metrics::record_session_head_recovery_m
 pub(crate) struct SessionHeadQuery {
     pub(crate) limit: Option<u32>,
     pub(crate) include_events: Option<String>,
+    pub(crate) min_event_seq: Option<i64>,
 }
 
 pub(crate) async fn get_session_head(
@@ -17,6 +18,10 @@ pub(crate) async fn get_session_head(
     let limit = q.limit.unwrap_or(60);
     let include_events = super::parse_boolish_flag(q.include_events.as_deref(), "include_events")
         .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let min_event_seq = match q.min_event_seq {
+        Some(value) if value < 0 => return Err(StatusCode::BAD_REQUEST),
+        value => value,
+    };
     let workspace_id = match state
         .global_store()
         .get_workspace_id_for_session(session_id)
@@ -32,7 +37,7 @@ pub(crate) async fn get_session_head(
     if let Some(head) = state
         .workspaces
         .workspace_active_snapshot
-        .get_cached_session_head_for_request(session_id, include_events, limit)
+        .get_cached_session_head_for_request(session_id, include_events, limit, min_event_seq)
         .await
     {
         record_session_head_recovery_metrics(
@@ -53,6 +58,21 @@ pub(crate) async fn get_session_head(
         .await
     {
         Ok(Some(head)) => {
+            if let Some(min_event_seq) = min_event_seq {
+                if head.last_event_seq < min_event_seq {
+                    state.emit_cache_rehydrate("session_head", false).await;
+                    record_session_head_recovery_metrics(
+                        &state,
+                        "store_rebuild",
+                        "stale",
+                        started_at.elapsed(),
+                        limit,
+                        include_events,
+                        Some(&head),
+                    );
+                    return Err(StatusCode::CONFLICT);
+                }
+            }
             state.emit_cache_rehydrate("session_head", true).await;
             record_session_head_recovery_metrics(
                 &state,

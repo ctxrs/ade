@@ -688,13 +688,13 @@ mod delta_tests {
         hub.update_session_head(head.clone()).await;
 
         assert!(
-            hub.get_cached_session_head_for_request(primary.id, true, 60)
+            hub.get_cached_session_head_for_request(primary.id, true, 60, None)
                 .await
                 .is_none(),
             "recovery must rebuild from store instead of serving a terminal cache missing assistant text"
         );
         assert!(
-            hub.get_cached_session_head_for_request(primary.id, false, 60)
+            hub.get_cached_session_head_for_request(primary.id, false, 60, None)
                 .await
                 .is_some(),
             "compact reads can still use the cache; only authoritative event-bearing recovery is blocked"
@@ -718,7 +718,7 @@ mod delta_tests {
         hub.update_session_head(head).await;
 
         let recovered = hub
-            .get_cached_session_head_for_request(primary.id, true, 60)
+            .get_cached_session_head_for_request(primary.id, true, 60, None)
             .await
             .expect("completed head with assistant text is authoritative");
         assert!(recovered
@@ -1408,10 +1408,40 @@ mod replay_tests {
         hub.update_compact_session_head(compact).await;
 
         assert!(
-            hub.get_cached_session_head_for_request(primary.id, false, 60)
+            hub.get_cached_session_head_for_request(primary.id, false, 60, None)
                 .await
                 .is_none(),
             "truncated compact heads must not satisfy the stronger request path"
+        );
+    }
+
+    #[tokio::test]
+    async fn session_head_request_cache_honors_min_event_seq() {
+        let hub = WorkspaceActiveSnapshotHub::new();
+        let primary = replay_session(SessionId::new());
+        let mut head = new_head_snapshot(&primary);
+        head.last_event_seq = 7;
+        head.projection_rev = 7;
+
+        hub.update_session_head(head).await;
+
+        assert!(
+            hub.get_cached_session_head_for_request(primary.id, true, 60, None)
+                .await
+                .is_some(),
+            "normal recovery can use a hydrated replay-capable cache"
+        );
+        assert!(
+            hub.get_cached_session_head_for_request(primary.id, true, 60, Some(7))
+                .await
+                .is_some(),
+            "cache should satisfy an already-covered minimum sequence"
+        );
+        assert!(
+            hub.get_cached_session_head_for_request(primary.id, true, 60, Some(8))
+                .await
+                .is_none(),
+            "gap repair must rebuild instead of accepting a stale cached head below the requested cursor"
         );
     }
 

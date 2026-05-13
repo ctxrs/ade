@@ -318,6 +318,7 @@ impl WorkspaceActiveSnapshotHub {
         session_id: SessionId,
         include_events: bool,
         limit: u32,
+        min_event_seq: Option<i64>,
     ) -> Option<SessionHeadSnapshot> {
         let requested = limit as usize;
         let mut head = {
@@ -343,6 +344,11 @@ impl WorkspaceActiveSnapshotHub {
             }
             if head.has_more_turns && head.turns.len() < requested {
                 return None;
+            }
+            if let Some(min_event_seq) = min_event_seq {
+                if head.last_event_seq < min_event_seq {
+                    return None;
+                }
             }
             head.clone()
         };

@@ -278,6 +278,12 @@ export class SessionReplicaCore {
       if (previousFreshness === "recovering" && opts.freshness !== "recovering") {
         const baseline = this.gapRepairBaselineBySessionId.get(entry.sessionId);
         const repairedLastEventSeq = incomingSeq >= 0 ? incomingSeq : null;
+        const effectiveRepairedLastEventSeq =
+          incomingSeq >= 0
+            ? Math.max(existingSeq, incomingSeq)
+            : existingSeq >= 0
+              ? existingSeq
+              : null;
         const authoritativeRepair = opts.freshness === "authoritative";
         const repairEpoch =
           typeof opts.gapRepairEpoch === "number" && Number.isFinite(opts.gapRepairEpoch)
@@ -291,8 +297,8 @@ export class SessionReplicaCore {
         const repairMissedBaseline =
           baseline &&
           typeof baseline.lastEventSeq === "number" &&
-          (typeof repairedLastEventSeq !== "number" ||
-            repairedLastEventSeq < baseline.lastEventSeq);
+          (typeof effectiveRepairedLastEventSeq !== "number" ||
+            effectiveRepairedLastEventSeq < baseline.lastEventSeq);
         if (!authoritativeRepair) {
           nextFreshness = "recovering";
         } else if (repairMissedBaseline && !staleEpochRepair) {
@@ -300,7 +306,7 @@ export class SessionReplicaCore {
             type: "gap_repair_mismatch",
             sessionId: entry.sessionId,
             baselineLastEventSeq: baseline?.lastEventSeq ?? null,
-            repairedLastEventSeq,
+            repairedLastEventSeq: effectiveRepairedLastEventSeq ?? repairedLastEventSeq,
           });
           nextFreshness = "recovering";
         } else if (repairMissedBaseline && staleEpochRepair) {
@@ -493,6 +499,7 @@ export class SessionReplicaCore {
       includeEvents?: boolean;
       coalesce?: boolean;
       gapRepairEpoch?: number;
+      minEventSeq?: number;
     },
   ): Promise<void> {
     const id = normalizeReplicaId(sessionId);
@@ -523,11 +530,16 @@ export class SessionReplicaCore {
     }
 
     try {
-      const head = await this.deps.api.getSessionHead(
-        id,
-        opts?.headLimit ?? this.config.headLimit,
-        opts?.includeEvents ?? true,
-      );
+      const minEventSeq =
+        typeof opts?.minEventSeq === "number" && Number.isFinite(opts.minEventSeq)
+          ? opts.minEventSeq
+          : undefined;
+      const headLimit = opts?.headLimit ?? this.config.headLimit;
+      const includeEvents = opts?.includeEvents ?? true;
+      const head =
+        minEventSeq === undefined
+          ? await this.deps.api.getSessionHead(id, headLimit, includeEvents)
+          : await this.deps.api.getSessionHead(id, headLimit, includeEvents, { minEventSeq });
       if (token !== entry.requestToken) return;
       if (head) {
         const sessionHead = snapshotToSessionHead(head);
@@ -577,6 +589,7 @@ export class SessionReplicaCore {
           void this.hydrateSessionHead(id, {
             ...opts,
             gapRepairEpoch: pendingBaseline?.epoch ?? opts.gapRepairEpoch,
+            minEventSeq: pendingBaseline?.lastEventSeq ?? opts.minEventSeq,
           }).catch(() => {});
         }
       }

@@ -216,10 +216,18 @@ export const getSessionSnapshot = (sessionId: string, limit?: number, includeEve
   return apiAny<SessionSnapshot>(`/api/sessions/${sessionId}/snapshot${suffix}`);
 };
 
-export const getSessionHead = (sessionId: string, limit?: number, includeEvents?: boolean) => {
+export const getSessionHead = (
+  sessionId: string,
+  limit?: number,
+  includeEvents?: boolean,
+  opts?: { minEventSeq?: number },
+) => {
   const qs = new URLSearchParams();
   if (limit) qs.set("limit", String(limit));
   if (includeEvents !== undefined) qs.set("include_events", includeEvents ? "1" : "0");
+  if (typeof opts?.minEventSeq === "number" && Number.isFinite(opts.minEventSeq)) {
+    qs.set("min_event_seq", String(opts.minEventSeq));
+  }
   const suffix = qs.toString() ? `?${qs.toString()}` : "";
   return apiAny<SessionHeadSnapshot>(`/api/sessions/${sessionId}/head${suffix}`);
 };

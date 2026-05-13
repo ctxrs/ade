@@ -10,6 +10,7 @@ STRICT_REQUIRED="${CTX_AUTOMATION_REMOTE_STRICT:-1}"
 ALLOW_SKIP="${CTX_AUTOMATION_REMOTE_ALLOW_SKIP:-0}"
 REQUIRE_FIRST_TURN_SUCCESS="${CTX_AUTOMATION_REMOTE_REQUIRE_FIRST_TURN_SUCCESS:-0}"
 DRY_RUN=0
+RUN_LANE_STATUS=0
 
 usage() {
   cat <<'USAGE'
@@ -225,15 +226,20 @@ write_launch_diagnostics() {
   local app_path="${CTX_DESKTOP_APP_PATH:-}"
   local app_root="${app_path%/AppRun}"
   local -a launch_paths=()
-  if [[ -n "${app_path}" ]]; then
-    launch_paths+=(
-      "${app_path}"
-      "${app_path}.wrapped"
-      "${app_root}/usr/bin/ctx"
-      "${app_root}/usr/bin/ctx-daemon"
-      "${app_root}/apprun-hooks/linuxdeploy-plugin-gtk.sh"
-    )
-  fi
+  case "${app_path}" in
+    "")
+      true
+      ;;
+    *)
+      launch_paths+=(
+        "${app_path}"
+        "${app_path}.wrapped"
+        "${app_root}/usr/bin/ctx"
+        "${app_root}/usr/bin/ctx-daemon"
+        "${app_root}/apprun-hooks/linuxdeploy-plugin-gtk.sh"
+      )
+      ;;
+  esac
   {
     printf 'CTX_DESKTOP_APP_PATH=%s\n' "${app_path}"
     printf 'CTX_AUTOMATION_SHIPPED_APP_BUNDLES_DIR=%s\n' "${CTX_AUTOMATION_SHIPPED_APP_BUNDLES_DIR:-}"
@@ -246,14 +252,16 @@ write_launch_diagnostics() {
     printf 'DISPLAY=%s\n' "${DISPLAY:-}"
     printf 'XDG_RUNTIME_DIR=%s\n' "${XDG_RUNTIME_DIR:-}"
     printf 'HOME=%s\n' "${HOME:-}"
-    for launch_path in "${launch_paths[@]}"; do
-      [[ -n "${launch_path}" ]] || continue
-      if [[ -e "${launch_path}" ]]; then
-        ls -l "${launch_path}" 2>&1 || true
-      else
-        printf 'missing %s\n' "${launch_path}"
-      fi
-    done
+    if ((${#launch_paths[@]} > 0)); then
+      for launch_path in "${launch_paths[@]}"; do
+        [[ -n "${launch_path}" ]] || continue
+        if [[ -e "${launch_path}" ]]; then
+          ls -l "${launch_path}" 2>&1 || true
+        else
+          printf 'missing %s\n' "${launch_path}"
+        fi
+      done
+    fi
   } >"${out_path}" 2>&1 || true
 }
 
@@ -639,7 +647,8 @@ run_lane() {
     echo "[remote-contracts] ${lane}: ${status}" >&2
   fi
 
-  return "${lane_exit}"
+  RUN_LANE_STATUS="${lane_exit}"
+  return 0
 }
 
 run_preflight
@@ -662,7 +671,7 @@ if [[ "${RUN_HOST}" == "1" ]]; then
     "CTX_REMOTE_BOOTSTRAP_CONTRACT_REPORT=${host_report}" \
     "CTX_REMOTE_BOOTSTRAP_FIRST_TURN_REPORT=${host_first_turn}" \
     pnpm -C "${ROOT}/core/apps/desktop" test:automation:remote-bootstrap
-  host_status=$?
+  host_status="${RUN_LANE_STATUS}"
 else
   printf "%s\t%s\t%s\t%s\t%s\n" \
     "remote-host" \
@@ -688,7 +697,7 @@ if [[ "${RUN_CONTAINER}" == "1" ]]; then
     "CTX_AUTOMATION_REMOTE_REQUIRE_FIRST_TURN_SUCCESS=${REQUIRE_FIRST_TURN_SUCCESS}" \
     "CTX_REMOTE_CONTAINER_CONTRACT_REPORT=${container_report}" \
     pnpm -C "${ROOT}/core/apps/desktop" test:automation:remote-container-contract
-  container_status=$?
+  container_status="${RUN_LANE_STATUS}"
 fi
 
 {

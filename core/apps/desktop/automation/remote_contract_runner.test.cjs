@@ -58,3 +58,38 @@ test("remote contracts runner fails strict preflight with explicit missing env o
     fs.rmSync(artifactDir, { recursive: true, force: true });
   }
 });
+
+test("remote contracts runner writes top-level summary after failed host lane", () => {
+  const artifactDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-remote-runner-failed-host-"));
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-remote-runner-bin-"));
+  try {
+    fs.writeFileSync(path.join(binDir, "corepack"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    fs.writeFileSync(path.join(binDir, "pnpm"), "#!/bin/sh\nexit 17\n", { mode: 0o755 });
+    const result = runRunner(
+      ["--artifacts-dir", artifactDir, "--run-host", "1", "--run-container", "0"],
+      {
+        PATH: `${binDir}${path.delimiter}${process.env.PATH || ""}`,
+        CTX_AUTOMATION_REMOTE_HOST: "builder@example.com",
+        CTX_AUTOMATION_REMOTE_DATA_DIR: "/tmp/ctx-remote-host",
+      },
+    );
+
+    assert.equal(result.status, 17);
+    const summaryTxt = fs.readFileSync(path.join(artifactDir, "remote-real-ci-summary.txt"), "utf8");
+    const summaryTsv = fs.readFileSync(path.join(artifactDir, "summary.tsv"), "utf8");
+    assert.match(summaryTxt, /host_status=17/);
+    assert.match(summaryTxt, /container_status=0/);
+    assert.match(summaryTsv, /remote-host\tfail\t17/);
+    assert.equal(
+      fs.existsSync(path.join(artifactDir, "remote-host", "wdio-attempt-1.log")),
+      true,
+    );
+    assert.equal(
+      fs.existsSync(path.join(artifactDir, "remote-host", "automation-attempt-1", "launch-env.txt")),
+      true,
+    );
+  } finally {
+    fs.rmSync(artifactDir, { recursive: true, force: true });
+    fs.rmSync(binDir, { recursive: true, force: true });
+  }
+});

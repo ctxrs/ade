@@ -126,6 +126,124 @@ async fn session_head_rehydrates_after_cache_eviction() {
 }
 
 #[tokio::test]
+async fn session_head_min_event_seq_bypasses_stale_active_snapshot_cache() {
+    let temp = tempdir().unwrap();
+    let stores = common::setup_store(temp.path()).await;
+    let state = common::build_state(
+        temp.path(),
+        stores.clone(),
+        common::fake_providers(),
+        "http://localhost",
+    );
+
+    let workspace_root = temp.path().join("workspace");
+    tokio::fs::create_dir_all(&workspace_root).await.unwrap();
+
+    let workspace = state
+        .global_store()
+        .create_workspace(
+            "ws".to_string(),
+            workspace_root.to_string_lossy().to_string(),
+            VcsKind::Git,
+        )
+        .await
+        .unwrap();
+    let store = state.store_for_workspace(workspace.id).await.unwrap();
+    let worktree = store
+        .create_worktree(
+            workspace.id,
+            workspace_root.to_string_lossy().to_string(),
+            "deadbeef".to_string(),
+            None,
+        )
+        .await
+        .unwrap();
+    let task = store
+        .create_task(workspace.id, "task".to_string(), None)
+        .await
+        .unwrap();
+    let session = store
+        .create_session(
+            task.id,
+            workspace.id,
+            worktree.id,
+            ctx_core::models::ExecutionEnvironment::Host,
+            "fake".to_string(),
+            "model".to_string(),
+            "implementer".to_string(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    state
+        .global_store()
+        .upsert_workspace_session_index(session.id, workspace.id)
+        .await
+        .unwrap();
+
+    let cached_head = store
+        .get_session_head_snapshot(session.id, 60, true)
+        .await
+        .unwrap()
+        .expect("session head snapshot");
+    state
+        .workspaces
+        .workspace_active_snapshot
+        .update_session_head(cached_head.clone())
+        .await;
+
+    store
+        .append_session_event(
+            session.id,
+            None,
+            None,
+            SessionEventType::Notice,
+            serde_json::json!({ "kind": "cache_boundary", "message": "newer than cache" }),
+        )
+        .await
+        .unwrap();
+    let full_head = store
+        .get_session_head_snapshot(session.id, 60, true)
+        .await
+        .unwrap()
+        .expect("rebuilt session head snapshot");
+    assert!(
+        full_head.last_event_seq > cached_head.last_event_seq,
+        "test setup needs a stale active snapshot cache"
+    );
+
+    let app = common::router(state.clone());
+    let stale_req = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/api/sessions/{}/head?include_events=true&limit=60",
+            session.id.0
+        ))
+        .body(Body::empty())
+        .unwrap();
+    let (stale_status, stale_head): (StatusCode, SessionHeadSnapshot) =
+        common::oneshot_json(&app, stale_req).await;
+    assert_eq!(stale_status, StatusCode::OK);
+    assert_eq!(stale_head.last_event_seq, cached_head.last_event_seq);
+
+    let repair_req = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/api/sessions/{}/head?include_events=true&limit=60&min_event_seq={}",
+            session.id.0, full_head.last_event_seq
+        ))
+        .body(Body::empty())
+        .unwrap();
+    let (repair_status, repair_head): (StatusCode, SessionHeadSnapshot) =
+        common::oneshot_json(&app, repair_req).await;
+    assert_eq!(repair_status, StatusCode::OK);
+    assert_eq!(repair_head.session.id, session.id);
+    assert_eq!(repair_head.last_event_seq, full_head.last_event_seq);
+}
+
+#[tokio::test]
 async fn include_events_session_heads_bypass_compact_cache() {
     let temp = tempdir().unwrap();
     let stores = common::setup_store(temp.path()).await;

@@ -58,6 +58,7 @@ type SessionReplicaHydrateOptions = {
   includeEvents?: boolean;
   coalesce?: boolean;
   gapRepairEpoch?: number;
+  minEventSeq?: number;
 };
 
 const SEEDED_GAP_HTTP_REPAIR_GRACE_MS = 100;
@@ -261,6 +262,7 @@ const hydrateSessionGapRepair = (
     includeEvents: host.config.recoveryHeadIncludeEvents ?? false,
     coalesce: true,
     gapRepairEpoch: baseline?.epoch,
+    minEventSeq: baseline?.lastEventSeq ?? undefined,
   });
 };
 
