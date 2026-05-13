@@ -19,7 +19,8 @@ pub(in crate::api) async fn delete_workspace(
     state.core.stores.begin_workspace_delete(id).await;
     let delete_result = async {
         for worktree in &worktrees {
-            if let Err(err) = vcs_hooks::cleanup_worktree_hooks(&state, &workspace, worktree).await
+            if let Err(err) =
+                vcs_hooks::cleanup_worktree_hooks(state.as_ref(), &workspace, worktree).await
             {
                 tracing::warn!(
                     workspace_id = %id.0,

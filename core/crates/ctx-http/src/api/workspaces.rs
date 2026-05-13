@@ -33,7 +33,7 @@ use super::shared::{
     store_for_existing_workspace_status,
 };
 use crate::daemon::execution_effective;
-use crate::daemon::workspaces::{vcs_hooks, WorkspaceHydrationError, WorkspaceHydrationErrorKind};
+use crate::daemon::workspaces::{WorkspaceHydrationError, WorkspaceHydrationErrorKind};
 use crate::daemon::AppState;
 use ctx_core::ids::{WorkspaceId, WorktreeId};
 use ctx_core::models::{
@@ -45,6 +45,7 @@ use ctx_observability::telemetry::TelemetryEvent;
 use ctx_workspace_attachments::AttachmentConfig;
 use ctx_workspace_config as workspace_config;
 use ctx_workspace_container::WorkspaceContainerStatus as HarnessContainerStatus;
+use ctx_workspace_services::vcs_hooks;
 
 #[derive(Debug, Deserialize)]
 pub(super) struct UpdateMergeQueueConfigReq {

@@ -91,7 +91,7 @@ pub(in crate::api) async fn unarchive_task(
             tracing::warn!(task_id = %task_id.0, "worktree bootstrap failed: {e:?}");
         }
         if let Err(e) =
-            vcs_hooks::ensure_task_commit_hook(&state, &workspace, worktree, task_id).await
+            vcs_hooks::ensure_task_commit_hook(state.as_ref(), &workspace, worktree, task_id).await
         {
             tracing::warn!(
                 task_id = %task_id.0,

@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use crate::api::sessions::diff_worktree_summary_for_session;
-use crate::daemon::workspaces::vcs_hooks;
 use crate::daemon::AppState;
 use ctx_core::ids::TaskId;
 use ctx_core::models::{VcsKind, Workspace, Worktree};
 use ctx_settings_model::ExecutionSettings;
+use ctx_workspace_services::vcs_hooks;
 use ctx_workspace_services::worktree_vcs::{
     effective_worktree_vcs_kind, WorktreeVcsCommitLookupSource,
 };
@@ -108,7 +108,7 @@ pub(in crate::daemon::sessions::subagents) async fn create_subagent_worktree(
     .await
     .map_err(internal_api_error)?;
     if let Err(error) =
-        vcs_hooks::ensure_task_commit_hook(state, workspace, &worktree, task_id).await
+        vcs_hooks::ensure_task_commit_hook(state.as_ref(), workspace, &worktree, task_id).await
     {
         tracing::warn!(
             task_id = %task_id.0,

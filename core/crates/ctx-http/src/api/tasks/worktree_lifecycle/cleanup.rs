@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use ctx_core::ids::TaskId;
 use ctx_core::models::{SandboxBinding, Workspace, Worktree};
+use ctx_workspace_services::vcs_hooks;
 
-use crate::daemon::workspaces::vcs_hooks;
 use crate::daemon::AppState;
 use branches::{cleanup_collected_worktree_branches, WorktreeBranchCleanup};
 use managed::cleanup_managed_worktree_target;

@@ -40,7 +40,6 @@ use super::sessions::schedule_session_title_generation;
 use super::shared::session_root_kind_for_worktree;
 use crate::daemon::execution_effective;
 use crate::daemon::scheduler::SchedulerCommand;
-use crate::daemon::workspaces::vcs_hooks;
 use crate::daemon::AppState;
 use ctx_core::ids::{RunId, SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
@@ -52,6 +51,7 @@ use ctx_observability::ops_events::OpsEvent;
 use ctx_observability::telemetry::TelemetryEvent;
 use ctx_settings_model::{ExecutionMode, ExecutionSettings};
 use ctx_store::{is_unique_constraint_violation, Store};
+use ctx_workspace_services::vcs_hooks;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -1,4 +1,3 @@
-use super::super::{cleanup_worktree_hooks, ensure_task_commit_hook};
 use super::fixtures::{
     git, init_git_workspace, save_test_execution_settings, test_state, write_sandbox_exec_shim,
     EnvVarGuard,
@@ -15,8 +14,8 @@ use ctx_settings_model::{
 };
 use ctx_workspace_container::workspace_container_name;
 use ctx_workspace_services::vcs_hooks::{
-    get_git_config, set_git_config, worktree_hooks_dir, CORE_HOOKS_PATH_KEY,
-    CTX_PREV_HOOKS_PATH_KEY, CTX_TASK_ID_KEY,
+    cleanup_worktree_hooks, ensure_task_commit_hook, get_git_config, set_git_config,
+    worktree_hooks_dir, CORE_HOOKS_PATH_KEY, CTX_PREV_HOOKS_PATH_KEY, CTX_TASK_ID_KEY,
 };
 use ctx_workspace_services::worktree_vcs::managed_worktree_path;
 
@@ -131,7 +130,7 @@ async fn sandbox_hooks_live_under_external_vcs_hooks_root_and_cleanup_restores_c
         &sandbox_cli.to_string_lossy(),
     );
 
-    ensure_task_commit_hook(&state, &workspace, &worktree, task_id)
+    ensure_task_commit_hook(state.as_ref(), &workspace, &worktree, task_id)
         .await
         .expect("install sandbox task hook");
 
@@ -169,7 +168,7 @@ async fn sandbox_hooks_live_under_external_vcs_hooks_root_and_cleanup_restores_c
         Some(original_hooks.to_string_lossy().to_string())
     );
 
-    cleanup_worktree_hooks(&state, &workspace, &worktree)
+    cleanup_worktree_hooks(state.as_ref(), &workspace, &worktree)
         .await
         .expect("cleanup sandbox task hook");
 
