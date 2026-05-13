@@ -1,4 +1,4 @@
-use super::common::{bad_request, internal_error, provider_account_delete_error, unknown_account};
+use super::common::{internal_error, provider_account_mutation_error, unknown_account};
 use super::*;
 
 pub(crate) async fn gemini_accounts_response(
@@ -25,21 +25,15 @@ pub(crate) async fn upsert_gemini_account(
     State(state): State<Arc<AppState>>,
     Json(req): Json<GeminiAccountUpsertReq>,
 ) -> Result<Json<GeminiAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    provider_accounts::add_gemini_account(
-        &state.core.data_root,
+    crate::daemon::providers::add_gemini_account(
+        &state,
         req.label,
         req.oauth_creds_json,
         req.google_accounts_json,
         req.email,
     )
     .await
-    .map_err(bad_request)?;
-    crate::daemon::providers::restart_gemini_providers_for_auth_change(
-        &state,
-        "gemini auth updated",
-    )
-    .await
-    .map_err(internal_error)?;
+    .map_err(provider_account_mutation_error)?;
     Ok(Json(
         gemini_accounts_response(&state)
             .await
@@ -59,15 +53,9 @@ pub(crate) async fn set_gemini_active_account(
             return Err(unknown_account());
         }
     }
-    provider_accounts::set_active_gemini_account(&state.core.data_root, req.account_id)
+    crate::daemon::providers::set_active_gemini_account(&state, req.account_id)
         .await
-        .map_err(bad_request)?;
-    crate::daemon::providers::restart_gemini_providers_for_auth_change(
-        &state,
-        "gemini auth updated",
-    )
-    .await
-    .map_err(internal_error)?;
+        .map_err(provider_account_mutation_error)?;
     Ok(Json(
         gemini_accounts_response(&state)
             .await
@@ -79,15 +67,9 @@ pub(crate) async fn delete_gemini_account(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<GeminiAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    provider_accounts::remove_gemini_account(&state.core.data_root, &id)
+    crate::daemon::providers::remove_gemini_account(&state, &id)
         .await
-        .map_err(provider_account_delete_error)?;
-    crate::daemon::providers::restart_gemini_providers_for_auth_change(
-        &state,
-        "gemini auth updated",
-    )
-    .await
-    .map_err(internal_error)?;
+        .map_err(provider_account_mutation_error)?;
     Ok(Json(
         gemini_accounts_response(&state)
             .await

@@ -4,7 +4,8 @@ use super::*;
 pub(crate) async fn amp_accounts_response(
     state: &Arc<AppState>,
 ) -> anyhow::Result<AmpAccountsResponse> {
-    let registry = crate::daemon::providers::load_amp_account_registry(state).await?;
+    let registry =
+        crate::daemon::providers::ensure_amp_account_registry_from_runtime_auth(state).await?;
     Ok(AmpAccountsResponse {
         active_account_id: registry.active_account_id,
         accounts: registry.accounts,

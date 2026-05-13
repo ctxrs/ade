@@ -1,4 +1,4 @@
-use super::common::{bad_request, internal_error, provider_account_delete_error};
+use super::common::{internal_error, provider_account_mutation_error};
 use super::*;
 
 #[path = "codex/usage.rs"]
@@ -9,16 +9,19 @@ pub(crate) use usage::get_codex_accounts_usage;
 pub(crate) async fn codex_accounts_response(
     state: &Arc<AppState>,
 ) -> anyhow::Result<CodexAccountsResponse> {
-    let registry = crate::daemon::providers::load_codex_account_registry(state).await?;
-    let logins = state
-        .providers
-        .with_codex_login_sessions(|map| map.values().cloned().collect::<Vec<_>>())
-        .await;
-    Ok(CodexAccountsResponse {
-        active_account_id: registry.active_account_id,
-        accounts: registry.accounts,
-        logins,
-    })
+    crate::daemon::providers::load_codex_accounts_snapshot(state)
+        .await
+        .map(codex_accounts_response_from_snapshot)
+}
+
+fn codex_accounts_response_from_snapshot(
+    snapshot: crate::daemon::providers::CodexAccountsSnapshot,
+) -> CodexAccountsResponse {
+    CodexAccountsResponse {
+        active_account_id: snapshot.active_account_id,
+        accounts: snapshot.accounts,
+        logins: snapshot.logins,
+    }
 }
 
 pub(crate) async fn list_codex_accounts(
@@ -35,7 +38,7 @@ pub(crate) async fn probe_host_codex_import(
     State(_state): State<Arc<AppState>>,
 ) -> Result<Json<provider_accounts::CodexHostImportProbe>, (StatusCode, Json<ApiErrorResp>)> {
     Ok(Json(
-        provider_accounts::probe_host_codex_auth_candidate().await,
+        crate::daemon::providers::probe_host_codex_auth_candidate().await,
     ))
 }
 
@@ -43,12 +46,9 @@ pub(crate) async fn import_host_codex_auth(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CodexHostImportReq>,
 ) -> Result<Json<CodexAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    provider_accounts::import_host_codex_auth_to_secret_store(&state.core.data_root, req.label)
+    crate::daemon::providers::import_host_codex_auth(&state, req.label)
         .await
-        .map_err(bad_request)?;
-    crate::daemon::providers::restart_codex_providers_for_auth_change(&state, "codex auth updated")
-        .await
-        .map_err(internal_error)?;
+        .map_err(provider_account_mutation_error)?;
     Ok(Json(
         codex_accounts_response(&state)
             .await
@@ -73,55 +73,41 @@ pub(crate) async fn set_codex_active_account(
             ));
         }
     }
-    let registry =
-        provider_accounts::set_active_codex_account(&state.core.data_root, req.account_id)
-            .await
-            .map_err(|e| {
-                let msg = e.to_string();
-                let status = if msg.contains("api_shape=openai_responses")
-                    || msg.contains("auth_type=bearer")
-                    || msg.contains("unknown account")
-                {
-                    StatusCode::BAD_REQUEST
-                } else {
-                    StatusCode::INTERNAL_SERVER_ERROR
-                };
-                (status, Json(ApiErrorResp { error: msg }))
-            })?;
-    crate::daemon::providers::restart_codex_providers_for_auth_change(&state, "codex auth updated")
+    let snapshot = crate::daemon::providers::set_active_codex_account(&state, req.account_id)
         .await
-        .map_err(internal_error)?;
-    let logins = state
-        .providers
-        .with_codex_login_sessions(|map| map.values().cloned().collect::<Vec<_>>())
-        .await;
-    Ok(Json(CodexAccountsResponse {
-        active_account_id: registry.active_account_id,
-        accounts: registry.accounts,
-        logins,
-    }))
+        .map_err(codex_account_set_active_error)?;
+    Ok(Json(codex_accounts_response_from_snapshot(snapshot)))
 }
 
 pub(crate) async fn delete_codex_account(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<CodexAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    let registry = provider_accounts::remove_codex_account(&state.core.data_root, &id)
+    let snapshot = crate::daemon::providers::remove_codex_account(&state, &id)
         .await
-        .map_err(provider_account_delete_error)?;
-    crate::daemon::providers::restart_codex_providers_for_auth_change(&state, "codex auth updated")
-        .await
-        .map_err(internal_error)?;
-    let logins = state
-        .providers
-        .with_codex_login_sessions(|map| {
-            map.remove(&id);
-            map.values().cloned().collect::<Vec<_>>()
-        })
-        .await;
-    Ok(Json(CodexAccountsResponse {
-        active_account_id: registry.active_account_id,
-        accounts: registry.accounts,
-        logins,
-    }))
+        .map_err(provider_account_mutation_error)?;
+    Ok(Json(codex_accounts_response_from_snapshot(snapshot)))
+}
+
+fn codex_account_set_active_error(
+    error: crate::daemon::providers::ProviderAccountMutationError,
+) -> (StatusCode, Json<ApiErrorResp>) {
+    match error {
+        crate::daemon::providers::ProviderAccountMutationError::BadRequest(error) => {
+            let msg = error.to_string();
+            let status = if msg.contains("api_shape=openai_responses")
+                || msg.contains("auth_type=bearer")
+                || msg.contains("unknown account")
+            {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            (status, Json(ApiErrorResp { error: msg }))
+        }
+        crate::daemon::providers::ProviderAccountMutationError::Delete(error)
+        | crate::daemon::providers::ProviderAccountMutationError::Internal(error) => {
+            internal_error(error)
+        }
+    }
 }

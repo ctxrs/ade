@@ -12,6 +12,20 @@ pub(super) fn provider_account_delete_error(
     (status, Json(ApiErrorResp { error }))
 }
 
+pub(super) fn provider_account_mutation_error(
+    err: crate::daemon::providers::ProviderAccountMutationError,
+) -> (StatusCode, Json<ApiErrorResp>) {
+    match err {
+        crate::daemon::providers::ProviderAccountMutationError::BadRequest(err) => bad_request(err),
+        crate::daemon::providers::ProviderAccountMutationError::Delete(err) => {
+            provider_account_delete_error(err)
+        }
+        crate::daemon::providers::ProviderAccountMutationError::Internal(err) => {
+            internal_error(err)
+        }
+    }
+}
+
 pub(super) fn bad_request(err: impl ToString) -> (StatusCode, Json<ApiErrorResp>) {
     (
         StatusCode::BAD_REQUEST,

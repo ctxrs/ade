@@ -26,30 +26,24 @@ pub(super) async fn complete_qwen_login_if_credentials_exist(
         return true;
     }
 
-    let added = provider_accounts::add_qwen_account(
-        &state.core.data_root,
+    let added = crate::daemon::providers::add_qwen_account_for_login(
+        state,
         label.clone(),
         oauth_raw,
         observed_email,
     )
     .await;
     match added {
-        Ok(registry) => {
-            let restart_result = crate::daemon::providers::restart_qwen_providers_for_auth_change(
-                state,
-                "qwen auth updated",
-            )
-            .await;
-            status::set_completion_status(
-                state,
-                login_id,
-                registry.active_account_id.clone(),
-                restart_result,
-            )
-            .await;
+        Ok(active_account_id) => {
+            status::set_completion_status(state, login_id, active_account_id, Ok(())).await;
         }
         Err(err) => {
-            status::set_failed(state, login_id, logs::redact_sensitive(&err.to_string())).await;
+            status::set_failed(
+                state,
+                login_id,
+                logs::redact_sensitive(&err.auth_login_error_message()),
+            )
+            .await;
         }
     }
     status::cleanup_login_home(&paths.login_home).await;

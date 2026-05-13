@@ -2,7 +2,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ctx_observability::logs;
-use ctx_provider_accounts as provider_accounts;
 
 use super::oauth;
 use crate::daemon::AppState;
@@ -36,38 +35,22 @@ pub(super) async fn monitor_kimi_login(
 
         match oauth::poll_kimi_token(&device_code).await {
             Ok(Ok(token)) => {
-                let added = provider_accounts::add_kimi_oauth_account(
-                    &state.core.data_root,
+                let added = crate::daemon::providers::add_kimi_oauth_account_for_login(
+                    &state,
                     label.clone(),
                     oauth::kimi_token_json(&token),
                     None,
                 )
                 .await;
                 match added {
-                    Ok(registry) => {
-                        let restart_result =
-                            crate::daemon::providers::restart_kimi_providers_for_auth_change(
-                                &state,
-                                "kimi auth updated",
-                            )
-                            .await;
+                    Ok(active_account_id) => {
                         state
                             .providers
                             .with_kimi_login_sessions(|map| {
                                 if let Some(entry) = map.get_mut(&login_id) {
-                                    entry.account_id = registry.active_account_id.clone();
-                                    match restart_result {
-                                        Ok(()) => {
-                                            entry.status = "success".to_string();
-                                            entry.error = None;
-                                        }
-                                        Err(err) => {
-                                            entry.status = "failed".to_string();
-                                            entry.error = Some(logs::redact_sensitive(&format!(
-                                                "auth saved but provider restart failed: {err:#}"
-                                            )));
-                                        }
-                                    }
+                                    entry.account_id = active_account_id.clone();
+                                    entry.status = "success".to_string();
+                                    entry.error = None;
                                 }
                             })
                             .await;
@@ -78,7 +61,9 @@ pub(super) async fn monitor_kimi_login(
                             .with_kimi_login_sessions(|map| {
                                 if let Some(entry) = map.get_mut(&login_id) {
                                     entry.status = "failed".to_string();
-                                    entry.error = Some(logs::redact_sensitive(&err.to_string()));
+                                    entry.error = Some(logs::redact_sensitive(
+                                        &err.auth_login_error_message(),
+                                    ));
                                 }
                             })
                             .await;

@@ -5,7 +5,6 @@ use super::status;
 use crate::api::providers::login::first_email_from_google_accounts;
 use crate::daemon::AppState;
 use ctx_observability::logs;
-use ctx_provider_accounts as provider_accounts;
 
 pub(super) async fn complete_gemini_login_if_credentials_exist(
     state: &Arc<AppState>,
@@ -39,8 +38,8 @@ pub(super) async fn complete_gemini_login_if_credentials_exist(
     let email = google_accounts_value
         .as_ref()
         .and_then(first_email_from_google_accounts);
-    let added = provider_accounts::add_gemini_account(
-        &state.core.data_root,
+    let added = crate::daemon::providers::add_gemini_account_for_login(
+        state,
         label.clone(),
         oauth_raw,
         google_accounts_raw,
@@ -48,36 +47,25 @@ pub(super) async fn complete_gemini_login_if_credentials_exist(
     )
     .await;
     match added {
-        Ok(registry) => {
-            let restart_result =
-                crate::daemon::providers::restart_gemini_providers_for_auth_change(
-                    state,
-                    "gemini auth updated",
-                )
-                .await;
+        Ok(active_account_id) => {
             state
                 .providers
                 .with_gemini_login_sessions(|map| {
                     if let Some(entry) = map.get_mut(login_id) {
-                        entry.account_id = registry.active_account_id.clone();
-                        match restart_result {
-                            Ok(()) => {
-                                entry.status = "success".to_string();
-                                entry.error = None;
-                            }
-                            Err(err) => {
-                                entry.status = "failed".to_string();
-                                entry.error = Some(logs::redact_sensitive(&format!(
-                                    "auth saved but provider restart failed: {err:#}"
-                                )));
-                            }
-                        }
+                        entry.account_id = active_account_id.clone();
+                        entry.status = "success".to_string();
+                        entry.error = None;
                     }
                 })
                 .await;
         }
         Err(err) => {
-            status::set_failed(state, login_id, logs::redact_sensitive(&err.to_string())).await;
+            status::set_failed(
+                state,
+                login_id,
+                logs::redact_sensitive(&err.auth_login_error_message()),
+            )
+            .await;
         }
     }
     status::cleanup_login_home(&paths.login_home).await;
