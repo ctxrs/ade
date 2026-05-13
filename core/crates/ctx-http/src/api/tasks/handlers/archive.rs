@@ -98,7 +98,7 @@ pub(in crate::api) async fn archive_task(
             &workspace,
             task_id,
             &cleanup_targets,
-            crate::api::tasks::BranchCleanupErrorMode::Report,
+            BranchCleanupErrorMode::Report,
         )
         .await,
     );

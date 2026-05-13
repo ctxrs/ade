@@ -1,4 +1,7 @@
 use super::*;
+use crate::daemon::sessions::title_generation::{
+    configured_title_generation_settings, maybe_generate_session_title,
+};
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct GenerateSessionTitleReq {

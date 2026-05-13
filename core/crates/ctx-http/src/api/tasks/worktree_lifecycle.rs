@@ -1,9 +1,5 @@
 use super::*;
 
-#[path = "worktree_lifecycle/cleanup.rs"]
-mod cleanup;
-#[path = "worktree_lifecycle/paths.rs"]
-mod paths;
 #[path = "worktree_lifecycle/persistence.rs"]
 mod persistence;
 #[path = "worktree_lifecycle/retry.rs"]
@@ -11,10 +7,6 @@ mod retry;
 #[path = "worktree_lifecycle/sandbox_binding.rs"]
 mod sandbox_binding;
 
-pub(crate) use cleanup::{
-    cleanup_task_worktrees, BranchCleanupErrorMode, TaskWorktreeCleanupTarget,
-};
-pub(crate) use paths::managed_worktree_root;
 pub(crate) use persistence::{persist_provisioned_worktree, provision_worktree_for_execution};
 pub(crate) use retry::retry_global_index_write;
 pub(crate) use sandbox_binding::{

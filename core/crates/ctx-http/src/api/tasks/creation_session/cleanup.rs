@@ -41,7 +41,7 @@ pub(super) async fn cleanup_orphaned_provisioned_worktree(
         workspace,
         task_id,
         &cleanup_targets,
-        crate::api::tasks::BranchCleanupErrorMode::Report,
+        BranchCleanupErrorMode::Report,
     )
     .await;
     if !cleanup_errors.is_empty() {

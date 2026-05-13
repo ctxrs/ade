@@ -71,11 +71,7 @@ pub(in crate::api::sessions) use store_lookup::{
 mod titles_and_modes;
 #[cfg(test)]
 use ctx_session_service::title_generation;
-pub(super) use titles_and_modes::{
-    generate_session_title, schedule_session_title_generation, set_session_mode, set_session_model,
-};
-#[cfg(test)]
-use titles_and_modes::{generate_title_for_prompt, TitleGenerationSource};
+pub(super) use titles_and_modes::{generate_session_title, set_session_mode, set_session_model};
 
 #[cfg(test)]
 mod tests;

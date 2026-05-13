@@ -1,5 +1,9 @@
 use std::sync::Arc;
 
+use crate::daemon::workspaces::{
+    cleanup_task_worktrees, managed_worktree_root, BranchCleanupErrorMode,
+    TaskWorktreeCleanupTarget,
+};
 use crate::daemon::AppState;
 
 mod context;
@@ -28,13 +32,13 @@ pub(in crate::daemon::sessions::subagents) async fn cleanup_archived_subagent_wo
         return true;
     };
     let mut cleanup_failed = cleanup_context.cleanup_failed;
-    let cleanup_errors = crate::api::tasks::cleanup_task_worktrees(
+    let cleanup_errors = cleanup_task_worktrees(
         state.as_ref(),
         &cleanup_context.workspace,
         child.task_id,
-        &[crate::api::tasks::TaskWorktreeCleanupTarget {
-            managed_root: crate::api::tasks::managed_worktree_root(
-                state,
+        &[TaskWorktreeCleanupTarget {
+            managed_root: managed_worktree_root(
+                state.as_ref(),
                 &cleanup_context.workspace,
                 &cleanup_context.worktree,
             ),
@@ -42,7 +46,7 @@ pub(in crate::daemon::sessions::subagents) async fn cleanup_archived_subagent_wo
             worktree: cleanup_context.worktree,
             destroy_worktree_on_cleanup: true,
         }],
-        crate::api::tasks::BranchCleanupErrorMode::Report,
+        BranchCleanupErrorMode::Report,
     )
     .await;
     if !cleanup_errors.is_empty() {

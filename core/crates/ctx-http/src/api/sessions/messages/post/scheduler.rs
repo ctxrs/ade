@@ -1,5 +1,6 @@
 use super::super::*;
 use super::persistence::PersistedPostMessage;
+use crate::daemon::sessions::title_generation::schedule_session_title_generation;
 use ctx_store::Store;
 
 pub(super) async fn enqueue_message_for_scheduler(

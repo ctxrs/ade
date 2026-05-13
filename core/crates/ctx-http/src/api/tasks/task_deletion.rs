@@ -34,7 +34,7 @@ pub(in crate::api) async fn delete_loaded_task_with_cleanup(
         workspace,
         task.id,
         &cleanup_targets,
-        crate::api::tasks::BranchCleanupErrorMode::BestEffort,
+        BranchCleanupErrorMode::BestEffort,
     )
     .await;
     if !cleanup_errors.is_empty() {

@@ -21,6 +21,10 @@ mod task_title;
 mod worktree_bootstrap;
 #[path = "tasks/worktree_lifecycle.rs"]
 mod worktree_lifecycle;
+use crate::daemon::workspaces::{
+    cleanup_task_worktrees, managed_worktree_root, BranchCleanupErrorMode,
+    TaskWorktreeCleanupTarget,
+};
 pub(in crate::api) use creation::*;
 pub(crate) use execution::resolve_existing_worktree_execution;
 #[allow(unused_imports)]
@@ -29,17 +33,16 @@ pub(in crate::api) use handlers::*;
 pub(super) use task_deletion::{delete_loaded_task_with_cleanup, delete_task};
 pub(super) use task_title::update_task_title;
 pub(crate) use worktree_lifecycle::{
-    cleanup_task_worktrees, execution_environment_from_settings, managed_worktree_root,
-    persist_provisioned_worktree, provision_worktree_for_execution,
-    rematerialize_sandbox_binding_for_worktree, retry_global_index_write, BranchCleanupErrorMode,
-    TaskWorktreeCleanupTarget,
+    execution_environment_from_settings, persist_provisioned_worktree,
+    provision_worktree_for_execution, rematerialize_sandbox_binding_for_worktree,
+    retry_global_index_write,
 };
 
 use super::errors::ApiErrorResp;
-use super::sessions::schedule_session_title_generation;
 use super::shared::session_root_kind_for_worktree;
 use crate::daemon::execution_effective;
 use crate::daemon::scheduler::SchedulerCommand;
+use crate::daemon::sessions::title_generation::schedule_session_title_generation;
 use crate::daemon::AppState;
 use ctx_core::ids::{RunId, SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{

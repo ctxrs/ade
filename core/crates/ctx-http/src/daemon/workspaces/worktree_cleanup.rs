@@ -3,17 +3,18 @@ use std::path::PathBuf;
 use ctx_core::ids::TaskId;
 use ctx_core::models::{SandboxBinding, Workspace, Worktree};
 use ctx_workspace_services::vcs_hooks;
+use ctx_workspace_services::worktree_vcs::matching_managed_worktree_path;
 
 use crate::daemon::AppState;
 use branches::{cleanup_collected_worktree_branches, WorktreeBranchCleanup};
 use managed::cleanup_managed_worktree_target;
 use sandbox::{cleanup_sandbox_materialization, SandboxCleanupOutcome};
 
-#[path = "cleanup/branches.rs"]
+#[path = "worktree_cleanup/branches.rs"]
 mod branches;
-#[path = "cleanup/managed.rs"]
+#[path = "worktree_cleanup/managed.rs"]
 mod managed;
-#[path = "cleanup/sandbox.rs"]
+#[path = "worktree_cleanup/sandbox.rs"]
 mod sandbox;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -28,6 +29,19 @@ pub(crate) struct TaskWorktreeCleanupTarget {
     pub sandbox_binding: Option<SandboxBinding>,
     pub managed_root: Option<PathBuf>,
     pub destroy_worktree_on_cleanup: bool,
+}
+
+pub(crate) fn managed_worktree_root(
+    state: &AppState,
+    workspace: &Workspace,
+    worktree: &Worktree,
+) -> Option<PathBuf> {
+    matching_managed_worktree_path(
+        &state.core.data_root,
+        workspace.id,
+        worktree.id,
+        PathBuf::from(&worktree.root_path),
+    )
 }
 
 pub(crate) async fn cleanup_task_worktrees(
