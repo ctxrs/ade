@@ -24,6 +24,7 @@ async fn subscription_resolution_filters_cross_workspace_session_references() {
             sessions: vec![
                 ctx_core::models::WorkspaceActiveSnapshotSessionSubscription {
                     session_id: session_b,
+                    intent: None,
                     replay: WorkspaceActiveSnapshotSessionReplay::Reset,
                 },
             ],

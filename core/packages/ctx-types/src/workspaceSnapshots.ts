@@ -389,8 +389,11 @@ export type WorkspaceActiveSnapshotEvent =
 
 export type WorkspaceActiveSnapshotSessionSubscription = {
   session_id: string;
+  intent?: WorkspaceActiveSnapshotSessionIntent;
   replay: WorkspaceActiveSnapshotSessionReplay;
 };
+
+export type WorkspaceActiveSnapshotSessionIntent = "head" | "replay";
 
 export type WorkspaceActiveSnapshotSessionReplay =
   | {

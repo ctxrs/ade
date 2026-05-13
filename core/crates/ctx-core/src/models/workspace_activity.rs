@@ -443,7 +443,16 @@ pub enum WorkspaceActiveSnapshotSessionReplay {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WorkspaceActiveSnapshotSessionSubscription {
     pub session_id: SessionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intent: Option<WorkspaceActiveSnapshotSessionIntent>,
     pub replay: WorkspaceActiveSnapshotSessionReplay,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceActiveSnapshotSessionIntent {
+    Head,
+    Replay,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

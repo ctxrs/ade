@@ -1,5 +1,5 @@
 import type { WorkspaceActiveSnapshotEvent } from "@ctx/types";
-import { getDaemonClientConfig } from "../../api/client";
+import { getDaemonClientConfig, recordClientCounterMetric } from "../../api/client";
 import type {
   WorkspaceActiveSnapshotCommand,
   WorkspaceActiveSnapshotPatch,
@@ -28,6 +28,7 @@ export type WorkspaceActiveSnapshotControlHost = {
   wsBaseUrlOverride: string | null;
   authTokenOverride: string | null;
   canonicalStreamUrl: string | null;
+  lastSubscriptionKey: string | null;
   workspaceId: string;
   subscribedSessions: SessionSubscriptionCursor[];
   foregroundSessionId: string | null;
@@ -116,6 +117,48 @@ const shouldFlushLiveSubscriptionUpdate = (
     }
   }
   return false;
+};
+
+const subscriptionCountBucket = (count: number): string => {
+  if (count <= 0) return "0";
+  if (count <= 5) return "1_5";
+  if (count <= 20) return "6_20";
+  if (count <= 50) return "21_50";
+  return "51_plus";
+};
+
+const recordSubscriptionFlushMetric = (
+  action: "sent" | "skipped",
+  reason: string,
+  requestSnapshot: boolean,
+  sessions: SessionSubscriptionCursor[],
+  foregroundSessionId: string | null,
+): void => {
+  let headCount = 0;
+  let replayCount = 0;
+  for (const session of sessions) {
+    const intent =
+      foregroundSessionId && session.sessionId === foregroundSessionId
+        ? "replay"
+        : session.replay.kind === "reset"
+          ? "replay"
+          : session.intent === "head"
+            ? "head"
+            : "replay";
+    if (intent === "head") {
+      headCount += 1;
+    } else {
+      replayCount += 1;
+    }
+  }
+  recordClientCounterMetric("workbench.workspace_subscription_flush_count", {
+    action,
+    reason,
+    request_snapshot: requestSnapshot ? "true" : "false",
+    session_count: subscriptionCountBucket(sessions.length),
+    head_count: subscriptionCountBucket(headCount),
+    replay_count: subscriptionCountBucket(replayCount),
+  });
 };
 
 export function unwrapEvent(value: unknown): unknown {
@@ -281,10 +324,41 @@ export function flushSubscriptions(
 ) {
   const ws = host.ws;
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  const { message, requestSnapshot } = buildWorkspaceActiveSubscribeMessage(
+  const built = buildWorkspaceActiveSubscribeMessage(
     reason,
     host.foregroundSessionId,
     host.subscribedSessions,
+  );
+  const forceSend =
+    reason === "ws_open" || reason === "reset_required" || reason === "snapshot_rev_reset";
+  if (!forceSend && host.subscribedSessions.length === 0 && !host.foregroundSessionId) {
+    recordSubscriptionFlushMetric(
+      "skipped",
+      reason,
+      built.requestSnapshot,
+      host.subscribedSessions,
+      host.foregroundSessionId,
+    );
+    return;
+  }
+  if (!forceSend && built.canonicalKey === host.lastSubscriptionKey) {
+    recordSubscriptionFlushMetric(
+      "skipped",
+      reason,
+      built.requestSnapshot,
+      host.subscribedSessions,
+      host.foregroundSessionId,
+    );
+    return;
+  }
+  host.lastSubscriptionKey = built.canonicalKey;
+  const { message, requestSnapshot } = built;
+  recordSubscriptionFlushMetric(
+    "sent",
+    reason,
+    requestSnapshot,
+    host.subscribedSessions,
+    host.foregroundSessionId,
   );
   if (requestSnapshot) {
     host.scheduleSnapshotWarning(reason);

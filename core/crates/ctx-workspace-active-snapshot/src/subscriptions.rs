@@ -4,8 +4,8 @@ use std::future::Future;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId};
 use ctx_core::models::{
     WorkspaceActiveSnapshotClientMessage, WorkspaceActiveSnapshotEvent,
-    WorkspaceActiveSnapshotSessionReplay, WorkspaceActiveSnapshotSubscribeScope,
-    WorkspaceActiveTaskSummary,
+    WorkspaceActiveSnapshotSessionIntent, WorkspaceActiveSnapshotSessionReplay,
+    WorkspaceActiveSnapshotSubscribeScope, WorkspaceActiveTaskSummary,
 };
 
 use crate::SessionReplayCursor;
@@ -22,6 +22,7 @@ pub enum ResolvedWorkspaceActiveSessionReplay {
 #[derive(Debug, PartialEq, Eq)]
 pub struct ResolvedWorkspaceActiveSessionSubscription {
     pub session_id: SessionId,
+    pub intent: WorkspaceActiveSnapshotSessionIntent,
     pub replay: ResolvedWorkspaceActiveSessionReplay,
 }
 
@@ -29,6 +30,7 @@ pub struct ResolvedWorkspaceActiveSessionSubscription {
 pub struct WorkspaceActiveSubscriptionState {
     pub active_scope: bool,
     pub explicit_sessions: HashSet<SessionId>,
+    pub replay_sessions: HashSet<SessionId>,
     pub active_task_sessions: HashMap<TaskId, SessionId>,
     pub foreground_session_ids: Option<HashSet<SessionId>>,
 }
@@ -136,6 +138,7 @@ where
 
     let mut resolved = HashSet::new();
     let mut replay_map: HashMap<SessionId, WorkspaceActiveSnapshotSessionReplay> = HashMap::new();
+    let mut intent_map: HashMap<SessionId, WorkspaceActiveSnapshotSessionIntent> = HashMap::new();
     let mut explicit_sessions = HashSet::new();
     let mut active_task_sessions = HashMap::new();
     let mut active_scope = false;
@@ -149,6 +152,14 @@ where
             continue;
         }
         replay_map.insert(sub.session_id, sub.replay);
+        intent_map.insert(
+            sub.session_id,
+            merge_session_intent(
+                intent_map.get(&sub.session_id).copied(),
+                sub.intent
+                    .unwrap_or(WorkspaceActiveSnapshotSessionIntent::Replay),
+            ),
+        );
         resolved.insert(sub.session_id);
         explicit_sessions.insert(sub.session_id);
     }
@@ -160,6 +171,13 @@ where
             continue;
         }
         resolved.insert(session_id);
+        intent_map.insert(
+            session_id,
+            merge_session_intent(
+                intent_map.get(&session_id).copied(),
+                WorkspaceActiveSnapshotSessionIntent::Replay,
+            ),
+        );
         explicit_sessions.insert(session_id);
     }
     if matches!(scope, Some(WorkspaceActiveSnapshotSubscribeScope::Active)) {
@@ -167,6 +185,9 @@ where
         for task in source.active_tasks(workspace_id).await {
             let session_id = primary_session_id_for_active_task(&task);
             resolved.insert(session_id);
+            intent_map
+                .entry(session_id)
+                .or_insert(WorkspaceActiveSnapshotSessionIntent::Head);
             active_task_sessions.insert(task.task.id, session_id);
         }
     }
@@ -176,6 +197,13 @@ where
             .await?
         {
             resolved.insert(primary_session_id);
+            intent_map.insert(
+                primary_session_id,
+                merge_session_intent(
+                    intent_map.get(&primary_session_id).copied(),
+                    WorkspaceActiveSnapshotSessionIntent::Replay,
+                ),
+            );
             explicit_sessions.insert(primary_session_id);
         }
     }
@@ -187,12 +215,25 @@ where
             let mut sessions = HashSet::new();
             sessions.insert(session_id);
             foreground_session_ids = Some(sessions);
+            resolved.insert(session_id);
+            explicit_sessions.insert(session_id);
+            intent_map.insert(
+                session_id,
+                merge_session_intent(
+                    intent_map.get(&session_id).copied(),
+                    WorkspaceActiveSnapshotSessionIntent::Replay,
+                ),
+            );
         }
     }
 
     let mut next = Vec::with_capacity(resolved.len());
     for session_id in resolved {
         let replay = replay_map.get(&session_id);
+        let intent = intent_map
+            .get(&session_id)
+            .copied()
+            .unwrap_or(WorkspaceActiveSnapshotSessionIntent::Replay);
         let existing_last_sent = existing.get(&session_id).copied();
         let current_tail = if matches!(
             replay,
@@ -204,7 +245,11 @@ where
             SessionReplayCursor::default()
         };
         let replay = resolve_session_replay(replay, existing_last_sent, current_tail);
-        next.push(ResolvedWorkspaceActiveSessionSubscription { session_id, replay });
+        next.push(ResolvedWorkspaceActiveSessionSubscription {
+            session_id,
+            intent,
+            replay,
+        });
     }
     let active_primary_session_ids = active_task_sessions
         .values()
@@ -227,6 +272,13 @@ where
     let subscription_state = WorkspaceActiveSubscriptionState {
         active_scope,
         explicit_sessions,
+        replay_sessions: next
+            .iter()
+            .filter_map(|subscription| {
+                (subscription.intent == WorkspaceActiveSnapshotSessionIntent::Replay)
+                    .then_some(subscription.session_id)
+            })
+            .collect(),
         active_task_sessions,
         foreground_session_ids,
     };
@@ -234,6 +286,19 @@ where
         sessions: next,
         state: subscription_state,
     })
+}
+
+fn merge_session_intent(
+    previous: Option<WorkspaceActiveSnapshotSessionIntent>,
+    next: WorkspaceActiveSnapshotSessionIntent,
+) -> WorkspaceActiveSnapshotSessionIntent {
+    match (previous, next) {
+        (Some(WorkspaceActiveSnapshotSessionIntent::Replay), _)
+        | (_, WorkspaceActiveSnapshotSessionIntent::Replay) => {
+            WorkspaceActiveSnapshotSessionIntent::Replay
+        }
+        _ => WorkspaceActiveSnapshotSessionIntent::Head,
+    }
 }
 
 pub fn resolve_session_replay(
@@ -532,12 +597,25 @@ mod tests {
             .iter()
             .map(|subscription| subscription.session_id)
             .collect::<Vec<_>>();
+        let ordered_intents = resolved
+            .sessions
+            .iter()
+            .map(|subscription| subscription.intent)
+            .collect::<Vec<_>>();
         assert_eq!(
             ordered_session_ids,
             vec![
                 foreground_session_id,
                 active_session_id,
                 background_session_id,
+            ]
+        );
+        assert_eq!(
+            ordered_intents,
+            vec![
+                WorkspaceActiveSnapshotSessionIntent::Replay,
+                WorkspaceActiveSnapshotSessionIntent::Head,
+                WorkspaceActiveSnapshotSessionIntent::Replay,
             ]
         );
     }

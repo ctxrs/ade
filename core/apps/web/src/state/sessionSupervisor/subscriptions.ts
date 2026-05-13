@@ -9,18 +9,27 @@ export function buildSubscribedSessions(
   subscribedSessionIds: string[],
   entries: Map<string, InternalEntry>,
   workspaceSessionHeadsById: Map<string, SessionHeadSnapshot>,
+  activeTaskSessionIds: string[] = [],
+  warmSessionIds: string[] = [],
 ): SessionSubscriptionCursor[] {
+  const activeTaskSessionSet = new Set(activeTaskSessionIds);
+  const warmSessionSet = new Set(warmSessionIds);
   return subscribedSessionIds.map((sessionId) => {
     const entry = entries.get(sessionId);
     const head = workspaceSessionHeadsById.get(sessionId);
     const headSeq = head?.last_event_seq;
     const headProjectionRev = head?.projection_rev;
+    const intent =
+      (entry?.refCount ?? 0) > 0 || (!activeTaskSessionSet.has(sessionId) && !warmSessionSet.has(sessionId))
+        ? "replay"
+        : "head";
     if (
       (entry?.freshness === "recovering" || entry?.loadState === "recovering") &&
       entry?.recoverySubscriptionPolicy !== "preserve"
     ) {
       return {
         sessionId,
+        intent: "replay",
         replay: { kind: "reset" },
       };
     }
@@ -30,6 +39,7 @@ export function buildSubscribedSessions(
     ) {
       return {
         sessionId,
+        intent,
         replay: { kind: "auto" },
       };
     }
@@ -47,6 +57,7 @@ export function buildSubscribedSessions(
           : null;
     return {
       sessionId,
+      intent,
       replay:
         typeof afterSeq === "number"
           ? {

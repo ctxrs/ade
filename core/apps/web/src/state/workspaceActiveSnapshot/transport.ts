@@ -16,13 +16,8 @@ export const shouldRequestWorkspaceSnapshot = (reason: string): boolean => {
   switch (reason) {
     case "ws_open":
     case "reset_required":
-    case "active_task_upsert":
-    case "session_gap":
     case "snapshot_rev_reset":
     case "session_ids":
-    case "stream_seq_gap":
-    case "stream_seq_reset":
-    case "foreground_session":
       return true;
     default:
       return false;

@@ -1,12 +1,50 @@
 use super::lifecycle::{clear_runtime_queues, queue_workspace_stream_reset};
 use super::*;
 use crate::daemon::workspaces::stream::resolve_workspace_active_snapshot_subscriptions;
+use ctx_workspace_active_snapshot::ResolvedWorkspaceActiveSessionSubscription;
 
 mod replay;
 #[cfg(test)]
 mod tests;
 
 use replay::{replay_workspace_stream_subscriptions, WorkspaceStreamReplayRequest};
+
+fn workspace_subscription_fingerprint(
+    include_initial_snapshot: bool,
+    resolved_sessions: &[ResolvedWorkspaceActiveSessionSubscription],
+    next_state: &WorkspaceActiveSubscriptionState,
+) -> String {
+    let mut sessions = resolved_sessions
+        .iter()
+        .map(|subscription| {
+            let replay = match subscription.replay {
+                ResolvedWorkspaceActiveSessionReplay::Reset => "reset".to_string(),
+                ResolvedWorkspaceActiveSessionReplay::Resume {
+                    after_seq,
+                    after_projection_rev,
+                } => format!("resume:{after_seq}:{after_projection_rev}"),
+            };
+            format!(
+                "{}:{:?}:{}",
+                subscription.session_id.0, subscription.intent, replay
+            )
+        })
+        .collect::<Vec<_>>();
+    sessions.sort();
+    let mut foreground = next_state
+        .foreground_session_ids
+        .as_ref()
+        .map(|ids| ids.iter().map(|id| id.0.to_string()).collect::<Vec<_>>())
+        .unwrap_or_default();
+    foreground.sort();
+    format!(
+        "heads={};active={};foreground={};sessions={}",
+        include_initial_snapshot,
+        next_state.active_scope,
+        foreground.join(","),
+        sessions.join("|")
+    )
+}
 
 fn merge_replayed_and_live_subscriptions(
     live_subscriptions: &HashMap<SessionId, SessionCursor>,
@@ -79,6 +117,14 @@ pub(crate) async fn handle_workspace_stream_subscription(
         sessions: resolved_sessions,
         state: next_state,
     } = resolved;
+    let fingerprint = workspace_subscription_fingerprint(
+        include_initial_snapshot,
+        &resolved_sessions,
+        &next_state,
+    );
+    if runtime.last_subscription_fingerprint.as_deref() == Some(fingerprint.as_str()) {
+        return Ok(());
+    }
     let previous_subscription_ids = runtime.subscriptions.keys().copied().collect::<Vec<_>>();
     let mut provisional_subscriptions = HashMap::new();
     for subscription in &resolved_sessions {
@@ -89,15 +135,16 @@ pub(crate) async fn handle_workspace_stream_subscription(
         else {
             continue;
         };
-        provisional_subscriptions.insert(
-            subscription.session_id,
-            SessionCursor {
-                last_sent: SessionReplayCursor {
-                    last_event_seq: after_seq.max(0),
-                    projection_rev: after_projection_rev.max(0),
-                },
-            },
-        );
+        let requested = SessionReplayCursor {
+            last_event_seq: after_seq.max(0),
+            projection_rev: after_projection_rev.max(0),
+        };
+        let last_sent = existing_replay_cursors
+            .get(&subscription.session_id)
+            .copied()
+            .map(|existing| existing.cover(requested))
+            .unwrap_or(requested);
+        provisional_subscriptions.insert(subscription.session_id, SessionCursor { last_sent });
     }
 
     clear_runtime_queues(runtime).await;
@@ -156,5 +203,6 @@ pub(crate) async fn handle_workspace_stream_subscription(
     )
     .await;
     runtime.subscriptions = final_map;
+    runtime.last_subscription_fingerprint = Some(fingerprint);
     Ok(())
 }

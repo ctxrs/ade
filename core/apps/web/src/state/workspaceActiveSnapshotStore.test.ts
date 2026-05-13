@@ -457,10 +457,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
       }),
     );
 
-    expect(ws.send).toHaveBeenCalledTimes(1);
-    const payload = JSON.parse(String(ws.send.mock.calls[0]?.[0] ?? "{}"));
-    expect(payload.type).toBe("subscribe");
-    expect(payload.include_active_heads).toBe(true);
+    expect(ws.send).not.toHaveBeenCalled();
   });
 
   it("does not resubscribe on paired seed-following session_gap", async () => {
@@ -541,10 +538,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
       { type: "session_gap", session_id: "session-1", reason: "stream_seq_gap" },
       { type: "session_gap", session_id: "session-2", reason: "stream_seq_gap" },
     ]);
-    expect(ws.send).toHaveBeenCalledTimes(1);
-    const payload = JSON.parse(String(ws.send.mock.calls[0]?.[0] ?? "{}"));
-    expect(payload.type).toBe("subscribe");
-    expect(payload.include_active_heads).toBe(true);
+    expect(ws.send).not.toHaveBeenCalled();
     unsubscribe();
     store.destroy();
   });
@@ -565,7 +559,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
     expect(ws.send).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(String(ws.send.mock.calls[0]?.[0] ?? "{}"));
     expect(payload.sessions).toEqual([
-      { session_id: "session-1", replay: { mode: "reset" } },
+      { session_id: "session-1", intent: "replay", replay: { mode: "reset" } },
     ]);
     expect(payload.include_active_heads).toBe(false);
   });
@@ -591,6 +585,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
     expect(payload.sessions).toEqual([
       {
         session_id: "session-1",
+        intent: "replay",
         replay: { mode: "resume", after_seq: 3, after_projection_rev: 7 },
       },
     ]);
@@ -641,7 +636,117 @@ describe("WorkspaceActiveSnapshotStore", () => {
     expect(ws.send).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(String(ws.send.mock.calls[0]?.[0] ?? "{}"));
     expect(payload.foreground_session_id).toBe("session-foreground");
+    expect(payload.include_active_heads).toBe(false);
+    store.destroy();
+  });
+
+  it("promotes head-only subscriptions to replay only for the foreground session", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    const ws = mkOpenWs();
+    asStoreInternals(store).ws = ws;
+
+    store.setSubscribedSessions([
+      { sessionId: "session-1", intent: "head", replay: { kind: "resume", afterSeq: 5 } },
+      { sessionId: "session-2", intent: "head", replay: { kind: "resume", afterSeq: 7 } },
+    ]);
+
+    expect(ws.send).toHaveBeenCalledTimes(1);
+    let payload = JSON.parse(String(ws.send.mock.calls[0]?.[0] ?? "{}"));
     expect(payload.include_active_heads).toBe(true);
+    expect(payload.sessions).toEqual([
+      {
+        session_id: "session-1",
+        intent: "head",
+        replay: { mode: "resume", after_seq: 5 },
+      },
+      {
+        session_id: "session-2",
+        intent: "head",
+        replay: { mode: "resume", after_seq: 7 },
+      },
+    ]);
+
+    ws.send.mockClear();
+    store.setForegroundSessionId?.("session-2");
+
+    expect(ws.send).toHaveBeenCalledTimes(1);
+    payload = JSON.parse(String(ws.send.mock.calls[0]?.[0] ?? "{}"));
+    expect(payload.include_active_heads).toBe(false);
+    expect(payload.foreground_session_id).toBe("session-2");
+    expect(payload.sessions).toEqual([
+      {
+        session_id: "session-1",
+        intent: "head",
+        replay: { mode: "resume", after_seq: 5 },
+      },
+      {
+        session_id: "session-2",
+        intent: "replay",
+        replay: { mode: "resume", after_seq: 7 },
+      },
+    ]);
+
+    ws.send.mockClear();
+    store.setSubscribedSessions([
+      { sessionId: "session-1", intent: "head", replay: { kind: "resume", afterSeq: 8 } },
+      { sessionId: "session-2", intent: "head", replay: { kind: "resume", afterSeq: 9 } },
+    ]);
+    expect(ws.send).not.toHaveBeenCalled();
+    store.destroy();
+  });
+
+  it("keeps a large active startup subscription at the optimal request count", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    const ws = mkOpenWs();
+    asStoreInternals(store).ws = ws;
+    const sessions = Array.from({ length: 29 }, (_, index) => ({
+      sessionId: `session-${index + 1}`,
+      intent: "head" as const,
+      replay: { kind: "resume" as const, afterSeq: 100 + index, afterProjectionRev: 200 + index },
+    }));
+
+    store.setSubscribedSessions(sessions);
+
+    expect(ws.send).toHaveBeenCalledTimes(1);
+    let payload = JSON.parse(String(ws.send.mock.calls[0]?.[0] ?? "{}"));
+    expect(payload.include_active_heads).toBe(true);
+    expect(payload.sessions).toHaveLength(29);
+    expect(payload.sessions.every((session: { intent?: string }) => session.intent === "head")).toBe(true);
+
+    ws.send.mockClear();
+    asStoreInternals(store).flushSubscriptions("active_task_upsert");
+    asStoreInternals(store).flushSubscriptions("session_gap");
+    asStoreInternals(store).flushSubscriptions("stream_seq_gap");
+    store.setSubscribedSessions(
+      sessions.map((session, index) => ({
+        ...session,
+        replay: {
+          kind: "resume" as const,
+          afterSeq: 300 + index,
+          afterProjectionRev: 400 + index,
+        },
+      })),
+    );
+    expect(ws.send).not.toHaveBeenCalled();
+
+    store.setForegroundSessionId?.("session-18");
+
+    expect(ws.send).toHaveBeenCalledTimes(1);
+    payload = JSON.parse(String(ws.send.mock.calls[0]?.[0] ?? "{}"));
+    expect(payload.include_active_heads).toBe(false);
+    expect(payload.foreground_session_id).toBe("session-18");
+    expect(payload.sessions.filter((session: { intent?: string }) => session.intent === "replay")).toEqual([
+      expect.objectContaining({ session_id: "session-18" }),
+    ]);
+
+    ws.send.mockClear();
+    asStoreInternals(store).flushSubscriptions("foreground_session");
+    asStoreInternals(store).flushSubscriptions("active_task_upsert");
+    expect(ws.send).not.toHaveBeenCalled();
     store.destroy();
   });
 
@@ -674,12 +779,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
       }),
     );
 
-    expect(ws.send).toHaveBeenCalledTimes(1);
-    const payload = JSON.parse(String(ws.send.mock.calls[0]?.[0] ?? "{}"));
-    expect(payload.type).toBe("subscribe");
-    expect(payload.include_active_heads).toBe(true);
-    expect(payload.foreground_session_id).toBe(session.id);
-    expect(payload.session_ids).toEqual([session.id]);
+    expect(ws.send).not.toHaveBeenCalled();
     store.destroy();
   });
 
@@ -1316,6 +1416,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
     expect(reconnectPayload.sessions).toEqual([
       {
         session_id: "session-1",
+        intent: "replay",
         replay: { mode: "resume", after_seq: 8, after_projection_rev: 2 },
       },
     ]);
@@ -1409,7 +1510,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
       }),
     );
 
-    expect(ws.send).toHaveBeenCalledTimes(1);
+    expect(ws.send).not.toHaveBeenCalled();
 
     await asStoreInternals(store).handleStreamMessage(
       JSON.stringify({
@@ -1592,7 +1693,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
       }),
     );
     expect(getWorkspaceActiveSnapshot).not.toHaveBeenCalled();
-    expect(ws.send).toHaveBeenCalled();
+    expect(ws.send).not.toHaveBeenCalled();
     store.destroy();
   });
 

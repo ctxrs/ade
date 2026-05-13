@@ -25,6 +25,10 @@ pub(super) async fn update_workspace_stream_subscriptions_for_event(
         {
             runtime.subscription_state.foreground_session_ids = None;
         }
+        runtime
+            .subscription_state
+            .replay_sessions
+            .remove(session_id);
         let removed_subscription = remove_runtime_subscription(state, runtime, *session_id).await;
         return removed_explicit || removed_foreground || removed_subscription;
     }

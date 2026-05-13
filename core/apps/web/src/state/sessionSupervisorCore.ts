@@ -318,7 +318,13 @@ export class SessionSupervisor {
   getSubscribedSessionIds = (): string[] => this.subscribedSessionIds.slice();
 
   private buildSubscribedSessions(): SessionSubscriptionCursor[] {
-    return buildSubscribedSessions(this.subscribedSessionIds, this.entries, this.workspaceSessionHeadsById);
+    return buildSubscribedSessions(
+      this.subscribedSessionIds,
+      this.entries,
+      this.workspaceSessionHeadsById,
+      this.activeTaskSessionIds,
+      this.warmSessionIds,
+    );
   }
 
   setActiveTaskSessionIds = (sessionIds: string[]) => {

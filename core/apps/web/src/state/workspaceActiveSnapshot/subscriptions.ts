@@ -1,5 +1,6 @@
 import type {
   WorkspaceActiveSnapshotClientMessage,
+  WorkspaceActiveSnapshotSessionIntent,
   WorkspaceActiveSnapshotSessionReplay,
 } from "../../api/client";
 import type { SessionSubscriptionCursor } from "../sessionSubscription";
@@ -24,6 +25,28 @@ const toWorkspaceReplay = (
   }
 };
 
+const toWorkspaceIntent = (
+  session: SessionSubscriptionCursor,
+  foregroundSessionId: string | null,
+): WorkspaceActiveSnapshotSessionIntent => {
+  if (foregroundSessionId && session.sessionId === foregroundSessionId) {
+    return "replay";
+  }
+  if (session.replay.kind === "reset") {
+    return "replay";
+  }
+  return session.intent === "head" ? "head" : "replay";
+};
+
+const replayKey = (replay: WorkspaceActiveSnapshotSessionReplay): string => {
+  switch (replay.mode) {
+    case "resume":
+      return `resume:${replay.after_seq}:${replay.after_projection_rev ?? 0}`;
+    default:
+      return replay.mode;
+  }
+};
+
 export function buildWorkspaceActiveSubscribeMessage(
   reason: string,
   foregroundSessionId: string | null,
@@ -31,6 +54,7 @@ export function buildWorkspaceActiveSubscribeMessage(
 ): {
   message: WorkspaceActiveSnapshotClientMessage;
   requestSnapshot: boolean;
+  canonicalKey: string;
 } {
   const requestSnapshot = shouldRequestWorkspaceSnapshot(reason);
   const message: WorkspaceActiveSnapshotClientMessage = {
@@ -42,11 +66,23 @@ export function buildWorkspaceActiveSubscribeMessage(
     message.foreground_session_id = foregroundSessionId;
   }
   if (subscribedSessions.length > 0) {
-    message.session_ids = subscribedSessions.map((session) => session.sessionId);
     message.sessions = subscribedSessions.map((session) => ({
       session_id: session.sessionId,
+      intent: toWorkspaceIntent(session, foregroundSessionId),
       replay: toWorkspaceReplay(session.replay),
     }));
   }
-  return { message, requestSnapshot };
+  const sessionKey = (message.sessions ?? [])
+    .map((session) => {
+      const intent = session.intent ?? "replay";
+      const replay = intent === "head" ? "head" : replayKey(session.replay);
+      return `${session.session_id}:${intent}:${replay}`;
+    })
+    .join("|");
+  const canonicalKey = [
+    "scope=active",
+    `foreground=${foregroundSessionId ?? ""}`,
+    `sessions=${sessionKey}`,
+  ].join(";");
+  return { message, requestSnapshot, canonicalKey };
 }

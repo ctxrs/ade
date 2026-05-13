@@ -24,6 +24,7 @@ pub(super) struct WorkspaceStreamRuntime {
     pub(super) summary_buffer: Arc<SummaryBatchBuffer>,
     pub(super) send_control: Arc<StreamSendControl>,
     pub(super) subscriptions: HashMap<SessionId, SessionCursor>,
+    pub(super) last_subscription_fingerprint: Option<String>,
     pub(super) subscription_state: WorkspaceActiveSubscriptionState,
     pub(super) reset_queued: bool,
     pub(super) latest_snapshot_rev: Arc<AtomicI64>,

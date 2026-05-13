@@ -11,6 +11,7 @@ fn replay_deserializes_subscribe_message_with_explicit_replay_modes() {
             "sessions":[
                 {
                     "session_id":"00000000-0000-0000-0000-000000000001",
+                    "intent":"head",
                     "replay":{"mode":"auto"}
                 },
                 {
@@ -28,6 +29,10 @@ fn replay_deserializes_subscribe_message_with_explicit_replay_modes() {
 
     let WorkspaceActiveSnapshotClientMessage::Subscribe { sessions, .. } = message;
     assert_eq!(sessions.len(), 3);
+    assert_eq!(
+        sessions[0].intent,
+        Some(ctx_core::models::WorkspaceActiveSnapshotSessionIntent::Head)
+    );
     assert!(matches!(
         sessions[0].replay,
         WorkspaceActiveSnapshotSessionReplay::Auto

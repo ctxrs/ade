@@ -119,6 +119,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   authTokenOverride: string | null = null;
   wsBaseUrlOverride: string | null = null;
   canonicalStreamUrl: string | null = null;
+  lastSubscriptionKey: string | null = null;
   private configUnsubscribe: (() => void) | null = null;
   private listWorkspaceArchivedTaskSummariesFn: typeof listWorkspaceArchivedTaskSummaries;
   subscribedSessions: SessionSubscriptionCursor[] = [];

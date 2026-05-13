@@ -1,5 +1,6 @@
 use super::*;
 use crate::daemon::workspaces::stream::ReplayOutcome;
+use ctx_core::models::WorkspaceActiveSnapshotSessionIntent;
 use ctx_workspace_active_snapshot::replay_cursor_after_live_progress;
 use std::collections::HashSet;
 
@@ -11,9 +12,7 @@ mod reset;
 mod session;
 
 use buffers::drop_buffered_session_events_at_or_before;
-use cursor::{
-    resume_replay_cursor, skip_replay_sessions_after_snapshot, skipped_initial_snapshot_cursor,
-};
+use cursor::{head_only_snapshot_cursor, resume_replay_cursor};
 use live_events::{
     drain_live_events_blocking_pending_replay, flush_replay_ready_deferred_live_events,
     replay_should_stop,
@@ -37,22 +36,14 @@ pub(super) async fn replay_workspace_stream_subscriptions(
     } = request;
     let next_state = runtime.subscription_state.clone();
 
-    let skip_replay_sessions = skip_replay_sessions_after_snapshot(
-        state,
-        workspace_id,
-        &next_state,
-        include_initial_snapshot,
-        active_head_cursors,
-    )
-    .await;
-
     let mut pending_replay_sessions = resolved_sessions
         .iter()
         .filter(|subscription| {
-            matches!(
-                subscription.replay,
-                ResolvedWorkspaceActiveSessionReplay::Resume { .. }
-            )
+            subscription.intent == WorkspaceActiveSnapshotSessionIntent::Replay
+                && matches!(
+                    subscription.replay,
+                    ResolvedWorkspaceActiveSessionReplay::Resume { .. }
+                )
         })
         .map(|subscription| subscription.session_id)
         .collect::<HashSet<_>>();
@@ -73,6 +64,24 @@ pub(super) async fn replay_workspace_stream_subscriptions(
             return Ok(None);
         }
         let session_id = sub.session_id;
+        if sub.intent == WorkspaceActiveSnapshotSessionIntent::Head {
+            next_map.insert(
+                session_id,
+                head_only_snapshot_cursor(
+                    state,
+                    workspace_id,
+                    session_id,
+                    runtime
+                        .subscriptions
+                        .get(&session_id)
+                        .map(|cursor| cursor.last_sent),
+                    active_head_cursors.get(&session_id).copied(),
+                    include_initial_snapshot,
+                )
+                .await,
+            );
+            continue;
+        }
         let ResolvedWorkspaceActiveSessionReplay::Resume {
             after_seq,
             after_projection_rev,
@@ -104,27 +113,6 @@ pub(super) async fn replay_workspace_stream_subscriptions(
             continue;
         };
         drop_buffered_session_events_at_or_before(runtime, session_id, replay_cursor).await;
-        if include_initial_snapshot && skip_replay_sessions.contains(&session_id) {
-            next_map.insert(
-                session_id,
-                skipped_initial_snapshot_cursor(state, workspace_id, session_id, replay_cursor)
-                    .await,
-            );
-            pending_replay_sessions.remove(&session_id);
-            flush_replay_ready_deferred_live_events(
-                state,
-                workspace_id,
-                runtime,
-                labels,
-                &mut deferred_live_events,
-                &pending_replay_sessions,
-            )
-            .await?;
-            if replay_should_stop(runtime) {
-                return Ok(None);
-            }
-            continue;
-        }
         let replay = replay_workspace_session(
             state,
             workspace_id,

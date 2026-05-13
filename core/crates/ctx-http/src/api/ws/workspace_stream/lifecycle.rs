@@ -59,6 +59,7 @@ pub(crate) async fn initialize_workspace_stream(
             summary_buffer,
             send_control,
             subscriptions: HashMap::new(),
+            last_subscription_fingerprint: None,
             subscription_state: WorkspaceActiveSubscriptionState::default(),
             reset_queued: false,
             latest_snapshot_rev: Arc::new(AtomicI64::new(snapshot_rev)),

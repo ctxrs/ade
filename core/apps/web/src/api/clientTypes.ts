@@ -44,6 +44,7 @@ export type {
   WorkspaceActiveSnapshotClientMessage,
   WorkspaceActiveSnapshotEvent,
   WorkspaceActiveSnapshotSessionReplay,
+  WorkspaceActiveSnapshotSessionIntent,
   WorkspaceActiveSnapshotSessionSubscription,
   WorkspaceActiveTaskSummary,
   WorkspaceArchivedPage,
