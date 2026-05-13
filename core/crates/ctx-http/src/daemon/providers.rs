@@ -1,9 +1,11 @@
 mod accounts;
 mod auth;
+mod auth_import;
 mod bootstrap;
 mod diagnostics;
 mod harness_config;
 mod installs;
+mod inventory;
 mod launch_config;
 mod login_runtime;
 mod login_sessions;
@@ -39,6 +41,12 @@ pub(crate) use accounts::{
 pub(crate) use auth::{
     authenticate_provider_for_workspace_runtime, ProviderWorkspaceAuthenticationError,
 };
+#[cfg(test)]
+pub(crate) use auth_import::provider_auth_import_result_requires_restart;
+pub(crate) use auth_import::{
+    import_provider_auth_candidates, list_provider_auth_import_candidates,
+    list_provider_auth_import_profiles,
+};
 pub(crate) use bootstrap::{build_bootstrap_options, visible_provider_count_hint};
 pub(crate) use diagnostics::provider_diagnostics_snapshot;
 pub(crate) use harness_config::{
@@ -52,6 +60,7 @@ pub(crate) use installs::{
     parse_provider_install_target, provider_install_event_sender, start_all_provider_installs,
     start_provider_install, StartProviderInstallError,
 };
+pub(crate) use inventory::refresh_provider_inventory;
 pub(crate) use launch_config::{
     load_provider_launch_config_snapshot, ProviderLaunchConfigError, ProviderLaunchConfigSnapshot,
 };

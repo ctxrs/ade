@@ -3,11 +3,7 @@ use super::*;
 pub(crate) async fn refresh_provider_matrix(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<MatrixRefreshResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    let outcome = state
-        .providers
-        .refresh_provider_matrix_from_local_sources(&state.core.data_root)
-        .await;
-    crate::daemon::providers::refresh_provider_statuses(state.as_ref())
+    let summary = crate::daemon::providers::refresh_provider_inventory(state.as_ref())
         .await
         .map_err(|e| {
             (
@@ -18,13 +14,11 @@ pub(crate) async fn refresh_provider_matrix(
             )
         })?;
     Ok(Json(MatrixRefreshResponse {
-        provider_count: outcome.matrix.providers.len(),
-        generated_at: outcome.matrix.generated_at,
-        source: outcome.source.as_str().to_string(),
-        degraded: outcome.degraded,
-        last_error: outcome
-            .last_error
-            .map(|value| logs::redact_sensitive(&value)),
+        provider_count: summary.provider_count,
+        generated_at: summary.generated_at,
+        source: summary.source,
+        degraded: summary.degraded,
+        last_error: summary.last_error,
     }))
 }
 

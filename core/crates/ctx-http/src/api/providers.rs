@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path as StdPath, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -24,6 +24,7 @@ use ctx_harness_sources::{HarnessApiShape, HarnessSourceKind};
 use ctx_managed_installs as installer;
 use ctx_observability::logs;
 use ctx_provider_accounts as provider_accounts;
+#[cfg(test)]
 use ctx_provider_auth_import as provider_auth_import;
 #[cfg(test)]
 use ctx_provider_install::install_state::InstallId;
@@ -77,13 +78,13 @@ pub(super) use status::{get_provider, get_provider_usage, list_providers};
 use types::*;
 
 #[cfg(test)]
+use crate::daemon::providers::provider_auth_import_result_requires_restart as import_result_requires_provider_restart;
+#[cfg(test)]
 use crate::daemon::providers::restart_provider_for_auth_change;
 #[cfg(test)]
 use ctx_provider_runtime::provider_auth::{
     endpoint_selection_is_active, provider_auth_mode, provider_has_active_auth_config,
 };
-#[cfg(test)]
-use imports::import_result_requires_provider_restart;
 #[cfg(test)]
 use login::{
     auth_url_looks_complete, expected_callback_from_auth_url, extract_auth_url,

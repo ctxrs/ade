@@ -27,27 +27,6 @@ pub(crate) fn status_code_for_request_or_policy_error(err: &anyhow::Error) -> St
     }
 }
 
-fn internal_api_error_message(err: &anyhow::Error) -> String {
-    if let Some(storage_message) = err
-        .chain()
-        .map(ToString::to_string)
-        .find(|message| is_storage_exhaustion_error(message))
-    {
-        storage_message
-    } else {
-        format!("{err:#}")
-    }
-}
-
-pub(crate) fn map_internal_api_error(err: &anyhow::Error) -> (StatusCode, Json<ApiErrorResp>) {
-    (
-        status_code_for_internal_error(err),
-        Json(ApiErrorResp {
-            error: logs::redact_sensitive(&internal_api_error_message(err)),
-        }),
-    )
-}
-
 pub(crate) fn map_effective_execution_settings_error(
     err: EffectiveExecutionSettingsError,
 ) -> (StatusCode, Json<ApiErrorResp>) {
@@ -115,18 +94,6 @@ mod tests {
         assert_eq!(
             status_code_for_request_or_policy_error(&err),
             StatusCode::BAD_REQUEST
-        );
-    }
-
-    #[test]
-    fn map_internal_api_error_preserves_storage_guidance() {
-        let err = anyhow::anyhow!("wrapper")
-            .context("Insufficient storage capacity for creating an isolated task worktree");
-        let (status, body) = map_internal_api_error(&err);
-        assert_eq!(status, StatusCode::INSUFFICIENT_STORAGE);
-        assert_eq!(
-            body.0.error,
-            "Insufficient storage capacity for creating an isolated task worktree"
         );
     }
 
