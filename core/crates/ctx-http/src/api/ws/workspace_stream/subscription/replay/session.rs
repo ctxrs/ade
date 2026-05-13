@@ -1,4 +1,5 @@
 use super::*;
+use crate::daemon::workspaces::stream::{replay_session_events, ReplayOutcome};
 
 pub(super) async fn replay_workspace_session(
     state: &Arc<AppState>,

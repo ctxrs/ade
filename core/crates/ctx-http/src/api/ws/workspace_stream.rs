@@ -1,5 +1,5 @@
-use super::replay::primary_session_id_for_active_task;
 use super::*;
+use ctx_workspace_active_snapshot::primary_session_id_for_active_task;
 use serde_json::json;
 
 mod events;

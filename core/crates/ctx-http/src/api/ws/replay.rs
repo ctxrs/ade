@@ -1,10 +1,5 @@
 use super::*;
 
-pub(super) use crate::daemon::workspaces::stream::{
-    replay_session_events, resolve_workspace_active_snapshot_subscriptions, ReplayOutcome,
-};
-pub(super) use ctx_workspace_active_snapshot::primary_session_id_for_active_task;
-
 pub(super) fn with_stream_rev(
     message: WorkspaceActiveSnapshotStreamMessage,
     stream_rev: i64,

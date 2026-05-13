@@ -1,5 +1,6 @@
 use super::lifecycle::{clear_runtime_queues, queue_workspace_stream_reset};
 use super::*;
+use crate::daemon::workspaces::stream::resolve_workspace_active_snapshot_subscriptions;
 
 mod replay;
 #[cfg(test)]

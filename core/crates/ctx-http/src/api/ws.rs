@@ -44,10 +44,7 @@ use queue::{
     should_stream_head_delta, HeadBatchBuffer, StreamQueue, SummaryBatchBuffer,
     HEAD_BATCH_TOTAL_LIMIT,
 };
-use replay::{
-    queue_reset_required, queue_snapshot_payload, replay_session_events,
-    resolve_workspace_active_snapshot_subscriptions, ReplayOutcome,
-};
+use replay::{queue_reset_required, queue_snapshot_payload};
 
 pub(super) use secure_mobile::mobile_secure_workspace_stream_ws;
 pub(super) use terminal::terminal_stream_ws;
