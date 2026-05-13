@@ -4,12 +4,10 @@ use std::time::Duration;
 mod errors;
 mod handlers;
 mod provider_options_response;
-mod runtime_probe;
 
 use errors::{provider_install_error_response, workspace_execution_settings_error_json};
 pub(in crate::api) use handlers::*;
 use provider_options_response::*;
-use runtime_probe::{prepare_provider_runtime_probe, PreparedProviderRuntimeProbeError};
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -22,8 +20,10 @@ use tokio::sync::mpsc;
 
 use super::errors::ApiErrorResp;
 use super::redact_json_value;
-use crate::daemon::providers::install_target_for_workspace;
-use crate::daemon::providers::ProviderOptionsCacheSnapshot;
+use crate::daemon::providers::{
+    install_target_for_workspace, prepare_provider_runtime_probe,
+    PreparedProviderRuntimeProbeError, ProviderOptionsCacheSnapshot,
+};
 use crate::daemon::AppState;
 use ctx_harness_sources as harness_sources;
 use ctx_harness_sources::{HarnessEndpointVerificationStatus, HarnessSourceKind};

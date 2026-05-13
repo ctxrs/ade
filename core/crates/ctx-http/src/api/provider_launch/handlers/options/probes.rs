@@ -42,7 +42,9 @@ pub(super) async fn probe_selected_endpoint_runtime_launch(
                 }
             }
         }
-        Err(PreparedProviderRuntimeProbeError::Route(err)) => Err(err),
+        Err(PreparedProviderRuntimeProbeError::ExecutionSettings(err)) => {
+            Err(workspace_execution_settings_error_json(&err))
+        }
         Err(PreparedProviderRuntimeProbeError::Verify(err)) => {
             let probe_error = logs::redact_sensitive(&err);
             let (_, auth_required, _) = classify_probe_error(&probe_error);
@@ -66,7 +68,9 @@ pub(super) async fn probe_runtime_models_for_provider_options(
             prepared.env,
         )
         .await),
-        Err(PreparedProviderRuntimeProbeError::Route(err)) => Err(err),
+        Err(PreparedProviderRuntimeProbeError::ExecutionSettings(err)) => {
+            Err(workspace_execution_settings_error_json(&err))
+        }
         Err(PreparedProviderRuntimeProbeError::Verify(err)) => Ok(Err(anyhow::anyhow!(err))),
     }
 }

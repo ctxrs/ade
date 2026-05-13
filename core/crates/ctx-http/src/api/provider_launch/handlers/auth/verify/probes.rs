@@ -33,7 +33,9 @@ pub(super) async fn run_catalog_verified_runtime_probe(
                 ));
             }
         }
-        Err(PreparedProviderRuntimeProbeError::Route(err)) => return Err(err),
+        Err(PreparedProviderRuntimeProbeError::ExecutionSettings(err)) => {
+            return Err(workspace_execution_settings_error_json(&err));
+        }
         Err(PreparedProviderRuntimeProbeError::Verify(err)) => {
             outcome.apply_endpoint_catalog_runtime_probe_failure(logs::redact_sensitive(&err));
         }
@@ -70,7 +72,9 @@ pub(super) async fn run_direct_runtime_probe(
                 outcome.apply_classified_probe_error(logs::redact_sensitive(&err.to_string()));
             }
         }
-        Err(PreparedProviderRuntimeProbeError::Route(err)) => return Err(err),
+        Err(PreparedProviderRuntimeProbeError::ExecutionSettings(err)) => {
+            return Err(workspace_execution_settings_error_json(&err));
+        }
         Err(PreparedProviderRuntimeProbeError::Verify(err)) => {
             outcome.apply_classified_probe_error(logs::redact_sensitive(&err));
         }

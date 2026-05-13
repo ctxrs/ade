@@ -1,24 +1,19 @@
 use std::sync::Arc;
 
-use axum::http::StatusCode;
-use axum::Json;
+use ctx_provider_runtime::provider_launch::probe;
 use ctx_provider_runtime::provider_launch::runtime_probe::{
     prepare_provider_runtime_probe_launch, PreparedProviderRuntimeProbe,
 };
 
-use crate::api::provider_launch::{
-    load_managed_agent_server_config_with_error, workspace_execution_settings_error_json,
-};
 use crate::daemon::providers::install_target_for_workspace;
 use crate::daemon::AppState;
-use ctx_provider_runtime::provider_launch::probe;
 
-pub(in crate::api::provider_launch) enum PreparedProviderRuntimeProbeError {
-    Route((StatusCode, Json<serde_json::Value>)),
+pub(crate) enum PreparedProviderRuntimeProbeError {
+    ExecutionSettings(anyhow::Error),
     Verify(String),
 }
 
-pub(in crate::api::provider_launch) async fn prepare_provider_runtime_probe(
+pub(crate) async fn prepare_provider_runtime_probe(
     state: &Arc<AppState>,
     workspace: &ctx_core::models::Workspace,
     provider_id: &str,
@@ -26,13 +21,12 @@ pub(in crate::api::provider_launch) async fn prepare_provider_runtime_probe(
 ) -> Result<PreparedProviderRuntimeProbe, PreparedProviderRuntimeProbeError> {
     let install_target = install_target_for_workspace(state, workspace.id)
         .await
-        .map_err(|error| {
-            PreparedProviderRuntimeProbeError::Route(workspace_execution_settings_error_json(
-                &error,
-            ))
-        })?;
+        .map_err(PreparedProviderRuntimeProbeError::ExecutionSettings)?;
     let (cfg, config_error) =
-        load_managed_agent_server_config_with_error(&state.core.data_root).await;
+        ctx_provider_runtime::provider_launch::config::load_managed_agent_server_config_with_error(
+            &state.core.data_root,
+        )
+        .await;
     if let Some(config_error) = config_error {
         return Err(PreparedProviderRuntimeProbeError::Verify(config_error));
     }
