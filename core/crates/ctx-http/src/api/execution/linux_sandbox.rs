@@ -13,7 +13,7 @@ use ctx_linux_sandbox_runtime::{
 use ctx_observability::logs;
 
 use crate::api::errors::ApiErrorResp;
-use crate::daemon::AppState;
+use crate::daemon::{maintenance as daemon_maintenance, AppState};
 
 fn linux_sandbox_user_message(kind: &str) -> String {
     match kind {
@@ -66,43 +66,10 @@ pub(in crate::api) async fn linux_sandbox_runtime_prepare(
     State(state): State<Arc<AppState>>,
     Json(req): Json<LinuxSandboxRuntimePrepareReq>,
 ) -> Result<Json<LinuxSandboxRuntimePrepareResult>, (StatusCode, Json<ApiErrorResp>)> {
-    if state
-        .core
-        .update_drain
-        .acquire("linux_sandbox_runtime_prepare", "execution_api")
+    let drain_permit = daemon_maintenance::acquire_linux_sandbox_prepare_drain(&state)
         .await
-        .is_none()
-    {
-        return Err((
-            StatusCode::CONFLICT,
-            Json(ApiErrorResp {
-                error: "Linux sandbox runtime prepare is already in progress. Retry when current maintenance completes.".to_string(),
-            }),
-        ));
-    }
-    let activity = crate::daemon::daemon_sandbox_work_activity_summary(&state)
-        .await
-        .map_err(|err| {
-            let state = state.clone();
-            tokio::spawn(async move {
-                let _ = state.core.update_drain.release().await;
-            });
-            tracing::warn!(target: "linux_sandbox", error = %logs::redact_sensitive(&err.to_string()), "linux_sandbox_runtime_prepare activity gate error");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp { error: linux_sandbox_user_message("prepare") }),
-            )
-        })?;
-    if activity.active {
-        let _ = state.core.update_drain.release().await;
-        return Err((
-            StatusCode::CONFLICT,
-            Json(ApiErrorResp {
-                error: "Preparing Linux sandbox runtime is blocked while sandbox work is active. Retry when sandbox turns, terminals, containers, and runtime operations are idle.".to_string(),
-            }),
-        ));
-    }
-    let result = prepare_linux_sandbox_runtime(
+        .map_err(linux_sandbox_prepare_drain_error)?;
+    let result = match prepare_linux_sandbox_runtime(
         &state.core.data_root,
         req.activation_mode
             .unwrap_or(LinuxSandboxActivationMode::Local),
@@ -110,17 +77,47 @@ pub(in crate::api) async fn linux_sandbox_runtime_prepare(
         None,
     )
     .await
-    .map_err(|err| {
-        let state = state.clone();
-        tokio::spawn(async move {
-            let _ = state.core.update_drain.release().await;
-        });
-        tracing::warn!(target: "linux_sandbox", error = %logs::redact_sensitive(&err.to_string()), "linux_sandbox_runtime_prepare error");
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp { error: linux_sandbox_user_message("prepare") }),
-        )
-    })?;
-    let _ = state.core.update_drain.release().await;
+    {
+        Ok(result) => result,
+        Err(err) => {
+            let _ = drain_permit.release().await;
+            tracing::warn!(target: "linux_sandbox", error = %logs::redact_sensitive(&err.to_string()), "linux_sandbox_runtime_prepare error");
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: linux_sandbox_user_message("prepare"),
+                }),
+            ));
+        }
+    };
+    let _ = drain_permit.release().await;
     Ok(Json(result))
+}
+
+fn linux_sandbox_prepare_drain_error(
+    error: daemon_maintenance::MaintenanceDrainError,
+) -> (StatusCode, Json<ApiErrorResp>) {
+    match error {
+        daemon_maintenance::MaintenanceDrainError::AlreadyActive => (
+            StatusCode::CONFLICT,
+            Json(ApiErrorResp {
+                error: "Linux sandbox runtime prepare is already in progress. Retry when current maintenance completes.".to_string(),
+            }),
+        ),
+        daemon_maintenance::MaintenanceDrainError::ActivityUnavailable(error) => {
+            tracing::warn!(target: "linux_sandbox", error = %logs::redact_sensitive(&error.to_string()), "linux_sandbox_runtime_prepare activity gate error");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: linux_sandbox_user_message("prepare"),
+                }),
+            )
+        }
+        daemon_maintenance::MaintenanceDrainError::SandboxWorkActive => (
+            StatusCode::CONFLICT,
+            Json(ApiErrorResp {
+                error: "Preparing Linux sandbox runtime is blocked while sandbox work is active. Retry when sandbox turns, terminals, containers, and runtime operations are idle.".to_string(),
+            }),
+        ),
+    }
 }

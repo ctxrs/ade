@@ -9,7 +9,7 @@ use super::types::{
     BeginUpdateDrainReq, BeginUpdateDrainResp, ReleaseUpdateDrainReq, ReleaseUpdateDrainResp,
 };
 use crate::api::errors::ApiErrorResp;
-use crate::daemon::AppState;
+use crate::daemon::{maintenance as daemon_maintenance, AppState};
 
 pub(in crate::api) async fn begin_update_drain(
     State(state): State<Arc<AppState>>,
@@ -31,44 +31,9 @@ pub(in crate::api) async fn begin_update_drain(
         .owner
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| "unknown".to_string());
-    if state
-        .core
-        .update_drain
-        .acquire(reason, owner)
+    let activity = daemon_maintenance::begin_update_drain(&state, reason, owner)
         .await
-        .is_none()
-    {
-        return Err((
-            StatusCode::CONFLICT,
-            Json(ApiErrorResp {
-                error: "daemon update drain already active".to_string(),
-            }),
-        ));
-    }
-    let activity = crate::daemon::daemon_turn_activity_summary(&state)
-        .await
-        .map_err(|err| {
-            let state = state.clone();
-            tokio::spawn(async move {
-                let _ = state.core.update_drain.release().await;
-            });
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&err.to_string()),
-                }),
-            )
-        })?;
-    if !activity.idle {
-        let _ = state.core.update_drain.release().await;
-        return Err((
-            StatusCode::CONFLICT,
-            Json(ApiErrorResp {
-                error: "daemon has queued or running turns; update drain was not acquired"
-                    .to_string(),
-            }),
-        ));
-    }
+        .map_err(begin_update_drain_error)?;
     Ok(Json(BeginUpdateDrainResp {
         acquired: true,
         activity,
@@ -87,6 +52,32 @@ pub(in crate::api) async fn release_update_drain(
             }),
         ));
     }
-    let released = state.core.update_drain.release().await;
+    let released = daemon_maintenance::release_update_drain(&state).await;
     Ok(Json(ReleaseUpdateDrainResp { released }))
+}
+
+fn begin_update_drain_error(
+    error: daemon_maintenance::BeginUpdateDrainError,
+) -> (StatusCode, Json<ApiErrorResp>) {
+    match error {
+        daemon_maintenance::BeginUpdateDrainError::AlreadyActive => (
+            StatusCode::CONFLICT,
+            Json(ApiErrorResp {
+                error: "daemon update drain already active".to_string(),
+            }),
+        ),
+        daemon_maintenance::BeginUpdateDrainError::ActivityUnavailable(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&error.to_string()),
+            }),
+        ),
+        daemon_maintenance::BeginUpdateDrainError::Busy => (
+            StatusCode::CONFLICT,
+            Json(ApiErrorResp {
+                error: "daemon has queued or running turns; update drain was not acquired"
+                    .to_string(),
+            }),
+        ),
+    }
 }

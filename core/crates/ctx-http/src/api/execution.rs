@@ -7,7 +7,7 @@ use serde::Deserialize;
 
 use ctx_execution_runtime::{ExecutionLaunchSnapshot, ExecutionSetupJobKind, RuntimePrewarmScope};
 
-use crate::daemon::AppState;
+use crate::daemon::{maintenance as daemon_maintenance, AppState};
 use ctx_observability::logs;
 use ctx_settings_model::ExecutionMode;
 
@@ -39,10 +39,7 @@ pub(super) async fn launch_start(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ExecutionLaunchStartReq>,
 ) -> Result<Json<ExecutionLaunchSnapshot>, (StatusCode, Json<ApiErrorResp>)> {
-    state
-        .core
-        .update_drain
-        .reject_if_draining()
+    daemon_maintenance::reject_new_execution_during_maintenance(&state)
         .await
         .map_err(|err| {
             (

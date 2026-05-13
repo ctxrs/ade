@@ -23,6 +23,7 @@ pub(crate) mod execution_setup;
 pub mod git_status;
 mod lifecycle;
 mod listener;
+pub(crate) mod maintenance;
 mod managed_auto_update;
 mod managed_installs_host;
 mod mcp_auth;

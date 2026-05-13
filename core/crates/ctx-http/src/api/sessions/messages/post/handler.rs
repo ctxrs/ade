@@ -28,12 +28,13 @@ pub(crate) async fn post_message(
         .map_err(|_| api_error(StatusCode::INTERNAL_SERVER_ERROR, "Failed to load session."))?
         .ok_or_else(|| api_error(StatusCode::NOT_FOUND, "Session not found."))?;
     state.remember_session_meta(&session).await;
-    if let Some(drain) = state.core.update_drain.snapshot().await {
+    if let Some(reason) = crate::daemon::maintenance::post_message_update_drain_reason(&state).await
+    {
         return Err(api_error(
             StatusCode::SERVICE_UNAVAILABLE,
             format!(
                 "Daemon update is in progress; retry after the daemon restarts. ({})",
-                drain.reason
+                reason
             ),
         ));
     }
