@@ -2,8 +2,8 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde::Deserialize;
 
-use super::launch::CreateTerminalLaunchRequest;
 use crate::api::errors::ApiErrorResp;
+use crate::daemon::terminals::CreateTerminalLaunchRequest;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
 
 #[derive(Debug, Deserialize)]

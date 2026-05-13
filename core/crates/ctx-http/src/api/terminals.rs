@@ -7,12 +7,12 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 
 use super::errors::ApiErrorResp;
+use crate::daemon::terminals;
 use crate::daemon::AppState;
 use ctx_core::ids::{TerminalId, WorkspaceId};
 use ctx_core::models::TerminalSession;
 use ctx_transport_runtime::terminal_launch::{TerminalLaunchError, TerminalLaunchErrorKind};
 
-mod launch;
 mod request;
 
 use self::request::{parse_create_terminal_launch_request, CreateTerminalReq};
@@ -23,7 +23,9 @@ pub(super) async fn list_workspace_terminals(
 ) -> Result<Json<Vec<TerminalSession>>, StatusCode> {
     let workspace_id =
         WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    Ok(Json(state.transport.terminals.list(workspace_id).await))
+    Ok(Json(
+        terminals::list_workspace_terminals(&state, workspace_id).await,
+    ))
 }
 
 pub(super) async fn create_workspace_terminal(
@@ -32,7 +34,7 @@ pub(super) async fn create_workspace_terminal(
     Json(req): Json<CreateTerminalReq>,
 ) -> Result<Json<TerminalSession>, (StatusCode, Json<ApiErrorResp>)> {
     let launch_req = parse_create_terminal_launch_request(&id, req)?;
-    let session = launch::create_workspace_terminal(&state, launch_req)
+    let session = terminals::create_workspace_terminal(&state, launch_req)
         .await
         .map_err(terminal_launch_error_response)?;
 
@@ -58,10 +60,7 @@ pub(super) async fn delete_terminal(
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
     let terminal_id = TerminalId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let session = state.transport.terminals.remove(terminal_id).await;
-    if let Some(session) = session {
-        let _ = session.kill();
-        session.mark_exited(None);
+    if terminals::delete_terminal(&state, terminal_id).await {
         return Ok(StatusCode::NO_CONTENT);
     }
     Err(StatusCode::NOT_FOUND)
@@ -78,15 +77,11 @@ pub(super) async fn mint_terminal_stream_token(
     Path(id): Path<String>,
 ) -> Result<Json<TerminalStreamConnectInfo>, StatusCode> {
     let terminal_id = TerminalId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let handle = state
-        .transport
-        .terminals
-        .get(terminal_id)
+    let token = terminals::mint_terminal_stream_token(&state, terminal_id)
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
-    let (stream_path, expires_at) = handle.issue_stream_connect_path();
     Ok(Json(TerminalStreamConnectInfo {
-        stream_path,
-        expires_at,
+        stream_path: token.stream_path,
+        expires_at: token.expires_at,
     }))
 }
