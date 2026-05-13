@@ -1,4 +1,4 @@
-use super::common::{bad_request, internal_error, provider_account_delete_error};
+use super::common::{internal_error, provider_account_mutation_error};
 use super::*;
 
 pub(crate) async fn claude_accounts_response(
@@ -25,15 +25,9 @@ pub(crate) async fn upsert_claude_account(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ClaudeAccountUpsertReq>,
 ) -> Result<Json<ClaudeAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    provider_accounts::add_claude_account(&state.core.data_root, req.label, req.setup_token)
+    crate::daemon::providers::add_claude_account(&state, req.label, req.setup_token)
         .await
-        .map_err(bad_request)?;
-    crate::daemon::providers::restart_claude_providers_for_auth_change(
-        &state,
-        "claude auth updated",
-    )
-    .await
-    .map_err(internal_error)?;
+        .map_err(provider_account_mutation_error)?;
     Ok(Json(
         claude_accounts_response(&state)
             .await
@@ -58,15 +52,9 @@ pub(crate) async fn set_claude_active_account(
             ));
         }
     }
-    provider_accounts::set_active_claude_account(&state.core.data_root, req.account_id)
+    crate::daemon::providers::set_active_claude_account(&state, req.account_id)
         .await
-        .map_err(bad_request)?;
-    crate::daemon::providers::restart_claude_providers_for_auth_change(
-        &state,
-        "claude auth updated",
-    )
-    .await
-    .map_err(internal_error)?;
+        .map_err(provider_account_mutation_error)?;
     Ok(Json(
         claude_accounts_response(&state)
             .await
@@ -78,15 +66,9 @@ pub(crate) async fn delete_claude_account(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<ClaudeAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    provider_accounts::remove_claude_account(&state.core.data_root, &id)
+    crate::daemon::providers::remove_claude_account(&state, &id)
         .await
-        .map_err(provider_account_delete_error)?;
-    crate::daemon::providers::restart_claude_providers_for_auth_change(
-        &state,
-        "claude auth updated",
-    )
-    .await
-    .map_err(internal_error)?;
+        .map_err(provider_account_mutation_error)?;
     Ok(Json(
         claude_accounts_response(&state)
             .await

@@ -17,6 +17,44 @@ pub(crate) enum ProviderAccountMutationError {
     Internal(anyhow::Error),
 }
 
+pub(crate) struct ProviderAccountLoginMutation {
+    pub(crate) active_account_id: Option<String>,
+    restart_error: Option<anyhow::Error>,
+}
+
+impl ProviderAccountLoginMutation {
+    fn from_restart_result(
+        active_account_id: Option<String>,
+        restart_result: anyhow::Result<()>,
+    ) -> Self {
+        Self {
+            active_account_id,
+            restart_error: restart_result.err(),
+        }
+    }
+
+    pub(crate) fn into_restart_result(self) -> (Option<String>, anyhow::Result<()>) {
+        let restart_result = match self.restart_error {
+            Some(err) => Err(err),
+            None => Ok(()),
+        };
+        (self.active_account_id, restart_result)
+    }
+
+    pub(crate) fn into_http_result(self) -> Result<(), ProviderAccountMutationError> {
+        match self.restart_error {
+            Some(err) => Err(ProviderAccountMutationError::Internal(err)),
+            None => Ok(()),
+        }
+    }
+
+    pub(crate) fn restart_error_message(&self) -> Option<String> {
+        self.restart_error
+            .as_ref()
+            .map(|err| format!("auth saved but provider restart failed: {err:#}"))
+    }
+}
+
 impl ProviderAccountMutationError {
     pub(crate) fn auth_login_error_message(&self) -> String {
         match self {
@@ -166,6 +204,259 @@ pub(crate) async fn load_qwen_account_registry(
     provider_accounts::load_qwen_registry(&state.core.data_root).await
 }
 
+pub(crate) async fn upsert_amp_account(
+    state: &Arc<AppState>,
+    label: Option<String>,
+    email: Option<String>,
+) -> Result<(), ProviderAccountMutationError> {
+    upsert_amp_account_for_login(state, label, email)
+        .await
+        .and_then(ProviderAccountLoginMutation::into_http_result)
+}
+
+pub(crate) async fn upsert_amp_account_for_login(
+    state: &Arc<AppState>,
+    label: Option<String>,
+    email: Option<String>,
+) -> Result<ProviderAccountLoginMutation, ProviderAccountMutationError> {
+    let registry = provider_accounts::upsert_amp_account(&state.core.data_root, label, email)
+        .await
+        .map_err(ProviderAccountMutationError::BadRequest)?;
+    let restart_result =
+        super::restarts::restart_amp_providers_for_auth_change(state, "amp auth updated").await;
+    Ok(ProviderAccountLoginMutation::from_restart_result(
+        registry.active_account_id,
+        restart_result,
+    ))
+}
+
+pub(crate) async fn set_active_amp_account(
+    state: &Arc<AppState>,
+    account_id: Option<String>,
+) -> Result<(), ProviderAccountMutationError> {
+    provider_accounts::set_active_amp_account(&state.core.data_root, account_id)
+        .await
+        .map_err(ProviderAccountMutationError::BadRequest)?;
+    super::restarts::restart_amp_providers_for_auth_change(state, "amp auth updated")
+        .await
+        .map_err(ProviderAccountMutationError::Internal)
+}
+
+pub(crate) async fn remove_amp_account(
+    state: &Arc<AppState>,
+    account_id: &str,
+) -> Result<(), ProviderAccountMutationError> {
+    provider_accounts::remove_amp_account(&state.core.data_root, account_id)
+        .await
+        .map_err(ProviderAccountMutationError::Delete)?;
+    super::restarts::restart_amp_providers_for_auth_change(state, "amp auth updated")
+        .await
+        .map_err(ProviderAccountMutationError::Internal)
+}
+
+pub(crate) async fn add_claude_account(
+    state: &Arc<AppState>,
+    label: Option<String>,
+    setup_token: String,
+) -> Result<(), ProviderAccountMutationError> {
+    add_claude_account_for_login(state, label, setup_token)
+        .await
+        .and_then(ProviderAccountLoginMutation::into_http_result)
+}
+
+pub(crate) async fn add_claude_account_for_login(
+    state: &Arc<AppState>,
+    label: Option<String>,
+    setup_token: String,
+) -> Result<ProviderAccountLoginMutation, ProviderAccountMutationError> {
+    let registry = provider_accounts::add_claude_account(&state.core.data_root, label, setup_token)
+        .await
+        .map_err(ProviderAccountMutationError::BadRequest)?;
+    let restart_result =
+        super::restarts::restart_claude_providers_for_auth_change(state, "claude auth updated")
+            .await;
+    Ok(ProviderAccountLoginMutation::from_restart_result(
+        registry.active_account_id,
+        restart_result,
+    ))
+}
+
+pub(crate) async fn set_active_claude_account(
+    state: &Arc<AppState>,
+    account_id: Option<String>,
+) -> Result<(), ProviderAccountMutationError> {
+    provider_accounts::set_active_claude_account(&state.core.data_root, account_id)
+        .await
+        .map_err(ProviderAccountMutationError::BadRequest)?;
+    super::restarts::restart_claude_providers_for_auth_change(state, "claude auth updated")
+        .await
+        .map_err(ProviderAccountMutationError::Internal)
+}
+
+pub(crate) async fn remove_claude_account(
+    state: &Arc<AppState>,
+    account_id: &str,
+) -> Result<(), ProviderAccountMutationError> {
+    provider_accounts::remove_claude_account(&state.core.data_root, account_id)
+        .await
+        .map_err(ProviderAccountMutationError::Delete)?;
+    super::restarts::restart_claude_providers_for_auth_change(state, "claude auth updated")
+        .await
+        .map_err(ProviderAccountMutationError::Internal)
+}
+
+pub(crate) async fn upsert_mistral_account(
+    state: &Arc<AppState>,
+    label: Option<String>,
+    email: Option<String>,
+) -> Result<(), ProviderAccountMutationError> {
+    upsert_mistral_account_for_login(state, label, email)
+        .await
+        .and_then(ProviderAccountLoginMutation::into_http_result)
+}
+
+pub(crate) async fn upsert_mistral_account_for_login(
+    state: &Arc<AppState>,
+    label: Option<String>,
+    email: Option<String>,
+) -> Result<ProviderAccountLoginMutation, ProviderAccountMutationError> {
+    let registry = provider_accounts::upsert_mistral_account(&state.core.data_root, label, email)
+        .await
+        .map_err(ProviderAccountMutationError::BadRequest)?;
+    let restart_result =
+        super::restarts::restart_mistral_providers_for_auth_change(state, "mistral auth updated")
+            .await;
+    Ok(ProviderAccountLoginMutation::from_restart_result(
+        registry.active_account_id,
+        restart_result,
+    ))
+}
+
+pub(crate) async fn set_active_mistral_account(
+    state: &Arc<AppState>,
+    account_id: Option<String>,
+) -> Result<(), ProviderAccountMutationError> {
+    provider_accounts::set_active_mistral_account(&state.core.data_root, account_id)
+        .await
+        .map_err(ProviderAccountMutationError::BadRequest)?;
+    super::restarts::restart_mistral_providers_for_auth_change(state, "mistral auth updated")
+        .await
+        .map_err(ProviderAccountMutationError::Internal)
+}
+
+pub(crate) async fn remove_mistral_account(
+    state: &Arc<AppState>,
+    account_id: &str,
+) -> Result<(), ProviderAccountMutationError> {
+    provider_accounts::remove_mistral_account(&state.core.data_root, account_id)
+        .await
+        .map_err(ProviderAccountMutationError::Delete)?;
+    super::restarts::restart_mistral_providers_for_auth_change(state, "mistral auth updated")
+        .await
+        .map_err(ProviderAccountMutationError::Internal)
+}
+
+pub(crate) async fn add_copilot_account(
+    state: &Arc<AppState>,
+    label: Option<String>,
+    token: String,
+    email: Option<String>,
+) -> Result<(), ProviderAccountMutationError> {
+    provider_accounts::add_copilot_account(&state.core.data_root, label, token, email)
+        .await
+        .map_err(ProviderAccountMutationError::BadRequest)?;
+    super::restarts::restart_copilot_providers_for_auth_change(state, "copilot auth updated")
+        .await
+        .map_err(ProviderAccountMutationError::Internal)
+}
+
+pub(crate) async fn set_active_copilot_account(
+    state: &Arc<AppState>,
+    account_id: Option<String>,
+) -> Result<(), ProviderAccountMutationError> {
+    provider_accounts::set_active_copilot_account(&state.core.data_root, account_id)
+        .await
+        .map_err(ProviderAccountMutationError::BadRequest)?;
+    super::restarts::restart_copilot_providers_for_auth_change(state, "copilot auth updated")
+        .await
+        .map_err(ProviderAccountMutationError::Internal)
+}
+
+pub(crate) async fn remove_copilot_account(
+    state: &Arc<AppState>,
+    account_id: &str,
+) -> Result<(), ProviderAccountMutationError> {
+    provider_accounts::remove_copilot_account(&state.core.data_root, account_id)
+        .await
+        .map_err(ProviderAccountMutationError::Delete)?;
+    super::restarts::restart_copilot_providers_for_auth_change(state, "copilot auth updated")
+        .await
+        .map_err(ProviderAccountMutationError::Internal)
+}
+
+pub(crate) async fn add_cursor_account(
+    state: &Arc<AppState>,
+    label: Option<String>,
+    token: String,
+    email: Option<String>,
+) -> Result<(), ProviderAccountMutationError> {
+    provider_accounts::add_cursor_account(&state.core.data_root, label, token, email)
+        .await
+        .map_err(ProviderAccountMutationError::BadRequest)?;
+    super::restarts::restart_cursor_providers_for_auth_change(state, "cursor auth updated")
+        .await
+        .map_err(ProviderAccountMutationError::Internal)
+}
+
+pub(crate) async fn add_cursor_oauth_account_for_login(
+    state: &Arc<AppState>,
+    label: Option<String>,
+    auth_token: String,
+    refresh_token: Option<String>,
+    email: Option<String>,
+) -> Result<ProviderAccountLoginMutation, ProviderAccountMutationError> {
+    let registry = provider_accounts::add_cursor_oauth_account(
+        &state.core.data_root,
+        label,
+        auth_token,
+        refresh_token,
+        email,
+    )
+    .await
+    .map_err(ProviderAccountMutationError::BadRequest)?;
+    let restart_result =
+        super::restarts::restart_cursor_providers_for_auth_change(state, "cursor auth updated")
+            .await;
+    Ok(ProviderAccountLoginMutation::from_restart_result(
+        registry.active_account_id,
+        restart_result,
+    ))
+}
+
+pub(crate) async fn set_active_cursor_account(
+    state: &Arc<AppState>,
+    account_id: Option<String>,
+) -> Result<(), ProviderAccountMutationError> {
+    provider_accounts::set_active_cursor_account(&state.core.data_root, account_id)
+        .await
+        .map_err(ProviderAccountMutationError::BadRequest)?;
+    super::restarts::restart_cursor_providers_for_auth_change(state, "cursor auth updated")
+        .await
+        .map_err(ProviderAccountMutationError::Internal)
+}
+
+pub(crate) async fn remove_cursor_account(
+    state: &Arc<AppState>,
+    account_id: &str,
+) -> Result<(), ProviderAccountMutationError> {
+    provider_accounts::remove_cursor_account(&state.core.data_root, account_id)
+        .await
+        .map_err(ProviderAccountMutationError::Delete)?;
+    super::restarts::restart_cursor_providers_for_auth_change(state, "cursor auth updated")
+        .await
+        .map_err(ProviderAccountMutationError::Internal)
+}
+
 pub(crate) async fn add_gemini_account(
     state: &Arc<AppState>,
     label: Option<String>,
@@ -175,7 +466,7 @@ pub(crate) async fn add_gemini_account(
 ) -> Result<(), ProviderAccountMutationError> {
     add_gemini_account_for_login(state, label, oauth_creds_json, google_accounts_json, email)
         .await
-        .map(|_| ())
+        .and_then(ProviderAccountLoginMutation::into_http_result)
 }
 
 pub(crate) async fn add_gemini_account_for_login(
@@ -184,7 +475,7 @@ pub(crate) async fn add_gemini_account_for_login(
     oauth_creds_json: String,
     google_accounts_json: Option<String>,
     email: Option<String>,
-) -> Result<Option<String>, ProviderAccountMutationError> {
+) -> Result<ProviderAccountLoginMutation, ProviderAccountMutationError> {
     let registry = provider_accounts::add_gemini_account(
         &state.core.data_root,
         label,
@@ -194,10 +485,13 @@ pub(crate) async fn add_gemini_account_for_login(
     )
     .await
     .map_err(ProviderAccountMutationError::BadRequest)?;
-    super::restarts::restart_gemini_providers_for_auth_change(state, "gemini auth updated")
-        .await
-        .map_err(ProviderAccountMutationError::Internal)?;
-    Ok(registry.active_account_id)
+    let restart_result =
+        super::restarts::restart_gemini_providers_for_auth_change(state, "gemini auth updated")
+            .await;
+    Ok(ProviderAccountLoginMutation::from_restart_result(
+        registry.active_account_id,
+        restart_result,
+    ))
 }
 
 pub(crate) async fn set_active_gemini_account(
@@ -253,7 +547,7 @@ pub(crate) async fn add_kimi_oauth_account_for_login(
     label: Option<String>,
     credentials_json: String,
     email: Option<String>,
-) -> Result<Option<String>, ProviderAccountMutationError> {
+) -> Result<ProviderAccountLoginMutation, ProviderAccountMutationError> {
     let registry = provider_accounts::add_kimi_oauth_account(
         &state.core.data_root,
         label,
@@ -262,10 +556,12 @@ pub(crate) async fn add_kimi_oauth_account_for_login(
     )
     .await
     .map_err(ProviderAccountMutationError::BadRequest)?;
-    super::restarts::restart_kimi_providers_for_auth_change(state, "kimi auth updated")
-        .await
-        .map_err(ProviderAccountMutationError::Internal)?;
-    Ok(registry.active_account_id)
+    let restart_result =
+        super::restarts::restart_kimi_providers_for_auth_change(state, "kimi auth updated").await;
+    Ok(ProviderAccountLoginMutation::from_restart_result(
+        registry.active_account_id,
+        restart_result,
+    ))
 }
 
 pub(crate) async fn set_active_kimi_account(
@@ -300,7 +596,7 @@ pub(crate) async fn add_qwen_account(
 ) -> Result<(), ProviderAccountMutationError> {
     add_qwen_account_for_login(state, label, oauth_creds_json, email)
         .await
-        .map(|_| ())
+        .and_then(ProviderAccountLoginMutation::into_http_result)
 }
 
 pub(crate) async fn add_qwen_account_for_login(
@@ -308,15 +604,17 @@ pub(crate) async fn add_qwen_account_for_login(
     label: Option<String>,
     oauth_creds_json: String,
     email: Option<String>,
-) -> Result<Option<String>, ProviderAccountMutationError> {
+) -> Result<ProviderAccountLoginMutation, ProviderAccountMutationError> {
     let registry =
         provider_accounts::add_qwen_account(&state.core.data_root, label, oauth_creds_json, email)
             .await
             .map_err(ProviderAccountMutationError::BadRequest)?;
-    super::restarts::restart_qwen_providers_for_auth_change(state, "qwen auth updated")
-        .await
-        .map_err(ProviderAccountMutationError::Internal)?;
-    Ok(registry.active_account_id)
+    let restart_result =
+        super::restarts::restart_qwen_providers_for_auth_change(state, "qwen auth updated").await;
+    Ok(ProviderAccountLoginMutation::from_restart_result(
+        registry.active_account_id,
+        restart_result,
+    ))
 }
 
 pub(crate) async fn set_active_qwen_account(

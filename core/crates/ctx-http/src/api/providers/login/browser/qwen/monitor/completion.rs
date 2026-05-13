@@ -34,8 +34,9 @@ pub(super) async fn complete_qwen_login_if_credentials_exist(
     )
     .await;
     match added {
-        Ok(active_account_id) => {
-            status::set_completion_status(state, login_id, active_account_id, Ok(())).await;
+        Ok(outcome) => {
+            let (active_account_id, restart_result) = outcome.into_restart_result();
+            status::set_completion_status(state, login_id, active_account_id, restart_result).await;
         }
         Err(err) => {
             status::set_failed(

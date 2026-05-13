@@ -24,33 +24,25 @@ pub(super) async fn finalize_claude_login(
         match exit_result {
             Some(Ok(exit)) if exit.success() => match extract_claude_setup_token(transcript) {
                 Some(setup_token) => {
-                    match provider_accounts::add_claude_account(
-                        &state.core.data_root,
+                    match crate::daemon::providers::add_claude_account_for_login(
+                        state,
                         label,
                         setup_token,
                     )
                     .await
                     {
-                        Ok(registry) => {
-                            final_account_id = registry.active_account_id;
-                            match crate::daemon::providers::restart_claude_providers_for_auth_change(
-                                state,
-                                "claude auth updated",
-                            )
-                            .await
-                            {
-                                Ok(()) => {
-                                    final_status = "success".to_string();
-                                }
-                                Err(err) => {
-                                    final_error = Some(logs::redact_sensitive(&format!(
-                                        "auth saved but provider restart failed: {err:#}"
-                                    )));
-                                }
+                        Ok(outcome) => {
+                            let restart_error = outcome.restart_error_message();
+                            final_account_id = outcome.active_account_id;
+                            if let Some(error) = restart_error {
+                                final_error = Some(logs::redact_sensitive(&error));
+                            } else {
+                                final_status = "success".to_string();
                             }
                         }
                         Err(err) => {
-                            final_error = Some(logs::redact_sensitive(&err.to_string()));
+                            final_error =
+                                Some(logs::redact_sensitive(&err.auth_login_error_message()));
                         }
                     }
                 }

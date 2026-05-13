@@ -1,4 +1,4 @@
-use super::common::{bad_request, internal_error, provider_account_delete_error, unknown_account};
+use super::common::{internal_error, provider_account_mutation_error, unknown_account};
 use super::*;
 
 pub(crate) async fn amp_accounts_response(
@@ -25,12 +25,9 @@ pub(crate) async fn upsert_amp_account(
     State(state): State<Arc<AppState>>,
     Json(req): Json<AmpAccountUpsertReq>,
 ) -> Result<Json<AmpAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    provider_accounts::upsert_amp_account(&state.core.data_root, req.label, req.email)
+    crate::daemon::providers::upsert_amp_account(&state, req.label, req.email)
         .await
-        .map_err(bad_request)?;
-    crate::daemon::providers::restart_amp_providers_for_auth_change(&state, "amp auth updated")
-        .await
-        .map_err(internal_error)?;
+        .map_err(provider_account_mutation_error)?;
     Ok(Json(
         amp_accounts_response(&state)
             .await
@@ -50,12 +47,9 @@ pub(crate) async fn set_amp_active_account(
             return Err(unknown_account());
         }
     }
-    provider_accounts::set_active_amp_account(&state.core.data_root, req.account_id)
+    crate::daemon::providers::set_active_amp_account(&state, req.account_id)
         .await
-        .map_err(bad_request)?;
-    crate::daemon::providers::restart_amp_providers_for_auth_change(&state, "amp auth updated")
-        .await
-        .map_err(internal_error)?;
+        .map_err(provider_account_mutation_error)?;
     let response = amp_accounts_response(&state)
         .await
         .map_err(internal_error)?;
@@ -66,12 +60,9 @@ pub(crate) async fn delete_amp_account(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<AmpAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    provider_accounts::remove_amp_account(&state.core.data_root, &id)
+    crate::daemon::providers::remove_amp_account(&state, &id)
         .await
-        .map_err(provider_account_delete_error)?;
-    crate::daemon::providers::restart_amp_providers_for_auth_change(&state, "amp auth updated")
-        .await
-        .map_err(internal_error)?;
+        .map_err(provider_account_mutation_error)?;
     let response = amp_accounts_response(&state)
         .await
         .map_err(internal_error)?;

@@ -43,14 +43,20 @@ pub(super) async fn monitor_kimi_login(
                 )
                 .await;
                 match added {
-                    Ok(active_account_id) => {
+                    Ok(outcome) => {
+                        let restart_error = outcome.restart_error_message();
                         state
                             .providers
                             .with_kimi_login_sessions(|map| {
                                 if let Some(entry) = map.get_mut(&login_id) {
-                                    entry.account_id = active_account_id.clone();
-                                    entry.status = "success".to_string();
-                                    entry.error = None;
+                                    entry.account_id = outcome.active_account_id.clone();
+                                    if let Some(error) = restart_error.as_deref() {
+                                        entry.status = "failed".to_string();
+                                        entry.error = Some(logs::redact_sensitive(error));
+                                    } else {
+                                        entry.status = "success".to_string();
+                                        entry.error = None;
+                                    }
                                 }
                             })
                             .await;

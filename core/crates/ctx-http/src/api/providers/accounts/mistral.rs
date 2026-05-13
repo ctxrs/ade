@@ -1,4 +1,4 @@
-use super::common::{bad_request, internal_error, provider_account_delete_error, unknown_account};
+use super::common::{internal_error, provider_account_mutation_error, unknown_account};
 use super::*;
 
 pub(crate) async fn mistral_accounts_response(
@@ -25,15 +25,9 @@ pub(crate) async fn upsert_mistral_account(
     State(state): State<Arc<AppState>>,
     Json(req): Json<MistralAccountUpsertReq>,
 ) -> Result<Json<MistralAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    provider_accounts::upsert_mistral_account(&state.core.data_root, req.label, req.email)
+    crate::daemon::providers::upsert_mistral_account(&state, req.label, req.email)
         .await
-        .map_err(bad_request)?;
-    crate::daemon::providers::restart_mistral_providers_for_auth_change(
-        &state,
-        "mistral auth updated",
-    )
-    .await
-    .map_err(internal_error)?;
+        .map_err(provider_account_mutation_error)?;
     Ok(Json(
         mistral_accounts_response(&state)
             .await
@@ -53,15 +47,9 @@ pub(crate) async fn set_mistral_active_account(
             return Err(unknown_account());
         }
     }
-    provider_accounts::set_active_mistral_account(&state.core.data_root, req.account_id)
+    crate::daemon::providers::set_active_mistral_account(&state, req.account_id)
         .await
-        .map_err(bad_request)?;
-    crate::daemon::providers::restart_mistral_providers_for_auth_change(
-        &state,
-        "mistral auth updated",
-    )
-    .await
-    .map_err(internal_error)?;
+        .map_err(provider_account_mutation_error)?;
     Ok(Json(
         mistral_accounts_response(&state)
             .await
@@ -73,15 +61,9 @@ pub(crate) async fn delete_mistral_account(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<MistralAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    provider_accounts::remove_mistral_account(&state.core.data_root, &id)
+    crate::daemon::providers::remove_mistral_account(&state, &id)
         .await
-        .map_err(provider_account_delete_error)?;
-    crate::daemon::providers::restart_mistral_providers_for_auth_change(
-        &state,
-        "mistral auth updated",
-    )
-    .await
-    .map_err(internal_error)?;
+        .map_err(provider_account_mutation_error)?;
     Ok(Json(
         mistral_accounts_response(&state)
             .await

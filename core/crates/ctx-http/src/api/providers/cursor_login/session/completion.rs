@@ -25,8 +25,8 @@ pub(super) async fn complete_cursor_login(
                     Ok((access_token, refresh_token, api_key)) => {
                         let auth_token = access_token.or(api_key);
                         if let Some(auth_token) = auth_token {
-                            match provider_accounts::add_cursor_oauth_account(
-                                &state.core.data_root,
+                            match crate::daemon::providers::add_cursor_oauth_account_for_login(
+                                state,
                                 label,
                                 auth_token,
                                 refresh_token,
@@ -34,26 +34,19 @@ pub(super) async fn complete_cursor_login(
                             )
                             .await
                             {
-                                Ok(registry) => {
-                                    account_id = registry.active_account_id.clone();
-                                    match crate::daemon::providers::restart_cursor_providers_for_auth_change(
-                                        state,
-                                        "cursor auth updated",
-                                    )
-                                    .await
-                                    {
-                                        Ok(()) => {
-                                            status = "success".to_string();
-                                        }
-                                        Err(err) => {
-                                            error = Some(logs::redact_sensitive(&format!(
-                                                "auth saved but provider restart failed: {err:#}"
-                                            )));
-                                        }
+                                Ok(outcome) => {
+                                    let restart_error = outcome.restart_error_message();
+                                    account_id = outcome.active_account_id;
+                                    if let Some(error_message) = restart_error.as_deref() {
+                                        error = Some(logs::redact_sensitive(error_message));
+                                    } else {
+                                        status = "success".to_string();
                                     }
                                 }
                                 Err(err) => {
-                                    error = Some(logs::redact_sensitive(&err.to_string()));
+                                    error = Some(logs::redact_sensitive(
+                                        &err.auth_login_error_message(),
+                                    ));
                                 }
                             }
                         } else {

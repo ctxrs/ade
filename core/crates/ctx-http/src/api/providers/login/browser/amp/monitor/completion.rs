@@ -6,15 +6,24 @@ pub(super) async fn complete_amp_login(
     label: &Option<String>,
     observed_email: Option<String>,
 ) {
-    if let Err(err) =
-        provider_accounts::upsert_amp_account(&state.core.data_root, label.clone(), observed_email)
-            .await
+    match crate::daemon::providers::upsert_amp_account_for_login(
+        state,
+        label.clone(),
+        observed_email,
+    )
+    .await
     {
-        status::set_failed(state, login_id, logs::redact_sensitive(&err.to_string())).await;
-        return;
-    }
-    let restart_result =
-        crate::daemon::providers::restart_amp_providers_for_auth_change(state, "amp auth updated")
+        Ok(outcome) => {
+            let (_, restart_result) = outcome.into_restart_result();
+            status::set_completion_status(state, login_id, restart_result).await;
+        }
+        Err(err) => {
+            status::set_failed(
+                state,
+                login_id,
+                logs::redact_sensitive(&err.auth_login_error_message()),
+            )
             .await;
-    status::set_completion_status(state, login_id, restart_result).await;
+        }
+    }
 }

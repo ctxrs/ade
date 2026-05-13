@@ -10,16 +10,22 @@ mod status;
 mod usage;
 
 pub(crate) use accounts::{
-    add_gemini_account, add_gemini_account_for_login, add_kimi_account,
-    add_kimi_oauth_account_for_login, add_qwen_account, add_qwen_account_for_login,
-    ensure_amp_account_registry_from_runtime_auth, import_host_codex_auth,
-    load_amp_account_registry, load_claude_account_registry, load_codex_account_registry,
-    load_codex_accounts_snapshot, load_copilot_account_registry, load_cursor_account_registry,
-    load_gemini_account_registry, load_kimi_account_registry, load_mistral_account_registry,
-    load_qwen_account_registry, probe_host_codex_auth_candidate, remove_codex_account,
-    remove_gemini_account, remove_kimi_account, remove_qwen_account, set_active_codex_account,
-    set_active_gemini_account, set_active_kimi_account, set_active_qwen_account,
-    CodexAccountsSnapshot, ProviderAccountMutationError,
+    add_claude_account, add_claude_account_for_login, add_copilot_account, add_cursor_account,
+    add_cursor_oauth_account_for_login, add_gemini_account, add_gemini_account_for_login,
+    add_kimi_account, add_kimi_oauth_account_for_login, add_qwen_account,
+    add_qwen_account_for_login, ensure_amp_account_registry_from_runtime_auth,
+    import_host_codex_auth, load_amp_account_registry, load_claude_account_registry,
+    load_codex_account_registry, load_codex_accounts_snapshot, load_copilot_account_registry,
+    load_cursor_account_registry, load_gemini_account_registry, load_kimi_account_registry,
+    load_mistral_account_registry, load_qwen_account_registry, probe_host_codex_auth_candidate,
+    remove_amp_account, remove_claude_account, remove_codex_account, remove_copilot_account,
+    remove_cursor_account, remove_gemini_account, remove_kimi_account, remove_mistral_account,
+    remove_qwen_account, set_active_amp_account, set_active_claude_account,
+    set_active_codex_account, set_active_copilot_account, set_active_cursor_account,
+    set_active_gemini_account, set_active_kimi_account, set_active_mistral_account,
+    set_active_qwen_account, upsert_amp_account, upsert_amp_account_for_login,
+    upsert_mistral_account, upsert_mistral_account_for_login, CodexAccountsSnapshot,
+    ProviderAccountMutationError,
 };
 pub(crate) use auth::{
     authenticate_provider_for_workspace_runtime, ProviderWorkspaceAuthenticationError,
@@ -35,10 +41,8 @@ pub(crate) use launch_config::{
 };
 pub(crate) use options_cache::{store_provider_verify_cache_value, ProviderOptionsCacheSnapshot};
 pub(crate) use restarts::{
-    invalidate_provider_runtime_state, restart_amp_providers_for_auth_change,
-    restart_claude_providers_for_auth_change, restart_codex_providers_for_auth_change,
-    restart_copilot_providers_for_auth_change, restart_cursor_providers_for_auth_change,
-    restart_mistral_providers_for_auth_change, restart_provider_for_auth_change,
+    invalidate_provider_runtime_state, restart_codex_providers_for_auth_change,
+    restart_provider_for_auth_change,
 };
 pub(crate) use runtime_probe::{prepare_provider_runtime_probe, PreparedProviderRuntimeProbeError};
 pub(crate) use status::{
