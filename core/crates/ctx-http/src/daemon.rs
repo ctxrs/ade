@@ -36,6 +36,7 @@ mod provider_runtime;
 pub(crate) mod providers;
 pub(crate) mod resource_governance;
 pub mod resource_telemetry;
+pub(crate) mod resource_utilization;
 mod retention;
 pub mod scheduler;
 mod serve;
