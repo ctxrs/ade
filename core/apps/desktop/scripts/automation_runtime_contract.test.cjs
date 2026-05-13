@@ -173,11 +173,13 @@ test("updater remote wrapper uses shipped app without source-side provisioning",
 
 test("remote real CI wrapper retries startup-only WebDriver session failures", () => {
   const script = fs.readFileSync(REMOTE_REAL_CI_WRAPPER, "utf8");
+  const wdio = fs.readFileSync(WDIO_CONF, "utf8");
   assert.match(script, /CTX_REMOTE_REAL_CI_AUTOMATION_ATTEMPTS/);
   assert.match(script, /is_retryable_wdio_session_start_failure\(\) \{/);
   assert.match(script, /UND_ERR_HEADERS_TIMEOUT/);
   assert.match(script, /hyper::Error\\?\(IncompleteMessage\\?\)/);
   assert.match(script, /Could not start a new session/);
+  assert.match(script, /write_launch_diagnostics\(\) \{/);
   assert.match(script, /sweep_webkit_automation_helpers\(\) \{/);
   assert.match(script, /sweep_stale_xvfb_processes\(\) \{/);
   assert.match(script, /remote-workspace-desktop-launch-smoke/);
@@ -185,12 +187,19 @@ test("remote real CI wrapper retries startup-only WebDriver session failures", (
   assert.match(script, /sweep_xvfb_processes_for_tmp_dir "\$\{attempt_tmp_dir\}"/);
   assert.match(script, /write_process_snapshot "\$\{attempt_dir\}\/processes-before-sweep\.log"/);
   assert.match(script, /write_process_snapshot "\$\{attempt_dir\}\/processes-after-automation-sweep\.log"/);
+  assert.match(script, /write_launch_diagnostics "\$\{attempt_dir\}\/launch-env\.txt"/);
   assert.match(script, /attempt_daemon_data_dir="\$\{attempt_dir\}\/controller-daemon-data"/);
   assert.match(script, /CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP="\$\{CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP:-1\}"/);
   assert.match(script, /CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP="\$\{CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP:-1\}"/);
   assert.match(script, /CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR="\$\{attempt_daemon_data_dir\}"/);
   assert.match(script, /CTX_AUTOMATION_APP_LAUNCH_LOG="\$\{attempt_dir\}\/app-launch\.log"/);
   assert.match(script, /CTX_AUTOMATION_CN_DRIVER_LOG="\$\{attempt_dir\}\/tauri-driver\.log"/);
+  assert.match(wdio, /TAURI_WEBVIEW_AUTOMATION: "true"/);
+  assert.match(wdio, /"APPDIR"/);
+  assert.match(wdio, /"APPIMAGE"/);
+  assert.match(wdio, /"CTX_APPIMAGE_PATH"/);
+  assert.match(wdio, /\.\.\.DESKTOP_APP_LAUNCH_ENV,/);
+  assert.match(wdio, /WebDriver application path=/);
   assert.match(script, /HOME="\$\{attempt_home_dir\}"/);
   assert.match(script, /TMPDIR="\$\{attempt_tmp_dir\}"/);
   assert.match(script, /TMP="\$\{attempt_tmp_dir\}"/);

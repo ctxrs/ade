@@ -828,7 +828,30 @@ const stopStaleSystemdScope = () => {
 const shellQuote = (value) => `'${String(value).replace(/'/g, `'\"'\"'`)}'`;
 
 const buildDesktopAppLaunchEnv = () => {
-  const env = {};
+  const env = {
+    TAURI_WEBVIEW_AUTOMATION: "true",
+  };
+  for (const key of [
+    "APPDIR",
+    "APPIMAGE",
+    "APPIMAGE_EXTRACT_AND_RUN",
+    "ARGV0",
+    "CTX_APPIMAGE_PATH",
+    "DISPLAY",
+    "HOME",
+    "TMP",
+    "TEMP",
+    "TMPDIR",
+    "XDG_CACHE_HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_RUNTIME_DIR",
+  ]) {
+    const value = String(process.env[key] || "").trim();
+    if (value) {
+      env[key] = value;
+    }
+  }
   if (SSH_NO_START_REMOTE) {
     env.CTX_DESKTOP_SSH_NO_START_REMOTE = "1";
     env.CTX_DESKTOP_SSH_START_REMOTE = "0";
@@ -849,7 +872,7 @@ const buildDesktopAppLaunchEnv = () => {
 
 const createDesktopAppLaunchWrapper = (appExecutablePath, env) => {
   const entries = Object.entries(env).filter(([, value]) => String(value || "").trim());
-  if (process.platform === "win32" || entries.length === 0) {
+  if (process.platform === "linux" || process.platform === "win32" || entries.length === 0) {
     return appExecutablePath;
   }
   const signature = crypto
@@ -867,6 +890,7 @@ const createDesktopAppLaunchWrapper = (appExecutablePath, env) => {
     "if [ -n \"${CTX_AUTOMATION_APP_LAUNCH_LOG:-}\" ]; then",
     "  mkdir -p \"$(dirname \"$CTX_AUTOMATION_APP_LAUNCH_LOG\")\"",
     "  printf '%s\\n' \"launching desktop app\" >> \"$CTX_AUTOMATION_APP_LAUNCH_LOG\"",
+    "  printf 'launch env TAURI_WEBVIEW_AUTOMATION=%s APPDIR=%s APPIMAGE=%s ARGV0=%s CTX_APPIMAGE_PATH=%s DISPLAY=%s XDG_RUNTIME_DIR=%s HOME=%s\\n' \"${TAURI_WEBVIEW_AUTOMATION:-}\" \"${APPDIR:-}\" \"${APPIMAGE:-}\" \"${ARGV0:-}\" \"${CTX_APPIMAGE_PATH:-}\" \"${DISPLAY:-}\" \"${XDG_RUNTIME_DIR:-}\" \"${HOME:-}\" >> \"$CTX_AUTOMATION_APP_LAUNCH_LOG\"",
     `  exec ${shellQuote(appExecutablePath)} "$@" >> "$CTX_AUTOMATION_APP_LAUNCH_LOG" 2>&1`,
     "fi",
     `exec ${shellQuote(appExecutablePath)} "$@"`,
@@ -1890,6 +1914,7 @@ exports.config = {
       `[wdio] CTX_AUTOMATION_SSH_NO_START_REMOTE=${String(process.env.CTX_AUTOMATION_SSH_NO_START_REMOTE || "<unset>")} SSH_NO_START_REMOTE=${String(SSH_NO_START_REMOTE)}`,
     );
     console.error(`[wdio] app path=${APP_PATH}`);
+    console.error(`[wdio] WebDriver application path=${WDIO_APPLICATION_PATH}`);
     activeTauriDriverPort = TAURI_DRIVER_PORT;
     activeTauriDriverNativePort = TAURI_DRIVER_NATIVE_PORT;
     console.error(
@@ -2144,6 +2169,7 @@ exports.config = {
 
     const driverEnv = {
       ...process.env,
+      ...DESKTOP_APP_LAUNCH_ENV,
       TAURI_DRIVER_PORT: String(activeTauriDriverPort),
       TAURI_DRIVER_NATIVE_PORT: String(activeTauriDriverNativePort),
     };

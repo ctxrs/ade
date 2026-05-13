@@ -1621,6 +1621,43 @@ async function stopStreamers(
   };
 }
 
+async function installStopClickTimestampProbe(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const win = window as Window & {
+      __ctxRemoteSoakStopClickAtMs?: number | null;
+    };
+    win.__ctxRemoteSoakStopClickAtMs = null;
+    const listener = (event: MouseEvent): void => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const stopButton = target.closest('button[aria-label="Stop"], button[title="Stop"]');
+      if (!stopButton) return;
+      win.__ctxRemoteSoakStopClickAtMs = Date.now();
+      document.removeEventListener("click", listener, true);
+    };
+    document.addEventListener("click", listener, true);
+  });
+}
+
+async function readStopClickTimestamp(page: Page): Promise<number> {
+  await page.waitForFunction(() => {
+    const win = window as Window & {
+      __ctxRemoteSoakStopClickAtMs?: number | null;
+    };
+    return typeof win.__ctxRemoteSoakStopClickAtMs === "number";
+  });
+  const clickAtMs = await page.evaluate(() => {
+    const win = window as Window & {
+      __ctxRemoteSoakStopClickAtMs?: number | null;
+    };
+    return win.__ctxRemoteSoakStopClickAtMs ?? null;
+  });
+  if (typeof clickAtMs !== "number" || !Number.isFinite(clickAtMs)) {
+    throw new Error("Stop click timestamp probe did not observe the browser click event");
+  }
+  return clickAtMs;
+}
+
 test("workbench: remote daemon stream load keeps UI progress fresh", async ({
   page,
   request,
@@ -1838,6 +1875,8 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
     terminalEventAtMs: null as number | null,
     terminalEventObservedAtMs: null as number | null,
     terminalStatus: null as string | null,
+    clickAttemptAtMs: null as number | null,
+    clickDispatchLagMs: null as number | null,
     clickToRequestMs: null as number | null,
     clickToPendingMs: null as number | null,
     clickToTerminalMs: null as number | null,
@@ -1897,8 +1936,12 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
       );
       const stopButton = page.getByRole("button", { name: "Stop" });
       await expect(stopButton).toBeVisible({ timeout: 20_000 });
-      interrupt.clickAtMs = Date.now();
+      await stopButton.click({ trial: true, timeout: MAX_CLICK_TO_PENDING_MS + 5000 });
+      await installStopClickTimestampProbe(page);
+      interrupt.clickAttemptAtMs = Date.now();
       await stopButton.click();
+      interrupt.clickAtMs = await readStopClickTimestamp(page);
+      interrupt.clickDispatchLagMs = interrupt.clickAtMs - interrupt.clickAttemptAtMs;
       await expect(page.getByRole("button", { name: "Stopping..." })).toBeVisible({
         timeout: MAX_CLICK_TO_PENDING_MS + 5000,
       });
@@ -2235,6 +2278,10 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
     );
   }
   expect(interrupt.error).toBeNull();
+  expect(telemetryMetrics["workbench.interrupt_click_to_pending_ms"]?.count ?? 0).toBeGreaterThan(0);
+  expect(telemetryMetrics["workbench.interrupt_click_to_pending_ms"]?.p95 ?? Infinity).toBeLessThanOrEqual(
+    MAX_CLICK_TO_PENDING_MS,
+  );
   expect(interrupt.clickToRequestMs ?? Infinity).toBeLessThanOrEqual(MAX_CLICK_TO_PENDING_MS);
   expect(interrupt.clickToPendingMs ?? Infinity).toBeLessThanOrEqual(MAX_CLICK_TO_PENDING_MS);
   expect(interrupt.clickToTerminalMs ?? Infinity).toBeLessThanOrEqual(MAX_CLICK_TO_TERMINAL_MS);

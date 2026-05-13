@@ -51,8 +51,13 @@ test("wdio macOS shipped-app launches through a wrapper with exact app env", () 
     const appPath = path.join(tmp, "ctx-real");
     const bundlesDir = path.join(tmp, "bundles");
     const daemonDataDir = path.join(tmp, "workspace-home", ".ctx");
+    const appDir = path.join(tmp, "squashfs-root");
+    const appImage = path.join(tmp, "ctx.AppImage");
+    const runtimeDir = path.join(tmp, "xdg-runtime");
     fs.writeFileSync(appPath, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
     fs.mkdirSync(bundlesDir, { recursive: true });
+    fs.mkdirSync(appDir, { recursive: true });
+    fs.mkdirSync(runtimeDir, { recursive: true });
 
     const nodeScript = [
       `Object.defineProperty(process, "platform", { value: "darwin" });`,
@@ -70,6 +75,13 @@ test("wdio macOS shipped-app launches through a wrapper with exact app env", () 
         CTX_AUTOMATION_SHIPPED_APP_BUNDLES_DIR: bundlesDir,
         CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR: daemonDataDir,
         CTX_AUTOMATION_SSH_NO_START_REMOTE: "0",
+        APPDIR: appDir,
+        APPIMAGE: appImage,
+        APPIMAGE_EXTRACT_AND_RUN: "1",
+        ARGV0: appImage,
+        CTX_APPIMAGE_PATH: appImage,
+        DISPLAY: ":99",
+        XDG_RUNTIME_DIR: runtimeDir,
       },
     });
     assert.notEqual(wrapperPath, appPath);
@@ -82,20 +94,34 @@ test("wdio macOS shipped-app launches through a wrapper with exact app env", () 
     );
     assert.match(wrapper, /export CTX_DESKTOP_SSH_NO_START_REMOTE='0'/);
     assert.match(wrapper, /export CTX_DESKTOP_SSH_START_REMOTE='1'/);
+    assert.match(wrapper, /export TAURI_WEBVIEW_AUTOMATION='true'/);
+    assert.match(wrapper, new RegExp(`export APPDIR='${escapeRegExp(appDir)}'`));
+    assert.match(wrapper, new RegExp(`export APPIMAGE='${escapeRegExp(appImage)}'`));
+    assert.match(wrapper, /export APPIMAGE_EXTRACT_AND_RUN='1'/);
+    assert.match(wrapper, new RegExp(`export ARGV0='${escapeRegExp(appImage)}'`));
+    assert.match(wrapper, new RegExp(`export CTX_APPIMAGE_PATH='${escapeRegExp(appImage)}'`));
+    assert.match(wrapper, /export DISPLAY=':99'/);
+    assert.match(wrapper, new RegExp(`export XDG_RUNTIME_DIR='${escapeRegExp(runtimeDir)}'`));
+    assert.match(wrapper, /launch env TAURI_WEBVIEW_AUTOMATION=/);
     assert.match(wrapper, new RegExp(`exec '${escapeRegExp(appPath)}' "\\$@"`));
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
 
-test("wdio Linux shipped-app launches through a wrapper with exact app env", () => {
+test("wdio Linux shipped-app launches raw AppRun with exact app env on tauri-driver", () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-linux-launch-env-"));
   try {
     const appPath = path.join(tmp, "ctx-real");
     const bundlesDir = path.join(tmp, "bundles");
     const daemonDataDir = path.join(tmp, "workspace-home", ".ctx");
+    const appDir = path.join(tmp, "squashfs-root");
+    const appImage = path.join(tmp, "ctx.AppImage");
+    const runtimeDir = path.join(tmp, "xdg-runtime");
     fs.writeFileSync(appPath, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
     fs.mkdirSync(bundlesDir, { recursive: true });
+    fs.mkdirSync(appDir, { recursive: true });
+    fs.mkdirSync(runtimeDir, { recursive: true });
 
     const nodeScript = [
       `Object.defineProperty(process, "platform", { value: "linux" });`,
@@ -113,22 +139,22 @@ test("wdio Linux shipped-app launches through a wrapper with exact app env", () 
         CTX_AUTOMATION_SHIPPED_APP_BUNDLES_DIR: bundlesDir,
         CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR: daemonDataDir,
         CTX_AUTOMATION_SSH_NO_START_REMOTE: "0",
+        APPDIR: appDir,
+        APPIMAGE: appImage,
+        APPIMAGE_EXTRACT_AND_RUN: "1",
+        ARGV0: appImage,
+        CTX_APPIMAGE_PATH: appImage,
+        DISPLAY: ":99",
+        XDG_RUNTIME_DIR: runtimeDir,
       },
     });
-    assert.notEqual(resolvedPath, appPath);
-    assert.equal(path.dirname(resolvedPath), path.join(tmp, "desktop-app-launchers"));
-    const wrapper = fs.readFileSync(resolvedPath, "utf8");
-    assert.match(wrapper, new RegExp(`export CTX_BUNDLE_DIR='${escapeRegExp(bundlesDir)}'`));
-    assert.match(
-      wrapper,
-      new RegExp(`export CTX_DESKTOP_DAEMON_DATA_DIR='${escapeRegExp(daemonDataDir)}'`),
-    );
-    assert.match(wrapper, /export CTX_DESKTOP_SSH_NO_START_REMOTE='0'/);
-    assert.match(wrapper, /export CTX_DESKTOP_SSH_START_REMOTE='1'/);
-    assert.match(wrapper, new RegExp(`exec '${escapeRegExp(appPath)}' "\\$@"`));
+    assert.equal(resolvedPath, appPath);
+    assert.equal(fs.existsSync(path.join(tmp, "desktop-app-launchers")), false);
 
     const script = fs.readFileSync(configPath, "utf8");
     assert.match(script, /const driverEnv = \{\s*\.\.\.process\.env,/);
+    assert.match(script, /\.\.\.DESKTOP_APP_LAUNCH_ENV,/);
+    assert.match(script, /console\.error\(`\[wdio\] WebDriver application path=\$\{WDIO_APPLICATION_PATH\}`\)/);
     assert.match(script, /TAURI_DRIVER_PORT: String\(activeTauriDriverPort\)/);
     assert.match(script, /TAURI_DRIVER_NATIVE_PORT: String\(activeTauriDriverNativePort\)/);
   } finally {

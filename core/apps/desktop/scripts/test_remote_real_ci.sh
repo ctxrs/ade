@@ -220,6 +220,43 @@ write_process_snapshot() {
   ps -Ao pid=,ppid=,stat=,etime=,command= >"${out_path}" 2>&1 || true
 }
 
+write_launch_diagnostics() {
+  local out_path="$1"
+  local app_path="${CTX_DESKTOP_APP_PATH:-}"
+  local app_root="${app_path%/AppRun}"
+  local -a launch_paths=()
+  if [[ -n "${app_path}" ]]; then
+    launch_paths+=(
+      "${app_path}"
+      "${app_path}.wrapped"
+      "${app_root}/usr/bin/ctx"
+      "${app_root}/usr/bin/ctx-daemon"
+      "${app_root}/apprun-hooks/linuxdeploy-plugin-gtk.sh"
+    )
+  fi
+  {
+    printf 'CTX_DESKTOP_APP_PATH=%s\n' "${app_path}"
+    printf 'CTX_AUTOMATION_SHIPPED_APP_BUNDLES_DIR=%s\n' "${CTX_AUTOMATION_SHIPPED_APP_BUNDLES_DIR:-}"
+    printf 'CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR=%s\n' "${CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR:-}"
+    printf 'APPDIR=%s\n' "${APPDIR:-}"
+    printf 'APPIMAGE=%s\n' "${APPIMAGE:-}"
+    printf 'APPIMAGE_EXTRACT_AND_RUN=%s\n' "${APPIMAGE_EXTRACT_AND_RUN:-}"
+    printf 'ARGV0=%s\n' "${ARGV0:-}"
+    printf 'CTX_APPIMAGE_PATH=%s\n' "${CTX_APPIMAGE_PATH:-}"
+    printf 'DISPLAY=%s\n' "${DISPLAY:-}"
+    printf 'XDG_RUNTIME_DIR=%s\n' "${XDG_RUNTIME_DIR:-}"
+    printf 'HOME=%s\n' "${HOME:-}"
+    for launch_path in "${launch_paths[@]}"; do
+      [[ -n "${launch_path}" ]] || continue
+      if [[ -e "${launch_path}" ]]; then
+        ls -l "${launch_path}" 2>&1 || true
+      else
+        printf 'missing %s\n' "${launch_path}"
+      fi
+    done
+  } >"${out_path}" 2>&1 || true
+}
+
 process_elapsed_seconds() {
   local elapsed="$1"
   local days=0
@@ -511,6 +548,7 @@ run_lane() {
       sweep_stale_xvfb_processes
       sweep_local_automation_processes
       write_process_snapshot "${attempt_dir}/processes-after-preflight-sweep.log"
+      write_launch_diagnostics "${attempt_dir}/launch-env.txt"
       set +e
       (
         cd "${ROOT}"
