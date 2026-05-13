@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use ctx_workspace_services::worktree_vcs::{claim_next_worktree_vcs_job, finish_worktree_vcs_job};
-
 use crate::daemon::AppState;
 
 use super::projection::refresh_worktree_vcs_projection;
@@ -37,22 +35,16 @@ async fn run_worktree_vcs_job(
         );
     }
 
-    let should_notify = {
-        let mut runtime = state.workspaces.worktree_vcs_runtime.lock().await;
-        finish_worktree_vcs_job(&mut runtime, worktree_id)
-    };
+    let should_notify = state.finish_worktree_vcs_job(worktree_id).await;
     if should_notify {
-        state.workspaces.worktree_vcs_scheduler.notify.notify_one();
+        state.notify_worktree_vcs_scheduler();
     }
 }
 
 async fn next_worktree_vcs_job(
     state: &Arc<AppState>,
 ) -> Option<(ctx_core::ids::WorktreeId, bool, bool)> {
-    let active = state.workspaces.worktree_vcs_active.lock().await;
-    let open = state.workspaces.worktree_vcs_open_panes.lock().await;
-    let mut runtime = state.workspaces.worktree_vcs_runtime.lock().await;
-    claim_next_worktree_vcs_job(&mut runtime, &active, &open).map(|job| {
+    state.claim_next_worktree_vcs_job().await.map(|job| {
         (
             job.worktree_id,
             job.refresh_summary,
@@ -63,22 +55,11 @@ async fn next_worktree_vcs_job(
 
 async fn run_worktree_vcs_scheduler(state: Arc<AppState>) {
     loop {
-        state
-            .workspaces
-            .worktree_vcs_scheduler
-            .notify
-            .notified()
-            .await;
+        state.wait_worktree_vcs_scheduler_notification().await;
         loop {
-            let permit = match state
-                .workspaces
-                .worktree_vcs_scheduler
-                .permits
-                .clone()
-                .try_acquire_owned()
-            {
-                Ok(permit) => permit,
-                Err(_) => break,
+            let permit = match state.try_acquire_worktree_vcs_scheduler_permit() {
+                Some(permit) => permit,
+                None => break,
             };
             let Some((worktree_id, refresh_summary, refresh_touched_files)) =
                 next_worktree_vcs_job(&state).await
@@ -97,12 +78,7 @@ async fn run_worktree_vcs_scheduler(state: Arc<AppState>) {
 }
 
 pub(super) async fn ensure_worktree_vcs_scheduler_started(state: &Arc<AppState>) {
-    let started = state
-        .workspaces
-        .worktree_vcs_scheduler
-        .started
-        .swap(true, std::sync::atomic::Ordering::AcqRel);
-    if started {
+    if !state.mark_worktree_vcs_scheduler_started() {
         return;
     }
     let state = state.clone();

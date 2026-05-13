@@ -3,9 +3,8 @@ use std::sync::Arc;
 use anyhow::Result;
 use ctx_core::models::{Worktree, WorktreeVcsBaseResolutionKind};
 use ctx_workspace_services::worktree_vcs::{
-    finish_worktree_vcs_refresh, plan_worktree_vcs_touched_files_refresh,
-    resolve_worktree_diff_base_from_source, worktree_vcs_projection_cache_state,
-    WorktreeDiffBaseResolution, WorktreeVcsDiffBaseQuery,
+    plan_worktree_vcs_touched_files_refresh, resolve_worktree_diff_base_from_source,
+    worktree_vcs_projection_cache_state, WorktreeDiffBaseResolution, WorktreeVcsDiffBaseQuery,
 };
 
 use crate::daemon::AppState;
@@ -119,13 +118,13 @@ pub(in crate::daemon::git_status) async fn refresh_worktree_vcs_projection(
 
     publish_worktree_vcs_snapshot(state, worktree, snapshot, force_emit, summary_at).await;
 
-    let mut runtime = state.workspaces.worktree_vcs_runtime.lock().await;
-    let entry = runtime.entry(worktree.id).or_default();
-    finish_worktree_vcs_refresh(
-        entry,
-        status_projection.git_snapshot,
-        touched_result.touched_files,
-        touched_result.touched_files_state,
-    );
+    state
+        .finish_worktree_vcs_refresh(
+            worktree.id,
+            status_projection.git_snapshot,
+            touched_result.touched_files,
+            touched_result.touched_files_state,
+        )
+        .await;
     Ok(())
 }

@@ -26,7 +26,7 @@ pub(super) async fn handle_workspace_vcs_ws(
         spawn_workspace_vcs_send_loop(sender, Arc::clone(&pending), Arc::clone(&metrics));
 
     let mut runtime = WorkspaceVcsRuntime::default();
-    let mut rx = state.workspaces.worktree_vcs_events.subscribe();
+    let mut rx = state.subscribe_worktree_vcs_events();
     let recv_loop = async {
         loop {
             tokio::select! {

@@ -12,9 +12,9 @@ mod snapshot;
 mod source;
 mod watch;
 use ctx_workspace_services::worktree_vcs::{
-    mark_worktree_vcs_runtime_dirty, queue_worktree_vcs_refresh, worktree_has_vcs_repo_from_source,
-    worktree_vcs_dirty_transient_snapshot, worktree_vcs_driver_for_kind,
-    worktree_vcs_refresh_transient_snapshot, WorktreeVcsDirtyBits, WorktreeVcsDriver,
+    worktree_has_vcs_repo_from_source, worktree_vcs_dirty_transient_snapshot,
+    worktree_vcs_driver_for_kind, worktree_vcs_refresh_transient_snapshot, WorktreeVcsDirtyBits,
+    WorktreeVcsDriver,
 };
 pub(crate) use projection::load_git_status_snapshot;
 use projection::{publish_transient_worktree_vcs_snapshot, refresh_worktree_vcs_projection};
@@ -66,11 +66,9 @@ async fn request_worktree_vcs_refresh_inner(
     }
     ensure_worktree_vcs_scheduler_started(state).await;
 
-    {
-        let mut runtime = state.workspaces.worktree_vcs_runtime.lock().await;
-        let entry = runtime.entry(worktree.id).or_default();
-        queue_worktree_vcs_refresh(entry, summary, touched_files);
-    }
+    state
+        .queue_worktree_vcs_refresh(worktree.id, summary, touched_files)
+        .await;
 
     if publish_transient {
         if let Some(snapshot) = state.get_worktree_vcs_snapshot(worktree.id).await {
@@ -80,7 +78,7 @@ async fn request_worktree_vcs_refresh_inner(
         }
     }
 
-    state.workspaces.worktree_vcs_scheduler.notify.notify_one();
+    state.notify_worktree_vcs_scheduler();
     Ok(())
 }
 
@@ -97,11 +95,9 @@ pub async fn mark_worktree_vcs_dirty(
         return Ok(());
     }
     let pane_open = state.is_worktree_vcs_pane_open(worktree.id).await;
-    {
-        let mut runtime = state.workspaces.worktree_vcs_runtime.lock().await;
-        let entry = runtime.entry(worktree.id).or_default();
-        mark_worktree_vcs_runtime_dirty(entry, dirty_bits, candidate_paths, pane_open);
-    }
+    state
+        .mark_worktree_vcs_runtime_dirty(worktree.id, dirty_bits, candidate_paths, pane_open)
+        .await;
 
     if let Some(snapshot) = state.get_worktree_vcs_snapshot(worktree.id).await {
         let snapshot = worktree_vcs_dirty_transient_snapshot(snapshot);
