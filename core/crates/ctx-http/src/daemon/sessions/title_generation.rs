@@ -4,11 +4,62 @@ use std::sync::Arc;
 use crate::daemon::AppState;
 use ctx_core::models::Session;
 use ctx_observability::logs;
+use ctx_provider_install::install_state::InstallId;
 use ctx_session_service::title_generation;
 use ctx_settings_model as user_settings;
 
 mod persistence;
+pub(crate) use ctx_managed_installs::title_generation_local::{
+    TitleGenerationLocalModelStatus, TitleGenerationLocalRuntimeStatus,
+};
 pub(crate) use persistence::apply_session_title_update;
+
+pub(crate) const TITLE_GENERATION_LOCAL_INSTALL_KEY: &str = "title_generation_local";
+
+#[derive(Debug, Clone)]
+pub(crate) struct TitleGenerationLocalStatusSnapshot {
+    pub(crate) ready: bool,
+    pub(crate) runtime: TitleGenerationLocalRuntimeStatus,
+    pub(crate) model: TitleGenerationLocalModelStatus,
+    pub(crate) install_id: Option<InstallId>,
+    pub(crate) install_running: bool,
+}
+
+pub(crate) async fn title_generation_local_status(
+    state: &Arc<AppState>,
+) -> anyhow::Result<TitleGenerationLocalStatusSnapshot> {
+    let status =
+        ctx_managed_installs::title_generation_local::local_status(&state.core.data_root).await?;
+    let install_id = state
+        .find_running_install(TITLE_GENERATION_LOCAL_INSTALL_KEY, None)
+        .await;
+    Ok(TitleGenerationLocalStatusSnapshot {
+        ready: status.ready,
+        runtime: status.runtime,
+        model: status.model,
+        install_id,
+        install_running: install_id.is_some(),
+    })
+}
+
+pub(crate) async fn start_title_generation_local_install(state: Arc<AppState>) -> InstallId {
+    let (install_id, started_new) = state
+        .start_install(TITLE_GENERATION_LOCAL_INSTALL_KEY.to_string(), None)
+        .await;
+    if started_new {
+        tokio::spawn(async move {
+            if let Err(error) = ctx_managed_installs::install_title_generation_local_with_progress(
+                state.clone(),
+                install_id,
+            )
+            .await
+            {
+                tracing::error!("local title generation install failed: {error:#}");
+            }
+        });
+    }
+    install_id
+}
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum TitleGenerationSource {
