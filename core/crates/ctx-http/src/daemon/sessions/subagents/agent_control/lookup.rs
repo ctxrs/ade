@@ -5,7 +5,7 @@ pub(crate) async fn list_agents(
     parent_id: SessionId,
 ) -> ApiResult<Vec<AgentSummary>> {
     let (store, parent) = load_parent_session(state.as_ref(), parent_id).await?;
-    let inactivity_timeout = state.sessions.provider_inactivity_timeout().await;
+    let inactivity_timeout = state.provider_inactivity_timeout().await;
     let subs = store
         .list_subagent_sessions(parent.id)
         .await
@@ -25,7 +25,7 @@ pub(crate) async fn get_agent(
     req: GetAgentReq,
 ) -> ApiResult<GetAgentResp> {
     let (store, parent) = load_parent_session(state.as_ref(), parent_id).await?;
-    let inactivity_timeout = state.sessions.provider_inactivity_timeout().await;
+    let inactivity_timeout = state.provider_inactivity_timeout().await;
     let child = resolve_child_agent_session(&store, &parent, &req.agent_id).await?;
     let detail = build_agent_detail(&state, &store, &parent, &child, inactivity_timeout).await?;
     Ok(GetAgentResp { agent: detail })

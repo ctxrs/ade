@@ -1,5 +1,6 @@
 use super::persistence::{persist_created_session, PersistCreatedSession};
 use super::*;
+use crate::daemon::workspaces::ensure_task_commit_hook;
 
 #[path = "loaded/prepared.rs"]
 mod prepared;
@@ -57,7 +58,7 @@ pub(in crate::api::tasks) async fn create_session_for_loaded_task_inner(
 
     if let Ok(Some(worktree)) = store.get_worktree(worktree_id).await {
         if let Err(e) =
-            vcs_hooks::ensure_task_commit_hook(state.as_ref(), &workspace, &worktree, task.id).await
+            ensure_task_commit_hook(state.as_ref(), &workspace, &worktree, task.id).await
         {
             tracing::warn!(
                 task_id = %task.id.0,

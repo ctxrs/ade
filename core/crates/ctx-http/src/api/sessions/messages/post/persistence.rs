@@ -83,12 +83,12 @@ pub(super) async fn persist_user_message(
 ) -> Result<PersistedPostMessage, ApiErr> {
     let delivery = resolve_message_delivery(
         parts.requested_delivery.clone(),
-        state.sessions.is_running(session.id).await,
+        state.is_session_running(session.id).await,
         queued_messages_enabled(),
     )?;
 
     let run_id = RunId::new();
-    let order_seq_state = state.sessions.get_order_seq_state(store, session.id).await;
+    let order_seq_state = state.session_order_seq_state(store, session.id).await;
     let order_seq = {
         let mut order_seq_state = order_seq_state.lock().await;
         order_seq_state.get_or_assign(format!("message:{}", parts.message_id.0), None)

@@ -80,7 +80,7 @@ pub(crate) async fn interrupt_agent(
     req: InterruptAgentReq,
 ) -> ApiResult<InterruptAgentResp> {
     let (store, parent) = load_parent_session(state.as_ref(), parent_id).await?;
-    let inactivity_timeout = state.sessions.provider_inactivity_timeout().await;
+    let inactivity_timeout = state.provider_inactivity_timeout().await;
     let child = resolve_child_agent_session(&store, &parent, &req.agent_id).await?;
     send_scheduler_interrupt(&state, &child).await;
     let detail = build_agent_detail(&state, &store, &parent, &child, inactivity_timeout).await?;

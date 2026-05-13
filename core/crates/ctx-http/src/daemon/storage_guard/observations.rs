@@ -51,7 +51,7 @@ fn push_observed_path(
 
 async fn running_session_workdirs(state: &Arc<AppState>) -> Vec<PathBuf> {
     let mut workdirs = Vec::new();
-    for session_id in state.sessions.list_running_sessions().await {
+    for session_id in state.running_session_ids().await {
         let Ok(store) = state.store_for_session(session_id).await else {
             continue;
         };

@@ -118,7 +118,7 @@ pub(super) async fn session_worker(
                     break;
                 };
                 if changed.is_err() {
-                    event_head_rx = state.sessions.subscribe_session_event_head(session.id).await;
+                    event_head_rx = state.subscribe_session_event_head(session.id).await;
                 }
                 refresh_inactivity_deadline(
                     running_inactivity_timeout,

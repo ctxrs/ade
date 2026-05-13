@@ -8,7 +8,7 @@ pub(crate) async fn wait_agent(
     let agent_ids = normalize_wait_agent_ids(req.agent_id.as_deref(), req.agent_ids.as_deref())
         .map_err(|error| api_error(SubagentErrorKind::BadRequest, error))?;
     let (store, parent) = load_parent_session(state.as_ref(), parent_id).await?;
-    let inactivity_timeout = state.sessions.provider_inactivity_timeout().await;
+    let inactivity_timeout = state.provider_inactivity_timeout().await;
     let targets = collect_wait_targets(&store, &parent, &agent_ids).await?;
     let mode = parse_wait_mode(req.mode.as_deref())
         .map_err(|error| api_error(SubagentErrorKind::BadRequest, error))?;

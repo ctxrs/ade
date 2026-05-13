@@ -55,7 +55,7 @@ pub(super) fn spawn_session_auth_event_sink(
                 }
             }
             if payload.is_object() && should_attach_order_seq(&event) {
-                let order_seq_state = state.sessions.get_order_seq_state(&store, session_id).await;
+                let order_seq_state = state.session_order_seq_state(&store, session_id).await;
                 let mut order_seq_state = order_seq_state.lock().await;
                 attach_order_seq(
                     &mut order_seq_state,

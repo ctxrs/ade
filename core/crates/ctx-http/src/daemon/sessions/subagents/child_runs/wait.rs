@@ -48,7 +48,7 @@ pub(in crate::daemon::sessions::subagents) async fn wait_for_run_terminal_turn(
                     let Some(state) = state_weak.upgrade() else {
                         return Ok(None);
                     };
-                    rx = state.sessions.subscribe_session_event_head(session_id).await;
+                    rx = state.subscribe_session_event_head(session_id).await;
                 }
                 if let Some(turn) = latest_terminal_turn_for_run(store, session_id, run_id).await?
                 {

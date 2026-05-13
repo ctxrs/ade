@@ -84,7 +84,7 @@ pub(super) async fn persist_created_session(
         }
     }
 
-    state.sessions.remember_session_meta(&session).await;
+    state.remember_session_meta(&session).await;
     if let Err(e) = retry_global_index_write(|| async {
         state
             .global_store()

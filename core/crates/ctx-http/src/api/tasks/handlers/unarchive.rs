@@ -1,4 +1,5 @@
 use super::super::*;
+use crate::daemon::workspaces::ensure_task_commit_hook;
 use ctx_workspace_services::worktree_vcs::ensure_worktree_attached;
 use worktrees::{load_unarchive_worktree_plan, UnarchiveWorktreePlan};
 
@@ -90,8 +91,7 @@ pub(in crate::api) async fn unarchive_task(
         {
             tracing::warn!(task_id = %task_id.0, "worktree bootstrap failed: {e:?}");
         }
-        if let Err(e) =
-            vcs_hooks::ensure_task_commit_hook(state.as_ref(), &workspace, worktree, task_id).await
+        if let Err(e) = ensure_task_commit_hook(state.as_ref(), &workspace, worktree, task_id).await
         {
             tracing::warn!(
                 task_id = %task_id.0,

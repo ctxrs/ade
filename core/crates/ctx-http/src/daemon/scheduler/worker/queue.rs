@@ -81,7 +81,7 @@ pub(super) async fn start_next_queued_turn(ctx: QueueStartContext<'_>) -> QueueS
     {
         Ok(turn) => {
             state.set_running(ctx.session.id, true).await;
-            let timeout = state.sessions.provider_inactivity_timeout().await;
+            let timeout = state.provider_inactivity_timeout().await;
             *ctx.running_inactivity_timeout = Some(timeout);
             *ctx.running_inactivity_deadline = Some(TokioInstant::now() + timeout);
             *ctx.running_start_deadline = Some(turn.start_deadline);

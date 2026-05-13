@@ -26,7 +26,7 @@ pub(super) async fn persist_session_model_update(
         .await
         .map_err(internal_session_model_error)?
         .ok_or_else(|| session_model_error(StatusCode::NOT_FOUND, "session not found"))?;
-    state.sessions.remember_session_meta(&updated).await;
+    state.remember_session_meta(&updated).await;
 
     let event = store
         .append_session_event(

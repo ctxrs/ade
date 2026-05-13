@@ -71,6 +71,6 @@ pub(super) async fn apply_seed_transcript_metadata(
                 error: "session not found".to_string(),
             }),
         ))?;
-    state.sessions.remember_session_meta(&session).await;
+    state.remember_session_meta(&session).await;
     Ok(session)
 }

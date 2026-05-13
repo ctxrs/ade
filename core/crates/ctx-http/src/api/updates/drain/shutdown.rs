@@ -44,8 +44,8 @@ pub(in crate::api) async fn shutdown_daemon(
         .await
         .is_some();
 
-    for session_id in state.sessions.list_running_sessions().await {
-        if let Some(tx) = state.sessions.scheduler_sender(session_id).await {
+    for session_id in state.running_session_ids().await {
+        if let Some(tx) = state.session_scheduler_sender(session_id).await {
             let interrupt = InterruptTelemetryContext::new(uuid::Uuid::new_v4().to_string());
             let _ = tx.send(SchedulerCommand::Interrupt(interrupt)).await;
         }

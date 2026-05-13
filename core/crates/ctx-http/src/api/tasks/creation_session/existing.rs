@@ -55,7 +55,7 @@ pub(super) async fn resolve_existing_requested_session(
         return Err(StatusCode::CONFLICT);
     }
 
-    state.sessions.remember_session_meta(&existing).await;
+    state.remember_session_meta(&existing).await;
     if remember_model_preference {
         if let Err(error) = crate::daemon::workspaces::update_workspace_provider_preferred_model_id(
             state,

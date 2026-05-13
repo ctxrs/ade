@@ -45,7 +45,6 @@ use ctx_observability::ops_events::OpsEvent;
 use ctx_observability::telemetry::TelemetryEvent;
 use ctx_settings_model::ExecutionSettings;
 use ctx_store::{is_unique_constraint_violation, Store};
-use ctx_workspace_services::vcs_hooks;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]

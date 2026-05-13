@@ -3,5 +3,37 @@ mod host;
 #[path = "vcs_hooks/sandbox.rs"]
 mod sandbox;
 
+use anyhow::Result;
+use ctx_core::ids::{TaskId, WorkspaceId};
+use ctx_core::models::{Workspace, Worktree};
+
+use crate::daemon::AppState;
+
+pub(crate) async fn ensure_task_commit_hook(
+    state: &AppState,
+    workspace: &Workspace,
+    worktree: &Worktree,
+    task_id: TaskId,
+) -> Result<()> {
+    ctx_workspace_services::vcs_hooks::ensure_task_commit_hook(state, workspace, worktree, task_id)
+        .await
+}
+
+pub(crate) async fn cleanup_worktree_hooks(
+    state: &AppState,
+    workspace: &Workspace,
+    worktree: &Worktree,
+) -> Result<()> {
+    ctx_workspace_services::vcs_hooks::cleanup_worktree_hooks(state, workspace, worktree).await
+}
+
+pub(crate) async fn cleanup_workspace_hooks(
+    state: &AppState,
+    workspace_id: WorkspaceId,
+) -> Result<()> {
+    ctx_workspace_services::vcs_hooks::cleanup_workspace_hooks(&state.core.data_root, workspace_id)
+        .await
+}
+
 #[cfg(test)]
 mod tests;

@@ -45,7 +45,6 @@ use ctx_observability::telemetry::TelemetryEvent;
 use ctx_workspace_attachments::AttachmentConfig;
 use ctx_workspace_config as workspace_config;
 use ctx_workspace_container::WorkspaceContainerStatus as HarnessContainerStatus;
-use ctx_workspace_services::vcs_hooks;
 
 #[derive(Debug, Deserialize)]
 pub(super) struct UpdateMergeQueueConfigReq {

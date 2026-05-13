@@ -38,7 +38,7 @@ pub(in crate::api) async fn create_session_for_task(
     Json(req): Json<CreateSessionReq>,
 ) -> Result<Json<Session>, StatusCode> {
     let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let creation_lock = state.sessions.task_session_creation_lock(task_id).await;
+    let creation_lock = state.task_session_creation_lock(task_id).await;
     let _creation_guard = creation_lock.lock().await;
     create_session_for_task_inner(state, task_id, headers, req).await
 }

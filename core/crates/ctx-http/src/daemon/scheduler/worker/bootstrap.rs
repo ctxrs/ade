@@ -28,12 +28,9 @@ pub(super) async fn bootstrap_worker(
     session: &Session,
 ) -> Option<WorkerBootstrap> {
     let store = state.store_for_session(session.id).await.ok()?;
-    let order_seq_state = state.sessions.get_order_seq_state(&store, session.id).await;
+    let order_seq_state = state.session_order_seq_state(&store, session.id).await;
     let queue = load_initial_queue(&store, session).await;
-    let event_head_rx = state
-        .sessions
-        .subscribe_session_event_head(session.id)
-        .await;
+    let event_head_rx = state.subscribe_session_event_head(session.id).await;
 
     let worktree = store.get_worktree(session.worktree_id).await.ok()??;
     let workdir = PathBuf::from(worktree.root_path.clone());

@@ -22,7 +22,7 @@ pub(crate) async fn apply_session_title_update(
     }
 
     if let Ok(Some(updated_session)) = store.get_session(session.id).await {
-        state.sessions.remember_session_meta(&updated_session).await;
+        state.remember_session_meta(&updated_session).await;
     }
 
     if let Err(e) = state.emit_workspace_task_upsert(session.task_id).await {

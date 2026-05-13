@@ -28,6 +28,9 @@ pub use hydration::{WorkspaceHydrationError, WorkspaceHydrationErrorKind};
 pub(crate) use model_preferences::update_workspace_provider_preferred_model_id;
 pub(crate) use retry::retry_global_index_write;
 pub(crate) use sandbox_binding::rematerialize_sandbox_binding_for_worktree;
+pub(crate) use vcs_hooks::{
+    cleanup_workspace_hooks, cleanup_worktree_hooks, ensure_task_commit_hook,
+};
 pub(crate) use worktree_bootstrap::spawn_worktree_bootstrap;
 pub(crate) use worktree_cleanup::{
     cleanup_task_worktrees, managed_worktree_root, BranchCleanupErrorMode,
