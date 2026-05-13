@@ -68,34 +68,24 @@ pub(crate) async fn start_codex_login(
             ));
         }
     };
-    let expected_callback_url = expected_callback_from_auth_url(&login.auth_url);
-    let completion_token = uuid::Uuid::new_v4().to_string();
-    let auth_url = login.auth_url.clone();
-    let status = provider_accounts::CodexLoginStatus {
-        account_id: account_id.clone(),
-        auth_url: auth_url.clone(),
-        expected_callback_url: expected_callback_url.clone(),
-        completion_token: Some(completion_token.clone()),
-        status: "pending".to_string(),
-        error: None,
-    };
-    state
-        .providers
-        .with_codex_login_sessions(|map| {
-            map.insert(account_id.clone(), status);
-        })
-        .await;
+    let started_login = crate::daemon::providers::start_codex_login_session(
+        &state,
+        account_id,
+        login.auth_url.clone(),
+        expected_callback_from_auth_url(&login.auth_url),
+    )
+    .await;
     let state_clone = Arc::clone(&state);
-    let account_id_for_task = account_id.clone();
+    let account_id_for_task = started_login.account_id.clone();
     tokio::spawn(async move {
         monitor_codex_login(state_clone, account_id_for_task, label, login).await;
     });
 
     Ok(Json(CodexLoginStartResp {
-        account_id,
-        auth_url,
-        expected_callback_url,
-        completion_token,
+        account_id: started_login.account_id,
+        auth_url: started_login.auth_url,
+        expected_callback_url: started_login.expected_callback_url,
+        completion_token: started_login.completion_token,
     }))
 }
 
@@ -105,9 +95,7 @@ pub(crate) async fn get_codex_login(
     Path(id): Path<String>,
 ) -> Result<Json<provider_accounts::CodexLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let status = state
-        .providers
-        .with_codex_login_sessions(|map| map.get(&id).cloned())
+    let status = crate::daemon::providers::codex_login_status(&state, &id)
         .await
         .ok_or_else(|| {
             (

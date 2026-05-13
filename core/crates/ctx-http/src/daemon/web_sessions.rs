@@ -1,16 +1,19 @@
-use super::*;
+use std::sync::Arc;
 
+use anyhow::Context;
 use ctx_provider_install::install_state::InstallTarget;
 use ctx_transport_runtime::web_sessions::{ensure_worker_bundle, NodeRuntimeSpec, WorkerBundle};
 
-pub(super) struct PreparedWebSessionWorker {
-    pub(super) node_runtime: ctx_managed_installs::NodeRuntime,
-    pub(super) bundle: WorkerBundle,
+use crate::daemon::AppState;
+
+pub(crate) struct PreparedWebSessionWorker {
+    pub(crate) node_runtime: ctx_managed_installs::NodeRuntime,
+    pub(crate) bundle: WorkerBundle,
 }
 
-pub(super) async fn prepare_web_session_worker(
+pub(crate) async fn prepare_web_session_worker(
     state: &Arc<AppState>,
-) -> Result<PreparedWebSessionWorker, WebSessionLaunchError> {
+) -> anyhow::Result<PreparedWebSessionWorker> {
     let node_runtime = ctx_managed_installs::ensure_node_runtime(
         state.as_ref(),
         None,
@@ -19,7 +22,7 @@ pub(super) async fn prepare_web_session_worker(
         InstallTarget::Host,
     )
     .await
-    .map_err(|e| internal_error(format!("failed to prepare node runtime: {e}")))?;
+    .context("preparing node runtime for web session worker")?;
 
     let bundle = ensure_worker_bundle(
         &state.core.data_root,
@@ -29,7 +32,7 @@ pub(super) async fn prepare_web_session_worker(
         },
     )
     .await
-    .map_err(|e| internal_error(format!("failed to prepare web session worker: {e}")))?;
+    .context("preparing web session worker bundle")?;
 
     Ok(PreparedWebSessionWorker {
         node_runtime,

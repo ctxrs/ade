@@ -1,15 +1,14 @@
 use std::sync::Arc;
 
 mod context;
-mod worker;
 
 use context::resolve_web_session_launch_context;
 use ctx_transport_runtime::web_sessions::{
     validate_web_session_url, WebSessionCreateRequest, WebSessionInfo, WebSessionLaunchPolicyError,
     WebSessionLaunchPolicyErrorKind, WebSessionViewport,
 };
-use worker::prepare_web_session_worker;
 
+use crate::daemon::web_sessions::prepare_web_session_worker;
 use crate::daemon::AppState;
 use ctx_core::ids::{SessionId, WorktreeId};
 
@@ -55,7 +54,9 @@ pub(crate) async fn create_web_session(
             .await
             .map_err(request_or_policy_error)?;
 
-    let worker = prepare_web_session_worker(state).await?;
+    let worker = prepare_web_session_worker(state)
+        .await
+        .map_err(|error| internal_error(format!("{error:#}")))?;
 
     let handle = state
         .transport

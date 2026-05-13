@@ -40,20 +40,13 @@ pub(in crate::api::providers::login::codex) async fn monitor_codex_login(
         let _ = tokio::fs::remove_dir_all(&login.account_dir).await;
     }
 
-    state
-        .providers
-        .with_codex_login_sessions(|map| {
-            if let Some(entry) = map.get_mut(&account_id) {
-                entry.status = if status.success {
-                    "success".to_string()
-                } else {
-                    "failed".to_string()
-                };
-                entry.completion_token = None;
-                entry.error = status.error;
-            }
-        })
-        .await;
+    crate::daemon::providers::finish_codex_login_session(
+        &state,
+        &account_id,
+        status.success,
+        status.error,
+    )
+    .await;
 
     let _ = login.child.kill().await;
 }

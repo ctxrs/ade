@@ -43,6 +43,7 @@ pub(crate) mod sessions;
 mod state;
 pub(crate) mod storage_guard;
 pub(crate) mod tool_cgroup;
+pub(crate) mod web_sessions;
 mod workspace_init;
 #[cfg(test)]
 mod workspace_runtime;

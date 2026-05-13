@@ -6,6 +6,7 @@ mod harness_config;
 mod installs;
 mod launch_config;
 mod login_runtime;
+mod login_sessions;
 mod options_cache;
 mod restarts;
 mod runtime_probe;
@@ -60,6 +61,10 @@ pub(crate) use login_runtime::{
 #[cfg(test)]
 pub(crate) use login_runtime::{
     resolve_claude_login_runtime_from_config, resolve_cursor_login_runtime_from_config,
+};
+pub(crate) use login_sessions::{
+    claim_codex_login_callback, codex_login_status, finish_codex_login_session,
+    restore_codex_login_completion_token, start_codex_login_session, CodexLoginCallbackClaimError,
 };
 pub(crate) use options_cache::{store_provider_verify_cache_value, ProviderOptionsCacheSnapshot};
 pub(crate) use restarts::{
