@@ -1,0 +1,210 @@
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+
+use ctx_provider_accounts as provider_accounts;
+
+use crate::daemon::AppState;
+
+pub(crate) struct PreparedAmpLoginPaths {
+    pub(crate) login_home: PathBuf,
+    pub(crate) workdir: PathBuf,
+    pub(crate) amp_home: PathBuf,
+}
+
+pub(crate) struct PreparedMistralLoginPaths {
+    pub(crate) login_home: PathBuf,
+    pub(crate) workdir: PathBuf,
+    pub(crate) mistral_home: PathBuf,
+}
+
+pub(crate) struct PreparedGeminiLoginPaths {
+    pub(crate) login_home: PathBuf,
+    pub(crate) workdir: PathBuf,
+    pub(crate) oauth_path: PathBuf,
+    pub(crate) google_accounts_path: PathBuf,
+}
+
+pub(crate) struct PreparedQwenLoginPaths {
+    pub(crate) login_home: PathBuf,
+    pub(crate) workdir: PathBuf,
+    pub(crate) oauth_path: PathBuf,
+}
+
+fn provider_login_home(data_root: &Path, provider_id: &str, login_id: &str) -> PathBuf {
+    data_root
+        .join("providers")
+        .join(provider_id)
+        .join("login-sessions")
+        .join(login_id)
+}
+
+fn login_provider_base_env(state: &AppState) -> HashMap<String, String> {
+    HashMap::from([
+        ("CTX_DAEMON_URL".to_string(), state.core.daemon_url.clone()),
+        ("CTX_MCP_DISABLED".to_string(), "1".to_string()),
+        (
+            "CTX_DATA_ROOT".to_string(),
+            state.core.data_root.to_string_lossy().to_string(),
+        ),
+    ])
+}
+
+pub(crate) async fn prepare_amp_login_paths(
+    state: &Arc<AppState>,
+    login_id: &str,
+) -> Result<PreparedAmpLoginPaths, String> {
+    let login_home = provider_login_home(&state.core.data_root, "amp", login_id);
+    let workdir = login_home.join("workspace");
+    if let Err(err) = tokio::fs::create_dir_all(&workdir).await {
+        return Err(format!("failed to prepare login workspace: {err}"));
+    }
+    let amp_home = match provider_accounts::ensure_amp_runtime_home(&state.core.data_root).await {
+        Ok(home) => home,
+        Err(err) => {
+            let _ = tokio::fs::remove_dir_all(&login_home).await;
+            return Err(format!("failed to prepare amp runtime home: {err}"));
+        }
+    };
+
+    Ok(PreparedAmpLoginPaths {
+        login_home,
+        workdir,
+        amp_home,
+    })
+}
+
+pub(crate) fn amp_login_provider_env(state: &AppState, amp_home: &Path) -> HashMap<String, String> {
+    let mut provider_env = login_provider_base_env(state);
+    provider_env.insert("HOME".to_string(), amp_home.to_string_lossy().to_string());
+    provider_env.insert(
+        "XDG_CONFIG_HOME".to_string(),
+        amp_home.join(".config").to_string_lossy().to_string(),
+    );
+    provider_env.insert(
+        "XDG_CACHE_HOME".to_string(),
+        amp_home.join(".cache").to_string_lossy().to_string(),
+    );
+    provider_env
+}
+
+pub(crate) async fn prepare_mistral_login_paths(
+    state: &Arc<AppState>,
+    login_id: &str,
+) -> Result<PreparedMistralLoginPaths, String> {
+    let login_home = provider_login_home(&state.core.data_root, "mistral", login_id);
+    let workdir = login_home.join("workspace");
+    if let Err(err) = tokio::fs::create_dir_all(&workdir).await {
+        return Err(format!("failed to prepare login workspace: {err}"));
+    }
+    let mistral_home =
+        match provider_accounts::ensure_mistral_runtime_home(&state.core.data_root).await {
+            Ok(home) => home,
+            Err(err) => {
+                let _ = tokio::fs::remove_dir_all(&login_home).await;
+                return Err(format!("failed to prepare mistral runtime home: {err}"));
+            }
+        };
+
+    Ok(PreparedMistralLoginPaths {
+        login_home,
+        workdir,
+        mistral_home,
+    })
+}
+
+pub(crate) fn mistral_login_provider_env(
+    state: &AppState,
+    mistral_home: &Path,
+) -> HashMap<String, String> {
+    let mut provider_env = login_provider_base_env(state);
+    provider_env.insert(
+        "HOME".to_string(),
+        mistral_home.to_string_lossy().to_string(),
+    );
+    provider_env.insert(
+        "XDG_CONFIG_HOME".to_string(),
+        mistral_home.join(".config").to_string_lossy().to_string(),
+    );
+    provider_env.insert(
+        "XDG_CACHE_HOME".to_string(),
+        mistral_home.join(".cache").to_string_lossy().to_string(),
+    );
+    provider_env
+}
+
+pub(crate) async fn prepare_gemini_login_paths(
+    state: &Arc<AppState>,
+    login_id: &str,
+) -> Result<PreparedGeminiLoginPaths, String> {
+    let login_home = provider_login_home(&state.core.data_root, "gemini", login_id);
+    let workdir = login_home.join("workspace");
+    tokio::fs::create_dir_all(&workdir)
+        .await
+        .map_err(|err| format!("failed to prepare login workspace: {err}"))?;
+    Ok(PreparedGeminiLoginPaths {
+        oauth_path: login_home.join(".gemini").join("oauth_creds.json"),
+        google_accounts_path: login_home.join(".gemini").join("google_accounts.json"),
+        login_home,
+        workdir,
+    })
+}
+
+pub(crate) fn gemini_login_provider_env(
+    state: &AppState,
+    login_home: &Path,
+) -> HashMap<String, String> {
+    let mut provider_env = login_provider_base_env(state);
+    provider_env.insert(
+        "GEMINI_CLI_HOME".to_string(),
+        login_home.to_string_lossy().to_string(),
+    );
+    provider_env.insert(
+        provider_accounts::GEMINI_FORCE_FILE_STORAGE_ENV.to_string(),
+        "true".to_string(),
+    );
+    provider_env
+}
+
+pub(crate) fn gemini_login_auth_method_id() -> String {
+    provider_accounts::GEMINI_CREDENTIAL_KIND_OAUTH_PERSONAL.to_string()
+}
+
+pub(crate) async fn prepare_qwen_login_paths(
+    state: &Arc<AppState>,
+    login_id: &str,
+) -> Result<PreparedQwenLoginPaths, String> {
+    let login_home = provider_login_home(&state.core.data_root, "qwen", login_id);
+    let workdir = login_home.join("workspace");
+    if let Err(err) = tokio::fs::create_dir_all(&workdir).await {
+        return Err(format!("failed to prepare login workspace: {err}"));
+    }
+    let _ = tokio::fs::create_dir_all(login_home.join(".config")).await;
+    let _ = tokio::fs::create_dir_all(login_home.join(".cache")).await;
+    let oauth_path = login_home.join(provider_accounts::QWEN_OAUTH_CREDS_RELATIVE_PATH);
+
+    Ok(PreparedQwenLoginPaths {
+        login_home,
+        workdir,
+        oauth_path,
+    })
+}
+
+pub(crate) fn qwen_login_provider_env(
+    state: &AppState,
+    login_home: &Path,
+) -> HashMap<String, String> {
+    let mut provider_env = login_provider_base_env(state);
+    provider_env.insert("HOME".to_string(), login_home.to_string_lossy().to_string());
+    provider_env.insert(
+        "XDG_CONFIG_HOME".to_string(),
+        login_home.join(".config").to_string_lossy().to_string(),
+    );
+    provider_env.insert(
+        "XDG_CACHE_HOME".to_string(),
+        login_home.join(".cache").to_string_lossy().to_string(),
+    );
+    provider_env
+}
