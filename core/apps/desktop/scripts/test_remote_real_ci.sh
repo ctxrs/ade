@@ -212,6 +212,184 @@ sweep_webkit_automation_helpers() {
   fi
 }
 
+write_process_snapshot() {
+  local out_path="$1"
+  if ! command -v ps >/dev/null 2>&1; then
+    return 0
+  fi
+  ps -Ao pid=,ppid=,stat=,etime=,command= >"${out_path}" 2>&1 || true
+}
+
+process_elapsed_seconds() {
+  local elapsed="$1"
+  local days=0
+  local time_part="$elapsed"
+  if [[ "$time_part" == *-* ]]; then
+    days="${time_part%%-*}"
+    time_part="${time_part#*-}"
+  fi
+
+  local first="" second="" third=""
+  IFS=: read -r first second third <<<"$time_part"
+  local hours=0
+  local minutes="$first"
+  local seconds="$second"
+  if [[ -n "${third:-}" ]]; then
+    hours="$first"
+    minutes="$second"
+    seconds="$third"
+  fi
+
+  if ! [[ "$days" =~ ^[0-9]+$ && "$hours" =~ ^[0-9]+$ && "$minutes" =~ ^[0-9]+$ && "$seconds" =~ ^[0-9]+$ ]]; then
+    return 1
+  fi
+  printf '%s\n' $((10#$days * 86400 + 10#$hours * 3600 + 10#$minutes * 60 + 10#$seconds))
+}
+
+command_is_ctx_remote_real_xvfb() {
+  local cmd="$1"
+  case "${cmd}" in
+    *Xvfb*"remote-contracts"*"automation-attempt-"*"/tmp/xvfb-run."*"/Xauthority"* | \
+    *Xvfb*"remote-workspace-e2e"* | \
+    *Xvfb*".ctx/volatile/artifacts/ctx-desktop-e2e"*) return 0 ;;
+  esac
+  return 1
+}
+
+sweep_stale_xvfb_processes() {
+  if [[ "${CTX_REMOTE_REAL_CI_SWEEP_STALE_XVFB:-1}" != "1" ]]; then
+    return 0
+  fi
+  local min_age_seconds="${CTX_REMOTE_REAL_CI_STALE_XVFB_MIN_AGE_SECONDS:-900}"
+  if ! [[ "$min_age_seconds" =~ ^[0-9]+$ ]]; then
+    echo "error: CTX_REMOTE_REAL_CI_STALE_XVFB_MIN_AGE_SECONDS must be a non-negative integer" >&2
+    return 2
+  fi
+  if ! command -v ps >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local pids=()
+  local pid ppid elapsed cmd age_seconds
+  while read -r pid ppid elapsed cmd; do
+    if [[ -z "${pid}" || -z "${ppid}" || -z "${elapsed}" || -z "${cmd:-}" ]]; then
+      continue
+    fi
+    if [[ "$ppid" != "1" ]]; then
+      continue
+    fi
+    if ! command_is_ctx_remote_real_xvfb "$cmd"; then
+      continue
+    fi
+    if ! age_seconds="$(process_elapsed_seconds "$elapsed")"; then
+      continue
+    fi
+    if [[ "$age_seconds" -lt "$min_age_seconds" ]]; then
+      continue
+    fi
+    pids+=("${pid}")
+  done < <(ps -Ao pid=,ppid=,etime=,command= 2>/dev/null || true)
+
+  if [[ "${#pids[@]}" -gt 0 ]]; then
+    kill -9 "${pids[@]}" >/dev/null 2>&1 || true
+  fi
+}
+
+sweep_xvfb_processes_for_tmp_dir() {
+  local tmp_dir="$1"
+  if [[ -z "$tmp_dir" ]]; then
+    return 0
+  fi
+  if ! command -v ps >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local resolved_tmp_dir
+  resolved_tmp_dir="$(cd "$tmp_dir" 2>/dev/null && pwd -P || printf '%s' "$tmp_dir")"
+  local pids=()
+  local pid cmd
+  while read -r pid cmd; do
+    if [[ -z "${pid}" || -z "${cmd:-}" ]]; then
+      continue
+    fi
+    case "${cmd}" in
+      *Xvfb*"${tmp_dir}"* | *Xvfb*"${resolved_tmp_dir}"*) pids+=("${pid}") ;;
+    esac
+  done < <(ps -Ao pid=,command= 2>/dev/null || true)
+
+  if [[ "${#pids[@]}" -gt 0 ]]; then
+    kill -9 "${pids[@]}" >/dev/null 2>&1 || true
+  fi
+}
+
+sweep_controller_app_processes() {
+  local app_path="${CTX_DESKTOP_APP_PATH:-}"
+  if [[ -z "${app_path}" ]]; then
+    return 0
+  fi
+  local app_dir
+  app_dir="$(cd "$(dirname "${app_path}")" 2>/dev/null && pwd -P || dirname "${app_path}")"
+  if [[ -z "${app_dir}" || ! -d "${app_dir}" ]]; then
+    return 0
+  fi
+  if ! command -v ps >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local pids=()
+  local pid cmd
+  while read -r pid cmd; do
+    if [[ -z "${pid}" || -z "${cmd:-}" ]]; then
+      continue
+    fi
+    case "${cmd}" in
+      *"${app_dir}"*) pids+=("${pid}") ;;
+    esac
+  done < <(ps -Ao pid=,command= 2>/dev/null || true)
+
+  if [[ "${#pids[@]}" -gt 0 ]]; then
+    kill -9 "${pids[@]}" >/dev/null 2>&1 || true
+  fi
+}
+
+sweep_local_automation_daemons() {
+  if ! command -v ps >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local pids=()
+  local pid cmd
+  while read -r pid cmd; do
+    if [[ -z "${pid}" || -z "${cmd:-}" ]]; then
+      continue
+    fi
+    case "${cmd}" in
+      *ctx-daemon*" serve "* | *"/ctx serve "* | *" ctx serve "*) ;;
+      *) continue ;;
+    esac
+    case "${cmd}" in
+      *"--data-dir "*"ctx-desktop-e2e-app-daemon-"* | \
+      *"--data-dir="*"ctx-desktop-e2e-app-daemon-"* | \
+      *"--data-dir "*"${ARTIFACT_DIR}"*"/controller-daemon-data"* | \
+      *"--data-dir="*"${ARTIFACT_DIR}"*"/controller-daemon-data"* | \
+      *"--data-dir "*"remote-workspace-e2e"* | \
+      *"--data-dir="*"remote-workspace-e2e"*)
+        pids+=("${pid}")
+        ;;
+    esac
+  done < <(ps -Ao pid=,command= 2>/dev/null || true)
+
+  if [[ "${#pids[@]}" -gt 0 ]]; then
+    kill -9 "${pids[@]}" >/dev/null 2>&1 || true
+  fi
+}
+
+sweep_local_automation_processes() {
+  sweep_controller_app_processes
+  sweep_webkit_automation_helpers
+  sweep_local_automation_daemons
+}
+
 classify_report() {
   local report_path="$1"
   local allow_skip="$2"
@@ -277,13 +455,28 @@ run_lane() {
       local attempt_daemon_data_dir="${attempt_dir}/controller-daemon-data"
       local attempt_xdg_token
       attempt_xdg_token="$(printf '%s' "${BUILDKITE_JOB_ID:-local}-${lane}-${attempt}-$$" | tr -c 'A-Za-z0-9._-' '_')"
-      local attempt_xdg_runtime_dir="/tmp/ctx-remote-real-xdg-${attempt_xdg_token}"
+      # WebKit helpers create short Unix sockets under XDG_RUNTIME_DIR.
+      local attempt_xdg_dir="/tmp/ctx-remote-real-xdg-${attempt_xdg_token}"
+      local attempt_xdg_runtime_dir="${attempt_xdg_dir}/runtime"
+      local attempt_home_dir="${attempt_xdg_dir}/home"
+      local attempt_corepack_home="${attempt_xdg_dir}/corepack"
       rm -f "${report_path}"
-      rm -rf "${attempt_xdg_runtime_dir}"
-      mkdir -p "${attempt_tmp_dir}" "${attempt_daemon_data_dir}" "${attempt_xdg_runtime_dir}"
+      rm -rf "${attempt_xdg_dir}"
+      mkdir -p \
+        "${attempt_tmp_dir}" \
+        "${attempt_daemon_data_dir}" \
+        "${attempt_xdg_runtime_dir}" \
+        "${attempt_home_dir}" \
+        "${attempt_xdg_dir}/config" \
+        "${attempt_xdg_dir}/cache" \
+        "${attempt_xdg_dir}/data" \
+        "${attempt_corepack_home}"
       chmod 700 "${attempt_xdg_runtime_dir}"
       touch "${attempt_log}"
-      sweep_webkit_automation_helpers
+      write_process_snapshot "${attempt_dir}/processes-before-sweep.log"
+      sweep_stale_xvfb_processes
+      sweep_local_automation_processes
+      write_process_snapshot "${attempt_dir}/processes-after-preflight-sweep.log"
       set +e
       (
         cd "${ROOT}"
@@ -291,7 +484,16 @@ run_lane() {
         export CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP="${CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP:-1}"
         export CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR="${attempt_daemon_data_dir}"
         export CTX_AUTOMATION_TMPDIR="${attempt_tmp_dir}"
+        export CTX_AUTOMATION_CN_DRIVER_LOG="${attempt_dir}/tauri-driver.log"
+        export HOME="${attempt_home_dir}"
+        export TMPDIR="${attempt_tmp_dir}"
+        export TMP="${attempt_tmp_dir}"
+        export TEMP="${attempt_tmp_dir}"
         export XDG_RUNTIME_DIR="${attempt_xdg_runtime_dir}"
+        export XDG_CONFIG_HOME="${attempt_xdg_dir}/config"
+        export XDG_CACHE_HOME="${attempt_xdg_dir}/cache"
+        export XDG_DATA_HOME="${attempt_xdg_dir}/data"
+        export COREPACK_HOME="${attempt_corepack_home}"
         "${cmd[@]}"
       ) >"${attempt_log}" 2>&1 &
       local cmd_pid="$!"
@@ -299,8 +501,12 @@ run_lane() {
       wait "${cmd_pid}"
       cmd_exit="$?"
       set -e
-      sweep_webkit_automation_helpers
-      rm -rf "${attempt_xdg_runtime_dir}"
+      write_process_snapshot "${attempt_dir}/processes-after-automation.log"
+      sweep_xvfb_processes_for_tmp_dir "${attempt_tmp_dir}"
+      sweep_stale_xvfb_processes
+      sweep_local_automation_processes
+      write_process_snapshot "${attempt_dir}/processes-after-automation-sweep.log"
+      rm -rf "${attempt_xdg_dir}"
       cp "${attempt_log}" "${wdio_log}"
       if [[ "${cmd_exit}" -eq 0 ]]; then
         break

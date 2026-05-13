@@ -6,6 +6,11 @@ import type {
 } from "../workspaceActiveSnapshotProtocol";
 import type { SessionSubscriptionCursor } from "../sessionSubscription";
 import {
+  isForegroundPrioritySessionEvent,
+  prioritizeForegroundPriorityEvents,
+  resolveForegroundPrioritySessionIds,
+} from "./foregroundPriority";
+import {
   normalizeSessionSubscriptionCursors,
   sameSessionSubscriptionCursorIds,
   sameSessionSubscriptionCursors,
@@ -34,31 +39,24 @@ export type WorkspaceActiveSnapshotControlHost = {
   enqueueStreamMessage(data: unknown): void;
   scheduleSnapshotWarning(reason: string): void;
   scheduleWorkerPatchFlush(): void;
-  flushWorkerPatchNow(): void;
+  flushWorkerPatchNow(prioritySessionIds?: readonly string[]): void;
 };
 
 const isImmediateWorkerPatchEvent = (
   host: WorkspaceActiveSnapshotControlHost,
   evt: WorkspaceActiveSnapshotEvent,
 ): boolean => {
-  const normalizeId = (value: string | null | undefined): string =>
-    typeof value === "string" ? value.trim() : "";
-  const foregroundSessionId = normalizeId(host.foregroundSessionId);
-  if (!foregroundSessionId) return false;
-  const isForegroundSession = (sessionId: string | null | undefined): boolean =>
-    normalizeId(sessionId) === foregroundSessionId;
+  if (!isForegroundPrioritySessionEvent(host.foregroundSessionId, host.subscribedSessions, evt)) {
+    return false;
+  }
 
   switch (evt.type) {
     case "session_gap":
-      return isForegroundSession(evt.session_id);
     case "session_head_seed":
-      return isForegroundSession(evt.head.session.id);
     case "session_summary":
-      return isForegroundSession(evt.summary.session.id);
     case "session_summary_delta":
-      return isForegroundSession(evt.delta.session_id);
+      return true;
     case "session_head_delta": {
-      if (!isForegroundSession(evt.delta.session_id)) return false;
       if (evt.delta.message) return true;
       const eventType = String(evt.delta.event?.event_type ?? "");
       if (!eventType) return false;
@@ -133,7 +131,14 @@ export function notifyEventListeners(
   if (host.workerPatchEmitter) {
     host.workerPatchPendingEvents.push(evt);
     if (isImmediateWorkerPatchEvent(host, evt)) {
-      host.flushWorkerPatchNow();
+      host.workerPatchPendingEvents = prioritizeForegroundPriorityEvents(
+        host.foregroundSessionId,
+        host.subscribedSessions,
+        host.workerPatchPendingEvents,
+      );
+      host.flushWorkerPatchNow(
+        resolveForegroundPrioritySessionIds(host.foregroundSessionId, host.subscribedSessions),
+      );
       return;
     }
     host.scheduleWorkerPatchFlush();

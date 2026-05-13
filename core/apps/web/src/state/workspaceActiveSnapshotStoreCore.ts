@@ -248,7 +248,7 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
   }
 
   private isForegroundSessionEvent(evt: WorkspaceActiveSnapshotEvent): boolean {
-    return isForegroundSessionEvent(this.getForegroundSessionId(), evt);
+    return isForegroundSessionEvent(this.getForegroundSessionId(), evt, this.subscribedSessions);
   }
 
   destroy = () => {
@@ -358,8 +358,8 @@ export class WorkspaceActiveSnapshotStoreImpl implements WorkspaceActiveSnapshot
     scheduleWorkerPatchFlush(this as unknown as WorkspaceActiveSnapshotWorkerHost);
   }
 
-  flushWorkerPatchNow() {
-    flushWorkerPatchNow(this as unknown as WorkspaceActiveSnapshotWorkerHost);
+  flushWorkerPatchNow(prioritySessionIds?: readonly string[]) {
+    flushWorkerPatchNow(this as unknown as WorkspaceActiveSnapshotWorkerHost, prioritySessionIds);
   }
 
   applyWorkerPatch(patch: WorkspaceActiveSnapshotPatch) {

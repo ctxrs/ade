@@ -1,6 +1,5 @@
 import type { WorkspaceActiveSnapshotEvent } from "@ctx/types";
 import {
-  idToString,
   recordClientCounterMetric,
   recordClientHistogramMetric,
 } from "../../api/client";
@@ -11,6 +10,11 @@ import {
 import { noteQueueAgeSample } from "../foregroundFreshnessTelemetry";
 import type { WorkspaceActiveSnapshotPatch } from "../workspaceActiveSnapshotProtocol";
 import { saveWorkspaceActiveSnapshotV1 } from "../uiStateStore";
+import type { SessionSubscriptionCursor } from "../sessionSubscription";
+import {
+  isForegroundPrioritySessionEvent,
+  workspaceEventSessionId,
+} from "./foregroundPriority";
 import type { WorkspaceActiveSnapshotState } from "./storeTypes";
 import type { WorkspaceActiveSnapshotWorkerHost } from "./workerRuntime";
 
@@ -93,6 +97,44 @@ const diffRecordEntries = <T,>(
     ...(Object.keys(upserts).length > 0 ? { upserts } : {}),
     ...(deletes.length > 0 ? { deletes } : {}),
   };
+};
+
+const filterRecordEntries = <T,>(
+  entries: Record<string, T> | undefined,
+  allowedKeys: ReadonlySet<string>,
+): Record<string, T> | undefined => {
+  if (!entries) return undefined;
+  const filtered: Record<string, T> = {};
+  for (const [key, value] of Object.entries(entries)) {
+    if (allowedKeys.has(key)) {
+      filtered[key] = value;
+    }
+  }
+  return Object.keys(filtered).length > 0 ? filtered : undefined;
+};
+
+const filterDeletedKeys = (
+  keys: string[] | undefined,
+  allowedKeys: ReadonlySet<string>,
+): string[] | undefined => {
+  if (!keys) return undefined;
+  const filtered = keys.filter((key) => allowedKeys.has(key));
+  return filtered.length > 0 ? filtered : undefined;
+};
+
+const applySessionHeadDiffToBaseline = <T,>(
+  previous: Record<string, T>,
+  upserts: Record<string, T> | undefined,
+  deletes: string[] | undefined,
+): Record<string, T> => {
+  const next = { ...previous };
+  for (const key of deletes ?? []) {
+    delete next[key];
+  }
+  for (const [key, value] of Object.entries(upserts ?? {})) {
+    next[key] = value;
+  }
+  return next;
 };
 
 export const applyWorkerPatch = (
@@ -184,12 +226,15 @@ export const scheduleWorkerPatchFlush = (host: WorkspaceActiveSnapshotWorkerHost
   }, host.workerPatchFlushMs);
 };
 
-export const flushWorkerPatchNow = (host: WorkspaceActiveSnapshotWorkerHost): void => {
+export const flushWorkerPatchNow = (
+  host: WorkspaceActiveSnapshotWorkerHost,
+  prioritySessionIds?: readonly string[],
+): void => {
   if (host.workerPatchTimer) {
     globalThis.clearTimeout(host.workerPatchTimer);
     host.workerPatchTimer = null;
   }
-  flushWorkerPatch(host);
+  flushWorkerPatch(host, prioritySessionIds);
 };
 
 export const resetWorkerPatchQueue = (host: WorkspaceActiveSnapshotWorkerHost): void => {
@@ -212,7 +257,10 @@ export const resetWorkerPatchQueue = (host: WorkspaceActiveSnapshotWorkerHost): 
   host.lastWorkerPatchSnapshotRev = -1;
 };
 
-const flushWorkerPatch = (host: WorkspaceActiveSnapshotWorkerHost): void => {
+const flushWorkerPatch = (
+  host: WorkspaceActiveSnapshotWorkerHost,
+  prioritySessionIds?: readonly string[],
+): void => {
   if (!host.workerPatchEmitter) return;
   if (
     !host.workerPatchDirty &&
@@ -224,8 +272,10 @@ const flushWorkerPatch = (host: WorkspaceActiveSnapshotWorkerHost): void => {
 
   host.workerPatchFlushSeq += 1;
   const flushStartedAtMs = nowMs();
-  const events = host.workerPatchPendingEvents.slice();
-  host.workerPatchPendingEvents = [];
+  const pendingEvents = host.workerPatchPendingEvents.slice();
+  const prioritySessionIdSet = new Set(
+    (prioritySessionIds ?? []).map((sessionId) => sessionId.trim()).filter(Boolean),
+  );
   const snapshot = host.state.getSnapshot();
   const sessionHeads = host.state.getSessionHeadsSnapshot();
   const worktreeRoots = host.state.getWorktreeRootsSnapshot();
@@ -233,8 +283,30 @@ const flushWorkerPatch = (host: WorkspaceActiveSnapshotWorkerHost): void => {
   const snapshotRev = host.state.getSnapshotRev();
   const forceSnapshotReplace =
     host.lastWorkerPatchSnapshot == null || snapshotRev < host.lastWorkerPatchSnapshotRev;
+  let events = pendingEvents;
+  let deferredEvents: WorkspaceActiveSnapshotEvent[] = [];
+  const canFlushPrioritySubset = !forceSnapshotReplace && prioritySessionIdSet.size > 0;
+  if (canFlushPrioritySubset) {
+    const priorityEvents: WorkspaceActiveSnapshotEvent[] = [];
+    const otherEvents: WorkspaceActiveSnapshotEvent[] = [];
+    for (const event of pendingEvents) {
+      if (prioritySessionIdSet.has(workspaceEventSessionId(event))) {
+        priorityEvents.push(event);
+      } else {
+        otherEvents.push(event);
+      }
+    }
+    if (priorityEvents.length > 0 && otherEvents.length > 0) {
+      events = priorityEvents;
+      deferredEvents = otherEvents;
+    }
+  }
+  host.workerPatchPendingEvents = deferredEvents;
+  const hasDeferredEvents = deferredEvents.length > 0;
 
   let patch: WorkspaceActiveSnapshotPatch;
+  let sentSessionHeadUpserts: Record<string, (typeof sessionHeads)[string]> | undefined;
+  let sentSessionHeadDeletes: string[] | undefined;
   if (forceSnapshotReplace) {
     patch = {
       snapshot,
@@ -252,7 +324,14 @@ const flushWorkerPatch = (host: WorkspaceActiveSnapshotWorkerHost): void => {
   } else {
     const previousSnapshot = host.lastWorkerPatchSnapshot as WorkspaceActiveSnapshotState;
     const taskDiff = diffRecordEntries(previousSnapshot.tasksById, snapshot.tasksById);
-    const sessionHeadDiff = diffRecordEntries(host.lastWorkerPatchSessionHeads, sessionHeads);
+    const rawSessionHeadDiff = diffRecordEntries(host.lastWorkerPatchSessionHeads, sessionHeads);
+    const sessionHeadDiff =
+      hasDeferredEvents && prioritySessionIdSet.size > 0
+        ? {
+            upserts: filterRecordEntries(rawSessionHeadDiff.upserts, prioritySessionIdSet),
+            deletes: filterDeletedKeys(rawSessionHeadDiff.deletes, prioritySessionIdSet),
+          }
+        : rawSessionHeadDiff;
     const worktreeRootDiff = diffRecordEntries(host.lastWorkerPatchWorktreeRoots, worktreeRoots);
     const shell: NonNullable<WorkspaceActiveSnapshotPatch["shell"]> = {};
 
@@ -297,6 +376,8 @@ const flushWorkerPatch = (host: WorkspaceActiveSnapshotWorkerHost): void => {
     }
     const shellChanged = Object.keys(shell).length > 0;
     const taskChanged = Boolean(taskDiff.upserts) || Boolean(taskDiff.deletes);
+    sentSessionHeadUpserts = sessionHeadDiff.upserts;
+    sentSessionHeadDeletes = sessionHeadDiff.deletes;
     patch = {
       ...(shellChanged ? { shell } : {}),
       ...(taskDiff.upserts ? { taskUpserts: taskDiff.upserts } : {}),
@@ -317,14 +398,26 @@ const flushWorkerPatch = (host: WorkspaceActiveSnapshotWorkerHost): void => {
   }
 
   const patchKind = patchKindFor(patch);
-  host.workerPatchDirty = false;
-  host.workerPatchPendingPersist = false;
-  host.workerPatchOldestEventReceivedAtMs = null;
+  host.workerPatchDirty = hasDeferredEvents ? host.workerPatchDirty : false;
+  host.workerPatchPendingPersist = hasDeferredEvents ? host.workerPatchPendingPersist : false;
+  host.workerPatchOldestEventReceivedAtMs = hasDeferredEvents
+    ? host.workerPatchOldestEventReceivedAtMs
+    : null;
   host.workerPatchOldestForegroundEventReceivedAtMs = null;
   host.lastWorkerPatchSnapshot = snapshot;
-  host.lastWorkerPatchSessionHeads = sessionHeads;
+  host.lastWorkerPatchSessionHeads =
+    hasDeferredEvents && !forceSnapshotReplace
+      ? applySessionHeadDiffToBaseline(
+          host.lastWorkerPatchSessionHeads,
+          sentSessionHeadUpserts,
+          sentSessionHeadDeletes,
+        )
+      : sessionHeads;
   host.lastWorkerPatchWorktreeRoots = worktreeRoots;
   host.lastWorkerPatchSnapshotRev = snapshotRev;
+  if (hasDeferredEvents) {
+    scheduleWorkerPatchFlush(host);
+  }
   const oldestEventAgeMs =
     typeof patch.oldestEventReceivedAtMs === "number"
       ? Math.max(0, nowMs() - patch.oldestEventReceivedAtMs)
@@ -381,19 +474,7 @@ const persistCache = async (host: WorkspaceActiveSnapshotWorkerHost): Promise<vo
 export const isForegroundSessionEvent = (
   foregroundSessionId: string | null,
   evt: WorkspaceActiveSnapshotEvent,
+  subscribedSessions?: readonly SessionSubscriptionCursor[],
 ): boolean => {
-  const normalizedForegroundSessionId = String(foregroundSessionId ?? "").trim();
-  if (!normalizedForegroundSessionId) return false;
-  switch (evt.type) {
-    case "session_head_delta":
-      return idToString(evt.delta.session_id) === normalizedForegroundSessionId;
-    case "session_summary":
-      return idToString(evt.summary.session.id) === normalizedForegroundSessionId;
-    case "session_summary_delta":
-      return idToString(evt.delta.session_id) === normalizedForegroundSessionId;
-    case "session_gap":
-      return idToString(evt.session_id) === normalizedForegroundSessionId;
-    default:
-      return false;
-  }
+  return isForegroundPrioritySessionEvent(foregroundSessionId, subscribedSessions, evt);
 };

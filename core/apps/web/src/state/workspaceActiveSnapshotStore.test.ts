@@ -586,6 +586,180 @@ describe("WorkspaceActiveSnapshotStore", () => {
     store.destroy();
   });
 
+  it("flushes worker patches immediately for the current subscription when foreground state is stale", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    vi.useFakeTimers();
+    const patches: Array<{ events: Array<{ type: string }> }> = [];
+    const telemetry: Array<{ lane: string; eventType: string }> = [];
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", {
+      disableWorker: true,
+      onPatch: (patch) => patches.push({ events: patch.events.map((event) => ({ type: event.type })) }),
+      onStreamTelemetry: (sample) => telemetry.push({ lane: sample.lane, eventType: sample.eventType }),
+    });
+
+    store.setSubscribedSessions([
+      { sessionId: "session-current", replay: { kind: "auto" } },
+    ]);
+    store.setForegroundSessionId?.("session-stale");
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 1,
+        event: {
+          type: "session_head_delta",
+          workspace_id: "ws-1",
+          snapshot_rev: 1,
+          delta: {
+            session_id: "session-current",
+            last_event_seq: 1,
+            projection_rev: 1,
+            state_rev: 1,
+            emitted_at_ms: Date.now(),
+            event: {
+              seq: 1,
+              id: "event-1",
+              session_id: "session-current",
+              turn_id: "turn-1",
+              event_type: "assistant_complete",
+              payload_json: { full_content: "final" },
+              created_at: "2026-03-09T00:00:01.000Z",
+            },
+            message: {
+              id: "message-1",
+              session_id: "session-current",
+              task_id: "task-1",
+              turn_id: "turn-1",
+              role: "assistant",
+              content: "final",
+              delivery: "immediate",
+              created_at: "2026-03-09T00:00:01.000Z",
+            },
+          },
+        },
+      }),
+    );
+
+    expect(telemetry.at(-1)).toEqual({
+      lane: "foreground",
+      eventType: "session_head_delta",
+    });
+    expect(patches).toHaveLength(1);
+    expect(patches[0]?.events.map((event) => event.type)).toEqual(["session_head_delta"]);
+    store.destroy();
+  });
+
+  it("preempts queued background session-head worker events when foreground terminal progress arrives", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    vi.useFakeTimers();
+    const patches: Array<{ sessionIds: string[]; upsertIds: string[] }> = [];
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", {
+      disableWorker: true,
+      onPatch: (patch) =>
+        patches.push({
+          sessionIds: patch.events.map((event) =>
+            event.type === "session_head_delta" ? String(event.delta.session_id) : "",
+          ),
+          upsertIds: Object.keys(patch.sessionHeadUpserts ?? {}),
+        }),
+    });
+
+    store.setSubscribedSessions([
+      { sessionId: "session-foreground", replay: { kind: "auto" } },
+      { sessionId: "session-background", replay: { kind: "auto" } },
+    ]);
+    store.setForegroundSessionId?.("session-foreground");
+
+    const now = "2026-03-09T00:00:00.000Z";
+    const seedHead = async (sessionId: string, seq: number) => {
+      await asStoreInternals(store).handleStreamMessage(
+        JSON.stringify({
+          type: "event",
+          rev: seq,
+          event: {
+            type: "session_head_seed",
+            workspace_id: "ws-1",
+            snapshot_rev: seq,
+            head: mkHead(mkSession(sessionId, "task-1", "ws-1", now)),
+          },
+        }),
+      );
+    };
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 0,
+        event: {
+          type: "ready",
+          workspace_id: "ws-1",
+          snapshot_rev: 0,
+          archived_rev: 0,
+        },
+      }),
+    );
+    await seedHead("session-background", 1);
+    await seedHead("session-foreground", 2);
+    vi.advanceTimersByTime(60);
+    expect(patches.length).toBeGreaterThan(0);
+    patches.length = 0;
+
+    const sendTerminalDelta = async (sessionId: string, seq: number) => {
+      await asStoreInternals(store).handleStreamMessage(
+        JSON.stringify({
+          type: "event",
+          rev: seq,
+          event: {
+            type: "session_head_delta",
+            workspace_id: "ws-1",
+            snapshot_rev: seq,
+            delta: {
+              session_id: sessionId,
+              last_event_seq: seq,
+              projection_rev: seq,
+              state_rev: seq,
+              event: {
+                seq,
+                id: `event-${seq}`,
+                session_id: sessionId,
+                turn_id: `turn-${seq}`,
+                event_type: "assistant_complete",
+                payload_json: { full_content: `final ${seq}` },
+                created_at: "2026-03-09T00:00:01.000Z",
+              },
+              message: {
+                id: `message-${seq}`,
+                session_id: sessionId,
+                task_id: "task-1",
+                turn_id: `turn-${seq}`,
+                role: "assistant",
+                content: `final ${seq}`,
+                delivery: "immediate",
+                created_at: "2026-03-09T00:00:01.000Z",
+              },
+            },
+          },
+        }),
+      );
+    };
+
+    await sendTerminalDelta("session-background", 3);
+    expect(patches).toHaveLength(0);
+
+    await sendTerminalDelta("session-foreground", 4);
+
+    expect(patches).toHaveLength(1);
+    expect(patches[0]?.sessionIds).toEqual(["session-foreground"]);
+    expect(patches[0]?.upsertIds).not.toContain("session-background");
+
+    vi.advanceTimersByTime(60);
+    expect(patches).toHaveLength(2);
+    expect(patches[1]?.sessionIds).toEqual(["session-background"]);
+    expect(patches[1]?.upsertIds).not.toContain("session-foreground");
+    store.destroy();
+  });
+
   it("keeps terminal worker patches batched for subscribed non-foreground sessions", async () => {
     const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
 
@@ -596,8 +770,11 @@ describe("WorkspaceActiveSnapshotStore", () => {
       onPatch: (patch) => patches.push({ events: patch.events.map((event) => ({ type: event.type })) }),
     });
 
-    store.setSubscribedSessions([{ sessionId: "session-1", replay: { kind: "auto" } }]);
-    store.setForegroundSessionId?.("session-2");
+    store.setSubscribedSessions([
+      { sessionId: "session-1", replay: { kind: "auto" } },
+      { sessionId: "session-2", replay: { kind: "auto" } },
+    ]);
+    store.setForegroundSessionId?.("session-1");
     await asStoreInternals(store).handleStreamMessage(
       JSON.stringify({
         type: "event",
@@ -607,14 +784,14 @@ describe("WorkspaceActiveSnapshotStore", () => {
           workspace_id: "ws-1",
           snapshot_rev: 1,
           delta: {
-            session_id: "session-1",
+            session_id: "session-2",
             last_event_seq: 1,
             projection_rev: 1,
             state_rev: 1,
             event: {
               seq: 1,
               id: "event-1",
-              session_id: "session-1",
+              session_id: "session-2",
               turn_id: "turn-1",
               event_type: "assistant_complete",
               payload_json: { full_content: "final" },
@@ -622,7 +799,7 @@ describe("WorkspaceActiveSnapshotStore", () => {
             },
             message: {
               id: "message-1",
-              session_id: "session-1",
+              session_id: "session-2",
               task_id: "task-1",
               turn_id: "turn-1",
               role: "assistant",
