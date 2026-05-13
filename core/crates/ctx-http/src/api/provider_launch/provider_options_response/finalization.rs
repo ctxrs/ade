@@ -41,8 +41,8 @@ async fn attach_static_provider_models_and_modes(
             let provider_id_for_refresh = provider_id.to_string();
             let endpoint_id_for_refresh = endpoint.id.clone();
             tokio::spawn(async move {
-                let _ = harness_sources::refresh_provider_endpoint_model_catalog(
-                    &state.core.data_root,
+                let _ = crate::daemon::providers::refresh_provider_endpoint_model_catalog(
+                    &state,
                     &provider_id_for_refresh,
                     &endpoint_id_for_refresh,
                 )

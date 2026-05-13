@@ -27,7 +27,7 @@ pub(super) async fn monitor_gemini_login(
             format!("gemini-login-{login_id}"),
             paths.workdir.clone(),
             provider_env,
-            Some(provider_accounts::GEMINI_CREDENTIAL_KIND_OAUTH_PERSONAL.to_string()),
+            Some(crate::daemon::providers::gemini_login_auth_method_id()),
             event_tx,
             ctx_providers::adapters::ProviderRunHooks::default(),
         )

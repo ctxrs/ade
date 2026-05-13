@@ -61,8 +61,8 @@ pub(in crate::api) async fn verify_provider_for_workspace(
         .as_ref()
         .filter(|endpoint| endpoint_supports_model_catalog_verify(endpoint))
     {
-        match harness_sources::refresh_provider_endpoint_model_catalog(
-            &state.core.data_root,
+        match crate::daemon::providers::refresh_provider_endpoint_model_catalog(
+            &state,
             &provider_id,
             &endpoint.id,
         )
@@ -85,8 +85,8 @@ pub(in crate::api) async fn verify_provider_for_workspace(
     }
 
     if let Some(endpoint_id) = outcome.selected_endpoint_id() {
-        let _ = harness_sources::mark_endpoint_verification(
-            &state.core.data_root,
+        let _ = crate::daemon::providers::mark_provider_endpoint_verification(
+            &state,
             &provider_id,
             endpoint_id,
             outcome.endpoint_status(),

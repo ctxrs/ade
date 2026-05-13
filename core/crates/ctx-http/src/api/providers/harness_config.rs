@@ -21,7 +21,7 @@ pub(crate) async fn get_provider_harness_config(
     Path(id): Path<String>,
 ) -> Result<Json<harness_sources::HarnessProviderSourceConfig>, (StatusCode, Json<serde_json::Value>)>
 {
-    let config = harness_sources::get_provider_source_config(&state.core.data_root, &id)
+    let config = crate::daemon::providers::get_provider_harness_config(&state, &id)
         .await
         .map_err(provider_harness_bad_request_error)?;
     Ok(Json(config))
@@ -33,14 +33,13 @@ pub(crate) async fn select_provider_harness_source(
     Json(req): Json<SelectHarnessSourceReq>,
 ) -> Result<Json<harness_sources::HarnessProviderSourceConfig>, (StatusCode, Json<serde_json::Value>)>
 {
-    let config = harness_sources::set_provider_source_selection(
-        &state.core.data_root,
+    let config = crate::daemon::providers::select_provider_harness_source(
+        &state,
         &id,
         req.source_kind,
         req.endpoint_id,
     )
     .await
     .map_err(provider_harness_bad_request_error)?;
-    crate::daemon::providers::invalidate_provider_runtime_state(&state, &id).await;
     Ok(Json(config))
 }
