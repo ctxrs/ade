@@ -86,9 +86,9 @@ pub(crate) use restarts::{
     restart_codex_providers_for_auth_change, restart_provider_for_auth_change,
 };
 pub(crate) use runtime_probe::{
-    prepare_provider_runtime_probe, probe_provider_options_env,
+    probe_provider_auth_verification_runtime, probe_provider_options_env,
     probe_runtime_models_for_provider_options, probe_selected_endpoint_runtime_launch,
-    provider_has_active_auth_for_workspace_runtime, PreparedProviderRuntimeProbeError,
+    provider_has_active_auth_for_workspace_runtime,
 };
 pub(crate) use status::{
     install_target_for_workspace, provider_status_response, providers_statuses_response,

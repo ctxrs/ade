@@ -3,13 +3,11 @@ use super::*;
 mod cache;
 mod load;
 mod outcome;
-mod probes;
 
 use crate::api::provider_launch::errors::provider_launch_config_error_response;
 use cache::store_provider_verify_cache;
 use load::load_verify_workspace;
 use outcome::{config_error_response, ProviderVerifyOutcome};
-use probes::{run_catalog_verified_runtime_probe, run_direct_runtime_probe};
 
 pub(in crate::api) async fn verify_provider_for_workspace(
     State(state): State<Arc<AppState>>,
@@ -77,11 +75,32 @@ pub(in crate::api) async fn verify_provider_for_workspace(
         }
 
         if outcome.is_ok() {
-            run_catalog_verified_runtime_probe(&state, &workspace, &provider_id, &mut outcome)
-                .await?;
+            let probe = crate::daemon::providers::probe_provider_auth_verification_runtime(
+                &state,
+                &workspace,
+                &provider_id,
+                outcome.selected_endpoint_id().map(str::to_string),
+            )
+            .await
+            .map_err(|error| workspace_execution_settings_error_json(&error))?;
+            outcome.set_selected_endpoint_id(probe.selected_endpoint_id);
+            if let Some(probe_error) = probe.probe_error {
+                outcome.apply_endpoint_catalog_runtime_probe_failure(probe_error);
+            }
         }
     } else {
-        run_direct_runtime_probe(&state, &workspace, &provider_id, &mut outcome).await?;
+        let probe = crate::daemon::providers::probe_provider_auth_verification_runtime(
+            &state,
+            &workspace,
+            &provider_id,
+            outcome.selected_endpoint_id().map(str::to_string),
+        )
+        .await
+        .map_err(|error| workspace_execution_settings_error_json(&error))?;
+        outcome.set_selected_endpoint_id(probe.selected_endpoint_id);
+        if let Some(probe_error) = probe.probe_error {
+            outcome.apply_classified_probe_error(probe_error);
+        }
     }
 
     if let Some(endpoint_id) = outcome.selected_endpoint_id() {

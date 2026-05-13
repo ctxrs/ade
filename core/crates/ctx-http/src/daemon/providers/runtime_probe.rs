@@ -21,6 +21,11 @@ pub(crate) struct ProviderRuntimeProbeStatus {
     pub(crate) probe_error: Option<String>,
 }
 
+pub(crate) struct ProviderAuthVerificationRuntimeProbe {
+    pub(crate) selected_endpoint_id: Option<String>,
+    pub(crate) probe_error: Option<String>,
+}
+
 pub(crate) async fn prepare_provider_runtime_probe(
     state: &Arc<AppState>,
     workspace: &ctx_core::models::Workspace,
@@ -51,6 +56,42 @@ pub(crate) async fn prepare_provider_runtime_probe(
         selected_endpoint_id,
     )
     .map_err(|error| PreparedProviderRuntimeProbeError::Verify(error.into_message()))
+}
+
+pub(crate) async fn probe_provider_auth_verification_runtime(
+    state: &Arc<AppState>,
+    workspace: &ctx_core::models::Workspace,
+    provider_id: &str,
+    selected_endpoint_id: Option<String>,
+) -> Result<ProviderAuthVerificationRuntimeProbe, anyhow::Error> {
+    let requested_endpoint_id = selected_endpoint_id.clone();
+    match prepare_provider_runtime_probe(state, workspace, provider_id, selected_endpoint_id).await
+    {
+        Ok(prepared) => {
+            let probe = probe_crp_models(
+                provider_id,
+                prepared.command,
+                prepared.args,
+                prepared.cwd,
+                prepared.env,
+            )
+            .await;
+            let probe_error = probe
+                .err()
+                .map(|error| ctx_observability::logs::redact_sensitive(&error.to_string()));
+            Ok(ProviderAuthVerificationRuntimeProbe {
+                selected_endpoint_id: prepared.selected_endpoint_id,
+                probe_error,
+            })
+        }
+        Err(PreparedProviderRuntimeProbeError::ExecutionSettings(err)) => Err(err),
+        Err(PreparedProviderRuntimeProbeError::Verify(err)) => {
+            Ok(ProviderAuthVerificationRuntimeProbe {
+                selected_endpoint_id: requested_endpoint_id,
+                probe_error: Some(ctx_observability::logs::redact_sensitive(&err)),
+            })
+        }
+    }
 }
 
 pub(crate) async fn provider_has_active_auth_for_workspace_runtime(

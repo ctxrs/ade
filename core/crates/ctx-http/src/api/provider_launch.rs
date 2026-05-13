@@ -23,9 +23,8 @@ use crate::daemon::providers::{
     authenticate_provider_for_workspace_runtime, cancel_provider_install,
     get_provider_install_info, install_target_for_workspace, list_provider_install_events,
     load_provider_launch_config_snapshot, parse_provider_install_target,
-    prepare_provider_runtime_probe, provider_install_event_sender, start_all_provider_installs,
-    start_provider_install, store_provider_verify_cache_value, PreparedProviderRuntimeProbeError,
-    ProviderLaunchConfigSnapshot, ProviderOptionsCacheSnapshot,
+    provider_install_event_sender, start_all_provider_installs, start_provider_install,
+    store_provider_verify_cache_value, ProviderLaunchConfigSnapshot, ProviderOptionsCacheSnapshot,
     ProviderWorkspaceAuthenticationError,
 };
 use crate::daemon::AppState;
@@ -47,7 +46,6 @@ use ctx_provider_runtime::provider_launch::probe_error::classify_probe_error;
 use ctx_provider_runtime::provider_usability::{
     provider_status_is_usable, provider_status_unusable_reason,
 };
-use ctx_providers::crp::probe_crp_models;
 
 #[derive(Debug, Deserialize)]
 pub(super) struct InstallTargetQuery {
