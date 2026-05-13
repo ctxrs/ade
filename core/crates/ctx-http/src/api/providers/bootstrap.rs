@@ -2,11 +2,9 @@ use super::*;
 
 mod accounts_response;
 mod load;
-mod options;
 
 use accounts_response::load_bootstrap_accounts;
 use load::{load_bootstrap_workspace, load_preferred_model_by_provider};
-use options::{build_bootstrap_options, visible_provider_count_hint};
 
 fn parse_workspace_id(ws_id: &str) -> Result<WorkspaceId, (StatusCode, Json<serde_json::Value>)> {
     Ok(WorkspaceId(uuid::Uuid::parse_str(ws_id).map_err(|_| {
@@ -47,10 +45,18 @@ pub(crate) async fn get_workspace_providers_bootstrap(
                 let preferred_model_id = preferred_model_by_provider
                     .get(&provider_status.provider_id)
                     .cloned();
-                build_bootstrap_options(&state, ws_id, provider_status, preferred_model_id).await
+                crate::daemon::providers::build_bootstrap_options(
+                    &state,
+                    ws_id,
+                    provider_status,
+                    preferred_model_id,
+                )
+                .await
             }
         }))
-        .buffer_unordered(visible_provider_count_hint(providers.len()))
+        .buffer_unordered(crate::daemon::providers::visible_provider_count_hint(
+            providers.len(),
+        ))
         .collect::<Vec<_>>()
         .await;
 

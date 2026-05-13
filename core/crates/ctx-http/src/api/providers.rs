@@ -40,7 +40,6 @@ mod harness_config;
 mod imports;
 mod install;
 mod login;
-mod probe;
 mod status;
 mod types;
 

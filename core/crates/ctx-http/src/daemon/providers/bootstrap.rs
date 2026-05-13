@@ -1,4 +1,8 @@
+use std::sync::Arc;
+
+use ctx_core::ids::WorkspaceId;
 use ctx_harness_sources::HarnessProviderSourceConfig;
+use ctx_observability::logs;
 use ctx_provider_runtime::model_preferences::preferred_model_id_from_available_models;
 use ctx_provider_runtime::provider_auth::{
     provider_auth_mode, provider_has_active_auth_config_with_runtime_root,
@@ -7,10 +11,14 @@ use ctx_provider_runtime::provider_auth::{
 use ctx_provider_runtime::provider_launch::models::{
     endpoint_models_payload, subscription_models_payload_from_status,
 };
+use ctx_provider_runtime::provider_usability::{
+    provider_status_is_usable, provider_status_unusable_reason,
+};
+use ctx_providers::adapters::ProviderStatus;
 
-use super::*;
+use crate::daemon::AppState;
 
-pub(super) async fn build_bootstrap_options(
+pub(crate) async fn build_bootstrap_options(
     state: &Arc<AppState>,
     ws_id: WorkspaceId,
     provider_status: ProviderStatus,
@@ -35,7 +43,7 @@ pub(super) async fn build_bootstrap_options(
     )
     .await;
     let (mut probe_ok, mut auth_required, mut probe_error) =
-        probe::bootstrap_provider_probe_summary(&provider_status, has_active_auth);
+        bootstrap_provider_probe_summary(&provider_status, has_active_auth);
     if let Some(config_error) = auth_config_error.as_ref() {
         probe_ok = false;
         auth_required = false;
@@ -79,6 +87,10 @@ pub(super) async fn build_bootstrap_options(
     (provider_id, options, source_config)
 }
 
+pub(crate) fn visible_provider_count_hint(total_provider_count: usize) -> usize {
+    total_provider_count.max(1)
+}
+
 async fn provider_auth_summary(
     state: &Arc<AppState>,
     provider_id: &str,
@@ -108,6 +120,24 @@ async fn provider_auth_summary(
     }
 }
 
+fn bootstrap_provider_probe_summary(
+    provider_status: &ProviderStatus,
+    has_active_auth: bool,
+) -> (bool, bool, Option<String>) {
+    if !provider_status_is_usable(provider_status) {
+        return (
+            false,
+            false,
+            Some(
+                provider_status_unusable_reason(provider_status)
+                    .unwrap_or_else(|| "provider not ready for use".to_string()),
+            ),
+        );
+    }
+
+    (true, !has_active_auth, None)
+}
+
 fn append_model_options(
     provider_id: &str,
     provider_status: &ProviderStatus,
@@ -119,8 +149,4 @@ fn append_model_options(
     } else if let Some(models) = subscription_models_payload_from_status(provider_status) {
         options["models"] = models;
     }
-}
-
-pub(super) fn visible_provider_count_hint(total_provider_count: usize) -> usize {
-    total_provider_count.max(1)
 }
