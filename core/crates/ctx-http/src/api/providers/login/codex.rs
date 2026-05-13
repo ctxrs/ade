@@ -4,9 +4,9 @@ mod app_server;
 mod completion;
 mod process;
 
-pub(crate) use completion::complete_codex_login;
 #[cfg(test)]
-use process::persist_successful_codex_login;
+use crate::daemon::providers::persist_successful_codex_login;
+pub(crate) use completion::complete_codex_login;
 use process::{monitor_codex_login, start_codex_login_process};
 
 #[derive(Debug, Deserialize)]

@@ -3,12 +3,8 @@ use super::*;
 
 #[path = "process/monitor.rs"]
 mod monitor;
-#[path = "process/persistence.rs"]
-mod persistence;
 
 pub(super) use monitor::monitor_codex_login;
-#[cfg(test)]
-pub(super) use persistence::persist_successful_codex_login;
 
 pub(super) struct CodexLoginProcess {
     pub(super) login_id: String,

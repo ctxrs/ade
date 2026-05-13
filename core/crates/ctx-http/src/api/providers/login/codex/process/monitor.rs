@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use super::super::app_server::{fetch_codex_account_details, wait_for_codex_login_completion};
-use super::persistence::persist_successful_codex_login;
 use super::{CodexLoginCompletion, CodexLoginProcess};
 use crate::daemon::AppState;
 
@@ -24,8 +23,14 @@ pub(in crate::api::providers::login::codex) async fn monitor_codex_login(
         let (email, plan_type) = fetch_codex_account_details(&mut login.stdin, &mut login.reader)
             .await
             .unwrap_or((None, None));
-        if let Err(err) =
-            persist_successful_codex_login(&state, &account_id, label, email, plan_type).await
+        if let Err(err) = crate::daemon::providers::persist_successful_codex_login(
+            &state,
+            &account_id,
+            label,
+            email,
+            plan_type,
+        )
+        .await
         {
             status.success = false;
             status.error = Some(err.to_string());
