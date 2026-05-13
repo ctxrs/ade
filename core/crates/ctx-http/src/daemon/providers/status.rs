@@ -31,6 +31,10 @@ pub(crate) async fn install_target_for_workspace(
         })
 }
 
+pub(crate) async fn refresh_provider_statuses(state: &AppState) -> anyhow::Result<()> {
+    ctx_managed_installs::refresh_provider_statuses(state).await
+}
+
 pub(crate) async fn providers_statuses_response(
     state: &Arc<AppState>,
     target: InstallTarget,

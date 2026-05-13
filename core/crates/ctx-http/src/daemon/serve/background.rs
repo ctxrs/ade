@@ -25,7 +25,8 @@ pub(super) fn spawn_daemon_background_services(state: Arc<AppState>, requested_b
 
 pub(in crate::daemon) fn spawn_startup_provider_status_refresh(state: Arc<AppState>) {
     tokio::spawn(async move {
-        if let Err(err) = ctx_managed_installs::refresh_provider_statuses(state.as_ref()).await {
+        if let Err(err) = crate::daemon::providers::refresh_provider_statuses(state.as_ref()).await
+        {
             tracing::warn!("startup provider status refresh failed: {err:#}");
         }
     });

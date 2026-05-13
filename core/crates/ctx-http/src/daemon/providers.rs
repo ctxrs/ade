@@ -66,6 +66,6 @@ pub(crate) use restarts::{
 pub(crate) use runtime_probe::{prepare_provider_runtime_probe, PreparedProviderRuntimeProbeError};
 pub(crate) use status::{
     install_target_for_workspace, provider_status_response, providers_statuses_response,
-    ProviderStatusResponseError,
+    refresh_provider_statuses, ProviderStatusResponseError,
 };
 pub(crate) use usage::{load_codex_accounts_usage, load_provider_usage};

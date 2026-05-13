@@ -20,6 +20,7 @@ use ctx_core::ids::WorkspaceId;
 use ctx_harness_sources as harness_sources;
 #[cfg(test)]
 use ctx_harness_sources::{HarnessApiShape, HarnessSourceKind};
+#[cfg(test)]
 use ctx_managed_installs as installer;
 use ctx_observability::logs;
 use ctx_provider_accounts as provider_accounts;

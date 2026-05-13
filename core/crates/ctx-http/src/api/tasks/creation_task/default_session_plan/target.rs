@@ -27,7 +27,7 @@ pub(super) async fn resolve_default_session_target(
     let provider_id = match select_default_provider_id(&statuses) {
         Some(provider_id) => provider_id,
         None if install_target == InstallTarget::Host => {
-            ctx_managed_installs::refresh_provider_statuses(state.as_ref())
+            crate::daemon::providers::refresh_provider_statuses(state.as_ref())
                 .await
                 .map_err(|error| {
                     (

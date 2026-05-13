@@ -7,7 +7,7 @@ pub(crate) async fn refresh_provider_matrix(
         .providers
         .refresh_provider_matrix_from_local_sources(&state.core.data_root)
         .await;
-    installer::refresh_provider_statuses(state.as_ref())
+    crate::daemon::providers::refresh_provider_statuses(state.as_ref())
         .await
         .map_err(|e| {
             (
