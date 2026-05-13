@@ -81,7 +81,7 @@ pub(in crate::api) async fn unarchive_task(
         {
             tracing::warn!(task_id = %task_id.0, "attachment mounts failed: {e:?}");
         }
-        if let Err(e) = worktree_bootstrap::spawn_worktree_bootstrap(
+        if let Err(e) = crate::daemon::workspaces::spawn_worktree_bootstrap(
             Arc::clone(&state),
             workspace.clone(),
             worktree.clone(),

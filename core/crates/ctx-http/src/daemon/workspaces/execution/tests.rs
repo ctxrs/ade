@@ -3,6 +3,8 @@ use super::*;
 use chrono::Utc;
 use ctx_core::ids::{WorkspaceId, WorktreeId};
 use ctx_core::models::{SandboxBinding, SandboxGuestIdentity, SandboxProfile, SandboxSubstrate};
+use ctx_sandbox_contract::sandbox_execution_settings_from_binding;
+use ctx_settings_model::ExecutionMode;
 use uuid::Uuid;
 
 mod binding_snapshot;

@@ -11,18 +11,13 @@ use serde::{Deserialize, Serialize};
 
 use super::artifacts::persist_blob_bytes;
 use super::errors::ApiErrorResp;
-use super::redact_json_value;
 use super::shared::{load_and_cache_worktree_files, FileCompletionsQuery};
 use crate::daemon::scheduler::SchedulerCommand;
 use crate::daemon::AppState;
 use ctx_core::ids::*;
 use ctx_core::models::*;
-use ctx_managed_installs as installer;
 use ctx_observability::logs;
-use ctx_providers::{
-    ask_user_question::{AskUserQuestionAnswer, AskUserQuestionOutcome},
-    crp::probe_crp_models,
-};
+use ctx_providers::ask_user_question::{AskUserQuestionAnswer, AskUserQuestionOutcome};
 #[cfg(test)]
 use ctx_settings_model as user_settings;
 use ctx_store::is_unique_constraint_violation;
@@ -35,8 +30,6 @@ pub(super) use subagents::{
     mcp_archive_agent, mcp_get_agent, mcp_interrupt_agent, mcp_list_agents, mcp_send_input,
     mcp_spawn_agent, mcp_wait_agent,
 };
-mod diff_exec;
-pub(crate) use diff_exec::diff_worktree_summary_for_session;
 mod control;
 pub(super) use control::{
     authenticate_session, cancel_session, interrupt_session, submit_ask_user_question,
@@ -46,8 +39,6 @@ pub(super) use file_completions::session_file_completions;
 mod messages;
 pub(crate) use messages::ensure_session_turn_for_message;
 pub(super) use messages::{delete_session_message, post_message};
-mod models;
-pub(crate) use models::load_provider_model_catalog_for_execution_environment;
 mod snapshot;
 pub(super) use snapshot::{
     apply_session_diff_patch, get_session_diff, get_session_diff_summary, get_session_events,

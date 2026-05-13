@@ -1,10 +1,14 @@
-use super::*;
+use std::sync::Arc;
+
+use ctx_core::models::Worktree;
 use ctx_settings_model::ExecutionMode;
 use ctx_workspace_services::worktree_vcs::{
     load_worktree_vcs_session_diff_from_host, load_worktree_vcs_session_diff_summary_from_host,
     WorktreeVcsDiffSummaryCounts,
 };
 use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
+
+use crate::daemon::AppState;
 
 mod sandbox;
 use sandbox::{container_diff_worktree, container_diff_worktree_summary};

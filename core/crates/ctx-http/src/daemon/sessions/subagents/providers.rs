@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::api::sessions::load_provider_model_catalog_for_execution_environment;
 use crate::daemon::execution_effective;
+use crate::daemon::sessions::model_catalog::load_provider_model_catalog_for_execution_environment;
 use crate::daemon::AppState;
 use ctx_core::models::{ExecutionEnvironment, Workspace};
 use ctx_provider_runtime::provider_launch::status::provider_status_for_target;

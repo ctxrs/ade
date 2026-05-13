@@ -29,7 +29,7 @@ pub(crate) async fn set_session_mode(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    let resolved_worktree = crate::api::tasks::resolve_existing_worktree_execution(
+    let resolved_worktree = crate::daemon::workspaces::resolve_existing_worktree_execution(
         &state,
         &store,
         &workspace,

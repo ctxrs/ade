@@ -38,7 +38,7 @@ pub(super) async fn load_session_model_target(
         .await
         .map_err(internal_session_model_error)?
         .ok_or_else(|| session_model_error(StatusCode::NOT_FOUND, "worktree not found"))?;
-    let resolved_worktree = crate::api::tasks::resolve_existing_worktree_execution(
+    let resolved_worktree = crate::daemon::workspaces::resolve_existing_worktree_execution(
         state,
         &store,
         &workspace,

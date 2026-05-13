@@ -33,7 +33,7 @@ pub(super) async fn prepare_session_auth_runtime(
             SessionAuthError::Internal(format!("failed to load workspace: {error:#}"))
         })?
         .ok_or(SessionAuthError::NotFound("workspace"))?;
-    let resolved_worktree = crate::api::tasks::resolve_existing_worktree_execution(
+    let resolved_worktree = crate::daemon::workspaces::resolve_existing_worktree_execution(
         state,
         store,
         &workspace,

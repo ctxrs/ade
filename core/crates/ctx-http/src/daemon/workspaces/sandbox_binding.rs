@@ -1,14 +1,11 @@
-use super::*;
-use ctx_sandbox_contract::sandbox_execution_settings_from_binding;
+use std::path::Path as StdPath;
 
-pub(crate) fn execution_environment_from_settings(
-    settings: &ExecutionSettings,
-) -> ExecutionEnvironment {
-    match settings.mode {
-        ExecutionMode::Host => ExecutionEnvironment::Host,
-        ExecutionMode::Sandbox => ExecutionEnvironment::Sandbox,
-    }
-}
+use chrono::{DateTime, Utc};
+use ctx_core::models::{SandboxBinding, Workspace, Worktree};
+use ctx_sandbox_contract::sandbox_execution_settings_from_binding;
+use ctx_settings_model::ExecutionSettings;
+
+use crate::daemon::AppState;
 
 pub(crate) async fn materialize_sandbox_binding_for_worktree(
     state: &AppState,

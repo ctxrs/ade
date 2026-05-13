@@ -1,4 +1,4 @@
-use super::*;
+use std::time::Duration;
 
 const GLOBAL_INDEX_WRITE_RETRY_LIMIT: usize = 3;
 const GLOBAL_INDEX_WRITE_RETRY_BASE_MS: u64 = 40;

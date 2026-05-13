@@ -1,8 +1,13 @@
-use super::*;
+use std::sync::Arc;
 
-#[cfg(test)]
-use ctx_sandbox_contract::sandbox_execution_settings_from_binding;
+use anyhow::Context;
+use ctx_core::ids::WorktreeId;
+use ctx_core::models::{ExecutionEnvironment, Workspace, Worktree};
+use ctx_settings_model::{ExecutionMode, ExecutionSettings};
+use ctx_store::Store;
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
+
+use crate::daemon::AppState;
 
 #[cfg(test)]
 mod tests;
@@ -18,6 +23,15 @@ impl ResolvedExistingWorktreeExecution {
     }
 }
 
+pub(crate) fn execution_environment_from_settings(
+    settings: &ExecutionSettings,
+) -> ExecutionEnvironment {
+    match settings.mode {
+        ExecutionMode::Host => ExecutionEnvironment::Host,
+        ExecutionMode::Sandbox => ExecutionEnvironment::Sandbox,
+    }
+}
+
 pub(crate) async fn resolve_existing_worktree_execution(
     state: &Arc<AppState>,
     store: &Store,
@@ -29,7 +43,7 @@ pub(crate) async fn resolve_existing_worktree_execution(
         .await?
         .ok_or_else(|| anyhow::anyhow!("worktree not found"))?;
     let base_effective =
-        crate::daemon::execution_effective::effective_execution_settings(state, workspace.id)
+        super::super::execution_effective::effective_execution_settings(state, workspace.id)
             .await
             .context("loading workspace execution settings")?;
     let data_plane =

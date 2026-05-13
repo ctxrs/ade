@@ -7,10 +7,11 @@ use serde::Deserialize;
 
 use super::super::errors::ApiErrorResp;
 use super::{
-    load_provider_model_catalog_for_execution_environment, store_for_existing_session_api_error,
-    store_for_existing_session_api_error_for_write, store_for_existing_session_status_for_write,
+    store_for_existing_session_api_error, store_for_existing_session_api_error_for_write,
+    store_for_existing_session_status_for_write,
 };
 use crate::daemon::execution_effective;
+use crate::daemon::sessions::model_catalog::load_provider_model_catalog_for_execution_environment;
 use crate::daemon::AppState;
 use ctx_core::ids::SessionId;
 use ctx_core::models::{Session, SessionEventType};

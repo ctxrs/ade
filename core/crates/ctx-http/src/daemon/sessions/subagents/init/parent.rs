@@ -52,7 +52,7 @@ pub(super) async fn load_parent_worktree_context(
         .map_err(internal_api_error)?
         .ok_or_else(|| api_error(SubagentErrorKind::NotFound, "workspace not found"))?;
 
-    let parent_worktree_execution = crate::api::tasks::resolve_existing_worktree_execution(
+    let parent_worktree_execution = crate::daemon::workspaces::resolve_existing_worktree_execution(
         state,
         store,
         &workspace,

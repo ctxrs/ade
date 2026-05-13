@@ -1,5 +1,5 @@
 use super::*;
-use crate::api::sessions;
+use crate::daemon::sessions::model_catalog::load_provider_model_catalog_for_execution_environment;
 use ctx_provider_install::InstallTarget;
 use ctx_session_service::default_session::{
     resolve_default_session_model, select_default_provider_id,
@@ -69,7 +69,7 @@ pub(super) async fn resolve_default_session_target(
                     }),
                 )
             })?;
-    let catalog = sessions::load_provider_model_catalog_for_execution_environment(
+    let catalog = load_provider_model_catalog_for_execution_environment(
         state,
         workspace,
         &provider_id,

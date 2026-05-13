@@ -1,5 +1,4 @@
 use super::*;
-use crate::api::sessions;
 use crate::api::shared;
 use ctx_session_service::session_creation::{
     session_matches_creation_identity, validate_create_session_request, CreateSessionRequestError,

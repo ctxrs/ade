@@ -1,4 +1,15 @@
-use super::*;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use chrono::Utc;
+use ctx_core::ids::WorktreeId;
+use ctx_core::models::{SandboxBinding, Workspace, Worktree};
+use ctx_settings_model::ExecutionSettings;
+use ctx_store::Store;
+
+use crate::daemon::AppState;
+
+use super::retry_global_index_write;
 
 pub(crate) async fn persist_provisioned_worktree(
     state: &Arc<AppState>,
@@ -19,7 +30,7 @@ pub(crate) async fn persist_provisioned_worktree(
     })
     .await?;
 
-    if let Err(err) = worktree_bootstrap::spawn_worktree_bootstrap(
+    if let Err(err) = super::worktree_bootstrap::spawn_worktree_bootstrap(
         Arc::clone(state),
         workspace.clone(),
         worktree.clone(),

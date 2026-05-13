@@ -1,9 +1,8 @@
 use std::collections::HashSet;
 use std::path::{Path as StdPath, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-use anyhow::Context;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
@@ -12,31 +11,21 @@ use serde::{Deserialize, Serialize};
 
 #[path = "tasks/creation.rs"]
 mod creation;
-mod execution;
 mod handlers;
 #[path = "tasks/task_deletion.rs"]
 mod task_deletion;
 #[path = "tasks/task_title.rs"]
 mod task_title;
-mod worktree_bootstrap;
-#[path = "tasks/worktree_lifecycle.rs"]
-mod worktree_lifecycle;
 use crate::daemon::workspaces::{
-    cleanup_task_worktrees, managed_worktree_root, BranchCleanupErrorMode,
-    TaskWorktreeCleanupTarget,
+    cleanup_task_worktrees, execution_environment_from_settings, managed_worktree_root,
+    persist_provisioned_worktree, provision_worktree_for_execution,
+    rematerialize_sandbox_binding_for_worktree, resolve_existing_worktree_execution,
+    retry_global_index_write, BranchCleanupErrorMode, TaskWorktreeCleanupTarget,
 };
 pub(in crate::api) use creation::*;
-pub(crate) use execution::resolve_existing_worktree_execution;
-#[allow(unused_imports)]
-pub(in crate::api) use execution::*;
 pub(in crate::api) use handlers::*;
 pub(super) use task_deletion::{delete_loaded_task_with_cleanup, delete_task};
 pub(super) use task_title::update_task_title;
-pub(crate) use worktree_lifecycle::{
-    execution_environment_from_settings, persist_provisioned_worktree,
-    provision_worktree_for_execution, rematerialize_sandbox_binding_for_worktree,
-    retry_global_index_write,
-};
 
 use super::errors::ApiErrorResp;
 use super::shared::session_root_kind_for_worktree;
@@ -45,14 +34,16 @@ use crate::daemon::scheduler::SchedulerCommand;
 use crate::daemon::sessions::title_generation::schedule_session_title_generation;
 use crate::daemon::AppState;
 use ctx_core::ids::{RunId, SessionId, TaskId, WorkspaceId, WorktreeId};
+#[cfg(test)]
+use ctx_core::models::SandboxBinding;
 use ctx_core::models::{
-    ExecutionEnvironment, MessageDelivery, SandboxBinding, Session, SessionEventType, Task,
-    TaskDeltaKind, VcsKind, Workspace, WorkspaceArchivedPage, WorkspaceIndexCursor, Worktree,
+    ExecutionEnvironment, MessageDelivery, Session, SessionEventType, Task, TaskDeltaKind, VcsKind,
+    Workspace, WorkspaceArchivedPage, WorkspaceIndexCursor, Worktree,
 };
 use ctx_observability::logs;
 use ctx_observability::ops_events::OpsEvent;
 use ctx_observability::telemetry::TelemetryEvent;
-use ctx_settings_model::{ExecutionMode, ExecutionSettings};
+use ctx_settings_model::ExecutionSettings;
 use ctx_store::{is_unique_constraint_violation, Store};
 use ctx_workspace_services::vcs_hooks;
 

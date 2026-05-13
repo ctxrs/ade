@@ -1,5 +1,5 @@
 use super::*;
-use crate::api::sessions::diff_exec::diff_worktree_for_session;
+use crate::daemon::workspaces::diff_worktree_for_session;
 use ctx_workspace_services::worktree_vcs::{
     is_no_vcs_repo_error, worktree_vcs_session_diff_available,
     worktree_vcs_session_diff_unavailable, WorktreeVcsSessionDiffOutcome,

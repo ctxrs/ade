@@ -1,4 +1,5 @@
 use super::*;
+use crate::daemon::sessions::model_catalog::load_provider_model_catalog_for_execution_environment;
 
 pub(super) struct ResolvedLoadedSessionModel {
     pub(super) model_id: String,
@@ -33,7 +34,7 @@ pub(super) async fn resolve_loaded_session_model(
         created_worktree_id,
     } = request;
 
-    let catalog = match sessions::load_provider_model_catalog_for_execution_environment(
+    let catalog = match load_provider_model_catalog_for_execution_environment(
         state,
         workspace,
         provider_id,
