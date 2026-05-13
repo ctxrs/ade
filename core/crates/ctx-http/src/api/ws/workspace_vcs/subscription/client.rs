@@ -3,10 +3,11 @@ use std::sync::Arc;
 
 use super::super::buffer::VcsPendingBuffer;
 use super::super::metrics::VcsStreamMetrics;
-use super::filter::filter_workspace_worktree_ids;
 use super::runtime::WorkspaceVcsRuntime;
 use super::snapshots::seed_current_vcs_snapshots;
-use crate::daemon::workspaces::stream::refresh_worktree_vcs_for_worktrees;
+use crate::daemon::workspaces::stream::{
+    filter_workspace_worktree_ids, refresh_worktree_vcs_for_worktrees,
+};
 use crate::daemon::AppState;
 use ctx_core::ids::{WorkspaceId, WorktreeId};
 use ctx_core::models::{

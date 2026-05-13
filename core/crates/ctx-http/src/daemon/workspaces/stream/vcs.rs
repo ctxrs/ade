@@ -1,10 +1,32 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use ctx_core::ids::WorktreeId;
+use ctx_core::ids::{WorkspaceId, WorktreeId};
 use ctx_core::models::{Worktree, WorktreeVcsFreshness};
 
 use crate::daemon::AppState;
+
+pub(crate) async fn filter_workspace_worktree_ids(
+    state: &Arc<AppState>,
+    workspace_id: WorkspaceId,
+    worktree_ids: Vec<WorktreeId>,
+) -> Vec<WorktreeId> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for worktree_id in worktree_ids {
+        if !seen.insert(worktree_id) {
+            continue;
+        }
+        let Some(worktree) = load_worktree(state, worktree_id).await else {
+            continue;
+        };
+        if worktree.workspace_id == workspace_id {
+            out.push(worktree_id);
+        }
+    }
+    out.sort_by_key(|worktree_id| worktree_id.0);
+    out
+}
 
 pub(crate) async fn refresh_worktree_vcs_for_worktrees(
     state: &Arc<AppState>,

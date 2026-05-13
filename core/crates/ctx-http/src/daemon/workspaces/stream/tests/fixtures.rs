@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::daemon::AppState;
 use ctx_core::ids::{SessionId, WorkspaceId};
-use ctx_core::models::ExecutionEnvironment;
+use ctx_core::models::{ExecutionEnvironment, Worktree};
 use ctx_store::StoreManager;
 
 pub(super) fn session_id(value: &str) -> SessionId {
@@ -25,37 +25,16 @@ pub(super) async fn create_workspace_session(
     state: &Arc<AppState>,
     root: &Path,
 ) -> (WorkspaceId, SessionId) {
-    let workspace = state
-        .global_store()
-        .create_workspace(
-            format!("ws-{}", uuid::Uuid::new_v4()),
-            root.join(format!("ws-{}", uuid::Uuid::new_v4()))
-                .to_string_lossy()
-                .to_string(),
-            ctx_core::models::VcsKind::Git,
-        )
-        .await
-        .unwrap();
-    let store = state.store_for_workspace(workspace.id).await.unwrap();
-    let worktree = store
-        .create_worktree(
-            workspace.id,
-            root.join(format!("worktree-{}", uuid::Uuid::new_v4()))
-                .to_string_lossy()
-                .to_string(),
-            "deadbeef".to_string(),
-            None,
-        )
-        .await
-        .unwrap();
+    let (workspace_id, worktree) = create_workspace_worktree(state, root).await;
+    let store = state.store_for_workspace(workspace_id).await.unwrap();
     let task = store
-        .create_task(workspace.id, "task".to_string(), None)
+        .create_task(workspace_id, "task".to_string(), None)
         .await
         .unwrap();
     let session = store
         .create_session(
             task.id,
-            workspace.id,
+            workspace_id,
             worktree.id,
             ExecutionEnvironment::Host,
             "fake".to_string(),
@@ -69,8 +48,52 @@ pub(super) async fn create_workspace_session(
         .unwrap();
     state
         .global_store()
-        .upsert_workspace_session_index(session.id, workspace.id)
+        .upsert_workspace_session_index(session.id, workspace_id)
         .await
         .unwrap();
-    (workspace.id, session.id)
+    (workspace_id, session.id)
+}
+
+pub(super) async fn create_workspace_worktree(
+    state: &Arc<AppState>,
+    root: &Path,
+) -> (WorkspaceId, Worktree) {
+    let workspace = state
+        .global_store()
+        .create_workspace(
+            format!("ws-{}", uuid::Uuid::new_v4()),
+            root.join(format!("ws-{}", uuid::Uuid::new_v4()))
+                .to_string_lossy()
+                .to_string(),
+            ctx_core::models::VcsKind::Git,
+        )
+        .await
+        .unwrap();
+    let worktree = create_worktree_for_workspace(state, root, workspace.id).await;
+    (workspace.id, worktree)
+}
+
+pub(super) async fn create_worktree_for_workspace(
+    state: &Arc<AppState>,
+    root: &Path,
+    workspace_id: WorkspaceId,
+) -> Worktree {
+    let store = state.store_for_workspace(workspace_id).await.unwrap();
+    let worktree = store
+        .create_worktree(
+            workspace_id,
+            root.join(format!("worktree-{}", uuid::Uuid::new_v4()))
+                .to_string_lossy()
+                .to_string(),
+            "deadbeef".to_string(),
+            None,
+        )
+        .await
+        .unwrap();
+    state
+        .global_store()
+        .upsert_workspace_worktree_index(worktree.id, workspace_id)
+        .await
+        .unwrap();
+    worktree
 }
