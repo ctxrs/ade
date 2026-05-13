@@ -69,17 +69,13 @@ pub(super) async fn finalize_claude_login(
         }
     }
 
-    state
-        .providers
-        .with_claude_login_sessions(|map| {
-            if let Some(entry) = map.get_mut(login_id) {
-                entry.status = final_status;
-                entry.account_id = final_account_id;
-                entry.error = final_error;
-                if entry.auth_url.is_none() {
-                    entry.auth_url = observed_auth_url;
-                }
-            }
-        })
-        .await;
+    crate::daemon::providers::finish_claude_login_session(
+        state,
+        login_id,
+        final_status,
+        final_account_id,
+        final_error,
+        observed_auth_url,
+    )
+    .await;
 }

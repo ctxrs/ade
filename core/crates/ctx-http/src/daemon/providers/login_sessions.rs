@@ -38,7 +38,9 @@ fn new_started_login_session(
 }
 
 fn restart_failure_message(error: anyhow::Error) -> String {
-    logs::redact_sensitive(&format!("auth saved but provider restart failed: {error:#}"))
+    logs::redact_sensitive(&format!(
+        "auth saved but provider restart failed: {error:#}"
+    ))
 }
 
 macro_rules! auth_account_login_session_helpers {
@@ -53,13 +55,14 @@ macro_rules! auth_account_login_session_helpers {
         $status_ty:ty
     ) => {
         pub(crate) async fn $start(state: &AppState) -> StartedLoginSession {
+            type LoginStatus = $status_ty;
             let session = new_started_login_session(None, None);
             state
                 .providers
                 .$with(|map| {
                     map.insert(
                         session.login_id.clone(),
-                        <$status_ty>{
+                        LoginStatus {
                             login_id: session.login_id.clone(),
                             auth_url: session.auth_url.clone(),
                             status: "pending".to_string(),
@@ -72,21 +75,14 @@ macro_rules! auth_account_login_session_helpers {
             session
         }
 
-        pub(crate) async fn $status(
-            state: &AppState,
-            login_id: &str,
-        ) -> Option<$status_ty> {
+        pub(crate) async fn $status(state: &AppState, login_id: &str) -> Option<$status_ty> {
             state
                 .providers
                 .$with(|map| map.get(login_id).cloned())
                 .await
         }
 
-        pub(crate) async fn $set_failed(
-            state: &AppState,
-            login_id: &str,
-            error: String,
-        ) {
+        pub(crate) async fn $set_failed(state: &AppState, login_id: &str, error: String) {
             state
                 .providers
                 .$with(|map| {
@@ -134,11 +130,7 @@ macro_rules! auth_account_login_session_helpers {
                 .await;
         }
 
-        pub(crate) async fn $set_auth_url(
-            state: &AppState,
-            login_id: &str,
-            auth_url: String,
-        ) {
+        pub(crate) async fn $set_auth_url(state: &AppState, login_id: &str, auth_url: String) {
             state
                 .providers
                 .$with(|map| {
@@ -163,13 +155,14 @@ macro_rules! auth_only_login_session_helpers {
         $status_ty:ty
     ) => {
         pub(crate) async fn $start(state: &AppState) -> StartedLoginSession {
+            type LoginStatus = $status_ty;
             let session = new_started_login_session(None, None);
             state
                 .providers
                 .$with(|map| {
                     map.insert(
                         session.login_id.clone(),
-                        <$status_ty>{
+                        LoginStatus {
                             login_id: session.login_id.clone(),
                             auth_url: session.auth_url.clone(),
                             status: "pending".to_string(),
@@ -181,21 +174,14 @@ macro_rules! auth_only_login_session_helpers {
             session
         }
 
-        pub(crate) async fn $status(
-            state: &AppState,
-            login_id: &str,
-        ) -> Option<$status_ty> {
+        pub(crate) async fn $status(state: &AppState, login_id: &str) -> Option<$status_ty> {
             state
                 .providers
                 .$with(|map| map.get(login_id).cloned())
                 .await
         }
 
-        pub(crate) async fn $set_failed(
-            state: &AppState,
-            login_id: &str,
-            error: String,
-        ) {
+        pub(crate) async fn $set_failed(state: &AppState, login_id: &str, error: String) {
             state
                 .providers
                 .$with(|map| {
@@ -243,11 +229,7 @@ macro_rules! auth_only_login_session_helpers {
                 .await;
         }
 
-        pub(crate) async fn $set_auth_url(
-            state: &AppState,
-            login_id: &str,
-            auth_url: String,
-        ) {
+        pub(crate) async fn $set_auth_url(state: &AppState, login_id: &str, auth_url: String) {
             state
                 .providers
                 .$with(|map| {
@@ -259,17 +241,6 @@ macro_rules! auth_only_login_session_helpers {
         }
     };
 }
-
-auth_account_login_session_helpers!(
-    start_cursor_login_session,
-    cursor_login_status,
-    set_cursor_login_error,
-    set_cursor_login_failed_if_no_error,
-    set_cursor_login_timeout_if_no_error,
-    update_cursor_login_auth_url,
-    with_cursor_login_sessions,
-    provider_accounts::CursorLoginStatus
-);
 
 auth_account_login_session_helpers!(
     start_gemini_login_session,
@@ -291,17 +262,6 @@ auth_account_login_session_helpers!(
     set_qwen_login_auth_url,
     with_qwen_login_sessions,
     provider_accounts::QwenLoginStatus
-);
-
-auth_account_login_session_helpers!(
-    start_claude_login_session_without_auth_url,
-    claude_login_status,
-    set_claude_login_failed,
-    set_claude_login_failed_if_no_error,
-    set_claude_login_timeout_if_no_error,
-    set_claude_login_auth_url,
-    with_claude_login_sessions,
-    provider_accounts::ClaudeLoginStatus
 );
 
 auth_only_login_session_helpers!(
@@ -326,6 +286,63 @@ auth_only_login_session_helpers!(
     provider_accounts::MistralLoginStatus
 );
 
+pub(crate) async fn start_cursor_login_session(state: &AppState) -> StartedLoginSession {
+    let session = new_started_login_session(None, None);
+    state
+        .providers
+        .with_cursor_login_sessions(|map| {
+            map.insert(
+                session.login_id.clone(),
+                provider_accounts::CursorLoginStatus {
+                    login_id: session.login_id.clone(),
+                    auth_url: session.auth_url.clone(),
+                    status: "pending".to_string(),
+                    account_id: None,
+                    error: None,
+                },
+            );
+        })
+        .await;
+    session
+}
+
+pub(crate) async fn cursor_login_status(
+    state: &AppState,
+    login_id: &str,
+) -> Option<provider_accounts::CursorLoginStatus> {
+    state
+        .providers
+        .with_cursor_login_sessions(|map| map.get(login_id).cloned())
+        .await
+}
+
+pub(crate) async fn set_cursor_login_error(state: &AppState, login_id: &str, error: String) {
+    state
+        .providers
+        .with_cursor_login_sessions(|map| {
+            if let Some(entry) = map.get_mut(login_id) {
+                entry.status = "failed".to_string();
+                entry.error = Some(error);
+            }
+        })
+        .await;
+}
+
+pub(crate) async fn update_cursor_login_auth_url(
+    state: &AppState,
+    login_id: &str,
+    auth_url: String,
+) {
+    state
+        .providers
+        .with_cursor_login_sessions(|map| {
+            if let Some(entry) = map.get_mut(login_id) {
+                entry.auth_url = Some(auth_url);
+            }
+        })
+        .await;
+}
+
 pub(crate) async fn start_claude_login_session(
     state: &AppState,
     auth_url: Option<String>,
@@ -347,6 +364,27 @@ pub(crate) async fn start_claude_login_session(
         })
         .await;
     session
+}
+
+pub(crate) async fn claude_login_status(
+    state: &AppState,
+    login_id: &str,
+) -> Option<provider_accounts::ClaudeLoginStatus> {
+    state
+        .providers
+        .with_claude_login_sessions(|map| map.get(login_id).cloned())
+        .await
+}
+
+pub(crate) async fn set_claude_login_auth_url(state: &AppState, login_id: &str, auth_url: String) {
+    state
+        .providers
+        .with_claude_login_sessions(|map| {
+            if let Some(entry) = map.get_mut(login_id) {
+                entry.auth_url = Some(auth_url);
+            }
+        })
+        .await;
 }
 
 pub(crate) async fn start_kimi_login_session(

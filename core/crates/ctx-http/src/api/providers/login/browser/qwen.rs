@@ -22,32 +22,17 @@ pub(crate) async fn start_qwen_login(
     Json(req): Json<QwenLoginStartReq>,
 ) -> Result<Json<QwenLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let login_id = uuid::Uuid::new_v4().to_string();
-    state
-        .providers
-        .with_qwen_login_sessions(|map| {
-            map.insert(
-                login_id.clone(),
-                provider_accounts::QwenLoginStatus {
-                    login_id: login_id.clone(),
-                    auth_url: None,
-                    status: "pending".to_string(),
-                    account_id: None,
-                    error: None,
-                },
-            );
-        })
-        .await;
+    let login_session = crate::daemon::providers::start_qwen_login_session(&state).await;
 
     let state_clone = Arc::clone(&state);
-    let login_id_for_task = login_id.clone();
+    let login_id_for_task = login_session.login_id.clone();
     tokio::spawn(async move {
         monitor_qwen_login(state_clone, login_id_for_task, req.label).await;
     });
 
     Ok(Json(QwenLoginStartResp {
-        login_id,
-        auth_url: None,
+        login_id: login_session.login_id,
+        auth_url: login_session.auth_url,
     }))
 }
 
@@ -57,9 +42,7 @@ pub(crate) async fn get_qwen_login(
     Path(id): Path<String>,
 ) -> Result<Json<provider_accounts::QwenLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let status = state
-        .providers
-        .with_qwen_login_sessions(|map| map.get(&id).cloned())
+    let status = crate::daemon::providers::qwen_login_status(&state, &id)
         .await
         .ok_or_else(|| {
             (

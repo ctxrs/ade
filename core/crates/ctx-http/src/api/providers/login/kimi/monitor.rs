@@ -18,18 +18,12 @@ pub(super) async fn monitor_kimi_login(
 
     loop {
         if started_at.elapsed() >= timeout {
-            state
-                .providers
-                .with_kimi_login_sessions(|map| {
-                    if let Some(entry) = map.get_mut(&login_id) {
-                        entry.status = "timeout".to_string();
-                        if entry.error.is_none() {
-                            entry.error =
-                                Some("timed out waiting for Kimi sign-in completion".to_string());
-                        }
-                    }
-                })
-                .await;
+            crate::daemon::providers::set_kimi_login_timeout_if_no_error(
+                &state,
+                &login_id,
+                "timed out waiting for Kimi sign-in completion".to_string(),
+            )
+            .await;
             return;
         }
 
@@ -45,34 +39,21 @@ pub(super) async fn monitor_kimi_login(
                 match added {
                     Ok(outcome) => {
                         let restart_error = outcome.restart_error_message();
-                        state
-                            .providers
-                            .with_kimi_login_sessions(|map| {
-                                if let Some(entry) = map.get_mut(&login_id) {
-                                    entry.account_id = outcome.active_account_id.clone();
-                                    if let Some(error) = restart_error.as_deref() {
-                                        entry.status = "failed".to_string();
-                                        entry.error = Some(logs::redact_sensitive(error));
-                                    } else {
-                                        entry.status = "success".to_string();
-                                        entry.error = None;
-                                    }
-                                }
-                            })
-                            .await;
+                        crate::daemon::providers::finish_kimi_login_session(
+                            &state,
+                            &login_id,
+                            outcome.active_account_id,
+                            restart_error,
+                        )
+                        .await;
                     }
                     Err(err) => {
-                        state
-                            .providers
-                            .with_kimi_login_sessions(|map| {
-                                if let Some(entry) = map.get_mut(&login_id) {
-                                    entry.status = "failed".to_string();
-                                    entry.error = Some(logs::redact_sensitive(
-                                        &err.auth_login_error_message(),
-                                    ));
-                                }
-                            })
-                            .await;
+                        crate::daemon::providers::set_kimi_login_failed(
+                            &state,
+                            &login_id,
+                            logs::redact_sensitive(&err.auth_login_error_message()),
+                        )
+                        .await;
                     }
                 }
                 return;
@@ -84,51 +65,42 @@ pub(super) async fn monitor_kimi_login(
                     "authorization_pending" | "slow_down" | "access_denied"
                 ) {
                     if error_code == "access_denied" {
-                        state
-                            .providers
-                            .with_kimi_login_sessions(|map| {
-                                if let Some(entry) = map.get_mut(&login_id) {
-                                    entry.status = "failed".to_string();
-                                    entry.error =
-                                        Some(error.error_description.unwrap_or_else(|| {
-                                            "Kimi sign-in was denied.".to_string()
-                                        }));
-                                }
-                            })
-                            .await;
+                        crate::daemon::providers::set_kimi_login_failed(
+                            &state,
+                            &login_id,
+                            error
+                                .error_description
+                                .unwrap_or_else(|| "Kimi sign-in was denied.".to_string()),
+                        )
+                        .await;
                         return;
                     }
                     tokio::time::sleep(poll_interval).await;
                     continue;
                 }
-                state
-                    .providers
-                    .with_kimi_login_sessions(|map| {
-                        if let Some(entry) = map.get_mut(&login_id) {
-                            entry.status = if error_code == "expired_token" {
-                                "timeout".to_string()
-                            } else {
-                                "failed".to_string()
-                            };
-                            entry.error =
-                                Some(error.error_description.unwrap_or_else(|| {
-                                    format!("Kimi sign-in failed: {error_code}")
-                                }));
-                        }
-                    })
-                    .await;
+                let status = if error_code == "expired_token" {
+                    "timeout"
+                } else {
+                    "failed"
+                };
+                crate::daemon::providers::set_kimi_login_terminal_status(
+                    &state,
+                    &login_id,
+                    status,
+                    error
+                        .error_description
+                        .unwrap_or_else(|| format!("Kimi sign-in failed: {error_code}")),
+                )
+                .await;
                 return;
             }
             Err(err) => {
-                state
-                    .providers
-                    .with_kimi_login_sessions(|map| {
-                        if let Some(entry) = map.get_mut(&login_id) {
-                            entry.status = "failed".to_string();
-                            entry.error = Some(logs::redact_sensitive(&err.to_string()));
-                        }
-                    })
-                    .await;
+                crate::daemon::providers::set_kimi_login_failed(
+                    &state,
+                    &login_id,
+                    logs::redact_sensitive(&err.to_string()),
+                )
+                .await;
                 return;
             }
         }

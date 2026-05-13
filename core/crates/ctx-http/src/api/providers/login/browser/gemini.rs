@@ -22,32 +22,17 @@ pub(crate) async fn start_gemini_login(
     Json(req): Json<GeminiLoginStartReq>,
 ) -> Result<Json<GeminiLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let login_id = uuid::Uuid::new_v4().to_string();
-    state
-        .providers
-        .with_gemini_login_sessions(|map| {
-            map.insert(
-                login_id.clone(),
-                provider_accounts::GeminiLoginStatus {
-                    login_id: login_id.clone(),
-                    auth_url: None,
-                    status: "pending".to_string(),
-                    account_id: None,
-                    error: None,
-                },
-            );
-        })
-        .await;
+    let login_session = crate::daemon::providers::start_gemini_login_session(&state).await;
 
     let state_clone = Arc::clone(&state);
-    let login_id_for_task = login_id.clone();
+    let login_id_for_task = login_session.login_id.clone();
     tokio::spawn(async move {
         monitor_gemini_login(state_clone, login_id_for_task, req.label).await;
     });
 
     Ok(Json(GeminiLoginStartResp {
-        login_id,
-        auth_url: None,
+        login_id: login_session.login_id,
+        auth_url: login_session.auth_url,
     }))
 }
 
@@ -57,9 +42,7 @@ pub(crate) async fn get_gemini_login(
     Path(id): Path<String>,
 ) -> Result<Json<provider_accounts::GeminiLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let status = state
-        .providers
-        .with_gemini_login_sessions(|map| map.get(&id).cloned())
+    let status = crate::daemon::providers::gemini_login_status(&state, &id)
         .await
         .ok_or_else(|| {
             (

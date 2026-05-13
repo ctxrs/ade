@@ -63,10 +63,22 @@ pub(crate) use login_runtime::{
     resolve_claude_login_runtime_from_config, resolve_cursor_login_runtime_from_config,
 };
 pub(crate) use login_sessions::{
-    claim_codex_login_callback, codex_login_status, cursor_login_status,
-    finish_codex_login_session, finish_cursor_login_session, restore_codex_login_completion_token,
-    set_cursor_login_error, start_codex_login_session, start_cursor_login_session,
-    update_cursor_login_auth_url, CodexLoginCallbackClaimError,
+    amp_login_status, claim_codex_login_callback, claude_login_status, codex_login_status,
+    cursor_login_status, finish_amp_login_session, finish_claude_login_session,
+    finish_codex_login_session, finish_cursor_login_session, finish_gemini_login_session,
+    finish_kimi_login_session, finish_mistral_login_session, finish_qwen_login_session,
+    gemini_login_status, kimi_login_status, mistral_login_status, qwen_login_status,
+    restore_codex_login_completion_token, set_amp_login_auth_url, set_amp_login_failed,
+    set_amp_login_failed_if_no_error, set_amp_login_timeout_if_no_error, set_claude_login_auth_url,
+    set_cursor_login_error, set_gemini_login_auth_url, set_gemini_login_failed,
+    set_gemini_login_failed_if_no_error, set_gemini_login_timeout_if_no_error,
+    set_kimi_login_failed, set_kimi_login_terminal_status, set_kimi_login_timeout_if_no_error,
+    set_mistral_login_auth_url, set_mistral_login_failed, set_mistral_login_failed_if_no_error,
+    set_mistral_login_timeout_if_no_error, set_qwen_login_auth_url, set_qwen_login_failed,
+    set_qwen_login_failed_if_no_error, set_qwen_login_timeout_if_no_error, start_amp_login_session,
+    start_claude_login_session, start_codex_login_session, start_cursor_login_session,
+    start_gemini_login_session, start_kimi_login_session, start_mistral_login_session,
+    start_qwen_login_session, update_cursor_login_auth_url, CodexLoginCallbackClaimError,
 };
 pub(crate) use options_cache::{store_provider_verify_cache_value, ProviderOptionsCacheSnapshot};
 pub(crate) use restarts::{

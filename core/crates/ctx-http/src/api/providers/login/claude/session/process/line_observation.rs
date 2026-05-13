@@ -40,13 +40,6 @@ pub(super) async fn append_claude_login_line(
         }
     }
     if let Some(url) = observed_auth_url.clone() {
-        state
-            .providers
-            .with_claude_login_sessions(|map| {
-                if let Some(entry) = map.get_mut(login_id) {
-                    entry.auth_url = Some(url);
-                }
-            })
-            .await;
+        crate::daemon::providers::set_claude_login_auth_url(state, login_id, url).await;
     }
 }

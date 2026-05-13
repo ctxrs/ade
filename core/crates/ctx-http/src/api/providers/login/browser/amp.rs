@@ -23,31 +23,17 @@ pub(crate) async fn start_amp_login(
 ) -> Result<Json<AmpLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
     let label = req.label;
-    let login_id = uuid::Uuid::new_v4().to_string();
-    state
-        .providers
-        .with_amp_login_sessions(|map| {
-            map.insert(
-                login_id.clone(),
-                provider_accounts::AmpLoginStatus {
-                    login_id: login_id.clone(),
-                    auth_url: None,
-                    status: "pending".to_string(),
-                    error: None,
-                },
-            );
-        })
-        .await;
+    let login_session = crate::daemon::providers::start_amp_login_session(&state).await;
 
     let state_clone = Arc::clone(&state);
-    let login_id_for_task = login_id.clone();
+    let login_id_for_task = login_session.login_id.clone();
     tokio::spawn(async move {
         monitor_amp_login(state_clone, login_id_for_task, label).await;
     });
 
     Ok(Json(AmpLoginStartResp {
-        login_id,
-        auth_url: None,
+        login_id: login_session.login_id,
+        auth_url: login_session.auth_url,
     }))
 }
 
@@ -57,9 +43,7 @@ pub(crate) async fn get_amp_login(
     Path(id): Path<String>,
 ) -> Result<Json<provider_accounts::AmpLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let status = state
-        .providers
-        .with_amp_login_sessions(|map| map.get(&id).cloned())
+    let status = crate::daemon::providers::amp_login_status(&state, &id)
         .await
         .ok_or_else(|| {
             (
