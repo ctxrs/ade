@@ -4,14 +4,16 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
-
-import { connectBrowser } from "./demo_ping_pong_playback.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DESKTOP_ROOT = path.resolve(__dirname, "..");
+const CORE_ROOT = path.resolve(DESKTOP_ROOT, "../..");
+const REPO_ROOT = path.resolve(CORE_ROOT, "..");
+const require = createRequire(import.meta.url);
 
 function fail(message) {
   throw new Error(message);
@@ -116,6 +118,45 @@ function sleep(ms) {
 function normalizeText(value, limit = 2_000) {
   const text = typeof value === "string" ? value : String(value || "");
   return text.length > limit ? `${text.slice(0, limit)}...` : text;
+}
+
+function requireWorkspacePackage(specifier) {
+  try {
+    const resolved = require.resolve(specifier, {
+      paths: [
+        CORE_ROOT,
+        DESKTOP_ROOT,
+        REPO_ROOT,
+      ],
+    });
+    return require(resolved);
+  } catch (error) {
+    throw new Error(
+      `missing workspace dependency "${specifier}". Run \`pnpm -C core install --frozen-lockfile\` before running the Linux bundled launch smoke.`,
+      { cause: error },
+    );
+  }
+}
+
+async function connectBrowser({ driverPort, appPath }) {
+  const { remote } = requireWorkspacePackage("webdriverio");
+  return remote({
+    hostname: "127.0.0.1",
+    port: driverPort,
+    path: "/",
+    capabilities: {
+      "tauri:options": {
+        application: appPath,
+      },
+      timeouts: {
+        script: 180000,
+        pageLoad: 300000,
+        implicit: 0,
+      },
+    },
+    automationProtocol: "webdriver",
+    logLevel: "error",
+  });
 }
 
 async function readLaunchState(browser) {

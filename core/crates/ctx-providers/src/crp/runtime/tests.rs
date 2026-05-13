@@ -2,6 +2,28 @@ use super::*;
 use std::fs;
 
 #[test]
+fn crp_event_broadcast_capacity_covers_remote_soak_burst() {
+    assert!(
+        CRP_EVENT_BROADCAST_CAPACITY >= 16_384,
+        "CRP prompt subscribers should not lag on ordinary remote-soak burst sizes"
+    );
+    assert_eq!(CRP_STDERR_BROADCAST_CAPACITY, 256);
+
+    let calibrated_burst = 8_192usize;
+    let (tx, mut rx) = tokio::sync::broadcast::channel(CRP_EVENT_BROADCAST_CAPACITY);
+    for seq in 0..calibrated_burst {
+        tx.send(seq).expect("broadcast send");
+    }
+    for expected in 0..calibrated_burst {
+        assert_eq!(rx.try_recv().expect("receiver should not lag"), expected);
+    }
+    assert!(matches!(
+        rx.try_recv(),
+        Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+    ));
+}
+
+#[test]
 fn redact_sensitive_covers_scoped_mcp_tokens() {
     let redacted = redact_sensitive(
         r#"stderr {"env":{"CTX_MCP_TOKEN":"ctxmcp_secret","ctx_mcp_token": "ctxmcp_lower","CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN":"shutdown_json"}} CTX_MCP_TOKEN=ctxmcp_env CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN=shutdown_env"#,

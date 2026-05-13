@@ -38,6 +38,8 @@ const AMBIENT_PROVIDER_SESSION_ENV_DENYLIST: &[&str] = &[
     "GEMINI_THREAD_ID",
     "ACP_SESSION_ID",
 ];
+pub(super) const CRP_EVENT_BROADCAST_CAPACITY: usize = 16_384;
+pub(super) const CRP_STDERR_BROADCAST_CAPACITY: usize = 256;
 
 fn scrub_ambient_provider_session_env(cmd: &mut Command) {
     for key in AMBIENT_PROVIDER_SESSION_ENV_DENYLIST {
@@ -125,8 +127,8 @@ impl CrpProcess {
             }
         });
 
-        let (events, _) = broadcast::channel(512);
-        let (stderr_lines, _) = broadcast::channel(256);
+        let (events, _) = broadcast::channel(CRP_EVENT_BROADCAST_CAPACITY);
+        let (stderr_lines, _) = broadcast::channel(CRP_STDERR_BROADCAST_CAPACITY);
         let (shutdown, _) = watch::channel::<Option<String>>(None);
         let process = Arc::new(Self {
             agent: agent.clone(),

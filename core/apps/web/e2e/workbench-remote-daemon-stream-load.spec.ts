@@ -67,9 +67,9 @@ const MIN_STREAM_EVENTS = envNumber(
 const PROBE_COUNT = envNumber("CTX_REMOTE_DAEMON_STREAM_SOAK_PROBES", 4);
 const PROBE_TIMEOUT_MS = envNumber("CTX_REMOTE_DAEMON_STREAM_SOAK_PROBE_TIMEOUT_MS", 35_000);
 const HEAD_POLL_MS = envNumber("CTX_REMOTE_DAEMON_STREAM_SOAK_HEAD_POLL_MS", REMOTE_MODE ? 250 : 75);
-const TEST_TIMEOUT_MS = envNumber(
-  "CTX_REMOTE_DAEMON_STREAM_SOAK_TEST_TIMEOUT_MS",
-  Math.max(480_000, 180_000 + PROBE_COUNT * PROBE_TIMEOUT_MS),
+const MAX_INITIAL_UI_READY_MS = envNumber(
+  "CTX_REMOTE_DAEMON_STREAM_SOAK_MAX_INITIAL_UI_READY_MS",
+  REMOTE_MODE ? 60_000 : 30_000,
 );
 const CLOCK_SAMPLES = envNumber("CTX_REMOTE_DAEMON_STREAM_SOAK_CLOCK_SAMPLES", 7);
 const MAX_CLOCK_UNCERTAINTY_MS = envNumber(
@@ -138,6 +138,33 @@ const MAX_VCS_GIT_PANE_OPEN_MS = envNumber(
 const MAX_VCS_TASK_SWITCH_MS = envNumber(
   "CTX_REMOTE_DAEMON_STREAM_SOAK_MAX_VCS_TASK_SWITCH_MS",
   REMOTE_MODE ? 8000 : 5000,
+);
+const DEFAULT_TEST_SETUP_TIMEOUT_MS = envNumber(
+  "CTX_REMOTE_DAEMON_STREAM_SOAK_SETUP_TIMEOUT_MS",
+  REMOTE_MODE ? 300_000 : 120_000,
+);
+const DEFAULT_VCS_CHURN_TIMEOUT_MS = VCS_CHURN_ENABLED
+  ? VCS_CHURN_UPDATES * VCS_CHURN_INTERVAL_MS +
+    MAX_VCS_GIT_PANE_OPEN_MS +
+    2 * MAX_VCS_TASK_SWITCH_MS
+  : 0;
+const DEFAULT_FORCED_GAP_RECOVERY_TIMEOUT_MS = LONG_FOREGROUND_RECOVERY
+  ? 3 * (PROBE_TIMEOUT_MS + 1_000)
+  : 0;
+const DEFAULT_TEST_TIMEOUT_MS = Math.max(
+  480_000,
+  DEFAULT_TEST_SETUP_TIMEOUT_MS +
+    DEFAULT_FORCED_GAP_RECOVERY_TIMEOUT_MS +
+    PROBE_COUNT * (PROBE_TIMEOUT_MS + 1_000) +
+    STREAM_TIMEOUT_MS +
+    MAX_CLICK_TO_PENDING_MS +
+    MAX_CLICK_TO_TERMINAL_MS +
+    DEFAULT_VCS_CHURN_TIMEOUT_MS +
+    120_000,
+);
+const TEST_TIMEOUT_MS = envNumber(
+  "CTX_REMOTE_DAEMON_STREAM_SOAK_TEST_TIMEOUT_MS",
+  DEFAULT_TEST_TIMEOUT_MS,
 );
 const REMOTE_CHURN_HOST = process.env.CTX_REMOTE_DAEMON_STREAM_SOAK_SSH_HOST?.trim() ?? "";
 const REMOTE_CHURN_KEY_PATH = process.env.CTX_REMOTE_DAEMON_STREAM_SOAK_SSH_KEY_PATH?.trim() ?? "";
@@ -1274,7 +1301,7 @@ async function attachPartialRemoteDaemonStreamLoadMetrics(
     return {};
   });
   const summary = {
-    status: "failed",
+    status: "partial",
     reason,
     capturedAtMs: Date.now(),
     context,
@@ -1587,6 +1614,30 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
   test.skip(!ENABLED, "Set CTX_REMOTE_DAEMON_STREAM_SOAK=1 to run the remote daemon stream load proof.");
   test.setTimeout(TEST_TIMEOUT_MS);
 
+  let partialMetricsCapture: Promise<void> | null = null;
+  const warnPartialMetricsFailure = (error: unknown): void => {
+    console.warn(
+      `failed to attach remote daemon stream load partial metrics: ${formatUnknownError(error)}`,
+    );
+  };
+  const attachPartialMetricsOnce = async (
+    reason: string,
+    context: Record<string, unknown>,
+  ): Promise<void> => {
+    if (!partialMetricsCapture) {
+      partialMetricsCapture = attachPartialRemoteDaemonStreamLoadMetrics(
+        testInfo,
+        request,
+        reason,
+        context,
+      ).catch((error: unknown) => {
+        partialMetricsCapture = null;
+        throw error;
+      });
+    }
+    await partialMetricsCapture;
+  };
+
   const clock = await calibrateClock(request);
 
   const seed = await seedDummyWorkspace(request, {
@@ -1630,17 +1681,17 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
 
   const rows = page.locator(".wb-task-row");
   const sessionView = page.locator('.wb-session-slot[aria-hidden="false"]');
-  await expect(rows).toHaveCount(TASK_COUNT, { timeout: 30_000 });
+  await expect(rows).toHaveCount(TASK_COUNT, { timeout: MAX_INITIAL_UI_READY_MS });
   const focused = await page.evaluate(
     ({ taskId, sessionId }) => window.__ctxE2E?.focusTask?.(taskId, sessionId) ?? false,
     { taskId: foregroundTaskId, sessionId: foregroundSessionId },
   );
   expect(focused).toBe(true);
   await expect(sessionView).toContainText(/remote stream fixture msg 1\.1\./i, {
-    timeout: 30_000,
+    timeout: MAX_INITIAL_UI_READY_MS,
   });
   await expect(page.locator(".wb-session-slot textarea.wb-active-textarea")).toBeVisible({
-    timeout: 30_000,
+    timeout: MAX_INITIAL_UI_READY_MS,
   });
   await clearDiagnostics(page);
 
@@ -1781,6 +1832,16 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
   };
 
   let forcedGapRecovery: Awaited<ReturnType<typeof runForcedForegroundGapRecovery>> | null = null;
+  const partialMetricsWatchdogMs = Math.max(1000, TEST_TIMEOUT_MS - 45_000);
+  const partialMetricsWatchdog = setTimeout(() => {
+    void attachPartialMetricsOnce("test timeout watchdog", {
+      testTimeoutMs: TEST_TIMEOUT_MS,
+      watchdogMs: partialMetricsWatchdogMs,
+    }).catch(warnPartialMetricsFailure);
+  }, partialMetricsWatchdogMs);
+  if (typeof partialMetricsWatchdog === "object" && "unref" in partialMetricsWatchdog) {
+    partialMetricsWatchdog.unref();
+  }
   try {
     if (LONG_FOREGROUND_RECOVERY) {
       forcedGapRecovery = await runForcedForegroundGapRecovery(
@@ -1800,17 +1861,12 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
       const probe = await runForegroundProbe(page, request, foregroundSessionId, marker);
       probes.push(probe);
       if (probe.timedOut) {
-        await attachPartialRemoteDaemonStreamLoadMetrics(
-          testInfo,
-          request,
-          "foreground probe timed out",
-          {
-            probeIndex: index + 1,
-            probeCount: PROBE_COUNT,
-            probe,
-            probes,
-          },
-        );
+        await attachPartialMetricsOnce("foreground probe timed out", {
+          probeIndex: index + 1,
+          probeCount: PROBE_COUNT,
+          probe,
+          probes,
+        }).catch(warnPartialMetricsFailure);
         throw new Error(`foreground probe ${index + 1}/${PROBE_COUNT} timed out: ${probe.error}`);
       }
       await sleep(250);
@@ -1879,6 +1935,14 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
         STREAM_TIMEOUT_MS,
       );
     }
+  } catch (error) {
+    await attachPartialMetricsOnce("stream load section failed before final summary", {
+      error: formatUnknownError(error),
+      probes,
+      interrupt,
+    }).catch(warnPartialMetricsFailure);
+    clearTimeout(partialMetricsWatchdog);
+    throw error;
   } finally {
     streamerStats = await stopStreamers(streamers);
     if (vcsChurnController) {
@@ -1989,6 +2053,7 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
       minSessionHeadProgressEvents: MIN_SESSION_HEAD_PROGRESS_EVENTS,
       testTimeoutMs: TEST_TIMEOUT_MS,
       headPollMs: HEAD_POLL_MS,
+      maxInitialUiReadyMs: MAX_INITIAL_UI_READY_MS,
       maxClockUncertaintyMs: MAX_CLOCK_UNCERTAINTY_MS,
       maxVisibleSilenceMs: MAX_VISIBLE_SILENCE_MS,
       maxHardVisibleSilenceMs: MAX_HARD_VISIBLE_SILENCE_MS,
@@ -2080,6 +2145,7 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
     "utf8",
   );
   console.log(`remote daemon stream load summary: ${JSON.stringify(summary)}`);
+  clearTimeout(partialMetricsWatchdog);
 
   expect(clock.uncertaintyMs).toBeLessThanOrEqual(MAX_CLOCK_UNCERTAINTY_MS);
   expect(sumMetricEntries(streamEventMetricEntries)).toBeGreaterThanOrEqual(MIN_STREAM_EVENTS);

@@ -216,6 +216,9 @@ test("linux bundled launch smoke passes explicit tauri-driver native port", () =
   assert.match(script, /--native-port/);
   assert.match(script, /TAURI_DRIVER_NATIVE_PORT: String\(nativePort\)/);
   assert.match(script, /failed to allocate distinct tauri-driver native port/);
+  assert.match(script, /requireWorkspacePackage\("webdriverio"\)/);
+  assert.doesNotMatch(script, /demo_ping_pong_playback/);
+  assert.doesNotMatch(script, /node:sqlite/);
 });
 
 test("updater Linux proof targets storage channel for stable dry-run proofs", () => {
