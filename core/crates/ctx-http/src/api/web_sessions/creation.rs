@@ -1,5 +1,8 @@
-use super::launch::{WebSessionLaunchError, WebSessionLaunchErrorKind, WebSessionLaunchRequest};
 use super::*;
+use crate::daemon::web_sessions::{
+    self as daemon_web_sessions, WebSessionLaunchError, WebSessionLaunchErrorKind,
+    WebSessionLaunchRequest,
+};
 
 #[derive(Debug, Deserialize)]
 pub(in crate::api) struct WebSessionCreatePayload {
@@ -52,7 +55,7 @@ pub(in crate::api) async fn create_web_session(
         })?
         .map(WorktreeId);
 
-    let info = super::launch::create_web_session(
+    let info = daemon_web_sessions::create_web_session(
         &state,
         WebSessionLaunchRequest {
             session_id,

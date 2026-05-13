@@ -9,6 +9,12 @@ use ctx_transport_runtime::web_sessions::{
 
 use crate::daemon::AppState;
 
+mod launch;
+
+pub(crate) use launch::{
+    create_web_session, WebSessionLaunchError, WebSessionLaunchErrorKind, WebSessionLaunchRequest,
+};
+
 pub(crate) struct PreparedWebSessionWorker {
     pub(crate) node_runtime: ctx_managed_installs::NodeRuntime,
     pub(crate) bundle: WorkerBundle,
