@@ -4,7 +4,7 @@ use super::*;
 pub(crate) async fn cursor_accounts_response(
     state: &Arc<AppState>,
 ) -> anyhow::Result<CursorAccountsResponse> {
-    let registry = provider_accounts::load_cursor_registry(&state.core.data_root).await?;
+    let registry = crate::daemon::providers::load_cursor_account_registry(state).await?;
     Ok(CursorAccountsResponse {
         active_account_id: registry.active_account_id,
         accounts: registry.accounts,
@@ -46,7 +46,7 @@ pub(crate) async fn set_cursor_active_account(
     Json(req): Json<CursorActiveAccountReq>,
 ) -> Result<Json<CursorAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     if let Some(ref account_id) = req.account_id {
-        let registry = provider_accounts::load_cursor_registry(&state.core.data_root)
+        let registry = crate::daemon::providers::load_cursor_account_registry(&state)
             .await
             .map_err(internal_error)?;
         if !registry.accounts.iter().any(|a| a.id == *account_id) {

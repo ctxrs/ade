@@ -2,9 +2,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use ctx_observability::logs;
 
-use ctx_provider_runtime::provider_launch::install as provider_launch_install;
-
-use crate::daemon::providers::ProviderLaunchConfigError;
+use crate::daemon::providers::{ProviderLaunchConfigError, StartProviderInstallError};
 
 pub(in crate::api::provider_launch) fn workspace_execution_settings_error_json(
     error: &anyhow::Error,
@@ -18,7 +16,7 @@ pub(in crate::api::provider_launch) fn workspace_execution_settings_error_json(
 }
 
 pub(in crate::api::provider_launch) fn provider_install_error_response(
-    error: provider_launch_install::StartProviderInstallError,
+    error: StartProviderInstallError,
 ) -> (StatusCode, Json<serde_json::Value>) {
     let status = if error.code.as_deref() == Some("install_target_disabled") {
         StatusCode::FORBIDDEN
@@ -50,16 +48,15 @@ pub(in crate::api::provider_launch) fn provider_launch_config_error_response(
 #[cfg(test)]
 mod tests {
     use super::provider_install_error_response;
+    use crate::daemon::providers::StartProviderInstallError;
     use axum::http::StatusCode;
 
     #[test]
     fn provider_install_error_response_maps_disabled_install_targets_to_forbidden() {
-        let (status, body) = provider_install_error_response(
-            ctx_provider_runtime::provider_launch::install::StartProviderInstallError {
-                message: "host provider installs are disabled by daemon policy".to_string(),
-                code: Some("install_target_disabled".to_string()),
-            },
-        );
+        let (status, body) = provider_install_error_response(StartProviderInstallError {
+            message: "host provider installs are disabled by daemon policy".to_string(),
+            code: Some("install_target_disabled".to_string()),
+        });
 
         assert_eq!(status, StatusCode::FORBIDDEN);
         assert_eq!(body.0["code"], "install_target_disabled");

@@ -4,7 +4,7 @@ use super::*;
 pub(crate) async fn copilot_accounts_response(
     state: &Arc<AppState>,
 ) -> anyhow::Result<CopilotAccountsResponse> {
-    let registry = provider_accounts::load_copilot_registry(&state.core.data_root).await?;
+    let registry = crate::daemon::providers::load_copilot_account_registry(state).await?;
     Ok(CopilotAccountsResponse {
         active_account_id: registry.active_account_id,
         accounts: registry.accounts,
@@ -46,7 +46,7 @@ pub(crate) async fn set_copilot_active_account(
     Json(req): Json<CopilotActiveAccountReq>,
 ) -> Result<Json<CopilotAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     if let Some(ref account_id) = req.account_id {
-        let registry = provider_accounts::load_copilot_registry(&state.core.data_root)
+        let registry = crate::daemon::providers::load_copilot_account_registry(&state)
             .await
             .map_err(internal_error)?;
         if !registry.accounts.iter().any(|a| a.id == *account_id) {

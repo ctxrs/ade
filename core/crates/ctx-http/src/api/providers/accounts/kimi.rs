@@ -4,7 +4,7 @@ use super::*;
 pub(crate) async fn kimi_accounts_response(
     state: &Arc<AppState>,
 ) -> anyhow::Result<KimiAccountsResponse> {
-    let registry = provider_accounts::load_kimi_registry(&state.core.data_root).await?;
+    let registry = crate::daemon::providers::load_kimi_account_registry(state).await?;
     Ok(KimiAccountsResponse {
         active_account_id: registry.active_account_id,
         accounts: registry.accounts,
@@ -50,7 +50,7 @@ pub(crate) async fn set_kimi_active_account(
     Json(req): Json<KimiActiveAccountReq>,
 ) -> Result<Json<KimiAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     if let Some(ref account_id) = req.account_id {
-        let registry = provider_accounts::load_kimi_registry(&state.core.data_root)
+        let registry = crate::daemon::providers::load_kimi_account_registry(&state)
             .await
             .map_err(internal_error)?;
         if !registry.accounts.iter().any(|a| a.id == *account_id) {

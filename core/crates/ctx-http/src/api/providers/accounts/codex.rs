@@ -9,7 +9,7 @@ pub(crate) use usage::get_codex_accounts_usage;
 pub(crate) async fn codex_accounts_response(
     state: &Arc<AppState>,
 ) -> anyhow::Result<CodexAccountsResponse> {
-    let registry = provider_accounts::load_codex_registry(&state.core.data_root).await?;
+    let registry = crate::daemon::providers::load_codex_account_registry(state).await?;
     let logins = state
         .providers
         .with_codex_login_sessions(|map| map.values().cloned().collect::<Vec<_>>())
@@ -61,7 +61,7 @@ pub(crate) async fn set_codex_active_account(
     Json(req): Json<CodexActiveAccountReq>,
 ) -> Result<Json<CodexAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     if let Some(ref account_id) = req.account_id {
-        let registry = provider_accounts::load_codex_registry(&state.core.data_root)
+        let registry = crate::daemon::providers::load_codex_account_registry(&state)
             .await
             .map_err(internal_error)?;
         if !registry.accounts.iter().any(|a| a.id == *account_id) {

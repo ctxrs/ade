@@ -6,8 +6,7 @@ pub(in crate::api) async fn get_install(
 ) -> Result<Json<InstallInfo>, StatusCode> {
     let install_id: InstallId =
         uuid::Uuid::parse_str(&install_id).map_err(|_| StatusCode::BAD_REQUEST)?;
-    state
-        .get_install_polling_info(install_id)
+    get_provider_install_info(&state, install_id)
         .await
         .map(Json)
         .ok_or(StatusCode::NOT_FOUND)
@@ -52,7 +51,7 @@ pub(in crate::api) async fn get_install_statuses(
 
     let mut installs = Vec::with_capacity(install_ids.len());
     for install_id in install_ids {
-        let info = state.get_install_polling_info(install_id).await;
+        let info = get_provider_install_info(&state, install_id).await;
         installs.push(InstallStatusBatchItem {
             install_id: install_id.to_string(),
             info,
@@ -68,8 +67,7 @@ pub(in crate::api) async fn cancel_install(
 ) -> Result<Json<InstallInfo>, StatusCode> {
     let install_id: InstallId =
         uuid::Uuid::parse_str(&install_id).map_err(|_| StatusCode::BAD_REQUEST)?;
-    state
-        .cancel_install(install_id)
+    cancel_provider_install(&state, install_id)
         .await
         .map(Json)
         .ok_or(StatusCode::NOT_FOUND)
@@ -81,8 +79,7 @@ pub(in crate::api) async fn list_install_events(
 ) -> Result<Json<Vec<InstallProgressEvent>>, StatusCode> {
     let install_id: InstallId =
         uuid::Uuid::parse_str(&install_id).map_err(|_| StatusCode::BAD_REQUEST)?;
-    state
-        .get_install_events(install_id)
+    list_provider_install_events(&state, install_id)
         .await
         .map(Json)
         .ok_or(StatusCode::NOT_FOUND)

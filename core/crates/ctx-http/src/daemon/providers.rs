@@ -1,5 +1,7 @@
+mod accounts;
 mod auth;
 mod bootstrap;
+mod installs;
 mod launch_config;
 mod options_cache;
 mod restarts;
@@ -7,10 +9,20 @@ mod runtime_probe;
 mod status;
 mod usage;
 
+pub(crate) use accounts::{
+    load_amp_account_registry, load_claude_account_registry, load_codex_account_registry,
+    load_copilot_account_registry, load_cursor_account_registry, load_gemini_account_registry,
+    load_kimi_account_registry, load_mistral_account_registry, load_qwen_account_registry,
+};
 pub(crate) use auth::{
     authenticate_provider_for_workspace_runtime, ProviderWorkspaceAuthenticationError,
 };
 pub(crate) use bootstrap::{build_bootstrap_options, visible_provider_count_hint};
+pub(crate) use installs::{
+    cancel_provider_install, get_provider_install_info, list_provider_install_events,
+    parse_provider_install_target, provider_install_event_sender, start_all_provider_installs,
+    start_provider_install, StartProviderInstallError,
+};
 pub(crate) use launch_config::{
     load_provider_launch_config_snapshot, ProviderLaunchConfigError, ProviderLaunchConfigSnapshot,
 };

@@ -4,7 +4,7 @@ use super::*;
 pub(crate) async fn mistral_accounts_response(
     state: &Arc<AppState>,
 ) -> anyhow::Result<MistralAccountsResponse> {
-    let registry = provider_accounts::load_mistral_registry(&state.core.data_root).await?;
+    let registry = crate::daemon::providers::load_mistral_account_registry(state).await?;
     Ok(MistralAccountsResponse {
         active_account_id: registry.active_account_id,
         accounts: registry.accounts,
@@ -46,7 +46,7 @@ pub(crate) async fn set_mistral_active_account(
     Json(req): Json<MistralActiveAccountReq>,
 ) -> Result<Json<MistralAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     if let Some(ref account_id) = req.account_id {
-        let registry = provider_accounts::load_mistral_registry(&state.core.data_root)
+        let registry = crate::daemon::providers::load_mistral_account_registry(&state)
             .await
             .map_err(internal_error)?;
         if !registry.accounts.iter().any(|a| a.id == *account_id) {

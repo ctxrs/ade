@@ -20,9 +20,11 @@ use serde::{Deserialize, Serialize};
 use super::errors::ApiErrorResp;
 use super::redact_json_value;
 use crate::daemon::providers::{
-    authenticate_provider_for_workspace_runtime, install_target_for_workspace,
-    load_provider_launch_config_snapshot, prepare_provider_runtime_probe,
-    store_provider_verify_cache_value, PreparedProviderRuntimeProbeError,
+    authenticate_provider_for_workspace_runtime, cancel_provider_install,
+    get_provider_install_info, install_target_for_workspace, list_provider_install_events,
+    load_provider_launch_config_snapshot, parse_provider_install_target,
+    prepare_provider_runtime_probe, provider_install_event_sender, start_all_provider_installs,
+    start_provider_install, store_provider_verify_cache_value, PreparedProviderRuntimeProbeError,
     ProviderLaunchConfigSnapshot, ProviderOptionsCacheSnapshot,
     ProviderWorkspaceAuthenticationError,
 };
@@ -35,7 +37,6 @@ use ctx_provider_install::install_state::{
 };
 use ctx_provider_runtime::model_preferences::inject_preferred_model_id;
 use ctx_provider_runtime::provider_auth::provider_auth_mode;
-use ctx_provider_runtime::provider_launch::install as provider_launch_install;
 use ctx_provider_runtime::provider_launch::models::{
     endpoint_catalog_runtime_probe_failure, endpoint_catalog_verify_outcome,
 };
