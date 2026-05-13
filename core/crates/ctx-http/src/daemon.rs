@@ -43,6 +43,7 @@ mod retention;
 pub mod scheduler;
 mod serve;
 pub(crate) mod sessions;
+pub(crate) mod settings;
 mod state;
 pub(crate) mod storage_guard;
 pub(crate) mod terminals;

@@ -11,7 +11,7 @@ use crate::daemon::AppState;
 use ctx_observability::logs;
 use ctx_settings_model::ExecutionMode;
 
-use crate::daemon::execution_setup as daemon_execution_setup;
+use crate::daemon::{execution_setup as daemon_execution_setup, settings as daemon_settings};
 
 use super::errors::ApiErrorResp;
 
@@ -61,16 +61,14 @@ pub(super) async fn launch_start(
                 .await
         }
         ExecutionSetupJobKind::StartupPrewarm => {
-            let settings = ctx_settings_service::load_settings(state.global_store())
-                .await
-                .map_err(|e| {
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ApiErrorResp {
-                            error: logs::redact_sensitive(&e.to_string()),
-                        }),
-                    )
-                })?;
+            let settings = daemon_settings::load_settings(&state).await.map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: logs::redact_sensitive(&e.to_string()),
+                    }),
+                )
+            })?;
             let mut execution_settings = settings.execution.unwrap_or_default();
             execution_settings.mode = ExecutionMode::Sandbox;
             daemon_execution_setup::start_runtime_prewarm(

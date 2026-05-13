@@ -3,6 +3,7 @@ use super::*;
 #[path = "execution/codec.rs"]
 mod codec;
 
+use crate::daemon::settings as daemon_settings;
 use codec::{
     build_workspace_execution_config_override, normalize_execution_allowlist,
     parse_execution_environment, parse_execution_network_mode, project_workspace_execution_config,
@@ -15,7 +16,7 @@ pub(in crate::api::workspaces::management) async fn load_workspace_execution_con
     state: &Arc<AppState>,
     ctx: &WorkspaceRequestContext,
 ) -> WorkspaceApiResult<WorkspaceExecutionConfigResp> {
-    let settings = ctx_settings_service::load_settings(state.global_store())
+    let settings = daemon_settings::load_settings(state)
         .await
         .map_err(|error| {
             (
@@ -64,7 +65,7 @@ pub(in crate::api::workspaces::management) async fn update_workspace_execution_c
     let network_mode = parse_execution_network_mode(req.network_mode.as_deref())?;
     let allowlist = req.allowlist.map(normalize_execution_allowlist);
 
-    let settings = ctx_settings_service::load_settings(state.global_store())
+    let settings = daemon_settings::load_settings(state)
         .await
         .map_err(|error| {
             (

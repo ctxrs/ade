@@ -3,29 +3,27 @@ use std::sync::Arc;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
-use effects::{apply_settings_side_effects, public_settings_for_response};
 
-use crate::daemon::AppState;
+use crate::daemon::{settings as daemon_settings, AppState};
 use ctx_settings_model as user_settings;
 use ctx_settings_service::HostExecutionPolicy;
-
-#[path = "settings/effects.rs"]
-mod effects;
 
 pub(super) async fn get_settings(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<user_settings::PublicSettings>, StatusCode> {
-    let settings = ctx_settings_service::load_settings(state.global_store())
+    let settings = daemon_settings::load_settings(&state)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(public_settings_for_response(&state, &settings).await))
+    Ok(Json(
+        daemon_settings::public_settings_for_response(&state, &settings).await,
+    ))
 }
 
 pub(super) async fn update_settings(
     State(state): State<Arc<AppState>>,
     Json(req): Json<user_settings::UpdateSettingsReq>,
 ) -> Result<Json<user_settings::PublicSettings>, StatusCode> {
-    let current = ctx_settings_service::load_settings(state.global_store())
+    let current = daemon_settings::load_settings(&state)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let host_execution_policy =
@@ -40,11 +38,13 @@ pub(super) async fn update_settings(
             .map_err(|error| crate::api::shared::status_code_for_request_or_policy_error(&error))?;
     }
     let next = ctx_settings_service::apply_update(current, req);
-    ctx_settings_service::save_settings(state.global_store(), &next)
+    daemon_settings::save_settings(&state, &next)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    apply_settings_side_effects(&state, &next).await;
-    Ok(Json(public_settings_for_response(&state, &next).await))
+    daemon_settings::apply_settings_side_effects(&state, &next).await;
+    Ok(Json(
+        daemon_settings::public_settings_for_response(&state, &next).await,
+    ))
 }
 
 #[cfg(test)]
