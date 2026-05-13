@@ -74,7 +74,10 @@ pub(crate) use mcp_auth::{
 #[cfg(test)]
 pub(crate) use retention::prune_archived_session_data_for_all_workspaces;
 pub use state::{AppRuntimeFlags, AppState};
-pub(crate) use state::{AttachmentMaterializationTask, CacheSweepConfig, StoreLookup, TimedEntry};
+pub(crate) use state::{
+    AttachmentMaterializationTask, CacheSweepConfig, SessionStoreAccessError, StoreLookup,
+    TimedEntry, WorkspaceStoreAccessError,
+};
 pub use workspace_init::init_workspace;
 
 #[cfg(test)]

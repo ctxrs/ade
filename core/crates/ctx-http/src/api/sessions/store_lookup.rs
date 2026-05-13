@@ -1,5 +1,4 @@
 mod api_error;
-mod retry;
 mod status;
 
 #[cfg(test)]

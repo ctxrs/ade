@@ -48,26 +48,28 @@ pub(super) async fn require_workspace_store(
     state: &Arc<AppState>,
     workspace_id: WorkspaceId,
 ) -> WorkspaceApiResult<ctx_store::Store> {
-    match state
-        .core
-        .stores
-        .workspace_access_outcome(workspace_id)
+    state
+        .existing_workspace_store(workspace_id)
         .await
-    {
-        Ok(ctx_store::manager::WorkspaceStoreAccessOutcome::Access(access)) => Ok(access.store),
-        Ok(ctx_store::manager::WorkspaceStoreAccessOutcome::Missing)
-        | Ok(ctx_store::manager::WorkspaceStoreAccessOutcome::Deleting) => Err((
+        .map_err(workspace_store_api_error)
+}
+
+fn workspace_store_api_error(
+    error: crate::daemon::WorkspaceStoreAccessError,
+) -> (StatusCode, Json<ApiErrorResp>) {
+    match error {
+        crate::daemon::WorkspaceStoreAccessError::NotFound => (
             StatusCode::NOT_FOUND,
             Json(ApiErrorResp {
                 error: "workspace not found".to_string(),
             }),
-        )),
-        Err(error) => Err((
+        ),
+        crate::daemon::WorkspaceStoreAccessError::Unavailable(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ApiErrorResp {
                 error: logs::redact_sensitive(&error.to_string()),
             }),
-        )),
+        ),
     }
 }
 

@@ -5,3 +5,4 @@ mod fixtures;
 mod install_lifecycle;
 mod mirrors;
 mod startup;
+mod store_lookup;

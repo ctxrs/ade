@@ -1,4 +1,21 @@
 use super::*;
+use std::time::Duration;
+
+const STORE_OPEN_RETRY_LIMIT: usize = 3;
+const STORE_OPEN_RETRY_BASE_MS: u64 = 40;
+
+#[derive(Debug)]
+pub(crate) enum SessionStoreAccessError {
+    NotFound,
+    LookupUnavailable(anyhow::Error),
+    StoreUnavailable,
+}
+
+#[derive(Debug)]
+pub(crate) enum WorkspaceStoreAccessError {
+    NotFound,
+    Unavailable(anyhow::Error),
+}
 
 impl AppState {
     pub fn global_store(&self) -> &Store {
@@ -86,6 +103,19 @@ impl AppState {
         }
     }
 
+    pub(crate) async fn existing_workspace_store(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<Store, WorkspaceStoreAccessError> {
+        match self.lookup_workspace_store(workspace_id).await {
+            StoreLookup::Found(store) => Ok(store),
+            StoreLookup::Missing | StoreLookup::Deleting => {
+                Err(WorkspaceStoreAccessError::NotFound)
+            }
+            StoreLookup::Unavailable(err) => Err(WorkspaceStoreAccessError::Unavailable(err)),
+        }
+    }
+
     pub async fn lookup_session_store(&self, session_id: SessionId) -> StoreLookup {
         let workspace_id = match self
             .global_store()
@@ -100,6 +130,67 @@ impl AppState {
             StoreLookup::Found(store) => StoreLookup::Found(store),
             StoreLookup::Missing | StoreLookup::Deleting => StoreLookup::Deleting,
             StoreLookup::Unavailable(err) => StoreLookup::Unavailable(err),
+        }
+    }
+
+    pub(crate) async fn existing_session_store_allow_archived(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Store, SessionStoreAccessError> {
+        match self.lookup_session_store(session_id).await {
+            StoreLookup::Found(store) => Ok(store),
+            StoreLookup::Missing | StoreLookup::Deleting => Err(SessionStoreAccessError::NotFound),
+            StoreLookup::Unavailable(err) => Err(SessionStoreAccessError::LookupUnavailable(err)),
+        }
+    }
+
+    pub(crate) async fn existing_session_store(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Store, SessionStoreAccessError> {
+        let store = self
+            .existing_session_store_allow_archived(session_id)
+            .await?;
+        reject_archived_subagent_session(&store, session_id).await?;
+        Ok(store)
+    }
+
+    pub(crate) async fn existing_session_store_for_write(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Store, SessionStoreAccessError> {
+        let store = self
+            .existing_session_store_allow_archived_for_write(session_id)
+            .await?;
+        reject_archived_subagent_session(&store, session_id).await?;
+        Ok(store)
+    }
+
+    async fn existing_session_store_allow_archived_for_write(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Store, SessionStoreAccessError> {
+        let mut attempt = 0usize;
+        loop {
+            match self.lookup_session_store(session_id).await {
+                StoreLookup::Found(store) => return Ok(store),
+                StoreLookup::Missing | StoreLookup::Deleting => {
+                    return Err(SessionStoreAccessError::NotFound);
+                }
+                StoreLookup::Unavailable(err) => {
+                    if is_transient_store_open_error(&err) && attempt < STORE_OPEN_RETRY_LIMIT {
+                        attempt += 1;
+                        let backoff_ms = STORE_OPEN_RETRY_BASE_MS.saturating_mul(attempt as u64);
+                        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                        continue;
+                    }
+                    tracing::warn!(
+                        session_id = %session_id.0,
+                        "session store lookup failed: {err:#}"
+                    );
+                    return Err(SessionStoreAccessError::StoreUnavailable);
+                }
+            }
         }
     }
 
@@ -130,4 +221,25 @@ impl AppState {
             .with_context(|| format!("workspace missing for worktree {}", worktree_id.0))?;
         self.store_for_workspace(workspace_id).await
     }
+}
+
+async fn reject_archived_subagent_session(
+    store: &Store,
+    session_id: SessionId,
+) -> Result<(), SessionStoreAccessError> {
+    if store
+        .is_archived_subagent_session(session_id)
+        .await
+        .map_err(|_| SessionStoreAccessError::StoreUnavailable)?
+    {
+        return Err(SessionStoreAccessError::NotFound);
+    }
+    Ok(())
+}
+
+fn is_transient_store_open_error(err: &anyhow::Error) -> bool {
+    let msg = err.to_string().to_lowercase();
+    msg.contains("database is locked")
+        || msg.contains("sqlite_busy")
+        || msg.contains("database is busy")
 }

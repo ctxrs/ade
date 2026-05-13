@@ -41,6 +41,7 @@ use runtime_adapters::{
     CtxExecutionHarness, CtxRuntimeEventSink, CtxRuntimeMetricsSink, DefaultWarmupOperations,
 };
 
+pub(crate) use store_lookup::{SessionStoreAccessError, WorkspaceStoreAccessError};
 pub use types::{
     AppRuntimeFlags, AppState, CoreState, ExecutionRuntime, ProviderRuntime, SessionRuntime,
     StoreLookup, TelemetryRuntime, TransportRuntime, WorkspaceRuntime,
