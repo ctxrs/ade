@@ -36,7 +36,7 @@ pub(super) async fn complete_cursor_login(
                             {
                                 Ok(registry) => {
                                     account_id = registry.active_account_id.clone();
-                                    match super::super::super::restarts::restart_cursor_providers_for_auth_change(
+                                    match crate::daemon::providers::restart_cursor_providers_for_auth_change(
                                         state,
                                         "cursor auth updated",
                                     )

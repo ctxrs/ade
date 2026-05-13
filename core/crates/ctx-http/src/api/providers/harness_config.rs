@@ -41,6 +41,6 @@ pub(crate) async fn select_provider_harness_source(
     )
     .await
     .map_err(provider_harness_bad_request_error)?;
-    restarts::invalidate_provider_runtime_state(&state, &id).await;
+    crate::daemon::providers::invalidate_provider_runtime_state(&state, &id).await;
     Ok(Json(config))
 }

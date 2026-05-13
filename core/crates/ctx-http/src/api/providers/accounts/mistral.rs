@@ -28,9 +28,12 @@ pub(crate) async fn upsert_mistral_account(
     provider_accounts::upsert_mistral_account(&state.core.data_root, req.label, req.email)
         .await
         .map_err(bad_request)?;
-    restarts::restart_mistral_providers_for_auth_change(&state, "mistral auth updated")
-        .await
-        .map_err(internal_error)?;
+    crate::daemon::providers::restart_mistral_providers_for_auth_change(
+        &state,
+        "mistral auth updated",
+    )
+    .await
+    .map_err(internal_error)?;
     Ok(Json(
         mistral_accounts_response(&state)
             .await
@@ -53,9 +56,12 @@ pub(crate) async fn set_mistral_active_account(
     provider_accounts::set_active_mistral_account(&state.core.data_root, req.account_id)
         .await
         .map_err(bad_request)?;
-    restarts::restart_mistral_providers_for_auth_change(&state, "mistral auth updated")
-        .await
-        .map_err(internal_error)?;
+    crate::daemon::providers::restart_mistral_providers_for_auth_change(
+        &state,
+        "mistral auth updated",
+    )
+    .await
+    .map_err(internal_error)?;
     Ok(Json(
         mistral_accounts_response(&state)
             .await
@@ -70,9 +76,12 @@ pub(crate) async fn delete_mistral_account(
     provider_accounts::remove_mistral_account(&state.core.data_root, &id)
         .await
         .map_err(provider_account_delete_error)?;
-    restarts::restart_mistral_providers_for_auth_change(&state, "mistral auth updated")
-        .await
-        .map_err(internal_error)?;
+    crate::daemon::providers::restart_mistral_providers_for_auth_change(
+        &state,
+        "mistral auth updated",
+    )
+    .await
+    .map_err(internal_error)?;
     Ok(Json(
         mistral_accounts_response(&state)
             .await

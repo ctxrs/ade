@@ -4,7 +4,6 @@ use std::time::{Duration, Instant};
 use ctx_observability::logs;
 use ctx_provider_accounts as provider_accounts;
 
-use super::super::super::restarts;
 use super::oauth;
 use crate::daemon::AppState;
 
@@ -46,11 +45,12 @@ pub(super) async fn monitor_kimi_login(
                 .await;
                 match added {
                     Ok(registry) => {
-                        let restart_result = restarts::restart_kimi_providers_for_auth_change(
-                            &state,
-                            "kimi auth updated",
-                        )
-                        .await;
+                        let restart_result =
+                            crate::daemon::providers::restart_kimi_providers_for_auth_change(
+                                &state,
+                                "kimi auth updated",
+                            )
+                            .await;
                         state
                             .providers
                             .with_kimi_login_sessions(|map| {

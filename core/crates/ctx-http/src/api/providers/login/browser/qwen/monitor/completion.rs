@@ -35,8 +35,11 @@ pub(super) async fn complete_qwen_login_if_credentials_exist(
     .await;
     match added {
         Ok(registry) => {
-            let restart_result =
-                restarts::restart_qwen_providers_for_auth_change(state, "qwen auth updated").await;
+            let restart_result = crate::daemon::providers::restart_qwen_providers_for_auth_change(
+                state,
+                "qwen auth updated",
+            )
+            .await;
             status::set_completion_status(
                 state,
                 login_id,

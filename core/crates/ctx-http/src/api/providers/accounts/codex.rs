@@ -46,7 +46,7 @@ pub(crate) async fn import_host_codex_auth(
     provider_accounts::import_host_codex_auth_to_secret_store(&state.core.data_root, req.label)
         .await
         .map_err(bad_request)?;
-    restarts::restart_codex_providers_for_auth_change(&state, "codex auth updated")
+    crate::daemon::providers::restart_codex_providers_for_auth_change(&state, "codex auth updated")
         .await
         .map_err(internal_error)?;
     Ok(Json(
@@ -88,7 +88,7 @@ pub(crate) async fn set_codex_active_account(
                 };
                 (status, Json(ApiErrorResp { error: msg }))
             })?;
-    restarts::restart_codex_providers_for_auth_change(&state, "codex auth updated")
+    crate::daemon::providers::restart_codex_providers_for_auth_change(&state, "codex auth updated")
         .await
         .map_err(internal_error)?;
     let logins = state
@@ -109,7 +109,7 @@ pub(crate) async fn delete_codex_account(
     let registry = provider_accounts::remove_codex_account(&state.core.data_root, &id)
         .await
         .map_err(provider_account_delete_error)?;
-    restarts::restart_codex_providers_for_auth_change(&state, "codex auth updated")
+    crate::daemon::providers::restart_codex_providers_for_auth_change(&state, "codex auth updated")
         .await
         .map_err(internal_error)?;
     let logins = state

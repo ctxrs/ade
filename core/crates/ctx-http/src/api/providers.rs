@@ -18,7 +18,6 @@ use url::Url;
 use super::errors::ApiErrorResp;
 use crate::daemon::AppState;
 use ctx_core::ids::WorkspaceId;
-use ctx_core::provider_ids::CODEX_PROVIDER_ID;
 use ctx_harness_sources as harness_sources;
 #[cfg(test)]
 use ctx_harness_sources::{HarnessApiShape, HarnessSourceKind};
@@ -42,7 +41,6 @@ mod imports;
 mod install;
 mod login;
 mod probe;
-mod restarts;
 mod status;
 mod types;
 
@@ -80,6 +78,8 @@ pub(super) use status::{get_provider, get_provider_usage, list_providers};
 use types::*;
 
 #[cfg(test)]
+use crate::daemon::providers::restart_provider_for_auth_change;
+#[cfg(test)]
 use ctx_provider_runtime::provider_auth::{
     endpoint_selection_is_active, provider_auth_mode, provider_has_active_auth_config,
 };
@@ -91,8 +91,5 @@ use login::{
     extract_auth_url_from_value, normalize_claude_login_line, read_trailing_claude_login_lines,
     resolve_claude_login_runtime_from_config, validate_callback_url,
 };
-#[cfg(test)]
-use restarts::*;
-
 #[cfg(test)]
 mod tests;

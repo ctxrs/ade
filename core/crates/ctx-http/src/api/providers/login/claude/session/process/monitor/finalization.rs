@@ -33,7 +33,7 @@ pub(super) async fn finalize_claude_login(
                     {
                         Ok(registry) => {
                             final_account_id = registry.active_account_id;
-                            match restarts::restart_claude_providers_for_auth_change(
+                            match crate::daemon::providers::restart_claude_providers_for_auth_change(
                                 state,
                                 "claude auth updated",
                             )

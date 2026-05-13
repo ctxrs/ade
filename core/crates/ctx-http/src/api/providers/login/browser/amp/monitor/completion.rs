@@ -14,6 +14,7 @@ pub(super) async fn complete_amp_login(
         return;
     }
     let restart_result =
-        restarts::restart_amp_providers_for_auth_change(state, "amp auth updated").await;
+        crate::daemon::providers::restart_amp_providers_for_auth_change(state, "amp auth updated")
+            .await;
     status::set_completion_status(state, login_id, restart_result).await;
 }

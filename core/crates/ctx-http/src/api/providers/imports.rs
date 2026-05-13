@@ -72,7 +72,7 @@ pub(crate) async fn import_provider_auth_candidates(
         .collect();
     let mut restart_errors = Vec::new();
     for provider_id in mutated_providers {
-        if let Err(err) = restarts::restart_provider_for_auth_change(
+        if let Err(err) = crate::daemon::providers::restart_provider_for_auth_change(
             &state,
             &provider_id,
             &format!("{provider_id} auth updated"),

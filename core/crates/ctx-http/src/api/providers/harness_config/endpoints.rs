@@ -7,7 +7,6 @@ use ctx_harness_sources as harness_sources;
 use ctx_harness_sources::HarnessEndpointUpsert;
 use ctx_observability::logs;
 
-use super::super::restarts;
 use super::super::types::{SetEndpointManualModelsReq, UpsertHarnessEndpointReq};
 use super::provider_harness_bad_request_error;
 use crate::daemon::AppState;
@@ -53,7 +52,7 @@ pub(crate) async fn upsert_provider_harness_endpoint(
     )
     .await
     .map_err(provider_harness_bad_request_error)?;
-    restarts::invalidate_provider_runtime_state(&state, &id).await;
+    crate::daemon::providers::invalidate_provider_runtime_state(&state, &id).await;
     load_provider_harness_config(&state, &id).await
 }
 
@@ -69,7 +68,7 @@ pub(crate) async fn refresh_provider_harness_endpoint_models(
     )
     .await
     .map_err(provider_harness_bad_request_error)?;
-    restarts::invalidate_provider_runtime_state(&state, &id).await;
+    crate::daemon::providers::invalidate_provider_runtime_state(&state, &id).await;
     load_provider_harness_config(&state, &id).await
 }
 
@@ -87,7 +86,7 @@ pub(crate) async fn set_provider_harness_endpoint_manual_models(
     )
     .await
     .map_err(provider_harness_bad_request_error)?;
-    restarts::invalidate_provider_runtime_state(&state, &id).await;
+    crate::daemon::providers::invalidate_provider_runtime_state(&state, &id).await;
     load_provider_harness_config(&state, &id).await
 }
 
@@ -100,7 +99,7 @@ pub(crate) async fn delete_provider_harness_endpoint(
         harness_sources::delete_provider_endpoint(&state.core.data_root, &id, &endpoint_id)
             .await
             .map_err(provider_harness_delete_error)?;
-    restarts::invalidate_provider_runtime_state(&state, &id).await;
+    crate::daemon::providers::invalidate_provider_runtime_state(&state, &id).await;
     Ok(Json(config))
 }
 

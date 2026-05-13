@@ -16,7 +16,10 @@ pub(super) async fn complete_mistral_login(
         status::set_failed(state, login_id, logs::redact_sensitive(&err.to_string())).await;
         return;
     }
-    let restart_result =
-        restarts::restart_mistral_providers_for_auth_change(state, "mistral auth updated").await;
+    let restart_result = crate::daemon::providers::restart_mistral_providers_for_auth_change(
+        state,
+        "mistral auth updated",
+    )
+    .await;
     status::set_completion_status(state, login_id, restart_result).await;
 }

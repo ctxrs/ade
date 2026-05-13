@@ -3,7 +3,6 @@ use std::sync::Arc;
 use super::setup::GeminiLoginPaths;
 use super::status;
 use crate::api::providers::login::first_email_from_google_accounts;
-use crate::api::providers::restarts;
 use crate::daemon::AppState;
 use ctx_observability::logs;
 use ctx_provider_accounts as provider_accounts;
@@ -51,8 +50,11 @@ pub(super) async fn complete_gemini_login_if_credentials_exist(
     match added {
         Ok(registry) => {
             let restart_result =
-                restarts::restart_gemini_providers_for_auth_change(state, "gemini auth updated")
-                    .await;
+                crate::daemon::providers::restart_gemini_providers_for_auth_change(
+                    state,
+                    "gemini auth updated",
+                )
+                .await;
             state
                 .providers
                 .with_gemini_login_sessions(|map| {

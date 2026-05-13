@@ -1,10 +1,18 @@
-use super::*;
+use std::sync::Arc;
 
-pub(super) async fn invalidate_provider_runtime_state(state: &Arc<AppState>, provider_id: &str) {
-    probe::invalidate_provider_probe_caches(state, provider_id).await;
+use ctx_core::provider_ids::CODEX_PROVIDER_ID;
+
+use crate::daemon::AppState;
+
+pub(crate) async fn invalidate_provider_runtime_state(state: &Arc<AppState>, provider_id: &str) {
+    ctx_provider_runtime::provider_cache::invalidate_provider_probe_caches(
+        &state.providers,
+        provider_id,
+    )
+    .await;
 }
 
-pub(super) async fn restart_provider_for_auth_change(
+pub(crate) async fn restart_provider_for_auth_change(
     state: &Arc<AppState>,
     provider_id: &str,
     reason: &str,
@@ -16,63 +24,63 @@ pub(super) async fn restart_provider_for_auth_change(
         .await
 }
 
-pub(super) async fn restart_codex_providers_for_auth_change(
+pub(crate) async fn restart_codex_providers_for_auth_change(
     state: &Arc<AppState>,
     reason: &str,
 ) -> anyhow::Result<()> {
     restart_provider_for_auth_change(state, CODEX_PROVIDER_ID, reason).await
 }
 
-pub(super) async fn restart_claude_providers_for_auth_change(
+pub(crate) async fn restart_claude_providers_for_auth_change(
     state: &Arc<AppState>,
     reason: &str,
 ) -> anyhow::Result<()> {
     restart_provider_for_auth_change(state, "claude-crp", reason).await
 }
 
-pub(super) async fn restart_gemini_providers_for_auth_change(
+pub(crate) async fn restart_gemini_providers_for_auth_change(
     state: &Arc<AppState>,
     reason: &str,
 ) -> anyhow::Result<()> {
     restart_provider_for_auth_change(state, "gemini", reason).await
 }
 
-pub(super) async fn restart_qwen_providers_for_auth_change(
+pub(crate) async fn restart_qwen_providers_for_auth_change(
     state: &Arc<AppState>,
     reason: &str,
 ) -> anyhow::Result<()> {
     restart_provider_for_auth_change(state, "qwen", reason).await
 }
 
-pub(super) async fn restart_amp_providers_for_auth_change(
+pub(crate) async fn restart_amp_providers_for_auth_change(
     state: &Arc<AppState>,
     reason: &str,
 ) -> anyhow::Result<()> {
     restart_provider_for_auth_change(state, "amp", reason).await
 }
 
-pub(super) async fn restart_mistral_providers_for_auth_change(
+pub(crate) async fn restart_mistral_providers_for_auth_change(
     state: &Arc<AppState>,
     reason: &str,
 ) -> anyhow::Result<()> {
     restart_provider_for_auth_change(state, "mistral", reason).await
 }
 
-pub(super) async fn restart_kimi_providers_for_auth_change(
+pub(crate) async fn restart_kimi_providers_for_auth_change(
     state: &Arc<AppState>,
     reason: &str,
 ) -> anyhow::Result<()> {
     restart_provider_for_auth_change(state, "kimi", reason).await
 }
 
-pub(super) async fn restart_copilot_providers_for_auth_change(
+pub(crate) async fn restart_copilot_providers_for_auth_change(
     state: &Arc<AppState>,
     reason: &str,
 ) -> anyhow::Result<()> {
     restart_provider_for_auth_change(state, "copilot", reason).await
 }
 
-pub(super) async fn restart_cursor_providers_for_auth_change(
+pub(crate) async fn restart_cursor_providers_for_auth_change(
     state: &Arc<AppState>,
     reason: &str,
 ) -> anyhow::Result<()> {

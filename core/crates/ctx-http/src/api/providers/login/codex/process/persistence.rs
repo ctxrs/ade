@@ -44,9 +44,12 @@ pub(in crate::api::providers::login::codex) async fn persist_successful_codex_lo
         )
         .await
         .with_context(|| format!("setting active codex account {account_id}"))?;
-        restarts::restart_codex_providers_for_auth_change(state, "codex auth updated")
-            .await
-            .context("restarting codex providers after auth change")?;
+        crate::daemon::providers::restart_codex_providers_for_auth_change(
+            state,
+            "codex auth updated",
+        )
+        .await
+        .context("restarting codex providers after auth change")?;
         Ok(())
     }
     .await;

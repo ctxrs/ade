@@ -35,7 +35,7 @@ pub(crate) async fn upsert_kimi_account(
     )
     .await
     .map_err(bad_request)?;
-    restarts::restart_kimi_providers_for_auth_change(&state, "kimi auth updated")
+    crate::daemon::providers::restart_kimi_providers_for_auth_change(&state, "kimi auth updated")
         .await
         .map_err(internal_error)?;
     Ok(Json(
@@ -60,7 +60,7 @@ pub(crate) async fn set_kimi_active_account(
     provider_accounts::set_active_kimi_account(&state.core.data_root, req.account_id)
         .await
         .map_err(bad_request)?;
-    restarts::restart_kimi_providers_for_auth_change(&state, "kimi auth updated")
+    crate::daemon::providers::restart_kimi_providers_for_auth_change(&state, "kimi auth updated")
         .await
         .map_err(internal_error)?;
     Ok(Json(
@@ -77,7 +77,7 @@ pub(crate) async fn delete_kimi_account(
     provider_accounts::remove_kimi_account(&state.core.data_root, &id)
         .await
         .map_err(provider_account_delete_error)?;
-    restarts::restart_kimi_providers_for_auth_change(&state, "kimi auth updated")
+    crate::daemon::providers::restart_kimi_providers_for_auth_change(&state, "kimi auth updated")
         .await
         .map_err(internal_error)?;
     Ok(Json(
