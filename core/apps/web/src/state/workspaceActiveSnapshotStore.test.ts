@@ -597,6 +597,23 @@ describe("WorkspaceActiveSnapshotStore", () => {
     store.destroy();
   });
 
+  it("does not interrupt replay when a subscribed session relaxes from resume to auto", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    const ws = mkOpenWs();
+    asStoreInternals(store).ws = ws;
+
+    store.setSubscribedSessions([{ sessionId: "session-1", replay: { kind: "resume", afterSeq: 5 } }]);
+    expect(ws.send).toHaveBeenCalledTimes(1);
+
+    ws.send.mockClear();
+    store.setSubscribedSessions([{ sessionId: "session-1", replay: { kind: "auto" } }]);
+
+    expect(ws.send).not.toHaveBeenCalled();
+    store.destroy();
+  });
+
   it("requests active heads when subscribed session ids change", async () => {
     const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
 

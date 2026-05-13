@@ -85,6 +85,12 @@ const replayControlChanged = (
   previous: SessionSubscriptionReplay,
   next: SessionSubscriptionReplay,
 ): boolean => {
+  if (next.kind === "auto") {
+    return false;
+  }
+  if (next.kind === "reset") {
+    return previous.kind !== "reset";
+  }
   if (previous.kind !== next.kind) {
     return true;
   }
