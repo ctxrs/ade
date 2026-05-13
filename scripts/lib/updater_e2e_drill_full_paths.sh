@@ -13,7 +13,7 @@ normalize_local_smoke_app_permissions() {
   fi
 
   case "$app_path" in
-    *.AppDir/AppRun)
+    *.AppDir/AppRun | */squashfs-root/AppRun)
       local appdir_path="${app_path%/AppRun}"
       local wrapped_path="${app_path}.wrapped"
       if [[ -f "$wrapped_path" && ! -x "$wrapped_path" ]]; then
@@ -54,18 +54,18 @@ validate_linux_local_smoke_app_path() {
   fi
 
   case "$app_path" in
-    *.AppDir/AppRun)
+    *.AppDir/AppRun | */squashfs-root/AppRun)
       return 0
       ;;
-    *.AppDir/usr/bin/*)
+    *.AppDir/usr/bin/* | */squashfs-root/usr/bin/*)
       updater_local_smoke_fail \
-        "linux local smoke must launch the AppDir AppRun launcher, not an inner bundled binary: $app_path"
+        "linux local smoke must launch the AppDir/AppImage AppRun launcher, not an inner bundled binary: $app_path"
       return 1
       ;;
   esac
 
   updater_local_smoke_fail \
-    "linux local smoke requires a bundled AppDir AppRun launcher (*.AppDir/AppRun): $app_path"
+    "linux local smoke requires a bundled AppDir/AppImage AppRun launcher (*.AppDir/AppRun or */squashfs-root/AppRun): $app_path"
   return 1
 }
 

@@ -180,6 +180,7 @@ test("remote real CI wrapper retries startup-only WebDriver session failures", (
   assert.match(script, /Could not start a new session/);
   assert.match(script, /sweep_webkit_automation_helpers\(\) \{/);
   assert.match(script, /sweep_stale_xvfb_processes\(\) \{/);
+  assert.match(script, /remote-workspace-desktop-launch-smoke/);
   assert.match(script, /sweep_local_automation_processes\(\) \{/);
   assert.match(script, /sweep_xvfb_processes_for_tmp_dir "\$\{attempt_tmp_dir\}"/);
   assert.match(script, /write_process_snapshot "\$\{attempt_dir\}\/processes-before-sweep\.log"/);
@@ -188,6 +189,7 @@ test("remote real CI wrapper retries startup-only WebDriver session failures", (
   assert.match(script, /CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP="\$\{CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP:-1\}"/);
   assert.match(script, /CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP="\$\{CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP:-1\}"/);
   assert.match(script, /CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR="\$\{attempt_daemon_data_dir\}"/);
+  assert.match(script, /CTX_AUTOMATION_APP_LAUNCH_LOG="\$\{attempt_dir\}\/app-launch\.log"/);
   assert.match(script, /CTX_AUTOMATION_CN_DRIVER_LOG="\$\{attempt_dir\}\/tauri-driver\.log"/);
   assert.match(script, /HOME="\$\{attempt_home_dir\}"/);
   assert.match(script, /TMPDIR="\$\{attempt_tmp_dir\}"/);

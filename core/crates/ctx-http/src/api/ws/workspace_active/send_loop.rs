@@ -4,7 +4,7 @@ use axum::extract::ws::{Message as WsMessage, WebSocket};
 use futures::SinkExt;
 
 use super::super::common::{WorkspaceStreamSendRuntime, WorkspaceStreamSequencer};
-use super::super::queue::NextWorkspaceStreamItem;
+use super::super::queue::{HeadBatchLane, NextWorkspaceStreamItem};
 use super::super::workspace_stream;
 use ctx_core::ids::WorkspaceId;
 
@@ -85,6 +85,9 @@ pub(super) fn spawn_workspace_active_send_loop(
                             encode_ms,
                             send_start.elapsed().as_millis(),
                         );
+                        if lane == HeadBatchLane::Background {
+                            runtime.wait_after_background_batch().await;
+                        }
                     }
                     NextWorkspaceStreamItem::SummaryBatch { events } => {
                         let mut send_failed = false;

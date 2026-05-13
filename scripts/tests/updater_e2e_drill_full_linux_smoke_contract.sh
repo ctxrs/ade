@@ -15,9 +15,14 @@ apprun_wrapped_path="${apprun_path}.wrapped"
 appdir_app_bin="$bundle_dir/ctx_0.5.18_amd64.AppDir/usr/bin/ctx"
 appdir_daemon_bin="$bundle_dir/ctx_0.5.18_amd64.AppDir/usr/bin/ctx-daemon"
 webkit_network_process="$bundle_dir/ctx_0.5.18_amd64.AppDir/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess"
+extracted_app_dir="$tmp/extracted/squashfs-root"
+extracted_apprun_path="$extracted_app_dir/AppRun"
+extracted_app_bin="$extracted_app_dir/usr/bin/ctx"
+extracted_webkit_process="$extracted_app_dir/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess"
 appimage_path="$bundle_dir/ctx_0.5.18_amd64.AppImage"
 
 mkdir -p "$(dirname "$apprun_path")" "$(dirname "$appdir_app_bin")" "$(dirname "$webkit_network_process")"
+mkdir -p "$(dirname "$extracted_apprun_path")" "$(dirname "$extracted_app_bin")" "$(dirname "$extracted_webkit_process")"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$apprun_path"
 chmod 0644 "$apprun_path"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$apprun_wrapped_path"
@@ -28,6 +33,12 @@ printf '#!/usr/bin/env bash\nexit 0\n' >"$appdir_daemon_bin"
 chmod 0644 "$appdir_daemon_bin"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$webkit_network_process"
 chmod 0644 "$webkit_network_process"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$extracted_apprun_path"
+chmod 0644 "$extracted_apprun_path"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$extracted_app_bin"
+chmod 0644 "$extracted_app_bin"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$extracted_webkit_process"
+chmod 0644 "$extracted_webkit_process"
 printf 'not-a-real-appimage\n' >"$appimage_path"
 chmod +x "$appimage_path"
 
@@ -58,6 +69,15 @@ if [[ ! -x "$appdir_daemon_bin" ]]; then
 fi
 if [[ ! -x "$webkit_network_process" ]]; then
   echo "error: expected nested WebKit helper to be normalized executable" >&2
+  exit 1
+fi
+if ! CTX_DESKTOP_APP_PATH="$extracted_apprun_path" resolve_local_smoke_app_path "$tmp" Linux >/dev/null; then
+  echo "error: expected extracted AppImage AppRun override to be accepted" >&2
+  exit 1
+fi
+normalize_local_smoke_app_permissions "$extracted_apprun_path"
+if [[ ! -x "$extracted_apprun_path" || ! -x "$extracted_app_bin" || ! -x "$extracted_webkit_process" ]]; then
+  echo "error: expected extracted AppImage tree helpers to be normalized executable" >&2
   exit 1
 fi
 

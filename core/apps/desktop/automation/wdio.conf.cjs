@@ -849,7 +849,7 @@ const buildDesktopAppLaunchEnv = () => {
 
 const createDesktopAppLaunchWrapper = (appExecutablePath, env) => {
   const entries = Object.entries(env).filter(([, value]) => String(value || "").trim());
-  if (process.platform === "win32" || process.platform === "linux" || entries.length === 0) {
+  if (process.platform === "win32" || entries.length === 0) {
     return appExecutablePath;
   }
   const signature = crypto
@@ -864,6 +864,11 @@ const createDesktopAppLaunchWrapper = (appExecutablePath, env) => {
     "#!/bin/sh",
     "set -eu",
     ...entries.map(([key, value]) => `export ${key}=${shellQuote(value)}`),
+    "if [ -n \"${CTX_AUTOMATION_APP_LAUNCH_LOG:-}\" ]; then",
+    "  mkdir -p \"$(dirname \"$CTX_AUTOMATION_APP_LAUNCH_LOG\")\"",
+    "  printf '%s\\n' \"launching desktop app\" >> \"$CTX_AUTOMATION_APP_LAUNCH_LOG\"",
+    `  exec ${shellQuote(appExecutablePath)} "$@" >> "$CTX_AUTOMATION_APP_LAUNCH_LOG" 2>&1`,
+    "fi",
     `exec ${shellQuote(appExecutablePath)} "$@"`,
     "",
   ];

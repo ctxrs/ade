@@ -251,6 +251,7 @@ command_is_ctx_remote_real_xvfb() {
   case "${cmd}" in
     *Xvfb*"remote-contracts"*"automation-attempt-"*"/tmp/xvfb-run."*"/Xauthority"* | \
     *Xvfb*"remote-workspace-e2e"* | \
+    *Xvfb*"remote-workspace-desktop-launch-smoke"* | \
     *Xvfb*".ctx/volatile/artifacts/ctx-desktop-e2e"*) return 0 ;;
   esac
   return 1
@@ -517,6 +518,7 @@ run_lane() {
         export CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP="${CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP:-1}"
         export CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR="${attempt_daemon_data_dir}"
         export CTX_AUTOMATION_TMPDIR="${attempt_tmp_dir}"
+        export CTX_AUTOMATION_APP_LAUNCH_LOG="${attempt_dir}/app-launch.log"
         export CTX_AUTOMATION_CN_DRIVER_LOG="${attempt_dir}/tauri-driver.log"
         export HOME="${attempt_home_dir}"
         export TMPDIR="${attempt_tmp_dir}"

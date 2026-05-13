@@ -88,7 +88,7 @@ test("wdio macOS shipped-app launches through a wrapper with exact app env", () 
   }
 });
 
-test("wdio Linux shipped-app uses the raw executable and driver env", () => {
+test("wdio Linux shipped-app launches through a wrapper with exact app env", () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-linux-launch-env-"));
   try {
     const appPath = path.join(tmp, "ctx-real");
@@ -115,8 +115,17 @@ test("wdio Linux shipped-app uses the raw executable and driver env", () => {
         CTX_AUTOMATION_SSH_NO_START_REMOTE: "0",
       },
     });
-    assert.equal(resolvedPath, appPath);
-    assert.equal(fs.existsSync(path.join(tmp, "desktop-app-launchers")), false);
+    assert.notEqual(resolvedPath, appPath);
+    assert.equal(path.dirname(resolvedPath), path.join(tmp, "desktop-app-launchers"));
+    const wrapper = fs.readFileSync(resolvedPath, "utf8");
+    assert.match(wrapper, new RegExp(`export CTX_BUNDLE_DIR='${escapeRegExp(bundlesDir)}'`));
+    assert.match(
+      wrapper,
+      new RegExp(`export CTX_DESKTOP_DAEMON_DATA_DIR='${escapeRegExp(daemonDataDir)}'`),
+    );
+    assert.match(wrapper, /export CTX_DESKTOP_SSH_NO_START_REMOTE='0'/);
+    assert.match(wrapper, /export CTX_DESKTOP_SSH_START_REMOTE='1'/);
+    assert.match(wrapper, new RegExp(`exec '${escapeRegExp(appPath)}' "\\$@"`));
 
     const script = fs.readFileSync(configPath, "utf8");
     assert.match(script, /const driverEnv = \{\s*\.\.\.process\.env,/);
