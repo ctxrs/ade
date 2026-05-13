@@ -1,4 +1,9 @@
 use super::super::*;
+use crate::daemon::sessions::ask_user::{
+    submit_ask_user_answer, SubmitAskUserAnswer, SubmitAskUserAnswerError,
+};
+use ctx_observability::logs;
+use ctx_providers::ask_user_question::AskUserQuestionOutcome;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct SubmitAskUserQuestionReq {
@@ -29,39 +34,6 @@ pub(crate) async fn submit_ask_user_question(
     })?;
     let session_id = SessionId(session_uuid);
 
-    // Validate the session exists (prevents accidentally fulfilling a prompt for a deleted session).
-    let store = store_for_existing_session_api_error(&state, session_id).await?;
-    let exists = store
-        .get_session(session_id)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to load session".to_string(),
-                }),
-            )
-        })?
-        .is_some();
-    if !exists {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "session not found".to_string(),
-            }),
-        ));
-    }
-
-    let tool_call_id = req.tool_call_id.trim().to_string();
-    if tool_call_id.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "missing tool_call_id".to_string(),
-            }),
-        ));
-    }
-
     let outcome = match req.outcome.as_deref() {
         Some("cancelled") => AskUserQuestionOutcome::Cancelled,
         Some("submitted") | None => AskUserQuestionOutcome::Submitted,
@@ -74,47 +46,47 @@ pub(crate) async fn submit_ask_user_question(
             ));
         }
     };
-    let answers = req.answers.unwrap_or_default();
-    let answers_for_event = answers.clone();
 
-    let ok = state
-        .core
-        .ask_user_question
-        .submit(
-            &session_uuid.to_string(),
-            &tool_call_id,
-            AskUserQuestionAnswer { outcome, answers },
-        )
-        .await;
-
-    if !ok {
-        return Err((
-            StatusCode::CONFLICT,
-            Json(ApiErrorResp {
-                error: "no pending AskUserQuestion for this tool_call_id".to_string(),
-            }),
-        ));
-    }
-
-    if let Ok(store) = state.store_for_session(session_id).await {
-        if let Ok(event) = store
-            .append_session_event(
-                session_id,
-                None,
-                None,
-                SessionEventType::Notice,
-                serde_json::json!({
-                    "kind": "ask_user_question_answered",
-                    "tool_call_id": tool_call_id,
-                    "outcome": outcome.as_str(),
-                    "answers": answers_for_event,
-                }),
-            )
-            .await
-        {
-            state.publish_event(event).await;
-        }
-    }
+    submit_ask_user_answer(
+        &state,
+        session_id,
+        SubmitAskUserAnswer {
+            tool_call_id: req.tool_call_id,
+            outcome,
+            answers: req.answers.unwrap_or_default(),
+        },
+    )
+    .await
+    .map_err(submit_ask_user_answer_error)?;
 
     Ok(Json(SubmitAskUserQuestionResp { ok: true }))
+}
+
+fn submit_ask_user_answer_error(
+    error: SubmitAskUserAnswerError,
+) -> (StatusCode, Json<ApiErrorResp>) {
+    match error {
+        SubmitAskUserAnswerError::MissingToolCallId => {
+            api_error(StatusCode::BAD_REQUEST, "missing tool_call_id".to_string())
+        }
+        SubmitAskUserAnswerError::SessionNotFound => {
+            api_error(StatusCode::NOT_FOUND, "session not found".to_string())
+        }
+        SubmitAskUserAnswerError::StoreUnavailable(err) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            logs::redact_sensitive(&err.to_string()),
+        ),
+        SubmitAskUserAnswerError::LoadSession => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to load session".to_string(),
+        ),
+        SubmitAskUserAnswerError::NoPendingQuestion => api_error(
+            StatusCode::CONFLICT,
+            "no pending AskUserQuestion for this tool_call_id".to_string(),
+        ),
+    }
+}
+
+fn api_error(status: StatusCode, error: String) -> (StatusCode, Json<ApiErrorResp>) {
+    (status, Json(ApiErrorResp { error }))
 }

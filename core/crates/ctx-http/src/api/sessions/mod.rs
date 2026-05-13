@@ -17,7 +17,6 @@ use crate::daemon::AppState;
 use ctx_core::ids::*;
 use ctx_core::models::*;
 use ctx_observability::logs;
-use ctx_providers::ask_user_question::{AskUserQuestionAnswer, AskUserQuestionOutcome};
 #[cfg(test)]
 use ctx_settings_model as user_settings;
 use ctx_store::is_unique_constraint_violation;
