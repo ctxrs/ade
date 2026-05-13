@@ -117,6 +117,16 @@ describe("workspaceAuthority", () => {
       },
     }) as unknown as SessionSupervisorWorkspaceEvent;
 
+  const makeGapEvent = (sessionId = "session-1"): SessionSupervisorWorkspaceEvent =>
+    ({
+      type: "session_gap",
+      workspace_id: "workspace-1",
+      snapshot_rev: 1,
+      session_id: sessionId,
+      after_seq: 8,
+      reason: "stream_seq_gap",
+    }) as unknown as SessionSupervisorWorkspaceEvent;
+
   const makeIngestHost = ({
     entries = new Map<string, InternalEntry>(),
     activeTaskSessionIds = [],
@@ -365,6 +375,48 @@ describe("workspaceAuthority", () => {
       lane: "workspace",
       receivedAtMs: null,
       streamSource: null,
+    });
+  });
+
+  it("routes replay session_gap recovery for the retained foreground session to the workspace lane", () => {
+    const replicaDispatch = vi.fn();
+    const event = makeGapEvent("session-foreground");
+    markWorkspaceEventStreamSource(event, "replay");
+    const host = makeIngestHost({
+      entries: new Map([["session-foreground", makeStaleEntry()]]),
+      activeTaskSessionIds: ["session-foreground"],
+      replicaDispatch,
+    });
+
+    ingestWorkspaceEvent(host, event);
+
+    expect(replicaDispatch).toHaveBeenCalledWith({
+      type: "workspace_event",
+      event,
+      lane: "workspace",
+      receivedAtMs: null,
+      streamSource: "replay",
+    });
+  });
+
+  it("keeps live session_gap recovery for the retained foreground session on the foreground lane", () => {
+    const replicaDispatch = vi.fn();
+    const event = makeGapEvent("session-foreground");
+    markWorkspaceEventStreamSource(event, "live");
+    const host = makeIngestHost({
+      entries: new Map([["session-foreground", makeStaleEntry()]]),
+      activeTaskSessionIds: ["session-foreground"],
+      replicaDispatch,
+    });
+
+    ingestWorkspaceEvent(host, event);
+
+    expect(replicaDispatch).toHaveBeenCalledWith({
+      type: "workspace_event",
+      event,
+      lane: "foreground",
+      receivedAtMs: null,
+      streamSource: "live",
     });
   });
 

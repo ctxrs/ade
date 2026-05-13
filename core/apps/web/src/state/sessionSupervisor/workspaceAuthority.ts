@@ -73,6 +73,18 @@ const workspaceReplicaEventSessionId = (evt: SessionSupervisorWorkspaceEvent): s
 const sessionGapSeedFollows = (evt: SessionSupervisorWorkspaceEvent): boolean =>
   evt.type === "session_gap" && (evt as { seed_follows?: unknown }).seed_follows === true;
 
+const workspaceReplicaLane = (
+  host: SessionSupervisorWorkspaceAuthorityHost,
+  evt: SessionSupervisorWorkspaceEvent,
+  sessionId: string,
+  streamSource: ReturnType<typeof readWorkspaceEventStreamSource>,
+): "foreground" | "workspace" => {
+  if (evt.type === "session_gap" && streamSource === "replay") {
+    return "workspace";
+  }
+  return host.getActiveTaskSessionIds().includes(sessionId) ? "foreground" : "workspace";
+};
+
 const isRetainedReplicaSession = (
   host: SessionSupervisorWorkspaceAuthorityHost,
   sessionId: string,
@@ -233,15 +245,13 @@ export const ingestWorkspaceEvent = (
   if (!replicaSessionId || !isRetainedReplicaSession(host, replicaSessionId)) {
     return;
   }
-  const lane = host.getActiveTaskSessionIds().includes(replicaSessionId)
-    ? "foreground"
-    : "workspace";
+  const streamSource = readWorkspaceEventStreamSource(evt);
   host.replicaDispatch({
     type: "workspace_event",
     event: evt,
-    lane,
+    lane: workspaceReplicaLane(host, evt, replicaSessionId, streamSource),
     receivedAtMs: readWorkspaceEventReceivedAt(evt),
-    streamSource: readWorkspaceEventStreamSource(evt),
+    streamSource,
   });
 };
 
