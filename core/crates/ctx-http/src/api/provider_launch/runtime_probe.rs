@@ -9,7 +9,7 @@ use ctx_provider_runtime::provider_launch::runtime_probe::{
 use crate::api::provider_launch::{
     load_managed_agent_server_config_with_error, workspace_execution_settings_error_json,
 };
-use crate::api::providers::install_target_for_workspace;
+use crate::daemon::providers::install_target_for_workspace;
 use crate::daemon::AppState;
 use ctx_provider_runtime::provider_launch::probe;
 

@@ -33,6 +33,7 @@ pub mod provider_guard;
 mod provider_launch_host;
 pub mod provider_restart;
 mod provider_runtime;
+pub(crate) mod providers;
 pub(crate) mod resource_governance;
 pub mod resource_telemetry;
 mod retention;

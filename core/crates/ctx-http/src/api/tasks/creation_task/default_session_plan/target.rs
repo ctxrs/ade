@@ -11,18 +11,19 @@ pub(super) async fn resolve_default_session_target(
     workspace: &Workspace,
     execution_environment: ExecutionEnvironment,
 ) -> Result<(String, String, Option<String>), (StatusCode, Json<ApiErrorResp>)> {
-    let install_target = crate::api::providers::install_target_for_workspace(state, workspace.id)
-        .await
-        .map_err(|error| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&error.to_string()),
-                }),
-            )
-        })?;
+    let install_target =
+        crate::daemon::providers::install_target_for_workspace(state, workspace.id)
+            .await
+            .map_err(|error| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResp {
+                        error: logs::redact_sensitive(&error.to_string()),
+                    }),
+                )
+            })?;
     let mut statuses =
-        crate::api::providers::providers_statuses_response(state, install_target, true).await;
+        crate::daemon::providers::providers_statuses_response(state, install_target, true).await;
     let provider_id = match select_default_provider_id(&statuses) {
         Some(provider_id) => provider_id,
         None if install_target == InstallTarget::Host => {
@@ -37,7 +38,7 @@ pub(super) async fn resolve_default_session_target(
                     )
                 })?;
             statuses =
-                crate::api::providers::providers_statuses_response(state, install_target, true)
+                crate::daemon::providers::providers_statuses_response(state, install_target, true)
                     .await;
             select_default_provider_id(&statuses).ok_or((
                 StatusCode::BAD_REQUEST,

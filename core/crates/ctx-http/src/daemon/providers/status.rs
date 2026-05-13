@@ -1,11 +1,31 @@
-use super::*;
+use std::sync::Arc;
 
-#[path = "aggregate/details.rs"]
+use anyhow::Context;
+use ctx_provider_install::install_state::InstallTarget;
+use ctx_provider_runtime::provider_launch::status::provider_status_for_target;
+use ctx_providers::adapters::ProviderStatus;
+
+use crate::daemon::{execution_effective, AppState};
+
 mod details;
 
-pub(in crate::api::providers::status) use details::{
+pub(crate) use details::{
     decorate_provider_runtime_details, provider_status_without_target_bootstrap,
 };
+
+pub(crate) async fn install_target_for_workspace(
+    state: &Arc<AppState>,
+    workspace_id: ctx_core::ids::WorkspaceId,
+) -> anyhow::Result<InstallTarget> {
+    execution_effective::effective_install_target(state.as_ref(), workspace_id)
+        .await
+        .with_context(|| {
+            format!(
+                "loading execution settings for workspace {}",
+                workspace_id.0
+            )
+        })
+}
 
 pub(crate) async fn providers_statuses_response(
     state: &Arc<AppState>,

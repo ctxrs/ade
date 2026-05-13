@@ -25,13 +25,14 @@ pub(crate) async fn get_workspace_providers_bootstrap(
 ) -> Result<Json<ProvidersBootstrapResponse>, (StatusCode, Json<serde_json::Value>)> {
     let ws_id = parse_workspace_id(&ws_id)?;
     load_bootstrap_workspace(&state, ws_id).await?;
-    let install_target = status::install_target_for_workspace(&state, ws_id)
+    let install_target = crate::daemon::providers::install_target_for_workspace(&state, ws_id)
         .await
         .map_err(|error| status::workspace_execution_settings_error_json(&error))?;
     let preferred_model_by_provider =
         std::sync::Arc::new(load_preferred_model_by_provider(&state, ws_id).await?);
 
-    let providers = status::providers_statuses_response(&state, install_target, true).await;
+    let providers =
+        crate::daemon::providers::providers_statuses_response(&state, install_target, true).await;
     let visible_providers = providers
         .iter()
         .filter(|provider| !provider.detail_flag("ui_hidden").unwrap_or(false))

@@ -21,8 +21,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use super::errors::ApiErrorResp;
-use super::providers::install_target_for_workspace;
 use super::redact_json_value;
+use crate::daemon::providers::install_target_for_workspace;
 use crate::daemon::AppState;
 use ctx_harness_sources as harness_sources;
 use ctx_harness_sources::{HarnessEndpointVerificationStatus, HarnessSourceKind};

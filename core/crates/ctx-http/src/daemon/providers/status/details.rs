@@ -1,11 +1,15 @@
-use super::*;
+use std::sync::Arc;
 
+use ctx_managed_installs as installer;
 use ctx_provider_runtime::provider_launch::status::mark_provider_status_with_managed_config_error;
+use ctx_providers::adapters::ProviderStatus;
 
-pub(in crate::api::providers::status) async fn provider_status_without_target_bootstrap(
+use crate::daemon::AppState;
+
+pub(crate) async fn provider_status_without_target_bootstrap(
     state: &Arc<AppState>,
     provider_id: &str,
-    target: InstallTarget,
+    target: ctx_provider_install::install_state::InstallTarget,
 ) -> ProviderStatus {
     state
         .providers
@@ -17,7 +21,7 @@ pub(super) async fn decorate_provider_list_status(
     state: &Arc<AppState>,
     matrix: &ctx_provider_matrix::ProviderMatrix,
     managed_config_error: Option<&str>,
-    target: InstallTarget,
+    target: ctx_provider_install::install_state::InstallTarget,
     show_fake: bool,
     status: &mut ProviderStatus,
 ) {
@@ -33,11 +37,11 @@ pub(super) async fn decorate_provider_list_status(
     decorate_provider_runtime_details(state, matrix, managed_config_error, target, status).await;
 }
 
-pub(in crate::api::providers::status) async fn decorate_provider_runtime_details(
+pub(crate) async fn decorate_provider_runtime_details(
     state: &Arc<AppState>,
     matrix: &ctx_provider_matrix::ProviderMatrix,
     managed_config_error: Option<&str>,
-    target: InstallTarget,
+    target: ctx_provider_install::install_state::InstallTarget,
     status: &mut ProviderStatus,
 ) {
     if let Some(bytes) =
