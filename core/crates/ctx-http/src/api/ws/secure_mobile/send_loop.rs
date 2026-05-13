@@ -5,7 +5,7 @@ use ctx_core::ids::WorkspaceId;
 use ctx_transport_runtime::mobile_e2ee;
 
 use super::super::common::{send_secure_ws, WorkspaceStreamSendRuntime, WorkspaceStreamSequencer};
-use super::super::queue::NextWorkspaceStreamItem;
+use super::super::queue::{HeadBatchLane, NextWorkspaceStreamItem};
 use super::super::workspace_stream;
 
 #[path = "send_loop/telemetry.rs"]
@@ -79,6 +79,9 @@ pub(super) fn spawn_mobile_secure_send_loop(
                             oldest_queued_ms,
                             send_start.elapsed().as_millis(),
                         );
+                        if lane == HeadBatchLane::Background {
+                            runtime.wait_after_background_batch().await;
+                        }
                     }
                     NextWorkspaceStreamItem::SummaryBatch { events } => {
                         let mut send_failed = false;

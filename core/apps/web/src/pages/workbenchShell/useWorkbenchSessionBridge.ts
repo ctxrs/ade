@@ -85,19 +85,23 @@ const readWorkspaceSessionHeads = (
 export const deriveRetainedPrefetchSessionIds = ({
   snapshot,
   foregroundSessionIds,
+  suppressWarmSessionIds = false,
 }: {
   snapshot: WorkspaceActiveSnapshotState;
   foregroundSessionIds: readonly string[];
   taskArchived: boolean;
+  suppressWarmSessionIds?: boolean;
 }): string[] => {
   const liveForegroundSessionIds = foregroundSessionIds
     .map((sessionId) => idToString(sessionId))
     .filter((sessionId) => sessionId.length > 0);
-  const warmSessionIds = deriveWarmSessionIds({
-    activeTaskSessionIds: liveForegroundSessionIds,
-    tasksById: snapshot.tasksById,
-    activeIds: snapshot.activeIds,
-  });
+  const warmSessionIds = suppressWarmSessionIds
+    ? []
+    : deriveWarmSessionIds({
+        activeTaskSessionIds: liveForegroundSessionIds,
+        tasksById: snapshot.tasksById,
+        activeIds: snapshot.activeIds,
+      });
   return planSessionHeadPrefetchTargets({
     foregroundSessionIds: liveForegroundSessionIds,
     warmSessionIds,
@@ -140,9 +144,22 @@ export function useWorkbenchSessionBridge({
   );
   const taskArchived = Boolean(activeTaskSummary?.task.archived_at);
   const taskArchivedRef = useRef(taskArchived);
+  const suppressWarmSessionIdsRef = useRef(false);
   const foregroundSessionIds = useMemo(
     () => (activeSessionId ? [activeSessionId] : primarySessionId ? [primarySessionId] : []),
     [activeSessionId, primarySessionId],
+  );
+  const taskLiveInfo = useMemo(
+    () =>
+      deriveTaskLiveInfo({
+        tasksById,
+        optimisticTasks,
+        sessions: sessionSnap.sessions,
+      }),
+    [optimisticTasks, sessionSnap.sessions, tasksById],
+  );
+  const foregroundTaskWorking = Boolean(
+    activeTaskId && taskLiveInfo.workingByTask.has(activeTaskId),
   );
   const warmSessionIds = useMemo(
     () =>
@@ -153,13 +170,17 @@ export function useWorkbenchSessionBridge({
       }),
     [foregroundSessionIds, tasksById, workspaceSnapshot.activeIds],
   );
+  const effectiveWarmSessionIds = useMemo(
+    () => (foregroundTaskWorking ? [] : warmSessionIds),
+    [foregroundTaskWorking, warmSessionIds],
+  );
   const plannedPrefetchSessionIds = useMemo(
     () =>
       planSessionHeadPrefetchTargets({
         foregroundSessionIds,
-        warmSessionIds,
+        warmSessionIds: effectiveWarmSessionIds,
       }).targetSessionIds,
-    [foregroundSessionIds, warmSessionIds],
+    [effectiveWarmSessionIds, foregroundSessionIds],
   );
   const prefetchSessionIdsKey = plannedPrefetchSessionIds.join("\u001f");
   const prefetchSessionIds = useMemo(
@@ -172,6 +193,7 @@ export function useWorkbenchSessionBridge({
         snapshot,
         foregroundSessionIds: foregroundSessionIdsRef.current,
         taskArchived: taskArchivedRef.current,
+        suppressWarmSessionIds: suppressWarmSessionIdsRef.current,
       });
     },
     [],
@@ -323,15 +345,6 @@ export function useWorkbenchSessionBridge({
     workspaceSnapshotStore,
   ]);
 
-  const taskLiveInfo = useMemo(
-    () =>
-      deriveTaskLiveInfo({
-        tasksById,
-        optimisticTasks,
-        sessions: sessionSnap.sessions,
-      }),
-    [optimisticTasks, sessionSnap.sessions, tasksById],
-  );
   useEffect(() => {
     if (!activeTaskId) return;
     const snapshotReady = workspaceSnapshot.initialized && workspaceSnapshot.fetchState.active === "idle";
@@ -457,8 +470,9 @@ export function useWorkbenchSessionBridge({
   useLayoutEffect(() => {
     foregroundSessionIdsRef.current = foregroundSessionIds;
     taskArchivedRef.current = taskArchived;
+    suppressWarmSessionIdsRef.current = foregroundTaskWorking;
     prefetchSessionIdsRef.current = new Set(prefetchSessionIds);
-  }, [foregroundSessionIds, prefetchSessionIds, taskArchived]);
+  }, [foregroundSessionIds, foregroundTaskWorking, prefetchSessionIds, taskArchived]);
 
   useEffect(() => {
     const generation = prefetchGenerationRef.current + 1;
@@ -527,8 +541,8 @@ export function useWorkbenchSessionBridge({
   ]);
 
   useEffect(() => {
-    supervisor.setWarmSessionIds(warmSessionIds);
-  }, [supervisor, warmSessionIds]);
+    supervisor.setWarmSessionIds(effectiveWarmSessionIds);
+  }, [effectiveWarmSessionIds, supervisor]);
 
   useEffect(() => {
     if (!workspaceSnapshot.initialized || foregroundSessionIds.length === 0) return;

@@ -6,6 +6,14 @@ use fixtures::{
     assert_control_session_gap, expect_heads_batch, push_control_gap, PriorityOrderingFixture,
 };
 
+#[test]
+fn background_head_batch_chunk_limit_keeps_foreground_preemption_fine_grained() {
+    assert!(
+        BACKGROUND_HEAD_BATCH_CHUNK_LIMIT <= 16,
+        "background head batches must remain small enough for foreground websocket preemption",
+    );
+}
+
 #[tokio::test]
 async fn next_workspace_stream_item_prioritizes_foreground_lane() {
     let fixture = PriorityOrderingFixture::new();

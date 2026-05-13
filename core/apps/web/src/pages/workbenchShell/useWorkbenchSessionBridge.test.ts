@@ -89,4 +89,17 @@ describe("deriveRetainedPrefetchSessionIds", () => {
 
     expect(retainedSessionIds[0]).toBe("session-1");
   });
+
+  it("drops warm retained sessions while foreground work is active", () => {
+    const snapshot = makeSnapshot(["session-2", "session-3"]);
+
+    const retainedSessionIds = deriveRetainedPrefetchSessionIds({
+      snapshot,
+      foregroundSessionIds: ["session-1"],
+      taskArchived: false,
+      suppressWarmSessionIds: true,
+    });
+
+    expect(retainedSessionIds).toEqual(["session-1"]);
+  });
 });

@@ -199,6 +199,10 @@ test("remote real CI wrapper retries startup-only WebDriver session failures", (
   assert.match(script, /XDG_DATA_HOME="\$\{attempt_xdg_dir\}\/data"/);
   assert.match(script, /attempt_corepack_home="\$\{attempt_xdg_dir\}\/corepack"/);
   assert.match(script, /COREPACK_HOME="\$\{attempt_corepack_home\}"/);
+  assert.match(script, /COREPACK_ENABLE_DOWNLOAD_PROMPT=0/);
+  assert.match(script, /core_package_manager\(\) \{/);
+  assert.match(script, /prepare_attempt_corepack\(\) \{/);
+  assert.match(script, /corepack prepare "\$\{package_manager\}" --activate/);
   assert.match(script, /sweep_webkit_automation_helpers/);
   assert.match(script, /\[\[ -f "\$\{report_path\}" \]\]/);
   assert.match(script, /wdio-attempt-\$\{attempt\}\.log/);

@@ -421,6 +421,39 @@ is_retryable_wdio_session_start_failure() {
   grep -Eq 'UND_ERR_HEADERS_TIMEOUT|hyper::Error\(IncompleteMessage\)' "${log_path}"
 }
 
+core_package_manager() {
+  node - "${ROOT}/core/package.json" <<'NODE'
+const fs = require("node:fs");
+const packageJsonPath = process.argv[2];
+const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+const packageManager = String(packageJson.packageManager || "").trim();
+if (!packageManager) {
+  console.error(`error: ${packageJsonPath} is missing packageManager`);
+  process.exit(2);
+}
+process.stdout.write(packageManager);
+NODE
+}
+
+prepare_attempt_corepack() {
+  local package_manager
+  package_manager="$(core_package_manager)"
+  case "${package_manager}" in
+    pnpm@*) ;;
+    *)
+      echo "error: remote CI expected core/package.json packageManager to pin pnpm, got '${package_manager}'" >&2
+      return 2
+      ;;
+  esac
+  if ! command -v corepack >/dev/null 2>&1; then
+    echo "error: remote CI requires Corepack to activate ${package_manager}" >&2
+    return 2
+  fi
+  # pnpm's Corepack shim resolves the package manager before honoring -C/--dir.
+  # Activate the core workspace pin inside the isolated attempt COREPACK_HOME.
+  COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare "${package_manager}" --activate
+}
+
 printf "lane\tstatus\texit_code\tartifact_dir\treason\n" >"${SUMMARY_TSV}"
 
 run_lane() {
@@ -494,6 +527,8 @@ run_lane() {
         export XDG_CACHE_HOME="${attempt_xdg_dir}/cache"
         export XDG_DATA_HOME="${attempt_xdg_dir}/data"
         export COREPACK_HOME="${attempt_corepack_home}"
+        export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+        prepare_attempt_corepack
         "${cmd[@]}"
       ) >"${attempt_log}" 2>&1 &
       local cmd_pid="$!"

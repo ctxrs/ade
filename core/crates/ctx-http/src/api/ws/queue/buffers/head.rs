@@ -6,7 +6,9 @@ mod state;
 use state::HeadBatchState;
 
 pub(crate) const HEAD_BATCH_TOTAL_LIMIT: usize = 1000;
-pub(crate) const BACKGROUND_HEAD_BATCH_CHUNK_LIMIT: usize = 100;
+// Keep the background send quantum small so foreground/control work can preempt
+// slow websocket clients before large background transcript batches build HOL.
+pub(crate) const BACKGROUND_HEAD_BATCH_CHUNK_LIMIT: usize = 16;
 
 pub(crate) struct HeadBatchDrain {
     pub(crate) snapshot_rev: i64,
