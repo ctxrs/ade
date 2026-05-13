@@ -129,6 +129,86 @@ impl<SchedulerCommand> SessionRuntime<SchedulerCommand> {
         }
     }
 
+    pub async fn cache_debug_stats(&self) -> SessionRuntimeCacheDebugStats {
+        let head_cache = self.session_head_cache.lock().await;
+        let head_cache_entries = head_cache.len();
+        let head_cache_keys = head_cache.values().map(|entry| entry.value.len()).sum();
+        let mut session_head_cache_bytes = 0;
+        let mut session_head_cache_max_bytes = 0;
+        for entry in head_cache.values() {
+            for head in entry.value.values() {
+                let bytes = json_bytes(head);
+                session_head_cache_bytes += bytes;
+                session_head_cache_max_bytes = session_head_cache_max_bytes.max(bytes);
+            }
+        }
+        drop(head_cache);
+
+        let session_meta_cache = self.session_meta_cache.lock().await;
+        let session_meta_cache_entries = session_meta_cache.len();
+        let mut session_meta_cache_bytes = 0;
+        for entry in session_meta_cache.values() {
+            session_meta_cache_bytes += json_bytes(&entry.value);
+        }
+        drop(session_meta_cache);
+
+        let session_event_heads = self.session_event_heads.lock().await.len();
+        let schedulers = self.schedulers.lock().await.len();
+        let broadcasters_guard = self.broadcasters.lock().await;
+        let broadcasters = broadcasters_guard.len();
+        let mut broadcast_buffer_total = 0;
+        let mut broadcast_buffer_max = 0;
+        let mut broadcast_receivers_total = 0;
+        let mut broadcast_receivers_max = 0;
+        for entry in broadcasters_guard.values() {
+            let sender = &entry.value;
+            let len = sender.len();
+            broadcast_buffer_total += len;
+            broadcast_buffer_max = broadcast_buffer_max.max(len);
+            let receivers = sender.receiver_count();
+            broadcast_receivers_total += receivers;
+            broadcast_receivers_max = broadcast_receivers_max.max(receivers);
+        }
+        drop(broadcasters_guard);
+        let running_sessions = self.running_sessions.lock().await.len();
+        let active_task_refreshes = self.active_task_refreshes.lock().await.len();
+
+        SessionRuntimeCacheDebugStats {
+            session_head_cache_entries: head_cache_entries,
+            session_head_cache_keys: head_cache_keys,
+            session_head_cache_bytes,
+            session_head_cache_max_bytes,
+            session_meta_cache_entries,
+            session_meta_cache_bytes,
+            session_event_heads,
+            schedulers,
+            broadcasters,
+            broadcast_buffer_total,
+            broadcast_buffer_max,
+            broadcast_receivers_total,
+            broadcast_receivers_max,
+            running_sessions,
+            active_task_refreshes,
+        }
+    }
+
+    pub async fn cached_session_ids_for_workspace(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Vec<SessionId> {
+        let cache = self.session_meta_cache.lock().await;
+        cache
+            .iter()
+            .filter_map(|(session_id, entry)| {
+                if entry.value.workspace_id == workspace_id {
+                    Some(*session_id)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
     pub async fn sweep_idle_caches(
         &self,
         now: Instant,
@@ -302,4 +382,29 @@ pub struct SessionRuntimeStats {
     pub broadcasters: usize,
     pub running_sessions: usize,
     pub active_task_refreshes: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, serde::Serialize)]
+pub struct SessionRuntimeCacheDebugStats {
+    pub session_head_cache_entries: usize,
+    pub session_head_cache_keys: usize,
+    pub session_head_cache_bytes: usize,
+    pub session_head_cache_max_bytes: usize,
+    pub session_meta_cache_entries: usize,
+    pub session_meta_cache_bytes: usize,
+    pub session_event_heads: usize,
+    pub schedulers: usize,
+    pub broadcasters: usize,
+    pub broadcast_buffer_total: usize,
+    pub broadcast_buffer_max: usize,
+    pub broadcast_receivers_total: usize,
+    pub broadcast_receivers_max: usize,
+    pub running_sessions: usize,
+    pub active_task_refreshes: usize,
+}
+
+fn json_bytes<T: serde::Serialize>(value: &T) -> usize {
+    serde_json::to_vec(value)
+        .map(|bytes| bytes.len())
+        .unwrap_or_default()
 }

@@ -2,11 +2,14 @@ use chrono::{DateTime, Utc};
 use ctx_harness_runtime::HarnessRuntimeStats;
 use ctx_observability::perf_telemetry::PerfTelemetryStats;
 use ctx_resource_utilization::memleak_debug::{GlibcMallinfo, JemallocStats};
+use ctx_session_service::runtime::SessionRuntimeCacheDebugStats;
 use ctx_store::StoreManagerStats;
 use ctx_transport_runtime::terminals::TerminalManagerStats;
 use ctx_transport_runtime::web_sessions::WebSessionManagerStats;
 use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotStats;
 use serde::Serialize;
+
+use crate::daemon::workspaces::WorkspaceCacheDebugStats;
 
 #[derive(Debug, Serialize)]
 pub(super) struct MemleakDebugSnapshot {
@@ -28,44 +31,9 @@ pub(super) struct MemleakDebugSnapshot {
     pub(super) jemalloc: Option<JemallocStats>,
 }
 
-#[derive(Debug, Serialize)]
-pub(super) struct SessionCacheStats {
-    pub(super) session_head_cache_entries: usize,
-    pub(super) session_head_cache_keys: usize,
-    pub(super) session_head_cache_bytes: usize,
-    pub(super) session_head_cache_max_bytes: usize,
-    pub(super) session_meta_cache_entries: usize,
-    pub(super) session_meta_cache_bytes: usize,
-    pub(super) session_event_heads: usize,
-    pub(super) schedulers: usize,
-    pub(super) broadcasters: usize,
-    pub(super) broadcast_buffer_total: usize,
-    pub(super) broadcast_buffer_max: usize,
-    pub(super) broadcast_receivers_total: usize,
-    pub(super) broadcast_receivers_max: usize,
-    pub(super) running_sessions: usize,
-    pub(super) active_task_refreshes: usize,
-}
+pub(super) type SessionCacheStats = SessionRuntimeCacheDebugStats;
 
-#[derive(Debug, Serialize)]
-pub(super) struct WorkspaceCacheStats {
-    pub(super) file_completions_cache: usize,
-    pub(super) file_completion_files: usize,
-    pub(super) file_completion_bytes: usize,
-    pub(super) workspace_file_completions_cache: usize,
-    pub(super) workspace_file_completion_files: usize,
-    pub(super) workspace_file_completion_bytes: usize,
-    pub(super) git_status_snapshots: usize,
-    pub(super) git_status_snapshot_bytes: usize,
-    pub(super) git_status_watchers: usize,
-    pub(super) workspace_active_snapshot_cache: usize,
-    pub(super) workspace_active_snapshot_cache_bytes: usize,
-    pub(super) workspace_active_snapshot_cache_max_bytes: usize,
-    pub(super) workspace_active_heads_cache: usize,
-    pub(super) workspace_active_heads_cache_bytes: usize,
-    pub(super) workspace_active_heads_cache_max_bytes: usize,
-    pub(super) worktree_bootstrap_gates: usize,
-}
+pub(super) type WorkspaceCacheStats = WorkspaceCacheDebugStats;
 
 #[derive(Debug, Serialize)]
 pub(super) struct ProviderCacheStats {

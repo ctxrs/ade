@@ -23,7 +23,10 @@ pub use publication::{
     SessionEventPublicationHost, SessionHeadRefreshHost, SessionHeadRefreshLoad,
     SessionReplayCursor,
 };
-pub use state::{SessionCacheSweepStats, SessionHeadCacheKey, SessionRuntimeStats, TimedEntry};
+pub use state::{
+    SessionCacheSweepStats, SessionHeadCacheKey, SessionRuntimeCacheDebugStats,
+    SessionRuntimeStats, TimedEntry,
+};
 pub use task_delta::{ActiveTaskRefreshEntry, SessionTaskDeltaRefreshHost};
 
 #[cfg(test)]

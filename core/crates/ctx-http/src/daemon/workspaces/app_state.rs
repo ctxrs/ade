@@ -9,7 +9,7 @@ use ctx_core::models::{
 
 use crate::daemon::state::AppState;
 
-use super::WorkspaceHydrationError;
+use super::{WorkspaceCacheDebugStats, WorkspaceHydrationError};
 
 mod worktree_vcs;
 
@@ -131,5 +131,9 @@ impl AppState {
         self.workspaces
             .release_git_status_watcher(worktree_id)
             .await;
+    }
+
+    pub(crate) async fn workspace_cache_debug_stats(&self) -> WorkspaceCacheDebugStats {
+        self.workspaces.cache_debug_stats().await
     }
 }

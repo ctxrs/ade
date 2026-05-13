@@ -3,8 +3,9 @@ use std::time::Duration;
 
 use tokio::sync::{mpsc, watch, Mutex};
 
-use ctx_core::ids::{SessionId, TaskId};
+use ctx_core::ids::{SessionId, TaskId, WorkspaceId};
 use ctx_core::models::{Session, SessionEvent};
+use ctx_session_service::runtime::SessionRuntimeCacheDebugStats;
 use ctx_session_tools::order_seq::OrderSeqState;
 use ctx_store::Store;
 
@@ -59,6 +60,19 @@ impl AppState {
 
     pub(crate) async fn provider_inactivity_timeout(&self) -> Duration {
         self.sessions.provider_inactivity_timeout().await
+    }
+
+    pub(crate) async fn session_cache_debug_stats(&self) -> SessionRuntimeCacheDebugStats {
+        self.sessions.cache_debug_stats().await
+    }
+
+    pub(crate) async fn cached_session_ids_for_workspace(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Vec<SessionId> {
+        self.sessions
+            .cached_session_ids_for_workspace(workspace_id)
+            .await
     }
 
     pub async fn ensure_scheduler(
