@@ -141,10 +141,7 @@ pub(crate) async fn load_codex_accounts_snapshot(
     state: &Arc<AppState>,
 ) -> anyhow::Result<CodexAccountsSnapshot> {
     let registry = load_codex_account_registry(state).await?;
-    let logins = state
-        .providers
-        .with_codex_login_sessions(|map| map.values().cloned().collect::<Vec<_>>())
-        .await;
+    let logins = super::codex_login_statuses(state).await;
     Ok(CodexAccountsSnapshot {
         active_account_id: registry.active_account_id,
         accounts: registry.accounts,
@@ -411,13 +408,7 @@ pub(crate) async fn remove_codex_account(
     super::restart_codex_providers_for_auth_change(state, "codex auth updated")
         .await
         .map_err(ProviderAccountMutationError::Internal)?;
-    let logins = state
-        .providers
-        .with_codex_login_sessions(|map| {
-            map.remove(account_id);
-            map.values().cloned().collect::<Vec<_>>()
-        })
-        .await;
+    let logins = super::remove_codex_login_session(state, account_id).await;
     Ok(CodexAccountsSnapshot {
         active_account_id: registry.active_account_id,
         accounts: registry.accounts,
