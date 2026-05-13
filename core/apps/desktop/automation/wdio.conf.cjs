@@ -921,6 +921,12 @@ const createDesktopAppLaunchWrapper = (appExecutablePath, env) => {
 
 const resolveAutomationApplicationPath = (appPath) => {
   const appExecutablePath = resolveWdioApplicationPath(appPath);
+  if (process.platform === "linux") {
+    // Linux WebKitWebDriver should receive the raw AppRun/binary path. AppDir
+    // environment is applied to the tauri-driver process below and inherited by
+    // the native WebDriver/app child.
+    return appExecutablePath;
+  }
   return createDesktopAppLaunchWrapper(appExecutablePath, DESKTOP_APP_LAUNCH_ENV);
 };
 

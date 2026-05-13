@@ -16,7 +16,6 @@ const REPO_ROOT = path.resolve(CORE_ROOT, "..");
 const require = createRequire(import.meta.url);
 const {
   buildLinuxAppDirLaunchEnv,
-  createLinuxAppDirLaunchWrapper,
   resolveLinuxAppDirFromPath,
 } = require("../automation/helpers/linux_appdir_launch_env.cjs");
 
@@ -422,11 +421,10 @@ async function main() {
     appPath: options.appPath,
     artifactDir,
   });
-  const applicationPath = createLinuxAppDirLaunchWrapper({
-    appPath: options.appPath,
-    env: appLaunchEnv,
-    wrapperDir: path.join(artifactDir, "desktop-app-launchers"),
-  });
+  // Linux WebKitWebDriver needs to launch the shipped AppRun directly. The exact
+  // AppDir/AppImage environment is already on the tauri-driver process and is
+  // inherited by the native WebDriver/app child.
+  const applicationPath = options.appPath;
   const driverPort = await pickUnusedPort();
   let nativeDriverPort = await pickUnusedPort();
   for (let attempt = 0; nativeDriverPort === driverPort && attempt < 5; attempt += 1) {
