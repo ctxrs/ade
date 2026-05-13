@@ -6,6 +6,7 @@ mod deletion;
 mod diff_exec;
 mod execution;
 mod file_completions;
+mod harness_container;
 mod hydration;
 mod model_preferences;
 mod retry;
@@ -27,6 +28,10 @@ pub(crate) use execution::{
 pub(crate) use file_completions::{
     complete_files_for_session, complete_files_for_workspace, FileCompletionsError,
     FileCompletionsErrorKind,
+};
+pub(crate) use harness_container::{
+    ensure_workspace_harness_container, stop_workspace_harness_container,
+    workspace_harness_container_status, WorkspaceHarnessContainerError,
 };
 pub use hydration::{WorkspaceHydrationError, WorkspaceHydrationErrorKind};
 pub(crate) use model_preferences::update_workspace_provider_preferred_model_id;
