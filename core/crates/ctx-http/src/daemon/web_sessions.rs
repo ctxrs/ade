@@ -11,6 +11,7 @@ use crate::daemon::AppState;
 
 mod access;
 mod launch;
+mod signal;
 
 pub(crate) use access::{
     authorize_web_session_signal_access, mint_web_session_view_connect_path,
@@ -19,6 +20,7 @@ pub(crate) use access::{
 pub(crate) use launch::{
     create_web_session, WebSessionLaunchError, WebSessionLaunchErrorKind, WebSessionLaunchRequest,
 };
+pub(crate) use signal::{authorize_web_session_signal_bridge, connect_web_session_signal_bridge};
 
 pub(crate) struct PreparedWebSessionWorker {
     pub(crate) node_runtime: ctx_managed_installs::NodeRuntime,

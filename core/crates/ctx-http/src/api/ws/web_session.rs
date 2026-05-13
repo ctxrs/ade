@@ -4,14 +4,9 @@ use axum::extract::ws::{CloseFrame, Message as WsMessage, WebSocket, WebSocketUp
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::Response;
-use ctx_transport_runtime::web_sessions::{WebSessionManager, WEB_SESSION_WORKER_AUTH_HEADER};
 use futures::{SinkExt, StreamExt};
-use tokio_tungstenite::{
-    connect_async,
-    tungstenite::{
-        client::IntoClientRequest, protocol::CloseFrame as TungsteniteCloseFrame,
-        Message as TungsteniteMessage,
-    },
+use tokio_tungstenite::tungstenite::{
+    protocol::CloseFrame as TungsteniteCloseFrame, Message as TungsteniteMessage,
 };
 
 use crate::daemon::web_sessions::{self as daemon_web_sessions, WebSessionAccessError};
@@ -25,13 +20,12 @@ pub(crate) async fn web_session_signal(
     Query(query): Query<WebSessionStreamAccessQuery>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, StatusCode> {
-    daemon_web_sessions::authorize_web_session_signal_access(&state, &id, query.token.as_deref())
+    daemon_web_sessions::authorize_web_session_signal_bridge(&state, &id, query.token.as_deref())
         .await
         .map_err(web_session_access_status)?;
-    let manager = state.transport.web_sessions.clone();
     let session_id = id.clone();
     Ok(ws.on_upgrade(move |socket| async move {
-        handle_web_session_socket(socket, manager, session_id).await;
+        handle_web_session_socket(socket, state, session_id).await;
     }))
 }
 
@@ -44,42 +38,15 @@ fn web_session_access_status(error: WebSessionAccessError) -> StatusCode {
     }
 }
 
-async fn handle_web_session_socket(
-    socket: WebSocket,
-    manager: Arc<WebSessionManager>,
-    session_id: String,
-) {
-    let handle = match manager.get(&session_id).await {
-        Some(handle) => handle,
-        None => {
-            let _ = socket.close().await;
-            return;
-        }
-    };
-    let port = handle.worker_port().await;
-    let url = format!("ws://127.0.0.1:{port}/signal");
-    let _ = manager.bump_viewers(&session_id, 1).await;
-
-    let mut request = match url.into_client_request() {
-        Ok(request) => request,
-        Err(_) => {
-            let _ = manager.bump_viewers(&session_id, -1).await;
-            return;
-        }
-    };
-    if let Ok(value) = handle.worker_auth_secret().parse() {
-        request
-            .headers_mut()
-            .insert(WEB_SESSION_WORKER_AUTH_HEADER, value);
-    }
-    let connect = connect_async(request).await;
-    let upstream = match connect {
-        Ok((stream, _)) => stream,
-        Err(_) => {
-            let _ = manager.bump_viewers(&session_id, -1).await;
-            return;
-        }
-    };
+async fn handle_web_session_socket(socket: WebSocket, state: Arc<AppState>, session_id: String) {
+    let (upstream, mut viewer_guard) =
+        match daemon_web_sessions::connect_web_session_signal_bridge(state, session_id).await {
+            Ok(parts) => parts,
+            Err(_) => {
+                let _ = socket.close().await;
+                return;
+            }
+        };
 
     let (mut client_tx, mut client_rx) = socket.split();
     let (mut up_tx, mut up_rx) = upstream.split();
@@ -132,5 +99,5 @@ async fn handle_web_session_socket(
         _ = up_to_client => {},
     };
 
-    let _ = manager.bump_viewers(&session_id, -1).await;
+    viewer_guard.release().await;
 }
