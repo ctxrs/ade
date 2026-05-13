@@ -1,4 +1,5 @@
 use super::*;
+use ctx_sandbox_container_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV;
 
 #[cfg(unix)]
 #[tokio::test]
@@ -9,7 +10,7 @@ async fn ready_runtime_sandbox_cli_short_circuits_network_cleanup_scripts_for_sh
     let sandbox_cli_path = write_ready_runtime_sandbox_cli_shim(temp.path());
     let _sandbox_cli_available = EnvGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
     let _sandbox_cli_path = EnvGuard::set(
-        crate::daemon::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+        CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
         &sandbox_cli_path.to_string_lossy(),
     );
 

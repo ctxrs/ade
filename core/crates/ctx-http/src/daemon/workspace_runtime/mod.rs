@@ -70,10 +70,10 @@ use self::sandbox_machine_recovery::{
 };
 #[cfg(test)]
 #[allow(unused_imports)]
-pub(crate) use ctx_avf_linux_runtime::AVF_LINUX_HELPER_PATH_ENV;
+use ctx_avf_linux_runtime::AVF_LINUX_HELPER_PATH_ENV;
 #[cfg(test)]
 #[allow(unused_imports)]
-pub(crate) use ctx_harness_runtime::{
+use ctx_harness_runtime::{
     container_image_present, ensure_builder_backend_launch_ready_with_observer,
     launch_ready_detail_message, launch_ready_gap_message, local_runtime_available,
     prefetch_container_image, prewarm_selected_runtime_for_launch_with_observer,
@@ -84,7 +84,7 @@ pub(crate) use ctx_harness_runtime::{
 };
 #[cfg(test)]
 #[allow(unused_imports)]
-pub(crate) use ctx_harness_runtime::{
+use ctx_harness_runtime::{
     sandbox_engine_ready, selected_sandbox_command_backend, selected_sandbox_command_mode,
     HarnessExecutionPlan, HarnessRuntimeKind, HarnessRuntimeStats, SandboxCommandBackend,
     CTX_AVF_HOST_DATA_ROOT_ENV, CTX_AVF_HOST_WORKTREE_ROOT_ENV, CTX_AVF_WORKSPACE_ID_ENV,
@@ -92,9 +92,9 @@ pub(crate) use ctx_harness_runtime::{
 };
 #[cfg(test)]
 #[allow(unused_imports)]
-pub(crate) use ctx_sandbox_container_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV;
+use ctx_sandbox_container_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV;
 #[cfg(test)]
-pub(crate) use ctx_sandbox_container_runtime::{
+use ctx_sandbox_container_runtime::{
     command_output_message, command_output_with_timeout, sandbox_cli_invocation,
 };
 #[cfg(test)]
@@ -105,7 +105,7 @@ use ctx_sandbox_container_runtime::{
 #[cfg(test)]
 use ctx_workspace_container::sandbox_machine_required;
 #[cfg(test)]
-pub(crate) use ctx_workspace_runtime::HarnessRuntimeManager;
+use ctx_workspace_runtime::HarnessRuntimeManager;
 
 #[cfg(test)]
 const SANDBOX_MACHINE_CACHE_DIR_ENV: &str = "CTX_SANDBOX_MACHINE_CACHE_DIR";

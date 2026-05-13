@@ -1,5 +1,5 @@
 use super::*;
-use crate::api::{
+use ctx_http_auth::{
     derive_browser_capability_token, derive_browser_query_secret, BrowserCapabilityAuthScope,
 };
 

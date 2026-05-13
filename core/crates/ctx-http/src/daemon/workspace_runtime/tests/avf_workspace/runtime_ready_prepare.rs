@@ -1,4 +1,5 @@
 use super::*;
+use ctx_sandbox_container_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV;
 
 #[cfg(unix)]
 #[tokio::test]
@@ -11,7 +12,7 @@ async fn ensure_workspace_container_after_runtime_ready_starts_avf_workspace_vm(
     let _helper_guard = EnvGuard::set(AVF_LINUX_HELPER_PATH_ENV, &helper_path.to_string_lossy());
     let _sandbox_cli_available = EnvGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
     let _sandbox_cli_path = EnvGuard::set(
-        crate::daemon::workspace_runtime::CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
+        CTX_HARNESS_SANDBOX_CLI_PATH_ENV,
         &sandbox_cli_path.to_string_lossy(),
     );
     let (_runtime_guard, servers) = install_test_managed_avf_linux_runtime_source().await;
