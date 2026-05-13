@@ -4,6 +4,7 @@ pub(crate) mod attachments;
 mod diff_exec;
 mod execution;
 mod hydration;
+mod model_preferences;
 mod retry;
 mod runtime;
 mod sandbox_binding;
@@ -19,6 +20,7 @@ pub(crate) use execution::{
     execution_environment_from_settings, resolve_existing_worktree_execution,
 };
 pub use hydration::{WorkspaceHydrationError, WorkspaceHydrationErrorKind};
+pub(crate) use model_preferences::update_workspace_provider_preferred_model_id;
 pub(crate) use retry::retry_global_index_write;
 pub(crate) use sandbox_binding::rematerialize_sandbox_binding_for_worktree;
 pub(crate) use worktree_bootstrap::spawn_worktree_bootstrap;

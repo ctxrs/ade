@@ -3,9 +3,10 @@ use std::sync::Arc;
 use anyhow::Result;
 use ctx_core::ids::WorkspaceId;
 
-use crate::daemon::AppState;
 use ctx_provider_runtime::provider_cache;
 use ctx_workspace_config as workspace_config;
+
+use crate::daemon::AppState;
 
 pub(crate) async fn update_workspace_provider_preferred_model_id(
     state: &Arc<AppState>,

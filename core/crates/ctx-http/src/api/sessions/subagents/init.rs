@@ -1,5 +1,6 @@
 use super::*;
 use crate::api::validate_scoped_mcp_session_context;
+use crate::daemon::sessions::subagents::{SpawnAgentReq, SpawnAgentResp};
 use axum::extract::Extension;
 
 pub(crate) async fn mcp_spawn_agent(

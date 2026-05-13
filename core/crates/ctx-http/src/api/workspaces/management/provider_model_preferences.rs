@@ -100,7 +100,7 @@ pub(in crate::api) async fn update_workspace_provider_model_preference(
     let workspace = require_workspace(&state, workspace_id).await?;
     require_known_provider(&state, &provider_id).await?;
     let provider_id = provider_id.trim().to_string();
-    crate::api::workspace_provider_model_preferences::update_workspace_provider_preferred_model_id(
+    crate::daemon::workspaces::update_workspace_provider_preferred_model_id(
         &state,
         workspace_id,
         &provider_id,

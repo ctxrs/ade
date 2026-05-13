@@ -1,4 +1,8 @@
 use super::*;
+use crate::daemon::sessions::subagents::{
+    AgentSummary, ArchiveAgentReq, ArchiveAgentResp, GetAgentReq, GetAgentResp, InterruptAgentReq,
+    InterruptAgentResp, SendInputReq, SendInputResp, WaitAgentReq, WaitAgentResp,
+};
 use axum::extract::Extension;
 use parent_session::resolve_scoped_parent_session_id;
 

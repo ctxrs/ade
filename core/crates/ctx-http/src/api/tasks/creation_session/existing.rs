@@ -57,14 +57,13 @@ pub(super) async fn resolve_existing_requested_session(
 
     state.sessions.remember_session_meta(&existing).await;
     if remember_model_preference {
-        if let Err(error) =
-            crate::api::workspace_provider_model_preferences::update_workspace_provider_preferred_model_id(
-                state,
-                task.workspace_id,
-                identity.provider_id,
-                Some(preferred_model_id.to_string()),
-            )
-            .await
+        if let Err(error) = crate::daemon::workspaces::update_workspace_provider_preferred_model_id(
+            state,
+            task.workspace_id,
+            identity.provider_id,
+            Some(preferred_model_id.to_string()),
+        )
+        .await
         {
             tracing::warn!(
                 session_id = %existing.id.0,

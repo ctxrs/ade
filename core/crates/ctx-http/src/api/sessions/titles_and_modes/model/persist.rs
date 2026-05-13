@@ -43,14 +43,13 @@ pub(super) async fn persist_session_model_update(
         .map_err(internal_session_model_error)?;
     state.publish_event(event).await;
 
-    if let Err(error) =
-        crate::api::workspace_provider_model_preferences::update_workspace_provider_preferred_model_id(
-            state,
-            updated.workspace_id,
-            &updated.provider_id,
-            Some(resolved_model.full_model_id.clone()),
-        )
-        .await
+    if let Err(error) = crate::daemon::workspaces::update_workspace_provider_preferred_model_id(
+        state,
+        updated.workspace_id,
+        &updated.provider_id,
+        Some(resolved_model.full_model_id.clone()),
+    )
+    .await
     {
         tracing::warn!(
             session_id = %updated.id.0,
