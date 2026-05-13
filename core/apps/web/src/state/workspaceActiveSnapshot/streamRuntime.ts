@@ -24,13 +24,18 @@ import {
 import {
   noteClientReceiveLag,
   noteQueueAgeSample,
+  noteWorkspaceEventAge,
   noteWorkspaceStreamEventObserved,
   noteWorkspaceStreamReset,
 } from "../foregroundFreshnessTelemetry";
-import { markWorkspaceEventReceivedAt } from "../workspaceEventTelemetry";
+import {
+  markWorkspaceEventReceivedAt,
+  markWorkspaceEventStreamSource,
+} from "../workspaceEventTelemetry";
 import type {
   WorkspaceActiveSnapshotPatch,
   WorkspaceActiveSnapshotStreamTelemetry,
+  WorkspaceActiveSnapshotStreamSource,
 } from "../workspaceActiveSnapshotProtocol";
 import type { SessionSubscriptionCursor } from "../sessionSubscription";
 import type { WorkspaceActiveSnapshotState } from "./storeTypes";
@@ -40,6 +45,7 @@ import {
   readWorkspaceHeadsBatchPayload,
   readWorkspaceSnapshotPayload,
   readWorkspaceStreamRev,
+  readWorkspaceStreamSource,
 } from "./transport";
 
 const ACTIVE_PAGE_SIZE = 50;
@@ -71,7 +77,7 @@ const noteWorkspaceEventClientReceiveLag = (
   host: WorkspaceActiveSnapshotStreamHost,
   evt: WorkspaceActiveSnapshotEvent,
   receivedAtMs: number,
-  source: "heads_batch" | "stream_event",
+  source: WorkspaceActiveSnapshotStreamSource,
 ): void => {
   const emittedAtMs = emittedAtMsForWorkspaceEvent(evt);
   const lane = host.isForegroundSessionEvent(evt) ? "foreground" : "workspace";
@@ -91,18 +97,18 @@ const noteWorkspaceEventClientReceiveLag = (
     sessionId,
     emittedAtMs,
     receivedAtMs,
+    streamSource: source,
   });
   noteWorkspaceStreamEventObserved(lane, evt.type);
   if (typeof emittedAtMs !== "number") return;
-  noteClientReceiveLag(
-    lane,
-    receivedAtMs - emittedAtMs,
-    {
-      source,
-      event_type: evt.type,
-      workspace_id: host.workspaceId,
-    },
-  );
+  const ageContext = {
+    stream_source: source,
+    event_type: evt.type,
+    workspace_id: host.workspaceId,
+  };
+  noteWorkspaceEventAge(lane, receivedAtMs - emittedAtMs, ageContext);
+  if (source !== "live") return;
+  noteClientReceiveLag(lane, receivedAtMs - emittedAtMs, ageContext);
 };
 
 export type WorkspaceActiveSnapshotStreamHost = {
@@ -460,6 +466,7 @@ export const handleStreamMessage = async (
   }
   const headsBatch = readWorkspaceHeadsBatchPayload(parsed);
   if (headsBatch) {
+    const streamSource = readWorkspaceStreamSource(parsed);
     const batchRev = headsBatch.snapshotRev;
     if (typeof batchRev === "number") {
       if (batchRev < host.state.getSnapshotRev()) {
@@ -484,7 +491,8 @@ export const handleStreamMessage = async (
         delta,
       };
       markWorkspaceEventReceivedAt(evt, payload.receivedAtMs);
-      noteWorkspaceEventClientReceiveLag(host, evt, payload.receivedAtMs, "heads_batch");
+      markWorkspaceEventStreamSource(evt, streamSource);
+      noteWorkspaceEventClientReceiveLag(host, evt, payload.receivedAtMs, streamSource);
       host.notifyEventListeners(evt);
     }
     if (changed) {
@@ -493,8 +501,10 @@ export const handleStreamMessage = async (
     return;
   }
   const evt = normalized as WorkspaceActiveSnapshotEvent;
+  const streamSource = readWorkspaceStreamSource(parsed);
   markWorkspaceEventReceivedAt(evt, payload.receivedAtMs);
-  noteWorkspaceEventClientReceiveLag(host, evt, payload.receivedAtMs, "stream_event");
+  markWorkspaceEventStreamSource(evt, streamSource);
+  noteWorkspaceEventClientReceiveLag(host, evt, payload.receivedAtMs, streamSource);
   const queueAgeMs = Math.max(0, nowMs() - payload.receivedAtMs);
   const foregroundEvent = host.isForegroundSessionEvent(evt);
   if (host.workerPatchEmitter) {

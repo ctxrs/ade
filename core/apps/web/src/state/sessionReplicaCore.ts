@@ -5,6 +5,7 @@ import type {
   SessionHeadSnapshot,
   WorkspaceActiveSnapshotEvent,
 } from "@ctx/types";
+import type { WorkspaceActiveSnapshotStreamSource } from "./workspaceActiveSnapshotProtocol";
 import { clearAllAssistantStreaming } from "./assistantStreaming";
 import { loadSessionHeadV1, saveSessionHeadV1 } from "./uiStateStore";
 import { ensureReplicaEventSeq, rebuildReplicaTranscriptAuxState } from "./sessionReplicaTranscript";
@@ -112,7 +113,7 @@ export class SessionReplicaCore {
         this.seedHead(cmd.sessionId, cmd.head, cmd.mode);
         return;
       case "workspace_event":
-        this.handleWorkspaceEvent(cmd.event, cmd.receivedAtMs, cmd.lane);
+        this.handleWorkspaceEvent(cmd.event, cmd.receivedAtMs, cmd.lane, cmd.streamSource);
         return;
       case "set_session":
         this.setSession(cmd.session);
@@ -601,6 +602,7 @@ export class SessionReplicaCore {
     evt: WorkspaceActiveSnapshotEvent,
     receivedAtMs?: number | null,
     lane?: SessionReplicaStreamLane,
+    streamSource?: WorkspaceActiveSnapshotStreamSource | null,
   ): void {
     handleSessionReplicaWorkspaceEvent(
       {
@@ -619,6 +621,7 @@ export class SessionReplicaCore {
       evt,
       receivedAtMs,
       lane,
+      streamSource,
     );
   }
 

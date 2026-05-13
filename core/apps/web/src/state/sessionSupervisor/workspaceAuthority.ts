@@ -3,7 +3,10 @@ import type { WorkspaceActiveSnapshotState } from "../workspaceActiveSnapshotSto
 import { collectWorkspaceActivePrimarySessionIds } from "../workspaceActiveSnapshot/projection";
 import type { SessionReplicaCommand, SessionReplicaHeadSeedMode } from "../sessionReplicaProtocol";
 import { canRepairFromPartialSessionHead } from "../sessionHeadRepair";
-import { readWorkspaceEventReceivedAt } from "../workspaceEventTelemetry";
+import {
+  readWorkspaceEventReceivedAt,
+  readWorkspaceEventStreamSource,
+} from "../workspaceEventTelemetry";
 import { classifyActiveSnapshotSeedMode } from "./activeSnapshotSeed";
 import type { ConnectionStatus, InternalEntry } from "./entryState";
 import { sameIdList } from "./cachePolicy";
@@ -238,6 +241,7 @@ export const ingestWorkspaceEvent = (
     event: evt,
     lane,
     receivedAtMs: readWorkspaceEventReceivedAt(evt),
+    streamSource: readWorkspaceEventStreamSource(evt),
   });
 };
 

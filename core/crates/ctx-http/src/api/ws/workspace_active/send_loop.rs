@@ -57,10 +57,15 @@ pub(super) fn spawn_workspace_active_send_loop(
                         snapshot_rev,
                         deltas,
                         oldest_queued_ms,
+                        stream_source,
                     } => {
                         let delta_count = deltas.len();
-                        let message =
-                            sequencer.sequence_heads_batch(&runtime, snapshot_rev, deltas);
+                        let message = sequencer.sequence_heads_batch(
+                            &runtime,
+                            snapshot_rev,
+                            deltas,
+                            stream_source,
+                        );
                         let serialize_start = Instant::now();
                         let Ok(text) = serde_json::to_string(&message) else {
                             break;
@@ -83,8 +88,9 @@ pub(super) fn spawn_workspace_active_send_loop(
                     }
                     NextWorkspaceStreamItem::SummaryBatch { events } => {
                         let mut send_failed = false;
-                        for event in events {
-                            let message = sequencer.sequence_summary_event(event);
+                        for queued in events {
+                            let message = sequencer
+                                .sequence_summary_event(queued.event, queued.stream_source);
                             let Ok(text) = serde_json::to_string(&message) else {
                                 send_failed = true;
                                 break;

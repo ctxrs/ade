@@ -22,10 +22,16 @@ pub(crate) enum NextWorkspaceStreamItem {
         snapshot_rev: i64,
         deltas: Vec<SessionHeadDelta>,
         oldest_queued_ms: u128,
+        stream_source: WorkspaceActiveSnapshotStreamSource,
     },
     SummaryBatch {
-        events: Vec<WorkspaceActiveSnapshotEvent>,
+        events: Vec<SummaryBatchEvent>,
     },
+}
+
+pub(crate) struct SummaryBatchEvent {
+    pub(crate) event: WorkspaceActiveSnapshotEvent,
+    pub(crate) stream_source: WorkspaceActiveSnapshotStreamSource,
 }
 
 #[derive(Debug)]

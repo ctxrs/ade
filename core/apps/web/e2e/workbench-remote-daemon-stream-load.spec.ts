@@ -338,6 +338,7 @@ type WorkspaceStreamTelemetrySample = {
   sessionId: string | null;
   emittedAtMs: number | null;
   receivedAtMs: number;
+  streamSource?: "live" | "replay";
 };
 
 type RemoteDaemonLoadWindow = Window & {
@@ -1287,7 +1288,9 @@ async function attachPartialRemoteDaemonStreamLoadMetrics(
     [
       "workbench.workspace_stream_event_count",
       "workbench.client_receive_lag_ms",
+      "workbench.workspace_event_age_ms",
       "workbench.session_replica_apply_lag_ms",
+      "workbench.session_replica_event_age_ms",
       "workbench.final_ws_to_dom_ms",
       "workbench.final_ingress_to_dom_ms",
       "workbench.foreground_queue_age_ms",
@@ -1560,7 +1563,10 @@ function summarizeVisibleCadence(snapshot: VisibleProgressSnapshot, activeUntilM
 function summarizeCorrectedReceiveLag(
   samples: readonly WorkspaceStreamTelemetrySample[],
   clockOffsetMs: number,
-  opts?: { minimumEmittedAtMs?: number | null },
+  opts?: {
+    minimumEmittedAtMs?: number | null;
+    streamSource?: "live" | "replay";
+  },
 ): {
   count: number;
   filteredHistoricalCount: number;
@@ -1571,6 +1577,10 @@ function summarizeCorrectedReceiveLag(
   const emittedSamples = samples
     .filter((sample) => typeof sample.emittedAtMs === "number")
     .filter((sample) => {
+      const streamSource = opts?.streamSource;
+      return !streamSource || sample.streamSource === streamSource;
+    })
+    .filter((sample) => {
       const minimum = opts?.minimumEmittedAtMs;
       return typeof minimum !== "number" || Number(sample.emittedAtMs) >= minimum;
     });
@@ -1580,7 +1590,11 @@ function summarizeCorrectedReceiveLag(
   return {
     count: corrected.length,
     filteredHistoricalCount:
-      samples.filter((sample) => typeof sample.emittedAtMs === "number").length - emittedSamples.length,
+      samples.filter((sample) => {
+        if (typeof sample.emittedAtMs !== "number") return false;
+        const streamSource = opts?.streamSource;
+        return !streamSource || sample.streamSource === streamSource;
+      }).length - emittedSamples.length,
     p50: percentile(corrected, 0.5),
     p95: percentile(corrected, 0.95),
     max: corrected.length > 0 ? Math.max(...corrected) : null,
@@ -1982,12 +1996,17 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
   const correctedReceiveLag = summarizeCorrectedReceiveLag(
     streamTelemetrySamples,
     clock.offsetMs,
-    { minimumEmittedAtMs: liveReceiveLagMinimumEmittedAtMs },
+    { minimumEmittedAtMs: liveReceiveLagMinimumEmittedAtMs, streamSource: "live" },
   );
   const correctedForegroundReceiveLag = summarizeCorrectedReceiveLag(
     streamTelemetrySamples.filter((sample) => sample.lane === "foreground"),
     clock.offsetMs,
-    { minimumEmittedAtMs: liveReceiveLagMinimumEmittedAtMs },
+    { minimumEmittedAtMs: liveReceiveLagMinimumEmittedAtMs, streamSource: "live" },
+  );
+  const foregroundReplayEventAge = summarizeCorrectedReceiveLag(
+    streamTelemetrySamples.filter((sample) => sample.lane === "foreground"),
+    clock.offsetMs,
+    { minimumEmittedAtMs: liveReceiveLagMinimumEmittedAtMs, streamSource: "replay" },
   );
   const streamEventMetricEntries = await readTelemetryMetricEntries(
     request,
@@ -2001,7 +2020,9 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
     [
       "workbench.workspace_stream_event_count",
       "workbench.client_receive_lag_ms",
+      "workbench.workspace_event_age_ms",
       "workbench.session_replica_apply_lag_ms",
+      "workbench.session_replica_event_age_ms",
       "workbench.session_replica_apply_duration_ms",
       "workbench.final_ws_to_dom_ms",
       "workbench.final_ingress_to_dom_ms",
@@ -2122,7 +2143,9 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
       },
       correctedLiveAll: correctedReceiveLag,
       correctedLiveForeground: correctedForegroundReceiveLag,
+      foregroundReplayEventAge,
       telemetry: telemetryMetrics["workbench.client_receive_lag_ms"] ?? metricRollupEmpty(),
+      eventAgeTelemetry: telemetryMetrics["workbench.workspace_event_age_ms"] ?? metricRollupEmpty(),
     },
     interrupt,
     telemetryMetrics,
@@ -2184,6 +2207,10 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
   expect(correctedForegroundReceiveLag.count).toBeGreaterThan(0);
   expect(correctedForegroundReceiveLag.p95 ?? Infinity).toBeLessThanOrEqual(
     MAX_FOREGROUND_CLIENT_RECEIVE_LAG_MS,
+  );
+  expect(telemetryMetrics["workbench.final_ws_to_dom_ms"]?.count ?? 0).toBeGreaterThan(0);
+  expect(telemetryMetrics["workbench.final_ws_to_dom_ms"]?.p95 ?? Infinity).toBeLessThanOrEqual(
+    MAX_BACKEND_TO_DOM_MS,
   );
   expect(telemetryMetrics["workbench.session_replica_apply_lag_ms"]?.count ?? 0).toBeGreaterThan(0);
   expect(telemetryMetrics["workbench.session_replica_apply_lag_ms"]?.p95 ?? Infinity).toBeLessThanOrEqual(

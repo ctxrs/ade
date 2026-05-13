@@ -12,6 +12,7 @@ import type {
 } from "@ctx/types";
 import type { GitStatusSummary } from "../api/client";
 import type { AssistantStreamingState } from "./assistantStreaming";
+import type { WorkspaceActiveSnapshotStreamSource } from "./workspaceActiveSnapshotProtocol";
 
 export type SessionReplicaConfig = {
   eventBufferLimit: number;
@@ -75,6 +76,7 @@ export type SessionReplicaCommand =
       event: WorkspaceActiveSnapshotEvent;
       lane?: SessionReplicaStreamLane;
       receivedAtMs?: number | null;
+      streamSource?: WorkspaceActiveSnapshotStreamSource | null;
     }
   | { type: "set_session"; session: Session };
 
@@ -134,6 +136,7 @@ export type SessionReplicaFreshnessEvent =
       sessionId: string;
       emittedAtMs: number | null;
       receivedAtMs: number | null;
+      streamSource?: WorkspaceActiveSnapshotStreamSource | null;
       lastEventSeq: number | null;
       eventType: string;
     }

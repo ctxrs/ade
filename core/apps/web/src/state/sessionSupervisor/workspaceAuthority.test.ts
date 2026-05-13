@@ -7,6 +7,7 @@ import {
   upsertWorkspaceSessionHead,
 } from "./workspaceAuthority";
 import type { SessionSupervisorWorkspaceEvent } from "./workspaceInputs";
+import { markWorkspaceEventStreamSource } from "../workspaceEventTelemetry";
 
 const now = "2026-05-05T00:00:00.000Z";
 
@@ -331,6 +332,7 @@ describe("workspaceAuthority", () => {
   it("forwards retained foreground stream deltas to the session replica", () => {
     const replicaDispatch = vi.fn();
     const event = makeDeltaEvent("session-foreground");
+    markWorkspaceEventStreamSource(event, "replay");
     const host = makeIngestHost({
       activeTaskSessionIds: ["session-foreground"],
       replicaDispatch,
@@ -343,6 +345,7 @@ describe("workspaceAuthority", () => {
       event,
       lane: "foreground",
       receivedAtMs: null,
+      streamSource: "replay",
     });
   });
 
@@ -361,6 +364,7 @@ describe("workspaceAuthority", () => {
       event,
       lane: "workspace",
       receivedAtMs: null,
+      streamSource: null,
     });
   });
 

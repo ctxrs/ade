@@ -112,6 +112,7 @@ async fn route_control_event(
         WorkspaceActiveSnapshotStreamMessage::Event {
             rev: 0,
             event: Box::new(event),
+            stream_source: None,
         },
     )
     .await

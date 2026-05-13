@@ -393,6 +393,13 @@ pub enum WorkspaceActiveSnapshotEvent {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceActiveSnapshotStreamSource {
+    Live,
+    Replay,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WorkspaceActiveSnapshotStreamMessage {
@@ -405,12 +412,16 @@ pub enum WorkspaceActiveSnapshotStreamMessage {
     Event {
         rev: i64,
         event: Box<WorkspaceActiveSnapshotEvent>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stream_source: Option<WorkspaceActiveSnapshotStreamSource>,
     },
     HeadsBatch {
         rev: i64,
         snapshot_rev: i64,
         #[serde(default)]
         deltas: Vec<SessionHeadDelta>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stream_source: Option<WorkspaceActiveSnapshotStreamSource>,
     },
     ResetRequired {
         latest_rev: i64,

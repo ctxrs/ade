@@ -8,9 +8,18 @@ import {
   trackWorkerPatchFlush,
 } from "../../utils/analytics";
 import { noteQueueAgeSample } from "../foregroundFreshnessTelemetry";
-import type { WorkspaceActiveSnapshotPatch } from "../workspaceActiveSnapshotProtocol";
+import type {
+  WorkspaceActiveSnapshotPatch,
+  WorkspaceActiveSnapshotStreamSource,
+} from "../workspaceActiveSnapshotProtocol";
 import { saveWorkspaceActiveSnapshotV1 } from "../uiStateStore";
 import type { SessionSubscriptionCursor } from "../sessionSubscription";
+import {
+  markWorkspaceEventReceivedAt,
+  markWorkspaceEventStreamSource,
+  readWorkspaceEventReceivedAt,
+  readWorkspaceEventStreamSource,
+} from "../workspaceEventTelemetry";
 import {
   isForegroundPrioritySessionEvent,
   workspaceEventSessionId,
@@ -53,6 +62,25 @@ const nowMs = (): number => {
     return (performance.timeOrigin ?? Date.now()) + performance.now();
   }
   return Date.now();
+};
+
+const isWorkspaceActiveSnapshotStreamSource = (
+  value: unknown,
+): value is WorkspaceActiveSnapshotStreamSource => value === "live" || value === "replay";
+
+const buildPatchEventMetadata = (
+  events: readonly WorkspaceActiveSnapshotEvent[],
+): Pick<WorkspaceActiveSnapshotPatch, "eventReceivedAtMs" | "eventStreamSources"> => {
+  const eventReceivedAtMs = events.map(readWorkspaceEventReceivedAt);
+  const eventStreamSources = events.map(readWorkspaceEventStreamSource);
+  return {
+    ...(eventReceivedAtMs.some((value) => typeof value === "number")
+      ? { eventReceivedAtMs }
+      : {}),
+    ...(eventStreamSources.some((value) => value !== null)
+      ? { eventStreamSources }
+      : {}),
+  };
 };
 
 const sameIdList = (left: readonly string[], right: readonly string[]): boolean => {
@@ -179,9 +207,17 @@ export const applyWorkerPatch = (
   if (patch.persist) {
     schedulePersistCache(host);
   }
-  for (const event of patch.events) {
+  patch.events.forEach((event, index) => {
+    const receivedAtMs = patch.eventReceivedAtMs?.[index];
+    if (typeof receivedAtMs === "number" && Number.isFinite(receivedAtMs)) {
+      markWorkspaceEventReceivedAt(event, receivedAtMs);
+    }
+    const streamSource = patch.eventStreamSources?.[index];
+    if (isWorkspaceActiveSnapshotStreamSource(streamSource)) {
+      markWorkspaceEventStreamSource(event, streamSource);
+    }
     host.notifyEventListeners(event);
-  }
+  });
 
   const applyDurationMs = Math.max(0, nowMs() - applyStartedAtMs);
   if (
@@ -313,6 +349,7 @@ const flushWorkerPatch = (
       sessionHeadUpserts: sessionHeads,
       worktreeRootUpserts: worktreeRoots,
       events,
+      ...buildPatchEventMetadata(events),
       snapshotRev,
       archivedRev: host.state.getArchivedRev(),
       activeSessionIds,
@@ -387,6 +424,7 @@ const flushWorkerPatch = (
       ...(worktreeRootDiff.upserts ? { worktreeRootUpserts: worktreeRootDiff.upserts } : {}),
       ...(worktreeRootDiff.deletes ? { worktreeRootDeletes: worktreeRootDiff.deletes } : {}),
       events,
+      ...buildPatchEventMetadata(events),
       snapshotRev,
       archivedRev: host.state.getArchivedRev(),
       activeSessionIds,

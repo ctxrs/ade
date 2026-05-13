@@ -3,6 +3,7 @@ use super::*;
 
 mod state;
 
+use ctx_core::models::WorkspaceActiveSnapshotStreamSource;
 use state::HeadBatchState;
 
 pub(crate) const HEAD_BATCH_TOTAL_LIMIT: usize = 1000;
@@ -14,6 +15,7 @@ pub(crate) struct HeadBatchDrain {
     pub(crate) snapshot_rev: i64,
     pub(crate) deltas: Vec<SessionHeadDelta>,
     pub(crate) oldest_queued_ms: u128,
+    pub(crate) stream_source: WorkspaceActiveSnapshotStreamSource,
 }
 
 pub(crate) struct HeadBatchBuffer {
@@ -34,8 +36,22 @@ impl HeadBatchBuffer {
         snapshot_rev: i64,
         delta: SessionHeadDelta,
     ) -> Result<(), HeadBatchPushError> {
+        self.push_with_source(
+            snapshot_rev,
+            delta,
+            WorkspaceActiveSnapshotStreamSource::Live,
+        )
+        .await
+    }
+
+    pub(crate) async fn push_with_source(
+        &self,
+        snapshot_rev: i64,
+        delta: SessionHeadDelta,
+        stream_source: WorkspaceActiveSnapshotStreamSource,
+    ) -> Result<(), HeadBatchPushError> {
         let mut state = self.state.lock().await;
-        let result = state.push(snapshot_rev, delta);
+        let result = state.push(snapshot_rev, delta, stream_source);
         if result.is_ok() {
             self.notify.notify_one();
         }

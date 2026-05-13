@@ -56,6 +56,7 @@ pub(super) async fn push_control_gap(
                 reason: Some(reason.to_string()),
                 seed_follows: false,
             }),
+            stream_source: None,
         },
     )
     .await

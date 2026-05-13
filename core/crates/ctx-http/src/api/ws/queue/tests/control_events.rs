@@ -80,6 +80,7 @@ async fn hydrating_keeps_snapshot_control_ahead_of_priority_lane() {
                 reason: Some("foreground".to_string()),
                 seed_follows: false,
             }),
+            stream_source: None,
         },
     )
     .await

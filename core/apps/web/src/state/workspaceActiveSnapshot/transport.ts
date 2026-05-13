@@ -3,6 +3,7 @@ import type {
   SessionHeadSnapshot,
   WorkspaceActiveSnapshot,
 } from "@ctx/types";
+import type { WorkspaceActiveSnapshotStreamSource } from "../workspaceActiveSnapshotProtocol";
 
 const isWorkspaceActiveSnapshot = (value: unknown): value is WorkspaceActiveSnapshot => {
   if (!value || typeof value !== "object") return false;
@@ -39,6 +40,14 @@ export const readWorkspaceStreamRev = (value: unknown): number | null => {
   if (!value || typeof value !== "object") return null;
   const rec = value as { rev?: unknown };
   return typeof rec.rev === "number" ? rec.rev : null;
+};
+
+export const readWorkspaceStreamSource = (
+  value: unknown,
+): WorkspaceActiveSnapshotStreamSource => {
+  if (!value || typeof value !== "object") return "live";
+  const source = (value as { stream_source?: unknown }).stream_source;
+  return source === "replay" ? "replay" : "live";
 };
 
 export const readWorkspaceSnapshotPayload = (

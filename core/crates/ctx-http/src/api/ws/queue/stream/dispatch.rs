@@ -29,6 +29,7 @@ pub(crate) async fn take_next_workspace_stream_item(
             snapshot_rev: foreground.snapshot_rev,
             deltas: foreground.deltas,
             oldest_queued_ms: foreground.oldest_queued_ms,
+            stream_source: foreground.stream_source,
         });
     }
     if let Some(entry) = control.pop().await {
@@ -43,6 +44,7 @@ pub(crate) async fn take_next_workspace_stream_item(
             snapshot_rev: background.snapshot_rev,
             deltas: background.deltas,
             oldest_queued_ms: background.oldest_queued_ms,
+            stream_source: background.stream_source,
         });
     }
     let events = summary_buffer.take().await;

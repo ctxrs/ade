@@ -96,6 +96,7 @@ fn workspace_stream_heads_batch_corpus_roundtrips() {
             rev,
             snapshot_rev,
             deltas,
+            ..
         } => {
             assert_eq!(rev, 79);
             assert_eq!(snapshot_rev, 42);
@@ -111,7 +112,7 @@ fn workspace_stream_session_gap_corpus_roundtrips() {
     let msg: WorkspaceActiveSnapshotStreamMessage =
         load_payload("workspace-stream-session-gap.json");
     match msg {
-        WorkspaceActiveSnapshotStreamMessage::Event { rev, event } => {
+        WorkspaceActiveSnapshotStreamMessage::Event { rev, event, .. } => {
             assert_eq!(rev, 78);
             match *event {
                 ctx_core::models::WorkspaceActiveSnapshotEvent::SessionGap {

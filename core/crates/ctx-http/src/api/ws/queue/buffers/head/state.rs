@@ -3,7 +3,7 @@ use super::super::types::HeadBatchPushError;
 use super::{HeadBatchDrain, HEAD_BATCH_TOTAL_LIMIT};
 use crate::api::ws::HEAD_BATCH_SESSION_LIMIT;
 use ctx_core::ids::SessionId;
-use ctx_core::models::SessionHeadDelta;
+use ctx_core::models::{SessionHeadDelta, WorkspaceActiveSnapshotStreamSource};
 use ctx_workspace_active_snapshot::SessionReplayCursor;
 use std::collections::HashMap;
 use std::time::Instant;
@@ -11,6 +11,7 @@ use std::time::Instant;
 struct QueuedHeadDelta {
     enqueued_at: Instant,
     delta: SessionHeadDelta,
+    stream_source: WorkspaceActiveSnapshotStreamSource,
 }
 
 pub(super) struct HeadBatchState {
@@ -32,12 +33,15 @@ impl HeadBatchState {
         &mut self,
         snapshot_rev: i64,
         delta: SessionHeadDelta,
+        stream_source: WorkspaceActiveSnapshotStreamSource,
     ) -> Result<(), HeadBatchPushError> {
         let session_id = delta.session_id;
         self.snapshot_rev = self.snapshot_rev.max(snapshot_rev);
         if let Some(entry) = self.deltas.get_mut(&session_id) {
             if let Some(prev) = entry.last_mut() {
-                if try_coalesce_partial_delta_tail(&mut prev.delta, &delta) {
+                if prev.stream_source == stream_source
+                    && try_coalesce_partial_delta_tail(&mut prev.delta, &delta)
+                {
                     return Ok(());
                 }
             }
@@ -58,6 +62,7 @@ impl HeadBatchState {
             entry.push(QueuedHeadDelta {
                 enqueued_at: Instant::now(),
                 delta,
+                stream_source,
             });
         }
         self.total_len += 1;
@@ -71,6 +76,7 @@ impl HeadBatchState {
                 snapshot_rev: self.snapshot_rev,
                 deltas: Vec::new(),
                 oldest_queued_ms: 0,
+                stream_source: WorkspaceActiveSnapshotStreamSource::Live,
             };
         }
         if limit == 0 {
@@ -78,9 +84,15 @@ impl HeadBatchState {
                 snapshot_rev: self.snapshot_rev,
                 deltas: Vec::new(),
                 oldest_queued_ms: 0,
+                stream_source: WorkspaceActiveSnapshotStreamSource::Live,
             };
         }
         let snapshot_rev = self.snapshot_rev;
+        let stream_source = self
+            .deltas
+            .values()
+            .find_map(|per_session| per_session.first().map(|queued| queued.stream_source))
+            .unwrap_or(WorkspaceActiveSnapshotStreamSource::Live);
         let mut deltas = Vec::with_capacity(self.total_len.min(limit));
         let mut oldest_enqueued_at: Option<Instant> = None;
         let mut empty_sessions = Vec::new();
@@ -92,7 +104,11 @@ impl HeadBatchState {
             let Some(per_session) = self.deltas.get_mut(&session_id) else {
                 continue;
             };
-            let take_count = (limit - deltas.len()).min(per_session.len());
+            let source_prefix = per_session
+                .iter()
+                .take_while(|queued| queued.stream_source == stream_source)
+                .count();
+            let take_count = (limit - deltas.len()).min(source_prefix);
             for queued in per_session.drain(..take_count) {
                 if oldest_enqueued_at
                     .map(|current| queued.enqueued_at < current)
@@ -119,6 +135,7 @@ impl HeadBatchState {
             oldest_queued_ms: oldest_enqueued_at
                 .map(|enqueued_at| enqueued_at.elapsed().as_millis())
                 .unwrap_or(0),
+            stream_source,
         }
     }
 

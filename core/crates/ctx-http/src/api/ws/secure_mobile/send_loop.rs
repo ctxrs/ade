@@ -56,11 +56,16 @@ pub(super) fn spawn_mobile_secure_send_loop(
                         snapshot_rev,
                         deltas,
                         oldest_queued_ms,
+                        stream_source,
                     } => {
                         envelope_seq += 1;
                         let delta_count = deltas.len();
-                        let message =
-                            sequencer.sequence_heads_batch(&runtime, snapshot_rev, deltas);
+                        let message = sequencer.sequence_heads_batch(
+                            &runtime,
+                            snapshot_rev,
+                            deltas,
+                            stream_source,
+                        );
                         let payload_bytes = serde_json::to_vec(&message)
                             .map(|data| data.len())
                             .unwrap_or(0);
@@ -82,9 +87,10 @@ pub(super) fn spawn_mobile_secure_send_loop(
                     }
                     NextWorkspaceStreamItem::SummaryBatch { events } => {
                         let mut send_failed = false;
-                        for event in events {
+                        for queued in events {
                             envelope_seq += 1;
-                            let message = sequencer.sequence_summary_event(event);
+                            let message = sequencer
+                                .sequence_summary_event(queued.event, queued.stream_source);
                             if send_secure_ws(&mut sender, &key, &device_id, envelope_seq, &message)
                                 .await
                                 .is_err()

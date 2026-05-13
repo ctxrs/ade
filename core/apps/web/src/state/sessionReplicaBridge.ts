@@ -21,6 +21,7 @@ import {
   noteGapRepairMismatch,
   noteProjectionOrSeqRegression,
   noteSessionReplicaApplyDuration,
+  noteSessionReplicaEventAge,
   noteSessionReplicaApplyLag,
   noteStaleHeadDeltaDropped,
 } from "./foregroundFreshnessTelemetry";
@@ -140,20 +141,19 @@ export const handleSessionReplicaFreshnessEvent = (event: SessionReplicaFreshnes
       return;
     case "replica_delta_applied": {
       const appliedAtMs = nowMs();
+      const freshnessContext = {
+        session_id: event.sessionId,
+        last_event_seq: event.lastEventSeq,
+        event_type: event.eventType,
+        ...(event.streamSource ? { stream_source: event.streamSource } : {}),
+      };
       if (typeof event.emittedAtMs === "number") {
-        noteSessionReplicaApplyLag(Math.max(0, appliedAtMs - event.emittedAtMs), {
-          source: "emitted_at",
-          session_id: event.sessionId,
-          last_event_seq: event.lastEventSeq,
-          event_type: event.eventType,
-        });
+        noteSessionReplicaEventAge(Math.max(0, appliedAtMs - event.emittedAtMs), freshnessContext);
       }
       if (typeof event.receivedAtMs === "number") {
         noteSessionReplicaApplyLag(Math.max(0, appliedAtMs - event.receivedAtMs), {
-          source: "received_at",
-          session_id: event.sessionId,
-          last_event_seq: event.lastEventSeq,
-          event_type: event.eventType,
+          ...freshnessContext,
+          lag_source: "received_at",
         });
       }
       return;

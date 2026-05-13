@@ -324,20 +324,44 @@ export const noteClientReceiveLag = (
   lagMs: number,
   context?: Record<string, unknown>,
 ): void => {
-  const source = typeof context?.source === "string" && context.source.trim() ? context.source : "unknown";
+  const streamSource =
+    typeof context?.stream_source === "string" && context.stream_source.trim()
+      ? context.stream_source
+      : "unknown";
   recordLatencyMetric({
     metric: "workbench.client_receive_lag_ms",
     valueMs: lagMs,
     thresholdMs:
       lane === "foreground" ? FOREGROUND_CLIENT_RECEIVE_LAG_SLA_MS : WORKSPACE_CLIENT_RECEIVE_LAG_SLA_MS,
     surface: lane === "foreground" ? "foreground_backlog" : "workspace_backlog",
-    labels: { lane, source },
+    labels: { lane, stream_source: streamSource },
     diagnosticCode: `client_receive_lag.${lane}.sla_missed`,
     message: `${lane} stream event missed the daemon-to-browser receive budget.`,
     context: {
       lane,
       ...(context ?? {}),
     },
+  });
+};
+
+export const noteWorkspaceEventAge = (
+  lane: QueueLane,
+  ageMs: number,
+  context?: Record<string, unknown>,
+): void => {
+  if (!Number.isFinite(ageMs) || ageMs < 0) return;
+  const streamSource =
+    typeof context?.stream_source === "string" && context.stream_source.trim()
+      ? context.stream_source
+      : "unknown";
+  const eventType =
+    typeof context?.event_type === "string" && context.event_type.trim()
+      ? context.event_type
+      : "unknown";
+  recordClientHistogramMetric("workbench.workspace_event_age_ms", "ms", ageMs, {
+    lane,
+    stream_source: streamSource,
+    event_type: eventType,
   });
 };
 
@@ -356,6 +380,10 @@ export const noteSessionReplicaApplyLag = (
   lagMs: number,
   context?: Record<string, unknown>,
 ): void => {
+  const lagSource =
+    typeof context?.lag_source === "string" && context.lag_source.trim()
+      ? context.lag_source
+      : "unknown";
   const op =
     typeof context?.op === "string" && context.op.trim()
       ? context.op
@@ -369,10 +397,30 @@ export const noteSessionReplicaApplyLag = (
     surface: "foreground_backlog",
     labels: {
       op,
+      lag_source: lagSource,
     },
     diagnosticCode: "session_replica.apply_lag_sla_missed",
     message: "Session replica patches missed the apply freshness budget.",
     context,
+  });
+};
+
+export const noteSessionReplicaEventAge = (
+  ageMs: number,
+  context?: Record<string, unknown>,
+): void => {
+  if (!Number.isFinite(ageMs) || ageMs < 0) return;
+  const eventType =
+    typeof context?.event_type === "string" && context.event_type.trim()
+      ? context.event_type
+      : "unknown";
+  const streamSource =
+    typeof context?.stream_source === "string" && context.stream_source.trim()
+      ? context.stream_source
+      : "unknown";
+  recordClientHistogramMetric("workbench.session_replica_event_age_ms", "ms", ageMs, {
+    op: eventType,
+    stream_source: streamSource,
   });
 };
 

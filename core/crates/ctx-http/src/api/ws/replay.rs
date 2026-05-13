@@ -14,20 +14,25 @@ pub(super) fn with_stream_rev(
             active_snapshot,
             active_heads,
         },
-        WorkspaceActiveSnapshotStreamMessage::Event { event, .. } => {
-            WorkspaceActiveSnapshotStreamMessage::Event {
-                rev: stream_rev,
-                event,
-            }
-        }
+        WorkspaceActiveSnapshotStreamMessage::Event {
+            event,
+            stream_source,
+            ..
+        } => WorkspaceActiveSnapshotStreamMessage::Event {
+            rev: stream_rev,
+            event,
+            stream_source,
+        },
         WorkspaceActiveSnapshotStreamMessage::HeadsBatch {
             snapshot_rev,
             deltas,
+            stream_source,
             ..
         } => WorkspaceActiveSnapshotStreamMessage::HeadsBatch {
             rev: stream_rev,
             snapshot_rev,
             deltas,
+            stream_source,
         },
         WorkspaceActiveSnapshotStreamMessage::ResetRequired { latest_rev } => {
             WorkspaceActiveSnapshotStreamMessage::ResetRequired { latest_rev }

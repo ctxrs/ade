@@ -54,8 +54,10 @@ import {
   noteSessionSwitchFirstPaint,
   noteSessionSwitchStarted,
   noteSessionReplicaApplyDuration,
+  noteSessionReplicaEventAge,
   noteSessionReplicaApplyLag,
   noteStaleHeadDeltaDropped,
+  noteWorkspaceEventAge,
   noteWorkspaceStreamEventObserved,
   noteSwitchStaleVisible,
   resetForegroundFreshnessTelemetryForTests,
@@ -153,9 +155,9 @@ describe("foregroundFreshnessTelemetry", () => {
     expect(diagnosticMocks.emitUiDiagnostic).not.toHaveBeenCalled();
   });
 
-  it("records client receive lag with lane and source labels", () => {
+  it("records client receive lag with lane and stream source labels", () => {
     noteClientReceiveLag("foreground", 125, {
-      source: "stream_event",
+      stream_source: "live",
       event_type: "session_head_delta",
     });
 
@@ -163,14 +165,33 @@ describe("foregroundFreshnessTelemetry", () => {
       "workbench.client_receive_lag_ms",
       "ms",
       125,
-      { lane: "foreground", source: "stream_event" },
+      { lane: "foreground", stream_source: "live" },
     );
     expect(diagnosticMocks.emitUiDiagnostic).not.toHaveBeenCalled();
   });
 
-  it("records replica apply lag separately from apply duration", () => {
+  it("records workspace event age without treating it as live receive lag", () => {
+    noteWorkspaceEventAge("foreground", 1250, {
+      stream_source: "replay",
+      event_type: "session_head_delta",
+    });
+
+    expect(clientMocks.recordClientHistogramMetric).toHaveBeenCalledWith(
+      "workbench.workspace_event_age_ms",
+      "ms",
+      1250,
+      { lane: "foreground", stream_source: "replay", event_type: "session_head_delta" },
+    );
+    expect(diagnosticMocks.emitUiDiagnostic).not.toHaveBeenCalled();
+  });
+
+  it("records replica apply lag separately from event age and apply duration", () => {
     noteSessionReplicaApplyLag(80, {
-      source: "received_at",
+      lag_source: "received_at",
+      event_type: "session_head_delta",
+    });
+    noteSessionReplicaEventAge(1800, {
+      stream_source: "replay",
       event_type: "session_head_delta",
     });
     noteSessionReplicaApplyDuration(12, {
@@ -182,7 +203,13 @@ describe("foregroundFreshnessTelemetry", () => {
       "workbench.session_replica_apply_lag_ms",
       "ms",
       80,
-      { op: "session_head_delta" },
+      { op: "session_head_delta", lag_source: "received_at" },
+    );
+    expect(clientMocks.recordClientHistogramMetric).toHaveBeenCalledWith(
+      "workbench.session_replica_event_age_ms",
+      "ms",
+      1800,
+      { op: "session_head_delta", stream_source: "replay" },
     );
     expect(clientMocks.recordClientHistogramMetric).toHaveBeenCalledWith(
       "workbench.session_replica_apply_duration_ms",

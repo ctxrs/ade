@@ -72,6 +72,8 @@ export type WorkspaceActiveSnapshotPatch = {
   worktreeRootUpserts?: Record<string, string>;
   worktreeRootDeletes?: string[];
   events: WorkspaceActiveSnapshotEvent[];
+  eventReceivedAtMs?: Array<number | null>;
+  eventStreamSources?: Array<WorkspaceActiveSnapshotStreamSource | null>;
   snapshotRev: number;
   archivedRev: number;
   activeSessionIds: string[];
@@ -81,12 +83,15 @@ export type WorkspaceActiveSnapshotPatch = {
   oldestForegroundEventReceivedAtMs?: number | null;
 };
 
+export type WorkspaceActiveSnapshotStreamSource = "live" | "replay";
+
 export type WorkspaceActiveSnapshotStreamTelemetry = {
   lane: "foreground" | "workspace";
   eventType: string;
   sessionId: string | null;
   emittedAtMs: number | null;
   receivedAtMs: number;
+  streamSource: WorkspaceActiveSnapshotStreamSource;
 };
 
 export type WorkspaceActiveSnapshotWorkerMessage =

@@ -17,6 +17,10 @@ import {
 } from "../testdata/projectionEquivalenceFixtures";
 import { buildWorkbenchThreadViewModel } from "../pages/SessionPage.workbenchViewModel";
 import type { WorkspaceActiveSnapshotPatch } from "./workspaceActiveSnapshotProtocol";
+import {
+  readWorkspaceEventReceivedAt,
+  readWorkspaceEventStreamSource,
+} from "./workspaceEventTelemetry";
 import { ctxUiRemoteIncident20260508 } from "./__fixtures__/ctxUiRemoteIncident20260508";
 
 vi.mock("../api/client", () => {
@@ -584,6 +588,80 @@ describe("WorkspaceActiveSnapshotStore", () => {
     expect(patches).toHaveLength(1);
     expect(patches[0]?.events.map((event) => event.type)).toEqual(["session_head_delta"]);
     store.destroy();
+  });
+
+  it("preserves stream metadata across worker patch delivery", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    vi.useFakeTimers();
+    const patches: WorkspaceActiveSnapshotPatch[] = [];
+    const workerStore = new WorkspaceActiveSnapshotStoreImpl("ws-1", {
+      disableWorker: true,
+      onPatch: (patch) => patches.push(patch),
+    });
+
+    workerStore.setSubscribedSessions([{ sessionId: "session-1", replay: { kind: "auto" } }]);
+    workerStore.setForegroundSessionId?.("session-1");
+    await asStoreInternals(workerStore).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 1,
+        stream_source: "replay",
+        event: {
+          type: "session_head_delta",
+          workspace_id: "ws-1",
+          snapshot_rev: 1,
+          delta: {
+            session_id: "session-1",
+            last_event_seq: 1,
+            projection_rev: 1,
+            state_rev: 1,
+            emitted_at_ms: Date.now(),
+            event: {
+              seq: 1,
+              id: "event-1",
+              session_id: "session-1",
+              turn_id: "turn-1",
+              event_type: "assistant_complete",
+              payload_json: { full_content: "final" },
+              created_at: "2026-03-09T00:00:01.000Z",
+            },
+            message: {
+              id: "message-1",
+              session_id: "session-1",
+              task_id: "task-1",
+              turn_id: "turn-1",
+              role: "assistant",
+              content: "final",
+              delivery: "immediate",
+              created_at: "2026-03-09T00:00:01.000Z",
+            },
+          },
+        },
+      }),
+    );
+
+    expect(patches).toHaveLength(1);
+    expect(patches[0]?.eventStreamSources).toEqual(["replay"]);
+    expect(typeof patches[0]?.eventReceivedAtMs?.[0]).toBe("number");
+
+    const mainStore = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    const observed: Array<{ receivedAtMs: number | null; streamSource: string | null }> = [];
+    const unsubscribe = mainStore.subscribeEvents((event) => {
+      observed.push({
+        receivedAtMs: readWorkspaceEventReceivedAt(event),
+        streamSource: readWorkspaceEventStreamSource(event),
+      });
+    });
+    const clonedPatch = JSON.parse(JSON.stringify(patches[0])) as WorkspaceActiveSnapshotPatch;
+    mainStore.applyWorkerPatch(clonedPatch);
+
+    expect(observed).toHaveLength(1);
+    expect(observed[0]?.streamSource).toBe("replay");
+    expect(typeof observed[0]?.receivedAtMs).toBe("number");
+    unsubscribe();
+    workerStore.destroy();
+    mainStore.destroy();
   });
 
   it("flushes worker patches immediately for the current subscription when foreground state is stale", async () => {

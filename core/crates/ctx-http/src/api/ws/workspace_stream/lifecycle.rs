@@ -41,6 +41,7 @@ pub(crate) async fn initialize_workspace_stream(
         WorkspaceActiveSnapshotStreamMessage::Event {
             rev: 0,
             event: Box::new(ready),
+            stream_source: None,
         },
     )
     .await

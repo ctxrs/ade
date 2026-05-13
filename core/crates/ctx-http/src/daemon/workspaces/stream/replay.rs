@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use ctx_core::ids::{SessionId, WorkspaceId};
-use ctx_core::models::{WorkspaceActiveSnapshotEvent, WorkspaceActiveSnapshotStreamMessage};
+use ctx_core::models::{
+    WorkspaceActiveSnapshotEvent, WorkspaceActiveSnapshotStreamMessage,
+    WorkspaceActiveSnapshotStreamSource,
+};
 use ctx_workspace_active_snapshot::{
     SessionReplayCursor, WorkspaceSessionReplay, WorkspaceSessionReplayItem,
 };
@@ -119,6 +122,7 @@ where
                 emit(WorkspaceActiveSnapshotStreamMessage::Event {
                     rev: 0,
                     event: Box::new(event),
+                    stream_source: Some(WorkspaceActiveSnapshotStreamSource::Replay),
                 })
                 .await?;
             }

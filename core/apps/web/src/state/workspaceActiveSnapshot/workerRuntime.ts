@@ -12,6 +12,7 @@ import type {
   WorkspaceActiveSnapshotCommand,
   WorkspaceActiveSnapshotPatch,
   WorkspaceActiveSnapshotStreamTelemetry,
+  WorkspaceActiveSnapshotStreamSource,
   WorkspaceActiveSnapshotWorkerMessage,
 } from "../workspaceActiveSnapshotProtocol";
 import {
@@ -44,6 +45,7 @@ type WorkspaceStreamTelemetrySample = {
   sessionId: string | null;
   emittedAtMs: number | null;
   receivedAtMs: number;
+  streamSource: WorkspaceActiveSnapshotStreamSource;
 };
 
 type WindowWithWorkspaceStreamTelemetry = Window & {
@@ -64,6 +66,7 @@ const recordWorkspaceStreamTelemetryForE2E = (
     sessionId: telemetry.sessionId,
     emittedAtMs: telemetry.emittedAtMs,
     receivedAtMs: telemetry.receivedAtMs,
+    streamSource: telemetry.streamSource,
   });
   win.__ctxWorkspaceStreamTelemetrySamples = samples;
 };
@@ -151,12 +154,16 @@ export const startWorker = async (host: WorkspaceActiveSnapshotWorkerHost): Prom
       if (msg.type === "stream_event_telemetry") {
         recordWorkspaceStreamTelemetryForE2E(host, msg.telemetry);
         noteWorkspaceStreamEventObserved(msg.telemetry.lane, msg.telemetry.eventType);
-        if (typeof msg.telemetry.emittedAtMs === "number") {
+        if (
+          typeof msg.telemetry.emittedAtMs === "number" &&
+          msg.telemetry.streamSource === "live"
+        ) {
           noteClientReceiveLag(
             msg.telemetry.lane,
             msg.telemetry.receivedAtMs - msg.telemetry.emittedAtMs,
             {
-              source: "workspace_worker",
+              stream_source: msg.telemetry.streamSource,
+              worker_source: "workspace_worker",
               event_type: msg.telemetry.eventType,
               workspace_id: host.workspaceId,
               session_id: msg.telemetry.sessionId,

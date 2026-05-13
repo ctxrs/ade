@@ -1,5 +1,6 @@
 use ctx_core::models::{
     SessionHeadDelta, WorkspaceActiveSnapshotEvent, WorkspaceActiveSnapshotStreamMessage,
+    WorkspaceActiveSnapshotStreamSource,
 };
 
 use super::super::super::replay::with_stream_rev;
@@ -17,6 +18,15 @@ pub(in crate::api::ws) struct WorkspaceStreamSequencer {
 }
 
 impl WorkspaceStreamSequencer {
+    fn serialized_source(
+        stream_source: WorkspaceActiveSnapshotStreamSource,
+    ) -> Option<WorkspaceActiveSnapshotStreamSource> {
+        match stream_source {
+            WorkspaceActiveSnapshotStreamSource::Live => None,
+            WorkspaceActiveSnapshotStreamSource::Replay => Some(stream_source),
+        }
+    }
+
     pub(in crate::api::ws) fn sequence_control_message(
         &mut self,
         message: WorkspaceActiveSnapshotStreamMessage,
@@ -43,6 +53,7 @@ impl WorkspaceStreamSequencer {
         runtime: &WorkspaceStreamSendRuntime,
         snapshot_rev: i64,
         deltas: Vec<SessionHeadDelta>,
+        stream_source: WorkspaceActiveSnapshotStreamSource,
     ) -> WorkspaceActiveSnapshotStreamMessage {
         let latest_rev = runtime
             .latest_snapshot_rev()
@@ -54,17 +65,20 @@ impl WorkspaceStreamSequencer {
             rev: self.stream_seq,
             snapshot_rev,
             deltas,
+            stream_source: Self::serialized_source(stream_source),
         }
     }
 
     pub(in crate::api::ws) fn sequence_summary_event(
         &mut self,
         event: WorkspaceActiveSnapshotEvent,
+        stream_source: WorkspaceActiveSnapshotStreamSource,
     ) -> WorkspaceActiveSnapshotStreamMessage {
         self.stream_seq += 1;
         WorkspaceActiveSnapshotStreamMessage::Event {
             rev: self.stream_seq,
             event: Box::new(event),
+            stream_source: Self::serialized_source(stream_source),
         }
     }
 }

@@ -108,6 +108,41 @@ async fn head_buffer_zero_chunk_does_not_drop_pending_deltas() {
 }
 
 #[tokio::test]
+async fn head_buffer_drains_live_and_replay_sources_separately() {
+    let buffer = HeadBatchBuffer::new();
+    let session_id = SessionId::new();
+
+    buffer
+        .push(10, cursor_delta(session_id, 1))
+        .await
+        .expect("live delta should enqueue");
+    buffer
+        .push_with_source(
+            11,
+            cursor_delta(session_id, 2),
+            WorkspaceActiveSnapshotStreamSource::Replay,
+        )
+        .await
+        .expect("replay delta should enqueue");
+
+    let live = buffer.take_chunk_with_meta(10).await;
+    assert_eq!(
+        live.stream_source,
+        WorkspaceActiveSnapshotStreamSource::Live
+    );
+    assert_eq!(live.deltas.len(), 1);
+    assert_eq!(live.deltas[0].last_event_seq, 1);
+
+    let replay = buffer.take_chunk_with_meta(10).await;
+    assert_eq!(
+        replay.stream_source,
+        WorkspaceActiveSnapshotStreamSource::Replay
+    );
+    assert_eq!(replay.deltas.len(), 1);
+    assert_eq!(replay.deltas[0].last_event_seq, 2);
+}
+
+#[tokio::test]
 async fn summary_buffer_drops_session_events_at_or_before_resume_cursor() {
     let buffer = SummaryBatchBuffer::new(8);
     let workspace_id = WorkspaceId::new();
@@ -147,16 +182,38 @@ async fn summary_buffer_drops_session_events_at_or_before_resume_cursor() {
 
     let events = buffer.take().await;
     assert_eq!(events.len(), 2);
-    assert!(events.iter().any(|event| matches!(
-        event,
+    assert!(events.iter().any(|queued| matches!(
+        &queued.event,
         WorkspaceActiveSnapshotEvent::SessionSummaryDelta { delta, .. }
             if delta.session_id == session_id && delta.projection_rev == Some(8)
     )));
-    assert!(events.iter().any(|event| matches!(
-        event,
+    assert!(events.iter().any(|queued| matches!(
+        &queued.event,
         WorkspaceActiveSnapshotEvent::SessionSummaryDelta { delta, .. }
             if delta.session_id == other_session_id
     )));
+}
+
+#[tokio::test]
+async fn summary_buffer_preserves_replay_source() {
+    let buffer = SummaryBatchBuffer::new(8);
+    let workspace_id = WorkspaceId::new();
+    let session_id = SessionId::new();
+
+    buffer
+        .push_with_source(
+            session_summary_delta_event(workspace_id, session_id, 3),
+            WorkspaceActiveSnapshotStreamSource::Replay,
+        )
+        .await
+        .expect("summary delta should enqueue");
+
+    let events = buffer.take().await;
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        events[0].stream_source,
+        WorkspaceActiveSnapshotStreamSource::Replay
+    );
 }
 
 #[tokio::test]

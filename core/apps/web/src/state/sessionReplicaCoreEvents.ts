@@ -8,6 +8,7 @@ import type {
   SessionTurnToolSummary,
   WorkspaceActiveSnapshotEvent,
 } from "@ctx/types";
+import type { WorkspaceActiveSnapshotStreamSource } from "./workspaceActiveSnapshotProtocol";
 import { idToString } from "../api/client";
 import { clearSessionHeadV1, clearSessionHistoryPagesV1 } from "./uiStateStore";
 import {
@@ -282,6 +283,7 @@ export const handleSessionReplicaWorkspaceEvent = (
   evt: WorkspaceActiveSnapshotEvent,
   receivedAtMs?: number | null,
   lane?: SessionReplicaStreamLane,
+  streamSource?: WorkspaceActiveSnapshotStreamSource | null,
 ): void => {
   const evtType = (evt as { type?: string }).type;
   if (evtType === "session_head_delta" || evtType === "session_delta") {
@@ -306,6 +308,7 @@ export const handleSessionReplicaWorkspaceEvent = (
         typeof receivedAtMs === "number" && Number.isFinite(receivedAtMs)
           ? receivedAtMs
           : null,
+      streamSource: streamSource ?? null,
       lastEventSeq: delta.last_event_seq,
       eventType: evtType,
     });

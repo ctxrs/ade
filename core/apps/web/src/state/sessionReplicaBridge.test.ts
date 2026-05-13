@@ -12,6 +12,7 @@ const noteGapRecoveryStartedMock = vi.hoisted(() => vi.fn());
 const noteFinalDeltaReceivedMock = vi.hoisted(() => vi.fn());
 const noteSessionReplicaApplyLagMock = vi.hoisted(() => vi.fn());
 const noteSessionReplicaApplyDurationMock = vi.hoisted(() => vi.fn());
+const noteSessionReplicaEventAgeMock = vi.hoisted(() => vi.fn());
 const noteStaleHeadDeltaDroppedMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../utils/desktop", () => ({
@@ -34,6 +35,7 @@ vi.mock("./foregroundFreshnessTelemetry", () => ({
   noteProjectionOrSeqRegression: vi.fn(),
   noteSessionReplicaApplyDuration: noteSessionReplicaApplyDurationMock,
   noteSessionReplicaApplyLag: noteSessionReplicaApplyLagMock,
+  noteSessionReplicaEventAge: noteSessionReplicaEventAgeMock,
   noteStaleHeadDeltaDropped: noteStaleHeadDeltaDroppedMock,
 }));
 
@@ -74,21 +76,23 @@ describe("SessionReplicaBridge", () => {
       sessionId: "session-1",
       emittedAtMs: (performance.timeOrigin ?? 0) + 40,
       receivedAtMs: (performance.timeOrigin ?? 0) + 70,
+      streamSource: "replay",
       lastEventSeq: 3,
       eventType: "session_head_delta",
     });
 
-    expect(noteSessionReplicaApplyLagMock).toHaveBeenCalledWith(60, {
-      source: "emitted_at",
+    expect(noteSessionReplicaEventAgeMock).toHaveBeenCalledWith(60, {
       session_id: "session-1",
       last_event_seq: 3,
       event_type: "session_head_delta",
+      stream_source: "replay",
     });
     expect(noteSessionReplicaApplyLagMock).toHaveBeenCalledWith(30, {
-      source: "received_at",
       session_id: "session-1",
       last_event_seq: 3,
       event_type: "session_head_delta",
+      stream_source: "replay",
+      lag_source: "received_at",
     });
   });
 

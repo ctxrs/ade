@@ -66,7 +66,14 @@ pub(super) async fn replay_workspace_session(
                             } else {
                                 &background_head_buffer
                             };
-                            if let Err(error) = head_buffer.push(snapshot_rev, delta).await {
+                            if let Err(error) = head_buffer
+                                .push_with_source(
+                                    snapshot_rev,
+                                    delta,
+                                    WorkspaceActiveSnapshotStreamSource::Replay,
+                                )
+                                .await
+                            {
                                 log_head_batch_push_error(
                                     labels.replay_queue_label,
                                     workspace_id,
@@ -77,13 +84,19 @@ pub(super) async fn replay_workspace_session(
                             Ok(())
                         }
                         other @ WorkspaceActiveSnapshotEvent::SessionSummaryDelta { .. } => {
-                            summary_buffer.push(other).await.map_err(|error| {
-                                log_summary_batch_push_error(
-                                    labels.replay_queue_label,
-                                    workspace_id,
-                                    &error,
-                                );
-                            })?;
+                            summary_buffer
+                                .push_with_source(
+                                    other,
+                                    WorkspaceActiveSnapshotStreamSource::Replay,
+                                )
+                                .await
+                                .map_err(|error| {
+                                    log_summary_batch_push_error(
+                                        labels.replay_queue_label,
+                                        workspace_id,
+                                        &error,
+                                    );
+                                })?;
                             Ok(())
                         }
                         other => {
@@ -103,6 +116,9 @@ pub(super) async fn replay_workspace_session(
                                 WorkspaceActiveSnapshotStreamMessage::Event {
                                     rev: 0,
                                     event: Box::new(other),
+                                    stream_source: Some(
+                                        WorkspaceActiveSnapshotStreamSource::Replay,
+                                    ),
                                 },
                             )
                             .await
