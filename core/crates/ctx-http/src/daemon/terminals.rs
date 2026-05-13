@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use ctx_core::ids::{TerminalId, WorkspaceId};
 use ctx_core::models::TerminalSession;
 use ctx_transport_runtime::terminal_launch::TerminalLaunchError;
+use ctx_transport_runtime::terminals::TerminalSessionHandle;
 
 use crate::daemon::AppState;
 
@@ -50,4 +51,29 @@ pub(crate) async fn mint_terminal_stream_token(
         stream_path,
         expires_at,
     })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TerminalStreamAccessError {
+    MissingToken,
+    NotFound,
+    Unauthorized,
+}
+
+pub(crate) async fn require_terminal_stream_access(
+    state: &Arc<AppState>,
+    terminal_id: TerminalId,
+    token: Option<&str>,
+) -> Result<Arc<TerminalSessionHandle>, TerminalStreamAccessError> {
+    let provided_token = token.ok_or(TerminalStreamAccessError::MissingToken)?;
+    let handle = state
+        .transport
+        .terminals
+        .get(terminal_id)
+        .await
+        .ok_or(TerminalStreamAccessError::NotFound)?;
+    if !handle.consume_stream_token(provided_token) {
+        return Err(TerminalStreamAccessError::Unauthorized);
+    }
+    Ok(handle)
 }

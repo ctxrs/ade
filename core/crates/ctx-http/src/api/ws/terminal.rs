@@ -1,9 +1,8 @@
 use super::*;
-use std::sync::Arc;
 
-use ctx_transport_runtime::terminals::{
-    TerminalManager, TerminalSessionHandle, DEFAULT_OUTPUT_TAIL_BYTES,
-};
+use ctx_transport_runtime::terminals::DEFAULT_OUTPUT_TAIL_BYTES;
+
+use crate::daemon::terminals::{self, TerminalStreamAccessError};
 
 mod queue;
 mod socket;
@@ -13,19 +12,6 @@ pub(super) use queue::{
     queue_terminal_ws_message, queue_terminal_ws_tail_resync_if_requested, TerminalWsQueueOutcome,
 };
 
-async fn require_terminal_stream_access(
-    manager: &Arc<TerminalManager>,
-    id: TerminalId,
-    token: Option<&str>,
-) -> Result<Arc<TerminalSessionHandle>, StatusCode> {
-    let provided_token = token.ok_or(StatusCode::UNAUTHORIZED)?;
-    let handle = manager.get(id).await.ok_or(StatusCode::NOT_FOUND)?;
-    if !handle.consume_stream_token(provided_token) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
-    Ok(handle)
-}
-
 pub(in crate::api) async fn terminal_stream_ws(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -33,17 +19,27 @@ pub(in crate::api) async fn terminal_stream_ws(
     ws: WebSocketUpgrade,
 ) -> Result<Response, StatusCode> {
     let terminal_id = TerminalId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let session = require_terminal_stream_access(
-        &state.transport.terminals,
+    let session = terminals::require_terminal_stream_access(
+        &state,
         terminal_id,
         params.get("token").map(String::as_str),
     )
-    .await?;
+    .await
+    .map_err(terminal_stream_access_status)?;
 
     let tail_bytes = terminal_stream_tail_bytes(&params);
     Ok(ws.on_upgrade(move |socket| async move {
         socket::handle_terminal_socket(socket, session, tail_bytes).await;
     }))
+}
+
+fn terminal_stream_access_status(error: TerminalStreamAccessError) -> StatusCode {
+    match error {
+        TerminalStreamAccessError::MissingToken | TerminalStreamAccessError::Unauthorized => {
+            StatusCode::UNAUTHORIZED
+        }
+        TerminalStreamAccessError::NotFound => StatusCode::NOT_FOUND,
+    }
 }
 
 fn terminal_stream_tail_bytes(params: &HashMap<String, String>) -> usize {
