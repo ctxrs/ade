@@ -677,6 +677,28 @@ pub(crate) async fn codex_login_status(
         .await
 }
 
+pub(crate) async fn codex_login_statuses(
+    state: &AppState,
+) -> Vec<provider_accounts::CodexLoginStatus> {
+    state
+        .providers
+        .with_codex_login_sessions(|map| map.values().cloned().collect())
+        .await
+}
+
+pub(crate) async fn remove_codex_login_session(
+    state: &AppState,
+    account_id: &str,
+) -> Vec<provider_accounts::CodexLoginStatus> {
+    state
+        .providers
+        .with_codex_login_sessions(|map| {
+            map.remove(account_id);
+            map.values().cloned().collect()
+        })
+        .await
+}
+
 pub(crate) async fn claim_codex_login_callback(
     state: &AppState,
     account_id: &str,
