@@ -22,7 +22,8 @@ use super::errors::ApiErrorResp;
 use super::redact_json_value;
 use crate::daemon::providers::{
     install_target_for_workspace, prepare_provider_runtime_probe,
-    PreparedProviderRuntimeProbeError, ProviderOptionsCacheSnapshot,
+    store_provider_verify_cache_value, PreparedProviderRuntimeProbeError,
+    ProviderOptionsCacheSnapshot,
 };
 use crate::daemon::AppState;
 use ctx_harness_sources as harness_sources;
@@ -36,7 +37,6 @@ use ctx_provider_runtime::provider_auth::{
     provider_auth_mode, selected_endpoint_from_harness_config,
     selected_endpoint_record_from_harness_config,
 };
-use ctx_provider_runtime::provider_cache::workspace_provider_cache_key;
 use ctx_provider_runtime::provider_launch::config::{
     load_managed_agent_server_config_with_error, load_provider_source_config_with_error,
 };

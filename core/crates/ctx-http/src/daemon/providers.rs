@@ -6,7 +6,7 @@ mod status;
 mod usage;
 
 pub(crate) use bootstrap::{build_bootstrap_options, visible_provider_count_hint};
-pub(crate) use options_cache::ProviderOptionsCacheSnapshot;
+pub(crate) use options_cache::{store_provider_verify_cache_value, ProviderOptionsCacheSnapshot};
 pub(crate) use restarts::{
     invalidate_provider_runtime_state, restart_amp_providers_for_auth_change,
     restart_claude_providers_for_auth_change, restart_codex_providers_for_auth_change,

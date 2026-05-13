@@ -96,6 +96,20 @@ impl ProviderOptionsCacheSnapshot {
     }
 }
 
+pub(crate) async fn store_provider_verify_cache_value(
+    state: &Arc<AppState>,
+    workspace_id: WorkspaceId,
+    target: InstallTarget,
+    provider_id: &str,
+    value: serde_json::Value,
+) {
+    let cache_key = workspace_provider_cache_key(workspace_id, target, provider_id);
+    state
+        .providers
+        .store_provider_verify_cache_value(cache_key, value)
+        .await;
+}
+
 fn attach_verify_cache(
     value: &mut serde_json::Value,
     verify_entry: Option<&CachedProviderJsonSnapshot>,

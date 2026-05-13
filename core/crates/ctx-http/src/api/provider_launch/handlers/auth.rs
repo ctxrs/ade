@@ -106,10 +106,7 @@ pub(in crate::api) async fn authenticate_provider_for_workspace(
     };
     let verify_value =
         redact_json_value(serde_json::to_value(&resp).unwrap_or(serde_json::Value::Null));
-    let cache_key = workspace_provider_cache_key(ws_id, install_target, &provider_id);
-    state
-        .providers
-        .store_provider_verify_cache_value(cache_key, verify_value)
+    store_provider_verify_cache_value(&state, ws_id, install_target, &provider_id, verify_value)
         .await;
 
     Ok(Json(resp))
