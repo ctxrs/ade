@@ -34,7 +34,11 @@ pub(crate) use harness_container::{
     workspace_harness_container_status, WorkspaceHarnessContainerError,
 };
 pub use hydration::{WorkspaceHydrationError, WorkspaceHydrationErrorKind};
-pub(crate) use model_preferences::update_workspace_provider_preferred_model_id;
+pub(crate) use model_preferences::{
+    get_workspace_provider_model_preference, set_workspace_provider_model_preference,
+    update_workspace_provider_preferred_model_id, WorkspaceProviderModelPreference,
+    WorkspaceProviderModelPreferenceError,
+};
 pub(crate) use retry::retry_global_index_write;
 pub(crate) use sandbox_binding::rematerialize_sandbox_binding_for_worktree;
 pub(crate) use vcs_hooks::{

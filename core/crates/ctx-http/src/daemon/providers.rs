@@ -9,6 +9,7 @@ mod inventory;
 mod launch_config;
 mod login_runtime;
 mod login_sessions;
+mod options;
 mod options_cache;
 mod restarts;
 mod runtime_probe;
@@ -89,6 +90,9 @@ pub(crate) use login_sessions::{
     start_codex_login_session, start_cursor_login_session, start_gemini_login_session,
     start_kimi_login_session, start_mistral_login_session, start_qwen_login_session,
     update_cursor_login_auth_url, CodexLoginCallbackClaimError,
+};
+pub(crate) use options::{
+    effective_preferred_model_id_for_workspace, EffectivePreferredModelError,
 };
 pub(crate) use options_cache::{store_provider_verify_cache_value, ProviderOptionsCacheSnapshot};
 pub(crate) use restarts::{

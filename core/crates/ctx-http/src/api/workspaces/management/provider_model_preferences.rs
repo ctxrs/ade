@@ -13,66 +13,58 @@ pub(in crate::api) struct WorkspaceProviderModelPreferenceResp {
     preferred_model_id: Option<String>,
 }
 
-async fn require_known_provider(
-    state: &Arc<AppState>,
-    provider_id: &str,
-) -> Result<(), (StatusCode, Json<ApiErrorResp>)> {
-    let provider_id = provider_id.trim();
-    if provider_id.is_empty() {
-        return Err((
+impl From<crate::daemon::workspaces::WorkspaceProviderModelPreference>
+    for WorkspaceProviderModelPreferenceResp
+{
+    fn from(value: crate::daemon::workspaces::WorkspaceProviderModelPreference) -> Self {
+        Self {
+            provider_id: value.provider_id,
+            preferred_model_id: value.preferred_model_id,
+        }
+    }
+}
+
+fn provider_model_preference_error_response(
+    error: crate::daemon::workspaces::WorkspaceProviderModelPreferenceError,
+) -> (StatusCode, Json<ApiErrorResp>) {
+    match error {
+        crate::daemon::workspaces::WorkspaceProviderModelPreferenceError::ProviderIdRequired => (
             StatusCode::BAD_REQUEST,
             Json(ApiErrorResp {
                 error: "provider_id is required".to_string(),
             }),
-        ));
-    }
-    let matrix = state
-        .providers
-        .load_provider_matrix(&state.core.data_root)
-        .await;
-    if state
-        .providers
-        .is_configurable_provider_id(&matrix, provider_id)
-        .await
-    {
-        return Ok(());
-    }
-    Err((
-        StatusCode::NOT_FOUND,
-        Json(ApiErrorResp {
-            error: format!("provider not found: {provider_id}"),
-        }),
-    ))
-}
-
-async fn load_effective_preferred_model_id(
-    state: &Arc<AppState>,
-    workspace: &ctx_core::models::Workspace,
-    provider_id: &str,
-) -> Result<Option<String>, (StatusCode, Json<ApiErrorResp>)> {
-    let options = crate::api::provider_launch::get_provider_options(
-        State(Arc::clone(state)),
-        Path((workspace.id.0.to_string(), provider_id.to_string())),
-    )
-    .await
-    .map_err(|(status, body)| {
-        (
-            status,
+        ),
+        crate::daemon::workspaces::WorkspaceProviderModelPreferenceError::ProviderNotFound {
+            provider_id,
+        } => (
+            StatusCode::NOT_FOUND,
             Json(ApiErrorResp {
-                error: body
-                    .0
-                    .get("error")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("provider options unavailable")
-                    .to_string(),
+                error: format!("provider not found: {provider_id}"),
             }),
-        )
-    })?;
-    Ok(options
-        .0
-        .get("preferred_model_id")
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string))
+        ),
+        crate::daemon::workspaces::WorkspaceProviderModelPreferenceError::WorkspaceNotFound => (
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "workspace not found".to_string(),
+            }),
+        ),
+        crate::daemon::workspaces::WorkspaceProviderModelPreferenceError::StoreUnavailable(
+            error,
+        ) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&error.to_string()),
+            }),
+        ),
+        crate::daemon::workspaces::WorkspaceProviderModelPreferenceError::ExecutionSettings(
+            error,
+        ) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: format!("failed to load workspace execution settings: {error:#}"),
+            }),
+        ),
+    }
 }
 
 pub(in crate::api) async fn get_workspace_provider_model_preference(
@@ -80,15 +72,15 @@ pub(in crate::api) async fn get_workspace_provider_model_preference(
     Path((id, provider_id)): Path<(String, String)>,
 ) -> Result<Json<WorkspaceProviderModelPreferenceResp>, (StatusCode, Json<ApiErrorResp>)> {
     let workspace_id = parse_workspace_id(&id)?;
-    let workspace = require_workspace(&state, workspace_id).await?;
-    require_known_provider(&state, &provider_id).await?;
-    let provider_id = provider_id.trim().to_string();
-    let preferred_model_id =
-        load_effective_preferred_model_id(&state, &workspace, &provider_id).await?;
-    Ok(Json(WorkspaceProviderModelPreferenceResp {
-        provider_id,
-        preferred_model_id,
-    }))
+    crate::daemon::workspaces::get_workspace_provider_model_preference(
+        &state,
+        workspace_id,
+        &provider_id,
+    )
+    .await
+    .map(WorkspaceProviderModelPreferenceResp::from)
+    .map(Json)
+    .map_err(provider_model_preference_error_response)
 }
 
 pub(in crate::api) async fn update_workspace_provider_model_preference(
@@ -97,28 +89,14 @@ pub(in crate::api) async fn update_workspace_provider_model_preference(
     Json(req): Json<UpdateWorkspaceProviderModelPreferenceReq>,
 ) -> Result<Json<WorkspaceProviderModelPreferenceResp>, (StatusCode, Json<ApiErrorResp>)> {
     let workspace_id = parse_workspace_id(&id)?;
-    let workspace = require_workspace(&state, workspace_id).await?;
-    require_known_provider(&state, &provider_id).await?;
-    let provider_id = provider_id.trim().to_string();
-    crate::daemon::workspaces::update_workspace_provider_preferred_model_id(
+    crate::daemon::workspaces::set_workspace_provider_model_preference(
         &state,
         workspace_id,
         &provider_id,
         req.preferred_model_id,
     )
     .await
-    .map_err(|error| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&error.to_string()),
-            }),
-        )
-    })?;
-    let preferred_model_id =
-        load_effective_preferred_model_id(&state, &workspace, &provider_id).await?;
-    Ok(Json(WorkspaceProviderModelPreferenceResp {
-        provider_id,
-        preferred_model_id,
-    }))
+    .map(WorkspaceProviderModelPreferenceResp::from)
+    .map(Json)
+    .map_err(provider_model_preference_error_response)
 }
