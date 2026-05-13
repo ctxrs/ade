@@ -1,6 +1,7 @@
 mod accounts;
 mod auth;
 mod bootstrap;
+mod diagnostics;
 mod harness_config;
 mod installs;
 mod launch_config;
@@ -38,6 +39,7 @@ pub(crate) use auth::{
     authenticate_provider_for_workspace_runtime, ProviderWorkspaceAuthenticationError,
 };
 pub(crate) use bootstrap::{build_bootstrap_options, visible_provider_count_hint};
+pub(crate) use diagnostics::provider_diagnostics_snapshot;
 pub(crate) use harness_config::{
     delete_provider_harness_endpoint, get_provider_harness_config,
     mark_provider_endpoint_verification, refresh_provider_endpoint_model_catalog,

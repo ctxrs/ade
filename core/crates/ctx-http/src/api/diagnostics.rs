@@ -1,7 +1,6 @@
 use super::health::{build_health_response, HealthResp};
 use super::*;
 use ctx_linux_sandbox_runtime::linux_sandbox_runtime_status;
-use ctx_provider_runtime::provider_launch::status::mark_provider_status_with_managed_config_error;
 
 #[derive(Debug, Serialize)]
 pub(in crate::api) struct DiagnosticsResp {
@@ -23,44 +22,8 @@ pub(in crate::api) async fn diagnostics(
         .unwrap_or_else(
             |err| serde_json::json!({"error": logs::redact_sensitive(&err.to_string())}),
         );
-    let (managed_installs, managed_config_error) =
-        match installer::load_agent_server_config(&state.core.data_root).await {
-            Ok(cfg) => (
-                serde_json::to_value(cfg).unwrap_or_else(|_| serde_json::json!({})),
-                None,
-            ),
-            Err(err) => {
-                let error = logs::redact_sensitive(&err.to_string());
-                (serde_json::json!({ "error": error }), Some(error))
-            }
-        };
-    let managed_installs = redact_json_value(managed_installs);
-
-    let providers = {
-        let mut providers = state.providers.provider_statuses().await;
-        if let Some(config_error) = managed_config_error.as_deref() {
-            for status in &mut providers {
-                mark_provider_status_with_managed_config_error(status, config_error);
-            }
-        }
-        providers
-            .into_iter()
-            .map(|mut s| {
-                s.diagnostics = s
-                    .diagnostics
-                    .into_iter()
-                    .map(|d| logs::redact_sensitive(&d))
-                    .collect();
-                s.details = s
-                    .details
-                    .into_iter()
-                    .filter(|(k, _)| !is_sensitive_key(k))
-                    .map(|(k, v)| (k, logs::redact_sensitive(&v)))
-                    .collect();
-                s
-            })
-            .collect::<Vec<_>>()
-    };
+    let provider_diagnostics =
+        crate::daemon::providers::provider_diagnostics_snapshot(&state).await;
 
     let log_files = logs::list_log_files(&state.core.data_root).await;
 
@@ -80,7 +43,7 @@ pub(in crate::api) async fn diagnostics(
             "startup_prewarm": startup_prewarm,
             "linux_sandbox_runtime": linux_sandbox_runtime,
         }),
-        providers,
-        managed_installs,
+        providers: provider_diagnostics.providers,
+        managed_installs: provider_diagnostics.managed_installs,
     }))
 }
