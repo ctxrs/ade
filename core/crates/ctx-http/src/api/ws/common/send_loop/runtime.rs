@@ -50,12 +50,6 @@ impl WorkspaceStreamSendRuntime {
         .await
     }
 
-    async fn priority_work_available(&self) -> bool {
-        !self.priority_control.is_empty().await
-            || !self.foreground_head_buffer.is_empty().await
-            || !self.control.is_empty().await
-    }
-
     pub(in crate::api::ws) fn clear_hydrating(&self) {
         self.send_control.clear_hydrating();
     }
@@ -84,20 +78,6 @@ impl WorkspaceStreamSendRuntime {
             _ = self.background_head_buffer.notify().notified() => {},
             _ = self.summary_buffer.notify().notified() => {},
             _ = tick.tick() => {},
-        }
-    }
-
-    pub(in crate::api::ws) async fn wait_after_background_batch(&self) {
-        if self.priority_work_available().await {
-            return;
-        }
-        let delay = tokio::time::sleep(HEAD_BATCH_FLUSH_INTERVAL);
-        tokio::pin!(delay);
-        tokio::select! {
-            _ = self.priority_control.notify().notified() => {},
-            _ = self.control.notify().notified() => {},
-            _ = self.foreground_head_buffer.notify().notified() => {},
-            _ = &mut delay => {},
         }
     }
 

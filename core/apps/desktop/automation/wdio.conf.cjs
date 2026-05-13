@@ -849,7 +849,9 @@ const buildDesktopAppLaunchEnv = () => {
 
 const createDesktopAppLaunchWrapper = (appExecutablePath, env) => {
   const entries = Object.entries(env).filter(([, value]) => String(value || "").trim());
-  if (process.platform === "win32" || entries.length === 0) return appExecutablePath;
+  if (process.platform === "win32" || process.platform === "linux" || entries.length === 0) {
+    return appExecutablePath;
+  }
   const signature = crypto
     .createHash("sha256")
     .update(JSON.stringify({ appExecutablePath, env }))

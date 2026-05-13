@@ -45,7 +45,7 @@ test("wdio shipped-app mode is cross-platform and supports an explicit bundle di
   );
 });
 
-test("wdio shipped-app launches through a wrapper with exact app env", () => {
+test("wdio macOS shipped-app launches through a wrapper with exact app env", () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-launch-env-"));
   try {
     const appPath = path.join(tmp, "ctx-real");
@@ -55,6 +55,7 @@ test("wdio shipped-app launches through a wrapper with exact app env", () => {
     fs.mkdirSync(bundlesDir, { recursive: true });
 
     const nodeScript = [
+      `Object.defineProperty(process, "platform", { value: "darwin" });`,
       `const cfg = require(${JSON.stringify(configPath)});`,
       `process.stdout.write(cfg.config.capabilities[0]["tauri:options"].application);`,
     ].join("\n");
@@ -82,6 +83,45 @@ test("wdio shipped-app launches through a wrapper with exact app env", () => {
     assert.match(wrapper, /export CTX_DESKTOP_SSH_NO_START_REMOTE='0'/);
     assert.match(wrapper, /export CTX_DESKTOP_SSH_START_REMOTE='1'/);
     assert.match(wrapper, new RegExp(`exec '${escapeRegExp(appPath)}' "\\$@"`));
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("wdio Linux shipped-app uses the raw executable and driver env", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-linux-launch-env-"));
+  try {
+    const appPath = path.join(tmp, "ctx-real");
+    const bundlesDir = path.join(tmp, "bundles");
+    const daemonDataDir = path.join(tmp, "workspace-home", ".ctx");
+    fs.writeFileSync(appPath, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+    fs.mkdirSync(bundlesDir, { recursive: true });
+
+    const nodeScript = [
+      `Object.defineProperty(process, "platform", { value: "linux" });`,
+      `const cfg = require(${JSON.stringify(configPath)});`,
+      `process.stdout.write(cfg.config.capabilities[0]["tauri:options"].application);`,
+    ].join("\n");
+    const resolvedPath = execFileSync(process.execPath, ["-e", nodeScript], {
+      cwd: path.resolve(__dirname, "..", "..", ".."),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        CTX_AUTOMATION_TMPDIR: tmp,
+        CTX_DESKTOP_APP_PATH: appPath,
+        CTX_AUTOMATION_SHIPPED_APP: "1",
+        CTX_AUTOMATION_SHIPPED_APP_BUNDLES_DIR: bundlesDir,
+        CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR: daemonDataDir,
+        CTX_AUTOMATION_SSH_NO_START_REMOTE: "0",
+      },
+    });
+    assert.equal(resolvedPath, appPath);
+    assert.equal(fs.existsSync(path.join(tmp, "desktop-app-launchers")), false);
+
+    const script = fs.readFileSync(configPath, "utf8");
+    assert.match(script, /const driverEnv = \{\s*\.\.\.process\.env,/);
+    assert.match(script, /TAURI_DRIVER_PORT: String\(activeTauriDriverPort\)/);
+    assert.match(script, /TAURI_DRIVER_NATIVE_PORT: String\(activeTauriDriverNativePort\)/);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
