@@ -1,9 +1,7 @@
 use super::*;
 use crate::daemon::providers::{
-    decorate_provider_runtime_details, provider_status_without_target_bootstrap,
-    providers_statuses_response,
+    provider_status_response, providers_statuses_response, ProviderStatusResponseError,
 };
-use ctx_provider_runtime::provider_launch::status::provider_status_for_target;
 
 pub(crate) async fn list_providers(
     State(state): State<Arc<AppState>>,
@@ -28,50 +26,21 @@ pub(crate) async fn get_provider(
         )
     })?;
 
-    let (managed, managed_config_error) =
-        ctx_provider_runtime::provider_launch::config::load_managed_agent_server_config_with_error(
-            &state.core.data_root,
-        )
-        .await;
-    let matrix = state
-        .providers
-        .load_provider_matrix(&state.core.data_root)
-        .await;
-    ensure_known_provider(&state, &matrix, &id).await?;
-
-    let mut status = if managed_config_error.is_some() {
-        provider_status_without_target_bootstrap(&state, &id, target).await
-    } else {
-        provider_status_for_target(state.as_ref(), &managed, &matrix, &id, target).await
-    };
-    decorate_provider_runtime_details(
-        &state,
-        &matrix,
-        managed_config_error.as_deref(),
-        target,
-        &mut status,
-    )
-    .await;
+    let status = provider_status_response(&state, &id, target)
+        .await
+        .map_err(provider_status_response_error)?;
     Ok(Json(status))
 }
 
-async fn ensure_known_provider(
-    state: &Arc<AppState>,
-    matrix: &ctx_provider_matrix::ProviderMatrix,
-    provider_id: &str,
-) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
-    if state
-        .providers
-        .is_known_provider_id(matrix, provider_id)
-        .await
-    {
-        return Ok(());
+fn provider_status_response_error(
+    error: ProviderStatusResponseError,
+) -> (StatusCode, Json<serde_json::Value>) {
+    match error {
+        ProviderStatusResponseError::NotFound { provider_id } => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": format!("provider not found: {provider_id}")
+            })),
+        ),
     }
-
-    Err((
-        StatusCode::NOT_FOUND,
-        Json(serde_json::json!({
-            "error": format!("provider not found: {provider_id}")
-        })),
-    ))
 }

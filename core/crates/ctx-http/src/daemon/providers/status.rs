@@ -9,9 +9,12 @@ use crate::daemon::{execution_effective, AppState};
 
 mod details;
 
-pub(crate) use details::{
-    decorate_provider_runtime_details, provider_status_without_target_bootstrap,
-};
+use details::{decorate_provider_runtime_details, provider_status_without_target_bootstrap};
+
+#[derive(Debug)]
+pub(crate) enum ProviderStatusResponseError {
+    NotFound { provider_id: String },
+}
 
 pub(crate) async fn install_target_for_workspace(
     state: &Arc<AppState>,
@@ -56,6 +59,38 @@ pub(crate) async fn providers_statuses_response(
     out
 }
 
+pub(crate) async fn provider_status_response(
+    state: &Arc<AppState>,
+    provider_id: &str,
+    target: InstallTarget,
+) -> Result<ProviderStatus, ProviderStatusResponseError> {
+    let (managed, managed_config_error) =
+        ctx_provider_runtime::provider_launch::config::load_managed_agent_server_config_with_error(
+            &state.core.data_root,
+        )
+        .await;
+    let matrix = state
+        .providers
+        .load_provider_matrix(&state.core.data_root)
+        .await;
+    ensure_known_provider(state, &matrix, provider_id).await?;
+
+    let mut status = if managed_config_error.is_some() {
+        provider_status_without_target_bootstrap(state, provider_id, target).await
+    } else {
+        provider_status_for_target(state.as_ref(), &managed, &matrix, provider_id, target).await
+    };
+    decorate_provider_runtime_details(
+        state,
+        &matrix,
+        managed_config_error.as_deref(),
+        target,
+        &mut status,
+    )
+    .await;
+    Ok(status)
+}
+
 async fn provider_status_ids(
     state: &Arc<AppState>,
     matrix: &ctx_provider_matrix::ProviderMatrix,
@@ -65,6 +100,24 @@ async fn provider_status_ids(
         .providers
         .visible_provider_status_ids(matrix, include_matrix_providers)
         .await
+}
+
+async fn ensure_known_provider(
+    state: &Arc<AppState>,
+    matrix: &ctx_provider_matrix::ProviderMatrix,
+    provider_id: &str,
+) -> Result<(), ProviderStatusResponseError> {
+    if state
+        .providers
+        .is_known_provider_id(matrix, provider_id)
+        .await
+    {
+        return Ok(());
+    }
+
+    Err(ProviderStatusResponseError::NotFound {
+        provider_id: provider_id.to_string(),
+    })
 }
 
 async fn decorate_provider_statuses(

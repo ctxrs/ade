@@ -1,11 +1,9 @@
 use super::*;
 use ctx_core::ids::WorkspaceId;
 
-mod cache;
 mod finalization;
 mod responses;
 
-pub(super) use cache::ProviderOptionsCacheSnapshot;
 pub(super) use finalization::{finalize_provider_options_response, ProviderOptionsResponseContext};
 pub(super) use responses::{
     config_error_provider_options_response, env_probe_provider_options_response,

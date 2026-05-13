@@ -1,14 +1,23 @@
-use super::*;
-use ctx_provider_runtime::provider_cache::CachedProviderJsonSnapshot;
+use std::sync::Arc;
+use std::time::Duration;
 
-pub(in crate::api::provider_launch) struct ProviderOptionsCacheSnapshot {
+use ctx_core::ids::WorkspaceId;
+use ctx_provider_install::install_state::InstallTarget;
+use ctx_provider_runtime::provider_cache::{
+    workspace_provider_cache_key, CachedProviderJsonSnapshot,
+};
+use ctx_provider_runtime::provider_launch::options::provider_options_cache_entry_is_authoritative;
+
+use crate::daemon::AppState;
+
+pub(crate) struct ProviderOptionsCacheSnapshot {
     cache_key: String,
     verify_entry: Option<CachedProviderJsonSnapshot>,
     authoritative_entry: Option<CachedProviderJsonSnapshot>,
 }
 
 impl ProviderOptionsCacheSnapshot {
-    pub(in crate::api::provider_launch) async fn load(
+    pub(crate) async fn load(
         state: &Arc<AppState>,
         workspace_id: WorkspaceId,
         target: InstallTarget,
@@ -45,7 +54,7 @@ impl ProviderOptionsCacheSnapshot {
         }
     }
 
-    pub(in crate::api::provider_launch) fn fresh_authoritative_response(
+    pub(crate) fn fresh_authoritative_response(
         &self,
         cache_ttl: Duration,
         verify_ttl: Duration,
@@ -67,30 +76,22 @@ impl ProviderOptionsCacheSnapshot {
             .filter(|value| !value.is_null())
     }
 
-    pub(in crate::api::provider_launch) fn cached_models(&self) -> Option<serde_json::Value> {
+    pub(crate) fn cached_models(&self) -> Option<serde_json::Value> {
         self.cached_payload_field("models")
     }
 
-    pub(in crate::api::provider_launch) fn cached_modes(&self) -> Option<serde_json::Value> {
+    pub(crate) fn cached_modes(&self) -> Option<serde_json::Value> {
         self.cached_payload_field("modes")
     }
 
-    pub(in crate::api::provider_launch) async fn store_response(
-        &self,
-        state: &Arc<AppState>,
-        value: serde_json::Value,
-    ) {
+    pub(crate) async fn store_response(&self, state: &Arc<AppState>, value: serde_json::Value) {
         state
             .providers
             .store_provider_options_cache_value(self.cache_key.clone(), value)
             .await;
     }
 
-    pub(in crate::api::provider_launch) fn attach_verify_cache(
-        &self,
-        value: &mut serde_json::Value,
-        verify_ttl: Duration,
-    ) {
+    pub(crate) fn attach_verify_cache(&self, value: &mut serde_json::Value, verify_ttl: Duration) {
         attach_verify_cache(value, self.verify_entry.as_ref(), verify_ttl);
     }
 }
