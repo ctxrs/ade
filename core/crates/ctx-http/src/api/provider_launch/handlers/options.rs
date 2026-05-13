@@ -35,18 +35,14 @@ pub(in crate::api) async fn get_provider_options(
     let ProviderOptionsInputs {
         workspace_id: ws_id,
         install_target,
-        managed,
-        managed_config_error,
-        matrix,
-        source_config,
-        source_config_error,
+        launch_config,
         cache,
         workspace,
         preferred_model_id,
         selected_endpoint,
     } = inputs;
 
-    if let Some(config_error) = managed_config_error.as_ref() {
+    if let Some(config_error) = launch_config.managed_config_error.as_ref() {
         let out = managed_config_error_provider_options(
             ProviderOptionsErrorContext {
                 state: &state,
@@ -57,22 +53,17 @@ pub(in crate::api) async fn get_provider_options(
                 verify_ttl: VERIFY_TTL,
             },
             config_error,
-            source_config.as_ref(),
+            launch_config.source_config(),
         )
         .await;
         return Ok(Json(out));
     }
 
-    let provider_status = provider_status_for_target(
-        state.as_ref(),
-        &managed,
-        &matrix,
-        &provider_id,
-        install_target,
-    )
-    .await;
+    let provider_status = launch_config
+        .provider_status(&state, &provider_id, install_target)
+        .await;
 
-    if let Some(config_error) = source_config_error.as_ref() {
+    if let Some(config_error) = launch_config.source_config_error.as_ref() {
         let out = source_config_error_provider_options(
             ProviderOptionsErrorContext {
                 state: &state,
@@ -84,17 +75,18 @@ pub(in crate::api) async fn get_provider_options(
             },
             &provider_status,
             config_error,
-            source_config.as_ref(),
+            launch_config.source_config(),
         )
         .await;
         return Ok(Json(out));
     }
 
+    let source_config = launch_config.source_config();
     let has_active_auth = match probe::provider_has_active_auth_for_workspace_runtime(
         state.as_ref(),
         &workspace,
         &provider_id,
-        source_config.as_ref(),
+        source_config,
     )
     .await
     {
@@ -117,7 +109,7 @@ pub(in crate::api) async fn get_provider_options(
             return Ok(Json(out));
         }
     };
-    let auth_mode = provider_auth_mode(has_active_auth, source_config.as_ref());
+    let auth_mode = provider_auth_mode(has_active_auth, source_config);
 
     if !provider_status_is_usable(&provider_status) {
         let out = unusable_provider_options(
@@ -132,7 +124,7 @@ pub(in crate::api) async fn get_provider_options(
             &provider_status,
             has_active_auth,
             auth_mode,
-            source_config.as_ref(),
+            source_config,
             selected_endpoint.as_ref(),
         )
         .await;
@@ -148,7 +140,7 @@ pub(in crate::api) async fn get_provider_options(
         provider_status: &provider_status,
         has_active_auth,
         auth_mode,
-        source_config: source_config.as_ref(),
+        source_config,
         selected_endpoint: selected_endpoint.as_ref(),
         cache: &cache,
         preferred_model_id,

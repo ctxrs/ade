@@ -30,84 +30,52 @@ pub(in crate::api) async fn authenticate_provider_for_workspace(
             })),
         ))?;
 
-    let probe_context = probe::provider_auth_context_for_workspace_runtime(
-        state.as_ref(),
-        &workspace,
-        &provider_id,
-    )
-    .await
-    .map_err(|err| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "error": err,
-            })),
-        )
-    })?;
-    if probe_context.source.source_kind == HarnessSourceKind::Endpoint {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "error": "selected source is endpoint; update endpoint key/config directly instead of interactive authenticate",
-            })),
-        ));
-    }
+    let auth =
+        authenticate_provider_for_workspace_runtime(&state, &workspace, &provider_id, method_id)
+            .await
+            .map_err(|error| match error {
+                ProviderWorkspaceAuthenticationError::ExecutionSettings(error) => {
+                    workspace_execution_settings_error_json(&error)
+                }
+                ProviderWorkspaceAuthenticationError::Verify(error) => (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": error,
+                    })),
+                ),
+            })?;
 
-    let install_target = install_target_for_workspace(&state, workspace.id)
-        .await
-        .map_err(|error| workspace_execution_settings_error_json(&error))?;
-    let (event_tx, mut event_rx) = mpsc::channel(32);
-    tokio::spawn(async move { while event_rx.recv().await.is_some() {} });
-    let checked_at = Utc::now().to_rfc3339();
-    let result =
-        match ctx_provider_runtime::provider_launch::resolver::ensure_provider_adapter_for_target(
-            state.as_ref(),
-            &provider_id,
-            install_target,
-        )
-        .await
-        {
-            Ok(adapter) => {
-                adapter
-                    .authenticate_session(
-                        format!("auth-{}", uuid::Uuid::new_v4()),
-                        probe_context.cwd,
-                        probe_context.env,
-                        method_id,
-                        event_tx,
-                        ctx_providers::adapters::ProviderRunHooks::default(),
-                    )
-                    .await
-            }
-            Err(err) => Err(err),
-        };
-
-    let resp = match result {
-        Ok(()) => ProviderAuthCheckResp {
+    let resp = match auth.error_message {
+        None => ProviderAuthCheckResp {
             provider_id: provider_id.clone(),
             workspace_id: ws_id.0.to_string(),
             status: "ok".to_string(),
             auth_required: Some(false),
-            checked_at: Some(checked_at),
+            checked_at: Some(auth.checked_at.clone()),
             message: None,
         },
-        Err(err) => {
-            let msg = logs::redact_sensitive(&format!("{err:#}"));
-            let (status, auth_required, _) = classify_probe_error(&msg);
+        Some(message) => {
+            let (status, auth_required, _) = classify_probe_error(&message);
             ProviderAuthCheckResp {
                 provider_id: provider_id.clone(),
                 workspace_id: ws_id.0.to_string(),
                 status: status.to_string(),
                 auth_required,
-                checked_at: Some(checked_at),
-                message: Some(msg),
+                checked_at: Some(auth.checked_at.clone()),
+                message: Some(message),
             }
         }
     };
     let verify_value =
         redact_json_value(serde_json::to_value(&resp).unwrap_or(serde_json::Value::Null));
-    store_provider_verify_cache_value(&state, ws_id, install_target, &provider_id, verify_value)
-        .await;
+    store_provider_verify_cache_value(
+        &state,
+        ws_id,
+        auth.install_target,
+        &provider_id,
+        verify_value,
+    )
+    .await;
 
     Ok(Json(resp))
 }

@@ -9,7 +9,8 @@ use crate::daemon::{execution_effective, AppState};
 
 mod details;
 
-use details::{decorate_provider_runtime_details, provider_status_without_target_bootstrap};
+use details::decorate_provider_runtime_details;
+pub(super) use details::provider_status_without_target_bootstrap;
 
 #[derive(Debug)]
 pub(crate) enum ProviderStatusResponseError {

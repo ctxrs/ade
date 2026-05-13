@@ -4,6 +4,8 @@ use ctx_observability::logs;
 
 use ctx_provider_runtime::provider_launch::install as provider_launch_install;
 
+use crate::daemon::providers::ProviderLaunchConfigError;
+
 pub(in crate::api::provider_launch) fn workspace_execution_settings_error_json(
     error: &anyhow::Error,
 ) -> (StatusCode, Json<serde_json::Value>) {
@@ -30,6 +32,19 @@ pub(in crate::api::provider_launch) fn provider_install_error_response(
             "code": error.code,
         })),
     )
+}
+
+pub(in crate::api::provider_launch) fn provider_launch_config_error_response(
+    error: ProviderLaunchConfigError,
+) -> (StatusCode, Json<serde_json::Value>) {
+    match error {
+        ProviderLaunchConfigError::UnsupportedProvider { provider_id } => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": format!("unsupported provider id: {provider_id}"),
+            })),
+        ),
+    }
 }
 
 #[cfg(test)]

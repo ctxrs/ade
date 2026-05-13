@@ -5,6 +5,8 @@ use ctx_core::models::Workspace;
 use ctx_harness_sources::HarnessEndpointRecord;
 use ctx_provider_install::install_state::InstallTarget;
 
+use crate::api::provider_launch::errors::provider_launch_config_error_response;
+
 use super::*;
 
 pub(super) enum ProviderOptionsLoadOutcome {
@@ -15,11 +17,7 @@ pub(super) enum ProviderOptionsLoadOutcome {
 pub(super) struct ProviderOptionsInputs {
     pub(super) workspace_id: WorkspaceId,
     pub(super) install_target: InstallTarget,
-    pub(super) managed: ctx_managed_installs::AgentServerConfigFile,
-    pub(super) managed_config_error: Option<String>,
-    pub(super) matrix: ctx_provider_matrix::ProviderMatrix,
-    pub(super) source_config: Option<harness_sources::HarnessProviderSourceConfig>,
-    pub(super) source_config_error: Option<String>,
+    pub(super) launch_config: ProviderLaunchConfigSnapshot,
     pub(super) cache: ProviderOptionsCacheSnapshot,
     pub(super) workspace: Workspace,
     pub(super) preferred_model_id: Option<String>,
@@ -37,16 +35,9 @@ pub(super) async fn load_provider_options_inputs(
     let install_target = install_target_for_workspace(state, workspace_id)
         .await
         .map_err(|error| workspace_execution_settings_error_json(&error))?;
-    let (managed, managed_config_error) =
-        load_managed_agent_server_config_with_error(&state.core.data_root).await;
-    let matrix = state
-        .providers
-        .load_provider_matrix(&state.core.data_root)
-        .await;
-    let (source_config, source_config_error) =
-        load_provider_source_config_with_error(&state.core.data_root, provider_id).await;
+    let launch_config = load_provider_launch_config_snapshot(state, provider_id).await;
     let skip_cached_config_surfaces =
-        managed_config_error.is_some() || source_config_error.is_some();
+        launch_config.managed_config_error.is_some() || launch_config.source_config_error.is_some();
     let cache = ProviderOptionsCacheSnapshot::load(
         state,
         workspace_id,
@@ -59,50 +50,27 @@ pub(super) async fn load_provider_options_inputs(
     if let Some(out) = cache.fresh_authoritative_response(cache_ttl, verify_ttl) {
         return Ok(ProviderOptionsLoadOutcome::Cached(out));
     }
-    ensure_known_provider(
-        provider_id,
-        state
-            .providers
-            .is_known_provider_id(&matrix, provider_id)
-            .await,
-    )?;
+    launch_config
+        .ensure_known_provider(state, provider_id)
+        .await
+        .map_err(provider_launch_config_error_response)?;
 
     let workspace = load_workspace(state, workspace_id).await?;
     let preferred_model_id =
         load_workspace_preferred_model_id(state, workspace_id, provider_id).await?;
-    let selected_endpoint = selected_endpoint_record_from_harness_config(source_config.as_ref());
+    let selected_endpoint = launch_config.selected_endpoint_record();
 
     Ok(ProviderOptionsLoadOutcome::Ready(Box::new(
         ProviderOptionsInputs {
             workspace_id,
             install_target,
-            managed,
-            managed_config_error,
-            matrix,
-            source_config,
-            source_config_error,
+            launch_config,
             cache,
             workspace,
             preferred_model_id,
             selected_endpoint,
         },
     )))
-}
-
-fn ensure_known_provider(
-    provider_id: &str,
-    known: bool,
-) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
-    if known {
-        return Ok(());
-    }
-
-    Err((
-        StatusCode::BAD_REQUEST,
-        Json(serde_json::json!({
-            "error": format!("unsupported provider id: {provider_id}"),
-        })),
-    ))
 }
 
 async fn load_workspace(

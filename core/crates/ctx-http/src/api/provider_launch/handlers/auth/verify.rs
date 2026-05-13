@@ -5,8 +5,9 @@ mod load;
 mod outcome;
 mod probes;
 
+use crate::api::provider_launch::errors::provider_launch_config_error_response;
 use cache::store_provider_verify_cache;
-use load::{ensure_known_provider, load_verify_workspace};
+use load::load_verify_workspace;
 use outcome::{config_error_response, ProviderVerifyOutcome};
 use probes::{run_catalog_verified_runtime_probe, run_direct_runtime_probe};
 
@@ -19,46 +20,36 @@ pub(in crate::api) async fn verify_provider_for_workspace(
     let install_target = install_target_for_workspace(&state, workspace.id)
         .await
         .map_err(|error| workspace_execution_settings_error_json(&error))?;
-    let (managed, managed_config_error) =
-        load_managed_agent_server_config_with_error(&state.core.data_root).await;
-    let matrix = state
-        .providers
-        .load_provider_matrix(&state.core.data_root)
-        .await;
-    ensure_known_provider(&state, &matrix, &provider_id).await?;
+    let launch_config = load_provider_launch_config_snapshot(&state, &provider_id).await;
+    launch_config
+        .ensure_known_provider(&state, &provider_id)
+        .await
+        .map_err(provider_launch_config_error_response)?;
     let checked_at = Utc::now().to_rfc3339();
-    let (source_config, source_config_error) =
-        load_provider_source_config_with_error(&state.core.data_root, &provider_id).await;
-    let selected_endpoint = selected_endpoint_record_from_harness_config(source_config.as_ref());
-    let mut selected_endpoint_id: Option<String> =
-        selected_endpoint_from_harness_config(source_config);
+    let selected_endpoint = launch_config.selected_endpoint_record();
+    let mut selected_endpoint_id: Option<String> = launch_config.selected_endpoint_id();
 
-    if let Some(config_error) = managed_config_error {
+    if let Some(config_error) = launch_config.managed_config_error.as_ref() {
         return Ok(Json(config_error_response(
             &provider_id,
             ws_id,
             &checked_at,
-            config_error,
+            config_error.clone(),
         )));
     }
 
-    if let Some(config_error) = source_config_error {
+    if let Some(config_error) = launch_config.source_config_error.as_ref() {
         return Ok(Json(config_error_response(
             &provider_id,
             ws_id,
             &checked_at,
-            config_error,
+            config_error.clone(),
         )));
     }
 
-    let provider_status = provider_status_for_target(
-        state.as_ref(),
-        &managed,
-        &matrix,
-        &provider_id,
-        install_target,
-    )
-    .await;
+    let provider_status = launch_config
+        .provider_status(&state, &provider_id, install_target)
+        .await;
     let mut outcome = ProviderVerifyOutcome::new(checked_at, selected_endpoint_id.take());
 
     if !provider_status_is_usable(&provider_status) {

@@ -1,6 +1,5 @@
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::Workspace;
-use ctx_provider_matrix::ProviderMatrix;
 
 use super::*;
 
@@ -26,25 +25,4 @@ pub(super) async fn load_verify_workspace(
                 "error": "workspace not found",
             })),
         ))
-}
-
-pub(super) async fn ensure_known_provider(
-    state: &Arc<AppState>,
-    matrix: &ProviderMatrix,
-    provider_id: &str,
-) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
-    if state
-        .providers
-        .is_known_provider_id(matrix, provider_id)
-        .await
-    {
-        return Ok(());
-    }
-
-    Err((
-        StatusCode::BAD_REQUEST,
-        Json(serde_json::json!({
-            "error": format!("unsupported provider id: {provider_id}"),
-        })),
-    ))
 }
