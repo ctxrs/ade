@@ -8,7 +8,5 @@ mod handler;
 mod persistence;
 #[path = "post/request.rs"]
 mod request;
-#[path = "post/scheduler.rs"]
-mod scheduler;
 
 pub(crate) use handler::post_message;

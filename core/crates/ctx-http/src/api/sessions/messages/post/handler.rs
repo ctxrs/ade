@@ -2,7 +2,6 @@ use super::super::*;
 use super::events::publish_user_message_events;
 use super::persistence::{load_matching_existing_message, persist_user_message, PostMessageParts};
 use super::request::PostMessageReq;
-use super::scheduler::enqueue_message_for_scheduler;
 
 pub(crate) async fn post_message(
     State(state): State<Arc<AppState>>,
@@ -48,7 +47,14 @@ pub(crate) async fn post_message(
 
     let persisted = persist_user_message(&state, &store, &session, parts).await?;
     publish_user_message_events(&state, &store, session_id, &persisted).await?;
-    enqueue_message_for_scheduler(&state, &store, session, &persisted, run_id_header).await;
+    crate::daemon::sessions::command_dispatch::enqueue_user_message_for_scheduler(
+        &state,
+        &store,
+        session,
+        persisted.saved.clone(),
+        run_id_header,
+    )
+    .await;
 
     Ok(Json(persisted.saved))
 }

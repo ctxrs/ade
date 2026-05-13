@@ -12,7 +12,6 @@ use serde::{Deserialize, Serialize};
 use super::artifacts::persist_blob_bytes;
 use super::errors::ApiErrorResp;
 use super::shared::{map_file_completions_error, FileCompletionsQuery};
-use crate::daemon::scheduler::SchedulerCommand;
 use crate::daemon::AppState;
 use ctx_core::ids::*;
 use ctx_core::models::*;
