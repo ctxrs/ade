@@ -12,7 +12,6 @@ mod workspace;
 use command::spawn_cursor_login_child;
 use completion::complete_cursor_login;
 use output_loop::collect_cursor_login_output;
-use progress::set_cursor_login_error;
 use workspace::prepare_cursor_login_workspace;
 
 pub(super) async fn monitor_cursor_login(
@@ -23,8 +22,12 @@ pub(super) async fn monitor_cursor_login(
     let cursor_runtime = match resolve_cursor_login_runtime(&state).await {
         Ok(runtime) => runtime,
         Err(err) => {
-            set_cursor_login_error(&state, &login_id, logs::redact_sensitive(&err.to_string()))
-                .await;
+            crate::daemon::providers::set_cursor_login_error(
+                &state,
+                &login_id,
+                logs::redact_sensitive(&err.to_string()),
+            )
+            .await;
             return;
         }
     };
@@ -33,7 +36,12 @@ pub(super) async fn monitor_cursor_login(
         Ok(workspace) => workspace,
         Err(err) => {
             let login_home = err.login_home().to_path_buf();
-            set_cursor_login_error(&state, &login_id, err.into_status_error()).await;
+            crate::daemon::providers::set_cursor_login_error(
+                &state,
+                &login_id,
+                err.into_status_error(),
+            )
+            .await;
             let _ = tokio::fs::remove_dir_all(&login_home).await;
             return;
         }
@@ -42,7 +50,7 @@ pub(super) async fn monitor_cursor_login(
     let mut child = match spawn_cursor_login_child(&cursor_runtime, &workspace) {
         Ok(child) => child,
         Err(err) => {
-            set_cursor_login_error(
+            crate::daemon::providers::set_cursor_login_error(
                 &state,
                 &login_id,
                 format!("failed to launch cursor-agent login: {err}"),
@@ -66,17 +74,13 @@ pub(super) async fn monitor_cursor_login(
     .await;
 
     let _ = tokio::fs::remove_dir_all(&workspace.login_home).await;
-    state
-        .providers
-        .with_cursor_login_sessions(|map| {
-            if let Some(entry) = map.get_mut(&login_id) {
-                entry.status = completion.status;
-                entry.account_id = completion.account_id;
-                entry.error = completion.error;
-                if entry.auth_url.is_none() {
-                    entry.auth_url = output.observed_auth_url;
-                }
-            }
-        })
-        .await;
+    crate::daemon::providers::finish_cursor_login_session(
+        &state,
+        &login_id,
+        completion.status,
+        completion.account_id,
+        completion.error,
+        output.observed_auth_url,
+    )
+    .await;
 }

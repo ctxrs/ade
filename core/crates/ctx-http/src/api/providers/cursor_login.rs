@@ -48,31 +48,16 @@ pub(crate) async fn start_cursor_login(
         (status, Json(ApiErrorResp { error: msg }))
     })?;
 
-    let login_id = uuid::Uuid::new_v4().to_string();
-    state
-        .providers
-        .with_cursor_login_sessions(|map| {
-            map.insert(
-                login_id.clone(),
-                provider_accounts::CursorLoginStatus {
-                    login_id: login_id.clone(),
-                    auth_url: None,
-                    status: "pending".to_string(),
-                    account_id: None,
-                    error: None,
-                },
-            );
-        })
-        .await;
+    let login_session = crate::daemon::providers::start_cursor_login_session(&state).await;
 
     let state_clone = Arc::clone(&state);
-    let login_id_for_task = login_id.clone();
+    let login_id_for_task = login_session.login_id.clone();
     tokio::spawn(async move {
         monitor_cursor_login(state_clone, login_id_for_task, req.label).await;
     });
 
     Ok(Json(CursorLoginStartResp {
-        login_id,
+        login_id: login_session.login_id,
         auth_url: None,
     }))
 }
@@ -83,9 +68,7 @@ pub(crate) async fn get_cursor_login(
     Path(id): Path<String>,
 ) -> Result<Json<provider_accounts::CursorLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let status = state
-        .providers
-        .with_cursor_login_sessions(|map| map.get(&id).cloned())
+    let status = crate::daemon::providers::cursor_login_status(&state, &id)
         .await
         .ok_or_else(|| {
             (

@@ -2,27 +2,8 @@ use super::super::super::login::extract_auth_url;
 use super::super::output::{first_email_from_text, CursorLoginOutputLine};
 use super::*;
 
-pub(super) async fn set_cursor_login_error(state: &Arc<AppState>, login_id: &str, error: String) {
-    state
-        .providers
-        .with_cursor_login_sessions(|map| {
-            if let Some(entry) = map.get_mut(login_id) {
-                entry.status = "failed".to_string();
-                entry.error = Some(error);
-            }
-        })
-        .await;
-}
-
 async fn update_cursor_auth_url(state: &Arc<AppState>, login_id: &str, auth_url: String) {
-    state
-        .providers
-        .with_cursor_login_sessions(|map| {
-            if let Some(entry) = map.get_mut(login_id) {
-                entry.auth_url = Some(auth_url);
-            }
-        })
-        .await;
+    crate::daemon::providers::update_cursor_login_auth_url(state, login_id, auth_url).await;
 }
 
 pub(super) async fn record_cursor_login_output(
