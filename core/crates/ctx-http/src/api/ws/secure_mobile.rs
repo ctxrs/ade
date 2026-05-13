@@ -7,10 +7,11 @@ use axum::response::IntoResponse;
 
 use ctx_core::ids::*;
 
-use crate::daemon::AppState;
+use crate::daemon::{
+    mobile_access::{self as daemon_mobile_access, MobileSecureStreamAccessError},
+    AppState,
+};
 
-#[path = "secure_mobile/access.rs"]
-mod access;
 #[path = "secure_mobile/context.rs"]
 mod context;
 #[path = "secure_mobile/send_loop.rs"]
@@ -19,7 +20,6 @@ mod send_loop;
 mod socket;
 
 use super::super::MobileSecureStreamQuery;
-use access::require_mobile_secure_stream_access;
 use socket::handle_mobile_secure_ws;
 
 pub(in crate::api) async fn mobile_secure_workspace_stream_ws(
@@ -34,14 +34,28 @@ pub(in crate::api) async fn mobile_secure_workspace_stream_ws(
     };
     let device_id = query.device_id.trim().to_string();
     let token = query.token.trim().to_string();
-    if let Err(status) =
-        require_mobile_secure_stream_access(&state, workspace_id, &device_id, &token).await
+    if let Err(error) = daemon_mobile_access::require_mobile_secure_stream_access(
+        &state,
+        workspace_id,
+        &device_id,
+        &token,
+    )
+    .await
     {
-        return status.into_response();
+        return mobile_secure_stream_access_status(error).into_response();
     }
     ws.on_upgrade(move |socket| async move {
         if let Err(err) = handle_mobile_secure_ws(socket, state, workspace_id, device_id).await {
             tracing::warn!("secure mobile ws ended: {err:#}");
         }
     })
+}
+
+fn mobile_secure_stream_access_status(error: MobileSecureStreamAccessError) -> StatusCode {
+    match error {
+        MobileSecureStreamAccessError::BadDeviceId => StatusCode::BAD_REQUEST,
+        MobileSecureStreamAccessError::Unauthorized => StatusCode::UNAUTHORIZED,
+        MobileSecureStreamAccessError::NotFound => StatusCode::NOT_FOUND,
+        MobileSecureStreamAccessError::Store => StatusCode::INTERNAL_SERVER_ERROR,
+    }
 }

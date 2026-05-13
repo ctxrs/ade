@@ -27,7 +27,6 @@ mod mcp_context;
 mod mcp_scope;
 mod merge_queue_api;
 mod mobile_access;
-mod mobile_scopes;
 mod org_policy;
 mod perf;
 mod provider_launch;
@@ -62,7 +61,6 @@ use mcp_context::*;
 use mcp_scope::*;
 use merge_queue_api::*;
 use mobile_access::*;
-use mobile_scopes::*;
 use org_policy::*;
 use providers::*;
 use repo::*;
@@ -81,10 +79,7 @@ use workspaces::*;
 use request_base::{public_route_url, public_websocket_url, resolve_request_base_url};
 pub use router::router;
 
-use auth::{
-    generate_mobile_api_token, generate_pairing_token, hash_api_token, hash_pairing_token,
-    load_mobile_auth_context_for_profile, MobileAuthContext,
-};
+use auth::{generate_mobile_api_token, generate_pairing_token, hash_api_token, hash_pairing_token};
 use demo::*;
 use errors::ApiErrorResp;
 use ws::{
@@ -95,7 +90,13 @@ use ws::{
 use ctx_core::{ids::*, models::*};
 use ctx_store::store::MobileDeviceUpsert;
 
-use crate::daemon::AppState;
+use crate::daemon::{
+    mobile_access::{
+        default_mobile_profile_scopes, load_mobile_auth_context_for_profile,
+        mobile_scope_set_from_strings, MobileAuthContext, MobileScope,
+    },
+    AppState,
+};
 use ctx_observability::logs;
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
 use ctx_provider_install::install_state::InstallId;

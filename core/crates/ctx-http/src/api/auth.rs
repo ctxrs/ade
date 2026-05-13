@@ -11,13 +11,12 @@ use ctx_http_auth::{
     browser_stream_query_token_is_valid, is_websocket_upgrade, scoped_mcp_route, ScopedMcpRoute,
 };
 
-use crate::daemon::AppState;
+use crate::daemon::{mobile_access::MobileAuthContext, AppState};
 
 mod mobile;
 
 pub(in crate::api) use mobile::{
     generate_mobile_api_token, generate_pairing_token, hash_api_token, hash_pairing_token,
-    load_mobile_auth_context_for_profile, MobileAuthContext,
 };
 
 use mobile::verify_mobile_api_token;

@@ -2,8 +2,8 @@ use axum::extract::ws::{Message as WsMessage, WebSocket};
 use futures::StreamExt;
 
 use super::super::workspace_stream;
-use super::context::{decode_mobile_secure_client_message, load_mobile_secure_stream_context};
-use crate::daemon::AppState;
+use super::context::decode_mobile_secure_client_message;
+use crate::daemon::{mobile_access::load_mobile_secure_stream_context, AppState};
 use ctx_core::ids::WorkspaceId;
 use std::sync::Arc;
 

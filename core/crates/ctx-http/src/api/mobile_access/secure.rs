@@ -49,9 +49,9 @@ pub(in crate::api) async fn handle_mobile_secure(
 
     let response_payload = match load_mobile_auth_context_for_profile(&state, verified.profile_id)
         .await
-        .map_err(|status| {
+        .map_err(|_| {
             (
-                status,
+                StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ApiErrorResp {
                     error: "failed to read mobile access profile".into(),
                 }),

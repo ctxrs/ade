@@ -6,8 +6,7 @@ use ctx_store::store::MobileAccessConfig;
 use ctx_transport_runtime::mobile_e2ee::{self, E2eeKey};
 
 use super::super::{ApiErrorResp, MobileScope, PairMobileDevicePayload, PairMobileDeviceReq};
-use crate::api::auth::load_mobile_auth_context_for_profile;
-use crate::daemon::AppState;
+use crate::daemon::{mobile_access::load_mobile_auth_context_for_profile, AppState};
 
 pub(super) struct VerifiedMobilePairingRequest {
     pub(super) device_uuid: uuid::Uuid,
@@ -48,9 +47,9 @@ pub(super) async fn verify_mobile_pairing_request(
 
     let Some(mobile_auth) = load_mobile_auth_context_for_profile(state, config.profile_id)
         .await
-        .map_err(|status| {
+        .map_err(|_| {
             (
-                status,
+                StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ApiErrorResp {
                     error: "failed to read mobile access profile".into(),
                 }),
