@@ -1,4 +1,4 @@
-use std::{fmt, sync::Arc};
+use std::{fmt, path::PathBuf, sync::Arc};
 
 use anyhow::Context;
 use chrono::Utc;
@@ -10,6 +10,13 @@ pub(crate) struct CodexAccountsSnapshot {
     pub(crate) active_account_id: Option<String>,
     pub(crate) accounts: Vec<provider_accounts::CodexAccountEntry>,
     pub(crate) logins: Vec<provider_accounts::CodexLoginStatus>,
+}
+
+pub(crate) struct PreparedCodexLoginStart {
+    pub(crate) account_id: String,
+    pub(crate) label: String,
+    pub(crate) account_dir: PathBuf,
+    pub(crate) codex_bin: String,
 }
 
 #[derive(Debug)]
@@ -117,6 +124,48 @@ pub(crate) async fn load_codex_accounts_snapshot(
 
 pub(crate) async fn probe_host_codex_auth_candidate() -> provider_accounts::CodexHostImportProbe {
     provider_accounts::probe_host_codex_auth_candidate().await
+}
+
+pub(crate) async fn prepare_codex_login_start(
+    state: &Arc<AppState>,
+    label: Option<String>,
+) -> anyhow::Result<PreparedCodexLoginStart> {
+    let account_id = uuid::Uuid::new_v4().to_string();
+    let label = provider_accounts::normalize_label(label, &account_id);
+    let account_dir =
+        provider_accounts::ensure_codex_account_dir(&state.core.data_root, &account_id)
+            .await
+            .with_context(|| format!("creating codex account directory for {account_id}"))?;
+
+    let prep_result = async {
+        let (cfg, managed_config_error) = ctx_provider_runtime::provider_launch::config::load_managed_agent_server_config_with_error(
+            &state.core.data_root,
+        )
+        .await;
+        if let Some(error) = managed_config_error {
+            anyhow::bail!(error);
+        }
+        let codex_bin = ctx_managed_installs::require_codex_cli_command_path_for_target(
+            &cfg,
+            Some(ctx_provider_install::install_state::InstallTarget::Host),
+        )
+        .context("resolving managed Codex CLI command")?;
+        Ok(codex_bin)
+    }
+    .await;
+
+    match prep_result {
+        Ok(codex_bin) => Ok(PreparedCodexLoginStart {
+            account_id,
+            label,
+            account_dir,
+            codex_bin,
+        }),
+        Err(err) => {
+            let _ = tokio::fs::remove_dir_all(&account_dir).await;
+            Err(err)
+        }
+    }
 }
 
 pub(crate) async fn import_host_codex_auth(

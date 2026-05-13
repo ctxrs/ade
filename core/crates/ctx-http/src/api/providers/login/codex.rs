@@ -41,43 +41,21 @@ pub(crate) async fn start_codex_login(
     Json(req): Json<CodexLoginStartReq>,
 ) -> Result<Json<CodexLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let account_id = uuid::Uuid::new_v4().to_string();
-    let label = provider_accounts::normalize_label(req.label, &account_id);
-    let account_dir =
-        provider_accounts::ensure_codex_account_dir(&state.core.data_root, &account_id)
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: e.to_string(),
-                    }),
-                )
-            })?;
-    let (cfg, managed_config_error) =
-        ctx_provider_runtime::provider_launch::config::load_managed_agent_server_config_with_error(
-            &state.core.data_root,
-        )
-        .await;
-    if let Some(error) = managed_config_error {
-        let _ = tokio::fs::remove_dir_all(&account_dir).await;
-        return Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp { error }),
-        ));
-    }
-    let codex_bin = ctx_managed_installs::require_codex_cli_command_path_for_target(
-        &cfg,
-        Some(ctx_provider_install::install_state::InstallTarget::Host),
-    )
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: e.to_string(),
-            }),
-        )
-    })?;
+    let crate::daemon::providers::PreparedCodexLoginStart {
+        account_id,
+        label,
+        account_dir,
+        codex_bin,
+    } = crate::daemon::providers::prepare_codex_login_start(&state, req.label)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
     let login = match start_codex_login_process(&account_dir, &codex_bin).await {
         Ok(login) => login,
         Err(e) => {
