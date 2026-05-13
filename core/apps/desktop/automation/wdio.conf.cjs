@@ -4,6 +4,7 @@ const crypto = require("crypto");
 const { spawnSync, spawn } = require("child_process");
 const os = require("os");
 const { resolveBoolishFlag } = require("../../../scripts/lib/boolish.cjs");
+const { buildLinuxAppDirLaunchEnv } = require("./helpers/linux_appdir_launch_env.cjs");
 const { buildNonDarwinTauriDriverLaunch } = require("./helpers/tauri_driver_launch.cjs");
 
 const resolveConfiguredPath = (rawValue) => {
@@ -852,6 +853,13 @@ const buildDesktopAppLaunchEnv = () => {
       env[key] = value;
     }
   }
+  Object.assign(env, buildLinuxAppDirLaunchEnv({
+    appPath: APP_PATH,
+    env: {
+      ...process.env,
+      ...env,
+    },
+  }));
   if (SSH_NO_START_REMOTE) {
     env.CTX_DESKTOP_SSH_NO_START_REMOTE = "1";
     env.CTX_DESKTOP_SSH_START_REMOTE = "0";

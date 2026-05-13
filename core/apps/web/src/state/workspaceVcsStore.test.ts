@@ -1,6 +1,12 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorktreeVcsSnapshot } from "@ctx/types";
 import { WorkspaceVcsStore } from "./workspaceVcsStore";
+
+const clientMocks = vi.hoisted(() => ({
+  recordClientCounterMetric: vi.fn(),
+  recordClientHistogramMetric: vi.fn(),
+  subscribeDaemonConfig: vi.fn(() => () => {}),
+}));
 
 vi.mock("../api/client", () => ({
   getDaemonClientConfig: vi.fn(() => ({
@@ -10,9 +16,9 @@ vi.mock("../api/client", () => ({
     runId: null,
   })),
   idToString: (id: string | null | undefined): string => (typeof id === "string" ? id : ""),
-  recordClientCounterMetric: vi.fn(),
-  recordClientHistogramMetric: vi.fn(),
-  subscribeDaemonConfig: vi.fn(() => () => {}),
+  recordClientCounterMetric: clientMocks.recordClientCounterMetric,
+  recordClientHistogramMetric: clientMocks.recordClientHistogramMetric,
+  subscribeDaemonConfig: clientMocks.subscribeDaemonConfig,
 }));
 
 class MockWebSocket {
@@ -116,7 +122,20 @@ const makeDetailSnapshot = (worktreeId: string, rev: number, path: string): Work
   touched_files_state: "ready",
 });
 
+const flushQueuedSnapshots = async (): Promise<void> => {
+  await Promise.resolve();
+  vi.advanceTimersByTime(20);
+  await Promise.resolve();
+};
+
 describe("WorkspaceVcsStore", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    clientMocks.recordClientCounterMetric.mockClear();
+    clientMocks.recordClientHistogramMetric.mockClear();
+    clientMocks.subscribeDaemonConfig.mockClear();
+  });
+
   afterEach(() => {
     globalThis.WebSocket = originalWebSocket;
     mockSockets.length = 0;
@@ -159,7 +178,7 @@ describe("WorkspaceVcsStore", () => {
       demand_generation: 1,
       snapshot: makeSnapshot("worktree-1", 2),
     });
-    await Promise.resolve();
+    await flushQueuedSnapshots();
     expect(store.getWorktreeVcsSnapshot("worktree-1")?.rev).toBe(2);
     socket.emit({
       type: "summary_snapshot",
@@ -168,7 +187,7 @@ describe("WorkspaceVcsStore", () => {
       demand_generation: 1,
       snapshot: makeSnapshot("worktree-1", 1),
     });
-    await Promise.resolve();
+    await flushQueuedSnapshots();
     socket.emit({
       type: "details_snapshot",
       workspace_id: "workspace-1",
@@ -176,7 +195,7 @@ describe("WorkspaceVcsStore", () => {
       demand_generation: 1,
       snapshot: makeSnapshot("worktree-1", 3),
     });
-    await Promise.resolve();
+    await flushQueuedSnapshots();
 
     expect(store.getWorktreeVcsSnapshot("worktree-1")?.rev).toBe(3);
     store.destroy();
@@ -207,7 +226,7 @@ describe("WorkspaceVcsStore", () => {
       demand_generation: 1,
       snapshot: makeSnapshot("worktree-1", 2),
     });
-    await Promise.resolve();
+    await flushQueuedSnapshots();
     expect(store.getWorktreeVcsSnapshot("worktree-1")?.rev).toBe(2);
 
     store.setDemand({ summaryWorktreeIds: ["worktree-2"] });
@@ -218,7 +237,7 @@ describe("WorkspaceVcsStore", () => {
       demand_generation: 1,
       snapshot: makeSnapshot("worktree-2", 99),
     });
-    await Promise.resolve();
+    await flushQueuedSnapshots();
     expect(store.getWorktreeVcsSnapshot("worktree-2")).toBeNull();
 
     socket.emit({
@@ -236,7 +255,7 @@ describe("WorkspaceVcsStore", () => {
       demand_generation: 1,
       snapshot: makeSnapshot("worktree-1", 99),
     });
-    await Promise.resolve();
+    await flushQueuedSnapshots();
     expect(store.getWorktreeVcsSnapshot("worktree-1")?.rev).toBe(2);
 
     store.setDemand({ summaryWorktreeIds: ["worktree-2"], detailWorktreeIds: ["worktree-2"] });
@@ -255,7 +274,7 @@ describe("WorkspaceVcsStore", () => {
       demand_generation: 3,
       snapshot: makeSnapshot("worktree-2", 5),
     });
-    await Promise.resolve();
+    await flushQueuedSnapshots();
     expect(store.getWorktreeVcsSnapshot("worktree-2")?.rev).toBe(5);
 
     socket.emit({
@@ -265,7 +284,7 @@ describe("WorkspaceVcsStore", () => {
       demand_generation: 3,
       snapshot: makeSnapshot("worktree-2", 6),
     });
-    await Promise.resolve();
+    await flushQueuedSnapshots();
     expect(store.getWorktreeVcsSnapshot("worktree-2")?.rev).toBe(6);
     store.destroy();
   });
@@ -295,7 +314,7 @@ describe("WorkspaceVcsStore", () => {
       demand_generation: 1,
       snapshot: makeSummaryOnlySnapshot("worktree-1", 10),
     });
-    await Promise.resolve();
+    await flushQueuedSnapshots();
     expect(store.getWorktreeVcsSnapshot("worktree-1")?.rev).toBe(10);
     expect(store.getWorktreeVcsSnapshot("worktree-1")?.touched_files.total_count).toBe(10);
     expect(store.getWorktreeVcsSnapshot("worktree-1")?.touched_files.items).toEqual([]);
@@ -307,7 +326,7 @@ describe("WorkspaceVcsStore", () => {
       demand_generation: 1,
       snapshot: makeDetailSnapshot("worktree-1", 9, "src/app.ts"),
     });
-    await Promise.resolve();
+    await flushQueuedSnapshots();
     const staleDetailSnapshot = store.getWorktreeVcsSnapshot("worktree-1");
     expect(staleDetailSnapshot?.rev).toBe(10);
     expect(staleDetailSnapshot?.touched_files_state).toBe("stale");
@@ -320,7 +339,7 @@ describe("WorkspaceVcsStore", () => {
       demand_generation: 1,
       snapshot: makeSummaryOnlySnapshot("worktree-1", 11),
     });
-    await Promise.resolve();
+    await flushQueuedSnapshots();
     const newerSummarySnapshot = store.getWorktreeVcsSnapshot("worktree-1");
     expect(newerSummarySnapshot?.rev).toBe(11);
     expect(newerSummarySnapshot?.touched_files_state).toBe("stale");
@@ -352,7 +371,7 @@ describe("WorkspaceVcsStore", () => {
       demand_generation: 1,
       snapshot: makeDetailSnapshot("worktree-1", 1, "vcs-soak-tracked.txt"),
     });
-    await Promise.resolve();
+    await flushQueuedSnapshots();
     expect(store.getWorktreeVcsSnapshot("worktree-1")).toBeNull();
 
     socket.emit({
@@ -370,11 +389,50 @@ describe("WorkspaceVcsStore", () => {
       demand_generation: 1,
       snapshot: makeDetailSnapshot("worktree-1", 1, "vcs-soak-tracked.txt"),
     });
-    await Promise.resolve();
+    await flushQueuedSnapshots();
 
     expect(store.getWorktreeVcsSnapshot("worktree-1")?.touched_files.items?.[0]?.path ?? null).toBe(
       "vcs-soak-tracked.txt",
     );
+    store.destroy();
+  });
+
+  it("coalesces queued snapshots by worktree and tier before applying telemetry", async () => {
+    globalThis.WebSocket = MockWebSocket as unknown as typeof WebSocket;
+    const store = new WorkspaceVcsStore("workspace-1");
+    store.init();
+    await Promise.resolve();
+    await Promise.resolve();
+    const socket = mockSockets[0];
+    socket.open();
+
+    store.setDemand({ summaryWorktreeIds: ["worktree-1"] });
+    socket.emit({
+      type: "subscribed",
+      workspace_id: "workspace-1",
+      demand_generation: 1,
+      summary_worktree_ids: ["worktree-1"],
+      detail_worktree_ids: [],
+    });
+    await Promise.resolve();
+
+    for (let rev = 1; rev <= 100; rev += 1) {
+      socket.emit({
+        type: "summary_snapshot",
+        workspace_id: "workspace-1",
+        worktree_id: "worktree-1",
+        demand_generation: 1,
+        snapshot: makeSnapshot("worktree-1", rev),
+      });
+    }
+
+    await Promise.resolve();
+    expect(store.getWorktreeVcsSnapshot("worktree-1")).toBeNull();
+    await flushQueuedSnapshots();
+
+    expect(store.getWorktreeVcsSnapshot("worktree-1")?.rev).toBe(100);
+    expect(clientMocks.recordClientCounterMetric).toHaveBeenCalledTimes(1);
+    expect(clientMocks.recordClientHistogramMetric).toHaveBeenCalledTimes(1);
     store.destroy();
   });
 });

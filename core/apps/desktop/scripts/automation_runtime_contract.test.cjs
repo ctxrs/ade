@@ -20,6 +20,7 @@ const DESKTOP_LOCAL_DAEMON = path.join(ROOT, "src-tauri", "src", "desktop_local_
 const REMOTE_REAL_CI_WRAPPER = path.join(ROOT, "scripts", "test_remote_real_ci.sh");
 const REMOTE_DOCKER_WRAPPER = path.join(ROOT, "scripts", "test_remote_docker_contracts.sh");
 const LINUX_BUNDLED_LAUNCH_SMOKE = path.join(ROOT, "scripts", "linux_bundled_launch_smoke.mjs");
+const REMOTE_WORKSPACE_WRAPPER = path.join(REPO_ROOT, "scripts", "buildkite", "run_remote_workspace_e2e.sh");
 const DESKTOP_SMOKE_WRAPPER = path.join(REPO_ROOT, "scripts", "desktop_smoke_with_infisical.sh");
 const LINUX_LOCAL_TRUTH_WRAPPER = path.join(REPO_ROOT, "scripts", "tests", "linux_local_install_sandbox_release_truth.sh");
 const UPDATER_LINUX_PROOF_WRAPPER = path.join(REPO_ROOT, "scripts", "tests", "updater_linux_release_truth.sh");
@@ -49,6 +50,9 @@ test("production desktop build keeps automation runtime available", () => {
     main,
     /fn desktop_automation_runtime_enabled\(\) -> bool[\s\S]*TAURI_WEBVIEW_AUTOMATION[\s\S]*AUTOMATION_LIBRARY_PATH/,
   );
+  assert.match(main, /fn write_automation_launch_breadcrumb\(\)/);
+  assert.match(main, /CTX_AUTOMATION_APP_LAUNCH_LOG/);
+  assert.match(main, /desktop app started pid=/);
   assert.match(
     main,
     /#\[cfg\(not\(feature = "automation"\)\)\]\s*\{\s*if !desktop_automation_runtime_enabled\(\) \{\s*builder = builder\.plugin\(tauri_plugin_single_instance::init/s,
@@ -223,11 +227,23 @@ test("remote real CI wrapper retries startup-only WebDriver session failures", (
 
 test("linux bundled launch smoke passes explicit tauri-driver native port", () => {
   const script = fs.readFileSync(LINUX_BUNDLED_LAUNCH_SMOKE, "utf8");
+  const remoteWorkspace = fs.readFileSync(REMOTE_WORKSPACE_WRAPPER, "utf8");
 
   assert.match(script, /--native-port/);
   assert.match(script, /TAURI_DRIVER_NATIVE_PORT: String\(nativePort\)/);
   assert.match(script, /failed to allocate distinct tauri-driver native port/);
   assert.match(script, /requireWorkspacePackage\("webdriverio"\)/);
+  assert.match(script, /buildLinuxAppDirLaunchEnv/);
+  assert.match(script, /resolveLinuxAppDirFromPath/);
+  assert.match(script, /launch-env\.json/);
+  assert.match(script, /app-launch\.log/);
+  assert.match(script, /processes-before-session\.log/);
+  assert.match(script, /processes-after-session\.log/);
+  assert.match(script, /connectBrowser\(\{ driverPort, appPath: options\.appPath \}\)/);
+  assert.match(remoteWorkspace, /prepare_smoke_corepack\(\)/);
+  assert.match(remoteWorkspace, /prepare_smoke_corepack "\$smoke_corepack_home" \|\| return \$\?/);
+  assert.match(remoteWorkspace, /COREPACK_HOME=\$smoke_corepack_home/);
+  assert.match(remoteWorkspace, /CTX_AUTOMATION_APP_LAUNCH_LOG=\$smoke_dir\/app-launch\.log/);
   assert.doesNotMatch(script, /demo_ping_pong_playback/);
   assert.doesNotMatch(script, /node:sqlite/);
 });
@@ -248,6 +264,8 @@ test("updater Linux proof targets storage channel for stable dry-run proofs", ()
     3,
   );
   assert.match(script, /extract_appimage_for_automation\(\) \{/);
+  assert.match(script, /candidate="\$\{app_dir\}\/AppRun"/);
+  assert.doesNotMatch(script, /usr\/bin\/ctx"; do/);
   assert.match(script, /APPIMAGE_AUTOMATION_TARGETS_LOG="\$\{ARTIFACT_DIR\}\/appimage-automation-targets\.log"/);
   assert.match(script, /DAEMON_CLEANUP_LOG="\$\{ARTIFACT_DIR\}\/daemon-cleanup\.log"/);
   assert.match(script, /stop_proof_daemons\(\) \{/);

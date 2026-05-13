@@ -7,6 +7,20 @@ use super::subscription::{
     handle_workspace_vcs_client_message, release_workspace_vcs_demand, WorkspaceVcsRuntime,
 };
 
+fn spawn_workspace_vcs_metrics_loop(
+    state: Arc<AppState>,
+    metrics: Arc<VcsStreamMetrics>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            interval.tick().await;
+            record_workspace_vcs_stream_metrics(&state, &metrics).await;
+        }
+    })
+}
+
 pub(super) async fn handle_workspace_vcs_ws(
     socket: WebSocket,
     state: Arc<AppState>,
@@ -24,6 +38,7 @@ pub(super) async fn handle_workspace_vcs_ws(
 
     let send_task =
         spawn_workspace_vcs_send_loop(sender, Arc::clone(&pending), Arc::clone(&metrics));
+    let metrics_task = spawn_workspace_vcs_metrics_loop(Arc::clone(&state), Arc::clone(&metrics));
 
     let mut runtime = WorkspaceVcsRuntime::default();
     let mut rx = state.subscribe_worktree_vcs_events();
@@ -120,6 +135,7 @@ pub(super) async fn handle_workspace_vcs_ws(
 
     recv_loop.await;
     send_task.abort();
+    metrics_task.abort();
     record_workspace_vcs_stream_metrics(&state, &metrics).await;
     release_workspace_vcs_demand(&state, &runtime).await;
 }

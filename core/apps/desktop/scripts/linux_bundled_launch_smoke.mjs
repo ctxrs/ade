@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -14,6 +14,10 @@ const DESKTOP_ROOT = path.resolve(__dirname, "..");
 const CORE_ROOT = path.resolve(DESKTOP_ROOT, "../..");
 const REPO_ROOT = path.resolve(CORE_ROOT, "..");
 const require = createRequire(import.meta.url);
+const {
+  buildLinuxAppDirLaunchEnv,
+  resolveLinuxAppDirFromPath,
+} = require("../automation/helpers/linux_appdir_launch_env.cjs");
 
 function fail(message) {
   throw new Error(message);
@@ -120,6 +124,116 @@ function normalizeText(value, limit = 2_000) {
   return text.length > limit ? `${text.slice(0, limit)}...` : text;
 }
 
+function pickEnv(env, keys) {
+  return Object.fromEntries(
+    keys
+      .map((key) => [key, String(env[key] || "")])
+      .filter(([, value]) => value.trim().length > 0),
+  );
+}
+
+function describePath(targetPath) {
+  if (!targetPath) return { path: "", exists: false };
+  try {
+    const stat = fs.statSync(targetPath);
+    return {
+      path: targetPath,
+      exists: true,
+      mode: `0${(stat.mode & 0o777).toString(8)}`,
+      size: stat.size,
+      isFile: stat.isFile(),
+      isDirectory: stat.isDirectory(),
+    };
+  } catch (error) {
+    return {
+      path: targetPath,
+      exists: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function writeProcessSnapshot(filePath) {
+  const result = spawnSync("ps", ["-eo", "pid,ppid,stat,etime,command"], {
+    encoding: "utf8",
+  });
+  fs.writeFileSync(
+    filePath,
+    result.status === 0
+      ? String(result.stdout || "")
+      : `ps failed status=${String(result.status)} stderr=${String(result.stderr || "")}\n`,
+  );
+}
+
+function writeLaunchDiagnostics({
+  artifactDir,
+  requestedAppPath,
+  applicationPath,
+  appLaunchEnv,
+  driverPort,
+  nativeDriverPort,
+}) {
+  fs.mkdirSync(artifactDir, { recursive: true });
+  const appDir = resolveLinuxAppDirFromPath({
+    appPath: requestedAppPath,
+    env: {
+      ...process.env,
+      ...appLaunchEnv,
+    },
+  });
+  const targets = appDir
+    ? [
+        path.join(appDir, "AppRun"),
+        path.join(appDir, "AppRun.wrapped"),
+        path.join(appDir, "usr", "bin", "ctx"),
+        path.join(appDir, "apprun-hooks", "linuxdeploy-plugin-gtk.sh"),
+      ]
+    : [requestedAppPath];
+  const envKeys = [
+    "APPDIR",
+    "APPIMAGE",
+    "APPIMAGE_EXTRACT_AND_RUN",
+    "ARGV0",
+    "CTX_APPIMAGE_PATH",
+    "CTX_AUTOMATION_APP_LAUNCH_LOG",
+    "CTX_BUNDLE_DIR",
+    "CTX_DESKTOP_DAEMON_DATA_DIR",
+    "CTX_DESKTOP_SSH_NO_START_REMOTE",
+    "CTX_DESKTOP_SSH_START_REMOTE",
+    "DISPLAY",
+    "GDK_BACKEND",
+    "GIO_EXTRA_MODULES",
+    "GSETTINGS_SCHEMA_DIR",
+    "GTK_DATA_PREFIX",
+    "GTK_EXE_PREFIX",
+    "GTK_IM_MODULE_FILE",
+    "GTK_PATH",
+    "HOME",
+    "LD_LIBRARY_PATH",
+    "PATH",
+    "TAURI_WEBVIEW_AUTOMATION",
+    "TMPDIR",
+    "XDG_CACHE_HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_DIRS",
+    "XDG_DATA_HOME",
+    "XDG_RUNTIME_DIR",
+  ];
+  fs.writeFileSync(
+    path.join(artifactDir, "launch-env.json"),
+    `${JSON.stringify({
+      requestedAppPath,
+      applicationPath,
+      appDir,
+      driverPort,
+      nativeDriverPort,
+      env: pickEnv({ ...process.env, ...appLaunchEnv }, envKeys),
+      targets: targets.map(describePath),
+    }, null, 2)}\n`,
+  );
+  writeProcessSnapshot(path.join(artifactDir, "processes-before-session.log"));
+}
+
 function requireWorkspacePackage(specifier) {
   try {
     const resolved = require.resolve(specifier, {
@@ -172,7 +286,7 @@ async function readLaunchState(browser) {
   }));
 }
 
-function spawnDriver({ port, nativePort, artifactDir }) {
+function spawnDriver({ port, nativePort, artifactDir, appLaunchEnv }) {
   const driverLogPath = path.join(artifactDir, "tauri-driver.log");
   fs.mkdirSync(path.dirname(driverLogPath), { recursive: true });
   const driverLogFd = fs.openSync(driverLogPath, "a");
@@ -187,6 +301,7 @@ function spawnDriver({ port, nativePort, artifactDir }) {
     stdio: ["ignore", driverLogFd, driverLogFd],
     env: {
       ...process.env,
+      ...appLaunchEnv,
       TAURI_DRIVER_PORT: String(port),
       TAURI_DRIVER_NATIVE_PORT: String(nativePort),
     },
@@ -208,6 +323,10 @@ async function main() {
     fail(`bundled app not found: ${options.appPath}`);
   }
   const artifactDir = options.artifactDir || fs.mkdtempSync(path.join(os.tmpdir(), "ctx-linux-launch-smoke-"));
+  const appLaunchEnv = buildLinuxAppDirLaunchEnv({ appPath: options.appPath });
+  const appLaunchLog = String(process.env.CTX_AUTOMATION_APP_LAUNCH_LOG || "").trim()
+    || path.join(artifactDir, "app-launch.log");
+  appLaunchEnv.CTX_AUTOMATION_APP_LAUNCH_LOG = appLaunchLog;
   const driverPort = await pickUnusedPort();
   let nativeDriverPort = await pickUnusedPort();
   for (let attempt = 0; nativeDriverPort === driverPort && attempt < 5; attempt += 1) {
@@ -220,6 +339,15 @@ async function main() {
     port: driverPort,
     nativePort: nativeDriverPort,
     artifactDir,
+    appLaunchEnv,
+  });
+  writeLaunchDiagnostics({
+    artifactDir,
+    requestedAppPath: options.appPath,
+    applicationPath: options.appPath,
+    appLaunchEnv,
+    driverPort,
+    nativeDriverPort,
   });
 
   let browser = null;
@@ -283,8 +411,10 @@ async function main() {
       newWorkspaceVisible: state.newWorkspaceVisible,
       artifactDir,
       driverLogPath,
+      appLaunchLog,
     }, null, 2)}\n`);
   } finally {
+    writeProcessSnapshot(path.join(artifactDir, "processes-after-session.log"));
     if (browser) {
       try {
         await browser.deleteSession();

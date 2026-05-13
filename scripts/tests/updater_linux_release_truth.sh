@@ -449,7 +449,7 @@ prepare_webkit_runtime() {
 AUTOMATION_APP_DIR=""
 AUTOMATION_APP_PATH=""
 
-# WebKitWebDriver must launch the real Tauri binary/AppRun, while the updater
+# WebKitWebDriver must launch the extracted AppRun, while the updater
 # must still target the installed AppImage path for in-place replacement.
 extract_appimage_for_automation() {
   local app_path="$1"
@@ -466,15 +466,9 @@ extract_appimage_for_automation() {
     echo "error: AppImage extraction did not create ${app_dir}" >&2
     return 1
   fi
-  local candidate=""
-  for path in "${app_dir}/AppRun" "${app_dir}/usr/bin/ctx"; do
-    if [[ -x "${path}" ]]; then
-      candidate="${path}"
-      break
-    fi
-  done
-  if [[ -z "${candidate}" ]]; then
-    echo "error: extracted AppImage is missing an executable AppRun or usr/bin/ctx under ${app_dir}" >&2
+  local candidate="${app_dir}/AppRun"
+  if [[ ! -x "${candidate}" ]]; then
+    echo "error: extracted AppImage is missing executable AppRun under ${app_dir}" >&2
     return 1
   fi
   AUTOMATION_APP_DIR="${app_dir}"

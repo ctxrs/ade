@@ -32,6 +32,14 @@ type WorkspaceVcsSnapshotMessage = Extract<
   { type: "summary_snapshot" | "details_snapshot" | "unavailable_snapshot" }
 >;
 
+type QueuedVcsSnapshotMessage = {
+  message: WorkspaceVcsSnapshotMessage;
+  receivedAtMs: number;
+  sequence: number;
+};
+
+const VCS_SNAPSHOT_DRAIN_MS = 16;
+
 const emptyDemand = (): WorkspaceVcsDemand => ({
   summaryWorktreeIds: [],
   detailWorktreeIds: [],
@@ -52,6 +60,19 @@ const sameIds = (left: readonly string[], right: readonly string[]): boolean =>
 const sameDemand = (left: WorkspaceVcsDemand, right: WorkspaceVcsDemand): boolean =>
   sameIds(left.summaryWorktreeIds, right.summaryWorktreeIds) &&
   sameIds(left.detailWorktreeIds, right.detailWorktreeIds);
+
+const snapshotQueueKey = (message: WorkspaceVcsSnapshotMessage): string =>
+  `${message.type}:${idToString(message.worktree_id)}`;
+
+const shouldReplaceQueuedSnapshot = (
+  previous: WorkspaceVcsSnapshotMessage,
+  next: WorkspaceVcsSnapshotMessage,
+): boolean => {
+  if (next.demand_generation !== previous.demand_generation) {
+    return next.demand_generation > previous.demand_generation;
+  }
+  return next.snapshot.rev >= previous.snapshot.rev;
+};
 
 const hasTouchedFileInventory = (snapshot: WorktreeVcsSnapshot): boolean =>
   snapshot.touched_files_state !== "not_loaded" || (snapshot.touched_files.items?.length ?? 0) > 0;
@@ -78,6 +99,9 @@ export class WorkspaceVcsStore {
   private connecting = false;
   private demand = emptyDemand();
   private demandAckPending = false;
+  private pendingSnapshotMessages = new Map<string, QueuedVcsSnapshotMessage>();
+  private snapshotDrainTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
+  private snapshotMessageSequence = 0;
   private snapshot: WorkspaceVcsState;
 
   constructor(private readonly workspaceId: string) {
@@ -109,6 +133,7 @@ export class WorkspaceVcsStore {
       globalThis.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+    this.clearPendingSnapshotMessages();
     try {
       this.ws?.close();
     } catch {
@@ -140,6 +165,7 @@ export class WorkspaceVcsStore {
     };
     if (sameDemand(this.demand, next)) return;
     this.demand = next;
+    this.clearPendingSnapshotMessages();
     this.sendDemand();
   };
 
@@ -228,6 +254,7 @@ export class WorkspaceVcsStore {
       globalThis.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+    this.clearPendingSnapshotMessages();
     const ws = this.ws;
     this.ws = null;
     try {
@@ -295,7 +322,7 @@ export class WorkspaceVcsStore {
       case "summary_snapshot":
       case "details_snapshot":
       case "unavailable_snapshot":
-        this.applySnapshotMessage(message, receivedAtMs);
+        this.queueSnapshotMessage(message, receivedAtMs);
         break;
       case "reset_required":
         this.reconnectNow();
@@ -373,6 +400,43 @@ export class WorkspaceVcsStore {
       );
     }
     this.publish();
+  }
+
+  private queueSnapshotMessage(message: WorkspaceVcsSnapshotMessage, receivedAtMs: number): void {
+    if (!this.snapshotMatchesCurrentDemand(message)) return;
+    const key = snapshotQueueKey(message);
+    const previous = this.pendingSnapshotMessages.get(key);
+    if (!previous || shouldReplaceQueuedSnapshot(previous.message, message)) {
+      this.pendingSnapshotMessages.set(key, {
+        message,
+        receivedAtMs,
+        sequence: ++this.snapshotMessageSequence,
+      });
+    }
+    if (this.snapshotDrainTimer) return;
+    this.snapshotDrainTimer = globalThis.setTimeout(() => {
+      this.snapshotDrainTimer = null;
+      this.drainSnapshotMessages();
+    }, VCS_SNAPSHOT_DRAIN_MS);
+  }
+
+  private drainSnapshotMessages(): void {
+    if (this.pendingSnapshotMessages.size === 0) return;
+    const messages = Array.from(this.pendingSnapshotMessages.values()).sort(
+      (left, right) => left.sequence - right.sequence,
+    );
+    this.pendingSnapshotMessages.clear();
+    for (const queued of messages) {
+      this.applySnapshotMessage(queued.message, queued.receivedAtMs);
+    }
+  }
+
+  private clearPendingSnapshotMessages(): void {
+    this.pendingSnapshotMessages.clear();
+    if (this.snapshotDrainTimer) {
+      globalThis.clearTimeout(this.snapshotDrainTimer);
+      this.snapshotDrainTimer = null;
+    }
   }
 }
 

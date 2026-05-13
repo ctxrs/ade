@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use super::super::buffer::VcsPendingBuffer;
@@ -69,6 +70,28 @@ async fn replace_workspace_vcs_subscription(
     runtime.summary_worktree_ids = summary_worktree_ids.iter().copied().collect();
     runtime.detail_worktree_ids = detail_worktree_ids.iter().copied().collect();
     let next_active = runtime.active_worktree_ids();
+    let summary_seed_worktree_ids: HashSet<_> = runtime
+        .summary_worktree_ids
+        .difference(&previous_active)
+        .copied()
+        .collect();
+    let detail_seed_worktree_ids: HashSet<_> = runtime
+        .detail_worktree_ids
+        .difference(&previous_details)
+        .copied()
+        .collect();
+    let mut summary_refresh_worktree_ids: Vec<_> = runtime
+        .summary_worktree_ids
+        .difference(&previous_active)
+        .copied()
+        .collect();
+    let mut detail_refresh_worktree_ids: Vec<_> = runtime
+        .detail_worktree_ids
+        .difference(&previous_details)
+        .copied()
+        .collect();
+    summary_refresh_worktree_ids.sort_by_key(|worktree_id| worktree_id.0);
+    detail_refresh_worktree_ids.sort_by_key(|worktree_id| worktree_id.0);
     state
         .update_worktree_vcs_activity(&previous_active, &next_active)
         .await;
@@ -91,9 +114,14 @@ async fn replace_workspace_vcs_subscription(
         pending,
         metrics,
         runtime.demand_generation,
-        &runtime.summary_worktree_ids,
-        &runtime.detail_worktree_ids,
+        &summary_seed_worktree_ids,
+        &detail_seed_worktree_ids,
     )
     .await;
-    refresh_worktree_vcs_for_worktrees(state, &summary_worktree_ids, &detail_worktree_ids).await;
+    refresh_worktree_vcs_for_worktrees(
+        state,
+        &summary_refresh_worktree_ids,
+        &detail_refresh_worktree_ids,
+    )
+    .await;
 }

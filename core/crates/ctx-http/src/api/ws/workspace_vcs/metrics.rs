@@ -13,6 +13,10 @@ pub(super) struct VcsStreamMetrics {
     pub(super) snapshot_coalesced_count: AtomicU64,
     message_sent_count: AtomicU64,
     snapshot_sent_count: AtomicU64,
+    snapshot_queued_recorded_count: AtomicU64,
+    snapshot_coalesced_recorded_count: AtomicU64,
+    message_sent_recorded_count: AtomicU64,
+    snapshot_sent_recorded_count: AtomicU64,
 }
 
 impl VcsStreamMetrics {
@@ -35,6 +39,12 @@ impl VcsStreamMetrics {
     }
 }
 
+fn counter_delta(counter: &AtomicU64, recorded: &AtomicU64) -> u64 {
+    let total = counter.load(AtomicOrdering::Relaxed);
+    let previous = recorded.swap(total, AtomicOrdering::Relaxed);
+    total.saturating_sub(previous)
+}
+
 pub(super) async fn record_workspace_vcs_stream_metrics(
     state: &Arc<AppState>,
     metrics: &VcsStreamMetrics,
@@ -42,21 +52,31 @@ pub(super) async fn record_workspace_vcs_stream_metrics(
     let counters = [
         (
             "workspace.vcs_stream.server_snapshot_queued_count",
-            metrics.snapshot_queued_count.load(AtomicOrdering::Relaxed),
+            counter_delta(
+                &metrics.snapshot_queued_count,
+                &metrics.snapshot_queued_recorded_count,
+            ),
         ),
         (
             "workspace.vcs_stream.server_snapshot_coalesced_count",
-            metrics
-                .snapshot_coalesced_count
-                .load(AtomicOrdering::Relaxed),
+            counter_delta(
+                &metrics.snapshot_coalesced_count,
+                &metrics.snapshot_coalesced_recorded_count,
+            ),
         ),
         (
             "workspace.vcs_stream.server_message_sent_count",
-            metrics.message_sent_count.load(AtomicOrdering::Relaxed),
+            counter_delta(
+                &metrics.message_sent_count,
+                &metrics.message_sent_recorded_count,
+            ),
         ),
         (
             "workspace.vcs_stream.server_snapshot_sent_count",
-            metrics.snapshot_sent_count.load(AtomicOrdering::Relaxed),
+            counter_delta(
+                &metrics.snapshot_sent_count,
+                &metrics.snapshot_sent_recorded_count,
+            ),
         ),
     ];
     for (name, value) in counters {

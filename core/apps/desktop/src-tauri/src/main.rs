@@ -93,6 +93,7 @@ fn main() {
     {
         configure_windows_vosk_dll_search_path();
     }
+    write_automation_launch_breadcrumb();
 
     let mut builder = tauri::Builder::default()
         .manage(ConnectionManager::default())
@@ -279,6 +280,70 @@ fn main() {
             manager.disconnect_all();
         }
     });
+}
+
+fn write_automation_launch_breadcrumb() {
+    let Some(log_path) = std::env::var_os("CTX_AUTOMATION_APP_LAUNCH_LOG") else {
+        return;
+    };
+    let log_path = PathBuf::from(log_path);
+    if let Some(parent) = log_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    else {
+        return;
+    };
+    let started_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    let exe = std::env::current_exe()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|_| "<unknown>".to_string());
+    let _ = writeln!(
+        file,
+        "desktop app started pid={} started_at_ms={} exe={}",
+        std::process::id(),
+        started_ms,
+        exe
+    );
+    for key in [
+        "APPDIR",
+        "APPIMAGE",
+        "APPIMAGE_EXTRACT_AND_RUN",
+        "ARGV0",
+        "CTX_APPIMAGE_PATH",
+        "CTX_BUNDLE_DIR",
+        "CTX_DESKTOP_DAEMON_DATA_DIR",
+        "CTX_DESKTOP_SSH_NO_START_REMOTE",
+        "CTX_DESKTOP_SSH_START_REMOTE",
+        "DISPLAY",
+        "GDK_BACKEND",
+        "GIO_EXTRA_MODULES",
+        "GSETTINGS_SCHEMA_DIR",
+        "GTK_DATA_PREFIX",
+        "GTK_EXE_PREFIX",
+        "GTK_IM_MODULE_FILE",
+        "GTK_PATH",
+        "HOME",
+        "LD_LIBRARY_PATH",
+        "PATH",
+        "TAURI_WEBVIEW_AUTOMATION",
+        "TMPDIR",
+        "XDG_CACHE_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_DIRS",
+        "XDG_DATA_HOME",
+        "XDG_RUNTIME_DIR",
+    ] {
+        if let Some(value) = std::env::var_os(key) {
+            let _ = writeln!(file, "{key}={}", value.to_string_lossy());
+        }
+    }
 }
 
 fn desktop_automation_runtime_enabled() -> bool {

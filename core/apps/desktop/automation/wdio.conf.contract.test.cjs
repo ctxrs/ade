@@ -112,15 +112,17 @@ test("wdio macOS shipped-app launches through a wrapper with exact app env", () 
 test("wdio Linux shipped-app launches raw AppRun with exact app env on tauri-driver", () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-linux-launch-env-"));
   try {
-    const appPath = path.join(tmp, "ctx-real");
     const bundlesDir = path.join(tmp, "bundles");
     const daemonDataDir = path.join(tmp, "workspace-home", ".ctx");
     const appDir = path.join(tmp, "squashfs-root");
+    const appPath = path.join(appDir, "AppRun");
     const appImage = path.join(tmp, "ctx.AppImage");
     const runtimeDir = path.join(tmp, "xdg-runtime");
+    const innerBinary = path.join(appDir, "usr", "bin", "ctx");
+    fs.mkdirSync(path.dirname(innerBinary), { recursive: true });
     fs.writeFileSync(appPath, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+    fs.writeFileSync(innerBinary, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
     fs.mkdirSync(bundlesDir, { recursive: true });
-    fs.mkdirSync(appDir, { recursive: true });
     fs.mkdirSync(runtimeDir, { recursive: true });
 
     const nodeScript = [
@@ -152,6 +154,7 @@ test("wdio Linux shipped-app launches raw AppRun with exact app env on tauri-dri
     assert.equal(fs.existsSync(path.join(tmp, "desktop-app-launchers")), false);
 
     const script = fs.readFileSync(configPath, "utf8");
+    assert.match(script, /buildLinuxAppDirLaunchEnv/);
     assert.match(script, /const driverEnv = \{\s*\.\.\.process\.env,/);
     assert.match(script, /\.\.\.DESKTOP_APP_LAUNCH_ENV,/);
     assert.match(script, /console\.error\(`\[wdio\] WebDriver application path=\$\{WDIO_APPLICATION_PATH\}`\)/);

@@ -1710,6 +1710,11 @@ async fn workspace_vcs_stream_repeat_subscribe_preserves_ready_worktree_vcs_stat
         repeated,
         WorktreeVcsStreamMessage::Subscribed { .. }
     ));
+    let repeat_snapshot = recv_vcs_stream_message(&mut socket, Duration::from_millis(250)).await;
+    assert!(
+        repeat_snapshot.is_none(),
+        "repeat subscribe should acknowledge demand without reseeding unchanged VCS snapshots"
+    );
 
     let watcher_deadline = tokio::time::Instant::now() + Duration::from_secs(2);
     loop {
