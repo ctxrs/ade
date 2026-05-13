@@ -28,12 +28,14 @@ pub(super) async fn monitor_mistral_login(
         .providers
         .authenticate_provider_session(
             "mistral",
-            format!("mistral-login-{login_id}"),
-            paths.workdir.clone(),
-            provider_env,
-            None,
-            event_tx,
-            ctx_providers::adapters::ProviderRunHooks::default(),
+            ctx_provider_runtime::provider_session_auth::ProviderSessionAuthenticationRequest {
+                session_key: format!("mistral-login-{login_id}"),
+                workdir: paths.workdir.clone(),
+                env: provider_env,
+                method_id: None,
+                event_sink: event_tx,
+                hooks: ctx_providers::adapters::ProviderRunHooks::default(),
+            },
         )
         .await;
     match auth_result {

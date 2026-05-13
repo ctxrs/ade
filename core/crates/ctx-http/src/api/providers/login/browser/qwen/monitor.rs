@@ -28,12 +28,14 @@ pub(super) async fn monitor_qwen_login(
         .providers
         .authenticate_provider_session(
             "qwen",
-            format!("qwen-login-{login_id}"),
-            paths.workdir.clone(),
-            provider_env,
-            Some(QWEN_OAUTH_AUTH_METHOD_ID.to_string()),
-            event_tx,
-            ctx_providers::adapters::ProviderRunHooks::default(),
+            ctx_provider_runtime::provider_session_auth::ProviderSessionAuthenticationRequest {
+                session_key: format!("qwen-login-{login_id}"),
+                workdir: paths.workdir.clone(),
+                env: provider_env,
+                method_id: Some(QWEN_OAUTH_AUTH_METHOD_ID.to_string()),
+                event_sink: event_tx,
+                hooks: ctx_providers::adapters::ProviderRunHooks::default(),
+            },
         )
         .await;
     match auth_result {

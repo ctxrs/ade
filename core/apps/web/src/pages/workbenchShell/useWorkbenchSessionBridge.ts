@@ -170,7 +170,7 @@ export function useWorkbenchSessionBridge({
       }),
     [foregroundSessionIds, tasksById, workspaceSnapshot.activeIds],
   );
-  const effectiveWarmSessionIds = useMemo(
+  const prefetchWarmSessionIds = useMemo(
     () => (foregroundTaskWorking ? [] : warmSessionIds),
     [foregroundTaskWorking, warmSessionIds],
   );
@@ -178,9 +178,9 @@ export function useWorkbenchSessionBridge({
     () =>
       planSessionHeadPrefetchTargets({
         foregroundSessionIds,
-        warmSessionIds: effectiveWarmSessionIds,
+        warmSessionIds: prefetchWarmSessionIds,
       }).targetSessionIds,
-    [effectiveWarmSessionIds, foregroundSessionIds],
+    [foregroundSessionIds, prefetchWarmSessionIds],
   );
   const prefetchSessionIdsKey = plannedPrefetchSessionIds.join("\u001f");
   const prefetchSessionIds = useMemo(
@@ -541,8 +541,8 @@ export function useWorkbenchSessionBridge({
   ]);
 
   useEffect(() => {
-    supervisor.setWarmSessionIds(effectiveWarmSessionIds);
-  }, [effectiveWarmSessionIds, supervisor]);
+    supervisor.setWarmSessionIds(warmSessionIds);
+  }, [supervisor, warmSessionIds]);
 
   useEffect(() => {
     if (!workspaceSnapshot.initialized || foregroundSessionIds.length === 0) return;

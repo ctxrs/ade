@@ -521,12 +521,12 @@ describe("SessionSupervisor", () => {
 
     sup.openSession(sessionId, { mode: "active" });
 
-    expect(sink).toHaveBeenCalledWith([{ sessionId, replay: { kind: "auto" } }]);
+    expect(sink).toHaveBeenCalledWith([{ sessionId, intent: "replay", replay: { kind: "auto" } }]);
     sink.mockClear();
 
     sup.setActiveTaskSessionIds([sessionId]);
 
-    expect(sink).toHaveBeenCalledWith([{ sessionId, replay: { kind: "auto" } }]);
+    expect(sink).toHaveBeenCalledWith([{ sessionId, intent: "replay", replay: { kind: "auto" } }]);
   });
 
   it("re-emits subscribed session ids when workspace active-primary membership flips under an identical plan", async () => {
@@ -539,8 +539,8 @@ describe("SessionSupervisor", () => {
 
     sup.setWarmSessionIds(["session-1", "session-2"]);
     expect(sink).toHaveBeenCalledWith([
-      { sessionId: "session-1", replay: { kind: "auto" } },
-      { sessionId: "session-2", replay: { kind: "auto" } },
+      { sessionId: "session-1", intent: "head", replay: { kind: "auto" } },
+      { sessionId: "session-2", intent: "head", replay: { kind: "auto" } },
     ]);
     sink.mockClear();
 
@@ -558,8 +558,8 @@ describe("SessionSupervisor", () => {
     };
     sup.setWorkspaceSnapshotState(stateWithPrimaryOne);
     expect(sink).toHaveBeenCalledWith([
-      { sessionId: "session-1", replay: { kind: "auto" } },
-      { sessionId: "session-2", replay: { kind: "auto" } },
+      { sessionId: "session-1", intent: "head", replay: { kind: "auto" } },
+      { sessionId: "session-2", intent: "head", replay: { kind: "auto" } },
     ]);
     sink.mockClear();
 
@@ -576,8 +576,8 @@ describe("SessionSupervisor", () => {
     sup.setWorkspaceSnapshotState(stateWithPrimaryTwo);
 
     expect(sink).toHaveBeenCalledWith([
-      { sessionId: "session-1", replay: { kind: "auto" } },
-      { sessionId: "session-2", replay: { kind: "auto" } },
+      { sessionId: "session-1", intent: "head", replay: { kind: "auto" } },
+      { sessionId: "session-2", intent: "head", replay: { kind: "auto" } },
     ]);
   });
 
@@ -637,7 +637,7 @@ describe("SessionSupervisor", () => {
       after_seq: 7,
     });
 
-    expect(sink).toHaveBeenCalledWith([{ sessionId, replay: { kind: "reset" } }]);
+    expect(sink).toHaveBeenCalledWith([{ sessionId, intent: "replay", replay: { kind: "reset" } }]);
     expect(sup.getSnapshot().sessions[sessionId]?.freshness).toBe("recovering");
   });
 

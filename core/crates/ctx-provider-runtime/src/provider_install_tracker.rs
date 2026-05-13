@@ -137,7 +137,7 @@ impl ProviderRuntime {
 
     pub async fn cancel_install(&self, install_id: InstallId) -> Option<CancelInstallOutcome> {
         enum CancelInstallUpdate {
-            AlreadyFinished(InstallInfo),
+            AlreadyFinished(Box<InstallInfo>),
             Cancelled {
                 provider_id: String,
                 target: Option<InstallTarget>,
@@ -148,7 +148,9 @@ impl ProviderRuntime {
             .with_install_map(|installs| {
                 let st = installs.get_mut(&install_id)?;
                 if !matches!(st.state, InstallStateKind::Running) {
-                    return Some(CancelInstallUpdate::AlreadyFinished(st.info(install_id)));
+                    return Some(CancelInstallUpdate::AlreadyFinished(Box::new(
+                        st.info(install_id),
+                    )));
                 }
 
                 st.state = InstallStateKind::Cancelled;
@@ -182,7 +184,7 @@ impl ProviderRuntime {
 
         match update {
             CancelInstallUpdate::AlreadyFinished(info) => Some(CancelInstallOutcome {
-                info,
+                info: *info,
                 ops_events: Vec::new(),
             }),
             CancelInstallUpdate::Cancelled {

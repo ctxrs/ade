@@ -13,22 +13,33 @@ pub enum ProviderSessionAuthenticationError {
     Authenticate(anyhow::Error),
 }
 
+pub struct ProviderSessionAuthenticationRequest {
+    pub session_key: String,
+    pub workdir: PathBuf,
+    pub env: HashMap<String, String>,
+    pub method_id: Option<String>,
+    pub event_sink: mpsc::Sender<NormalizedEvent>,
+    pub hooks: ProviderRunHooks,
+}
+
 impl ProviderRuntime {
     pub async fn authenticate_provider_session(
         &self,
         provider_id: &str,
-        session_key: String,
-        workdir: PathBuf,
-        env: HashMap<String, String>,
-        method_id: Option<String>,
-        event_sink: mpsc::Sender<NormalizedEvent>,
-        hooks: ProviderRunHooks,
+        request: ProviderSessionAuthenticationRequest,
     ) -> Result<(), ProviderSessionAuthenticationError> {
         let Some(adapter) = self.provider_adapter(provider_id).await else {
             return Err(ProviderSessionAuthenticationError::AdapterUnavailable);
         };
         adapter
-            .authenticate_session(session_key, workdir, env, method_id, event_sink, hooks)
+            .authenticate_session(
+                request.session_key,
+                request.workdir,
+                request.env,
+                request.method_id,
+                request.event_sink,
+                request.hooks,
+            )
             .await
             .map_err(ProviderSessionAuthenticationError::Authenticate)
     }
@@ -157,12 +168,14 @@ mod tests {
         runtime
             .authenticate_provider_session(
                 "gemini",
-                "session-key".to_string(),
-                workdir.clone(),
-                env,
-                Some("oauth".to_string()),
-                event_tx,
-                ProviderRunHooks::default(),
+                ProviderSessionAuthenticationRequest {
+                    session_key: "session-key".to_string(),
+                    workdir: workdir.clone(),
+                    env,
+                    method_id: Some("oauth".to_string()),
+                    event_sink: event_tx,
+                    hooks: ProviderRunHooks::default(),
+                },
             )
             .await
             .expect("authenticate provider session");
@@ -186,12 +199,14 @@ mod tests {
         let err = runtime
             .authenticate_provider_session(
                 "missing",
-                "session-key".to_string(),
-                PathBuf::from("/tmp/auth-workdir"),
-                HashMap::new(),
-                None,
-                event_tx,
-                ProviderRunHooks::default(),
+                ProviderSessionAuthenticationRequest {
+                    session_key: "session-key".to_string(),
+                    workdir: PathBuf::from("/tmp/auth-workdir"),
+                    env: HashMap::new(),
+                    method_id: None,
+                    event_sink: event_tx,
+                    hooks: ProviderRunHooks::default(),
+                },
             )
             .await
             .expect_err("missing adapter should fail");
@@ -214,12 +229,14 @@ mod tests {
         let err = runtime
             .authenticate_provider_session(
                 "gemini",
-                "session-key".to_string(),
-                PathBuf::from("/tmp/auth-workdir"),
-                HashMap::new(),
-                None,
-                event_tx,
-                ProviderRunHooks::default(),
+                ProviderSessionAuthenticationRequest {
+                    session_key: "session-key".to_string(),
+                    workdir: PathBuf::from("/tmp/auth-workdir"),
+                    env: HashMap::new(),
+                    method_id: None,
+                    event_sink: event_tx,
+                    hooks: ProviderRunHooks::default(),
+                },
             )
             .await
             .expect_err("adapter error should fail");

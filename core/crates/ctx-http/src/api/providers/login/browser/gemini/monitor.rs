@@ -24,12 +24,14 @@ pub(super) async fn monitor_gemini_login(
         .providers
         .authenticate_provider_session(
             "gemini",
-            format!("gemini-login-{login_id}"),
-            paths.workdir.clone(),
-            provider_env,
-            Some(crate::daemon::providers::gemini_login_auth_method_id()),
-            event_tx,
-            ctx_providers::adapters::ProviderRunHooks::default(),
+            ctx_provider_runtime::provider_session_auth::ProviderSessionAuthenticationRequest {
+                session_key: format!("gemini-login-{login_id}"),
+                workdir: paths.workdir.clone(),
+                env: provider_env,
+                method_id: Some(crate::daemon::providers::gemini_login_auth_method_id()),
+                event_sink: event_tx,
+                hooks: ctx_providers::adapters::ProviderRunHooks::default(),
+            },
         )
         .await;
     match auth_result {
