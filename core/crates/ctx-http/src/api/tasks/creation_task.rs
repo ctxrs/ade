@@ -35,7 +35,6 @@ pub(in crate::api) async fn create_task(
     upsert_workspace_task_index(&state, persisted_task.task.id, ws_id).await;
 
     let default_session_lock = state
-        .sessions
         .task_session_creation_lock(persisted_task.task.id)
         .await;
     let _default_session_guard = default_session_lock.lock().await;

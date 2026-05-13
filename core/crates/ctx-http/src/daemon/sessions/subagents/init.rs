@@ -30,10 +30,7 @@ pub(crate) async fn init_subagents(
     } = prepare_subagent_init_request(&state, &req).await?;
 
     let (store, parent) = load_parent_session(state.as_ref(), parent_id).await?;
-    let creation_lock = state
-        .sessions
-        .task_session_creation_lock(parent.task_id)
-        .await;
+    let creation_lock = state.task_session_creation_lock(parent.task_id).await;
     let _creation_guard = creation_lock.lock().await;
     validate_parent_spawn_capacity(&store, &parent, agents.len()).await?;
 
