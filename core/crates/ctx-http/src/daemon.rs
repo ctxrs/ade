@@ -69,7 +69,8 @@ pub(crate) use listener::daemon_public_base_url_from_env;
 pub use mcp_auth::issue_provider_session_mcp_token;
 pub(crate) use mcp_auth::{
     emit_mcp_token_denied, issue_provider_session_mcp_token_with_capabilities,
-    revoke_provider_session_mcp_token, verify_mcp_auth_token,
+    require_scoped_mcp_session_context, revoke_provider_session_mcp_token, verify_mcp_auth_token,
+    ScopedMcpSessionAccessError,
 };
 #[cfg(test)]
 pub(crate) use retention::prune_archived_session_data_for_all_workspaces;

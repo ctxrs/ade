@@ -1,6 +1,7 @@
+use anyhow::Error;
 use ctx_core::ids::{SessionId, WorkspaceId, WorktreeId};
 
-use crate::daemon::AppState;
+use crate::daemon::{AppState, SessionStoreAccessError};
 
 mod events;
 
@@ -81,4 +82,57 @@ pub(crate) async fn revoke_provider_session_mcp_token(state: &AppState, token: &
 
 pub(crate) async fn verify_mcp_auth_token(state: &AppState, token: &str) -> Option<McpAuthContext> {
     state.core.mcp_auth.verify_token(token).await
+}
+
+#[derive(Debug)]
+pub(crate) enum ScopedMcpSessionAccessError {
+    Unauthorized(&'static str),
+    SessionNotFound,
+    StoreUnavailable(Error),
+}
+
+pub(crate) async fn require_scoped_mcp_session_context(
+    state: &AppState,
+    mcp_auth: McpAuthContext,
+    session_id: SessionId,
+) -> Result<(), ScopedMcpSessionAccessError> {
+    if mcp_auth.session_id != session_id {
+        return Err(ScopedMcpSessionAccessError::Unauthorized(
+            "scoped ctx-mcp token is limited to the current session",
+        ));
+    }
+
+    let store = state
+        .existing_session_store(session_id)
+        .await
+        .map_err(scoped_mcp_session_store_error)?;
+    let session = store
+        .get_session(session_id)
+        .await
+        .map_err(ScopedMcpSessionAccessError::StoreUnavailable)?
+        .ok_or(ScopedMcpSessionAccessError::SessionNotFound)?;
+
+    if session.workspace_id != mcp_auth.workspace_id || session.worktree_id != mcp_auth.worktree_id
+    {
+        return Err(ScopedMcpSessionAccessError::Unauthorized(
+            "scoped ctx-mcp token does not match the loaded session scope",
+        ));
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests;
+
+fn scoped_mcp_session_store_error(error: SessionStoreAccessError) -> ScopedMcpSessionAccessError {
+    match error {
+        SessionStoreAccessError::NotFound => ScopedMcpSessionAccessError::SessionNotFound,
+        SessionStoreAccessError::LookupUnavailable(error) => {
+            ScopedMcpSessionAccessError::StoreUnavailable(error)
+        }
+        SessionStoreAccessError::StoreUnavailable => ScopedMcpSessionAccessError::StoreUnavailable(
+            anyhow::anyhow!("workspace store unavailable"),
+        ),
+    }
 }
