@@ -43,7 +43,6 @@ use ctx_provider_runtime::provider_launch::models::{
 use ctx_provider_runtime::provider_launch::options::{
     endpoint_supports_model_catalog_verify, provider_supports_runtime_model_catalog,
 };
-use ctx_provider_runtime::provider_launch::probe;
 use ctx_provider_runtime::provider_launch::probe_error::classify_probe_error;
 use ctx_provider_runtime::provider_usability::{
     provider_status_is_usable, provider_status_unusable_reason,

@@ -82,33 +82,34 @@ pub(in crate::api) async fn get_provider_options(
     }
 
     let source_config = launch_config.source_config();
-    let has_active_auth = match probe::provider_has_active_auth_for_workspace_runtime(
-        state.as_ref(),
-        &workspace,
-        &provider_id,
-        source_config,
-    )
-    .await
-    {
-        Ok(value) => value,
-        Err(config_error) => {
-            let config_error = logs::redact_sensitive(&config_error);
-            let out = auth_config_error_provider_options(
-                ProviderOptionsErrorContext {
-                    state: &state,
-                    provider_id: &provider_id,
-                    workspace_id: ws_id,
-                    cache: &cache,
-                    preferred_model_id: preferred_model_id.clone(),
-                    verify_ttl: VERIFY_TTL,
-                },
-                &provider_status,
-                &config_error,
-            )
-            .await;
-            return Ok(Json(out));
-        }
-    };
+    let has_active_auth =
+        match crate::daemon::providers::provider_has_active_auth_for_workspace_runtime(
+            &state,
+            &workspace,
+            &provider_id,
+            source_config,
+        )
+        .await
+        {
+            Ok(value) => value,
+            Err(config_error) => {
+                let config_error = logs::redact_sensitive(&config_error);
+                let out = auth_config_error_provider_options(
+                    ProviderOptionsErrorContext {
+                        state: &state,
+                        provider_id: &provider_id,
+                        workspace_id: ws_id,
+                        cache: &cache,
+                        preferred_model_id: preferred_model_id.clone(),
+                        verify_ttl: VERIFY_TTL,
+                    },
+                    &provider_status,
+                    &config_error,
+                )
+                .await;
+                return Ok(Json(out));
+            }
+        };
     let auth_mode = provider_auth_mode(has_active_auth, source_config);
 
     if !provider_status_is_usable(&provider_status) {
