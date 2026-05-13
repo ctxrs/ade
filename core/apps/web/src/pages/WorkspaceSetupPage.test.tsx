@@ -581,7 +581,7 @@ describe("WorkspaceSetupPage", () => {
     });
   }, 15000);
 
-  it("keeps the harness-download admin password scoped to the harness retry", async () => {
+  it("prepares the local sandbox during workspace creation, not harness downloads", async () => {
     vi.mocked(isDesktopApp).mockReturnValue(true);
     vi.mocked(getSettings).mockResolvedValue(configuredTitlingSettingsFixture() as never);
     vi.mocked(listProviders).mockResolvedValue([
@@ -593,11 +593,6 @@ describe("WorkspaceSetupPage", () => {
       }),
     ] as never);
     vi.mocked(desktopEnsureLocalLinuxSandboxReady)
-      .mockRejectedValueOnce(
-        new Error(
-          "CTX_LOCAL_ADMIN_PASSWORD_REQUIRED: Local admin password required to prepare sandbox on this machine.",
-        ) as never,
-      )
       .mockResolvedValue({ ready: true } as never);
     vi.mocked(installProvider).mockResolvedValue({
       provider_id: "codex",
@@ -627,24 +622,12 @@ describe("WorkspaceSetupPage", () => {
     });
 
     fireEvent.click(screen.getByTestId("wizard-next"));
-    await screen.findByTestId("wizard-local-admin-password-once");
-    expect(installProvider).not.toHaveBeenCalled();
-    expect(desktopEnsureLocalLinuxSandboxReady).toHaveBeenNthCalledWith(1, {
-      admin_password_once: null,
-    });
-
-    fireEvent.change(screen.getByTestId("wizard-local-admin-password-once"), {
-      target: { value: "local-admin" },
-    });
-    fireEvent.click(screen.getByTestId("wizard-next"));
-
     await waitFor(() => {
       expect(installProvider).toHaveBeenCalledWith("codex", "container");
       expect(wizardStepKey()).toBe("source");
     });
-    expect(desktopEnsureLocalLinuxSandboxReady).toHaveBeenNthCalledWith(2, {
-      admin_password_once: "local-admin",
-    });
+    expect(screen.queryByTestId("wizard-local-admin-password-once")).not.toBeInTheDocument();
+    expect(desktopEnsureLocalLinuxSandboxReady).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByTestId("wizard-option-source-new"));
     fireEvent.change(screen.getByTestId("wizard-workspace-name"), {
@@ -672,7 +655,8 @@ describe("WorkspaceSetupPage", () => {
     fireEvent.click(screen.getByTestId("wizard-create"));
 
     await waitFor(() => {
-      expect(desktopEnsureLocalLinuxSandboxReady).toHaveBeenNthCalledWith(3, {
+      expect(desktopEnsureLocalLinuxSandboxReady).toHaveBeenCalledTimes(1);
+      expect(desktopEnsureLocalLinuxSandboxReady).toHaveBeenCalledWith({
         admin_password_once: null,
       });
     });

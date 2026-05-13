@@ -293,6 +293,136 @@ describe("WorkspaceActiveSnapshotStore", () => {
     expect(store.getSnapshot().tasksById[task.id]?.primarySessionHead?.session.id).toBe(session.id);
   });
 
+  it("does not treat replay session event revs as workspace snapshot progress or resets", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const now = new Date().toISOString();
+    const task = mkTask("task-1", "ws-1", now);
+    const session = mkSession("session-1", "task-1", "ws-1", now);
+    const summary = mkSummary(session, now);
+    const head = mkHead(session);
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    const ws = mkOpenWs();
+    asStoreInternals(store).ws = ws;
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "snapshot",
+        rev: 5,
+        active_snapshot: {
+          workspace_id: "ws-1",
+          snapshot_rev: 5,
+          archived_rev: 0,
+          active: { total_count: 1, tasks: [mkActiveSummary(task, summary, head, now)] },
+        },
+      }),
+    );
+    await waitForCondition(() => store.getSnapshot().initialized);
+    store.setSubscribedSessions([{ sessionId: session.id, replay: { kind: "resume", afterSeq: 1 } }]);
+    ws.send.mockClear();
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 6,
+        stream_source: "replay",
+        event: {
+          type: "session_head_delta",
+          workspace_id: "ws-1",
+          snapshot_rev: 1,
+          delta: {
+            session_id: session.id,
+            last_event_seq: 1,
+            projection_rev: 1,
+            state_rev: 1,
+          },
+        },
+      }),
+    );
+
+    expect(ws.send).not.toHaveBeenCalled();
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 7,
+        stream_source: "replay",
+        event: {
+          type: "session_head_delta",
+          workspace_id: "ws-1",
+          snapshot_rev: 9,
+          delta: {
+            session_id: session.id,
+            last_event_seq: 2,
+            projection_rev: 2,
+            state_rev: 2,
+          },
+        },
+      }),
+    );
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 8,
+        event: { type: "ready", workspace_id: "ws-1", snapshot_rev: 6 },
+      }),
+    );
+
+    expect(ws.send).not.toHaveBeenCalled();
+    store.destroy();
+  });
+
+  it("does not treat replay head batch revs as workspace snapshot progress", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const now = new Date().toISOString();
+    const task = mkTask("task-1", "ws-1", now);
+    const session = mkSession("session-1", "task-1", "ws-1", now);
+    const summary = mkSummary(session, now);
+    const head = mkHead(session);
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    const ws = mkOpenWs();
+    asStoreInternals(store).ws = ws;
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "snapshot",
+        rev: 5,
+        active_snapshot: {
+          workspace_id: "ws-1",
+          snapshot_rev: 5,
+          archived_rev: 0,
+          active: { total_count: 1, tasks: [mkActiveSummary(task, summary, head, now)] },
+        },
+      }),
+    );
+    await waitForCondition(() => store.getSnapshot().initialized);
+    store.setSubscribedSessions([{ sessionId: session.id, replay: { kind: "resume", afterSeq: 1 } }]);
+    ws.send.mockClear();
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "heads_batch",
+        rev: 6,
+        stream_source: "replay",
+        snapshot_rev: 9,
+        deltas: [],
+      }),
+    );
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 7,
+        event: { type: "ready", workspace_id: "ws-1", snapshot_rev: 6 },
+      }),
+    );
+
+    expect(ws.send).not.toHaveBeenCalled();
+    store.destroy();
+  });
+
   it("requests snapshot on reset_required", async () => {
     const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
     const { getWorkspaceActiveSnapshot } = await import("../api/client");

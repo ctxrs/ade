@@ -109,7 +109,7 @@ test("wdio macOS shipped-app launches through a wrapper with exact app env", () 
   }
 });
 
-test("wdio Linux shipped-app launches raw AppRun with exact app env on tauri-driver", () => {
+test("wdio Linux shipped-app launches AppRun through an explicit AppDir env wrapper", () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-linux-launch-env-"));
   try {
     const bundlesDir = path.join(tmp, "bundles");
@@ -150,11 +150,30 @@ test("wdio Linux shipped-app launches raw AppRun with exact app env on tauri-dri
         XDG_RUNTIME_DIR: runtimeDir,
       },
     });
-    assert.equal(resolvedPath, appPath);
-    assert.equal(fs.existsSync(path.join(tmp, "desktop-app-launchers")), false);
+    assert.notEqual(resolvedPath, appPath);
+    assert.equal(path.dirname(resolvedPath), path.join(tmp, "desktop-app-launchers"));
+    const wrapper = fs.readFileSync(resolvedPath, "utf8");
+    assert.match(wrapper, new RegExp(`export CTX_BUNDLE_DIR='${escapeRegExp(bundlesDir)}'`));
+    assert.match(
+      wrapper,
+      new RegExp(`export CTX_DESKTOP_DAEMON_DATA_DIR='${escapeRegExp(daemonDataDir)}'`),
+    );
+    assert.match(wrapper, /export CTX_DESKTOP_SSH_NO_START_REMOTE='0'/);
+    assert.match(wrapper, /export CTX_DESKTOP_SSH_START_REMOTE='1'/);
+    assert.match(wrapper, /export TAURI_WEBVIEW_AUTOMATION='true'/);
+    assert.match(wrapper, new RegExp(`export APPDIR='${escapeRegExp(appDir)}'`));
+    assert.match(wrapper, new RegExp(`export APPIMAGE='${escapeRegExp(appImage)}'`));
+    assert.match(wrapper, /export APPIMAGE_EXTRACT_AND_RUN='1'/);
+    assert.match(wrapper, new RegExp(`export ARGV0='${escapeRegExp(appImage)}'`));
+    assert.match(wrapper, new RegExp(`export CTX_APPIMAGE_PATH='${escapeRegExp(appImage)}'`));
+    assert.match(wrapper, /export DISPLAY=':99'/);
+    assert.match(wrapper, new RegExp(`export XDG_RUNTIME_DIR='${escapeRegExp(runtimeDir)}'`));
+    assert.match(wrapper, /launching Linux AppDir desktop app/);
+    assert.match(wrapper, new RegExp(`exec '${escapeRegExp(appPath)}' "\\$@"`));
 
     const script = fs.readFileSync(configPath, "utf8");
     assert.match(script, /buildLinuxAppDirLaunchEnv/);
+    assert.match(script, /createLinuxAppDirLaunchWrapper/);
     assert.match(script, /const driverEnv = \{\s*\.\.\.process\.env,/);
     assert.match(script, /\.\.\.DESKTOP_APP_LAUNCH_ENV,/);
     assert.match(script, /console\.error\(`\[wdio\] WebDriver application path=\$\{WDIO_APPLICATION_PATH\}`\)/);

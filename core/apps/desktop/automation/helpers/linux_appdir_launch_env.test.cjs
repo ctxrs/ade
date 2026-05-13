@@ -6,6 +6,7 @@ const path = require("node:path");
 
 const {
   buildLinuxAppDirLaunchEnv,
+  createLinuxAppDirLaunchWrapper,
   resolveLinuxAppDirFromPath,
 } = require("./linux_appdir_launch_env.cjs");
 
@@ -20,7 +21,7 @@ const withPlatform = async (platform, fn) => {
   }
 };
 
-test("linux AppDir launch env resolves extracted AppRun without changing the application path", async () => {
+test("linux AppDir launch env resolves extracted AppRun", async () => {
   await withPlatform("linux", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-linux-appdir-env-"));
     try {
@@ -49,6 +50,46 @@ test("linux AppDir launch env resolves extracted AppRun without changing the app
       assert.match(env.LD_LIBRARY_PATH, new RegExp(`^${path.join(appDir, "usr", "lib").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}:`));
       assert.match(env.XDG_DATA_DIRS, new RegExp(`^${path.join(appDir, "usr", "share").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}:`));
       assert.equal(env.GDK_BACKEND, "x11");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+test("linux AppDir launch wrapper materializes explicit env before AppRun", async () => {
+  await withPlatform("linux", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-linux-appdir-wrapper-"));
+    try {
+      const appDir = path.join(tmp, "squashfs-root");
+      const appRun = path.join(appDir, "AppRun");
+      const wrapperDir = path.join(tmp, "launchers");
+      const appImage = path.join(tmp, "ctx.AppImage");
+      fs.mkdirSync(path.join(appDir, "usr", "bin"), { recursive: true });
+      fs.writeFileSync(appRun, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(appDir, "usr", "bin", "ctx"), "", { mode: 0o755 });
+
+      const wrapperPath = createLinuxAppDirLaunchWrapper({
+        appPath: appRun,
+        wrapperDir,
+        env: {
+          APPIMAGE: appImage,
+          APPDIR: path.join(tmp, "stale-appdir"),
+          ARGV0: appImage,
+          CTX_APPIMAGE_PATH: appImage,
+          CTX_AUTOMATION_APP_LAUNCH_LOG: path.join(tmp, "app-launch.log"),
+          TAURI_WEBVIEW_AUTOMATION: "true",
+        },
+      });
+
+      assert.notEqual(wrapperPath, appRun);
+      assert.equal(path.dirname(wrapperPath), wrapperDir);
+      const wrapper = fs.readFileSync(wrapperPath, "utf8");
+      assert.match(wrapper, new RegExp(`export APPDIR='${appDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}'`));
+      assert.doesNotMatch(wrapper, /stale-appdir/);
+      assert.match(wrapper, new RegExp(`export APPIMAGE='${appImage.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}'`));
+      assert.match(wrapper, /export TAURI_WEBVIEW_AUTOMATION='true'/);
+      assert.match(wrapper, /launching Linux AppDir desktop app/);
+      assert.match(wrapper, new RegExp(`exec '${appRun.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}' "\\$@"`));
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

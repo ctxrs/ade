@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 
 const resolveConfiguredPath = (rawValue, pathImpl = path) => {
   const configured = String(rawValue || "").trim();
@@ -51,6 +52,8 @@ const prependPath = (entries, current, delimiter = path.delimiter) => {
   const normalizedCurrent = String(current || "").trim();
   return [...normalizedEntries, normalizedCurrent].filter(Boolean).join(delimiter);
 };
+
+const shellQuote = (value) => `'${String(value).replace(/'/g, `'\"'\"'`)}'`;
 
 const buildLinuxAppDirLaunchEnv = ({
   appPath,
@@ -144,7 +147,54 @@ const buildLinuxAppDirLaunchEnv = ({
   return patch;
 };
 
+const createLinuxAppDirLaunchWrapper = ({
+  appPath,
+  env = {},
+  wrapperDir,
+  fsImpl = fs,
+  pathImpl = path,
+  cryptoImpl = crypto,
+} = {}) => {
+  if (process.platform !== "linux") return appPath;
+  const appExecutablePath = resolveConfiguredPath(appPath, pathImpl);
+  const appDir = resolveLinuxAppDirFromPath({ appPath: appExecutablePath, env, fsImpl, pathImpl });
+  if (!appExecutablePath || !appDir) return appPath;
+  const launchEnv = {
+    ...env,
+    ...buildLinuxAppDirLaunchEnv({ appPath: appExecutablePath, env, fsImpl, pathImpl }),
+  };
+  const entries = Object.entries(launchEnv).filter(([, value]) => String(value || "").trim());
+  const normalizedWrapperDir = resolveConfiguredPath(wrapperDir, pathImpl);
+  if (!normalizedWrapperDir) {
+    throw new Error("Linux AppDir launch wrapper requires wrapperDir.");
+  }
+  const signature = cryptoImpl
+    .createHash("sha256")
+    .update(JSON.stringify({ appExecutablePath, launchEnv }))
+    .digest("hex")
+    .slice(0, 16);
+  fsImpl.mkdirSync(normalizedWrapperDir, { recursive: true });
+  const wrapperPath = pathImpl.join(normalizedWrapperDir, `ctx-linux-appdir-${signature}.sh`);
+  const lines = [
+    "#!/bin/sh",
+    "set -eu",
+    ...entries.map(([key, value]) => `export ${key}=${shellQuote(value)}`),
+    "if [ -n \"${CTX_AUTOMATION_APP_LAUNCH_LOG:-}\" ]; then",
+    "  mkdir -p \"$(dirname \"$CTX_AUTOMATION_APP_LAUNCH_LOG\")\"",
+    "  printf '%s\\n' \"launching Linux AppDir desktop app\" >> \"$CTX_AUTOMATION_APP_LAUNCH_LOG\"",
+    "  printf 'launch env TAURI_WEBVIEW_AUTOMATION=%s APPDIR=%s APPIMAGE=%s ARGV0=%s CTX_APPIMAGE_PATH=%s DISPLAY=%s XDG_RUNTIME_DIR=%s HOME=%s\\n' \"${TAURI_WEBVIEW_AUTOMATION:-}\" \"${APPDIR:-}\" \"${APPIMAGE:-}\" \"${ARGV0:-}\" \"${CTX_APPIMAGE_PATH:-}\" \"${DISPLAY:-}\" \"${XDG_RUNTIME_DIR:-}\" \"${HOME:-}\" >> \"$CTX_AUTOMATION_APP_LAUNCH_LOG\"",
+    `  exec ${shellQuote(appExecutablePath)} "$@" >> "$CTX_AUTOMATION_APP_LAUNCH_LOG" 2>&1`,
+    "fi",
+    `exec ${shellQuote(appExecutablePath)} "$@"`,
+    "",
+  ];
+  fsImpl.writeFileSync(wrapperPath, lines.join("\n"), { mode: 0o700 });
+  fsImpl.chmodSync(wrapperPath, 0o700);
+  return wrapperPath;
+};
+
 module.exports = {
   buildLinuxAppDirLaunchEnv,
+  createLinuxAppDirLaunchWrapper,
   resolveLinuxAppDirFromPath,
 };

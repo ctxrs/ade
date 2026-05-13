@@ -234,12 +234,13 @@ test("linux bundled launch smoke passes explicit tauri-driver native port", () =
   assert.match(script, /failed to allocate distinct tauri-driver native port/);
   assert.match(script, /requireWorkspacePackage\("webdriverio"\)/);
   assert.match(script, /buildLinuxAppDirLaunchEnv/);
+  assert.match(script, /createLinuxAppDirLaunchWrapper/);
   assert.match(script, /resolveLinuxAppDirFromPath/);
   assert.match(script, /launch-env\.json/);
   assert.match(script, /app-launch\.log/);
   assert.match(script, /processes-before-session\.log/);
   assert.match(script, /processes-after-session\.log/);
-  assert.match(script, /connectBrowser\(\{ driverPort, appPath: options\.appPath \}\)/);
+  assert.match(script, /connectBrowser\(\{ driverPort, appPath: applicationPath \}\)/);
   assert.match(remoteWorkspace, /prepare_smoke_corepack\(\)/);
   assert.match(remoteWorkspace, /prepare_smoke_corepack "\$smoke_corepack_home" \|\| return \$\?/);
   assert.match(remoteWorkspace, /COREPACK_HOME=\$smoke_corepack_home/);

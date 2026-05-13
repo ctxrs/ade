@@ -182,6 +182,23 @@ const notifyRecoverableSessionStreamGap = (
 const sessionGapSeedFollows = (evt: WorkspaceActiveSnapshotEvent): boolean =>
   evt.type === "session_gap" && (evt as { seed_follows?: unknown }).seed_follows === true;
 
+const updateLiveWorkspaceSnapshotRev = (
+  host: WorkspaceActiveSnapshotStreamHost,
+  snapshotRev: number,
+  streamSource: WorkspaceActiveSnapshotStreamSource,
+): void => {
+  if (streamSource === "replay") return;
+  if (snapshotRev < host.state.getSnapshotRev()) {
+    host.state.updateSnapshotRev(snapshotRev, { allowReset: true });
+    host.allowSnapshotReset = true;
+    if (host.state.hasLiveSnapshotApplied()) {
+      host.flushSubscriptions("snapshot_rev_reset");
+    }
+    return;
+  }
+  host.state.updateSnapshotRev(snapshotRev);
+};
+
 export const applyWorkspaceSnapshot = (
   host: WorkspaceActiveSnapshotStreamHost,
   snapshot: WorkspaceActiveSnapshot,
@@ -469,15 +486,7 @@ export const handleStreamMessage = async (
     const streamSource = readWorkspaceStreamSource(parsed);
     const batchRev = headsBatch.snapshotRev;
     if (typeof batchRev === "number") {
-      if (batchRev < host.state.getSnapshotRev()) {
-        host.state.updateSnapshotRev(batchRev, { allowReset: true });
-        host.allowSnapshotReset = true;
-        if (host.state.hasLiveSnapshotApplied()) {
-          host.flushSubscriptions("snapshot_rev_reset");
-        }
-      } else {
-        host.state.updateSnapshotRev(batchRev);
-      }
+      updateLiveWorkspaceSnapshotRev(host, batchRev, streamSource);
     }
     let changed = false;
     for (const delta of headsBatch.deltas) {
@@ -525,15 +534,7 @@ export const handleStreamMessage = async (
     }
   }
   if (typeof evt.snapshot_rev === "number") {
-    if (evt.snapshot_rev < host.state.getSnapshotRev()) {
-      host.state.updateSnapshotRev(evt.snapshot_rev, { allowReset: true });
-      host.allowSnapshotReset = true;
-      if (host.state.hasLiveSnapshotApplied()) {
-        host.flushSubscriptions("snapshot_rev_reset");
-      }
-    } else {
-      host.state.updateSnapshotRev(evt.snapshot_rev);
-    }
+    updateLiveWorkspaceSnapshotRev(host, evt.snapshot_rev, streamSource);
   }
   const archivedStateChanged =
     "archived_rev" in evt && typeof evt.archived_rev === "number"

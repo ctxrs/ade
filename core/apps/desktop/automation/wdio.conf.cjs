@@ -4,7 +4,10 @@ const crypto = require("crypto");
 const { spawnSync, spawn } = require("child_process");
 const os = require("os");
 const { resolveBoolishFlag } = require("../../../scripts/lib/boolish.cjs");
-const { buildLinuxAppDirLaunchEnv } = require("./helpers/linux_appdir_launch_env.cjs");
+const {
+  buildLinuxAppDirLaunchEnv,
+  createLinuxAppDirLaunchWrapper,
+} = require("./helpers/linux_appdir_launch_env.cjs");
 const { buildNonDarwinTauriDriverLaunch } = require("./helpers/tauri_driver_launch.cjs");
 
 const resolveConfiguredPath = (rawValue) => {
@@ -879,8 +882,15 @@ const buildDesktopAppLaunchEnv = () => {
 };
 
 const createDesktopAppLaunchWrapper = (appExecutablePath, env) => {
+  if (process.platform === "linux") {
+    return createLinuxAppDirLaunchWrapper({
+      appPath: appExecutablePath,
+      env,
+      wrapperDir: path.join(automationTmpDir, "desktop-app-launchers"),
+    });
+  }
   const entries = Object.entries(env).filter(([, value]) => String(value || "").trim());
-  if (process.platform === "linux" || process.platform === "win32" || entries.length === 0) {
+  if (process.platform === "win32" || entries.length === 0) {
     return appExecutablePath;
   }
   const signature = crypto

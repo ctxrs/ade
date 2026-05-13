@@ -25,6 +25,7 @@ import {
   noteSessionReplicaApplyLag,
   noteStaleHeadDeltaDropped,
 } from "./foregroundFreshnessTelemetry";
+import { SessionReplicaDispatchScheduler } from "./sessionReplicaDispatchScheduler";
 
 const shouldUseWorker = (): boolean => {
   if (typeof Worker === "undefined") return false;
@@ -51,6 +52,7 @@ const patchOpLabel = (patches: readonly SessionReplicaPatch[]): string => {
 export class SessionReplicaBridge {
   private worker: Worker | null = null;
   private core: SessionReplicaCore | null = null;
+  private workerScheduler: SessionReplicaDispatchScheduler | null = null;
   private configUnsubscribe: (() => void) | null = null;
 
   constructor(
@@ -59,6 +61,9 @@ export class SessionReplicaBridge {
   ) {
     if (shouldUseWorker()) {
       this.worker = new Worker(new URL("../workers/sessionReplica.worker.ts", import.meta.url), { type: "module" });
+      this.workerScheduler = new SessionReplicaDispatchScheduler((cmd) => {
+        this.worker?.postMessage(cmd);
+      });
       this.worker.onmessage = (event: MessageEvent<SessionReplicaWorkerMessage>) => {
         const msg = event.data;
         if (msg?.type === "patches") {
@@ -100,8 +105,8 @@ export class SessionReplicaBridge {
   }
 
   dispatch(cmd: SessionReplicaCommand) {
-    if (this.worker) {
-      this.worker.postMessage(cmd);
+    if (this.workerScheduler) {
+      this.workerScheduler.dispatch(cmd);
       return;
     }
     this.core?.handleCommand(cmd);
@@ -109,6 +114,8 @@ export class SessionReplicaBridge {
 
   destroy() {
     if (this.worker) {
+      this.workerScheduler?.destroy();
+      this.workerScheduler = null;
       this.worker.terminate();
       this.worker = null;
     }

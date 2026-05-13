@@ -16,6 +16,7 @@ const REPO_ROOT = path.resolve(CORE_ROOT, "..");
 const require = createRequire(import.meta.url);
 const {
   buildLinuxAppDirLaunchEnv,
+  createLinuxAppDirLaunchWrapper,
   resolveLinuxAppDirFromPath,
 } = require("../automation/helpers/linux_appdir_launch_env.cjs");
 
@@ -324,9 +325,15 @@ async function main() {
   }
   const artifactDir = options.artifactDir || fs.mkdtempSync(path.join(os.tmpdir(), "ctx-linux-launch-smoke-"));
   const appLaunchEnv = buildLinuxAppDirLaunchEnv({ appPath: options.appPath });
+  appLaunchEnv.TAURI_WEBVIEW_AUTOMATION = "true";
   const appLaunchLog = String(process.env.CTX_AUTOMATION_APP_LAUNCH_LOG || "").trim()
     || path.join(artifactDir, "app-launch.log");
   appLaunchEnv.CTX_AUTOMATION_APP_LAUNCH_LOG = appLaunchLog;
+  const applicationPath = createLinuxAppDirLaunchWrapper({
+    appPath: options.appPath,
+    env: appLaunchEnv,
+    wrapperDir: path.join(artifactDir, "desktop-app-launchers"),
+  });
   const driverPort = await pickUnusedPort();
   let nativeDriverPort = await pickUnusedPort();
   for (let attempt = 0; nativeDriverPort === driverPort && attempt < 5; attempt += 1) {
@@ -344,7 +351,7 @@ async function main() {
   writeLaunchDiagnostics({
     artifactDir,
     requestedAppPath: options.appPath,
-    applicationPath: options.appPath,
+    applicationPath,
     appLaunchEnv,
     driverPort,
     nativeDriverPort,
@@ -362,7 +369,7 @@ async function main() {
     });
 
     await waitForTcpPort("127.0.0.1", driverPort, 30_000, "tauri-driver");
-    browser = await connectBrowser({ driverPort, appPath: options.appPath });
+    browser = await connectBrowser({ driverPort, appPath: applicationPath });
 
     const deadline = Date.now() + options.timeoutMs;
     let state = await readLaunchState(browser);

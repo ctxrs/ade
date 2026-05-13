@@ -21,7 +21,6 @@ import {
 import {
   buildHarnessCatalogEntryMap,
 } from "../../utils/harnessCatalog";
-import { desktopEnsureLocalLinuxSandboxReady } from "../../utils/desktop";
 import {
   computeInstallPct,
 } from "../../utils/providerInstallUi";
@@ -93,8 +92,7 @@ export function useWorkspaceSetupHarnessDownloadsProvisioning({
   const [harnessInstallBusy, setHarnessInstallBusy] = useState(false);
   const [harnessInstallError, setHarnessInstallError] = useState<string | null>(null);
   const [harnessInstallRows, setHarnessInstallRows] = useState<Record<string, HarnessInstallRowState>>({});
-  const [localAdminPasswordPromptVisible, setLocalAdminPasswordPromptVisible] = useState(false);
-  const [localAdminPasswordInput, setLocalAdminPasswordInput] = useState("");
+  const setLocalAdminPasswordInput = useCallback((_value: string) => {}, []);
 
   const harnessInstallObserversRef = useRef<Record<string, { installId: string; stop: () => void }>>({});
   const harnessByProviderId = useMemo(() => buildHarnessCatalogEntryMap(), []);
@@ -127,8 +125,6 @@ export function useWorkspaceSetupHarnessDownloadsProvisioning({
     setHarnessInstallSelected({});
     setHarnessInstallRows({});
     setHarnessInstallError(null);
-    setLocalAdminPasswordPromptVisible(false);
-    setLocalAdminPasswordInput("");
   }, [clearHarnessInstallObserver]);
 
   const attachHarnessInstall = useCallback(async (providerId: string, installId: string) => {
@@ -343,37 +339,7 @@ export function useWorkspaceSetupHarnessDownloadsProvisioning({
     setHarnessInstallError(null);
     let shouldAdvance = false;
     try {
-      if (
-        desktopApp
-        && selections.location === "local"
-        && selectedHarnessInstallTarget === "container"
-        && startableRows.length > 0
-      ) {
-        try {
-          await desktopEnsureLocalLinuxSandboxReady({
-            admin_password_once: localAdminPasswordInput.length > 0 ? localAdminPasswordInput : null,
-          });
-          setLocalAdminPasswordPromptVisible(false);
-          setLocalAdminPasswordInput("");
-        } catch (error) {
-          const message = messageFromError(error);
-          if (message.includes("CTX_LOCAL_ADMIN_PASSWORD_REQUIRED")) {
-            setLocalAdminPasswordPromptVisible(true);
-            setLocalAdminPasswordInput("");
-            setHarnessInstallError(
-              "Preparing sandbox needs your Linux admin password. Enter it and try again.",
-            );
-            return null;
-          }
-          setHarnessInstallError(
-            `Could not prepare sandbox for selected downloads: ${message}`,
-          );
-          return null;
-        }
-        await connectDaemonForImport("local");
-      } else {
-        await connectDaemonForImport();
-      }
+      await connectDaemonForImport();
       const startResults = await Promise.all(
         startableRows.map(async (row) => {
           try {
@@ -479,11 +445,8 @@ export function useWorkspaceSetupHarnessDownloadsProvisioning({
     harnessInstallCandidates,
     harnessInstallRows,
     harnessInstallSelected,
-    localAdminPasswordInput,
     providerProgressOwnerScope,
     selectedHarnessInstallTarget,
-    selections.location,
-    desktopApp,
   ]);
 
   const harnessInstallSummary = deriveHarnessInstallSummary(
@@ -510,8 +473,8 @@ export function useWorkspaceSetupHarnessDownloadsProvisioning({
     harnessInstallBusy,
     harnessInstallError,
     harnessInstallRows,
-    localAdminPasswordPromptVisible,
-    localAdminPasswordInput,
+    localAdminPasswordPromptVisible: false,
+    localAdminPasswordInput: "",
     setLocalAdminPasswordInput,
     cancelHarnessInstall,
     advanceFromHarnessDownloadsStep,
