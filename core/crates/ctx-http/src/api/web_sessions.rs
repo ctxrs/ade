@@ -5,7 +5,7 @@ mod actions;
 mod creation;
 mod stream_view;
 
-pub(crate) use access::{require_web_session_signal_access, WebSessionStreamAccessQuery};
+pub(crate) use access::WebSessionStreamAccessQuery;
 pub(super) use actions::{
     close_web_session, eval_web_session, get_web_session, list_web_sessions, run_web_session,
 };

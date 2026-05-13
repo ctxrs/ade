@@ -14,8 +14,10 @@ use tokio_tungstenite::{
     },
 };
 
-use super::super::web_sessions::{require_web_session_signal_access, WebSessionStreamAccessQuery};
+use crate::daemon::web_sessions::{self as daemon_web_sessions, WebSessionAccessError};
 use crate::daemon::AppState;
+
+use super::super::web_sessions::WebSessionStreamAccessQuery;
 
 pub(crate) async fn web_session_signal(
     State(state): State<Arc<AppState>>,
@@ -23,13 +25,23 @@ pub(crate) async fn web_session_signal(
     Query(query): Query<WebSessionStreamAccessQuery>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, StatusCode> {
-    require_web_session_signal_access(&state.transport.web_sessions, &id, query.token.as_deref())
-        .await?;
+    daemon_web_sessions::authorize_web_session_signal_access(&state, &id, query.token.as_deref())
+        .await
+        .map_err(web_session_access_status)?;
     let manager = state.transport.web_sessions.clone();
     let session_id = id.clone();
     Ok(ws.on_upgrade(move |socket| async move {
         handle_web_session_socket(socket, manager, session_id).await;
     }))
+}
+
+fn web_session_access_status(error: WebSessionAccessError) -> StatusCode {
+    match error {
+        WebSessionAccessError::MissingToken | WebSessionAccessError::Unauthorized => {
+            StatusCode::UNAUTHORIZED
+        }
+        WebSessionAccessError::NotFound => StatusCode::NOT_FOUND,
+    }
 }
 
 async fn handle_web_session_socket(

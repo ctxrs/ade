@@ -9,8 +9,13 @@ use ctx_transport_runtime::web_sessions::{
 
 use crate::daemon::AppState;
 
+mod access;
 mod launch;
 
+pub(crate) use access::{
+    authorize_web_session_signal_access, mint_web_session_view_connect_path,
+    prepare_web_session_view_page, WebSessionAccessError,
+};
 pub(crate) use launch::{
     create_web_session, WebSessionLaunchError, WebSessionLaunchErrorKind, WebSessionLaunchRequest,
 };
