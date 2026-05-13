@@ -2,7 +2,9 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use super::{AppState, StorageGuardObservedPath};
+use ctx_storage_admission::StorageGuardObservedPath;
+
+use crate::daemon::AppState;
 
 pub(super) async fn sample_storage_disks(
     state: &Arc<AppState>,

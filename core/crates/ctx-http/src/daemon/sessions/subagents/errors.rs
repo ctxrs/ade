@@ -2,6 +2,7 @@ use crate::daemon::AppState;
 use ctx_core::ids::SessionId;
 use ctx_core::models::Session;
 use ctx_observability::logs;
+use ctx_storage_admission::is_storage_exhaustion_error;
 
 pub(super) type SubagentResult<T> = Result<T, SubagentError>;
 pub(super) type ApiResult<T> = SubagentResult<T>;
@@ -62,7 +63,7 @@ pub(super) fn internal_request_or_policy_error(error: anyhow::Error) -> Subagent
         SubagentErrorKind::Forbidden
     } else if error
         .chain()
-        .any(|cause| crate::daemon::storage_guard::is_storage_exhaustion_error(&cause.to_string()))
+        .any(|cause| is_storage_exhaustion_error(&cause.to_string()))
     {
         SubagentErrorKind::InsufficientStorage
     } else {

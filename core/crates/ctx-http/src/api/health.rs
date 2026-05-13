@@ -1,4 +1,5 @@
 use super::*;
+use ctx_storage_admission::StorageGuardStatus;
 
 const MOBILE_API_MIN_VERSION: i64 = 1;
 const MOBILE_API_MAX_VERSION: i64 = 1;
@@ -27,7 +28,7 @@ pub(in crate::api) struct HealthResp {
     #[serde(skip_serializing_if = "Option::is_none")]
     open_file_limit: Option<ctx_resource_utilization::process_limits::OpenFileLimitSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    storage: Option<crate::daemon::storage_guard::StorageGuardStatus>,
+    storage: Option<StorageGuardStatus>,
     compatibility: HealthCompatibility,
 }
 

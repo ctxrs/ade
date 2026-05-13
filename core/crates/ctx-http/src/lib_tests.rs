@@ -13,10 +13,10 @@ use tower::ServiceExt;
 use ctx_execution_runtime::{ExecutionLaunchSnapshot, ExecutionLaunchState, ExecutionSetupJobKind};
 use ctx_providers::adapters::ProviderStatus;
 use ctx_providers::fake::FakeProviderAdapter;
+use ctx_storage_admission::{StorageGuardLevel, StorageGuardPathStatus, StorageGuardStatus};
 use ctx_store::StoreManager;
 
 use crate::api;
-use crate::daemon::storage_guard::{StorageGuardLevel, StorageGuardPathStatus, StorageGuardStatus};
 use crate::daemon::AppState;
 
 async fn run_git(root: &Path, args: &[&str]) {

@@ -14,8 +14,3 @@ pub(super) use pins::{release_workspace_stream_session_pins, sync_workspace_stre
 pub(super) use rev::{bump_latest_snapshot_rev, event_snapshot_rev};
 pub(super) use secure::send_secure_ws;
 pub(super) use send_loop::{WorkspaceStreamSendRuntime, WorkspaceStreamSequencer};
-
-pub(crate) use ctx_workspace_active_snapshot::{
-    ResolvedWorkspaceActiveSessionReplay, ResolvedWorkspaceActiveSubscriptions,
-    WorkspaceActiveSubscriptionState,
-};

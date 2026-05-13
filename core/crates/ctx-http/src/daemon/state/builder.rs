@@ -3,6 +3,7 @@ mod runtime_parts;
 mod startup;
 
 use super::*;
+use ctx_storage_admission::StorageGuardRuntime;
 use runtime_parts::{
     build_execution_runtime, build_provider_runtime, build_runtime_parts, build_telemetry_runtime,
     build_tool_output_spool, build_transport_runtime, build_workspace_runtime,
@@ -52,7 +53,7 @@ impl AppState {
         let worktree_vcs_enabled = runtime_flags.worktree_vcs_enabled;
         let tool_output_spool = build_tool_output_spool(&data_root);
         let runtime_parts = build_runtime_parts(&data_root);
-        let storage_guard = crate::daemon::storage_guard::StorageGuardRuntime::new(&data_root);
+        let storage_guard = StorageGuardRuntime::new(&data_root);
         let local_shutdown_token = std::env::var("CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN")
             .ok()
             .filter(|value| !value.trim().is_empty());

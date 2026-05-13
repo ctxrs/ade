@@ -2,6 +2,7 @@ use super::*;
 use ctx_core::models::WorktreeVcsSnapshot;
 use ctx_execution_runtime::ExecutionSetupCoordinator;
 use ctx_mcp_auth::McpAuthRegistry;
+use ctx_storage_admission::StorageGuardRuntime;
 use ctx_update_service::UpdateDrainCoordinator;
 use ctx_workspace_active_snapshot::{
     WorkspaceActiveHeadCacheEntry, WorkspaceActiveSnapshotCacheEntry,
@@ -14,7 +15,7 @@ use ctx_workspace_services::worktree_vcs::{
 
 pub struct CoreState {
     pub data_root: PathBuf,
-    pub storage_guard: crate::daemon::storage_guard::StorageGuardRuntime,
+    pub storage_guard: StorageGuardRuntime,
     pub tool_output_spool_enabled: bool,
     pub tool_output_spool_dir: PathBuf,
     pub stores: StoreManager,
