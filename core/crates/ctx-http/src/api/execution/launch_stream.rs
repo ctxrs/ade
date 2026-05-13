@@ -13,6 +13,7 @@ use ctx_execution_runtime::{
     ExecutionLaunchSnapshot, ExecutionLaunchState, ExecutionLaunchStreamEvent,
 };
 
+use crate::daemon::execution_setup as daemon_execution_setup;
 use crate::daemon::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -28,10 +29,7 @@ pub(in crate::api) async fn launch_status(
     if job_id.is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let snapshot = state
-        .execution
-        .setup
-        .launch_status(job_id)
+    let snapshot = daemon_execution_setup::launch_status(&state, job_id)
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
     Ok(Json(snapshot))
@@ -47,7 +45,8 @@ pub(in crate::api) async fn launch_stream_ws(
         return StatusCode::BAD_REQUEST.into_response();
     }
 
-    let Some((snapshot, rx)) = state.execution.setup.subscribe_launch(&job_id).await else {
+    let Some((snapshot, rx)) = daemon_execution_setup::subscribe_launch(&state, &job_id).await
+    else {
         return StatusCode::NOT_FOUND.into_response();
     };
 

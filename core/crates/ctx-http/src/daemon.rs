@@ -19,6 +19,7 @@ use ctx_provider_runtime::provider_usage;
 
 mod activity;
 pub(crate) mod execution_effective;
+pub(crate) mod execution_setup;
 pub mod git_status;
 mod lifecycle;
 mod listener;

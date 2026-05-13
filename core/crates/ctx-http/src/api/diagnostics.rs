@@ -15,7 +15,7 @@ pub(in crate::api) struct DiagnosticsResp {
 pub(in crate::api) async fn diagnostics(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<DiagnosticsResp>, StatusCode> {
-    let startup_prewarm = state.execution.setup.startup_status().await;
+    let startup_prewarm = crate::daemon::execution_setup::startup_status(&state).await;
     let linux_sandbox_runtime = linux_sandbox_runtime_status(&state.core.data_root)
         .await
         .map(|status| serde_json::to_value(status).unwrap_or_else(|_| serde_json::json!({})))

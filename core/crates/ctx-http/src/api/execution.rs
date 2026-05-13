@@ -11,6 +11,8 @@ use crate::daemon::AppState;
 use ctx_observability::logs;
 use ctx_settings_model::ExecutionMode;
 
+use crate::daemon::execution_setup as daemon_execution_setup;
+
 use super::errors::ApiErrorResp;
 
 mod launch_stream;
@@ -55,14 +57,7 @@ pub(super) async fn launch_start(
         ExecutionSetupJobKind::WorkspaceLaunch => {
             let (workspace, execution_settings) =
                 resolve_workspace_launch_inputs(&state, req.workspace_id.as_deref()).await?;
-            state
-                .execution
-                .setup
-                .start_workspace_launch(
-                    workspace,
-                    execution_settings,
-                    state.core.daemon_url.clone(),
-                )
+            daemon_execution_setup::start_workspace_launch(&state, workspace, execution_settings)
                 .await
         }
         ExecutionSetupJobKind::StartupPrewarm => {
@@ -78,11 +73,12 @@ pub(super) async fn launch_start(
                 })?;
             let mut execution_settings = settings.execution.unwrap_or_default();
             execution_settings.mode = ExecutionMode::Sandbox;
-            state
-                .execution
-                .setup
-                .start_runtime_prewarm(execution_settings, req.prewarm_scope)
-                .await
+            daemon_execution_setup::start_runtime_prewarm(
+                &state,
+                execution_settings,
+                req.prewarm_scope,
+            )
+            .await
         }
     };
     Ok(Json(snapshot))
