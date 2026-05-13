@@ -3,7 +3,7 @@ use std::process::Stdio;
 use tokio::process::{Child, Command};
 
 use super::workspace::CursorLoginWorkspace;
-use ctx_managed_installs as installer;
+use crate::daemon::providers::ProviderLoginRuntimeCommand;
 
 fn cursor_login_node_options(workspace: &CursorLoginWorkspace) -> String {
     let hook_require = format!("--require {}", workspace.hook_path.to_string_lossy());
@@ -16,7 +16,7 @@ fn cursor_login_node_options(workspace: &CursorLoginWorkspace) -> String {
 }
 
 pub(super) fn spawn_cursor_login_child(
-    cursor_runtime: &installer::ProviderRuntimeCommand,
+    cursor_runtime: &ProviderLoginRuntimeCommand,
     workspace: &CursorLoginWorkspace,
 ) -> std::io::Result<Child> {
     let mut cmd = Command::new(&cursor_runtime.command_abs_path);

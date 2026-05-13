@@ -59,11 +59,6 @@ async fn resolve_cursor_login_runtime_accepts_configured_login_command() {
         expected.to_string_lossy().to_string()
     );
     assert!(resolved.args.is_empty());
-    assert!(resolved.dependencies.is_empty());
-    assert_eq!(
-        resolved.source,
-        installer::ProviderRuntimeCommandSource::PreparedLoginExecutable
-    );
 }
 
 #[tokio::test]

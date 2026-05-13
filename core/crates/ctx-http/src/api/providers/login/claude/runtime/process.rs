@@ -6,9 +6,8 @@ use anyhow::Context;
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use tokio::sync::{mpsc, oneshot};
 
-use ctx_managed_installs as installer;
-
 use super::shim::create_claude_browser_open_shim;
+use crate::daemon::providers::ProviderLoginRuntimeCommand;
 use output::pump_claude_login_output;
 
 #[path = "process/output.rs"]
@@ -31,7 +30,7 @@ fn scrub_daemon_auth_env(cmd: &mut CommandBuilder) {
 }
 
 pub(in crate::api::providers::login::claude) fn spawn_claude_setup_token_command(
-    runtime: &installer::ProviderRuntimeCommand,
+    runtime: &ProviderLoginRuntimeCommand,
 ) -> anyhow::Result<ClaudeLoginSpawn> {
     let pty = NativePtySystem::default();
     let pair = pty

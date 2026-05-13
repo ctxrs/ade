@@ -91,25 +91,3 @@ pub(super) fn extract_auth_url_from_value(value: &serde_json::Value) -> Option<S
         _ => None,
     }
 }
-
-pub(super) async fn resolve_runtime_provider_command_from_config(
-    data_root: &std::path::Path,
-    provider_id: &str,
-) -> anyhow::Result<Option<installer::ProviderRuntimeCommand>> {
-    let cfg = installer::load_agent_server_config(data_root)
-        .await
-        .context("loading agent server config")?;
-    installer::resolve_runtime_provider_command(&cfg, provider_id)
-        .with_context(|| format!("resolving runtime command for {provider_id}"))
-}
-
-pub(super) async fn resolve_provider_login_command_from_config(
-    data_root: &std::path::Path,
-    provider_id: &str,
-) -> anyhow::Result<Option<installer::ProviderRuntimeCommand>> {
-    let cfg = installer::load_agent_server_config(data_root)
-        .await
-        .context("loading agent server config")?;
-    installer::resolve_provider_login_command(&cfg, provider_id)
-        .with_context(|| format!("resolving prepared login executable for {provider_id}"))
-}

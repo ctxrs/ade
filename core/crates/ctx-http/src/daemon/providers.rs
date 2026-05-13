@@ -4,6 +4,7 @@ mod bootstrap;
 mod harness_config;
 mod installs;
 mod launch_config;
+mod login_runtime;
 mod options_cache;
 mod restarts;
 mod runtime_probe;
@@ -50,6 +51,13 @@ pub(crate) use installs::{
 };
 pub(crate) use launch_config::{
     load_provider_launch_config_snapshot, ProviderLaunchConfigError, ProviderLaunchConfigSnapshot,
+};
+pub(crate) use login_runtime::{
+    resolve_claude_login_runtime, resolve_cursor_login_runtime, ProviderLoginRuntimeCommand,
+};
+#[cfg(test)]
+pub(crate) use login_runtime::{
+    resolve_claude_login_runtime_from_config, resolve_cursor_login_runtime_from_config,
 };
 pub(crate) use options_cache::{store_provider_verify_cache_value, ProviderOptionsCacheSnapshot};
 pub(crate) use restarts::{

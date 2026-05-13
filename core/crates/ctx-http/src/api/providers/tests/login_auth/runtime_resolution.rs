@@ -44,11 +44,6 @@ async fn resolve_claude_login_runtime_uses_configured_runtime_command() {
         .expect("resolve runtime from config");
     assert!(resolved.command_abs_path.contains("claude-cli-mock.sh"));
     assert_eq!(resolved.args, vec!["--shim".to_string()]);
-    assert_eq!(resolved.dependencies, vec!["dep-node".to_string()]);
-    assert_eq!(
-        resolved.source,
-        installer::ProviderRuntimeCommandSource::UserOverride
-    );
 }
 
 #[tokio::test]
