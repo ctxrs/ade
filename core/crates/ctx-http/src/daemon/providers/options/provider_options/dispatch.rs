@@ -13,7 +13,7 @@ pub(super) async fn dispatch_provider_options_probe(
     use_crp_probe: bool,
     selected_endpoint: Option<&HarnessEndpointRecord>,
     probe_context: ProviderOptionsProbeContext<'_>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Value, ProviderOptionsResponseError> {
     match provider_options_probe_plan(
         use_crp_probe,
         selected_endpoint.map(|endpoint| endpoint.id.as_str()),

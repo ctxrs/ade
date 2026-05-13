@@ -92,7 +92,8 @@ pub(crate) use login_sessions::{
     update_cursor_login_auth_url, CodexLoginCallbackClaimError,
 };
 pub(crate) use options::{
-    effective_preferred_model_id_for_workspace, EffectivePreferredModelError,
+    effective_preferred_model_id_for_workspace, get_provider_options_response,
+    EffectivePreferredModelError, ProviderOptionsResponseError,
 };
 pub(crate) use options_cache::{store_provider_verify_cache_value, ProviderOptionsCacheSnapshot};
 pub(crate) use restarts::{

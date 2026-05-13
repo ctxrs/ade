@@ -46,7 +46,7 @@ impl ProviderOptionsProbeContext<'_> {
 
 pub(super) async fn env_probe_provider_options(
     context: ProviderOptionsProbeContext<'_>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Value, ProviderOptionsResponseError> {
     let (probe_ok, auth_required, probe_error) =
         probe_provider_options_env(context.state, context.workspace, context.provider_id).await;
     let raw_resp = env_probe_provider_options_response(
@@ -64,19 +64,16 @@ pub(super) async fn env_probe_provider_options(
         context.verify_ttl,
     )
     .await;
-    Ok(Json(out))
+    Ok(out)
 }
 
 pub(super) async fn selected_endpoint_runtime_launch_provider_options(
     context: ProviderOptionsProbeContext<'_>,
     endpoint_id: String,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let endpoint = context.selected_endpoint.ok_or((
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(serde_json::json!({
-            "error": "selected endpoint missing from provider configuration",
-        })),
-    ))?;
+) -> Result<Value, ProviderOptionsResponseError> {
+    let endpoint = context
+        .selected_endpoint
+        .ok_or(ProviderOptionsResponseError::SelectedEndpointMissing)?;
     let (probe_ok, auth_required, probe_error) = probe_selected_endpoint_runtime_launch(
         context.state,
         context.workspace,
@@ -100,12 +97,12 @@ pub(super) async fn selected_endpoint_runtime_launch_provider_options(
         context.verify_ttl,
     )
     .await;
-    Ok(Json(out))
+    Ok(out)
 }
 
 pub(super) async fn runtime_models_provider_options(
     context: ProviderOptionsProbeContext<'_>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Value, ProviderOptionsResponseError> {
     let probe = probe_runtime_models_for_provider_options(
         context.state,
         context.workspace,
@@ -128,5 +125,5 @@ pub(super) async fn runtime_models_provider_options(
         context.verify_ttl,
     )
     .await;
-    Ok(Json(out))
+    Ok(out)
 }

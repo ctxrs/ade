@@ -7,7 +7,7 @@ use ctx_provider_runtime::provider_launch::options::runtime_probe_models_payload
 use ctx_provider_runtime::provider_launch::probe_error::classify_probe_error;
 use ctx_providers::adapters::ProviderStatus;
 
-pub(in crate::api::provider_launch) fn runtime_models_provider_options_response(
+pub(in crate::daemon::providers::options) fn runtime_models_provider_options_response(
     provider_id: &str,
     workspace_id: WorkspaceId,
     provider_status: &ProviderStatus,

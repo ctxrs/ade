@@ -5,8 +5,6 @@ use ctx_core::models::Workspace;
 use ctx_harness_sources::HarnessEndpointRecord;
 use ctx_provider_install::install_state::InstallTarget;
 
-use crate::api::provider_launch::errors::provider_launch_config_error_response;
-
 use super::*;
 
 pub(super) enum ProviderOptionsLoadOutcome {
@@ -26,15 +24,14 @@ pub(super) struct ProviderOptionsInputs {
 
 pub(super) async fn load_provider_options_inputs(
     state: &Arc<AppState>,
-    ws_id: &str,
+    workspace_id: WorkspaceId,
     provider_id: &str,
     cache_ttl: Duration,
     verify_ttl: Duration,
-) -> Result<ProviderOptionsLoadOutcome, (StatusCode, Json<serde_json::Value>)> {
-    let workspace_id = parse_workspace_id(ws_id)?;
+) -> Result<ProviderOptionsLoadOutcome, ProviderOptionsResponseError> {
     let install_target = install_target_for_workspace(state, workspace_id)
         .await
-        .map_err(|error| workspace_execution_settings_error_json(&error))?;
+        .map_err(ProviderOptionsResponseError::ExecutionSettings)?;
     let launch_config = load_provider_launch_config_snapshot(state, provider_id).await;
     let skip_cached_config_surfaces =
         launch_config.managed_config_error.is_some() || launch_config.source_config_error.is_some();
@@ -53,7 +50,7 @@ pub(super) async fn load_provider_options_inputs(
     launch_config
         .ensure_known_provider(state, provider_id)
         .await
-        .map_err(provider_launch_config_error_response)?;
+        .map_err(ProviderOptionsResponseError::ProviderLaunchConfig)?;
 
     let workspace = load_workspace(state, workspace_id).await?;
     let preferred_model_id =
@@ -76,23 +73,25 @@ pub(super) async fn load_provider_options_inputs(
 async fn load_workspace(
     state: &Arc<AppState>,
     ws_id: WorkspaceId,
-) -> Result<Workspace, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Workspace, ProviderOptionsResponseError> {
     state
         .global_store()
         .get_workspace(ws_id)
         .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": "failed to load workspace",
-                })),
-            )
-        })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({
-                "error": "workspace not found",
-            })),
-        ))
+        .map_err(|_| ProviderOptionsResponseError::WorkspaceLoad)?
+        .ok_or(ProviderOptionsResponseError::WorkspaceNotFound)
+}
+
+async fn load_workspace_preferred_model_id(
+    state: &Arc<AppState>,
+    workspace_id: WorkspaceId,
+    provider_id: &str,
+) -> Result<Option<String>, ProviderOptionsResponseError> {
+    let store = state
+        .store_for_workspace(workspace_id)
+        .await
+        .map_err(ProviderOptionsResponseError::WorkspaceStoreLoad)?;
+    ctx_workspace_config::load_preferred_new_session_model_id(&store, provider_id)
+        .await
+        .map_err(ProviderOptionsResponseError::WorkspacePreferenceLoad)
 }

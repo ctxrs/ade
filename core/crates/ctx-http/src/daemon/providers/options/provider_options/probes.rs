@@ -15,7 +15,7 @@ pub(super) async fn probe_selected_endpoint_runtime_launch(
     workspace: &ctx_core::models::Workspace,
     provider_id: &str,
     endpoint_id: String,
-) -> Result<(bool, bool, Option<String>), (StatusCode, Json<serde_json::Value>)> {
+) -> Result<(bool, bool, Option<String>), ProviderOptionsResponseError> {
     let status = crate::daemon::providers::probe_selected_endpoint_runtime_launch(
         state,
         workspace,
@@ -23,7 +23,7 @@ pub(super) async fn probe_selected_endpoint_runtime_launch(
         endpoint_id,
     )
     .await
-    .map_err(|err| workspace_execution_settings_error_json(&err))?;
+    .map_err(ProviderOptionsResponseError::ExecutionSettings)?;
     Ok((status.probe_ok, status.auth_required, status.probe_error))
 }
 
@@ -31,13 +31,12 @@ pub(super) async fn probe_runtime_models_for_provider_options(
     state: &Arc<AppState>,
     workspace: &ctx_core::models::Workspace,
     provider_id: &str,
-) -> Result<anyhow::Result<ctx_providers::crp::CrpModelsProbe>, (StatusCode, Json<serde_json::Value>)>
-{
+) -> Result<anyhow::Result<ctx_providers::crp::CrpModelsProbe>, ProviderOptionsResponseError> {
     crate::daemon::providers::probe_runtime_models_for_provider_options(
         state,
         workspace,
         provider_id,
     )
     .await
-    .map_err(|err| workspace_execution_settings_error_json(&err))
+    .map_err(ProviderOptionsResponseError::ExecutionSettings)
 }

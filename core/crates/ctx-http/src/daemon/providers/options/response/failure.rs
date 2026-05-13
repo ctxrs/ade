@@ -5,7 +5,7 @@ use ctx_providers::adapters::ProviderStatus;
 
 use super::attach_source_config;
 
-pub(in crate::api::provider_launch) fn config_error_provider_options_response(
+pub(in crate::daemon::providers::options) fn config_error_provider_options_response(
     provider_id: &str,
     workspace_id: WorkspaceId,
     installed: Option<bool>,
@@ -44,7 +44,7 @@ pub(in crate::api::provider_launch) fn config_error_provider_options_response(
     response
 }
 
-pub(in crate::api::provider_launch) fn unusable_provider_options_response(
+pub(in crate::daemon::providers::options) fn unusable_provider_options_response(
     provider_id: &str,
     workspace_id: WorkspaceId,
     provider_status: &ProviderStatus,

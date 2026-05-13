@@ -1,18 +1,26 @@
-use super::*;
+use std::sync::Arc;
+use std::time::Duration;
+
+use ctx_core::redaction::redact_json_value;
+use ctx_harness_sources as harness_sources;
 use ctx_harness_sources::HarnessEndpointRecord;
+use ctx_provider_runtime::model_preferences::inject_preferred_model_id;
 use ctx_provider_runtime::provider_launch::models::{
     endpoint_models_payload, subscription_models_payload_from_status,
     supplement_models_payload_with_endpoint_metadata,
 };
 use ctx_providers::adapters::ProviderStatus;
 
-pub(in crate::api::provider_launch) struct ProviderOptionsResponseContext<'a> {
-    pub(in crate::api::provider_launch) state: &'a Arc<AppState>,
-    pub(in crate::api::provider_launch) provider_id: &'a str,
-    pub(in crate::api::provider_launch) provider_status: Option<&'a ProviderStatus>,
-    pub(in crate::api::provider_launch) selected_endpoint: Option<&'a HarnessEndpointRecord>,
-    pub(in crate::api::provider_launch) cache: &'a ProviderOptionsCacheSnapshot,
-    pub(in crate::api::provider_launch) preferred_model_id: Option<String>,
+use crate::daemon::providers::ProviderOptionsCacheSnapshot;
+use crate::daemon::AppState;
+
+pub(in crate::daemon::providers::options) struct ProviderOptionsResponseContext<'a> {
+    pub(in crate::daemon::providers::options) state: &'a Arc<AppState>,
+    pub(in crate::daemon::providers::options) provider_id: &'a str,
+    pub(in crate::daemon::providers::options) provider_status: Option<&'a ProviderStatus>,
+    pub(in crate::daemon::providers::options) selected_endpoint: Option<&'a HarnessEndpointRecord>,
+    pub(in crate::daemon::providers::options) cache: &'a ProviderOptionsCacheSnapshot,
+    pub(in crate::daemon::providers::options) preferred_model_id: Option<String>,
 }
 
 async fn attach_static_provider_models_and_modes(
@@ -69,7 +77,7 @@ async fn attach_static_provider_models_and_modes(
     }
 }
 
-pub(in crate::api::provider_launch) async fn finalize_provider_options_response(
+pub(in crate::daemon::providers::options) async fn finalize_provider_options_response(
     context: ProviderOptionsResponseContext<'_>,
     mut raw_response: serde_json::Value,
     write_options_cache: bool,

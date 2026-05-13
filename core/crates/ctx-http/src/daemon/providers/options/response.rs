@@ -1,15 +1,20 @@
-use super::*;
+use ctx_core::ids::WorkspaceId;
+use ctx_harness_sources as harness_sources;
 use ctx_harness_sources::HarnessEndpointRecord;
 use ctx_provider_runtime::provider_launch::models::endpoint_models_payload;
 use ctx_providers::adapters::ProviderStatus;
 
 mod failure;
+mod finalization;
 mod runtime_models;
 
-pub(in crate::api::provider_launch) use self::failure::{
+pub(super) use self::failure::{
     config_error_provider_options_response, unusable_provider_options_response,
 };
-pub(in crate::api::provider_launch) use self::runtime_models::runtime_models_provider_options_response;
+pub(super) use self::finalization::{
+    finalize_provider_options_response, ProviderOptionsResponseContext,
+};
+pub(super) use self::runtime_models::runtime_models_provider_options_response;
 
 fn attach_source_config(
     value: &mut serde_json::Value,
@@ -20,23 +25,22 @@ fn attach_source_config(
     }
 }
 
-pub(in crate::api::provider_launch) struct ProviderOptionsResponseBase<'a> {
-    pub(in crate::api::provider_launch) provider_id: &'a str,
-    pub(in crate::api::provider_launch) workspace_id: WorkspaceId,
-    pub(in crate::api::provider_launch) provider_status: &'a ProviderStatus,
-    pub(in crate::api::provider_launch) has_active_auth: bool,
-    pub(in crate::api::provider_launch) auth_mode: &'a str,
-    pub(in crate::api::provider_launch) source_config:
-        Option<&'a harness_sources::HarnessProviderSourceConfig>,
+pub(super) struct ProviderOptionsResponseBase<'a> {
+    pub(super) provider_id: &'a str,
+    pub(super) workspace_id: WorkspaceId,
+    pub(super) provider_status: &'a ProviderStatus,
+    pub(super) has_active_auth: bool,
+    pub(super) auth_mode: &'a str,
+    pub(super) source_config: Option<&'a harness_sources::HarnessProviderSourceConfig>,
 }
 
-pub(in crate::api::provider_launch) struct ProviderOptionsProbeResult {
-    pub(in crate::api::provider_launch) probe_ok: bool,
-    pub(in crate::api::provider_launch) auth_required: bool,
-    pub(in crate::api::provider_launch) probe_error: Option<String>,
+pub(super) struct ProviderOptionsProbeResult {
+    pub(super) probe_ok: bool,
+    pub(super) auth_required: bool,
+    pub(super) probe_error: Option<String>,
 }
 
-pub(in crate::api::provider_launch) fn env_probe_provider_options_response(
+pub(super) fn env_probe_provider_options_response(
     base: ProviderOptionsResponseBase<'_>,
     probe: ProviderOptionsProbeResult,
 ) -> serde_json::Value {
@@ -58,7 +62,7 @@ pub(in crate::api::provider_launch) fn env_probe_provider_options_response(
     response
 }
 
-pub(in crate::api::provider_launch) fn selected_endpoint_runtime_launch_options_response(
+pub(super) fn selected_endpoint_runtime_launch_options_response(
     base: ProviderOptionsResponseBase<'_>,
     endpoint: &HarnessEndpointRecord,
     probe: ProviderOptionsProbeResult,

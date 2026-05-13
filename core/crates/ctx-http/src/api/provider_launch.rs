@@ -1,13 +1,16 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+mod common;
 mod errors;
 mod handlers;
-mod provider_options_response;
 
-use errors::{provider_install_error_response, workspace_execution_settings_error_json};
+use common::parse_workspace_id;
+use errors::{
+    provider_install_error_response, provider_launch_config_error_response,
+    workspace_execution_settings_error_json,
+};
 pub(in crate::api) use handlers::*;
-use provider_options_response::*;
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -24,24 +27,18 @@ use crate::daemon::providers::{
     get_provider_install_info, install_target_for_workspace, list_provider_install_events,
     load_provider_launch_config_snapshot, parse_provider_install_target,
     provider_install_event_sender, start_all_provider_installs, start_provider_install,
-    store_provider_verify_cache_value, ProviderLaunchConfigSnapshot, ProviderOptionsCacheSnapshot,
-    ProviderWorkspaceAuthenticationError,
+    store_provider_verify_cache_value, ProviderWorkspaceAuthenticationError,
 };
 use crate::daemon::AppState;
-use ctx_harness_sources as harness_sources;
 use ctx_harness_sources::HarnessEndpointVerificationStatus;
 use ctx_observability::logs;
 use ctx_provider_install::install_state::{
     InstallId, InstallInfo, InstallProgressEvent, InstallTarget,
 };
-use ctx_provider_runtime::model_preferences::inject_preferred_model_id;
-use ctx_provider_runtime::provider_auth::provider_auth_mode;
 use ctx_provider_runtime::provider_launch::models::{
     endpoint_catalog_runtime_probe_failure, endpoint_catalog_verify_outcome,
 };
-use ctx_provider_runtime::provider_launch::options::{
-    endpoint_supports_model_catalog_verify, provider_supports_runtime_model_catalog,
-};
+use ctx_provider_runtime::provider_launch::options::endpoint_supports_model_catalog_verify;
 use ctx_provider_runtime::provider_launch::probe_error::classify_probe_error;
 use ctx_provider_runtime::provider_usability::{
     provider_status_is_usable, provider_status_unusable_reason,
