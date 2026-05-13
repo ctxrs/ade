@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use super::artifacts::persist_blob_bytes;
 use super::errors::ApiErrorResp;
-use super::shared::{load_and_cache_worktree_files, FileCompletionsQuery};
+use super::shared::{map_file_completions_error, FileCompletionsQuery};
 use crate::daemon::scheduler::SchedulerCommand;
 use crate::daemon::AppState;
 use ctx_core::ids::*;
@@ -21,7 +21,6 @@ use ctx_providers::ask_user_question::{AskUserQuestionAnswer, AskUserQuestionOut
 #[cfg(test)]
 use ctx_settings_model as user_settings;
 use ctx_store::is_unique_constraint_violation;
-use ctx_workspace_services::file_completions as workspace_file_completions;
 use ctx_workspace_services::worktree_vcs::GitStatusEntry;
 
 mod subagents;

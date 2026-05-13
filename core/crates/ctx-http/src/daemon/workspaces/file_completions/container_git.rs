@@ -3,11 +3,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::http::StatusCode;
 use ctx_core::models::Worktree;
 use ctx_settings_model::ContainerRuntimeKind;
 
 use crate::daemon::AppState;
+
+use super::super::FileCompletionsError;
 
 pub(super) async fn container_git_ls_files(
     state: &Arc<AppState>,
@@ -15,12 +16,14 @@ pub(super) async fn container_git_ls_files(
     runtime: ContainerRuntimeKind,
     workdir: &str,
     git_args: &[&str],
-) -> Result<Vec<String>, StatusCode> {
+) -> Result<Vec<String>, FileCompletionsError> {
     const SANDBOX_GIT_LS_FILES_TIMEOUT: Duration = Duration::from_secs(30);
     let out = match runtime {
         ContainerRuntimeKind::NativeContainer => {
             let mut cmd = ctx_harness_runtime::sandbox_container_command(&state.core.data_root)
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                .map_err(|err| {
+                    FileCompletionsError::internal(format!("building sandbox command: {err}"))
+                })?;
             cmd.arg("exec")
                 .arg("--workdir")
                 .arg(workdir)
@@ -36,7 +39,7 @@ pub(super) async fn container_git_ls_files(
                 SANDBOX_GIT_LS_FILES_TIMEOUT,
             )
             .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .map_err(|err| FileCompletionsError::internal(format!("running sandbox git: {err}")))?
         }
         ContainerRuntimeKind::SharedVmContainer => {
             let args = git_args
@@ -59,12 +62,17 @@ pub(super) async fn container_git_ls_files(
                 ),
             )
             .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .map_err(|_| FileCompletionsError::internal("shared VM git timed out"))?
+            .map_err(|err| {
+                FileCompletionsError::internal(format!("running shared VM git: {err}"))
+            })?
         }
     };
     if !out.status.success() {
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(FileCompletionsError::internal(format!(
+            "container git {git_args:?} failed: {stderr}"
+        )));
     }
     Ok(parse_nul_delimited_git_paths(&out.stdout))
 }

@@ -13,9 +13,7 @@ pub(crate) use errors::{
     map_effective_execution_settings_error, map_internal_api_error, status_code_for_internal_error,
     status_code_for_request_or_policy_error,
 };
-pub(super) use file_completions::{
-    load_and_cache_workspace_files, load_and_cache_worktree_files, FileCompletionsQuery,
-};
+pub(super) use file_completions::{map_file_completions_error, FileCompletionsQuery};
 pub(super) use path_guard::path_resolves_within_root;
 pub(super) use session_root::session_root_kind_for_worktree;
 pub(super) use store_lookup::store_for_existing_workspace_status;
