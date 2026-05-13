@@ -1,4 +1,7 @@
 use super::super::super::*;
+use ctx_workspace_services::worktree_vcs::{
+    worktree_vcs_scheduler_concurrency_from_env, WorktreeVcsSchedulerRuntime,
+};
 
 pub(in crate::daemon::state::builder) fn build_workspace_runtime(
     worktree_vcs_enabled: bool,

@@ -1,6 +1,6 @@
 use super::super::{apply_workspace_snapshot_hydration_payload, WorkspaceSnapshotHydrationPayload};
 use super::fixtures::{test_head, test_session_metadata, test_task};
-use crate::daemon::state::{WorkspaceRuntime, WorktreeVcsSchedulerRuntime};
+use crate::daemon::state::WorkspaceRuntime;
 use chrono::Utc;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
@@ -8,6 +8,7 @@ use ctx_core::models::{
     WorkspaceActiveTaskSummary,
 };
 use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotHub;
+use ctx_workspace_services::worktree_vcs::WorktreeVcsSchedulerRuntime;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;

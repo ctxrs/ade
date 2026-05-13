@@ -4,6 +4,7 @@ mod startup;
 
 use super::*;
 use ctx_storage_admission::StorageGuardRuntime;
+use ctx_workspace_services::worktree_vcs::worktree_vcs_enabled_from_env;
 use runtime_parts::{
     build_execution_runtime, build_provider_runtime, build_runtime_parts, build_telemetry_runtime,
     build_tool_output_spool, build_transport_runtime, build_workspace_runtime,

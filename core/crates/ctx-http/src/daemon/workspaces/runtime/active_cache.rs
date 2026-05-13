@@ -1,9 +1,10 @@
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot};
-
-use crate::daemon::state::{
-    TimedEntry, WorkspaceActiveHeadCacheEntry, WorkspaceActiveSnapshotCacheEntry, WorkspaceRuntime,
+use ctx_workspace_active_snapshot::{
+    WorkspaceActiveHeadCacheEntry, WorkspaceActiveSnapshotCacheEntry,
 };
+
+use crate::daemon::state::{TimedEntry, WorkspaceRuntime};
 
 impl WorkspaceRuntime {
     pub async fn cached_workspace_active_snapshot_state(

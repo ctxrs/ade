@@ -37,17 +37,10 @@ mod types;
 mod worktree_data_plane;
 
 pub use cache::{CacheSweepConfig, TimedEntry};
-pub use ctx_workspace_active_snapshot::{
-    WorkspaceActiveHeadCacheEntry, WorkspaceActiveSnapshotCacheEntry,
-};
-pub(crate) use ctx_workspace_services::worktree_vcs::{
-    worktree_vcs_enabled_from_env, worktree_vcs_scheduler_concurrency_from_env,
-};
 use runtime_adapters::{
     CtxExecutionHarness, CtxRuntimeEventSink, CtxRuntimeMetricsSink, DefaultWarmupOperations,
 };
 
-pub use ctx_workspace_services::worktree_vcs::WorktreeVcsSchedulerRuntime;
 pub use types::{
     AppRuntimeFlags, AppState, CoreState, ExecutionRuntime, ProviderRuntime, SessionRuntime,
     StoreLookup, TelemetryRuntime, TransportRuntime, WorkspaceRuntime,
