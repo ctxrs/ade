@@ -49,7 +49,7 @@ pub async fn load_worktree_vcs_session_diff_summary_from_host(
 }
 
 pub async fn load_worktree_vcs_session_diff_from_sandbox(
-    executor: &(impl WorktreeVcsSessionDiffSandboxExecutor + Sync),
+    executor: &impl WorktreeVcsSessionDiffSandboxExecutor,
     base_commit_sha: &str,
 ) -> Result<String> {
     let bytes = executor
@@ -62,7 +62,7 @@ pub async fn load_worktree_vcs_session_diff_from_sandbox(
 }
 
 pub async fn load_worktree_vcs_session_diff_summary_from_sandbox(
-    executor: &(impl WorktreeVcsSessionDiffSandboxExecutor + Sync),
+    executor: &impl WorktreeVcsSessionDiffSandboxExecutor,
     base_commit_sha: &str,
 ) -> Result<WorktreeVcsDiffSummaryCounts> {
     let bytes = executor

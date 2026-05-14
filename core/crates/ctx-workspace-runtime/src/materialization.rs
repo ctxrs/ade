@@ -19,6 +19,18 @@ pub struct SandboxWorktreeMaterialization {
     pub host_materialization_root: Option<PathBuf>,
 }
 
+#[derive(Clone, Copy)]
+pub struct MaterializeSandboxBindingParams<'a> {
+    pub data_root: &'a Path,
+    pub daemon_url: &'a str,
+    pub harness: &'a HarnessRuntimeManager,
+    pub workspace: &'a Workspace,
+    pub worktree: &'a Worktree,
+    pub canonical_root: &'a Path,
+    pub effective: &'a ExecutionSettings,
+    pub created_at: DateTime<Utc>,
+}
+
 pub async fn materialize_sandbox_worktree(
     data_root: &Path,
     daemon_url: &str,
@@ -92,15 +104,18 @@ pub async fn materialize_sandbox_worktree(
 }
 
 pub async fn materialize_sandbox_binding(
-    data_root: &Path,
-    daemon_url: &str,
-    harness: &HarnessRuntimeManager,
-    workspace: &Workspace,
-    worktree: &Worktree,
-    canonical_root: &Path,
-    effective: &ExecutionSettings,
-    created_at: DateTime<Utc>,
+    params: MaterializeSandboxBindingParams<'_>,
 ) -> Result<Option<SandboxBinding>> {
+    let MaterializeSandboxBindingParams {
+        data_root,
+        daemon_url,
+        harness,
+        workspace,
+        worktree,
+        canonical_root,
+        effective,
+        created_at,
+    } = params;
     let Some(materialization) = materialize_sandbox_worktree(
         data_root,
         daemon_url,

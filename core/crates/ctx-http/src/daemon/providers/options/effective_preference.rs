@@ -141,16 +141,16 @@ async fn effective_model_payload_for_workspace(
                     &probe,
                     fallback_current_model_id.as_deref(),
                 ) {
-                    let response = cached_runtime_models_response(
+                    let response = cached_runtime_models_response(CachedRuntimeModelsResponseArgs {
                         provider_id,
-                        workspace.id,
-                        provider_status.installed,
-                        &models,
+                        workspace_id: workspace.id,
+                        installed: provider_status.installed,
+                        models: &models,
                         has_active_auth,
-                        provider_auth_mode(has_active_auth, source_config),
+                        auth_mode: provider_auth_mode(has_active_auth, source_config),
                         source_config,
                         preferred_model_id,
-                    );
+                    });
                     cache.store_response(state, response).await;
                     return Ok(Some(models));
                 }
@@ -168,16 +168,28 @@ fn endpoint_models_payload_for_provider(
     endpoint_models_payload(provider_id, endpoint, chrono::Utc::now())
 }
 
-fn cached_runtime_models_response(
-    provider_id: &str,
+struct CachedRuntimeModelsResponseArgs<'a> {
+    provider_id: &'a str,
     workspace_id: ctx_core::ids::WorkspaceId,
     installed: bool,
-    models: &Value,
+    models: &'a Value,
     has_active_auth: bool,
-    auth_mode: &str,
-    source_config: Option<&HarnessProviderSourceConfig>,
-    preferred_model_id: &str,
-) -> Value {
+    auth_mode: &'a str,
+    source_config: Option<&'a HarnessProviderSourceConfig>,
+    preferred_model_id: &'a str,
+}
+
+fn cached_runtime_models_response(args: CachedRuntimeModelsResponseArgs<'_>) -> Value {
+    let CachedRuntimeModelsResponseArgs {
+        provider_id,
+        workspace_id,
+        installed,
+        models,
+        has_active_auth,
+        auth_mode,
+        source_config,
+        preferred_model_id,
+    } = args;
     let mut response = serde_json::json!({
         "provider_id": provider_id,
         "workspace_id": workspace_id.0,

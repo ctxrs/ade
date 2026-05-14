@@ -15,17 +15,19 @@ pub(crate) async fn materialize_sandbox_binding_for_worktree(
     effective: &ExecutionSettings,
     created_at: DateTime<Utc>,
 ) -> anyhow::Result<Option<SandboxBinding>> {
-    Ok(ctx_workspace_runtime::materialize_sandbox_binding(
-        &state.core.data_root,
-        &state.core.daemon_url,
-        state.execution.harness.as_ref(),
-        workspace,
-        worktree,
-        canonical_root,
-        effective,
-        created_at,
+    ctx_workspace_runtime::materialize_sandbox_binding(
+        ctx_workspace_runtime::MaterializeSandboxBindingParams {
+            data_root: &state.core.data_root,
+            daemon_url: &state.core.daemon_url,
+            harness: state.execution.harness.as_ref(),
+            workspace,
+            worktree,
+            canonical_root,
+            effective,
+            created_at,
+        },
     )
-    .await?)
+    .await
 }
 
 pub(crate) async fn rematerialize_sandbox_binding_for_worktree(

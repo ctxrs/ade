@@ -8,10 +8,12 @@ use fixtures::{
 
 #[test]
 fn background_head_batch_chunk_limit_keeps_foreground_preemption_fine_grained() {
-    assert!(
-        BACKGROUND_HEAD_BATCH_CHUNK_LIMIT <= 16,
-        "background head batches must remain small enough for foreground websocket preemption",
-    );
+    const {
+        assert!(
+            BACKGROUND_HEAD_BATCH_CHUNK_LIMIT <= 16,
+            "background head batches must remain small enough for foreground websocket preemption",
+        );
+    }
 }
 
 #[tokio::test]

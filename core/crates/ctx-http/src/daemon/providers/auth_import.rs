@@ -7,17 +7,13 @@ use crate::daemon::AppState;
 
 pub(crate) async fn list_provider_auth_import_candidates(
 ) -> anyhow::Result<Vec<provider_auth_import::ProviderAuthImportCandidate>> {
-    provider_auth_import::list_provider_auth_import_candidates()
-        .await
-        .map_err(Into::into)
+    provider_auth_import::list_provider_auth_import_candidates().await
 }
 
 pub(crate) async fn list_provider_auth_import_profiles(
     state: &Arc<AppState>,
 ) -> anyhow::Result<Vec<provider_auth_import::ProviderImportedAuthProfile>> {
-    provider_auth_import::list_provider_auth_profiles(&state.core.data_root)
-        .await
-        .map_err(Into::into)
+    provider_auth_import::list_provider_auth_profiles(&state.core.data_root).await
 }
 
 pub(crate) async fn import_provider_auth_candidates(

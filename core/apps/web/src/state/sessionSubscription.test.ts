@@ -12,7 +12,7 @@ describe("sessionSubscription", () => {
         { sessionId: "session-1", replay: { kind: "resume", afterSeq: 7 } },
         { sessionId: "session-1", replay: { kind: "reset" } },
       ]),
-    ).toEqual([{ sessionId: "session-1", replay: { kind: "reset" } }]);
+    ).toEqual([{ sessionId: "session-1", intent: "replay", replay: { kind: "reset" } }]);
   });
 
   it("keeps the largest resume cursor when merging duplicates", () => {
@@ -22,7 +22,7 @@ describe("sessionSubscription", () => {
         { sessionId: "session-1", replay: { kind: "resume", afterSeq: 9 } },
       ]),
     ).toEqual([
-      { sessionId: "session-1", replay: { kind: "resume", afterSeq: 9 } },
+      { sessionId: "session-1", intent: "replay", replay: { kind: "resume", afterSeq: 9 } },
     ]);
   });
 
@@ -33,7 +33,7 @@ describe("sessionSubscription", () => {
         { sessionId: "session-1", replay: { kind: "resume", afterSeq: 9, afterProjectionRev: 14 } },
       ]),
     ).toEqual([
-      { sessionId: "session-1", replay: { kind: "resume", afterSeq: 9, afterProjectionRev: 14 } },
+      { sessionId: "session-1", intent: "replay", replay: { kind: "resume", afterSeq: 9, afterProjectionRev: 14 } },
     ]);
   });
 

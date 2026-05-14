@@ -16,7 +16,9 @@ use ctx_managed_installs::{
     load_agent_server_config, save_agent_server_config, AgentServerCommand, ManagedInstallMetadata,
 };
 use ctx_provider_accounts::{
-    add_copilot_account, add_gemini_account, add_kimi_account, upsert_amp_account,
+    add_copilot_account, add_gemini_account, add_kimi_account, ensure_codex_account_dir,
+    save_codex_registry, upsert_amp_account, CodexAccountEntry, CodexAccountRegistry,
+    CodexEndpointProfile, CODEX_CREDENTIAL_KIND_API_KEY,
 };
 use ctx_provider_install::install_state::InstallTarget;
 use ctx_providers::adapters::{ProviderAdapter, ProviderHealth, ProviderStatus};
@@ -564,11 +566,44 @@ async fn configure_hermetic_codex_host_auth(root: &Path) -> Vec<EnvVarGuard> {
 }
 
 #[cfg(unix)]
+async fn seed_active_codex_subscription_account(data_root: &Path) {
+    let account_id = "fixture-codex-account";
+    let registry = CodexAccountRegistry {
+        active_account_id: Some(account_id.to_string()),
+        accounts: vec![CodexAccountEntry {
+            id: account_id.to_string(),
+            label: "Fixture Codex".to_string(),
+            kind: CODEX_CREDENTIAL_KIND_API_KEY.to_string(),
+            email: None,
+            provider_account_id: None,
+            plan_type: None,
+            created_at: chrono::Utc::now(),
+            last_used_at: None,
+            secret_ref: None,
+            endpoint_profile: CodexEndpointProfile::default(),
+        }],
+    };
+    save_codex_registry(data_root, &registry)
+        .await
+        .expect("save fixture codex account registry");
+    let account_dir = ensure_codex_account_dir(data_root, account_id)
+        .await
+        .expect("create fixture codex account dir");
+    tokio::fs::write(
+        account_dir.join("auth.json"),
+        br#"{"OPENAI_API_KEY":"fixture-codex-key"}"#,
+    )
+    .await
+    .expect("write fixture codex account auth");
+}
+
+#[cfg(unix)]
 #[tokio::test]
 async fn provider_options_probe_uses_managed_dependency_path() {
     let _env_lock = lock_env().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let _env_guards = configure_hermetic_codex_host_auth(data_dir.path()).await;
+    seed_active_codex_subscription_account(data_dir.path()).await;
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let state = app_state(data_dir.path()).await;
     let app = api::router(state.clone());
@@ -607,6 +642,7 @@ async fn provider_options_preserve_live_runtime_catalog_for_preferred_models() {
     let _env_lock = lock_env().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let _env_guards = configure_hermetic_codex_host_auth(data_dir.path()).await;
+    seed_active_codex_subscription_account(data_dir.path()).await;
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let state = app_state(data_dir.path()).await;
     let app = api::router(state.clone());
@@ -1522,6 +1558,7 @@ async fn provider_verify_probe_uses_managed_dependency_path() {
     let _env_lock = lock_env().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let _env_guards = configure_hermetic_codex_host_auth(data_dir.path()).await;
+    seed_active_codex_subscription_account(data_dir.path()).await;
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let state = app_state(data_dir.path()).await;
     let app = api::router(state.clone());

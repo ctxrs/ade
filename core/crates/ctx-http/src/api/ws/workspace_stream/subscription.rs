@@ -154,7 +154,7 @@ pub(crate) async fn handle_workspace_stream_subscription(
     runtime.subscription_state = next_state.clone();
     sync_workspace_stream_session_pins(
         state,
-        previous_subscription_ids.into_iter(),
+        previous_subscription_ids,
         runtime.subscriptions.keys().copied(),
     )
     .await;

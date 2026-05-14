@@ -29,11 +29,11 @@ pub(crate) async fn submit_ask_user_answer(
     submission: SubmitAskUserAnswer,
 ) -> Result<(), SubmitAskUserAnswerError> {
     let store = store_for_ask_user_session(state, session_id).await?;
-    if !store
+    if store
         .get_session(session_id)
         .await
         .map_err(|_| SubmitAskUserAnswerError::LoadSession)?
-        .is_some()
+        .is_none()
     {
         return Err(SubmitAskUserAnswerError::SessionNotFound);
     }

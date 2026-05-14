@@ -121,6 +121,7 @@ fn acquire_broker_oauth_authority_lock(home: &Path) -> Result<File> {
     let lock_path = home.join(CODEX_OAUTH_AUTHORITY_LOCK_FILE);
     let file = OpenOptions::new()
         .create(true)
+        .truncate(false)
         .read(true)
         .write(true)
         .open(&lock_path)
