@@ -26,6 +26,12 @@ async fn task_mutations_return_not_found_for_stale_task_index() {
 async fn assert_task_mutations_return_not_found(state: &Arc<DaemonState>, missing_task_id: TaskId) {
     let (sessions, providers, workspaces, transport) = task_api_states(state);
 
+    let task_sessions_status =
+        list_task_sessions(sessions.clone(), Path(missing_task_id.0.to_string()))
+            .await
+            .expect_err("missing task sessions should fail");
+    assert_eq!(task_sessions_status, StatusCode::NOT_FOUND);
+
     let read_status = mark_task_read(
         sessions.clone(),
         workspaces.clone(),

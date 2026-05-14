@@ -322,7 +322,9 @@ impl WorkspacesHandle {
         &self,
         worktree_id: WorktreeId,
     ) -> anyhow::Result<Option<Worktree>> {
-        let store = self.store_for_worktree(worktree_id).await?;
+        let Some(store) = self.worktree_store_or_none(worktree_id).await? else {
+            return Ok(None);
+        };
         let Some(mut worktree) = store.get_worktree(worktree_id).await? else {
             return Ok(None);
         };
@@ -338,7 +340,9 @@ impl WorkspacesHandle {
         &self,
         worktree_id: WorktreeId,
     ) -> anyhow::Result<Option<String>> {
-        let store = self.store_for_worktree(worktree_id).await?;
+        let Some(store) = self.worktree_store_or_none(worktree_id).await? else {
+            return Ok(None);
+        };
         let Some(worktree) = store.get_worktree(worktree_id).await? else {
             return Ok(None);
         };
@@ -421,11 +425,23 @@ impl WorkspacesHandle {
         self.state.existing_workspace_store(workspace_id).await
     }
 
-    pub(in crate::daemon) async fn store_for_worktree(
+    async fn worktree_store_or_none(
         &self,
         worktree_id: WorktreeId,
-    ) -> anyhow::Result<Store> {
-        self.state.store_for_worktree(worktree_id).await
+    ) -> anyhow::Result<Option<Store>> {
+        let Some(workspace_id) = self
+            .state
+            .global_store()
+            .get_workspace_id_for_worktree(worktree_id)
+            .await?
+        else {
+            return Ok(None);
+        };
+        match self.existing_workspace_store(workspace_id).await {
+            Ok(store) => Ok(Some(store)),
+            Err(WorkspaceStoreAccessError::NotFound) => Ok(None),
+            Err(WorkspaceStoreAccessError::Unavailable(error)) => Err(error),
+        }
     }
 
     pub(crate) async fn record_workspace_registered(&self) {

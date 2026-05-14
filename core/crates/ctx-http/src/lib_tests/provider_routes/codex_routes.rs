@@ -102,7 +102,7 @@ async fn codex_accounts_usage_blocks_deleting_account_broker_home() {
         .unwrap();
 
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),
@@ -189,7 +189,7 @@ async fn codex_accounts_usage_surfaces_hydration_errors() {
     std::fs::write(&secret_path, "{ not valid json").unwrap();
 
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),

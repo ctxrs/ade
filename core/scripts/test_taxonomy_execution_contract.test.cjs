@@ -615,7 +615,7 @@ test("Buildkite checkin plan splits ctx-http suites and Rust crate gates without
   const providerRoutesAndManagedInstallsCommand =
     "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:unit_tests_lib_provider_routes //core/crates/ctx-managed-installs:unit_tests";
   const providerSettingsOwnerCommand =
-    "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-provider-matrix:unit_tests //core/crates/ctx-settings-model:unit_tests //core/crates/ctx-settings-service:unit_tests";
+    "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-provider-matrix:unit_tests //core/crates/ctx-provider-runtime:unit_tests //core/crates/ctx-settings-model:unit_tests //core/crates/ctx-settings-service:unit_tests";
   assert.equal(ctxHttpSuiteCommands.length, 0);
   assert.equal(selectedCtxHttpSuites.includes("base"), false);
   assert.equal(selectedCtxHttpSuites.includes("unit-tests-api"), true);

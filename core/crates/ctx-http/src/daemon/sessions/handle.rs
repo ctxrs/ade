@@ -901,11 +901,15 @@ impl SessionsHandle {
         Ok((tasks, next_cursor, total_archived))
     }
 
-    pub(crate) async fn list_task_sessions(&self, task_id: TaskId) -> Result<Vec<Session>> {
-        let Some(store) = self.task_store_or_none(task_id).await? else {
-            return Ok(Vec::new());
+    pub(crate) async fn list_task_sessions(&self, task_id: TaskId) -> Result<Option<Vec<Session>>> {
+        let Some(context) = self.load_task_context(task_id).await? else {
+            return Ok(None);
         };
-        store.list_sessions_for_task(task_id).await
+        context
+            .store
+            .list_sessions_for_task(task_id)
+            .await
+            .map(Some)
     }
 
     pub(crate) async fn mark_task_read(&self, task_id: TaskId) -> Result<Option<Task>> {

@@ -80,7 +80,8 @@ pub(in crate::api) async fn list_task_sessions(
     let sessions = sessions
         .list_task_sessions(task_id)
         .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+        .map_err(|_| StatusCode::NOT_FOUND)?
+        .ok_or(StatusCode::NOT_FOUND)?;
     Ok(Json(sessions))
 }
 

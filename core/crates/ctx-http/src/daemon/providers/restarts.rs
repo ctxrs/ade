@@ -26,7 +26,7 @@ pub(crate) async fn restart_provider_for_auth_change(
 }
 
 pub(crate) async fn stop_provider_for_auth_removal(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     provider_id: &str,
     reason: &str,
 ) -> anyhow::Result<()> {
@@ -66,7 +66,7 @@ pub(crate) async fn restart_codex_providers_for_auth_change(
 }
 
 pub(crate) async fn stop_codex_providers_for_auth_removal(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     reason: &str,
 ) -> anyhow::Result<()> {
     stop_provider_for_auth_removal(state, CODEX_PROVIDER_ID, reason).await

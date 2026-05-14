@@ -257,7 +257,7 @@ test("ctx-http checkin fanout exposes split unit suite targets without changing 
     ],
   ]);
   assert.equal(getCtxHttpSuiteCheckinFanoutTargetBatches("base").length, 22);
-  assert.equal(getCtxHttpSuiteCheckinFanoutTargets("base").length, 44);
+  assert.equal(getCtxHttpSuiteCheckinFanoutTargets("base").length, 45);
   assert.equal(
     getCtxHttpSuiteCheckinFanoutTargets("base").includes("//core/crates/ctx-managed-installs:unit_tests"),
     true,

@@ -100,3 +100,29 @@ async fn get_worktree_returns_live_root_for_bound_sandbox_worktree() {
     assert_eq!(response.workspace_id, worktree.workspace_id);
     let _ = state.core.shutdown_tx.send(());
 }
+
+#[tokio::test]
+async fn missing_worktree_routes_return_not_found() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let state = Arc::new(DaemonState::new(
+        temp.path().to_path_buf(),
+        StoreManager::open(temp.path()).await.expect("open stores"),
+        HashMap::new(),
+        "http://127.0.0.1:4310".to_string(),
+        None,
+    ));
+    let workspaces = State(DaemonHandle::new(state.clone()).workspaces());
+    let missing_worktree_id = WorktreeId(Uuid::new_v4()).0.to_string();
+
+    let status = get_worktree(workspaces.clone(), Path(missing_worktree_id.clone()))
+        .await
+        .expect_err("missing worktree should not resolve");
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let status = get_worktree_bootstrap_logs(workspaces, Path(missing_worktree_id))
+        .await
+        .expect_err("missing worktree bootstrap log should not resolve");
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let _ = state.core.shutdown_tx.send(());
+}
