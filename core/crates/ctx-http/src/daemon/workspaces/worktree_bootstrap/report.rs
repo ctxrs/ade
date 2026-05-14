@@ -5,10 +5,10 @@ use ctx_workspace_services::worktree_bootstrap::{
     prepare_bootstrap_log_for_storage, write_bootstrap_log, BootstrapReport,
 };
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(super) async fn persist_bootstrap_report(
-    state: &AppState,
+    state: &DaemonState,
     workspace_id: WorkspaceId,
     worktree: &Worktree,
     report: BootstrapReport,
@@ -55,7 +55,7 @@ pub(super) async fn persist_bootstrap_report(
     }
 }
 
-async fn update_bootstrap_result(state: &AppState, update: WorktreeBootstrapResultUpdate) {
+async fn update_bootstrap_result(state: &DaemonState, update: WorktreeBootstrapResultUpdate) {
     let store = match state.store_for_worktree(update.worktree_id).await {
         Ok(store) => store,
         Err(_) => return,
@@ -64,7 +64,7 @@ async fn update_bootstrap_result(state: &AppState, update: WorktreeBootstrapResu
 }
 
 async fn emit_failure_notice(
-    state: &AppState,
+    state: &DaemonState,
     workspace_id: WorkspaceId,
     notice: WorktreeBootstrapNotice,
 ) {

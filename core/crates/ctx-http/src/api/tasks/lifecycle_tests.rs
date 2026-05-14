@@ -10,6 +10,8 @@ mod delete;
 mod delete_cleanup;
 #[path = "lifecycle_tests/fixtures.rs"]
 mod fixtures;
+#[path = "lifecycle_tests/missing_resources.rs"]
+mod missing_resources;
 #[path = "lifecycle_tests/unarchive.rs"]
 mod unarchive;
 use fixtures::*;

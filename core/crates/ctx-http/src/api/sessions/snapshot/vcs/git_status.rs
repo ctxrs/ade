@@ -1,10 +1,9 @@
 use super::context::load_session_vcs_context;
 use super::*;
-use crate::daemon::git_status::load_git_status_snapshot;
 use ctx_workspace_services::worktree_vcs::session_git_status_summary_from_snapshot;
 
 pub(crate) async fn get_session_git_status(
-    State(state): State<Arc<AppState>>,
+    State(state): State<SessionsHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<SessionGitStatusResponse>, (StatusCode, Json<ApiErrorResp>)> {
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| {
@@ -15,8 +14,9 @@ pub(crate) async fn get_session_git_status(
             }),
         )
     })?);
-    let (store, ctx) = load_session_vcs_context(&state, session_id).await?;
-    let snapshot = load_git_status_snapshot(&state, &ctx.worktree, true, true)
+    let ctx = load_session_vcs_context(&state, session_id).await?;
+    let snapshot = state
+        .load_git_status_snapshot(&ctx.worktree, true, true)
         .await
         .map_err(|e| {
             (
@@ -42,8 +42,8 @@ pub(crate) async fn get_session_git_status(
         entries_truncated: snapshot.entries_truncated,
         entries_total_count: snapshot.entries_total_count,
     };
-    if let Err(err) = store
-        .upsert_session_git_status_summary(ctx.session.id, ctx.worktree.id, &summary)
+    if let Err(err) = state
+        .persist_session_git_status_summary(ctx.session.id, ctx.worktree.id, &summary)
         .await
     {
         tracing::warn!(session_id = %ctx.session.id.0, "git status summary persist failed: {err:?}");

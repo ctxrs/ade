@@ -39,7 +39,6 @@ const CTX_HTTP_CHECKIN_FANOUT_TARGETS_BY_SUITE = Object.freeze({
   "unit-tests-lib": [
     "unit_tests_lib",
     "unit_tests_lib_mobile_secure_routes",
-    "unit_tests_lib_provider_routes",
     "unit_tests_lib_session_artifacts",
     "unit_tests_lib_telemetry_export",
     "unit_tests_lib_update_boundaries",
@@ -72,6 +71,7 @@ const CTX_HTTP_CHECKIN_FANOUT_TARGETS_BY_SUITE = Object.freeze({
     "unit_tests_daemon_http_and_ws_streaming",
   ],
   "unit-tests-provider-and-settings": [
+    "unit_tests_lib_provider_routes",
     "//core/crates/ctx-managed-installs:unit_tests",
     "//core/crates/ctx-provider-matrix:unit_tests",
     "//core/crates/ctx-provider-runtime:unit_tests",
@@ -111,7 +111,6 @@ const CTX_HTTP_CHECKIN_FANOUT_TARGET_BATCHES_BY_SUITE = Object.freeze({
   ],
   "unit-tests-lib": [
     [
-      "unit_tests_lib_provider_routes",
       "unit_tests_lib_session_artifacts",
       "unit_tests_lib_telemetry_export",
     ],
@@ -151,7 +150,10 @@ const CTX_HTTP_CHECKIN_FANOUT_TARGET_BATCHES_BY_SUITE = Object.freeze({
   ],
   "unit-tests-provider-and-settings": [
     [
+      "unit_tests_lib_provider_routes",
       "//core/crates/ctx-managed-installs:unit_tests",
+    ],
+    [
       "//core/crates/ctx-provider-matrix:unit_tests",
       "//core/crates/ctx-provider-runtime:unit_tests",
       "//core/crates/ctx-settings-model:unit_tests",
@@ -359,7 +361,7 @@ const CTX_HTTP_UNIT_SUITES = [
   {
     family: "provider-runtime",
     name: "unit-tests-provider-and-settings",
-    description: "ctx-http provider launch, installer, provider matrix owner, and settings unit family",
+    description: "ctx-http provider routes, provider matrix owner, and settings unit family",
     dependencyCrates: [
       "ctx-managed-installs",
       "ctx-provider-matrix",
@@ -368,12 +370,10 @@ const CTX_HTTP_UNIT_SUITES = [
     ],
     sourceGlobs: [
       "crates/ctx-http/src/api/providers/**",
-      "crates/ctx-http/src/installer.rs",
-      "crates/ctx-http/src/installer/**",
-      "crates/ctx-http/src/provider_launch.rs",
-      "crates/ctx-http/src/provider_launch/**",
-      "crates/ctx-http/src/settings.rs",
-      "crates/ctx-http/src/settings/**",
+      "crates/ctx-http/src/api/provider_launch.rs",
+      "crates/ctx-http/src/api/provider_launch/**",
+      "crates/ctx-http/src/api/settings.rs",
+      "crates/ctx-http/src/daemon/settings.rs",
     ],
   },
   {

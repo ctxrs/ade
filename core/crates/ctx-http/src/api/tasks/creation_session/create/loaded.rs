@@ -1,6 +1,5 @@
 use super::persistence::{persist_created_session, PersistCreatedSession};
 use super::*;
-use crate::daemon::workspaces::ensure_task_commit_hook;
 
 #[path = "loaded/prepared.rs"]
 mod prepared;
@@ -8,7 +7,7 @@ mod prepared;
 use prepared::{prepare_loaded_session_request, PreparedLoadedSessionRequest};
 
 pub(in crate::api::tasks) async fn create_session_for_loaded_task_inner(
-    state: Arc<AppState>,
+    handles: &TaskApiHandles,
     store: Store,
     task: Task,
     workspace: Workspace,
@@ -28,10 +27,10 @@ pub(in crate::api::tasks) async fn create_session_for_loaded_task_inner(
         model_id,
         reasoning_effort,
         preferred_model_id,
-    } = prepare_loaded_session_request(&state, &store, &task, &workspace, &headers, &req).await?;
+    } = prepare_loaded_session_request(handles, &store, &task, &workspace, &headers, &req).await?;
 
     if let Some(existing) = resolve_existing_requested_session(ExistingRequestedSession {
-        state: &state,
+        handles,
         store: &store,
         task: &task,
         workspace: &workspace,
@@ -57,8 +56,10 @@ pub(in crate::api::tasks) async fn create_session_for_loaded_task_inner(
     }
 
     if let Ok(Some(worktree)) = store.get_worktree(worktree_id).await {
-        if let Err(e) =
-            ensure_task_commit_hook(state.as_ref(), &workspace, &worktree, task.id).await
+        if let Err(e) = handles
+            .workspaces
+            .ensure_task_commit_hook(&workspace, &worktree, task.id)
+            .await
         {
             tracing::warn!(
                 task_id = %task.id.0,
@@ -69,7 +70,7 @@ pub(in crate::api::tasks) async fn create_session_for_loaded_task_inner(
     }
 
     let session = persist_created_session(PersistCreatedSession {
-        state: &state,
+        handles,
         store: &store,
         task: &task,
         workspace: &workspace,
@@ -87,7 +88,7 @@ pub(in crate::api::tasks) async fn create_session_for_loaded_task_inner(
     .await?;
 
     seed_initial_prompt(
-        &state,
+        handles,
         &store,
         &session,
         InitialPromptSeed {
@@ -100,13 +101,14 @@ pub(in crate::api::tasks) async fn create_session_for_loaded_task_inner(
     .await?;
 
     if req.remember_model_preference {
-        if let Err(error) = crate::daemon::workspaces::update_workspace_provider_preferred_model_id(
-            &state,
-            task.workspace_id,
-            &provider_id,
-            Some(preferred_model_id),
-        )
-        .await
+        if let Err(error) = handles
+            .sessions
+            .update_workspace_provider_preferred_model_id(
+                task.workspace_id,
+                &provider_id,
+                Some(preferred_model_id),
+            )
+            .await
         {
             tracing::warn!(
                 session_id = %session.id.0,
@@ -117,7 +119,7 @@ pub(in crate::api::tasks) async fn create_session_for_loaded_task_inner(
         }
     }
 
-    emit_session_started_observability(&state, &session, &task).await;
+    emit_session_started_observability(handles, &session, &task).await;
 
     Ok(Json(session))
 }

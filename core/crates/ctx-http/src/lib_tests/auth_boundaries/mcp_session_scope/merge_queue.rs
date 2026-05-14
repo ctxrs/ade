@@ -8,7 +8,7 @@ async fn scoped_mcp_merge_queue_submit_is_bound_to_current_session_worktree() {
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),

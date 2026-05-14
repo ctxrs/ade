@@ -1,7 +1,7 @@
 use super::super::*;
 
 pub(crate) async fn wait_agent(
-    state: Arc<AppState>,
+    state: Arc<DaemonState>,
     parent_id: SessionId,
     req: WaitAgentReq,
 ) -> ApiResult<WaitAgentResp> {
@@ -47,7 +47,7 @@ pub(crate) async fn wait_agent(
 }
 
 async fn collect_wait_details(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     store: &ctx_store::store::Store,
     parent: &ctx_core::models::Session,
     targets: &[ctx_core::models::Session],

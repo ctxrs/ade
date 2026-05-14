@@ -11,14 +11,14 @@ use ctx_worktree_data_plane::{
 };
 
 use crate::daemon::execution_effective;
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use self::helpers::{probe_cwd_for_workspace_runtime, runtime_data_root, synthetic_probe_worktree};
 
 mod helpers;
 
 pub(super) async fn prepare_workspace_probe_runtime(
-    state: &AppState,
+    state: &DaemonState,
     workspace: &Workspace,
 ) -> Result<PreparedWorkspaceProbeRuntime, String> {
     let effective = execution_effective::effective_execution_settings(state, workspace.id)
@@ -80,7 +80,7 @@ pub(super) async fn prepare_workspace_probe_runtime(
 }
 
 pub(super) async fn prepare_worktree_probe_runtime(
-    state: &AppState,
+    state: &DaemonState,
     workspace: &Workspace,
     worktree: &Worktree,
 ) -> Result<PreparedWorkspaceProbeRuntime, String> {

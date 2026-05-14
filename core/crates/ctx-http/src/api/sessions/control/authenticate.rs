@@ -7,7 +7,7 @@ pub(crate) struct AuthenticateSessionReq {
 }
 
 pub(crate) async fn authenticate_session(
-    State(state): State<Arc<AppState>>,
+    State(state): State<SessionsHandle>,
     Path(id): Path<String>,
     Json(req): Json<AuthenticateSessionReq>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiErrorResp>)> {
@@ -20,34 +20,10 @@ pub(crate) async fn authenticate_session(
         )
     })?);
 
-    let store = store_for_existing_session_api_error_for_write(&state, session_id).await?;
-    let session = store
-        .get_session(session_id)
+    state
+        .authenticate_session_for_request(session_id, req.method_id)
         .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to load session".to_string(),
-                }),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: "session not found".to_string(),
-                }),
-            )
-        })?;
-    crate::daemon::sessions::auth::run_session_authentication(
-        &state,
-        &store,
-        &session,
-        req.method_id,
-    )
-    .await
-    .map_err(map_session_auth_error)?;
+        .map_err(map_session_auth_error)?;
     Ok(StatusCode::OK)
 }
 

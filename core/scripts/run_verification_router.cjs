@@ -25,9 +25,11 @@ const {
 const coreRoot = path.resolve(__dirname, "..");
 const repoRoot = path.resolve(coreRoot, "..");
 const MERGE_READY_COMMAND = "node scripts/run_test_taxonomy_profile.cjs --run --profile checkin";
+const CTX_HTTP_DAEMON_BOUNDARY_COMMAND = "pnpm ctx-http:daemon-boundary:check";
 const VERIFICATION_TOOLING_COMMAND = [
   "node",
   "--test",
+  "scripts/ctx_http_daemon_boundary_guard.test.cjs",
   "scripts/verification_git_changes.test.cjs",
   "scripts/verification_router_contract.test.cjs",
   "scripts/verification_run_store.test.cjs",
@@ -146,7 +148,16 @@ function buildOverlayCommands(changedFiles) {
     commands.push("pnpm source:file-size:report");
   }
   if (changedFiles.some((entry) =>
+    entry.startsWith("core/crates/ctx-http/src/api/")
+    || entry === "core/crates/ctx-http/src/api/mod.rs"
+    || entry === "core/crates/ctx-http/src/daemon/handle.rs"
+    || entry === "core/crates/ctx-http/src/daemon.rs"
+  )) {
+    commands.push(CTX_HTTP_DAEMON_BOUNDARY_COMMAND);
+  }
+  if (changedFiles.some((entry) =>
     entry.startsWith("core/scripts/run_verification_router")
+    || entry.startsWith("core/scripts/ctx_http_daemon_boundary_guard")
     || entry.startsWith("core/scripts/managed_runtime_mirror")
     || entry.startsWith("core/scripts/sdlc_verify_metrics_report")
     || entry.startsWith("core/scripts/verification_")

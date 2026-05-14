@@ -3,7 +3,7 @@ use std::sync::Arc;
 use super::backlog::turn_status_has_input_backlog;
 use super::types::PersistedSubagentPrompt;
 use crate::daemon::sessions::subagents::errors::{internal_api_error, ApiResult};
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_core::ids::{MessageId, RunId, TurnId};
 use ctx_core::models::{
     Message, MessageDelivery, MessageRole, Session, SessionEventType, SessionTurn,
@@ -15,7 +15,7 @@ use self::queue_events::append_and_publish_queued_prompt_events;
 mod queue_events;
 
 pub(in crate::daemon::sessions::subagents) async fn persist_subagent_prompt(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session: &Session,
     prompt: String,
 ) -> ApiResult<PersistedSubagentPrompt> {

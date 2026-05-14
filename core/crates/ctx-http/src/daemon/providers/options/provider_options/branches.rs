@@ -6,7 +6,7 @@ use ctx_harness_sources::HarnessEndpointRecord;
 use ctx_providers::adapters::ProviderStatus;
 
 pub(super) struct ProviderOptionsProbeContext<'a> {
-    pub(super) state: &'a Arc<AppState>,
+    pub(super) state: &'a Arc<DaemonState>,
     pub(super) workspace: &'a ctx_core::models::Workspace,
     pub(super) provider_id: &'a str,
     pub(super) workspace_id: WorkspaceId,

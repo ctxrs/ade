@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -8,8 +6,7 @@ use axum::response::IntoResponse;
 use ctx_core::ids::*;
 
 use crate::daemon::{
-    mobile_access::{self as daemon_mobile_access, MobileSecureStreamAccessError},
-    AppState,
+    mobile_access::MobileSecureStreamAccessError, CoreHandle, WorkspaceStreamHandle,
 };
 
 #[path = "secure_mobile/context.rs"]
@@ -24,7 +21,8 @@ use socket::handle_mobile_secure_ws;
 
 pub(in crate::api) async fn mobile_secure_workspace_stream_ws(
     ws: WebSocketUpgrade,
-    State(state): State<Arc<AppState>>,
+    State(core): State<CoreHandle>,
+    State(workspace_stream): State<WorkspaceStreamHandle>,
     Path(id): Path<String>,
     Query(query): Query<MobileSecureStreamQuery>,
 ) -> impl IntoResponse {
@@ -34,18 +32,16 @@ pub(in crate::api) async fn mobile_secure_workspace_stream_ws(
     };
     let device_id = query.device_id.trim().to_string();
     let token = query.token.trim().to_string();
-    if let Err(error) = daemon_mobile_access::require_mobile_secure_stream_access(
-        &state,
-        workspace_id,
-        &device_id,
-        &token,
-    )
-    .await
+    if let Err(error) = core
+        .require_mobile_secure_stream_access(workspace_id, &device_id, &token)
+        .await
     {
         return mobile_secure_stream_access_status(error).into_response();
     }
     ws.on_upgrade(move |socket| async move {
-        if let Err(err) = handle_mobile_secure_ws(socket, state, workspace_id, device_id).await {
+        if let Err(err) =
+            handle_mobile_secure_ws(socket, core, workspace_stream, workspace_id, device_id).await
+        {
             tracing::warn!("secure mobile ws ended: {err:#}");
         }
     })

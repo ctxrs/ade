@@ -7,7 +7,7 @@ use ctx_session_service::subagents::{
 };
 
 use super::ContextWindowSummary;
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 impl From<SubagentContextWindowSummary> for ContextWindowSummary {
     fn from(summary: SubagentContextWindowSummary) -> Self {
@@ -25,7 +25,7 @@ fn summarize_context_window(metrics: &serde_json::Value) -> Option<ContextWindow
 }
 
 pub(crate) async fn context_window_for_run(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session_id: SessionId,
     run_id: RunId,
 ) -> Option<ContextWindowSummary> {
@@ -49,7 +49,7 @@ pub(crate) async fn context_window_for_run(
 }
 
 pub(crate) async fn worktree_path_for_child(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     parent_worktree_id: WorktreeId,
     child_session_id: SessionId,
 ) -> Option<String> {

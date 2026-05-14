@@ -5,7 +5,7 @@ use ctx_managed_installs::AgentServerConfigFile;
 use ctx_provider_install::install_state::InstallTarget;
 use ctx_providers::adapters::ProviderAdapter;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(in crate::daemon::scheduler::runtime) struct PreparedProviderAdapter {
     pub(in crate::daemon::scheduler::runtime) adapter: Arc<dyn ProviderAdapter>,
@@ -14,7 +14,7 @@ pub(in crate::daemon::scheduler::runtime) struct PreparedProviderAdapter {
 }
 
 pub(in crate::daemon::scheduler::runtime) async fn prepare_provider_adapter_for_turn(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     runtime_provider_id: &str,
     is_linux_sandbox: bool,
 ) -> Result<PreparedProviderAdapter> {

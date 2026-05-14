@@ -8,7 +8,7 @@ async fn pair_mobile_device_preserves_token_for_invalid_device_id() {
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),

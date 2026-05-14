@@ -1,5 +1,6 @@
 use super::*;
 use crate::daemon::sessions::title_generation as daemon_title_generation;
+use crate::daemon::SessionsHandle;
 
 #[derive(Debug, Serialize)]
 pub(in crate::api) struct TitleGenerationLocalStatusResponse {
@@ -17,9 +18,10 @@ pub(in crate::api) struct TitleGenerationLocalInstallResponse {
 }
 
 pub(in crate::api) async fn get_title_generation_local_status(
-    State(state): State<Arc<AppState>>,
+    State(state): State<SessionsHandle>,
 ) -> Result<Json<TitleGenerationLocalStatusResponse>, StatusCode> {
-    let status = daemon_title_generation::title_generation_local_status(&state)
+    let status = state
+        .title_generation_local_status()
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(TitleGenerationLocalStatusResponse {
@@ -32,8 +34,8 @@ pub(in crate::api) async fn get_title_generation_local_status(
 }
 
 pub(in crate::api) async fn install_title_generation_local(
-    State(state): State<Arc<AppState>>,
+    State(state): State<SessionsHandle>,
 ) -> Result<Json<TitleGenerationLocalInstallResponse>, StatusCode> {
-    let install_id = daemon_title_generation::start_title_generation_local_install(state).await;
+    let install_id = state.start_title_generation_local_install().await;
     Ok(Json(TitleGenerationLocalInstallResponse { install_id }))
 }

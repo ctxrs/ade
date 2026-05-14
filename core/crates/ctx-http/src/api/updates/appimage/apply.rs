@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
@@ -7,10 +5,10 @@ use ctx_observability::logs;
 
 use super::types::{ApplyAppImageReq, ApplyAppImageResp};
 use crate::api::errors::ApiErrorResp;
-use crate::daemon::AppState;
+use crate::daemon::CoreHandle;
 
 pub(in crate::api) async fn apply_appimage_update(
-    State(state): State<Arc<AppState>>,
+    State(core): State<CoreHandle>,
     Json(req): Json<ApplyAppImageReq>,
 ) -> Result<Json<ApplyAppImageResp>, (StatusCode, Json<ApiErrorResp>)> {
     if !req.confirm {
@@ -60,7 +58,7 @@ pub(in crate::api) async fn apply_appimage_update(
             )
         })?;
     let (downloaded, _meta) = ctx_update_service::validate_verified_appimage_candidate(
-        &state.core.data_root,
+        core.data_root(),
         &target,
         &channel,
         platform,
@@ -87,7 +85,7 @@ pub(in crate::api) async fn apply_appimage_update(
                 }),
             )
         })?;
-    ctx_update_service::clear_appimage_candidate(&state.core.data_root).await;
+    ctx_update_service::clear_appimage_candidate(core.data_root()).await;
 
     Ok(Json(ApplyAppImageResp {
         applied: true,

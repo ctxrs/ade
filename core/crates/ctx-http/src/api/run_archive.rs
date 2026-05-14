@@ -1,4 +1,6 @@
 use super::*;
+use crate::daemon::workspaces::RunArchiveIngestError;
+use crate::daemon::WorkspacesHandle;
 
 mod validation;
 use validation::{
@@ -7,40 +9,23 @@ use validation::{
 };
 
 pub(super) async fn build_workspace_run_archive_ingest_batch(
-    State(state): State<Arc<AppState>>,
+    State(state): State<WorkspacesHandle>,
     Path((workspace_id, run_id)): Path<(String, String)>,
     Query(query): Query<RunArchiveBatchQuery>,
 ) -> Result<Json<Option<RunArchiveIngestBatch>>, (StatusCode, Json<ApiErrorResp>)> {
     let workspace_id = parse_archive_workspace_id(&workspace_id)?;
     let run_id = parse_archive_run_id(&run_id)?;
     let max_items = requested_batch_item_limit(query)?;
-    let store = state
-        .store_for_workspace(workspace_id)
+    let batch = state
+        .build_run_archive_ingest_batch(workspace_id, run_id, max_items)
         .await
-        .map_err(|err| {
-            run_archive_api_error(
-                StatusCode::NOT_FOUND,
-                format!("workspace not found for run archive ingest: {err:#}"),
-            )
-        })?;
+        .map_err(|err| run_archive_ingest_api_error("build", err))?;
 
-    let batch = store
-        .build_run_archive_ingest_batch(run_id, max_items)
-        .await
-        .map_err(|err| {
-            run_archive_api_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to build run archive ingest batch: {err:#}"),
-            )
-        })?;
-
-    Ok(Json(
-        batch.filter(|batch| batch.run.workspace_id == workspace_id),
-    ))
+    Ok(Json(batch))
 }
 
 pub(super) async fn acknowledge_workspace_run_archive_ingest_batch(
-    State(state): State<Arc<AppState>>,
+    State(state): State<WorkspacesHandle>,
     Path((workspace_id, run_id)): Path<(String, String)>,
     Query(query): Query<RunArchiveBatchQuery>,
     Json(batch): Json<RunArchiveIngestBatch>,
@@ -67,66 +52,28 @@ pub(super) async fn acknowledge_workspace_run_archive_ingest_batch(
         ));
     }
 
-    let store = state
-        .store_for_workspace(workspace_id)
-        .await
-        .map_err(|err| {
-            run_archive_api_error(
-                StatusCode::NOT_FOUND,
-                format!("workspace not found for run archive ingest: {err:#}"),
-            )
-        })?;
-    let cursor = store
-        .get_run_archive_ingest_cursor(run_id)
-        .await
-        .map_err(|err| {
-            run_archive_api_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to load run archive ingest cursor: {err:#}"),
-            )
-        })?;
-    let current_watermark = cursor
-        .as_ref()
-        .map(|cursor| cursor.watermark)
-        .unwrap_or_default();
-    if batch.from != current_watermark {
-        return Err(run_archive_api_error(
-            StatusCode::CONFLICT,
-            "archive ingest acknowledgement is stale for the current cursor",
-        ));
-    }
-
-    let Some(mut expected_batch) = store
-        .build_run_archive_ingest_batch_after(run_id, batch.from, max_items, cursor.is_none())
-        .await
-        .map_err(|err| {
-            run_archive_api_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to verify run archive ingest batch: {err:#}"),
-            )
-        })?
-    else {
-        return Err(run_archive_api_error(
-            StatusCode::CONFLICT,
-            "archive ingest acknowledgement does not match an available batch",
-        ));
-    };
-    expected_batch.created_at = batch.created_at;
-    if expected_batch != batch {
-        return Err(run_archive_api_error(
-            StatusCode::CONFLICT,
-            "archive ingest acknowledgement does not match the current batch",
-        ));
-    }
-
-    store
-        .acknowledge_run_archive_ingest_batch(&batch)
+    state
+        .acknowledge_run_archive_ingest_batch(workspace_id, run_id, max_items, batch)
         .await
         .map(Json)
-        .map_err(|err| {
-            run_archive_api_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to acknowledge run archive ingest batch: {err:#}"),
-            )
-        })
+        .map_err(|err| run_archive_ingest_api_error("acknowledge", err))
+}
+
+fn run_archive_ingest_api_error(
+    action: &'static str,
+    error: RunArchiveIngestError,
+) -> (StatusCode, Json<ApiErrorResp>) {
+    match error {
+        RunArchiveIngestError::WorkspaceNotFound => run_archive_api_error(
+            StatusCode::NOT_FOUND,
+            "workspace not found for run archive ingest",
+        ),
+        RunArchiveIngestError::AcknowledgementConflict(message) => {
+            run_archive_api_error(StatusCode::CONFLICT, message)
+        }
+        RunArchiveIngestError::Internal(err) => run_archive_api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to {action} run archive ingest batch: {err:#}"),
+        ),
+    }
 }

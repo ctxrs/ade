@@ -11,14 +11,14 @@ use ctx_transport_runtime::web_sessions::{
     validate_web_session_launch_scope,
 };
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(super) struct WebSessionLaunchContext {
     pub(super) work_dir: Option<PathBuf>,
 }
 
 pub(super) async fn resolve_web_session_launch_context(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session_id: Option<SessionId>,
     worktree_id: Option<WorktreeId>,
 ) -> anyhow::Result<WebSessionLaunchContext> {
@@ -70,7 +70,7 @@ pub(super) async fn resolve_web_session_launch_context(
 }
 
 async fn validate_web_session_worktree(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     store: &ctx_store::Store,
     worktree: &Worktree,
 ) -> anyhow::Result<()> {

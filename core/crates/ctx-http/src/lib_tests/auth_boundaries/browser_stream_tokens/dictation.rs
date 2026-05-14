@@ -8,7 +8,7 @@ async fn dictation_websocket_stream_requires_browser_scoped_query_token() {
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),

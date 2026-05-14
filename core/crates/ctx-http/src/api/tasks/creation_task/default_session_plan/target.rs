@@ -1,33 +1,37 @@
 use super::*;
-use crate::daemon::sessions::model_catalog::load_provider_model_catalog_for_execution_environment;
 use ctx_provider_install::InstallTarget;
 use ctx_session_service::default_session::{
     resolve_default_session_model, select_default_provider_id,
 };
 
 pub(super) async fn resolve_default_session_target(
-    state: &Arc<AppState>,
+    handles: &TaskApiHandles,
     store: &Store,
     workspace: &Workspace,
     execution_environment: ExecutionEnvironment,
 ) -> Result<(String, String, Option<String>), (StatusCode, Json<ApiErrorResp>)> {
-    let install_target =
-        crate::daemon::providers::install_target_for_workspace(state, workspace.id)
-            .await
-            .map_err(|error| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: logs::redact_sensitive(&error.to_string()),
-                    }),
-                )
-            })?;
-    let mut statuses =
-        crate::daemon::providers::providers_statuses_response(state, install_target, true).await;
+    let install_target = handles
+        .providers
+        .install_target_for_workspace(workspace.id)
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&error.to_string()),
+                }),
+            )
+        })?;
+    let mut statuses = handles
+        .providers
+        .providers_statuses_response(install_target, true)
+        .await;
     let provider_id = match select_default_provider_id(&statuses) {
         Some(provider_id) => provider_id,
         None if install_target == InstallTarget::Host => {
-            crate::daemon::providers::refresh_provider_statuses(state.as_ref())
+            handles
+                .providers
+                .refresh_provider_statuses()
                 .await
                 .map_err(|error| {
                     (
@@ -37,9 +41,10 @@ pub(super) async fn resolve_default_session_target(
                         }),
                     )
                 })?;
-            statuses =
-                crate::daemon::providers::providers_statuses_response(state, install_target, true)
-                    .await;
+            statuses = handles
+                .providers
+                .providers_statuses_response(install_target, true)
+                .await;
             select_default_provider_id(&statuses).ok_or((
                 StatusCode::BAD_REQUEST,
                 Json(ApiErrorResp {
@@ -70,21 +75,22 @@ pub(super) async fn resolve_default_session_target(
                     }),
                 )
             })?;
-    let catalog = load_provider_model_catalog_for_execution_environment(
-        state,
-        workspace,
-        &provider_id,
-        execution_environment,
-    )
-    .await
-    .map_err(|error| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&error),
-            }),
+    let catalog = handles
+        .sessions
+        .load_provider_model_catalog_for_execution_environment(
+            workspace,
+            &provider_id,
+            execution_environment,
         )
-    })?;
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&error),
+                }),
+            )
+        })?;
     let resolved_model = resolve_default_session_model(
         preferred_model_id.as_deref(),
         catalog.as_ref(),

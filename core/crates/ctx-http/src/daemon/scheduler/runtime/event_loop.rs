@@ -21,7 +21,7 @@ mod terminal;
 mod tools;
 
 pub(super) struct TurnEventLoop {
-    pub(super) state_weak: Weak<AppState>,
+    pub(super) state_weak: Weak<DaemonState>,
     pub(super) store: ctx_store::Store,
     pub(super) session_id: ctx_core::ids::SessionId,
     pub(super) task_id: ctx_core::ids::TaskId,
@@ -49,13 +49,13 @@ pub(super) struct TurnEventLoop {
 }
 
 impl TurnEventLoop {
-    fn state(&self) -> Option<Arc<AppState>> {
+    fn state(&self) -> Option<Arc<DaemonState>> {
         self.state_weak.upgrade()
     }
 }
 
 pub(super) struct TurnEventLoopSpawnRequest<'a> {
-    pub(super) state: &'a Arc<AppState>,
+    pub(super) state: &'a Arc<DaemonState>,
     pub(super) store: ctx_store::Store,
     pub(super) session: &'a Session,
     pub(super) full_model_id: &'a str,

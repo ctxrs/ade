@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::api) async fn create_mobile_connection_profile(
-    State(state): State<Arc<AppState>>,
+    State(state): State<CoreHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<CreateMobileConnectionProfileReq>,
 ) -> Result<Json<CreateMobileConnectionProfileResp>, (StatusCode, Json<ApiErrorResp>)> {
@@ -30,7 +30,6 @@ pub(in crate::api) async fn create_mobile_connection_profile(
     let token_hash = hash_api_token(&token);
     let token_prefix: String = token.chars().take(8).collect();
     let profile = state
-        .global_store()
         .create_mobile_connection_profile(
             label.to_string(),
             normalized_base.clone(),

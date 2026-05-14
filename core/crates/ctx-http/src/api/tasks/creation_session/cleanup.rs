@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) async fn cleanup_orphaned_provisioned_worktree(
-    state: &Arc<AppState>,
+    handles: &TaskApiHandles,
     store: &Store,
     workspace: &Workspace,
     task_id: TaskId,
@@ -31,19 +31,22 @@ pub(super) async fn cleanup_orphaned_provisioned_worktree(
         }
     };
     let cleanup_targets = [TaskWorktreeCleanupTarget {
-        managed_root: managed_worktree_root(state, workspace, &worktree),
+        managed_root: handles
+            .workspaces
+            .managed_worktree_root(workspace, &worktree),
         sandbox_binding,
         worktree: worktree.clone(),
         destroy_worktree_on_cleanup: true,
     }];
-    let cleanup_errors = cleanup_task_worktrees(
-        state.as_ref(),
-        workspace,
-        task_id,
-        &cleanup_targets,
-        BranchCleanupErrorMode::Report,
-    )
-    .await;
+    let cleanup_errors = handles
+        .workspaces
+        .cleanup_task_worktrees(
+            workspace,
+            task_id,
+            &cleanup_targets,
+            BranchCleanupErrorMode::Report,
+        )
+        .await;
     if !cleanup_errors.is_empty() {
         tracing::warn!(
             task_id = %task_id.0,
@@ -72,8 +75,8 @@ pub(super) async fn cleanup_orphaned_provisioned_worktree(
         );
         return;
     }
-    if let Err(err) = state
-        .global_store()
+    if let Err(err) = handles
+        .sessions
         .delete_workspace_worktree_index(worktree_id)
         .await
     {

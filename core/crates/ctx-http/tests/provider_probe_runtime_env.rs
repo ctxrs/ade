@@ -11,7 +11,7 @@ use ctx_harness_sources::{
     HarnessEndpointUpsert, HarnessSourceKind,
 };
 use ctx_http::api;
-use ctx_http::daemon::AppState;
+use ctx_http::daemon::DaemonState;
 use ctx_managed_installs::{
     load_agent_server_config, save_agent_server_config, AgentServerCommand, ManagedInstallMetadata,
 };
@@ -382,10 +382,10 @@ exit 1
     )
 }
 
-async fn app_state(data_root: &Path) -> Arc<AppState> {
+async fn app_state(data_root: &Path) -> Arc<DaemonState> {
     let stores = StoreManager::open(data_root).await.expect("open stores");
     let providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
-    Arc::new(AppState::new(
+    Arc::new(DaemonState::new(
         data_root.to_path_buf(),
         stores,
         providers,
@@ -394,7 +394,7 @@ async fn app_state(data_root: &Path) -> Arc<AppState> {
     ))
 }
 
-async fn seed_provider_status(state: &Arc<AppState>, status: ProviderStatus) {
+async fn seed_provider_status(state: &Arc<DaemonState>, status: ProviderStatus) {
     let provider_id = status.provider_id.clone();
     state
         .providers
@@ -403,7 +403,7 @@ async fn seed_provider_status(state: &Arc<AppState>, status: ProviderStatus) {
 }
 
 async fn seed_runtime_and_status(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     provider_id: &str,
     runtime_cmd: String,
     dep_bin_rel: String,
@@ -457,7 +457,7 @@ async fn seed_runtime_and_status(
 }
 
 #[cfg(unix)]
-async fn seed_managed_codex_cli_dependency(state: &Arc<AppState>, dep_bin_rel: &str) {
+async fn seed_managed_codex_cli_dependency(state: &Arc<DaemonState>, dep_bin_rel: &str) {
     let dep_bin_dir = state.core.data_root.join(dep_bin_rel);
     std::fs::create_dir_all(&dep_bin_dir).expect("create codex-cli dep bin dir");
     let codex_cmd = dep_bin_dir.join("codex");

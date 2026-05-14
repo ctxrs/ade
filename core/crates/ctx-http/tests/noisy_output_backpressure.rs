@@ -8,7 +8,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 use ctx_core::models::{
     SessionEventType, WorkspaceActiveSnapshotEvent, WorkspaceActiveSnapshotStreamMessage,
 };
-use ctx_http::daemon::AppState;
+use ctx_http::daemon::DaemonState;
 use ctx_store::StoreManager;
 
 mod common;
@@ -45,7 +45,7 @@ impl Drop for EnvGuard {
     }
 }
 
-async fn wait_for_done(state: &Arc<AppState>, session_id: ctx_core::ids::SessionId) {
+async fn wait_for_done(state: &Arc<DaemonState>, session_id: ctx_core::ids::SessionId) {
     let store = state.store_for_session(session_id).await.unwrap();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     loop {
@@ -127,7 +127,7 @@ async fn noisy_tool_output_stays_bounded_end_to_end() {
     .await;
     let providers =
         common::crp_fixture_runtime::build_crp_fixture_providers(&["codex"], &python, &script_path);
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,

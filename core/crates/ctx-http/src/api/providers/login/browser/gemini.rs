@@ -17,17 +17,17 @@ pub(crate) struct GeminiLoginStartResp {
 }
 
 pub(crate) async fn start_gemini_login(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<GeminiLoginStartReq>,
 ) -> Result<Json<GeminiLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let login_session = crate::daemon::providers::start_gemini_login_session(&state).await;
+    let login_session = providers.start_gemini_login_session().await;
 
-    let state_clone = Arc::clone(&state);
+    let providers_clone = providers.clone();
     let login_id_for_task = login_session.login_id.clone();
     tokio::spawn(async move {
-        monitor_gemini_login(state_clone, login_id_for_task, req.label).await;
+        monitor_gemini_login(providers_clone, login_id_for_task, req.label).await;
     });
 
     Ok(Json(GeminiLoginStartResp {
@@ -37,20 +37,18 @@ pub(crate) async fn start_gemini_login(
 }
 
 pub(crate) async fn get_gemini_login(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Path(id): Path<String>,
 ) -> Result<Json<provider_accounts::GeminiLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let status = crate::daemon::providers::gemini_login_status(&state, &id)
-        .await
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: "login not found".to_string(),
-                }),
-            )
-        })?;
+    let status = providers.gemini_login_status(&id).await.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "login not found".to_string(),
+            }),
+        )
+    })?;
     Ok(Json(status))
 }

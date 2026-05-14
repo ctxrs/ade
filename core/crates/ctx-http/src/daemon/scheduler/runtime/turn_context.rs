@@ -6,7 +6,7 @@ use ctx_core::models::{ExecutionEnvironment, Session};
 use ctx_session_tools::model_resolution::compose_model_id;
 
 use crate::daemon::storage_guard;
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(super) struct TurnRuntimeContext {
     pub(super) store: ctx_store::Store,
@@ -18,7 +18,7 @@ pub(super) struct TurnRuntimeContext {
 }
 
 pub(super) async fn prepare_turn_runtime_context(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session: &Session,
     workdir: &Path,
 ) -> Result<TurnRuntimeContext> {

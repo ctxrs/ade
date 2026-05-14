@@ -1,14 +1,12 @@
-use std::sync::Arc;
-
 use axum::routing::{delete, get, put};
 
 use crate::api::providers::{
     delete_copilot_account, list_copilot_accounts, set_copilot_active_account,
     upsert_copilot_account,
 };
-use crate::daemon::AppState;
+use crate::daemon::DaemonHandle;
 
-pub(super) fn copilot_account_routes() -> axum::Router<Arc<AppState>> {
+pub(super) fn copilot_account_routes() -> axum::Router<DaemonHandle> {
     axum::Router::new()
         .route(
             "/api/providers/copilot/accounts",

@@ -11,7 +11,7 @@ use ctx_core::models::{ExecutionEnvironment as SessionExecutionEnvironment, VcsK
 use ctx_store::StoreManager;
 use ctx_workspace_config::{ExecutionConfigUpdate, ExecutionEnvironment};
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_provider_install::install_state::InstallTarget;
 use ctx_settings_model::{self, ContainerNetworkMode, ExecutionMode, ExecutionSettings, Settings};
 use ctx_settings_service::{
@@ -79,12 +79,12 @@ async fn open_store_manager(path: &Path) -> StoreManager {
     StoreManager::open(path).await.expect("open stores")
 }
 
-async fn state_with_workspace() -> (tempfile::TempDir, AppState, Workspace) {
+async fn state_with_workspace() -> (tempfile::TempDir, DaemonState, Workspace) {
     let temp = tempfile::tempdir().expect("tempdir");
     let repo_root = temp.path().join("repo");
     std::fs::create_dir_all(&repo_root).expect("create repo root");
     let stores = open_store_manager(temp.path()).await;
-    let state = AppState::new(
+    let state = DaemonState::new(
         temp.path().to_path_buf(),
         stores,
         HashMap::new(),
@@ -103,7 +103,7 @@ async fn state_with_workspace() -> (tempfile::TempDir, AppState, Workspace) {
     (temp, state, workspace)
 }
 
-async fn set_daemon_execution_settings(state: &AppState, execution: ExecutionSettings) {
+async fn set_daemon_execution_settings(state: &DaemonState, execution: ExecutionSettings) {
     ctx_settings_service::save_settings(
         state.global_store(),
         &Settings {

@@ -1,10 +1,9 @@
 use std::path::{Path as StdPath, PathBuf};
-use std::sync::Arc;
 
 use axum::http::StatusCode;
 use ctx_observability::logs;
 
-use crate::daemon::AppState;
+use crate::daemon::SessionsHandle;
 
 async fn canonicalize_existing_or_raw(path: &StdPath) -> PathBuf {
     tokio::fs::canonicalize(path)
@@ -13,37 +12,28 @@ async fn canonicalize_existing_or_raw(path: &StdPath) -> PathBuf {
 }
 
 async fn session_artifact_allowed_roots(
-    state: &Arc<AppState>,
-    store: &ctx_store::Store,
+    state: &SessionsHandle,
     session: &ctx_core::models::Session,
 ) -> Result<Vec<PathBuf>, StatusCode> {
     let mut roots = Vec::with_capacity(2);
-    if let Some(worktree) = store
-        .get_worktree(session.worktree_id)
+    if let Some(worktree) = state
+        .get_session_worktree(session)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     {
         roots.push(canonicalize_existing_or_raw(&PathBuf::from(worktree.root_path)).await);
     }
-    roots.push(
-        canonicalize_existing_or_raw(
-            &state
-                .core
-                .tool_output_spool_dir
-                .join(session.id.0.to_string()),
-        )
-        .await,
-    );
+    roots
+        .push(canonicalize_existing_or_raw(&state.session_tool_output_spool_dir(session.id)).await);
     Ok(roots)
 }
 
 pub(in crate::api::artifacts) async fn resolve_session_artifact_accessible_path(
-    state: &Arc<AppState>,
-    store: &ctx_store::Store,
+    state: &SessionsHandle,
     session: &ctx_core::models::Session,
     path: &StdPath,
 ) -> Result<Option<PathBuf>, StatusCode> {
-    let roots = session_artifact_allowed_roots(state, store, session).await?;
+    let roots = session_artifact_allowed_roots(state, session).await?;
     let canonical = match tokio::fs::canonicalize(path).await {
         Ok(canonical) => canonical,
         Err(_) => return Ok(None),
@@ -55,13 +45,12 @@ pub(in crate::api::artifacts) async fn resolve_session_artifact_accessible_path(
 }
 
 pub(in crate::api) async fn session_artifact_path_is_accessible(
-    state: &Arc<AppState>,
-    store: &ctx_store::Store,
+    state: &SessionsHandle,
     session: &ctx_core::models::Session,
     path: &StdPath,
 ) -> Result<bool, StatusCode> {
     Ok(
-        resolve_session_artifact_accessible_path(state, store, session, path)
+        resolve_session_artifact_accessible_path(state, session, path)
             .await?
             .is_some(),
     )
@@ -94,12 +83,11 @@ pub(crate) async fn open_canonical_session_artifact_file(
 }
 
 pub(in crate::api::artifacts) async fn validate_session_artifact_write_path(
-    state: &Arc<AppState>,
-    store: &ctx_store::Store,
+    state: &SessionsHandle,
     session: &ctx_core::models::Session,
     path: &StdPath,
 ) -> Result<PathBuf, String> {
-    let roots = session_artifact_allowed_roots(state, store, session)
+    let roots = session_artifact_allowed_roots(state, session)
         .await
         .map_err(|status| format!("failed to resolve session artifact roots: {status}"))?;
     let canonical = tokio::fs::canonicalize(path)

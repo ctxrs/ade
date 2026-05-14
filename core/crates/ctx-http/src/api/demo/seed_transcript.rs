@@ -1,22 +1,18 @@
-use std::sync::Arc;
-
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
-use chrono::{Duration, Utc};
 
 use super::dev_mode::dev_tools_enabled;
-use super::seed_turn::seed_transcript_turn;
 use super::types::{SeedTranscriptReq, SeedTranscriptResp};
 use crate::api::errors::ApiErrorResp;
-use crate::daemon::AppState;
+use crate::daemon::sessions::{
+    DemoSeedTranscript, DemoSeedTranscriptError, DemoSeedTranscriptTurn,
+};
+use crate::daemon::SessionsHandle;
 use ctx_core::ids::SessionId;
 
-#[path = "seed_transcript/metadata.rs"]
-mod metadata;
-
 pub(crate) async fn dev_seed_session_transcript(
-    State(state): State<Arc<AppState>>,
+    State(sessions): State<SessionsHandle>,
     Path(id): Path<String>,
     Json(req): Json<SeedTranscriptReq>,
 ) -> Result<Json<SeedTranscriptResp>, (StatusCode, Json<ApiErrorResp>)> {
@@ -47,95 +43,98 @@ pub(crate) async fn dev_seed_session_transcript(
         ));
     }
 
-    let store = state.store_for_session(session_id).await.map_err(|_| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "session not found".to_string(),
-            }),
-        )
-    })?;
-    let session = store
-        .get_session(session_id)
+    let seed = DemoSeedTranscript {
+        session_title: req.session_title,
+        task_title: req.task_title,
+        append: req.append,
+        refresh: req.refresh,
+        materialize_tail_turns: req.materialize_tail_turns,
+        turns: req
+            .turns
+            .into_iter()
+            .map(|turn| DemoSeedTranscriptTurn {
+                user: turn.user,
+                assistant: turn.assistant,
+                context_window: turn.context_window,
+            })
+            .collect(),
+    };
+    let result = sessions
+        .seed_demo_transcript(session_id, seed)
         .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to load session".to_string(),
-                }),
-            )
-        })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "session not found".to_string(),
-            }),
-        ))?;
-
-    if !req.append
-        && !store
-            .list_messages_for_session(session_id)
-            .await
-            .map_err(|_| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: "failed to inspect session messages".to_string(),
-                    }),
-                )
-            })?
-            .is_empty()
-    {
-        return Err((
-            StatusCode::CONFLICT,
-            Json(ApiErrorResp {
-                error: "session already has messages; seed into a fresh session".to_string(),
-            }),
-        ));
-    }
-
-    let session =
-        metadata::apply_seed_transcript_metadata(&state, &store, session_id, session, &req).await?;
-
-    let mut seeded_messages = 0usize;
-    let mut seeded_events = 0usize;
-    let base_time = Utc::now() - Duration::minutes(req.turns.len() as i64);
-
-    let materialize_from_index = req
-        .materialize_tail_turns
-        .map(|tail| req.turns.len().saturating_sub(tail));
-
-    for (index, turn) in req.turns.iter().enumerate() {
-        let materialize_turn = materialize_from_index
-            .map(|from_index| index >= from_index)
-            .unwrap_or(true);
-        let counts = seed_transcript_turn(
-            &store,
-            session_id,
-            session.task_id,
-            index,
-            base_time,
-            turn,
-            materialize_turn,
-        )
-        .await?;
-        seeded_messages += counts.messages;
-        seeded_events += counts.events;
-    }
-
-    if req.refresh {
-        state.refresh_session_head_cache(session_id).await;
-
-        if let Err(err) = state.emit_workspace_task_upsert(session.task_id).await {
-            tracing::warn!(task_id = %session.task_id.0, "workspace active snapshot refresh failed after demo transcript seed: {err:?}");
-        }
-    }
+        .map_err(seed_transcript_error)?;
 
     Ok(Json(SeedTranscriptResp {
         session_id: session_id.0.to_string(),
-        seeded_turns: req.turns.len(),
-        seeded_messages,
-        seeded_events,
+        seeded_turns: result.seeded_turns,
+        seeded_messages: result.seeded_messages,
+        seeded_events: result.seeded_events,
     }))
+}
+
+fn seed_transcript_error(error: DemoSeedTranscriptError) -> (StatusCode, Json<ApiErrorResp>) {
+    let (status, message) = match error {
+        DemoSeedTranscriptError::SessionNotFound => (StatusCode::NOT_FOUND, "session not found"),
+        DemoSeedTranscriptError::SessionAlreadyHasMessages => (
+            StatusCode::CONFLICT,
+            "session already has messages; seed into a fresh session",
+        ),
+        DemoSeedTranscriptError::StoreUnavailable => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "failed to load session")
+        }
+        DemoSeedTranscriptError::InspectMessages => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to inspect session messages",
+        ),
+        DemoSeedTranscriptError::UpdateSessionTitle => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to update session title",
+        ),
+        DemoSeedTranscriptError::UpdateTaskTitle => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to update task title",
+        ),
+        DemoSeedTranscriptError::ReloadSession => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to reload session",
+        ),
+        DemoSeedTranscriptError::InsertUserMessage => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to insert user message",
+        ),
+        DemoSeedTranscriptError::InsertAssistantMessage => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to insert assistant message",
+        ),
+        DemoSeedTranscriptError::InsertSessionTurn => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to insert session turn",
+        ),
+        DemoSeedTranscriptError::AppendUserEvent => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to append user event",
+        ),
+        DemoSeedTranscriptError::AppendTurnStartedEvent => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to append turn started event",
+        ),
+        DemoSeedTranscriptError::AppendAssistantEvent => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to append assistant event",
+        ),
+        DemoSeedTranscriptError::AppendDoneEvent => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to append done event",
+        ),
+        DemoSeedTranscriptError::AppendTurnFinishedEvent => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to append turn finished event",
+        ),
+    };
+    (
+        status,
+        Json(ApiErrorResp {
+            error: message.to_string(),
+        }),
+    )
 }

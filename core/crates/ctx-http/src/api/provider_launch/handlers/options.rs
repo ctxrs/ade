@@ -1,11 +1,12 @@
 use super::*;
 
 pub(in crate::api) async fn get_provider_options(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     Path((ws_id, provider_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let workspace_id = parse_workspace_id(&ws_id)?;
-    crate::daemon::providers::get_provider_options_response(&state, workspace_id, &provider_id)
+    providers
+        .get_provider_options_response(workspace_id, &provider_id)
         .await
         .map(Json)
         .map_err(provider_options_response_error_json)

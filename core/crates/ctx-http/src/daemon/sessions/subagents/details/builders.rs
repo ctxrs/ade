@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::super::context::{context_window_for_run, worktree_path_for_child};
 use super::super::{
@@ -12,7 +12,7 @@ use super::refs::{encode_agent_ref, encode_run_ref};
 use super::summary::{agent_active_state, agent_terminal_result_status, build_agent_summary};
 
 pub(in crate::daemon::sessions::subagents) async fn build_agent_detail(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     store: &ctx_store::Store,
     parent: &ctx_core::models::Session,
     session: &ctx_core::models::Session,
@@ -62,7 +62,7 @@ pub(in crate::daemon::sessions::subagents) async fn build_agent_detail(
 }
 
 pub(in crate::daemon::sessions::subagents) async fn build_enqueued_agent_detail(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     parent: &ctx_core::models::Session,
     session: &ctx_core::models::Session,
     persisted: &PersistedSubagentPrompt,

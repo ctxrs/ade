@@ -1,10 +1,9 @@
 use super::*;
-use crate::api::validate_scoped_mcp_session_context;
 use crate::daemon::sessions::subagents::{SpawnAgentReq, SpawnAgentResp};
 use axum::extract::Extension;
 
 pub(crate) async fn mcp_spawn_agent(
-    State(state): State<Arc<AppState>>,
+    State(state): State<SessionsHandle>,
     mcp_auth: Option<Extension<ctx_mcp_auth::McpAuthContext>>,
     Path(id): Path<String>,
     Json(req): Json<SpawnAgentReq>,
@@ -19,11 +18,40 @@ pub(crate) async fn mcp_spawn_agent(
     })?);
 
     if let Some(Extension(mcp_auth)) = mcp_auth {
-        validate_scoped_mcp_session_context(&state, mcp_auth, parent_id).await?;
+        state
+            .require_scoped_mcp_session_context(mcp_auth, parent_id)
+            .await
+            .map_err(scoped_mcp_session_error)?;
     }
 
-    crate::daemon::sessions::subagents::spawn_agent(state, parent_id, req)
+    state
+        .spawn_agent(parent_id, req)
         .await
         .map_err(subagent_error_response)
         .map(Json)
+}
+
+fn scoped_mcp_session_error(
+    error: crate::daemon::ScopedMcpSessionAccessError,
+) -> (StatusCode, Json<ApiErrorResp>) {
+    match error {
+        crate::daemon::ScopedMcpSessionAccessError::Unauthorized(message) => (
+            StatusCode::UNAUTHORIZED,
+            Json(ApiErrorResp {
+                error: message.to_string(),
+            }),
+        ),
+        crate::daemon::ScopedMcpSessionAccessError::SessionNotFound => (
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "session not found".to_string(),
+            }),
+        ),
+        crate::daemon::ScopedMcpSessionAccessError::StoreUnavailable(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&error.to_string()),
+            }),
+        ),
+    }
 }

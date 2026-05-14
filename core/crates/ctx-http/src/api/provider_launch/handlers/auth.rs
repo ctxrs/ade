@@ -5,22 +5,18 @@ mod verify;
 pub(in crate::api) use verify::verify_provider_for_workspace;
 
 pub(in crate::api) async fn authenticate_provider_for_workspace(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     Path((ws_id, provider_id)): Path<(String, String)>,
     req: Option<Json<AuthenticateProviderReq>>,
 ) -> Result<Json<ProviderAuthCheckResp>, (StatusCode, Json<serde_json::Value>)> {
     let ws_id = parse_workspace_id(&ws_id)?;
     let method_id = req.and_then(|value| value.0.method_id);
-    crate::daemon::providers::authenticate_provider_for_workspace(
-        &state,
-        ws_id,
-        &provider_id,
-        method_id,
-    )
-    .await
-    .map(ProviderAuthCheckResp::from)
-    .map(Json)
-    .map_err(provider_auth_check_error_json)
+    providers
+        .authenticate_provider_for_workspace(ws_id, &provider_id, method_id)
+        .await
+        .map(ProviderAuthCheckResp::from)
+        .map(Json)
+        .map_err(provider_auth_check_error_json)
 }
 
 fn provider_auth_check_error_json(

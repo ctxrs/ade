@@ -2,7 +2,7 @@ use super::*;
 use anyhow::anyhow;
 
 pub(super) struct CodexRuntimeCredentialRequest<'a> {
-    pub(super) state: &'a Arc<AppState>,
+    pub(super) state: &'a Arc<DaemonState>,
     pub(super) provider_env: &'a mut HashMap<String, String>,
     pub(super) runtime_provider_id: &'a str,
     pub(super) runtime_plan: &'a ctx_harness_runtime::HarnessExecutionPlan,

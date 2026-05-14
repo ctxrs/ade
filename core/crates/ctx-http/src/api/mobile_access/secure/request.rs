@@ -1,12 +1,10 @@
-use std::sync::Arc;
-
 use axum::http::StatusCode;
 use axum::Json;
 use ctx_core::ids::{ConnectionProfileId, MobileDeviceId};
 use ctx_transport_runtime::mobile_e2ee::{self, E2eeKey};
 
 use super::super::{ApiErrorResp, MobileSecureEnvelope, SecureRequestPayload};
-use crate::daemon::AppState;
+use crate::daemon::CoreHandle;
 
 pub(super) struct VerifiedMobileSecureRequest {
     pub(super) device_uuid: uuid::Uuid,
@@ -18,22 +16,18 @@ pub(super) struct VerifiedMobileSecureRequest {
 }
 
 pub(super) async fn verify_mobile_secure_request(
-    state: &Arc<AppState>,
+    state: &CoreHandle,
     req: MobileSecureEnvelope,
 ) -> Result<VerifiedMobileSecureRequest, (StatusCode, Json<ApiErrorResp>)> {
     let device_uuid = uuid::Uuid::parse_str(req.device_id.trim())
         .map_err(|_| api_error(StatusCode::BAD_REQUEST, "device_id must be a UUID"))?;
-    let cfg = state
-        .global_store()
-        .get_mobile_access_config()
-        .await
-        .map_err(|e| {
-            tracing::error!("failed to read mobile access config: {e:?}");
-            api_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "mobile access not configured",
-            )
-        })?;
+    let cfg = state.get_mobile_access_config().await.map_err(|e| {
+        tracing::error!("failed to read mobile access config: {e:?}");
+        api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "mobile access not configured",
+        )
+    })?;
     let Some(cfg) = cfg else {
         return Err(api_error(
             StatusCode::BAD_REQUEST,
@@ -47,7 +41,6 @@ pub(super) async fn verify_mobile_secure_request(
         ));
     }
     let device = state
-        .global_store()
         .get_mobile_device(MobileDeviceId(device_uuid))
         .await
         .map_err(|e| {

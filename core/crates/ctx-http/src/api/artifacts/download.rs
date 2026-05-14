@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -10,13 +9,13 @@ use ctx_session_tools::{build_session_artifact_etag, build_session_artifact_last
 use super::access::{
     open_canonical_session_artifact_file, resolve_session_artifact_accessible_path,
 };
-use crate::daemon::AppState;
+use crate::daemon::SessionsHandle;
 
 #[path = "download/response.rs"]
 mod response;
 
 pub(in crate::api) async fn get_session_artifact(
-    State(state): State<Arc<AppState>>,
+    State(state): State<SessionsHandle>,
     Path((session_id, artifact_id)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<Response, StatusCode> {
@@ -24,26 +23,14 @@ pub(in crate::api) async fn get_session_artifact(
         SessionId(uuid::Uuid::parse_str(&session_id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let artifact_id =
         ArtifactId(uuid::Uuid::parse_str(&artifact_id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let store = state
-        .store_for_session(session_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-    let session = store
-        .get_session(session_id)
+    let (session, artifact) = state
+        .get_session_artifact_for_download(session_id, artifact_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    let artifact = store
-        .get_artifact(artifact_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
-    if artifact.session_id != session.id {
-        return Err(StatusCode::NOT_FOUND);
-    }
 
     let path = PathBuf::from(&artifact.absolute_path);
-    let canonical_path = resolve_session_artifact_accessible_path(&state, &store, &session, &path)
+    let canonical_path = resolve_session_artifact_accessible_path(&state, &session, &path)
         .await?
         .ok_or(StatusCode::NOT_FOUND)?;
     let file = open_canonical_session_artifact_file(&canonical_path).await?;

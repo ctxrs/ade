@@ -1,22 +1,19 @@
 use super::*;
-use crate::daemon::providers::{
-    parse_provider_install_target, provider_status_response, providers_statuses_response,
-    ProviderStatusResponseError,
-};
+use crate::daemon::providers::{parse_provider_install_target, ProviderStatusResponseError};
 
 pub(crate) async fn list_providers(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     Query(query): Query<InstallTargetQuery>,
 ) -> Result<Json<Vec<ProviderStatus>>, StatusCode> {
     let target = parse_provider_install_target(query.target.as_deref())
         .map_err(|_| StatusCode::BAD_REQUEST)?;
     Ok(Json(
-        providers_statuses_response(&state, target, false).await,
+        providers.providers_statuses_response(target, false).await,
     ))
 }
 
 pub(crate) async fn get_provider(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     Path(id): Path<String>,
     Query(query): Query<InstallTargetQuery>,
 ) -> Result<Json<ProviderStatus>, (StatusCode, Json<serde_json::Value>)> {
@@ -27,7 +24,8 @@ pub(crate) async fn get_provider(
         )
     })?;
 
-    let status = provider_status_response(&state, &id, target)
+    let status = providers
+        .provider_status_response(&id, target)
         .await
         .map_err(provider_status_response_error)?;
     Ok(Json(status))

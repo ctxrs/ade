@@ -1,14 +1,12 @@
-use std::sync::Arc;
-
 use axum::routing::{delete, get, post, put};
 
 use crate::api::providers::{
     delete_gemini_account, get_gemini_login, list_gemini_accounts, set_gemini_active_account,
     start_gemini_login, upsert_gemini_account,
 };
-use crate::daemon::AppState;
+use crate::daemon::DaemonHandle;
 
-pub(super) fn gemini_account_routes() -> axum::Router<Arc<AppState>> {
+pub(super) fn gemini_account_routes() -> axum::Router<DaemonHandle> {
     axum::Router::new()
         .route(
             "/api/providers/gemini/accounts",

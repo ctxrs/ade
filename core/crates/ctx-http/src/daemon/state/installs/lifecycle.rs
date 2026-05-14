@@ -2,7 +2,7 @@ use super::*;
 
 mod finish;
 
-impl AppState {
+impl DaemonState {
     pub async fn find_running_install(
         &self,
         provider_id: &str,

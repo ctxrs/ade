@@ -1,8 +1,8 @@
 use super::*;
-use crate::daemon::mobile_access as daemon_mobile_access;
+use crate::daemon::mobile_access::DisableMobileAccessError;
 
 pub(in crate::api) async fn disable_mobile_access(
-    State(state): State<Arc<AppState>>,
+    State(state): State<CoreHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<EnableMobileAccessReq>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiErrorResp>)> {
@@ -27,26 +27,21 @@ pub(in crate::api) async fn disable_mobile_access(
             .await;
     }
 
-    daemon_mobile_access::disable_mobile_access_runtime(&state)
+    state
+        .disable_mobile_access_runtime()
         .await
         .map_err(disable_mobile_access_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 fn disable_mobile_access_error(
-    error: daemon_mobile_access::DisableMobileAccessError,
+    error: DisableMobileAccessError,
 ) -> (StatusCode, Json<ApiErrorResp>) {
     let message = match error {
-        daemon_mobile_access::DisableMobileAccessError::ReadConfig => {
-            "failed to read mobile access config"
-        }
-        daemon_mobile_access::DisableMobileAccessError::ClearPairingTokens => {
-            "failed to clear pairing tokens"
-        }
-        daemon_mobile_access::DisableMobileAccessError::DeleteConfig => {
-            "failed to delete mobile access config"
-        }
-        daemon_mobile_access::DisableMobileAccessError::DeleteConnectionProfile => {
+        DisableMobileAccessError::ReadConfig => "failed to read mobile access config",
+        DisableMobileAccessError::ClearPairingTokens => "failed to clear pairing tokens",
+        DisableMobileAccessError::DeleteConfig => "failed to delete mobile access config",
+        DisableMobileAccessError::DeleteConnectionProfile => {
             "failed to delete mobile connection profile"
         }
     };

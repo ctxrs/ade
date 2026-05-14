@@ -1,6 +1,6 @@
 use super::*;
 
-impl AppState {
+impl DaemonState {
     pub(super) fn emit_provider_install_ops_events(
         &self,
         events: Vec<ctx_provider_runtime::provider_install_tracker::ProviderInstallOpsEvent>,

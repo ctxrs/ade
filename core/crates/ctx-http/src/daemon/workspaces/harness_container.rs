@@ -4,7 +4,7 @@ use ctx_core::ids::WorkspaceId;
 use ctx_settings_service::EffectiveExecutionSettingsError;
 use ctx_workspace_container::WorkspaceContainerStatus;
 
-use crate::daemon::{execution_effective, AppState};
+use crate::daemon::{execution_effective, DaemonState};
 
 #[derive(Debug)]
 pub(crate) enum WorkspaceHarnessContainerError {
@@ -15,7 +15,7 @@ pub(crate) enum WorkspaceHarnessContainerError {
 }
 
 pub(crate) async fn workspace_harness_container_status(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
 ) -> Result<Option<WorkspaceContainerStatus>, WorkspaceHarnessContainerError> {
     ensure_workspace_exists(state, workspace_id).await?;
@@ -28,7 +28,7 @@ pub(crate) async fn workspace_harness_container_status(
 }
 
 pub(crate) async fn stop_workspace_harness_container(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
 ) -> Result<(), WorkspaceHarnessContainerError> {
     ensure_workspace_exists(state, workspace_id).await?;
@@ -46,7 +46,7 @@ pub(crate) async fn stop_workspace_harness_container(
 }
 
 pub(crate) async fn ensure_workspace_harness_container(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
 ) -> Result<(), WorkspaceHarnessContainerError> {
     let workspace = ensure_workspace_exists(state, workspace_id).await?;
@@ -63,7 +63,7 @@ pub(crate) async fn ensure_workspace_harness_container(
 }
 
 async fn ensure_workspace_exists(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
 ) -> Result<ctx_core::models::Workspace, WorkspaceHarnessContainerError> {
     state

@@ -11,7 +11,7 @@ use ctx_provider_install::install_state::{
 };
 use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
 
-use crate::daemon::AppState as HttpAppState;
+use crate::daemon::DaemonState as HttpAppState;
 
 #[async_trait]
 impl ctx_managed_installs::ManagedInstallHost for HttpAppState {

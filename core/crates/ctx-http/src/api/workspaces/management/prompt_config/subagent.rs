@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
@@ -8,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::common;
 use crate::api::errors::ApiErrorResp;
-use crate::daemon::AppState;
+use crate::daemon::WorkspacesHandle;
 
 #[derive(Debug, Serialize)]
 pub(in crate::api) struct SubagentSystemPromptConfigResponse {
@@ -25,29 +23,28 @@ pub(in crate::api) struct UpdateSubagentSystemPromptConfigReq {
 }
 
 pub(in crate::api) async fn get_subagent_system_prompt(
-    State(state): State<Arc<AppState>>,
+    State(workspaces): State<WorkspacesHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<SubagentSystemPromptConfigResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    let store = common::store_for_existing_workspace(&state, &id).await?;
-    let cfg = workspace_config::load_subagent_system_prompt_append(&store)
+    let workspace_id = common::parse_workspace_id(&id)?;
+    let cfg = workspaces
+        .load_subagent_system_prompt_append(workspace_id)
         .await
-        .map_err(common::bad_request)?;
+        .map_err(common::workspace_store_error)?;
 
     Ok(Json(subagent_response(&cfg)))
 }
 
 pub(in crate::api) async fn update_subagent_system_prompt(
-    State(state): State<Arc<AppState>>,
+    State(workspaces): State<WorkspacesHandle>,
     Path(id): Path<String>,
     Json(req): Json<UpdateSubagentSystemPromptConfigReq>,
 ) -> Result<Json<SubagentSystemPromptConfigResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    let store = common::store_for_existing_workspace(&state, &id).await?;
-    workspace_config::update_subagent_system_prompt_append(&store, req.system_prompt_append)
+    let workspace_id = common::parse_workspace_id(&id)?;
+    let cfg = workspaces
+        .update_subagent_system_prompt_append(workspace_id, req.system_prompt_append)
         .await
-        .map_err(common::bad_request)?;
-    let cfg = workspace_config::load_subagent_system_prompt_append(&store)
-        .await
-        .map_err(common::bad_request)?;
+        .map_err(common::workspace_store_error)?;
 
     Ok(Json(subagent_response(&cfg)))
 }

@@ -2,7 +2,7 @@ use super::common::{parse_org_id, policy_api_error};
 use super::*;
 
 pub(in crate::api) async fn cache_org_policy_snapshot(
-    State(state): State<Arc<AppState>>,
+    State(state): State<CoreHandle>,
     Path(org_id): Path<String>,
     Json(snapshot): Json<OrgPolicySnapshot>,
 ) -> Result<Json<OrgPolicySnapshot>, (StatusCode, Json<ApiErrorResp>)> {
@@ -14,7 +14,6 @@ pub(in crate::api) async fn cache_org_policy_snapshot(
         ));
     }
     let Some(mut enrollment) = state
-        .global_store()
         .get_daemon_enrollment_by_org_id(org_id)
         .await
         .map_err(|err| {
@@ -38,7 +37,6 @@ pub(in crate::api) async fn cache_org_policy_snapshot(
         },
     )?;
     let stored = state
-        .global_store()
         .upsert_org_policy_snapshot(snapshot)
         .await
         .map_err(|err| {
@@ -50,7 +48,6 @@ pub(in crate::api) async fn cache_org_policy_snapshot(
     enrollment.active_policy_snapshot_id = Some(stored.id);
     enrollment.updated_at = chrono::Utc::now();
     state
-        .global_store()
         .upsert_daemon_enrollment(enrollment)
         .await
         .map_err(|err| {

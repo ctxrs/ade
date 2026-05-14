@@ -18,7 +18,7 @@ pub(in crate::api) struct CreateWorkspaceAttachmentReq {
 }
 
 pub(in crate::api) async fn create_workspace_attachment(
-    State(state): State<Arc<AppState>>,
+    State(workspaces): State<WorkspacesHandle>,
     Path(id): Path<String>,
     Json(req): Json<CreateWorkspaceAttachmentReq>,
 ) -> Result<Json<Vec<WorkspaceAttachment>>, (StatusCode, Json<ApiErrorResp>)> {
@@ -30,8 +30,8 @@ pub(in crate::api) async fn create_workspace_attachment(
             }),
         ));
     }
-    let ctx = require_workspace_ctx(&state, &id).await?;
-    create_and_sync_workspace_attachment(&state, &ctx, req)
+    let ctx = require_workspace_ctx(&workspaces, &id).await?;
+    create_and_sync_workspace_attachment(&workspaces, &ctx, req)
         .await
         .map(Json)
 }
@@ -43,7 +43,7 @@ pub(in crate::api) struct DeleteWorkspaceAttachmentReq {
 }
 
 pub(in crate::api) async fn delete_workspace_attachment(
-    State(state): State<Arc<AppState>>,
+    State(workspaces): State<WorkspacesHandle>,
     Path(id): Path<String>,
     Json(req): Json<DeleteWorkspaceAttachmentReq>,
 ) -> Result<Json<Vec<WorkspaceAttachment>>, (StatusCode, Json<ApiErrorResp>)> {
@@ -55,8 +55,8 @@ pub(in crate::api) async fn delete_workspace_attachment(
             }),
         ));
     }
-    let ctx = require_workspace_ctx(&state, &id).await?;
-    delete_and_sync_workspace_attachment(&state, &ctx, req)
+    let ctx = require_workspace_ctx(&workspaces, &id).await?;
+    delete_and_sync_workspace_attachment(&workspaces, &ctx, req)
         .await
         .map(Json)
 }

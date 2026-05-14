@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use axum::extract::{Extension, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
@@ -7,7 +5,6 @@ use serde::{Deserialize, Serialize};
 
 use super::errors::ApiErrorResp;
 use crate::api::MobileAuthContext;
-use crate::daemon::AppState;
 use ctx_observability::logs;
 use ctx_workspace_services::repo_onboarding::{
     RepoGitCommandError, RepoOnboardingPathError, RepoOnboardingWorkflowError,

@@ -10,7 +10,7 @@ use ctx_storage_admission::is_storage_exhaustion_error;
 use ctx_workspace_services::file_completions::{self, CachedFileCompletions};
 use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
 
-use crate::daemon::{AppState, StoreLookup, TimedEntry};
+use crate::daemon::{DaemonState, StoreLookup, TimedEntry};
 
 mod container;
 
@@ -74,7 +74,7 @@ impl FileCompletionsError {
 }
 
 pub(crate) async fn complete_files_for_session(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session_id: SessionId,
     query: Option<String>,
     limit: Option<u32>,
@@ -111,7 +111,7 @@ pub(crate) async fn complete_files_for_session(
 }
 
 pub(crate) async fn complete_files_for_workspace(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
     query: Option<String>,
     limit: Option<u32>,
@@ -133,7 +133,7 @@ pub(crate) async fn complete_files_for_workspace(
 }
 
 async fn store_for_existing_session(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session_id: SessionId,
 ) -> Result<ctx_store::Store, FileCompletionsError> {
     let store = match state.lookup_session_store(session_id).await {
@@ -162,7 +162,7 @@ async fn store_for_existing_session(
 }
 
 async fn cached_worktree_files(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     worktree: &Worktree,
     execution_environment: ExecutionEnvironment,
 ) -> Result<Arc<Vec<String>>, FileCompletionsError> {
@@ -179,7 +179,7 @@ async fn cached_worktree_files(
 }
 
 async fn cached_workspace_files(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
     root: &Path,
 ) -> Result<Arc<Vec<String>>, FileCompletionsError> {
@@ -200,7 +200,7 @@ async fn cached_workspace_files(
 }
 
 async fn load_and_cache_worktree_files(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     worktree: &Worktree,
     execution_environment: ExecutionEnvironment,
     now: Instant,
@@ -235,7 +235,7 @@ async fn load_and_cache_worktree_files(
 }
 
 async fn load_and_cache_workspace_files(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
     root: &Path,
     now: Instant,
@@ -271,7 +271,11 @@ fn rank_files(paths: &[String], query: Option<String>, limit: Option<u32>) -> Ve
     file_completions::filter_and_rank_paths(paths, &query, limit)
 }
 
-async fn record_list_files_metric(state: &Arc<AppState>, event: &'static str, started_at: Instant) {
+async fn record_list_files_metric(
+    state: &Arc<DaemonState>,
+    event: &'static str,
+    started_at: Instant,
+) {
     let mut labels = HashMap::new();
     labels.insert("event".to_string(), event.to_string());
     labels.insert("source".to_string(), "daemon".to_string());

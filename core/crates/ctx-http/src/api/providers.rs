@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path as StdPath, PathBuf};
 use std::process::Stdio;
+#[cfg(test)]
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -15,7 +16,9 @@ use tokio::sync::mpsc;
 use url::Url;
 
 use super::errors::ApiErrorResp;
-use crate::daemon::AppState;
+#[cfg(test)]
+use crate::daemon::DaemonState;
+use crate::daemon::ProvidersHandle;
 use ctx_core::ids::WorkspaceId;
 use ctx_harness_sources as harness_sources;
 #[cfg(test)]

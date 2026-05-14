@@ -7,7 +7,7 @@ use ctx_storage_admission::{
     storage_emergency_message, StorageGuardStatus, STORAGE_GUARD_MONITOR_INTERVAL,
 };
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 #[cfg(test)]
 const GIB: u64 = ctx_storage_admission::STORAGE_BYTES_GIB;
@@ -22,7 +22,7 @@ use observations::{collect_observed_paths, sample_storage_disks};
 use publication::dispatch_storage_emergency_interrupt;
 use publication::{emit_reserve_warnings, publish_storage_guard_snapshot};
 
-pub fn spawn_storage_guard(state: Arc<AppState>) {
+pub fn spawn_storage_guard(state: Arc<DaemonState>) {
     let mut shutdown_rx = state.core.shutdown_tx.subscribe();
     tokio::spawn(async move {
         if let Err(err) = evaluate_storage_guard(&state, &[]).await {
@@ -42,7 +42,7 @@ pub fn spawn_storage_guard(state: Arc<AppState>) {
     });
 }
 
-pub async fn preflight_turn_start(state: &Arc<AppState>, workdir: &Path) -> Result<()> {
+pub async fn preflight_turn_start(state: &Arc<DaemonState>, workdir: &Path) -> Result<()> {
     let current = state.storage_guard_snapshot();
     if current.is_emergency() {
         anyhow::bail!(storage_emergency_message(current.active.as_ref()));
@@ -55,7 +55,7 @@ pub async fn preflight_turn_start(state: &Arc<AppState>, workdir: &Path) -> Resu
 }
 
 pub async fn evaluate_storage_guard(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     extra_paths: &[PathBuf],
 ) -> Result<StorageGuardStatus> {
     let observed_paths = collect_observed_paths(state, extra_paths).await;
@@ -72,7 +72,7 @@ pub async fn evaluate_storage_guard(
 }
 
 async fn refresh_preflight_storage_guard(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     extra_paths: &[PathBuf],
 ) -> StorageGuardStatus {
     let observed_paths = collect_observed_paths(state, extra_paths).await;
@@ -86,7 +86,7 @@ async fn refresh_preflight_storage_guard(
     snapshot
 }
 
-impl AppState {
+impl DaemonState {
     pub fn storage_guard_snapshot(&self) -> StorageGuardStatus {
         self.core.storage_guard.snapshot()
     }

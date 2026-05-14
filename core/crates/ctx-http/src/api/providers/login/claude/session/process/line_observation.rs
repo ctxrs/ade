@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) async fn append_claude_login_line(
-    state: &Arc<AppState>,
+    providers: &ProvidersHandle,
     login_id: &str,
     observed_auth_url: &mut Option<String>,
     transcript: &mut String,
@@ -40,6 +40,6 @@ pub(super) async fn append_claude_login_line(
         }
     }
     if let Some(url) = observed_auth_url.clone() {
-        crate::daemon::providers::set_claude_login_auth_url(state, login_id, url).await;
+        providers.set_claude_login_auth_url(login_id, url).await;
     }
 }

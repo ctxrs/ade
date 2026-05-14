@@ -2,9 +2,9 @@ use super::common::{internal_error, provider_account_mutation_error, unknown_acc
 use super::*;
 
 pub(crate) async fn copilot_accounts_response(
-    state: &Arc<AppState>,
+    providers: &ProvidersHandle,
 ) -> anyhow::Result<CopilotAccountsResponse> {
-    let registry = crate::daemon::providers::load_copilot_account_registry(state).await?;
+    let registry = providers.load_copilot_account_registry().await?;
     Ok(CopilotAccountsResponse {
         active_account_id: registry.active_account_id,
         accounts: registry.accounts,
@@ -12,60 +12,64 @@ pub(crate) async fn copilot_accounts_response(
 }
 
 pub(crate) async fn list_copilot_accounts(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
 ) -> Result<Json<CopilotAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     Ok(Json(
-        copilot_accounts_response(&state)
+        copilot_accounts_response(&providers)
             .await
             .map_err(internal_error)?,
     ))
 }
 
 pub(crate) async fn upsert_copilot_account(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     Json(req): Json<CopilotAccountUpsertReq>,
 ) -> Result<Json<CopilotAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    crate::daemon::providers::add_copilot_account(&state, req.label, req.token, req.email)
+    providers
+        .add_copilot_account(req.label, req.token, req.email)
         .await
         .map_err(provider_account_mutation_error)?;
     Ok(Json(
-        copilot_accounts_response(&state)
+        copilot_accounts_response(&providers)
             .await
             .map_err(internal_error)?,
     ))
 }
 
 pub(crate) async fn set_copilot_active_account(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     Json(req): Json<CopilotActiveAccountReq>,
 ) -> Result<Json<CopilotAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     if let Some(ref account_id) = req.account_id {
-        let registry = crate::daemon::providers::load_copilot_account_registry(&state)
+        let registry = providers
+            .load_copilot_account_registry()
             .await
             .map_err(internal_error)?;
         if !registry.accounts.iter().any(|a| a.id == *account_id) {
             return Err(unknown_account());
         }
     }
-    crate::daemon::providers::set_active_copilot_account(&state, req.account_id)
+    providers
+        .set_active_copilot_account(req.account_id)
         .await
         .map_err(provider_account_mutation_error)?;
     Ok(Json(
-        copilot_accounts_response(&state)
+        copilot_accounts_response(&providers)
             .await
             .map_err(internal_error)?,
     ))
 }
 
 pub(crate) async fn delete_copilot_account(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<CopilotAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    crate::daemon::providers::remove_copilot_account(&state, &id)
+    providers
+        .remove_copilot_account(&id)
         .await
         .map_err(provider_account_mutation_error)?;
     Ok(Json(
-        copilot_accounts_response(&state)
+        copilot_accounts_response(&providers)
             .await
             .map_err(internal_error)?,
     ))

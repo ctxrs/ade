@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::Instant;
 
 use axum::body::{Body, Bytes};
@@ -90,12 +89,8 @@ use ws::{
 use ctx_core::{ids::*, models::*};
 use ctx_store::store::MobileDeviceUpsert;
 
-use crate::daemon::{
-    mobile_access::{
-        default_mobile_profile_scopes, load_mobile_auth_context_for_profile,
-        mobile_scope_set_from_strings, MobileAuthContext, MobileScope,
-    },
-    AppState,
+use crate::daemon::mobile_access::{
+    default_mobile_profile_scopes, mobile_scope_set_from_strings, MobileAuthContext, MobileScope,
 };
 use ctx_observability::logs;
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};

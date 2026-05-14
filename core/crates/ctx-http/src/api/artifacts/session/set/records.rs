@@ -1,8 +1,8 @@
 use super::*;
+use crate::daemon::SessionsHandle;
 
 pub(super) async fn build_session_artifacts(
-    state: &Arc<AppState>,
-    store: &ctx_store::Store,
+    state: &SessionsHandle,
     session: &ctx_core::models::Session,
     inputs: Vec<ArtifactInput>,
 ) -> Result<Vec<Artifact>, (StatusCode, Json<ApiErrorResp>)> {
@@ -46,7 +46,7 @@ pub(super) async fn build_session_artifacts(
                 }),
             ));
         }
-        let path = validate_session_artifact_write_path(state, store, session, &path)
+        let path = validate_session_artifact_write_path(state, session, &path)
             .await
             .map_err(|error| {
                 (

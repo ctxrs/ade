@@ -20,7 +20,7 @@ use ctx_core::models::{
     MessageDelivery, SandboxBinding, SandboxGuestIdentity, SandboxProfile, SandboxSubstrate,
     SessionEventType, SessionHeadDelta, SessionTurn, SessionTurnStatus, SessionTurnTool, VcsKind,
 };
-use ctx_http::daemon::AppState;
+use ctx_http::daemon::DaemonState;
 use ctx_providers::adapters::{
     ProviderAdapter, ProviderHealth, ProviderStatus, ProviderUsability, RunHandle, TurnInput,
 };
@@ -135,7 +135,7 @@ async fn setup_state_with_providers(
     providers: HashMap<String, Arc<dyn ProviderAdapter>>,
 ) -> (
     tempfile::TempDir,
-    Arc<AppState>,
+    Arc<DaemonState>,
     common::TestServer,
     Store,
     String,
@@ -220,7 +220,7 @@ async fn setup_state(
     repo_root: &Path,
 ) -> (
     tempfile::TempDir,
-    Arc<AppState>,
+    Arc<DaemonState>,
     common::TestServer,
     Store,
     String,

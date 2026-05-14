@@ -2,9 +2,9 @@ use ctx_core::ids::SessionId;
 use ctx_core::models::SessionHeadSnapshot;
 use ctx_session_service::runtime::{SessionHeadRefreshHost, SessionHeadRefreshLoad};
 
-use crate::daemon::state::AppState;
+use crate::daemon::state::DaemonState;
 
-pub async fn refresh_session_head_cache(state: &AppState, session_id: SessionId) {
+pub async fn refresh_session_head_cache(state: &DaemonState, session_id: SessionId) {
     state
         .sessions
         .refresh_session_head_cache_with_host(state, session_id)
@@ -12,7 +12,7 @@ pub async fn refresh_session_head_cache(state: &AppState, session_id: SessionId)
 }
 
 #[async_trait::async_trait]
-impl SessionHeadRefreshHost for AppState {
+impl SessionHeadRefreshHost for DaemonState {
     async fn load_active_snapshot_head(&self, session_id: SessionId) -> SessionHeadRefreshLoad {
         let store = match self.store_for_session(session_id).await {
             Ok(store) => store,

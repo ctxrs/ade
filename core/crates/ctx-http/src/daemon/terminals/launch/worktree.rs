@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::Worktree;
 
 use super::{internal_error, not_found, TerminalLaunchError};
 
 pub(super) async fn resolve_terminal_worktree(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
     worktree_id: Option<WorktreeId>,
     session_id: Option<SessionId>,
@@ -23,7 +23,7 @@ pub(super) async fn resolve_terminal_worktree(
 }
 
 async fn load_explicit_worktree(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
     worktree_id: WorktreeId,
 ) -> Result<Option<Worktree>, TerminalLaunchError> {
@@ -43,7 +43,7 @@ async fn load_explicit_worktree(
 }
 
 pub(crate) async fn infer_terminal_worktree(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
     session_id: Option<SessionId>,
     task_id: Option<TaskId>,

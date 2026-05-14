@@ -16,10 +16,10 @@ use ctx_provider_runtime::provider_usability::{
 };
 use ctx_providers::adapters::ProviderStatus;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(crate) async fn build_bootstrap_options(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     ws_id: WorkspaceId,
     provider_status: ProviderStatus,
     preferred_model_id: Option<String>,
@@ -92,7 +92,7 @@ pub(crate) fn visible_provider_count_hint(total_provider_count: usize) -> usize 
 }
 
 async fn provider_auth_summary(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     provider_id: &str,
     source_config: Option<&HarnessProviderSourceConfig>,
     source_config_error: &Option<String>,

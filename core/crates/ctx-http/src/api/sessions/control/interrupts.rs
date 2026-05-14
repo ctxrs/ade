@@ -3,25 +3,27 @@ use super::super::*;
 use crate::daemon::sessions::command_dispatch as daemon_command_dispatch;
 
 pub(crate) async fn cancel_session(
-    State(state): State<Arc<AppState>>,
+    State(state): State<SessionsHandle>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
 
-    daemon_command_dispatch::cancel_session(&state, session_id)
+    state
+        .cancel_session(session_id)
         .await
         .map_err(session_command_status)?;
     Ok(StatusCode::OK)
 }
 
 pub(crate) async fn interrupt_session(
-    State(state): State<Arc<AppState>>,
+    State(state): State<SessionsHandle>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
     let request_started = std::time::Instant::now();
     let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
 
-    daemon_command_dispatch::interrupt_session(&state, session_id, request_started)
+    state
+        .interrupt_session(session_id, request_started)
         .await
         .map_err(session_command_status)?;
     Ok(StatusCode::OK)

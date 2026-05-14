@@ -10,7 +10,7 @@ async fn provider_options_surface_agent_server_config_errors() {
     let data_dir = tempfile::tempdir().unwrap();
     write_invalid_agent_server_config(data_dir.path());
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),
@@ -47,7 +47,7 @@ async fn provider_options_ignore_stale_verify_cache_while_agent_server_config_is
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),

@@ -1,12 +1,12 @@
 mod common;
 
 use axum::http::{Method, StatusCode};
-use ctx_http::daemon::AppState;
+use ctx_http::daemon::DaemonState;
 use ctx_store::StoreManager;
 use serde_json::Value;
 use std::sync::Arc;
 
-fn build_state(data_root: &std::path::Path, stores: StoreManager) -> Arc<AppState> {
+fn build_state(data_root: &std::path::Path, stores: StoreManager) -> Arc<DaemonState> {
     common::build_state(
         data_root,
         stores,

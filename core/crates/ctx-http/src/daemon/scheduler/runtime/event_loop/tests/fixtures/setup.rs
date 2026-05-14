@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::daemon::scheduler::runtime::event_loop::tests) struct LoopFixture {
-    pub(in crate::daemon::scheduler::runtime::event_loop::tests) state: Arc<AppState>,
+    pub(in crate::daemon::scheduler::runtime::event_loop::tests) state: Arc<DaemonState>,
     pub(in crate::daemon::scheduler::runtime::event_loop::tests) store: ctx_store::Store,
     pub(in crate::daemon::scheduler::runtime::event_loop::tests) workspace_id:
         ctx_core::ids::WorkspaceId,
@@ -24,7 +24,7 @@ pub(in crate::daemon::scheduler::runtime::event_loop::tests) async fn build_loop
     let stores = StoreManager::open(data_dir).await.expect("open stores");
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.to_path_buf(),
         stores.clone(),
         providers,

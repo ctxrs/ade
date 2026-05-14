@@ -7,7 +7,7 @@ use ctx_settings_model::{ExecutionMode, ExecutionSettings};
 use ctx_store::Store;
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 #[cfg(test)]
 mod tests;
@@ -33,7 +33,7 @@ pub(crate) fn execution_environment_from_settings(
 }
 
 pub(crate) async fn resolve_existing_worktree_execution(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     store: &Store,
     workspace: &Workspace,
     worktree_id: WorktreeId,

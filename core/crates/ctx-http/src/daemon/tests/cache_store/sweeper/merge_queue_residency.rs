@@ -4,7 +4,7 @@ use super::*;
 async fn sweeper_keeps_merge_queue_running_workspaces_resident() {
     let temp = tempdir().unwrap();
     let stores = StoreManager::open(temp.path()).await.unwrap();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         temp.path().to_path_buf(),
         stores.clone(),
         HashMap::new(),

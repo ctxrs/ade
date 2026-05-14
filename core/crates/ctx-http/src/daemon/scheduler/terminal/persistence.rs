@@ -6,13 +6,13 @@ use serde_json::Value;
 use ctx_core::ids::{RunId, SessionId, TurnId};
 use ctx_core::models::{RunStatus, SessionEvent, SessionEventType};
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::super::persistence::{
     is_transient_store_error, sleep_store_write_retry, STORE_WRITE_RETRY_LIMIT,
 };
 
-async fn publish_persisted_events(state: &Arc<AppState>, events: Vec<SessionEvent>) {
+async fn publish_persisted_events(state: &Arc<DaemonState>, events: Vec<SessionEvent>) {
     for event in events {
         state.publish_event(event).await;
     }
@@ -65,7 +65,7 @@ async fn persist_turn_terminal_events_with_retry(
 }
 
 pub(super) async fn persist_terminal_events(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session_id: SessionId,
     run_id: Option<RunId>,
     turn_id: TurnId,

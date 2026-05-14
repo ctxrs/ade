@@ -7,7 +7,7 @@ use ctx_core::models::SessionEventType;
 use ctx_providers::adapters::ProviderTurnOutcome;
 use ctx_session_tools::interrupt_telemetry::{payload_fields, InterruptTelemetryContext};
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::super::super::persistence::emit_event;
 use super::super::state::{RunningTurn, StopReason};
@@ -43,7 +43,7 @@ impl StopReason {
 }
 
 pub(super) async fn emit_interrupt_requested_event(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session_id: SessionId,
     turn: &RunningTurn,
     interrupt: Option<&InterruptTelemetryContext>,

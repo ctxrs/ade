@@ -2,14 +2,14 @@ use ctx_observability::ops_events::OpsEvent;
 use ctx_session_tools::{build_tool_ops_meta_from_normalized, NormalizedToolEvent};
 use serde_json::{json, Value};
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::super::super::tool_runtime::cwd_outside_worktree;
 use super::super::TurnEventLoop;
 
 pub(super) fn emit_tool_call_ops(
     ctx: &TurnEventLoop,
-    state: &AppState,
+    state: &DaemonState,
     tool_event: &NormalizedToolEvent,
 ) {
     let tool_meta = build_tool_ops_meta_from_normalized(tool_event);

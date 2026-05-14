@@ -3,7 +3,7 @@ use std::sync::Arc;
 use ctx_core::ids::TurnId;
 use ctx_core::models::{Session, SubagentInvocation};
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::super::{emit_subagent_invocation_notice, internal_api_error, ApiResult};
 use parent_turn::resolve_parent_turn_id;
@@ -18,7 +18,7 @@ pub(super) struct StartedSubagentInvocation {
 }
 
 pub(super) async fn start_subagent_invocation(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     store: &ctx_store::Store,
     parent: &Session,
     requested_count: usize,
@@ -96,7 +96,7 @@ pub(super) async fn start_subagent_invocation(
 }
 
 pub(super) async fn mark_subagent_invocation_failed(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     parent: &Session,
     invocation_id: &str,
     tool_call_id: &str,

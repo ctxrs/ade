@@ -12,23 +12,19 @@ pub(super) struct ManagedMobileAccessKeys {
 }
 
 pub(super) async fn load_or_create_managed_mobile_access_keys(
-    state: &Arc<AppState>,
+    state: &CoreHandle,
     public_url: &Url,
     now: chrono::DateTime<chrono::Utc>,
 ) -> Result<ManagedMobileAccessKeys, (StatusCode, Json<ApiErrorResp>)> {
-    match state
-        .global_store()
-        .get_mobile_access_config()
-        .await
-        .map_err(|e| {
-            tracing::error!("failed to read mobile access config: {e:?}");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to read mobile access config".into(),
-                }),
-            )
-        })? {
+    match state.get_mobile_access_config().await.map_err(|e| {
+        tracing::error!("failed to read mobile access config: {e:?}");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: "failed to read mobile access config".into(),
+            }),
+        )
+    })? {
         Some(cfg) => {
             ensure_managed_profile_scopes(state, cfg.profile_id).await?;
             Ok(ManagedMobileAccessKeys {
@@ -43,7 +39,7 @@ pub(super) async fn load_or_create_managed_mobile_access_keys(
 }
 
 pub(super) async fn persist_mobile_access_config(
-    state: &Arc<AppState>,
+    state: &CoreHandle,
     payload: &ControlPlaneEnableResp,
     public_url: &Url,
     keys: &ManagedMobileAccessKeys,
@@ -64,7 +60,6 @@ pub(super) async fn persist_mobile_access_config(
     };
 
     state
-        .global_store()
         .upsert_mobile_access_config(config)
         .await
         .map_err(|e| {

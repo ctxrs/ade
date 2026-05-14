@@ -18,7 +18,7 @@ use ctx_workspace_active_snapshot::{
     ResolvedWorkspaceActiveSubscriptions, SessionReplayCursor, WorkspaceActiveSubscriptionState,
 };
 
-use crate::daemon::AppState;
+use crate::daemon::{CoreHandle, WorkspaceStreamHandle, WorkspacesHandle};
 
 mod async_util;
 mod common;
@@ -58,7 +58,7 @@ pub(super) use workspace_vcs::workspace_vcs_stream_ws;
 
 pub(super) async fn dictation_livekit_stream_ws(
     ws: WebSocketUpgrade,
-    State(state): State<Arc<AppState>>,
+    State(state): State<CoreHandle>,
 ) -> impl IntoResponse {
     ws.on_upgrade(move |socket| dictation_livekit::dictation_livekit_stream(socket, state))
 }

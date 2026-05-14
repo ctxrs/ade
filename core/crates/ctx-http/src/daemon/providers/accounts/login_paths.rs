@@ -6,7 +6,7 @@ use std::{
 
 use ctx_provider_accounts as provider_accounts;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(crate) struct PreparedAmpLoginPaths {
     pub(crate) login_home: PathBuf,
@@ -41,7 +41,7 @@ fn provider_login_home(data_root: &Path, provider_id: &str, login_id: &str) -> P
         .join(login_id)
 }
 
-fn login_provider_base_env(state: &AppState) -> HashMap<String, String> {
+fn login_provider_base_env(state: &DaemonState) -> HashMap<String, String> {
     HashMap::from([
         ("CTX_DAEMON_URL".to_string(), state.core.daemon_url.clone()),
         ("CTX_MCP_DISABLED".to_string(), "1".to_string()),
@@ -53,7 +53,7 @@ fn login_provider_base_env(state: &AppState) -> HashMap<String, String> {
 }
 
 pub(crate) async fn prepare_amp_login_paths(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     login_id: &str,
 ) -> Result<PreparedAmpLoginPaths, String> {
     let login_home = provider_login_home(&state.core.data_root, "amp", login_id);
@@ -76,7 +76,10 @@ pub(crate) async fn prepare_amp_login_paths(
     })
 }
 
-pub(crate) fn amp_login_provider_env(state: &AppState, amp_home: &Path) -> HashMap<String, String> {
+pub(crate) fn amp_login_provider_env(
+    state: &DaemonState,
+    amp_home: &Path,
+) -> HashMap<String, String> {
     let mut provider_env = login_provider_base_env(state);
     provider_env.insert("HOME".to_string(), amp_home.to_string_lossy().to_string());
     provider_env.insert(
@@ -91,7 +94,7 @@ pub(crate) fn amp_login_provider_env(state: &AppState, amp_home: &Path) -> HashM
 }
 
 pub(crate) async fn prepare_mistral_login_paths(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     login_id: &str,
 ) -> Result<PreparedMistralLoginPaths, String> {
     let login_home = provider_login_home(&state.core.data_root, "mistral", login_id);
@@ -116,7 +119,7 @@ pub(crate) async fn prepare_mistral_login_paths(
 }
 
 pub(crate) fn mistral_login_provider_env(
-    state: &AppState,
+    state: &DaemonState,
     mistral_home: &Path,
 ) -> HashMap<String, String> {
     let mut provider_env = login_provider_base_env(state);
@@ -136,7 +139,7 @@ pub(crate) fn mistral_login_provider_env(
 }
 
 pub(crate) async fn prepare_gemini_login_paths(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     login_id: &str,
 ) -> Result<PreparedGeminiLoginPaths, String> {
     let login_home = provider_login_home(&state.core.data_root, "gemini", login_id);
@@ -153,7 +156,7 @@ pub(crate) async fn prepare_gemini_login_paths(
 }
 
 pub(crate) fn gemini_login_provider_env(
-    state: &AppState,
+    state: &DaemonState,
     login_home: &Path,
 ) -> HashMap<String, String> {
     let mut provider_env = login_provider_base_env(state);
@@ -173,7 +176,7 @@ pub(crate) fn gemini_login_auth_method_id() -> String {
 }
 
 pub(crate) async fn prepare_qwen_login_paths(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     login_id: &str,
 ) -> Result<PreparedQwenLoginPaths, String> {
     let login_home = provider_login_home(&state.core.data_root, "qwen", login_id);
@@ -193,7 +196,7 @@ pub(crate) async fn prepare_qwen_login_paths(
 }
 
 pub(crate) fn qwen_login_provider_env(
-    state: &AppState,
+    state: &DaemonState,
     login_home: &Path,
 ) -> HashMap<String, String> {
     let mut provider_env = login_provider_base_env(state);

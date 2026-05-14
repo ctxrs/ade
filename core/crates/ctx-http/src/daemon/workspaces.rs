@@ -1,3 +1,26 @@
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::sync::broadcast;
+
+use ctx_core::ids::{MergeQueueEntryId, RunId, SessionId, TaskId, WorkspaceId, WorktreeId};
+use ctx_core::models::{
+    MergeQueueEntry, MergeQueueRun, RunArchiveIngestBatch, RunArchiveIngestCursor, SandboxBinding,
+    Task, TaskDeltaKind, VcsKind, Workspace, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot,
+    WorkspaceActiveSnapshotClientMessage, WorkspaceActiveSnapshotEvent,
+    WorkspaceActiveSnapshotStreamMessage, WorkspaceAttachment, Worktree, WorktreeAttachmentMount,
+};
+use ctx_observability::telemetry::TelemetryEvent;
+use ctx_settings_model::ExecutionSettings;
+use ctx_store::Store;
+use ctx_workspace_attachments::AttachmentConfig;
+use ctx_workspace_config as workspace_config;
+use ctx_workspace_container::WorkspaceContainerStatus;
+
+use super::handle::WorkspacesHandle;
+use crate::daemon::{settings, WorkspaceStoreAccessError, WorkspaceStreamHandle};
+use ctx_workspace_active_snapshot::{ResolvedWorkspaceActiveSubscriptions, SessionReplayCursor};
+
 mod active_snapshot_state;
 mod app_state;
 pub(crate) mod attachments;
@@ -24,6 +47,7 @@ pub(crate) use deletion::{delete_workspace, WorkspaceDeleteError};
 pub(crate) use diff_exec::{diff_worktree_for_session, diff_worktree_summary_for_session};
 pub(crate) use execution::{
     execution_environment_from_settings, resolve_existing_worktree_execution,
+    ResolvedExistingWorktreeExecution,
 };
 pub(crate) use file_completions::{
     complete_files_for_session, complete_files_for_workspace, FileCompletionsError,
@@ -52,3 +76,980 @@ pub(crate) use worktree_cleanup::{
 pub(crate) use worktree_provision::{
     persist_provisioned_worktree, provision_worktree_for_execution,
 };
+
+#[derive(Debug)]
+pub(crate) enum RunArchiveIngestError {
+    WorkspaceNotFound,
+    AcknowledgementConflict(&'static str),
+    Internal(anyhow::Error),
+}
+
+impl WorkspacesHandle {
+    pub(crate) async fn list_workspaces(&self) -> anyhow::Result<Vec<Workspace>> {
+        self.state.global_store().list_workspaces().await
+    }
+
+    pub(crate) async fn get_workspace(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> anyhow::Result<Option<Workspace>> {
+        self.state.global_store().get_workspace(workspace_id).await
+    }
+
+    pub(crate) async fn workspace_exists(&self, workspace_id: WorkspaceId) -> anyhow::Result<bool> {
+        self.state
+            .global_store()
+            .get_workspace(workspace_id)
+            .await
+            .map(|workspace| workspace.is_some())
+    }
+
+    pub(crate) async fn create_workspace(
+        &self,
+        name: String,
+        root_path: String,
+        vcs_kind: VcsKind,
+    ) -> anyhow::Result<Workspace> {
+        self.state
+            .global_store()
+            .create_workspace(name, root_path, vcs_kind)
+            .await
+    }
+
+    pub(crate) async fn list_workspace_attachments(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<Vec<WorkspaceAttachment>, WorkspaceStoreAccessError> {
+        let store = self.existing_workspace_store(workspace_id).await?;
+        store
+            .list_workspace_attachments(workspace_id)
+            .await
+            .map_err(WorkspaceStoreAccessError::Unavailable)
+    }
+
+    pub(crate) async fn update_workspace_primary_branch(
+        &self,
+        workspace_id: WorkspaceId,
+        primary_branch: &str,
+    ) -> anyhow::Result<()> {
+        let store = self.store_for_workspace(workspace_id).await?;
+        ctx_workspace_config::update_primary_branch(&store, primary_branch).await
+    }
+
+    pub(crate) async fn load_workspace_primary_branch_config(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<Option<String>, WorkspaceStoreAccessError> {
+        let store = self.existing_workspace_store(workspace_id).await?;
+        workspace_config::load_primary_branch(&store)
+            .await
+            .map_err(WorkspaceStoreAccessError::Unavailable)
+    }
+
+    pub(crate) async fn update_workspace_primary_branch_config(
+        &self,
+        workspace: &Workspace,
+        primary_branch: &str,
+    ) -> anyhow::Result<()> {
+        let store = self.store_for_workspace(workspace.id).await?;
+        workspace_config::update_primary_branch(&store, primary_branch).await?;
+        let worktrees = store.list_worktrees(workspace.id).await?;
+        for worktree in worktrees {
+            if let Err(error) = self.refresh_worktree_vcs_snapshot(&worktree, true).await {
+                tracing::warn!(
+                    workspace_id = %workspace.id.0,
+                    worktree_id = %worktree.id.0,
+                    "failed to refresh worktree vcs after primary branch update: {error:#}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn load_workspace_merge_queue_config(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<workspace_config::MergeQueueConfig, WorkspaceStoreAccessError> {
+        let store = self.existing_workspace_store(workspace_id).await?;
+        workspace_config::load_merge_queue_config(&store)
+            .await
+            .map_err(WorkspaceStoreAccessError::Unavailable)
+    }
+
+    pub(crate) async fn update_workspace_merge_queue_config(
+        &self,
+        workspace_id: WorkspaceId,
+        update: workspace_config::MergeQueueConfigUpdate,
+    ) -> anyhow::Result<()> {
+        let store = self.store_for_workspace(workspace_id).await?;
+        let was_enabled = workspace_config::load_merge_queue_config(&store)
+            .await?
+            .enabled;
+        workspace_config::update_merge_queue_config(&store, update).await?;
+        let now_enabled = workspace_config::load_merge_queue_config(&store)
+            .await?
+            .enabled;
+        if !was_enabled && now_enabled {
+            self.schedule_workspace_merge_queue_if_enabled_and_queued(workspace_id)
+                .await?;
+        } else if was_enabled && !now_enabled {
+            self.cancel_queued_entries_for_disabled_workspace(&store, workspace_id)
+                .await?;
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn list_merge_queue_entries_for_route(
+        &self,
+        workspace_id: WorkspaceId,
+        limit: Option<i64>,
+    ) -> Result<Vec<MergeQueueEntry>, WorkspaceStoreAccessError> {
+        let store = self.existing_workspace_store(workspace_id).await?;
+        store
+            .list_merge_queue_entries(workspace_id, limit)
+            .await
+            .map_err(WorkspaceStoreAccessError::Unavailable)
+    }
+
+    pub(crate) async fn latest_merge_queue_run_for_route(
+        &self,
+        workspace_id: WorkspaceId,
+        entry_id: MergeQueueEntryId,
+    ) -> Result<Option<(Workspace, MergeQueueRun)>, WorkspaceStoreAccessError> {
+        let store = self.existing_workspace_store(workspace_id).await?;
+        let Some(workspace) = store
+            .get_workspace(workspace_id)
+            .await
+            .map_err(WorkspaceStoreAccessError::Unavailable)?
+        else {
+            return Ok(None);
+        };
+        let run = store
+            .get_latest_merge_queue_run(entry_id)
+            .await
+            .map_err(WorkspaceStoreAccessError::Unavailable)?;
+        Ok(run.map(|run| (workspace, run)))
+    }
+
+    pub(crate) async fn load_workspace_execution_override(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<Option<workspace_config::ExecutionSettingsOverride>, WorkspaceStoreAccessError>
+    {
+        let store = self.existing_workspace_store(workspace_id).await?;
+        workspace_config::load_execution_settings_override(&store)
+            .await
+            .map_err(WorkspaceStoreAccessError::Unavailable)
+    }
+
+    pub(crate) async fn update_workspace_execution_config(
+        &self,
+        workspace_id: WorkspaceId,
+        update: workspace_config::ExecutionConfigUpdate,
+    ) -> anyhow::Result<()> {
+        let store = self.store_for_workspace(workspace_id).await?;
+        workspace_config::update_execution_config(&store, update).await
+    }
+
+    pub(crate) async fn load_worktree_bootstrap_config(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<Option<workspace_config::WorktreeBootstrapConfig>, WorkspaceStoreAccessError> {
+        let store = self.existing_workspace_store(workspace_id).await?;
+        workspace_config::load_worktree_bootstrap_config(&store)
+            .await
+            .map_err(WorkspaceStoreAccessError::Unavailable)
+    }
+
+    pub(crate) async fn update_worktree_bootstrap_config(
+        &self,
+        workspace_id: WorkspaceId,
+        update: workspace_config::WorktreeBootstrapConfigUpdate,
+    ) -> anyhow::Result<()> {
+        let store = self.store_for_workspace(workspace_id).await?;
+        workspace_config::update_worktree_bootstrap_config(&store, update).await
+    }
+
+    pub(crate) async fn load_agent_system_prompt_append(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<workspace_config::AgentSystemPromptAppendConfig, WorkspaceStoreAccessError> {
+        let store = self.existing_workspace_store(workspace_id).await?;
+        workspace_config::load_agent_system_prompt_append(&store)
+            .await
+            .map_err(WorkspaceStoreAccessError::Unavailable)
+    }
+
+    pub(crate) async fn update_agent_system_prompt_append(
+        &self,
+        workspace_id: WorkspaceId,
+        system_prompt_append: Option<String>,
+    ) -> Result<workspace_config::AgentSystemPromptAppendConfig, WorkspaceStoreAccessError> {
+        let store = self.existing_workspace_store(workspace_id).await?;
+        workspace_config::update_agent_system_prompt_append(&store, system_prompt_append)
+            .await
+            .map_err(WorkspaceStoreAccessError::Unavailable)?;
+        workspace_config::load_agent_system_prompt_append(&store)
+            .await
+            .map_err(WorkspaceStoreAccessError::Unavailable)
+    }
+
+    pub(crate) async fn load_subagent_system_prompt_append(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<workspace_config::SubagentSystemPromptAppendConfig, WorkspaceStoreAccessError> {
+        let store = self.existing_workspace_store(workspace_id).await?;
+        workspace_config::load_subagent_system_prompt_append(&store)
+            .await
+            .map_err(WorkspaceStoreAccessError::Unavailable)
+    }
+
+    pub(crate) async fn update_subagent_system_prompt_append(
+        &self,
+        workspace_id: WorkspaceId,
+        system_prompt_append: Option<String>,
+    ) -> Result<workspace_config::SubagentSystemPromptAppendConfig, WorkspaceStoreAccessError> {
+        let store = self.existing_workspace_store(workspace_id).await?;
+        workspace_config::update_subagent_system_prompt_append(&store, system_prompt_append)
+            .await
+            .map_err(WorkspaceStoreAccessError::Unavailable)?;
+        workspace_config::load_subagent_system_prompt_append(&store)
+            .await
+            .map_err(WorkspaceStoreAccessError::Unavailable)
+    }
+
+    pub(crate) async fn get_worktree_with_live_root(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> anyhow::Result<Option<Worktree>> {
+        let store = self.store_for_worktree(worktree_id).await?;
+        let Some(mut worktree) = store.get_worktree(worktree_id).await? else {
+            return Ok(None);
+        };
+        worktree.root_path = self
+            .resolve_live_worktree_root(&worktree)
+            .await?
+            .to_string_lossy()
+            .to_string();
+        Ok(Some(worktree))
+    }
+
+    pub(crate) async fn get_worktree_bootstrap_log_path(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> anyhow::Result<Option<String>> {
+        let store = self.store_for_worktree(worktree_id).await?;
+        let Some(worktree) = store.get_worktree(worktree_id).await? else {
+            return Ok(None);
+        };
+        Ok(worktree.bootstrap_log_path)
+    }
+
+    pub(crate) async fn build_run_archive_ingest_batch(
+        &self,
+        workspace_id: WorkspaceId,
+        run_id: RunId,
+        max_items: u32,
+    ) -> Result<Option<RunArchiveIngestBatch>, RunArchiveIngestError> {
+        let store = self
+            .existing_workspace_store(workspace_id)
+            .await
+            .map_err(run_archive_workspace_store_error)?;
+        let batch = store
+            .build_run_archive_ingest_batch(run_id, max_items)
+            .await
+            .map_err(RunArchiveIngestError::Internal)?;
+        Ok(batch.filter(|batch| batch.run.workspace_id == workspace_id))
+    }
+
+    pub(crate) async fn acknowledge_run_archive_ingest_batch(
+        &self,
+        workspace_id: WorkspaceId,
+        run_id: RunId,
+        max_items: u32,
+        batch: RunArchiveIngestBatch,
+    ) -> Result<RunArchiveIngestCursor, RunArchiveIngestError> {
+        let store = self
+            .existing_workspace_store(workspace_id)
+            .await
+            .map_err(run_archive_workspace_store_error)?;
+        let cursor = store
+            .get_run_archive_ingest_cursor(run_id)
+            .await
+            .map_err(RunArchiveIngestError::Internal)?;
+        let current_watermark = cursor
+            .as_ref()
+            .map(|cursor| cursor.watermark)
+            .unwrap_or_default();
+        if batch.from != current_watermark {
+            return Err(RunArchiveIngestError::AcknowledgementConflict(
+                "archive ingest acknowledgement is stale for the current cursor",
+            ));
+        }
+        let Some(mut expected_batch) = store
+            .build_run_archive_ingest_batch_after(run_id, batch.from, max_items, cursor.is_none())
+            .await
+            .map_err(RunArchiveIngestError::Internal)?
+        else {
+            return Err(RunArchiveIngestError::AcknowledgementConflict(
+                "archive ingest acknowledgement does not match an available batch",
+            ));
+        };
+        expected_batch.created_at = batch.created_at;
+        if expected_batch != batch {
+            return Err(RunArchiveIngestError::AcknowledgementConflict(
+                "archive ingest acknowledgement does not match the current batch",
+            ));
+        }
+        store
+            .acknowledge_run_archive_ingest_batch(&batch)
+            .await
+            .map_err(RunArchiveIngestError::Internal)
+    }
+
+    pub(in crate::daemon) async fn store_for_workspace(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> anyhow::Result<Store> {
+        self.state.store_for_workspace(workspace_id).await
+    }
+
+    pub(in crate::daemon) async fn existing_workspace_store(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<Store, WorkspaceStoreAccessError> {
+        self.state.existing_workspace_store(workspace_id).await
+    }
+
+    pub(in crate::daemon) async fn store_for_worktree(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> anyhow::Result<Store> {
+        self.state.store_for_worktree(worktree_id).await
+    }
+
+    pub(crate) async fn record_workspace_registered(&self) {
+        self.state
+            .telemetry
+            .telemetry
+            .emit(TelemetryEvent::workspace_registered())
+            .await;
+    }
+
+    pub(crate) async fn record_workspace_opened(&self) {
+        self.state
+            .telemetry
+            .telemetry
+            .emit(TelemetryEvent::workspace_opened())
+            .await;
+    }
+
+    pub(crate) async fn delete_workspace(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<(), WorkspaceDeleteError> {
+        delete_workspace(&self.state, workspace_id).await
+    }
+
+    pub(crate) async fn load_workspace_active_snapshot(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<WorkspaceActiveSnapshot, WorkspaceHydrationError> {
+        self.state
+            .ensure_workspace_active_snapshot_hydrated(workspace_id)
+            .await?;
+        crate::daemon::merge_queue::activate_workspace_merge_queue(&self.state, workspace_id).await;
+        let snapshot = self
+            .state
+            .workspaces
+            .workspace_active_snapshot
+            .active_snapshot(workspace_id, i64::MAX)
+            .await;
+        self.state
+            .cache_workspace_active_snapshot(snapshot.clone())
+            .await;
+        Ok(snapshot)
+    }
+
+    pub(crate) async fn load_workspace_active_heads(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<WorkspaceActiveHeadBatch, WorkspaceHydrationError> {
+        self.state
+            .ensure_workspace_active_snapshot_hydrated(workspace_id)
+            .await?;
+        crate::daemon::merge_queue::activate_workspace_merge_queue(&self.state, workspace_id).await;
+        let heads = self
+            .state
+            .workspaces
+            .workspace_active_snapshot
+            .active_heads(workspace_id)
+            .await;
+        self.state.cache_workspace_active_heads(heads.clone()).await;
+        Ok(heads)
+    }
+
+    pub(crate) async fn effective_execution_settings(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> anyhow::Result<ExecutionSettings> {
+        crate::daemon::execution_effective::effective_execution_settings(
+            self.state.as_ref(),
+            workspace_id,
+        )
+        .await
+    }
+
+    pub(crate) async fn effective_execution_settings_classified(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<ExecutionSettings, ctx_settings_service::EffectiveExecutionSettingsError> {
+        crate::daemon::execution_effective::effective_execution_settings_classified(
+            self.state.as_ref(),
+            workspace_id,
+        )
+        .await
+    }
+
+    pub(crate) async fn resolve_existing_worktree_execution(
+        &self,
+        store: &Store,
+        workspace: &Workspace,
+        worktree_id: WorktreeId,
+    ) -> anyhow::Result<ResolvedExistingWorktreeExecution> {
+        resolve_existing_worktree_execution(&self.state, store, workspace, worktree_id).await
+    }
+
+    pub(crate) async fn provision_worktree_for_execution(
+        &self,
+        workspace: &Workspace,
+        worktree_id: WorktreeId,
+        base_commit_sha: &str,
+        branch_name: &str,
+        effective: &ExecutionSettings,
+    ) -> anyhow::Result<(PathBuf, Option<SandboxBinding>)> {
+        provision_worktree_for_execution(
+            &self.state,
+            workspace,
+            worktree_id,
+            base_commit_sha,
+            branch_name,
+            effective,
+        )
+        .await
+    }
+
+    pub(crate) async fn persist_provisioned_worktree(
+        &self,
+        store: &Store,
+        workspace: &Workspace,
+        worktree: Worktree,
+        sandbox_binding: Option<SandboxBinding>,
+    ) -> anyhow::Result<()> {
+        persist_provisioned_worktree(&self.state, store, workspace, worktree, sandbox_binding)
+            .await
+            .map(|_| ())
+    }
+
+    pub(crate) fn managed_worktree_root(
+        &self,
+        workspace: &Workspace,
+        worktree: &Worktree,
+    ) -> Option<PathBuf> {
+        managed_worktree_root(self.state.as_ref(), workspace, worktree)
+    }
+
+    pub(crate) async fn resolve_live_worktree_root(
+        &self,
+        worktree: &Worktree,
+    ) -> anyhow::Result<PathBuf> {
+        Ok(
+            ctx_worktree_data_plane::resolve_worktree_data_plane_with_host(
+                self.state.as_ref(),
+                worktree,
+            )
+            .await?
+            .live_worktree_root,
+        )
+    }
+
+    pub(crate) fn worktree_bootstrap_logs_root(&self) -> PathBuf {
+        ctx_observability::logs::logs_dir(&self.state.core.data_root).join("worktree-bootstrap")
+    }
+
+    pub(crate) async fn cleanup_task_worktrees(
+        &self,
+        workspace: &Workspace,
+        task_id: TaskId,
+        targets: &[TaskWorktreeCleanupTarget],
+        branch_cleanup_error_mode: BranchCleanupErrorMode,
+    ) -> Vec<anyhow::Error> {
+        cleanup_task_worktrees(
+            self.state.as_ref(),
+            workspace,
+            task_id,
+            targets,
+            branch_cleanup_error_mode,
+        )
+        .await
+    }
+
+    pub(crate) async fn rematerialize_sandbox_binding_for_worktree(
+        &self,
+        workspace: &Workspace,
+        worktree: &Worktree,
+        binding: &SandboxBinding,
+    ) -> anyhow::Result<SandboxBinding> {
+        rematerialize_sandbox_binding_for_worktree(&self.state, workspace, worktree, binding).await
+    }
+
+    pub(crate) async fn ensure_worktree_attachment_mounts_if_materialized(
+        &self,
+        workspace: &Workspace,
+        worktree: &Worktree,
+    ) -> anyhow::Result<Vec<WorktreeAttachmentMount>> {
+        attachments::ensure_worktree_attachment_mounts_if_materialized(
+            self.state.as_ref(),
+            workspace,
+            worktree,
+        )
+        .await
+    }
+
+    pub(crate) async fn upsert_workspace_attachment(
+        &self,
+        workspace_id: WorkspaceId,
+        cfg: AttachmentConfig,
+    ) -> anyhow::Result<WorkspaceAttachment> {
+        attachments::upsert_workspace_attachment(self.state.as_ref(), workspace_id, cfg).await
+    }
+
+    pub(crate) async fn delete_workspace_attachment(
+        &self,
+        workspace_id: WorkspaceId,
+        kind: ctx_core::models::WorkspaceAttachmentKind,
+        name: &str,
+    ) -> anyhow::Result<bool> {
+        attachments::delete_workspace_attachment(self.state.as_ref(), workspace_id, kind, name)
+            .await
+    }
+
+    pub(crate) async fn sync_workspace_attachments(
+        &self,
+        workspace: &Workspace,
+        refresh: bool,
+    ) -> anyhow::Result<Vec<WorkspaceAttachment>> {
+        let attachments =
+            attachments::sync_workspace_attachments(Arc::clone(&self.state), workspace, refresh)
+                .await?;
+        let _ = attachments::ensure_workspace_attachments_for_worktrees_with_attachments(
+            self.state.as_ref(),
+            workspace,
+            &attachments,
+            false,
+            false,
+        )
+        .await;
+        Ok(attachments)
+    }
+
+    pub(crate) async fn spawn_worktree_bootstrap(
+        &self,
+        workspace: Workspace,
+        worktree: Worktree,
+    ) -> anyhow::Result<()> {
+        spawn_worktree_bootstrap(Arc::clone(&self.state), workspace, worktree).await
+    }
+
+    pub(crate) async fn ensure_task_commit_hook(
+        &self,
+        workspace: &Workspace,
+        worktree: &Worktree,
+        task_id: TaskId,
+    ) -> anyhow::Result<()> {
+        ensure_task_commit_hook(self.state.as_ref(), workspace, worktree, task_id).await
+    }
+
+    pub(crate) async fn emit_workspace_task_upsert(&self, task_id: TaskId) -> anyhow::Result<()> {
+        self.state.emit_workspace_task_upsert(task_id).await
+    }
+
+    pub(crate) async fn emit_workspace_task_delta(&self, task: Task, kind: TaskDeltaKind) -> bool {
+        self.state.emit_workspace_task_delta(task, kind).await
+    }
+
+    pub(crate) async fn emit_workspace_task_delete(
+        &self,
+        workspace_id: WorkspaceId,
+        task_id: TaskId,
+    ) {
+        self.state
+            .emit_workspace_task_delete(workspace_id, task_id)
+            .await;
+    }
+
+    pub(crate) async fn emit_workspace_archived_task_delete(
+        &self,
+        workspace_id: WorkspaceId,
+        task_id: TaskId,
+    ) {
+        self.state
+            .emit_workspace_archived_task_delete(workspace_id, task_id)
+            .await;
+    }
+
+    pub(crate) async fn load_workspace_active_snapshot_state(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> (i64, i64) {
+        load_workspace_active_snapshot_state(&self.state, workspace_id).await
+    }
+
+    pub(crate) async fn workspace_harness_container_status(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<Option<WorkspaceContainerStatus>, WorkspaceHarnessContainerError> {
+        workspace_harness_container_status(&self.state, workspace_id).await
+    }
+
+    pub(crate) async fn stop_workspace_harness_container(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<(), WorkspaceHarnessContainerError> {
+        stop_workspace_harness_container(&self.state, workspace_id).await
+    }
+
+    pub(crate) async fn ensure_workspace_harness_container(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<(), WorkspaceHarnessContainerError> {
+        ensure_workspace_harness_container(&self.state, workspace_id).await
+    }
+
+    pub(crate) async fn get_workspace_provider_model_preference(
+        &self,
+        workspace_id: WorkspaceId,
+        provider_id: &str,
+    ) -> Result<WorkspaceProviderModelPreference, WorkspaceProviderModelPreferenceError> {
+        get_workspace_provider_model_preference(&self.state, workspace_id, provider_id).await
+    }
+
+    pub(crate) async fn set_workspace_provider_model_preference(
+        &self,
+        workspace_id: WorkspaceId,
+        provider_id: &str,
+        preferred_model_id: Option<String>,
+    ) -> Result<WorkspaceProviderModelPreference, WorkspaceProviderModelPreferenceError> {
+        set_workspace_provider_model_preference(
+            &self.state,
+            workspace_id,
+            provider_id,
+            preferred_model_id,
+        )
+        .await
+    }
+
+    pub(crate) async fn complete_files_for_workspace(
+        &self,
+        workspace_id: WorkspaceId,
+        query: Option<String>,
+        limit: Option<u32>,
+    ) -> Result<Vec<String>, FileCompletionsError> {
+        complete_files_for_workspace(&self.state, workspace_id, query, limit).await
+    }
+
+    pub(crate) async fn load_settings(&self) -> anyhow::Result<ctx_settings_model::Settings> {
+        settings::load_settings(self.state.as_ref()).await
+    }
+
+    pub(crate) fn shared_vm_container_runtime_available(&self) -> bool {
+        ctx_harness_runtime::local_runtime_available(
+            &self.state.core.data_root,
+            &ctx_settings_model::ContainerRuntimeKind::SharedVmContainer,
+        )
+    }
+
+    pub(crate) async fn refresh_worktree_vcs_snapshot(
+        &self,
+        worktree: &Worktree,
+        force_emit: bool,
+    ) -> anyhow::Result<()> {
+        crate::daemon::git_status::emit_worktree_vcs_snapshot_for_worktree(
+            &self.state,
+            worktree,
+            force_emit,
+        )
+        .await
+    }
+
+    pub(crate) async fn schedule_workspace_merge_queue_if_enabled_and_queued(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> anyhow::Result<bool> {
+        crate::daemon::merge_queue::schedule_workspace_if_enabled_and_queued(
+            &self.state,
+            workspace_id,
+        )
+        .await
+    }
+
+    pub(crate) async fn cancel_queued_entries_for_disabled_workspace(
+        &self,
+        store: &Store,
+        workspace_id: WorkspaceId,
+    ) -> anyhow::Result<()> {
+        crate::daemon::merge_queue::cancel_queued_entries_for_disabled_workspace(
+            &self.state,
+            store,
+            workspace_id,
+        )
+        .await
+    }
+
+    pub(crate) async fn get_worktree_vcs_snapshot(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> Option<ctx_core::models::WorktreeVcsSnapshot> {
+        self.state.get_worktree_vcs_snapshot(worktree_id).await
+    }
+
+    pub(crate) fn subscribe_worktree_vcs_events(
+        &self,
+    ) -> broadcast::Receiver<ctx_core::models::WorktreeVcsSnapshot> {
+        self.state.subscribe_worktree_vcs_events()
+    }
+
+    pub(crate) async fn filter_workspace_worktree_ids(
+        &self,
+        workspace_id: WorkspaceId,
+        worktree_ids: Vec<WorktreeId>,
+    ) -> Vec<WorktreeId> {
+        stream::filter_workspace_worktree_ids(&self.state, workspace_id, worktree_ids).await
+    }
+
+    pub(crate) async fn refresh_worktree_vcs_for_worktrees(
+        &self,
+        summary_worktree_ids: &[WorktreeId],
+        detail_worktree_ids: &[WorktreeId],
+    ) {
+        stream::refresh_worktree_vcs_for_worktrees(
+            &self.state,
+            summary_worktree_ids,
+            detail_worktree_ids,
+        )
+        .await;
+    }
+
+    pub(crate) async fn update_worktree_vcs_activity(
+        &self,
+        previous: &std::collections::HashSet<WorktreeId>,
+        next: &std::collections::HashSet<WorktreeId>,
+    ) {
+        self.state
+            .update_worktree_vcs_activity(previous, next)
+            .await;
+    }
+
+    pub(crate) async fn update_worktree_vcs_open_panes(
+        &self,
+        previous: &std::collections::HashSet<WorktreeId>,
+        next: &std::collections::HashSet<WorktreeId>,
+    ) {
+        self.state
+            .update_worktree_vcs_open_panes(previous, next)
+            .await;
+    }
+
+    pub(crate) async fn record_workspace_vcs_stream_metric(&self, name: &str, value: u64) {
+        let mut labels = HashMap::new();
+        labels.insert("source".to_string(), "daemon".to_string());
+        labels.insert("stream".to_string(), "workspace_vcs".to_string());
+        let metric = ctx_observability::perf_telemetry::PerfMetric {
+            name: name.to_string(),
+            kind: ctx_observability::perf_telemetry::PerfMetricKind::Counter,
+            unit: "count".to_string(),
+            value: value as f64,
+            labels,
+        };
+        self.state
+            .telemetry
+            .perf_telemetry
+            .record_metric(metric, None, None, None)
+            .await;
+    }
+}
+
+fn run_archive_workspace_store_error(error: WorkspaceStoreAccessError) -> RunArchiveIngestError {
+    match error {
+        WorkspaceStoreAccessError::NotFound => RunArchiveIngestError::WorkspaceNotFound,
+        WorkspaceStoreAccessError::Unavailable(error) => RunArchiveIngestError::Internal(error),
+    }
+}
+
+impl WorkspaceStreamHandle {
+    pub(crate) async fn workspace_exists(&self, workspace_id: WorkspaceId) -> anyhow::Result<bool> {
+        self.state
+            .global_store()
+            .get_workspace(workspace_id)
+            .await
+            .map(|workspace| workspace.is_some())
+    }
+
+    pub(crate) async fn subscribe_workspace_active_snapshot(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> broadcast::Receiver<WorkspaceActiveSnapshotEvent> {
+        self.state
+            .workspaces
+            .workspace_active_snapshot
+            .subscribe(workspace_id)
+            .await
+    }
+
+    pub(crate) async fn ensure_workspace_active_snapshot_hydrated(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<(), WorkspaceHydrationError> {
+        self.state
+            .ensure_workspace_active_snapshot_hydrated(workspace_id)
+            .await
+    }
+
+    pub(crate) async fn activate_workspace_merge_queue(&self, workspace_id: WorkspaceId) {
+        crate::daemon::merge_queue::activate_workspace_merge_queue(&self.state, workspace_id).await;
+    }
+
+    pub(crate) async fn load_workspace_active_snapshot_state(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> (i64, i64) {
+        load_workspace_active_snapshot_state(&self.state, workspace_id).await
+    }
+
+    pub(crate) async fn workspace_active_snapshot(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> WorkspaceActiveSnapshot {
+        self.state
+            .workspaces
+            .workspace_active_snapshot
+            .active_snapshot(workspace_id, i64::MAX)
+            .await
+    }
+
+    pub(crate) async fn workspace_active_heads(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> WorkspaceActiveHeadBatch {
+        self.state
+            .workspaces
+            .workspace_active_snapshot
+            .active_heads(workspace_id)
+            .await
+    }
+
+    pub(crate) async fn session_replay_cursor(
+        &self,
+        workspace_id: WorkspaceId,
+        session_id: SessionId,
+    ) -> SessionReplayCursor {
+        self.state
+            .workspaces
+            .workspace_active_snapshot
+            .session_replay_cursor(workspace_id, session_id)
+            .await
+    }
+
+    pub(crate) async fn resolve_workspace_active_snapshot_subscriptions(
+        &self,
+        workspace_id: WorkspaceId,
+        message: WorkspaceActiveSnapshotClientMessage,
+        existing: &HashMap<SessionId, SessionReplayCursor>,
+    ) -> Result<ResolvedWorkspaceActiveSubscriptions, ()> {
+        stream::resolve_workspace_active_snapshot_subscriptions(
+            &self.state,
+            workspace_id,
+            message,
+            existing,
+        )
+        .await
+    }
+
+    pub(crate) async fn replay_session_events<F, Fut>(
+        &self,
+        workspace_id: WorkspaceId,
+        session_id: SessionId,
+        after_cursor: SessionReplayCursor,
+        list_failpoint: &'static str,
+        send_failpoint: Option<&'static str>,
+        emit: F,
+    ) -> Result<stream::ReplayOutcome, ()>
+    where
+        F: FnMut(WorkspaceActiveSnapshotStreamMessage) -> Fut,
+        Fut: std::future::Future<Output = Result<(), ()>>,
+    {
+        stream::replay_session_events(
+            &self.state,
+            workspace_id,
+            session_id,
+            after_cursor,
+            list_failpoint,
+            send_failpoint,
+            emit,
+        )
+        .await
+    }
+
+    pub(crate) async fn attach_session_pin(&self, session_id: SessionId) {
+        self.state.attach_session(session_id).await;
+    }
+
+    pub(crate) async fn detach_session_pin(&self, session_id: SessionId) {
+        self.state.detach_session(session_id).await;
+    }
+
+    pub(crate) async fn emit_workspace_stream_incident(
+        &self,
+        event_name: &'static str,
+        labels: &[(&'static str, serde_json::Value)],
+    ) {
+        let mut event = TelemetryEvent::daemon_incident(event_name)
+            .with_source("workspace_stream")
+            .with_property("has_workspace_scope", serde_json::json!(true));
+        for (key, value) in labels {
+            event = event.with_property(*key, value.clone());
+        }
+        self.state.telemetry.telemetry.emit(event).await;
+    }
+
+    pub(crate) async fn record_workspace_stream_receiver_drain(
+        &self,
+        queue_label: &'static str,
+        event_count: usize,
+        hit_limit: bool,
+    ) {
+        let mut labels = HashMap::new();
+        labels.insert("source".to_string(), "daemon".to_string());
+        labels.insert("queue_label".to_string(), queue_label.to_string());
+        labels.insert(
+            "hit_limit".to_string(),
+            if hit_limit { "true" } else { "false" }.to_string(),
+        );
+        self.state
+            .telemetry
+            .perf_telemetry
+            .record_metric(
+                ctx_observability::perf_telemetry::PerfMetric {
+                    name: "workspace.stream.receiver_drain_event_count".to_string(),
+                    kind: ctx_observability::perf_telemetry::PerfMetricKind::Histogram,
+                    unit: "count".to_string(),
+                    value: event_count as f64,
+                    labels,
+                },
+                None,
+                None,
+                None,
+            )
+            .await;
+    }
+}

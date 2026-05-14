@@ -23,7 +23,7 @@ pub(super) struct ProviderOptionsInputs {
 }
 
 pub(super) async fn load_provider_options_inputs(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
     provider_id: &str,
     cache_ttl: Duration,
@@ -71,7 +71,7 @@ pub(super) async fn load_provider_options_inputs(
 }
 
 async fn load_workspace(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     ws_id: WorkspaceId,
 ) -> Result<Workspace, ProviderOptionsResponseError> {
     state
@@ -83,7 +83,7 @@ async fn load_workspace(
 }
 
 async fn load_workspace_preferred_model_id(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
     provider_id: &str,
 ) -> Result<Option<String>, ProviderOptionsResponseError> {

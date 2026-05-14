@@ -56,9 +56,16 @@ async fn delete_task_removes_standalone_managed_worktree_when_workspace_root_is_
         .await
         .expect("set primary worktree");
 
-    let status = delete_task(State(Arc::clone(&state)), Path(task.id.0.to_string()))
-        .await
-        .expect("delete task");
+    let (sessions, providers, workspaces, transport) = task_api_states(&state);
+    let status = delete_task(
+        sessions,
+        providers,
+        workspaces,
+        transport,
+        Path(task.id.0.to_string()),
+    )
+    .await
+    .expect("delete task");
     assert_eq!(status, StatusCode::NO_CONTENT);
     assert!(
         store

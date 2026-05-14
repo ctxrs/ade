@@ -1,11 +1,12 @@
 use super::*;
+use crate::daemon::CoreHandle;
 
 pub(super) fn blobs_dir(data_root: &StdPath) -> PathBuf {
     data_root.join("blobs")
 }
 
 pub(in crate::api) async fn persist_blob_bytes(
-    state: &AppState,
+    state: &CoreHandle,
     bytes: &[u8],
     mime_type: &str,
     name: Option<&str>,
@@ -23,7 +24,7 @@ pub(in crate::api) async fn persist_blob_bytes(
 
     let blob_id = uuid::Uuid::new_v4().to_string();
 
-    let dir = blobs_dir(&state.core.data_root);
+    let dir = blobs_dir(state.data_root());
     tokio::fs::create_dir_all(&dir)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -38,7 +39,6 @@ pub(in crate::api) async fn persist_blob_bytes(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     state
-        .global_store()
         .insert_blob(
             &blob_id,
             &sha256,

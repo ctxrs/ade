@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
@@ -13,8 +11,7 @@ use ctx_execution_runtime::{
     ExecutionLaunchSnapshot, ExecutionLaunchState, ExecutionLaunchStreamEvent,
 };
 
-use crate::daemon::execution_setup as daemon_execution_setup;
-use crate::daemon::AppState;
+use crate::daemon::ExecutionHandle;
 
 #[derive(Debug, Deserialize)]
 pub(in crate::api) struct ExecutionLaunchStatusQuery {
@@ -22,14 +19,15 @@ pub(in crate::api) struct ExecutionLaunchStatusQuery {
 }
 
 pub(in crate::api) async fn launch_status(
-    State(state): State<Arc<AppState>>,
+    State(state): State<ExecutionHandle>,
     Query(query): Query<ExecutionLaunchStatusQuery>,
 ) -> Result<Json<ExecutionLaunchSnapshot>, StatusCode> {
     let job_id = query.job_id.trim();
     if job_id.is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let snapshot = daemon_execution_setup::launch_status(&state, job_id)
+    let snapshot = state
+        .launch_status(job_id)
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
     Ok(Json(snapshot))
@@ -37,7 +35,7 @@ pub(in crate::api) async fn launch_status(
 
 pub(in crate::api) async fn launch_stream_ws(
     ws: WebSocketUpgrade,
-    State(state): State<Arc<AppState>>,
+    State(state): State<ExecutionHandle>,
     Query(query): Query<ExecutionLaunchStatusQuery>,
 ) -> impl IntoResponse {
     let job_id = query.job_id.trim().to_string();
@@ -45,8 +43,7 @@ pub(in crate::api) async fn launch_stream_ws(
         return StatusCode::BAD_REQUEST.into_response();
     }
 
-    let Some((snapshot, rx)) = daemon_execution_setup::subscribe_launch(&state, &job_id).await
-    else {
+    let Some((snapshot, rx)) = state.subscribe_launch(&job_id).await else {
         return StatusCode::NOT_FOUND.into_response();
     };
 

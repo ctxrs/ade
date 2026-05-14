@@ -4,12 +4,12 @@ use std::sync::Arc;
 use serde_json::json;
 
 use super::snapshot::capture_guard_snapshot;
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_core::models::SessionEventType;
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
 
 pub(super) async fn handle_provider_guard_event(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     event: &ctx_provider_runtime::provider_guard::ProviderGuardEvent,
 ) {
     log_guard_event(state, event).await;
@@ -20,7 +20,7 @@ pub(super) async fn handle_provider_guard_event(
 }
 
 async fn log_guard_event(
-    state: &AppState,
+    state: &DaemonState,
     event: &ctx_provider_runtime::provider_guard::ProviderGuardEvent,
 ) {
     let mem_mb = bytes_to_mb(event.sample.memory_bytes);
@@ -56,7 +56,7 @@ async fn log_guard_event(
 }
 
 async fn notify_sessions(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     event: &ctx_provider_runtime::provider_guard::ProviderGuardEvent,
 ) {
     let session_ids = state.running_session_ids().await;

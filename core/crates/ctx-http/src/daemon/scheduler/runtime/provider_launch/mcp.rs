@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) async fn issue_mcp_token_if_enabled(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session: &Session,
     provider_env: &mut HashMap<String, String>,
     mcp_disabled: bool,

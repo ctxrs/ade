@@ -122,12 +122,26 @@ async fn unarchive_task_does_not_recreate_archived_subagent_worktrees() {
         "test setup should remove the archived child managed worktree root"
     );
 
-    let Json(_) = archive_task(State(Arc::clone(&state)), Path(task.id.0.to_string()))
-        .await
-        .expect("archive task");
-    let Json(unarchived) = unarchive_task(State(Arc::clone(&state)), Path(task.id.0.to_string()))
-        .await
-        .expect("unarchive task");
+    let (sessions, providers, workspaces, transport) = task_api_states(&state);
+    let Json(_) = archive_task(
+        sessions,
+        providers,
+        workspaces,
+        transport,
+        Path(task.id.0.to_string()),
+    )
+    .await
+    .expect("archive task");
+    let (sessions, providers, workspaces, transport) = task_api_states(&state);
+    let Json(unarchived) = unarchive_task(
+        sessions,
+        providers,
+        workspaces,
+        transport,
+        Path(task.id.0.to_string()),
+    )
+    .await
+    .expect("unarchive task");
 
     assert!(unarchived.archived_at.is_none());
     assert!(

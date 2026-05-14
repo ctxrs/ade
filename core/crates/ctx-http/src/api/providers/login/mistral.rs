@@ -16,18 +16,18 @@ pub(crate) struct MistralLoginStartResp {
 }
 
 pub(crate) async fn start_mistral_login(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<MistralLoginStartReq>,
 ) -> Result<Json<MistralLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
     let label = req.label;
-    let login_session = crate::daemon::providers::start_mistral_login_session(&state).await;
+    let login_session = providers.start_mistral_login_session().await;
 
-    let state_clone = Arc::clone(&state);
+    let providers_clone = providers.clone();
     let login_id_for_task = login_session.login_id.clone();
     tokio::spawn(async move {
-        monitor::monitor_mistral_login(state_clone, login_id_for_task, label).await;
+        monitor::monitor_mistral_login(providers_clone, login_id_for_task, label).await;
     });
 
     Ok(Json(MistralLoginStartResp {
@@ -37,20 +37,18 @@ pub(crate) async fn start_mistral_login(
 }
 
 pub(crate) async fn get_mistral_login(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Path(id): Path<String>,
 ) -> Result<Json<provider_accounts::MistralLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let status = crate::daemon::providers::mistral_login_status(&state, &id)
-        .await
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: "login not found".to_string(),
-                }),
-            )
-        })?;
+    let status = providers.mistral_login_status(&id).await.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "login not found".to_string(),
+            }),
+        )
+    })?;
     Ok(Json(status))
 }

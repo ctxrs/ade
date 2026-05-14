@@ -6,7 +6,7 @@ mod effects;
 use effects::{emit_task_upsert, rollback_new_task_after_default_session_failure};
 
 pub(super) async fn ensure_default_session_for_task(
-    state: Arc<AppState>,
+    handles: &TaskApiHandles,
     store: Store,
     workspace: Workspace,
     task: Task,
@@ -18,7 +18,7 @@ pub(super) async fn ensure_default_session_for_task(
         if let Some(default_session_req) = requested_default_session {
             if let Err(status) =
                 super::super::session_creation::replay_requested_default_session_for_task(
-                    Arc::clone(&state),
+                    handles,
                     store.clone(),
                     task.clone(),
                     workspace.clone(),
@@ -36,13 +36,13 @@ pub(super) async fn ensure_default_session_for_task(
                 ));
             }
         }
-        emit_task_upsert(&state, task.id).await;
+        emit_task_upsert(handles, task.id).await;
         return Ok(task);
     }
 
     let default_session_result = if let Some(default_session_req) = requested_default_session {
         super::super::session_creation::create_requested_default_session_for_task(
-            Arc::clone(&state),
+            handles,
             store.clone(),
             task.clone(),
             workspace.clone(),
@@ -54,12 +54,12 @@ pub(super) async fn ensure_default_session_for_task(
             match default_session_plan {
                 Some(plan) => plan,
                 None => {
-                    match preflight_default_session_creation(&state, &store, &workspace).await {
+                    match preflight_default_session_creation(handles, &store, &workspace).await {
                         Ok(plan) => plan,
                         Err(err) => {
                             if created_task_in_this_request {
                                 rollback_new_task_after_default_session_failure(
-                                    &state, &store, &workspace, task.id,
+                                    handles, &store, &workspace, task.id,
                                 )
                                 .await;
                             }
@@ -69,7 +69,7 @@ pub(super) async fn ensure_default_session_for_task(
                 }
             };
         create_default_session_for_task(
-            Arc::clone(&state),
+            handles,
             store.clone(),
             task.clone(),
             workspace.clone(),
@@ -84,7 +84,7 @@ pub(super) async fn ensure_default_session_for_task(
     };
     if let Err(status) = default_session_result {
         if created_task_in_this_request {
-            rollback_new_task_after_default_session_failure(&state, &store, &workspace, task.id)
+            rollback_new_task_after_default_session_failure(handles, &store, &workspace, task.id)
                 .await;
         }
         return Err((
@@ -114,6 +114,6 @@ pub(super) async fn ensure_default_session_for_task(
         }
     };
 
-    emit_task_upsert(&state, task.id).await;
+    emit_task_upsert(handles, task.id).await;
     Ok(task)
 }

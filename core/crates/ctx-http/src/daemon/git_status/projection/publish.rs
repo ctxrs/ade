@@ -4,10 +4,10 @@ use std::time::Instant;
 use ctx_core::models::{Worktree, WorktreeVcsSnapshot};
 use ctx_workspace_services::worktree_vcs::snapshot_for_durable_cache;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 async fn persist_worktree_vcs_snapshot(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     worktree: &Worktree,
     snapshot: &WorktreeVcsSnapshot,
 ) {
@@ -27,7 +27,7 @@ async fn persist_worktree_vcs_snapshot(
 }
 
 pub(in crate::daemon::git_status) async fn publish_worktree_vcs_snapshot(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     worktree: &Worktree,
     snapshot: WorktreeVcsSnapshot,
     force_emit: bool,
@@ -44,7 +44,7 @@ pub(in crate::daemon::git_status) async fn publish_worktree_vcs_snapshot(
 }
 
 pub(in crate::daemon::git_status) async fn publish_transient_worktree_vcs_snapshot(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     worktree: &Worktree,
     snapshot: WorktreeVcsSnapshot,
 ) {

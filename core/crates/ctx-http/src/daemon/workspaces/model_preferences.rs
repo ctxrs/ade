@@ -7,7 +7,7 @@ use ctx_core::models::Workspace;
 use ctx_provider_runtime::provider_cache;
 use ctx_workspace_config as workspace_config;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 #[derive(Debug)]
 pub(crate) enum WorkspaceProviderModelPreferenceError {
@@ -24,7 +24,7 @@ pub(crate) struct WorkspaceProviderModelPreference {
 }
 
 pub(crate) async fn get_workspace_provider_model_preference(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
     provider_id: &str,
 ) -> Result<WorkspaceProviderModelPreference, WorkspaceProviderModelPreferenceError> {
@@ -51,7 +51,7 @@ pub(crate) async fn get_workspace_provider_model_preference(
 }
 
 pub(crate) async fn set_workspace_provider_model_preference(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
     provider_id: &str,
     preferred_model_id: Option<String>,
@@ -87,7 +87,7 @@ pub(crate) async fn set_workspace_provider_model_preference(
 }
 
 pub(crate) async fn load_workspace_provider_preferred_model_id(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
     provider_id: &str,
 ) -> Result<Option<String>, WorkspaceProviderModelPreferenceError> {
@@ -101,7 +101,7 @@ pub(crate) async fn load_workspace_provider_preferred_model_id(
 }
 
 pub(crate) async fn update_workspace_provider_preferred_model_id(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
     provider_id: &str,
     preferred_model_id: Option<String>,
@@ -123,7 +123,7 @@ pub(crate) async fn update_workspace_provider_preferred_model_id(
 }
 
 async fn load_workspace(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
 ) -> Result<Workspace, WorkspaceProviderModelPreferenceError> {
     state
@@ -135,7 +135,7 @@ async fn load_workspace(
 }
 
 async fn require_configurable_provider_id(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     provider_id: &str,
 ) -> Result<String, WorkspaceProviderModelPreferenceError> {
     let provider_id = provider_id.trim();

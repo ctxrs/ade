@@ -53,7 +53,7 @@ async fn set_codex_active_account_returns_error_when_restart_fails() {
     .expect("seed codex account");
 
     let err = set_codex_active_account(
-        State(Arc::clone(&state)),
+        State(crate::daemon::DaemonHandle::new(Arc::clone(&state)).providers()),
         Json(CodexActiveAccountReq {
             account_id: Some("acct".to_string()),
         }),

@@ -11,7 +11,7 @@ use ctx_http::daemon::git_status::{
     emit_worktree_vcs_snapshot_for_worktree, refresh_worktree_vcs_summary,
     request_worktree_vcs_refresh, run_git_status_watcher,
 };
-use ctx_http::daemon::{AppRuntimeFlags, AppState};
+use ctx_http::daemon::{AppRuntimeFlags, DaemonState};
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::process::Command;
@@ -90,8 +90,8 @@ fn worktree_vcs_snapshot_test_lock() -> &'static tokio::sync::Mutex<()> {
     LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
-fn build_vcs_disabled_state(data_dir: &Path, stores: ctx_store::StoreManager) -> Arc<AppState> {
-    Arc::new(AppState::new_with_runtime_flags(
+fn build_vcs_disabled_state(data_dir: &Path, stores: ctx_store::StoreManager) -> Arc<DaemonState> {
+    Arc::new(DaemonState::new_with_runtime_flags(
         data_dir.to_path_buf(),
         stores,
         common::fake_providers(),

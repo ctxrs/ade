@@ -8,7 +8,7 @@ use ctx_observability::logs;
 use ctx_provider_accounts as provider_accounts;
 use ctx_providers::crp::probe_crp_models;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 mod loader;
 

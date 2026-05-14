@@ -1,16 +1,14 @@
-use std::sync::Arc;
-
 use axum::extract::ws::{Message as WsMessage, WebSocket};
 use futures::StreamExt;
 
 use super::super::workspace_stream;
-use crate::daemon::AppState;
+use crate::daemon::WorkspaceStreamHandle;
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::WorkspaceActiveSnapshotClientMessage;
 
 pub(super) async fn handle_workspace_active_snapshot_ws(
     socket: WebSocket,
-    state: Arc<AppState>,
+    state: WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
 ) {
     let (sender, mut receiver) = socket.split();

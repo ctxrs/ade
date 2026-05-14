@@ -4,10 +4,10 @@ use ctx_core::ids::WorktreeId;
 use ctx_core::models::Worktree;
 
 use crate::daemon::git_status;
-use crate::daemon::state::{AppState, WorkspaceRuntime};
+use crate::daemon::state::{DaemonState, WorkspaceRuntime};
 
 impl WorkspaceRuntime {
-    pub async fn ensure_git_status_watcher(&self, state: &Arc<AppState>, worktree: Worktree) {
+    pub async fn ensure_git_status_watcher(&self, state: &Arc<DaemonState>, worktree: Worktree) {
         if !self.worktree_vcs_enabled {
             return;
         }

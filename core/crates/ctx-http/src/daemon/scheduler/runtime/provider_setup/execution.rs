@@ -7,14 +7,14 @@ use ctx_core::models::{ExecutionEnvironment, Session};
 use ctx_harness_sources::{HarnessRuntimeSourceMode, ResolvedHarnessSource};
 use ctx_settings_model::ExecutionSettings;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::super::execution_plan::{prepare_turn_execution_plan, TurnExecutionPlan};
 use super::super::provider_env::apply_runtime_source_env;
 use super::super::turn_failure::emit_turn_start_failed;
 
 pub(super) struct ProviderExecutionContextRequest<'a> {
-    pub(super) state: &'a Arc<AppState>,
+    pub(super) state: &'a Arc<DaemonState>,
     pub(super) store: &'a ctx_store::Store,
     pub(super) session: &'a Session,
     pub(super) run_id: RunId,

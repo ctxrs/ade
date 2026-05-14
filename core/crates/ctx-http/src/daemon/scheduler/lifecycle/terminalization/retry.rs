@@ -4,7 +4,7 @@ const TURN_TERMINALIZATION_RETRY_LIMIT: usize = 3;
 const TURN_TERMINALIZATION_RETRY_BASE_MS: u64 = 50;
 
 async fn turn_finished_persisted(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session_id: SessionId,
     turn_id: TurnId,
 ) -> bool {
@@ -30,7 +30,7 @@ async fn turn_finished_persisted(
 }
 
 pub(in crate::daemon::scheduler::lifecycle) async fn finalize_provider_outcome_required(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session_id: SessionId,
     run_id: Option<RunId>,
     turn_id: TurnId,

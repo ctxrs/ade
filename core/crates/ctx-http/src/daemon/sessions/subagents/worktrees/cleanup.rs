@@ -4,7 +4,7 @@ use crate::daemon::workspaces::{
     cleanup_task_worktrees, managed_worktree_root, BranchCleanupErrorMode,
     TaskWorktreeCleanupTarget,
 };
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 mod context;
 mod references;
@@ -13,7 +13,7 @@ use context::load_archived_worktree_cleanup_context;
 use references::archived_worktree_has_other_references;
 
 pub(in crate::daemon::sessions::subagents) async fn cleanup_archived_subagent_worktree(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     store: &ctx_store::Store,
     parent: &ctx_core::models::Session,
     child: &ctx_core::models::Session,

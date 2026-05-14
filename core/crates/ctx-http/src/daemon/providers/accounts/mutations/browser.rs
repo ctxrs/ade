@@ -3,10 +3,10 @@ use std::sync::Arc;
 use ctx_provider_accounts as provider_accounts;
 
 use super::super::{ProviderAccountLoginMutation, ProviderAccountMutationError};
-use crate::daemon::{providers::restarts, AppState};
+use crate::daemon::{providers::restarts, DaemonState};
 
 pub(crate) async fn upsert_amp_account(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     label: Option<String>,
     email: Option<String>,
 ) -> Result<(), ProviderAccountMutationError> {
@@ -16,7 +16,7 @@ pub(crate) async fn upsert_amp_account(
 }
 
 pub(crate) async fn upsert_amp_account_for_login(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     label: Option<String>,
     email: Option<String>,
 ) -> Result<ProviderAccountLoginMutation, ProviderAccountMutationError> {
@@ -32,7 +32,7 @@ pub(crate) async fn upsert_amp_account_for_login(
 }
 
 pub(crate) async fn set_active_amp_account(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     account_id: Option<String>,
 ) -> Result<(), ProviderAccountMutationError> {
     provider_accounts::set_active_amp_account(&state.core.data_root, account_id)
@@ -44,7 +44,7 @@ pub(crate) async fn set_active_amp_account(
 }
 
 pub(crate) async fn remove_amp_account(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     account_id: &str,
 ) -> Result<(), ProviderAccountMutationError> {
     provider_accounts::remove_amp_account(&state.core.data_root, account_id)
@@ -56,7 +56,7 @@ pub(crate) async fn remove_amp_account(
 }
 
 pub(crate) async fn upsert_mistral_account(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     label: Option<String>,
     email: Option<String>,
 ) -> Result<(), ProviderAccountMutationError> {
@@ -66,7 +66,7 @@ pub(crate) async fn upsert_mistral_account(
 }
 
 pub(crate) async fn upsert_mistral_account_for_login(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     label: Option<String>,
     email: Option<String>,
 ) -> Result<ProviderAccountLoginMutation, ProviderAccountMutationError> {
@@ -82,7 +82,7 @@ pub(crate) async fn upsert_mistral_account_for_login(
 }
 
 pub(crate) async fn set_active_mistral_account(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     account_id: Option<String>,
 ) -> Result<(), ProviderAccountMutationError> {
     provider_accounts::set_active_mistral_account(&state.core.data_root, account_id)
@@ -94,7 +94,7 @@ pub(crate) async fn set_active_mistral_account(
 }
 
 pub(crate) async fn remove_mistral_account(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     account_id: &str,
 ) -> Result<(), ProviderAccountMutationError> {
     provider_accounts::remove_mistral_account(&state.core.data_root, account_id)
@@ -106,7 +106,7 @@ pub(crate) async fn remove_mistral_account(
 }
 
 pub(crate) async fn add_gemini_account(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     label: Option<String>,
     oauth_creds_json: String,
     google_accounts_json: Option<String>,
@@ -118,7 +118,7 @@ pub(crate) async fn add_gemini_account(
 }
 
 pub(crate) async fn add_gemini_account_for_login(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     label: Option<String>,
     oauth_creds_json: String,
     google_accounts_json: Option<String>,
@@ -142,7 +142,7 @@ pub(crate) async fn add_gemini_account_for_login(
 }
 
 pub(crate) async fn set_active_gemini_account(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     account_id: Option<String>,
 ) -> Result<(), ProviderAccountMutationError> {
     provider_accounts::set_active_gemini_account(&state.core.data_root, account_id)
@@ -154,7 +154,7 @@ pub(crate) async fn set_active_gemini_account(
 }
 
 pub(crate) async fn remove_gemini_account(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     account_id: &str,
 ) -> Result<(), ProviderAccountMutationError> {
     provider_accounts::remove_gemini_account(&state.core.data_root, account_id)
@@ -166,7 +166,7 @@ pub(crate) async fn remove_gemini_account(
 }
 
 pub(crate) async fn add_qwen_account(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     label: Option<String>,
     oauth_creds_json: String,
     email: Option<String>,
@@ -177,7 +177,7 @@ pub(crate) async fn add_qwen_account(
 }
 
 pub(crate) async fn add_qwen_account_for_login(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     label: Option<String>,
     oauth_creds_json: String,
     email: Option<String>,
@@ -195,7 +195,7 @@ pub(crate) async fn add_qwen_account_for_login(
 }
 
 pub(crate) async fn set_active_qwen_account(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     account_id: Option<String>,
 ) -> Result<(), ProviderAccountMutationError> {
     provider_accounts::set_active_qwen_account(&state.core.data_root, account_id)
@@ -207,7 +207,7 @@ pub(crate) async fn set_active_qwen_account(
 }
 
 pub(crate) async fn remove_qwen_account(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     account_id: &str,
 ) -> Result<(), ProviderAccountMutationError> {
     provider_accounts::remove_qwen_account(&state.core.data_root, account_id)

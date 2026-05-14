@@ -1,13 +1,14 @@
 use super::*;
 
 pub(in crate::api) async fn install_provider(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     Path(id): Path<String>,
     Query(query): Query<InstallTargetQuery>,
 ) -> Result<Json<InstallStartResponse>, (StatusCode, Json<serde_json::Value>)> {
     let target = parse_install_target_query(query.target.as_deref())?;
 
-    let install_id = start_provider_install(&state, &id, target)
+    let install_id = providers
+        .start_provider_install(&id, target)
         .await
         .map_err(provider_install_error_response)?;
 
@@ -19,11 +20,12 @@ pub(in crate::api) async fn install_provider(
 }
 
 pub(in crate::api) async fn install_all_providers(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     Query(query): Query<InstallTargetQuery>,
 ) -> Result<Json<Vec<InstallStartResponse>>, (StatusCode, Json<serde_json::Value>)> {
     let target = parse_install_target_query(query.target.as_deref())?;
-    let installs = start_all_provider_installs(&state, target)
+    let installs = providers
+        .start_all_provider_installs(target)
         .await
         .map_err(provider_install_error_response)?;
     Ok(Json(

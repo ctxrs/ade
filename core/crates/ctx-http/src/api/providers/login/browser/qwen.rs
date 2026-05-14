@@ -17,17 +17,17 @@ pub(crate) struct QwenLoginStartResp {
 }
 
 pub(crate) async fn start_qwen_login(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<QwenLoginStartReq>,
 ) -> Result<Json<QwenLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let login_session = crate::daemon::providers::start_qwen_login_session(&state).await;
+    let login_session = providers.start_qwen_login_session().await;
 
-    let state_clone = Arc::clone(&state);
+    let providers_clone = providers.clone();
     let login_id_for_task = login_session.login_id.clone();
     tokio::spawn(async move {
-        monitor_qwen_login(state_clone, login_id_for_task, req.label).await;
+        monitor_qwen_login(providers_clone, login_id_for_task, req.label).await;
     });
 
     Ok(Json(QwenLoginStartResp {
@@ -37,20 +37,18 @@ pub(crate) async fn start_qwen_login(
 }
 
 pub(crate) async fn get_qwen_login(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Path(id): Path<String>,
 ) -> Result<Json<provider_accounts::QwenLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let status = crate::daemon::providers::qwen_login_status(&state, &id)
-        .await
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: "login not found".to_string(),
-                }),
-            )
-        })?;
+    let status = providers.qwen_login_status(&id).await.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "login not found".to_string(),
+            }),
+        )
+    })?;
     Ok(Json(status))
 }

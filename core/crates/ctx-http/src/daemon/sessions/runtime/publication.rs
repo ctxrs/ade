@@ -7,12 +7,12 @@ use ctx_core::models::{
 };
 use ctx_session_service::runtime::{SessionEventPublicationHost, SessionReplayCursor};
 
-use crate::daemon::state::AppState;
+use crate::daemon::state::DaemonState;
 
 mod task_delta;
 use task_delta::HttpTaskDeltaRefreshHost;
 
-pub async fn publish_event(state: &Arc<AppState>, event: SessionEvent) {
+pub async fn publish_event(state: &Arc<DaemonState>, event: SessionEvent) {
     let task_delta_refresh_host = Arc::new(HttpTaskDeltaRefreshHost::new(state));
     let host = HttpSessionPublicationHost {
         state: Arc::clone(state),
@@ -22,7 +22,7 @@ pub async fn publish_event(state: &Arc<AppState>, event: SessionEvent) {
 }
 
 struct HttpSessionPublicationHost {
-    state: Arc<AppState>,
+    state: Arc<DaemonState>,
     task_delta_refresh_host: Arc<HttpTaskDeltaRefreshHost>,
 }
 

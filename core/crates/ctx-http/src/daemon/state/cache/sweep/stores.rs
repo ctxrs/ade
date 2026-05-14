@@ -1,6 +1,6 @@
-use super::super::{AppState, CacheSweepConfig, CacheSweepStats};
+use super::super::{CacheSweepConfig, CacheSweepStats, DaemonState};
 
-impl AppState {
+impl DaemonState {
     pub(super) async fn sweep_workspace_stores(
         &self,
         config: CacheSweepConfig,

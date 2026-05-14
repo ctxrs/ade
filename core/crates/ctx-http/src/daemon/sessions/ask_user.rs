@@ -5,7 +5,7 @@ use ctx_core::ids::SessionId;
 use ctx_core::models::SessionEventType;
 use ctx_providers::ask_user_question::{AskUserQuestionAnswer, AskUserQuestionOutcome};
 
-use crate::daemon::{AppState, StoreLookup};
+use crate::daemon::{DaemonState, StoreLookup};
 
 #[derive(Debug)]
 pub(crate) struct SubmitAskUserAnswer {
@@ -24,7 +24,7 @@ pub(crate) enum SubmitAskUserAnswerError {
 }
 
 pub(crate) async fn submit_ask_user_answer(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session_id: SessionId,
     submission: SubmitAskUserAnswer,
 ) -> Result<(), SubmitAskUserAnswerError> {
@@ -83,7 +83,7 @@ pub(crate) async fn submit_ask_user_answer(
 }
 
 async fn store_for_ask_user_session(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session_id: SessionId,
 ) -> Result<ctx_store::Store, SubmitAskUserAnswerError> {
     let store = match state.lookup_session_store(session_id).await {
@@ -111,8 +111,8 @@ mod tests {
     use ctx_core::models::ExecutionEnvironment;
     use ctx_store::StoreManager;
 
-    async fn test_state(root: &std::path::Path) -> Arc<AppState> {
-        Arc::new(AppState::new(
+    async fn test_state(root: &std::path::Path) -> Arc<DaemonState> {
+        Arc::new(DaemonState::new(
             root.to_path_buf(),
             StoreManager::open(root).await.unwrap(),
             HashMap::new(),
@@ -121,7 +121,7 @@ mod tests {
         ))
     }
 
-    async fn create_session(state: &Arc<AppState>, root: &std::path::Path) -> SessionId {
+    async fn create_session(state: &Arc<DaemonState>, root: &std::path::Path) -> SessionId {
         let workspace = state
             .global_store()
             .create_workspace(

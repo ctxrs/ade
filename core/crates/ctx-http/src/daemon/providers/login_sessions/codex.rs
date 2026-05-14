@@ -1,6 +1,6 @@
 use ctx_provider_accounts as provider_accounts;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 #[derive(Debug)]
 pub(crate) struct StartedCodexLoginSession {
@@ -19,7 +19,7 @@ pub(crate) enum CodexLoginCallbackClaimError {
 }
 
 pub(crate) async fn start_codex_login_session(
-    state: &AppState,
+    state: &DaemonState,
     account_id: String,
     auth_url: String,
     expected_callback_url: Option<String>,
@@ -49,7 +49,7 @@ pub(crate) async fn start_codex_login_session(
 }
 
 pub(crate) async fn codex_login_status(
-    state: &AppState,
+    state: &DaemonState,
     account_id: &str,
 ) -> Option<provider_accounts::CodexLoginStatus> {
     state
@@ -59,7 +59,7 @@ pub(crate) async fn codex_login_status(
 }
 
 pub(crate) async fn codex_login_statuses(
-    state: &AppState,
+    state: &DaemonState,
 ) -> Vec<provider_accounts::CodexLoginStatus> {
     state
         .providers
@@ -68,7 +68,7 @@ pub(crate) async fn codex_login_statuses(
 }
 
 pub(crate) async fn remove_codex_login_session(
-    state: &AppState,
+    state: &DaemonState,
     account_id: &str,
 ) -> Vec<provider_accounts::CodexLoginStatus> {
     state
@@ -81,7 +81,7 @@ pub(crate) async fn remove_codex_login_session(
 }
 
 pub(crate) async fn claim_codex_login_callback(
-    state: &AppState,
+    state: &DaemonState,
     account_id: &str,
     completion_token: &str,
 ) -> Result<String, CodexLoginCallbackClaimError> {
@@ -107,7 +107,7 @@ pub(crate) async fn claim_codex_login_callback(
 }
 
 pub(crate) async fn restore_codex_login_completion_token(
-    state: &AppState,
+    state: &DaemonState,
     account_id: &str,
     completion_token: &str,
 ) {
@@ -124,7 +124,7 @@ pub(crate) async fn restore_codex_login_completion_token(
 }
 
 pub(crate) async fn finish_codex_login_session(
-    state: &AppState,
+    state: &DaemonState,
     account_id: &str,
     success: bool,
     error: Option<String>,

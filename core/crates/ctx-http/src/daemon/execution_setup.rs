@@ -9,17 +9,17 @@ use ctx_execution_runtime::{
 };
 use ctx_settings_model::ExecutionSettings;
 
-use crate::daemon::AppState;
+use crate::daemon::{DaemonState, ExecutionHandle};
 
 pub(crate) async fn launch_status(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     job_id: &str,
 ) -> Option<ExecutionLaunchSnapshot> {
     state.execution.setup.launch_status(job_id).await
 }
 
 pub(crate) async fn subscribe_launch(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     job_id: &str,
 ) -> Option<(
     ExecutionLaunchSnapshot,
@@ -29,7 +29,7 @@ pub(crate) async fn subscribe_launch(
 }
 
 pub(crate) async fn start_workspace_launch(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace: Workspace,
     execution_settings: ExecutionSettings,
 ) -> ExecutionLaunchSnapshot {
@@ -41,7 +41,7 @@ pub(crate) async fn start_workspace_launch(
 }
 
 pub(crate) async fn start_runtime_prewarm(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     execution_settings: ExecutionSettings,
     prewarm_scope: RuntimePrewarmScope,
 ) -> ExecutionLaunchSnapshot {
@@ -52,6 +52,42 @@ pub(crate) async fn start_runtime_prewarm(
         .await
 }
 
-pub(crate) async fn startup_status(state: &Arc<AppState>) -> StartupPrewarmSnapshot {
+pub(crate) async fn startup_status(state: &Arc<DaemonState>) -> StartupPrewarmSnapshot {
     state.execution.setup.startup_status().await
+}
+
+impl ExecutionHandle {
+    pub(crate) async fn launch_status(&self, job_id: &str) -> Option<ExecutionLaunchSnapshot> {
+        launch_status(&self.state, job_id).await
+    }
+
+    pub(crate) async fn subscribe_launch(
+        &self,
+        job_id: &str,
+    ) -> Option<(
+        ExecutionLaunchSnapshot,
+        broadcast::Receiver<ExecutionLaunchStreamEvent>,
+    )> {
+        subscribe_launch(&self.state, job_id).await
+    }
+
+    pub(crate) async fn start_workspace_launch(
+        &self,
+        workspace: Workspace,
+        execution_settings: ExecutionSettings,
+    ) -> ExecutionLaunchSnapshot {
+        start_workspace_launch(&self.state, workspace, execution_settings).await
+    }
+
+    pub(crate) async fn start_runtime_prewarm(
+        &self,
+        execution_settings: ExecutionSettings,
+        prewarm_scope: RuntimePrewarmScope,
+    ) -> ExecutionLaunchSnapshot {
+        start_runtime_prewarm(&self.state, execution_settings, prewarm_scope).await
+    }
+
+    pub(crate) async fn startup_status(&self) -> StartupPrewarmSnapshot {
+        startup_status(&self.state).await
+    }
 }

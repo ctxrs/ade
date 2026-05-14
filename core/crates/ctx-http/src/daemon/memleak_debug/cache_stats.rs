@@ -1,5 +1,5 @@
 use super::snapshot::{ProviderCacheStats, SessionCacheStats, WorkspaceCacheStats};
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 mod providers;
 mod sessions;
@@ -15,7 +15,9 @@ pub(super) struct MemleakDebugCacheStats {
     pub(super) providers: ProviderCacheStats,
 }
 
-pub(super) async fn collect_memleak_debug_cache_stats(state: &AppState) -> MemleakDebugCacheStats {
+pub(super) async fn collect_memleak_debug_cache_stats(
+    state: &DaemonState,
+) -> MemleakDebugCacheStats {
     let sessions = collect_session_cache_stats(state).await;
     let workspaces = collect_workspace_cache_stats(state).await;
     let providers = collect_provider_cache_stats(state).await;

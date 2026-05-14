@@ -7,12 +7,12 @@ const TEST_MOBILE_API_TOKEN: &str = "ctxm_test_mobile_api_token";
 const TEST_MOBILE_DEFAULT_SCOPES: &[&str] =
     &["device_registration", "workspace_read", "workspace_stream"];
 
-pub(super) async fn insert_mobile_profile(state: &Arc<AppState>) -> ConnectionProfileId {
+pub(super) async fn insert_mobile_profile(state: &Arc<DaemonState>) -> ConnectionProfileId {
     insert_mobile_profile_with_scopes(state, TEST_MOBILE_DEFAULT_SCOPES).await
 }
 
 pub(super) async fn insert_mobile_profile_with_scopes(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     scopes: &[&str],
 ) -> ConnectionProfileId {
     let mut hasher = sha2::Sha256::new();
@@ -36,7 +36,7 @@ pub(super) async fn build_mobile_access_app(
     enabled: bool,
 ) -> (
     axum::Router,
-    Arc<AppState>,
+    Arc<DaemonState>,
     WorkspaceId,
     String,
     ctx_transport_runtime::mobile_e2ee::E2eeKey,
@@ -50,7 +50,7 @@ pub(super) async fn build_mobile_access_app_with_scopes(
     scopes: &[&str],
 ) -> (
     axum::Router,
-    Arc<AppState>,
+    Arc<DaemonState>,
     WorkspaceId,
     String,
     ctx_transport_runtime::mobile_e2ee::E2eeKey,
@@ -59,7 +59,7 @@ pub(super) async fn build_mobile_access_app_with_scopes(
     let git_repo = setup_git_repo().await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),
@@ -100,7 +100,7 @@ pub(super) async fn build_mobile_secure_proxy_app(
     enabled: bool,
 ) -> (
     axum::Router,
-    Arc<AppState>,
+    Arc<DaemonState>,
     String,
     ctx_transport_runtime::mobile_e2ee::E2eeKey,
     tempfile::TempDir,
@@ -113,14 +113,14 @@ pub(super) async fn build_mobile_secure_proxy_app_with_scopes(
     scopes: &[&str],
 ) -> (
     axum::Router,
-    Arc<AppState>,
+    Arc<DaemonState>,
     String,
     ctx_transport_runtime::mobile_e2ee::E2eeKey,
     tempfile::TempDir,
 ) {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),
@@ -155,7 +155,7 @@ pub(super) async fn build_mobile_secure_proxy_app_with_scopes(
 }
 
 async fn seed_mobile_access_config(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     profile_id: ConnectionProfileId,
     device_id: &str,
     daemon_public_key: String,

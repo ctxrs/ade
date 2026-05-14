@@ -5,10 +5,10 @@ use ctx_core::models::{Session, SessionEventType};
 use ctx_session_service::title_generation;
 
 use super::TitleGenerationOutcome;
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(crate) async fn apply_session_title_update(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session: &Session,
     outcome: TitleGenerationOutcome,
 ) -> anyhow::Result<()> {

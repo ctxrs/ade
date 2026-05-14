@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_core::ids::{SessionId, WorkspaceId};
 use ctx_core::models::{ExecutionEnvironment, Worktree};
 use ctx_store::StoreManager;
@@ -11,8 +11,8 @@ pub(super) fn session_id(value: &str) -> SessionId {
     SessionId(uuid::Uuid::parse_str(value).unwrap())
 }
 
-pub(super) async fn test_state(root: &Path) -> Arc<AppState> {
-    Arc::new(AppState::new(
+pub(super) async fn test_state(root: &Path) -> Arc<DaemonState> {
+    Arc::new(DaemonState::new(
         root.to_path_buf(),
         StoreManager::open(root).await.unwrap(),
         HashMap::new(),
@@ -22,7 +22,7 @@ pub(super) async fn test_state(root: &Path) -> Arc<AppState> {
 }
 
 pub(super) async fn create_workspace_session(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     root: &Path,
 ) -> (WorkspaceId, SessionId) {
     let (workspace_id, worktree) = create_workspace_worktree(state, root).await;
@@ -55,7 +55,7 @@ pub(super) async fn create_workspace_session(
 }
 
 pub(super) async fn create_workspace_worktree(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     root: &Path,
 ) -> (WorkspaceId, Worktree) {
     let workspace = state
@@ -74,7 +74,7 @@ pub(super) async fn create_workspace_worktree(
 }
 
 pub(super) async fn create_worktree_for_workspace(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     root: &Path,
     workspace_id: WorkspaceId,
 ) -> Worktree {

@@ -17,13 +17,13 @@ pub(crate) struct ClaudeLoginStartResp {
 }
 
 pub(crate) async fn start_claude_login(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<ClaudeLoginStartReq>,
 ) -> Result<Json<ClaudeLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
     let label = req.label;
-    let login = start_claude_login_process(&state).await.map_err(|e| {
+    let login = start_claude_login_process(&providers).await.map_err(|e| {
         let msg = format!("{e:#}");
         let status = if msg.contains("runtime_command_") {
             StatusCode::BAD_REQUEST
@@ -33,12 +33,11 @@ pub(crate) async fn start_claude_login(
         (status, Json(ApiErrorResp { error: msg }))
     })?;
     let auth_url = login.auth_url.clone();
-    let login_session =
-        crate::daemon::providers::start_claude_login_session(&state, auth_url).await;
-    let state_clone = Arc::clone(&state);
+    let login_session = providers.start_claude_login_session(auth_url).await;
+    let providers_clone = providers.clone();
     let login_id_for_task = login_session.login_id.clone();
     tokio::spawn(async move {
-        monitor_claude_login(state_clone, login_id_for_task, label, login).await;
+        monitor_claude_login(providers_clone, login_id_for_task, label, login).await;
     });
 
     Ok(Json(ClaudeLoginStartResp {
@@ -48,20 +47,18 @@ pub(crate) async fn start_claude_login(
 }
 
 pub(crate) async fn get_claude_login(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Path(id): Path<String>,
 ) -> Result<Json<provider_accounts::ClaudeLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let status = crate::daemon::providers::claude_login_status(&state, &id)
-        .await
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: "login not found".to_string(),
-                }),
-            )
-        })?;
+    let status = providers.claude_login_status(&id).await.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "login not found".to_string(),
+            }),
+        )
+    })?;
     Ok(Json(status))
 }

@@ -9,7 +9,7 @@ pub(crate) struct SessionHeadQuery {
 }
 
 pub(crate) async fn get_session_head(
-    State(state): State<Arc<AppState>>,
+    State(state): State<SessionsHandle>,
     Path(id): Path<String>,
     Query(q): Query<SessionHeadQuery>,
 ) -> Result<Json<SessionHeadSnapshot>, StatusCode> {
@@ -22,22 +22,16 @@ pub(crate) async fn get_session_head(
         Some(value) if value < 0 => return Err(StatusCode::BAD_REQUEST),
         value => value,
     };
-    let workspace_id = match state
-        .global_store()
-        .get_workspace_id_for_session(session_id)
-        .await
-    {
+    let workspace_id = match state.workspace_id_for_session(session_id).await {
         Ok(Some(workspace_id)) => workspace_id,
         Ok(None) => return Err(StatusCode::NOT_FOUND),
         Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
     };
-    if state.core.stores.is_workspace_deleting(workspace_id).await {
+    if state.is_workspace_deleting(workspace_id).await {
         return Err(StatusCode::NOT_FOUND);
     }
     if let Some(head) = state
-        .workspaces
-        .workspace_active_snapshot
-        .get_cached_session_head_for_request(session_id, include_events, limit, min_event_seq)
+        .cached_session_head_for_request(session_id, include_events, limit, min_event_seq)
         .await
     {
         record_session_head_recovery_metrics(
@@ -51,10 +45,9 @@ pub(crate) async fn get_session_head(
         );
         return Ok(Json(head));
     }
-    let store = store_for_existing_session_status_allow_archived(&state, session_id).await?;
     state.emit_cache_miss("session_head").await;
-    match store
-        .get_session_head_snapshot(session_id, limit, include_events)
+    match state
+        .load_session_head_snapshot_from_store(session_id, limit, include_events)
         .await
     {
         Ok(Some(head)) => {
@@ -83,19 +76,9 @@ pub(crate) async fn get_session_head(
                 include_events,
                 Some(&head),
             );
-            if include_events {
-                state
-                    .workspaces
-                    .workspace_active_snapshot
-                    .update_session_head(head.clone())
-                    .await;
-            } else {
-                state
-                    .workspaces
-                    .workspace_active_snapshot
-                    .update_compact_session_head(head.clone())
-                    .await;
-            }
+            state
+                .update_session_head_cache(head.clone(), include_events)
+                .await;
             Ok(Json(head))
         }
         Ok(None) => {

@@ -4,10 +4,10 @@ use ctx_core::ids::{RunId, TurnId};
 use ctx_core::models::{Message, Session, SessionEventType};
 
 use crate::daemon::sessions::subagents::errors::{internal_api_error, ApiResult};
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(super) async fn append_and_publish_queued_prompt_events(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     store: &ctx_store::Store,
     session: &Session,
     run_id: RunId,

@@ -1,5 +1,4 @@
 use super::*;
-use crate::daemon::workspaces::diff_worktree_for_session;
 use ctx_workspace_services::worktree_vcs::{
     is_no_vcs_repo_error, worktree_vcs_session_diff_available,
     worktree_vcs_session_diff_unavailable, WorktreeVcsSessionDiffOutcome,
@@ -17,7 +16,7 @@ use self::summary::{
 };
 
 pub(crate) async fn get_session_diff(
-    State(state): State<Arc<AppState>>,
+    State(state): State<SessionsHandle>,
     Path(id): Path<String>,
     Query(q): Query<SessionDiffQuery>,
 ) -> Result<Json<SessionDiffResponse>, (StatusCode, Json<ApiErrorResp>)> {
@@ -38,7 +37,10 @@ pub(crate) async fn get_session_diff(
                 )));
             }
         };
-    let diff = match diff_worktree_for_session(&state, &ctx.worktree, &base_commit_sha).await {
+    let diff = match state
+        .diff_worktree_for_session(&ctx.worktree, &base_commit_sha)
+        .await
+    {
         Ok(diff) => diff,
         Err(err) if is_no_vcs_repo_error(&err) => {
             return Ok(Json(session_diff_response(
@@ -60,7 +62,7 @@ pub(crate) async fn get_session_diff(
 }
 
 pub(crate) async fn get_session_diff_summary(
-    State(state): State<Arc<AppState>>,
+    State(state): State<SessionsHandle>,
     Path(id): Path<String>,
     Query(q): Query<SessionDiffQuery>,
 ) -> Result<Json<SessionDiffSummaryResponse>, (StatusCode, Json<ApiErrorResp>)> {

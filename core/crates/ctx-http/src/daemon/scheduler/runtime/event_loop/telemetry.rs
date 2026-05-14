@@ -2,7 +2,7 @@ use ctx_core::models::SessionEvent;
 use ctx_session_tools::interrupt_telemetry::{latency_bucket, metric_labels};
 use serde_json::Value;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
 use ctx_observability::telemetry::TelemetryEvent;
 
@@ -14,7 +14,7 @@ mod failed_turn;
 pub(super) async fn record_terminal_run_telemetry(
     ctx: &TurnEventLoop,
     runtime: &mut EventLoopRuntimeState,
-    state: &AppState,
+    state: &DaemonState,
     event_label: &'static str,
     provider_call_success: bool,
     session_status: &'static str,
@@ -71,7 +71,7 @@ pub(super) async fn record_terminal_run_telemetry(
 
 pub(super) async fn record_interrupt_visible_telemetry(
     ctx: &TurnEventLoop,
-    state: &AppState,
+    state: &DaemonState,
     event: &SessionEvent,
 ) {
     let Some(requested_at_ms) = event
@@ -132,7 +132,7 @@ pub(super) async fn record_interrupt_visible_telemetry(
 pub(super) async fn record_failed_turn_telemetry(
     ctx: &TurnEventLoop,
     runtime: &mut EventLoopRuntimeState,
-    state: &AppState,
+    state: &DaemonState,
     error_message: String,
     details: Option<Value>,
     kind: Option<Value>,

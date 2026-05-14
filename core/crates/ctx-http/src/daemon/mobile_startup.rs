@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use super::AppState;
+use super::DaemonState;
 
-pub(super) fn spawn_saved_mobile_tunnel_reconnect(state: Arc<AppState>) {
+pub(super) fn spawn_saved_mobile_tunnel_reconnect(state: Arc<DaemonState>) {
     tokio::spawn(async move {
         if state.core.auth_token.is_none() {
             return;

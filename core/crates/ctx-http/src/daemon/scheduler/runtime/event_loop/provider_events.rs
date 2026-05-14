@@ -2,14 +2,14 @@ use std::collections::HashMap;
 
 use serde_json::{json, Value};
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
 
 use super::super::helpers::read_codex_context_window_metrics;
 use super::failure::TurnFailurePayload;
 use super::TurnEventLoop;
 
-pub(super) async fn record_first_provider_event_metric(ctx: &TurnEventLoop, state: &AppState) {
+pub(super) async fn record_first_provider_event_metric(ctx: &TurnEventLoop, state: &DaemonState) {
     let first_ms = ctx.run_started_at.elapsed().as_millis() as u64;
     let mut first_labels = HashMap::new();
     first_labels.insert("provider_id".to_string(), ctx.provider_id.clone());
@@ -39,7 +39,7 @@ pub(super) async fn record_first_provider_event_metric(ctx: &TurnEventLoop, stat
 
 pub(super) async fn claim_init_provider_session_ref(
     ctx: &mut TurnEventLoop,
-    state: &AppState,
+    state: &DaemonState,
     payload: &mut Value,
 ) -> Option<TurnFailurePayload> {
     if payload.get("crp_session_id").is_some() {

@@ -11,9 +11,9 @@ use ctx_workspace_services::worktree_vcs::{
 };
 use tokio::sync::{broadcast, OwnedSemaphorePermit};
 
-use crate::daemon::state::AppState;
+use crate::daemon::state::DaemonState;
 
-impl AppState {
+impl DaemonState {
     pub fn worktree_vcs_enabled(&self) -> bool {
         self.workspaces.worktree_vcs_enabled
     }

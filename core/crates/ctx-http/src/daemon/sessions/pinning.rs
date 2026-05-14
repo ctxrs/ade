@@ -1,9 +1,9 @@
 use ctx_core::ids::SessionId;
 use ctx_session_service::runtime::SessionLifecycleHost;
 
-use crate::daemon::state::AppState;
+use crate::daemon::state::DaemonState;
 
-impl AppState {
+impl DaemonState {
     async fn propagate_provider_session_pin_by_key(&self, session_key: String, pinned: bool) {
         self.providers
             .set_provider_session_pinned(session_key, pinned)
@@ -41,7 +41,7 @@ impl AppState {
 }
 
 #[async_trait::async_trait]
-impl SessionLifecycleHost for AppState {
+impl SessionLifecycleHost for DaemonState {
     async fn set_provider_session_pinned(&self, session_id: SessionId, pinned: bool) {
         self.propagate_provider_session_pin(session_id, pinned)
             .await;

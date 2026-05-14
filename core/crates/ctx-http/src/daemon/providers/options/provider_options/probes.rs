@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) async fn probe_provider_options_env(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace: &ctx_core::models::Workspace,
     provider_id: &str,
 ) -> (bool, bool, Option<String>) {
@@ -11,7 +11,7 @@ pub(super) async fn probe_provider_options_env(
 }
 
 pub(super) async fn probe_selected_endpoint_runtime_launch(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace: &ctx_core::models::Workspace,
     provider_id: &str,
     endpoint_id: String,
@@ -28,7 +28,7 @@ pub(super) async fn probe_selected_endpoint_runtime_launch(
 }
 
 pub(super) async fn probe_runtime_models_for_provider_options(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace: &ctx_core::models::Workspace,
     provider_id: &str,
 ) -> Result<anyhow::Result<ctx_providers::crp::CrpModelsProbe>, ProviderOptionsResponseError> {

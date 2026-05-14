@@ -6,7 +6,6 @@ pub(super) type WorkspaceApiResult<T> = Result<T, (StatusCode, Json<ApiErrorResp
 pub(super) struct WorkspaceRequestContext {
     pub(super) workspace_id: WorkspaceId,
     pub(super) workspace: Workspace,
-    pub(super) store: ctx_store::Store,
 }
 
 pub(super) fn parse_workspace_id(id: &str) -> WorkspaceApiResult<WorkspaceId> {
@@ -21,11 +20,10 @@ pub(super) fn parse_workspace_id(id: &str) -> WorkspaceApiResult<WorkspaceId> {
 }
 
 pub(super) async fn require_workspace(
-    state: &Arc<AppState>,
+    workspaces: &WorkspacesHandle,
     workspace_id: WorkspaceId,
 ) -> WorkspaceApiResult<Workspace> {
-    state
-        .global_store()
+    workspaces
         .get_workspace(workspace_id)
         .await
         .map_err(|error| {
@@ -44,17 +42,7 @@ pub(super) async fn require_workspace(
         ))
 }
 
-pub(super) async fn require_workspace_store(
-    state: &Arc<AppState>,
-    workspace_id: WorkspaceId,
-) -> WorkspaceApiResult<ctx_store::Store> {
-    state
-        .existing_workspace_store(workspace_id)
-        .await
-        .map_err(workspace_store_api_error)
-}
-
-fn workspace_store_api_error(
+pub(super) fn workspace_store_api_error(
     error: crate::daemon::WorkspaceStoreAccessError,
 ) -> (StatusCode, Json<ApiErrorResp>) {
     match error {
@@ -74,15 +62,13 @@ fn workspace_store_api_error(
 }
 
 pub(super) async fn require_workspace_ctx(
-    state: &Arc<AppState>,
+    workspaces: &WorkspacesHandle,
     id: &str,
 ) -> WorkspaceApiResult<WorkspaceRequestContext> {
     let workspace_id = parse_workspace_id(id)?;
-    let workspace = require_workspace(state, workspace_id).await?;
-    let store = require_workspace_store(state, workspace_id).await?;
+    let workspace = require_workspace(workspaces, workspace_id).await?;
     Ok(WorkspaceRequestContext {
         workspace_id,
         workspace,
-        store,
     })
 }

@@ -15,14 +15,14 @@ use ctx_core::models::{
     Message, MessageDelivery, MessageRole, SessionEvent, SessionEventType, SessionHeadDelta,
     SessionTurn, SessionTurnStatus,
 };
-use ctx_http::daemon::AppState;
+use ctx_http::daemon::DaemonState;
 
 mod common;
 
 async fn setup() -> (
     tempfile::TempDir,
     tempfile::TempDir,
-    Arc<AppState>,
+    Arc<DaemonState>,
     common::TestServer,
 ) {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;

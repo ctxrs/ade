@@ -5,11 +5,14 @@ use anyhow::Result;
 use ctx_core::models::Worktree;
 use ctx_workspace_services::worktree_vcs::{WorktreeVcsDirtyBits, WORKTREE_VCS_POLL_INTERVAL_MS};
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::super::mark_worktree_vcs_dirty;
 
-pub(super) async fn run_git_status_poller(state: Arc<AppState>, worktree: Worktree) -> Result<()> {
+pub(super) async fn run_git_status_poller(
+    state: Arc<DaemonState>,
+    worktree: Worktree,
+) -> Result<()> {
     let mut interval = tokio::time::interval(Duration::from_millis(WORKTREE_VCS_POLL_INTERVAL_MS));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {

@@ -13,12 +13,13 @@ fn provider_usage_internal_error(
 }
 
 pub(crate) async fn get_provider_usage(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     Path(id): Path<String>,
     Query(query): Query<ProviderUsageQuery>,
 ) -> Result<Json<provider_usage::ProviderUsageSnapshot>, (StatusCode, Json<serde_json::Value>)> {
     let refresh = query.refresh.unwrap_or(false);
-    let snapshot = crate::daemon::providers::load_provider_usage(&state, &id, refresh)
+    let snapshot = providers
+        .load_provider_usage(&id, refresh)
         .await
         .map_err(provider_usage_internal_error)?;
     Ok(Json(snapshot))

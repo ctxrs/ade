@@ -76,8 +76,12 @@ async fn delete_task_preserves_worktree_for_archived_sibling_session_reference()
         .await
         .expect("archive sibling task");
 
+    let (sessions, providers, workspaces, transport) = task_api_states(&state);
     let status = delete_task(
-        State(Arc::clone(&state)),
+        sessions,
+        providers,
+        workspaces,
+        transport,
         Path(active_task.id.0.to_string()),
     )
     .await

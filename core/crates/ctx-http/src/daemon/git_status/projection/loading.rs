@@ -6,12 +6,12 @@ use ctx_workspace_services::worktree_vcs::{
     load_git_status_snapshot_from_source, GitStatusSnapshot,
 };
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::super::source::HttpWorktreeVcsSource;
 
 pub(crate) async fn load_git_status_snapshot(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     worktree: &Worktree,
     include_untracked_files: bool,
     include_entries: bool,

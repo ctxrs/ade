@@ -6,7 +6,7 @@ async fn sweeper_eviction_keeps_active_entries() {
     let stores = StoreManager::open(temp.path()).await.unwrap();
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         temp.path().to_path_buf(),
         stores.clone(),
         providers,

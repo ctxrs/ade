@@ -1,32 +1,34 @@
 use super::*;
-use crate::daemon::workspaces::{self, WorkspaceHarnessContainerError};
+use crate::daemon::workspaces::WorkspaceHarnessContainerError;
 
 pub(in crate::api) async fn get_workspace_harness_container(
-    State(state): State<Arc<AppState>>,
+    State(workspaces): State<WorkspacesHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<Option<ctx_workspace_container::WorkspaceContainerStatus>>, StatusCode> {
     let workspace_id =
         WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let status = workspaces::workspace_harness_container_status(&state, workspace_id)
+    let status = workspaces
+        .workspace_harness_container_status(workspace_id)
         .await
         .map_err(workspace_harness_container_status)?;
     Ok(Json(status))
 }
 
 pub(in crate::api) async fn stop_workspace_harness_container(
-    State(state): State<Arc<AppState>>,
+    State(workspaces): State<WorkspacesHandle>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
     let workspace_id =
         WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    workspaces::stop_workspace_harness_container(&state, workspace_id)
+    workspaces
+        .stop_workspace_harness_container(workspace_id)
         .await
         .map_err(workspace_harness_container_status)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 pub(in crate::api) async fn ensure_workspace_harness_container(
-    State(state): State<Arc<AppState>>,
+    State(workspaces): State<WorkspacesHandle>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiErrorResp>)> {
     let workspace_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
@@ -37,7 +39,8 @@ pub(in crate::api) async fn ensure_workspace_harness_container(
             }),
         )
     })?);
-    workspaces::ensure_workspace_harness_container(&state, workspace_id)
+    workspaces
+        .ensure_workspace_harness_container(workspace_id)
         .await
         .map_err(workspace_harness_container_api_error)?;
 

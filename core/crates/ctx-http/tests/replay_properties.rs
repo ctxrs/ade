@@ -15,7 +15,7 @@ use ctx_core::models::{
     SessionTurn, SessionTurnStatus, SessionTurnTool, Task, Workspace, WorkspaceActiveSnapshotEvent,
     WorkspaceActiveSnapshotStreamMessage,
 };
-use ctx_http::daemon::AppState;
+use ctx_http::daemon::DaemonState;
 
 mod common;
 
@@ -89,7 +89,7 @@ fn projection_fixtures() -> &'static ProjectionFixtureFile {
 struct ProjectionHarness {
     _repo: tempfile::TempDir,
     _data_dir: tempfile::TempDir,
-    state: Arc<AppState>,
+    state: Arc<DaemonState>,
     server: common::TestServer,
     workspace: Workspace,
     task: Task,

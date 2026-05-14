@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use ctx_provider_auth_import as provider_auth_import;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(crate) async fn list_provider_auth_import_candidates(
 ) -> anyhow::Result<Vec<provider_auth_import::ProviderAuthImportCandidate>> {
@@ -11,13 +11,13 @@ pub(crate) async fn list_provider_auth_import_candidates(
 }
 
 pub(crate) async fn list_provider_auth_import_profiles(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
 ) -> anyhow::Result<Vec<provider_auth_import::ProviderImportedAuthProfile>> {
     provider_auth_import::list_provider_auth_profiles(&state.core.data_root).await
 }
 
 pub(crate) async fn import_provider_auth_candidates(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     candidate_ids: Vec<String>,
 ) -> anyhow::Result<Vec<provider_auth_import::ProviderAuthImportResult>> {
     let ids: Vec<String> = candidate_ids

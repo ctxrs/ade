@@ -1,13 +1,13 @@
 use ctx_observability::ops_events::OpsEvent;
 use serde_json::{json, Value};
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::super::TurnEventLoop;
 
 pub(super) fn emit_failed_turn_ops_event(
     ctx: &TurnEventLoop,
-    state: &AppState,
+    state: &DaemonState,
     error_message: String,
     details: Option<Value>,
     kind: Option<Value>,

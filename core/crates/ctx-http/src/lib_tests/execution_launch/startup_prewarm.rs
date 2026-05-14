@@ -18,7 +18,7 @@ async fn execution_launch_startup_prewarm_kind_supported() {
         HashMap::new();
     providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
 
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,

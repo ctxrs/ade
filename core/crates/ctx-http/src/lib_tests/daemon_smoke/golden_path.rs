@@ -14,7 +14,7 @@ async fn daemon_golden_path_with_fake_provider() {
         HashMap::new();
     providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
 
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,

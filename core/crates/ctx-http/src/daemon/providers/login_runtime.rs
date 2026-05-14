@@ -2,7 +2,7 @@ use std::{path::Path, sync::Arc};
 
 use anyhow::Context;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 #[derive(Debug, Clone)]
 pub(crate) struct ProviderLoginRuntimeCommand {
@@ -83,7 +83,7 @@ pub(crate) async fn resolve_cursor_login_runtime_from_config(
 }
 
 pub(crate) async fn resolve_cursor_login_runtime(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
 ) -> anyhow::Result<ProviderLoginRuntimeCommand> {
     resolve_cursor_login_runtime_from_config(&state.core.data_root).await
 }
@@ -103,7 +103,7 @@ pub(crate) async fn resolve_claude_login_runtime_from_config(
 }
 
 pub(crate) async fn resolve_claude_login_runtime(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
 ) -> anyhow::Result<ProviderLoginRuntimeCommand> {
     resolve_claude_login_runtime_from_config(&state.core.data_root).await
 }

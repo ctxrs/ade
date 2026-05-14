@@ -1,14 +1,13 @@
 use super::*;
-use crate::daemon::mobile_access as daemon_mobile_access;
-
 pub(in crate::api) async fn get_mobile_access_status(
-    State(state): State<Arc<AppState>>,
+    State(state): State<CoreHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
 ) -> Result<Json<MobileAccessStatus>, StatusCode> {
     if mobile_auth.is_some() {
         return Err(StatusCode::UNAUTHORIZED);
     }
-    let snapshot = daemon_mobile_access::mobile_access_status(&state)
+    let snapshot = state
+        .mobile_access_status()
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(MobileAccessStatus {

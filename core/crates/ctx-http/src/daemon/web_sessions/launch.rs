@@ -10,7 +10,7 @@ use ctx_transport_runtime::web_sessions::{
 };
 
 use crate::daemon::web_sessions::prepare_web_session_worker;
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(crate) struct WebSessionLaunchRequest {
     pub(crate) session_id: Option<SessionId>,
@@ -44,7 +44,7 @@ impl WebSessionLaunchError {
 }
 
 pub(crate) async fn create_web_session(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     request: WebSessionLaunchRequest,
 ) -> Result<WebSessionInfo, WebSessionLaunchError> {
     validate_web_session_url(&request.url).map_err(|e| bad_request(e.to_string()))?;

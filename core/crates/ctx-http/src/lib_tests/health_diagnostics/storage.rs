@@ -6,7 +6,7 @@ async fn health_and_diagnostics_include_storage_guard_state() {
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
         HashMap::new();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,

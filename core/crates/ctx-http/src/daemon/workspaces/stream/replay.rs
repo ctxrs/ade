@@ -9,7 +9,7 @@ use ctx_workspace_active_snapshot::{
     SessionReplayCursor, WorkspaceSessionReplay, WorkspaceSessionReplayItem,
 };
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(crate) enum ReplayOutcome {
     Replay { last_sent: SessionReplayCursor },
@@ -24,7 +24,7 @@ const SESSION_REPLAY_HEAD_SEED_LIMIT: u32 = 60;
 const SESSION_REPLAY_DELTA_LIMIT: usize = SESSION_REPLAY_HEAD_SEED_LIMIT as usize;
 
 pub(crate) async fn replay_session_events<F, Fut>(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
     session_id: SessionId,
     after_cursor: SessionReplayCursor,

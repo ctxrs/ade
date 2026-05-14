@@ -4,13 +4,13 @@ use super::super::dispatch::handle_persisted_provider_event;
 use super::super::state::EventLoopRuntimeState;
 use super::super::terminal::is_truthful_start_activity;
 use super::super::TurnEventLoop;
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_core::models::{SessionEvent, SessionEventType, SessionTurnStatus};
 use ctx_session_tools::NormalizedToolEvent;
 
 pub(super) async fn handle_persisted_provider_event_effects(
     ctx: &TurnEventLoop,
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     runtime: &mut EventLoopRuntimeState,
     event: SessionEvent,
     raw_payload: serde_json::Value,

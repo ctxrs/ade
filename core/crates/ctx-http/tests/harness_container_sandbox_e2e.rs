@@ -14,7 +14,7 @@ use ctx_providers::crp::Tier1CrpAdapter;
 use ctx_store::StoreManager;
 
 use ctx_http::api;
-use ctx_http::daemon::AppState;
+use ctx_http::daemon::DaemonState;
 use ctx_managed_installs::{save_agent_server_config, AgentServerCommand, AgentServerConfigFile};
 use ctx_settings_model::{
     ContainerExecutionSettings, ContainerMountMode, ContainerNetworkMode, ExecutionMode,
@@ -312,7 +312,7 @@ async fn post_message(app: &mut axum::Router, session_id: &str, content: &str) {
     assert_eq!(res.status(), StatusCode::OK);
 }
 
-async fn wait_for_done(state: &Arc<AppState>, session_id: ctx_core::ids::SessionId) {
+async fn wait_for_done(state: &Arc<DaemonState>, session_id: ctx_core::ids::SessionId) {
     let store = state.store_for_session(session_id).await.unwrap();
     let mut attempts = 0;
     loop {
@@ -380,7 +380,7 @@ async fn harness_container_sandbox_fake_acp() {
         )),
     );
 
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,
@@ -458,7 +458,7 @@ async fn harness_container_sandbox_egress_allowlist() {
         )),
     );
 
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,
@@ -604,7 +604,7 @@ async fn harness_container_sandbox_egress_allow_all() {
         )),
     );
 
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,
@@ -737,7 +737,7 @@ async fn harness_container_sandbox_egress_deny_all() {
         )),
     );
 
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,

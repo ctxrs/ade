@@ -2,7 +2,7 @@ use super::identity::{task_id_conflict, validate_requested_task_identity};
 use super::*;
 
 pub(in crate::api::tasks::creation::task_creation) async fn load_existing_task_for_request(
-    state: &Arc<AppState>,
+    handles: &TaskApiHandles,
     store: &Store,
     ws_id: WorkspaceId,
     request: &CreateTaskRequestParts,
@@ -10,8 +10,8 @@ pub(in crate::api::tasks::creation::task_creation) async fn load_existing_task_f
     let Some(task_id) = request.task_id else {
         return Ok(None);
     };
-    let existing_ws = state
-        .global_store()
+    let existing_ws = handles
+        .sessions
         .get_workspace_id_for_task(task_id)
         .await
         .map_err(|e| {

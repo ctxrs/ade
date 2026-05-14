@@ -4,12 +4,12 @@ use std::sync::Arc;
 use ctx_core::ids::{RunId, TurnId};
 use ctx_core::models::{ExecutionEnvironment, Session};
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::super::provider_env::{emit_provider_run_env_ready_event, ProviderRunEnvReadyEvent};
 
 pub(super) struct ProviderSetupReadyEvent<'a> {
-    pub(super) state: &'a Arc<AppState>,
+    pub(super) state: &'a Arc<DaemonState>,
     pub(super) session: &'a Session,
     pub(super) run_id: RunId,
     pub(super) turn_id: TurnId,

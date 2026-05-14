@@ -1,10 +1,9 @@
 use super::context::load_session_vcs_context;
 use super::*;
-use crate::daemon::workspaces::diff_worktree_for_session;
 use ctx_workspace_services::worktree_vcs::apply_worktree_vcs_session_patch;
 
 pub(crate) async fn apply_session_diff_patch(
-    State(state): State<Arc<AppState>>,
+    State(state): State<SessionsHandle>,
     Path(id): Path<String>,
     Json(req): Json<SessionDiffApplyReq>,
 ) -> Result<Json<SessionDiffResponse>, (StatusCode, Json<ApiErrorResp>)> {
@@ -39,7 +38,7 @@ pub(crate) async fn apply_session_diff_patch(
         }
     };
 
-    let (store, ctx) = load_session_vcs_context(&state, session_id).await?;
+    let ctx = load_session_vcs_context(&state, session_id).await?;
     apply_worktree_vcs_session_patch(
         std::path::Path::new(&ctx.worktree.root_path),
         &req.patch,
@@ -55,14 +54,8 @@ pub(crate) async fn apply_session_diff_patch(
         )
     })?;
 
-    let resolution = resolve_session_diff_base(
-        &state,
-        &store,
-        &ctx.workspace,
-        &ctx.worktree,
-        &SessionDiffQuery::default(),
-    )
-    .await?;
+    let resolution =
+        resolve_session_diff_base(&state, &ctx.worktree, &SessionDiffQuery::default()).await?;
     if let Some(unavailable_reason) = resolution.unavailable_reason.clone() {
         state
             .emit_compat_payload_reject_counter("sessions.diff_apply", "no_target_branch", None)
@@ -74,7 +67,8 @@ pub(crate) async fn apply_session_diff_patch(
         }));
     }
     let base_commit_sha = resolution.base_commit_sha;
-    let diff = diff_worktree_for_session(&state, &ctx.worktree, &base_commit_sha)
+    let diff = state
+        .diff_worktree_for_session(&ctx.worktree, &base_commit_sha)
         .await
         .map_err(|e| {
             (

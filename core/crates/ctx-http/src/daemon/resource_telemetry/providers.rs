@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
-pub(super) async fn provider_session_counts(state: &Arc<AppState>) -> HashMap<String, u64> {
+pub(super) async fn provider_session_counts(state: &Arc<DaemonState>) -> HashMap<String, u64> {
     let session_ids = state.running_session_ids().await;
     let mut counts: HashMap<String, u64> = HashMap::new();
     for session_id in session_ids {

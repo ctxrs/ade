@@ -236,6 +236,7 @@ test("verify:affected keeps shared turn execution paths on both scheduler runtim
 
   assert.deepEqual(plan.commands, [
     "pnpm source:file-size:report",
+    "pnpm ctx-http:daemon-boundary:check",
     "node scripts/ctx_http_suite_task.cjs --suite scheduler-runtime",
     "node scripts/ctx_http_suite_task.cjs --suite turns-terminal",
     "node scripts/ctx_http_suite_task.cjs --suite unit-tests-api",
@@ -416,7 +417,7 @@ test("verify:touched routes verification-tooling edits through the local tooling
   });
 
   assert.deepEqual(plan.commands, [
-    "node --test scripts/verification_git_changes.test.cjs scripts/verification_router_contract.test.cjs scripts/verification_run_store.test.cjs scripts/sdlc_verify_metrics_report.test.cjs scripts/run_bazel_pilot.test.cjs scripts/ctx_http_suite_task.test.cjs scripts/lib/ctx_http_suites.test.cjs scripts/ctx_http_bazel_contract.test.cjs scripts/testing_tiers_contract.test.cjs scripts/test_taxonomy_execution_contract.test.cjs scripts/managed_runtime_mirror.test.cjs scripts/affected_tests_contract.test.cjs",
+    "node --test scripts/ctx_http_daemon_boundary_guard.test.cjs scripts/verification_git_changes.test.cjs scripts/verification_router_contract.test.cjs scripts/verification_run_store.test.cjs scripts/sdlc_verify_metrics_report.test.cjs scripts/run_bazel_pilot.test.cjs scripts/ctx_http_suite_task.test.cjs scripts/lib/ctx_http_suites.test.cjs scripts/ctx_http_bazel_contract.test.cjs scripts/testing_tiers_contract.test.cjs scripts/test_taxonomy_execution_contract.test.cjs scripts/managed_runtime_mirror.test.cjs scripts/affected_tests_contract.test.cjs",
   ]);
 });
 
@@ -432,7 +433,7 @@ test("verify:touched routes managed-runtime mirror tool edits through the local 
     });
 
     assert.deepEqual(plan.commands, [
-      "node --test scripts/verification_git_changes.test.cjs scripts/verification_router_contract.test.cjs scripts/verification_run_store.test.cjs scripts/sdlc_verify_metrics_report.test.cjs scripts/run_bazel_pilot.test.cjs scripts/ctx_http_suite_task.test.cjs scripts/lib/ctx_http_suites.test.cjs scripts/ctx_http_bazel_contract.test.cjs scripts/testing_tiers_contract.test.cjs scripts/test_taxonomy_execution_contract.test.cjs scripts/managed_runtime_mirror.test.cjs scripts/affected_tests_contract.test.cjs",
+      "node --test scripts/ctx_http_daemon_boundary_guard.test.cjs scripts/verification_git_changes.test.cjs scripts/verification_router_contract.test.cjs scripts/verification_run_store.test.cjs scripts/sdlc_verify_metrics_report.test.cjs scripts/run_bazel_pilot.test.cjs scripts/ctx_http_suite_task.test.cjs scripts/lib/ctx_http_suites.test.cjs scripts/ctx_http_bazel_contract.test.cjs scripts/testing_tiers_contract.test.cjs scripts/test_taxonomy_execution_contract.test.cjs scripts/managed_runtime_mirror.test.cjs scripts/affected_tests_contract.test.cjs",
     ]);
   }
 });
@@ -466,7 +467,7 @@ test("verify:affected routes ctx-http suite runner edits through tooling coverag
     changedFiles: ["core/scripts/ctx_http_suite_task.cjs"],
   });
 
-  assert.equal(plan.commands[0], "node --test scripts/verification_git_changes.test.cjs scripts/verification_router_contract.test.cjs scripts/verification_run_store.test.cjs scripts/sdlc_verify_metrics_report.test.cjs scripts/run_bazel_pilot.test.cjs scripts/ctx_http_suite_task.test.cjs scripts/lib/ctx_http_suites.test.cjs scripts/ctx_http_bazel_contract.test.cjs scripts/testing_tiers_contract.test.cjs scripts/test_taxonomy_execution_contract.test.cjs scripts/managed_runtime_mirror.test.cjs scripts/affected_tests_contract.test.cjs");
+  assert.equal(plan.commands[0], "node --test scripts/ctx_http_daemon_boundary_guard.test.cjs scripts/verification_git_changes.test.cjs scripts/verification_router_contract.test.cjs scripts/verification_run_store.test.cjs scripts/sdlc_verify_metrics_report.test.cjs scripts/run_bazel_pilot.test.cjs scripts/ctx_http_suite_task.test.cjs scripts/lib/ctx_http_suites.test.cjs scripts/ctx_http_bazel_contract.test.cjs scripts/testing_tiers_contract.test.cjs scripts/test_taxonomy_execution_contract.test.cjs scripts/managed_runtime_mirror.test.cjs scripts/affected_tests_contract.test.cjs");
   assert.equal(plan.commands[1], "pnpm rust:bazel-deps:check");
   assert.equal(plan.commands[2], "pnpm rust:package-scripts:check");
   assert.deepEqual(plan.commands.slice(3, 22), [

@@ -1,14 +1,12 @@
-use std::sync::Arc;
-
 use axum::routing::{get, post};
 
 use crate::api::providers::{
     import_provider_auth_candidates, list_provider_auth_import_candidates,
     list_provider_auth_import_profiles,
 };
-use crate::daemon::AppState;
+use crate::daemon::DaemonHandle;
 
-pub(super) fn provider_auth_import_routes() -> axum::Router<Arc<AppState>> {
+pub(super) fn provider_auth_import_routes() -> axum::Router<DaemonHandle> {
     axum::Router::new()
         .route(
             "/api/providers/auth/import/candidates",

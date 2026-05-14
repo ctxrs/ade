@@ -1,6 +1,4 @@
-use std::sync::Arc;
-
-use crate::daemon::AppState;
+use crate::daemon::DaemonHandle;
 
 mod amp;
 mod claude;
@@ -22,7 +20,7 @@ use kimi::kimi_account_routes;
 use mistral::mistral_account_routes;
 use qwen::qwen_account_routes;
 
-pub(super) fn provider_account_routes() -> axum::Router<Arc<AppState>> {
+pub(super) fn provider_account_routes() -> axum::Router<DaemonHandle> {
     axum::Router::new()
         .merge(codex_account_routes())
         .merge(claude_account_routes())

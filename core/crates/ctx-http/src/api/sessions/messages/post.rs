@@ -1,7 +1,5 @@
 #[path = "post/delivery.rs"]
 mod delivery;
-#[path = "post/events.rs"]
-mod events;
 #[path = "post/handler.rs"]
 mod handler;
 #[path = "post/persistence.rs"]

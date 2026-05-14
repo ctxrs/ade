@@ -1,11 +1,10 @@
 use super::*;
 
 pub(super) async fn ensure_managed_profile_scopes(
-    state: &Arc<AppState>,
+    state: &CoreHandle,
     profile_id: ConnectionProfileId,
 ) -> Result<(), (StatusCode, Json<ApiErrorResp>)> {
     let profile = state
-        .global_store()
         .get_mobile_connection_profile(profile_id)
         .await
         .map_err(|e| {
@@ -27,7 +26,6 @@ pub(super) async fn ensure_managed_profile_scopes(
         })?;
     if profile.scopes.is_empty() {
         state
-            .global_store()
             .update_mobile_connection_profile_scopes(profile.id, default_mobile_profile_scopes())
             .await
             .map_err(|e| {
@@ -44,7 +42,7 @@ pub(super) async fn ensure_managed_profile_scopes(
 }
 
 pub(super) async fn create_managed_mobile_access_keys(
-    state: &Arc<AppState>,
+    state: &CoreHandle,
     public_url: &Url,
     now: chrono::DateTime<chrono::Utc>,
 ) -> Result<ManagedMobileAccessKeys, (StatusCode, Json<ApiErrorResp>)> {
@@ -53,7 +51,6 @@ pub(super) async fn create_managed_mobile_access_keys(
     let token_hash = hash_api_token(&token);
     let token_prefix: String = token.chars().take(8).collect();
     let profile = state
-        .global_store()
         .create_mobile_connection_profile(
             "Managed Mobile Access".to_string(),
             public_url.as_str().trim_end_matches('/').to_string(),

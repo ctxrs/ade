@@ -3,18 +3,18 @@ use futures::StreamExt;
 
 use super::super::workspace_stream;
 use super::context::decode_mobile_secure_client_message;
-use crate::daemon::{mobile_access::load_mobile_secure_stream_context, AppState};
+use crate::daemon::{CoreHandle, WorkspaceStreamHandle};
 use ctx_core::ids::WorkspaceId;
-use std::sync::Arc;
 
 pub(super) async fn handle_mobile_secure_ws(
     socket: WebSocket,
-    state: Arc<AppState>,
+    core: CoreHandle,
+    workspace_stream: WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
     device_id: String,
 ) -> Result<(), anyhow::Error> {
     let (sender, mut receiver) = socket.split();
-    let stream_context = load_mobile_secure_stream_context(&state, device_id).await?;
+    let stream_context = core.load_mobile_secure_stream_context(device_id).await?;
 
     let labels = workspace_stream::WorkspaceStreamLabels {
         ready_queue_label: "ready_secure",
@@ -27,7 +27,7 @@ pub(super) async fn handle_mobile_secure_ws(
         event_queue_label: "event_secure",
     };
     let Some((mut runtime, mut rx)) = workspace_stream::initialize_workspace_stream(
-        &state,
+        &workspace_stream,
         workspace_id,
         labels.ready_queue_label,
     )
@@ -55,8 +55,8 @@ pub(super) async fn handle_mobile_secure_ws(
                             else {
                                 continue;
                             };
-                            if workspace_stream::handle_workspace_stream_subscription(
-                                &state,
+                                if workspace_stream::handle_workspace_stream_subscription(
+                                    &workspace_stream,
                                 workspace_id,
                                 message,
                                 &mut rx,
@@ -80,7 +80,7 @@ pub(super) async fn handle_mobile_secure_ws(
                         Ok(event) => {
                             let burst = workspace_stream::take_workspace_stream_receiver_burst(&mut rx, event);
                             if workspace_stream::handle_workspace_stream_receiver_burst(
-                                &state,
+                                &workspace_stream,
                                 workspace_id,
                                 burst,
                                 &mut runtime,
@@ -94,7 +94,7 @@ pub(super) async fn handle_mobile_secure_ws(
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(lagged)) => {
                             if workspace_stream::handle_workspace_stream_lagged(
-                                &state,
+                                &workspace_stream,
                                 workspace_id,
                                 lagged,
                                 &mut runtime,
@@ -121,7 +121,7 @@ pub(super) async fn handle_mobile_secure_ws(
     if let Some(send_task) = send_task {
         let _ = send_task.await;
     }
-    workspace_stream::release_workspace_stream(&state, &runtime).await;
+    workspace_stream::release_workspace_stream(&workspace_stream, &runtime).await;
 
     recv_result.unwrap_or(Ok(()))
 }

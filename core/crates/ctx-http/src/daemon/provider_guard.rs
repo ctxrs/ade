@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use tokio::sync::{broadcast, Mutex};
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_settings_model::{ProviderGuardSettings, ResourceGovernanceMode, Settings};
 
 mod events;
@@ -13,17 +13,17 @@ use ctx_provider_runtime::provider_guard::{
     ProviderGuardConfig, ProviderGuardRuntime, ResourceGovernanceMode as GuardMode,
 };
 
-pub async fn apply_settings(state: &AppState, settings: &Settings) -> Result<()> {
+pub async fn apply_settings(state: &DaemonState, settings: &Settings) -> Result<()> {
     let cfg = settings.provider_guard.clone().unwrap_or_default();
     ctx_provider_runtime::provider_guard::apply_settings(state, &map_config(&cfg)).await
 }
 
-pub fn spawn_provider_guard(state: Arc<AppState>) {
+pub fn spawn_provider_guard(state: Arc<DaemonState>) {
     ctx_provider_runtime::provider_guard::spawn_provider_guard(state);
 }
 
 #[async_trait::async_trait]
-impl ctx_provider_runtime::provider_guard::ProviderGuardHost for AppState {
+impl ctx_provider_runtime::provider_guard::ProviderGuardHost for DaemonState {
     fn provider_guard_runtime(&self) -> &Mutex<ProviderGuardRuntime> {
         self.providers.provider_guard_runtime()
     }

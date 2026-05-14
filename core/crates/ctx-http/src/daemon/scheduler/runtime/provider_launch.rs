@@ -7,7 +7,7 @@ use anyhow::Result;
 
 use ctx_core::models::Session;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::turn_start::turn_start_deadline;
 
@@ -20,7 +20,7 @@ pub(super) struct PreparedProviderLaunchEnvironment {
 }
 
 pub(super) async fn prepare_provider_launch_environment(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session: &Session,
     runtime_provider_id: &str,
     workdir: &Path,

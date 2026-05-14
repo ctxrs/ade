@@ -23,7 +23,7 @@ async fn effective_install_target_errors_for_missing_workspace() {
     let _env = clean_execution_env().await;
     let temp = tempfile::tempdir().expect("tempdir");
     let stores = open_store_manager(temp.path()).await;
-    let state = AppState::new(
+    let state = DaemonState::new(
         temp.path().to_path_buf(),
         stores,
         HashMap::new(),

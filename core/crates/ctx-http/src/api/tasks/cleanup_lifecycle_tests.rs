@@ -1,5 +1,5 @@
 use super::*;
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_core::models::VcsKind;
 use ctx_store::{Store, StoreManager};
 use ctx_workspace_services::worktree_vcs::{managed_worktree_path, standaloneize_worktree_git_dir};
@@ -35,8 +35,8 @@ fn init_git_workspace(root: &StdPath) -> String {
     git_output(&["rev-parse", "HEAD"], root)
 }
 
-async fn test_state(data_root: &StdPath) -> Arc<AppState> {
-    Arc::new(AppState::new(
+async fn test_state(data_root: &StdPath) -> Arc<DaemonState> {
+    Arc::new(DaemonState::new(
         data_root.to_path_buf(),
         StoreManager::open(data_root).await.expect("open stores"),
         HashMap::new(),
@@ -151,9 +151,16 @@ async fn delete_task_prunes_and_deletes_branch_for_standalone_managed_worktree()
         .await
         .expect("set primary worktree");
 
-    let status = delete_task(State(Arc::clone(&state)), Path(task.id.0.to_string()))
-        .await
-        .expect("delete task");
+    let (sessions, providers, workspaces, transport) = task_api_states(&state);
+    let status = delete_task(
+        sessions,
+        providers,
+        workspaces,
+        transport,
+        Path(task.id.0.to_string()),
+    )
+    .await
+    .expect("delete task");
     assert_eq!(status, StatusCode::NO_CONTENT);
     assert!(
         tokio::fs::metadata(&managed_root).await.is_err(),

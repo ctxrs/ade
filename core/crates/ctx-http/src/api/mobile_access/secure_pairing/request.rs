@@ -1,12 +1,10 @@
-use std::sync::Arc;
-
 use axum::http::StatusCode;
 use axum::Json;
 use ctx_store::store::MobileAccessConfig;
 use ctx_transport_runtime::mobile_e2ee::{self, E2eeKey};
 
 use super::super::{ApiErrorResp, MobileScope, PairMobileDevicePayload, PairMobileDeviceReq};
-use crate::daemon::{mobile_access::load_mobile_auth_context_for_profile, AppState};
+use crate::daemon::CoreHandle;
 
 pub(super) struct VerifiedMobilePairingRequest {
     pub(super) device_uuid: uuid::Uuid,
@@ -18,20 +16,16 @@ pub(super) struct VerifiedMobilePairingRequest {
 }
 
 pub(super) async fn verify_mobile_pairing_request(
-    state: &Arc<AppState>,
+    state: &CoreHandle,
     req: PairMobileDeviceReq,
 ) -> Result<VerifiedMobilePairingRequest, (StatusCode, Json<ApiErrorResp>)> {
-    let config = state
-        .global_store()
-        .get_mobile_access_config()
-        .await
-        .map_err(|e| {
-            tracing::error!("failed to read mobile access config: {e:?}");
-            api_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "mobile access not configured",
-            )
-        })?;
+    let config = state.get_mobile_access_config().await.map_err(|e| {
+        tracing::error!("failed to read mobile access config: {e:?}");
+        api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "mobile access not configured",
+        )
+    })?;
     let Some(config) = config else {
         return Err(api_error(
             StatusCode::BAD_REQUEST,
@@ -45,7 +39,8 @@ pub(super) async fn verify_mobile_pairing_request(
         ));
     }
 
-    let Some(mobile_auth) = load_mobile_auth_context_for_profile(state, config.profile_id)
+    let Some(mobile_auth) = state
+        .load_mobile_auth_context_for_profile(config.profile_id)
         .await
         .map_err(|_| {
             (

@@ -8,7 +8,7 @@ use ctx_worktree_data_plane::{
     resolve_worktree_data_plane_with_host as resolve_worktree_data_plane,
 };
 
-use crate::daemon::{execution_effective, AppState};
+use crate::daemon::{execution_effective, DaemonState};
 
 pub(super) enum SandboxExecTarget {
     NativeContainer { container_name: String },
@@ -16,7 +16,7 @@ pub(super) enum SandboxExecTarget {
 }
 
 pub(super) async fn ensure_container_for_worktree(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     worktree: &Worktree,
 ) -> anyhow::Result<SandboxExecTarget> {
     let data_plane = resolve_worktree_data_plane(state.as_ref(), worktree).await?;

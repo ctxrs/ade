@@ -1,4 +1,5 @@
 use super::*;
+use crate::daemon::CoreHandle;
 use ctx_storage_admission::StorageGuardStatus;
 
 const MOBILE_API_MIN_VERSION: i64 = 1;
@@ -33,7 +34,7 @@ pub(in crate::api) struct HealthResp {
 }
 
 pub(in crate::api) async fn health(
-    State(state): State<Arc<AppState>>,
+    State(state): State<CoreHandle>,
     headers: HeaderMap,
 ) -> Result<Json<HealthResp>, StatusCode> {
     let identity = ctx_update_service::current_build_identity(env!("CARGO_PKG_VERSION"))
@@ -57,8 +58,8 @@ pub(in crate::api) async fn dev_clock() -> Json<DevClockResp> {
     })
 }
 
-fn health_request_is_authorized(state: &Arc<AppState>, headers: &HeaderMap) -> bool {
-    let Some(expected) = state.core.auth_token.as_deref() else {
+fn health_request_is_authorized(state: &CoreHandle, headers: &HeaderMap) -> bool {
+    let Some(expected) = state.auth_token() else {
         return true;
     };
     headers
@@ -69,7 +70,7 @@ fn health_request_is_authorized(state: &Arc<AppState>, headers: &HeaderMap) -> b
 }
 
 pub(in crate::api) fn build_health_response(
-    state: &Arc<AppState>,
+    state: &CoreHandle,
     identity: &ctx_update_service::BuildIdentity,
     include_sensitive: bool,
 ) -> HealthResp {
@@ -83,9 +84,9 @@ pub(in crate::api) fn build_health_response(
         version: version.clone(),
         daemon_version: version.clone(),
         pid: include_sensitive.then_some(std::process::id()),
-        data_root: include_sensitive.then(|| state.core.data_root.to_string_lossy().to_string()),
-        daemon_url: include_sensitive.then(|| state.core.daemon_url.clone()),
-        auth_required: state.core.auth_token.is_some(),
+        data_root: include_sensitive.then(|| state.data_root().to_string_lossy().to_string()),
+        daemon_url: include_sensitive.then(|| state.daemon_url().to_string()),
+        auth_required: state.has_auth_token(),
         open_file_limit: if include_sensitive {
             ctx_resource_utilization::process_limits::current_open_file_limit()
         } else {

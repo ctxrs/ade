@@ -7,7 +7,7 @@ use ctx_core::ids::SessionId;
 use ctx_core::models::MessageDelivery;
 use ctx_session_tools::interrupt_telemetry::InterruptTelemetryContext;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use crate::daemon::scheduler::lifecycle::{stop_running_turn, RunningTurn, StopReason};
 use crate::daemon::scheduler::{QueuedMessage, SchedulerCommand};
@@ -19,7 +19,7 @@ pub(super) enum SchedulerCommandAction {
 
 pub(super) async fn handle_scheduler_command(
     cmd: Option<SchedulerCommand>,
-    state_weak: &Weak<AppState>,
+    state_weak: &Weak<DaemonState>,
     session_id: SessionId,
     queue: &mut VecDeque<QueuedMessage>,
     running: &mut Option<RunningTurn>,
@@ -92,7 +92,7 @@ fn enqueue_message(
 }
 
 async fn stop_running_for_command(
-    state_weak: &Weak<AppState>,
+    state_weak: &Weak<DaemonState>,
     session_id: SessionId,
     running: &mut Option<RunningTurn>,
     running_start_deadline: &mut Option<TokioInstant>,

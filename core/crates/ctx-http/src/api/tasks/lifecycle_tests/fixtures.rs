@@ -1,5 +1,5 @@
 use super::*;
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_core::models::{Task, VcsKind, Workspace, Worktree};
 use ctx_store::{Store, StoreManager};
 use std::collections::HashMap;
@@ -11,7 +11,7 @@ pub(super) use git::{create_branch_lock, git, init_git_workspace};
 
 pub(super) struct ManagedTaskFixture {
     pub(super) repo_root: PathBuf,
-    pub(super) state: Arc<AppState>,
+    pub(super) state: Arc<DaemonState>,
     pub(super) workspace: Workspace,
     pub(super) store: Store,
     pub(super) task: Task,
@@ -76,8 +76,8 @@ pub(super) async fn create_managed_task_fixture(data_root: &StdPath) -> ManagedT
     }
 }
 
-pub(super) async fn test_state(data_root: &StdPath) -> Arc<AppState> {
-    Arc::new(AppState::new(
+pub(super) async fn test_state(data_root: &StdPath) -> Arc<DaemonState> {
+    Arc::new(DaemonState::new(
         data_root.to_path_buf(),
         StoreManager::open(data_root).await.expect("open stores"),
         HashMap::new(),
@@ -87,7 +87,7 @@ pub(super) async fn test_state(data_root: &StdPath) -> Arc<AppState> {
 }
 
 pub(super) async fn save_test_execution_settings(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     execution: ctx_settings_model::ExecutionSettings,
 ) {
     let settings = ctx_settings_model::Settings {

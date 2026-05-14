@@ -9,7 +9,7 @@ use ctx_session_service::subagents::SubagentWorktreeSelection;
 use ctx_session_tools::model_resolution::ModelCatalog;
 use tokio::sync::Mutex;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_settings_model::ExecutionSettings;
 
 use super::super::errors::{api_error, internal_api_error, ApiResult, SubagentErrorKind};
@@ -28,7 +28,7 @@ use worktree::resolve_child_worktree;
 
 #[derive(Clone)]
 pub(super) struct SubagentChildInit {
-    pub(super) state: Arc<AppState>,
+    pub(super) state: Arc<DaemonState>,
     pub(super) parent: Session,
     pub(super) workspace: Workspace,
     pub(super) model_catalogs: HashMap<String, Option<ModelCatalog>>,

@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) async fn complete_qwen_login_if_credentials_exist(
-    state: &Arc<AppState>,
+    providers: &ProvidersHandle,
     login_id: &str,
     label: &Option<String>,
     paths: &setup::QwenLoginPaths,
@@ -17,7 +17,7 @@ pub(super) async fn complete_qwen_login_if_credentials_exist(
         .is_some_and(serde_json::Value::is_object);
     if !oauth_valid {
         status::set_failed(
-            state,
+            providers,
             login_id,
             "captured oauth_creds.json is not a valid JSON object".to_string(),
         )
@@ -26,21 +26,18 @@ pub(super) async fn complete_qwen_login_if_credentials_exist(
         return true;
     }
 
-    let added = crate::daemon::providers::add_qwen_account_for_login(
-        state,
-        label.clone(),
-        oauth_raw,
-        observed_email,
-    )
-    .await;
+    let added = providers
+        .add_qwen_account_for_login(label.clone(), oauth_raw, observed_email)
+        .await;
     match added {
         Ok(outcome) => {
             let (active_account_id, restart_result) = outcome.into_restart_result();
-            status::set_completion_status(state, login_id, active_account_id, restart_result).await;
+            status::set_completion_status(providers, login_id, active_account_id, restart_result)
+                .await;
         }
         Err(err) => {
             status::set_failed(
-                state,
+                providers,
                 login_id,
                 logs::redact_sensitive(&err.auth_login_error_message()),
             )

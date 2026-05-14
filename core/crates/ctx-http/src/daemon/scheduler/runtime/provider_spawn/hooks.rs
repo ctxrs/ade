@@ -4,10 +4,10 @@ use ctx_core::models::{ExecutionEnvironment, Session};
 use ctx_providers::adapters::{ProviderRunHooks, ProviderSessionRefClaimHook};
 use ctx_store::Store;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(super) fn build_provider_run_hooks(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     store: &Store,
     session: &Session,
     execution_environment: ExecutionEnvironment,

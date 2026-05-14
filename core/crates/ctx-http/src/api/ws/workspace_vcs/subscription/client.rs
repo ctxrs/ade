@@ -1,21 +1,17 @@
-use std::collections::HashSet;
-use std::sync::Arc;
-
 use super::super::buffer::VcsPendingBuffer;
 use super::super::metrics::VcsStreamMetrics;
 use super::runtime::WorkspaceVcsRuntime;
 use super::snapshots::seed_current_vcs_snapshots;
-use crate::daemon::workspaces::stream::{
-    filter_workspace_worktree_ids, refresh_worktree_vcs_for_worktrees,
-};
-use crate::daemon::AppState;
+use crate::daemon::WorkspacesHandle;
 use ctx_core::ids::{WorkspaceId, WorktreeId};
 use ctx_core::models::{
     WorktreeVcsStreamClientMessage, WorktreeVcsStreamMessage, WorktreeVcsStreamTier,
 };
+use std::collections::HashSet;
+use std::sync::Arc;
 
 pub(in crate::api::ws::workspace_vcs) async fn handle_workspace_vcs_client_message(
-    state: &Arc<AppState>,
+    state: &WorkspacesHandle,
     workspace_id: WorkspaceId,
     pending: &Arc<VcsPendingBuffer>,
     metrics: &Arc<VcsStreamMetrics>,
@@ -39,14 +35,19 @@ pub(in crate::api::ws::workspace_vcs) async fn handle_workspace_vcs_client_messa
             .await;
         }
         WorktreeVcsStreamClientMessage::Refresh { worktree_ids, tier } => {
-            let worktree_ids =
-                filter_workspace_worktree_ids(state, workspace_id, worktree_ids).await;
+            let worktree_ids = state
+                .filter_workspace_worktree_ids(workspace_id, worktree_ids)
+                .await;
             match tier {
                 WorktreeVcsStreamTier::Summary => {
-                    refresh_worktree_vcs_for_worktrees(state, &worktree_ids, &[]).await;
+                    state
+                        .refresh_worktree_vcs_for_worktrees(&worktree_ids, &[])
+                        .await;
                 }
                 WorktreeVcsStreamTier::Details => {
-                    refresh_worktree_vcs_for_worktrees(state, &[], &worktree_ids).await;
+                    state
+                        .refresh_worktree_vcs_for_worktrees(&[], &worktree_ids)
+                        .await;
                 }
             }
         }
@@ -54,7 +55,7 @@ pub(in crate::api::ws::workspace_vcs) async fn handle_workspace_vcs_client_messa
 }
 
 async fn replace_workspace_vcs_subscription(
-    state: &Arc<AppState>,
+    state: &WorkspacesHandle,
     workspace_id: WorkspaceId,
     pending: &Arc<VcsPendingBuffer>,
     metrics: &Arc<VcsStreamMetrics>,
@@ -64,10 +65,12 @@ async fn replace_workspace_vcs_subscription(
 ) {
     let previous_active = runtime.active_worktree_ids();
     let previous_details = runtime.detail_worktree_ids.clone();
-    let summary_worktree_ids =
-        filter_workspace_worktree_ids(state, workspace_id, summary_worktree_ids).await;
-    let detail_worktree_ids =
-        filter_workspace_worktree_ids(state, workspace_id, detail_worktree_ids).await;
+    let summary_worktree_ids = state
+        .filter_workspace_worktree_ids(workspace_id, summary_worktree_ids)
+        .await;
+    let detail_worktree_ids = state
+        .filter_workspace_worktree_ids(workspace_id, detail_worktree_ids)
+        .await;
     runtime.summary_worktree_ids = summary_worktree_ids.iter().copied().collect();
     runtime.detail_worktree_ids = detail_worktree_ids.iter().copied().collect();
     let next_active = runtime.active_worktree_ids();
@@ -119,10 +122,10 @@ async fn replace_workspace_vcs_subscription(
         &detail_seed_worktree_ids,
     )
     .await;
-    refresh_worktree_vcs_for_worktrees(
-        state,
-        &summary_refresh_worktree_ids,
-        &detail_refresh_worktree_ids,
-    )
-    .await;
+    state
+        .refresh_worktree_vcs_for_worktrees(
+            &summary_refresh_worktree_ids,
+            &detail_refresh_worktree_ids,
+        )
+        .await;
 }

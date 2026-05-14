@@ -8,13 +8,13 @@ use ctx_workspace_services::worktree_vcs::{
 };
 use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 mod sandbox;
 use sandbox::{container_diff_worktree, container_diff_worktree_summary};
 
 pub(crate) async fn diff_worktree_for_session(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     worktree: &Worktree,
     base_commit_sha: &str,
 ) -> anyhow::Result<String> {
@@ -26,7 +26,7 @@ pub(crate) async fn diff_worktree_for_session(
 }
 
 pub(crate) async fn diff_worktree_summary_for_session(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     worktree: &Worktree,
     base_commit_sha: &str,
 ) -> anyhow::Result<WorktreeVcsDiffSummaryCounts> {

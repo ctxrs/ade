@@ -7,7 +7,7 @@ use axum::http::{Method, StatusCode};
 use chrono::Utc;
 use ctx_core::ids::{MergeQueueEntryId, WorkspaceId};
 use ctx_core::models::{MergeQueueEntry, MergeQueueEntryStatus, MergeQueuePatchSource, Workspace};
-use ctx_http::daemon::AppState;
+use ctx_http::daemon::DaemonState;
 use serde_json::Value;
 
 fn queued_entry(workspace_id: WorkspaceId, name: &str) -> MergeQueueEntry {
@@ -33,7 +33,7 @@ fn queued_entry(workspace_id: WorkspaceId, name: &str) -> MergeQueueEntry {
 }
 
 async fn wait_for_non_queued_status(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace: &Workspace,
     entry_id: MergeQueueEntryId,
 ) -> MergeQueueEntry {
@@ -69,7 +69,7 @@ async fn enabling_merge_queue_on_open_workspace_reschedules_queued_rows() {
     let app = common::router(state.clone());
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;
 
-    ctx_merge_queue::spawn_merge_queue_runner::<AppState>(state.clone());
+    ctx_merge_queue::spawn_merge_queue_runner::<DaemonState>(state.clone());
 
     let store = state
         .core
@@ -130,7 +130,7 @@ async fn disabling_merge_queue_cancels_existing_queued_rows() {
     let app = common::router(state.clone());
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;
 
-    ctx_merge_queue::spawn_merge_queue_runner::<AppState>(state.clone());
+    ctx_merge_queue::spawn_merge_queue_runner::<DaemonState>(state.clone());
 
     let (enable_status, _enable_resp): (StatusCode, Value) = common::json_request(
         &app,

@@ -2,7 +2,7 @@ use super::super::lifecycle::queue_workspace_stream_reset;
 use super::super::*;
 
 pub(super) async fn route_workspace_stream_event(
-    state: &Arc<AppState>,
+    state: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
     event: WorkspaceActiveSnapshotEvent,
     runtime: &mut WorkspaceStreamRuntime,
@@ -31,7 +31,7 @@ pub(super) async fn route_workspace_stream_event(
 }
 
 async fn route_head_delta(
-    state: &Arc<AppState>,
+    state: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
     snapshot_rev: i64,
     delta: SessionHeadDelta,
@@ -72,7 +72,7 @@ async fn route_head_delta(
 }
 
 async fn route_summary_delta(
-    state: &Arc<AppState>,
+    state: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
     event: WorkspaceActiveSnapshotEvent,
     runtime: &mut WorkspaceStreamRuntime,
@@ -89,7 +89,7 @@ async fn route_summary_delta(
 }
 
 async fn route_control_event(
-    state: &Arc<AppState>,
+    state: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
     session_id: Option<SessionId>,
     event: WorkspaceActiveSnapshotEvent,

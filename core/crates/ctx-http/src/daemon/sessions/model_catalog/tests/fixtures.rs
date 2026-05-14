@@ -3,9 +3,9 @@ use super::*;
 pub(super) async fn test_state_with_workspace(
     data_root: &Path,
     port: u16,
-) -> (Arc<AppState>, Workspace) {
+) -> (Arc<DaemonState>, Workspace) {
     let stores = StoreManager::open(data_root).await.expect("open stores");
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_root.to_path_buf(),
         stores,
         HashMap::new(),
@@ -24,7 +24,7 @@ pub(super) async fn test_state_with_workspace(
     (state, workspace)
 }
 
-pub(super) async fn save_sandbox_execution_mode(state: &AppState) {
+pub(super) async fn save_sandbox_execution_mode(state: &DaemonState) {
     ctx_settings_service::save_settings(
         state.global_store(),
         &Settings {
@@ -39,7 +39,7 @@ pub(super) async fn save_sandbox_execution_mode(state: &AppState) {
     .expect("save settings");
 }
 
-pub(super) async fn seed_ready_gemini_status(state: &AppState) {
+pub(super) async fn seed_ready_gemini_status(state: &DaemonState) {
     state
         .providers
         .upsert_provider_status(

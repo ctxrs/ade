@@ -8,7 +8,7 @@ use ctx_core::models::{
     Session, SessionEventType, Task, TerminalSession, TerminalStatus, Workspace,
     WorkspaceActiveSnapshotEvent, WorkspaceActiveSnapshotStreamMessage,
 };
-use ctx_http::daemon::AppState;
+use ctx_http::daemon::DaemonState;
 use ctx_transport_runtime::TerminalServerMessage;
 
 mod common;
@@ -106,7 +106,7 @@ async fn read_terminal_until_marker(socket: &mut WsStream, marker: &str) -> Stri
 }
 
 async fn wait_for_session_done_events_in_store(
-    state: &std::sync::Arc<AppState>,
+    state: &std::sync::Arc<DaemonState>,
     session_id: ctx_core::ids::SessionId,
     expected_done_events: usize,
 ) {
@@ -133,7 +133,7 @@ async fn wait_for_session_done_events_in_store(
 }
 
 async fn wait_for_session_idle_in_memory(
-    state: &std::sync::Arc<AppState>,
+    state: &std::sync::Arc<DaemonState>,
     session_id: ctx_core::ids::SessionId,
 ) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);

@@ -97,13 +97,27 @@ async fn unarchive_task_fails_closed_for_corrupt_binding_snapshot() {
     );
     let _sandbox_cli_available = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "1");
 
-    let Json(_) = archive_task(State(Arc::clone(&state)), Path(task.id.0.to_string()))
-        .await
-        .expect("archive task");
+    let (sessions, providers, workspaces, transport) = task_api_states(&state);
+    let Json(_) = archive_task(
+        sessions,
+        providers,
+        workspaces,
+        transport,
+        Path(task.id.0.to_string()),
+    )
+    .await
+    .expect("archive task");
 
-    let status = unarchive_task(State(Arc::clone(&state)), Path(task.id.0.to_string()))
-        .await
-        .expect_err("corrupt binding snapshot should fail closed");
+    let (sessions, providers, workspaces, transport) = task_api_states(&state);
+    let status = unarchive_task(
+        sessions,
+        providers,
+        workspaces,
+        transport,
+        Path(task.id.0.to_string()),
+    )
+    .await
+    .expect_err("corrupt binding snapshot should fail closed");
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
     assert!(
         store

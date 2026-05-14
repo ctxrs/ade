@@ -1,8 +1,8 @@
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::ProviderCacheStats;
 
-pub(super) async fn collect_provider_cache_stats(state: &AppState) -> ProviderCacheStats {
+pub(super) async fn collect_provider_cache_stats(state: &DaemonState) -> ProviderCacheStats {
     let stats = state.providers.cache_stats().await;
 
     ProviderCacheStats {

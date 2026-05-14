@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use tokio::fs;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_core::models::Artifact;
 use ctx_session_tools::{NormalizedToolEvent, ToolOutputArtifactRef};
 
@@ -41,7 +41,7 @@ pub(super) fn cwd_outside_worktree(
 }
 
 pub(super) async fn maybe_spool_tool_output(
-    state: &AppState,
+    state: &DaemonState,
     store: &ctx_store::Store,
     tool_event: &NormalizedToolEvent,
     scope: ToolOutputArtifactScope,

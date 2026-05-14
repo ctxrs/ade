@@ -7,12 +7,12 @@ use ctx_session_tools::interrupt_telemetry::InterruptTelemetryContext;
 use crate::daemon::scheduler::SchedulerCommand;
 use crate::daemon::{
     daemon_sandbox_work_activity_summary, daemon_turn_activity_summary,
-    reconcile_running_turns_with_reason, spawn_deferred_daemon_shutdown, AppState,
-    DaemonSandboxWorkActivitySummary, DaemonTurnActivitySummary,
+    reconcile_running_turns_with_reason, spawn_deferred_daemon_shutdown,
+    DaemonSandboxWorkActivitySummary, DaemonState, DaemonTurnActivitySummary, ExecutionHandle,
 };
 
 pub(crate) struct MaintenanceDrainPermit {
-    state: Arc<AppState>,
+    state: Arc<DaemonState>,
 }
 
 impl MaintenanceDrainPermit {
@@ -42,7 +42,7 @@ pub(crate) enum DaemonShutdownError {
 }
 
 pub(crate) async fn begin_update_drain(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     reason: String,
     owner: String,
 ) -> Result<DaemonTurnActivitySummary, BeginUpdateDrainError> {
@@ -70,15 +70,17 @@ pub(crate) async fn begin_update_drain(
     Ok(activity)
 }
 
-pub(crate) async fn release_update_drain(state: &AppState) -> bool {
+pub(crate) async fn release_update_drain(state: &DaemonState) -> bool {
     state.core.update_drain.release().await
 }
 
-pub(crate) async fn reject_new_execution_during_maintenance(state: &AppState) -> Result<(), Error> {
+pub(crate) async fn reject_new_execution_during_maintenance(
+    state: &DaemonState,
+) -> Result<(), Error> {
     state.core.update_drain.reject_if_draining().await
 }
 
-pub(crate) async fn post_message_update_drain_reason(state: &AppState) -> Option<String> {
+pub(crate) async fn post_message_update_drain_reason(state: &DaemonState) -> Option<String> {
     state
         .core
         .update_drain
@@ -88,7 +90,7 @@ pub(crate) async fn post_message_update_drain_reason(state: &AppState) -> Option
 }
 
 pub(crate) async fn acquire_linux_sandbox_prepare_drain(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
 ) -> Result<MaintenanceDrainPermit, MaintenanceDrainError> {
     if state
         .core
@@ -118,7 +120,7 @@ pub(crate) async fn acquire_linux_sandbox_prepare_drain(
 }
 
 pub(crate) async fn request_daemon_shutdown(
-    state: Arc<AppState>,
+    state: Arc<DaemonState>,
     reason: String,
 ) -> Result<DaemonTurnActivitySummary, DaemonShutdownError> {
     let acquired_drain = state
@@ -171,9 +173,46 @@ fn sandbox_work_is_active(activity: &DaemonSandboxWorkActivitySummary) -> bool {
     activity.active
 }
 
-async fn release_shutdown_drain_on_error(state: &AppState, acquired_drain: bool) {
+async fn release_shutdown_drain_on_error(state: &DaemonState, acquired_drain: bool) {
     if acquired_drain {
         let _ = state.core.update_drain.release().await;
+    }
+}
+
+impl ExecutionHandle {
+    pub(crate) async fn begin_update_drain(
+        &self,
+        reason: String,
+        owner: String,
+    ) -> Result<DaemonTurnActivitySummary, BeginUpdateDrainError> {
+        begin_update_drain(&self.state, reason, owner).await
+    }
+
+    pub(crate) async fn release_update_drain(&self) -> bool {
+        release_update_drain(self.state.as_ref()).await
+    }
+
+    pub(crate) async fn reject_new_execution_during_maintenance(&self) -> Result<(), Error> {
+        reject_new_execution_during_maintenance(self.state.as_ref()).await
+    }
+
+    pub(crate) async fn acquire_linux_sandbox_prepare_drain(
+        &self,
+    ) -> Result<MaintenanceDrainPermit, MaintenanceDrainError> {
+        acquire_linux_sandbox_prepare_drain(&self.state).await
+    }
+
+    pub(crate) async fn daemon_turn_activity_summary(
+        &self,
+    ) -> Result<DaemonTurnActivitySummary, Error> {
+        daemon_turn_activity_summary(&self.state).await
+    }
+
+    pub(crate) async fn request_daemon_shutdown(
+        &self,
+        reason: String,
+    ) -> Result<DaemonTurnActivitySummary, DaemonShutdownError> {
+        request_daemon_shutdown(std::sync::Arc::clone(&self.state), reason).await
     }
 }
 

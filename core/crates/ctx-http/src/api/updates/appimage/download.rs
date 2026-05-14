@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
@@ -7,10 +5,10 @@ use ctx_observability::logs;
 
 use super::types::{DownloadAppImageReq, DownloadAppImageResp};
 use crate::api::errors::ApiErrorResp;
-use crate::daemon::AppState;
+use crate::daemon::CoreHandle;
 
 pub(in crate::api) async fn download_appimage_update(
-    State(state): State<Arc<AppState>>,
+    State(core): State<CoreHandle>,
     Json(req): Json<DownloadAppImageReq>,
 ) -> Result<Json<DownloadAppImageResp>, (StatusCode, Json<ApiErrorResp>)> {
     let channel =
@@ -90,7 +88,7 @@ pub(in crate::api) async fn download_appimage_update(
     let manifest_url = ctx_update_service::release_manifest_url(&base_url, &channel);
     let meta = ctx_update_service::download_verified_appimage_candidate(
         ctx_update_service::AppImageCandidateRequest {
-            data_root: &state.core.data_root,
+            data_root: core.data_root(),
             target_path: &target_path,
             channel: &channel,
             platform,

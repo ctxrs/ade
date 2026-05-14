@@ -7,7 +7,7 @@ use ctx_transport_runtime::web_sessions::{
     WebSessionRunResponse, WorkerBundle,
 };
 
-use crate::daemon::AppState;
+use crate::daemon::{DaemonState, TransportHandle};
 
 mod access;
 mod launch;
@@ -20,7 +20,7 @@ pub(crate) use access::{
 pub(crate) use launch::{
     create_web_session, WebSessionLaunchError, WebSessionLaunchErrorKind, WebSessionLaunchRequest,
 };
-pub(crate) use signal::{authorize_web_session_signal_bridge, connect_web_session_signal_bridge};
+pub(crate) use signal::connect_web_session_signal_bridge;
 
 pub(crate) struct PreparedWebSessionWorker {
     pub(crate) node_runtime: ctx_managed_installs::NodeRuntime,
@@ -33,17 +33,17 @@ pub(crate) enum WebSessionActionError {
     Internal,
 }
 
-pub(crate) async fn list_web_sessions(state: &Arc<AppState>) -> Vec<WebSessionInfo> {
+pub(crate) async fn list_web_sessions(state: &Arc<DaemonState>) -> Vec<WebSessionInfo> {
     state.transport.web_sessions.list().await
 }
 
-pub(crate) async fn get_web_session(state: &Arc<AppState>, id: &str) -> Option<WebSessionInfo> {
+pub(crate) async fn get_web_session(state: &Arc<DaemonState>, id: &str) -> Option<WebSessionInfo> {
     let handle = state.transport.web_sessions.get(id).await?;
     Some(handle.snapshot().await)
 }
 
 pub(crate) async fn run_web_session(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     id: &str,
     payload: WebSessionRunRequest,
 ) -> Result<WebSessionRunResponse, WebSessionActionError> {
@@ -54,7 +54,7 @@ pub(crate) async fn run_web_session(
 }
 
 pub(crate) async fn eval_web_session(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     id: &str,
     payload: WebSessionRunRequest,
 ) -> Result<WebSessionRunResponse, WebSessionActionError> {
@@ -65,7 +65,7 @@ pub(crate) async fn eval_web_session(
 }
 
 pub(crate) async fn close_web_session(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     id: &str,
 ) -> Result<(), WebSessionActionError> {
     match state.transport.web_sessions.close(id).await {
@@ -75,7 +75,7 @@ pub(crate) async fn close_web_session(
 }
 
 async fn classify_web_session_action_error(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     id: &str,
 ) -> WebSessionActionError {
     if state.transport.web_sessions.get(id).await.is_none() {
@@ -86,7 +86,7 @@ async fn classify_web_session_action_error(
 }
 
 pub(crate) async fn prepare_web_session_worker(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
 ) -> anyhow::Result<PreparedWebSessionWorker> {
     let node_runtime = ctx_managed_installs::ensure_node_runtime(
         state.as_ref(),
@@ -112,4 +112,77 @@ pub(crate) async fn prepare_web_session_worker(
         node_runtime,
         bundle,
     })
+}
+
+impl TransportHandle {
+    pub(crate) async fn list_web_sessions(&self) -> Vec<WebSessionInfo> {
+        list_web_sessions(&self.state).await
+    }
+
+    pub(crate) async fn get_web_session(&self, id: &str) -> Option<WebSessionInfo> {
+        get_web_session(&self.state, id).await
+    }
+
+    pub(crate) async fn create_web_session(
+        &self,
+        request: WebSessionLaunchRequest,
+    ) -> Result<WebSessionInfo, WebSessionLaunchError> {
+        create_web_session(&self.state, request).await
+    }
+
+    pub(crate) async fn run_web_session(
+        &self,
+        id: &str,
+        payload: WebSessionRunRequest,
+    ) -> Result<WebSessionRunResponse, WebSessionActionError> {
+        run_web_session(&self.state, id, payload).await
+    }
+
+    pub(crate) async fn eval_web_session(
+        &self,
+        id: &str,
+        payload: WebSessionRunRequest,
+    ) -> Result<WebSessionRunResponse, WebSessionActionError> {
+        eval_web_session(&self.state, id, payload).await
+    }
+
+    pub(crate) async fn close_web_session(&self, id: &str) -> Result<(), WebSessionActionError> {
+        close_web_session(&self.state, id).await
+    }
+
+    pub(crate) async fn mint_web_session_view_connect_path(
+        &self,
+        id: &str,
+    ) -> Result<access::WebSessionViewConnectPath, WebSessionAccessError> {
+        mint_web_session_view_connect_path(&self.state, id).await
+    }
+
+    pub(crate) async fn prepare_web_session_view_page(
+        &self,
+        id: &str,
+        token: Option<&str>,
+    ) -> Result<access::WebSessionViewPage, WebSessionAccessError> {
+        prepare_web_session_view_page(&self.state, id, token).await
+    }
+
+    pub(crate) async fn authorize_web_session_signal_bridge(
+        &self,
+        id: &str,
+        token: Option<&str>,
+    ) -> Result<(), WebSessionAccessError> {
+        authorize_web_session_signal_access(&self.state, id, token).await
+    }
+
+    pub(crate) async fn connect_web_session_signal_bridge(
+        &self,
+        session_id: String,
+    ) -> Result<
+        (
+            signal::WebSessionSignalUpstream,
+            signal::WebSessionSignalViewerGuard,
+        ),
+        signal::WebSessionSignalBridgeError,
+    > {
+        connect_web_session_signal_bridge(Arc::clone(&self.state), session_id).await
+    }
 }

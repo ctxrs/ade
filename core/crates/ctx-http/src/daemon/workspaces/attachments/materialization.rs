@@ -4,10 +4,10 @@ use std::sync::Arc;
 use ctx_core::ids::WorkspaceAttachmentId;
 use ctx_core::models::Workspace;
 
-use crate::daemon::{AppState, AttachmentMaterializationTask};
+use crate::daemon::{AttachmentMaterializationTask, DaemonState};
 
 pub(crate) async fn spawn_attachment_materialization(
-    state: Arc<AppState>,
+    state: Arc<DaemonState>,
     workspace: Workspace,
     attachment_id: WorkspaceAttachmentId,
     refresh: bool,
@@ -32,7 +32,7 @@ pub(crate) async fn spawn_attachment_materialization(
 }
 
 pub(crate) async fn cancel_attachment_materialization(
-    state: &AppState,
+    state: &DaemonState,
     attachment_id: WorkspaceAttachmentId,
 ) {
     let existing = {
@@ -46,7 +46,7 @@ pub(crate) async fn cancel_attachment_materialization(
 }
 
 async fn clear_attachment_materialization_task(
-    state: &AppState,
+    state: &DaemonState,
     attachment_id: WorkspaceAttachmentId,
     generation: u64,
 ) {
@@ -60,7 +60,7 @@ async fn clear_attachment_materialization_task(
 }
 
 async fn run_attachment_materialization(
-    state: Arc<AppState>,
+    state: Arc<DaemonState>,
     workspace: Workspace,
     attachment_id: WorkspaceAttachmentId,
     refresh: bool,

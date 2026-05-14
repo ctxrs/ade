@@ -12,10 +12,10 @@ use ctx_provider_runtime::provider_launch::models::{
 use ctx_providers::adapters::ProviderStatus;
 
 use crate::daemon::providers::ProviderOptionsCacheSnapshot;
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(in crate::daemon::providers::options) struct ProviderOptionsResponseContext<'a> {
-    pub(in crate::daemon::providers::options) state: &'a Arc<AppState>,
+    pub(in crate::daemon::providers::options) state: &'a Arc<DaemonState>,
     pub(in crate::daemon::providers::options) provider_id: &'a str,
     pub(in crate::daemon::providers::options) provider_status: Option<&'a ProviderStatus>,
     pub(in crate::daemon::providers::options) selected_endpoint: Option<&'a HarnessEndpointRecord>,
@@ -24,7 +24,7 @@ pub(in crate::daemon::providers::options) struct ProviderOptionsResponseContext<
 }
 
 async fn attach_static_provider_models_and_modes(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     value: &mut serde_json::Value,
     provider_id: &str,
     provider_status: &ProviderStatus,

@@ -4,7 +4,7 @@ use anyhow::Context;
 use ctx_core::ids::TaskId;
 use ctx_core::models::{SandboxBinding, Workspace, Worktree};
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(super) enum SandboxCleanupOutcome {
     Complete { errors: Vec<anyhow::Error> },
@@ -12,7 +12,7 @@ pub(super) enum SandboxCleanupOutcome {
 }
 
 pub(super) async fn cleanup_sandbox_materialization(
-    state: &AppState,
+    state: &DaemonState,
     workspace: &Workspace,
     worktree: &Worktree,
     binding: &SandboxBinding,

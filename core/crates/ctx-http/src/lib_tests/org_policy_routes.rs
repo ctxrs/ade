@@ -10,7 +10,7 @@ async fn daemon_enrollment_routes_do_not_return_policy_signing_keys() {
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
         HashMap::new();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,

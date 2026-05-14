@@ -5,10 +5,10 @@ use ctx_core::models::Session;
 use ctx_observability::ops_events::OpsEvent;
 use serde_json::json;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(super) struct ProviderRunStartedEvent<'a> {
-    pub(super) state: &'a Arc<AppState>,
+    pub(super) state: &'a Arc<DaemonState>,
     pub(super) session: &'a Session,
     pub(super) run_id: RunId,
     pub(super) turn_id: TurnId,

@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use axum::http::StatusCode;
 use ctx_http::api;
-use ctx_http::daemon::AppState;
+use ctx_http::daemon::DaemonState;
 use ctx_provider_accounts::{
     save_codex_registry, CodexAccountEntry, CodexAccountRegistry, CodexEndpointProfile,
     CodexLoginStatus, CODEX_API_SHAPE_OPENAI_RESPONSES, CODEX_CREDENTIAL_KIND_API_KEY,
@@ -28,7 +28,7 @@ struct ErrorResp {
 }
 
 async fn start_http_app(
-    state: Arc<AppState>,
+    state: Arc<DaemonState>,
 ) -> (String, reqwest::Client, tokio::task::JoinHandle<()>) {
     let app = api::router(state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -112,11 +112,11 @@ async fn start_redirecting_callback_server(
     )
 }
 
-async fn app_state(data_root: &std::path::Path) -> Arc<AppState> {
+async fn app_state(data_root: &std::path::Path) -> Arc<DaemonState> {
     let stores = StoreManager::open(data_root).await.unwrap();
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-    Arc::new(AppState::new(
+    Arc::new(DaemonState::new(
         data_root.to_path_buf(),
         stores,
         providers,
@@ -126,7 +126,7 @@ async fn app_state(data_root: &std::path::Path) -> Arc<AppState> {
 }
 
 async fn insert_pending_login(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     account_id: &str,
     completion_token: &str,
     expected_callback_url: &str,

@@ -8,10 +8,10 @@ use ctx_workspace_active_snapshot::{
     ResolvedWorkspaceActiveSubscriptions, SessionReplayCursor, WorkspaceActiveSubscriptionSource,
 };
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(crate) async fn resolve_workspace_active_snapshot_subscriptions(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
     message: WorkspaceActiveSnapshotClientMessage,
     existing: &HashMap<SessionId, SessionReplayCursor>,
@@ -26,7 +26,7 @@ pub(crate) async fn resolve_workspace_active_snapshot_subscriptions(
 }
 
 struct HttpWorkspaceActiveSubscriptionSource<'a> {
-    state: &'a Arc<AppState>,
+    state: &'a Arc<DaemonState>,
 }
 
 impl WorkspaceActiveSubscriptionSource for HttpWorkspaceActiveSubscriptionSource<'_> {
@@ -85,7 +85,7 @@ impl WorkspaceActiveSubscriptionSource for HttpWorkspaceActiveSubscriptionSource
 }
 
 async fn session_belongs_to_workspace(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
     session_id: SessionId,
 ) -> bool {

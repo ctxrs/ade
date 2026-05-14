@@ -3,7 +3,7 @@ use ctx_provider_runtime::provider_launch::options::runtime_probe_models_payload
 use ctx_provider_runtime::provider_launch::probe::provider_probe_context_for_workspace_runtime;
 
 pub(super) async fn load_runtime_model_catalog(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace: &Workspace,
     provider_id: &str,
     install_target: ctx_provider_install::install_state::InstallTarget,

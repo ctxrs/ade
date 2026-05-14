@@ -17,7 +17,7 @@ pub(crate) use browser::{
 pub(crate) use codex::{
     claim_codex_login_callback, codex_login_status, codex_login_statuses,
     finish_codex_login_session, remove_codex_login_session, restore_codex_login_completion_token,
-    start_codex_login_session, CodexLoginCallbackClaimError,
+    start_codex_login_session, CodexLoginCallbackClaimError, StartedCodexLoginSession,
 };
 pub(crate) use interactive::{
     claude_login_status, cursor_login_status, finish_claude_login_session,

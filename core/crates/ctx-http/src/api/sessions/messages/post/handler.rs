@@ -1,10 +1,11 @@
 use super::super::*;
-use super::events::publish_user_message_events;
-use super::persistence::{load_matching_existing_message, persist_user_message, PostMessageParts};
+use super::delivery::queued_messages_enabled;
+use super::persistence::PostMessageParts;
 use super::request::PostMessageReq;
+use crate::daemon::sessions::{PostUserMessageError, PostUserMessageInput};
 
 pub(crate) async fn post_message(
-    State(state): State<Arc<AppState>>,
+    State(state): State<SessionsHandle>,
     Path(id): Path<String>,
     headers: axum::http::HeaderMap,
     Json(req): Json<PostMessageReq>,
@@ -13,48 +14,41 @@ pub(crate) async fn post_message(
         uuid::Uuid::parse_str(&id)
             .map_err(|_| api_error(StatusCode::BAD_REQUEST, "Invalid session id."))?,
     );
-    let store = store_for_existing_session_status_for_write(&state, session_id)
-        .await
-        .map_err(session_store_api_error)?;
     let run_id_header = headers
         .get("x-ctx-run-id")
         .and_then(|v| v.to_str().ok())
         .map(|v| v.to_string());
 
-    let session = store
-        .get_session(session_id)
-        .await
-        .map_err(|_| api_error(StatusCode::INTERNAL_SERVER_ERROR, "Failed to load session."))?
-        .ok_or_else(|| api_error(StatusCode::NOT_FOUND, "Session not found."))?;
-    state.remember_session_meta(&session).await;
-    if let Some(reason) = crate::daemon::maintenance::post_message_update_drain_reason(&state).await
-    {
-        return Err(api_error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            format!(
-                "Daemon update is in progress; retry after the daemon restarts. ({})",
-                reason
-            ),
-        ));
-    }
-
     let parts = PostMessageParts::from_request(&state, req).await?;
-    if let Some(existing) =
-        load_matching_existing_message(&state, &store, session_id, &parts).await?
-    {
-        return Ok(Json(existing));
+    state
+        .post_user_message_for_request(
+            session_id,
+            PostUserMessageInput {
+                message_id: parts.message_id,
+                turn_id: parts.turn_id,
+                client_supplied_ids: parts.client_supplied_ids,
+                content: parts.content,
+                requested_delivery: parts.requested_delivery,
+                attachments: parts.attachments,
+                queued_messages_enabled: queued_messages_enabled(),
+                run_id_header,
+            },
+        )
+        .await
+        .map(Json)
+        .map_err(post_user_message_api_error)
+}
+
+fn post_user_message_api_error(error: PostUserMessageError) -> ApiErr {
+    match error {
+        PostUserMessageError::BadRequest(error) => api_error(StatusCode::BAD_REQUEST, error),
+        PostUserMessageError::Conflict(error) => api_error(StatusCode::CONFLICT, error),
+        PostUserMessageError::NotFound(error) => api_error(StatusCode::NOT_FOUND, error),
+        PostUserMessageError::ServiceUnavailable(error) => {
+            api_error(StatusCode::SERVICE_UNAVAILABLE, error)
+        }
+        PostUserMessageError::Internal(error) => {
+            api_error(StatusCode::INTERNAL_SERVER_ERROR, error)
+        }
     }
-
-    let persisted = persist_user_message(&state, &store, &session, parts).await?;
-    publish_user_message_events(&state, &store, session_id, &persisted).await?;
-    crate::daemon::sessions::command_dispatch::enqueue_user_message_for_scheduler(
-        &state,
-        &store,
-        session,
-        persisted.saved.clone(),
-        run_id_header,
-    )
-    .await;
-
-    Ok(Json(persisted.saved))
 }

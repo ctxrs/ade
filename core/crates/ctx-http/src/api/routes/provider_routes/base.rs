@@ -1,12 +1,10 @@
-use std::sync::Arc;
-
 use axum::routing::{get, post};
 
 use crate::api::providers::{get_provider, get_provider_usage, list_providers};
 use crate::api::refresh_provider_matrix;
-use crate::daemon::AppState;
+use crate::daemon::DaemonHandle;
 
-pub(super) fn provider_base_routes() -> axum::Router<Arc<AppState>> {
+pub(super) fn provider_base_routes() -> axum::Router<DaemonHandle> {
     axum::Router::new()
         .route("/api/providers", get(list_providers))
         .route(

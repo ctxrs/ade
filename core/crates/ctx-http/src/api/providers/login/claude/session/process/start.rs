@@ -1,9 +1,9 @@
 use super::*;
 
 pub(in crate::api::providers::login::claude::session) async fn start_claude_login_process(
-    state: &Arc<AppState>,
+    providers: &ProvidersHandle,
 ) -> anyhow::Result<ClaudeLoginProcess> {
-    let runtime = resolve_claude_login_runtime(state).await?;
+    let runtime = providers.resolve_claude_login_runtime().await?;
     let ClaudeLoginSpawn {
         line_rx: mut rx,
         mut exit_rx,

@@ -1,14 +1,12 @@
-use std::sync::Arc;
-
 use axum::routing::{delete, get, post, put};
 
 use crate::api::providers::{
     delete_kimi_account, get_kimi_login, list_kimi_accounts, set_kimi_active_account,
     start_kimi_login, upsert_kimi_account,
 };
-use crate::daemon::AppState;
+use crate::daemon::DaemonHandle;
 
-pub(super) fn kimi_account_routes() -> axum::Router<Arc<AppState>> {
+pub(super) fn kimi_account_routes() -> axum::Router<DaemonHandle> {
     axum::Router::new()
         .route(
             "/api/providers/kimi/accounts/login/start",

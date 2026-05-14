@@ -14,7 +14,7 @@ struct SessionArtifactFixture {
     _data_dir: tempfile::TempDir,
     _git_repo: tempfile::TempDir,
     app: axum::Router,
-    state: Arc<AppState>,
+    state: Arc<DaemonState>,
     task: ctx_core::models::Task,
     session: ctx_core::models::Session,
 }
@@ -32,7 +32,7 @@ async fn build_session_artifact_fixture() -> SessionArtifactFixture {
         HashMap::new();
     providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
 
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,

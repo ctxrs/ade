@@ -1,7 +1,6 @@
 use std::collections::HashSet;
-use std::sync::Arc;
 
-use crate::daemon::AppState;
+use crate::daemon::WorkspacesHandle;
 use ctx_core::ids::WorktreeId;
 
 #[derive(Default)]
@@ -21,7 +20,7 @@ impl WorkspaceVcsRuntime {
 }
 
 pub(in crate::api::ws::workspace_vcs) async fn release_workspace_vcs_demand(
-    state: &Arc<AppState>,
+    state: &WorkspacesHandle,
     runtime: &WorkspaceVcsRuntime,
 ) {
     let active = runtime.active_worktree_ids();

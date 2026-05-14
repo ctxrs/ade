@@ -3,12 +3,12 @@ use ctx_resource_utilization::resource_governance::{
     apply_limits, compute_effective_limits, public_settings, status_for, ResourceGovernanceRuntime,
 };
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_settings_model::{
     PublicResourceGovernanceSettings, ResourceGovernanceStatusState, Settings,
 };
 
-pub async fn apply_settings(state: &AppState, settings: &Settings) -> Result<()> {
+pub async fn apply_settings(state: &DaemonState, settings: &Settings) -> Result<()> {
     let cfg = settings.resource_governance.clone().unwrap_or_default();
     let (system, _disks, _cache_age_ms) = {
         let mut sampler = state.telemetry.resource_sampler.lock().await;
@@ -39,7 +39,7 @@ pub async fn apply_settings(state: &AppState, settings: &Settings) -> Result<()>
 }
 
 pub async fn build_public_settings(
-    state: &AppState,
+    state: &DaemonState,
     settings: &Settings,
 ) -> Option<PublicResourceGovernanceSettings> {
     let cfg = settings.resource_governance.as_ref()?;
@@ -56,7 +56,7 @@ pub async fn build_public_settings(
     Some(public_settings(cfg, effective.as_ref(), status))
 }
 
-async fn has_running_children(state: &AppState) -> bool {
+async fn has_running_children(state: &DaemonState) -> bool {
     state.providers.has_running_provider_processes().await
         || state.transport.terminals.has_running().await
 }

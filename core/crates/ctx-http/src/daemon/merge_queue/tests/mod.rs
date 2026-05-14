@@ -13,11 +13,11 @@ use ctx_providers::adapters::ProviderAdapter;
 use ctx_store::StoreManager;
 use ctx_workspace_config::{update_merge_queue_config, MergeQueueConfigUpdate};
 
-async fn setup_state() -> (tempfile::TempDir, Arc<AppState>) {
+async fn setup_state() -> (tempfile::TempDir, Arc<DaemonState>) {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,
@@ -28,7 +28,7 @@ async fn setup_state() -> (tempfile::TempDir, Arc<AppState>) {
 }
 
 async fn create_workspace(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     data_dir: &tempfile::TempDir,
     name: &str,
 ) -> Workspace {
@@ -68,7 +68,7 @@ fn queued_entry(workspace_id: WorkspaceId, name: &str) -> MergeQueueEntry {
 }
 
 async fn wait_for_entry_status<F>(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
     entry_id: MergeQueueEntryId,
     predicate: F,

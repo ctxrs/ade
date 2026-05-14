@@ -7,7 +7,7 @@ use ctx_storage_admission::{is_storage_exhaustion_error, storage_exhaustion_mess
 use serde_json::json;
 
 use crate::daemon::scheduler::persistence::{emit_event, persist_assistant_message};
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::super::failure::{fail_turn, TurnFailurePayload};
 use super::super::state::EventLoopRuntimeState;
@@ -16,7 +16,7 @@ use super::super::TurnEventLoop;
 pub(super) async fn persist_assistant_complete_content(
     ctx: &TurnEventLoop,
     runtime: &mut EventLoopRuntimeState,
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     event: &SessionEvent,
     content: String,
     provider_message_id: Option<String>,

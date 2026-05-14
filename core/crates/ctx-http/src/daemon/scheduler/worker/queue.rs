@@ -14,7 +14,7 @@ use crate::daemon::scheduler::lifecycle::{finalize_start_failure_if_needed, Runn
 use crate::daemon::scheduler::persistence::emit_event;
 use crate::daemon::scheduler::runtime::start_turn;
 use crate::daemon::scheduler::QueuedMessage;
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(super) enum QueueStartOutcome {
     Idle,
@@ -23,7 +23,7 @@ pub(super) enum QueueStartOutcome {
 }
 
 pub(super) struct QueueStartContext<'a> {
-    pub(super) state_weak: &'a Weak<AppState>,
+    pub(super) state_weak: &'a Weak<DaemonState>,
     pub(super) session: &'a mut Session,
     pub(super) store: &'a ctx_store::Store,
     pub(super) queue: &'a mut VecDeque<QueuedMessage>,

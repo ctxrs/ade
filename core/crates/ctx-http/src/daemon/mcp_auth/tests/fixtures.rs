@@ -5,9 +5,9 @@ use ctx_core::models::{ExecutionEnvironment, Session, VcsKind};
 use ctx_mcp_auth::{McpAuthCapabilities, McpAuthContext};
 use ctx_store::StoreManager;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
-pub(super) async fn seeded_state() -> (tempfile::TempDir, Arc<AppState>, Session) {
+pub(super) async fn seeded_state() -> (tempfile::TempDir, Arc<DaemonState>, Session) {
     let data_dir = tempfile::tempdir().expect("create tempdir");
     let stores = StoreManager::open(data_dir.path())
         .await
@@ -69,7 +69,7 @@ pub(super) async fn seeded_state() -> (tempfile::TempDir, Arc<AppState>, Session
         .await
         .expect("index session");
 
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),
@@ -81,7 +81,7 @@ pub(super) async fn seeded_state() -> (tempfile::TempDir, Arc<AppState>, Session
 
 pub(super) async fn block_workspace_store_for_session(
     data_dir: &tempfile::TempDir,
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session: &Session,
 ) {
     state.cleanup_session(session.id).await;

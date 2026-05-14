@@ -60,7 +60,7 @@ pub(super) async fn wait_for_done_event(
 }
 
 pub(super) async fn assert_user_message_persisted(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session_id: ctx_core::ids::SessionId,
 ) {
     let store = state.store_for_session(session_id).await.unwrap();

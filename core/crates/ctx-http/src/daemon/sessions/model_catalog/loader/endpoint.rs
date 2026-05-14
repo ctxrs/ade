@@ -6,7 +6,7 @@ pub(super) enum EndpointModelCatalog {
 }
 
 pub(super) async fn load_endpoint_model_catalog(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace: &Workspace,
     provider_id: &str,
     cache_key: String,

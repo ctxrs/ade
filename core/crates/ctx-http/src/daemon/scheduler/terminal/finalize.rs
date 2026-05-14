@@ -6,7 +6,7 @@ use ctx_core::ids::{MessageId, RunId, SessionId, TurnId};
 use ctx_core::models::{RunStatus, SessionEventType};
 use ctx_providers::adapters::{ProviderTurnOutcome, ProviderTurnStatus};
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::persistence::persist_terminal_events;
 use super::types::{FailedTurnTerminalization, InterruptedTurnTerminalization};
@@ -18,7 +18,7 @@ use self::events::{
 mod events;
 
 pub(crate) async fn finalize_completed_turn(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session_id: SessionId,
     run_id: Option<RunId>,
     turn_id: TurnId,
@@ -40,7 +40,7 @@ pub(crate) async fn finalize_completed_turn(
 }
 
 pub(crate) async fn finalize_interrupted_turn(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session_id: SessionId,
     run_id: Option<RunId>,
     turn_id: TurnId,
@@ -64,7 +64,7 @@ pub(crate) async fn finalize_interrupted_turn(
 }
 
 pub(crate) async fn finalize_failed_turn(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session_id: SessionId,
     run_id: Option<RunId>,
     turn_id: TurnId,
@@ -88,7 +88,7 @@ pub(crate) async fn finalize_failed_turn(
 }
 
 pub(crate) async fn finalize_provider_outcome(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session_id: SessionId,
     run_id: Option<RunId>,
     turn_id: TurnId,

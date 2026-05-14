@@ -1,7 +1,7 @@
 use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{Workspace, Worktree};
 use ctx_settings_model::{ContainerRuntimeKind, ExecutionMode};
@@ -15,7 +15,7 @@ use super::{internal_error, TerminalLaunchError};
 mod runtime;
 
 pub(super) async fn prepare_terminal_container_launch(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace: &Workspace,
     worktree: Option<&Worktree>,
     effective: &ctx_settings_model::ExecutionSettings,

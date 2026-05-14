@@ -7,7 +7,7 @@ use super::*;
 async fn reconcile_running_turns_leaves_queued_turns_queued() {
     let temp = tempdir().unwrap();
     let stores = StoreManager::open(temp.path()).await.unwrap();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         temp.path().to_path_buf(),
         stores.clone(),
         HashMap::new(),

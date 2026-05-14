@@ -14,7 +14,7 @@ async fn post_message_fails_turn_start_when_agent_server_config_is_invalid() {
         HashMap::new();
     providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
 
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,
@@ -67,7 +67,7 @@ async fn post_message_fails_turn_start_when_workspace_runtime_settings_are_inval
         HashMap::new();
     providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
 
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,

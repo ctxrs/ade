@@ -6,7 +6,7 @@ use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
 use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
 
 use crate::daemon::execution_effective;
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::FileCompletionsError;
 
@@ -14,7 +14,7 @@ use super::FileCompletionsError;
 mod container_git;
 
 pub(super) async fn list_container_worktree_files(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     worktree: &Worktree,
     execution_environment: ExecutionEnvironment,
 ) -> Result<Vec<String>, FileCompletionsError> {

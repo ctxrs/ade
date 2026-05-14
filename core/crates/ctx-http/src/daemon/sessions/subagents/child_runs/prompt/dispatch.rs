@@ -2,11 +2,11 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::daemon::scheduler::{QueuedMessage, SchedulerCommand};
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_core::models::{Message, Session};
 
 pub(in crate::daemon::sessions::subagents) async fn dispatch_subagent_prompt(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session: &Session,
     saved: &Message,
 ) {

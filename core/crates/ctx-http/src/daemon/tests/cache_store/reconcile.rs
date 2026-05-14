@@ -4,7 +4,7 @@ use super::super::*;
 async fn reconcile_running_turns_does_not_cache_historical_workspace_stores() {
     let temp = tempdir().unwrap();
     let stores = StoreManager::open(temp.path()).await.unwrap();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         temp.path().to_path_buf(),
         stores.clone(),
         HashMap::new(),
@@ -37,7 +37,7 @@ async fn reconcile_running_turns_does_not_cache_historical_workspace_stores() {
 async fn reconcile_running_turns_keeps_cached_workspace_store_usable() {
     let temp = tempdir().unwrap();
     let stores = StoreManager::open(temp.path()).await.unwrap();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         temp.path().to_path_buf(),
         stores.clone(),
         HashMap::new(),

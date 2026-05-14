@@ -4,10 +4,10 @@ use ctx_core::ids::WorkspaceId;
 use ctx_core::models::Workspace;
 
 use crate::daemon::providers::auth_check::ProviderAuthCheckError;
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(super) async fn load_workspace(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
 ) -> Result<Workspace, ProviderAuthCheckError> {
     state

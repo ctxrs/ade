@@ -10,7 +10,7 @@ use runtime_parts::{
     build_tool_output_spool, build_transport_runtime, build_workspace_runtime,
 };
 
-impl AppState {
+impl DaemonState {
     pub fn new(
         data_root: PathBuf,
         stores: StoreManager,

@@ -2,12 +2,12 @@ use anyhow::Result;
 use ctx_core::ids::{TaskId, WorkspaceId};
 use ctx_core::models::Task;
 
-use crate::daemon::state::{AppState, WorkspaceRuntime};
+use crate::daemon::state::{DaemonState, WorkspaceRuntime};
 
 impl WorkspaceRuntime {
     pub async fn emit_workspace_task_upsert(
         &self,
-        state: &AppState,
+        state: &DaemonState,
         task_id: TaskId,
     ) -> Result<()> {
         let mut task: Option<Task> = None;
@@ -38,7 +38,7 @@ impl WorkspaceRuntime {
 
     pub async fn emit_workspace_task_delete(
         &self,
-        state: &AppState,
+        state: &DaemonState,
         workspace_id: WorkspaceId,
         task_id: TaskId,
     ) {
@@ -57,7 +57,7 @@ impl WorkspaceRuntime {
 
     pub async fn emit_workspace_archived_task_delete(
         &self,
-        state: &AppState,
+        state: &DaemonState,
         workspace_id: WorkspaceId,
         task_id: TaskId,
     ) {
@@ -94,7 +94,7 @@ impl WorkspaceRuntime {
 
     async fn emit_workspace_archived_task_upsert(
         &self,
-        state: &AppState,
+        state: &DaemonState,
         task: &Task,
     ) -> Result<()> {
         let store = state.store_for_task(task.id).await?;

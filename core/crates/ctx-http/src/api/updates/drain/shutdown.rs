@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
@@ -7,10 +5,11 @@ use axum::Json;
 use super::helpers::{internal_error_response, local_shutdown_token_authorized};
 use super::types::{ShutdownDaemonReq, ShutdownDaemonResp};
 use crate::api::errors::ApiErrorResp;
-use crate::daemon::{maintenance as daemon_maintenance, AppState};
+use crate::daemon::{maintenance as daemon_maintenance, CoreHandle, ExecutionHandle};
 
 pub(in crate::api) async fn shutdown_daemon(
-    State(state): State<Arc<AppState>>,
+    State(core): State<CoreHandle>,
+    State(execution): State<ExecutionHandle>,
     headers: HeaderMap,
     Json(req): Json<ShutdownDaemonReq>,
 ) -> Result<Json<ShutdownDaemonResp>, (StatusCode, Json<ApiErrorResp>)> {
@@ -22,7 +21,7 @@ pub(in crate::api) async fn shutdown_daemon(
             }),
         ));
     }
-    if !local_shutdown_token_authorized(&state, &headers) {
+    if !local_shutdown_token_authorized(&core, &headers) {
         return Err((
             StatusCode::FORBIDDEN,
             Json(ApiErrorResp {
@@ -35,7 +34,8 @@ pub(in crate::api) async fn shutdown_daemon(
         .reason
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| "desktop_quit".to_string());
-    let activity = daemon_maintenance::request_daemon_shutdown(state, reason)
+    let activity = execution
+        .request_daemon_shutdown(reason)
         .await
         .map_err(daemon_shutdown_error)?;
     Ok(Json(ShutdownDaemonResp {

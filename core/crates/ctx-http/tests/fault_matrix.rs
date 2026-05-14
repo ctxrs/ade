@@ -12,7 +12,7 @@ use tokio::process::Command;
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
 use ctx_core::models::SessionEventType;
-use ctx_http::{api, daemon::AppState};
+use ctx_http::{api, daemon::DaemonState};
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::StoreManager;
 
@@ -61,7 +61,7 @@ async fn setup_git_repo() -> tempfile::TempDir {
 }
 
 async fn setup_server() -> (
-    Arc<AppState>,
+    Arc<DaemonState>,
     tokio::task::JoinHandle<()>,
     std::net::SocketAddr,
     ctx_core::models::Workspace,
@@ -76,7 +76,7 @@ async fn setup_server() -> (
         HashMap::new();
     providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
 
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,

@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use axum::extract::ws::{CloseFrame, Message as WsMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -9,18 +7,18 @@ use tokio_tungstenite::tungstenite::{
     protocol::CloseFrame as TungsteniteCloseFrame, Message as TungsteniteMessage,
 };
 
-use crate::daemon::web_sessions::{self as daemon_web_sessions, WebSessionAccessError};
-use crate::daemon::AppState;
+use crate::daemon::{web_sessions::WebSessionAccessError, TransportHandle};
 
 use super::super::web_sessions::WebSessionStreamAccessQuery;
 
 pub(crate) async fn web_session_signal(
-    State(state): State<Arc<AppState>>,
+    State(state): State<TransportHandle>,
     Path(id): Path<String>,
     Query(query): Query<WebSessionStreamAccessQuery>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, StatusCode> {
-    daemon_web_sessions::authorize_web_session_signal_bridge(&state, &id, query.token.as_deref())
+    state
+        .authorize_web_session_signal_bridge(&id, query.token.as_deref())
         .await
         .map_err(web_session_access_status)?;
     let session_id = id.clone();
@@ -38,9 +36,9 @@ fn web_session_access_status(error: WebSessionAccessError) -> StatusCode {
     }
 }
 
-async fn handle_web_session_socket(socket: WebSocket, state: Arc<AppState>, session_id: String) {
+async fn handle_web_session_socket(socket: WebSocket, state: TransportHandle, session_id: String) {
     let (upstream, mut viewer_guard) =
-        match daemon_web_sessions::connect_web_session_signal_bridge(state, session_id).await {
+        match state.connect_web_session_signal_bridge(session_id).await {
             Ok(parts) => parts,
             Err(_) => {
                 let _ = socket.close().await;

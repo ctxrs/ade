@@ -5,14 +5,14 @@ use futures::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
-use ctx_http::daemon::AppState;
+use ctx_http::daemon::DaemonState;
 
 mod common;
 
 async fn setup() -> (
     tempfile::TempDir,
     tempfile::TempDir,
-    Arc<AppState>,
+    Arc<DaemonState>,
     common::TestServer,
 ) {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;

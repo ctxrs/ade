@@ -27,7 +27,7 @@ pub(crate) use self::types::{
     WaitAgentResp,
 };
 use crate::daemon::scheduler::SchedulerCommand;
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_core::ids::SessionId;
 use ctx_core::models::SubagentInvocationChild;
 

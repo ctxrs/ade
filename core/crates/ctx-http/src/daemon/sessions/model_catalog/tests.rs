@@ -5,7 +5,7 @@ use std::sync::Arc;
 use ctx_core::models::{VcsKind, Workspace};
 use ctx_store::StoreManager;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_settings_model::{ExecutionMode, ExecutionSettings, Settings};
 
 use super::load_provider_model_catalog;

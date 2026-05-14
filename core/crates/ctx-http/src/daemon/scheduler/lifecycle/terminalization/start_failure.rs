@@ -8,7 +8,7 @@ fn has_terminal_event(event_type: &SessionEventType) -> bool {
 }
 
 pub(crate) async fn finalize_start_failure_if_needed(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session_id: SessionId,
     run_id: Option<RunId>,
     turn_id: TurnId,

@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use anyhow::Result;
 
-use super::{daemon_turn_activity_summary, AppState};
+use super::{daemon_turn_activity_summary, DaemonState};
 
 struct ManagedDaemonAutoUpdateAppHooks {
-    state: Arc<AppState>,
+    state: Arc<DaemonState>,
 }
 
 #[async_trait::async_trait]
@@ -28,7 +28,7 @@ impl ctx_update_service::ManagedDaemonAutoUpdateHooks for ManagedDaemonAutoUpdat
     }
 }
 
-pub(super) fn spawn_managed_daemon_auto_update(state: Arc<AppState>, bind: Vec<String>) {
+pub(super) fn spawn_managed_daemon_auto_update(state: Arc<DaemonState>, bind: Vec<String>) {
     if !ctx_update_service::managed_daemon_auto_update_configured_from_env() {
         return;
     }

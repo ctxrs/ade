@@ -6,10 +6,10 @@ use chrono::{DateTime, Utc};
 use ctx_core::provider_ids::CODEX_PROVIDER_ID;
 use ctx_provider_runtime::provider_usage;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 async fn provider_usage_env(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     provider_id: &str,
 ) -> Result<HashMap<String, String>> {
     if provider_id != CODEX_PROVIDER_ID {
@@ -36,7 +36,7 @@ async fn provider_usage_env(
 }
 
 pub(crate) async fn load_provider_usage(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     provider_id: &str,
     refresh: bool,
 ) -> Result<provider_usage::ProviderUsageSnapshot> {
@@ -73,7 +73,7 @@ fn codex_account_usage_error(error: String) -> provider_usage::ProviderUsageSnap
 }
 
 pub(crate) async fn load_codex_accounts_usage(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     refresh: bool,
 ) -> Result<Vec<CodexAccountUsageRecord>> {
     let registry = ctx_provider_accounts::load_codex_registry(&state.core.data_root).await?;

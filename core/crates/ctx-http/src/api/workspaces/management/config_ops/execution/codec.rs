@@ -25,7 +25,7 @@ pub(super) fn project_workspace_execution_config(
 }
 
 pub(super) fn parse_execution_environment(
-    _state: &Arc<AppState>,
+    workspaces: &WorkspacesHandle,
     environment: &str,
 ) -> WorkspaceApiResult<ctx_workspace_config::ExecutionEnvironment> {
     match environment {
@@ -33,10 +33,7 @@ pub(super) fn parse_execution_environment(
         "sandbox" => {
             #[cfg(target_os = "macos")]
             {
-                if !ctx_harness_runtime::local_runtime_available(
-                    &_state.core.data_root,
-                    &ctx_settings_model::ContainerRuntimeKind::SharedVmContainer,
-                ) {
+                if !workspaces.shared_vm_container_runtime_available() {
                     return Err((
                         StatusCode::BAD_REQUEST,
                         Json(ApiErrorResp {

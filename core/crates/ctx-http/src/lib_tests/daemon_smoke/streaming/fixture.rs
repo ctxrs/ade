@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) struct StreamingServer {
-    pub(super) state: Arc<AppState>,
+    pub(super) state: Arc<DaemonState>,
     pub(super) base: String,
     pub(super) addr: std::net::SocketAddr,
     pub(super) client: reqwest::Client,
@@ -25,7 +25,7 @@ pub(super) async fn start_streaming_server() -> StreamingServer {
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         fake_provider_map(),
@@ -127,7 +127,7 @@ fn fake_provider_map() -> HashMap<String, Arc<dyn ctx_providers::adapters::Provi
     providers
 }
 
-async fn install_fake_provider_status(state: &Arc<AppState>) {
+async fn install_fake_provider_status(state: &Arc<DaemonState>) {
     let mut statuses = HashMap::new();
     statuses.insert(
         "fake".into(),

@@ -12,19 +12,22 @@ pub(in crate::api) struct ArchiveTaskResponse {
 }
 
 pub(in crate::api) async fn archive_task(
-    State(state): State<Arc<AppState>>,
+    State(sessions): State<SessionsHandle>,
+    State(providers): State<ProvidersHandle>,
+    State(workspaces): State<WorkspacesHandle>,
+    State(transport): State<TransportHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<ArchiveTaskResponse>, StatusCode> {
+    let handles = TaskApiHandles::new(sessions, providers, workspaces, transport);
     let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let store = state
-        .store_for_task(task_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-    let task = store
-        .get_task(task_id)
+    let ctx = handles
+        .sessions
+        .load_task_context(task_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
+    let store = ctx.store;
+    let task = ctx.task;
     let session_ids: Vec<SessionId> = store
         .list_all_sessions_for_task(task_id)
         .await
@@ -32,18 +35,13 @@ pub(in crate::api) async fn archive_task(
         .into_iter()
         .map(|session| session.id)
         .collect();
-    let workspace = state
-        .global_store()
-        .get_workspace(task.workspace_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let workspace = ctx.workspace;
     let sessions = store
         .list_all_sessions_for_task(task_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     for session in &sessions {
-        state.cleanup_session(session.id).await;
+        handles.sessions.cleanup_session(session.id).await;
     }
     let worktrees = load_archive_worktrees(&store, &task, &sessions).await?;
 
@@ -86,21 +84,24 @@ pub(in crate::api) async fn archive_task(
             }
         };
         cleanup_targets.push(TaskWorktreeCleanupTarget {
-            managed_root: managed_worktree_root(&state, &workspace, worktree),
+            managed_root: handles
+                .workspaces
+                .managed_worktree_root(&workspace, worktree),
             sandbox_binding,
             worktree: worktree.clone(),
             destroy_worktree_on_cleanup: true,
         });
     }
     errors.extend(
-        cleanup_task_worktrees(
-            state.as_ref(),
-            &workspace,
-            task_id,
-            &cleanup_targets,
-            BranchCleanupErrorMode::Report,
-        )
-        .await,
+        handles
+            .workspaces
+            .cleanup_task_worktrees(
+                &workspace,
+                task_id,
+                &cleanup_targets,
+                BranchCleanupErrorMode::Report,
+            )
+            .await,
     );
     let cleanup_failed = !errors.is_empty();
     if cleanup_failed {
@@ -117,17 +118,17 @@ pub(in crate::api) async fn archive_task(
         Some(task) => task,
         None => return Err(StatusCode::NOT_FOUND),
     };
-    let _ = state
+    let _ = handles
+        .workspaces
         .emit_workspace_task_delta(task.clone(), TaskDeltaKind::Archived)
         .await;
-    if let Err(e) = state.emit_workspace_task_upsert(task_id).await {
+    if let Err(e) = handles.workspaces.emit_workspace_task_upsert(task_id).await {
         tracing::warn!(task_id = %task_id.0, "workspace active snapshot refresh failed: {e:?}");
     }
     for session_id in session_ids {
-        state
-            .workspaces
-            .workspace_active_snapshot
-            .remove_session(session_id)
+        handles
+            .sessions
+            .remove_session_from_active_snapshot(session_id)
             .await;
     }
     Ok(Json(ArchiveTaskResponse {

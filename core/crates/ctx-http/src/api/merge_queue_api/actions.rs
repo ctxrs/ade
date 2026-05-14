@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
@@ -8,31 +6,30 @@ use ctx_core::models::MergeQueueEntry;
 
 use super::request::MergeQueueListParams;
 use crate::api::errors::ApiErrorResp;
-use crate::api::shared::store_for_existing_workspace_status;
-use crate::daemon::{merge_queue, AppState};
+use crate::daemon::WorkspacesHandle;
 
 pub(in crate::api) async fn list_merge_queue_entries(
-    State(state): State<Arc<AppState>>,
+    State(state): State<WorkspacesHandle>,
     Query(params): Query<MergeQueueListParams>,
 ) -> Result<Json<Vec<MergeQueueEntry>>, StatusCode> {
     let workspace_id = WorkspaceId(
         uuid::Uuid::parse_str(&params.workspace_id).map_err(|_| StatusCode::BAD_REQUEST)?,
     );
-    let store = store_for_existing_workspace_status(&state, workspace_id).await?;
-    let entries = store
-        .list_merge_queue_entries(workspace_id, params.limit)
+    let entries = state
+        .list_merge_queue_entries_for_route(workspace_id, params.limit)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(entries))
 }
 
 pub(in crate::api) async fn cancel_merge_queue_entry(
-    State(state): State<Arc<AppState>>,
+    State(state): State<WorkspacesHandle>,
     Path((workspace_id, id)): Path<(String, String)>,
 ) -> Result<Json<MergeQueueEntry>, (StatusCode, Json<ApiErrorResp>)> {
     let workspace_id = parse_workspace_id(&workspace_id)?;
     let entry_id = parse_entry_id(&id)?;
-    let entry = merge_queue::cancel_merge_queue_entry(&state, workspace_id, entry_id)
+    let entry = state
+        .cancel_merge_queue_entry(workspace_id, entry_id)
         .await
         .map_err(|err| {
             (
@@ -46,12 +43,13 @@ pub(in crate::api) async fn cancel_merge_queue_entry(
 }
 
 pub(in crate::api) async fn retry_merge_queue_entry(
-    State(state): State<Arc<AppState>>,
+    State(state): State<WorkspacesHandle>,
     Path((workspace_id, id)): Path<(String, String)>,
 ) -> Result<Json<MergeQueueEntry>, (StatusCode, Json<ApiErrorResp>)> {
     let workspace_id = parse_workspace_id(&workspace_id)?;
     let entry_id = parse_entry_id(&id)?;
-    let entry = merge_queue::retry_merge_queue_entry(&state, workspace_id, entry_id)
+    let entry = state
+        .retry_merge_queue_entry(workspace_id, entry_id)
         .await
         .map_err(|err| {
             (

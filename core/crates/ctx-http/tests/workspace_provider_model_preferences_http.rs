@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::http::{Method, StatusCode};
-use ctx_http::daemon::AppState;
+use ctx_http::daemon::DaemonState;
 use ctx_providers::adapters::{
     ProviderAdapter, ProviderRecommendedAction, ProviderUsability, ProviderUsabilityStatus,
 };
@@ -21,7 +21,7 @@ fn fake_codex_providers() -> HashMap<String, Arc<dyn ProviderAdapter>> {
 async fn build_state_with_fake_codex(
     data_root: &std::path::Path,
     stores: StoreManager,
-) -> Arc<AppState> {
+) -> Arc<DaemonState> {
     let state = common::build_state(
         data_root,
         stores,

@@ -7,12 +7,12 @@ use ctx_core::models::{SandboxBinding, Workspace, Worktree};
 use ctx_settings_model::ExecutionSettings;
 use ctx_store::Store;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::retry_global_index_write;
 
 pub(crate) async fn persist_provisioned_worktree(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     store: &Store,
     workspace: &Workspace,
     worktree: Worktree,
@@ -61,7 +61,7 @@ pub(crate) async fn persist_provisioned_worktree(
 }
 
 pub(crate) async fn provision_worktree_for_execution(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace: &Workspace,
     worktree_id: WorktreeId,
     base_commit_sha: &str,

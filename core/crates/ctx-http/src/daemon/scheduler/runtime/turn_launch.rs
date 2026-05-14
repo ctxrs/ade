@@ -13,7 +13,7 @@ use ctx_providers::adapters::{ProviderAdapter, TurnInput};
 use ctx_session_tools::order_seq::OrderSeqState;
 use ctx_store::Store;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::event_loop::{spawn_turn_event_loop_for_session, TurnEventLoopSpawnRequest};
 use super::provider_spawn::{spawn_provider_turn, ProviderTurnSpawnRequest};
@@ -22,7 +22,7 @@ use super::turn_channels::TurnRuntimeChannels;
 use crate::daemon::scheduler::lifecycle::RunningTurn;
 
 pub(super) struct TurnLaunchRequest<'a> {
-    pub(super) state: &'a Arc<AppState>,
+    pub(super) state: &'a Arc<DaemonState>,
     pub(super) store: &'a Store,
     pub(super) session: &'a Session,
     pub(super) adapter: Arc<dyn ProviderAdapter>,

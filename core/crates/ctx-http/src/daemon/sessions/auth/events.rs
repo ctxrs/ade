@@ -6,12 +6,12 @@ use ctx_providers::events::NormalizedEvent;
 use ctx_session_tools::order_seq::attach_order_seq;
 use tokio::sync::mpsc;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::SessionAuthError;
 
 pub(super) fn spawn_session_auth_event_sink(
-    state: Arc<AppState>,
+    state: Arc<DaemonState>,
     store: ctx_store::Store,
     session_id: SessionId,
 ) -> mpsc::Sender<NormalizedEvent> {
@@ -96,7 +96,7 @@ fn should_attach_order_seq(event: &NormalizedEvent) -> bool {
 }
 
 pub(super) async fn append_auth_notice(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     store: &ctx_store::Store,
     session_id: SessionId,
     payload: serde_json::Value,

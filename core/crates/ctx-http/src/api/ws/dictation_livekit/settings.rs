@@ -5,7 +5,7 @@ use ctx_transport_runtime::dictation_livekit::{
 };
 use serde::Serialize;
 
-use crate::daemon::{settings as daemon_settings, AppState};
+use crate::daemon::CoreHandle;
 
 #[derive(Debug)]
 pub(super) struct DictationStreamError {
@@ -41,9 +41,9 @@ pub(super) async fn send_dictation_error(socket: &mut WebSocket, error: Dictatio
 }
 
 pub(super) async fn load_livekit_dictation_config(
-    state: &AppState,
+    state: &CoreHandle,
 ) -> Result<LiveKitDictationConfig, DictationStreamError> {
-    let settings = daemon_settings::load_settings(state).await.map_err(|err| {
+    let settings = state.load_settings().await.map_err(|err| {
         DictationStreamError::new(
             format!("Failed to load dictation settings: {err}"),
             "{\"type\":\"error\",\"message\":\"dictation unavailable\"}",

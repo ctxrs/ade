@@ -4,13 +4,29 @@ use ctx_transport_runtime::{
 };
 use errors::desktop_auth_required_secure_response;
 pub(super) use errors::{mobile_scope_required_secure_response, SecureProxyError};
-use tower::util::ServiceExt;
+
+use crate::daemon::{CoreHandle, DaemonHandle, WorkspacesHandle};
 
 #[path = "secure_proxy/errors.rs"]
 mod errors;
 
+#[derive(Clone)]
+pub(in crate::api) struct SecureProxyRouterState {
+    core: CoreHandle,
+    workspaces: WorkspacesHandle,
+}
+
+impl axum::extract::FromRef<DaemonHandle> for SecureProxyRouterState {
+    fn from_ref(handle: &DaemonHandle) -> Self {
+        Self {
+            core: handle.core(),
+            workspaces: handle.workspaces(),
+        }
+    }
+}
+
 pub(super) async fn proxy_secure_request(
-    state: &Arc<AppState>,
+    router_state: &SecureProxyRouterState,
     mobile_auth: MobileAuthContext,
     mut payload: SecureRequestPayload,
 ) -> Result<SecureResponsePayload, SecureProxyError> {
@@ -52,8 +68,8 @@ pub(super) async fn proxy_secure_request(
         uri.push_str(query.trim_start_matches('?'));
     }
 
-    let body = decode_body_b64(&payload.body_b64).map_err(SecureProxyError::bad_request_owned)?;
-    let mut builder = Request::builder().method(method).uri(uri);
+    let _body = decode_body_b64(&payload.body_b64).map_err(SecureProxyError::bad_request_owned)?;
+    let mut headers = HeaderMap::new();
     for (name, value) in payload.headers {
         if name.eq_ignore_ascii_case("host") || name.eq_ignore_ascii_case("content-length") {
             continue;
@@ -64,19 +80,12 @@ pub(super) async fn proxy_secure_request(
         let Ok(header_value) = header::HeaderValue::from_str(&value) else {
             continue;
         };
-        builder = builder.header(header_name, header_value);
+        headers.insert(header_name, header_value);
     }
 
-    let mut req = builder
-        .body(Body::from(body))
-        .map_err(|_| SecureProxyError::bad_request("failed to build proxied request"))?;
-    req.extensions_mut().insert(mobile_auth);
-
-    let app = router(state.clone());
-    let resp = app
-        .oneshot(req)
-        .await
-        .map_err(|_| SecureProxyError::bad_gateway("failed to proxy request"))?;
+    let resp =
+        dispatch_scoped_secure_proxy_request(router_state, method, &uri, headers, mobile_auth)
+            .await;
 
     let status = resp.status().as_u16();
     let headers: Vec<(String, String)> = resp
@@ -93,4 +102,36 @@ pub(super) async fn proxy_secure_request(
         headers,
         body_b64,
     })
+}
+
+async fn dispatch_scoped_secure_proxy_request(
+    state: &SecureProxyRouterState,
+    method: axum::http::Method,
+    uri: &str,
+    headers: HeaderMap,
+    _mobile_auth: MobileAuthContext,
+) -> Response {
+    let path = uri.split_once('?').map(|(path, _)| path).unwrap_or(uri);
+    if method != axum::http::Method::GET {
+        return StatusCode::METHOD_NOT_ALLOWED.into_response();
+    }
+    if path == "/api/health" {
+        return health(State(state.core.clone()), headers)
+            .await
+            .into_response();
+    }
+    if path == "/api/workspaces" {
+        return list_workspaces(State(state.workspaces.clone()))
+            .await
+            .into_response();
+    }
+    if let Some(workspace_id) = path.strip_prefix("/api/workspaces/") {
+        return get_workspace(
+            State(state.workspaces.clone()),
+            Path(workspace_id.to_string()),
+        )
+        .await
+        .into_response();
+    }
+    StatusCode::NOT_FOUND.into_response()
 }

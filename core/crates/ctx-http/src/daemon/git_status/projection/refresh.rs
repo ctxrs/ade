@@ -7,7 +7,7 @@ use ctx_workspace_services::worktree_vcs::{
     worktree_vcs_projection_cache_state, WorktreeDiffBaseResolution, WorktreeVcsDiffBaseQuery,
 };
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use self::status::{load_status_projection, StatusProjectionOutcome};
 use self::touched::{refresh_touched_files_projection, TouchedFilesRefreshOutcome};
@@ -23,7 +23,7 @@ mod summary;
 mod touched;
 
 pub(in crate::daemon::git_status) async fn refresh_worktree_vcs_projection(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     worktree: &Worktree,
     refresh_summary: bool,
     refresh_touched_files: bool,

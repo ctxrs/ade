@@ -7,7 +7,7 @@ use axum::http::{Request, StatusCode};
 use serde_json::Value;
 use tower::ServiceExt;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_core::ids::WorkspaceId;
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_sandbox_materialization::set_test_preflight_storage_samples_override;
@@ -36,11 +36,11 @@ fn git(args: &[&str], cwd: &Path) {
     assert!(status.success(), "git {args:?} failed");
 }
 
-pub(super) async fn test_state(data_root: &Path) -> Arc<AppState> {
+pub(super) async fn test_state(data_root: &Path) -> Arc<DaemonState> {
     let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
         HashMap::new();
     providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-    Arc::new(AppState::new(
+    Arc::new(DaemonState::new(
         data_root.to_path_buf(),
         StoreManager::open(data_root).await.expect("open stores"),
         providers,
@@ -50,7 +50,7 @@ pub(super) async fn test_state(data_root: &Path) -> Arc<AppState> {
 }
 
 pub(super) async fn save_test_execution_settings(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     execution: ExecutionSettings,
 ) {
     ctx_settings_service::save_settings(

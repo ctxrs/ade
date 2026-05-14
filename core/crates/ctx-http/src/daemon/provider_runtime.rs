@@ -3,9 +3,9 @@ use std::path::Path;
 use ctx_provider_runtime::ProviderRuntime;
 use tokio::sync::broadcast;
 
-use super::AppState;
+use super::DaemonState;
 
-impl ctx_provider_runtime::ProviderRuntimeHost for AppState {
+impl ctx_provider_runtime::ProviderRuntimeHost for DaemonState {
     fn data_root(&self) -> &Path {
         &self.core.data_root
     }
@@ -25,7 +25,7 @@ impl ctx_provider_runtime::ProviderRuntimeHost for AppState {
     }
 }
 
-impl ctx_provider_runtime::provider_usage::ProviderUsageHost for AppState {
+impl ctx_provider_runtime::provider_usage::ProviderUsageHost for DaemonState {
     fn data_root(&self) -> &Path {
         &self.core.data_root
     }

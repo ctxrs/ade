@@ -8,7 +8,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use axum::http::StatusCode;
-use ctx_http::daemon::AppState;
+use ctx_http::daemon::DaemonState;
 use ctx_managed_installs::{
     load_agent_server_config, save_agent_server_config, AgentServerCommand, AgentServerConfigFile,
     ManagedInstallMetadata,
@@ -54,7 +54,7 @@ async fn env_lock() -> tokio::sync::OwnedMutexGuard<()> {
         .await
 }
 
-async fn seed_provider_status(state: &Arc<AppState>, status: ProviderStatus) {
+async fn seed_provider_status(state: &Arc<DaemonState>, status: ProviderStatus) {
     let provider_id = status.provider_id.clone();
     state
         .providers
@@ -264,7 +264,7 @@ async fn save_managed_provider_target(
 }
 
 async fn wait_for_install_completion(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     install_id: InstallId,
 ) -> ctx_provider_install::install_state::InstallInfo {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(20);

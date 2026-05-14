@@ -1,7 +1,7 @@
 use super::*;
 use ctx_provider_runtime::{CachedProviderOptions, CachedProviderVerify};
 
-async fn insert_options_cache(state: &Arc<AppState>, key: &str, value: serde_json::Value) {
+async fn insert_options_cache(state: &Arc<DaemonState>, key: &str, value: serde_json::Value) {
     state
         .providers
         .with_provider_options_cache(|cache| {
@@ -16,7 +16,7 @@ async fn insert_options_cache(state: &Arc<AppState>, key: &str, value: serde_jso
         .await;
 }
 
-async fn insert_verify_cache(state: &Arc<AppState>, key: &str, value: serde_json::Value) {
+async fn insert_verify_cache(state: &Arc<DaemonState>, key: &str, value: serde_json::Value) {
     state
         .providers
         .with_provider_verify_cache(|cache| {
@@ -35,7 +35,7 @@ async fn insert_verify_cache(state: &Arc<AppState>, key: &str, value: serde_json
 async fn select_provider_harness_source_invalidates_only_matching_provider_probe_caches() {
     let temp = tempfile::tempdir().expect("tempdir");
     let stores = StoreManager::open(temp.path()).await.expect("open stores");
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         temp.path().to_path_buf(),
         stores,
         HashMap::new(),
@@ -69,7 +69,7 @@ async fn select_provider_harness_source_invalidates_only_matching_provider_probe
     .await;
 
     let Json(config) = select_provider_harness_source(
-        State(Arc::clone(&state)),
+        State(crate::daemon::DaemonHandle::new(Arc::clone(&state)).providers()),
         Path("codex".to_string()),
         Json(SelectHarnessSourceReq {
             source_kind: HarnessSourceKind::Subscription,

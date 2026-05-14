@@ -8,7 +8,7 @@ use ctx_provider_runtime::provider_launch::runtime_probe::{
 use ctx_providers::crp::{probe_crp_models, CrpModelsProbe};
 
 use crate::daemon::providers::install_target_for_workspace;
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(crate) enum PreparedProviderRuntimeProbeError {
     ExecutionSettings(anyhow::Error),
@@ -27,7 +27,7 @@ pub(crate) struct ProviderAuthVerificationRuntimeProbe {
 }
 
 pub(crate) async fn prepare_provider_runtime_probe(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace: &ctx_core::models::Workspace,
     provider_id: &str,
     selected_endpoint_id: Option<String>,
@@ -59,7 +59,7 @@ pub(crate) async fn prepare_provider_runtime_probe(
 }
 
 pub(crate) async fn probe_provider_auth_verification_runtime(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace: &ctx_core::models::Workspace,
     provider_id: &str,
     selected_endpoint_id: Option<String>,
@@ -95,7 +95,7 @@ pub(crate) async fn probe_provider_auth_verification_runtime(
 }
 
 pub(crate) async fn provider_has_active_auth_for_workspace_runtime(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace: &ctx_core::models::Workspace,
     provider_id: &str,
     source_config: Option<&ctx_harness_sources::HarnessProviderSourceConfig>,
@@ -110,7 +110,7 @@ pub(crate) async fn provider_has_active_auth_for_workspace_runtime(
 }
 
 pub(crate) async fn probe_provider_options_env(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace: &ctx_core::models::Workspace,
     provider_id: &str,
 ) -> ProviderRuntimeProbeStatus {
@@ -127,7 +127,7 @@ pub(crate) async fn probe_provider_options_env(
 }
 
 pub(crate) async fn probe_selected_endpoint_runtime_launch(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace: &ctx_core::models::Workspace,
     provider_id: &str,
     endpoint_id: String,
@@ -161,7 +161,7 @@ pub(crate) async fn probe_selected_endpoint_runtime_launch(
 }
 
 pub(crate) async fn probe_runtime_models_for_provider_options(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace: &ctx_core::models::Workspace,
     provider_id: &str,
 ) -> Result<anyhow::Result<CrpModelsProbe>, anyhow::Error> {

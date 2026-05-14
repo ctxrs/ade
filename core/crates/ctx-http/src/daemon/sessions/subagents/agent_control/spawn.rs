@@ -1,7 +1,7 @@
 use super::super::*;
 
 pub(crate) async fn spawn_agent(
-    state: Arc<AppState>,
+    state: Arc<DaemonState>,
     parent_id: SessionId,
     req: SpawnAgentReq,
 ) -> ApiResult<SpawnAgentResp> {

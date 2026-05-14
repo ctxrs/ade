@@ -19,7 +19,7 @@ async fn diagnostics_marks_provider_statuses_with_agent_server_config_errors() {
     let data_dir = tempfile::tempdir().unwrap();
     write_invalid_agent_server_config(data_dir.path());
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),

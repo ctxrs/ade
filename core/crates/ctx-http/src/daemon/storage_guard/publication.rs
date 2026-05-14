@@ -8,10 +8,10 @@ use ctx_storage_admission::{
 use serde_json::json;
 
 use crate::daemon::scheduler::SchedulerCommand;
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(super) async fn publish_storage_guard_snapshot(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     previous: &StorageGuardStatus,
     snapshot: &StorageGuardStatus,
 ) {
@@ -26,7 +26,7 @@ pub(super) async fn publish_storage_guard_snapshot(
     }
 }
 
-fn emit_storage_guard_transition(state: &AppState, snapshot: &StorageGuardStatus) {
+fn emit_storage_guard_transition(state: &DaemonState, snapshot: &StorageGuardStatus) {
     let mut event = OpsEvent::new(
         match snapshot.level {
             StorageGuardLevel::Emergency => "error",
@@ -65,7 +65,7 @@ pub(super) fn emit_reserve_warnings(warnings: Vec<StorageGuardReserveWarning>) {
 }
 
 async fn dispatch_storage_emergency_interrupts(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     snapshot: &StorageGuardStatus,
 ) {
     let running_sessions = state.running_session_ids().await;
@@ -85,7 +85,7 @@ async fn dispatch_storage_emergency_interrupts(
 }
 
 pub(super) async fn dispatch_storage_emergency_interrupt(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session_id: SessionId,
 ) -> bool {
     let Some(tx) = state.session_scheduler_sender(session_id).await else {

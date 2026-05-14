@@ -7,10 +7,10 @@ use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_wo
 
 use super::ensure_workspace_attachments_for_worktrees_with_attachments;
 use crate::daemon::execution_effective;
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 #[async_trait::async_trait]
-impl workspace_attachments::WorkspaceAttachmentsHost for AppState {
+impl workspace_attachments::WorkspaceAttachmentsHost for DaemonState {
     fn data_root(&self) -> &std::path::Path {
         &self.core.data_root
     }
@@ -88,7 +88,7 @@ impl workspace_attachments::WorkspaceAttachmentsHost for AppState {
 }
 
 #[async_trait::async_trait]
-impl ctx_workspace_attachments::WorkspaceAttachmentMountHost for AppState {
+impl ctx_workspace_attachments::WorkspaceAttachmentMountHost for DaemonState {
     fn data_root(&self) -> &std::path::Path {
         &self.core.data_root
     }

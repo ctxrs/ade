@@ -43,7 +43,7 @@ use runtime_adapters::{
 
 pub(crate) use store_lookup::{SessionStoreAccessError, WorkspaceStoreAccessError};
 pub use types::{
-    AppRuntimeFlags, AppState, CoreState, ExecutionRuntime, ProviderRuntime, SessionRuntime,
+    AppRuntimeFlags, CoreState, DaemonState, ExecutionRuntime, ProviderRuntime, SessionRuntime,
     StoreLookup, TelemetryRuntime, TransportRuntime, WorkspaceRuntime,
 };
 pub(crate) use types::{AttachmentMaterializationTask, WorktreeBootstrapGate};

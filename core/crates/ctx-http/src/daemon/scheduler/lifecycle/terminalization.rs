@@ -8,7 +8,7 @@ use ctx_core::ids::{MessageId, RunId, SessionId, TurnId};
 use ctx_core::models::{SessionEventType, SessionTurnStatus};
 use ctx_providers::adapters::{ProviderTurnOutcome, RunHandle};
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::super::reconcile::reconcile_turn_terminal_state;
 use super::super::terminal::{
@@ -57,7 +57,7 @@ fn provider_protocol_violation(reason: &str, message: &str) -> ProviderTurnOutco
     ProviderTurnOutcome::protocol_violation(reason, message)
 }
 
-pub(super) async fn revoke_turn_mcp_token(state: &Arc<AppState>, token: &mut Option<String>) {
+pub(super) async fn revoke_turn_mcp_token(state: &Arc<DaemonState>, token: &mut Option<String>) {
     if let Some(token) = token.take() {
         crate::daemon::revoke_provider_session_mcp_token(state.as_ref(), &token).await;
     }

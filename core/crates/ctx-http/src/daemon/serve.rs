@@ -57,7 +57,7 @@ pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
     auth.daemon_url = Some(daemon_url.clone());
     daemon_auth::write_daemon_auth_file(&daemon_auth::daemon_auth_path(&data_root), &auth)?;
 
-    let state = Arc::new(AppState::new_with_public_base_url(
+    let state = Arc::new(DaemonState::new_with_public_base_url(
         data_root,
         stores,
         providers,
@@ -65,6 +65,7 @@ pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
         public_base_url,
         auth_token,
     ));
+    let handle = DaemonHandle::new(state.clone());
     state.transport.web_sessions.clone().start_reaper().await;
     state.transport.terminals.clone().start_reaper().await;
     lifecycle::spawn_cache_sweeper(state.clone());
@@ -107,7 +108,7 @@ pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
     }
 
     background::spawn_daemon_background_services(state.clone(), requested_binds.clone());
-    let app: Router = api::router(state.clone());
+    let app: Router = api::router(handle);
 
     let bound_addrs = listeners
         .iter()

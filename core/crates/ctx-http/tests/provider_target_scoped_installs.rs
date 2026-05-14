@@ -11,7 +11,7 @@ use std::time::Duration;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use ctx_core::models::SessionEventType;
-use ctx_http::daemon::AppState;
+use ctx_http::daemon::DaemonState;
 use ctx_managed_installs::{
     agent_server_config_path, load_agent_server_config, refresh_provider_statuses,
     save_agent_server_config, AgentServerCommand, AgentServerConfigFile, ManagedInstallMetadata,
@@ -102,7 +102,7 @@ async fn write_invalid_agent_server_config(data_root: &Path) {
         .expect("write invalid agent server config");
 }
 
-async fn seed_provider_status(state: &Arc<AppState>, status: ProviderStatus) {
+async fn seed_provider_status(state: &Arc<DaemonState>, status: ProviderStatus) {
     let provider_id = status.provider_id.clone();
     state
         .providers
@@ -415,7 +415,7 @@ async fn seed_target_scoped_codex_runtime(data_root: &Path) -> SeededRuntime {
     }
 }
 
-async fn build_state_with_host_codex(data_root: &Path, host_command: &str) -> Arc<AppState> {
+async fn build_state_with_host_codex(data_root: &Path, host_command: &str) -> Arc<DaemonState> {
     let stores = common::setup_store(data_root).await;
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert(
@@ -493,7 +493,7 @@ async fn set_workspace_container_execution(
 }
 
 async fn write_workspace_container_execution_without_runtime_probe(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: uuid::Uuid,
 ) {
     let store = state
@@ -516,7 +516,7 @@ async fn write_workspace_container_execution_without_runtime_probe(
 }
 
 async fn assert_target_adapter_not_cached(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     provider_id: &str,
     target: InstallTarget,
     context: &str,
@@ -885,14 +885,14 @@ fn npm_harness_with_archive_targets_fixture_entry(
 }
 
 async fn wait_for_install_completion(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     install_id: InstallId,
 ) -> ctx_provider_install::install_state::InstallInfo {
     wait_for_install_completion_with_timeout(state, install_id, Duration::from_secs(60)).await
 }
 
 async fn wait_for_install_completion_with_timeout(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     install_id: InstallId,
     timeout: Duration,
 ) -> ctx_provider_install::install_state::InstallInfo {
@@ -976,7 +976,7 @@ async fn get_install_info_api(app: &axum::Router, install_id: InstallId) -> Inst
 }
 
 async fn wait_for_running_install_progress(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     install_id: InstallId,
 ) -> ctx_provider_install::install_state::InstallInfo {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
@@ -997,7 +997,7 @@ async fn wait_for_running_install_progress(
 }
 
 async fn wait_for_running_install_id(
-    state: &AppState,
+    state: &DaemonState,
     provider_id: &str,
     target: Option<InstallTarget>,
 ) -> InstallId {
@@ -1015,7 +1015,7 @@ async fn wait_for_running_install_id(
 }
 
 async fn wait_for_tracked_install_id(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     provider_id: &str,
     target: Option<InstallTarget>,
 ) -> InstallId {
@@ -1039,7 +1039,7 @@ async fn wait_for_tracked_install_id(
 }
 
 async fn wait_for_prerequisite_visibility(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     app: &axum::Router,
     install_id: InstallId,
     prerequisite_install_id: InstallId,
@@ -1128,7 +1128,7 @@ async fn post_message(app: &axum::Router, session_id: uuid::Uuid, content: &str)
     assert_eq!(status, StatusCode::OK, "message post failed: {body:#?}");
 }
 
-async fn wait_for_done(state: &Arc<AppState>, session_id: ctx_core::ids::SessionId) {
+async fn wait_for_done(state: &Arc<DaemonState>, session_id: ctx_core::ids::SessionId) {
     let store = state.store_for_session(session_id).await.expect("store");
     let deadline = tokio::time::Instant::now() + Duration::from_secs(90);
     loop {

@@ -36,7 +36,7 @@ pub(crate) struct CodexLoginCompleteResp {
 }
 
 pub(crate) async fn start_codex_login(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<CodexLoginStartReq>,
 ) -> Result<Json<CodexLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
@@ -46,7 +46,8 @@ pub(crate) async fn start_codex_login(
         label,
         account_dir,
         codex_bin,
-    } = crate::daemon::providers::prepare_codex_login_start(&state, req.label)
+    } = providers
+        .prepare_codex_login_start(req.label)
         .await
         .map_err(|e| {
             (
@@ -68,17 +69,17 @@ pub(crate) async fn start_codex_login(
             ));
         }
     };
-    let started_login = crate::daemon::providers::start_codex_login_session(
-        &state,
-        account_id,
-        login.auth_url.clone(),
-        expected_callback_from_auth_url(&login.auth_url),
-    )
-    .await;
-    let state_clone = Arc::clone(&state);
+    let started_login = providers
+        .start_codex_login_session(
+            account_id,
+            login.auth_url.clone(),
+            expected_callback_from_auth_url(&login.auth_url),
+        )
+        .await;
+    let providers_clone = providers.clone();
     let account_id_for_task = started_login.account_id.clone();
     tokio::spawn(async move {
-        monitor_codex_login(state_clone, account_id_for_task, label, login).await;
+        monitor_codex_login(providers_clone, account_id_for_task, label, login).await;
     });
 
     Ok(Json(CodexLoginStartResp {
@@ -90,21 +91,19 @@ pub(crate) async fn start_codex_login(
 }
 
 pub(crate) async fn get_codex_login(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Path(id): Path<String>,
 ) -> Result<Json<provider_accounts::CodexLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let status = crate::daemon::providers::codex_login_status(&state, &id)
-        .await
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: "login not found".to_string(),
-                }),
-            )
-        })?;
+    let status = providers.codex_login_status(&id).await.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "login not found".to_string(),
+            }),
+        )
+    })?;
     Ok(Json(status))
 }
 

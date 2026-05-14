@@ -5,7 +5,7 @@ use ctx_core::models::{SandboxBinding, Workspace, Worktree};
 use ctx_workspace_services::vcs_hooks;
 use ctx_workspace_services::worktree_vcs::matching_managed_worktree_path;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use branches::{cleanup_collected_worktree_branches, WorktreeBranchCleanup};
 use managed::cleanup_managed_worktree_target;
 use sandbox::{cleanup_sandbox_materialization, SandboxCleanupOutcome};
@@ -32,7 +32,7 @@ pub(crate) struct TaskWorktreeCleanupTarget {
 }
 
 pub(crate) fn managed_worktree_root(
-    state: &AppState,
+    state: &DaemonState,
     workspace: &Workspace,
     worktree: &Worktree,
 ) -> Option<PathBuf> {
@@ -45,7 +45,7 @@ pub(crate) fn managed_worktree_root(
 }
 
 pub(crate) async fn cleanup_task_worktrees(
-    state: &AppState,
+    state: &DaemonState,
     workspace: &Workspace,
     task_id: TaskId,
     targets: &[TaskWorktreeCleanupTarget],

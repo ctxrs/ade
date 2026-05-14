@@ -1,5 +1,4 @@
 use std::path::{Path as StdPath, PathBuf};
-use std::sync::Arc;
 
 use axum::body::Body;
 use axum::extract::{Path, Request, State};
@@ -16,7 +15,7 @@ use sha2::Digest;
 use tokio_util::io::ReaderStream;
 
 use super::super::errors::ApiErrorResp;
-use crate::daemon::AppState;
+use crate::daemon::CoreHandle;
 
 #[path = "blob/errors.rs"]
 mod errors;
@@ -47,7 +46,7 @@ pub(in crate::api) const MAX_BLOB_MULTIPART_BODY_BYTES: usize =
     SESSION_IMAGE_BLOB_MULTIPART_MAX_BYTES;
 
 pub(in crate::api) async fn upload_blob(
-    State(state): State<Arc<AppState>>,
+    State(state): State<CoreHandle>,
     req: Request,
 ) -> Result<Json<BlobUploadResp>, (StatusCode, Json<ApiErrorResp>)> {
     let file = parse_blob_upload_file(req, &state).await?;
@@ -58,11 +57,10 @@ pub(in crate::api) async fn upload_blob(
 }
 
 pub(in crate::api) async fn get_blob(
-    State(state): State<Arc<AppState>>,
+    State(state): State<CoreHandle>,
     Path(id): Path<String>,
 ) -> Result<Response, StatusCode> {
     let Some((_sha256, mime_type, _bytes, name, _created_at)) = state
-        .global_store()
         .get_blob(&id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
@@ -70,7 +68,7 @@ pub(in crate::api) async fn get_blob(
         return Err(StatusCode::NOT_FOUND);
     };
 
-    let path = blobs_dir(&state.core.data_root).join(&id);
+    let path = blobs_dir(state.data_root()).join(&id);
     let file = tokio::fs::File::open(&path)
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;

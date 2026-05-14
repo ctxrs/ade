@@ -1,11 +1,8 @@
 use super::*;
-use crate::daemon::git_status::HttpWorktreeVcsSource;
-use crate::daemon::workspaces::diff_worktree_summary_for_session;
 use ctx_workspace_services::worktree_vcs::{
     is_no_vcs_repo_error, worktree_vcs_diff_summary_mismatch,
     worktree_vcs_session_diff_summary_available, worktree_vcs_session_diff_summary_no_repo,
-    worktree_vcs_session_diff_summary_unavailable, WorktreeVcsCommitLookupSource,
-    WorktreeVcsSessionDiffSummaryOutcome,
+    worktree_vcs_session_diff_summary_unavailable, WorktreeVcsSessionDiffSummaryOutcome,
 };
 
 pub(super) fn session_diff_summary_no_repo_response(
@@ -15,7 +12,7 @@ pub(super) fn session_diff_summary_no_repo_response(
 }
 
 pub(super) async fn session_diff_summary_unavailable_response(
-    state: &Arc<AppState>,
+    state: &SessionsHandle,
     worktree: &Worktree,
     base_commit_sha: String,
     unavailable_reason: DiffUnavailableReason,
@@ -29,23 +26,25 @@ pub(super) async fn session_diff_summary_unavailable_response(
 }
 
 pub(super) async fn session_diff_summary_available_response(
-    state: &Arc<AppState>,
+    state: &SessionsHandle,
     worktree: &Worktree,
     base_commit_sha: String,
 ) -> Result<SessionDiffSummaryResponse, (StatusCode, Json<ApiErrorResp>)> {
-    let summary_counts =
-        match diff_worktree_summary_for_session(state, worktree, &base_commit_sha).await {
-            Ok(counts) => Ok(counts),
-            Err(err) if is_no_vcs_repo_error(&err) => Err(DiffUnavailableReason::NoRepo),
-            Err(err) => {
-                return Err((
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: logs::redact_sensitive(&err.to_string()),
-                    }),
-                ));
-            }
-        };
+    let summary_counts = match state
+        .diff_worktree_summary_for_session(worktree, &base_commit_sha)
+        .await
+    {
+        Ok(counts) => Ok(counts),
+        Err(err) if is_no_vcs_repo_error(&err) => Err(DiffUnavailableReason::NoRepo),
+        Err(err) => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&err.to_string()),
+                }),
+            ));
+        }
+    };
     let head_commit_sha = resolve_head_commit_sha_or_base(state, worktree, &base_commit_sha).await;
     let outcome = match summary_counts {
         Ok(counts) => {
@@ -79,13 +78,12 @@ pub(super) async fn session_diff_summary_available_response(
 }
 
 async fn resolve_head_commit_sha_or_base(
-    state: &Arc<AppState>,
+    state: &SessionsHandle,
     worktree: &Worktree,
     base_commit_sha: &str,
 ) -> String {
-    let source = HttpWorktreeVcsSource::new(state, worktree);
-    source
-        .resolve_commit("HEAD")
+    state
+        .resolve_worktree_commit(worktree, "HEAD")
         .await
         .unwrap_or_else(|_| base_commit_sha.to_string())
 }

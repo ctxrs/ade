@@ -6,14 +6,17 @@ use ctx_core::models::{
 };
 use ctx_store::StoreManager;
 use std::collections::HashMap;
+use std::sync::Arc;
 use uuid::Uuid;
+
+use crate::daemon::{DaemonHandle, DaemonState};
 
 #[tokio::test]
 async fn get_worktree_returns_live_root_for_bound_sandbox_worktree() {
     let temp = tempfile::tempdir().expect("tempdir");
     let workspace_root = temp.path().join("repo");
     std::fs::create_dir_all(&workspace_root).expect("create workspace root");
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         temp.path().to_path_buf(),
         StoreManager::open(temp.path()).await.expect("open stores"),
         HashMap::new(),
@@ -82,9 +85,12 @@ async fn get_worktree_returns_live_root_for_bound_sandbox_worktree() {
         .await
         .expect("upsert worktree index");
 
-    let Json(response) = get_worktree(State(state.clone()), Path(worktree.id.0.to_string()))
-        .await
-        .expect("get worktree");
+    let Json(response) = get_worktree(
+        State(DaemonHandle::new(state.clone()).workspaces()),
+        Path(worktree.id.0.to_string()),
+    )
+    .await
+    .expect("get worktree");
 
     assert_eq!(
         response.root_path,

@@ -13,7 +13,7 @@ use axum::body::{to_bytes, Body};
 use axum::http::{Method, Request, StatusCode};
 use ctx_core::models::{Session, Task, Workspace};
 use ctx_http::api;
-use ctx_http::daemon::AppState;
+use ctx_http::daemon::DaemonState;
 use ctx_managed_installs::{
     load_agent_server_config, save_agent_server_config, AgentServerCommand, AgentServerConfigFile,
     ManagedInstallMetadata,
@@ -406,8 +406,8 @@ pub fn build_state(
     stores: StoreManager,
     providers: HashMap<String, Arc<dyn ProviderAdapter>>,
     base_url: impl Into<String>,
-) -> Arc<AppState> {
-    Arc::new(AppState::new(
+) -> Arc<DaemonState> {
+    Arc::new(DaemonState::new(
         data_root.into(),
         stores,
         providers,
@@ -451,7 +451,7 @@ impl Drop for TestServer {
     }
 }
 
-pub fn router(state: Arc<AppState>) -> axum::Router {
+pub fn router(state: Arc<DaemonState>) -> axum::Router {
     api::router(state)
 }
 

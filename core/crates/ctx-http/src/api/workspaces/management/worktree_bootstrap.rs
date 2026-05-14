@@ -21,20 +21,14 @@ pub(in crate::api) struct WorkspaceWorktreeBootstrapConfigResp {
 }
 
 pub(in crate::api) async fn get_worktree_bootstrap_config(
-    State(state): State<Arc<AppState>>,
+    State(workspaces): State<WorkspacesHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<WorkspaceWorktreeBootstrapConfigResp>, (StatusCode, Json<ApiErrorResp>)> {
-    let ctx = require_workspace_ctx(&state, &id).await?;
-    let cfg = workspace_config::load_worktree_bootstrap_config(&ctx.store)
+    let ctx = require_workspace_ctx(&workspaces, &id).await?;
+    let cfg = workspaces
+        .load_worktree_bootstrap_config(ctx.workspace_id)
         .await
-        .map_err(|error| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&error.to_string()),
-                }),
-            )
-        })?;
+        .map_err(workspace_store_api_error)?;
 
     Ok(Json(WorkspaceWorktreeBootstrapConfigResp {
         setup_command: cfg.as_ref().and_then(|value| value.setup_command.clone()),
@@ -44,28 +38,29 @@ pub(in crate::api) async fn get_worktree_bootstrap_config(
 }
 
 pub(in crate::api) async fn update_worktree_bootstrap_config(
-    State(state): State<Arc<AppState>>,
+    State(workspaces): State<WorkspacesHandle>,
     Path(id): Path<String>,
     Json(req): Json<UpdateWorktreeBootstrapReq>,
 ) -> Result<Json<UpdateWorkspaceConfigResp>, (StatusCode, Json<ApiErrorResp>)> {
-    let ctx = require_workspace_ctx(&state, &id).await?;
-    workspace_config::update_worktree_bootstrap_config(
-        &ctx.store,
-        workspace_config::WorktreeBootstrapConfigUpdate {
-            setup_command: req.setup_command,
-            timeout_sec: req.timeout_sec,
-            wait_for_completion: req.wait_for_completion,
-        },
-    )
-    .await
-    .map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
+    let ctx = require_workspace_ctx(&workspaces, &id).await?;
+    workspaces
+        .update_worktree_bootstrap_config(
+            ctx.workspace_id,
+            workspace_config::WorktreeBootstrapConfigUpdate {
+                setup_command: req.setup_command,
+                timeout_sec: req.timeout_sec,
+                wait_for_completion: req.wait_for_completion,
+            },
         )
-    })?;
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&e.to_string()),
+                }),
+            )
+        })?;
 
     Ok(Json(UpdateWorkspaceConfigResp { ok: true }))
 }

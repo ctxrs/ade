@@ -3,7 +3,7 @@ use super::types::{active_turn_record, DaemonTurnActivitySummary};
 use super::*;
 
 pub async fn daemon_turn_activity_summary(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
 ) -> Result<DaemonTurnActivitySummary> {
     let (workspace_count, turns) = collect_turns_by_statuses(
         state,

@@ -20,7 +20,7 @@ pub(super) struct PreparedLoadedSessionRequest {
 }
 
 pub(super) async fn prepare_loaded_session_request(
-    state: &Arc<AppState>,
+    handles: &TaskApiHandles,
     store: &Store,
     task: &Task,
     workspace: &Workspace,
@@ -32,7 +32,7 @@ pub(super) async fn prepare_loaded_session_request(
         .and_then(|v| v.to_str().ok())
         .map(|v| v.to_string());
     let provider_id = req.provider_id.trim().to_string();
-    if !state
+    if !handles
         .providers
         .can_create_loaded_session_for_provider(&provider_id)
         .await
@@ -50,7 +50,8 @@ pub(super) async fn prepare_loaded_session_request(
     }) {
         Ok(decision) => decision,
         Err(CreateSessionRequestError::MissingInitialPromptIds) => {
-            state
+            handles
+                .sessions
                 .emit_compat_payload_reject_counter(
                     "tasks.create_session",
                     "missing_initial_ids",
@@ -76,7 +77,7 @@ pub(super) async fn prepare_loaded_session_request(
     let requested_relationship = relationship.clone();
 
     let worktree_resolution = resolve_session_worktree_for_task(
-        state,
+        handles,
         store,
         task,
         workspace,
@@ -93,7 +94,7 @@ pub(super) async fn prepare_loaded_session_request(
         reasoning_effort,
         preferred_model_id,
     } = resolve_loaded_session_model(LoadedSessionModelRequest {
-        state,
+        handles,
         store,
         workspace,
         task_id: task.id,

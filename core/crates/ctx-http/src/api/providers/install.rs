@@ -1,18 +1,16 @@
 use super::*;
 
 pub(crate) async fn refresh_provider_matrix(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
 ) -> Result<Json<MatrixRefreshResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    let summary = crate::daemon::providers::refresh_provider_inventory(state.as_ref())
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: format!("failed to refresh provider statuses: {e:#}"),
-                }),
-            )
-        })?;
+    let summary = providers.refresh_provider_inventory().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: format!("failed to refresh provider statuses: {e:#}"),
+            }),
+        )
+    })?;
     Ok(Json(MatrixRefreshResponse {
         provider_count: summary.provider_count,
         generated_at: summary.generated_at,
@@ -39,7 +37,7 @@ fn parse_restart_mode(value: &str) -> Option<ProviderRestartMode> {
 }
 
 pub(crate) async fn dev_restart_providers(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     Json(req): Json<DevRestartProvidersReq>,
 ) -> Result<Json<DevRestartProvidersResp>, (StatusCode, Json<ApiErrorResp>)> {
     if !dev_tools_enabled() {
@@ -63,8 +61,7 @@ pub(crate) async fn dev_restart_providers(
         .reason
         .unwrap_or_else(|| format!("dev restart ({})", mode.as_str()));
 
-    let results = state
-        .providers
+    let results = providers
         .restart_all_provider_adapters(&reason, mode)
         .await
         .into_iter()

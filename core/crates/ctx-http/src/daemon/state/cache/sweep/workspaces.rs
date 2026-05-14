@@ -2,9 +2,9 @@ use std::time::Instant;
 
 use ctx_core::ids::{WorkspaceId, WorktreeId};
 
-use super::super::{AppState, CacheSweepConfig, CacheSweepStats};
+use super::super::{CacheSweepConfig, CacheSweepStats, DaemonState};
 
-impl AppState {
+impl DaemonState {
     pub(super) async fn sweep_workspace_runtime_caches(
         &self,
         now: Instant,

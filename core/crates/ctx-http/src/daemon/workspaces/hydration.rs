@@ -1,6 +1,6 @@
 use ctx_core::ids::WorkspaceId;
 
-use crate::daemon::state::{AppState, WorkspaceRuntime};
+use crate::daemon::state::{DaemonState, WorkspaceRuntime};
 use crate::daemon::StoreLookup;
 
 mod payload;
@@ -38,7 +38,7 @@ impl WorkspaceHydrationError {
 impl WorkspaceRuntime {
     pub async fn ensure_workspace_active_snapshot_hydrated(
         &self,
-        state: &AppState,
+        state: &DaemonState,
         workspace_id: WorkspaceId,
     ) -> std::result::Result<(), WorkspaceHydrationError> {
         let hydration_start = std::time::Instant::now();

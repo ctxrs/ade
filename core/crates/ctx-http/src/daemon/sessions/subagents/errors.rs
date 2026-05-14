@@ -1,4 +1,4 @@
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_core::ids::SessionId;
 use ctx_core::models::Session;
 use ctx_observability::logs;
@@ -73,7 +73,7 @@ pub(super) fn internal_request_or_policy_error(error: anyhow::Error) -> Subagent
 }
 
 pub(super) async fn store_for_session(
-    state: &AppState,
+    state: &DaemonState,
     session_id: SessionId,
 ) -> SubagentResult<ctx_store::Store> {
     state
@@ -83,7 +83,7 @@ pub(super) async fn store_for_session(
 }
 
 pub(super) async fn load_parent_session(
-    state: &AppState,
+    state: &DaemonState,
     parent_id: SessionId,
 ) -> SubagentResult<(ctx_store::Store, Session)> {
     let store = store_for_session(state, parent_id).await?;

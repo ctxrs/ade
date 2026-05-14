@@ -1,12 +1,12 @@
 use ctx_core::ids::WorkspaceId;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_provider_install::install_state::InstallTarget;
 use ctx_settings_model::ExecutionSettings;
 use ctx_settings_service::{install_target_for_settings, EffectiveExecutionSettingsError};
 
 pub async fn effective_execution_settings_classified(
-    state: &AppState,
+    state: &DaemonState,
     workspace_id: WorkspaceId,
 ) -> Result<ExecutionSettings, EffectiveExecutionSettingsError> {
     let store = state
@@ -20,7 +20,7 @@ pub async fn effective_execution_settings_classified(
 /// Compute effective execution settings for a workspace, combining daemon defaults with any
 /// workspace runtime override.
 pub async fn effective_execution_settings(
-    state: &AppState,
+    state: &DaemonState,
     workspace_id: WorkspaceId,
 ) -> anyhow::Result<ExecutionSettings> {
     effective_execution_settings_classified(state, workspace_id)
@@ -29,7 +29,7 @@ pub async fn effective_execution_settings(
 }
 
 pub async fn effective_install_target(
-    state: &AppState,
+    state: &DaemonState,
     workspace_id: WorkspaceId,
 ) -> anyhow::Result<InstallTarget> {
     let effective = effective_execution_settings(state, workspace_id).await?;
@@ -37,7 +37,7 @@ pub async fn effective_install_target(
 }
 
 pub async fn effective_execution_settings_for_environment(
-    state: &AppState,
+    state: &DaemonState,
     workspace_id: WorkspaceId,
     execution_environment: ctx_core::models::ExecutionEnvironment,
 ) -> anyhow::Result<ExecutionSettings> {
@@ -51,7 +51,7 @@ pub async fn effective_execution_settings_for_environment(
 }
 
 pub async fn effective_install_target_for_environment(
-    state: &AppState,
+    state: &DaemonState,
     workspace_id: WorkspaceId,
     execution_environment: ctx_core::models::ExecutionEnvironment,
 ) -> anyhow::Result<InstallTarget> {

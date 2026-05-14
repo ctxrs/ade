@@ -3,15 +3,15 @@ use super::*;
 pub(super) use crate::daemon::providers::PreparedAmpLoginPaths as AmpLoginPaths;
 
 pub(super) async fn prepare_amp_login_paths(
-    state: &Arc<AppState>,
+    providers: &ProvidersHandle,
     login_id: &str,
 ) -> Result<AmpLoginPaths, String> {
-    crate::daemon::providers::prepare_amp_login_paths(state, login_id).await
+    providers.prepare_amp_login_paths(login_id).await
 }
 
 pub(super) fn amp_provider_env(
-    state: &Arc<AppState>,
+    providers: &ProvidersHandle,
     amp_home: &StdPath,
 ) -> HashMap<String, String> {
-    crate::daemon::providers::amp_login_provider_env(state, amp_home)
+    providers.amp_login_provider_env(amp_home)
 }

@@ -39,10 +39,9 @@ impl From<DaemonEnrollment> for DaemonEnrollmentResponse {
 }
 
 pub(in crate::api) async fn list_daemon_enrollments(
-    State(state): State<Arc<AppState>>,
+    State(state): State<CoreHandle>,
 ) -> Result<Json<Vec<DaemonEnrollmentResponse>>, (StatusCode, Json<ApiErrorResp>)> {
     state
-        .global_store()
         .list_daemon_enrollments()
         .await
         .map(|enrollments| {
@@ -62,7 +61,7 @@ pub(in crate::api) async fn list_daemon_enrollments(
 }
 
 pub(in crate::api) async fn upsert_daemon_enrollment(
-    State(state): State<Arc<AppState>>,
+    State(state): State<CoreHandle>,
     Path(org_id): Path<String>,
     Json(mut enrollment): Json<DaemonEnrollment>,
 ) -> Result<Json<DaemonEnrollmentResponse>, (StatusCode, Json<ApiErrorResp>)> {
@@ -87,7 +86,6 @@ pub(in crate::api) async fn upsert_daemon_enrollment(
     }
     enrollment.updated_at = chrono::Utc::now();
     state
-        .global_store()
         .upsert_daemon_enrollment(enrollment)
         .await
         .map(|enrollment| Json(DaemonEnrollmentResponse::from(enrollment)))

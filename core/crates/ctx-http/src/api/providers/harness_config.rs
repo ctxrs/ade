@@ -17,29 +17,26 @@ fn provider_harness_bad_request_error(err: anyhow::Error) -> (StatusCode, Json<s
 }
 
 pub(crate) async fn get_provider_harness_config(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<harness_sources::HarnessProviderSourceConfig>, (StatusCode, Json<serde_json::Value>)>
 {
-    let config = crate::daemon::providers::get_provider_harness_config(&state, &id)
+    let config = providers
+        .get_provider_harness_config(&id)
         .await
         .map_err(provider_harness_bad_request_error)?;
     Ok(Json(config))
 }
 
 pub(crate) async fn select_provider_harness_source(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     Path(id): Path<String>,
     Json(req): Json<SelectHarnessSourceReq>,
 ) -> Result<Json<harness_sources::HarnessProviderSourceConfig>, (StatusCode, Json<serde_json::Value>)>
 {
-    let config = crate::daemon::providers::select_provider_harness_source(
-        &state,
-        &id,
-        req.source_kind,
-        req.endpoint_id,
-    )
-    .await
-    .map_err(provider_harness_bad_request_error)?;
+    let config = providers
+        .select_provider_harness_source(&id, req.source_kind, req.endpoint_id)
+        .await
+        .map_err(provider_harness_bad_request_error)?;
     Ok(Json(config))
 }

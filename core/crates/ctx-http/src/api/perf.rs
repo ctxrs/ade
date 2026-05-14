@@ -1,7 +1,8 @@
 use super::*;
+use crate::daemon::TelemetryHandle;
 
 pub(in crate::api) async fn perf_middleware(
-    State(state): State<Arc<AppState>>,
+    State(state): State<TelemetryHandle>,
     req: Request<Body>,
     next: Next,
 ) -> Response {
@@ -17,11 +18,8 @@ pub(in crate::api) async fn perf_middleware(
         .get::<MatchedPath>()
         .map(|m| m.as_str().to_string())
         .unwrap_or_else(|| req.uri().path().to_string());
-    let parent = state
-        .telemetry
-        .perf_telemetry
-        .extract_trace_context(req.headers());
-    let span = state.telemetry.perf_telemetry.start_span(
+    let parent = state.perf_telemetry().extract_trace_context(req.headers());
+    let span = state.perf_telemetry().start_span(
         "http_request",
         SpanKind::Server,
         Some(parent),
@@ -40,7 +38,7 @@ pub(in crate::api) async fn perf_middleware(
     labels.insert("status".to_string(), status.to_string());
     labels.insert("success".to_string(), success.to_string());
     labels.insert("source".to_string(), "daemon".to_string());
-    let (trace_id, span_id) = state.telemetry.perf_telemetry.finish_span(
+    let (trace_id, span_id) = state.perf_telemetry().finish_span(
         span,
         Some(status.to_string()),
         Some(success),
@@ -54,8 +52,7 @@ pub(in crate::api) async fn perf_middleware(
         labels,
     };
     state
-        .telemetry
-        .perf_telemetry
+        .perf_telemetry()
         .record_metric(metric, run_id, trace_id, span_id)
         .await;
     response

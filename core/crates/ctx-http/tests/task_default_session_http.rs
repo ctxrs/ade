@@ -5,7 +5,7 @@ use axum::http::StatusCode;
 use axum::http::{Method, Request};
 use ctx_core::ids::TaskId;
 use ctx_core::models::{Session, Task, VcsKind};
-use ctx_http::daemon::AppState;
+use ctx_http::daemon::DaemonState;
 use ctx_providers::adapters::{
     ProviderAdapter, ProviderRecommendedAction, ProviderUsability, ProviderUsabilityStatus,
 };
@@ -44,7 +44,7 @@ impl Drop for EnvVarGuard {
     }
 }
 
-async fn setup_state(data_root: &std::path::Path, prewarm_statuses: bool) -> Arc<AppState> {
+async fn setup_state(data_root: &std::path::Path, prewarm_statuses: bool) -> Arc<DaemonState> {
     let stores = common::setup_store(data_root).await;
     let state = common::build_state(
         data_root.to_path_buf(),

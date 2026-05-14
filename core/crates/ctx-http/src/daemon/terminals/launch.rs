@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::daemon::execution_effective;
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::TerminalSession;
 use ctx_settings_model::ExecutionMode;
@@ -30,7 +30,7 @@ pub(crate) struct CreateTerminalLaunchRequest {
 }
 
 pub(crate) async fn create_workspace_terminal(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     req: CreateTerminalLaunchRequest,
 ) -> Result<TerminalSession, TerminalLaunchError> {
     let workspace_id = req.workspace_id;

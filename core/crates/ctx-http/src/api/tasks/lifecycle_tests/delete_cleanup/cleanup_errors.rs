@@ -72,9 +72,16 @@ async fn delete_task_cleanup_errors_preserve_worktree_row_and_index() {
         .await
         .expect("set primary worktree");
 
-    let status = delete_task(State(Arc::clone(&state)), Path(task.id.0.to_string()))
-        .await
-        .expect("delete task");
+    let (sessions, providers, workspaces, transport) = task_api_states(&state);
+    let status = delete_task(
+        sessions,
+        providers,
+        workspaces,
+        transport,
+        Path(task.id.0.to_string()),
+    )
+    .await
+    .expect("delete task");
     assert_eq!(status, StatusCode::NO_CONTENT);
     assert!(
         store

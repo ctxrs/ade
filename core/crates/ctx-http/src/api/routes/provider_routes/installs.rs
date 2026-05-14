@@ -1,11 +1,9 @@
-use std::sync::Arc;
-
 use axum::routing::{get, post};
 
 use crate::api::provider_launch;
-use crate::daemon::AppState;
+use crate::daemon::DaemonHandle;
 
-pub(super) fn provider_install_routes() -> axum::Router<Arc<AppState>> {
+pub(super) fn provider_install_routes() -> axum::Router<DaemonHandle> {
     axum::Router::new()
         .route(
             "/api/providers/install_all",

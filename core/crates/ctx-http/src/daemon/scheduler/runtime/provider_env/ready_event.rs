@@ -7,10 +7,10 @@ use ctx_core::ids::{RunId, TurnId};
 use ctx_core::models::Session;
 use ctx_observability::ops_events::OpsEvent;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(in crate::daemon::scheduler::runtime) struct ProviderRunEnvReadyEvent<'a> {
-    pub(in crate::daemon::scheduler::runtime) state: &'a Arc<AppState>,
+    pub(in crate::daemon::scheduler::runtime) state: &'a Arc<DaemonState>,
     pub(in crate::daemon::scheduler::runtime) session: &'a Session,
     pub(in crate::daemon::scheduler::runtime) run_id: RunId,
     pub(in crate::daemon::scheduler::runtime) turn_id: TurnId,

@@ -5,10 +5,10 @@ use ctx_core::redaction::redact_json_value;
 use ctx_provider_install::install_state::InstallTarget;
 
 use crate::daemon::providers::{store_provider_verify_cache_value, ProviderAuthCheckSnapshot};
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(super) async fn store_provider_auth_check_cache(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
     install_target: InstallTarget,
     provider_id: &str,

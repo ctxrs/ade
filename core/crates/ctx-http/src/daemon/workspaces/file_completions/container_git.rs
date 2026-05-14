@@ -6,12 +6,12 @@ use std::time::Duration;
 use ctx_core::models::Worktree;
 use ctx_settings_model::ContainerRuntimeKind;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::super::FileCompletionsError;
 
 pub(super) async fn container_git_ls_files(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     worktree: &Worktree,
     runtime: ContainerRuntimeKind,
     workdir: &str,

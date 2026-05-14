@@ -3,15 +3,15 @@ use super::*;
 pub(super) use crate::daemon::providers::PreparedQwenLoginPaths as QwenLoginPaths;
 
 pub(super) async fn prepare_qwen_login_paths(
-    state: &Arc<AppState>,
+    providers: &ProvidersHandle,
     login_id: &str,
 ) -> Result<QwenLoginPaths, String> {
-    crate::daemon::providers::prepare_qwen_login_paths(state, login_id).await
+    providers.prepare_qwen_login_paths(login_id).await
 }
 
 pub(super) fn qwen_provider_env(
-    state: &Arc<AppState>,
+    providers: &ProvidersHandle,
     login_home: &StdPath,
 ) -> HashMap<String, String> {
-    crate::daemon::providers::qwen_login_provider_env(state, login_home)
+    providers.qwen_login_provider_env(login_home)
 }

@@ -5,14 +5,13 @@ use request::verify_mobile_pairing_request;
 mod request;
 
 pub(in crate::api) async fn pair_mobile_device(
-    State(state): State<Arc<AppState>>,
+    State(state): State<CoreHandle>,
     body: Bytes,
 ) -> Result<Json<SecureEnvelope>, (StatusCode, Json<ApiErrorResp>)> {
     let req: PairMobileDeviceReq = parse_json_body(body)?;
     let verified = verify_mobile_pairing_request(&state, req).await?;
     let token_hash = hash_pairing_token(verified.payload.pairing_token.trim());
     let allowed = state
-        .global_store()
         .consume_mobile_pairing_token(&token_hash)
         .await
         .map_err(|e| {
@@ -33,7 +32,6 @@ pub(in crate::api) async fn pair_mobile_device(
         ));
     }
     let _device = state
-        .global_store()
         .upsert_mobile_device(
             MobileDeviceId(verified.device_uuid),
             verified.config.profile_id,

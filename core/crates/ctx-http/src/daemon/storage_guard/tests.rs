@@ -12,12 +12,12 @@ use ctx_store::StoreManager;
 
 use super::*;
 use crate::daemon::scheduler::SchedulerCommand;
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
-async fn app_state_for_test() -> Arc<AppState> {
+async fn app_state_for_test() -> Arc<DaemonState> {
     let data_root = tempdir().expect("data root");
     let stores = StoreManager::open(data_root.path()).await.expect("stores");
-    Arc::new(AppState::new(
+    Arc::new(DaemonState::new(
         data_root.path().to_path_buf(),
         stores,
         HashMap::new(),
@@ -52,7 +52,7 @@ async fn preflight_blocks_turn_start_during_emergency() {
 async fn preflight_samples_storage_without_allocating_reserve_file() {
     let data_root = tempdir().expect("data root");
     let stores = StoreManager::open(data_root.path()).await.expect("stores");
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_root.path().to_path_buf(),
         stores,
         HashMap::new(),

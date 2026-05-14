@@ -1,4 +1,5 @@
 use super::*;
+use crate::daemon::{CoreHandle, TelemetryHandle};
 use chrono::{NaiveDate, Utc};
 use serde::Deserialize;
 
@@ -15,15 +16,14 @@ pub(super) struct TelemetrySummaryQuery {
 }
 
 pub(super) async fn get_telemetry_summary(
-    State(state): State<Arc<AppState>>,
+    State(state): State<TelemetryHandle>,
     Query(q): Query<TelemetrySummaryQuery>,
 ) -> Result<Json<ctx_observability::perf_telemetry::PerfSummary>, StatusCode> {
-    let limit = q.limit.map(|v| v as usize);
-    let summary = state.telemetry.perf_telemetry.summary(
+    let summary = state.perf_telemetry().summary(
         q.metric.as_deref(),
         q.run_id.as_deref(),
         q.window_ms,
-        limit,
+        q.limit.map(|v| v as usize),
     );
     Ok(Json(summary))
 }
@@ -43,12 +43,11 @@ fn normalize_export_date(raw: Option<String>) -> Result<String, StatusCode> {
 }
 
 pub(super) async fn export_telemetry(
-    State(state): State<Arc<AppState>>,
+    State(core): State<CoreHandle>,
     Query(q): Query<TelemetryExportQuery>,
 ) -> Result<Response, StatusCode> {
     let date = normalize_export_date(q.date)?;
-    let path =
-        ctx_observability::perf_telemetry::perf_log_path_for_date(&state.core.data_root, &date);
+    let path = ctx_observability::perf_telemetry::perf_log_path_for_date(core.data_root(), &date);
     let bytes = tokio::fs::read(&path)
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;
@@ -76,7 +75,7 @@ pub(super) struct ClientTelemetryBatch {
 }
 
 pub(super) async fn post_client_telemetry(
-    State(state): State<Arc<AppState>>,
+    State(state): State<TelemetryHandle>,
     Json(batch): Json<ClientTelemetryBatch>,
 ) -> Result<StatusCode, StatusCode> {
     for event in batch.events {
@@ -90,8 +89,7 @@ pub(super) async fn post_client_telemetry(
             labels,
         };
         state
-            .telemetry
-            .perf_telemetry
+            .perf_telemetry()
             .record_metric(metric, event.run_id, None, None)
             .await;
     }

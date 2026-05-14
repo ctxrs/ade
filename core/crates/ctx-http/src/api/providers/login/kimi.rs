@@ -20,7 +20,7 @@ pub(crate) struct KimiLoginStartResp {
 }
 
 pub(crate) async fn start_kimi_login(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<KimiLoginStartReq>,
 ) -> Result<Json<KimiLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
@@ -40,16 +40,17 @@ pub(crate) async fn start_kimi_login(
         .clone()
         .or(auth.verification_uri.clone());
     let device_code = Some(auth.user_code.clone());
-    let login_session =
-        crate::daemon::providers::start_kimi_login_session(&state, auth_url, device_code).await;
+    let login_session = providers
+        .start_kimi_login_session(auth_url, device_code)
+        .await;
 
-    let state_clone = Arc::clone(&state);
+    let providers_clone = providers.clone();
     let login_id_for_task = login_session.login_id.clone();
     let poll_interval = oauth::poll_interval_for_authorization(&auth);
     let timeout = oauth::timeout_for_authorization(&auth);
     tokio::spawn(async move {
         monitor::monitor_kimi_login(
-            state_clone,
+            providers_clone,
             login_id_for_task,
             req.label,
             auth.device_code,
@@ -67,20 +68,18 @@ pub(crate) async fn start_kimi_login(
 }
 
 pub(crate) async fn get_kimi_login(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Path(id): Path<String>,
 ) -> Result<Json<provider_accounts::KimiLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let status = crate::daemon::providers::kimi_login_status(&state, &id)
-        .await
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: "login not found".to_string(),
-                }),
-            )
-        })?;
+    let status = providers.kimi_login_status(&id).await.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "login not found".to_string(),
+            }),
+        )
+    })?;
     Ok(Json(status))
 }

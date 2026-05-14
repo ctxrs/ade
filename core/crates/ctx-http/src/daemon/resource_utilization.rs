@@ -5,7 +5,7 @@ use std::time::Instant;
 use ctx_core::ids::WorkspaceId;
 use ctx_resource_utilization as resource_utilization;
 
-use crate::daemon::{AppState, StoreLookup};
+use crate::daemon::{DaemonState, StoreLookup, WorkspacesHandle};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ResourceUtilizationSnapshotError {
@@ -15,7 +15,7 @@ pub(crate) enum ResourceUtilizationSnapshotError {
 }
 
 pub(crate) async fn workspace_resource_utilization_snapshot(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
 ) -> Result<resource_utilization::ResourceUtilizationSnapshot, ResourceUtilizationSnapshotError> {
     if resource_utilization::resource_utilization_disabled_from_env() {
@@ -98,4 +98,14 @@ pub(crate) async fn workspace_resource_utilization_snapshot(
         processes,
         workspace: workspace_snapshot,
     })
+}
+
+impl WorkspacesHandle {
+    pub(crate) async fn workspace_resource_utilization_snapshot(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<resource_utilization::ResourceUtilizationSnapshot, ResourceUtilizationSnapshotError>
+    {
+        workspace_resource_utilization_snapshot(&self.state, workspace_id).await
+    }
 }

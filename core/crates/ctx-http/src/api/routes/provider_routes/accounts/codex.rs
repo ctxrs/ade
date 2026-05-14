@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use axum::routing::{delete, get, post, put};
 
 use crate::api::providers::{
@@ -7,9 +5,9 @@ use crate::api::providers::{
     import_host_codex_auth, list_codex_accounts, probe_host_codex_import, set_codex_active_account,
     start_codex_login,
 };
-use crate::daemon::AppState;
+use crate::daemon::DaemonHandle;
 
-pub(super) fn codex_account_routes() -> axum::Router<Arc<AppState>> {
+pub(super) fn codex_account_routes() -> axum::Router<DaemonHandle> {
     axum::Router::new()
         .route("/api/providers/codex/accounts", get(list_codex_accounts))
         .route(

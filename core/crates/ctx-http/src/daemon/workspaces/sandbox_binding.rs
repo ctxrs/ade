@@ -5,10 +5,10 @@ use ctx_core::models::{SandboxBinding, Workspace, Worktree};
 use ctx_sandbox_contract::sandbox_execution_settings_from_binding;
 use ctx_settings_model::ExecutionSettings;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(crate) async fn materialize_sandbox_binding_for_worktree(
-    state: &AppState,
+    state: &DaemonState,
     workspace: &Workspace,
     worktree: &Worktree,
     canonical_root: &StdPath,
@@ -31,7 +31,7 @@ pub(crate) async fn materialize_sandbox_binding_for_worktree(
 }
 
 pub(crate) async fn rematerialize_sandbox_binding_for_worktree(
-    state: &AppState,
+    state: &DaemonState,
     workspace: &Workspace,
     worktree: &Worktree,
     existing_binding: &SandboxBinding,

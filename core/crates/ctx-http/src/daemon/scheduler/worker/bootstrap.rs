@@ -10,7 +10,7 @@ use ctx_core::models::Session;
 use ctx_observability::ops_events::OpsEvent;
 use ctx_session_tools::order_seq::OrderSeqState;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::super::QueuedMessage;
 
@@ -24,7 +24,7 @@ pub(super) struct WorkerBootstrap {
 }
 
 pub(super) async fn bootstrap_worker(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session: &Session,
 ) -> Option<WorkerBootstrap> {
     let store = state.store_for_session(session.id).await.ok()?;
@@ -71,7 +71,7 @@ async fn load_initial_queue(
 }
 
 fn emit_worktree_resolved_event(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session: &Session,
     workdir: &std::path::Path,
     session_root_kind: &str,

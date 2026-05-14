@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) async fn create_session_with_turn_status(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     root: &Path,
     environment: ExecutionEnvironment,
     status: SessionTurnStatus,

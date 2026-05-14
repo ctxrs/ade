@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) async fn collect_turns_by_statuses(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     statuses: &[SessionTurnStatus],
 ) -> Result<(usize, Vec<(WorkspaceId, SessionTurn)>)> {
     let workspaces = state.global_store().list_workspaces().await?;
@@ -36,7 +36,7 @@ pub(super) async fn collect_turns_by_statuses(
 }
 
 pub(super) async fn session_execution_environment(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     cache: &mut HashMap<ctx_core::ids::SessionId, ExecutionEnvironment>,
     session_id: ctx_core::ids::SessionId,
 ) -> Result<ExecutionEnvironment> {

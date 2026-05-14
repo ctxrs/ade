@@ -14,7 +14,7 @@ async fn opening_workspace_does_not_evict_active_workspace_store() {
     .unwrap();
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         temp.path().to_path_buf(),
         stores.clone(),
         providers,

@@ -12,7 +12,7 @@ use ctx_providers::adapters::{ProviderAdapter, RunHandle, TurnInput};
 use ctx_providers::events::NormalizedEvent;
 use ctx_store::Store;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 mod adapter;
 mod hooks;
@@ -25,7 +25,7 @@ use telemetry::{
 };
 
 pub(super) struct ProviderTurnSpawnRequest<'a> {
-    pub(super) state: &'a Arc<AppState>,
+    pub(super) state: &'a Arc<DaemonState>,
     pub(super) store: &'a Store,
     pub(super) session: &'a Session,
     pub(super) adapter: Arc<dyn ProviderAdapter>,

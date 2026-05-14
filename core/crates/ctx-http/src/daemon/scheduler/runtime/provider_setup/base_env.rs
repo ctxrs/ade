@@ -5,7 +5,7 @@ use anyhow::Result;
 use ctx_core::models::Session;
 use ctx_settings_model::ProviderControlMode;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::super::provider_env::{build_base_provider_env, BaseProviderEnvRequest};
 
@@ -15,7 +15,7 @@ pub(super) struct ProviderSetupBaseEnv {
 }
 
 pub(super) async fn load_provider_setup_base_env(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session: &Session,
     full_model_id: &str,
 ) -> Result<ProviderSetupBaseEnv> {

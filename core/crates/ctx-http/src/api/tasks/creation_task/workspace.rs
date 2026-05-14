@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) async fn load_create_task_workspace(
-    state: &Arc<AppState>,
+    handles: &TaskApiHandles,
     id: &str,
 ) -> Result<(WorkspaceId, Workspace, Store), CreateTaskApiError> {
     let ws_id = WorkspaceId(uuid::Uuid::parse_str(id).map_err(|_| {
@@ -12,9 +12,9 @@ pub(super) async fn load_create_task_workspace(
             }),
         )
     })?);
-    let ws = state
-        .global_store()
-        .get_workspace(ws_id)
+    let ctx = handles
+        .sessions
+        .load_workspace_context(ws_id)
         .await
         .map_err(|e| {
             (
@@ -30,13 +30,5 @@ pub(super) async fn load_create_task_workspace(
                 error: "workspace not found".to_string(),
             }),
         ))?;
-    let store = state.store_for_workspace(ws_id).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
-    Ok((ws_id, ws, store))
+    Ok((ctx.workspace_id, ctx.workspace, ctx.store))
 }

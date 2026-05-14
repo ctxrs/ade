@@ -1,4 +1,5 @@
 use super::*;
+use crate::daemon::CoreHandle;
 use ctx_workspace_services::repo_onboarding::RepoValidateDestinationRequest;
 
 #[derive(Debug, Deserialize)]
@@ -59,13 +60,12 @@ pub(in crate::api) struct RepoStagingPathResp {
 /// doesn't need to ask the user for a host destination.
 pub(in crate::api) async fn repo_staging_path(
     mobile_auth: Option<Extension<MobileAuthContext>>,
-    State(state): State<Arc<AppState>>,
+    State(state): State<CoreHandle>,
 ) -> Result<Json<RepoStagingPathResp>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let path =
-        ctx_workspace_services::repo_onboarding::create_repo_staging_path(&state.core.data_root)
-            .await
-            .map_err(repo_staging_path_error_response)?;
+    let path = ctx_workspace_services::repo_onboarding::create_repo_staging_path(state.data_root())
+        .await
+        .map_err(repo_staging_path_error_response)?;
 
     Ok(Json(RepoStagingPathResp {
         path: path.to_string_lossy().to_string(),

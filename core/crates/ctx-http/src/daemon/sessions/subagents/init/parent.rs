@@ -41,7 +41,7 @@ pub(super) async fn validate_parent_spawn_capacity(
 }
 
 pub(super) async fn load_parent_worktree_context(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     store: &Store,
     parent: &Session,
 ) -> ApiResult<ParentWorktreeContext> {

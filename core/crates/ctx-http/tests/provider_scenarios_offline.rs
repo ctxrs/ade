@@ -7,7 +7,7 @@ use axum::http::{Method, Request, StatusCode};
 use tower::ServiceExt;
 
 use ctx_core::models::{MessageRole, SessionEventType, SessionTurnStatus};
-use ctx_http::daemon::AppState;
+use ctx_http::daemon::DaemonState;
 use ctx_store::StoreManager;
 
 mod common;
@@ -113,19 +113,19 @@ async fn post_message(app: &axum::Router, session_id: uuid::Uuid, content: &str)
     assert_eq!(res.status(), StatusCode::OK);
 }
 
-async fn wait_for_done(state: &Arc<AppState>, session_id: ctx_core::ids::SessionId) {
+async fn wait_for_done(state: &Arc<DaemonState>, session_id: ctx_core::ids::SessionId) {
     wait_for_done_inner(state, session_id, false).await;
 }
 
 async fn wait_for_done_and_completed_turn(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session_id: ctx_core::ids::SessionId,
 ) {
     wait_for_done_inner(state, session_id, true).await;
 }
 
 async fn wait_for_done_inner(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session_id: ctx_core::ids::SessionId,
     require_completed_turn: bool,
 ) {
@@ -380,7 +380,7 @@ async fn provider_scenarios_offline_crp_fixtures() {
         &script_path,
     );
 
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,
@@ -476,7 +476,7 @@ async fn provider_scenarios_offline_interleaved_assistant_tools_do_not_fragment_
     let providers =
         common::crp_fixture_runtime::build_crp_fixture_providers(&["codex"], &python, &script_path);
 
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,
@@ -586,7 +586,7 @@ async fn provider_scenarios_offline_crp_fixtures_persist_context_window_metrics(
         &script_path,
     );
 
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,

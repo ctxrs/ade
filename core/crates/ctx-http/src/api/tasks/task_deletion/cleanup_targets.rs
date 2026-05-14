@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) async fn collect_task_delete_cleanup_targets(
-    state: &Arc<AppState>,
+    handles: &TaskApiHandles,
     store: &Store,
     workspace: &Workspace,
     task: &Task,
@@ -68,7 +68,9 @@ pub(super) async fn collect_task_delete_cleanup_targets(
             }
         };
         cleanup_targets.push(TaskWorktreeCleanupTarget {
-            managed_root: managed_worktree_root(state, workspace, &worktree),
+            managed_root: handles
+                .workspaces
+                .managed_worktree_root(workspace, &worktree),
             sandbox_binding,
             worktree,
             destroy_worktree_on_cleanup: !other_tasks,
@@ -78,7 +80,7 @@ pub(super) async fn collect_task_delete_cleanup_targets(
 }
 
 pub(super) async fn delete_unused_worktree_records_after_cleanup(
-    state: &Arc<AppState>,
+    handles: &TaskApiHandles,
     store: &Store,
     task: &Task,
     cleanup_targets: &[TaskWorktreeCleanupTarget],
@@ -110,8 +112,8 @@ pub(super) async fn delete_unused_worktree_records_after_cleanup(
             );
             continue;
         }
-        if let Err(err) = state
-            .global_store()
+        if let Err(err) = handles
+            .sessions
             .delete_workspace_worktree_index(target.worktree.id)
             .await
         {

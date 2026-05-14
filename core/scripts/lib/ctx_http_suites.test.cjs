@@ -1,4 +1,5 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
 
@@ -28,6 +29,13 @@ const {
 
 const coreRoot = path.resolve(__dirname, "../..");
 const canonicalSuiteNames = CTX_HTTP_SUITES.map((suite) => suite.name);
+
+function ctxHttpSourceGlobExists(sourceGlob) {
+  const sourcePath = sourceGlob.endsWith("/**")
+    ? sourceGlob.slice(0, -3)
+    : sourceGlob;
+  return fs.existsSync(path.join(coreRoot, sourcePath));
+}
 
 function targetNameFromLabel(target) {
   return String(target).split(":").at(-1);
@@ -249,7 +257,7 @@ test("ctx-http checkin fanout exposes split unit suite targets without changing 
     ],
   ]);
   assert.equal(getCtxHttpSuiteCheckinFanoutTargetBatches("base").length, 22);
-  assert.equal(getCtxHttpSuiteCheckinFanoutTargets("base").length, 46);
+  assert.equal(getCtxHttpSuiteCheckinFanoutTargets("base").length, 44);
   assert.equal(
     getCtxHttpSuiteCheckinFanoutTargets("base").includes("//core/crates/ctx-managed-installs:unit_tests"),
     true,
@@ -380,6 +388,16 @@ test("ctx-http extracted owner crates route to behavior-owning suites", () => {
     suiteByName.get("attachments-routing").dependencyCrates.includes("ctx-workspace-attachments"),
     true,
   );
+});
+
+test("provider/settings suite source globs resolve to live files", () => {
+  const suite = CTX_HTTP_SUITES.find(
+    (candidate) => candidate.name === "unit-tests-provider-and-settings",
+  );
+  assert.ok(suite);
+  for (const sourceGlob of suite.sourceGlobs) {
+    assert.equal(ctxHttpSourceGlobExists(sourceGlob), true, sourceGlob);
+  }
 });
 
 test("ctx-http suite concurrency metadata classifies every concrete suite", () => {

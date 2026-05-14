@@ -18,7 +18,7 @@ struct LogPathFixture {
     data_dir: tempfile::TempDir,
     git_repo: tempfile::TempDir,
     app: axum::Router,
-    state: Arc<AppState>,
+    state: Arc<DaemonState>,
     workspace: ctx_core::models::Workspace,
 }
 
@@ -35,7 +35,7 @@ async fn build_log_path_fixture() -> LogPathFixture {
         HashMap::new();
     providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
 
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,

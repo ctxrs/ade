@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use ctx_core::ids::WorkspaceId;
 
-use crate::daemon::state::AppState;
+use crate::daemon::state::DaemonState;
 
 use super::{cleanup_workspace_hooks, cleanup_worktree_hooks};
 
@@ -13,7 +13,7 @@ pub(crate) enum WorkspaceDeleteError {
 }
 
 pub(crate) async fn delete_workspace(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
 ) -> Result<(), WorkspaceDeleteError> {
     let workspace = state

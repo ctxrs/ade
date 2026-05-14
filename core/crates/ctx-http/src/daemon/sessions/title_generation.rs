@@ -1,7 +1,7 @@
 use std::path::Path as StdPath;
 use std::sync::Arc;
 
-use crate::daemon::AppState;
+use crate::daemon::{DaemonState, SessionsHandle};
 use ctx_core::models::Session;
 use ctx_observability::logs;
 use ctx_provider_install::install_state::InstallId;
@@ -26,7 +26,7 @@ pub(crate) struct TitleGenerationLocalStatusSnapshot {
 }
 
 pub(crate) async fn title_generation_local_status(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
 ) -> anyhow::Result<TitleGenerationLocalStatusSnapshot> {
     let status =
         ctx_managed_installs::title_generation_local::local_status(&state.core.data_root).await?;
@@ -42,7 +42,7 @@ pub(crate) async fn title_generation_local_status(
     })
 }
 
-pub(crate) async fn start_title_generation_local_install(state: Arc<AppState>) -> InstallId {
+pub(crate) async fn start_title_generation_local_install(state: Arc<DaemonState>) -> InstallId {
     let (install_id, started_new) = state
         .start_install(TITLE_GENERATION_LOCAL_INSTALL_KEY.to_string(), None)
         .await;
@@ -83,7 +83,7 @@ pub(crate) struct TitleGenerationOutcome {
 }
 
 pub(crate) async fn configured_title_generation_settings(
-    state: &AppState,
+    state: &DaemonState,
 ) -> Option<user_settings::TitleGenerationSettings> {
     let settings = match ctx_settings_service::load_settings(state.global_store()).await {
         Ok(settings) => settings,
@@ -136,7 +136,7 @@ pub(crate) async fn generate_title_for_prompt(
 }
 
 pub(crate) async fn maybe_generate_session_title(
-    state: Arc<AppState>,
+    state: Arc<DaemonState>,
     session: Session,
     prompt: String,
     force: bool,
@@ -157,8 +157,20 @@ pub(crate) async fn maybe_generate_session_title(
     Ok(Some(outcome))
 }
 
+impl SessionsHandle {
+    pub(crate) async fn title_generation_local_status(
+        &self,
+    ) -> anyhow::Result<TitleGenerationLocalStatusSnapshot> {
+        title_generation_local_status(&self.state).await
+    }
+
+    pub(crate) async fn start_title_generation_local_install(&self) -> InstallId {
+        start_title_generation_local_install(Arc::clone(&self.state)).await
+    }
+}
+
 pub(crate) async fn schedule_session_title_generation(
-    state: Arc<AppState>,
+    state: Arc<DaemonState>,
     session: Session,
     prompt: String,
     force: bool,

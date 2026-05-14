@@ -1,16 +1,17 @@
 use super::*;
 
 pub(in crate::api) async fn install_stream_sse(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     Path(install_id): Path<String>,
 ) -> Result<Sse<impl Stream<Item = Result<SseEvent, axum::Error>>>, StatusCode> {
     let install_id: InstallId =
         uuid::Uuid::parse_str(&install_id).map_err(|_| StatusCode::BAD_REQUEST)?;
-    let Some(sender) = provider_install_event_sender(&state, install_id).await else {
+    let Some(sender) = providers.provider_install_event_sender(install_id).await else {
         return Err(StatusCode::NOT_FOUND);
     };
 
-    let history = list_provider_install_events(&state, install_id)
+    let history = providers
+        .list_provider_install_events(install_id)
         .await
         .unwrap_or_default();
     let initial = futures::stream::iter(history.into_iter().map(|ev| {

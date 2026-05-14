@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::daemon::sessions::subagents::errors::{
     api_error, internal_api_error, ApiResult, SubagentErrorKind,
 };
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_session_service::subagents::{
     build_subagent_request_json, normalize_subagent_labels, parse_subagent_worktree,
     resolve_max_subagents_per_call, SubagentRequestAgent, SubagentWorktreeSelection,
@@ -20,7 +20,7 @@ pub(super) struct PreparedSubagentInitRequest {
 }
 
 pub(super) async fn prepare_subagent_init_request(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     req: &AgentInitReq,
 ) -> ApiResult<PreparedSubagentInitRequest> {
     if req.agents.is_empty() {

@@ -5,12 +5,12 @@ use std::sync::Arc;
 
 use ctx_store::StoreManager;
 
-async fn test_state() -> (tempfile::TempDir, Arc<AppState>) {
+async fn test_state() -> (tempfile::TempDir, Arc<DaemonState>) {
     let data_dir = tempfile::tempdir().expect("create tempdir");
     let stores = StoreManager::open(data_dir.path())
         .await
         .expect("open stores");
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),

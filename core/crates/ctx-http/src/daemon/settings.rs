@@ -1,18 +1,20 @@
 use ctx_observability::telemetry::TelemetryConfig;
 use ctx_settings_model::{PublicSettings, Settings};
 
-use crate::daemon::{provider_guard, provider_restart, resource_governance, tool_cgroup, AppState};
+use crate::daemon::{
+    provider_guard, provider_restart, resource_governance, tool_cgroup, CoreHandle, DaemonState,
+};
 
-pub(crate) async fn load_settings(state: &AppState) -> anyhow::Result<Settings> {
+pub(crate) async fn load_settings(state: &DaemonState) -> anyhow::Result<Settings> {
     ctx_settings_service::load_settings(state.global_store()).await
 }
 
-pub(crate) async fn save_settings(state: &AppState, settings: &Settings) -> anyhow::Result<()> {
+pub(crate) async fn save_settings(state: &DaemonState, settings: &Settings) -> anyhow::Result<()> {
     ctx_settings_service::save_settings(state.global_store(), settings).await
 }
 
 pub(crate) async fn public_settings_for_response(
-    state: &AppState,
+    state: &DaemonState,
     settings: &Settings,
 ) -> PublicSettings {
     let mut public = ctx_settings_service::to_public(settings);
@@ -21,7 +23,7 @@ pub(crate) async fn public_settings_for_response(
     public
 }
 
-pub(crate) async fn apply_settings_side_effects(state: &AppState, settings: &Settings) {
+pub(crate) async fn apply_settings_side_effects(state: &DaemonState, settings: &Settings) {
     let mut telemetry_cfg = TelemetryConfig::default();
     if let Some(telemetry) = settings.telemetry.as_ref() {
         telemetry_cfg.enabled = telemetry.enabled;
@@ -51,5 +53,23 @@ pub(crate) async fn apply_settings_side_effects(state: &AppState, settings: &Set
     }
     if let Err(err) = tool_cgroup::apply_settings(state, settings).await {
         tracing::warn!("failed to apply tool cgroup settings: {err:#}");
+    }
+}
+
+impl CoreHandle {
+    pub(crate) async fn load_settings(&self) -> anyhow::Result<Settings> {
+        load_settings(self.state.as_ref()).await
+    }
+
+    pub(crate) async fn save_settings(&self, settings: &Settings) -> anyhow::Result<()> {
+        save_settings(self.state.as_ref(), settings).await
+    }
+
+    pub(crate) async fn public_settings_for_response(&self, settings: &Settings) -> PublicSettings {
+        public_settings_for_response(self.state.as_ref(), settings).await
+    }
+
+    pub(crate) async fn apply_settings_side_effects(&self, settings: &Settings) {
+        apply_settings_side_effects(self.state.as_ref(), settings).await;
     }
 }

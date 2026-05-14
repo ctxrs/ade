@@ -1,8 +1,4 @@
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-use std::sync::Arc;
-
-use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
 
 use super::buffer::vcs_stream_message_is_snapshot;
 use super::*;
@@ -46,7 +42,7 @@ fn counter_delta(counter: &AtomicU64, recorded: &AtomicU64) -> u64 {
 }
 
 pub(super) async fn record_workspace_vcs_stream_metrics(
-    state: &Arc<AppState>,
+    state: &WorkspacesHandle,
     metrics: &VcsStreamMetrics,
 ) {
     let counters = [
@@ -83,20 +79,6 @@ pub(super) async fn record_workspace_vcs_stream_metrics(
         if value == 0 {
             continue;
         }
-        let mut labels = HashMap::new();
-        labels.insert("source".to_string(), "daemon".to_string());
-        labels.insert("stream".to_string(), "workspace_vcs".to_string());
-        let metric = PerfMetric {
-            name: name.to_string(),
-            kind: PerfMetricKind::Counter,
-            unit: "count".to_string(),
-            value: value as f64,
-            labels,
-        };
-        state
-            .telemetry
-            .perf_telemetry
-            .record_metric(metric, None, None, None)
-            .await;
+        state.record_workspace_vcs_stream_metric(name, value).await;
     }
 }

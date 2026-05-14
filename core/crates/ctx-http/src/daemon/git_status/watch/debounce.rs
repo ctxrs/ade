@@ -10,7 +10,7 @@ use ctx_workspace_services::worktree_vcs::{
 };
 use notify::{Event, RecommendedWatcher};
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::super::mark_worktree_vcs_dirty;
 
@@ -29,7 +29,7 @@ fn lock_watch_pending<'a>(
 }
 
 async fn dispatch_invalidation(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     worktree: &Worktree,
     pending: WorktreeVcsInvalidation,
 ) {
@@ -43,7 +43,7 @@ async fn dispatch_invalidation(
 }
 
 pub(super) fn build_git_status_watcher(
-    state: Arc<AppState>,
+    state: Arc<DaemonState>,
     worktree: Worktree,
     worktree_root: PathBuf,
     metadata_roots: Vec<PathBuf>,

@@ -12,7 +12,7 @@ use ctx_resource_utilization::{
     resource_utilization_disabled_from_env, trim_resource_processes, ResourceTelemetryConfig,
 };
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_observability::logs;
 
 mod event;
@@ -23,7 +23,7 @@ use event::ResourceTelemetryEvent;
 use providers::provider_session_counts;
 use remote_metrics::export_remote_metrics;
 
-pub fn spawn_resource_telemetry(state: Arc<AppState>) {
+pub fn spawn_resource_telemetry(state: Arc<DaemonState>) {
     if resource_utilization_disabled_from_env() {
         return;
     }
@@ -56,7 +56,7 @@ pub fn spawn_resource_telemetry(state: Arc<AppState>) {
 }
 
 async fn sample_once(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     cfg: &ResourceTelemetryConfig,
     last_cleanup: &mut Option<String>,
 ) -> Result<()> {

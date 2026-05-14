@@ -5,10 +5,10 @@ use ctx_core::models::Workspace;
 use crate::daemon::providers::auth_check::outcome::ProviderVerifyOutcome;
 use crate::daemon::providers::auth_check::ProviderAuthCheckError;
 use crate::daemon::providers::probe_provider_auth_verification_runtime;
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(super) async fn apply_auth_verification_probe(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace: &Workspace,
     provider_id: &str,
     outcome: &mut ProviderVerifyOutcome,

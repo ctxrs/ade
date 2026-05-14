@@ -12,7 +12,7 @@ use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
 use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
 
 use crate::daemon::execution_effective;
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 struct SandboxBootstrapContext<'a> {
     settings: &'a ctx_settings_model::ExecutionSettings,
@@ -21,7 +21,7 @@ struct SandboxBootstrapContext<'a> {
 }
 
 pub(super) async fn run_bootstrap_step(
-    state: &AppState,
+    state: &DaemonState,
     step: &BootstrapStep,
     workspace: &Workspace,
     worktree: &Worktree,
@@ -58,7 +58,7 @@ pub(super) async fn run_bootstrap_step(
 }
 
 async fn run_bootstrap_step_in_container(
-    state: &AppState,
+    state: &DaemonState,
     step: &BootstrapStep,
     workspace: &Workspace,
     worktree: &Worktree,

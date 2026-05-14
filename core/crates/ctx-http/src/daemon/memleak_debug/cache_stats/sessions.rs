@@ -1,7 +1,7 @@
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::SessionCacheStats;
 
-pub(super) async fn collect_session_cache_stats(state: &AppState) -> SessionCacheStats {
+pub(super) async fn collect_session_cache_stats(state: &DaemonState) -> SessionCacheStats {
     state.session_cache_debug_stats().await
 }

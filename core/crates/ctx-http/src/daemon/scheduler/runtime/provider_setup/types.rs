@@ -5,10 +5,10 @@ use ctx_core::ids::{MessageId, RunId, TurnId};
 use ctx_core::models::{ExecutionEnvironment, Session};
 use ctx_providers::adapters::ProviderAdapter;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(in crate::daemon::scheduler::runtime) struct ProviderTurnRuntimeSetupRequest<'a> {
-    pub(in crate::daemon::scheduler::runtime) state: &'a Arc<AppState>,
+    pub(in crate::daemon::scheduler::runtime) state: &'a Arc<DaemonState>,
     pub(in crate::daemon::scheduler::runtime) store: &'a ctx_store::Store,
     pub(in crate::daemon::scheduler::runtime) session: &'a Session,
     pub(in crate::daemon::scheduler::runtime) run_id: RunId,

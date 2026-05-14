@@ -7,7 +7,7 @@ use ctx_core::ids::MessageId;
 use ctx_core::models::{Message, Session};
 use ctx_session_tools::interrupt_telemetry::InterruptTelemetryContext;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 mod lifecycle;
 mod persistence;
@@ -37,7 +37,7 @@ pub enum SchedulerCommand {
 }
 
 pub async fn session_worker(
-    state_weak: Weak<AppState>,
+    state_weak: Weak<DaemonState>,
     session: Session,
     rx: mpsc::Receiver<SchedulerCommand>,
 ) {

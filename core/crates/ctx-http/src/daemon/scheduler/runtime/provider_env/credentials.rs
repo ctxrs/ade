@@ -8,7 +8,7 @@ use ctx_harness_sources::HarnessRuntimeSourceMode;
 use ctx_provider_accounts as provider_accounts;
 use ctx_provider_install::install_state::InstallTarget;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_managed_installs as installer;
 
 #[path = "credentials/codex.rs"]
@@ -25,7 +25,7 @@ use subscription::{
 };
 
 pub(in crate::daemon::scheduler::runtime) struct ProviderRuntimeEnvironmentRequest<'a> {
-    pub(in crate::daemon::scheduler::runtime) state: &'a Arc<AppState>,
+    pub(in crate::daemon::scheduler::runtime) state: &'a Arc<DaemonState>,
     pub(in crate::daemon::scheduler::runtime) provider_env: &'a mut HashMap<String, String>,
     pub(in crate::daemon::scheduler::runtime) runtime_provider_id: &'a str,
     pub(in crate::daemon::scheduler::runtime) runtime_plan:

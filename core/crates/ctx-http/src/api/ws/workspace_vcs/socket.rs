@@ -8,7 +8,7 @@ use super::subscription::{
 };
 
 fn spawn_workspace_vcs_metrics_loop(
-    state: Arc<AppState>,
+    state: WorkspacesHandle,
     metrics: Arc<VcsStreamMetrics>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
@@ -23,7 +23,7 @@ fn spawn_workspace_vcs_metrics_loop(
 
 pub(super) async fn handle_workspace_vcs_ws(
     socket: WebSocket,
-    state: Arc<AppState>,
+    state: WorkspacesHandle,
     workspace_id: WorkspaceId,
 ) {
     let (sender, mut receiver) = socket.split();
@@ -38,7 +38,7 @@ pub(super) async fn handle_workspace_vcs_ws(
 
     let send_task =
         spawn_workspace_vcs_send_loop(sender, Arc::clone(&pending), Arc::clone(&metrics));
-    let metrics_task = spawn_workspace_vcs_metrics_loop(Arc::clone(&state), Arc::clone(&metrics));
+    let metrics_task = spawn_workspace_vcs_metrics_loop(state.clone(), Arc::clone(&metrics));
 
     let mut runtime = WorkspaceVcsRuntime::default();
     let mut rx = state.subscribe_worktree_vcs_events();

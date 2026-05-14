@@ -68,35 +68,28 @@ fn provider_model_preference_error_response(
 }
 
 pub(in crate::api) async fn get_workspace_provider_model_preference(
-    State(state): State<Arc<AppState>>,
+    State(workspaces): State<WorkspacesHandle>,
     Path((id, provider_id)): Path<(String, String)>,
 ) -> Result<Json<WorkspaceProviderModelPreferenceResp>, (StatusCode, Json<ApiErrorResp>)> {
     let workspace_id = parse_workspace_id(&id)?;
-    crate::daemon::workspaces::get_workspace_provider_model_preference(
-        &state,
-        workspace_id,
-        &provider_id,
-    )
-    .await
-    .map(WorkspaceProviderModelPreferenceResp::from)
-    .map(Json)
-    .map_err(provider_model_preference_error_response)
+    workspaces
+        .get_workspace_provider_model_preference(workspace_id, &provider_id)
+        .await
+        .map(WorkspaceProviderModelPreferenceResp::from)
+        .map(Json)
+        .map_err(provider_model_preference_error_response)
 }
 
 pub(in crate::api) async fn update_workspace_provider_model_preference(
-    State(state): State<Arc<AppState>>,
+    State(workspaces): State<WorkspacesHandle>,
     Path((id, provider_id)): Path<(String, String)>,
     Json(req): Json<UpdateWorkspaceProviderModelPreferenceReq>,
 ) -> Result<Json<WorkspaceProviderModelPreferenceResp>, (StatusCode, Json<ApiErrorResp>)> {
     let workspace_id = parse_workspace_id(&id)?;
-    crate::daemon::workspaces::set_workspace_provider_model_preference(
-        &state,
-        workspace_id,
-        &provider_id,
-        req.preferred_model_id,
-    )
-    .await
-    .map(WorkspaceProviderModelPreferenceResp::from)
-    .map(Json)
-    .map_err(provider_model_preference_error_response)
+    workspaces
+        .set_workspace_provider_model_preference(workspace_id, &provider_id, req.preferred_model_id)
+        .await
+        .map(WorkspaceProviderModelPreferenceResp::from)
+        .map(Json)
+        .map_err(provider_model_preference_error_response)
 }

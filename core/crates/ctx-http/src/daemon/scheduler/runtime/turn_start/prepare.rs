@@ -8,7 +8,7 @@ use ctx_core::models::{
 };
 
 use crate::daemon::scheduler::QueuedMessage;
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::super::helpers::compute_context_window_metrics;
 use super::events::{emit_provider_run_started_event, ProviderRunStartedEvent};
@@ -25,7 +25,7 @@ pub(in crate::daemon::scheduler::runtime) struct PreparedTurnStart {
 }
 
 pub(in crate::daemon::scheduler::runtime) struct PrepareTurnStartRequest<'a> {
-    pub(in crate::daemon::scheduler::runtime) state: &'a Arc<AppState>,
+    pub(in crate::daemon::scheduler::runtime) state: &'a Arc<DaemonState>,
     pub(in crate::daemon::scheduler::runtime) store: &'a ctx_store::Store,
     pub(in crate::daemon::scheduler::runtime) session: &'a Session,
     pub(in crate::daemon::scheduler::runtime) workdir_str: &'a str,

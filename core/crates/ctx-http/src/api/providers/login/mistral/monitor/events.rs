@@ -15,7 +15,7 @@ pub(super) enum MistralLoginEventOutcome {
 }
 
 pub(super) async fn next_mistral_login_event(
-    state: &Arc<AppState>,
+    providers: &ProvidersHandle,
     login_id: &str,
     event_rx: &mut mpsc::Receiver<NormalizedEvent>,
     progress: &mut MistralLoginProgress,
@@ -28,7 +28,7 @@ pub(super) async fn next_mistral_login_event(
 
     if let Some(auth_url) = extract_auth_url_from_value(&event.payload_json) {
         progress.observed_auth_url = true;
-        status::set_auth_url(state, login_id, auth_url).await;
+        status::set_auth_url(providers, login_id, auth_url).await;
     }
     if progress.observed_email.is_none() {
         progress.observed_email = first_email_from_value(&event.payload_json);
@@ -41,7 +41,7 @@ pub(super) async fn next_mistral_login_event(
             .and_then(serde_json::Value::as_str)
             .map(logs::redact_sensitive)
             .unwrap_or_else(|| "mistral authenticate reported an error".to_string());
-        status::set_failed(state, login_id, message).await;
+        status::set_failed(providers, login_id, message).await;
         return MistralLoginEventOutcome::Failed;
     }
 
@@ -57,7 +57,7 @@ pub(super) async fn next_mistral_login_event(
                 .and_then(serde_json::Value::as_str)
                 .map(logs::redact_sensitive)
                 .unwrap_or_else(|| "Mistral sign-in failed. Retry.".to_string());
-            status::set_failed(state, login_id, message).await;
+            status::set_failed(providers, login_id, message).await;
             return MistralLoginEventOutcome::Failed;
         }
     }

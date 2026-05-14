@@ -32,8 +32,8 @@ impl Drop for EnvVarGuard {
     }
 }
 
-pub(super) async fn test_state(data_root: &Path) -> Arc<AppState> {
-    Arc::new(AppState::new(
+pub(super) async fn test_state(data_root: &Path) -> Arc<DaemonState> {
+    Arc::new(DaemonState::new(
         data_root.to_path_buf(),
         StoreManager::open(data_root).await.expect("open stores"),
         HashMap::new(),

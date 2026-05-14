@@ -6,14 +6,14 @@ use serde_json::{json, Value};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
-use ctx_http::daemon::AppState;
+use ctx_http::daemon::DaemonState;
 
 mod common;
 
 async fn setup() -> (
     tempfile::TempDir,
     tempfile::TempDir,
-    Arc<AppState>,
+    Arc<DaemonState>,
     common::TestServer,
 ) {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
@@ -33,7 +33,7 @@ async fn setup() -> (
 }
 
 async fn sessions_have_done_events_in_store(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     sessions: &[ctx_core::models::Session],
     expected_done_events_per_session: usize,
 ) -> bool {

@@ -6,7 +6,7 @@ use ctx_core::ids::SessionId;
 use ctx_core::models::SessionEventType;
 use ctx_session_tools::interrupt_telemetry::InterruptTelemetryContext;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::super::persistence::emit_event;
 use super::state::{RunningTurn, StopReason};
@@ -23,7 +23,7 @@ use interruption::{
 };
 
 pub(crate) async fn stop_running_turn(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session_id: SessionId,
     mut turn: RunningTurn,
     reason: StopReason,

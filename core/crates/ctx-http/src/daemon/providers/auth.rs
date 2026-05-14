@@ -9,7 +9,7 @@ use ctx_provider_runtime::provider_launch::probe;
 use tokio::sync::mpsc;
 
 use crate::daemon::providers::install_target_for_workspace;
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(crate) enum ProviderWorkspaceAuthenticationError {
     ExecutionSettings(anyhow::Error),
@@ -23,7 +23,7 @@ pub(crate) struct ProviderWorkspaceAuthentication {
 }
 
 pub(crate) async fn authenticate_provider_for_workspace_runtime(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace: &Workspace,
     provider_id: &str,
     method_id: Option<String>,

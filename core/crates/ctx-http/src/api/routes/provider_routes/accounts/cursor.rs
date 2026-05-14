@@ -1,14 +1,12 @@
-use std::sync::Arc;
-
 use axum::routing::{delete, get, post, put};
 
 use crate::api::providers::{
     delete_cursor_account, get_cursor_login, list_cursor_accounts, set_cursor_active_account,
     start_cursor_login, upsert_cursor_account,
 };
-use crate::daemon::AppState;
+use crate::daemon::DaemonHandle;
 
-pub(super) fn cursor_account_routes() -> axum::Router<Arc<AppState>> {
+pub(super) fn cursor_account_routes() -> axum::Router<DaemonHandle> {
     axum::Router::new()
         .route(
             "/api/providers/cursor/accounts",

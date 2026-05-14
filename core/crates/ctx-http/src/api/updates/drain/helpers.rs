@@ -3,7 +3,7 @@ use axum::Json;
 use ctx_observability::logs;
 
 use crate::api::errors::ApiErrorResp;
-use crate::daemon::AppState;
+use crate::daemon::CoreHandle;
 
 const LOCAL_DAEMON_SHUTDOWN_TOKEN_HEADER: &str = "x-ctx-local-daemon-shutdown-token";
 
@@ -18,8 +18,8 @@ pub(super) fn internal_error_response(
     )
 }
 
-pub(super) fn local_shutdown_token_authorized(state: &AppState, headers: &HeaderMap) -> bool {
-    let Some(expected) = state.core.local_shutdown_token.as_deref() else {
+pub(super) fn local_shutdown_token_authorized(state: &CoreHandle, headers: &HeaderMap) -> bool {
+    let Some(expected) = state.local_shutdown_token() else {
         return false;
     };
     headers

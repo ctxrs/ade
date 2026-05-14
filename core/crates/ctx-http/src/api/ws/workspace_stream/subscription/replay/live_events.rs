@@ -7,7 +7,7 @@ pub(super) fn replay_should_stop(runtime: &WorkspaceStreamRuntime) -> bool {
 }
 
 pub(super) async fn drain_live_events_blocking_pending_replay(
-    state: &Arc<AppState>,
+    state: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
     live_rx: &mut tokio::sync::broadcast::Receiver<WorkspaceActiveSnapshotEvent>,
     runtime: &mut WorkspaceStreamRuntime,
@@ -35,7 +35,7 @@ pub(super) async fn drain_live_events_blocking_pending_replay(
 }
 
 pub(super) async fn flush_replay_ready_deferred_live_events(
-    state: &Arc<AppState>,
+    state: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
     runtime: &mut WorkspaceStreamRuntime,
     labels: &WorkspaceStreamLabels,

@@ -1,15 +1,14 @@
 use super::*;
 use std::collections::HashMap;
 
+use crate::daemon::DaemonState;
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::StoreManager;
 
-mod archived_subagents;
-mod store_lookup;
 #[path = "tests/title_generation.rs"]
 mod title_generation_tests;
 
-async fn setup_state() -> (tempfile::TempDir, Arc<AppState>, Session) {
+async fn setup_state() -> (tempfile::TempDir, Arc<DaemonState>, Session) {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
 
@@ -75,7 +74,7 @@ async fn setup_state() -> (tempfile::TempDir, Arc<AppState>, Session) {
         HashMap::new();
     providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
 
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,
@@ -84,40 +83,4 @@ async fn setup_state() -> (tempfile::TempDir, Arc<AppState>, Session) {
     ));
 
     (data_dir, state, session)
-}
-
-async fn block_workspace_store_for_session(
-    data_dir: &tempfile::TempDir,
-    state: &Arc<AppState>,
-    session: &Session,
-) {
-    state.cleanup_session(session.id).await;
-    state
-        .core
-        .stores
-        .evict_workspace(session.workspace_id)
-        .await;
-
-    let blocked_workspace_store_dir = data_dir
-        .path()
-        .join("db")
-        .join("workspaces")
-        .join(session.workspace_id.0.to_string());
-    if let Ok(metadata) = tokio::fs::metadata(&blocked_workspace_store_dir).await {
-        if metadata.is_dir() {
-            tokio::fs::remove_dir_all(&blocked_workspace_store_dir)
-                .await
-                .unwrap();
-        } else {
-            tokio::fs::remove_file(&blocked_workspace_store_dir)
-                .await
-                .unwrap();
-        }
-    }
-    tokio::fs::create_dir_all(blocked_workspace_store_dir.parent().unwrap())
-        .await
-        .unwrap();
-    tokio::fs::write(&blocked_workspace_store_dir, b"blocked workspace store")
-        .await
-        .unwrap();
 }

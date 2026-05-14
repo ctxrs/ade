@@ -1,6 +1,6 @@
 use super::super::*;
 
-impl AppState {
+impl DaemonState {
     pub async fn finish_install(
         &self,
         install_id: InstallId,

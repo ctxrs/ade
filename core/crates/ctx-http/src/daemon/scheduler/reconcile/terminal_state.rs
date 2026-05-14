@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_core::ids::{RunId, SessionId, TurnId};
 use ctx_core::models::SessionTurnStatus;
 use ctx_core::session_projection::resolve_turn_terminal_state;
@@ -12,7 +12,7 @@ mod events;
 use events::fallback_interrupted_turn_events;
 
 pub async fn reconcile_turn_terminal_state(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session_id: SessionId,
     run_id: Option<RunId>,
     turn_id: TurnId,

@@ -2,14 +2,16 @@ use std::sync::Arc;
 
 use tokio::sync::broadcast;
 
-use super::AppState;
+use super::DaemonState;
 
-pub(super) fn spawn_provider_child_reclassifier(state: Arc<AppState>) {
+pub(super) fn spawn_provider_child_reclassifier(state: Arc<DaemonState>) {
     ctx_provider_runtime::provider_child_reclassifier::spawn_provider_child_reclassifier(state);
 }
 
 #[async_trait::async_trait]
-impl ctx_provider_runtime::provider_child_reclassifier::ProviderChildReclassifierHost for AppState {
+impl ctx_provider_runtime::provider_child_reclassifier::ProviderChildReclassifierHost
+    for DaemonState
+{
     fn subscribe_shutdown(&self) -> broadcast::Receiver<()> {
         self.core.shutdown_tx.subscribe()
     }

@@ -13,7 +13,7 @@ pub(super) struct QwenLoginEventOutcome {
 }
 
 pub(super) async fn drain_qwen_login_events(
-    state: &Arc<AppState>,
+    providers: &ProvidersHandle,
     login_id: &str,
     event_rx: &mut mpsc::Receiver<NormalizedEvent>,
     progress: &mut QwenLoginProgress,
@@ -24,7 +24,7 @@ pub(super) async fn drain_qwen_login_events(
             Ok(event) => {
                 if let Some(auth_url) = extract_auth_url_from_value(&event.payload_json) {
                     progress.observed_auth_url = true;
-                    status::set_auth_url(state, login_id, auth_url).await;
+                    status::set_auth_url(providers, login_id, auth_url).await;
                 }
                 if progress.observed_email.is_none() {
                     progress.observed_email = first_email_from_value(&event.payload_json);
@@ -36,7 +36,7 @@ pub(super) async fn drain_qwen_login_events(
                         .and_then(serde_json::Value::as_str)
                         .map(logs::redact_sensitive)
                         .unwrap_or_else(|| "qwen authenticate reported an error".to_string());
-                    status::set_failed(state, login_id, message).await;
+                    status::set_failed(providers, login_id, message).await;
                     return QwenLoginEventOutcome {
                         channel_disconnected,
                         failed: true,

@@ -3,10 +3,10 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-use crate::daemon::{reconcile_running_turns_with_reason, AppState};
+use crate::daemon::{reconcile_running_turns_with_reason, DaemonState};
 
 pub(crate) async fn shutdown_shared_substrate(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     reason: &str,
 ) -> Result<Option<ctx_avf_linux_runtime::SubstrateLifecycleRecord>> {
     let Some(record) = state
@@ -31,7 +31,7 @@ pub(crate) async fn shutdown_shared_substrate(
     Ok(Some(record))
 }
 
-async fn trigger_daemon_shutdown(state: Arc<AppState>, reason: &str) {
+async fn trigger_daemon_shutdown(state: Arc<DaemonState>, reason: &str) {
     tracing::info!("daemon shutdown requested: {reason}");
     let _ = state
         .core
@@ -49,7 +49,7 @@ async fn trigger_daemon_shutdown(state: Arc<AppState>, reason: &str) {
 }
 
 pub(crate) fn spawn_deferred_daemon_shutdown(
-    state: Arc<AppState>,
+    state: Arc<DaemonState>,
     reason: String,
     delay: Duration,
 ) {
@@ -59,7 +59,7 @@ pub(crate) fn spawn_deferred_daemon_shutdown(
     });
 }
 
-pub(in crate::daemon) fn spawn_process_shutdown_listener(state: Arc<AppState>) {
+pub(in crate::daemon) fn spawn_process_shutdown_listener(state: Arc<DaemonState>) {
     tokio::spawn(async move {
         #[cfg(unix)]
         {

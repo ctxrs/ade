@@ -19,29 +19,34 @@ use workspace::load_create_task_workspace;
 type CreateTaskApiError = (StatusCode, Json<ApiErrorResp>);
 
 pub(in crate::api) async fn create_task(
-    State(state): State<Arc<AppState>>,
+    State(sessions): State<SessionsHandle>,
+    State(providers): State<ProvidersHandle>,
+    State(workspaces): State<WorkspacesHandle>,
+    State(transport): State<TransportHandle>,
     Path(id): Path<String>,
     Json(req): Json<CreateTaskReq>,
 ) -> Result<Json<Task>, CreateTaskApiError> {
-    let (ws_id, ws, store) = load_create_task_workspace(&state, &id).await?;
+    let handles = TaskApiHandles::new(sessions, providers, workspaces, transport);
+    let (ws_id, ws, store) = load_create_task_workspace(&handles, &id).await?;
     let request = CreateTaskRequestParts::from_request(req)?;
-    let existing_task = load_existing_task_for_request(&state, &store, ws_id, &request).await?;
+    let existing_task = load_existing_task_for_request(&handles, &store, ws_id, &request).await?;
     let default_session_plan = if request.should_preflight_default_session(&existing_task) {
-        Some(preflight_default_session_creation(&state, &store, &ws).await?)
+        Some(preflight_default_session_creation(&handles, &store, &ws).await?)
     } else {
         None
     };
     let persisted_task = persist_task_for_request(&store, ws_id, existing_task, &request).await?;
-    upsert_workspace_task_index(&state, persisted_task.task.id, ws_id).await;
+    upsert_workspace_task_index(&handles, persisted_task.task.id, ws_id).await;
 
-    let default_session_lock = state
+    let default_session_lock = handles
+        .sessions
         .task_session_creation_lock(persisted_task.task.id)
         .await;
     let _default_session_guard = default_session_lock.lock().await;
     let persisted_task =
         reload_or_retry_task_for_request(&store, ws_id, persisted_task, &request).await?;
     let task = ensure_default_session_for_task(
-        Arc::clone(&state),
+        &handles,
         store.clone(),
         ws,
         persisted_task.task,

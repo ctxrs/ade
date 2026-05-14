@@ -8,10 +8,10 @@ use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
 use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
 
 use crate::daemon::execution_effective;
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub async fn ensure_worktree_attachment_mounts_if_materialized(
-    state: &AppState,
+    state: &DaemonState,
     workspace: &Workspace,
     worktree: &Worktree,
 ) -> Result<Vec<WorktreeAttachmentMount>> {
@@ -35,7 +35,7 @@ pub async fn ensure_worktree_attachment_mounts_if_materialized(
 }
 
 pub async fn ensure_worktree_attachment_mounts_for_attachments(
-    state: &AppState,
+    state: &DaemonState,
     workspace: &Workspace,
     worktree: &Worktree,
     attachments: &[WorkspaceAttachment],
@@ -94,7 +94,7 @@ pub async fn ensure_worktree_attachment_mounts_for_attachments(
 }
 
 pub async fn ensure_workspace_attachments_for_worktrees_with_attachments(
-    state: &AppState,
+    state: &DaemonState,
     workspace: &Workspace,
     attachments: &[WorkspaceAttachment],
     refresh: bool,

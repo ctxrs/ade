@@ -8,7 +8,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
 use axum::http::StatusCode;
-use ctx_http::daemon::AppState;
+use ctx_http::daemon::DaemonState;
 use ctx_managed_installs::{
     resolve_matrix_target_key, save_agent_server_config, AgentServerCommand, AgentServerConfigFile,
     ManagedInstallMetadata,
@@ -54,7 +54,7 @@ fn write_runtime_fixture(path: &Path) {
     std::fs::write(path, "#!/bin/sh\nexit 0\n").expect("write runtime fixture");
 }
 
-async fn seed_provider_status(state: &Arc<AppState>, status: ProviderStatus) {
+async fn seed_provider_status(state: &Arc<DaemonState>, status: ProviderStatus) {
     let provider_id = status.provider_id.clone();
     state
         .providers

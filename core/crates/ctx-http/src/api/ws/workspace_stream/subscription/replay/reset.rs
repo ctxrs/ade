@@ -2,7 +2,7 @@ use super::super::super::lifecycle::queue_workspace_stream_reset;
 use super::*;
 
 pub(super) async fn queue_failed_replay_reset(
-    state: &Arc<AppState>,
+    state: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
     session_id: SessionId,
     after_seq: i64,

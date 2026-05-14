@@ -58,7 +58,7 @@ pub(crate) fn take_workspace_stream_receiver_burst(
 }
 
 pub(crate) async fn handle_workspace_stream_receiver_burst(
-    state: &Arc<AppState>,
+    state: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
     burst: WorkspaceStreamReceiverBurst,
     runtime: &mut WorkspaceStreamRuntime,

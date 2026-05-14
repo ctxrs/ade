@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_core::ids::SessionId;
 use ctx_core::models::Session;
 use ctx_observability::logs;
@@ -43,7 +43,7 @@ fn provider_session_claim_hook(
 }
 
 pub(crate) async fn run_session_authentication(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     store: &ctx_store::Store,
     session: &Session,
     method_id: Option<String>,

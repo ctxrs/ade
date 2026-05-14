@@ -1,14 +1,12 @@
-use std::sync::Arc;
-
 use axum::routing::{delete, get, post, put};
 
 use crate::api::providers::{
     delete_claude_account, get_claude_login, list_claude_accounts, set_claude_active_account,
     start_claude_login, upsert_claude_account,
 };
-use crate::daemon::AppState;
+use crate::daemon::DaemonHandle;
 
-pub(super) fn claude_account_routes() -> axum::Router<Arc<AppState>> {
+pub(super) fn claude_account_routes() -> axum::Router<DaemonHandle> {
     axum::Router::new()
         .route(
             "/api/providers/claude-crp/accounts",

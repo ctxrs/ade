@@ -1,5 +1,6 @@
 use super::*;
 use chrono::Utc;
+use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{
     ArchiveVisibility, ExecutionEnvironment, Message, MessageDelivery, MessageRole,
     RetentionPolicyRef, RunArchiveIngestBatch, RunArchiveIngestCursor, RunArchiveIngestScope,
@@ -14,7 +15,7 @@ async fn run_archive_routes_build_and_acknowledge_org_visible_batch() {
 
     let providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
         HashMap::new();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,
@@ -152,6 +153,34 @@ async fn run_archive_routes_build_and_acknowledge_org_visible_batch() {
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::CONFLICT);
+
+    let missing_workspace_id = WorkspaceId::new();
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/api/workspaces/{}/runs/{}/archive/ingest_batch?max_items=25",
+            missing_workspace_id.0, run_id.0
+        ))
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+
+    let mut missing_workspace_batch = batch.clone();
+    missing_workspace_batch.run.workspace_id = missing_workspace_id;
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/api/workspaces/{}/runs/{}/archive/ingest_ack",
+            missing_workspace_id.0, run_id.0
+        ))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_string(&missing_workspace_batch).unwrap(),
+        ))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
 
     let req = Request::builder()
         .method("POST")

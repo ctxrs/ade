@@ -1,11 +1,11 @@
 use ctx_observability::logs;
 use ctx_provider_accounts as provider_accounts;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::{new_started_login_session, StartedLoginSession};
 
-pub(crate) async fn start_cursor_login_session(state: &AppState) -> StartedLoginSession {
+pub(crate) async fn start_cursor_login_session(state: &DaemonState) -> StartedLoginSession {
     let session = new_started_login_session(None, None);
     state
         .providers
@@ -26,7 +26,7 @@ pub(crate) async fn start_cursor_login_session(state: &AppState) -> StartedLogin
 }
 
 pub(crate) async fn cursor_login_status(
-    state: &AppState,
+    state: &DaemonState,
     login_id: &str,
 ) -> Option<provider_accounts::CursorLoginStatus> {
     state
@@ -35,7 +35,7 @@ pub(crate) async fn cursor_login_status(
         .await
 }
 
-pub(crate) async fn set_cursor_login_error(state: &AppState, login_id: &str, error: String) {
+pub(crate) async fn set_cursor_login_error(state: &DaemonState, login_id: &str, error: String) {
     state
         .providers
         .with_cursor_login_sessions(|map| {
@@ -48,7 +48,7 @@ pub(crate) async fn set_cursor_login_error(state: &AppState, login_id: &str, err
 }
 
 pub(crate) async fn update_cursor_login_auth_url(
-    state: &AppState,
+    state: &DaemonState,
     login_id: &str,
     auth_url: String,
 ) {
@@ -63,7 +63,7 @@ pub(crate) async fn update_cursor_login_auth_url(
 }
 
 pub(crate) async fn start_claude_login_session(
-    state: &AppState,
+    state: &DaemonState,
     auth_url: Option<String>,
 ) -> StartedLoginSession {
     let session = new_started_login_session(auth_url, None);
@@ -86,7 +86,7 @@ pub(crate) async fn start_claude_login_session(
 }
 
 pub(crate) async fn claude_login_status(
-    state: &AppState,
+    state: &DaemonState,
     login_id: &str,
 ) -> Option<provider_accounts::ClaudeLoginStatus> {
     state
@@ -95,7 +95,11 @@ pub(crate) async fn claude_login_status(
         .await
 }
 
-pub(crate) async fn set_claude_login_auth_url(state: &AppState, login_id: &str, auth_url: String) {
+pub(crate) async fn set_claude_login_auth_url(
+    state: &DaemonState,
+    login_id: &str,
+    auth_url: String,
+) {
     state
         .providers
         .with_claude_login_sessions(|map| {
@@ -107,7 +111,7 @@ pub(crate) async fn set_claude_login_auth_url(state: &AppState, login_id: &str, 
 }
 
 pub(crate) async fn start_kimi_login_session(
-    state: &AppState,
+    state: &DaemonState,
     auth_url: Option<String>,
     device_code: Option<String>,
 ) -> StartedLoginSession {
@@ -132,7 +136,7 @@ pub(crate) async fn start_kimi_login_session(
 }
 
 pub(crate) async fn kimi_login_status(
-    state: &AppState,
+    state: &DaemonState,
     login_id: &str,
 ) -> Option<provider_accounts::KimiLoginStatus> {
     state
@@ -141,7 +145,7 @@ pub(crate) async fn kimi_login_status(
         .await
 }
 
-pub(crate) async fn set_kimi_login_failed(state: &AppState, login_id: &str, error: String) {
+pub(crate) async fn set_kimi_login_failed(state: &DaemonState, login_id: &str, error: String) {
     state
         .providers
         .with_kimi_login_sessions(|map| {
@@ -154,7 +158,7 @@ pub(crate) async fn set_kimi_login_failed(state: &AppState, login_id: &str, erro
 }
 
 pub(crate) async fn set_kimi_login_timeout_if_no_error(
-    state: &AppState,
+    state: &DaemonState,
     login_id: &str,
     error: String,
 ) {
@@ -172,7 +176,7 @@ pub(crate) async fn set_kimi_login_timeout_if_no_error(
 }
 
 pub(crate) async fn set_kimi_login_terminal_status(
-    state: &AppState,
+    state: &DaemonState,
     login_id: &str,
     status: &'static str,
     error: String,
@@ -189,7 +193,7 @@ pub(crate) async fn set_kimi_login_terminal_status(
 }
 
 pub(crate) async fn finish_kimi_login_session(
-    state: &AppState,
+    state: &DaemonState,
     login_id: &str,
     account_id: Option<String>,
     restart_error: Option<String>,
@@ -212,7 +216,7 @@ pub(crate) async fn finish_kimi_login_session(
 }
 
 pub(crate) async fn finish_cursor_login_session(
-    state: &AppState,
+    state: &DaemonState,
     login_id: &str,
     status: String,
     account_id: Option<String>,
@@ -235,7 +239,7 @@ pub(crate) async fn finish_cursor_login_session(
 }
 
 pub(crate) async fn finish_claude_login_session(
-    state: &AppState,
+    state: &DaemonState,
     login_id: &str,
     status: String,
     account_id: Option<String>,

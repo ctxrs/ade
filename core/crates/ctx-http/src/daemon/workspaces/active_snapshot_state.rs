@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use ctx_core::ids::WorkspaceId;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(crate) async fn load_workspace_active_snapshot_state(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
 ) -> (i64, i64) {
     state

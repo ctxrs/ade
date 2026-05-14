@@ -3,10 +3,10 @@ use std::sync::Arc;
 use ctx_provider_accounts as provider_accounts;
 
 use super::super::ProviderAccountMutationError;
-use crate::daemon::{providers::restarts, AppState};
+use crate::daemon::{providers::restarts, DaemonState};
 
 pub(crate) async fn add_copilot_account(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     label: Option<String>,
     token: String,
     email: Option<String>,
@@ -20,7 +20,7 @@ pub(crate) async fn add_copilot_account(
 }
 
 pub(crate) async fn set_active_copilot_account(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     account_id: Option<String>,
 ) -> Result<(), ProviderAccountMutationError> {
     provider_accounts::set_active_copilot_account(&state.core.data_root, account_id)
@@ -32,7 +32,7 @@ pub(crate) async fn set_active_copilot_account(
 }
 
 pub(crate) async fn remove_copilot_account(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     account_id: &str,
 ) -> Result<(), ProviderAccountMutationError> {
     provider_accounts::remove_copilot_account(&state.core.data_root, account_id)

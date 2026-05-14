@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
@@ -13,7 +11,7 @@ use ctx_linux_sandbox_runtime::{
 use ctx_observability::logs;
 
 use crate::api::errors::ApiErrorResp;
-use crate::daemon::{maintenance as daemon_maintenance, AppState};
+use crate::daemon::{maintenance as daemon_maintenance, CoreHandle, ExecutionHandle};
 
 fn linux_sandbox_user_message(kind: &str) -> String {
     match kind {
@@ -33,9 +31,9 @@ pub(in crate::api) struct LinuxSandboxRuntimePrepareReq {
 }
 
 pub(in crate::api) async fn linux_sandbox_runtime_status_api(
-    State(state): State<Arc<AppState>>,
+    State(core): State<CoreHandle>,
 ) -> Result<Json<LinuxSandboxRuntimeStatus>, (StatusCode, Json<ApiErrorResp>)> {
-    let status = linux_sandbox_runtime_status(&state.core.data_root)
+    let status = linux_sandbox_runtime_status(core.data_root())
         .await
         .map_err(|err| {
             tracing::warn!(target: "linux_sandbox", error = %logs::redact_sensitive(&err.to_string()), "linux_sandbox_runtime_status_api error");
@@ -48,9 +46,9 @@ pub(in crate::api) async fn linux_sandbox_runtime_status_api(
 }
 
 pub(in crate::api) async fn linux_sandbox_runtime_stage(
-    State(state): State<Arc<AppState>>,
+    State(core): State<CoreHandle>,
 ) -> Result<Json<LinuxSandboxRuntimeStatus>, (StatusCode, Json<ApiErrorResp>)> {
-    let status = stage_linux_sandbox_runtime_downloads(&state.core.data_root, None)
+    let status = stage_linux_sandbox_runtime_downloads(core.data_root(), None)
         .await
         .map_err(|err| {
             tracing::warn!(target: "linux_sandbox", error = %logs::redact_sensitive(&err.to_string()), "linux_sandbox_runtime_stage error");
@@ -63,14 +61,16 @@ pub(in crate::api) async fn linux_sandbox_runtime_stage(
 }
 
 pub(in crate::api) async fn linux_sandbox_runtime_prepare(
-    State(state): State<Arc<AppState>>,
+    State(core): State<CoreHandle>,
+    State(execution): State<ExecutionHandle>,
     Json(req): Json<LinuxSandboxRuntimePrepareReq>,
 ) -> Result<Json<LinuxSandboxRuntimePrepareResult>, (StatusCode, Json<ApiErrorResp>)> {
-    let drain_permit = daemon_maintenance::acquire_linux_sandbox_prepare_drain(&state)
+    let drain_permit = execution
+        .acquire_linux_sandbox_prepare_drain()
         .await
         .map_err(linux_sandbox_prepare_drain_error)?;
     let result = match prepare_linux_sandbox_runtime(
-        &state.core.data_root,
+        core.data_root(),
         req.activation_mode
             .unwrap_or(LinuxSandboxActivationMode::Local),
         req.sudo_password.as_deref(),

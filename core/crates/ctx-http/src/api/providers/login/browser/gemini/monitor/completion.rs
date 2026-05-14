@@ -1,13 +1,11 @@
-use std::sync::Arc;
-
 use super::setup::GeminiLoginPaths;
 use super::status;
 use crate::api::providers::login::first_email_from_google_accounts;
-use crate::daemon::AppState;
+use crate::daemon::ProvidersHandle;
 use ctx_observability::logs;
 
 pub(super) async fn complete_gemini_login_if_credentials_exist(
-    state: &Arc<AppState>,
+    providers: &ProvidersHandle,
     login_id: &str,
     label: &Option<String>,
     paths: &GeminiLoginPaths,
@@ -22,7 +20,7 @@ pub(super) async fn complete_gemini_login_if_credentials_exist(
         .is_some_and(serde_json::Value::is_object);
     if !oauth_valid {
         status::set_failed(
-            state,
+            providers,
             login_id,
             "captured oauth_creds.json is not a valid JSON object".to_string(),
         )
@@ -38,28 +36,19 @@ pub(super) async fn complete_gemini_login_if_credentials_exist(
     let email = google_accounts_value
         .as_ref()
         .and_then(first_email_from_google_accounts);
-    let added = crate::daemon::providers::add_gemini_account_for_login(
-        state,
-        label.clone(),
-        oauth_raw,
-        google_accounts_raw,
-        email,
-    )
-    .await;
+    let added = providers
+        .add_gemini_account_for_login(label.clone(), oauth_raw, google_accounts_raw, email)
+        .await;
     match added {
         Ok(outcome) => {
             let restart_error = outcome.restart_error_message();
-            crate::daemon::providers::finish_gemini_login_session(
-                state,
-                login_id,
-                outcome.active_account_id,
-                restart_error,
-            )
-            .await;
+            providers
+                .finish_gemini_login_session(login_id, outcome.active_account_id, restart_error)
+                .await;
         }
         Err(err) => {
             status::set_failed(
-                state,
+                providers,
                 login_id,
                 logs::redact_sensitive(&err.auth_login_error_message()),
             )

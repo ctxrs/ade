@@ -4,7 +4,7 @@ use ctx_observability::logs;
 use ctx_provider_runtime::provider_launch::status::mark_provider_status_with_managed_config_error;
 use ctx_providers::adapters::ProviderStatus;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 #[derive(Debug)]
 pub(crate) struct ProviderDiagnosticsSnapshot {
@@ -13,7 +13,7 @@ pub(crate) struct ProviderDiagnosticsSnapshot {
 }
 
 pub(crate) async fn provider_diagnostics_snapshot(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
 ) -> ProviderDiagnosticsSnapshot {
     let (managed_installs, managed_config_error) =
         match ctx_managed_installs::load_agent_server_config(&state.core.data_root).await {

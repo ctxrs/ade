@@ -8,7 +8,7 @@ use tokio::process::Command;
 use ctx_core::models::{Task, Workspace};
 use ctx_fs::worktrees::managed_worktree_path;
 use ctx_http::api;
-use ctx_http::daemon::AppState;
+use ctx_http::daemon::DaemonState;
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::StoreManager;
 
@@ -73,7 +73,7 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
         HashMap::new();
     providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
 
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,

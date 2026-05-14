@@ -20,7 +20,7 @@ pub(crate) struct SetSessionModelReq {
 }
 
 pub(crate) async fn set_session_model(
-    State(state): State<Arc<AppState>>,
+    State(state): State<SessionsHandle>,
     Path(id): Path<String>,
     Json(req): Json<SetSessionModelReq>,
 ) -> Result<Json<Session>, (StatusCode, Json<ApiErrorResp>)> {
@@ -47,8 +47,7 @@ pub(crate) async fn set_session_model(
     )
     .await?;
 
-    let updated =
-        persist_session_model_update(&state, &target.store, session_id, &resolved_model).await?;
+    let updated = persist_session_model_update(&state, session_id, &resolved_model).await?;
 
     Ok(Json(updated))
 }

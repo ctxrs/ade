@@ -1,5 +1,6 @@
 use super::secure_proxy::{
     mobile_scope_required_secure_response, proxy_secure_request, SecureProxyError,
+    SecureProxyRouterState,
 };
 use super::*;
 use ctx_transport_runtime::mobile_e2ee;
@@ -8,14 +9,14 @@ use request::verify_mobile_secure_request;
 mod request;
 
 pub(in crate::api) async fn handle_mobile_secure(
-    State(state): State<Arc<AppState>>,
+    State(state): State<CoreHandle>,
+    State(router_state): State<SecureProxyRouterState>,
     body: Bytes,
 ) -> Result<Json<SecureEnvelope>, (StatusCode, Json<ApiErrorResp>)> {
     let req: MobileSecureEnvelope = parse_json_body(body)?;
     let verified = verify_mobile_secure_request(&state, req).await?;
 
     match state
-        .global_store()
         .advance_mobile_device_seq(MobileDeviceId(verified.device_uuid), verified.seq)
         .await
         .map_err(|e| {
@@ -47,7 +48,8 @@ pub(in crate::api) async fn handle_mobile_secure(
         }
     }
 
-    let response_payload = match load_mobile_auth_context_for_profile(&state, verified.profile_id)
+    let response_payload = match state
+        .load_mobile_auth_context_for_profile(verified.profile_id)
         .await
         .map_err(|_| {
             (
@@ -58,7 +60,7 @@ pub(in crate::api) async fn handle_mobile_secure(
             )
         })? {
         Some(mobile_auth) if mobile_auth.allows(MobileScope::WorkspaceRead) => {
-            proxy_secure_request(&state, mobile_auth, verified.payload)
+            proxy_secure_request(&router_state, mobile_auth, verified.payload)
                 .await
                 .map_err(SecureProxyError::into_api_error)?
         }

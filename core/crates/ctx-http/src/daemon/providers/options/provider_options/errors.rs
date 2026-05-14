@@ -7,7 +7,7 @@ use ctx_providers::adapters::ProviderStatus;
 use super::*;
 
 pub(super) struct ProviderOptionsErrorContext<'a> {
-    pub(super) state: &'a Arc<AppState>,
+    pub(super) state: &'a Arc<DaemonState>,
     pub(super) provider_id: &'a str,
     pub(super) workspace_id: WorkspaceId,
     pub(super) cache: &'a ProviderOptionsCacheSnapshot,

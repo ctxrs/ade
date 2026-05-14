@@ -3,10 +3,13 @@ use std::sync::Arc;
 use crate::daemon::{
     lifecycle, managed_auto_update, memleak_debug, merge_queue, mobile_startup,
     provider_child_reclassifier, provider_guard, provider_restart, provider_usage,
-    resource_telemetry, storage_guard, AppState,
+    resource_telemetry, storage_guard, DaemonState,
 };
 
-pub(super) fn spawn_daemon_background_services(state: Arc<AppState>, requested_binds: Vec<String>) {
+pub(super) fn spawn_daemon_background_services(
+    state: Arc<DaemonState>,
+    requested_binds: Vec<String>,
+) {
     resource_telemetry::spawn_resource_telemetry(state.clone());
     memleak_debug::spawn_memleak_debug(state.clone());
     storage_guard::spawn_storage_guard(state.clone());
@@ -23,7 +26,7 @@ pub(super) fn spawn_daemon_background_services(state: Arc<AppState>, requested_b
     spawn_startup_provider_status_refresh(state);
 }
 
-pub(in crate::daemon) fn spawn_startup_provider_status_refresh(state: Arc<AppState>) {
+pub(in crate::daemon) fn spawn_startup_provider_status_refresh(state: Arc<DaemonState>) {
     tokio::spawn(async move {
         if let Err(err) = crate::daemon::providers::refresh_provider_statuses(state.as_ref()).await
         {

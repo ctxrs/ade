@@ -1,5 +1,5 @@
 use super::infer_terminal_worktree;
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use chrono::Utc;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{VcsKind, Workspace, Worktree};
@@ -44,8 +44,8 @@ fn sample_worktree(workspace: &Workspace, root_path: PathBuf) -> Worktree {
     }
 }
 
-async fn test_state(data_root: &std::path::Path) -> Arc<AppState> {
-    Arc::new(AppState::new(
+async fn test_state(data_root: &std::path::Path) -> Arc<DaemonState> {
+    Arc::new(DaemonState::new(
         data_root.to_path_buf(),
         StoreManager::open(data_root).await.expect("open stores"),
         std::collections::HashMap::new(),

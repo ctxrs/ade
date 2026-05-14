@@ -8,10 +8,10 @@ use ctx_workspace_container::workspace_container_name;
 use ctx_workspace_services::vcs_hooks::{SandboxContainerRuntime, WorktreeHookExecution};
 use tokio::process::Command;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(super) fn sandbox_command(
-    state: &AppState,
+    state: &DaemonState,
     workspace: &Workspace,
     worktree: &Worktree,
     execution: &WorktreeHookExecution,

@@ -5,10 +5,10 @@ use ctx_core::ids::WorkspaceId;
 use ctx_store::Store;
 use ctx_worktree_data_plane::WorktreeDataPlaneHost;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 #[async_trait]
-impl WorktreeDataPlaneHost for AppState {
+impl WorktreeDataPlaneHost for DaemonState {
     async fn get_workspace(
         state: &Self,
         workspace_id: WorkspaceId,
@@ -31,14 +31,14 @@ mod tests {
     use std::sync::Arc;
     use uuid::Uuid;
 
-    use crate::daemon::AppState;
+    use crate::daemon::DaemonState;
 
     #[tokio::test]
     async fn resolve_worktree_data_plane_rejects_sandbox_session_without_binding() {
         let temp = tempfile::tempdir().expect("tempdir");
         let repo_root = temp.path().join("repo");
         std::fs::create_dir_all(&repo_root).expect("create repo root");
-        let state = Arc::new(AppState::new(
+        let state = Arc::new(DaemonState::new(
             temp.path().to_path_buf(),
             StoreManager::open(temp.path()).await.expect("open stores"),
             HashMap::new(),

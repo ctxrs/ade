@@ -5,7 +5,7 @@ use record::{create_session_record, CreateSessionRecord, CreatedWorktreeCleanup}
 mod record;
 
 pub(super) struct PersistCreatedSession<'a> {
-    pub(super) state: &'a Arc<AppState>,
+    pub(super) handles: &'a TaskApiHandles,
     pub(super) store: &'a Store,
     pub(super) task: &'a Task,
     pub(super) workspace: &'a Workspace,
@@ -25,7 +25,7 @@ pub(super) async fn persist_created_session(
     request: PersistCreatedSession<'_>,
 ) -> Result<Session, StatusCode> {
     let PersistCreatedSession {
-        state,
+        handles,
         store,
         task,
         workspace,
@@ -54,7 +54,7 @@ pub(super) async fn persist_created_session(
         parent_session_id,
         relationship,
         cleanup: CreatedWorktreeCleanup {
-            state,
+            handles,
             store,
             workspace,
             task_id: task.id,
@@ -84,10 +84,10 @@ pub(super) async fn persist_created_session(
         }
     }
 
-    state.remember_session_meta(&session).await;
+    handles.sessions.remember_session_meta(&session).await;
     if let Err(e) = retry_global_index_write(|| async {
-        state
-            .global_store()
+        handles
+            .sessions
             .upsert_workspace_session_index(session.id, task.workspace_id)
             .await
     })

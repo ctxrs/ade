@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) struct SandboxWorkActivityFixture {
-    state: Arc<AppState>,
+    state: Arc<DaemonState>,
     temp: tempfile::TempDir,
     _disable: EnvVarGuard,
     _serial: tokio::sync::MutexGuard<'static, ()>,
@@ -13,7 +13,7 @@ impl SandboxWorkActivityFixture {
         let disable = EnvVarGuard::set("CTX_TEST_SANDBOX_CLI_AVAILABLE", "0");
         let temp = tempdir().unwrap();
         let stores = StoreManager::open(temp.path()).await.unwrap();
-        let state = Arc::new(AppState::new(
+        let state = Arc::new(DaemonState::new(
             temp.path().to_path_buf(),
             stores,
             HashMap::new(),
@@ -29,7 +29,7 @@ impl SandboxWorkActivityFixture {
         }
     }
 
-    pub(super) fn state(&self) -> Arc<AppState> {
+    pub(super) fn state(&self) -> Arc<DaemonState> {
         self.state.clone()
     }
 

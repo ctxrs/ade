@@ -11,36 +11,41 @@ pub(super) struct SessionWorktreeResolution {
 }
 
 pub(super) async fn resolve_session_worktree_for_task(
-    state: &Arc<AppState>,
+    handles: &TaskApiHandles,
     store: &Store,
     task: &Task,
     workspace: &Workspace,
     requested_worktree_id: Option<&str>,
     requested_execution_environment: Option<ExecutionEnvironment>,
 ) -> Result<SessionWorktreeResolution, StatusCode> {
-    let workspace_effective =
-        execution_effective::effective_execution_settings(state, workspace.id)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let workspace_effective = handles
+        .workspaces
+        .effective_execution_settings(workspace.id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let mut existing_worktree = None;
     let worktree_id = if let Some(worktree_id) = requested_worktree_id {
         let worktree_id =
             WorktreeId(uuid::Uuid::parse_str(worktree_id).map_err(|_| StatusCode::BAD_REQUEST)?);
         existing_worktree = Some(
-            resolve_existing_worktree_execution(state, store, workspace, worktree_id)
+            handles
+                .workspaces
+                .resolve_existing_worktree_execution(store, workspace, worktree_id)
                 .await
                 .map_err(|_| StatusCode::NOT_FOUND)?,
         );
         worktree_id
     } else if let Some(primary) = task.primary_worktree_id {
         existing_worktree = Some(
-            resolve_existing_worktree_execution(state, store, workspace, primary)
+            handles
+                .workspaces
+                .resolve_existing_worktree_execution(store, workspace, primary)
                 .await
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
         );
         primary
     } else {
-        create_session_execution_worktree(state, store, task, workspace, &workspace_effective)
+        create_session_execution_worktree(handles, store, task, workspace, &workspace_effective)
             .await?
     };
     let created_worktree_id = existing_worktree.is_none().then_some(worktree_id);
@@ -60,7 +65,7 @@ pub(super) async fn resolve_session_worktree_for_task(
                 if requested != effective_execution_environment {
                     if let Some(created_worktree_id) = created_worktree_id {
                         cleanup_orphaned_provisioned_worktree(
-                            state,
+                            handles,
                             store,
                             workspace,
                             task.id,

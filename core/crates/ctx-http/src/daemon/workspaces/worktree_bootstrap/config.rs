@@ -5,10 +5,10 @@ use ctx_workspace_services::worktree_bootstrap::{
     normalize_bootstrap_config, BootstrapConfig, BootstrapConfigInput,
 };
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(super) async fn load_bootstrap_config(
-    state: &AppState,
+    state: &DaemonState,
     workspace: &Workspace,
 ) -> Result<Option<BootstrapConfig>> {
     let store = state.store_for_workspace(workspace.id).await?;

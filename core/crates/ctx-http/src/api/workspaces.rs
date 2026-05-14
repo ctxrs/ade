@@ -1,5 +1,4 @@
 use std::path::Path as StdPath;
-use std::sync::Arc;
 
 use axum::body::Body;
 use axum::extract::{Path, State};
@@ -28,21 +27,16 @@ pub(super) use registry::{create_workspace, delete_workspace, get_workspace, lis
 pub(super) use worktrees::{get_worktree, get_worktree_bootstrap_logs};
 
 use super::errors::ApiErrorResp;
-use super::shared::{
-    map_effective_execution_settings_error, path_resolves_within_root,
-    store_for_existing_workspace_status,
-};
+use super::shared::{map_effective_execution_settings_error, path_resolves_within_root};
 use crate::daemon::workspaces::{WorkspaceHydrationError, WorkspaceHydrationErrorKind};
-use crate::daemon::AppState;
+use crate::daemon::WorkspacesHandle;
 use ctx_core::ids::{WorkspaceId, WorktreeId};
 use ctx_core::models::{
     AttachmentMode, AttachmentUpdatePolicy, Workspace, WorkspaceActiveHeadBatch,
     WorkspaceActiveSnapshot, WorkspaceAttachment, WorkspaceAttachmentKind, Worktree,
 };
 use ctx_observability::logs;
-use ctx_observability::telemetry::TelemetryEvent;
 use ctx_workspace_attachments::AttachmentConfig;
-use ctx_workspace_config as workspace_config;
 
 #[derive(Debug, Deserialize)]
 pub(super) struct UpdateMergeQueueConfigReq {

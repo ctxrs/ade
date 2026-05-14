@@ -1,5 +1,4 @@
 use std::path::{Path as StdPath, PathBuf};
-use std::sync::Arc;
 
 use axum::body::Body;
 use axum::extract::{Path, State};
@@ -7,28 +6,23 @@ use axum::http::{header, StatusCode};
 use axum::response::Response;
 use ctx_core::ids::{MergeQueueEntryId, WorkspaceId};
 
-use crate::api::shared::{path_resolves_within_root, store_for_existing_workspace_status};
-use crate::daemon::{merge_queue, AppState};
+use crate::api::shared::path_resolves_within_root;
+use crate::daemon::WorkspacesHandle;
 
 pub(in crate::api) async fn get_merge_queue_entry_logs(
-    State(state): State<Arc<AppState>>,
+    State(state): State<WorkspacesHandle>,
     Path((workspace_id, id)): Path<(String, String)>,
 ) -> Result<Response, StatusCode> {
     let workspace_id =
         WorkspaceId(uuid::Uuid::parse_str(&workspace_id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let entry_id =
         MergeQueueEntryId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    merge_queue::get_workspace_merge_queue_entry(&state, workspace_id, entry_id)
+    state
+        .get_workspace_merge_queue_entry(workspace_id, entry_id)
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;
-    let store = store_for_existing_workspace_status(&state, workspace_id).await?;
-    let workspace = store
-        .get_workspace(workspace_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
-    let run = store
-        .get_latest_merge_queue_run(entry_id)
+    let (workspace, run) = state
+        .latest_merge_queue_run_for_route(workspace_id, entry_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;

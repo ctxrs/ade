@@ -4,7 +4,7 @@ use super::*;
 use crate::daemon::mobile_access as daemon_mobile_access;
 
 pub(super) async fn start_mobile_tunnel_best_effort(
-    state: &Arc<AppState>,
+    state: &CoreHandle,
     payload: &ControlPlaneEnableResp,
     public_url: &Url,
 ) {
@@ -14,7 +14,7 @@ pub(super) async fn start_mobile_tunnel_best_effort(
         tunnel_secret: payload.tunnel_secret.clone(),
         public_base_url: public_url.as_str().trim_end_matches('/').to_string(),
     };
-    daemon_mobile_access::start_mobile_tunnel_best_effort(state, request).await;
+    state.start_mobile_tunnel_best_effort(request).await;
 }
 
 pub(super) fn build_enable_mobile_access_response(

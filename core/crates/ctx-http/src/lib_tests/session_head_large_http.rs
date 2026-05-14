@@ -20,7 +20,7 @@ async fn large_session_head_http_responses_are_bounded() {
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,

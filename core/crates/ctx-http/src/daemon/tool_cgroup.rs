@@ -6,11 +6,11 @@ use ctx_resource_utilization::tool_limits::{
 #[cfg(target_os = "linux")]
 pub const TOOL_SLICE_UNIT: &str = ctx_resource_utilization::tool_limits::TOOL_SLICE_UNIT;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_settings_model::{PublicToolLimitsSettings, Settings};
 
 pub async fn build_public_settings(
-    state: &AppState,
+    state: &DaemonState,
     settings: &Settings,
 ) -> Option<PublicToolLimitsSettings> {
     let cfg = settings.tool_limits.as_ref()?;
@@ -22,7 +22,7 @@ pub async fn build_public_settings(
     Some(public_settings(cfg, effective.as_ref()))
 }
 
-pub async fn apply_settings(state: &AppState, settings: &Settings) -> Result<()> {
+pub async fn apply_settings(state: &DaemonState, settings: &Settings) -> Result<()> {
     let cfg = settings.tool_limits.clone().unwrap_or_default();
     if !cfg.enabled {
         return Ok(());

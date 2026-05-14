@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use axum::routing::{delete, get, post, put};
 
 use crate::api::providers::{
@@ -7,9 +5,9 @@ use crate::api::providers::{
     refresh_provider_harness_endpoint_models, select_provider_harness_source,
     set_provider_harness_endpoint_manual_models, upsert_provider_harness_endpoint,
 };
-use crate::daemon::AppState;
+use crate::daemon::DaemonHandle;
 
-pub(super) fn provider_harness_config_routes() -> axum::Router<Arc<AppState>> {
+pub(super) fn provider_harness_config_routes() -> axum::Router<DaemonHandle> {
     axum::Router::new()
         .route(
             "/api/providers/:id/harness_config",

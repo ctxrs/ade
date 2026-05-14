@@ -4,10 +4,10 @@ use std::sync::Arc;
 use ctx_core::ids::{WorkspaceId, WorktreeId};
 use ctx_core::models::{Worktree, WorktreeVcsFreshness};
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(crate) async fn filter_workspace_worktree_ids(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
     worktree_ids: Vec<WorktreeId>,
 ) -> Vec<WorktreeId> {
@@ -29,7 +29,7 @@ pub(crate) async fn filter_workspace_worktree_ids(
 }
 
 pub(crate) async fn refresh_worktree_vcs_for_worktrees(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     summary_worktree_ids: &[WorktreeId],
     detail_worktree_ids: &[WorktreeId],
 ) {
@@ -83,7 +83,7 @@ pub(crate) async fn refresh_worktree_vcs_for_worktrees(
     }
 }
 
-async fn load_worktree(state: &Arc<AppState>, worktree_id: WorktreeId) -> Option<Worktree> {
+async fn load_worktree(state: &Arc<DaemonState>, worktree_id: WorktreeId) -> Option<Worktree> {
     let store = state.store_for_worktree(worktree_id).await.ok()?;
     store.get_worktree(worktree_id).await.ok().flatten()
 }

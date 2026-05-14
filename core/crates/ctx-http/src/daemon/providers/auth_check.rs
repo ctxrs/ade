@@ -20,7 +20,7 @@ use crate::daemon::providers::{
     refresh_provider_endpoint_model_catalog, ProviderLaunchConfigError,
     ProviderWorkspaceAuthenticationError,
 };
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 mod cache;
 mod outcome;
@@ -52,7 +52,7 @@ pub(crate) struct ProviderAuthCheckSnapshot {
 }
 
 pub(crate) async fn authenticate_provider_for_workspace(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
     provider_id: &str,
     method_id: Option<String>,
@@ -103,7 +103,7 @@ pub(crate) async fn authenticate_provider_for_workspace(
 }
 
 pub(crate) async fn verify_provider_for_workspace(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
     provider_id: &str,
 ) -> Result<ProviderAuthCheckSnapshot, ProviderAuthCheckError> {

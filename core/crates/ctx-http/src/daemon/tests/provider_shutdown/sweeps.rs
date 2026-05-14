@@ -22,7 +22,7 @@ async fn sweep_provider_workers_once_dedupes_shared_adapters_and_aggregates_stat
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert("root".into(), shared_adapter.clone());
     providers.insert("other".into(), other_adapter.clone());
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         temp.path().to_path_buf(),
         stores,
         providers,
@@ -67,7 +67,7 @@ async fn shutdown_shared_substrate_requests_save_or_stop_when_shared_backend_ava
     let temp = tempdir().unwrap();
     let stores = StoreManager::open(temp.path()).await.unwrap();
     let providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         temp.path().to_path_buf(),
         stores,
         providers,

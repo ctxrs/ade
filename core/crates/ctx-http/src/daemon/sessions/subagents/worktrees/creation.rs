@@ -4,7 +4,7 @@ use crate::daemon::workspaces::{
     diff_worktree_summary_for_session, ensure_task_commit_hook, persist_provisioned_worktree,
     provision_worktree_for_execution,
 };
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_core::ids::TaskId;
 use ctx_core::models::{VcsKind, Workspace, Worktree};
 use ctx_settings_model::ExecutionSettings;
@@ -18,7 +18,7 @@ use super::super::errors::{
 use ctx_session_service::subagents::SubagentWorktreeSelection;
 
 pub(in crate::daemon::sessions::subagents) async fn plan_subagent_worktree_creation(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     parent_worktree: &Worktree,
     selection: SubagentWorktreeSelection,
 ) -> ApiResult<Option<(VcsKind, String)>> {
@@ -57,7 +57,7 @@ pub(in crate::daemon::sessions::subagents) async fn plan_subagent_worktree_creat
 }
 
 pub(in crate::daemon::sessions::subagents) async fn create_subagent_worktree(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     store: &ctx_store::Store,
     workspace: &Workspace,
     task_id: TaskId,

@@ -1,7 +1,5 @@
 use super::super::*;
-use crate::daemon::sessions::ask_user::{
-    submit_ask_user_answer, SubmitAskUserAnswer, SubmitAskUserAnswerError,
-};
+use crate::daemon::sessions::ask_user::{SubmitAskUserAnswer, SubmitAskUserAnswerError};
 use ctx_observability::logs;
 use ctx_providers::ask_user_question::AskUserQuestionOutcome;
 
@@ -20,7 +18,7 @@ pub(crate) struct SubmitAskUserQuestionResp {
 }
 
 pub(crate) async fn submit_ask_user_question(
-    State(state): State<Arc<AppState>>,
+    State(state): State<SessionsHandle>,
     Path(id): Path<String>,
     Json(req): Json<SubmitAskUserQuestionReq>,
 ) -> Result<Json<SubmitAskUserQuestionResp>, (StatusCode, Json<ApiErrorResp>)> {
@@ -47,17 +45,17 @@ pub(crate) async fn submit_ask_user_question(
         }
     };
 
-    submit_ask_user_answer(
-        &state,
-        session_id,
-        SubmitAskUserAnswer {
-            tool_call_id: req.tool_call_id,
-            outcome,
-            answers: req.answers.unwrap_or_default(),
-        },
-    )
-    .await
-    .map_err(submit_ask_user_answer_error)?;
+    state
+        .submit_ask_user_answer(
+            session_id,
+            SubmitAskUserAnswer {
+                tool_call_id: req.tool_call_id,
+                outcome,
+                answers: req.answers.unwrap_or_default(),
+            },
+        )
+        .await
+        .map_err(submit_ask_user_answer_error)?;
 
     Ok(Json(SubmitAskUserQuestionResp { ok: true }))
 }

@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) struct ExistingRequestedSession<'a> {
-    pub(super) state: &'a Arc<AppState>,
+    pub(super) handles: &'a TaskApiHandles,
     pub(super) store: &'a Store,
     pub(super) task: &'a Task,
     pub(super) workspace: &'a Workspace,
@@ -16,7 +16,7 @@ pub(super) async fn resolve_existing_requested_session(
     request: ExistingRequestedSession<'_>,
 ) -> Result<Option<Session>, StatusCode> {
     let ExistingRequestedSession {
-        state,
+        handles,
         store,
         task,
         workspace,
@@ -29,8 +29,8 @@ pub(super) async fn resolve_existing_requested_session(
     let Some(session_id) = requested_session_id else {
         return Ok(None);
     };
-    let existing_ws = state
-        .global_store()
+    let existing_ws = handles
+        .sessions
         .get_workspace_id_for_session(session_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -38,7 +38,7 @@ pub(super) async fn resolve_existing_requested_session(
         return Ok(None);
     };
     if existing_ws != task.workspace_id {
-        cleanup_created_worktree(state, store, workspace, task.id, created_worktree_id).await;
+        cleanup_created_worktree(handles, store, workspace, task.id, created_worktree_id).await;
         return Err(StatusCode::CONFLICT);
     }
 
@@ -47,23 +47,24 @@ pub(super) async fn resolve_existing_requested_session(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let Some(existing) = existing else {
-        cleanup_created_worktree(state, store, workspace, task.id, created_worktree_id).await;
+        cleanup_created_worktree(handles, store, workspace, task.id, created_worktree_id).await;
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     };
     if !session_matches_creation_identity(&existing, identity) {
-        cleanup_created_worktree(state, store, workspace, task.id, created_worktree_id).await;
+        cleanup_created_worktree(handles, store, workspace, task.id, created_worktree_id).await;
         return Err(StatusCode::CONFLICT);
     }
 
-    state.remember_session_meta(&existing).await;
+    handles.sessions.remember_session_meta(&existing).await;
     if remember_model_preference {
-        if let Err(error) = crate::daemon::workspaces::update_workspace_provider_preferred_model_id(
-            state,
-            task.workspace_id,
-            identity.provider_id,
-            Some(preferred_model_id.to_string()),
-        )
-        .await
+        if let Err(error) = handles
+            .sessions
+            .update_workspace_provider_preferred_model_id(
+                task.workspace_id,
+                identity.provider_id,
+                Some(preferred_model_id.to_string()),
+            )
+            .await
         {
             tracing::warn!(
                 session_id = %existing.id.0,
@@ -78,7 +79,7 @@ pub(super) async fn resolve_existing_requested_session(
 }
 
 async fn cleanup_created_worktree(
-    state: &Arc<AppState>,
+    handles: &TaskApiHandles,
     store: &Store,
     workspace: &Workspace,
     task_id: TaskId,
@@ -86,7 +87,7 @@ async fn cleanup_created_worktree(
 ) {
     if let Some(created_worktree_id) = created_worktree_id {
         cleanup_orphaned_provisioned_worktree(
-            state,
+            handles,
             store,
             workspace,
             task_id,

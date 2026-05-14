@@ -7,7 +7,7 @@ use tokio::sync::Mutex;
 use ctx_core::models::Session;
 use ctx_session_tools::order_seq::OrderSeqState;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 mod event_loop;
 mod execution_plan;
@@ -37,7 +37,7 @@ use super::lifecycle::RunningTurn;
 use super::QueuedMessage;
 
 pub(crate) async fn start_turn(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session: &Session,
     workdir: &Path,
     session_root_kind: &str,

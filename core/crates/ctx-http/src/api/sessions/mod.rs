@@ -1,24 +1,22 @@
+#[cfg(test)]
 use std::sync::Arc;
 use std::time::Instant;
 
 use base64::Engine;
-use sha2::Digest;
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
-use super::artifacts::persist_blob_bytes;
 use super::errors::ApiErrorResp;
 use super::shared::{map_file_completions_error, FileCompletionsQuery};
-use crate::daemon::AppState;
+use crate::daemon::SessionsHandle;
 use ctx_core::ids::*;
 use ctx_core::models::*;
 use ctx_observability::logs;
 #[cfg(test)]
 use ctx_settings_model as user_settings;
-use ctx_store::is_unique_constraint_violation;
 use ctx_workspace_services::worktree_vcs::GitStatusEntry;
 
 mod subagents;
@@ -34,21 +32,12 @@ pub(super) use control::{
 mod file_completions;
 pub(super) use file_completions::session_file_completions;
 mod messages;
-pub(crate) use messages::ensure_session_turn_for_message;
 pub(super) use messages::{delete_session_message, post_message};
 mod snapshot;
 pub(super) use snapshot::{
     apply_session_diff_patch, get_session_diff, get_session_diff_summary, get_session_events,
     get_session_git_status, get_session_head, get_session_history, get_session_snapshot,
     get_session_state, list_session_turn_tools,
-};
-mod store_lookup;
-#[cfg(test)]
-pub(in crate::api::sessions) use store_lookup::store_for_existing_session_api_error_allow_archived;
-pub(in crate::api::sessions) use store_lookup::{
-    store_for_existing_session_api_error, store_for_existing_session_api_error_for_write,
-    store_for_existing_session_status, store_for_existing_session_status_allow_archived,
-    store_for_existing_session_status_for_write,
 };
 mod titles_and_modes;
 #[cfg(test)]
@@ -57,3 +46,9 @@ pub(super) use titles_and_modes::{generate_session_title, set_session_mode, set_
 
 #[cfg(test)]
 mod tests;
+
+fn session_data_or_status<T>(result: anyhow::Result<Option<T>>) -> Result<T, StatusCode> {
+    result
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)
+}

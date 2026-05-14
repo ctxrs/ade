@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use axum::body::Body;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -11,7 +9,7 @@ use ctx_http_auth::{
     browser_stream_query_token_is_valid, is_websocket_upgrade, scoped_mcp_route, ScopedMcpRoute,
 };
 
-use crate::daemon::{mobile_access::MobileAuthContext, AppState};
+use crate::daemon::{mobile_access::MobileAuthContext, CoreHandle};
 
 mod mobile;
 
@@ -22,7 +20,7 @@ pub(in crate::api) use mobile::{
 use mobile::verify_mobile_api_token;
 
 pub(super) async fn auth_middleware(
-    State(state): State<Arc<AppState>>,
+    State(state): State<CoreHandle>,
     mut req: Request<Body>,
     next: Next,
 ) -> Result<impl IntoResponse, StatusCode> {
@@ -51,14 +49,14 @@ pub(super) async fn auth_middleware(
         let Some(token_value) = token.as_deref() else {
             return Err(StatusCode::UNAUTHORIZED);
         };
-        let Some(mcp_auth) = crate::daemon::verify_mcp_auth_token(&state, token_value).await else {
+        let Some(mcp_auth) = state.verify_mcp_auth_token(token_value).await else {
             return Err(StatusCode::UNAUTHORIZED);
         };
         req.extensions_mut().insert(mcp_auth);
         return Ok(next.run(req).await);
     }
 
-    if state.core.auth_token.is_none() {
+    if !state.has_auth_token() {
         return Ok(next.run(req).await);
     }
     let is_terminal_stream = path.starts_with("/api/terminals/") && path.ends_with("/stream");
@@ -68,10 +66,10 @@ pub(super) async fn auth_middleware(
     }
     let is_mobile_token_route = path == "/api/mobile/register";
 
-    if token.as_deref() == state.core.auth_token.as_deref() {
+    if token.as_deref() == state.auth_token() {
         return Ok(next.run(req).await);
     }
-    if let Some(auth_token) = state.core.auth_token.as_deref() {
+    if let Some(auth_token) = state.auth_token() {
         if browser_query_secret_bearer_is_valid(path, token.as_deref(), auth_token) {
             return Ok(next.run(req).await);
         }
@@ -89,8 +87,7 @@ pub(super) async fn auth_middleware(
     }
     if let Some(token_value) = token.as_deref() {
         if let Some(route) = scoped_mcp_route(req.method(), path) {
-            if let Some(mcp_auth) = crate::daemon::verify_mcp_auth_token(&state, token_value).await
-            {
+            if let Some(mcp_auth) = state.verify_mcp_auth_token(token_value).await {
                 let allowed = match route {
                     ScopedMcpRoute::SessionSubagents { session_id } => {
                         mcp_auth.allows_subagents(session_id)
@@ -104,24 +101,15 @@ pub(super) async fn auth_middleware(
                     req.extensions_mut().insert(mcp_auth);
                     return Ok(next.run(req).await);
                 }
-                crate::daemon::emit_mcp_token_denied(
-                    &state,
+                state.emit_mcp_token_denied(
                     mcp_auth,
                     req.method().as_str(),
                     path,
                     "scope_or_capability_mismatch",
                 );
             }
-        } else if let Some(mcp_auth) =
-            crate::daemon::verify_mcp_auth_token(&state, token_value).await
-        {
-            crate::daemon::emit_mcp_token_denied(
-                &state,
-                mcp_auth,
-                req.method().as_str(),
-                path,
-                "route_not_allowed",
-            );
+        } else if let Some(mcp_auth) = state.verify_mcp_auth_token(token_value).await {
+            state.emit_mcp_token_denied(mcp_auth, req.method().as_str(), path, "route_not_allowed");
         }
     }
     if is_mobile_token_route {

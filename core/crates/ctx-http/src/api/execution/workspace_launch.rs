@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use axum::http::StatusCode;
 use axum::Json;
 use ctx_core::ids::WorkspaceId;
@@ -7,10 +5,10 @@ use ctx_observability::logs;
 
 use super::super::errors::ApiErrorResp;
 use super::super::shared::map_effective_execution_settings_error;
-use crate::daemon::{execution_effective, AppState};
+use crate::daemon::WorkspacesHandle;
 
 pub(super) async fn resolve_workspace_launch_inputs(
-    state: &Arc<AppState>,
+    state: &WorkspacesHandle,
     raw_workspace_id: Option<&str>,
 ) -> Result<
     (
@@ -29,7 +27,6 @@ pub(super) async fn resolve_workspace_launch_inputs(
     };
     let workspace_id = parse_workspace_id(raw_workspace_id)?;
     let workspace = state
-        .global_store()
         .get_workspace(workspace_id)
         .await
         .map_err(|e| {
@@ -47,10 +44,10 @@ pub(super) async fn resolve_workspace_launch_inputs(
             }),
         ))?;
 
-    let execution_settings =
-        execution_effective::effective_execution_settings_classified(state.as_ref(), workspace_id)
-            .await
-            .map_err(map_effective_execution_settings_error)?;
+    let execution_settings = state
+        .effective_execution_settings_classified(workspace_id)
+        .await
+        .map_err(map_effective_execution_settings_error)?;
 
     Ok((workspace, execution_settings))
 }

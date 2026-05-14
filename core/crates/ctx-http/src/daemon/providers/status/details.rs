@@ -4,10 +4,10 @@ use ctx_managed_installs as installer;
 use ctx_provider_runtime::provider_launch::status::mark_provider_status_with_managed_config_error;
 use ctx_providers::adapters::ProviderStatus;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(crate) async fn provider_status_without_target_bootstrap(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     provider_id: &str,
     target: ctx_provider_install::install_state::InstallTarget,
 ) -> ProviderStatus {
@@ -18,7 +18,7 @@ pub(crate) async fn provider_status_without_target_bootstrap(
 }
 
 pub(super) async fn decorate_provider_list_status(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     matrix: &ctx_provider_matrix::ProviderMatrix,
     managed_config_error: Option<&str>,
     target: ctx_provider_install::install_state::InstallTarget,
@@ -38,7 +38,7 @@ pub(super) async fn decorate_provider_list_status(
 }
 
 pub(crate) async fn decorate_provider_runtime_details(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     matrix: &ctx_provider_matrix::ProviderMatrix,
     managed_config_error: Option<&str>,
     target: ctx_provider_install::install_state::InstallTarget,

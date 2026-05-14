@@ -9,14 +9,14 @@ use ctx_workspace_services::worktree_bootstrap::{
     BootstrapCommandResult, BootstrapConfig, BootstrapReport, BootstrapStep,
 };
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 mod command;
 mod config;
 mod report;
 
 pub async fn spawn_worktree_bootstrap(
-    state: Arc<AppState>,
+    state: Arc<DaemonState>,
     workspace: Workspace,
     worktree: Worktree,
 ) -> Result<()> {
@@ -25,7 +25,7 @@ pub async fn spawn_worktree_bootstrap(
 }
 
 #[async_trait]
-impl ctx_workspace_services::worktree_bootstrap::WorktreeBootstrapHost for AppState {
+impl ctx_workspace_services::worktree_bootstrap::WorktreeBootstrapHost for DaemonState {
     async fn load_bootstrap_config(
         &self,
         workspace: &Workspace,

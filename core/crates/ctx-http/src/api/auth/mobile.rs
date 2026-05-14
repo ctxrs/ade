@@ -1,11 +1,6 @@
-use std::sync::Arc;
-
 use axum::http::StatusCode;
 
-use crate::daemon::{
-    mobile_access::{self as daemon_mobile_access, MobileAuthContext},
-    AppState,
-};
+use crate::daemon::{mobile_access::MobileAuthContext, CoreHandle};
 
 pub(in crate::api) use self::tokens::{
     generate_mobile_api_token, generate_pairing_token, hash_api_token, hash_pairing_token,
@@ -15,11 +10,12 @@ pub(in crate::api) use self::tokens::{
 mod tokens;
 
 pub(super) async fn verify_mobile_api_token(
-    state: &Arc<AppState>,
+    state: &CoreHandle,
     token: &str,
 ) -> Result<Option<MobileAuthContext>, StatusCode> {
     let hash = hash_api_token(token);
-    daemon_mobile_access::verify_mobile_api_token_hash(state, &hash)
+    state
+        .verify_mobile_api_token_hash(&hash)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }

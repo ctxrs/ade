@@ -4,7 +4,7 @@ use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
 use ctx_session_tools::interrupt_telemetry::metric_labels;
 
 pub(in crate::daemon::scheduler::lifecycle::stop) async fn record_interrupt_request_telemetry(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session_id: SessionId,
     turn: &RunningTurn,
     interrupt: &InterruptTelemetryContext,
@@ -23,7 +23,7 @@ pub(in crate::daemon::scheduler::lifecycle::stop) async fn record_interrupt_requ
 }
 
 pub(in crate::daemon::scheduler::lifecycle::stop) async fn record_provider_cancel_telemetry(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session_id: SessionId,
     turn: &RunningTurn,
     interrupt: &InterruptTelemetryContext,
@@ -42,7 +42,7 @@ pub(in crate::daemon::scheduler::lifecycle::stop) async fn record_provider_cance
 }
 
 async fn record_interrupt_metric(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     turn: &RunningTurn,
     event: &str,
     value_ms: u64,

@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
@@ -9,10 +7,10 @@ use super::types::{
     BeginUpdateDrainReq, BeginUpdateDrainResp, ReleaseUpdateDrainReq, ReleaseUpdateDrainResp,
 };
 use crate::api::errors::ApiErrorResp;
-use crate::daemon::{maintenance as daemon_maintenance, AppState};
+use crate::daemon::{maintenance as daemon_maintenance, ExecutionHandle};
 
 pub(in crate::api) async fn begin_update_drain(
-    State(state): State<Arc<AppState>>,
+    State(execution): State<ExecutionHandle>,
     Json(req): Json<BeginUpdateDrainReq>,
 ) -> Result<Json<BeginUpdateDrainResp>, (StatusCode, Json<ApiErrorResp>)> {
     if !req.confirm {
@@ -31,7 +29,8 @@ pub(in crate::api) async fn begin_update_drain(
         .owner
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| "unknown".to_string());
-    let activity = daemon_maintenance::begin_update_drain(&state, reason, owner)
+    let activity = execution
+        .begin_update_drain(reason, owner)
         .await
         .map_err(begin_update_drain_error)?;
     Ok(Json(BeginUpdateDrainResp {
@@ -41,7 +40,7 @@ pub(in crate::api) async fn begin_update_drain(
 }
 
 pub(in crate::api) async fn release_update_drain(
-    State(state): State<Arc<AppState>>,
+    State(execution): State<ExecutionHandle>,
     Json(req): Json<ReleaseUpdateDrainReq>,
 ) -> Result<Json<ReleaseUpdateDrainResp>, (StatusCode, Json<ApiErrorResp>)> {
     if !req.confirm {
@@ -52,7 +51,7 @@ pub(in crate::api) async fn release_update_drain(
             }),
         ));
     }
-    let released = daemon_maintenance::release_update_drain(&state).await;
+    let released = execution.release_update_drain().await;
     Ok(Json(ReleaseUpdateDrainResp { released }))
 }
 

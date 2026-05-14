@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::daemon::sessions::subagents) async fn finalize_subagent_invocation(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     invocation_id: &str,
     tool_call_id: &str,
     parent_session_id: SessionId,

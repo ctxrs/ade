@@ -6,7 +6,7 @@ use tokio::time::Instant as TokioInstant;
 
 use ctx_core::models::Session;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::lifecycle::{handle_provider_exit, RunningTurn};
 use super::SchedulerCommand;
@@ -25,12 +25,12 @@ use self::deadlines::{
 use self::queue::{start_next_queued_turn, QueueStartContext, QueueStartOutcome};
 
 pub(super) async fn session_worker(
-    state_weak: Weak<AppState>,
+    state_weak: Weak<DaemonState>,
     session: Session,
     mut rx: mpsc::Receiver<SchedulerCommand>,
 ) {
     // Keep only a weak reference in the scheduler task so background workers do not
-    // keep AppState alive after tests or shutdown drop the owner.
+    // keep DaemonState alive after tests or shutdown drop the owner.
     let Some(state) = state_weak.upgrade() else {
         return;
     };

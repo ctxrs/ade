@@ -1,6 +1,4 @@
-use std::sync::Arc;
-
-use crate::daemon::AppState;
+use crate::daemon::DaemonHandle;
 
 mod accounts;
 mod auth_import;
@@ -14,7 +12,7 @@ use base::provider_base_routes;
 use harness_config::provider_harness_config_routes;
 use installs::provider_install_routes;
 
-pub(super) fn provider_routes() -> axum::Router<Arc<AppState>> {
+pub(super) fn provider_routes() -> axum::Router<DaemonHandle> {
     provider_base_routes()
         .merge(provider_harness_config_routes())
         .merge(provider_auth_import_routes())

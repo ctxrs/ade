@@ -17,7 +17,7 @@ use ctx_provider_runtime::provider_usability::provider_status_is_usable;
 use serde_json::Value;
 
 use crate::daemon::providers;
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 const CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(30);
 const VERIFY_TTL: std::time::Duration = std::time::Duration::from_secs(30 * 60);
@@ -28,7 +28,7 @@ pub(crate) enum EffectivePreferredModelError {
 }
 
 pub(crate) async fn effective_preferred_model_id_for_workspace(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace: &Workspace,
     provider_id: &str,
     preferred_model_id: Option<String>,
@@ -52,7 +52,7 @@ pub(crate) async fn effective_preferred_model_id_for_workspace(
 }
 
 async fn effective_model_payload_for_workspace(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace: &Workspace,
     provider_id: &str,
     preferred_model_id: &str,

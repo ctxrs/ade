@@ -8,7 +8,7 @@ use ctx_provider_runtime::provider_cache::{
 };
 use ctx_provider_runtime::provider_launch::options::provider_options_cache_entry_is_authoritative;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(crate) struct ProviderOptionsCacheSnapshot {
     cache_key: String,
@@ -18,7 +18,7 @@ pub(crate) struct ProviderOptionsCacheSnapshot {
 
 impl ProviderOptionsCacheSnapshot {
     pub(crate) async fn load(
-        state: &Arc<AppState>,
+        state: &Arc<DaemonState>,
         workspace_id: WorkspaceId,
         target: InstallTarget,
         provider_id: &str,
@@ -84,7 +84,7 @@ impl ProviderOptionsCacheSnapshot {
         self.cached_payload_field("modes")
     }
 
-    pub(crate) async fn store_response(&self, state: &Arc<AppState>, value: serde_json::Value) {
+    pub(crate) async fn store_response(&self, state: &Arc<DaemonState>, value: serde_json::Value) {
         state
             .providers
             .store_provider_options_cache_value(self.cache_key.clone(), value)
@@ -97,7 +97,7 @@ impl ProviderOptionsCacheSnapshot {
 }
 
 pub(crate) async fn store_provider_verify_cache_value(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
     target: InstallTarget,
     provider_id: &str,

@@ -7,7 +7,7 @@ use axum::http::{Method, StatusCode};
 use ctx_core::models::{
     Message, MessageRole, SessionEvent, SessionEventType, SessionTurn, SessionTurnStatus,
 };
-use ctx_http::daemon::AppState;
+use ctx_http::daemon::DaemonState;
 use serde_json::json;
 
 mod common;
@@ -30,7 +30,7 @@ async fn post_message(app: &axum::Router, session_id: uuid::Uuid, content: &str)
 }
 
 async fn wait_for_terminal_turn(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session_id: ctx_core::ids::SessionId,
     turn_id: ctx_core::ids::TurnId,
 ) -> (SessionTurn, Vec<SessionEvent>) {

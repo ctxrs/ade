@@ -7,10 +7,10 @@ use anyhow::Result;
 use ctx_core::ids::{TaskId, WorkspaceId};
 use ctx_core::models::{Workspace, Worktree};
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(crate) async fn ensure_task_commit_hook(
-    state: &AppState,
+    state: &DaemonState,
     workspace: &Workspace,
     worktree: &Worktree,
     task_id: TaskId,
@@ -20,7 +20,7 @@ pub(crate) async fn ensure_task_commit_hook(
 }
 
 pub(crate) async fn cleanup_worktree_hooks(
-    state: &AppState,
+    state: &DaemonState,
     workspace: &Workspace,
     worktree: &Worktree,
 ) -> Result<()> {
@@ -28,7 +28,7 @@ pub(crate) async fn cleanup_worktree_hooks(
 }
 
 pub(crate) async fn cleanup_workspace_hooks(
-    state: &AppState,
+    state: &DaemonState,
     workspace_id: WorkspaceId,
 ) -> Result<()> {
     ctx_workspace_services::vcs_hooks::cleanup_workspace_hooks(&state.core.data_root, workspace_id)

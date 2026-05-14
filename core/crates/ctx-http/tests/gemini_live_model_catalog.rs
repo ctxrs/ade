@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use axum::http::StatusCode;
 use ctx_http::api;
-use ctx_http::daemon::AppState;
+use ctx_http::daemon::DaemonState;
 use ctx_managed_installs::{save_agent_server_config, AgentServerCommand, AgentServerConfigFile};
 use ctx_provider_accounts::add_gemini_account;
 use ctx_providers::adapters::{ProviderAdapter, ProviderHealth, ProviderStatus};
@@ -124,10 +124,10 @@ fn catalog_snapshot(models: &serde_json::Value) -> (String, Vec<String>) {
     (current_model_id, ids)
 }
 
-async fn app_state(data_root: &Path) -> Arc<AppState> {
+async fn app_state(data_root: &Path) -> Arc<DaemonState> {
     let stores = StoreManager::open(data_root).await.expect("open stores");
     let providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
-    Arc::new(AppState::new(
+    Arc::new(DaemonState::new(
         data_root.to_path_buf(),
         stores,
         providers,
@@ -136,7 +136,7 @@ async fn app_state(data_root: &Path) -> Arc<AppState> {
     ))
 }
 
-async fn seed_provider_status(state: &Arc<AppState>, status: ProviderStatus) {
+async fn seed_provider_status(state: &Arc<DaemonState>, status: ProviderStatus) {
     let provider_id = status.provider_id.clone();
     state
         .providers

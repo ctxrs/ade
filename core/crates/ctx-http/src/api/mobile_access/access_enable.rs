@@ -13,7 +13,7 @@ use profile_config::{load_or_create_managed_mobile_access_keys, persist_mobile_a
 use response::{build_enable_mobile_access_response, start_mobile_tunnel_best_effort};
 
 pub(in crate::api) async fn enable_mobile_access(
-    State(state): State<Arc<AppState>>,
+    State(state): State<CoreHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<EnableMobileAccessReq>,
 ) -> Result<Json<EnableMobileAccessResp>, (StatusCode, Json<ApiErrorResp>)> {
@@ -25,7 +25,7 @@ pub(in crate::api) async fn enable_mobile_access(
             }),
         ));
     }
-    if state.core.auth_token.is_none() {
+    if !state.has_auth_token() {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiErrorResp {

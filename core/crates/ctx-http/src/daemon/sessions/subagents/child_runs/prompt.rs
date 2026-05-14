@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_core::models::Session;
 
 mod backlog;
@@ -15,7 +15,7 @@ pub(in crate::daemon::sessions::subagents) use types::PersistedSubagentPrompt;
 use super::super::errors::ApiResult;
 
 pub(in crate::daemon::sessions::subagents) async fn enqueue_subagent_prompt(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session: &Session,
     prompt: String,
 ) -> ApiResult<PersistedSubagentPrompt> {

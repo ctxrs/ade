@@ -2,17 +2,17 @@ use std::sync::Arc;
 
 use ctx_harness_sources as harness_sources;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(crate) async fn get_provider_harness_config(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     provider_id: &str,
 ) -> anyhow::Result<harness_sources::HarnessProviderSourceConfig> {
     harness_sources::get_provider_source_config(&state.core.data_root, provider_id).await
 }
 
 pub(crate) async fn select_provider_harness_source(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     provider_id: &str,
     source_kind: harness_sources::HarnessSourceKind,
     endpoint_id: Option<String>,
@@ -29,7 +29,7 @@ pub(crate) async fn select_provider_harness_source(
 }
 
 pub(crate) async fn upsert_provider_harness_endpoint(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     provider_id: &str,
     endpoint: harness_sources::HarnessEndpointUpsert,
     manual_model_ids: Option<Vec<String>>,
@@ -57,7 +57,7 @@ pub(crate) async fn upsert_provider_harness_endpoint(
 }
 
 pub(crate) async fn refresh_provider_harness_endpoint_models(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     provider_id: &str,
     endpoint_id: &str,
 ) -> anyhow::Result<harness_sources::HarnessProviderSourceConfig> {
@@ -67,7 +67,7 @@ pub(crate) async fn refresh_provider_harness_endpoint_models(
 }
 
 pub(crate) async fn set_provider_harness_endpoint_manual_models(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     provider_id: &str,
     endpoint_id: &str,
     model_ids: Vec<String>,
@@ -84,7 +84,7 @@ pub(crate) async fn set_provider_harness_endpoint_manual_models(
 }
 
 pub(crate) async fn delete_provider_harness_endpoint(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     provider_id: &str,
     endpoint_id: &str,
 ) -> anyhow::Result<harness_sources::HarnessProviderSourceConfig> {
@@ -96,7 +96,7 @@ pub(crate) async fn delete_provider_harness_endpoint(
 }
 
 pub(crate) async fn refresh_provider_endpoint_model_catalog(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     provider_id: &str,
     endpoint_id: &str,
 ) -> anyhow::Result<harness_sources::HarnessEndpointRecord> {
@@ -109,7 +109,7 @@ pub(crate) async fn refresh_provider_endpoint_model_catalog(
 }
 
 pub(crate) async fn mark_provider_endpoint_verification(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     provider_id: &str,
     endpoint_id: &str,
     status: harness_sources::HarnessEndpointVerificationStatus,

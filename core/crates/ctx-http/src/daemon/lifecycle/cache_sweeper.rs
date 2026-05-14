@@ -1,9 +1,9 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::daemon::{AppState, CacheSweepConfig};
+use crate::daemon::{CacheSweepConfig, DaemonState};
 
-pub(in crate::daemon) fn spawn_cache_sweeper(state: Arc<AppState>) {
+pub(in crate::daemon) fn spawn_cache_sweeper(state: Arc<DaemonState>) {
     let config = CacheSweepConfig::from_env();
     tokio::spawn(async move {
         let mut shutdown_rx = state.core.shutdown_tx.subscribe();

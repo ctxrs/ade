@@ -4,7 +4,7 @@ use anyhow::Result;
 
 use ctx_core::models::Worktree;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 mod projection;
 mod sandbox;
 mod scheduler;
@@ -26,7 +26,7 @@ fn vcs_driver_for_worktree(worktree: &Worktree) -> Arc<WorktreeVcsDriver> {
 }
 
 pub(crate) async fn worktree_has_vcs_repo(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     worktree: &Worktree,
 ) -> Result<bool> {
     let source = source::HttpWorktreeVcsSource::new(state, worktree);
@@ -34,7 +34,7 @@ pub(crate) async fn worktree_has_vcs_repo(
 }
 
 pub async fn request_worktree_vcs_refresh(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     worktree: &Worktree,
     summary: bool,
     touched_files: bool,
@@ -43,7 +43,7 @@ pub async fn request_worktree_vcs_refresh(
 }
 
 pub(crate) async fn request_worktree_vcs_refresh_without_transient(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     worktree: &Worktree,
     summary: bool,
     touched_files: bool,
@@ -52,7 +52,7 @@ pub(crate) async fn request_worktree_vcs_refresh_without_transient(
 }
 
 async fn request_worktree_vcs_refresh_inner(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     worktree: &Worktree,
     summary: bool,
     touched_files: bool,
@@ -83,7 +83,7 @@ async fn request_worktree_vcs_refresh_inner(
 }
 
 pub async fn mark_worktree_vcs_dirty(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     worktree: &Worktree,
     dirty_bits: WorktreeVcsDirtyBits,
     candidate_paths: Vec<String>,
@@ -107,7 +107,10 @@ pub async fn mark_worktree_vcs_dirty(
     request_worktree_vcs_refresh(state, worktree, true, pane_open).await
 }
 
-pub async fn refresh_worktree_vcs_summary(state: Arc<AppState>, worktree: Worktree) -> Result<()> {
+pub async fn refresh_worktree_vcs_summary(
+    state: Arc<DaemonState>,
+    worktree: Worktree,
+) -> Result<()> {
     if !state.worktree_vcs_enabled() {
         return Ok(());
     }
@@ -115,7 +118,7 @@ pub async fn refresh_worktree_vcs_summary(state: Arc<AppState>, worktree: Worktr
 }
 
 pub async fn emit_worktree_vcs_snapshot_for_worktree(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     worktree: &Worktree,
     force_emit: bool,
 ) -> Result<()> {
@@ -126,7 +129,7 @@ pub async fn emit_worktree_vcs_snapshot_for_worktree(
     refresh_worktree_vcs_projection(state, worktree, true, refresh_touched_files, force_emit).await
 }
 
-pub async fn run_git_status_watcher(state: Arc<AppState>, worktree: Worktree) -> Result<()> {
+pub async fn run_git_status_watcher(state: Arc<DaemonState>, worktree: Worktree) -> Result<()> {
     if !state.worktree_vcs_enabled() {
         return Ok(());
     }

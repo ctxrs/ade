@@ -3,10 +3,10 @@ use ctx_core::models::{Workspace, Worktree};
 use ctx_workspace_services::vcs_hooks::WorktreeHookExecution;
 
 use super::super::sandbox::sandbox_command;
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(super) async fn sandbox_git_config_get(
-    state: &AppState,
+    state: &DaemonState,
     workspace: &Workspace,
     worktree: &Worktree,
     execution: &WorktreeHookExecution,
@@ -44,7 +44,7 @@ pub(super) async fn sandbox_git_config_get(
 }
 
 pub(super) async fn sandbox_git_config_set(
-    state: &AppState,
+    state: &DaemonState,
     workspace: &Workspace,
     worktree: &Worktree,
     execution: &WorktreeHookExecution,
@@ -75,7 +75,7 @@ pub(super) async fn sandbox_git_config_set(
 }
 
 pub(super) async fn sandbox_git_config_unset(
-    state: &AppState,
+    state: &DaemonState,
     workspace: &Workspace,
     worktree: &Worktree,
     execution: &WorktreeHookExecution,

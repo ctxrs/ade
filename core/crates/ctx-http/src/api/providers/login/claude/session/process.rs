@@ -15,9 +15,7 @@ use super::super::auth_url::{
     refresh_claude_auth_url_from_capture_path, should_replace_observed_claude_auth_url,
     CLAUDE_UNSUPPORTED_MANUAL_FALLBACK_ERROR,
 };
-use super::super::runtime::{
-    resolve_claude_login_runtime, spawn_claude_setup_token_command, ClaudeLoginSpawn,
-};
+use super::super::runtime::{spawn_claude_setup_token_command, ClaudeLoginSpawn};
 use super::*;
 
 #[path = "process/line_observation.rs"]

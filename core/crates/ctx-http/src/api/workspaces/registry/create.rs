@@ -10,7 +10,7 @@ pub(in crate::api) struct CreateWorkspaceReq {
 }
 
 pub(in crate::api) async fn create_workspace(
-    State(state): State<Arc<AppState>>,
+    State(workspaces): State<WorkspacesHandle>,
     Json(req): Json<CreateWorkspaceReq>,
 ) -> Result<Json<Workspace>, (StatusCode, Json<ApiErrorResp>)> {
     let candidate = prepare_workspace_registration(&req.root_path)
@@ -19,8 +19,7 @@ pub(in crate::api) async fn create_workspace(
 
     let root_path_str = candidate.root_path.to_string_lossy().to_string();
     let name = req.name.unwrap_or(candidate.default_name);
-    let workspace = state
-        .global_store()
+    let workspace = workspaces
         .create_workspace(name, root_path_str, candidate.vcs_kind)
         .await
         .map_err(|e| {
@@ -31,15 +30,8 @@ pub(in crate::api) async fn create_workspace(
                 }),
             )
         })?;
-    let store = state.store_for_workspace(workspace.id).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
-    workspace_config::update_primary_branch(&store, &candidate.primary_branch)
+    workspaces
+        .update_workspace_primary_branch(workspace.id, &candidate.primary_branch)
         .await
         .map_err(|e| {
             (
@@ -49,11 +41,7 @@ pub(in crate::api) async fn create_workspace(
                 }),
             )
         })?;
-    state
-        .telemetry
-        .telemetry
-        .emit(TelemetryEvent::workspace_registered())
-        .await;
+    workspaces.record_workspace_registered().await;
     Ok(Json(workspace))
 }
 

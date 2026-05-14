@@ -25,7 +25,6 @@ pub(in crate::api) struct UpdateCheckQuery {
 }
 
 pub(in crate::api) async fn check_updates(
-    State(_state): State<Arc<AppState>>,
     axum::extract::Query(q): axum::extract::Query<UpdateCheckQuery>,
 ) -> Result<Json<UpdateCheckResp>, (StatusCode, Json<ApiErrorResp>)> {
     let channel =

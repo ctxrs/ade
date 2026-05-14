@@ -3,10 +3,10 @@ use std::sync::Arc;
 use ctx_core::ids::{SessionId, TurnId, WorktreeId};
 
 use super::super::{finalize_subagent_invocation, run_subagent_child, SpawnedChild};
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(super) fn spawn_subagent_completion_tasks(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     spawned_children: &[SpawnedChild],
     invocation_id: String,
     tool_call_id: String,

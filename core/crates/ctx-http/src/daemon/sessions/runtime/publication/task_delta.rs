@@ -4,14 +4,14 @@ use ctx_core::ids::TaskId;
 use ctx_core::models::TaskDeltaKind;
 use ctx_session_service::runtime::SessionTaskDeltaRefreshHost;
 
-use crate::daemon::state::AppState;
+use crate::daemon::state::DaemonState;
 
 pub(super) struct HttpTaskDeltaRefreshHost {
-    state: Weak<AppState>,
+    state: Weak<DaemonState>,
 }
 
 impl HttpTaskDeltaRefreshHost {
-    pub(super) fn new(state: &Arc<AppState>) -> Self {
+    pub(super) fn new(state: &Arc<DaemonState>) -> Self {
         Self {
             state: Arc::downgrade(state),
         }

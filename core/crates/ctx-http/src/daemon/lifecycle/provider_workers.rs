@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use ctx_providers::adapters::ProviderSessionSweepConfig;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
-pub(in crate::daemon) fn spawn_provider_worker_sweeper(state: Arc<AppState>) {
+pub(in crate::daemon) fn spawn_provider_worker_sweeper(state: Arc<DaemonState>) {
     let config = ProviderSessionSweepConfig::from_env();
     tokio::spawn(async move {
         let mut shutdown_rx = state.core.shutdown_tx.subscribe();

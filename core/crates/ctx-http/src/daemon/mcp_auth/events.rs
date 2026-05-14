@@ -1,10 +1,10 @@
 use ctx_mcp_auth::McpAuthContext;
 use ctx_observability::ops_events::OpsEvent;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(super) fn emit_mcp_token_event(
-    state: &AppState,
+    state: &DaemonState,
     level: &str,
     event_name: &str,
     ctx: McpAuthContext,
@@ -22,7 +22,7 @@ pub(super) fn emit_mcp_token_event(
 }
 
 pub(crate) fn emit_mcp_token_denied(
-    state: &AppState,
+    state: &DaemonState,
     ctx: McpAuthContext,
     method: &str,
     path: &str,

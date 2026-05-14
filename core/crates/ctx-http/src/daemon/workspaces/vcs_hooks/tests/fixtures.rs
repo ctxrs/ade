@@ -1,4 +1,4 @@
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_settings_model::{ExecutionSettings, Settings};
 use ctx_settings_service::save_settings;
 use ctx_store::StoreManager;
@@ -60,8 +60,8 @@ pub(super) fn init_git_workspace(root: &Path) -> String {
     git_output(&["rev-parse", "HEAD"], root)
 }
 
-pub(super) async fn test_state(data_root: &Path) -> Arc<AppState> {
-    Arc::new(AppState::new(
+pub(super) async fn test_state(data_root: &Path) -> Arc<DaemonState> {
+    Arc::new(DaemonState::new(
         data_root.to_path_buf(),
         StoreManager::open(data_root).await.expect("open stores"),
         HashMap::new(),
@@ -71,7 +71,7 @@ pub(super) async fn test_state(data_root: &Path) -> Arc<AppState> {
 }
 
 pub(super) async fn save_test_execution_settings(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     execution: ExecutionSettings,
 ) {
     let settings = Settings {

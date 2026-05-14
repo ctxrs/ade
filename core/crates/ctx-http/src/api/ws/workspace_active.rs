@@ -8,15 +8,13 @@ mod socket;
 use socket::handle_workspace_active_snapshot_ws;
 
 async fn require_workspace_active_stream_access(
-    state: &Arc<AppState>,
+    state: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
 ) -> Result<(), StatusCode> {
     let exists = state
-        .global_store()
-        .get_workspace(workspace_id)
+        .workspace_exists(workspace_id)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .is_some();
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if !exists {
         return Err(StatusCode::NOT_FOUND);
     }
@@ -25,7 +23,7 @@ async fn require_workspace_active_stream_access(
 
 pub(crate) async fn workspace_active_snapshot_stream_ws(
     ws: WebSocketUpgrade,
-    State(state): State<Arc<AppState>>,
+    State(state): State<WorkspaceStreamHandle>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     let workspace_id = match uuid::Uuid::parse_str(&id) {

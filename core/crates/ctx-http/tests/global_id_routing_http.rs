@@ -4,7 +4,7 @@ use std::sync::Arc;
 use axum::http::StatusCode;
 use ctx_core::ids::{ArtifactId, MessageId, SessionId};
 use ctx_core::models::{Message, MessageDelivery, MessageRole, VcsKind};
-use ctx_http::daemon::AppState;
+use ctx_http::daemon::DaemonState;
 use ctx_providers::adapters::{
     ProviderAdapter, ProviderRecommendedAction, ProviderUsability, ProviderUsabilityStatus,
 };
@@ -18,11 +18,11 @@ struct SessionFixture {
     session_id: SessionId,
 }
 
-fn request_shutdown(state: &Arc<AppState>) {
+fn request_shutdown(state: &Arc<DaemonState>) {
     let _ = state.core.shutdown_tx.send(());
 }
 
-async fn setup_state() -> (tempfile::TempDir, Arc<AppState>, common::TestServer) {
+async fn setup_state() -> (tempfile::TempDir, Arc<DaemonState>, common::TestServer) {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
     let state = common::build_state(
@@ -49,7 +49,7 @@ async fn setup_state() -> (tempfile::TempDir, Arc<AppState>, common::TestServer)
 }
 
 async fn create_workspace_session(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     name: &str,
     repo_root: &Path,
 ) -> SessionFixture {

@@ -7,10 +7,9 @@ pub(in crate::api) use create::create_workspace;
 pub(in crate::api) use delete::delete_workspace;
 
 pub(in crate::api) async fn list_workspaces(
-    State(state): State<Arc<AppState>>,
+    State(workspaces): State<WorkspacesHandle>,
 ) -> Result<Json<Vec<Workspace>>, StatusCode> {
-    state
-        .global_store()
+    workspaces
         .list_workspaces()
         .await
         .map(Json)
@@ -18,22 +17,17 @@ pub(in crate::api) async fn list_workspaces(
 }
 
 pub(in crate::api) async fn get_workspace(
-    State(state): State<Arc<AppState>>,
+    State(workspaces): State<WorkspacesHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<Workspace>, StatusCode> {
     let id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    match state
-        .global_store()
+    match workspaces
         .get_workspace(id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     {
         Some(ws) => {
-            state
-                .telemetry
-                .telemetry
-                .emit(TelemetryEvent::workspace_opened())
-                .await;
+            workspaces.record_workspace_opened().await;
             Ok(Json(ws))
         }
         None => Err(StatusCode::NOT_FOUND),

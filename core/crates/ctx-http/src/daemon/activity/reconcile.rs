@@ -2,7 +2,7 @@ use super::collect::collect_turns_by_statuses;
 use super::*;
 
 pub(crate) async fn reconcile_running_turns_with_reason(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     fallback_reason: &str,
 ) -> Result<()> {
     let (_, running_turns) = collect_turns_by_statuses(
@@ -33,6 +33,6 @@ pub(crate) async fn reconcile_running_turns_with_reason(
     Ok(())
 }
 
-pub(crate) async fn reconcile_running_turns(state: &Arc<AppState>) -> Result<()> {
+pub(crate) async fn reconcile_running_turns(state: &Arc<DaemonState>) -> Result<()> {
     reconcile_running_turns_with_reason(state, "daemon_restart").await
 }

@@ -17,7 +17,7 @@ pub(crate) enum WorkspaceStoreAccessError {
     Unavailable(anyhow::Error),
 }
 
-impl AppState {
+impl DaemonState {
     pub fn global_store(&self) -> &Store {
         self.core.stores.global()
     }

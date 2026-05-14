@@ -2,7 +2,7 @@ use super::*;
 
 pub(super) struct EncryptedPairingHarness {
     pub(super) app: axum::Router,
-    pub(super) state: Arc<AppState>,
+    pub(super) state: Arc<DaemonState>,
     pub(super) token: &'static str,
     pub(super) token_hash: String,
     pub(super) daemon_public_key: String,
@@ -39,7 +39,7 @@ pub(super) async fn encrypted_pairing_harness() -> EncryptedPairingHarness {
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),

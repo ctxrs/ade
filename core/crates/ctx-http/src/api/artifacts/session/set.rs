@@ -1,4 +1,5 @@
 use super::*;
+use crate::daemon::SessionsHandle;
 
 use self::records::build_session_artifacts;
 
@@ -21,7 +22,7 @@ pub(in crate::api) struct SetSessionArtifactsReq {
 }
 
 pub(in crate::api) async fn set_session_artifacts(
-    State(state): State<Arc<AppState>>,
+    State(state): State<SessionsHandle>,
     mcp_auth: Option<Extension<ctx_mcp_auth::McpAuthContext>>,
     Path(id): Path<String>,
     Json(req): Json<SetSessionArtifactsReq>,
@@ -39,16 +40,8 @@ pub(in crate::api) async fn set_session_artifacts(
         validate_scoped_mcp_session_context(&state, mcp_auth, session_id).await?;
     }
 
-    let store = state.store_for_session(session_id).await.map_err(|e| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&e.to_string()),
-            }),
-        )
-    })?;
-    let session = store
-        .get_session(session_id)
+    let session = state
+        .get_session_for_artifacts(session_id)
         .await
         .map_err(|e| {
             (
@@ -65,10 +58,10 @@ pub(in crate::api) async fn set_session_artifacts(
             }),
         ))?;
 
-    let artifacts = build_session_artifacts(&state, &store, &session, req.artifacts).await?;
+    let artifacts = build_session_artifacts(&state, &session, req.artifacts).await?;
 
-    store
-        .replace_session_artifacts(session.id, &artifacts)
+    state
+        .replace_session_artifacts_and_publish(&session, &artifacts)
         .await
         .map_err(|e| {
             (
@@ -78,24 +71,6 @@ pub(in crate::api) async fn set_session_artifacts(
                 }),
             )
         })?;
-    let event = store
-        .append_session_event(
-            session.id,
-            None,
-            None,
-            SessionEventType::ArtifactsSet,
-            serde_json::json!({ "artifacts": artifacts }),
-        )
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
-    state.publish_event(event).await;
 
     Ok(Json(artifacts))
 }

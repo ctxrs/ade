@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
@@ -7,11 +5,9 @@ use serde::Deserialize;
 
 use ctx_execution_runtime::{ExecutionLaunchSnapshot, ExecutionSetupJobKind, RuntimePrewarmScope};
 
-use crate::daemon::{maintenance as daemon_maintenance, AppState};
+use crate::daemon::{CoreHandle, ExecutionHandle, WorkspacesHandle};
 use ctx_observability::logs;
 use ctx_settings_model::ExecutionMode;
-
-use crate::daemon::{execution_setup as daemon_execution_setup, settings as daemon_settings};
 
 use super::errors::ApiErrorResp;
 
@@ -36,10 +32,13 @@ pub(super) struct ExecutionLaunchStartReq {
 }
 
 pub(super) async fn launch_start(
-    State(state): State<Arc<AppState>>,
+    State(core): State<CoreHandle>,
+    State(execution): State<ExecutionHandle>,
+    State(workspaces): State<WorkspacesHandle>,
     Json(req): Json<ExecutionLaunchStartReq>,
 ) -> Result<Json<ExecutionLaunchSnapshot>, (StatusCode, Json<ApiErrorResp>)> {
-    daemon_maintenance::reject_new_execution_during_maintenance(&state)
+    execution
+        .reject_new_execution_during_maintenance()
         .await
         .map_err(|err| {
             (
@@ -53,12 +52,13 @@ pub(super) async fn launch_start(
     let snapshot = match kind {
         ExecutionSetupJobKind::WorkspaceLaunch => {
             let (workspace, execution_settings) =
-                resolve_workspace_launch_inputs(&state, req.workspace_id.as_deref()).await?;
-            daemon_execution_setup::start_workspace_launch(&state, workspace, execution_settings)
+                resolve_workspace_launch_inputs(&workspaces, req.workspace_id.as_deref()).await?;
+            execution
+                .start_workspace_launch(workspace, execution_settings)
                 .await
         }
         ExecutionSetupJobKind::StartupPrewarm => {
-            let settings = daemon_settings::load_settings(&state).await.map_err(|e| {
+            let settings = core.load_settings().await.map_err(|e| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(ApiErrorResp {
@@ -68,12 +68,9 @@ pub(super) async fn launch_start(
             })?;
             let mut execution_settings = settings.execution.unwrap_or_default();
             execution_settings.mode = ExecutionMode::Sandbox;
-            daemon_execution_setup::start_runtime_prewarm(
-                &state,
-                execution_settings,
-                req.prewarm_scope,
-            )
-            .await
+            execution
+                .start_runtime_prewarm(execution_settings, req.prewarm_scope)
+                .await
         }
     };
     Ok(Json(snapshot))

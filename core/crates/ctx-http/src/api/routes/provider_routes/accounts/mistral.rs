@@ -1,14 +1,12 @@
-use std::sync::Arc;
-
 use axum::routing::{delete, get, post, put};
 
 use crate::api::providers::{
     delete_mistral_account, get_mistral_login, list_mistral_accounts, set_mistral_active_account,
     start_mistral_login, upsert_mistral_account,
 };
-use crate::daemon::AppState;
+use crate::daemon::DaemonHandle;
 
-pub(super) fn mistral_account_routes() -> axum::Router<Arc<AppState>> {
+pub(super) fn mistral_account_routes() -> axum::Router<DaemonHandle> {
     axum::Router::new()
         .route(
             "/api/providers/mistral/accounts",

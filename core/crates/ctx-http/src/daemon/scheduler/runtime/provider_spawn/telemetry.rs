@@ -10,12 +10,12 @@ use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
 use ctx_observability::telemetry::TelemetryEvent;
 use serde_json::json;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::super::super::terminal::{finalize_failed_turn, FailedTurnTerminalization};
 
 pub(super) async fn record_provider_spawn_metric(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     perf_run_id: Option<String>,
     session: &Session,
     full_model_id: &str,
@@ -65,7 +65,7 @@ pub(super) struct ProviderStartFailure<'a> {
 }
 
 pub(super) async fn handle_provider_start_failure(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     failure: ProviderStartFailure<'_>,
 ) {
     let ProviderStartFailure {

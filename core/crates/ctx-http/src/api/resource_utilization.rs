@@ -1,5 +1,6 @@
 use super::*;
 use crate::daemon::resource_utilization as daemon_resource_utilization;
+use crate::daemon::WorkspacesHandle;
 
 #[derive(Debug, Deserialize)]
 pub(in crate::api) struct ResourceUtilizationQuery {
@@ -7,13 +8,14 @@ pub(in crate::api) struct ResourceUtilizationQuery {
 }
 
 pub(in crate::api) async fn resource_utilization(
-    State(state): State<Arc<AppState>>,
+    State(state): State<WorkspacesHandle>,
     Query(query): Query<ResourceUtilizationQuery>,
 ) -> Result<Json<ctx_resource_utilization::ResourceUtilizationSnapshot>, StatusCode> {
     let workspace_id = WorkspaceId(
         uuid::Uuid::parse_str(&query.workspace_id).map_err(|_| StatusCode::BAD_REQUEST)?,
     );
-    daemon_resource_utilization::workspace_resource_utilization_snapshot(&state, workspace_id)
+    state
+        .workspace_resource_utilization_snapshot(workspace_id)
         .await
         .map(Json)
         .map_err(resource_utilization_status)

@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use super::AppState;
+use super::DaemonState;
 
 mod sweep;
 

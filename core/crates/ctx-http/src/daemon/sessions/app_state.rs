@@ -9,9 +9,9 @@ use ctx_session_service::runtime::SessionRuntimeCacheDebugStats;
 use ctx_session_tools::order_seq::OrderSeqState;
 use ctx_store::Store;
 
-use crate::daemon::state::AppState;
+use crate::daemon::state::DaemonState;
 
-impl AppState {
+impl DaemonState {
     pub async fn publish_event(self: &Arc<Self>, event: SessionEvent) {
         super::runtime::publish_event(self, event).await;
     }

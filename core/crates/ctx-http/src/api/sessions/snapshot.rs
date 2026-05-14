@@ -26,7 +26,7 @@ pub(crate) struct SessionSnapshotQuery {
 }
 
 pub(crate) async fn get_session_snapshot(
-    State(state): State<Arc<AppState>>,
+    State(state): State<SessionsHandle>,
     Path(id): Path<String>,
     Query(q): Query<SessionSnapshotQuery>,
 ) -> Result<Json<ctx_core::models::SessionSnapshot>, StatusCode> {
@@ -34,15 +34,12 @@ pub(crate) async fn get_session_snapshot(
     let limit = q.limit.unwrap_or(60);
     let include_events = parse_boolish_flag(q.include_events.as_deref(), "include_events")
         .map_err(|_| StatusCode::BAD_REQUEST)?;
-    let store = store_for_existing_session_status_allow_archived(&state, session_id).await?;
-    match store
-        .get_session_snapshot(session_id, limit, include_events)
+    state
+        .load_session_snapshot(session_id, limit, include_events)
         .await
-    {
-        Ok(Some(snapshot)) => Ok(Json(snapshot)),
-        Ok(None) => Err(StatusCode::NOT_FOUND),
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-    }
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map(Json)
+        .ok_or(StatusCode::NOT_FOUND)
 }
 
 fn parse_boolish_flag(raw: Option<&str>, label: &str) -> Result<bool, String> {
@@ -51,4 +48,10 @@ fn parse_boolish_flag(raw: Option<&str>, label: &str) -> Result<bool, String> {
             .ok_or_else(|| format!("{label} must be one of: 1/true/yes/on or 0/false/no/off")),
         None => Ok(false),
     }
+}
+
+fn session_data_or_status<T>(result: anyhow::Result<Option<T>>) -> Result<T, StatusCode> {
+    result
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)
 }

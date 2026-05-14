@@ -7,7 +7,7 @@ async fn startup_provider_status_refresh_runs_in_background() {
     let adapter = Arc::new(BlockingInspectAdapter::default());
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert("blocking".into(), adapter.clone());
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         temp.path().to_path_buf(),
         stores,
         providers,

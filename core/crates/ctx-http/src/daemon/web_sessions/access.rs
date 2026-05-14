@@ -3,7 +3,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use ctx_transport_runtime::web_sessions::{WebSessionHandle, WebSessionInfo};
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WebSessionAccessError {
@@ -23,7 +23,7 @@ pub(crate) struct WebSessionViewPage {
 }
 
 pub(crate) async fn mint_web_session_view_connect_path(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     id: &str,
 ) -> Result<WebSessionViewConnectPath, WebSessionAccessError> {
     let handle = state
@@ -40,7 +40,7 @@ pub(crate) async fn mint_web_session_view_connect_path(
 }
 
 pub(crate) async fn prepare_web_session_view_page(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     id: &str,
     token: Option<&str>,
 ) -> Result<WebSessionViewPage, WebSessionAccessError> {
@@ -51,7 +51,7 @@ pub(crate) async fn prepare_web_session_view_page(
 }
 
 pub(crate) async fn authorize_web_session_signal_access(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     id: &str,
     token: Option<&str>,
 ) -> Result<(), WebSessionAccessError> {
@@ -61,7 +61,7 @@ pub(crate) async fn authorize_web_session_signal_access(
 }
 
 async fn require_web_session_view_access(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     id: &str,
     token: Option<&str>,
 ) -> Result<Arc<WebSessionHandle>, WebSessionAccessError> {
@@ -79,7 +79,7 @@ async fn require_web_session_view_access(
 }
 
 async fn require_web_session_signal_access(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     id: &str,
     token: Option<&str>,
 ) -> Result<Arc<WebSessionHandle>, WebSessionAccessError> {

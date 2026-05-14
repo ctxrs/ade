@@ -1,6 +1,6 @@
 use super::*;
 
-impl AppState {
+impl DaemonState {
     pub(crate) async fn emit_cache_miss(&self, cache: &str) {
         self.emit_cache_counter("daemon.cache_miss", cache, 1, None)
             .await;

@@ -12,14 +12,14 @@ use ctx_workspace_services::worktree_vcs::{
 };
 use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use target::{ensure_container_for_worktree, SandboxExecTarget};
 
 #[path = "sandbox/target.rs"]
 mod target;
 
 struct HttpSandboxSessionDiffExecutor<'a> {
-    state: &'a Arc<AppState>,
+    state: &'a Arc<DaemonState>,
     worktree: &'a Worktree,
 }
 
@@ -31,7 +31,7 @@ impl WorktreeVcsSessionDiffSandboxExecutor for HttpSandboxSessionDiffExecutor<'_
 }
 
 async fn container_exec_stdout(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     worktree: &Worktree,
     program: &str,
     args: &[String],
@@ -84,7 +84,7 @@ async fn container_exec_stdout(
 }
 
 pub(super) async fn container_diff_worktree(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     worktree: &Worktree,
     base_commit_sha: &str,
 ) -> anyhow::Result<String> {
@@ -93,7 +93,7 @@ pub(super) async fn container_diff_worktree(
 }
 
 pub(super) async fn container_diff_worktree_summary(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     worktree: &Worktree,
     base_commit_sha: &str,
 ) -> anyhow::Result<WorktreeVcsDiffSummaryCounts> {

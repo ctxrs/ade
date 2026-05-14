@@ -15,7 +15,6 @@ use capture::{
     cursor_login_home, ensure_private_dir, initialize_cursor_capture_file,
     write_cursor_capture_hook,
 };
-use runtime::resolve_cursor_login_runtime;
 #[cfg(test)]
 use runtime::resolve_cursor_login_runtime_from_config;
 use session::monitor_cursor_login;
@@ -33,27 +32,30 @@ pub(crate) struct CursorLoginStartResp {
 }
 
 pub(crate) async fn start_cursor_login(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<CursorLoginStartReq>,
 ) -> Result<Json<CursorLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let _ = resolve_cursor_login_runtime(&state).await.map_err(|e| {
-        let msg = e.to_string();
-        let status = if msg.contains("runtime_command_") {
-            StatusCode::BAD_REQUEST
-        } else {
-            StatusCode::INTERNAL_SERVER_ERROR
-        };
-        (status, Json(ApiErrorResp { error: msg }))
-    })?;
+    let _ = providers
+        .resolve_cursor_login_runtime()
+        .await
+        .map_err(|e| {
+            let msg = e.to_string();
+            let status = if msg.contains("runtime_command_") {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            (status, Json(ApiErrorResp { error: msg }))
+        })?;
 
-    let login_session = crate::daemon::providers::start_cursor_login_session(&state).await;
+    let login_session = providers.start_cursor_login_session().await;
 
-    let state_clone = Arc::clone(&state);
+    let providers_clone = providers.clone();
     let login_id_for_task = login_session.login_id.clone();
     tokio::spawn(async move {
-        monitor_cursor_login(state_clone, login_id_for_task, req.label).await;
+        monitor_cursor_login(providers_clone, login_id_for_task, req.label).await;
     });
 
     Ok(Json(CursorLoginStartResp {
@@ -63,20 +65,18 @@ pub(crate) async fn start_cursor_login(
 }
 
 pub(crate) async fn get_cursor_login(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Path(id): Path<String>,
 ) -> Result<Json<provider_accounts::CursorLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let status = crate::daemon::providers::cursor_login_status(&state, &id)
-        .await
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: "login not found".to_string(),
-                }),
-            )
-        })?;
+    let status = providers.cursor_login_status(&id).await.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiErrorResp {
+                error: "login not found".to_string(),
+            }),
+        )
+    })?;
     Ok(Json(status))
 }

@@ -6,7 +6,7 @@ use tokio::process::Command;
 use ctx_core::ids::WorktreeId;
 use ctx_core::models::{VcsKind, WorkspaceAttachmentKind, Worktree};
 use ctx_fs::git::rev_parse_head;
-use ctx_http::daemon::AppState;
+use ctx_http::daemon::DaemonState;
 use ctx_store::StoreManager;
 use ctx_workspace_services::workspace_attachments::{self, AttachmentConfig};
 
@@ -111,7 +111,7 @@ async fn attachments_demo_react_smoketest() {
         String,
         std::sync::Arc<dyn ctx_providers::adapters::ProviderAdapter>,
     > = std::collections::HashMap::new();
-    let state = std::sync::Arc::new(AppState::new(
+    let state = std::sync::Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,

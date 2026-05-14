@@ -58,12 +58,12 @@ pub(super) async fn persist_task_for_request(
 }
 
 pub(super) async fn upsert_workspace_task_index(
-    state: &Arc<AppState>,
+    handles: &TaskApiHandles,
     task_id: TaskId,
     ws_id: WorkspaceId,
 ) {
-    if let Err(e) = state
-        .global_store()
+    if let Err(e) = handles
+        .sessions
         .upsert_workspace_task_index(task_id, ws_id)
         .await
     {

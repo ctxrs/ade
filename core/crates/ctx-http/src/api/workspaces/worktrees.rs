@@ -1,49 +1,35 @@
 use super::*;
 
 pub(in crate::api) async fn get_worktree(
-    State(state): State<Arc<AppState>>,
+    State(workspaces): State<WorkspacesHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<Worktree>, StatusCode> {
     let worktree_id = WorktreeId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let store = state
-        .store_for_worktree(worktree_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-    match store
-        .get_worktree(worktree_id)
+    match workspaces
+        .get_worktree_with_live_root(worktree_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     {
-        Some(mut wt) => {
-            let data_plane =
-                ctx_worktree_data_plane::resolve_worktree_data_plane_with_host(state.as_ref(), &wt)
-                    .await
-                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-            wt.root_path = data_plane.live_worktree_root.to_string_lossy().to_string();
-            Ok(Json(wt))
-        }
+        Some(wt) => Ok(Json(wt)),
         None => Err(StatusCode::NOT_FOUND),
     }
 }
 
 pub(in crate::api) async fn get_worktree_bootstrap_logs(
-    State(state): State<Arc<AppState>>,
+    State(workspaces): State<WorkspacesHandle>,
     Path(id): Path<String>,
 ) -> Result<Response, StatusCode> {
     let worktree_id = WorktreeId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let store = state
-        .store_for_worktree(worktree_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-    let worktree = store
-        .get_worktree(worktree_id)
+    let path = workspaces
+        .get_worktree_bootstrap_log_path(worktree_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    let Some(path) = worktree.bootstrap_log_path.as_deref() else {
+    let path = path.as_str();
+    if path.trim().is_empty() {
         return Err(StatusCode::NOT_FOUND);
-    };
-    let log_root = logs::logs_dir(&state.core.data_root).join("worktree-bootstrap");
+    }
+    let log_root = workspaces.worktree_bootstrap_logs_root();
     if !path_resolves_within_root(StdPath::new(path), &log_root).await {
         return Err(StatusCode::NOT_FOUND);
     }

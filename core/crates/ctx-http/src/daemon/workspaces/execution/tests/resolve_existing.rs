@@ -1,6 +1,6 @@
 use super::*;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_core::models::{ExecutionEnvironment, SandboxGuestIdentity, SandboxProfile, VcsKind};
 use ctx_settings_model::{ContainerMountMode, ContainerNetworkMode, ContainerRuntimeKind};
 use ctx_store::StoreManager;
@@ -14,7 +14,7 @@ async fn resolve_existing_worktree_execution_uses_binding_snapshot_after_workspa
     let temp = tempfile::tempdir().expect("tempdir");
     let repo_root = temp.path().join("repo");
     std::fs::create_dir_all(&repo_root).expect("create repo root");
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         temp.path().to_path_buf(),
         StoreManager::open(temp.path()).await.expect("open stores"),
         HashMap::new(),

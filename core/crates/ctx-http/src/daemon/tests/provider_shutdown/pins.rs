@@ -7,7 +7,7 @@ async fn running_state_updates_provider_worker_pin_once_per_transition() {
     let adapter = Arc::new(RecordingProviderAdapter::default());
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert("root".into(), adapter.clone());
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         temp.path().to_path_buf(),
         stores,
         providers,
@@ -37,7 +37,7 @@ async fn attachment_state_updates_provider_worker_pin_once_per_connection_lifecy
     let adapter = Arc::new(RecordingProviderAdapter::default());
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert("root".into(), adapter.clone());
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         temp.path().to_path_buf(),
         stores,
         providers,
@@ -67,7 +67,7 @@ async fn running_and_attachment_leases_share_one_provider_pin_state() {
     let adapter = Arc::new(RecordingProviderAdapter::default());
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert("root".into(), adapter.clone());
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         temp.path().to_path_buf(),
         stores,
         providers,

@@ -15,7 +15,7 @@ use route::route_workspace_stream_event;
 use subscriptions::update_workspace_stream_subscriptions_for_event;
 
 pub(crate) async fn handle_workspace_stream_lagged(
-    state: &Arc<AppState>,
+    state: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
     lagged: u64,
     runtime: &mut WorkspaceStreamRuntime,
@@ -45,7 +45,7 @@ pub(crate) async fn handle_workspace_stream_lagged(
 }
 
 pub(crate) async fn handle_workspace_stream_event(
-    state: &Arc<AppState>,
+    state: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
     event: WorkspaceActiveSnapshotEvent,
     runtime: &mut WorkspaceStreamRuntime,

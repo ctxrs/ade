@@ -5,7 +5,7 @@ use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{Workspace, WorkspaceAttachment, WorkspaceAttachmentKind};
 use ctx_workspace_services::workspace_attachments;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 mod hosts;
 mod materialization;
@@ -19,7 +19,7 @@ pub use mounts::{
 use self::materialization::{cancel_attachment_materialization, spawn_attachment_materialization};
 
 pub async fn sync_workspace_attachments(
-    state: Arc<AppState>,
+    state: Arc<DaemonState>,
     workspace: &Workspace,
     refresh: bool,
 ) -> Result<Vec<WorkspaceAttachment>> {
@@ -39,7 +39,7 @@ pub async fn sync_workspace_attachments(
 }
 
 pub async fn upsert_workspace_attachment(
-    state: &AppState,
+    state: &DaemonState,
     workspace_id: WorkspaceId,
     cfg: ctx_workspace_attachments::AttachmentConfig,
 ) -> Result<WorkspaceAttachment> {
@@ -47,7 +47,7 @@ pub async fn upsert_workspace_attachment(
 }
 
 pub async fn delete_workspace_attachment(
-    state: &AppState,
+    state: &DaemonState,
     workspace_id: WorkspaceId,
     kind: WorkspaceAttachmentKind,
     name: &str,

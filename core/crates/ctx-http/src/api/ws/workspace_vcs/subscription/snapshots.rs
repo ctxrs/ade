@@ -3,12 +3,12 @@ use std::sync::Arc;
 
 use super::super::buffer::{VcsPendingBuffer, VcsSnapshotKey};
 use super::super::metrics::VcsStreamMetrics;
-use crate::daemon::AppState;
+use crate::daemon::WorkspacesHandle;
 use ctx_core::ids::{WorkspaceId, WorktreeId};
 use ctx_core::models::{WorktreeVcsSnapshot, WorktreeVcsStreamMessage, WorktreeVcsStreamTier};
 
 pub(in crate::api::ws::workspace_vcs) async fn seed_current_vcs_snapshots(
-    state: &Arc<AppState>,
+    state: &WorkspacesHandle,
     workspace_id: WorkspaceId,
     pending: &Arc<VcsPendingBuffer>,
     metrics: &Arc<VcsStreamMetrics>,

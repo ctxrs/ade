@@ -612,8 +612,10 @@ test("Buildkite checkin plan splits ctx-http suites and Rust crate gates without
   const ctxHttpCommands = buildkitePlan.commands.filter(isCtxHttpBazelTargetCommand);
   const expectedCtxHttpCommands = [...new Set(selectedCtxHttpSuites.flatMap(buildCtxHttpSuiteFanoutCommands))]
     .filter(isCtxHttpBazelTargetCommand);
-  const providerAndSettingsOwnerCommand =
-    "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-managed-installs:unit_tests //core/crates/ctx-provider-matrix:unit_tests //core/crates/ctx-settings-model:unit_tests //core/crates/ctx-settings-service:unit_tests";
+  const providerRoutesAndManagedInstallsCommand =
+    "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:unit_tests_lib_provider_routes //core/crates/ctx-managed-installs:unit_tests";
+  const providerSettingsOwnerCommand =
+    "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-provider-matrix:unit_tests //core/crates/ctx-settings-model:unit_tests //core/crates/ctx-settings-service:unit_tests";
   assert.equal(ctxHttpSuiteCommands.length, 0);
   assert.equal(selectedCtxHttpSuites.includes("base"), false);
   assert.equal(selectedCtxHttpSuites.includes("unit-tests-api"), true);
@@ -628,7 +630,8 @@ test("Buildkite checkin plan splits ctx-http suites and Rust crate gates without
     false,
   );
   assert.equal(ctxHttpCommands.length, expectedCtxHttpCommands.length);
-  assert.ok(buildkitePlan.commands.includes(providerAndSettingsOwnerCommand));
+  assert.ok(buildkitePlan.commands.includes(providerRoutesAndManagedInstallsCommand));
+  assert.ok(buildkitePlan.commands.includes(providerSettingsOwnerCommand));
   assert.ok(ctxHttpCommands.some((command) => command.includes("//core/crates/ctx-http:session_model_api")));
   assert.ok(ctxHttpCommands.includes(
     "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:unit_tests_scheduler",

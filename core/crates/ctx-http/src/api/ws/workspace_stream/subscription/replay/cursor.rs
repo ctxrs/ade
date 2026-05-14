@@ -15,7 +15,7 @@ pub(super) fn resume_replay_cursor(
 }
 
 pub(super) async fn head_only_snapshot_cursor(
-    state: &Arc<AppState>,
+    state: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
     session_id: SessionId,
     live_cursor: Option<SessionReplayCursor>,
@@ -30,11 +30,7 @@ pub(super) async fn head_only_snapshot_cursor(
     let last_sent = match snapshot_cursor {
         Some(cursor) => live_cursor.unwrap_or_default().cover(cursor),
         None => {
-            let current_tail = state
-                .workspaces
-                .workspace_active_snapshot
-                .session_replay_cursor(workspace_id, session_id)
-                .await;
+            let current_tail = state.session_replay_cursor(workspace_id, session_id).await;
             live_cursor.unwrap_or_default().cover(current_tail)
         }
     };

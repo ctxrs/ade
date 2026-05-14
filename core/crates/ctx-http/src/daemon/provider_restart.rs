@@ -5,7 +5,7 @@ use tokio::sync::{broadcast, Mutex};
 
 use ctx_providers::adapters::ProviderRestartMode;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_settings_model::{ProviderRestartSettings, ResourceGovernanceMode, Settings};
 
 mod notices;
@@ -19,17 +19,17 @@ use ctx_provider_runtime::provider_restart::{
     ResourceGovernanceMode as RestartGovernanceMode,
 };
 
-pub async fn apply_settings(state: &AppState, settings: &Settings) -> Result<()> {
+pub async fn apply_settings(state: &DaemonState, settings: &Settings) -> Result<()> {
     let cfg = settings.provider_restart.clone().unwrap_or_default();
     ctx_provider_runtime::provider_restart::apply_settings(state, &map_config(&cfg)).await
 }
 
-pub fn spawn_provider_restart(state: Arc<AppState>) {
+pub fn spawn_provider_restart(state: Arc<DaemonState>) {
     ctx_provider_runtime::provider_restart::spawn_provider_restart(state);
 }
 
 #[async_trait::async_trait]
-impl ctx_provider_runtime::provider_restart::ProviderRestartHost for AppState {
+impl ctx_provider_runtime::provider_restart::ProviderRestartHost for DaemonState {
     fn provider_restart_runtime(&self) -> &Mutex<ProviderRestartRuntime> {
         self.providers.provider_restart_runtime()
     }

@@ -2,7 +2,7 @@ use super::super::child_runs::enqueue_subagent_prompt;
 use super::super::*;
 
 pub(crate) async fn send_input(
-    state: Arc<AppState>,
+    state: Arc<DaemonState>,
     parent_id: SessionId,
     req: SendInputReq,
 ) -> ApiResult<SendInputResp> {
@@ -31,7 +31,7 @@ pub(crate) async fn send_input(
 }
 
 pub(crate) async fn archive_agent(
-    state: Arc<AppState>,
+    state: Arc<DaemonState>,
     parent_id: SessionId,
     req: ArchiveAgentReq,
 ) -> ApiResult<ArchiveAgentResp> {
@@ -75,7 +75,7 @@ pub(crate) async fn archive_agent(
 }
 
 pub(crate) async fn interrupt_agent(
-    state: Arc<AppState>,
+    state: Arc<DaemonState>,
     parent_id: SessionId,
     req: InterruptAgentReq,
 ) -> ApiResult<InterruptAgentResp> {
@@ -87,7 +87,7 @@ pub(crate) async fn interrupt_agent(
     Ok(InterruptAgentResp { agent: detail })
 }
 
-async fn send_scheduler_interrupt(state: &Arc<AppState>, child: &ctx_core::models::Session) {
+async fn send_scheduler_interrupt(state: &Arc<DaemonState>, child: &ctx_core::models::Session) {
     let tx = state.ensure_scheduler(child.clone()).await;
     let interrupt = InterruptTelemetryContext::new(uuid::Uuid::new_v4().to_string());
     let _ = tx.send(SchedulerCommand::Interrupt(interrupt)).await;

@@ -4,7 +4,7 @@ use anyhow::{anyhow, Result};
 use ctx_core::ids::{RunId, TurnId};
 use ctx_core::models::{Message, MessageDelivery, MessageRole, SessionEvent, SessionEventType};
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 mod retry;
 
@@ -54,7 +54,7 @@ pub(crate) async fn append_session_event_with_retry(
 }
 
 pub(crate) async fn emit_event(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session_id: ctx_core::ids::SessionId,
     run_id: Option<RunId>,
     turn_id: Option<TurnId>,
@@ -77,7 +77,7 @@ pub(crate) async fn emit_event(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn persist_assistant_message(
-    _state: &AppState,
+    _state: &DaemonState,
     store: &ctx_store::Store,
     _workspace_id: ctx_core::ids::WorkspaceId,
     message_id: ctx_core::ids::MessageId,

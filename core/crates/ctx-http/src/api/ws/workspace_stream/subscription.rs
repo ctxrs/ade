@@ -1,6 +1,5 @@
 use super::lifecycle::{clear_runtime_queues, queue_workspace_stream_reset};
 use super::*;
-use crate::daemon::workspaces::stream::resolve_workspace_active_snapshot_subscriptions;
 use ctx_workspace_active_snapshot::ResolvedWorkspaceActiveSessionSubscription;
 
 mod replay;
@@ -63,7 +62,7 @@ fn merge_replayed_and_live_subscriptions(
 }
 
 pub(crate) async fn handle_workspace_stream_subscription(
-    state: &Arc<AppState>,
+    state: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
     message: WorkspaceActiveSnapshotClientMessage,
     live_rx: &mut tokio::sync::broadcast::Receiver<WorkspaceActiveSnapshotEvent>,
@@ -87,19 +86,19 @@ pub(crate) async fn handle_workspace_stream_subscription(
                 "workspace stream hydration failed: {error:?}"
             );
         })?;
-    crate::daemon::merge_queue::activate_workspace_merge_queue(state, workspace_id).await;
+    state.activate_workspace_merge_queue(workspace_id).await;
     let existing_replay_cursors = runtime
         .subscriptions
         .iter()
         .map(|(session_id, cursor)| (*session_id, cursor.last_sent))
         .collect::<HashMap<_, _>>();
-    let resolved = match resolve_workspace_active_snapshot_subscriptions(
-        state,
-        workspace_id,
-        message,
-        &existing_replay_cursors,
-    )
-    .await
+    let resolved = match state
+        .resolve_workspace_active_snapshot_subscriptions(
+            workspace_id,
+            message,
+            &existing_replay_cursors,
+        )
+        .await
     {
         Ok(next) => next,
         Err(_) => {
@@ -167,9 +166,7 @@ pub(crate) async fn handle_workspace_stream_subscription(
             return Err(());
         }
         state
-            .workspaces
-            .workspace_active_snapshot
-            .active_heads(workspace_id)
+            .workspace_active_heads(workspace_id)
             .await
             .heads
             .into_iter()

@@ -1,14 +1,14 @@
 use super::*;
 
 pub(in crate::api::tasks) async fn create_requested_default_session_for_task(
-    state: Arc<AppState>,
+    handles: &TaskApiHandles,
     store: Store,
     task: Task,
     workspace: Workspace,
     req: CreateTaskDefaultSessionReq,
 ) -> Result<Session, StatusCode> {
     let Json(session) = create_session_for_loaded_task_inner(
-        state,
+        handles,
         store,
         task,
         workspace,
@@ -20,7 +20,7 @@ pub(in crate::api::tasks) async fn create_requested_default_session_for_task(
 }
 
 pub(in crate::api::tasks) async fn replay_requested_default_session_for_task(
-    state: Arc<AppState>,
+    handles: &TaskApiHandles,
     store: Store,
     task: Task,
     workspace: Workspace,
@@ -28,7 +28,7 @@ pub(in crate::api::tasks) async fn replay_requested_default_session_for_task(
     primary_session_id: SessionId,
 ) -> Result<Session, StatusCode> {
     let Json(session) = create_session_for_loaded_task_inner(
-        state,
+        handles,
         store,
         task,
         workspace,

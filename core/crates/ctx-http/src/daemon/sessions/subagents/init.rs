@@ -17,7 +17,7 @@ use request::{
 use spawning::spawn_subagent_completion_tasks;
 
 pub(crate) async fn init_subagents(
-    state: Arc<AppState>,
+    state: Arc<DaemonState>,
     parent_id: SessionId,
     req: AgentInitReq,
 ) -> ApiResult<Vec<SpawnedChild>> {

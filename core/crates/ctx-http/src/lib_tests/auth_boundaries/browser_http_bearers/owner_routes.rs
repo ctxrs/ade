@@ -7,7 +7,7 @@ async fn desktop_browser_query_secret_authorizes_high_risk_owner_routes() {
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),
@@ -59,7 +59,7 @@ async fn desktop_browser_query_secret_authorizes_transition_provider_install_rou
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),

@@ -204,6 +204,7 @@
     "dev:daemon": "node scripts/run_with_ctx_cache_env.cjs --mode workspace -- cargo run -p ctx-http -- serve --bind ${CTX_DAEMON_BIND:-127.0.0.1:4399} --data-dir ${CTX_DATA_DIR:-$HOME/.ctx}",
     "dev:web": "pnpm -C apps/web dev",
     "dev:daemon:web": "CTX_DESKTOP_CHANNEL=dev CTX_RUNTIME_PROFILE=parity CTX_LAUNCH_SURFACE=daemon-web node scripts/dev_daemon_web.cjs",
+    "ctx-http:daemon-boundary:check": "node scripts/ctx_http_daemon_boundary_guard.cjs",
     "rust:fmt": "cargo fmt --all -- --check",
     "rust:bazel-deps:write": "node scripts/sync_rust_bazel_deps.cjs",
     "rust:bazel-deps:check": "node scripts/sync_rust_bazel_deps.cjs --check",

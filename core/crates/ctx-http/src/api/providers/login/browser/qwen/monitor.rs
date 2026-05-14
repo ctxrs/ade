@@ -10,22 +10,21 @@ mod setup;
 mod status;
 
 pub(super) async fn monitor_qwen_login(
-    state: Arc<AppState>,
+    providers: ProvidersHandle,
     login_id: String,
     label: Option<String>,
 ) {
-    let paths = match setup::prepare_qwen_login_paths(&state, &login_id).await {
+    let paths = match setup::prepare_qwen_login_paths(&providers, &login_id).await {
         Ok(paths) => paths,
         Err(error) => {
-            status::set_failed(&state, &login_id, error).await;
+            status::set_failed(&providers, &login_id, error).await;
             return;
         }
     };
-    let provider_env = setup::qwen_provider_env(&state, &paths.login_home);
+    let provider_env = setup::qwen_provider_env(&providers, &paths.login_home);
 
     let (event_tx, mut event_rx) = mpsc::channel(64);
-    let auth_result = state
-        .providers
+    let auth_result = providers
         .authenticate_provider_session(
             "qwen",
             ctx_provider_runtime::provider_session_auth::ProviderSessionAuthenticationRequest {
@@ -42,7 +41,7 @@ pub(super) async fn monitor_qwen_login(
         Ok(()) => {}
         Err(ctx_provider_runtime::provider_session_auth::ProviderSessionAuthenticationError::AdapterUnavailable) => {
             status::set_failed(
-                &state,
+                &providers,
                 &login_id,
                 "provider adapter not available".to_string(),
             )
@@ -51,7 +50,7 @@ pub(super) async fn monitor_qwen_login(
             return;
         }
         Err(ctx_provider_runtime::provider_session_auth::ProviderSessionAuthenticationError::Authenticate(err)) => {
-            status::set_failed(&state, &login_id, logs::redact_sensitive(&err.to_string())).await;
+            status::set_failed(&providers, &login_id, logs::redact_sensitive(&err.to_string())).await;
             status::cleanup_login_home(&paths.login_home).await;
             return;
         }
@@ -63,14 +62,15 @@ pub(super) async fn monitor_qwen_login(
 
     loop {
         let event_outcome =
-            events::drain_qwen_login_events(&state, &login_id, &mut event_rx, &mut progress).await;
+            events::drain_qwen_login_events(&providers, &login_id, &mut event_rx, &mut progress)
+                .await;
         if event_outcome.failed {
             status::cleanup_login_home(&paths.login_home).await;
             return;
         }
 
         if completion::complete_qwen_login_if_credentials_exist(
-            &state,
+            &providers,
             &login_id,
             &label,
             &paths,
@@ -83,7 +83,7 @@ pub(super) async fn monitor_qwen_login(
 
         if event_outcome.channel_disconnected && !progress.observed_auth_url {
             status::set_failed_if_no_error(
-                &state,
+                &providers,
                 &login_id,
                 "Qwen sign-in did not emit an OAuth URL in this environment.".to_string(),
             )
@@ -94,7 +94,7 @@ pub(super) async fn monitor_qwen_login(
 
         if started_at.elapsed() >= timeout {
             status::set_timeout_if_no_error(
-                &state,
+                &providers,
                 &login_id,
                 "timed out waiting for Qwen OAuth completion".to_string(),
             )

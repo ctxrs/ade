@@ -5,7 +5,7 @@ use chrono::Utc;
 use ctx_provider_accounts as provider_accounts;
 
 use super::ProviderAccountMutationError;
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(crate) struct CodexAccountsSnapshot {
     pub(crate) active_account_id: Option<String>,
@@ -21,13 +21,13 @@ pub(crate) struct PreparedCodexLoginStart {
 }
 
 pub(crate) async fn load_codex_account_registry(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
 ) -> anyhow::Result<provider_accounts::CodexAccountRegistry> {
     provider_accounts::load_codex_registry(&state.core.data_root).await
 }
 
 pub(crate) async fn load_codex_accounts_snapshot(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
 ) -> anyhow::Result<CodexAccountsSnapshot> {
     let registry = load_codex_account_registry(state).await?;
     let logins = crate::daemon::providers::codex_login_statuses(state).await;
@@ -43,7 +43,7 @@ pub(crate) async fn probe_host_codex_auth_candidate() -> provider_accounts::Code
 }
 
 pub(crate) async fn prepare_codex_login_start(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     label: Option<String>,
 ) -> anyhow::Result<PreparedCodexLoginStart> {
     let account_id = uuid::Uuid::new_v4().to_string();
@@ -85,7 +85,7 @@ pub(crate) async fn prepare_codex_login_start(
 }
 
 pub(crate) async fn import_host_codex_auth(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     label: Option<String>,
 ) -> Result<(), ProviderAccountMutationError> {
     provider_accounts::import_host_codex_auth_to_secret_store(&state.core.data_root, label)
@@ -97,7 +97,7 @@ pub(crate) async fn import_host_codex_auth(
 }
 
 pub(crate) async fn set_active_codex_account(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     account_id: Option<String>,
 ) -> Result<CodexAccountsSnapshot, ProviderAccountMutationError> {
     provider_accounts::set_active_codex_account(&state.core.data_root, account_id)
@@ -112,7 +112,7 @@ pub(crate) async fn set_active_codex_account(
 }
 
 pub(crate) async fn remove_codex_account(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     account_id: &str,
 ) -> Result<CodexAccountsSnapshot, ProviderAccountMutationError> {
     let previous_active =
@@ -164,7 +164,7 @@ pub(crate) async fn remove_codex_account(
 }
 
 pub(crate) async fn persist_successful_codex_login(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     account_id: &str,
     label: String,
     email: Option<String>,

@@ -32,7 +32,7 @@ async fn prune_archived_session_data_does_not_cache_historical_workspace_stores(
 async fn prune_archived_session_data_keeps_cached_workspace_store_usable() {
     let temp = tempdir().unwrap();
     let stores = StoreManager::open(temp.path()).await.unwrap();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         temp.path().to_path_buf(),
         stores.clone(),
         HashMap::new(),

@@ -1,11 +1,9 @@
-use std::sync::Arc;
-
 use axum::extract::DefaultBodyLimit;
 use axum::routing::{delete, get, post, put};
 
 use super::*;
 use crate::api::artifacts::MAX_BLOB_MULTIPART_BODY_BYTES;
-use crate::daemon::AppState;
+use crate::daemon::DaemonHandle;
 
 mod core_routes;
 mod mobile_routes;
@@ -19,7 +17,7 @@ use provider_routes::provider_routes;
 use session_routes::session_routes;
 use workspace_routes::workspace_routes;
 
-pub(super) fn api_routes() -> axum::Router<Arc<AppState>> {
+pub(super) fn api_routes() -> axum::Router<DaemonHandle> {
     core_routes()
         .merge(provider_routes())
         .merge(workspace_routes())

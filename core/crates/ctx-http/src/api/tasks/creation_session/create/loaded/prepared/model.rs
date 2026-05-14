@@ -1,5 +1,4 @@
 use super::*;
-use crate::daemon::sessions::model_catalog::load_provider_model_catalog_for_execution_environment;
 
 pub(super) struct ResolvedLoadedSessionModel {
     pub(super) model_id: String,
@@ -8,7 +7,7 @@ pub(super) struct ResolvedLoadedSessionModel {
 }
 
 pub(super) struct LoadedSessionModelRequest<'a> {
-    pub(super) state: &'a Arc<AppState>,
+    pub(super) handles: &'a TaskApiHandles,
     pub(super) store: &'a Store,
     pub(super) workspace: &'a Workspace,
     pub(super) task_id: TaskId,
@@ -23,7 +22,7 @@ pub(super) async fn resolve_loaded_session_model(
     request: LoadedSessionModelRequest<'_>,
 ) -> Result<ResolvedLoadedSessionModel, StatusCode> {
     let LoadedSessionModelRequest {
-        state,
+        handles,
         store,
         workspace,
         task_id,
@@ -34,13 +33,14 @@ pub(super) async fn resolve_loaded_session_model(
         created_worktree_id,
     } = request;
 
-    let catalog = match load_provider_model_catalog_for_execution_environment(
-        state,
-        workspace,
-        provider_id,
-        execution_environment,
-    )
-    .await
+    let catalog = match handles
+        .sessions
+        .load_provider_model_catalog_for_execution_environment(
+            workspace,
+            provider_id,
+            execution_environment,
+        )
+        .await
     {
         Ok(catalog) => catalog,
         Err(error) => {
@@ -50,7 +50,7 @@ pub(super) async fn resolve_loaded_session_model(
                 execution_environment = execution_environment.as_str(),
                 "failed to load provider model catalog while creating session: {error}"
             );
-            cleanup_created_worktree(state, store, workspace, task_id, created_worktree_id).await;
+            cleanup_created_worktree(handles, store, workspace, task_id, created_worktree_id).await;
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
     };
@@ -62,7 +62,7 @@ pub(super) async fn resolve_loaded_session_model(
     ) {
         Ok(model) => model,
         Err(_) => {
-            cleanup_created_worktree(state, store, workspace, task_id, created_worktree_id).await;
+            cleanup_created_worktree(handles, store, workspace, task_id, created_worktree_id).await;
             return Err(StatusCode::BAD_REQUEST);
         }
     };
@@ -78,7 +78,7 @@ pub(super) async fn resolve_loaded_session_model(
 }
 
 async fn cleanup_created_worktree(
-    state: &Arc<AppState>,
+    handles: &TaskApiHandles,
     store: &Store,
     workspace: &Workspace,
     task_id: TaskId,
@@ -86,7 +86,7 @@ async fn cleanup_created_worktree(
 ) {
     if let Some(created_worktree_id) = created_worktree_id {
         cleanup_orphaned_provisioned_worktree(
-            state,
+            handles,
             store,
             workspace,
             task_id,

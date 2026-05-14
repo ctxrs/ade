@@ -5,14 +5,12 @@ use tokio_tungstenite::{
     connect_async, tungstenite::client::IntoClientRequest, MaybeTlsStream, WebSocketStream,
 };
 
-use crate::daemon::AppState;
-
-use super::WebSessionAccessError;
+use crate::daemon::DaemonState;
 
 pub(crate) type WebSessionSignalUpstream = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
 pub(crate) struct WebSessionSignalViewerGuard {
-    state: Arc<AppState>,
+    state: Arc<DaemonState>,
     session_id: String,
     released: bool,
 }
@@ -60,7 +58,7 @@ pub(crate) enum WebSessionSignalBridgeError {
 }
 
 pub(crate) async fn connect_web_session_signal_bridge(
-    state: Arc<AppState>,
+    state: Arc<DaemonState>,
     session_id: String,
 ) -> Result<(WebSessionSignalUpstream, WebSessionSignalViewerGuard), WebSessionSignalBridgeError> {
     let handle = state
@@ -120,12 +118,4 @@ pub(crate) async fn connect_web_session_signal_bridge(
 
 async fn release_signal_viewer(mut viewer_guard: WebSessionSignalViewerGuard) {
     viewer_guard.release().await;
-}
-
-pub(crate) async fn authorize_web_session_signal_bridge(
-    state: &Arc<AppState>,
-    id: &str,
-    token: Option<&str>,
-) -> Result<(), WebSessionAccessError> {
-    super::authorize_web_session_signal_access(state, id, token).await
 }

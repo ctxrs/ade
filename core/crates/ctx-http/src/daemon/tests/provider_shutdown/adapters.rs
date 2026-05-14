@@ -8,7 +8,7 @@ async fn collect_provider_adapters_for_shutdown_includes_root_and_target_adapter
     let target_adapter = Arc::new(RecordingProviderAdapter::default());
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert("root".into(), root_adapter.clone());
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         temp.path().to_path_buf(),
         stores,
         providers,
@@ -38,7 +38,7 @@ async fn shutdown_provider_adapters_requests_immediate_restart_for_all_adapters(
     let target_adapter = Arc::new(RecordingProviderAdapter::default());
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert("root".into(), root_adapter.clone());
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         temp.path().to_path_buf(),
         stores,
         providers,

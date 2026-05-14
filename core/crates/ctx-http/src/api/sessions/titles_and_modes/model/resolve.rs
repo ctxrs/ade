@@ -14,21 +14,18 @@ pub(super) struct ResolvedSessionModelUpdate {
 }
 
 pub(super) async fn ensure_session_model_adapter(
-    state: &Arc<AppState>,
+    state: &SessionsHandle,
     session: &Session,
     install_target: InstallTarget,
 ) -> SessionModelResult<Arc<dyn ProviderAdapter>> {
-    ctx_provider_runtime::provider_launch::resolver::ensure_provider_adapter_for_target(
-        state.as_ref(),
-        &session.provider_id,
-        install_target,
-    )
-    .await
-    .map_err(internal_session_model_error)
+    state
+        .ensure_provider_adapter_for_target(&session.provider_id, install_target)
+        .await
+        .map_err(internal_session_model_error)
 }
 
 pub(super) async fn resolve_session_model_update(
-    state: &Arc<AppState>,
+    state: &SessionsHandle,
     workspace: &ctx_core::models::Workspace,
     session: &Session,
     execution_environment: ExecutionEnvironment,
@@ -49,14 +46,14 @@ pub(super) async fn resolve_session_model_update(
         }
     }
 
-    let catalog = load_provider_model_catalog_for_execution_environment(
-        state,
-        workspace,
-        &session.provider_id,
-        execution_environment,
-    )
-    .await
-    .map_err(internal_session_model_error)?;
+    let catalog = state
+        .load_provider_model_catalog_for_execution_environment(
+            workspace,
+            &session.provider_id,
+            execution_environment,
+        )
+        .await
+        .map_err(internal_session_model_error)?;
     let resolved_model = resolve_model_id(
         Some(req.model_id.as_str()),
         reasoning_effort.as_deref(),

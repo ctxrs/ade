@@ -1,7 +1,7 @@
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(super) async fn capture_guard_snapshot(
-    state: &AppState,
+    state: &DaemonState,
     event: &ctx_provider_runtime::provider_guard::ProviderGuardEvent,
 ) {
     #[cfg(target_os = "linux")]

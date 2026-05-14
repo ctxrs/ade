@@ -9,7 +9,7 @@ pub(crate) struct SessionEventsQuery {
 }
 
 pub(crate) async fn get_session_events(
-    State(state): State<Arc<AppState>>,
+    State(state): State<SessionsHandle>,
     Path(id): Path<String>,
     Query(q): Query<SessionEventsQuery>,
 ) -> Result<Json<ctx_core::models::SessionEventsPage>, StatusCode> {
@@ -21,42 +21,10 @@ pub(crate) async fn get_session_events(
     let include_transient =
         super::parse_boolish_flag(q.include_transient.as_deref(), "include_transient")
             .map_err(|_| StatusCode::BAD_REQUEST)?;
-    let store = store_for_existing_session_status_allow_archived(&state, session_id).await?;
-
-    let (events, has_more, next_cursor) = if let Some(tail) = q.tail {
-        let tail = tail.clamp(1, MAX_LIMIT);
-        let mut rows = store
-            .list_session_events_tail_by_seq(session_id, tail + 1, include_transient)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        let has_more = rows.len() as u32 > tail;
-        if has_more {
-            rows = rows.split_off(rows.len().saturating_sub(tail as usize));
-        }
-        let next_cursor = rows.last().map(|ev| ev.seq);
-        (rows, has_more, next_cursor)
-    } else {
-        let mut rows = store
-            .list_session_events_page_by_seq(
-                session_id,
-                q.after_seq,
-                Some(limit + 1),
-                include_transient,
-            )
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        let has_more = rows.len() as u32 > limit;
-        if has_more {
-            rows.truncate(limit as usize);
-        }
-        let next_cursor = rows.last().map(|ev| ev.seq);
-        (rows, has_more, next_cursor)
-    };
-
-    Ok(Json(ctx_core::models::SessionEventsPage {
-        session_id,
-        events,
-        next_cursor,
-        has_more,
-    }))
+    session_data_or_status(
+        state
+            .list_session_events_page(session_id, q.after_seq, limit, q.tail, include_transient)
+            .await,
+    )
+    .map(Json)
 }

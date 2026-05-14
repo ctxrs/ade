@@ -8,10 +8,10 @@ use ctx_merge_queue::{MergeQueueHost, MergeQueueNotice, MergeQueueToolExecEvent}
 use ctx_observability::ops_events::OpsEvent;
 use ctx_store::Store;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 #[async_trait]
-impl MergeQueueHost for AppState {
+impl MergeQueueHost for DaemonState {
     fn merge_queue_runtime(state: &Self) -> &ctx_merge_queue::MergeQueueRuntime {
         &state.transport.merge_queue
     }

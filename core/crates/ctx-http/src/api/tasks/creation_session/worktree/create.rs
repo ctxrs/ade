@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) async fn create_session_execution_worktree(
-    state: &Arc<AppState>,
+    handles: &TaskApiHandles,
     store: &Store,
     task: &Task,
     workspace: &Workspace,
@@ -19,23 +19,24 @@ pub(super) async fn create_session_execution_worktree(
         })?;
     let worktree_id = WorktreeId::new();
     let branch_name = format!("ctx/{}/{}", task.id.0, worktree_id.0);
-    let (wt_path, sandbox_binding) = provision_worktree_for_execution(
-        state,
-        workspace,
-        worktree_id,
-        &base.base_commit_sha,
-        &branch_name,
-        workspace_effective,
-    )
-    .await
-    .map_err(|e| {
-        tracing::warn!(
-            task_id = %task.id.0,
-            worktree_id = %worktree_id.0,
-            "worktree provisioning failed: {e:#}"
-        );
-        shared::status_code_for_internal_error(&e)
-    })?;
+    let (wt_path, sandbox_binding) = handles
+        .workspaces
+        .provision_worktree_for_execution(
+            workspace,
+            worktree_id,
+            &base.base_commit_sha,
+            &branch_name,
+            workspace_effective,
+        )
+        .await
+        .map_err(|e| {
+            tracing::warn!(
+                task_id = %task.id.0,
+                worktree_id = %worktree_id.0,
+                "worktree provisioning failed: {e:#}"
+            );
+            shared::status_code_for_internal_error(&e)
+        })?;
 
     let worktree = Worktree {
         id: worktree_id,
@@ -58,7 +59,9 @@ pub(super) async fn create_session_execution_worktree(
         bootstrap_command: None,
         bootstrap_script_path: None,
     };
-    persist_provisioned_worktree(state, store, workspace, worktree, sandbox_binding)
+    handles
+        .workspaces
+        .persist_provisioned_worktree(store, workspace, worktree, sandbox_binding)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(worktree_id)

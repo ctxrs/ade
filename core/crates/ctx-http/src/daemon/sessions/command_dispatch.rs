@@ -9,7 +9,7 @@ use ctx_store::Store;
 
 use crate::daemon::scheduler::{QueuedMessage, SchedulerCommand};
 use crate::daemon::sessions::title_generation::schedule_session_title_generation;
-use crate::daemon::{AppState, SessionStoreAccessError};
+use crate::daemon::{DaemonState, SessionStoreAccessError};
 
 #[derive(Debug)]
 pub(crate) enum SessionSchedulerCommandError {
@@ -19,7 +19,7 @@ pub(crate) enum SessionSchedulerCommandError {
 }
 
 pub(crate) async fn cancel_session(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session_id: SessionId,
 ) -> Result<(), SessionSchedulerCommandError> {
     let (_store, session) = load_session_for_command(state, session_id).await?;
@@ -29,7 +29,7 @@ pub(crate) async fn cancel_session(
 }
 
 pub(crate) async fn interrupt_session(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session_id: SessionId,
     request_started: Instant,
 ) -> Result<(), SessionSchedulerCommandError> {
@@ -80,7 +80,7 @@ pub(crate) async fn interrupt_session(
 }
 
 pub(crate) async fn delete_queued_session_message(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session_id: SessionId,
     message_id: MessageId,
 ) -> Result<(), SessionSchedulerCommandError> {
@@ -129,7 +129,7 @@ pub(crate) async fn delete_queued_session_message(
 }
 
 pub(crate) async fn enqueue_user_message_for_scheduler(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     store: &Store,
     session: Session,
     message: Message,
@@ -153,7 +153,7 @@ pub(crate) async fn enqueue_user_message_for_scheduler(
 }
 
 async fn load_session_for_command(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session_id: SessionId,
 ) -> Result<(Store, Session), SessionSchedulerCommandError> {
     let store = state

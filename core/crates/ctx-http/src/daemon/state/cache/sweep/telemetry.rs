@@ -1,6 +1,6 @@
-use super::super::{AppState, CacheSweepStats};
+use super::super::{CacheSweepStats, DaemonState};
 
-impl AppState {
+impl DaemonState {
     pub(super) async fn emit_cache_sweep_stats(&self, stats: &CacheSweepStats) {
         self.emit_cache_evicted("session_head", stats.session_head_evicted)
             .await;

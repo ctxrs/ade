@@ -2,7 +2,7 @@ use super::*;
 
 use ctx_core::models::{ExecutionEnvironment, Session, VcsKind};
 
-async fn seeded_session() -> (tempfile::TempDir, Arc<AppState>, Session) {
+async fn seeded_session() -> (tempfile::TempDir, Arc<DaemonState>, Session) {
     let temp = tempfile::tempdir().expect("create tempdir");
     let state = fixtures::test_state(&temp).await;
 
@@ -68,7 +68,7 @@ async fn seeded_session() -> (tempfile::TempDir, Arc<AppState>, Session) {
 
 async fn block_workspace_store_for_session(
     data_dir: &tempfile::TempDir,
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session: &Session,
 ) {
     state.cleanup_session(session.id).await;

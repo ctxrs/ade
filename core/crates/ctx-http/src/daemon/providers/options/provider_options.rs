@@ -14,7 +14,7 @@ use crate::daemon::providers::{
     provider_has_active_auth_for_workspace_runtime, ProviderLaunchConfigError,
     ProviderLaunchConfigSnapshot, ProviderOptionsCacheSnapshot,
 };
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::response::{
     config_error_provider_options_response, env_probe_provider_options_response,
@@ -53,7 +53,7 @@ pub(crate) enum ProviderOptionsResponseError {
 }
 
 pub(crate) async fn get_provider_options_response(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
     provider_id: &str,
 ) -> Result<Value, ProviderOptionsResponseError> {

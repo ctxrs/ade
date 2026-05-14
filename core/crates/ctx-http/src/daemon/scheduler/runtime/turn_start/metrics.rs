@@ -4,10 +4,10 @@ use std::sync::Arc;
 use ctx_core::models::Session;
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(super) async fn record_queue_wait_metric(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session: &Session,
     full_model_id: &str,
     execution_environment: &str,

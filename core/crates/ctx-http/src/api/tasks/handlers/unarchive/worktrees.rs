@@ -7,7 +7,7 @@ pub(super) struct UnarchiveWorktreePlan {
 }
 
 pub(super) async fn load_unarchive_worktree_plan(
-    state: &Arc<AppState>,
+    handles: &TaskApiHandles,
     store: &Store,
     workspace: &Workspace,
     task: &Task,
@@ -31,7 +31,10 @@ pub(super) async fn load_unarchive_worktree_plan(
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
             .ok_or(StatusCode::NOT_FOUND)?;
-        if let Some(root) = managed_worktree_root(state, workspace, &worktree) {
+        if let Some(root) = handles
+            .workspaces
+            .managed_worktree_root(workspace, &worktree)
+        {
             if seen.insert(worktree.id) {
                 managed_worktrees.push((worktree.clone(), root));
             }

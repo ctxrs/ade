@@ -5,7 +5,7 @@ use std::sync::Arc;
 use ctx_core::models::Session;
 use ctx_providers::adapters::ProviderAdapter;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::SessionAuthError;
 
@@ -16,7 +16,7 @@ pub(super) struct PreparedSessionAuth {
 }
 
 pub(super) async fn prepare_session_auth_runtime(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     store: &ctx_store::Store,
     session: &Session,
 ) -> Result<PreparedSessionAuth, SessionAuthError> {

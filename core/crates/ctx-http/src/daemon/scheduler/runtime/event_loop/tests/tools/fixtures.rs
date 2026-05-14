@@ -8,7 +8,7 @@ pub(super) enum HeadCacheSeed {
 }
 
 pub(super) struct ToolEventLoopFixture {
-    pub(super) state: Arc<AppState>,
+    pub(super) state: Arc<DaemonState>,
     pub(super) store: ctx_store::Store,
     pub(super) session_id: ctx_core::ids::SessionId,
     pub(super) turn_id: TurnId,
@@ -29,7 +29,7 @@ impl ToolEventLoopFixture {
             .expect("open stores");
         let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
         providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-        let mut app_state = AppState::new(
+        let mut app_state = DaemonState::new(
             data_dir.path().to_path_buf(),
             stores.clone(),
             providers,

@@ -1,9 +1,9 @@
 use ctx_core::ids::WorkspaceId;
 
-use crate::daemon::state::{AppState, WorkspaceRuntime};
+use crate::daemon::state::{DaemonState, WorkspaceRuntime};
 
 impl WorkspaceRuntime {
-    pub async fn cleanup_workspace(&self, state: &AppState, workspace_id: WorkspaceId) {
+    pub async fn cleanup_workspace(&self, state: &DaemonState, workspace_id: WorkspaceId) {
         let session_ids = state.cached_session_ids_for_workspace(workspace_id).await;
         for session_id in session_ids {
             state.cleanup_session(session_id).await;

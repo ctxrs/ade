@@ -21,6 +21,7 @@ mod activity;
 pub(crate) mod execution_effective;
 pub(crate) mod execution_setup;
 pub mod git_status;
+mod handle;
 mod lifecycle;
 mod listener;
 pub(crate) mod maintenance;
@@ -31,6 +32,7 @@ mod memleak_debug;
 pub(crate) mod merge_queue;
 pub(crate) mod mobile_access;
 mod mobile_startup;
+pub(crate) mod org_policy;
 mod provider_child_reclassifier;
 pub mod provider_guard;
 mod provider_launch_host;
@@ -64,6 +66,10 @@ pub use activity::{
     daemon_sandbox_work_activity_summary, daemon_turn_activity_summary, ActiveTurnRecord,
     DaemonSandboxWorkActivitySummary, DaemonTurnActivitySummary,
 };
+pub use handle::{
+    CoreHandle, DaemonHandle, ExecutionHandle, ProvidersHandle, SessionsHandle, TelemetryHandle,
+    TransportHandle, WorkspaceStreamHandle, WorkspacesHandle,
+};
 pub(crate) use lifecycle::spawn_deferred_daemon_shutdown;
 #[cfg(test)]
 pub(crate) use listener::daemon_public_base_url_from_env;
@@ -75,7 +81,7 @@ pub(crate) use mcp_auth::{
 };
 #[cfg(test)]
 pub(crate) use retention::prune_archived_session_data_for_all_workspaces;
-pub use state::{AppRuntimeFlags, AppState};
+pub use state::{AppRuntimeFlags, DaemonState};
 pub(crate) use state::{
     AttachmentMaterializationTask, CacheSweepConfig, SessionStoreAccessError, StoreLookup,
     TimedEntry, WorkspaceStoreAccessError,

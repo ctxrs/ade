@@ -1,7 +1,7 @@
 use ctx_observability::logs;
 use ctx_provider_accounts as provider_accounts;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::{new_started_login_session, StartedLoginSession};
 
@@ -22,7 +22,7 @@ macro_rules! auth_account_login_session_helpers {
         $with:ident,
         $status_ty:ty
     ) => {
-        pub(crate) async fn $start(state: &AppState) -> StartedLoginSession {
+        pub(crate) async fn $start(state: &DaemonState) -> StartedLoginSession {
             type LoginStatus = $status_ty;
             let session = new_started_login_session(None, None);
             state
@@ -43,14 +43,14 @@ macro_rules! auth_account_login_session_helpers {
             session
         }
 
-        pub(crate) async fn $status(state: &AppState, login_id: &str) -> Option<$status_ty> {
+        pub(crate) async fn $status(state: &DaemonState, login_id: &str) -> Option<$status_ty> {
             state
                 .providers
                 .$with(|map| map.get(login_id).cloned())
                 .await
         }
 
-        pub(crate) async fn $set_failed(state: &AppState, login_id: &str, error: String) {
+        pub(crate) async fn $set_failed(state: &DaemonState, login_id: &str, error: String) {
             state
                 .providers
                 .$with(|map| {
@@ -63,7 +63,7 @@ macro_rules! auth_account_login_session_helpers {
         }
 
         pub(crate) async fn $set_failed_if_no_error(
-            state: &AppState,
+            state: &DaemonState,
             login_id: &str,
             error: String,
         ) {
@@ -81,7 +81,7 @@ macro_rules! auth_account_login_session_helpers {
         }
 
         pub(crate) async fn $set_timeout_if_no_error(
-            state: &AppState,
+            state: &DaemonState,
             login_id: &str,
             error: String,
         ) {
@@ -98,7 +98,7 @@ macro_rules! auth_account_login_session_helpers {
                 .await;
         }
 
-        pub(crate) async fn $set_auth_url(state: &AppState, login_id: &str, auth_url: String) {
+        pub(crate) async fn $set_auth_url(state: &DaemonState, login_id: &str, auth_url: String) {
             state
                 .providers
                 .$with(|map| {
@@ -122,7 +122,7 @@ macro_rules! auth_only_login_session_helpers {
         $with:ident,
         $status_ty:ty
     ) => {
-        pub(crate) async fn $start(state: &AppState) -> StartedLoginSession {
+        pub(crate) async fn $start(state: &DaemonState) -> StartedLoginSession {
             type LoginStatus = $status_ty;
             let session = new_started_login_session(None, None);
             state
@@ -142,14 +142,14 @@ macro_rules! auth_only_login_session_helpers {
             session
         }
 
-        pub(crate) async fn $status(state: &AppState, login_id: &str) -> Option<$status_ty> {
+        pub(crate) async fn $status(state: &DaemonState, login_id: &str) -> Option<$status_ty> {
             state
                 .providers
                 .$with(|map| map.get(login_id).cloned())
                 .await
         }
 
-        pub(crate) async fn $set_failed(state: &AppState, login_id: &str, error: String) {
+        pub(crate) async fn $set_failed(state: &DaemonState, login_id: &str, error: String) {
             state
                 .providers
                 .$with(|map| {
@@ -162,7 +162,7 @@ macro_rules! auth_only_login_session_helpers {
         }
 
         pub(crate) async fn $set_failed_if_no_error(
-            state: &AppState,
+            state: &DaemonState,
             login_id: &str,
             error: String,
         ) {
@@ -180,7 +180,7 @@ macro_rules! auth_only_login_session_helpers {
         }
 
         pub(crate) async fn $set_timeout_if_no_error(
-            state: &AppState,
+            state: &DaemonState,
             login_id: &str,
             error: String,
         ) {
@@ -197,7 +197,7 @@ macro_rules! auth_only_login_session_helpers {
                 .await;
         }
 
-        pub(crate) async fn $set_auth_url(state: &AppState, login_id: &str, auth_url: String) {
+        pub(crate) async fn $set_auth_url(state: &DaemonState, login_id: &str, auth_url: String) {
             state
                 .providers
                 .$with(|map| {
@@ -255,7 +255,7 @@ auth_only_login_session_helpers!(
 );
 
 pub(crate) async fn finish_gemini_login_session(
-    state: &AppState,
+    state: &DaemonState,
     login_id: &str,
     account_id: Option<String>,
     restart_error: Option<String>,
@@ -278,7 +278,7 @@ pub(crate) async fn finish_gemini_login_session(
 }
 
 pub(crate) async fn finish_qwen_login_session(
-    state: &AppState,
+    state: &DaemonState,
     login_id: &str,
     account_id: Option<String>,
     restart_result: anyhow::Result<()>,
@@ -304,7 +304,7 @@ pub(crate) async fn finish_qwen_login_session(
 }
 
 pub(crate) async fn finish_amp_login_session(
-    state: &AppState,
+    state: &DaemonState,
     login_id: &str,
     restart_result: anyhow::Result<()>,
 ) {
@@ -329,7 +329,7 @@ pub(crate) async fn finish_amp_login_session(
 }
 
 pub(crate) async fn finish_mistral_login_session(
-    state: &AppState,
+    state: &DaemonState,
     login_id: &str,
     restart_result: anyhow::Result<()>,
 ) {

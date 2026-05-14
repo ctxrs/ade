@@ -9,14 +9,14 @@ use ctx_workspace_services::worktree_vcs::{
     build_worktree_vcs_snapshot_from_source, WorktreeDiffBaseResolution,
 };
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::projection::publish_worktree_vcs_snapshot;
 use super::source::HttpWorktreeVcsSource;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn build_worktree_vcs_snapshot_from_parts(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     worktree: &Worktree,
     git_status: WorktreeVcsGitStatusSummary,
     touched_files: WorktreeVcsTouchedFiles,
@@ -44,7 +44,7 @@ pub(super) async fn build_worktree_vcs_snapshot_from_parts(
 }
 
 pub(super) async fn publish_no_repo_snapshot(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     worktree: &Worktree,
     resolution: WorktreeDiffBaseResolution,
     force_emit: bool,
@@ -60,7 +60,7 @@ pub(super) async fn publish_no_repo_snapshot(
 }
 
 pub(super) async fn publish_unavailable_snapshot(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     worktree: &Worktree,
     resolution: WorktreeDiffBaseResolution,
     force_emit: bool,

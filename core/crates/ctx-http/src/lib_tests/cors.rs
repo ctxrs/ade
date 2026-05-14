@@ -9,7 +9,7 @@ async fn cors_preflight_allows_archived_endpoint_for_tauri_origin() {
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
         HashMap::new();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,
@@ -60,7 +60,7 @@ async fn cors_preflight_allows_health_endpoint_for_tauri_localhost_origin() {
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
         HashMap::new();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,

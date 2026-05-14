@@ -6,7 +6,7 @@ async fn unauthenticated_health_omits_sensitive_fields_when_daemon_auth_is_enabl
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
         HashMap::new();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,
@@ -68,7 +68,7 @@ async fn authorized_health_keeps_sensitive_fields_when_daemon_auth_is_enabled() 
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
         HashMap::new();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,

@@ -10,10 +10,10 @@ use ctx_org_policy::admission::{
 };
 use ctx_sandbox_contract::ContainerNetworkMode;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(super) struct ProviderTurnAdmissionEnvRequest<'a> {
-    pub(super) state: &'a Arc<AppState>,
+    pub(super) state: &'a Arc<DaemonState>,
     pub(super) store: &'a ctx_store::Store,
     pub(super) session: &'a Session,
     pub(super) run_id: RunId,

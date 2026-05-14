@@ -1,13 +1,13 @@
 use std::time::Instant;
 
-use super::{AppState, CacheSweepConfig, CacheSweepStats};
+use super::{CacheSweepConfig, CacheSweepStats, DaemonState};
 
 mod sessions;
 mod stores;
 mod telemetry;
 mod workspaces;
 
-impl AppState {
+impl DaemonState {
     pub async fn sweep_idle_caches(
         &self,
         now: Instant,

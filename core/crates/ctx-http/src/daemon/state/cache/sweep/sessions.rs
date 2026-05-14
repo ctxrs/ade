@@ -3,9 +3,9 @@ use std::time::Instant;
 
 use ctx_core::ids::SessionId;
 
-use super::super::{AppState, CacheSweepConfig, CacheSweepStats};
+use super::super::{CacheSweepConfig, CacheSweepStats, DaemonState};
 
-impl AppState {
+impl DaemonState {
     pub(super) async fn running_sessions_snapshot(&self) -> HashSet<SessionId> {
         let set = self.sessions.running_sessions.lock().await;
         set.iter().copied().collect()

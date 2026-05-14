@@ -1,7 +1,7 @@
 use anyhow::Error;
 use ctx_core::ids::{SessionId, WorkspaceId, WorktreeId};
 
-use crate::daemon::{AppState, SessionStoreAccessError};
+use crate::daemon::{DaemonState, SessionStoreAccessError};
 
 mod events;
 
@@ -10,7 +10,7 @@ pub(crate) use events::emit_mcp_token_denied;
 use events::emit_mcp_token_event;
 
 pub async fn issue_provider_session_mcp_token(
-    state: &AppState,
+    state: &DaemonState,
     session_id: SessionId,
     workspace_id: WorkspaceId,
     worktree_id: WorktreeId,
@@ -26,7 +26,7 @@ pub async fn issue_provider_session_mcp_token(
 }
 
 pub(crate) async fn issue_provider_session_mcp_token_with_capabilities(
-    state: &AppState,
+    state: &DaemonState,
     session_id: SessionId,
     workspace_id: WorkspaceId,
     worktree_id: WorktreeId,
@@ -61,7 +61,7 @@ pub(crate) async fn issue_provider_session_mcp_token_with_capabilities(
     issued.token
 }
 
-pub(crate) async fn revoke_provider_session_mcp_token(state: &AppState, token: &str) -> bool {
+pub(crate) async fn revoke_provider_session_mcp_token(state: &DaemonState, token: &str) -> bool {
     if let Some(ctx) = state
         .core
         .mcp_auth
@@ -80,7 +80,10 @@ pub(crate) async fn revoke_provider_session_mcp_token(state: &AppState, token: &
     false
 }
 
-pub(crate) async fn verify_mcp_auth_token(state: &AppState, token: &str) -> Option<McpAuthContext> {
+pub(crate) async fn verify_mcp_auth_token(
+    state: &DaemonState,
+    token: &str,
+) -> Option<McpAuthContext> {
     state.core.mcp_auth.verify_token(token).await
 }
 
@@ -92,7 +95,7 @@ pub(crate) enum ScopedMcpSessionAccessError {
 }
 
 pub(crate) async fn require_scoped_mcp_session_context(
-    state: &AppState,
+    state: &DaemonState,
     mcp_auth: McpAuthContext,
     session_id: SessionId,
 ) -> Result<(), ScopedMcpSessionAccessError> {

@@ -9,7 +9,7 @@ use ctx_provider_runtime::provider_launch::status::provider_status_for_target;
 use ctx_providers::adapters::ProviderStatus;
 
 use crate::daemon::providers::status::provider_status_without_target_bootstrap;
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(crate) struct ProviderLaunchConfigSnapshot {
     managed: ctx_managed_installs::AgentServerConfigFile,
@@ -25,7 +25,7 @@ pub(crate) enum ProviderLaunchConfigError {
 }
 
 pub(crate) async fn load_provider_launch_config_snapshot(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     provider_id: &str,
 ) -> ProviderLaunchConfigSnapshot {
     let (managed, managed_config_error) =
@@ -56,7 +56,7 @@ pub(crate) async fn load_provider_launch_config_snapshot(
 impl ProviderLaunchConfigSnapshot {
     pub(crate) async fn ensure_known_provider(
         &self,
-        state: &Arc<AppState>,
+        state: &Arc<DaemonState>,
         provider_id: &str,
     ) -> Result<(), ProviderLaunchConfigError> {
         if state
@@ -74,7 +74,7 @@ impl ProviderLaunchConfigSnapshot {
 
     pub(crate) async fn provider_status(
         &self,
-        state: &Arc<AppState>,
+        state: &Arc<DaemonState>,
         provider_id: &str,
         target: InstallTarget,
     ) -> ProviderStatus {

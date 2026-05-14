@@ -1,7 +1,7 @@
 use super::super::*;
 
 pub(super) async fn update_workspace_stream_subscriptions_for_event(
-    state: &Arc<AppState>,
+    state: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
     runtime: &mut WorkspaceStreamRuntime,
     event: &WorkspaceActiveSnapshotEvent,
@@ -47,11 +47,7 @@ pub(super) async fn update_workspace_stream_subscriptions_for_event(
             if let std::collections::hash_map::Entry::Vacant(entry) =
                 runtime.subscriptions.entry(session_id)
             {
-                let last_sent = state
-                    .workspaces
-                    .workspace_active_snapshot
-                    .session_replay_cursor(workspace_id, session_id)
-                    .await;
+                let last_sent = state.session_replay_cursor(workspace_id, session_id).await;
                 entry.insert(SessionCursor { last_sent });
             }
         }
@@ -69,7 +65,7 @@ pub(super) async fn update_workspace_stream_subscriptions_for_event(
 }
 
 async fn remove_active_task_subscription_if_unused(
-    state: &Arc<AppState>,
+    state: &WorkspaceStreamHandle,
     runtime: &mut WorkspaceStreamRuntime,
     task_id: TaskId,
 ) {
@@ -95,13 +91,13 @@ async fn remove_active_task_subscription_if_unused(
 }
 
 async fn remove_runtime_subscription(
-    state: &Arc<AppState>,
+    state: &WorkspaceStreamHandle,
     runtime: &mut WorkspaceStreamRuntime,
     session_id: SessionId,
 ) -> bool {
     let removed = runtime.subscriptions.remove(&session_id).is_some();
     if removed {
-        state.detach_session(session_id).await;
+        state.detach_session_pin(session_id).await;
     }
     removed
 }

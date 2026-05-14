@@ -22,13 +22,15 @@ async fn validate_workspace_root_is_repo(
 }
 
 pub(super) async fn preflight_default_session_creation(
-    state: &Arc<AppState>,
+    handles: &TaskApiHandles,
     store: &Store,
     workspace: &Workspace,
 ) -> Result<(ExecutionEnvironment, String, String, Option<String>), (StatusCode, Json<ApiErrorResp>)>
 {
     validate_workspace_root_is_repo(workspace).await?;
-    let effective = execution_effective::effective_execution_settings(state, workspace.id)
+    let effective = handles
+        .workspaces
+        .effective_execution_settings(workspace.id)
         .await
         .map_err(|e| {
             (
@@ -40,7 +42,7 @@ pub(super) async fn preflight_default_session_creation(
         })?;
     let execution_environment = execution_environment_from_settings(&effective);
     let (provider_id, model_id, reasoning_effort) =
-        resolve_default_session_target(state, store, workspace, execution_environment).await?;
+        resolve_default_session_target(handles, store, workspace, execution_environment).await?;
     Ok((
         execution_environment,
         provider_id,

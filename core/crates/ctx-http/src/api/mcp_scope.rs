@@ -1,11 +1,13 @@
 use super::*;
+use crate::daemon::SessionsHandle;
 
 pub(in crate::api) async fn validate_scoped_mcp_session_context(
-    state: &Arc<AppState>,
+    state: &SessionsHandle,
     mcp_auth: ctx_mcp_auth::McpAuthContext,
     session_id: SessionId,
 ) -> Result<(), (StatusCode, Json<ApiErrorResp>)> {
-    crate::daemon::require_scoped_mcp_session_context(state, mcp_auth, session_id)
+    state
+        .require_scoped_mcp_session_context(mcp_auth, session_id)
         .await
         .map_err(scoped_mcp_session_error)
 }

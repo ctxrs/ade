@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use ctx_core::models::{SandboxBinding, Session, Workspace, Worktree};
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(super) struct ArchivedWorktreeCleanupContext {
     pub(super) worktree: Worktree,
@@ -12,7 +12,7 @@ pub(super) struct ArchivedWorktreeCleanupContext {
 }
 
 pub(super) async fn load_archived_worktree_cleanup_context(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     store: &ctx_store::Store,
     parent: &Session,
     child: &Session,

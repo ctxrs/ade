@@ -78,7 +78,7 @@ pub(super) async fn create_session_record(
 }
 
 pub(super) struct CreatedWorktreeCleanup<'a> {
-    pub(super) state: &'a Arc<AppState>,
+    pub(super) handles: &'a TaskApiHandles,
     pub(super) store: &'a Store,
     pub(super) workspace: &'a Workspace,
     pub(super) task_id: TaskId,
@@ -89,7 +89,7 @@ impl CreatedWorktreeCleanup<'_> {
     async fn cleanup_orphaned_worktree(&self) {
         if let Some(created_worktree_id) = self.created_worktree_id {
             cleanup_orphaned_provisioned_worktree(
-                self.state,
+                self.handles,
                 self.store,
                 self.workspace,
                 self.task_id,

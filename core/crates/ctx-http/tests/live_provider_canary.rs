@@ -10,7 +10,7 @@ use serde_json::Value;
 use tower::ServiceExt;
 
 use ctx_core::models::SessionEventType;
-use ctx_http::daemon::AppState;
+use ctx_http::daemon::DaemonState;
 use ctx_managed_installs::{save_agent_server_config, AgentServerCommand, AgentServerConfigFile};
 use ctx_providers::adapters::{ProviderAdapter, ProviderHealth, ProviderStatus};
 use ctx_providers::crp::Tier1CrpAdapter;
@@ -31,7 +31,7 @@ async fn post_message(app: &axum::Router, session_id: uuid::Uuid, content: &str)
     assert_eq!(res.status(), StatusCode::OK);
 }
 
-async fn wait_for_terminal(state: &Arc<AppState>, session_id: ctx_core::ids::SessionId) {
+async fn wait_for_terminal(state: &Arc<DaemonState>, session_id: ctx_core::ids::SessionId) {
     let store = state.store_for_session(session_id).await.unwrap();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(240);
     loop {
@@ -138,7 +138,7 @@ async fn seed_claude_runtime_config(data_root: &Path, command_abs_path: &str) {
         .expect("write agent server config");
 }
 
-async fn seed_provider_status_ok(state: &Arc<AppState>, provider_id: &str) {
+async fn seed_provider_status_ok(state: &Arc<DaemonState>, provider_id: &str) {
     state
         .providers
         .upsert_provider_status(
@@ -188,7 +188,7 @@ async fn live_provider_canary_turn_invariants() {
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert(provider_id.clone(), adapter);
 
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,
@@ -242,7 +242,7 @@ async fn live_codex_canary_can_edit_workspace_file() {
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert(provider_id.clone(), Arc::new(Tier1CrpAdapter::codex()));
 
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,
@@ -329,7 +329,7 @@ async fn live_claude_endpoint_profile_api_key_round_trip() {
     providers.insert("claude-crp".to_string(), Arc::clone(&claude_adapter));
     providers.insert("claude".to_string(), claude_adapter);
 
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,
@@ -543,7 +543,7 @@ async fn live_claude_openrouter_opus_v1_base_url_normalization_round_trip() {
     providers.insert("claude-crp".to_string(), Arc::clone(&claude_adapter));
     providers.insert("claude".to_string(), claude_adapter);
 
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,

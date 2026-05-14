@@ -4,7 +4,7 @@ use ctx_core::ids::{SessionId, TurnId, WorktreeId};
 use ctx_core::models::{SessionEventType, SubagentInvocationChild};
 use ctx_observability::logs;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::super::errors::{internal_api_error, store_for_session, ApiResult};
 use super::status::subagent_status_from_turn_status;
@@ -15,7 +15,7 @@ pub(in crate::daemon::sessions::subagents) use finalize::finalize_subagent_invoc
 mod finalize;
 
 pub(in crate::daemon::sessions::subagents) async fn emit_subagent_invocation_notice(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     parent_session_id: SessionId,
     parent_turn_id: Option<TurnId>,
     payload: serde_json::Value,
@@ -36,7 +36,7 @@ pub(in crate::daemon::sessions::subagents) async fn emit_subagent_invocation_not
 }
 
 pub(in crate::daemon::sessions::subagents) async fn run_subagent_child(
-    state_weak: &Weak<AppState>,
+    state_weak: &Weak<DaemonState>,
     child: SubagentInvocationChild,
     _parent_worktree_id: WorktreeId,
 ) -> Result<(), String> {

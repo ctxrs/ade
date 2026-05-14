@@ -1,5 +1,6 @@
 use super::health::{build_health_response, HealthResp};
 use super::*;
+use crate::daemon::{CoreHandle, ExecutionHandle, ProvidersHandle};
 use ctx_linux_sandbox_runtime::linux_sandbox_runtime_status;
 
 #[derive(Debug, Serialize)]
@@ -13,30 +14,31 @@ pub(in crate::api) struct DiagnosticsResp {
 }
 
 pub(in crate::api) async fn diagnostics(
-    State(state): State<Arc<AppState>>,
+    State(core): State<CoreHandle>,
+    State(execution): State<ExecutionHandle>,
+    State(providers): State<ProvidersHandle>,
 ) -> Result<Json<DiagnosticsResp>, StatusCode> {
-    let startup_prewarm = crate::daemon::execution_setup::startup_status(&state).await;
-    let linux_sandbox_runtime = linux_sandbox_runtime_status(&state.core.data_root)
+    let startup_prewarm = execution.startup_status().await;
+    let linux_sandbox_runtime = linux_sandbox_runtime_status(core.data_root())
         .await
         .map(|status| serde_json::to_value(status).unwrap_or_else(|_| serde_json::json!({})))
         .unwrap_or_else(
             |err| serde_json::json!({"error": logs::redact_sensitive(&err.to_string())}),
         );
-    let provider_diagnostics =
-        crate::daemon::providers::provider_diagnostics_snapshot(&state).await;
+    let provider_diagnostics = providers.provider_diagnostics_snapshot().await;
 
-    let log_files = logs::list_log_files(&state.core.data_root).await;
+    let log_files = logs::list_log_files(core.data_root()).await;
 
     let identity = ctx_update_service::current_build_identity(env!("CARGO_PKG_VERSION"))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(DiagnosticsResp {
-        daemon: build_health_response(&state, identity, true),
+        daemon: build_health_response(&core, identity, true),
         platform: serde_json::json!({
             "os": std::env::consts::OS,
             "arch": std::env::consts::ARCH,
         }),
         logs: serde_json::json!({
-            "dir": logs::logs_dir(&state.core.data_root).to_string_lossy(),
+            "dir": logs::logs_dir(core.data_root()).to_string_lossy(),
             "files": log_files,
         }),
         execution: serde_json::json!({

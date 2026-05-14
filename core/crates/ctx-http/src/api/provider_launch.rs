@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use std::time::Duration;
 
 mod common;
@@ -20,12 +19,8 @@ use futures::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 
 use super::errors::ApiErrorResp;
-use crate::daemon::providers::{
-    cancel_provider_install, get_provider_install_info, list_provider_install_events,
-    parse_provider_install_target, provider_install_event_sender, start_all_provider_installs,
-    start_provider_install,
-};
-use crate::daemon::AppState;
+use crate::daemon::providers::parse_provider_install_target;
+use crate::daemon::ProvidersHandle;
 use ctx_observability::logs;
 use ctx_provider_install::install_state::{
     InstallId, InstallInfo, InstallProgressEvent, InstallTarget,

@@ -9,7 +9,7 @@ use ctx_workspace_services::worktree_vcs::{
     resolve_worktree_vcs_metadata_roots, WorktreeVcsGitCommand, WORKTREE_VCS_WATCH_DEBOUNCE_MS,
 };
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_settings_model::ExecutionMode;
 use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
 
@@ -22,7 +22,10 @@ mod poller;
 use debounce::build_git_status_watcher;
 use poller::run_git_status_poller;
 
-pub(super) async fn run_git_status_watcher(state: Arc<AppState>, worktree: Worktree) -> Result<()> {
+pub(super) async fn run_git_status_watcher(
+    state: Arc<DaemonState>,
+    worktree: Worktree,
+) -> Result<()> {
     let data_plane = resolve_worktree_data_plane(state.as_ref(), &worktree).await?;
     let root = data_plane.live_worktree_root.as_path();
     if matches!(data_plane.execution_mode, ExecutionMode::Sandbox) {

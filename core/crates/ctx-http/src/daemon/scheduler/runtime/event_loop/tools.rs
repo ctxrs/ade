@@ -2,7 +2,7 @@ use ctx_core::models::{SessionEvent, SessionEventType};
 use ctx_session_tools::{sanitize_normalized_tool_event_payload, NormalizedToolEvent};
 use serde_json::Value;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use self::ops::emit_tool_call_ops;
 use super::super::tool_runtime::{self, maybe_spool_tool_output};
@@ -14,7 +14,7 @@ mod persistence;
 
 pub(super) async fn prepare_tool_event_payload(
     ctx: &TurnEventLoop,
-    state: &AppState,
+    state: &DaemonState,
     event_type: &SessionEventType,
     tool_event: &NormalizedToolEvent,
 ) -> Value {

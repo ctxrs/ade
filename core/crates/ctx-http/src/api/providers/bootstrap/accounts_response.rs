@@ -28,34 +28,34 @@ pub(super) fn bootstrap_accounts_error(
 }
 
 pub(super) async fn load_bootstrap_accounts(
-    state: &Arc<AppState>,
+    providers: &ProvidersHandle,
 ) -> Result<BootstrapAccounts, (StatusCode, Json<serde_json::Value>)> {
     Ok(BootstrapAccounts {
-        codex_accounts: accounts::codex_accounts_response(state)
+        codex_accounts: accounts::codex_accounts_response(providers)
             .await
             .map_err(|err| bootstrap_accounts_error("codex", err))?,
-        claude_accounts: accounts::claude_accounts_response(state)
+        claude_accounts: accounts::claude_accounts_response(providers)
             .await
             .map_err(|err| bootstrap_accounts_error("claude-crp", err))?,
-        gemini_accounts: accounts::gemini_accounts_response(state)
+        gemini_accounts: accounts::gemini_accounts_response(providers)
             .await
             .map_err(|err| bootstrap_accounts_error("gemini", err))?,
-        qwen_accounts: accounts::qwen_accounts_response(state)
+        qwen_accounts: accounts::qwen_accounts_response(providers)
             .await
             .map_err(|err| bootstrap_accounts_error("qwen", err))?,
-        kimi_accounts: accounts::kimi_accounts_response(state)
+        kimi_accounts: accounts::kimi_accounts_response(providers)
             .await
             .map_err(|err| bootstrap_accounts_error("kimi", err))?,
-        mistral_accounts: accounts::mistral_accounts_response(state)
+        mistral_accounts: accounts::mistral_accounts_response(providers)
             .await
             .map_err(|err| bootstrap_accounts_error("mistral", err))?,
-        copilot_accounts: accounts::copilot_accounts_response(state)
+        copilot_accounts: accounts::copilot_accounts_response(providers)
             .await
             .map_err(|err| bootstrap_accounts_error("copilot", err))?,
-        cursor_accounts: accounts::cursor_accounts_response(state)
+        cursor_accounts: accounts::cursor_accounts_response(providers)
             .await
             .map_err(|err| bootstrap_accounts_error("cursor", err))?,
-        amp_accounts: accounts::amp_accounts_response(state)
+        amp_accounts: accounts::amp_accounts_response(providers)
             .await
             .map_err(|err| bootstrap_accounts_error("amp", err))?,
     })

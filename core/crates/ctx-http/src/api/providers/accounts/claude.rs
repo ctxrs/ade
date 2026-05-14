@@ -2,9 +2,9 @@ use super::common::{internal_error, provider_account_mutation_error};
 use super::*;
 
 pub(crate) async fn claude_accounts_response(
-    state: &Arc<AppState>,
+    providers: &ProvidersHandle,
 ) -> anyhow::Result<ClaudeAccountsResponse> {
-    let registry = crate::daemon::providers::load_claude_account_registry(state).await?;
+    let registry = providers.load_claude_account_registry().await?;
     Ok(ClaudeAccountsResponse {
         active_account_id: registry.active_account_id,
         accounts: registry.accounts,
@@ -12,35 +12,37 @@ pub(crate) async fn claude_accounts_response(
 }
 
 pub(crate) async fn list_claude_accounts(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
 ) -> Result<Json<ClaudeAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     Ok(Json(
-        claude_accounts_response(&state)
+        claude_accounts_response(&providers)
             .await
             .map_err(internal_error)?,
     ))
 }
 
 pub(crate) async fn upsert_claude_account(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     Json(req): Json<ClaudeAccountUpsertReq>,
 ) -> Result<Json<ClaudeAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    crate::daemon::providers::add_claude_account(&state, req.label, req.setup_token)
+    providers
+        .add_claude_account(req.label, req.setup_token)
         .await
         .map_err(provider_account_mutation_error)?;
     Ok(Json(
-        claude_accounts_response(&state)
+        claude_accounts_response(&providers)
             .await
             .map_err(internal_error)?,
     ))
 }
 
 pub(crate) async fn set_claude_active_account(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     Json(req): Json<ClaudeActiveAccountReq>,
 ) -> Result<Json<ClaudeAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     if let Some(ref account_id) = req.account_id {
-        let registry = crate::daemon::providers::load_claude_account_registry(&state)
+        let registry = providers
+            .load_claude_account_registry()
             .await
             .map_err(internal_error)?;
         if !registry.accounts.iter().any(|a| a.id == *account_id) {
@@ -52,25 +54,27 @@ pub(crate) async fn set_claude_active_account(
             ));
         }
     }
-    crate::daemon::providers::set_active_claude_account(&state, req.account_id)
+    providers
+        .set_active_claude_account(req.account_id)
         .await
         .map_err(provider_account_mutation_error)?;
     Ok(Json(
-        claude_accounts_response(&state)
+        claude_accounts_response(&providers)
             .await
             .map_err(internal_error)?,
     ))
 }
 
 pub(crate) async fn delete_claude_account(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<ClaudeAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    crate::daemon::providers::remove_claude_account(&state, &id)
+    providers
+        .remove_claude_account(&id)
         .await
         .map_err(provider_account_mutation_error)?;
     Ok(Json(
-        claude_accounts_response(&state)
+        claude_accounts_response(&providers)
             .await
             .map_err(internal_error)?,
     ))

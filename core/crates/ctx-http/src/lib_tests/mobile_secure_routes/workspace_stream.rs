@@ -9,7 +9,7 @@ async fn mobile_secure_workspace_stream_returns_unauthorized_before_upgrade_for_
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),
@@ -86,7 +86,7 @@ async fn mobile_secure_workspace_stream_returns_unauthorized_before_upgrade_with
     let git_repo = setup_git_repo().await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),

@@ -9,14 +9,14 @@ use ctx_transport_runtime::terminals::{
     NativeContainerTerminalSpec, SharedVmContainerTerminalSpec,
 };
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{Workspace, Worktree};
 
 use super::super::{internal_error, TerminalLaunchError};
 
 pub(super) async fn prepare_native_container_terminal_launch(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace: &Workspace,
     worktree: Option<&Worktree>,
     effective: &ctx_settings_model::ExecutionSettings,
@@ -59,7 +59,7 @@ pub(super) async fn prepare_native_container_terminal_launch(
 }
 
 pub(super) async fn prepare_shared_vm_container_terminal_launch(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace: &Workspace,
     worktree: Option<&Worktree>,
     effective: &ctx_settings_model::ExecutionSettings,
@@ -118,7 +118,7 @@ pub(super) async fn prepare_shared_vm_container_terminal_launch(
 }
 
 async fn ensure_materialized_workspace_root(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace: &Workspace,
 ) -> Result<(), TerminalLaunchError> {
     let sandbox_mode = ctx_harness_runtime::selected_sandbox_command_mode(&state.core.data_root)

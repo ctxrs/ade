@@ -1,5 +1,4 @@
 use super::*;
-use crate::api::sessions;
 
 #[path = "initial_prompt/records.rs"]
 mod records;
@@ -17,7 +16,7 @@ pub(super) struct InitialPromptSeed {
 }
 
 pub(super) async fn seed_initial_prompt(
-    state: &Arc<AppState>,
+    handles: &TaskApiHandles,
     store: &Store,
     session: &Session,
     seed: InitialPromptSeed,
@@ -37,8 +36,7 @@ pub(super) async fn seed_initial_prompt(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     {
         if existing_initial_prompt_message_matches(&existing, session, turn_id, &prompt) {
-            sessions::ensure_session_turn_for_message(store, session.id, turn_id, &existing)
-                .await?;
+            ensure_session_turn_for_initial_prompt(store, session.id, turn_id, &existing).await?;
         } else {
             return Err(StatusCode::CONFLICT);
         }
@@ -46,7 +44,10 @@ pub(super) async fn seed_initial_prompt(
         let prompt_for_idempotency = prompt.clone();
 
         let run_id = RunId::new();
-        let order_seq_state = state.session_order_seq_state(store, session.id).await;
+        let order_seq_state = handles
+            .sessions
+            .session_order_seq_state(store, session.id)
+            .await;
         let order_seq = {
             let mut order_seq_state = order_seq_state.lock().await;
             order_seq_state.get_or_assign(format!("message:{}", message_id.0), None)
@@ -110,10 +111,10 @@ pub(super) async fn seed_initial_prompt(
             }
         }
 
-        state.publish_event(event).await;
+        handles.sessions.publish_event(event).await;
 
         let prompt = saved.content.clone();
-        let tx = state.ensure_scheduler(session.clone()).await;
+        let tx = handles.sessions.ensure_scheduler(session.clone()).await;
         let queued = crate::daemon::scheduler::QueuedMessage {
             message: saved,
             enqueued_at: Instant::now(),
@@ -121,9 +122,52 @@ pub(super) async fn seed_initial_prompt(
         };
         let _ = tx.send(SchedulerCommand::Enqueue(queued)).await;
 
-        let _ =
-            schedule_session_title_generation(Arc::clone(state), session.clone(), prompt, false)
-                .await;
+        let _ = handles
+            .sessions
+            .schedule_session_title_generation(session.clone(), prompt, false)
+            .await;
+    }
+    Ok(())
+}
+
+async fn ensure_session_turn_for_initial_prompt(
+    store: &Store,
+    session_id: SessionId,
+    turn_id: TurnId,
+    message: &Message,
+) -> Result<(), StatusCode> {
+    let existing_turn = store
+        .get_session_turn_by_id(turn_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if let Some(existing) = existing_turn {
+        let matches =
+            existing.session_id == session_id && existing.user_message_id == Some(message.id);
+        if !matches {
+            return Err(StatusCode::CONFLICT);
+        }
+        return Ok(());
+    }
+
+    let turn =
+        ctx_session_service::message_delivery::build_user_message_turn(message, turn_id, None);
+    if let Err(err) = store.insert_session_turn(turn).await {
+        if !is_unique_constraint_violation(&err) {
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+        let existing = store
+            .get_session_turn_by_id(turn_id)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        if let Some(existing) = existing {
+            let matches =
+                existing.session_id == session_id && existing.user_message_id == Some(message.id);
+            if !matches {
+                return Err(StatusCode::CONFLICT);
+            }
+        } else {
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
     }
     Ok(())
 }

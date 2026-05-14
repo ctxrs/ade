@@ -2,7 +2,7 @@ use super::*;
 use serde_json::json;
 
 pub(crate) async fn initialize_workspace_stream(
-    state: &Arc<AppState>,
+    state: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
     ready_queue_label: &'static str,
 ) -> Option<(
@@ -10,9 +10,7 @@ pub(crate) async fn initialize_workspace_stream(
     tokio::sync::broadcast::Receiver<WorkspaceActiveSnapshotEvent>,
 )> {
     let rx = state
-        .workspaces
-        .workspace_active_snapshot
-        .subscribe(workspace_id)
+        .subscribe_workspace_active_snapshot(workspace_id)
         .await;
     let priority_control = Arc::new(StreamQueue::new(
         WORKSPACE_STREAM_QUEUE_LIMIT,
@@ -26,8 +24,9 @@ pub(crate) async fn initialize_workspace_stream(
     let background_head_buffer = Arc::new(HeadBatchBuffer::new());
     let summary_buffer = Arc::new(SummaryBatchBuffer::new(HEAD_BATCH_TOTAL_LIMIT));
     let send_control = Arc::new(StreamSendControl::new());
-    let (snapshot_rev, archived_rev) =
-        crate::daemon::workspaces::load_workspace_active_snapshot_state(state, workspace_id).await;
+    let (snapshot_rev, archived_rev) = state
+        .load_workspace_active_snapshot_state(workspace_id)
+        .await;
     let ready = WorkspaceActiveSnapshotEvent::Ready {
         workspace_id,
         snapshot_rev,
@@ -78,7 +77,7 @@ pub(crate) async fn notify_workspace_stream_shutdown(runtime: &WorkspaceStreamRu
 }
 
 pub(crate) async fn release_workspace_stream(
-    state: &Arc<AppState>,
+    state: &WorkspaceStreamHandle,
     runtime: &WorkspaceStreamRuntime,
 ) {
     release_workspace_stream_session_pins(state, runtime.subscriptions.keys().copied()).await;
@@ -93,7 +92,7 @@ pub(super) async fn clear_runtime_queues(runtime: &WorkspaceStreamRuntime) {
 }
 
 pub(super) async fn queue_workspace_stream_reset(
-    state: &Arc<AppState>,
+    state: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
     runtime: &mut WorkspaceStreamRuntime,
 ) -> Result<(), ()> {

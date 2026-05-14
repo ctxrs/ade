@@ -1,6 +1,6 @@
 use super::*;
 
-impl AppState {
+impl DaemonState {
     pub async fn register_install_progress_mirror(
         &self,
         source_install_id: InstallId,

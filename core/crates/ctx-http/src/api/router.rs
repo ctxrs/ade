@@ -1,12 +1,10 @@
-use std::sync::Arc;
-
 use axum::http::{header, HeaderValue, Method};
 use axum::middleware;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 use url::Url;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonHandle;
 
 use super::auth::auth_middleware;
 use super::perf::perf_middleware;
@@ -54,7 +52,8 @@ fn daemon_cors_layer() -> CorsLayer {
         ])
 }
 
-pub fn router(state: Arc<AppState>) -> axum::Router {
+pub fn router(state: impl Into<DaemonHandle>) -> axum::Router {
+    let state = state.into();
     let auth_state = state.clone();
     let perf_state = state.clone();
     let api = routes::api_routes()

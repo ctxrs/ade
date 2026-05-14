@@ -83,7 +83,7 @@ pub struct ExecutionRuntime {
     pub setup: Arc<ExecutionSetupCoordinator>,
 }
 
-pub struct AppState {
+pub struct DaemonState {
     pub core: CoreState,
     pub sessions: SessionRuntime,
     pub workspaces: WorkspaceRuntime,

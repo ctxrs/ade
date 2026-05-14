@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use axum::http::StatusCode;
 use ctx_http::api;
-use ctx_http::daemon::AppState;
+use ctx_http::daemon::DaemonState;
 use ctx_provider_accounts::{codex_env_for_active_account, ensure_codex_auth_ready};
 use ctx_providers::adapters::ProviderAdapter;
 use ctx_providers::fake::FakeProviderAdapter;
@@ -37,11 +37,11 @@ struct CodexHostImportProbe {
     auth_kind: Option<String>,
 }
 
-async fn app_state(data_root: &std::path::Path) -> Arc<AppState> {
+async fn app_state(data_root: &std::path::Path) -> Arc<DaemonState> {
     let stores = StoreManager::open(data_root).await.unwrap();
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-    Arc::new(AppState::new(
+    Arc::new(DaemonState::new(
         data_root.to_path_buf(),
         stores,
         providers,
@@ -51,7 +51,7 @@ async fn app_state(data_root: &std::path::Path) -> Arc<AppState> {
 }
 
 async fn start_http_app(
-    state: Arc<AppState>,
+    state: Arc<DaemonState>,
 ) -> (String, reqwest::Client, tokio::task::JoinHandle<()>) {
     let app = api::router(state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

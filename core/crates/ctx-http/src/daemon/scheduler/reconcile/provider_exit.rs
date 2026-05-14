@@ -4,13 +4,13 @@ use anyhow::Result;
 use serde_json::json;
 
 use super::terminal_state::reconcile_turn_terminal_state;
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_core::ids::{RunId, SessionId, TurnId};
 use ctx_core::models::{SessionEventType, SessionTurnStatus};
 use ctx_core::session_projection::resolve_turn_terminal_state;
 
 pub async fn reconcile_turn_failed_on_provider_exit(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session_id: SessionId,
     run_id: Option<RunId>,
     turn_id: TurnId,

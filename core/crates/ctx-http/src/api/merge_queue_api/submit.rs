@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use axum::extract::{Extension, State};
 use axum::http::StatusCode;
 use axum::Json;
@@ -9,10 +7,11 @@ use ctx_merge_queue::MergeQueueSubmitParams;
 use super::request::MergeQueueSubmitReq;
 use crate::api::errors::ApiErrorResp;
 use crate::api::validate_scoped_mcp_session_context;
-use crate::daemon::{merge_queue, AppState};
+use crate::daemon::{SessionsHandle, WorkspacesHandle};
 
 pub(in crate::api) async fn submit_merge_queue_entry(
-    State(state): State<Arc<AppState>>,
+    State(sessions): State<SessionsHandle>,
+    State(workspaces): State<WorkspacesHandle>,
     mcp_auth: Option<Extension<ctx_mcp_auth::McpAuthContext>>,
     Json(req): Json<MergeQueueSubmitReq>,
 ) -> Result<Json<ctx_core::models::MergeQueueEntry>, (StatusCode, Json<ApiErrorResp>)> {
@@ -68,7 +67,7 @@ pub(in crate::api) async fn submit_merge_queue_entry(
                 }),
             ));
         }
-        validate_scoped_mcp_session_context(&state, mcp_auth, scoped_session_id).await?;
+        validate_scoped_mcp_session_context(&sessions, mcp_auth, scoped_session_id).await?;
         session_id = Some(scoped_session_id);
         worktree_id = Some(scoped_worktree_id);
     }
@@ -80,7 +79,8 @@ pub(in crate::api) async fn submit_merge_queue_entry(
         target_branch: req.target_branch,
         message: req.message,
     };
-    let entry = merge_queue::submit_merge_queue_entry(&state, params)
+    let entry = workspaces
+        .submit_merge_queue_entry(params)
         .await
         .map_err(|err| {
             (

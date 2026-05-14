@@ -10,7 +10,7 @@ use ctx_workspace_container::workspace_container_name;
 use ctx_workspace_services::worktree_vcs::{WorktreeVcsGitCommand, WorktreeVcsSandboxGitExecutor};
 
 use crate::daemon::execution_effective;
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_harness_runtime::sandbox_container_command;
 use ctx_settings_model::ContainerRuntimeKind;
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
@@ -27,12 +27,12 @@ struct SandboxGitContext {
 }
 
 pub(super) struct HttpSandboxWorktreeVcsExecutor<'a> {
-    state: &'a Arc<AppState>,
+    state: &'a Arc<DaemonState>,
     worktree: &'a Worktree,
 }
 
 impl<'a> HttpSandboxWorktreeVcsExecutor<'a> {
-    pub(super) fn new(state: &'a Arc<AppState>, worktree: &'a Worktree) -> Self {
+    pub(super) fn new(state: &'a Arc<DaemonState>, worktree: &'a Worktree) -> Self {
         Self { state, worktree }
     }
 }
@@ -45,7 +45,7 @@ impl WorktreeVcsSandboxGitExecutor for HttpSandboxWorktreeVcsExecutor<'_> {
 }
 
 async fn ensure_container_for_worktree(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     worktree: &Worktree,
 ) -> Result<SandboxGitContext> {
     let data_plane = resolve_worktree_data_plane(state.as_ref(), worktree).await?;
@@ -81,7 +81,7 @@ async fn ensure_container_for_worktree(
 }
 
 async fn container_git_output(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     worktree: &Worktree,
     args: &[String],
 ) -> Result<std::process::Output> {
@@ -123,7 +123,7 @@ async fn container_git_output(
 }
 
 pub(super) async fn container_git_stdout(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     worktree: &Worktree,
     command: WorktreeVcsGitCommand,
 ) -> Result<Vec<u8>> {

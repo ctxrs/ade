@@ -1,29 +1,27 @@
-use std::sync::Arc;
-
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
 
-use crate::daemon::{settings as daemon_settings, AppState};
+use crate::daemon::CoreHandle;
 use ctx_settings_model as user_settings;
 use ctx_settings_service::HostExecutionPolicy;
 
 pub(super) async fn get_settings(
-    State(state): State<Arc<AppState>>,
+    State(state): State<CoreHandle>,
 ) -> Result<Json<user_settings::PublicSettings>, StatusCode> {
-    let settings = daemon_settings::load_settings(&state)
+    let settings = state
+        .load_settings()
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(
-        daemon_settings::public_settings_for_response(&state, &settings).await,
-    ))
+    Ok(Json(state.public_settings_for_response(&settings).await))
 }
 
 pub(super) async fn update_settings(
-    State(state): State<Arc<AppState>>,
+    State(state): State<CoreHandle>,
     Json(req): Json<user_settings::UpdateSettingsReq>,
 ) -> Result<Json<user_settings::PublicSettings>, StatusCode> {
-    let current = daemon_settings::load_settings(&state)
+    let current = state
+        .load_settings()
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let host_execution_policy =
@@ -38,13 +36,12 @@ pub(super) async fn update_settings(
             .map_err(|error| crate::api::shared::status_code_for_request_or_policy_error(&error))?;
     }
     let next = ctx_settings_service::apply_update(current, req);
-    daemon_settings::save_settings(&state, &next)
+    state
+        .save_settings(&next)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    daemon_settings::apply_settings_side_effects(&state, &next).await;
-    Ok(Json(
-        daemon_settings::public_settings_for_response(&state, &next).await,
-    ))
+    state.apply_settings_side_effects(&next).await;
+    Ok(Json(state.public_settings_for_response(&next).await))
 }
 
 #[cfg(test)]
@@ -52,10 +49,12 @@ mod tests {
     use super::*;
 
     use std::collections::HashMap;
+    use std::sync::Arc;
 
     use ctx_store::StoreManager;
     use serde_json::json;
 
+    use crate::daemon::{DaemonHandle, DaemonState};
     use ctx_settings_service::EXECUTION_POLICY_TEST_ENV_LOCK;
 
     struct EnvVarGuard {
@@ -93,7 +92,7 @@ mod tests {
         let _policy = EnvVarGuard::set("CTX_HOST_EXECUTION_POLICY", "sandbox_only");
         let _mode = EnvVarGuard::remove("CTX_EXECUTION_MODE");
         let temp = tempfile::tempdir().expect("tempdir");
-        let state = Arc::new(AppState::new(
+        let state = Arc::new(DaemonState::new(
             temp.path().to_path_buf(),
             StoreManager::open(temp.path()).await.expect("open stores"),
             HashMap::new(),
@@ -107,7 +106,7 @@ mod tests {
         }))
         .expect("settings update request");
 
-        let err = update_settings(State(state), Json(req))
+        let err = update_settings(State(DaemonHandle::new(state).core()), Json(req))
             .await
             .expect_err("sandbox-only policy should reject host execution settings update");
 

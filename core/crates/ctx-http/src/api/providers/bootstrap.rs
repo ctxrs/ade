@@ -18,20 +18,22 @@ fn parse_workspace_id(ws_id: &str) -> Result<WorkspaceId, (StatusCode, Json<serd
 }
 
 pub(crate) async fn get_workspace_providers_bootstrap(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     Path(ws_id): Path<String>,
 ) -> Result<Json<ProvidersBootstrapResponse>, (StatusCode, Json<serde_json::Value>)> {
     let ws_id = parse_workspace_id(&ws_id)?;
-    load_bootstrap_workspace(&state, ws_id).await?;
-    let install_target = crate::daemon::providers::install_target_for_workspace(&state, ws_id)
+    load_bootstrap_workspace(&providers, ws_id).await?;
+    let install_target = providers
+        .install_target_for_workspace(ws_id)
         .await
         .map_err(|error| status::workspace_execution_settings_error_json(&error))?;
     let preferred_model_by_provider =
-        std::sync::Arc::new(load_preferred_model_by_provider(&state, ws_id).await?);
+        std::sync::Arc::new(load_preferred_model_by_provider(&providers, ws_id).await?);
 
-    let providers =
-        crate::daemon::providers::providers_statuses_response(&state, install_target, true).await;
-    let visible_providers = providers
+    let provider_statuses = providers
+        .providers_statuses_response(install_target, true)
+        .await;
+    let visible_providers = provider_statuses
         .iter()
         .filter(|provider| !provider.detail_flag("ui_hidden").unwrap_or(false))
         .cloned()
@@ -39,23 +41,19 @@ pub(crate) async fn get_workspace_providers_bootstrap(
 
     let per_provider =
         futures::stream::iter(visible_providers.into_iter().map(|provider_status| {
-            let state = Arc::clone(&state);
+            let providers = providers.clone();
             let preferred_model_by_provider = std::sync::Arc::clone(&preferred_model_by_provider);
             async move {
                 let preferred_model_id = preferred_model_by_provider
                     .get(&provider_status.provider_id)
                     .cloned();
-                crate::daemon::providers::build_bootstrap_options(
-                    &state,
-                    ws_id,
-                    provider_status,
-                    preferred_model_id,
-                )
-                .await
+                providers
+                    .build_bootstrap_options(ws_id, provider_status, preferred_model_id)
+                    .await
             }
         }))
         .buffer_unordered(crate::daemon::providers::visible_provider_count_hint(
-            providers.len(),
+            provider_statuses.len(),
         ))
         .collect::<Vec<_>>()
         .await;
@@ -68,10 +66,10 @@ pub(crate) async fn get_workspace_providers_bootstrap(
             provider_harness_config.insert(provider_id, config);
         }
     }
-    let accounts = load_bootstrap_accounts(&state).await?;
+    let accounts = load_bootstrap_accounts(&providers).await?;
 
     Ok(Json(ProvidersBootstrapResponse {
-        providers,
+        providers: provider_statuses,
         provider_options,
         provider_harness_config,
         codex_accounts: accounts.codex_accounts,

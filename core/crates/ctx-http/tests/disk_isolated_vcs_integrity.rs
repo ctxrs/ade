@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use tokio::process::Command;
 
 use ctx_http::api;
-use ctx_http::daemon::AppState;
+use ctx_http::daemon::DaemonState;
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::StoreManager;
 
@@ -158,7 +158,7 @@ async fn disk_isolated_task_creation_produces_valid_git_worktree() {
         "fake".into(),
         std::sync::Arc::new(FakeProviderAdapter::new()),
     );
-    let state = std::sync::Arc::new(AppState::new(
+    let state = std::sync::Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,

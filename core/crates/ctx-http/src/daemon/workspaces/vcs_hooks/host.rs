@@ -11,13 +11,13 @@ use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
 use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
 
 use crate::daemon::execution_effective;
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 #[path = "host/git_config.rs"]
 mod git_config;
 
 #[async_trait]
-impl VcsHooksHost for AppState {
+impl VcsHooksHost for DaemonState {
     fn data_root(&self) -> &Path {
         &self.core.data_root
     }

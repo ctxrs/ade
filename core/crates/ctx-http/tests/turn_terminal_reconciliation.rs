@@ -53,7 +53,7 @@ impl ProviderAdapter for StartFailProvider {
 struct TestHarness {
     _repo: tempfile::TempDir,
     _data_dir: tempfile::TempDir,
-    state: std::sync::Arc<ctx_http::daemon::AppState>,
+    state: std::sync::Arc<ctx_http::daemon::DaemonState>,
     session: ctx_core::models::Session,
     store: ctx_store::Store,
 }

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 const DEFAULT_ENDPOINT_MODEL_SWEEP_INTERVAL: Duration = Duration::from_secs(60 * 60 * 6);
 
@@ -14,7 +14,7 @@ fn endpoint_model_sweep_interval() -> Duration {
         .unwrap_or(DEFAULT_ENDPOINT_MODEL_SWEEP_INTERVAL)
 }
 
-pub(in crate::daemon) fn spawn_endpoint_model_catalog_sweeper(state: Arc<AppState>) {
+pub(in crate::daemon) fn spawn_endpoint_model_catalog_sweeper(state: Arc<DaemonState>) {
     let interval = endpoint_model_sweep_interval();
     tokio::spawn(async move {
         let mut shutdown_rx = state.core.shutdown_tx.subscribe();

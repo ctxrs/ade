@@ -1,7 +1,7 @@
 use super::super::*;
 
 pub(crate) async fn list_agents(
-    state: Arc<AppState>,
+    state: Arc<DaemonState>,
     parent_id: SessionId,
 ) -> ApiResult<Vec<AgentSummary>> {
     let (store, parent) = load_parent_session(state.as_ref(), parent_id).await?;
@@ -20,7 +20,7 @@ pub(crate) async fn list_agents(
 }
 
 pub(crate) async fn get_agent(
-    state: Arc<AppState>,
+    state: Arc<DaemonState>,
     parent_id: SessionId,
     req: GetAgentReq,
 ) -> ApiResult<GetAgentResp> {

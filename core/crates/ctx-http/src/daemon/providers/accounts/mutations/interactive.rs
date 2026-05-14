@@ -3,10 +3,10 @@ use std::sync::Arc;
 use ctx_provider_accounts as provider_accounts;
 
 use super::super::{ProviderAccountLoginMutation, ProviderAccountMutationError};
-use crate::daemon::{providers::restarts, AppState};
+use crate::daemon::{providers::restarts, DaemonState};
 
 pub(crate) async fn add_claude_account(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     label: Option<String>,
     setup_token: String,
 ) -> Result<(), ProviderAccountMutationError> {
@@ -16,7 +16,7 @@ pub(crate) async fn add_claude_account(
 }
 
 pub(crate) async fn add_claude_account_for_login(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     label: Option<String>,
     setup_token: String,
 ) -> Result<ProviderAccountLoginMutation, ProviderAccountMutationError> {
@@ -32,7 +32,7 @@ pub(crate) async fn add_claude_account_for_login(
 }
 
 pub(crate) async fn set_active_claude_account(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     account_id: Option<String>,
 ) -> Result<(), ProviderAccountMutationError> {
     provider_accounts::set_active_claude_account(&state.core.data_root, account_id)
@@ -44,7 +44,7 @@ pub(crate) async fn set_active_claude_account(
 }
 
 pub(crate) async fn remove_claude_account(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     account_id: &str,
 ) -> Result<(), ProviderAccountMutationError> {
     provider_accounts::remove_claude_account(&state.core.data_root, account_id)
@@ -56,7 +56,7 @@ pub(crate) async fn remove_claude_account(
 }
 
 pub(crate) async fn add_cursor_account(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     label: Option<String>,
     token: String,
     email: Option<String>,
@@ -70,7 +70,7 @@ pub(crate) async fn add_cursor_account(
 }
 
 pub(crate) async fn add_cursor_oauth_account_for_login(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     label: Option<String>,
     auth_token: String,
     refresh_token: Option<String>,
@@ -94,7 +94,7 @@ pub(crate) async fn add_cursor_oauth_account_for_login(
 }
 
 pub(crate) async fn set_active_cursor_account(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     account_id: Option<String>,
 ) -> Result<(), ProviderAccountMutationError> {
     provider_accounts::set_active_cursor_account(&state.core.data_root, account_id)
@@ -106,7 +106,7 @@ pub(crate) async fn set_active_cursor_account(
 }
 
 pub(crate) async fn remove_cursor_account(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     account_id: &str,
 ) -> Result<(), ProviderAccountMutationError> {
     provider_accounts::remove_cursor_account(&state.core.data_root, account_id)
@@ -118,7 +118,7 @@ pub(crate) async fn remove_cursor_account(
 }
 
 pub(crate) async fn add_kimi_account(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     label: Option<String>,
     provider: Option<String>,
     credentials_json: String,
@@ -142,7 +142,7 @@ pub(crate) async fn add_kimi_account(
 }
 
 pub(crate) async fn add_kimi_oauth_account_for_login(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     label: Option<String>,
     credentials_json: String,
     email: Option<String>,
@@ -164,7 +164,7 @@ pub(crate) async fn add_kimi_oauth_account_for_login(
 }
 
 pub(crate) async fn set_active_kimi_account(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     account_id: Option<String>,
 ) -> Result<(), ProviderAccountMutationError> {
     provider_accounts::set_active_kimi_account(&state.core.data_root, account_id)
@@ -176,7 +176,7 @@ pub(crate) async fn set_active_kimi_account(
 }
 
 pub(crate) async fn remove_kimi_account(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     account_id: &str,
 ) -> Result<(), ProviderAccountMutationError> {
     provider_accounts::remove_kimi_account(&state.core.data_root, account_id)

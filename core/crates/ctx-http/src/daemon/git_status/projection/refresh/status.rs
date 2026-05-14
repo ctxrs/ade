@@ -6,7 +6,7 @@ use ctx_workspace_services::worktree_vcs::{
     build_git_status_entries, build_git_status_summary, is_no_vcs_repo_error, GitStatusSnapshot,
 };
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::super::loading::load_git_status_snapshot;
 
@@ -21,7 +21,7 @@ pub(super) struct StatusProjection {
 }
 
 pub(super) async fn load_status_projection(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     worktree: &Worktree,
     include_status_inventory: bool,
 ) -> Result<StatusProjectionOutcome> {

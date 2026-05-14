@@ -11,7 +11,7 @@ use std::path::PathBuf;
 async fn codex_login_persistence_requires_auth_file() {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),
@@ -89,7 +89,7 @@ impl ProviderAdapter for RestartFailingAdapter {
 async fn codex_login_persistence_rolls_back_when_restart_fails() {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::from([(
@@ -133,7 +133,7 @@ async fn codex_login_persistence_rolls_back_when_restart_fails() {
 async fn codex_login_persistence_removes_account_home_auth_after_secret_ingest() {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),

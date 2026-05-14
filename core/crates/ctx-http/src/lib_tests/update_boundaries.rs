@@ -6,7 +6,7 @@ async fn update_check_rejects_path_traversal_channel() {
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
         HashMap::new();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,
@@ -29,7 +29,7 @@ async fn update_check_rejects_path_traversal_channel() {
 async fn daemon_shutdown_endpoint_terminalizes_running_turns_before_ack() {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let mut app_state = AppState::new(
+    let mut app_state = DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),
@@ -136,7 +136,7 @@ async fn daemon_shutdown_endpoint_terminalizes_running_turns_before_ack() {
 async fn daemon_shutdown_endpoint_requires_local_shutdown_token() {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let mut app_state = AppState::new(
+    let mut app_state = DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),

@@ -4,7 +4,7 @@ use super::super::*;
 async fn merge_queue_startup_runner_does_not_cache_historical_workspace_stores() {
     let temp = tempdir().unwrap();
     let stores = StoreManager::open(temp.path()).await.unwrap();
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         temp.path().to_path_buf(),
         stores.clone(),
         HashMap::new(),

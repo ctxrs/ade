@@ -6,9 +6,9 @@ use ctx_core::models::{Message, MessageDelivery, MessageRole, Session, SessionEv
 use ctx_provider_runtime::provider_restart::ProviderRestartEvent;
 use serde_json::json;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
-pub(super) async fn notify_sessions(state: &Arc<AppState>, event: &ProviderRestartEvent) {
+pub(super) async fn notify_sessions(state: &Arc<DaemonState>, event: &ProviderRestartEvent) {
     let message_text = match event.kind {
         "provider_restart_warning" => {
             "Provider memory is high; restart scheduled if it stays elevated."
@@ -62,7 +62,7 @@ pub(super) async fn notify_sessions(state: &Arc<AppState>, event: &ProviderResta
 }
 
 async fn insert_system_message(
-    state: &AppState,
+    state: &DaemonState,
     store: &ctx_store::Store,
     session: &Session,
     content: &str,

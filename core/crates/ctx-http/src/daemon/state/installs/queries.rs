@@ -1,6 +1,6 @@
 use super::*;
 
-impl AppState {
+impl DaemonState {
     pub async fn set_install_progress_pct_override(&self, install_id: InstallId, pct: Option<u8>) {
         self.providers
             .set_install_progress_pct_override(install_id, pct)

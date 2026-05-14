@@ -4,14 +4,14 @@ use anyhow::Result;
 use async_trait::async_trait;
 use ctx_core::models::{Workspace, Worktree};
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_observability::logs;
 use ctx_provider_runtime::provider_launch::probe::PreparedWorkspaceProbeRuntime;
 
 mod runtime;
 
 #[async_trait]
-impl ctx_provider_runtime::provider_launch::probe::ProviderProbeHost for AppState {
+impl ctx_provider_runtime::provider_launch::probe::ProviderProbeHost for DaemonState {
     fn data_root(&self) -> &Path {
         &self.core.data_root
     }

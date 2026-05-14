@@ -8,39 +8,37 @@ mod persistence;
 pub(in crate::api::tasks) use loaded::create_session_for_loaded_task_inner;
 
 async fn create_session_for_task_inner(
-    state: Arc<AppState>,
+    handles: &TaskApiHandles,
     task_id: TaskId,
     headers: HeaderMap,
     req: CreateSessionReq,
 ) -> Result<Json<Session>, StatusCode> {
-    let store = state
-        .store_for_task(task_id)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-    let task = store
-        .get_task(task_id)
+    let ctx = handles
+        .sessions
+        .load_task_context(task_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    let workspace = state
-        .global_store()
-        .get_workspace(task.workspace_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
-    create_session_for_loaded_task_inner(state, store, task, workspace, headers, req).await
+    let store = ctx.store;
+    let task = ctx.task;
+    let workspace = ctx.workspace;
+    create_session_for_loaded_task_inner(handles, store, task, workspace, headers, req).await
 }
 
 pub(in crate::api) async fn create_session_for_task(
-    State(state): State<Arc<AppState>>,
+    State(sessions): State<SessionsHandle>,
+    State(providers): State<ProvidersHandle>,
+    State(workspaces): State<WorkspacesHandle>,
+    State(transport): State<TransportHandle>,
     Path(id): Path<String>,
     headers: HeaderMap,
     Json(req): Json<CreateSessionReq>,
 ) -> Result<Json<Session>, StatusCode> {
+    let handles = TaskApiHandles::new(sessions, providers, workspaces, transport);
     let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let creation_lock = state.task_session_creation_lock(task_id).await;
+    let creation_lock = handles.sessions.task_session_creation_lock(task_id).await;
     let _creation_guard = creation_lock.lock().await;
-    create_session_for_task_inner(state, task_id, headers, req).await
+    create_session_for_task_inner(&handles, task_id, headers, req).await
 }
 
 pub(in crate::api) struct DefaultSessionSeed {
@@ -51,14 +49,14 @@ pub(in crate::api) struct DefaultSessionSeed {
 }
 
 pub(in crate::api) async fn create_default_session_for_task(
-    state: Arc<AppState>,
+    handles: &TaskApiHandles,
     store: Store,
     task: Task,
     workspace: Workspace,
     seed: DefaultSessionSeed,
 ) -> Result<Session, StatusCode> {
     let Json(session) = create_session_for_loaded_task_inner(
-        state,
+        handles,
         store,
         task,
         workspace,

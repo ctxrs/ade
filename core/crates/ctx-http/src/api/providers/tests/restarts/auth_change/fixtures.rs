@@ -2,7 +2,7 @@ use super::*;
 
 pub(super) struct ProviderRestartFixture {
     pub(super) _temp: tempfile::TempDir,
-    pub(super) state: Arc<AppState>,
+    pub(super) state: Arc<DaemonState>,
 }
 
 pub(super) async fn fixture_with_adapter(
@@ -10,7 +10,7 @@ pub(super) async fn fixture_with_adapter(
 ) -> ProviderRestartFixture {
     let temp = tempfile::tempdir().expect("tempdir");
     let stores = StoreManager::open(temp.path()).await.expect("open stores");
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         temp.path().to_path_buf(),
         stores,
         HashMap::from([("codex".to_string(), adapter)]),
@@ -22,7 +22,7 @@ pub(super) async fn fixture_with_adapter(
 }
 
 pub(super) async fn insert_options_cache(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     key: &str,
     value: serde_json::Value,
 ) {
@@ -41,7 +41,7 @@ pub(super) async fn insert_options_cache(
 }
 
 pub(super) async fn insert_verify_cache(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     key: &str,
     value: serde_json::Value,
 ) {

@@ -8,7 +8,7 @@ fn format_claude_exit_status(status: &portable_pty::ExitStatus) -> String {
 }
 
 pub(super) async fn finalize_claude_login(
-    state: &Arc<AppState>,
+    providers: &ProvidersHandle,
     login_id: &str,
     label: Option<String>,
     observed_auth_url: Option<String>,
@@ -24,12 +24,9 @@ pub(super) async fn finalize_claude_login(
         match exit_result {
             Some(Ok(exit)) if exit.success() => match extract_claude_setup_token(transcript) {
                 Some(setup_token) => {
-                    match crate::daemon::providers::add_claude_account_for_login(
-                        state,
-                        label,
-                        setup_token,
-                    )
-                    .await
+                    match providers
+                        .add_claude_account_for_login(label, setup_token)
+                        .await
                     {
                         Ok(outcome) => {
                             let restart_error = outcome.restart_error_message();
@@ -69,13 +66,13 @@ pub(super) async fn finalize_claude_login(
         }
     }
 
-    crate::daemon::providers::finish_claude_login_session(
-        state,
-        login_id,
-        final_status,
-        final_account_id,
-        final_error,
-        observed_auth_url,
-    )
-    .await;
+    providers
+        .finish_claude_login_session(
+            login_id,
+            final_status,
+            final_account_id,
+            final_error,
+            observed_auth_url,
+        )
+        .await;
 }

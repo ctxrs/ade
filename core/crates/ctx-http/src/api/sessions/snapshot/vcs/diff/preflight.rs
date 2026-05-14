@@ -17,7 +17,7 @@ pub(super) enum PreparedSessionDiffRequest {
 }
 
 pub(super) async fn prepare_session_diff_request(
-    state: &Arc<AppState>,
+    state: &SessionsHandle,
     id: &str,
     query: &SessionDiffQuery,
     compat_route: &'static str,
@@ -30,8 +30,9 @@ pub(super) async fn prepare_session_diff_request(
             }),
         )
     })?);
-    let (store, ctx) = load_session_vcs_context(state, session_id).await?;
-    if !crate::daemon::git_status::worktree_has_vcs_repo(state, &ctx.worktree)
+    let ctx = load_session_vcs_context(state, session_id).await?;
+    if !state
+        .worktree_has_vcs_repo(&ctx.worktree)
         .await
         .map_err(|err| {
             (
@@ -44,8 +45,7 @@ pub(super) async fn prepare_session_diff_request(
     {
         return Ok(PreparedSessionDiffRequest::NoRepo { ctx });
     }
-    let resolution =
-        resolve_session_diff_base(state, &store, &ctx.workspace, &ctx.worktree, query).await?;
+    let resolution = resolve_session_diff_base(state, &ctx.worktree, query).await?;
     if let Some(reason) = resolution.unavailable_reason.clone() {
         state
             .emit_compat_payload_reject_counter(compat_route, "no_target_branch", None)

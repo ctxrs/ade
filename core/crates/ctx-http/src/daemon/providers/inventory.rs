@@ -1,6 +1,6 @@
 use ctx_observability::logs;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(crate) struct ProviderMatrixRefreshSummary {
     pub(crate) provider_count: usize,
@@ -11,7 +11,7 @@ pub(crate) struct ProviderMatrixRefreshSummary {
 }
 
 pub(crate) async fn refresh_provider_inventory(
-    state: &AppState,
+    state: &DaemonState,
 ) -> anyhow::Result<ProviderMatrixRefreshSummary> {
     let outcome = state
         .providers

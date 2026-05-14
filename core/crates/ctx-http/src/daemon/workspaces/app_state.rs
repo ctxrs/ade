@@ -7,13 +7,13 @@ use ctx_core::models::{
     Task, TaskDeltaKind, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot, Worktree,
 };
 
-use crate::daemon::state::AppState;
+use crate::daemon::state::DaemonState;
 
 use super::{WorkspaceCacheDebugStats, WorkspaceHydrationError};
 
 mod worktree_vcs;
 
-impl AppState {
+impl DaemonState {
     pub async fn cached_workspace_active_snapshot_state(
         &self,
         workspace_id: WorkspaceId,

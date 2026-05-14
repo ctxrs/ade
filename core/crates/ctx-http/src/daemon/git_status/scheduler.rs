@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::projection::refresh_worktree_vcs_projection;
 
 async fn run_worktree_vcs_job(
-    state: Arc<AppState>,
+    state: Arc<DaemonState>,
     worktree_id: ctx_core::ids::WorktreeId,
     refresh_summary: bool,
     refresh_touched_files: bool,
@@ -42,7 +42,7 @@ async fn run_worktree_vcs_job(
 }
 
 async fn next_worktree_vcs_job(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
 ) -> Option<(ctx_core::ids::WorktreeId, bool, bool)> {
     state.claim_next_worktree_vcs_job().await.map(|job| {
         (
@@ -53,7 +53,7 @@ async fn next_worktree_vcs_job(
     })
 }
 
-async fn run_worktree_vcs_scheduler(state: Arc<AppState>) {
+async fn run_worktree_vcs_scheduler(state: Arc<DaemonState>) {
     loop {
         state.wait_worktree_vcs_scheduler_notification().await;
         loop {
@@ -77,7 +77,7 @@ async fn run_worktree_vcs_scheduler(state: Arc<AppState>) {
     }
 }
 
-pub(super) async fn ensure_worktree_vcs_scheduler_started(state: &Arc<AppState>) {
+pub(super) async fn ensure_worktree_vcs_scheduler_started(state: &Arc<DaemonState>) {
     if !state.mark_worktree_vcs_scheduler_started() {
         return;
     }

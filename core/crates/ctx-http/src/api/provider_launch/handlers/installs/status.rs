@@ -1,12 +1,13 @@
 use super::*;
 
 pub(in crate::api) async fn get_install(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     Path(install_id): Path<String>,
 ) -> Result<Json<InstallInfo>, StatusCode> {
     let install_id: InstallId =
         uuid::Uuid::parse_str(&install_id).map_err(|_| StatusCode::BAD_REQUEST)?;
-    get_provider_install_info(&state, install_id)
+    providers
+        .get_provider_install_info(install_id)
         .await
         .map(Json)
         .ok_or(StatusCode::NOT_FOUND)
@@ -30,7 +31,7 @@ pub(in crate::api) struct GetInstallStatusesResp {
 }
 
 pub(in crate::api) async fn get_install_statuses(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     Json(req): Json<GetInstallStatusesReq>,
 ) -> Result<Json<GetInstallStatusesResp>, (StatusCode, Json<ApiErrorResp>)> {
     let install_ids = req
@@ -51,7 +52,7 @@ pub(in crate::api) async fn get_install_statuses(
 
     let mut installs = Vec::with_capacity(install_ids.len());
     for install_id in install_ids {
-        let info = get_provider_install_info(&state, install_id).await;
+        let info = providers.get_provider_install_info(install_id).await;
         installs.push(InstallStatusBatchItem {
             install_id: install_id.to_string(),
             info,
@@ -62,24 +63,26 @@ pub(in crate::api) async fn get_install_statuses(
 }
 
 pub(in crate::api) async fn cancel_install(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     Path(install_id): Path<String>,
 ) -> Result<Json<InstallInfo>, StatusCode> {
     let install_id: InstallId =
         uuid::Uuid::parse_str(&install_id).map_err(|_| StatusCode::BAD_REQUEST)?;
-    cancel_provider_install(&state, install_id)
+    providers
+        .cancel_provider_install(install_id)
         .await
         .map(Json)
         .ok_or(StatusCode::NOT_FOUND)
 }
 
 pub(in crate::api) async fn list_install_events(
-    State(state): State<Arc<AppState>>,
+    State(providers): State<ProvidersHandle>,
     Path(install_id): Path<String>,
 ) -> Result<Json<Vec<InstallProgressEvent>>, StatusCode> {
     let install_id: InstallId =
         uuid::Uuid::parse_str(&install_id).map_err(|_| StatusCode::BAD_REQUEST)?;
-    list_provider_install_events(&state, install_id)
+    providers
+        .list_provider_install_events(install_id)
         .await
         .map(Json)
         .ok_or(StatusCode::NOT_FOUND)

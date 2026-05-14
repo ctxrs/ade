@@ -5,7 +5,7 @@ use ctx_provider_install::install_state::InstallTarget;
 use ctx_provider_runtime::provider_launch::status::provider_status_for_target;
 use ctx_providers::adapters::ProviderStatus;
 
-use crate::daemon::{execution_effective, AppState};
+use crate::daemon::{execution_effective, DaemonState};
 
 mod details;
 
@@ -18,7 +18,7 @@ pub(crate) enum ProviderStatusResponseError {
 }
 
 pub(crate) async fn install_target_for_workspace(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: ctx_core::ids::WorkspaceId,
 ) -> anyhow::Result<InstallTarget> {
     execution_effective::effective_install_target(state.as_ref(), workspace_id)
@@ -31,12 +31,12 @@ pub(crate) async fn install_target_for_workspace(
         })
 }
 
-pub(crate) async fn refresh_provider_statuses(state: &AppState) -> anyhow::Result<()> {
+pub(crate) async fn refresh_provider_statuses(state: &DaemonState) -> anyhow::Result<()> {
     ctx_managed_installs::refresh_provider_statuses(state).await
 }
 
 pub(crate) async fn providers_statuses_response(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     target: InstallTarget,
     include_matrix_providers: bool,
 ) -> Vec<ProviderStatus> {
@@ -65,7 +65,7 @@ pub(crate) async fn providers_statuses_response(
 }
 
 pub(crate) async fn provider_status_response(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     provider_id: &str,
     target: InstallTarget,
 ) -> Result<ProviderStatus, ProviderStatusResponseError> {
@@ -97,7 +97,7 @@ pub(crate) async fn provider_status_response(
 }
 
 async fn provider_status_ids(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     matrix: &ctx_provider_matrix::ProviderMatrix,
     include_matrix_providers: bool,
 ) -> Vec<String> {
@@ -108,7 +108,7 @@ async fn provider_status_ids(
 }
 
 async fn ensure_known_provider(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     matrix: &ctx_provider_matrix::ProviderMatrix,
     provider_id: &str,
 ) -> Result<(), ProviderStatusResponseError> {
@@ -126,7 +126,7 @@ async fn ensure_known_provider(
 }
 
 async fn decorate_provider_statuses(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     matrix: &ctx_provider_matrix::ProviderMatrix,
     managed_config_error: &Option<String>,
     target: InstallTarget,

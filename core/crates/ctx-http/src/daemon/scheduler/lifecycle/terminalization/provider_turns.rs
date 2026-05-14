@@ -1,7 +1,7 @@
 use super::*;
 
 pub(crate) async fn handle_provider_exit(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session_id: SessionId,
     mut turn: RunningTurn,
 ) -> bool {
@@ -48,7 +48,7 @@ pub(crate) async fn handle_provider_exit(
 }
 
 pub(crate) async fn handle_provider_stall(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session_id: SessionId,
     mut turn: RunningTurn,
 ) -> bool {
@@ -90,7 +90,7 @@ pub(crate) async fn handle_provider_stall(
 }
 
 pub(crate) async fn fail_starting_turn(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session_id: SessionId,
     mut turn: RunningTurn,
     error_message: &str,

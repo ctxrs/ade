@@ -1,13 +1,15 @@
 use std::sync::Arc;
 
+use chrono::{DateTime, Utc};
 use ctx_core::ids::{ConnectionProfileId, MobileDeviceId, WorkspaceId};
-use ctx_core::models::MobileConnectionProfile;
+use ctx_core::models::{MobileConnectionProfile, MobileDeviceRegistration};
+use ctx_store::store::{MobileAccessConfig, MobileDeviceSeqAdvance, MobileDeviceUpsert};
 use ctx_transport_runtime::{
     mobile_e2ee::{self, E2eeKey},
     mobile_tunnel::{MobileTunnelState, StartMobileTunnelConfig},
 };
 
-use crate::daemon::AppState;
+use crate::daemon::{CoreHandle, DaemonState};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum MobileScope {
@@ -148,7 +150,7 @@ fn mobile_profile_uses_legacy_empty_scope_shape(profile: &MobileConnectionProfil
 }
 
 async fn migrate_legacy_mobile_profile_scopes(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     profile: &MobileConnectionProfile,
 ) -> Result<MobileAuthContext, MobileAuthContextError> {
     let scopes = default_mobile_profile_scopes();
@@ -182,7 +184,7 @@ async fn migrate_legacy_mobile_profile_scopes(
 }
 
 pub(crate) async fn resolve_mobile_auth_context(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     profile: MobileConnectionProfile,
 ) -> Result<Option<MobileAuthContext>, MobileAuthContextError> {
     match mobile_auth_context_from_profile(&profile) {
@@ -200,7 +202,7 @@ pub(crate) async fn resolve_mobile_auth_context(
 }
 
 pub(crate) async fn load_mobile_auth_context_for_profile(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     profile_id: ConnectionProfileId,
 ) -> Result<Option<MobileAuthContext>, MobileAuthContextError> {
     let profile = state
@@ -218,7 +220,7 @@ pub(crate) async fn load_mobile_auth_context_for_profile(
 }
 
 pub(crate) async fn verify_mobile_api_token_hash(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     hash: &str,
 ) -> Result<Option<MobileAuthContext>, MobileAuthContextError> {
     let profile = state
@@ -258,7 +260,7 @@ pub(crate) enum MobileSecureStreamAccessError {
 }
 
 pub(crate) async fn require_mobile_secure_stream_access(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
     device_id: &str,
     provided_token: &str,
@@ -321,8 +323,188 @@ pub(crate) async fn require_mobile_secure_stream_access(
     Ok(())
 }
 
+impl CoreHandle {
+    pub(crate) async fn create_mobile_connection_profile(
+        &self,
+        label: String,
+        base_url: String,
+        token_hash: String,
+        token_prefix: String,
+        scopes: Vec<String>,
+    ) -> anyhow::Result<MobileConnectionProfile> {
+        self.state
+            .global_store()
+            .create_mobile_connection_profile(label, base_url, token_hash, token_prefix, scopes)
+            .await
+    }
+
+    pub(crate) async fn list_mobile_connection_profiles(
+        &self,
+    ) -> anyhow::Result<Vec<MobileConnectionProfile>> {
+        self.state
+            .global_store()
+            .list_mobile_connection_profiles()
+            .await
+    }
+
+    pub(crate) async fn get_mobile_connection_profile(
+        &self,
+        profile_id: ConnectionProfileId,
+    ) -> anyhow::Result<Option<MobileConnectionProfile>> {
+        self.state
+            .global_store()
+            .get_mobile_connection_profile(profile_id)
+            .await
+    }
+
+    pub(crate) async fn update_mobile_connection_profile_scopes(
+        &self,
+        profile_id: ConnectionProfileId,
+        scopes: Vec<String>,
+    ) -> anyhow::Result<()> {
+        self.state
+            .global_store()
+            .update_mobile_connection_profile_scopes(profile_id, scopes)
+            .await
+    }
+
+    pub(crate) async fn delete_mobile_connection_profile(
+        &self,
+        profile_id: ConnectionProfileId,
+    ) -> anyhow::Result<()> {
+        self.state
+            .global_store()
+            .delete_mobile_connection_profile(profile_id)
+            .await
+    }
+
+    pub(crate) async fn get_mobile_access_config(
+        &self,
+    ) -> anyhow::Result<Option<MobileAccessConfig>> {
+        self.state.global_store().get_mobile_access_config().await
+    }
+
+    pub(crate) async fn upsert_mobile_access_config(
+        &self,
+        config: MobileAccessConfig,
+    ) -> anyhow::Result<MobileAccessConfig> {
+        self.state
+            .global_store()
+            .upsert_mobile_access_config(config)
+            .await
+    }
+
+    pub(crate) async fn insert_mobile_pairing_token(
+        &self,
+        token_id: &str,
+        token_hash: &str,
+        expires_at: DateTime<Utc>,
+    ) -> anyhow::Result<()> {
+        self.state
+            .global_store()
+            .insert_mobile_pairing_token(token_id, token_hash, expires_at)
+            .await
+    }
+
+    pub(crate) async fn consume_mobile_pairing_token(
+        &self,
+        token_hash: &str,
+    ) -> anyhow::Result<bool> {
+        self.state
+            .global_store()
+            .consume_mobile_pairing_token(token_hash)
+            .await
+    }
+
+    pub(crate) async fn list_mobile_devices(
+        &self,
+        profile_id: ConnectionProfileId,
+    ) -> anyhow::Result<Vec<MobileDeviceRegistration>> {
+        self.state
+            .global_store()
+            .list_mobile_devices(profile_id)
+            .await
+    }
+
+    pub(crate) async fn get_mobile_device(
+        &self,
+        device_id: MobileDeviceId,
+    ) -> anyhow::Result<Option<MobileDeviceRegistration>> {
+        self.state.global_store().get_mobile_device(device_id).await
+    }
+
+    pub(crate) async fn upsert_mobile_device(
+        &self,
+        device_id: MobileDeviceId,
+        profile_id: ConnectionProfileId,
+        update: MobileDeviceUpsert,
+    ) -> anyhow::Result<MobileDeviceRegistration> {
+        self.state
+            .global_store()
+            .upsert_mobile_device(device_id, profile_id, update)
+            .await
+    }
+
+    pub(crate) async fn advance_mobile_device_seq(
+        &self,
+        device_id: MobileDeviceId,
+        seq: i64,
+    ) -> anyhow::Result<MobileDeviceSeqAdvance> {
+        self.state
+            .global_store()
+            .advance_mobile_device_seq(device_id, seq)
+            .await
+    }
+
+    pub(crate) async fn load_mobile_auth_context_for_profile(
+        &self,
+        profile_id: ConnectionProfileId,
+    ) -> Result<Option<MobileAuthContext>, MobileAuthContextError> {
+        load_mobile_auth_context_for_profile(&self.state, profile_id).await
+    }
+
+    pub(crate) async fn verify_mobile_api_token_hash(
+        &self,
+        hash: &str,
+    ) -> Result<Option<MobileAuthContext>, MobileAuthContextError> {
+        verify_mobile_api_token_hash(&self.state, hash).await
+    }
+
+    pub(crate) async fn mobile_access_status(
+        &self,
+    ) -> Result<MobileAccessStatusSnapshot, MobileAccessStatusError> {
+        mobile_access_status(&self.state).await
+    }
+
+    pub(crate) async fn disable_mobile_access_runtime(
+        &self,
+    ) -> Result<(), DisableMobileAccessError> {
+        disable_mobile_access_runtime(&self.state).await
+    }
+
+    pub(crate) async fn start_mobile_tunnel_best_effort(&self, request: StartMobileTunnelRequest) {
+        start_mobile_tunnel_best_effort(&self.state, request).await;
+    }
+
+    pub(crate) async fn require_mobile_secure_stream_access(
+        &self,
+        workspace_id: WorkspaceId,
+        device_id: &str,
+        token: &str,
+    ) -> Result<(), MobileSecureStreamAccessError> {
+        require_mobile_secure_stream_access(&self.state, workspace_id, device_id, token).await
+    }
+
+    pub(crate) async fn load_mobile_secure_stream_context(
+        &self,
+        device_id: String,
+    ) -> Result<MobileSecureStreamContext, anyhow::Error> {
+        load_mobile_secure_stream_context(&self.state, device_id).await
+    }
+}
+
 pub(crate) async fn load_mobile_secure_stream_context(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     device_id: String,
 ) -> Result<MobileSecureStreamContext, anyhow::Error> {
     let device_uuid = uuid::Uuid::parse_str(&device_id)?;
@@ -398,7 +580,7 @@ pub(crate) enum DisableMobileAccessError {
 }
 
 pub(crate) async fn mobile_access_status(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
 ) -> Result<MobileAccessStatusSnapshot, MobileAccessStatusError> {
     let cfg = state
         .global_store()
@@ -431,7 +613,7 @@ pub(crate) async fn mobile_access_status(
 }
 
 pub(crate) async fn start_mobile_tunnel_best_effort(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     request: StartMobileTunnelRequest,
 ) {
     let tunnel_cfg = StartMobileTunnelConfig {
@@ -447,7 +629,7 @@ pub(crate) async fn start_mobile_tunnel_best_effort(
 }
 
 pub(crate) async fn disable_mobile_access_runtime(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
 ) -> Result<(), DisableMobileAccessError> {
     let cfg = state
         .global_store()
@@ -479,7 +661,7 @@ pub(crate) async fn disable_mobile_access_runtime(
 }
 
 async fn delete_mobile_access_config(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     profile_id: ConnectionProfileId,
 ) -> Result<(), DisableMobileAccessError> {
     state

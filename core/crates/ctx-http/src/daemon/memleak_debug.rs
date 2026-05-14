@@ -7,7 +7,7 @@ use ctx_resource_utilization::memleak_debug::{
 };
 use tokio::time::MissedTickBehavior;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 use ctx_observability::logs;
 
 mod cache_stats;
@@ -16,7 +16,7 @@ mod snapshot;
 use self::cache_stats::collect_memleak_debug_cache_stats;
 use self::snapshot::MemleakDebugSnapshot;
 
-pub fn spawn_memleak_debug(state: Arc<AppState>) {
+pub fn spawn_memleak_debug(state: Arc<DaemonState>) {
     let config = MemleakDebugConfig::from_env();
     if !config.enabled {
         return;
@@ -38,7 +38,7 @@ pub fn spawn_memleak_debug(state: Arc<AppState>) {
     });
 }
 
-async fn sample_once(state: &Arc<AppState>) -> Result<()> {
+async fn sample_once(state: &Arc<DaemonState>) -> Result<()> {
     let cache_stats = collect_memleak_debug_cache_stats(state).await;
     let active_snapshot = state.workspaces.workspace_active_snapshot.stats().await;
     let terminals = state.transport.terminals.stats().await;

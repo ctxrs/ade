@@ -77,6 +77,7 @@ test("ctx-http BUILD exposes Bazel-native base test targets", () => {
   assert.match(ctxHttpBuild, /name = "unit_tests_api"/);
   assert.match(ctxHttpBuild, /name = "unit_tests_daemon"/);
   assert.match(ctxHttpBuild, /name = "unit_tests_lib"/);
+  assert.match(ctxHttpBuild, /name = "unit_tests_lib_provider_routes"/);
   assert.match(
     ctxHttpBazelTests,
     /sh_test\([\s\S]*name = name[\s\S]*"\$\(rootpath :\{\}\)"[\s\S]*CTX_HTTP_UNIT_TEST_HARNESS_NAME[\s\S]*data = \[":\{\}"\.format\(CTX_HTTP_UNIT_TEST_HARNESS_NAME\)\]/,

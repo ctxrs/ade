@@ -6,7 +6,7 @@ use ctx_store::StoreManager;
 
 use super::super::{require_scoped_mcp_session_context, ScopedMcpSessionAccessError};
 use super::fixtures::{block_workspace_store_for_session, context_for, seeded_state};
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 #[tokio::test]
 async fn scoped_mcp_session_context_accepts_bound_session_scope() {
@@ -59,7 +59,7 @@ async fn scoped_mcp_session_context_reports_missing_session() {
     let stores = StoreManager::open(data_dir.path())
         .await
         .expect("open stores");
-    let state = AppState::new(
+    let state = DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),

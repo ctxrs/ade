@@ -2,7 +2,7 @@ use super::types::RegisterMobileDeviceReq;
 use super::*;
 
 pub(in crate::api) async fn list_mobile_devices_for_profile(
-    State(state): State<Arc<AppState>>,
+    State(state): State<CoreHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<MobileDeviceRegistration>>, StatusCode> {
@@ -11,7 +11,6 @@ pub(in crate::api) async fn list_mobile_devices_for_profile(
     }
     let uuid = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
     let devices = state
-        .global_store()
         .list_mobile_devices(ConnectionProfileId(uuid))
         .await
         .map_err(|e| {
@@ -22,7 +21,7 @@ pub(in crate::api) async fn list_mobile_devices_for_profile(
 }
 
 pub(in crate::api) async fn register_mobile_device(
-    State(state): State<Arc<AppState>>,
+    State(state): State<CoreHandle>,
     auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<RegisterMobileDeviceReq>,
 ) -> Result<Json<MobileDeviceRegistration>, (StatusCode, Json<ApiErrorResp>)> {
@@ -51,7 +50,6 @@ pub(in crate::api) async fn register_mobile_device(
         )
     })?;
     let device = state
-        .global_store()
         .upsert_mobile_device(
             MobileDeviceId(device_uuid),
             mobile_auth.profile_id,

@@ -5,7 +5,7 @@ use ctx_core::ids::{RunId, SessionId};
 use ctx_core::models::SessionTurn;
 use ctx_observability::logs;
 
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 use super::status::subagent_terminal_status_from_turn_status;
 
@@ -24,7 +24,7 @@ async fn latest_terminal_turn_for_run(
 }
 
 pub(in crate::daemon::sessions::subagents) async fn wait_for_run_terminal_turn(
-    state_weak: &Weak<AppState>,
+    state_weak: &Weak<DaemonState>,
     store: &ctx_store::Store,
     session_id: SessionId,
     run_id: RunId,
@@ -66,7 +66,7 @@ pub(in crate::daemon::sessions::subagents) async fn wait_for_run_terminal_turn(
 }
 
 pub(in crate::daemon::sessions::subagents) async fn wait_for_run_assistant_message(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     session_id: SessionId,
     run_id: RunId,
 ) -> Result<Option<String>, String> {

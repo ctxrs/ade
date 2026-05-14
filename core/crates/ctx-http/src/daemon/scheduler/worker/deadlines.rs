@@ -8,7 +8,7 @@ use ctx_core::ids::SessionId;
 use crate::daemon::scheduler::lifecycle::{
     fail_starting_turn, handle_provider_stall, RunningTurn, TurnStartProgress,
 };
-use crate::daemon::AppState;
+use crate::daemon::DaemonState;
 
 pub(super) enum WorkerDeadlineAction {
     Continue,
@@ -25,7 +25,7 @@ pub(super) fn refresh_inactivity_deadline(
 }
 
 pub(super) async fn handle_start_deadline_elapsed(
-    state_weak: &Weak<AppState>,
+    state_weak: &Weak<DaemonState>,
     session_id: SessionId,
     running: &mut Option<RunningTurn>,
     running_start_deadline: &mut Option<TokioInstant>,
@@ -57,7 +57,7 @@ pub(super) async fn handle_start_deadline_elapsed(
 }
 
 pub(super) async fn handle_inactivity_deadline_elapsed(
-    state_weak: &Weak<AppState>,
+    state_weak: &Weak<DaemonState>,
     session_id: SessionId,
     running: &mut Option<RunningTurn>,
     running_start_deadline: &mut Option<TokioInstant>,
@@ -77,7 +77,7 @@ pub(super) async fn handle_inactivity_deadline_elapsed(
 }
 
 async fn clear_running_or_break(
-    state_weak: &Weak<AppState>,
+    state_weak: &Weak<DaemonState>,
     session_id: SessionId,
 ) -> WorkerDeadlineAction {
     let Some(state) = state_weak.upgrade() else {

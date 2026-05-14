@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
@@ -7,8 +5,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 
 use super::errors::ApiErrorResp;
-use crate::daemon::terminals;
-use crate::daemon::AppState;
+use crate::daemon::TransportHandle;
 use ctx_core::ids::{TerminalId, WorkspaceId};
 use ctx_core::models::TerminalSession;
 use ctx_transport_runtime::terminal_launch::{TerminalLaunchError, TerminalLaunchErrorKind};
@@ -18,23 +15,22 @@ mod request;
 use self::request::{parse_create_terminal_launch_request, CreateTerminalReq};
 
 pub(super) async fn list_workspace_terminals(
-    State(state): State<Arc<AppState>>,
+    State(state): State<TransportHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<TerminalSession>>, StatusCode> {
     let workspace_id =
         WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    Ok(Json(
-        terminals::list_workspace_terminals(&state, workspace_id).await,
-    ))
+    Ok(Json(state.list_workspace_terminals(workspace_id).await))
 }
 
 pub(super) async fn create_workspace_terminal(
-    State(state): State<Arc<AppState>>,
+    State(state): State<TransportHandle>,
     Path(id): Path<String>,
     Json(req): Json<CreateTerminalReq>,
 ) -> Result<Json<TerminalSession>, (StatusCode, Json<ApiErrorResp>)> {
     let launch_req = parse_create_terminal_launch_request(&id, req)?;
-    let session = terminals::create_workspace_terminal(&state, launch_req)
+    let session = state
+        .create_workspace_terminal(launch_req)
         .await
         .map_err(terminal_launch_error_response)?;
 
@@ -56,11 +52,11 @@ fn terminal_launch_error_response(error: TerminalLaunchError) -> (StatusCode, Js
 }
 
 pub(super) async fn delete_terminal(
-    State(state): State<Arc<AppState>>,
+    State(state): State<TransportHandle>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
     let terminal_id = TerminalId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    if terminals::delete_terminal(&state, terminal_id).await {
+    if state.delete_terminal(terminal_id).await {
         return Ok(StatusCode::NO_CONTENT);
     }
     Err(StatusCode::NOT_FOUND)
@@ -73,11 +69,12 @@ pub(super) struct TerminalStreamConnectInfo {
 }
 
 pub(super) async fn mint_terminal_stream_token(
-    State(state): State<Arc<AppState>>,
+    State(state): State<TransportHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<TerminalStreamConnectInfo>, StatusCode> {
     let terminal_id = TerminalId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let token = terminals::mint_terminal_stream_token(&state, terminal_id)
+    let token = state
+        .mint_terminal_stream_token(terminal_id)
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
     Ok(Json(TerminalStreamConnectInfo {

@@ -13,7 +13,7 @@ use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::StoreManager;
 
 use ctx_http::api;
-use ctx_http::daemon::AppState;
+use ctx_http::daemon::DaemonState;
 
 const CONTAINER_FILE_SHA256: &str =
     "dc155555ce7bf6f6b7aa998bafe7e1cafa3c7017bc5dcdeb8ef72ebc5961c11a";
@@ -232,7 +232,7 @@ async fn disk_isolated_smoke_sandbox_volume_attachments_and_terminal() {
         std::sync::Arc::new(FakeProviderAdapter::new()),
     );
 
-    let state = std::sync::Arc::new(AppState::new(
+    let state = std::sync::Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,

@@ -1,7 +1,7 @@
 use super::*;
-use crate::daemon::web_sessions::{
-    self as daemon_web_sessions, WebSessionLaunchError, WebSessionLaunchErrorKind,
-    WebSessionLaunchRequest,
+use crate::daemon::{
+    web_sessions::{WebSessionLaunchError, WebSessionLaunchErrorKind, WebSessionLaunchRequest},
+    TransportHandle,
 };
 
 #[derive(Debug, Deserialize)]
@@ -14,7 +14,7 @@ pub(in crate::api) struct WebSessionCreatePayload {
 }
 
 pub(in crate::api) async fn create_web_session(
-    State(state): State<Arc<AppState>>,
+    State(state): State<TransportHandle>,
     Json(payload): Json<WebSessionCreatePayload>,
 ) -> Result<Json<WebSessionInfo>, (StatusCode, Json<ApiErrorResp>)> {
     if payload.url.trim().is_empty() {
@@ -55,18 +55,16 @@ pub(in crate::api) async fn create_web_session(
         })?
         .map(WorktreeId);
 
-    let info = daemon_web_sessions::create_web_session(
-        &state,
-        WebSessionLaunchRequest {
+    let info = state
+        .create_web_session(WebSessionLaunchRequest {
             session_id,
             worktree_id,
             url: payload.url,
             viewport: payload.viewport,
             fps: payload.fps,
-        },
-    )
-    .await
-    .map_err(web_session_launch_error_response)?;
+        })
+        .await
+        .map_err(web_session_launch_error_response)?;
     Ok(Json(info))
 }
 

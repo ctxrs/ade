@@ -19,7 +19,7 @@ use ctx_core::models::{
     WorkspaceActiveSnapshotStreamMessage, WorktreeVcsFreshness, WorktreeVcsSnapshot,
     WorktreeVcsStreamMessage,
 };
-use ctx_http::daemon::AppState;
+use ctx_http::daemon::DaemonState;
 
 mod common;
 
@@ -137,7 +137,7 @@ async fn setup_with_root(
 ) -> (
     tempfile::TempDir,
     tempfile::TempDir,
-    Arc<AppState>,
+    Arc<DaemonState>,
     common::TestServer,
 ) {
     let permit = workspace_http_test_gate()
@@ -165,7 +165,7 @@ async fn setup_with_root(
 async fn setup() -> (
     tempfile::TempDir,
     tempfile::TempDir,
-    Arc<AppState>,
+    Arc<DaemonState>,
     common::TestServer,
 ) {
     setup_with_root(common::init_git_repo(&[("file.txt", "hello\n")]).await).await
@@ -174,7 +174,7 @@ async fn setup() -> (
 async fn setup_git() -> (
     tempfile::TempDir,
     tempfile::TempDir,
-    Arc<AppState>,
+    Arc<DaemonState>,
     common::TestServer,
 ) {
     setup().await
@@ -261,7 +261,7 @@ async fn decode_json_response<T: DeserializeOwned>(response: reqwest::Response) 
 }
 
 async fn insert_worktree(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace_id: ctx_core::ids::WorkspaceId,
     _task_id: ctx_core::ids::TaskId,
     root_path: &Path,
@@ -300,7 +300,7 @@ async fn insert_worktree(
 
 async fn create_task_with_primary_worktree(
     client: &reqwest::Client,
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     base: &str,
     workspace_id: ctx_core::ids::WorkspaceId,
     root_path: &Path,

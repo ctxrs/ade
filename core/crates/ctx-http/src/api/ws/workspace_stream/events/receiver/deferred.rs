@@ -6,7 +6,7 @@ use super::metrics::record_workspace_stream_receiver_drain;
 use super::*;
 
 pub(crate) async fn drain_pending_workspace_stream_receiver_burst_deferring<F>(
-    state: &Arc<AppState>,
+    state: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
     rx: &mut tokio::sync::broadcast::Receiver<WorkspaceActiveSnapshotEvent>,
     runtime: &mut WorkspaceStreamRuntime,
@@ -40,7 +40,7 @@ where
 }
 
 pub(crate) async fn flush_deferred_workspace_stream_receiver_events<F>(
-    state: &Arc<AppState>,
+    state: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
     runtime: &mut WorkspaceStreamRuntime,
     labels: &WorkspaceStreamLabels,
@@ -74,7 +74,7 @@ where
 }
 
 async fn handle_workspace_stream_receiver_burst_deferring<F>(
-    state: &Arc<AppState>,
+    state: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
     burst: WorkspaceStreamReceiverBurst,
     runtime: &mut WorkspaceStreamRuntime,

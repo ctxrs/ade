@@ -1,4 +1,5 @@
 use super::*;
+use crate::daemon::{CoreHandle, ExecutionHandle};
 
 #[derive(Debug, Serialize)]
 pub(in crate::api) struct UpdateActivityResp {
@@ -8,9 +9,11 @@ pub(in crate::api) struct UpdateActivityResp {
 }
 
 pub(in crate::api) async fn update_activity(
-    State(state): State<Arc<AppState>>,
+    State(core): State<CoreHandle>,
+    State(execution): State<ExecutionHandle>,
 ) -> Result<Json<UpdateActivityResp>, (StatusCode, Json<ApiErrorResp>)> {
-    let activity = crate::daemon::daemon_turn_activity_summary(&state)
+    let activity = execution
+        .daemon_turn_activity_summary()
         .await
         .map_err(|err| {
             (
@@ -21,7 +24,7 @@ pub(in crate::api) async fn update_activity(
             )
         })?;
     let managed_daemon_auto_update =
-        ctx_update_service::managed_daemon_auto_update_status_snapshot(&state.core.data_root).await;
+        ctx_update_service::managed_daemon_auto_update_status_snapshot(core.data_root()).await;
     Ok(Json(UpdateActivityResp {
         activity,
         managed_daemon_auto_update,

@@ -42,11 +42,12 @@ pub(super) fn with_stream_rev(
 
 pub(super) async fn queue_reset_required(
     pending: &StreamQueue<WorkspaceActiveSnapshotStreamMessage>,
-    state: &Arc<AppState>,
+    state: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
 ) -> Result<(), ()> {
-    let (snapshot_rev, _) =
-        crate::daemon::workspaces::load_workspace_active_snapshot_state(state, workspace_id).await;
+    let (snapshot_rev, _) = state
+        .load_workspace_active_snapshot_state(workspace_id)
+        .await;
     if crate::fault_injection::maybe_fail("ctx_http.send_workspace_active_reset").is_err() {
         return Err(());
     }
@@ -64,7 +65,7 @@ pub(super) async fn queue_reset_required(
 
 pub(super) async fn queue_snapshot_payload(
     pending: &StreamQueue<WorkspaceActiveSnapshotStreamMessage>,
-    state: &Arc<AppState>,
+    state: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
 ) -> Result<(), ()> {
     let build_start = Instant::now();
@@ -78,17 +79,9 @@ pub(super) async fn queue_snapshot_payload(
                 "workspace snapshot hydration failed before snapshot payload: {err:?}"
             );
         })?;
-    crate::daemon::merge_queue::activate_workspace_merge_queue(state, workspace_id).await;
-    let active_snapshot = state
-        .workspaces
-        .workspace_active_snapshot
-        .active_snapshot(workspace_id, i64::MAX)
-        .await;
-    let active_heads = state
-        .workspaces
-        .workspace_active_snapshot
-        .active_heads(workspace_id)
-        .await;
+    state.activate_workspace_merge_queue(workspace_id).await;
+    let active_snapshot = state.workspace_active_snapshot(workspace_id).await;
+    let active_heads = state.workspace_active_heads(workspace_id).await;
     let snapshot_rev = active_snapshot.snapshot_rev;
     let task_count = active_snapshot.active.tasks.len();
     let head_count = active_heads.heads.len();

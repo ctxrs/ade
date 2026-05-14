@@ -12,7 +12,7 @@ use endpoint::{load_endpoint_model_catalog, EndpointModelCatalog};
 use runtime::load_runtime_model_catalog;
 
 async fn load_pinned_subscription_model_catalog(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     provider_id: &str,
     install_target: ctx_provider_install::install_state::InstallTarget,
 ) -> Result<Option<ModelCatalog>, String> {
@@ -57,7 +57,7 @@ fn provider_model_cache_key(
 }
 
 async fn load_provider_model_catalog_for_install_target(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace: &Workspace,
     provider_id: &str,
     install_target: ctx_provider_install::install_state::InstallTarget,
@@ -100,7 +100,7 @@ async fn load_provider_model_catalog_for_install_target(
 
 #[cfg(test)]
 pub(crate) async fn load_provider_model_catalog(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace: &Workspace,
     provider_id: &str,
 ) -> Result<Option<ModelCatalog>, String> {
@@ -115,7 +115,7 @@ pub(crate) async fn load_provider_model_catalog(
 }
 
 pub(crate) async fn load_provider_model_catalog_for_execution_environment(
-    state: &Arc<AppState>,
+    state: &Arc<DaemonState>,
     workspace: &Workspace,
     provider_id: &str,
     execution_environment: ctx_core::models::ExecutionEnvironment,
