@@ -304,8 +304,8 @@ function rustFunctionBody(source, fnName) {
 }
 
 function classifyBrowserSecretPolicySource(source) {
-  const body = rustFunctionBody(source, "browser_query_secret_bearer_route_allowed");
-  const ownerWide = body?.replace(/\s+/g, " ") === 'req.uri().path().starts_with("/api/")';
+  const body = rustFunctionBody(source, "browser_query_secret_bearer_is_valid");
+  const ownerWide = body?.replace(/\s+/g, " ") === 'path.starts_with("/api/") && bearer_token.is_some_and(|value| value == derive_browser_query_secret(auth_token))';
   return {
     mode: ownerWide ? "desktop_web_owner" : "unknown",
     classification: ownerWide ? DESKTOP_BROWSER_SECRET_POLICY : null,
@@ -313,7 +313,7 @@ function classifyBrowserSecretPolicySource(source) {
 }
 
 function loadBrowserSecretPolicy(repoRoot) {
-  const sourcePath = path.join(repoRoot, "core", "crates", "ctx-http", "src", "api", "auth", "browser.rs");
+  const sourcePath = path.join(repoRoot, "core", "crates", "ctx-http-auth", "src", "lib.rs");
   return classifyBrowserSecretPolicySource(fs.readFileSync(sourcePath, "utf8"));
 }
 

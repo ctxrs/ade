@@ -65,7 +65,7 @@ const PROVIDER_AUTH_VALIDATE_GLOBS = [
   "core/apps/web/src/**",
   "core/apps/desktop/automation/**",
   "core/apps/desktop/scripts/run_provider_auth_matrix.sh",
-  "core/crates/ctx-http/src/api/auth/browser.rs",
+  "core/crates/ctx-http-auth/src/lib.rs",
   "core/package.json",
   "core/scripts/desktop_e2e_preflight.cjs",
   "core/scripts/desktop_e2e_secret_contract.cjs",

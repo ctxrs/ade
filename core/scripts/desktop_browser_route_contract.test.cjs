@@ -60,16 +60,27 @@ test("browser secret policy detector fails closed if owner-wide route auth disap
 test("browser secret policy source detector requires exact owner-wide body", () => {
   assert.equal(
     classifyBrowserSecretPolicySource(`
-      fn browser_query_secret_bearer_route_allowed(req: &Request<Body>) -> bool {
-          req.uri().path().starts_with("/api/")
+      pub fn browser_query_secret_bearer_is_valid(
+          path: &str,
+          bearer_token: Option<&str>,
+          auth_token: &str,
+      ) -> bool {
+          path.starts_with("/api/")
+              && bearer_token.is_some_and(|value| value == derive_browser_query_secret(auth_token))
       }
     `).mode,
     "desktop_web_owner",
   );
   assert.equal(
     classifyBrowserSecretPolicySource(`
-      fn browser_query_secret_bearer_route_allowed(req: &Request<Body>) -> bool {
-          req.uri().path().starts_with("/api/") && req.method() == Method::GET
+      pub fn browser_query_secret_bearer_is_valid(
+          path: &str,
+          bearer_token: Option<&str>,
+          auth_token: &str,
+      ) -> bool {
+          path.starts_with("/api/")
+              && path.ends_with("/readonly")
+              && bearer_token.is_some_and(|value| value == derive_browser_query_secret(auth_token))
       }
     `).mode,
     "unknown",
