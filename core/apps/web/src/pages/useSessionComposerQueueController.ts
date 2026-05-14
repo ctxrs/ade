@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import {
   deleteMessage,
   type Message,
@@ -211,7 +219,7 @@ export function useSessionComposerQueueController(params: Params): Result {
     }
   }, [hasActiveTurn]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (interruptPending && interruptSessionId) {
       noteInterruptPendingVisible(interruptSessionId);
       return;

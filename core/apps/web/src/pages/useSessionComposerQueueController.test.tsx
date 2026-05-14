@@ -3,10 +3,15 @@
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import {
+  interruptSession,
   postMessage,
   type Message,
   type Session,
 } from "../api/client";
+import {
+  noteInterruptClicked,
+  noteInterruptPendingVisible,
+} from "../state/foregroundFreshnessTelemetry";
 import { useSessionComposerQueueController } from "./useSessionComposerQueueController";
 
 vi.mock("../state/foregroundFreshnessTelemetry", () => ({
@@ -64,6 +69,9 @@ const supervisor = {
 };
 
 const postMessageMock = vi.mocked(postMessage);
+const interruptSessionMock = vi.mocked(interruptSession);
+const noteInterruptClickedMock = vi.mocked(noteInterruptClicked);
+const noteInterruptPendingVisibleMock = vi.mocked(noteInterruptPendingVisible);
 
 function createHookProps(overrides?: Partial<Parameters<typeof useSessionComposerQueueController>[0]>) {
   return {
@@ -92,6 +100,7 @@ function createHookProps(overrides?: Partial<Parameters<typeof useSessionCompose
 describe("useSessionComposerQueueController", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    interruptSessionMock.mockResolvedValue(undefined);
     postMessageMock.mockImplementation(async (sessionId, text, delivery, attachments, optimistic) => ({
       id: optimistic?.id ?? "posted-1",
       session_id: sessionId,
@@ -120,6 +129,24 @@ describe("useSessionComposerQueueController", () => {
     expect(result.current.pendingQueueMessageIdSet).toEqual(new Set(["queued-1"]));
     expect(result.current.interruptPending).toBe(false);
     expect(result.current.onInterruptSession).toBeNull();
+  });
+
+  it("records interrupt pending telemetry when the stopping state is committed", async () => {
+    const { result } = renderHook(() =>
+      useSessionComposerQueueController(
+        createHookProps({
+          hasActiveTurn: true,
+          interruptSessionId: "session-1",
+        }),
+      ),
+    );
+
+    await act(async () => {
+      await result.current.onInterruptSession?.();
+    });
+
+    expect(noteInterruptClickedMock).toHaveBeenCalledWith("session-1", "thread_header");
+    expect(noteInterruptPendingVisibleMock).toHaveBeenCalledWith("session-1");
   });
 
   it("notifies when a valid composer send starts", async () => {
