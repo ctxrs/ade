@@ -19,7 +19,7 @@ async fn codex_login_persistence_requires_auth_file() {
         None,
     ));
     let account_id = "acct-missing-auth";
-    provider_accounts::ensure_codex_account_dir(&state.core.data_root, account_id)
+    provider_accounts::ensure_codex_account_dir(state.test_data_root(), account_id)
         .await
         .unwrap();
 
@@ -31,12 +31,12 @@ async fn codex_login_persistence_requires_auth_file() {
     assert!(err
         .to_string()
         .contains("missing persisted codex auth file"));
-    let registry = provider_accounts::load_codex_registry(&state.core.data_root)
+    let registry = provider_accounts::load_codex_registry(state.test_data_root())
         .await
         .unwrap();
     assert!(registry.accounts.is_empty());
     assert!(registry.active_account_id.is_none());
-    assert!(!provider_accounts::codex_broker_home(&state.core.data_root, account_id).exists());
+    assert!(!provider_accounts::codex_broker_home(state.test_data_root(), account_id).exists());
 }
 
 struct RestartFailingAdapter;
@@ -101,7 +101,7 @@ async fn codex_login_persistence_rolls_back_when_restart_fails() {
     ));
     let account_id = "acct-restart-fails";
     let account_dir =
-        provider_accounts::ensure_codex_account_dir(&state.core.data_root, account_id)
+        provider_accounts::ensure_codex_account_dir(state.test_data_root(), account_id)
             .await
             .unwrap();
     tokio::fs::write(
@@ -122,7 +122,7 @@ async fn codex_login_persistence_rolls_back_when_restart_fails() {
     .expect_err("restart failure should bubble up");
     assert!(!err.to_string().is_empty());
 
-    let registry = provider_accounts::load_codex_registry(&state.core.data_root)
+    let registry = provider_accounts::load_codex_registry(state.test_data_root())
         .await
         .unwrap();
     assert!(registry.accounts.is_empty());
@@ -142,7 +142,7 @@ async fn codex_login_persistence_removes_account_home_auth_after_secret_ingest()
     ));
     let account_id = "acct-secret-store";
     let account_dir =
-        provider_accounts::ensure_codex_account_dir(&state.core.data_root, account_id)
+        provider_accounts::ensure_codex_account_dir(state.test_data_root(), account_id)
             .await
             .unwrap();
     tokio::fs::write(
@@ -162,7 +162,7 @@ async fn codex_login_persistence_removes_account_home_auth_after_secret_ingest()
     .await
     .unwrap();
 
-    let registry = provider_accounts::load_codex_registry(&state.core.data_root)
+    let registry = provider_accounts::load_codex_registry(state.test_data_root())
         .await
         .unwrap();
     let entry = registry
@@ -172,9 +172,11 @@ async fn codex_login_persistence_removes_account_home_auth_after_secret_ingest()
         .expect("persisted account");
     let secret_ref = entry.secret_ref.as_deref().expect("secret_ref");
     assert_eq!(registry.active_account_id.as_deref(), Some(account_id));
-    assert!(provider_accounts::codex_secrets_root(&state.core.data_root)
-        .join(secret_ref)
-        .exists());
+    assert!(
+        provider_accounts::codex_secrets_root(state.test_data_root())
+            .join(secret_ref)
+            .exists()
+    );
     assert!(tokio::fs::metadata(account_dir.join("auth.json"))
         .await
         .is_err());

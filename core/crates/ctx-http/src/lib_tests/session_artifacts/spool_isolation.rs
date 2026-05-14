@@ -8,8 +8,7 @@ async fn session_artifacts_do_not_accept_other_session_spool_files() {
 
     let other_spool_dir = fixture
         .state
-        .core
-        .tool_output_spool_dir
+        .test_tool_output_spool_dir()
         .join(other_session.id.0.to_string())
         .join(uuid::Uuid::new_v4().to_string());
     std::fs::create_dir_all(&other_spool_dir).unwrap();

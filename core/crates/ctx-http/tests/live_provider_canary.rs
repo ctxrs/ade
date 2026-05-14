@@ -140,8 +140,7 @@ async fn seed_claude_runtime_config(data_root: &Path, command_abs_path: &str) {
 
 async fn seed_provider_status_ok(state: &Arc<DaemonState>, provider_id: &str) {
     state
-        .providers
-        .upsert_provider_status(
+        .test_upsert_provider_status(
             provider_id.to_string(),
             ProviderStatus {
                 provider_id: provider_id.to_string(),

@@ -65,8 +65,7 @@ async fn setup_state(data_root: &std::path::Path, prewarm_statuses: bool) -> Arc
         recommended_action: ProviderRecommendedAction::None,
     };
     state
-        .providers
-        .upsert_provider_status("fake".into(), status)
+        .test_upsert_provider_status("fake".into(), status)
         .await;
     state
 }
@@ -501,7 +500,7 @@ async fn create_task_rolls_back_if_default_session_preflight_fails_after_task_pe
 
     let task_uuid = common::fixed_uuid(0xfeed);
     let task_id = TaskId(task_uuid);
-    let creation_lock = state.sessions.task_session_creation_lock(task_id).await;
+    let creation_lock = state.task_session_creation_lock(task_id).await;
     let creation_guard = creation_lock.lock_owned().await;
 
     let request_app = app.clone();
@@ -584,7 +583,7 @@ async fn create_session_waits_for_task_session_creation_lock() {
         .await
         .unwrap();
 
-    let creation_lock = state.sessions.task_session_creation_lock(task.id).await;
+    let creation_lock = state.task_session_creation_lock(task.id).await;
     let creation_guard = creation_lock.lock_owned().await;
 
     let request_app = app.clone();
@@ -640,7 +639,7 @@ async fn concurrent_replayed_create_task_failures_return_validation_error_not_no
 
     let task_uuid = common::fixed_uuid(0xbeef);
     let task_id = TaskId(task_uuid);
-    let creation_lock = state.sessions.task_session_creation_lock(task_id).await;
+    let creation_lock = state.task_session_creation_lock(task_id).await;
     let creation_guard = creation_lock.lock_owned().await;
 
     let uri = format!("/api/workspaces/{}/tasks", workspace.id.0);
@@ -724,7 +723,7 @@ async fn concurrent_replayed_create_task_with_different_payload_conflicts() {
 
     let task_uuid = common::fixed_uuid(0xc0de);
     let task_id = TaskId(task_uuid);
-    let creation_lock = state.sessions.task_session_creation_lock(task_id).await;
+    let creation_lock = state.task_session_creation_lock(task_id).await;
     let creation_guard = creation_lock.lock_owned().await;
 
     let uri = format!("/api/workspaces/{}/tasks", workspace.id.0);

@@ -19,7 +19,7 @@ struct SessionFixture {
 }
 
 fn request_shutdown(state: &Arc<DaemonState>) {
-    let _ = state.core.shutdown_tx.send(());
+    state.test_request_shutdown();
 }
 
 async fn setup_state() -> (tempfile::TempDir, Arc<DaemonState>, common::TestServer) {
@@ -41,8 +41,7 @@ async fn setup_state() -> (tempfile::TempDir, Arc<DaemonState>, common::TestServ
         recommended_action: ProviderRecommendedAction::None,
     };
     state
-        .providers
-        .upsert_provider_status("fake".into(), status)
+        .test_upsert_provider_status("fake".into(), status)
         .await;
     let server = common::spawn_http_server(common::router(state.clone())).await;
     (data_dir, state, server)

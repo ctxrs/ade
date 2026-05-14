@@ -493,7 +493,7 @@ printf 'CTX_TERM_BOUND_TAIL\n'
 
     wait_for_terminal_status(client, base, &workspace, &terminal, TerminalStatus::Exited).await;
 
-    let handle = state.transport.terminals.get(terminal.id).await.unwrap();
+    let handle = state.test_terminal_handle(terminal.id).await.unwrap();
     let output_snapshot = handle.output_snapshot();
     let buffered = String::from_utf8_lossy(&output_snapshot).to_string();
     assert!(

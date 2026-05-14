@@ -396,10 +396,7 @@ async fn app_state(data_root: &Path) -> Arc<DaemonState> {
 
 async fn seed_provider_status(state: &Arc<DaemonState>, status: ProviderStatus) {
     let provider_id = status.provider_id.clone();
-    state
-        .providers
-        .upsert_provider_status(provider_id, status)
-        .await;
+    state.test_upsert_provider_status(provider_id, status).await;
 }
 
 async fn seed_runtime_and_status(
@@ -409,7 +406,7 @@ async fn seed_runtime_and_status(
     dep_bin_rel: String,
 ) {
     let dep_id = format!("runtime-node-host-{provider_id}");
-    let mut cfg = load_agent_server_config(&state.core.data_root)
+    let mut cfg = load_agent_server_config(state.test_data_root())
         .await
         .unwrap_or_default();
     cfg.providers.insert(
@@ -435,7 +432,7 @@ async fn seed_runtime_and_status(
             last_error: None,
         },
     );
-    save_agent_server_config(&state.core.data_root, &cfg)
+    save_agent_server_config(state.test_data_root(), &cfg)
         .await
         .expect("save runtime config");
 
@@ -458,7 +455,7 @@ async fn seed_runtime_and_status(
 
 #[cfg(unix)]
 async fn seed_managed_codex_cli_dependency(state: &Arc<DaemonState>, dep_bin_rel: &str) {
-    let dep_bin_dir = state.core.data_root.join(dep_bin_rel);
+    let dep_bin_dir = state.test_data_root().join(dep_bin_rel);
     std::fs::create_dir_all(&dep_bin_dir).expect("create codex-cli dep bin dir");
     let codex_cmd = dep_bin_dir.join("codex");
     write_executable(
@@ -468,7 +465,7 @@ exit 0
 "#,
     );
 
-    let mut cfg = load_agent_server_config(&state.core.data_root)
+    let mut cfg = load_agent_server_config(state.test_data_root())
         .await
         .unwrap_or_default();
     cfg.managed_provider_targets.insert(
@@ -497,7 +494,7 @@ exit 0
             last_error: None,
         },
     );
-    save_agent_server_config(&state.core.data_root, &cfg)
+    save_agent_server_config(state.test_data_root(), &cfg)
         .await
         .expect("save codex-cli managed dependency");
 }

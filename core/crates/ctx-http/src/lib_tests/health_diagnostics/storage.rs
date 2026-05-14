@@ -13,7 +13,7 @@ async fn health_and_diagnostics_include_storage_guard_state() {
         "http://127.0.0.1:4399".to_string(),
         None,
     ));
-    state.core.storage_guard.publish(StorageGuardStatus {
+    state.test_publish_storage_guard(StorageGuardStatus {
         level: StorageGuardLevel::Warning,
         reserve_file_active: true,
         active: Some(StorageGuardPathStatus {

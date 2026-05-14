@@ -39,7 +39,11 @@ async fn wait_for_non_queued_status(
 ) -> MergeQueueEntry {
     tokio::time::timeout(Duration::from_secs(2), async {
         loop {
-            let store = state.core.stores.workspace(workspace.id).await.unwrap();
+            let store = state
+                .test_store_manager()
+                .workspace(workspace.id)
+                .await
+                .unwrap();
             let entry = store
                 .get_merge_queue_entry(entry_id)
                 .await
@@ -72,8 +76,7 @@ async fn enabling_merge_queue_on_open_workspace_reschedules_queued_rows() {
     ctx_merge_queue::spawn_merge_queue_runner::<DaemonState>(state.clone());
 
     let store = state
-        .core
-        .stores
+        .test_store_manager()
         .workspace_uncached(workspace.id)
         .await
         .unwrap();
@@ -83,8 +86,7 @@ async fn enabling_merge_queue_on_open_workspace_reschedules_queued_rows() {
 
     tokio::time::sleep(Duration::from_millis(100)).await;
     let queued = state
-        .core
-        .stores
+        .test_store_manager()
         .workspace_uncached(workspace.id)
         .await
         .unwrap()
@@ -145,8 +147,7 @@ async fn disabling_merge_queue_cancels_existing_queued_rows() {
     assert_eq!(enable_status, StatusCode::OK);
 
     let store = state
-        .core
-        .stores
+        .test_store_manager()
         .workspace_uncached(workspace.id)
         .await
         .unwrap();

@@ -3,8 +3,7 @@ use ctx_provider_runtime::{CachedProviderOptions, CachedProviderVerify};
 
 async fn insert_options_cache(state: &Arc<DaemonState>, key: &str, value: serde_json::Value) {
     state
-        .providers
-        .with_provider_options_cache(|cache| {
+        .test_with_provider_options_cache(|cache| {
             cache.insert(
                 key.to_string(),
                 CachedProviderOptions {
@@ -18,8 +17,7 @@ async fn insert_options_cache(state: &Arc<DaemonState>, key: &str, value: serde_
 
 async fn insert_verify_cache(state: &Arc<DaemonState>, key: &str, value: serde_json::Value) {
     state
-        .providers
-        .with_provider_verify_cache(|cache| {
+        .test_with_provider_verify_cache(|cache| {
             cache.insert(
                 key.to_string(),
                 CachedProviderVerify {
@@ -83,8 +81,7 @@ async fn select_provider_harness_source_invalidates_only_matching_provider_probe
     assert_eq!(config.selected_source_kind, HarnessSourceKind::Subscription);
 
     let (codex_options_cached, claude_options_cached) = state
-        .providers
-        .with_provider_options_cache(|cache| {
+        .test_with_provider_options_cache(|cache| {
             (
                 cache.contains_key("ws-a/host/codex"),
                 cache.contains_key("ws-b/container/claude-crp"),
@@ -95,8 +92,7 @@ async fn select_provider_harness_source_invalidates_only_matching_provider_probe
     assert!(claude_options_cached);
 
     let (codex_verify_cached, claude_verify_cached) = state
-        .providers
-        .with_provider_verify_cache(|cache| {
+        .test_with_provider_verify_cache(|cache| {
             (
                 cache.contains_key("ws-a/host/codex"),
                 cache.contains_key("ws-b/container/claude-crp"),

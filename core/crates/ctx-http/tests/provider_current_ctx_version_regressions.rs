@@ -56,10 +56,7 @@ async fn env_lock() -> tokio::sync::OwnedMutexGuard<()> {
 
 async fn seed_provider_status(state: &Arc<DaemonState>, status: ProviderStatus) {
     let provider_id = status.provider_id.clone();
-    state
-        .providers
-        .upsert_provider_status(provider_id, status)
-        .await;
+    state.test_upsert_provider_status(provider_id, status).await;
 }
 
 fn ensure_test_build_identity() {

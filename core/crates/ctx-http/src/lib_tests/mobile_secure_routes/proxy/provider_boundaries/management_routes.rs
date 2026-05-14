@@ -92,14 +92,14 @@ async fn mobile_secure_proxy_rejects_provider_management_routes() {
     }
 
     let codex_registry =
-        ctx_provider_accounts::provider_accounts::load_codex_registry(&state.core.data_root)
+        ctx_provider_accounts::provider_accounts::load_codex_registry(state.test_data_root())
             .await
             .unwrap();
     assert!(codex_registry.accounts.is_empty());
     assert!(codex_registry.active_account_id.is_none());
 
     let qwen_config = ctx_harness_sources::harness_sources::get_provider_source_config(
-        &state.core.data_root,
+        state.test_data_root(),
         "qwen",
     )
     .await

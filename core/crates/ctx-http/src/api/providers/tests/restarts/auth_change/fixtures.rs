@@ -27,8 +27,7 @@ pub(super) async fn insert_options_cache(
     value: serde_json::Value,
 ) {
     state
-        .providers
-        .with_provider_options_cache(|cache| {
+        .test_with_provider_options_cache(|cache| {
             cache.insert(
                 key.to_string(),
                 CachedProviderOptions {
@@ -46,8 +45,7 @@ pub(super) async fn insert_verify_cache(
     value: serde_json::Value,
 ) {
     state
-        .providers
-        .with_provider_verify_cache(|cache| {
+        .test_with_provider_verify_cache(|cache| {
             cache.insert(
                 key.to_string(),
                 CachedProviderVerify {

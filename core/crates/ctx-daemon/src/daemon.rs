@@ -46,6 +46,8 @@ mod state;
 pub mod storage_guard;
 pub mod tasks;
 pub mod terminals;
+#[cfg(any(test, feature = "test-support"))]
+mod test_support_access;
 pub mod tool_cgroup;
 pub mod web_sessions;
 mod workspace_init;

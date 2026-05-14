@@ -142,7 +142,7 @@ async fn wait_for_provider_session_ref(
 async fn wait_for_session_idle(state: &Arc<DaemonState>, session_id: ctx_core::ids::SessionId) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     loop {
-        if !state.sessions.is_running(session_id).await {
+        if !state.is_session_running(session_id).await {
             return;
         }
         if tokio::time::Instant::now() >= deadline {

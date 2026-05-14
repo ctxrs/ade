@@ -143,5 +143,5 @@ async fn install_fake_provider_status(state: &Arc<DaemonState>) {
             usability: ctx_providers::adapters::ProviderUsability::default(),
         },
     );
-    state.providers.replace_provider_statuses(statuses).await;
+    state.test_replace_provider_statuses(statuses).await;
 }

@@ -235,8 +235,7 @@ async fn provider_usage_cache_hit_surfaces_agent_server_config_errors_for_codex(
         None,
     ));
     state
-        .providers
-        .with_provider_usage_cache(|cache| {
+        .test_with_provider_usage_cache(|cache| {
             cache.insert(
                 "codex".to_string(),
                 ProviderUsageSnapshot {
@@ -308,8 +307,7 @@ async fn provider_usage_cache_hit_preserves_canonical_provider_id_for_codex() {
         None,
     ));
     state
-        .providers
-        .with_provider_usage_cache(|cache| {
+        .test_with_provider_usage_cache(|cache| {
             cache.insert(
                 "codex".to_string(),
                 ProviderUsageSnapshot {

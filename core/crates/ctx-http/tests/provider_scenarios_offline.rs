@@ -142,7 +142,7 @@ async fn wait_for_done_inner(
             .iter()
             .any(|e| matches!(e.event_type, SessionEventType::Error))
         {
-            let provider_logs = provider_log_snapshot(&state.core.data_root);
+            let provider_logs = provider_log_snapshot(state.test_data_root());
             panic!("saw Error event(s): {events:#?}\nprovider logs:\n{provider_logs}");
         }
         let saw_done = events
@@ -169,7 +169,7 @@ async fn wait_for_done_inner(
             }
         }
         if tokio::time::Instant::now() >= deadline {
-            let provider_logs = provider_log_snapshot(&state.core.data_root);
+            let provider_logs = provider_log_snapshot(state.test_data_root());
             let turns = store
                 .list_session_turns_page_by_seq(session_id, None, Some(3))
                 .await

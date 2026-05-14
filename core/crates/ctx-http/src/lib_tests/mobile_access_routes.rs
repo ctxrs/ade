@@ -77,7 +77,7 @@ async fn enable_mobile_access_seeds_explicit_default_scopes() {
         ]
     );
 
-    state.transport.mobile_tunnel.stop().await;
+    state.test_stop_mobile_tunnel().await;
     server.abort();
     let _ = server.await;
 }
@@ -169,7 +169,7 @@ async fn enable_mobile_access_backfills_empty_managed_profile_scopes() {
         ]
     );
 
-    state.transport.mobile_tunnel.stop().await;
+    state.test_stop_mobile_tunnel().await;
     server.abort();
     let _ = server.await;
 }

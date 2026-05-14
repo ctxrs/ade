@@ -110,6 +110,7 @@ http-body-util = "0.1"
 [dev-dependencies]
 ctx-avf-linux-runtime = { path = "../ctx-avf-linux-runtime", features = ["test-support"] }
 ctx-bundled-assets = { path = "../ctx-bundled-assets", features = ["test-support"] }
+ctx-daemon = { path = "../ctx-daemon", features = ["test-support"] }
 ctx-workspace-runtime = { path = "../ctx-workspace-runtime", features = ["test-support"] }
 blake2 = "0.10"
 ed25519-dalek = "2"

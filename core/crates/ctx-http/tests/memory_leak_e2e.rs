@@ -213,7 +213,7 @@ async fn run_scenario(label: &'static str, monitoring_enabled: bool) -> LeakRepo
         slope_mb_per_min
     );
 
-    let _ = state.core.shutdown_tx.send(());
+    state.test_request_shutdown();
 
     LeakReport {
         label,

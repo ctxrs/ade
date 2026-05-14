@@ -6,6 +6,7 @@ const {
   API_DOMAIN_RAW_STORE_PATTERNS,
   API_RAW_DAEMON_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
+  TEST_RAW_DAEMON_BUCKET_PATTERNS,
   apiPatternsForPath,
   isTestRustPath,
   scanRepo,
@@ -157,7 +158,44 @@ test("daemon boundary guard allows cfg(test) helpers to construct daemon state",
 test("daemon boundary guard ignores test paths", () => {
   assert.equal(isTestRustPath("core/crates/ctx-http/src/api/tasks/lifecycle_tests/archive.rs"), true);
   assert.equal(isTestRustPath("core/crates/ctx-http/src/api/workspaces/tests.rs"), true);
+  assert.equal(isTestRustPath("core/crates/ctx-http/src/lib_tests/mobile_access_routes.rs"), true);
   assert.equal(isTestRustPath("core/crates/ctx-http/src/api/workspaces/management.rs"), false);
+});
+
+test("daemon boundary guard rejects raw daemon bucket access in test surfaces", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/example.rs",
+    contents: `
+      async fn helper(state: &DaemonState) {
+        let _ = state.core.data_root.clone();
+        let _ = state.providers.replace_provider_statuses(Default::default()).await;
+      }
+    `,
+    patterns: TEST_RAW_DAEMON_BUCKET_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "raw daemon runtime bucket field access",
+      "raw daemon runtime bucket field access",
+    ],
+  );
+});
+
+test("daemon boundary guard allows daemon-owned test support accessors", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/example.rs",
+    contents: `
+      async fn helper(state: &DaemonState) {
+        let _ = state.test_data_root();
+        state.test_upsert_provider_status("fake".into(), status).await;
+      }
+    `,
+    patterns: TEST_RAW_DAEMON_BUCKET_PATTERNS,
+  });
+
+  assert.deepEqual(violations, []);
 });
 
 test("daemon boundary guard rejects DaemonHandle raw-state backdoors", () => {

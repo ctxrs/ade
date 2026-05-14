@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
-use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::daemon::DaemonHandle;
 use ctx_providers::adapters::ProviderAdapter;
 
 pub(crate) async fn bind_loopback_listener() -> Result<(tokio::net::TcpListener, String)> {
@@ -12,8 +12,8 @@ pub(crate) async fn bind_loopback_listener() -> Result<(tokio::net::TcpListener,
     Ok((listener, format!("http://{addr}")))
 }
 
-pub(crate) fn spawn_router(listener: tokio::net::TcpListener, state: Arc<DaemonState>) {
-    let app = ctx_http::api::router(state);
+pub(crate) fn spawn_router(listener: tokio::net::TcpListener, handle: DaemonHandle) {
+    let app = ctx_http::api::router(handle);
     tokio::spawn(async move {
         axum::serve(listener, app)
             .await

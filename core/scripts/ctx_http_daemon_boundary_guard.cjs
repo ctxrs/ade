@@ -5,6 +5,9 @@ const path = require("node:path");
 
 const coreRoot = path.resolve(__dirname, "..");
 const repoRoot = path.resolve(coreRoot, "..");
+const ctxHttpSrcRoot = path.join(coreRoot, "crates", "ctx-http", "src");
+const ctxHttpTestsRoot = path.join(coreRoot, "crates", "ctx-http", "tests");
+const ctxHttpTestSupportSrcRoot = path.join(coreRoot, "crates", "ctx-http-test-support", "src");
 const apiRoot = path.join(coreRoot, "crates", "ctx-http", "src", "api");
 const legacyHttpDaemonRoot = path.join(coreRoot, "crates", "ctx-http", "src", "daemon");
 const legacyHttpDaemonRootPath = path.join(coreRoot, "crates", "ctx-http", "src", "daemon.rs");
@@ -98,6 +101,13 @@ const DAEMON_EXTRACTION_BLOCKER_PATTERNS = [
   },
 ];
 
+const TEST_RAW_DAEMON_BUCKET_PATTERNS = [
+  {
+    name: "raw daemon runtime bucket field access",
+    regex: /\b(?:state|app_state|daemon_state)\s*\.\s*(?:core|sessions|workspaces|providers|telemetry|transport|execution)\s*\./,
+  },
+];
+
 function isRustFile(filePath) {
   return filePath.endsWith(".rs");
 }
@@ -106,11 +116,26 @@ function isTestRustPath(filePath) {
   const normalized = filePath.split(path.sep).join("/");
   const base = path.basename(filePath);
   return normalized.includes("/tests/")
+    || normalized.includes("/lib_tests/")
+    || normalized.includes("/test_support/")
     || normalized.includes("/lifecycle_tests/")
     || normalized.includes("/storage_admission_http_tests/")
     || normalized.includes("/cleanup_lifecycle_tests")
     || base === "tests.rs"
     || base.endsWith("_tests.rs");
+}
+
+function testSurfaceRustFiles() {
+  const files = [];
+  if (fs.existsSync(ctxHttpSrcRoot)) {
+    files.push(...listRustFiles(ctxHttpSrcRoot).filter(isTestRustPath));
+  }
+  for (const root of [ctxHttpTestsRoot, ctxHttpTestSupportSrcRoot]) {
+    if (fs.existsSync(root)) {
+      files.push(...listRustFiles(root));
+    }
+  }
+  return files;
 }
 
 function listRustFiles(root) {
@@ -276,6 +301,16 @@ function scanRepo() {
     );
   }
 
+  for (const filePath of testSurfaceRustFiles()) {
+    violations.push(
+      ...scanText({
+        filePath: repoRelative(filePath),
+        contents: fs.readFileSync(filePath, "utf8"),
+        patterns: TEST_RAW_DAEMON_BUCKET_PATTERNS,
+      }),
+    );
+  }
+
   return violations;
 }
 
@@ -303,6 +338,7 @@ module.exports = {
   API_RAW_DAEMON_PATTERNS,
   API_DOMAIN_RAW_STORE_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
+  TEST_RAW_DAEMON_BUCKET_PATTERNS,
   apiPatternsForPath,
   isTestRustPath,
   scanRepo,

@@ -3,8 +3,8 @@ pub mod daemon;
 #[cfg(feature = "fault_injection")]
 pub mod fault_injection;
 
-#[cfg(test)]
-pub(crate) mod test_support;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 
 #[cfg(not(feature = "fault_injection"))]
 pub mod fault_injection {

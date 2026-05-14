@@ -132,8 +132,7 @@ async fn insert_pending_login(
     expected_callback_url: &str,
 ) {
     state
-        .providers
-        .with_codex_login_sessions(|map| {
+        .test_with_codex_login_sessions(|map| {
             map.insert(
                 account_id.to_string(),
                 CodexLoginStatus {
@@ -178,8 +177,7 @@ async fn complete_login_replays_loopback_callback_and_clears_token() {
     assert_eq!(body.status_code, 200);
 
     let status = state
-        .providers
-        .with_codex_login_sessions(|map| map.get(account_id).cloned())
+        .test_with_codex_login_sessions(|map| map.get(account_id).cloned())
         .await
         .expect("login status");
     assert!(
@@ -265,8 +263,7 @@ async fn complete_login_rejects_missing_expected_callback_metadata() {
     let account_id = "acct-missing-expected-callback";
     let token = "token-missing-expected-callback";
     state
-        .providers
-        .with_codex_login_sessions(|map| {
+        .test_with_codex_login_sessions(|map| {
             map.insert(
                 account_id.to_string(),
                 CodexLoginStatus {
@@ -298,8 +295,7 @@ async fn complete_login_rejects_missing_expected_callback_metadata() {
     assert!(body.error.contains("expected callback"));
 
     let status = state
-        .providers
-        .with_codex_login_sessions(|map| map.get(account_id).cloned())
+        .test_with_codex_login_sessions(|map| map.get(account_id).cloned())
         .await
         .expect("login status");
     assert_eq!(status.completion_token.as_deref(), Some(token));

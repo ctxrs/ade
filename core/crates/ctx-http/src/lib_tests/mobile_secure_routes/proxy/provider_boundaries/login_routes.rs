@@ -124,50 +124,42 @@ async fn mobile_secure_proxy_rejects_provider_login_routes() {
 
     assert!(
         state
-            .providers
-            .with_gemini_login_sessions(|map| map.is_empty())
+            .test_with_gemini_login_sessions(|map| map.is_empty())
             .await
     );
     assert!(
         state
-            .providers
-            .with_qwen_login_sessions(|map| map.is_empty())
+            .test_with_qwen_login_sessions(|map| map.is_empty())
             .await
     );
     assert!(
         state
-            .providers
-            .with_amp_login_sessions(|map| map.is_empty())
+            .test_with_amp_login_sessions(|map| map.is_empty())
             .await
     );
     assert!(
         state
-            .providers
-            .with_mistral_login_sessions(|map| map.is_empty())
+            .test_with_mistral_login_sessions(|map| map.is_empty())
             .await
     );
     assert!(
         state
-            .providers
-            .with_kimi_login_sessions(|map| map.is_empty())
+            .test_with_kimi_login_sessions(|map| map.is_empty())
             .await
     );
     assert!(
         state
-            .providers
-            .with_claude_login_sessions(|map| map.is_empty())
+            .test_with_claude_login_sessions(|map| map.is_empty())
             .await
     );
     assert!(
         state
-            .providers
-            .with_codex_login_sessions(|map| map.is_empty())
+            .test_with_codex_login_sessions(|map| map.is_empty())
             .await
     );
     assert!(
         state
-            .providers
-            .with_cursor_login_sessions(|map| map.is_empty())
+            .test_with_cursor_login_sessions(|map| map.is_empty())
             .await
     );
 }

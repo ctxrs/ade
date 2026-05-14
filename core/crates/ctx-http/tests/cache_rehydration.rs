@@ -91,21 +91,18 @@ async fn session_head_rehydrates_after_cache_eviction() {
         .unwrap()
         .expect("session head snapshot");
     state
-        .workspaces
-        .workspace_active_snapshot
+        .test_workspace_active_snapshot_hub()
         .update_session_head(baseline.clone())
         .await;
     assert!(state
-        .workspaces
-        .workspace_active_snapshot
+        .test_workspace_active_snapshot_hub()
         .get_session_head(session.id)
         .await
         .is_some());
 
     state.cleanup_session(session.id).await;
     assert!(state
-        .workspaces
-        .workspace_active_snapshot
+        .test_workspace_active_snapshot_hub()
         .get_session_head(session.id)
         .await
         .is_none());
@@ -189,8 +186,7 @@ async fn session_head_min_event_seq_bypasses_stale_active_snapshot_cache() {
         .unwrap()
         .expect("session head snapshot");
     state
-        .workspaces
-        .workspace_active_snapshot
+        .test_workspace_active_snapshot_hub()
         .update_session_head(cached_head.clone())
         .await;
 
@@ -334,8 +330,7 @@ async fn include_events_session_heads_bypass_compact_cache() {
         .expect("compact active head");
     assert!(compact_head.events.is_empty());
     state
-        .workspaces
-        .workspace_active_snapshot
+        .test_workspace_active_snapshot_hub()
         .update_compact_session_head(compact_head)
         .await;
 
@@ -438,13 +433,15 @@ async fn include_events_session_heads_use_hydrated_replay_cache_when_store_canno
         "full head should include persisted events for replay-capable caching"
     );
     state
-        .workspaces
-        .workspace_active_snapshot
+        .test_workspace_active_snapshot_hub()
         .update_session_head(full_head.clone())
         .await;
 
     drop(store);
-    state.core.stores.evict_workspace(workspace.id).await;
+    state
+        .test_store_manager()
+        .evict_workspace(workspace.id)
+        .await;
 
     let blocked_workspace_store_dir = temp
         .path()
@@ -509,13 +506,11 @@ async fn archiving_task_invalidates_cached_replay_session_head() {
         .unwrap()
         .expect("full replay-capable session head");
     state
-        .workspaces
-        .workspace_active_snapshot
+        .test_workspace_active_snapshot_hub()
         .update_session_head(full_head)
         .await;
     assert!(state
-        .workspaces
-        .workspace_active_snapshot
+        .test_workspace_active_snapshot_hub()
         .get_session_head(session.id)
         .await
         .is_some());
@@ -529,8 +524,7 @@ async fn archiving_task_invalidates_cached_replay_session_head() {
     assert_eq!(status, StatusCode::OK);
     assert!(
         state
-            .workspaces
-            .workspace_active_snapshot
+            .test_workspace_active_snapshot_hub()
             .get_session_head(session.id)
             .await
             .is_none(),
@@ -602,20 +596,17 @@ async fn non_primary_store_backed_head_is_purged_on_workspace_cleanup() {
         .unwrap()
         .expect("store-backed session head");
     state
-        .workspaces
-        .workspace_active_snapshot
+        .test_workspace_active_snapshot_hub()
         .update_compact_session_head(head)
         .await;
     assert!(state
-        .workspaces
-        .workspace_active_snapshot
+        .test_workspace_active_snapshot_hub()
         .get_cached_session_head_for_read(session.id)
         .await
         .is_some());
     assert!(
         state
-            .workspaces
-            .workspace_active_snapshot
+            .test_workspace_active_snapshot_hub()
             .get_session_head(session.id)
             .await
             .is_none(),
@@ -636,8 +627,7 @@ async fn non_primary_store_backed_head_is_purged_on_workspace_cleanup() {
         .unwrap();
 
     assert!(state
-        .workspaces
-        .workspace_active_snapshot
+        .test_workspace_active_snapshot_hub()
         .get_cached_session_head_for_read(session.id)
         .await
         .is_none());
@@ -723,7 +713,10 @@ async fn session_read_routes_return_500_when_workspace_store_cannot_open() {
 
     drop(store);
     state.cleanup_session(session.id).await;
-    state.core.stores.evict_workspace(workspace.id).await;
+    state
+        .test_store_manager()
+        .evict_workspace(workspace.id)
+        .await;
 
     let blocked_workspace_store_dir = temp
         .path()
@@ -846,7 +839,10 @@ async fn delete_in_progress_workspace_and_session_reads_return_404() {
         .await
         .unwrap();
 
-    state.core.stores.begin_workspace_delete(workspace.id).await;
+    state
+        .test_store_manager()
+        .begin_workspace_delete(workspace.id)
+        .await;
 
     let app = common::router(state.clone());
     for route in [
@@ -871,8 +867,7 @@ async fn delete_in_progress_workspace_and_session_reads_return_404() {
     }
 
     state
-        .core
-        .stores
+        .test_store_manager()
         .finish_workspace_delete(workspace.id)
         .await;
 }
@@ -1043,14 +1038,12 @@ async fn include_events_false_subagent_heads_fall_back_to_store_after_cold_delta
         tool_summaries: Vec::new(),
     };
     state
-        .workspaces
-        .workspace_active_snapshot
+        .test_workspace_active_snapshot_hub()
         .publish_session_head_delta(workspace.id, &subagent, delta, true)
         .await;
     assert!(
         state
-            .workspaces
-            .workspace_active_snapshot
+            .test_workspace_active_snapshot_hub()
             .get_session_head(subagent.id)
             .await
             .is_none(),
@@ -1191,8 +1184,7 @@ async fn unarchive_repopulates_active_heads_for_hydrated_workspace() {
         .unwrap()
         .expect("session head snapshot");
     state
-        .workspaces
-        .workspace_active_snapshot
+        .test_workspace_active_snapshot_hub()
         .hydrate_snapshot(workspace.id, 1, 0, vec![active_summary], vec![head])
         .await;
 
@@ -1235,8 +1227,7 @@ async fn unarchive_repopulates_active_heads_for_hydrated_workspace() {
         .unwrap();
     assert!(durable_head.is_some());
     let active_task = state
-        .workspaces
-        .workspace_active_snapshot
+        .test_workspace_active_snapshot_hub()
         .active_task_summary(workspace.id, task.id)
         .await;
     assert!(active_task.is_some());
@@ -1386,15 +1377,13 @@ async fn unarchive_replaces_stale_session_head_cache_before_workspace_hydration(
         common::oneshot_json(&app, archived_head_req).await;
     assert_eq!(head_status, StatusCode::OK);
     assert!(state
-        .workspaces
-        .workspace_active_snapshot
+        .test_workspace_active_snapshot_hub()
         .get_session_head(session.id)
         .await
         .is_some());
     assert!(
         state
-            .workspaces
-            .workspace_active_snapshot
+            .test_workspace_active_snapshot_hub()
             .needs_hydration(workspace.id)
             .await
     );
@@ -1409,14 +1398,12 @@ async fn unarchive_replaces_stale_session_head_cache_before_workspace_hydration(
     assert_eq!(unarchive_status, StatusCode::OK);
 
     assert!(state
-        .workspaces
-        .workspace_active_snapshot
+        .test_workspace_active_snapshot_hub()
         .get_session_head(session.id)
         .await
         .is_none());
     assert!(state
-        .workspaces
-        .workspace_active_snapshot
+        .test_workspace_active_snapshot_hub()
         .get_cached_session_head_for_read(session.id)
         .await
         .is_some());
@@ -1568,14 +1555,12 @@ async fn include_events_false_primary_heads_fall_back_to_store_after_cold_delta(
         tool_summaries: Vec::new(),
     };
     state
-        .workspaces
-        .workspace_active_snapshot
+        .test_workspace_active_snapshot_hub()
         .publish_session_head_delta(workspace.id, &primary, delta, true)
         .await;
     assert!(
         state
-            .workspaces
-            .workspace_active_snapshot
+            .test_workspace_active_snapshot_hub()
             .get_session_head(primary.id)
             .await
             .is_none(),
@@ -1596,8 +1581,7 @@ async fn include_events_false_primary_heads_fall_back_to_store_after_cold_delta(
     assert_eq!(head.messages[0].content, "primary answer");
 
     let cached = state
-        .workspaces
-        .workspace_active_snapshot
+        .test_workspace_active_snapshot_hub()
         .get_cached_session_head_for_read(primary.id)
         .await
         .expect("store-backed read should hydrate the compact per-session head cache");
@@ -1606,8 +1590,7 @@ async fn include_events_false_primary_heads_fall_back_to_store_after_cold_delta(
     assert_eq!(cached.messages[0].content, "primary answer");
     assert!(
         state
-            .workspaces
-            .workspace_active_snapshot
+            .test_workspace_active_snapshot_hub()
             .get_session_head(primary.id)
             .await
             .is_none(),

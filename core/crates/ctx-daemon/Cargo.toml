@@ -102,5 +102,6 @@ fs2 = "0.4"
 sqlx.workspace = true
 
 [features]
+test-support = []
 fault_injection = ["ctx-store/fault_injection"]
 daemon-heap-prof = ["ctx-resource-utilization/daemon-heap-prof"]

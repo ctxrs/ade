@@ -56,10 +56,7 @@ fn write_runtime_fixture(path: &Path) {
 
 async fn seed_provider_status(state: &Arc<DaemonState>, status: ProviderStatus) {
     let provider_id = status.provider_id.clone();
-    state
-        .providers
-        .upsert_provider_status(provider_id, status)
-        .await;
+    state.test_upsert_provider_status(provider_id, status).await;
 }
 
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -421,8 +418,7 @@ async fn workspace_options_use_workspace_target_status_for_acp_provider() {
     let cache_key_host = format!("{}/host/{provider_id}", ws.id.0);
     let cache_key_container = format!("{}/container/{provider_id}", ws.id.0);
     state
-        .providers
-        .with_provider_options_cache(|cache| {
+        .test_with_provider_options_cache(|cache| {
             cache.insert(
                 cache_key_host,
                 CachedProviderOptions {

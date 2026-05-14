@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use ctx_core::models::{Session, Task, Workspace};
-use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::test_support::TestDaemon;
 use ctx_providers::adapters::ProviderAdapter;
 use ctx_store::StoreManager;
 use serde_json::json;
@@ -26,14 +26,14 @@ pub(crate) async fn setup_live_provider_parent_session(
         provider_id.to_string(),
         router::live_provider_adapter(provider_id)?,
     );
-    let state = Arc::new(DaemonState::new(
+    let daemon = TestDaemon::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,
         base_url.clone(),
         None,
-    ));
-    router::spawn_router(listener, state.clone());
+    );
+    router::spawn_router(listener, daemon.handle());
 
     let session = create_live_provider_session(&base_url, repo.path(), provider_id, model_id)
         .await
@@ -42,7 +42,7 @@ pub(crate) async fn setup_live_provider_parent_session(
     Ok(DaemonBackedParentSession::new(
         repo,
         data_dir,
-        state,
+        daemon,
         base_url,
         session.id,
         String::new(),

@@ -98,7 +98,7 @@ async fn get_worktree_returns_live_root_for_bound_sandbox_worktree() {
     );
     assert_eq!(response.id, worktree.id);
     assert_eq!(response.workspace_id, worktree.workspace_id);
-    let _ = state.core.shutdown_tx.send(());
+    state.test_request_shutdown();
 }
 
 #[tokio::test]
@@ -124,5 +124,5 @@ async fn missing_worktree_routes_return_not_found() {
         .expect_err("missing worktree bootstrap log should not resolve");
     assert_eq!(status, StatusCode::NOT_FOUND);
 
-    let _ = state.core.shutdown_tx.send(());
+    state.test_request_shutdown();
 }

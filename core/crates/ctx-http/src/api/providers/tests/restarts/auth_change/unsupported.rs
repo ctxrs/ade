@@ -19,8 +19,7 @@ async fn restart_provider_for_auth_change_skips_adapters_without_drain_restart()
         .expect("unsupported restart should be skipped");
 
     let options_cached = state
-        .providers
-        .with_provider_options_cache(|cache| cache.contains_key("ws-a/host/codex"))
+        .test_with_provider_options_cache(|cache| cache.contains_key("ws-a/host/codex"))
         .await;
     assert!(!options_cached);
 }

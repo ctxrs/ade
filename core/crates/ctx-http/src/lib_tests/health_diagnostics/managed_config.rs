@@ -27,8 +27,7 @@ async fn diagnostics_marks_provider_statuses_with_agent_server_config_errors() {
         None,
     ));
     state
-        .providers
-        .upsert_provider_status(
+        .test_upsert_provider_status(
             "qwen".to_string(),
             ProviderStatus {
                 provider_id: "qwen".to_string(),

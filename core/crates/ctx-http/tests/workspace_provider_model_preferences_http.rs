@@ -42,8 +42,7 @@ async fn build_state_with_fake_codex(
         recommended_action: ProviderRecommendedAction::None,
     };
     state
-        .providers
-        .upsert_provider_status("codex".into(), status)
+        .test_upsert_provider_status("codex".into(), status)
         .await;
     state
 }

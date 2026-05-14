@@ -772,9 +772,7 @@ async fn assert_live_crp_session_model_switch_case(
         providers,
         "http://127.0.0.1:0",
     );
-    state
-        .providers
-        .with_provider_options_cache(|cache| {
+    state.test_with_provider_options_cache(|cache| {
             cache.insert(
                 format!("{}/host/{provider_id}", workspace.id.0),
                 CachedProviderOptions {
@@ -967,8 +965,7 @@ async fn set_session_model_allows_explicit_model_outside_cached_catalog() {
         .expect("workspace json");
 
     state
-        .providers
-        .with_provider_options_cache(|cache| {
+        .test_with_provider_options_cache(|cache| {
             cache.insert(
                 format!("{}/host/fake-set-model", workspace.id.0),
                 CachedProviderOptions {

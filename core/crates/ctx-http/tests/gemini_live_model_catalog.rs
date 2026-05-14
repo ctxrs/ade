@@ -138,10 +138,7 @@ async fn app_state(data_root: &Path) -> Arc<DaemonState> {
 
 async fn seed_provider_status(state: &Arc<DaemonState>, status: ProviderStatus) {
     let provider_id = status.provider_id.clone();
-    state
-        .providers
-        .upsert_provider_status(provider_id, status)
-        .await;
+    state.test_upsert_provider_status(provider_id, status).await;
 }
 
 #[tokio::test]

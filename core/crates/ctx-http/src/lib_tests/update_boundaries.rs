@@ -36,7 +36,7 @@ async fn daemon_shutdown_endpoint_terminalizes_running_turns_before_ack() {
         "http://127.0.0.1:4399".to_string(),
         Some("daemon-secret".to_string()),
     );
-    app_state.core.local_shutdown_token = Some("local-shutdown-secret".to_string());
+    app_state.test_set_local_shutdown_token(Some("local-shutdown-secret".to_string()));
     let state = Arc::new(app_state);
 
     let workspace = state
@@ -143,7 +143,7 @@ async fn daemon_shutdown_endpoint_requires_local_shutdown_token() {
         "http://127.0.0.1:4399".to_string(),
         Some("daemon-secret".to_string()),
     );
-    app_state.core.local_shutdown_token = Some("local-shutdown-secret".to_string());
+    app_state.test_set_local_shutdown_token(Some("local-shutdown-secret".to_string()));
     let app = api::router(Arc::new(app_state));
 
     let req = Request::builder()

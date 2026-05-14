@@ -37,8 +37,7 @@ async fn restart_provider_for_auth_change_invalidates_only_matching_provider_pro
         .expect("restart should succeed");
 
     let (codex_options_cached, claude_options_cached) = state
-        .providers
-        .with_provider_options_cache(|cache| {
+        .test_with_provider_options_cache(|cache| {
             (
                 cache.contains_key("ws-a/host/codex"),
                 cache.contains_key("ws-b/container/claude-crp"),
@@ -49,8 +48,7 @@ async fn restart_provider_for_auth_change_invalidates_only_matching_provider_pro
     assert!(claude_options_cached);
 
     let (codex_verify_cached, claude_verify_cached) = state
-        .providers
-        .with_provider_verify_cache(|cache| {
+        .test_with_provider_verify_cache(|cache| {
             (
                 cache.contains_key("ws-a/host/codex"),
                 cache.contains_key("ws-b/container/claude-crp"),

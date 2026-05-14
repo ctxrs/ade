@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use ctx_core::models::{ExecutionEnvironment, Session, Task, VcsKind, Workspace, Worktree};
-use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::test_support::TestDaemon;
 use ctx_providers::adapters::ProviderAdapter;
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::StoreManager;
@@ -20,15 +20,14 @@ pub(crate) async fn setup_fake_provider_parent_session() -> Result<DaemonBackedP
 
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-    let state = Arc::new(DaemonState::new(
+    let daemon = TestDaemon::new(
         data_dir.path().to_path_buf(),
         stores.clone(),
         providers,
         base_url.clone(),
         Some("daemon-secret".to_string()),
-    ));
-    state
-        .providers
+    );
+    daemon
         .upsert_provider_status(
             "fake".into(),
             FakeProviderAdapter::new()
@@ -37,7 +36,7 @@ pub(crate) async fn setup_fake_provider_parent_session() -> Result<DaemonBackedP
                 .context("inspect fake provider")?,
         )
         .await;
-    router::spawn_router(listener, state.clone());
+    router::spawn_router(listener, daemon.handle());
 
     let workspace = create_workspace_record(&stores, repo.path()).await?;
     let store = stores
@@ -74,17 +73,13 @@ pub(crate) async fn setup_fake_provider_parent_session() -> Result<DaemonBackedP
         .await
         .context("create parent session")?;
 
-    index_parent_entities(&state, &session, workspace.id, worktree.id, task.id).await?;
-    let mcp_token = ctx_daemon::daemon::issue_provider_session_mcp_token(
-        &state,
-        session.id,
-        workspace.id,
-        worktree.id,
-    )
-    .await;
+    index_parent_entities(&daemon, &session, workspace.id, worktree.id, task.id).await?;
+    let mcp_token = daemon
+        .issue_provider_session_mcp_token(session.id, workspace.id, worktree.id)
+        .await;
 
     Ok(DaemonBackedParentSession::new(
-        repo, data_dir, state, base_url, session.id, mcp_token,
+        repo, data_dir, daemon, base_url, session.id, mcp_token,
     ))
 }
 
@@ -104,23 +99,23 @@ async fn create_workspace_record(
 }
 
 async fn index_parent_entities(
-    state: &DaemonState,
+    daemon: &TestDaemon,
     session: &Session,
     workspace_id: ctx_core::ids::WorkspaceId,
     worktree_id: ctx_core::ids::WorktreeId,
     task_id: ctx_core::ids::TaskId,
 ) -> Result<()> {
-    state
+    daemon
         .global_store()
         .upsert_workspace_session_index(session.id, workspace_id)
         .await
         .context("index parent session")?;
-    state
+    daemon
         .global_store()
         .upsert_workspace_worktree_index(worktree_id, workspace_id)
         .await
         .context("index parent worktree")?;
-    state
+    daemon
         .global_store()
         .upsert_workspace_task_index(task_id, workspace_id)
         .await

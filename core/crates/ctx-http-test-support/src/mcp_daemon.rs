@@ -1,9 +1,7 @@
-use std::sync::Arc;
-
 use anyhow::{Context, Result};
 use ctx_core::ids::SessionId;
 use ctx_core::models::{SessionEvent, SessionSummary};
-use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::test_support::TestDaemon;
 use tempfile::TempDir;
 
 mod fake;
@@ -14,7 +12,7 @@ mod router;
 pub struct DaemonBackedParentSession {
     _repo: TempDir,
     _data_dir: TempDir,
-    state: Arc<DaemonState>,
+    daemon: TestDaemon,
     base_url: String,
     session_id: SessionId,
     mcp_token: String,
@@ -24,7 +22,7 @@ impl DaemonBackedParentSession {
     pub(crate) fn new(
         repo: TempDir,
         data_dir: TempDir,
-        state: Arc<DaemonState>,
+        daemon: TestDaemon,
         base_url: String,
         session_id: SessionId,
         mcp_token: String,
@@ -32,7 +30,7 @@ impl DaemonBackedParentSession {
         Self {
             _repo: repo,
             _data_dir: data_dir,
-            state,
+            daemon,
             base_url,
             session_id,
             mcp_token,
@@ -53,7 +51,7 @@ impl DaemonBackedParentSession {
 
     pub async fn list_session_events(&self) -> Result<Vec<SessionEvent>> {
         let store = self
-            .state
+            .daemon
             .store_for_session(self.session_id)
             .await
             .context("load session store")?;
@@ -65,7 +63,7 @@ impl DaemonBackedParentSession {
 
     pub async fn list_subagent_sessions(&self) -> Result<Vec<SessionSummary>> {
         let store = self
-            .state
+            .daemon
             .store_for_session(self.session_id)
             .await
             .context("load session store")?;

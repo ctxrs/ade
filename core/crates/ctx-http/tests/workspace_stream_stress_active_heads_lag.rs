@@ -167,11 +167,7 @@ async fn workspace_stream_does_not_reset_during_hydration_when_active_heads_are_
             .await
             .unwrap()
             .unwrap();
-        state
-            .workspaces
-            .workspace_active_snapshot
-            .update_session_head(head)
-            .await;
+        state.test_update_session_head(head).await;
     }
 
     let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
@@ -253,9 +249,7 @@ async fn workspace_stream_does_not_reset_during_hydration_when_active_heads_are_
                 tool_summaries: Vec::new(),
             };
             state_pub
-                .workspaces
-                .workspace_active_snapshot
-                .publish_session_head_delta(ws_id, session, delta, false)
+                .test_publish_session_head_delta_for_workspace(ws_id, session, delta, false)
                 .await;
             seq += 1;
 

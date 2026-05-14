@@ -244,8 +244,7 @@ async fn workspace_primary_branch_endpoint_updates_branch() {
     let mut next_active = HashSet::new();
     next_active.insert(worktree.id);
     state
-        .workspaces
-        .update_worktree_vcs_activity(&HashSet::new(), &next_active)
+        .test_update_worktree_vcs_activity(&HashSet::new(), &next_active)
         .await;
     emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, true)
         .await

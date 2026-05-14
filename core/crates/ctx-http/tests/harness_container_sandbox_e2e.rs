@@ -468,16 +468,14 @@ async fn harness_container_sandbox_egress_allowlist() {
     let mut app = api::router(state.clone());
     let session = create_session_with_provider(&mut app, git_repo.path(), "codex").await;
     let workspace = state
-        .core
-        .stores
+        .test_store_manager()
         .global()
         .get_workspace(session.workspace_id)
         .await
         .unwrap()
         .expect("workspace");
     let workspace_store = state
-        .core
-        .stores
+        .test_store_manager()
         .workspace(session.workspace_id)
         .await
         .unwrap();
@@ -487,14 +485,7 @@ async fn harness_container_sandbox_egress_allowlist() {
         .unwrap()
         .expect("worktree");
     state
-        .execution
-        .harness
-        .prepare(
-            &workspace,
-            &worktree,
-            &execution_settings,
-            &state.core.daemon_url,
-        )
+        .test_prepare_harness(&workspace, &worktree, &execution_settings)
         .await
         .expect("failed to prepare container runtime");
 
@@ -502,9 +493,7 @@ async fn harness_container_sandbox_egress_allowlist() {
     post_message(&mut app, &session_id, PROMPT).await;
     wait_for_done(&state, session.id).await;
     let container_status = state
-        .execution
-        .harness
-        .container_status(session.workspace_id)
+        .test_harness_container_status(session.workspace_id)
         .await
         .unwrap();
     assert!(
@@ -614,16 +603,14 @@ async fn harness_container_sandbox_egress_allow_all() {
     let mut app = api::router(state.clone());
     let session = create_session_with_provider(&mut app, git_repo.path(), "codex").await;
     let workspace = state
-        .core
-        .stores
+        .test_store_manager()
         .global()
         .get_workspace(session.workspace_id)
         .await
         .unwrap()
         .expect("workspace");
     let workspace_store = state
-        .core
-        .stores
+        .test_store_manager()
         .workspace(session.workspace_id)
         .await
         .unwrap();
@@ -633,14 +620,7 @@ async fn harness_container_sandbox_egress_allow_all() {
         .unwrap()
         .expect("worktree");
     state
-        .execution
-        .harness
-        .prepare(
-            &workspace,
-            &worktree,
-            &execution_settings,
-            &state.core.daemon_url,
-        )
+        .test_prepare_harness(&workspace, &worktree, &execution_settings)
         .await
         .expect("failed to prepare container runtime");
 
@@ -648,9 +628,7 @@ async fn harness_container_sandbox_egress_allow_all() {
     post_message(&mut app, &session_id, PROMPT).await;
     wait_for_done(&state, session.id).await;
     let container_status = state
-        .execution
-        .harness
-        .container_status(session.workspace_id)
+        .test_harness_container_status(session.workspace_id)
         .await
         .unwrap();
     assert_eq!(
@@ -747,16 +725,14 @@ async fn harness_container_sandbox_egress_deny_all() {
     let mut app = api::router(state.clone());
     let session = create_session_with_provider(&mut app, git_repo.path(), "codex").await;
     let workspace = state
-        .core
-        .stores
+        .test_store_manager()
         .global()
         .get_workspace(session.workspace_id)
         .await
         .unwrap()
         .expect("workspace");
     let workspace_store = state
-        .core
-        .stores
+        .test_store_manager()
         .workspace(session.workspace_id)
         .await
         .unwrap();
@@ -766,14 +742,7 @@ async fn harness_container_sandbox_egress_deny_all() {
         .unwrap()
         .expect("worktree");
     state
-        .execution
-        .harness
-        .prepare(
-            &workspace,
-            &worktree,
-            &execution_settings,
-            &state.core.daemon_url,
-        )
+        .test_prepare_harness(&workspace, &worktree, &execution_settings)
         .await
         .expect("failed to prepare container runtime");
 
@@ -781,9 +750,7 @@ async fn harness_container_sandbox_egress_deny_all() {
     post_message(&mut app, &session_id, PROMPT).await;
     wait_for_done(&state, session.id).await;
     let container_status = state
-        .execution
-        .harness
-        .container_status(session.workspace_id)
+        .test_harness_container_status(session.workspace_id)
         .await
         .unwrap();
     assert!(

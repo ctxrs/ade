@@ -104,10 +104,7 @@ async fn write_invalid_agent_server_config(data_root: &Path) {
 
 async fn seed_provider_status(state: &Arc<DaemonState>, status: ProviderStatus) {
     let provider_id = status.provider_id.clone();
-    state
-        .providers
-        .upsert_provider_status(provider_id, status)
-        .await;
+    state.test_upsert_provider_status(provider_id, status).await;
 }
 
 fn write_fake_node_runtime(path: &Path, tag: &str) {
@@ -497,8 +494,7 @@ async fn write_workspace_container_execution_without_runtime_probe(
     workspace_id: uuid::Uuid,
 ) {
     let store = state
-        .core
-        .stores
+        .test_store_manager()
         .workspace(ctx_core::ids::WorkspaceId(workspace_id))
         .await
         .expect("workspace store");
@@ -523,13 +519,9 @@ async fn assert_target_adapter_not_cached(
 ) {
     let cache_key = target_adapter_cache_key(provider_id, target)
         .expect("non-host target should have a target adapter cache key");
-    let cached = state
-        .providers
-        .has_target_provider_adapter(&cache_key)
-        .await;
+    let cached = state.test_has_target_provider_adapter(&cache_key).await;
     let keys = state
-        .providers
-        .target_provider_adapter_entries()
+        .test_target_provider_adapter_entries()
         .await
         .into_iter()
         .map(|(key, _)| key)
@@ -1022,8 +1014,7 @@ async fn wait_for_tracked_install_id(
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     loop {
         if let Some(install_id) = state
-            .providers
-            .tracked_install_ids(provider_id, target)
+            .test_tracked_install_ids(provider_id, target)
             .await
             .into_iter()
             .next()
@@ -2047,8 +2038,7 @@ async fn provider_target_scoped_installs_install_all_repairs_invalid_bridge_when
     }
 
     let bridge_install_ids = state
-        .providers
-        .tracked_install_ids("acp-crp-bridge", Some(InstallTarget::Container))
+        .test_tracked_install_ids("acp-crp-bridge", Some(InstallTarget::Container))
         .await;
     assert_eq!(
         bridge_install_ids,
@@ -2109,8 +2099,7 @@ async fn acp_container_install_happy_path_installs_bridge_prerequisite_and_keeps
     );
 
     let bridge_install_id = state
-        .providers
-        .tracked_install_ids("acp-crp-bridge", Some(InstallTarget::Container))
+        .test_tracked_install_ids("acp-crp-bridge", Some(InstallTarget::Container))
         .await
         .into_iter()
         .next()
@@ -2767,8 +2756,7 @@ async fn acp_container_install_joins_existing_bridge_install_and_surfaces_short_
     );
 
     let bridge_install_ids = state
-        .providers
-        .tracked_install_ids("acp-crp-bridge", Some(InstallTarget::Container))
+        .test_tracked_install_ids("acp-crp-bridge", Some(InstallTarget::Container))
         .await;
     assert_eq!(
         bridge_install_ids,

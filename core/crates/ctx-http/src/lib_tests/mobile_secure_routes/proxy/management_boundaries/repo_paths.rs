@@ -12,7 +12,7 @@ async fn mobile_secure_proxy_rejects_repo_path_management_routes() {
     let clone_parent = sandbox.path().join("mobile-clone-parent");
     let init_path = sandbox.path().join("mobile-init-target");
     let existing_repo = setup_git_repo().await;
-    let staging_root = state.core.data_root.join("workspaces").join("staging");
+    let staging_root = state.test_data_root().join("workspaces").join("staging");
 
     let cases = [
         (

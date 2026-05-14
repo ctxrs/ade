@@ -151,10 +151,7 @@ async fn setup_state_with_providers(
     );
     for (provider_id, provider) in statuses {
         let status = provider.inspect().await.unwrap();
-        state
-            .providers
-            .upsert_provider_status(provider_id, status)
-            .await;
+        state.test_upsert_provider_status(provider_id, status).await;
     }
     let app = common::router(state.clone());
     let server = common::spawn_http_server(app).await;
@@ -1307,10 +1304,7 @@ async fn archive_agent_emits_workspace_stream_session_removed_for_explicit_child
                 session_id, ..
             } if *session_id == child.id => {
                 state
-                    .workspaces
-                    .workspace_active_snapshot
-                    .publish_session_head_delta(
-                        child.workspace_id,
+                    .test_publish_session_head_delta(
                         &child,
                         SessionHeadDelta {
                             session_id: child.id,
@@ -1933,8 +1927,7 @@ async fn subagent_wait_fails_when_child_stalls_without_done_or_outcome() {
     let (_data_dir, state, server, _store, parent_id) =
         setup_state_with_providers(repo.path(), providers).await;
     state
-        .sessions
-        .set_provider_inactivity_timeout(Duration::from_millis(250))
+        .test_set_provider_inactivity_timeout(Duration::from_millis(250))
         .await;
     let client = &server.client;
     let base = &server.base_url;

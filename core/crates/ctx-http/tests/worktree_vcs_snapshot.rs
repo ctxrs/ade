@@ -128,8 +128,7 @@ async fn worktree_vcs_disabled_mode_suppresses_projection_work() {
     let mut next_active = HashSet::new();
     next_active.insert(worktree.id);
     state
-        .workspaces
-        .update_worktree_vcs_activity(&HashSet::new(), &next_active)
+        .test_update_worktree_vcs_activity(&HashSet::new(), &next_active)
         .await;
 
     assert!(!state.worktree_vcs_enabled());
@@ -178,8 +177,7 @@ async fn worktree_vcs_snapshot_clears_stale_counts_when_repo_becomes_unavailable
     let mut next_active = HashSet::new();
     next_active.insert(worktree.id);
     state
-        .workspaces
-        .update_worktree_vcs_activity(&HashSet::new(), &next_active)
+        .test_update_worktree_vcs_activity(&HashSet::new(), &next_active)
         .await;
     tokio::fs::write(
         Path::new(&worktree.root_path).join("file.txt"),
@@ -267,8 +265,7 @@ async fn worktree_vcs_snapshot_populates_jj_head_commit_metadata() {
     let mut next_active = HashSet::new();
     next_active.insert(worktree.id);
     state
-        .workspaces
-        .update_worktree_vcs_activity(&HashSet::new(), &next_active)
+        .test_update_worktree_vcs_activity(&HashSet::new(), &next_active)
         .await;
 
     emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, true)
@@ -327,8 +324,7 @@ async fn worktree_vcs_snapshot_recovers_when_repo_is_reinitialized() {
     let mut next_active = HashSet::new();
     next_active.insert(worktree.id);
     state
-        .workspaces
-        .update_worktree_vcs_activity(&HashSet::new(), &next_active)
+        .test_update_worktree_vcs_activity(&HashSet::new(), &next_active)
         .await;
 
     let worktree_root = Path::new(&worktree.root_path);
@@ -415,8 +411,7 @@ async fn worktree_vcs_snapshot_noop_emit_preserves_freshness() {
     let mut next_active = HashSet::new();
     next_active.insert(worktree.id);
     state
-        .workspaces
-        .update_worktree_vcs_activity(&HashSet::new(), &next_active)
+        .test_update_worktree_vcs_activity(&HashSet::new(), &next_active)
         .await;
 
     refresh_worktree_vcs_summary(state.clone(), worktree.clone())
@@ -474,8 +469,7 @@ async fn worktree_vcs_snapshot_does_not_repopulate_cache_after_activity_eviction
     let mut next_active = HashSet::new();
     next_active.insert(worktree.id);
     state
-        .workspaces
-        .update_worktree_vcs_activity(&HashSet::new(), &next_active)
+        .test_update_worktree_vcs_activity(&HashSet::new(), &next_active)
         .await;
 
     emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, true)
@@ -487,8 +481,7 @@ async fn worktree_vcs_snapshot_does_not_repopulate_cache_after_activity_eviction
     );
 
     state
-        .workspaces
-        .update_worktree_vcs_activity(&next_active, &HashSet::new())
+        .test_update_worktree_vcs_activity(&next_active, &HashSet::new())
         .await;
     assert!(
         state.get_worktree_vcs_snapshot(worktree.id).await.is_none(),
@@ -543,8 +536,7 @@ async fn worktree_vcs_snapshot_watcher_recomputes_when_target_branch_ref_moves()
     let mut next_active = HashSet::new();
     next_active.insert(worktree.id);
     state
-        .workspaces
-        .update_worktree_vcs_activity(&HashSet::new(), &next_active)
+        .test_update_worktree_vcs_activity(&HashSet::new(), &next_active)
         .await;
 
     let watcher = tokio::spawn(run_git_status_watcher(state.clone(), worktree.clone()));
@@ -648,8 +640,7 @@ async fn worktree_vcs_snapshot_preserves_head_when_configured_target_branch_disa
     let mut next_active = HashSet::new();
     next_active.insert(worktree.id);
     state
-        .workspaces
-        .update_worktree_vcs_activity(&HashSet::new(), &next_active)
+        .test_update_worktree_vcs_activity(&HashSet::new(), &next_active)
         .await;
 
     let worktree_root = Path::new(&worktree.root_path);
