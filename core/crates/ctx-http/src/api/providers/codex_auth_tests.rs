@@ -63,7 +63,7 @@ async fn codex_subscription_selection_requires_real_auth() {
 }
 
 #[tokio::test]
-async fn codex_subscription_selection_counts_host_auth_candidate_as_active_auth_config() {
+async fn codex_subscription_selection_does_not_count_unimported_host_auth_as_active() {
     let _env_lock = lock_env().await;
     let _guard = EnvGuard::without("CTX_CODEX_HOME");
     let _seed_guard = EnvGuard::without("CTX_SEED_CODEX_AUTH_FROM_HOST");
@@ -89,5 +89,5 @@ async fn codex_subscription_selection_counts_host_auth_candidate_as_active_auth_
     let active = provider_has_active_auth_config(root.path(), "codex", Some(&source))
         .await
         .unwrap();
-    assert!(active);
+    assert!(!active);
 }

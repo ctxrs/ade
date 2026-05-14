@@ -290,6 +290,16 @@ pub(super) fn extract_auth_url_from_stderr_line(line: &str) -> Option<String> {
 
 pub(super) fn extract_auth_error_from_stderr_line(line: &str) -> Option<String> {
     let lowered = line.to_ascii_lowercase();
+    if (lowered.contains("refresh token") && lowered.contains("already used"))
+        || lowered.contains("refresh_token_reused")
+        || (lowered.contains("access token could not be refreshed")
+            && lowered.contains("unauthorized"))
+    {
+        return Some(
+            "Provider sign-in needs renewal. Please sign in again in ctx; the previous refresh token was rejected by the upstream OAuth server."
+                .to_string(),
+        );
+    }
     if lowered.contains("auggie does not currently support authenticating over acp")
         || lowered.contains("please run `auggie login` from your terminal then try again")
     {
@@ -356,6 +366,17 @@ mod tests {
             extract_auth_error_from_stderr_line(line).as_deref(),
             Some(
                 "Auggie does not currently support ACP authentication in this environment. Run `auggie login` via the fallback flow."
+            )
+        );
+    }
+
+    #[test]
+    fn extract_auth_error_from_stderr_line_detects_codex_refresh_token_reuse() {
+        let line = r#"Error: Your access token could not be refreshed because your refresh token was already used. Details: "unauthorized""#;
+        assert_eq!(
+            extract_auth_error_from_stderr_line(line).as_deref(),
+            Some(
+                "Provider sign-in needs renewal. Please sign in again in ctx; the previous refresh token was rejected by the upstream OAuth server."
             )
         );
     }

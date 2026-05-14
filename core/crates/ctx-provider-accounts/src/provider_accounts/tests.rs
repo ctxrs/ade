@@ -57,6 +57,7 @@ async fn codex_env_mirrors_active_account_auth_into_runtime_home() {
             label: "Account".to_string(),
             kind: CODEX_CREDENTIAL_KIND_API_KEY.to_string(),
             email: None,
+            provider_account_id: None,
             plan_type: None,
             created_at: Utc::now(),
             last_used_at: None,
@@ -84,6 +85,51 @@ async fn codex_env_mirrors_active_account_auth_into_runtime_home() {
 }
 
 #[tokio::test]
+async fn codex_account_deletion_marker_blocks_active_runtime_auth() {
+    let _env_lock = lock_env().await;
+    let _guard = EnvGuard::without("CTX_CODEX_HOME");
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let registry = CodexAccountRegistry {
+        active_account_id: Some("acct-123".to_string()),
+        accounts: vec![CodexAccountEntry {
+            id: "acct-123".to_string(),
+            label: "Account".to_string(),
+            kind: CODEX_CREDENTIAL_KIND_API_KEY.to_string(),
+            email: None,
+            provider_account_id: None,
+            plan_type: None,
+            created_at: Utc::now(),
+            last_used_at: None,
+            secret_ref: None,
+            endpoint_profile: CodexEndpointProfile::default(),
+        }],
+    };
+    save_codex_registry(root, &registry).await.unwrap();
+    let account_dir = ensure_codex_account_dir(root, "acct-123").await.unwrap();
+    tokio::fs::write(
+        account_dir.join("auth.json"),
+        br#"{"OPENAI_API_KEY":"test-key"}"#,
+    )
+    .await
+    .unwrap();
+
+    begin_codex_account_deletion(root, "acct-123")
+        .await
+        .unwrap();
+
+    let env = codex_env_for_active_account(root).await.unwrap();
+    let home = PathBuf::from(env.get("CODEX_HOME").unwrap());
+    assert_eq!(home, codex_runtime_home(root));
+    assert!(tokio::fs::metadata(home.join("auth.json")).await.is_err());
+    assert!(codex_account_deletion_in_progress(root, "acct-123")
+        .await
+        .unwrap());
+    let registry = load_codex_registry(root).await.unwrap();
+    assert!(registry.active_account_id.is_none());
+}
+
+#[tokio::test]
 async fn codex_env_projects_active_account_auth_into_runtime_root() {
     let _env_lock = lock_env().await;
     let _guard = EnvGuard::without("CTX_CODEX_HOME");
@@ -97,6 +143,7 @@ async fn codex_env_projects_active_account_auth_into_runtime_root() {
             label: "Account".to_string(),
             kind: CODEX_CREDENTIAL_KIND_API_KEY.to_string(),
             email: None,
+            provider_account_id: None,
             plan_type: None,
             created_at: Utc::now(),
             last_used_at: None,
@@ -312,7 +359,7 @@ async fn codex_env_seeds_runtime_home_from_host_when_enabled_without_active_acco
 }
 
 #[tokio::test]
-async fn codex_env_uses_host_auth_candidate_without_active_account() {
+async fn codex_env_does_not_implicitly_copy_host_auth_without_active_account() {
     let _env_lock = lock_env().await;
     let _guard = EnvGuard::without("CTX_CODEX_HOME");
     let _seed_guard = EnvGuard::without(CTX_SEED_CODEX_AUTH_FROM_HOST_ENV);
@@ -333,7 +380,8 @@ async fn codex_env_uses_host_auth_candidate_without_active_account() {
     let env = codex_env_for_active_account(dir.path()).await.unwrap();
     let home = env.get("CODEX_HOME").unwrap();
     assert_eq!(home, &codex_runtime_home(dir.path()).to_string_lossy());
-    ensure_codex_auth_ready(Path::new(home)).await.unwrap();
+    let err = ensure_codex_auth_ready(Path::new(home)).await.unwrap_err();
+    assert!(err.to_string().contains("missing codex auth file"));
 }
 
 #[tokio::test]
@@ -429,6 +477,7 @@ async fn ingested_secret_projects_even_without_account_dir_auth() {
             label: "acct".to_string(),
             kind: CODEX_CREDENTIAL_KIND_OAUTH.to_string(),
             email: None,
+            provider_account_id: None,
             plan_type: None,
             created_at: Utc::now(),
             last_used_at: None,
@@ -459,7 +508,377 @@ async fn ingested_secret_projects_even_without_account_dir_auth() {
 }
 
 #[tokio::test]
-async fn runtime_home_refresh_reconciles_back_to_active_secret() {
+async fn oauth_secret_uses_broker_home_without_runtime_copy() {
+    let _env_lock = lock_env().await;
+    let _guard = EnvGuard::without("CTX_CODEX_HOME");
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let account_id = "acct-oauth";
+    let secret_ref = format!("{account_id}.json");
+    let registry = CodexAccountRegistry {
+        active_account_id: Some(account_id.to_string()),
+        accounts: vec![CodexAccountEntry {
+            id: account_id.to_string(),
+            label: "acct".to_string(),
+            kind: CODEX_CREDENTIAL_KIND_OAUTH.to_string(),
+            email: None,
+            provider_account_id: Some("upstream-acct".to_string()),
+            plan_type: None,
+            created_at: Utc::now(),
+            last_used_at: None,
+            secret_ref: Some(secret_ref.clone()),
+            endpoint_profile: CodexEndpointProfile::default(),
+        }],
+    };
+    save_codex_registry(root, &registry).await.unwrap();
+    tokio::fs::create_dir_all(codex_secrets_root(root))
+        .await
+        .unwrap();
+    tokio::fs::write(
+        codex_secret_path(root, &secret_ref).unwrap(),
+        br#"{"version":1,"auth":{"tokens":{"access_token":"access","refresh_token":"refresh","account_id":"upstream-acct"}}}"#,
+    )
+    .await
+    .unwrap();
+
+    let env = codex_env_for_active_account(root).await.unwrap();
+    let home = env.get("CODEX_HOME").unwrap();
+    assert_eq!(home, &codex_broker_home(root, account_id).to_string_lossy());
+    ensure_codex_auth_ready(Path::new(home)).await.unwrap();
+    assert!(
+        !codex_runtime_home(root).join("auth.json").exists(),
+        "OAuth refresh tokens must not be copied into the shared runtime home"
+    );
+}
+
+#[tokio::test]
+async fn usage_hydration_migrates_raw_oauth_account_to_broker_home() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let account_id = "acct-oauth";
+    let registry = CodexAccountRegistry {
+        active_account_id: Some(account_id.to_string()),
+        accounts: vec![CodexAccountEntry {
+            id: account_id.to_string(),
+            label: "acct".to_string(),
+            kind: CODEX_CREDENTIAL_KIND_OAUTH.to_string(),
+            email: None,
+            provider_account_id: None,
+            plan_type: None,
+            created_at: Utc::now(),
+            last_used_at: None,
+            secret_ref: None,
+            endpoint_profile: CodexEndpointProfile::default(),
+        }],
+    };
+    save_codex_registry(root, &registry).await.unwrap();
+    let account_dir = ensure_codex_account_dir(root, account_id).await.unwrap();
+    tokio::fs::write(
+        account_dir.join("auth.json"),
+        br#"{"tokens":{"access_token":"legacy-access","refresh_token":"legacy-refresh","account_id":"upstream-acct"}}"#,
+    )
+    .await
+    .unwrap();
+
+    let hydrated = hydrate_codex_account_home_from_secret(root, account_id)
+        .await
+        .unwrap();
+
+    assert!(hydrated);
+    let env = codex_env_for_account(root, account_id);
+    let home = env.get("CODEX_HOME").unwrap();
+    assert_eq!(home, &codex_broker_home(root, account_id).to_string_lossy());
+    ensure_codex_auth_ready(Path::new(home)).await.unwrap();
+    assert!(
+        !account_dir.join("auth.json").exists(),
+        "legacy raw OAuth auth should be removed after broker adoption"
+    );
+    assert!(
+        !codex_runtime_home(root).join("auth.json").exists(),
+        "usage hydration must not copy OAuth refresh tokens into the runtime home"
+    );
+    let registry = load_codex_registry(root).await.unwrap();
+    let entry = registry
+        .accounts
+        .iter()
+        .find(|entry| entry.id == account_id)
+        .unwrap();
+    assert!(entry.secret_ref.is_some());
+    assert_eq!(entry.provider_account_id.as_deref(), Some("upstream-acct"));
+}
+
+#[tokio::test]
+async fn usage_hydration_adopts_legacy_oauth_home_before_stale_secret() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let account_id = "acct-oauth";
+    let secret_ref = format!("{account_id}.json");
+    let registry = CodexAccountRegistry {
+        active_account_id: Some(account_id.to_string()),
+        accounts: vec![CodexAccountEntry {
+            id: account_id.to_string(),
+            label: "acct".to_string(),
+            kind: CODEX_CREDENTIAL_KIND_OAUTH.to_string(),
+            email: None,
+            provider_account_id: Some("upstream-acct".to_string()),
+            plan_type: None,
+            created_at: Utc::now(),
+            last_used_at: None,
+            secret_ref: Some(secret_ref.clone()),
+            endpoint_profile: CodexEndpointProfile::default(),
+        }],
+    };
+    save_codex_registry(root, &registry).await.unwrap();
+    tokio::fs::create_dir_all(codex_secrets_root(root))
+        .await
+        .unwrap();
+    tokio::fs::write(
+        codex_secret_path(root, &secret_ref).unwrap(),
+        br#"{"version":1,"auth":{"tokens":{"access_token":"stale-access","refresh_token":"stale-refresh","account_id":"upstream-acct"}}}"#,
+    )
+    .await
+    .unwrap();
+    let account_dir = ensure_codex_account_dir(root, account_id).await.unwrap();
+    tokio::fs::write(
+        account_dir.join("auth.json"),
+        br#"{"tokens":{"access_token":"fresh-access","refresh_token":"fresh-refresh","account_id":"upstream-acct"}}"#,
+    )
+    .await
+    .unwrap();
+
+    let hydrated = hydrate_codex_account_home_from_secret(root, account_id)
+        .await
+        .unwrap();
+
+    assert!(hydrated);
+    let broker_payload =
+        tokio::fs::read_to_string(codex_broker_home(root, account_id).join("auth.json"))
+            .await
+            .unwrap();
+    assert!(broker_payload.contains("fresh-access"));
+    assert!(broker_payload.contains("fresh-refresh"));
+    assert!(!broker_payload.contains("stale-access"));
+    assert!(!account_dir.join("auth.json").exists());
+    let secret_payload = tokio::fs::read_to_string(codex_secret_path(root, &secret_ref).unwrap())
+        .await
+        .unwrap();
+    assert!(secret_payload.contains("fresh-access"));
+    assert!(!secret_payload.contains("stale-access"));
+}
+
+#[tokio::test]
+async fn usage_hydration_preserves_existing_broker_authority_for_raw_oauth_account() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let account_id = "acct-oauth";
+    let registry = CodexAccountRegistry {
+        active_account_id: Some(account_id.to_string()),
+        accounts: vec![CodexAccountEntry {
+            id: account_id.to_string(),
+            label: "acct".to_string(),
+            kind: CODEX_CREDENTIAL_KIND_OAUTH.to_string(),
+            email: None,
+            provider_account_id: None,
+            plan_type: None,
+            created_at: Utc::now(),
+            last_used_at: None,
+            secret_ref: None,
+            endpoint_profile: CodexEndpointProfile::default(),
+        }],
+    };
+    save_codex_registry(root, &registry).await.unwrap();
+    let account_dir = ensure_codex_account_dir(root, account_id).await.unwrap();
+    tokio::fs::write(
+        account_dir.join("auth.json"),
+        br#"{"tokens":{"access_token":"old-access","refresh_token":"old-refresh","account_id":"upstream-acct"}}"#,
+    )
+    .await
+    .unwrap();
+    tokio::fs::create_dir_all(codex_broker_home(root, account_id))
+        .await
+        .unwrap();
+    tokio::fs::write(
+        codex_broker_home(root, account_id).join("auth.json"),
+        br#"{"tokens":{"access_token":"new-access","refresh_token":"new-refresh","account_id":"upstream-acct"}}"#,
+    )
+    .await
+    .unwrap();
+
+    hydrate_codex_account_home_from_secret(root, account_id)
+        .await
+        .unwrap();
+
+    let broker_payload =
+        tokio::fs::read_to_string(codex_broker_home(root, account_id).join("auth.json"))
+            .await
+            .unwrap();
+    assert!(broker_payload.contains("new-access"));
+    assert!(broker_payload.contains("new-refresh"));
+    assert!(!broker_payload.contains("old-access"));
+    assert!(!account_dir.join("auth.json").exists());
+    let registry = load_codex_registry(root).await.unwrap();
+    let secret_ref = registry.accounts[0].secret_ref.as_deref().unwrap();
+    let secret_payload = tokio::fs::read_to_string(codex_secret_path(root, secret_ref).unwrap())
+        .await
+        .unwrap();
+    assert!(secret_payload.contains("new-access"));
+    assert!(!secret_payload.contains("old-access"));
+}
+
+#[tokio::test]
+async fn usage_hydration_projects_raw_api_key_account_to_broker_home() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let account_id = "acct-api-key";
+    let registry = CodexAccountRegistry {
+        active_account_id: Some(account_id.to_string()),
+        accounts: vec![CodexAccountEntry {
+            id: account_id.to_string(),
+            label: "acct".to_string(),
+            kind: CODEX_CREDENTIAL_KIND_API_KEY.to_string(),
+            email: None,
+            provider_account_id: None,
+            plan_type: None,
+            created_at: Utc::now(),
+            last_used_at: None,
+            secret_ref: None,
+            endpoint_profile: CodexEndpointProfile::default(),
+        }],
+    };
+    save_codex_registry(root, &registry).await.unwrap();
+    let account_dir = ensure_codex_account_dir(root, account_id).await.unwrap();
+    tokio::fs::write(
+        account_dir.join("auth.json"),
+        br#"{"OPENAI_API_KEY":"test-key"}"#,
+    )
+    .await
+    .unwrap();
+
+    let hydrated = hydrate_codex_account_home_from_secret(root, account_id)
+        .await
+        .unwrap();
+
+    assert!(hydrated);
+    let env = codex_env_for_account(root, account_id);
+    let home = env.get("CODEX_HOME").unwrap();
+    assert_eq!(home, &codex_broker_home(root, account_id).to_string_lossy());
+    ensure_codex_auth_ready(Path::new(home)).await.unwrap();
+    assert!(!account_dir.join("auth.json").exists());
+    let registry = load_codex_registry(root).await.unwrap();
+    assert!(registry.accounts[0].secret_ref.is_some());
+}
+
+#[tokio::test]
+async fn oauth_broker_launch_clears_legacy_runtime_projection() {
+    let _env_lock = lock_env().await;
+    let _guard = EnvGuard::without("CTX_CODEX_HOME");
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let account_id = "acct-oauth";
+    let secret_ref = format!("{account_id}.json");
+    let registry = CodexAccountRegistry {
+        active_account_id: Some(account_id.to_string()),
+        accounts: vec![CodexAccountEntry {
+            id: account_id.to_string(),
+            label: "acct".to_string(),
+            kind: CODEX_CREDENTIAL_KIND_OAUTH.to_string(),
+            email: None,
+            provider_account_id: Some("upstream-acct".to_string()),
+            plan_type: None,
+            created_at: Utc::now(),
+            last_used_at: None,
+            secret_ref: Some(secret_ref.clone()),
+            endpoint_profile: CodexEndpointProfile::default(),
+        }],
+    };
+    save_codex_registry(root, &registry).await.unwrap();
+    tokio::fs::create_dir_all(codex_secrets_root(root))
+        .await
+        .unwrap();
+    tokio::fs::write(
+        codex_secret_path(root, &secret_ref).unwrap(),
+        br#"{"version":1,"auth":{"tokens":{"access_token":"secret-access","refresh_token":"secret-refresh","account_id":"upstream-acct"}}}"#,
+    )
+    .await
+    .unwrap();
+    tokio::fs::create_dir_all(codex_runtime_home(root))
+        .await
+        .unwrap();
+    tokio::fs::write(
+        codex_runtime_home(root).join("auth.json"),
+        br#"{"tokens":{"access_token":"legacy-access","refresh_token":"legacy-refresh","account_id":"upstream-acct"}}"#,
+    )
+    .await
+    .unwrap();
+    write_runtime_owner_marker(root, account_id).await.unwrap();
+
+    let env = codex_env_for_active_account(root).await.unwrap();
+    let expected_home = codex_broker_home(root, account_id)
+        .to_string_lossy()
+        .to_string();
+    assert_eq!(
+        env.get("CODEX_HOME").map(String::as_str),
+        Some(expected_home.as_str())
+    );
+    assert!(
+        !codex_runtime_home(root).join("auth.json").exists(),
+        "legacy runtime OAuth projection should be removed after broker adoption"
+    );
+    ensure_codex_auth_ready(&codex_broker_home(root, account_id))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn oauth_secret_rejects_runtime_root_projection() {
+    let _env_lock = lock_env().await;
+    let _guard = EnvGuard::without("CTX_CODEX_HOME");
+    let dir = tempfile::tempdir().unwrap();
+    let runtime_root = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let account_id = "acct-oauth";
+    let secret_ref = format!("{account_id}.json");
+    let registry = CodexAccountRegistry {
+        active_account_id: Some(account_id.to_string()),
+        accounts: vec![CodexAccountEntry {
+            id: account_id.to_string(),
+            label: "acct".to_string(),
+            kind: CODEX_CREDENTIAL_KIND_OAUTH.to_string(),
+            email: None,
+            provider_account_id: None,
+            plan_type: None,
+            created_at: Utc::now(),
+            last_used_at: None,
+            secret_ref: Some(secret_ref.clone()),
+            endpoint_profile: CodexEndpointProfile::default(),
+        }],
+    };
+    save_codex_registry(root, &registry).await.unwrap();
+    tokio::fs::create_dir_all(codex_secrets_root(root))
+        .await
+        .unwrap();
+    tokio::fs::write(
+        codex_secret_path(root, &secret_ref).unwrap(),
+        br#"{"version":1,"auth":{"tokens":{"access_token":"access","refresh_token":"refresh"}}}"#,
+    )
+    .await
+    .unwrap();
+
+    let err = codex_env_for_active_account_with_runtime_root(root, runtime_root.path())
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("cannot be copied into this sandbox runtime"),
+        "unexpected error: {err:#}"
+    );
+    assert!(!codex_runtime_home(runtime_root.path())
+        .join("auth.json")
+        .exists());
+}
+
+#[tokio::test]
+async fn existing_broker_home_is_not_rewritten_by_stale_secret() {
     let _env_lock = lock_env().await;
     let _guard = EnvGuard::without("CTX_CODEX_HOME");
     let dir = tempfile::tempdir().unwrap();
@@ -473,6 +892,7 @@ async fn runtime_home_refresh_reconciles_back_to_active_secret() {
             label: "acct".to_string(),
             kind: CODEX_CREDENTIAL_KIND_OAUTH.to_string(),
             email: None,
+            provider_account_id: None,
             plan_type: None,
             created_at: Utc::now(),
             last_used_at: None,
@@ -490,24 +910,29 @@ async fn runtime_home_refresh_reconciles_back_to_active_secret() {
     )
     .await
     .unwrap();
-    tokio::fs::create_dir_all(codex_runtime_home(root))
+    tokio::fs::create_dir_all(codex_broker_home(root, account_id))
         .await
         .unwrap();
     tokio::fs::write(
-        codex_runtime_home(root).join("auth.json"),
+        codex_broker_home(root, account_id).join("auth.json"),
         br#"{"tokens":{"access_token":"new-access","refresh_token":"new-refresh"}}"#,
     )
     .await
     .unwrap();
-    write_runtime_owner_marker(root, account_id).await.unwrap();
 
     let _ = codex_env_for_active_account(root).await.unwrap();
 
     let secret_payload = tokio::fs::read_to_string(codex_secret_path(root, &secret_ref).unwrap())
         .await
         .unwrap();
-    assert!(secret_payload.contains("new-access"));
-    assert!(secret_payload.contains("new-refresh"));
+    assert!(secret_payload.contains("old-access"));
+    assert!(secret_payload.contains("old-refresh"));
+    let broker_payload =
+        tokio::fs::read_to_string(codex_broker_home(root, account_id).join("auth.json"))
+            .await
+            .unwrap();
+    assert!(broker_payload.contains("new-access"));
+    assert!(broker_payload.contains("new-refresh"));
 }
 
 #[tokio::test]
@@ -523,6 +948,7 @@ async fn removing_account_cleans_secret_file() {
             label: "acct".to_string(),
             kind: CODEX_CREDENTIAL_KIND_OAUTH.to_string(),
             email: None,
+            provider_account_id: None,
             plan_type: None,
             created_at: Utc::now(),
             last_used_at: None,
@@ -546,6 +972,51 @@ async fn removing_account_cleans_secret_file() {
 }
 
 #[tokio::test]
+async fn removing_account_leaves_broker_home_for_post_restart_cleanup() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let account_id = "acct-locked";
+    let registry = CodexAccountRegistry {
+        active_account_id: Some(account_id.to_string()),
+        accounts: vec![CodexAccountEntry {
+            id: account_id.to_string(),
+            label: "acct".to_string(),
+            kind: CODEX_CREDENTIAL_KIND_OAUTH.to_string(),
+            email: None,
+            provider_account_id: None,
+            plan_type: None,
+            created_at: Utc::now(),
+            last_used_at: None,
+            secret_ref: None,
+            endpoint_profile: CodexEndpointProfile::default(),
+        }],
+    };
+    save_codex_registry(root, &registry).await.unwrap();
+    let broker_root = codex_broker_home(root, account_id)
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    tokio::fs::create_dir_all(broker_root.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::write(&broker_root, b"not-a-directory")
+        .await
+        .unwrap();
+
+    let registry = remove_codex_account(root, account_id).await.unwrap();
+
+    assert!(registry.accounts.is_empty());
+    assert!(registry.active_account_id.is_none());
+    let persisted = load_codex_registry(root).await.unwrap();
+    assert!(persisted.accounts.is_empty());
+    assert!(persisted.active_account_id.is_none());
+    assert!(
+        broker_root.exists(),
+        "failed broker cleanup should be deferred after registry removal"
+    );
+}
+
+#[tokio::test]
 async fn removing_account_with_unsafe_secret_ref_preserves_outside_file_and_clears_registry() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
@@ -562,6 +1033,7 @@ async fn removing_account_with_unsafe_secret_ref_preserves_outside_file_and_clea
             label: "acct".to_string(),
             kind: CODEX_CREDENTIAL_KIND_OAUTH.to_string(),
             email: None,
+            provider_account_id: None,
             plan_type: None,
             created_at: Utc::now(),
             last_used_at: None,
@@ -640,7 +1112,7 @@ async fn import_host_auth_persists_secret_and_sets_active() {
     let auth_path = host_dir.path().join("auth.json");
     tokio::fs::write(
         &auth_path,
-        br#"{"tokens":{"access_token":"a","refresh_token":"b"}}"#,
+        br#"{"tokens":{"access_token":"a","refresh_token":"b","account_id":"upstream-1"}}"#,
     )
     .await
     .unwrap();
@@ -660,6 +1132,7 @@ async fn import_host_auth_persists_secret_and_sets_active() {
         .expect("imported account");
     assert_eq!(entry.label, "Imported");
     assert_eq!(entry.kind, CODEX_CREDENTIAL_KIND_OAUTH);
+    assert_eq!(entry.provider_account_id.as_deref(), Some("upstream-1"));
     assert!(entry.secret_ref.is_some());
     assert_eq!(
         entry.endpoint_profile.api_shape,
@@ -681,7 +1154,7 @@ async fn import_host_auth_dedupes_existing_account() {
     let auth_path = host_dir.path().join("auth.json");
     tokio::fs::write(
         &auth_path,
-        br#"{"tokens":{"access_token":"a","refresh_token":"b"}}"#,
+        br#"{"tokens":{"access_token":"access-1","refresh_token":"refresh-1","account_id":"upstream-1"}}"#,
     )
     .await
     .unwrap();
@@ -695,13 +1168,43 @@ async fn import_host_auth_dedupes_existing_account() {
         .unwrap();
     let first_active = first.active_account_id.clone().expect("active account");
     assert_eq!(first.accounts.len(), 1);
+    let mut legacy_registry = first.clone();
+    legacy_registry.accounts[0].provider_account_id = None;
+    save_codex_registry(root, &legacy_registry).await.unwrap();
 
+    tokio::fs::write(
+        &auth_path,
+        br#"{"tokens":{"access_token":"access-2","refresh_token":"refresh-2","account_id":"upstream-1"}}"#,
+    )
+    .await
+    .unwrap();
     let second = import_host_codex_auth_to_secret_store(root, Some("Second".to_string()))
         .await
         .unwrap();
     let second_active = second.active_account_id.clone().expect("active account");
     assert_eq!(second.accounts.len(), 1);
     assert_eq!(second_active, first_active);
+    assert_eq!(
+        second.accounts[0].provider_account_id.as_deref(),
+        Some("upstream-1")
+    );
+    let secret_ref = second.accounts[0]
+        .secret_ref
+        .as_deref()
+        .expect("secret ref");
+    let secret_payload = tokio::fs::read_to_string(codex_secret_path(root, secret_ref).unwrap())
+        .await
+        .unwrap();
+    assert!(secret_payload.contains("access-1"));
+    assert!(secret_payload.contains("refresh-1"));
+    assert!(!secret_payload.contains("access-2"));
+    let broker_payload =
+        tokio::fs::read_to_string(codex_broker_home(root, &second_active).join("auth.json"))
+            .await
+            .unwrap();
+    assert!(broker_payload.contains("access-1"));
+    assert!(broker_payload.contains("refresh-1"));
+    assert!(!broker_payload.contains("access-2"));
 }
 
 #[tokio::test]
@@ -710,12 +1213,9 @@ async fn seed_host_auth_projects_valid_auth_into_private_runtime_home() {
     let host_dir = tempfile::tempdir().unwrap();
     let runtime_dir = tempfile::tempdir().unwrap();
     let auth_path = host_dir.path().join("auth.json");
-    tokio::fs::write(
-        &auth_path,
-        br#"{"tokens":{"access_token":"a","refresh_token":"b"}}"#,
-    )
-    .await
-    .unwrap();
+    tokio::fs::write(&auth_path, br#"{"OPENAI_API_KEY":"seeded-key"}"#)
+        .await
+        .unwrap();
     let _seed_guard = EnvGuard::set(CTX_SEED_CODEX_AUTH_FROM_HOST_ENV, "1");
     let _path_guard = EnvGuard::set(
         CTX_CODEX_HOST_AUTH_PATH_ENV,
@@ -735,6 +1235,33 @@ async fn seed_host_auth_projects_valid_auth_into_private_runtime_home() {
             .permissions();
         assert_eq!(perms.mode() & 0o777, 0o600);
     }
+}
+
+#[tokio::test]
+async fn seed_host_auth_rejects_oauth_refresh_token() {
+    let _env_lock = lock_env().await;
+    let host_dir = tempfile::tempdir().unwrap();
+    let runtime_dir = tempfile::tempdir().unwrap();
+    let auth_path = host_dir.path().join("auth.json");
+    tokio::fs::write(
+        &auth_path,
+        br#"{"tokens":{"access_token":"a","refresh_token":"b"}}"#,
+    )
+    .await
+    .unwrap();
+    let _seed_guard = EnvGuard::set(CTX_SEED_CODEX_AUTH_FROM_HOST_ENV, "1");
+    let _path_guard = EnvGuard::set(
+        CTX_CODEX_HOST_AUTH_PATH_ENV,
+        auth_path.to_string_lossy().as_ref(),
+    );
+
+    let err = seed_codex_auth_from_host(runtime_dir.path())
+        .await
+        .expect_err("OAuth host auth should not be seeded");
+    assert!(err.to_string().contains("OAuth host auth cannot be seeded"));
+    assert!(tokio::fs::metadata(runtime_dir.path().join("auth.json"))
+        .await
+        .is_err());
 }
 
 #[tokio::test]
@@ -788,6 +1315,7 @@ async fn import_host_auth_fails_closed_on_malformed_existing_account_auth() {
                 label: "Existing".to_string(),
                 kind: CODEX_CREDENTIAL_KIND_OAUTH.to_string(),
                 email: None,
+                provider_account_id: None,
                 plan_type: None,
                 created_at: Utc::now(),
                 last_used_at: Some(Utc::now()),
@@ -830,6 +1358,7 @@ async fn upsert_rejects_incompatible_endpoint_profile() {
         label: "Bad Profile".to_string(),
         kind: CODEX_CREDENTIAL_KIND_API_KEY.to_string(),
         email: None,
+        provider_account_id: None,
         plan_type: None,
         created_at: Utc::now(),
         last_used_at: None,
@@ -856,6 +1385,7 @@ async fn set_active_rejects_incompatible_auth_type() {
             label: "Bad Profile".to_string(),
             kind: CODEX_CREDENTIAL_KIND_API_KEY.to_string(),
             email: None,
+            provider_account_id: None,
             plan_type: None,
             created_at: Utc::now(),
             last_used_at: None,
@@ -886,6 +1416,7 @@ async fn clearing_active_account_clears_runtime_projection() {
             label: "Account".to_string(),
             kind: CODEX_CREDENTIAL_KIND_API_KEY.to_string(),
             email: None,
+            provider_account_id: None,
             plan_type: None,
             created_at: Utc::now(),
             last_used_at: None,
@@ -921,6 +1452,7 @@ async fn removing_active_account_clears_runtime_projection() {
             label: "Account".to_string(),
             kind: CODEX_CREDENTIAL_KIND_API_KEY.to_string(),
             email: None,
+            provider_account_id: None,
             plan_type: None,
             created_at: Utc::now(),
             last_used_at: None,
@@ -965,6 +1497,7 @@ async fn subscription_env_dispatches_to_supported_providers() {
             label: "Codex".to_string(),
             kind: CODEX_CREDENTIAL_KIND_API_KEY.to_string(),
             email: None,
+            provider_account_id: None,
             plan_type: None,
             created_at: Utc::now(),
             last_used_at: None,
@@ -1097,6 +1630,7 @@ async fn subscription_env_runtime_root_projects_path_based_providers() {
             label: "Codex".to_string(),
             kind: CODEX_CREDENTIAL_KIND_API_KEY.to_string(),
             email: None,
+            provider_account_id: None,
             plan_type: None,
             created_at: Utc::now(),
             last_used_at: None,

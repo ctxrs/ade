@@ -9,6 +9,7 @@ chrono.workspace = true
 ctx-core = { path = "../ctx-core" }
 ctx-fs = { path = "../ctx-fs" }
 directories.workspace = true
+fs2 = "0.4"
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

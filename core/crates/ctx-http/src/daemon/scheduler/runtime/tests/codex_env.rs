@@ -139,6 +139,7 @@ async fn codex_subscription_env_for_sandbox_uses_runtime_root_projection() {
             label: "Account".to_string(),
             kind: CODEX_CREDENTIAL_KIND_API_KEY.to_string(),
             email: None,
+            provider_account_id: None,
             plan_type: None,
             created_at: Utc::now(),
             last_used_at: None,

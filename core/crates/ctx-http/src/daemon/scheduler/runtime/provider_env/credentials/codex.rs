@@ -35,13 +35,14 @@ pub(super) async fn prepare_codex_runtime_credentials(
     if !provider_env.contains_key("CODEX_HOME") && credential_mode.is_subscription() {
         if is_linux_sandbox {
             if let Some(root) = runtime_plan.env_overrides.get("CTX_DATA_ROOT") {
-                let codex_home = provider_accounts::codex_runtime_home(Path::new(root));
-                tokio::fs::create_dir_all(&codex_home).await.ok();
-                provider_accounts::seed_codex_auth_from_host(&codex_home).await?;
-                provider_env.insert(
-                    "CODEX_HOME".to_string(),
-                    codex_home.to_string_lossy().to_string(),
-                );
+                let env = provider_accounts::codex_env_for_active_account_with_runtime_root(
+                    &state.core.data_root,
+                    Path::new(root),
+                )
+                .await?;
+                for (key, value) in env {
+                    provider_env.insert(key, value);
+                }
             }
         } else {
             let env =

@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 use std::io::Write as _;
 use std::path::Path;
 use std::process::Stdio;
@@ -13,9 +13,12 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader, BufWriter}
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{mpsc, oneshot, Mutex};
 
+#[path = "app_server/auth_lock.rs"]
+mod auth_lock;
 #[path = "app_server/types.rs"]
 mod types;
 
+use self::auth_lock::acquire_codex_oauth_authority_lock;
 pub use self::types::*;
 
 const CODEX_APP_SERVER_BASE_ARGS: [&str; 4] = ["-s", "danger-full-access", "-a", "never"];
@@ -45,8 +48,9 @@ pub struct AppServerClient {
     pending: Arc<Mutex<HashMap<i64, PendingResponse>>>,
     stdin: Arc<Mutex<BufWriter<ChildStdin>>>,
     inbound_rx: mpsc::UnboundedReceiver<AppServerInbound>,
-    child: Child,
+    child: Option<Child>,
     next_id: i64,
+    _auth_lock: Option<File>,
 }
 
 fn maybe_dump_app_server_message(direction: &str, value: &Value) {
@@ -123,6 +127,7 @@ impl AppServerClient {
         if !Path::new(&codex_bin).is_absolute() {
             anyhow::bail!("CTX_CODEX_BIN_PATH must be absolute, got `{codex_bin}`");
         }
+        let auth_lock = acquire_codex_oauth_authority_lock()?;
 
         let mut command = Command::new(&codex_bin);
         command
@@ -165,8 +170,9 @@ impl AppServerClient {
             pending,
             stdin: Arc::new(Mutex::new(BufWriter::new(stdin))),
             inbound_rx,
-            child,
+            child: Some(child),
             next_id: 1,
+            _auth_lock: auth_lock,
         };
 
         client
@@ -248,8 +254,11 @@ impl AppServerClient {
     }
 
     pub async fn shutdown(&mut self) {
-        let _ = self.child.kill().await;
-        let _ = self.child.wait().await;
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+        }
+        self._auth_lock.take();
     }
 
     async fn send_json(&mut self, value: &Value) -> Result<()> {
@@ -265,7 +274,22 @@ impl AppServerClient {
 
 impl Drop for AppServerClient {
     fn drop(&mut self) {
-        let _ = self.child.start_kill();
+        let Some(mut child) = self.child.take() else {
+            return;
+        };
+        let auth_lock = self._auth_lock.take();
+        let _ = child.start_kill();
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => {
+                handle.spawn(async move {
+                    let _auth_lock = auth_lock;
+                    let _ = child.wait().await;
+                });
+            }
+            Err(_) => {
+                std::mem::forget(auth_lock);
+            }
+        }
     }
 }
 
@@ -405,8 +429,9 @@ impl AppServerClient {
                 let (_tx, rx) = mpsc::unbounded_channel();
                 rx
             },
-            child,
+            child: Some(child),
             next_id: 1,
+            _auth_lock: None,
         }
     }
 }

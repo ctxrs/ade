@@ -240,6 +240,7 @@ RUST_BAZEL_DEPS = {
             "@crates//:anyhow",
             "@crates//:chrono",
             "@crates//:directories",
+            "@crates//:fs2",
             "@crates//:serde",
             "@crates//:serde_json",
             "@crates//:tokio",

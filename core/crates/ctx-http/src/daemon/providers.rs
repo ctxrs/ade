@@ -103,6 +103,7 @@ pub(crate) use options::{
 pub(crate) use options_cache::{store_provider_verify_cache_value, ProviderOptionsCacheSnapshot};
 pub(crate) use restarts::{
     restart_codex_providers_for_auth_change, restart_provider_for_auth_change,
+    stop_codex_providers_for_auth_removal,
 };
 pub(crate) use runtime_probe::{
     probe_provider_auth_verification_runtime, probe_provider_options_env,

@@ -3,6 +3,7 @@ use super::*;
 #[derive(Default)]
 pub(super) struct RestartTrackingAdapter {
     pub(super) restart_calls: AtomicUsize,
+    pub(super) restart_modes: std::sync::Mutex<Vec<ProviderRestartMode>>,
 }
 
 #[async_trait::async_trait]
@@ -40,8 +41,12 @@ impl ProviderAdapter for RestartTrackingAdapter {
         Vec::new()
     }
 
-    async fn restart(&self, _reason: &str, _mode: ProviderRestartMode) -> anyhow::Result<()> {
+    async fn restart(&self, _reason: &str, mode: ProviderRestartMode) -> anyhow::Result<()> {
         self.restart_calls.fetch_add(1, Ordering::SeqCst);
+        self.restart_modes
+            .lock()
+            .expect("restart mode lock")
+            .push(mode);
         Ok(())
     }
 
@@ -53,6 +58,7 @@ impl ProviderAdapter for RestartTrackingAdapter {
 #[derive(Default)]
 pub(super) struct RestartFailingAdapter {
     pub(super) restart_calls: AtomicUsize,
+    pub(super) restart_modes: std::sync::Mutex<Vec<ProviderRestartMode>>,
 }
 
 #[async_trait::async_trait]
@@ -90,8 +96,12 @@ impl ProviderAdapter for RestartFailingAdapter {
         Vec::new()
     }
 
-    async fn restart(&self, _reason: &str, _mode: ProviderRestartMode) -> anyhow::Result<()> {
+    async fn restart(&self, _reason: &str, mode: ProviderRestartMode) -> anyhow::Result<()> {
         self.restart_calls.fetch_add(1, Ordering::SeqCst);
+        self.restart_modes
+            .lock()
+            .expect("restart mode lock")
+            .push(mode);
         anyhow::bail!("restart failed")
     }
 

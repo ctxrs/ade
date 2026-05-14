@@ -525,6 +525,7 @@ async fn set_active_account_rejects_incompatible_endpoint_profile() {
             label: "Incompatible".to_string(),
             kind: CODEX_CREDENTIAL_KIND_API_KEY.to_string(),
             email: None,
+            provider_account_id: None,
             plan_type: None,
             created_at: chrono::Utc::now(),
             last_used_at: None,

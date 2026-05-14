@@ -1,5 +1,6 @@
 use super::secret_store::{
-    codex_auth_has_supported_shape, codex_auth_kind, project_auth_value_to_home,
+    codex_auth_has_refresh_token, codex_auth_has_supported_shape, codex_auth_kind,
+    project_auth_value_to_home,
 };
 use super::*;
 
@@ -50,6 +51,11 @@ pub async fn seed_codex_auth_from_host(codex_home: &Path) -> Result<bool> {
         anyhow::bail!(
             "codex auth file at {} has no OPENAI_API_KEY or tokens.access_token/tokens.refresh_token",
             src.display()
+        );
+    }
+    if codex_auth_has_refresh_token(&auth) {
+        anyhow::bail!(
+            "Codex OAuth host auth cannot be seeded into a runtime home. Import the Codex account through ctx so it can run from the broker-owned home."
         );
     }
     project_auth_value_to_home(codex_home, &auth).await
@@ -115,26 +121,4 @@ pub async fn probe_host_codex_auth_candidate() -> CodexHostImportProbe {
         auth_kind,
         error: None,
     }
-}
-
-pub(super) async fn mirror_host_codex_auth_to_runtime_root(runtime_root: &Path) -> Result<bool> {
-    let src = host_codex_auth_path()?;
-    let payload = match tokio::fs::read_to_string(&src).await {
-        Ok(payload) => payload,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(err) => return Err(err.into()),
-    };
-    let auth: serde_json::Value = serde_json::from_str(&payload)
-        .with_context(|| format!("invalid codex auth JSON at {}", src.display()))?;
-    if !codex_auth_has_supported_shape(&auth) {
-        return Ok(false);
-    }
-    let projected = project_auth_value_to_home(&codex_runtime_home(runtime_root), &auth).await?;
-    let owner_path = codex_runtime_owner_path(runtime_root);
-    match tokio::fs::remove_file(&owner_path).await {
-        Ok(_) => {}
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-        Err(err) => return Err(err.into()),
-    }
-    Ok(projected)
 }

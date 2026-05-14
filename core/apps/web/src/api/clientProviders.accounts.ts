@@ -6,6 +6,7 @@ export type CodexAccountEntry = {
   label: string;
   kind?: string;
   email?: string | null;
+  provider_account_id?: string | null;
   plan_type?: string | null;
   created_at: string;
   last_used_at?: string | null;

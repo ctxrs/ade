@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use ctx_core::provider_ids::CODEX_PROVIDER_ID;
 use serde::{Deserialize, Serialize};
@@ -42,7 +42,7 @@ use self::paths::{
 use self::qwen::qwen_env_for_active_account_with_runtime_root;
 use self::shared::{
     collect_secret_paths, ensure_account_exists, ensure_safe_account_id, load_json_registry,
-    save_json_registry,
+    save_json_registry, write_secure_file_atomic,
 };
 
 pub use self::amp::{
@@ -190,6 +190,8 @@ pub struct CodexAccountEntry {
     pub kind: String,
     #[serde(default)]
     pub email: Option<String>,
+    #[serde(default)]
+    pub provider_account_id: Option<String>,
     #[serde(default)]
     pub plan_type: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -341,6 +343,93 @@ pub async fn remove_codex_account(
     Ok(registry)
 }
 
+pub async fn require_codex_account_exists(data_root: &Path, account_id: &str) -> Result<()> {
+    ensure_safe_account_id(account_id)?;
+    let registry = load_codex_registry(data_root).await?;
+    ensure_account_exists(
+        registry
+            .accounts
+            .iter()
+            .any(|account| account.id == account_id),
+    )
+}
+
+pub async fn codex_account_deletion_in_progress(
+    data_root: &Path,
+    account_id: &str,
+) -> Result<bool> {
+    ensure_safe_account_id(account_id)?;
+    Ok(self::paths::codex_account_deletion_marker(data_root, account_id).exists())
+}
+
+pub async fn begin_codex_account_deletion(
+    data_root: &Path,
+    account_id: &str,
+) -> Result<Option<String>> {
+    ensure_safe_account_id(account_id)?;
+    let registry = load_codex_registry(data_root).await?;
+    ensure_account_exists(
+        registry
+            .accounts
+            .iter()
+            .any(|account| account.id == account_id),
+    )?;
+    let marker = self::paths::codex_account_deletion_marker(data_root, account_id);
+    write_secure_file_atomic(&marker, b"deleting")
+        .await
+        .with_context(|| format!("writing Codex account deletion marker {}", marker.display()))?;
+    let previous_active = registry.active_account_id.clone();
+    if previous_active.as_deref() == Some(account_id) {
+        set_active_codex_account(data_root, None).await?;
+    }
+    Ok(previous_active)
+}
+
+pub async fn finish_codex_account_deletion(data_root: &Path, account_id: &str) -> Result<()> {
+    ensure_safe_account_id(account_id)?;
+    let marker = self::paths::codex_account_deletion_marker(data_root, account_id);
+    match tokio::fs::remove_file(&marker).await {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err).with_context(|| {
+            format!(
+                "removing Codex account deletion marker {}",
+                marker.display()
+            )
+        }),
+    }
+}
+
+pub async fn abort_codex_account_deletion(
+    data_root: &Path,
+    account_id: &str,
+    previous_active: Option<String>,
+) -> Result<()> {
+    finish_codex_account_deletion(data_root, account_id).await?;
+    if previous_active.as_deref() == Some(account_id) {
+        set_active_codex_account(data_root, previous_active).await?;
+    }
+    Ok(())
+}
+
+pub async fn cleanup_codex_account_broker_home(data_root: &Path, account_id: &str) -> Result<()> {
+    ensure_safe_account_id(account_id)?;
+    let broker_home = codex_broker_home(data_root, account_id);
+    if let Some(broker_root) = broker_home.parent() {
+        if broker_root.exists() {
+            tokio::fs::remove_dir_all(broker_root)
+                .await
+                .with_context(|| {
+                    format!(
+                        "removing Codex broker home directory {}",
+                        broker_root.display()
+                    )
+                })?;
+        }
+    }
+    Ok(())
+}
+
 pub async fn set_active_codex_account(
     data_root: &Path,
     account_id: Option<String>,
@@ -380,9 +469,25 @@ pub async fn ensure_codex_account_dir(data_root: &Path, account_id: &str) -> Res
 
 pub fn codex_env_for_account(data_root: &Path, account_id: &str) -> HashMap<String, String> {
     let mut env = HashMap::new();
-    let dir = codex_account_dir(data_root, account_id);
+    let dir = codex_broker_home(data_root, account_id);
     env.insert("CODEX_HOME".to_string(), dir.to_string_lossy().to_string());
+    env.insert(
+        "CTX_CODEX_AUTH_ACCOUNT_ID".to_string(),
+        account_id.to_string(),
+    );
     env
+}
+
+pub async fn codex_env_for_available_account(
+    data_root: &Path,
+    account_id: &str,
+) -> Result<HashMap<String, String>> {
+    ensure_safe_account_id(account_id)?;
+    require_codex_account_exists(data_root, account_id).await?;
+    if codex_account_deletion_in_progress(data_root, account_id).await? {
+        anyhow::bail!("codex account is being deleted");
+    }
+    Ok(codex_env_for_account(data_root, account_id))
 }
 
 pub async fn subscription_env_for_active_account(

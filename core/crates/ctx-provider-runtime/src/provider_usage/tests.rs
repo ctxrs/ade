@@ -130,3 +130,65 @@ async fn refresh_provider_usage_replaces_stale_cache_with_error_snapshot_on_conf
         "expected managed config error snapshot: {snapshot:?}"
     );
 }
+
+#[tokio::test]
+async fn codex_oauth_usage_error_does_not_spawn_rpc_fallback() {
+    let runtime_home = tempfile::tempdir().expect("runtime home");
+    tokio::fs::write(
+        runtime_home.path().join("auth.json"),
+        serde_json::json!({
+            "tokens": {
+                "access_token": "stale-access",
+                "refresh_token": "refresh-token",
+                "account_id": "acct-1"
+            }
+        })
+        .to_string(),
+    )
+    .await
+    .expect("write auth.json");
+    tokio::fs::write(
+        runtime_home.path().join("config.toml"),
+        "chatgpt_base_url = \"http://127.0.0.1:9\"",
+    )
+    .await
+    .expect("write config.toml");
+
+    let snapshot = fetch_codex_usage_snapshot(HashMap::from([(
+        "CODEX_HOME".to_string(),
+        runtime_home.path().to_string_lossy().to_string(),
+    )]))
+    .await
+    .expect("usage snapshot should be represented as an error snapshot");
+
+    assert_eq!(snapshot.source, "error");
+    let error = snapshot.error.as_deref().expect("usage error");
+    assert!(
+        error.contains("will not refresh Codex OAuth tokens"),
+        "unexpected error: {error}"
+    );
+    assert!(
+        !error.contains("CTX_CODEX_BIN_PATH"),
+        "OAuth usage must not spawn a separate Codex app-server fallback: {error}"
+    );
+}
+
+#[tokio::test]
+async fn codex_usage_missing_auth_returns_error_snapshot() {
+    let runtime_home = tempfile::tempdir().expect("runtime home");
+
+    let snapshot = fetch_codex_usage_snapshot(HashMap::from([(
+        "CODEX_HOME".to_string(),
+        runtime_home.path().to_string_lossy().to_string(),
+    )]))
+    .await
+    .expect("missing auth should be represented as an error snapshot");
+
+    assert_eq!(snapshot.source, "error");
+    assert!(snapshot.payload.is_none());
+    let error = snapshot.error.as_deref().expect("usage error");
+    assert!(
+        error.contains("missing codex auth.json"),
+        "unexpected error: {error}"
+    );
+}

@@ -62,6 +62,16 @@ pub(crate) struct CodexAccountUsageRecord {
     pub(crate) usage: provider_usage::ProviderUsageSnapshot,
 }
 
+fn codex_account_usage_error(error: String) -> provider_usage::ProviderUsageSnapshot {
+    provider_usage::ProviderUsageSnapshot {
+        provider_id: CODEX_PROVIDER_ID.to_string(),
+        source: "error".to_string(),
+        fetched_at: Utc::now(),
+        payload: None,
+        error: Some(error),
+    }
+}
+
 pub(crate) async fn load_codex_accounts_usage(
     state: &Arc<AppState>,
     refresh: bool,
@@ -87,27 +97,41 @@ pub(crate) async fn load_codex_accounts_usage(
 
     let mut entries = Vec::new();
     for account in registry.accounts {
-        let _ = ctx_provider_accounts::hydrate_codex_account_home_from_secret(
+        let usage = match ctx_provider_accounts::codex_env_for_available_account(
             &state.core.data_root,
             &account.id,
         )
-        .await;
-        let mut env =
-            ctx_provider_accounts::codex_env_for_account(&state.core.data_root, &account.id);
-        ctx_managed_installs::ensure_codex_cli_command_env_for_target(
-            &mut env,
-            &cfg,
-            CODEX_PROVIDER_ID,
-            Some(ctx_provider_install::InstallTarget::Host),
-        )?;
-        let usage = if active_id.as_deref() == Some(&account.id) {
-            if let Some(snapshot) = cached_active.clone() {
-                snapshot
-            } else {
-                provider_usage::fetch_codex_usage_snapshot(env).await?
+        .await
+        {
+            Ok(mut env) => {
+                if let Err(err) = ctx_provider_accounts::hydrate_codex_account_home_from_secret(
+                    &state.core.data_root,
+                    &account.id,
+                )
+                .await
+                {
+                    codex_account_usage_error(format!(
+                        "preparing codex account auth failed: {err:#}"
+                    ))
+                } else {
+                    ctx_managed_installs::ensure_codex_cli_command_env_for_target(
+                        &mut env,
+                        &cfg,
+                        CODEX_PROVIDER_ID,
+                        Some(ctx_provider_install::InstallTarget::Host),
+                    )?;
+                    if active_id.as_deref() == Some(&account.id) {
+                        if let Some(snapshot) = cached_active.clone() {
+                            snapshot
+                        } else {
+                            provider_usage::fetch_codex_usage_snapshot(env).await?
+                        }
+                    } else {
+                        provider_usage::fetch_codex_usage_snapshot(env).await?
+                    }
+                }
             }
-        } else {
-            provider_usage::fetch_codex_usage_snapshot(env).await?
+            Err(err) => codex_account_usage_error(err.to_string()),
         };
         entries.push(CodexAccountUsageRecord {
             account_id: Some(account.id),

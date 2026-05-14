@@ -13,6 +13,7 @@ CODEX_CRP_DEPS = [
     "@crates//:base64",
     "@crates//:clap",
     "@crates//:directories",
+    "@crates//:fs2",
     "@crates//:serde",
     "@crates//:serde_json",
     "@crates//:tokio",

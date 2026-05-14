@@ -137,6 +137,23 @@ pub fn codex_runtime_home(data_root: &Path) -> PathBuf {
         .join("home")
 }
 
+pub fn codex_broker_home(data_root: &Path, account_id: &str) -> PathBuf {
+    data_root
+        .join("providers")
+        .join(CODEX_PROVIDER_ROOT)
+        .join("brokers")
+        .join(account_id)
+        .join("home")
+}
+
+pub fn codex_account_deletion_marker(data_root: &Path, account_id: &str) -> PathBuf {
+    data_root
+        .join("providers")
+        .join(CODEX_PROVIDER_ROOT)
+        .join("deleting")
+        .join(account_id)
+}
+
 pub fn codex_registry_path(data_root: &Path) -> PathBuf {
     codex_accounts_root(data_root).join("index.json")
 }

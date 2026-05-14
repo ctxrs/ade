@@ -36,6 +36,7 @@ async fn codex_login_persistence_requires_auth_file() {
         .unwrap();
     assert!(registry.accounts.is_empty());
     assert!(registry.active_account_id.is_none());
+    assert!(!provider_accounts::codex_broker_home(&state.core.data_root, account_id).exists());
 }
 
 struct RestartFailingAdapter;

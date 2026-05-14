@@ -147,15 +147,38 @@ pub async fn fetch_codex_usage_snapshot(
 }
 
 async fn fetch_codex_usage(env: HashMap<String, String>) -> Result<ProviderUsageSnapshot> {
-    match oauth::fetch_codex_usage_oauth(&env).await {
-        Ok(payload) => Ok(ProviderUsageSnapshot {
-            provider_id: CODEX_PROVIDER_ID.to_string(),
-            source: "oauth".to_string(),
-            fetched_at: Utc::now(),
-            payload: Some(payload),
-            error: None,
-        }),
-        Err(err) => match rpc::fetch_codex_usage_rpc(&env).await {
+    let auth_kind = match oauth::codex_usage_auth_kind(&env).await {
+        Ok(auth_kind) => auth_kind,
+        Err(err) => {
+            return Ok(ProviderUsageSnapshot {
+                provider_id: CODEX_PROVIDER_ID.to_string(),
+                source: "error".to_string(),
+                fetched_at: Utc::now(),
+                payload: None,
+                error: Some(err.to_string()),
+            });
+        }
+    };
+    match auth_kind {
+        oauth::CodexUsageAuthKind::OAuth => match oauth::fetch_codex_usage_oauth(&env).await {
+            Ok(payload) => Ok(ProviderUsageSnapshot {
+                provider_id: CODEX_PROVIDER_ID.to_string(),
+                source: "oauth".to_string(),
+                fetched_at: Utc::now(),
+                payload: Some(payload),
+                error: None,
+            }),
+            Err(err) => Ok(ProviderUsageSnapshot {
+                provider_id: CODEX_PROVIDER_ID.to_string(),
+                source: "error".to_string(),
+                fetched_at: Utc::now(),
+                payload: None,
+                error: Some(format!(
+                    "{err}; usage polling will not refresh Codex OAuth tokens outside the active Codex auth authority"
+                )),
+            }),
+        },
+        oauth::CodexUsageAuthKind::ApiKey => match rpc::fetch_codex_usage_rpc(&env).await {
             Ok(payload) => Ok(ProviderUsageSnapshot {
                 provider_id: CODEX_PROVIDER_ID.to_string(),
                 source: "rpc".to_string(),
@@ -163,12 +186,12 @@ async fn fetch_codex_usage(env: HashMap<String, String>) -> Result<ProviderUsage
                 payload: Some(payload),
                 error: None,
             }),
-            Err(rpc_err) => Ok(ProviderUsageSnapshot {
+            Err(err) => Ok(ProviderUsageSnapshot {
                 provider_id: CODEX_PROVIDER_ID.to_string(),
                 source: "error".to_string(),
                 fetched_at: Utc::now(),
                 payload: None,
-                error: Some(format!("{err}; rpc fallback failed: {rpc_err}")),
+                error: Some(err.to_string()),
             }),
         },
     }
