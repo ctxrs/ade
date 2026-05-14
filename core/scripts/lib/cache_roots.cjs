@@ -85,12 +85,28 @@ function resolveSccacheServerUds(targetPath) {
   return path.join("/tmp", `ctx-sccache-${hash}.sock`);
 }
 
+function resolveSccacheDir(targetPath) {
+  const hash = crypto.createHash("sha1").update(path.resolve(targetPath)).digest("hex").slice(0, 12);
+  return path.join("/tmp", `ctx-sccache-cache-${hash}`);
+}
+
 function shouldNormalizeSccacheServerUds(value) {
   if (process.platform === "win32") {
     return false;
   }
   const normalized = trimValue(value);
   return !normalized || Buffer.byteLength(normalized) >= SCCACHE_UNIX_SOCKET_PATH_LIMIT;
+}
+
+function shouldNormalizeSccacheDir(value) {
+  if (process.platform === "win32") {
+    return false;
+  }
+  const normalized = trimValue(value);
+  if (!normalized) {
+    return false;
+  }
+  return Buffer.byteLength(path.join(normalized, "sccache.sock")) >= SCCACHE_UNIX_SOCKET_PATH_LIMIT;
 }
 
 function setDefaultEnvValue(targetEnv, key, value) {
@@ -613,6 +629,9 @@ function buildCtxCacheEnv({
     );
     setDefaultEnvValue(resolvedEnv, "CTX_RUST_CACHE_SCCACHE", sccacheState);
     if (wrapperIsSccache) {
+      if (shouldNormalizeSccacheDir(resolvedEnv.SCCACHE_DIR)) {
+        resolvedEnv.SCCACHE_DIR = resolveSccacheDir(cargoTargetDir);
+      }
       setDefaultEnvValue(resolvedEnv, "SCCACHE_NO_DAEMON", "1");
       if (shouldNormalizeSccacheServerUds(resolvedEnv.SCCACHE_SERVER_UDS)) {
         resolvedEnv.SCCACHE_SERVER_UDS = resolveSccacheServerUds(cargoTargetDir);
@@ -637,10 +656,18 @@ function buildCtxCacheEnv({
   const initialLayout = resolveCtxCacheLayout({ cwd, env: baseEnv });
   let result = buildForLayout(initialLayout);
 
+  function ensureResultDirs(cacheEnvResult) {
+    ensureCacheLayout(cacheEnvResult.layout);
+    fs.mkdirSync(cacheEnvResult.env.CARGO_TARGET_DIR, { recursive: true });
+    const sccacheDir = trimValue(cacheEnvResult.env.SCCACHE_DIR);
+    if (sccacheDir) {
+      fs.mkdirSync(sccacheDir, { recursive: true });
+    }
+  }
+
   if (mkdir) {
     try {
-      ensureCacheLayout(result.layout);
-      fs.mkdirSync(result.env.CARGO_TARGET_DIR, { recursive: true });
+      ensureResultDirs(result);
     } catch (error) {
       const hasExplicitVolatileRoot = Boolean(trimValue(baseEnv.CTX_VOLATILE_ROOT));
       const shouldFallback =
@@ -660,8 +687,7 @@ function buildCtxCacheEnv({
       };
       result = buildForLayout(fallbackLayout);
       result.env.CTX_VOLATILE_ROOT_MODE = "internal-fallback";
-      ensureCacheLayout(result.layout);
-      fs.mkdirSync(result.env.CARGO_TARGET_DIR, { recursive: true });
+      ensureResultDirs(result);
     }
   }
 
@@ -695,6 +721,7 @@ module.exports = {
   resolveConfiguredPath,
   resolveCtxCacheLayout,
   resolveRepoScopeKey,
+  resolveSccacheDir,
   resolveSccacheServerUds,
   resolveVolatileSelection,
   writeCacheRootMarker,

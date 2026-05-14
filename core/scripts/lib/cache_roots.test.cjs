@@ -10,6 +10,7 @@ const {
   LEGACY_TURBO_ENV_KEYS,
   resolveCtxCacheLayout,
   resolveRepoScopeKey,
+  resolveSccacheDir,
   resolveSccacheServerUds,
   resolveVolatileSelection,
 } = require("./cache_roots.cjs");
@@ -218,6 +219,40 @@ test("buildCtxCacheEnv replaces unsafe inherited sccache sockets with a short so
   });
 
   if (process.platform !== "win32") {
+    assert.equal(env.SCCACHE_SERVER_UDS, resolveSccacheServerUds(targetDir));
+    assert.equal(Buffer.byteLength(env.SCCACHE_SERVER_UDS) < 100, true);
+  }
+});
+
+test("buildCtxCacheEnv shortens sccache dir when its default socket path would be unsafe", () => {
+  const cwd = path.resolve(__dirname, "..", "..");
+  const volatileRoot = path.join(
+    os.tmpdir(),
+    "ctx-cache-roots-remote-real-xdg-fixture-with-deep-bundle-cache",
+    "home",
+    ".ctx",
+    "volatile",
+  );
+  const targetDir = path.join(
+    volatileRoot,
+    "cache",
+    "bundles",
+    ".build",
+    "cargo",
+    "linux-x86_64",
+  );
+  const { env } = buildCtxCacheEnv({
+    cwd,
+    env: {
+      CTX_VOLATILE_ROOT: volatileRoot,
+      CARGO_TARGET_DIR: targetDir,
+      RUSTC_WRAPPER: "/usr/bin/sccache",
+    },
+  });
+
+  if (process.platform !== "win32") {
+    assert.equal(env.SCCACHE_DIR, resolveSccacheDir(targetDir));
+    assert.equal(Buffer.byteLength(path.join(env.SCCACHE_DIR, "sccache.sock")) < 100, true);
     assert.equal(env.SCCACHE_SERVER_UDS, resolveSccacheServerUds(targetDir));
     assert.equal(Buffer.byteLength(env.SCCACHE_SERVER_UDS) < 100, true);
   }
