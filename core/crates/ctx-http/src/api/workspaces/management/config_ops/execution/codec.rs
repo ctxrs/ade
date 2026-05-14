@@ -25,7 +25,7 @@ pub(super) fn project_workspace_execution_config(
 }
 
 pub(super) fn parse_execution_environment(
-    state: &Arc<AppState>,
+    _state: &Arc<AppState>,
     environment: &str,
 ) -> WorkspaceApiResult<ctx_workspace_config::ExecutionEnvironment> {
     match environment {
@@ -34,7 +34,7 @@ pub(super) fn parse_execution_environment(
             #[cfg(target_os = "macos")]
             {
                 if !ctx_harness_runtime::local_runtime_available(
-                    &state.core.data_root,
+                    &_state.core.data_root,
                     &ctx_settings_model::ContainerRuntimeKind::SharedVmContainer,
                 ) {
                     return Err((
