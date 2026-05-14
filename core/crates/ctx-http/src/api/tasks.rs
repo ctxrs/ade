@@ -1,5 +1,7 @@
 use std::collections::HashSet;
-use std::path::{Path as StdPath, PathBuf};
+use std::path::Path as StdPath;
+#[cfg(test)]
+use std::path::PathBuf;
 #[cfg(test)]
 use std::sync::Arc;
 use std::time::Instant;
@@ -32,13 +34,15 @@ use crate::daemon::scheduler::SchedulerCommand;
 use crate::daemon::DaemonHandle;
 #[cfg(test)]
 use crate::daemon::DaemonState;
-use crate::daemon::{ProvidersHandle, SessionsHandle, TransportHandle, WorkspacesHandle};
+use crate::daemon::{
+    ProvidersHandle, SessionsHandle, TasksHandle, TransportHandle, WorkspacesHandle,
+};
 use ctx_core::ids::{RunId, SessionId, TaskId, TurnId, WorkspaceId, WorktreeId};
 #[cfg(test)]
 use ctx_core::models::SandboxBinding;
 use ctx_core::models::{
-    ExecutionEnvironment, Message, MessageDelivery, Session, SessionEventType, Task, TaskDeltaKind,
-    VcsKind, Workspace, WorkspaceArchivedPage, WorkspaceIndexCursor, Worktree,
+    ExecutionEnvironment, Message, MessageDelivery, Session, SessionEventType, Task, VcsKind,
+    Workspace, WorkspaceArchivedPage, WorkspaceIndexCursor, Worktree,
 };
 use ctx_observability::logs;
 use ctx_settings_model::ExecutionSettings;
@@ -60,7 +64,6 @@ pub(super) struct TaskApiHandles {
     pub(super) sessions: SessionsHandle,
     pub(super) providers: ProvidersHandle,
     pub(super) workspaces: WorkspacesHandle,
-    pub(super) transport: TransportHandle,
 }
 
 impl TaskApiHandles {
@@ -68,37 +71,32 @@ impl TaskApiHandles {
         sessions: SessionsHandle,
         providers: ProvidersHandle,
         workspaces: WorkspacesHandle,
-        transport: TransportHandle,
     ) -> Self {
         Self {
             sessions,
             providers,
             workspaces,
-            transport,
         }
     }
 }
 
 #[cfg(test)]
-pub(super) fn task_api_states(
-    state: &Arc<DaemonState>,
-) -> (
-    State<SessionsHandle>,
-    State<ProvidersHandle>,
-    State<WorkspacesHandle>,
-    State<TransportHandle>,
-) {
-    let handle = DaemonHandle::new(Arc::clone(state));
-    (
-        State(handle.sessions()),
-        State(handle.providers()),
-        State(handle.workspaces()),
-        State(handle.transport()),
-    )
+pub(super) fn task_api_task_state(state: &Arc<DaemonState>) -> State<TasksHandle> {
+    State(DaemonHandle::new(Arc::clone(state)).tasks())
 }
 
 fn task_request_matches(existing: &Task, title: &str, description: &Option<String>) -> bool {
     existing.title == title && existing.description.as_deref() == description.as_deref()
+}
+
+fn task_lifecycle_status(error: crate::daemon::tasks::TaskLifecycleError) -> StatusCode {
+    match error {
+        crate::daemon::tasks::TaskLifecycleError::NotFound => StatusCode::NOT_FOUND,
+        crate::daemon::tasks::TaskLifecycleError::Internal(error) => {
+            tracing::warn!("task lifecycle operation failed: {error:#}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    }
 }
 #[cfg(test)]
 mod cleanup_lifecycle_tests;

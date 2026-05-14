@@ -49,6 +49,7 @@ pub(crate) mod sessions;
 pub(crate) mod settings;
 mod state;
 pub(crate) mod storage_guard;
+pub(crate) mod tasks;
 pub(crate) mod terminals;
 pub(crate) mod tool_cgroup;
 pub(crate) mod web_sessions;
@@ -67,8 +68,8 @@ pub use activity::{
     DaemonSandboxWorkActivitySummary, DaemonTurnActivitySummary,
 };
 pub use handle::{
-    CoreHandle, DaemonHandle, ExecutionHandle, ProvidersHandle, SessionsHandle, TelemetryHandle,
-    TransportHandle, WorkspaceStreamHandle, WorkspacesHandle,
+    CoreHandle, DaemonHandle, ExecutionHandle, ProvidersHandle, SessionsHandle, TasksHandle,
+    TelemetryHandle, TransportHandle, WorkspaceStreamHandle, WorkspacesHandle,
 };
 pub(crate) use lifecycle::spawn_deferred_daemon_shutdown;
 #[cfg(test)]

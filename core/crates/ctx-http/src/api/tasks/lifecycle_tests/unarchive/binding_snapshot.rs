@@ -107,16 +107,10 @@ async fn unarchive_task_recreates_managed_root_and_keeps_binding_snapshot_runtim
             },
         ));
 
-    let (sessions, providers, workspaces, transport) = task_api_states(&state);
-    let Json(_) = archive_task(
-        sessions,
-        providers,
-        workspaces,
-        transport,
-        Path(task.id.0.to_string()),
-    )
-    .await
-    .expect("archive task");
+    let tasks = task_api_task_state(&state);
+    let Json(_) = archive_task(tasks, Path(task.id.0.to_string()))
+        .await
+        .expect("archive task");
 
     save_test_execution_settings(
         &state,
@@ -133,20 +127,14 @@ async fn unarchive_task_recreates_managed_root_and_keeps_binding_snapshot_runtim
     )
     .await;
 
-    let (sessions, providers, workspaces, transport) = task_api_states(&state);
-    let Json(unarchived_task) = unarchive_task(
-        sessions,
-        providers,
-        workspaces,
-        transport,
-        Path(task.id.0.to_string()),
-    )
-    .await
-    .unwrap_or_else(|status| {
-        let sandbox_log = std::fs::read_to_string(&log_path)
-            .unwrap_or_else(|err| format!("failed to read sandbox CLI log: {err}"));
-        panic!("unarchive task: {status}; sandbox log:\n{sandbox_log}");
-    });
+    let tasks = task_api_task_state(&state);
+    let Json(unarchived_task) = unarchive_task(tasks, Path(task.id.0.to_string()))
+        .await
+        .unwrap_or_else(|status| {
+            let sandbox_log = std::fs::read_to_string(&log_path)
+                .unwrap_or_else(|err| format!("failed to read sandbox CLI log: {err}"));
+            panic!("unarchive task: {status}; sandbox log:\n{sandbox_log}");
+        });
 
     assert!(
         unarchived_task.archived_at.is_none(),

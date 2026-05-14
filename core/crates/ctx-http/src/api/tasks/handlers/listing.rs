@@ -1,17 +1,12 @@
 use super::super::*;
 
 pub(in crate::api) async fn list_workspace_tasks(
-    State(sessions): State<SessionsHandle>,
-    State(providers): State<ProvidersHandle>,
-    State(workspaces): State<WorkspacesHandle>,
-    State(transport): State<TransportHandle>,
+    State(tasks): State<TasksHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<Task>>, StatusCode> {
-    let handles = TaskApiHandles::new(sessions, providers, workspaces, transport);
     let workspace_id =
         WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let tasks = handles
-        .sessions
+    let tasks = tasks
         .list_workspace_tasks(workspace_id)
         .await
         .map_err(workspace_store_status)?;
@@ -26,14 +21,10 @@ pub(in crate::api) struct WorkspaceArchivedQuery {
 }
 
 pub(in crate::api) async fn list_workspace_archived_task_summaries(
-    State(sessions): State<SessionsHandle>,
-    State(providers): State<ProvidersHandle>,
-    State(workspaces): State<WorkspacesHandle>,
-    State(transport): State<TransportHandle>,
+    State(tasks): State<TasksHandle>,
     Path(id): Path<String>,
     Query(query): Query<WorkspaceArchivedQuery>,
 ) -> Result<Json<WorkspaceArchivedPage>, StatusCode> {
-    let handles = TaskApiHandles::new(sessions, providers, workspaces, transport);
     let workspace_id =
         WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let limit = query.limit.unwrap_or(50) as i64;
@@ -53,31 +44,19 @@ pub(in crate::api) async fn list_workspace_archived_task_summaries(
         _ => return Err(StatusCode::BAD_REQUEST),
     };
 
-    let (tasks, next_cursor, total_archived) = handles
-        .sessions
+    let page = tasks
         .list_workspace_archived_page(workspace_id, cursor, limit)
         .await
         .map_err(workspace_store_status)?;
-    let (_, archived_rev) = handles
-        .workspaces
-        .load_workspace_active_snapshot_state(workspace_id)
-        .await;
-
-    Ok(Json(WorkspaceArchivedPage {
-        workspace_id,
-        archived_rev,
-        tasks,
-        next_cursor,
-        total_archived,
-    }))
+    Ok(Json(page))
 }
 
 pub(in crate::api) async fn list_task_sessions(
-    State(sessions): State<SessionsHandle>,
+    State(tasks): State<TasksHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<Session>>, StatusCode> {
     let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let sessions = sessions
+    let sessions = tasks
         .list_task_sessions(task_id)
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?

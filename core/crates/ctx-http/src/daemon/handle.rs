@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -26,6 +25,10 @@ impl DaemonHandle {
 
     pub fn sessions(&self) -> SessionsHandle {
         SessionsHandle::new(Arc::clone(&self.state))
+    }
+
+    pub fn tasks(&self) -> TasksHandle {
+        TasksHandle::new(Arc::clone(&self.state))
     }
 
     pub fn workspaces(&self) -> WorkspacesHandle {
@@ -56,21 +59,6 @@ impl DaemonHandle {
 impl From<Arc<DaemonState>> for DaemonHandle {
     fn from(state: Arc<DaemonState>) -> Self {
         Self::new(state)
-    }
-}
-
-impl TransportHandle {
-    pub(crate) async fn close_web_sessions_for_task(
-        &self,
-        session_ids: &HashSet<String>,
-        worktree_ids: &HashSet<String>,
-    ) -> anyhow::Result<()> {
-        self.state
-            .transport
-            .web_sessions
-            .close_for_task(session_ids, worktree_ids)
-            .await
-            .map(|_| ())
     }
 }
 
@@ -189,6 +177,7 @@ macro_rules! domain_handle_with_accessor {
 
 domain_handle_with_accessor!(CoreHandle, core);
 domain_handle_with_accessor!(SessionsHandle, sessions);
+domain_handle_with_accessor!(TasksHandle, tasks);
 domain_handle_with_accessor!(WorkspacesHandle, workspaces);
 domain_handle_with_accessor!(WorkspaceStreamHandle, workspace_stream);
 domain_handle_with_accessor!(ProvidersHandle, providers);

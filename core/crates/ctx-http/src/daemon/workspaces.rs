@@ -6,9 +6,9 @@ use tokio::sync::broadcast;
 use ctx_core::ids::{MergeQueueEntryId, RunId, SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     MergeQueueEntry, MergeQueueRun, RunArchiveIngestBatch, RunArchiveIngestCursor, SandboxBinding,
-    Task, TaskDeltaKind, VcsKind, Workspace, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot,
+    VcsKind, Workspace, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot,
     WorkspaceActiveSnapshotClientMessage, WorkspaceActiveSnapshotEvent,
-    WorkspaceActiveSnapshotStreamMessage, WorkspaceAttachment, Worktree, WorktreeAttachmentMount,
+    WorkspaceActiveSnapshotStreamMessage, WorkspaceAttachment, Worktree,
 };
 use ctx_observability::telemetry::TelemetryEvent;
 use ctx_settings_model::ExecutionSettings;
@@ -42,6 +42,7 @@ mod worktree_cleanup;
 mod worktree_provision;
 
 pub(crate) use active_snapshot_state::load_workspace_active_snapshot_state;
+pub(crate) use attachments::ensure_worktree_attachment_mounts_if_materialized;
 pub(crate) use cache_stats::WorkspaceCacheDebugStats;
 pub(crate) use deletion::{delete_workspace, WorkspaceDeleteError};
 pub(crate) use diff_exec::{diff_worktree_for_session, diff_worktree_summary_for_session};
@@ -610,28 +611,6 @@ impl WorkspacesHandle {
         .await
     }
 
-    pub(crate) async fn rematerialize_sandbox_binding_for_worktree(
-        &self,
-        workspace: &Workspace,
-        worktree: &Worktree,
-        binding: &SandboxBinding,
-    ) -> anyhow::Result<SandboxBinding> {
-        rematerialize_sandbox_binding_for_worktree(&self.state, workspace, worktree, binding).await
-    }
-
-    pub(crate) async fn ensure_worktree_attachment_mounts_if_materialized(
-        &self,
-        workspace: &Workspace,
-        worktree: &Worktree,
-    ) -> anyhow::Result<Vec<WorktreeAttachmentMount>> {
-        attachments::ensure_worktree_attachment_mounts_if_materialized(
-            self.state.as_ref(),
-            workspace,
-            worktree,
-        )
-        .await
-    }
-
     pub(crate) async fn upsert_workspace_attachment(
         &self,
         workspace_id: WorkspaceId,
@@ -669,14 +648,6 @@ impl WorkspacesHandle {
         Ok(attachments)
     }
 
-    pub(crate) async fn spawn_worktree_bootstrap(
-        &self,
-        workspace: Workspace,
-        worktree: Worktree,
-    ) -> anyhow::Result<()> {
-        spawn_worktree_bootstrap(Arc::clone(&self.state), workspace, worktree).await
-    }
-
     pub(crate) async fn ensure_task_commit_hook(
         &self,
         workspace: &Workspace,
@@ -688,10 +659,6 @@ impl WorkspacesHandle {
 
     pub(crate) async fn emit_workspace_task_upsert(&self, task_id: TaskId) -> anyhow::Result<()> {
         self.state.emit_workspace_task_upsert(task_id).await
-    }
-
-    pub(crate) async fn emit_workspace_task_delta(&self, task: Task, kind: TaskDeltaKind) -> bool {
-        self.state.emit_workspace_task_delta(task, kind).await
     }
 
     pub(crate) async fn emit_workspace_task_delete(
@@ -712,13 +679,6 @@ impl WorkspacesHandle {
         self.state
             .emit_workspace_archived_task_delete(workspace_id, task_id)
             .await;
-    }
-
-    pub(crate) async fn load_workspace_active_snapshot_state(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> (i64, i64) {
-        load_workspace_active_snapshot_state(&self.state, workspace_id).await
     }
 
     pub(crate) async fn workspace_harness_container_status(

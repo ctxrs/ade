@@ -24,58 +24,38 @@ async fn task_mutations_return_not_found_for_stale_task_index() {
 }
 
 async fn assert_task_mutations_return_not_found(state: &Arc<DaemonState>, missing_task_id: TaskId) {
-    let (sessions, providers, workspaces, transport) = task_api_states(state);
+    let tasks = task_api_task_state(state);
 
     let task_sessions_status =
-        list_task_sessions(sessions.clone(), Path(missing_task_id.0.to_string()))
+        list_task_sessions(tasks.clone(), Path(missing_task_id.0.to_string()))
             .await
             .expect_err("missing task sessions should fail");
     assert_eq!(task_sessions_status, StatusCode::NOT_FOUND);
 
-    let read_status = mark_task_read(
-        sessions.clone(),
-        workspaces.clone(),
-        Path(missing_task_id.0.to_string()),
-    )
-    .await
-    .expect_err("missing task read should fail");
+    let read_status = mark_task_read(tasks.clone(), Path(missing_task_id.0.to_string()))
+        .await
+        .expect_err("missing task read should fail");
     assert_eq!(read_status, StatusCode::NOT_FOUND);
 
-    let unread_status = mark_task_unread(
-        sessions.clone(),
-        workspaces.clone(),
-        Path(missing_task_id.0.to_string()),
-    )
-    .await
-    .expect_err("missing task unread should fail");
+    let unread_status = mark_task_unread(tasks.clone(), Path(missing_task_id.0.to_string()))
+        .await
+        .expect_err("missing task unread should fail");
     assert_eq!(unread_status, StatusCode::NOT_FOUND);
 
     let title_update = crate::daemon::DaemonHandle::new(Arc::clone(&state))
-        .sessions()
+        .tasks()
         .update_task_title(missing_task_id, "renamed".to_string())
         .await
         .expect("missing task title update should not be an internal error");
     assert!(title_update.is_none());
 
-    let archive_status = archive_task(
-        sessions.clone(),
-        providers.clone(),
-        workspaces.clone(),
-        transport.clone(),
-        Path(missing_task_id.0.to_string()),
-    )
-    .await
-    .expect_err("missing task archive should fail");
+    let archive_status = archive_task(tasks.clone(), Path(missing_task_id.0.to_string()))
+        .await
+        .expect_err("missing task archive should fail");
     assert_eq!(archive_status, StatusCode::NOT_FOUND);
 
-    let unarchive_status = unarchive_task(
-        sessions,
-        providers,
-        workspaces,
-        transport,
-        Path(missing_task_id.0.to_string()),
-    )
-    .await
-    .expect_err("missing task unarchive should fail");
+    let unarchive_status = unarchive_task(tasks, Path(missing_task_id.0.to_string()))
+        .await
+        .expect_err("missing task unarchive should fail");
     assert_eq!(unarchive_status, StatusCode::NOT_FOUND);
 }

@@ -1,8 +1,4 @@
 use super::super::*;
-use worktrees::load_archive_worktrees;
-
-#[path = "archive/worktrees.rs"]
-mod worktrees;
 
 #[derive(Debug, Serialize)]
 pub(in crate::api) struct ArchiveTaskResponse {
@@ -12,127 +8,16 @@ pub(in crate::api) struct ArchiveTaskResponse {
 }
 
 pub(in crate::api) async fn archive_task(
-    State(sessions): State<SessionsHandle>,
-    State(providers): State<ProvidersHandle>,
-    State(workspaces): State<WorkspacesHandle>,
-    State(transport): State<TransportHandle>,
+    State(tasks): State<TasksHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<ArchiveTaskResponse>, StatusCode> {
-    let handles = TaskApiHandles::new(sessions, providers, workspaces, transport);
     let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let ctx = handles
-        .sessions
-        .load_task_context(task_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
-    let store = ctx.store;
-    let task = ctx.task;
-    let session_ids: Vec<SessionId> = store
-        .list_all_sessions_for_task(task_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .into_iter()
-        .map(|session| session.id)
-        .collect();
-    let workspace = ctx.workspace;
-    let sessions = store
-        .list_all_sessions_for_task(task_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    for session in &sessions {
-        handles.sessions.cleanup_session(session.id).await;
-    }
-    let worktrees = load_archive_worktrees(&store, &task, &sessions).await?;
-
-    let updated = store
+    let outcome = tasks
         .archive_task(task_id)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    if !updated {
-        return Err(StatusCode::NOT_FOUND);
-    }
-    let mut errors: Vec<anyhow::Error> = Vec::new();
-    let mut cleanup_targets = Vec::new();
-    for worktree in &worktrees {
-        let other_active = match store
-            .count_active_tasks_for_worktree(worktree.id, Some(task_id))
-            .await
-        {
-            Ok(count) => count > 0,
-            Err(err) => {
-                tracing::warn!(
-                    task_id = %task_id.0,
-                    worktree_id = %worktree.id.0,
-                    "failed to check worktree usage: {err:#}"
-                );
-                true
-            }
-        };
-        if other_active {
-            continue;
-        }
-        let sandbox_binding = match store.get_sandbox_binding(worktree.id).await {
-            Ok(binding) => binding,
-            Err(err) => {
-                tracing::warn!(
-                    task_id = %task_id.0,
-                    worktree_id = %worktree.id.0,
-                    "failed to load sandbox binding for cleanup: {err:#}"
-                );
-                None
-            }
-        };
-        cleanup_targets.push(TaskWorktreeCleanupTarget {
-            managed_root: handles
-                .workspaces
-                .managed_worktree_root(&workspace, worktree),
-            sandbox_binding,
-            worktree: worktree.clone(),
-            destroy_worktree_on_cleanup: true,
-        });
-    }
-    errors.extend(
-        handles
-            .workspaces
-            .cleanup_task_worktrees(
-                &workspace,
-                task_id,
-                &cleanup_targets,
-                BranchCleanupErrorMode::Report,
-            )
-            .await,
-    );
-    let cleanup_failed = !errors.is_empty();
-    if cleanup_failed {
-        tracing::warn!(
-            task_id = %task_id.0,
-            "archive cleanup had errors after task state was persisted"
-        );
-    }
-    let task = match store
-        .get_task_with_activity(task_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    {
-        Some(task) => task,
-        None => return Err(StatusCode::NOT_FOUND),
-    };
-    let _ = handles
-        .workspaces
-        .emit_workspace_task_delta(task.clone(), TaskDeltaKind::Archived)
-        .await;
-    if let Err(e) = handles.workspaces.emit_workspace_task_upsert(task_id).await {
-        tracing::warn!(task_id = %task_id.0, "workspace active snapshot refresh failed: {e:?}");
-    }
-    for session_id in session_ids {
-        handles
-            .sessions
-            .remove_session_from_active_snapshot(session_id)
-            .await;
-    }
+        .map_err(task_lifecycle_status)?;
     Ok(Json(ArchiveTaskResponse {
-        task,
-        cleanup_failed,
+        task: outcome.task,
+        cleanup_failed: outcome.cleanup_failed,
     }))
 }

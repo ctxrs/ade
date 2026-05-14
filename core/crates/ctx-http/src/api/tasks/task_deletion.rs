@@ -74,31 +74,14 @@ pub(in crate::api) async fn delete_loaded_task_with_cleanup(
     Ok(())
 }
 
-pub(in crate::api) async fn delete_task_with_cleanup(
-    handles: &TaskApiHandles,
-    task_id: TaskId,
-) -> Result<(), StatusCode> {
-    let ctx = handles
-        .sessions
-        .load_task_context(task_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
-    let store = ctx.store;
-    let task = ctx.task;
-    let workspace = ctx.workspace;
-    delete_loaded_task_with_cleanup(handles, &store, &workspace, &task).await
-}
-
 pub(in crate::api) async fn delete_task(
-    State(sessions): State<SessionsHandle>,
-    State(providers): State<ProvidersHandle>,
-    State(workspaces): State<WorkspacesHandle>,
-    State(transport): State<TransportHandle>,
+    State(tasks): State<TasksHandle>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
-    let handles = TaskApiHandles::new(sessions, providers, workspaces, transport);
     let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    delete_task_with_cleanup(&handles, task_id).await?;
+    tasks
+        .delete_task(task_id)
+        .await
+        .map_err(task_lifecycle_status)?;
     Ok(StatusCode::NO_CONTENT)
 }

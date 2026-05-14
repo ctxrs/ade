@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -11,8 +11,8 @@ use ctx_core::models::{
     Artifact, ExecutionEnvironment, Message, MessageAttachment, MessageDelivery, MessageRole,
     Session, SessionEvent, SessionEventType, SessionEventsPage, SessionGitStatusSummary,
     SessionHeadSnapshot, SessionHistoryPage, SessionSnapshot, SessionState, SessionSummary,
-    SessionTurn, SessionTurnStatus, SessionTurnTool, SubagentInvocation, Task, Workspace,
-    WorkspaceIndexCursor, WorkspaceTaskSummary, Worktree, WorktreeVcsSnapshot,
+    SessionTurn, SessionTurnStatus, SessionTurnTool, SubagentInvocation, Task, Workspace, Worktree,
+    WorktreeVcsSnapshot,
 };
 use ctx_observability::ops_events::OpsEvent;
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
@@ -57,12 +57,6 @@ pub(crate) enum SessionImageBlobStoreError {
     PayloadTooLarge,
     UnsupportedMediaType,
     Internal,
-}
-
-pub(crate) struct TaskTitleUpdate {
-    pub(crate) task: Task,
-    pub(crate) session_ids: HashSet<String>,
-    pub(crate) worktree_ids: HashSet<String>,
 }
 
 pub(crate) struct TaskStoreContext {
@@ -866,128 +860,6 @@ impl SessionsHandle {
             workspace_id,
             workspace,
             store,
-        }))
-    }
-
-    pub(crate) async fn list_workspace_tasks(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> Result<Vec<Task>, WorkspaceStoreAccessError> {
-        let store = self.existing_workspace_store(workspace_id).await?;
-        store
-            .list_tasks(workspace_id)
-            .await
-            .map_err(WorkspaceStoreAccessError::Unavailable)
-    }
-
-    pub(crate) async fn list_workspace_archived_page(
-        &self,
-        workspace_id: WorkspaceId,
-        cursor: Option<WorkspaceIndexCursor>,
-        limit: i64,
-    ) -> Result<
-        (Vec<WorkspaceTaskSummary>, Option<WorkspaceIndexCursor>, i64),
-        WorkspaceStoreAccessError,
-    > {
-        let store = self.existing_workspace_store(workspace_id).await?;
-        let (tasks, next_cursor) = store
-            .list_workspace_archived_page(workspace_id, cursor, limit)
-            .await
-            .map_err(WorkspaceStoreAccessError::Unavailable)?;
-        let (_, total_archived) = store
-            .workspace_task_counts(workspace_id)
-            .await
-            .map_err(WorkspaceStoreAccessError::Unavailable)?;
-        Ok((tasks, next_cursor, total_archived))
-    }
-
-    pub(crate) async fn list_task_sessions(&self, task_id: TaskId) -> Result<Option<Vec<Session>>> {
-        let Some(context) = self.load_task_context(task_id).await? else {
-            return Ok(None);
-        };
-        context
-            .store
-            .list_sessions_for_task(task_id)
-            .await
-            .map(Some)
-    }
-
-    pub(crate) async fn mark_task_read(&self, task_id: TaskId) -> Result<Option<Task>> {
-        let Some(store) = self.task_store_or_none(task_id).await? else {
-            return Ok(None);
-        };
-        let updated = store.mark_task_read(task_id).await?;
-        if !updated {
-            return Ok(None);
-        }
-        store.get_task_with_activity(task_id).await
-    }
-
-    pub(crate) async fn mark_task_unread(&self, task_id: TaskId) -> Result<Option<Task>> {
-        let Some(store) = self.task_store_or_none(task_id).await? else {
-            return Ok(None);
-        };
-        let updated = store.mark_task_unread(task_id).await?;
-        if !updated {
-            return Ok(None);
-        }
-        store.get_task_with_activity(task_id).await
-    }
-
-    pub(crate) async fn update_task_title(
-        &self,
-        task_id: TaskId,
-        title: String,
-    ) -> Result<Option<TaskTitleUpdate>> {
-        let Some(store) = self.task_store_or_none(task_id).await? else {
-            return Ok(None);
-        };
-        let updated = store.update_task_title(task_id, title).await?;
-        if !updated {
-            return Ok(None);
-        }
-        let Some(task) = store.get_task_with_activity(task_id).await? else {
-            return Ok(None);
-        };
-        let sessions = store
-            .list_sessions_for_task(task_id)
-            .await
-            .unwrap_or_default();
-        let session_ids = sessions
-            .iter()
-            .map(|session| session.id.0.to_string())
-            .collect();
-        let mut worktree_ids: HashSet<WorktreeId> =
-            sessions.iter().map(|session| session.worktree_id).collect();
-        if let Some(primary_worktree_id) = task.primary_worktree_id {
-            worktree_ids.insert(primary_worktree_id);
-        }
-        let mut worktree_id_strings = HashSet::new();
-        for worktree_id in worktree_ids {
-            match store.get_worktree(worktree_id).await {
-                Ok(Some(worktree)) => {
-                    worktree_id_strings.insert(worktree.id.0.to_string());
-                }
-                Ok(None) => {
-                    tracing::warn!(
-                        task_id = %task_id.0,
-                        worktree_id = %worktree_id.0,
-                        "worktree missing for task title update"
-                    );
-                }
-                Err(error) => {
-                    tracing::warn!(
-                        task_id = %task_id.0,
-                        worktree_id = %worktree_id.0,
-                        "failed to load worktree for task title update: {error:?}"
-                    );
-                }
-            }
-        }
-        Ok(Some(TaskTitleUpdate {
-            task,
-            session_ids,
-            worktree_ids: worktree_id_strings,
         }))
     }
 
@@ -1944,14 +1816,6 @@ impl SessionsHandle {
             "relationship": session.relationship.clone(),
         }));
         self.state.telemetry.ops_events.emit(ops_event);
-    }
-
-    pub(crate) async fn remove_session_from_active_snapshot(&self, session_id: SessionId) {
-        self.state
-            .workspaces
-            .workspace_active_snapshot
-            .remove_session(session_id)
-            .await;
     }
 
     pub(crate) async fn workspace_id_for_session(

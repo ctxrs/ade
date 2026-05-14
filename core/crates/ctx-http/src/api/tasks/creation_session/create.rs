@@ -29,12 +29,12 @@ pub(in crate::api) async fn create_session_for_task(
     State(sessions): State<SessionsHandle>,
     State(providers): State<ProvidersHandle>,
     State(workspaces): State<WorkspacesHandle>,
-    State(transport): State<TransportHandle>,
+    State(_transport): State<TransportHandle>,
     Path(id): Path<String>,
     headers: HeaderMap,
     Json(req): Json<CreateSessionReq>,
 ) -> Result<Json<Session>, StatusCode> {
-    let handles = TaskApiHandles::new(sessions, providers, workspaces, transport);
+    let handles = TaskApiHandles::new(sessions, providers, workspaces);
     let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let creation_lock = handles.sessions.task_session_creation_lock(task_id).await;
     let _creation_guard = creation_lock.lock().await;
