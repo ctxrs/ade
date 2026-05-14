@@ -90,6 +90,7 @@ upload_artifacts_on_buildkite() {
   fi
   buildkite-agent artifact upload "${ARTIFACT_DIR}/*.json" >/dev/null 2>&1 || true
   buildkite-agent artifact upload "${ARTIFACT_DIR}/*.log" >/dev/null 2>&1 || true
+  buildkite-agent artifact upload "${ARTIFACT_DIR}/native-up-to-date-attempt-*.log" >/dev/null 2>&1 || true
   buildkite-agent artifact upload "${ARTIFACT_DIR}/harness-install-matrix/**/*.json" >/dev/null 2>&1 || true
   buildkite-agent artifact upload "${ARTIFACT_DIR}/harness-install-matrix/**/*.log" >/dev/null 2>&1 || true
   buildkite-agent artifact upload "${PROVIDER_DIAGNOSTICS_DIR}/**/*.json" >/dev/null 2>&1 || true
@@ -293,6 +294,36 @@ matches_log() {
     return
   fi
   grep -Eqi "${pattern}" "${WIZARD_LOG}"
+}
+
+sweep_webkit_automation_helpers() {
+  if ! command -v ps >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local pids=()
+  local pid cmd
+  while read -r pid cmd; do
+    if [[ -z "${pid}" || -z "${cmd:-}" ]]; then
+      continue
+    fi
+    case "${cmd}" in
+      *WebKitWebDriver*|*wkwebdriver*|*WebKitWebProcess*|*WebKitNetworkProcess*|*WebKitGPUProcess*|*WebKitPluginProcess*|*WebKitStorageProcess*|*WebKitWebExtension*)
+        pids+=("${pid}")
+        ;;
+    esac
+  done < <(ps -Ao pid=,command= 2>/dev/null || true)
+
+  if [[ "${#pids[@]}" -gt 0 ]]; then
+    kill -9 "${pids[@]}" >/dev/null 2>&1 || true
+  fi
+}
+
+is_retryable_wdio_session_start_failure() {
+  local log_path="$1"
+  [[ -f "${log_path}" ]] || return 1
+  grep -Eq 'Failed to create a session|Could not start a new session|POST[[:space:]]+/session|/session[[:space:]]|invalid HTTP version parsed' "${log_path}" || return 1
+  grep -Eq 'UND_ERR_HEADERS_TIMEOUT|hyper::Error\(IncompleteMessage\)|invalid HTTP version parsed' "${log_path}"
 }
 
 collect_clean_workspace_diagnostics() {
@@ -719,31 +750,78 @@ if [[ "${RUN_UPDATER_PHASE}" == "1" ]]; then
   updated_automation_app_path="${AUTOMATION_APP_PATH}"
 
   echo "[updater-linux-proof] proving up-to-date manual check on updated app" >&2
-  if ! HOME="${home_dir}" \
-  XDG_DATA_HOME="${home_dir}/.local/share" \
-  XDG_CONFIG_HOME="${home_dir}/.config" \
-  XDG_CACHE_HOME="${home_dir}/.cache" \
-  PATH="${home_dir}/.local/bin:${PATH}" \
-  APPIMAGE_EXTRACT_AND_RUN="${APPIMAGE_EXTRACT_AND_RUN:-1}" \
-  APPIMAGE="${app_path}" \
-  APPDIR="${updated_automation_app_dir}" \
-  ARGV0="${app_path}" \
-  CTX_APPIMAGE_PATH="${app_path}" \
-  CTX_VOLATILE_ROOT="${ARTIFACT_DIR}/volatile" \
-  CTX_AUTOMATION_SKIP_DESKTOP_PREP_RELEASE=1 \
-  CTX_AUTOMATION_SKIP_APP_BUILD=1 \
-  CTX_AUTOMATION_WDIO_LOG_LEVEL="${CTX_AUTOMATION_WDIO_LOG_LEVEL:-warn}" \
-  CTX_AUTOMATION_CONNECTION_RETRY_TIMEOUT_MS="${CTX_AUTOMATION_CONNECTION_RETRY_TIMEOUT_MS:-${WDIO_CONNECTION_RETRY_TIMEOUT_MS}}" \
-  CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP="${CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP:-1}" \
-  CTX_AUTOMATION_KEEP_TMPDIR=1 \
-  CTX_AUTOMATION_SHIPPED_APP=1 \
-  CTX_DESKTOP_APP_PATH="${updated_automation_app_path}" \
-  TAURI_DRIVER_PORT="${up_to_date_driver_port}" \
-  TAURI_TEST_BACKEND_PORT="${up_to_date_backend_port}" \
-  CTX_UPDATER_E2E_CHANNEL="${TARGET_CHANNEL}" \
-  CTX_UPDATER_NATIVE_SMOKE_REPORT="${UP_TO_DATE_REPORT}" \
-  CTX_UPDATER_PROOF_EXPECT_UP_TO_DATE=1 \
-  run_repo_pnpm -C apps/desktop test:automation:updater-native-smoke; then
+  up_to_date_attempts="${CTX_UPDATER_LINUX_PROOF_UP_TO_DATE_ATTEMPTS:-2}"
+  if ! [[ "${up_to_date_attempts}" =~ ^[0-9]+$ ]] || [[ "${up_to_date_attempts}" -lt 1 ]]; then
+    write_report "failed" "invalid_up_to_date_attempts"
+    echo "error: CTX_UPDATER_LINUX_PROOF_UP_TO_DATE_ATTEMPTS must be a positive integer" >&2
+    exit 2
+  fi
+
+  up_to_date_attempt=1
+  up_to_date_status=1
+  while true; do
+    attempt_driver_port="${up_to_date_driver_port}"
+    attempt_backend_port="${up_to_date_backend_port}"
+    if [[ "${up_to_date_attempt}" -gt 1 ]]; then
+      if [[ -z "${CTX_UPDATER_LINUX_PROOF_UP_TO_DATE_DRIVER_PORT:-}" ]]; then
+        attempt_driver_port="$((up_to_date_driver_port + ((up_to_date_attempt - 1) * 10)))"
+      fi
+      if [[ -z "${CTX_UPDATER_LINUX_PROOF_UP_TO_DATE_BACKEND_PORT:-}" ]]; then
+        attempt_backend_port="$((up_to_date_backend_port + ((up_to_date_attempt - 1) * 10)))"
+      fi
+    fi
+    up_to_date_attempt_log="${ARTIFACT_DIR}/native-up-to-date-attempt-${up_to_date_attempt}.log"
+    rm -f "${UP_TO_DATE_REPORT}"
+    echo "[updater-linux-proof] up-to-date automation attempt ${up_to_date_attempt}/${up_to_date_attempts} driver=${attempt_driver_port} backend=${attempt_backend_port}" >&2
+    set +e
+    HOME="${home_dir}" \
+    XDG_DATA_HOME="${home_dir}/.local/share" \
+    XDG_CONFIG_HOME="${home_dir}/.config" \
+    XDG_CACHE_HOME="${home_dir}/.cache" \
+    PATH="${home_dir}/.local/bin:${PATH}" \
+    APPIMAGE_EXTRACT_AND_RUN="${APPIMAGE_EXTRACT_AND_RUN:-1}" \
+    APPIMAGE="${app_path}" \
+    APPDIR="${updated_automation_app_dir}" \
+    ARGV0="${app_path}" \
+    CTX_APPIMAGE_PATH="${app_path}" \
+    CTX_VOLATILE_ROOT="${ARTIFACT_DIR}/volatile" \
+    CTX_AUTOMATION_SKIP_DESKTOP_PREP_RELEASE=1 \
+    CTX_AUTOMATION_SKIP_APP_BUILD=1 \
+    CTX_AUTOMATION_WDIO_LOG_LEVEL="${CTX_AUTOMATION_WDIO_LOG_LEVEL:-warn}" \
+    CTX_AUTOMATION_CONNECTION_RETRY_TIMEOUT_MS="${CTX_AUTOMATION_CONNECTION_RETRY_TIMEOUT_MS:-${WDIO_CONNECTION_RETRY_TIMEOUT_MS}}" \
+    CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP="${CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP:-1}" \
+    CTX_AUTOMATION_KEEP_TMPDIR=1 \
+    CTX_AUTOMATION_SHIPPED_APP=1 \
+    CTX_DESKTOP_APP_PATH="${updated_automation_app_path}" \
+    TAURI_DRIVER_PORT="${attempt_driver_port}" \
+    TAURI_TEST_BACKEND_PORT="${attempt_backend_port}" \
+    CTX_UPDATER_E2E_CHANNEL="${TARGET_CHANNEL}" \
+    CTX_UPDATER_NATIVE_SMOKE_REPORT="${UP_TO_DATE_REPORT}" \
+    CTX_UPDATER_PROOF_EXPECT_UP_TO_DATE=1 \
+    run_repo_pnpm -C apps/desktop test:automation:updater-native-smoke 2>&1 | tee "${up_to_date_attempt_log}"
+    up_to_date_status="${PIPESTATUS[0]}"
+    set -e
+
+    if [[ "${up_to_date_status}" -eq 0 ]]; then
+      break
+    fi
+    if [[ "${up_to_date_attempt}" -ge "${up_to_date_attempts}" ]]; then
+      break
+    fi
+    if [[ -f "${UP_TO_DATE_REPORT}" ]]; then
+      break
+    fi
+    if ! is_retryable_wdio_session_start_failure "${up_to_date_attempt_log}"; then
+      break
+    fi
+
+    echo "[updater-linux-proof] retrying startup-only WebDriver session failure after up-to-date attempt ${up_to_date_attempt}; log=${up_to_date_attempt_log}" >&2
+    stop_proof_daemons
+    sweep_webkit_automation_helpers
+    up_to_date_attempt=$((up_to_date_attempt + 1))
+  done
+
+  if [[ "${up_to_date_status}" -ne 0 ]]; then
     write_report "failed" "native_up_to_date_smoke_failed"
     exit 1
   fi

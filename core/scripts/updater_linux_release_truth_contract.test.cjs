@@ -98,6 +98,18 @@ test("Linux updater proof opts sequential native updater WDIO runs into WebKit h
   }
 });
 
+test("Linux updater proof retries startup-only WebDriver failures for the updated app check", () => {
+  assert.match(scriptText, /buildkite-agent artifact upload "\$\{ARTIFACT_DIR\}\/native-up-to-date-attempt-\*\.log"/);
+  assert.match(scriptText, /is_retryable_wdio_session_start_failure\(\) \{/);
+  assert.match(scriptText, /invalid HTTP version parsed/);
+  assert.match(scriptText, /CTX_UPDATER_LINUX_PROOF_UP_TO_DATE_ATTEMPTS:-2/);
+  assert.match(scriptText, /native-up-to-date-attempt-\$\{up_to_date_attempt\}\.log/);
+  assert.match(scriptText, /TAURI_DRIVER_PORT="\$\{attempt_driver_port\}"/);
+  assert.match(scriptText, /TAURI_TEST_BACKEND_PORT="\$\{attempt_backend_port\}"/);
+  assert.match(scriptText, /if \[\[ -f "\$\{UP_TO_DATE_REPORT\}" \]\]; then\s+break\s+fi/);
+  assert.match(scriptText, /stop_proof_daemons\s+sweep_webkit_automation_helpers/);
+});
+
 test("Linux clean workspace proof uploads provider diagnostics when the wizard fails", () => {
   assert.match(scriptText, /collect_clean_workspace_diagnostics\(\) \{/);
   assert.match(scriptText, /shipped-app\.summary\.json/);
