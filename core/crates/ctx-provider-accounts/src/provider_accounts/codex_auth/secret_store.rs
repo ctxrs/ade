@@ -472,11 +472,6 @@ pub async fn hydrate_codex_account_home_from_secret(
     if codex_account_deletion_in_progress(data_root, account_id).await? {
         return Ok(false);
     }
-    let Some(secret_ref) = account.secret_ref.as_deref() else {
-        return hydrate_legacy_account_auth_to_broker_home(data_root, account_id, true)
-            .await
-            .map(|home| home.is_some());
-    };
     let include_legacy_api_key = account.kind.trim() == CODEX_CREDENTIAL_KIND_API_KEY;
     if hydrate_legacy_account_auth_to_broker_home(data_root, account_id, include_legacy_api_key)
         .await?
@@ -484,6 +479,17 @@ pub async fn hydrate_codex_account_home_from_secret(
     {
         return Ok(true);
     }
+    if account.kind.trim() != CODEX_CREDENTIAL_KIND_API_KEY
+        && super::runtime::migrate_owned_runtime_oauth_projection_to_broker_if_needed(
+            data_root, account_id,
+        )
+        .await?
+    {
+        return Ok(true);
+    }
+    let Some(secret_ref) = account.secret_ref.as_deref() else {
+        return Ok(false);
+    };
     let auth = load_codex_auth_from_secret_store(data_root, secret_ref).await?;
     let home = codex_broker_home(data_root, account_id);
     if codex_auth_has_refresh_token(&auth) && home.join("auth.json").exists() {

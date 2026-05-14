@@ -211,11 +211,12 @@ async fn prepare_broker_home_from_secret(
     Ok(broker_home)
 }
 
-async fn migrate_owned_runtime_oauth_projection_to_broker_if_needed(
+pub(super) async fn migrate_owned_runtime_oauth_projection_to_broker_if_needed(
     data_root: &Path,
     account_id: &str,
-) -> Result<()> {
+) -> Result<bool> {
     let broker_home = codex_broker_home(data_root, account_id);
+    let mut adopted = false;
     if !broker_home.join("auth.json").exists()
         && read_runtime_owner_marker(data_root).await?.as_deref() == Some(account_id)
     {
@@ -224,10 +225,12 @@ async fn migrate_owned_runtime_oauth_projection_to_broker_if_needed(
             if codex_auth_has_supported_shape(&auth) && codex_auth_has_refresh_token(&auth) {
                 ingest_auth_value_for_account(data_root, account_id, &auth).await?;
                 project_oauth_auth_to_broker_home_with_lock(data_root, account_id, &auth).await?;
+                adopted = true;
             }
         }
     }
-    clear_runtime_auth_projection(data_root).await
+    clear_runtime_auth_projection_if_owned_by(data_root, account_id).await?;
+    Ok(adopted)
 }
 
 async fn prepare_broker_home_from_legacy_account_auth(
