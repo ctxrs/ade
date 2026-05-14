@@ -141,16 +141,17 @@ async fn effective_model_payload_for_workspace(
                     &probe,
                     fallback_current_model_id.as_deref(),
                 ) {
-                    let response = cached_runtime_models_response(CachedRuntimeModelsResponseArgs {
-                        provider_id,
-                        workspace_id: workspace.id,
-                        installed: provider_status.installed,
-                        models: &models,
-                        has_active_auth,
-                        auth_mode: provider_auth_mode(has_active_auth, source_config),
-                        source_config,
-                        preferred_model_id,
-                    });
+                    let response =
+                        cached_runtime_models_response(CachedRuntimeModelsResponseArgs {
+                            provider_id,
+                            workspace_id: workspace.id,
+                            installed: provider_status.installed,
+                            models: &models,
+                            has_active_auth,
+                            auth_mode: provider_auth_mode(has_active_auth, source_config),
+                            source_config,
+                            preferred_model_id,
+                        });
                     cache.store_response(state, response).await;
                     return Ok(Some(models));
                 }
