@@ -8,7 +8,7 @@ use ctx_core::models::{
     Session, SessionEventType, Task, TerminalSession, TerminalStatus, Workspace,
     WorkspaceActiveSnapshotEvent, WorkspaceActiveSnapshotStreamMessage,
 };
-use ctx_http::daemon::DaemonState;
+use ctx_daemon::daemon::DaemonState;
 use ctx_transport_runtime::TerminalServerMessage;
 
 mod common;

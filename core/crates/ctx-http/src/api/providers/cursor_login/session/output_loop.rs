@@ -5,7 +5,7 @@ use super::super::output::{
     CURSOR_LOGIN_POLL_INTERVAL,
 };
 use super::progress::record_cursor_login_output;
-use crate::daemon::ProvidersHandle;
+use ctx_daemon::daemon::ProvidersHandle;
 
 pub(super) struct CursorLoginOutputResult {
     pub(super) observed_auth_url: Option<String>,

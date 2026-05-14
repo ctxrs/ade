@@ -5,8 +5,8 @@ use tokio::process::Command;
 
 use ctx_core::ids::WorktreeId;
 use ctx_core::models::{VcsKind, WorkspaceAttachmentKind, Worktree};
+use ctx_daemon::daemon::DaemonState;
 use ctx_fs::git::rev_parse_head;
-use ctx_http::daemon::DaemonState;
 use ctx_store::StoreManager;
 use ctx_workspace_services::workspace_attachments::{self, AttachmentConfig};
 

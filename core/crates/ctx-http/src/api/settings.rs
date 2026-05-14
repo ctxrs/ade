@@ -2,7 +2,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
 
-use crate::daemon::CoreHandle;
+use ctx_daemon::daemon::CoreHandle;
 use ctx_settings_model as user_settings;
 use ctx_settings_service::HostExecutionPolicy;
 
@@ -54,7 +54,7 @@ mod tests {
     use ctx_store::StoreManager;
     use serde_json::json;
 
-    use crate::daemon::{DaemonHandle, DaemonState};
+    use ctx_daemon::daemon::{DaemonHandle, DaemonState};
     use ctx_settings_service::EXECUTION_POLICY_TEST_ENV_LOCK;
 
     struct EnvVarGuard {

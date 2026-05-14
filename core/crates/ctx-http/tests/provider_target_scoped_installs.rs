@@ -11,7 +11,7 @@ use std::time::Duration;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use ctx_core::models::SessionEventType;
-use ctx_http::daemon::DaemonState;
+use ctx_daemon::daemon::DaemonState;
 use ctx_managed_installs::{
     agent_server_config_path, load_agent_server_config, refresh_provider_statuses,
     save_agent_server_config, AgentServerCommand, AgentServerConfigFile, ManagedInstallMetadata,

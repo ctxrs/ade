@@ -1,6 +1,6 @@
 use super::*;
-use crate::daemon::workspaces::stream::ReplayOutcome;
 use ctx_core::models::WorkspaceActiveSnapshotSessionIntent;
+use ctx_daemon::daemon::workspaces::stream::ReplayOutcome;
 use ctx_workspace_active_snapshot::replay_cursor_after_live_progress;
 use std::collections::HashSet;
 

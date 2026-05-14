@@ -10,7 +10,7 @@ use serde_json::Value;
 use tower::ServiceExt;
 
 use ctx_core::models::SessionEventType;
-use ctx_http::daemon::DaemonState;
+use ctx_daemon::daemon::DaemonState;
 use ctx_managed_installs::{save_agent_server_config, AgentServerCommand, AgentServerConfigFile};
 use ctx_providers::adapters::{ProviderAdapter, ProviderHealth, ProviderStatus};
 use ctx_providers::crp::Tier1CrpAdapter;

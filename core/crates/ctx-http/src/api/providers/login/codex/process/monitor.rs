@@ -1,6 +1,6 @@
 use super::super::app_server::{fetch_codex_account_details, wait_for_codex_login_completion};
 use super::{CodexLoginCompletion, CodexLoginProcess};
-use crate::daemon::ProvidersHandle;
+use ctx_daemon::daemon::ProvidersHandle;
 
 pub(in crate::api::providers::login::codex) async fn monitor_codex_login(
     providers: ProvidersHandle,

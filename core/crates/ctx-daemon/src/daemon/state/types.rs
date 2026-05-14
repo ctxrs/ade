@@ -1,0 +1,114 @@
+use super::*;
+use ctx_core::models::WorktreeVcsSnapshot;
+use ctx_execution_runtime::ExecutionSetupCoordinator;
+use ctx_mcp_auth::McpAuthRegistry;
+use ctx_storage_admission::StorageGuardRuntime;
+use ctx_update_service::UpdateDrainCoordinator;
+use ctx_workspace_active_snapshot::{
+    WorkspaceActiveHeadCacheEntry, WorkspaceActiveSnapshotCacheEntry,
+};
+use ctx_workspace_services::file_completions::CachedFileCompletions;
+use ctx_workspace_services::worktree_vcs::{
+    GitStatusSnapshotCacheEntry, WorktreeVcsRuntimeState, WorktreeVcsSchedulerRuntime,
+    WorktreeVcsSnapshotCacheEntry,
+};
+
+pub struct CoreState {
+    pub data_root: PathBuf,
+    pub storage_guard: StorageGuardRuntime,
+    pub tool_output_spool_enabled: bool,
+    pub tool_output_spool_dir: PathBuf,
+    pub stores: StoreManager,
+    pub daemon_url: String,
+    pub public_base_url: Option<String>,
+    pub auth_token: Option<String>,
+    pub local_shutdown_token: Option<String>,
+    pub mcp_auth: McpAuthRegistry,
+    pub ask_user_question: Arc<AskUserQuestionBroker>,
+    pub shutdown_tx: broadcast::Sender<()>,
+    pub update_drain: Arc<UpdateDrainCoordinator>,
+}
+
+pub type SessionRuntime = ctx_session_service::runtime::SessionRuntime<SchedulerCommand>;
+
+pub struct WorkspaceRuntime {
+    pub worktree_vcs_enabled: bool,
+    pub file_completions_cache: Mutex<HashMap<WorktreeId, TimedEntry<CachedFileCompletions>>>,
+    pub workspace_file_completions_cache:
+        Mutex<HashMap<WorkspaceId, TimedEntry<CachedFileCompletions>>>,
+    pub git_status_snapshots: Mutex<HashMap<WorktreeId, TimedEntry<GitStatusSnapshotCacheEntry>>>,
+    pub worktree_vcs_snapshots:
+        Mutex<HashMap<WorktreeId, TimedEntry<WorktreeVcsSnapshotCacheEntry>>>,
+    pub worktree_vcs_active: Mutex<HashMap<WorktreeId, usize>>,
+    pub worktree_vcs_refresh_locks: Mutex<HashMap<WorktreeId, std::sync::Weak<Mutex<()>>>>,
+    pub worktree_vcs_open_panes: Mutex<HashMap<WorktreeId, usize>>,
+    pub worktree_vcs_summary_gen: Mutex<HashMap<WorktreeId, u64>>,
+    pub worktree_vcs_runtime: Mutex<HashMap<WorktreeId, WorktreeVcsRuntimeState>>,
+    pub worktree_vcs_scheduler: WorktreeVcsSchedulerRuntime,
+    pub worktree_vcs_events: broadcast::Sender<WorktreeVcsSnapshot>,
+    pub git_status_watchers: Mutex<HashSet<WorktreeId>>,
+    pub workspace_active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
+    pub workspace_active_snapshot_cache:
+        Mutex<HashMap<WorkspaceId, TimedEntry<WorkspaceActiveSnapshotCacheEntry>>>,
+    pub workspace_active_heads_cache:
+        Mutex<HashMap<WorkspaceId, TimedEntry<WorkspaceActiveHeadCacheEntry>>>,
+    pub worktree_bootstrap_gates: Mutex<HashMap<WorktreeId, TimedEntry<WorktreeBootstrapGate>>>,
+    pub attachment_materializations:
+        Mutex<HashMap<WorkspaceAttachmentId, AttachmentMaterializationTask>>,
+    pub attachment_materialization_generation: AtomicU64,
+}
+
+pub type ProviderRuntime = ctx_provider_runtime::ProviderRuntime;
+
+pub struct TelemetryRuntime {
+    pub telemetry: Telemetry,
+    pub ops_events: OpsEvents,
+    pub perf_telemetry: PerfTelemetry,
+    pub provider_unknown_events: ctx_observability::provider_unknown_events::ProviderUnknownEvents,
+    pub resource_governance: Mutex<ResourceGovernanceRuntime>,
+    pub resource_sampler: Mutex<ResourceSampler>,
+}
+
+pub struct TransportRuntime {
+    pub terminals: Arc<TerminalManager>,
+    pub mobile_tunnel: MobileTunnelManager,
+    pub web_sessions: Arc<WebSessionManager>,
+    pub merge_queue: Arc<ctx_merge_queue::MergeQueueRuntime>,
+}
+
+pub struct ExecutionRuntime {
+    pub harness: Arc<HarnessRuntimeManager>,
+    pub setup: Arc<ExecutionSetupCoordinator>,
+}
+
+pub struct DaemonState {
+    pub core: CoreState,
+    pub sessions: SessionRuntime,
+    pub workspaces: WorkspaceRuntime,
+    pub providers: ProviderRuntime,
+    pub telemetry: TelemetryRuntime,
+    pub transport: TransportRuntime,
+    pub execution: ExecutionRuntime,
+}
+
+pub enum StoreLookup {
+    Found(Store),
+    Missing,
+    Deleting,
+    Unavailable(anyhow::Error),
+}
+
+pub struct WorktreeBootstrapGate {
+    pub wait_for_completion: bool,
+    pub done_tx: watch::Sender<bool>,
+}
+
+pub struct AttachmentMaterializationTask {
+    pub generation: u64,
+    pub handle: JoinHandle<()>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AppRuntimeFlags {
+    pub worktree_vcs_enabled: bool,
+}

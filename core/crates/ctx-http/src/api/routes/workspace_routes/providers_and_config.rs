@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn workspace_provider_and_config_routes() -> axum::Router<DaemonHandle> {
+pub(super) fn workspace_provider_and_config_routes() -> axum::Router<RouteState> {
     axum::Router::new()
         .route(
             "/api/workspaces/:id/providers/:provider_id/options",

@@ -5,7 +5,7 @@ use axum::response::IntoResponse;
 
 use ctx_core::ids::*;
 
-use crate::daemon::{
+use ctx_daemon::daemon::{
     mobile_access::MobileSecureStreamAccessError, CoreHandle, WorkspaceStreamHandle,
 };
 

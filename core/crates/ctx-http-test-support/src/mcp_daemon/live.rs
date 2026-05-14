@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use ctx_core::models::{Session, Task, Workspace};
-use ctx_http::daemon::DaemonState;
+use ctx_daemon::daemon::DaemonState;
 use ctx_providers::adapters::ProviderAdapter;
 use ctx_store::StoreManager;
 use serde_json::json;

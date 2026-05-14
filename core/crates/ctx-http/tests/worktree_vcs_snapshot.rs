@@ -7,11 +7,11 @@ use std::time::{Duration, Instant};
 
 use axum::http::{Method, StatusCode};
 use ctx_core::models::{DiffUnavailableReason, WorktreeVcsFreshness};
-use ctx_http::daemon::git_status::{
+use ctx_daemon::daemon::git_status::{
     emit_worktree_vcs_snapshot_for_worktree, refresh_worktree_vcs_summary,
     request_worktree_vcs_refresh, run_git_status_watcher,
 };
-use ctx_http::daemon::{AppRuntimeFlags, DaemonState};
+use ctx_daemon::daemon::{AppRuntimeFlags, DaemonState};
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::process::Command;

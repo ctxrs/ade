@@ -1,6 +1,6 @@
 use super::*;
-use crate::daemon::workspaces::RunArchiveIngestError;
-use crate::daemon::WorkspacesHandle;
+use ctx_daemon::daemon::workspaces::RunArchiveIngestError;
+use ctx_daemon::daemon::WorkspacesHandle;
 
 mod validation;
 use validation::{

@@ -7,7 +7,7 @@ use super::output::{
     drain_claude_login_output, observe_claude_login_line, ClaudeLoginOutputDrainMode,
 };
 use crate::api::providers::login::claude::auth_url::refresh_claude_auth_url_from_capture_path;
-use crate::daemon::ProvidersHandle;
+use ctx_daemon::daemon::ProvidersHandle;
 
 pub(super) struct ClaudeLoginObservation {
     pub(super) observed_auth_url: Option<String>,

@@ -3,7 +3,7 @@ use axum::Json;
 use ctx_observability::logs;
 
 use crate::api::errors::ApiErrorResp;
-use crate::daemon::CoreHandle;
+use ctx_daemon::daemon::CoreHandle;
 
 const LOCAL_DAEMON_SHUTDOWN_TOKEN_HEADER: &str = "x-ctx-local-daemon-shutdown-token";
 

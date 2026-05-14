@@ -5,7 +5,8 @@ use ctx_transport_runtime::{
 use errors::desktop_auth_required_secure_response;
 pub(super) use errors::{mobile_scope_required_secure_response, SecureProxyError};
 
-use crate::daemon::{CoreHandle, DaemonHandle, WorkspacesHandle};
+use crate::api::router::RouteState;
+use ctx_daemon::daemon::{CoreHandle, WorkspacesHandle};
 
 #[path = "secure_proxy/errors.rs"]
 mod errors;
@@ -16,11 +17,11 @@ pub(in crate::api) struct SecureProxyRouterState {
     workspaces: WorkspacesHandle,
 }
 
-impl axum::extract::FromRef<DaemonHandle> for SecureProxyRouterState {
-    fn from_ref(handle: &DaemonHandle) -> Self {
+impl axum::extract::FromRef<RouteState> for SecureProxyRouterState {
+    fn from_ref(state: &RouteState) -> Self {
         Self {
-            core: handle.core(),
-            workspaces: handle.workspaces(),
+            core: state.handle.core(),
+            workspaces: state.handle.workspaces(),
         }
     }
 }

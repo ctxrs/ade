@@ -11,7 +11,7 @@ use ctx_linux_sandbox_runtime::{
 use ctx_observability::logs;
 
 use crate::api::errors::ApiErrorResp;
-use crate::daemon::{maintenance as daemon_maintenance, CoreHandle, ExecutionHandle};
+use ctx_daemon::daemon::{maintenance as daemon_maintenance, CoreHandle, ExecutionHandle};
 
 fn linux_sandbox_user_message(kind: &str) -> String {
     match kind {

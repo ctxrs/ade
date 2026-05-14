@@ -1,5 +1,5 @@
 use super::*;
-use crate::daemon::CoreHandle;
+use ctx_daemon::daemon::CoreHandle;
 
 pub(super) fn blobs_dir(data_root: &StdPath) -> PathBuf {
     data_root.join("blobs")

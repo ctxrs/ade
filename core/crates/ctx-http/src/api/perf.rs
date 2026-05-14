@@ -1,5 +1,5 @@
 use super::*;
-use crate::daemon::TelemetryHandle;
+use ctx_daemon::daemon::TelemetryHandle;
 
 pub(in crate::api) async fn perf_middleware(
     State(state): State<TelemetryHandle>,

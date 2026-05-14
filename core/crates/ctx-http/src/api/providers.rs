@@ -16,10 +16,10 @@ use tokio::sync::mpsc;
 use url::Url;
 
 use super::errors::ApiErrorResp;
-#[cfg(test)]
-use crate::daemon::DaemonState;
-use crate::daemon::ProvidersHandle;
 use ctx_core::ids::WorkspaceId;
+#[cfg(test)]
+use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::daemon::ProvidersHandle;
 use ctx_harness_sources as harness_sources;
 #[cfg(test)]
 use ctx_harness_sources::{HarnessApiShape, HarnessSourceKind};
@@ -81,9 +81,9 @@ pub(super) use status::{get_provider, get_provider_usage, list_providers};
 use types::*;
 
 #[cfg(test)]
-use crate::daemon::providers::provider_auth_import_result_requires_restart as import_result_requires_provider_restart;
+use ctx_daemon::daemon::providers::provider_auth_import_result_requires_restart as import_result_requires_provider_restart;
 #[cfg(test)]
-use crate::daemon::providers::restart_provider_for_auth_change;
+use ctx_daemon::daemon::providers::restart_provider_for_auth_change;
 #[cfg(test)]
 use ctx_provider_runtime::provider_auth::{
     endpoint_selection_is_active, provider_auth_mode, provider_has_active_auth_config,

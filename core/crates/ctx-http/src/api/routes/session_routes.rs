@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn session_routes() -> axum::Router<DaemonHandle> {
+pub(super) fn session_routes() -> axum::Router<RouteState> {
     axum::Router::new()
         .route(
             "/api/sessions/:id/artifacts/:artifact_id",

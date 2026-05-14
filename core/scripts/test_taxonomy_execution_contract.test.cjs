@@ -20,6 +20,7 @@ function rustGateCrates(command) {
 function isCtxHttpBazelTargetCommand(command) {
   const text = String(command || "");
   return text.startsWith("node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:")
+    || text.startsWith("node scripts/run_bazel_pilot.cjs test //core/crates/ctx-daemon:")
     || text.startsWith("node scripts/run_bazel_pilot.cjs test //core/crates/ctx-settings-");
 }
 
@@ -271,12 +272,14 @@ test("agent-default selects narrow pretext E2E Bazel labels for touched parity s
 test("agent-default affected selection adds ctx-http unit-family truth for scheduler runtime changes", () => {
   const plan = buildExecutionPlan({
     profileId: "agent-default",
-    changedFiles: ["core/crates/ctx-http/src/scheduler/runtime/event_loop.rs"],
+    changedFiles: ["core/crates/ctx-daemon/src/daemon/scheduler/runtime/event_loop.rs"],
     selectionMode: "affected",
   });
 
   assert.deepEqual(plan.commands, [
+    "pnpm rust:package-scripts:check",
     "node scripts/ctx_http_suite_task.cjs --suite scheduler-runtime --suite unit-tests-daemon-and-scheduler",
+    "pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --crate ctx-daemon",
   ]);
 });
 
@@ -634,10 +637,10 @@ test("Buildkite checkin plan splits ctx-http suites and Rust crate gates without
   assert.ok(buildkitePlan.commands.includes(providerSettingsOwnerCommand));
   assert.ok(ctxHttpCommands.some((command) => command.includes("//core/crates/ctx-http:session_model_api")));
   assert.ok(ctxHttpCommands.includes(
-    "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:unit_tests_scheduler",
+    "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-daemon:unit_tests_scheduler",
   ));
   assert.ok(ctxHttpCommands.includes(
-    "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:unit_tests_workspace_runtime",
+    "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-daemon:unit_tests_workspace_runtime",
   ));
   assert.ok(ctxHttpCommands.includes(
     "node scripts/run_bazel_pilot.cjs test //core/crates/ctx-http:unit_tests_lib",

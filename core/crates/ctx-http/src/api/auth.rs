@@ -9,7 +9,7 @@ use ctx_http_auth::{
     browser_stream_query_token_is_valid, is_websocket_upgrade, scoped_mcp_route, ScopedMcpRoute,
 };
 
-use crate::daemon::{mobile_access::MobileAuthContext, CoreHandle};
+use ctx_daemon::daemon::{mobile_access::MobileAuthContext, CoreHandle};
 
 mod mobile;
 

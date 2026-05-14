@@ -42,7 +42,3 @@ pub(crate) fn write_running_container_sandbox_cli_shim(
         .expect("chmod running-container sandbox CLI shim");
     path
 }
-
-pub(crate) fn avf_linux_runtime_manager_test_sandbox_cli_path(dir: &Path) -> PathBuf {
-    dir.join("ctx-avf-linux-sandbox-cli-runtime-manager-test.sh")
-}

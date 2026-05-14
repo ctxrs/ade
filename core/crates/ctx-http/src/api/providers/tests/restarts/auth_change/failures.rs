@@ -53,7 +53,7 @@ async fn set_codex_active_account_returns_error_when_restart_fails() {
     .expect("seed codex account");
 
     let err = set_codex_active_account(
-        State(crate::daemon::DaemonHandle::new(Arc::clone(&state)).providers()),
+        State(ctx_daemon::daemon::DaemonHandle::new(Arc::clone(&state)).providers()),
         Json(CodexActiveAccountReq {
             account_id: Some("acct".to_string()),
         }),
@@ -101,7 +101,8 @@ async fn delete_codex_account_keeps_account_when_restart_fails() {
     .await
     .expect("write broker auth");
 
-    let err = match crate::daemon::providers::remove_codex_account(&state, "acct-delete").await {
+    let err = match ctx_daemon::daemon::providers::remove_codex_account(&state, "acct-delete").await
+    {
         Ok(_) => panic!("restart failure should surface before deletion"),
         Err(err) => err,
     };
@@ -159,7 +160,7 @@ async fn delete_codex_account_stops_provider_immediately_before_broker_cleanup()
     .await
     .expect("write broker auth");
 
-    crate::daemon::providers::remove_codex_account(&state, "acct-delete")
+    ctx_daemon::daemon::providers::remove_codex_account(&state, "acct-delete")
         .await
         .expect("remove account");
 
@@ -188,7 +189,7 @@ async fn delete_unknown_codex_account_does_not_stop_provider() {
     let fixture = fixture_with_adapter(adapter.clone() as Arc<dyn ProviderAdapter>).await;
     let state = Arc::clone(&fixture.state);
 
-    let err = match crate::daemon::providers::remove_codex_account(&state, "missing").await {
+    let err = match ctx_daemon::daemon::providers::remove_codex_account(&state, "missing").await {
         Ok(_) => panic!("missing account should not be deleted"),
         Err(err) => err,
     };
@@ -227,7 +228,8 @@ async fn delete_codex_account_keeps_account_when_broker_cleanup_fails() {
         .await
         .expect("write broker root file");
 
-    let err = match crate::daemon::providers::remove_codex_account(&state, "acct-delete").await {
+    let err = match ctx_daemon::daemon::providers::remove_codex_account(&state, "acct-delete").await
+    {
         Ok(_) => panic!("broker cleanup failure should surface before deletion"),
         Err(err) => err,
     };

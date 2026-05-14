@@ -17,7 +17,7 @@ use ctx_storage_admission::{StorageGuardLevel, StorageGuardPathStatus, StorageGu
 use ctx_store::StoreManager;
 
 use crate::api;
-use crate::daemon::DaemonState;
+use ctx_daemon::daemon::DaemonState;
 
 async fn run_git(root: &Path, args: &[&str]) {
     let output = Command::new("git")

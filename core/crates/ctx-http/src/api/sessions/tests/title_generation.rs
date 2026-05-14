@@ -1,5 +1,5 @@
 use super::*;
-use crate::daemon::sessions::title_generation::{
+use ctx_daemon::daemon::sessions::title_generation::{
     generate_title_for_prompt, schedule_session_title_generation, TitleGenerationSource,
 };
 use ctx_managed_installs::title_generation_local;

@@ -1,5 +1,5 @@
 use super::*;
-use crate::daemon::workspaces::stream::ReplayOutcome;
+use ctx_daemon::daemon::workspaces::stream::ReplayOutcome;
 
 pub(super) async fn replay_workspace_session(
     state: &WorkspaceStreamHandle,

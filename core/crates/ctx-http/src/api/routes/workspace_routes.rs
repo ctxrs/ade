@@ -6,7 +6,7 @@ mod providers_and_config;
 mod tasks;
 mod terminals_and_worktrees;
 
-pub(super) fn workspace_routes() -> axum::Router<DaemonHandle> {
+pub(super) fn workspace_routes() -> axum::Router<RouteState> {
     base::workspace_base_routes()
         .merge(providers_and_config::workspace_provider_and_config_routes())
         .merge(tasks::workspace_task_routes())

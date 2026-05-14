@@ -4,9 +4,9 @@ use crate::api::providers::{
     delete_claude_account, get_claude_login, list_claude_accounts, set_claude_active_account,
     start_claude_login, upsert_claude_account,
 };
-use crate::daemon::DaemonHandle;
+use crate::api::router::RouteState;
 
-pub(super) fn claude_account_routes() -> axum::Router<DaemonHandle> {
+pub(super) fn claude_account_routes() -> axum::Router<RouteState> {
     axum::Router::new()
         .route(
             "/api/providers/claude-crp/accounts",

@@ -217,13 +217,16 @@ test("verify:affected adds ctx-http unit-family truth for canonical scheduler ru
   const plan = buildVerificationPlan({
     intent: "affected",
     base: "origin/main",
-    changedFiles: ["core/crates/ctx-http/src/scheduler/runtime/event_loop.rs"],
+    changedFiles: ["core/crates/ctx-daemon/src/daemon/scheduler/runtime/event_loop.rs"],
   });
 
   assert.deepEqual(plan.commands, [
     "pnpm source:file-size:report",
+    "pnpm ctx-http:daemon-boundary:check",
+    "pnpm rust:package-scripts:check",
     "node scripts/ctx_http_suite_task.cjs --suite scheduler-runtime",
     "node scripts/ctx_http_suite_task.cjs --suite unit-tests-daemon-and-scheduler",
+    "pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --crate ctx-daemon",
   ]);
 });
 

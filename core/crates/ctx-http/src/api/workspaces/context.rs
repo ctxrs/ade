@@ -43,16 +43,16 @@ pub(super) async fn require_workspace(
 }
 
 pub(super) fn workspace_store_api_error(
-    error: crate::daemon::WorkspaceStoreAccessError,
+    error: ctx_daemon::daemon::WorkspaceStoreAccessError,
 ) -> (StatusCode, Json<ApiErrorResp>) {
     match error {
-        crate::daemon::WorkspaceStoreAccessError::NotFound => (
+        ctx_daemon::daemon::WorkspaceStoreAccessError::NotFound => (
             StatusCode::NOT_FOUND,
             Json(ApiErrorResp {
                 error: "workspace not found".to_string(),
             }),
         ),
-        crate::daemon::WorkspaceStoreAccessError::Unavailable(error) => (
+        ctx_daemon::daemon::WorkspaceStoreAccessError::Unavailable(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ApiErrorResp {
                 error: logs::redact_sensitive(&error.to_string()),

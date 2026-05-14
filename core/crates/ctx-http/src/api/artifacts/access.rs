@@ -3,7 +3,7 @@ use std::path::{Path as StdPath, PathBuf};
 use axum::http::StatusCode;
 use ctx_observability::logs;
 
-use crate::daemon::SessionsHandle;
+use ctx_daemon::daemon::SessionsHandle;
 
 async fn canonicalize_existing_or_raw(path: &StdPath) -> PathBuf {
     tokio::fs::canonicalize(path)

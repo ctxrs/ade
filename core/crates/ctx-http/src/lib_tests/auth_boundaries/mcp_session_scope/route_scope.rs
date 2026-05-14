@@ -17,7 +17,7 @@ async fn scoped_mcp_token_is_limited_to_bound_session_routes() {
     ));
     let session_id = SessionId::new();
     let other_session_id = SessionId::new();
-    let token = crate::daemon::issue_provider_session_mcp_token(
+    let token = ctx_daemon::daemon::issue_provider_session_mcp_token(
         state.as_ref(),
         session_id,
         WorkspaceId::new(),

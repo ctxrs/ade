@@ -18,7 +18,7 @@ use ctx_workspace_active_snapshot::{
     ResolvedWorkspaceActiveSubscriptions, SessionReplayCursor, WorkspaceActiveSubscriptionState,
 };
 
-use crate::daemon::{CoreHandle, WorkspaceStreamHandle, WorkspacesHandle};
+use ctx_daemon::daemon::{CoreHandle, WorkspaceStreamHandle, WorkspacesHandle};
 
 mod async_util;
 mod common;

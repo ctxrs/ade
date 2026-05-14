@@ -5,7 +5,7 @@ use ctx_observability::logs;
 
 use super::super::errors::ApiErrorResp;
 use super::super::shared::map_effective_execution_settings_error;
-use crate::daemon::WorkspacesHandle;
+use ctx_daemon::daemon::WorkspacesHandle;
 
 pub(super) async fn resolve_workspace_launch_inputs(
     state: &WorkspacesHandle,

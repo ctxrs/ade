@@ -6,7 +6,7 @@ use ctx_core::models::MergeQueueEntry;
 
 use super::request::MergeQueueListParams;
 use crate::api::errors::ApiErrorResp;
-use crate::daemon::WorkspacesHandle;
+use ctx_daemon::daemon::WorkspacesHandle;
 
 pub(in crate::api) async fn list_merge_queue_entries(
     State(state): State<WorkspacesHandle>,

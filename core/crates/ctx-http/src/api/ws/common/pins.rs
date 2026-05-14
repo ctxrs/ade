@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use ctx_core::ids::SessionId;
 
-use crate::daemon::WorkspaceStreamHandle;
+use ctx_daemon::daemon::WorkspaceStreamHandle;
 
 pub(in crate::api::ws) async fn sync_workspace_stream_session_pins<I, J>(
     state: &WorkspaceStreamHandle,

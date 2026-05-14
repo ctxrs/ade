@@ -8,7 +8,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 use ctx_core::models::{
     SessionEventType, WorkspaceActiveSnapshotEvent, WorkspaceActiveSnapshotStreamMessage,
 };
-use ctx_http::daemon::DaemonState;
+use ctx_daemon::daemon::DaemonState;
 use ctx_store::StoreManager;
 
 mod common;

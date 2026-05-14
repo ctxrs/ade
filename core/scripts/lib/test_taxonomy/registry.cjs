@@ -137,6 +137,7 @@ const RUST_FAMILY_BY_CRATE = {
   "ctx-client": "web-workbench",
   "ctx-core": "build-graph",
   "ctx-crp-protocol": "provider-runtime",
+  "ctx-daemon": "workspace-stream",
   "ctx-desktop-ipc": "desktop-shell",
   "ctx-docs-mirror": "attachments-artifacts",
   "ctx-egress-proxy": "sandbox-runtime",

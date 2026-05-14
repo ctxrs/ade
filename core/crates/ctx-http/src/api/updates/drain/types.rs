@@ -10,7 +10,7 @@ pub(in crate::api) struct ShutdownDaemonReq {
 #[derive(Debug, Serialize)]
 pub(in crate::api) struct ShutdownDaemonResp {
     pub(super) accepted: bool,
-    pub(super) activity: crate::daemon::DaemonTurnActivitySummary,
+    pub(super) activity: ctx_daemon::daemon::DaemonTurnActivitySummary,
 }
 
 #[derive(Debug, Deserialize)]
@@ -25,7 +25,7 @@ pub(in crate::api) struct BeginUpdateDrainReq {
 #[derive(Debug, Serialize)]
 pub(in crate::api) struct BeginUpdateDrainResp {
     pub(super) acquired: bool,
-    pub(super) activity: crate::daemon::DaemonTurnActivitySummary,
+    pub(super) activity: ctx_daemon::daemon::DaemonTurnActivitySummary,
 }
 
 #[derive(Debug, Deserialize)]

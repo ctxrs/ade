@@ -52,7 +52,7 @@ async fn main() -> Result<()> {
             ctx_http::serve(bind, data_dir).await?;
         }
         Commands::Init { root } => {
-            ctx_http::daemon::init_workspace(root).await?;
+            ctx_daemon::daemon::init_workspace(root).await?;
         }
         Commands::SelfUpdate {
             channel,

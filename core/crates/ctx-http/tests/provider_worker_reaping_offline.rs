@@ -8,7 +8,7 @@ use axum::http::{Method, Request, StatusCode};
 use tower::ServiceExt;
 
 use ctx_core::models::SessionEventType;
-use ctx_http::daemon::DaemonState;
+use ctx_daemon::daemon::DaemonState;
 use ctx_providers::adapters::{ProviderAdapter, ProviderSessionSweepConfig};
 use ctx_providers::crp::Tier1CrpAdapter;
 use ctx_store::StoreManager;

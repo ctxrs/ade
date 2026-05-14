@@ -5,7 +5,7 @@ use ctx_observability::logs;
 
 use super::types::{ApplyAppImageReq, ApplyAppImageResp};
 use crate::api::errors::ApiErrorResp;
-use crate::daemon::CoreHandle;
+use ctx_daemon::daemon::CoreHandle;
 
 pub(in crate::api) async fn apply_appimage_update(
     State(core): State<CoreHandle>,

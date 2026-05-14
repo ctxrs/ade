@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use ctx_core::ids::SessionId;
 use ctx_core::models::{SessionEvent, SessionSummary};
-use ctx_http::daemon::DaemonState;
+use ctx_daemon::daemon::DaemonState;
 use tempfile::TempDir;
 
 mod fake;

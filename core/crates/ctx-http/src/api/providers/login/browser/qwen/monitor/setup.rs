@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) use crate::daemon::providers::PreparedQwenLoginPaths as QwenLoginPaths;
+pub(super) use ctx_daemon::daemon::providers::PreparedQwenLoginPaths as QwenLoginPaths;
 
 pub(super) async fn prepare_qwen_login_paths(
     providers: &ProvidersHandle,

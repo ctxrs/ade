@@ -1,7 +1,7 @@
 use super::*;
 use std::collections::HashMap;
 
-use crate::daemon::DaemonState;
+use ctx_daemon::daemon::DaemonState;
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::StoreManager;
 

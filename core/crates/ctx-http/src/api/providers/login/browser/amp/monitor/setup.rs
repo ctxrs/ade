@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) use crate::daemon::providers::PreparedAmpLoginPaths as AmpLoginPaths;
+pub(super) use ctx_daemon::daemon::providers::PreparedAmpLoginPaths as AmpLoginPaths;
 
 pub(super) async fn prepare_amp_login_paths(
     providers: &ProvidersHandle,

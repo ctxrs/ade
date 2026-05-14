@@ -5,7 +5,7 @@ use axum::http::StatusCode;
 use axum::http::{Method, Request};
 use ctx_core::ids::TaskId;
 use ctx_core::models::{Session, Task, VcsKind};
-use ctx_http::daemon::DaemonState;
+use ctx_daemon::daemon::DaemonState;
 use ctx_providers::adapters::{
     ProviderAdapter, ProviderRecommendedAction, ProviderUsability, ProviderUsabilityStatus,
 };

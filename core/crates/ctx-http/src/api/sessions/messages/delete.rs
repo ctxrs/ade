@@ -16,16 +16,16 @@ pub(crate) async fn delete_session_message(
 }
 
 fn session_command_status(
-    error: crate::daemon::sessions::command_dispatch::SessionSchedulerCommandError,
+    error: ctx_daemon::daemon::sessions::command_dispatch::SessionSchedulerCommandError,
 ) -> StatusCode {
     match error {
-        crate::daemon::sessions::command_dispatch::SessionSchedulerCommandError::BadRequest => {
+        ctx_daemon::daemon::sessions::command_dispatch::SessionSchedulerCommandError::BadRequest => {
             StatusCode::BAD_REQUEST
         }
-        crate::daemon::sessions::command_dispatch::SessionSchedulerCommandError::NotFound => {
+        ctx_daemon::daemon::sessions::command_dispatch::SessionSchedulerCommandError::NotFound => {
             StatusCode::NOT_FOUND
         }
-        crate::daemon::sessions::command_dispatch::SessionSchedulerCommandError::StoreUnavailable => {
+        ctx_daemon::daemon::sessions::command_dispatch::SessionSchedulerCommandError::StoreUnavailable => {
             StatusCode::INTERNAL_SERVER_ERROR
         }
     }

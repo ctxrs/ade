@@ -7,6 +7,7 @@ edition.workspace = true
 anyhow.workspace = true
 axum.workspace = true
 ctx-core = { path = "../ctx-core" }
+ctx-daemon = { path = "../ctx-daemon" }
 ctx-http = { path = "../ctx-http" }
 ctx-providers = { path = "../ctx-providers" }
 ctx-store = { path = "../ctx-store" }

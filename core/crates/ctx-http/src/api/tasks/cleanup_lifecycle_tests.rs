@@ -1,6 +1,6 @@
 use super::*;
-use crate::daemon::DaemonState;
 use ctx_core::models::VcsKind;
+use ctx_daemon::daemon::DaemonState;
 use ctx_store::{Store, StoreManager};
 use ctx_workspace_services::worktree_vcs::{managed_worktree_path, standaloneize_worktree_git_dir};
 use std::collections::HashMap;

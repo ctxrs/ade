@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 use ctx_execution_runtime::{ExecutionLaunchSnapshot, ExecutionSetupJobKind, RuntimePrewarmScope};
 
-use crate::daemon::{CoreHandle, ExecutionHandle, WorkspacesHandle};
+use ctx_daemon::daemon::{CoreHandle, ExecutionHandle, WorkspacesHandle};
 use ctx_observability::logs;
 use ctx_settings_model::ExecutionMode;
 

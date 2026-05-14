@@ -4,7 +4,7 @@ use axum::Json;
 use ctx_core::ids::WorkspaceId;
 
 use crate::api::shared::{map_file_completions_error, FileCompletionsQuery};
-use crate::daemon::WorkspacesHandle;
+use ctx_daemon::daemon::WorkspacesHandle;
 
 pub(in crate::api) async fn workspace_file_completions(
     State(workspaces): State<WorkspacesHandle>,

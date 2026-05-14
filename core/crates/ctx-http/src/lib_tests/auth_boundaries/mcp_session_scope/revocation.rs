@@ -18,14 +18,14 @@ async fn scoped_mcp_token_revokes_prior_token_for_same_session_scope() {
     let session_id = SessionId::new();
     let workspace_id = WorkspaceId::new();
     let worktree_id = WorktreeId::new();
-    let stale_token = crate::daemon::issue_provider_session_mcp_token(
+    let stale_token = ctx_daemon::daemon::issue_provider_session_mcp_token(
         state.as_ref(),
         session_id,
         workspace_id,
         worktree_id,
     )
     .await;
-    let fresh_token = crate::daemon::issue_provider_session_mcp_token(
+    let fresh_token = ctx_daemon::daemon::issue_provider_session_mcp_token(
         state.as_ref(),
         session_id,
         workspace_id,
@@ -69,7 +69,7 @@ async fn scoped_mcp_token_can_be_revoked_exactly() {
         Some("daemon-secret".to_string()),
     ));
     let session_id = SessionId::new();
-    let token = crate::daemon::issue_provider_session_mcp_token(
+    let token = ctx_daemon::daemon::issue_provider_session_mcp_token(
         state.as_ref(),
         session_id,
         WorkspaceId::new(),
@@ -87,7 +87,7 @@ async fn scoped_mcp_token_can_be_revoked_exactly() {
     let res = app.clone().oneshot(req).await.unwrap();
     assert_ne!(res.status(), StatusCode::UNAUTHORIZED);
 
-    assert!(crate::daemon::revoke_provider_session_mcp_token(state.as_ref(), &token).await);
+    assert!(ctx_daemon::daemon::revoke_provider_session_mcp_token(state.as_ref(), &token).await);
 
     let req = Request::builder()
         .method("GET")

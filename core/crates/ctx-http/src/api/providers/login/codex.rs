@@ -4,9 +4,9 @@ mod app_server;
 mod completion;
 mod process;
 
-#[cfg(test)]
-use crate::daemon::providers::persist_successful_codex_login;
 pub(crate) use completion::complete_codex_login;
+#[cfg(test)]
+use ctx_daemon::daemon::providers::persist_successful_codex_login;
 use process::{monitor_codex_login, start_codex_login_process};
 
 #[derive(Debug, Deserialize)]
@@ -41,7 +41,7 @@ pub(crate) async fn start_codex_login(
     Json(req): Json<CodexLoginStartReq>,
 ) -> Result<Json<CodexLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let crate::daemon::providers::PreparedCodexLoginStart {
+    let ctx_daemon::daemon::providers::PreparedCodexLoginStart {
         account_id,
         label,
         account_dir,

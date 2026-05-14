@@ -5,9 +5,9 @@ use crate::api::providers::{
     refresh_provider_harness_endpoint_models, select_provider_harness_source,
     set_provider_harness_endpoint_manual_models, upsert_provider_harness_endpoint,
 };
-use crate::daemon::DaemonHandle;
+use crate::api::router::RouteState;
 
-pub(super) fn provider_harness_config_routes() -> axum::Router<DaemonHandle> {
+pub(super) fn provider_harness_config_routes() -> axum::Router<RouteState> {
     axum::Router::new()
         .route(
             "/api/providers/:id/harness_config",

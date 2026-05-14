@@ -1,5 +1,5 @@
 use super::*;
-use crate::daemon::CoreHandle;
+use ctx_daemon::daemon::CoreHandle;
 
 pub(in crate::api) async fn open_logs_folder(
     State(state): State<CoreHandle>,

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
-use ctx_http::daemon::DaemonState;
+use ctx_daemon::daemon::DaemonState;
 use ctx_providers::adapters::ProviderAdapter;
 
 pub(crate) async fn bind_loopback_listener() -> Result<(tokio::net::TcpListener, String)> {

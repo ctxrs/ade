@@ -69,7 +69,7 @@ async fn select_provider_harness_source_invalidates_only_matching_provider_probe
     .await;
 
     let Json(config) = select_provider_harness_source(
-        State(crate::daemon::DaemonHandle::new(Arc::clone(&state)).providers()),
+        State(ctx_daemon::daemon::DaemonHandle::new(Arc::clone(&state)).providers()),
         Path("codex".to_string()),
         Json(SelectHarnessSourceReq {
             source_kind: HarnessSourceKind::Subscription,

@@ -1,9 +1,9 @@
 use super::*;
-use crate::daemon::{CoreHandle, ExecutionHandle};
+use ctx_daemon::daemon::{CoreHandle, ExecutionHandle};
 
 #[derive(Debug, Serialize)]
 pub(in crate::api) struct UpdateActivityResp {
-    activity: crate::daemon::DaemonTurnActivitySummary,
+    activity: ctx_daemon::daemon::DaemonTurnActivitySummary,
     #[serde(skip_serializing_if = "Option::is_none")]
     managed_daemon_auto_update: Option<ctx_update_service::ManagedDaemonAutoUpdateStatus>,
 }

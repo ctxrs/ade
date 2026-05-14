@@ -1,9 +1,9 @@
 use super::*;
-use crate::daemon::TransportHandle;
+use ctx_daemon::daemon::TransportHandle;
 
 use ctx_transport_runtime::terminals::DEFAULT_OUTPUT_TAIL_BYTES;
 
-use crate::daemon::terminals::TerminalStreamAccessError;
+use ctx_daemon::daemon::terminals::TerminalStreamAccessError;
 
 mod queue;
 mod socket;

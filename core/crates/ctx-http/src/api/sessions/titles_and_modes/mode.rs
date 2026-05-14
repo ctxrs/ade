@@ -20,10 +20,14 @@ pub(crate) async fn set_session_mode(
     Ok(StatusCode::OK)
 }
 
-fn map_set_session_mode_error(error: crate::daemon::sessions::SetSessionModeError) -> StatusCode {
+fn map_set_session_mode_error(
+    error: ctx_daemon::daemon::sessions::SetSessionModeError,
+) -> StatusCode {
     match error {
-        crate::daemon::sessions::SetSessionModeError::NotFound => StatusCode::NOT_FOUND,
-        crate::daemon::sessions::SetSessionModeError::BadRequest => StatusCode::BAD_REQUEST,
-        crate::daemon::sessions::SetSessionModeError::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+        ctx_daemon::daemon::sessions::SetSessionModeError::NotFound => StatusCode::NOT_FOUND,
+        ctx_daemon::daemon::sessions::SetSessionModeError::BadRequest => StatusCode::BAD_REQUEST,
+        ctx_daemon::daemon::sessions::SetSessionModeError::Internal => {
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
     }
 }

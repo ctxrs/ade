@@ -19,8 +19,8 @@ use futures::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 
 use super::errors::ApiErrorResp;
-use crate::daemon::providers::parse_provider_install_target;
-use crate::daemon::ProvidersHandle;
+use ctx_daemon::daemon::providers::parse_provider_install_target;
+use ctx_daemon::daemon::ProvidersHandle;
 use ctx_observability::logs;
 use ctx_provider_install::install_state::{
     InstallId, InstallInfo, InstallProgressEvent, InstallTarget,
@@ -57,8 +57,8 @@ pub(super) struct ProviderAuthCheckResp {
     message: Option<String>,
 }
 
-impl From<crate::daemon::providers::ProviderAuthCheckSnapshot> for ProviderAuthCheckResp {
-    fn from(value: crate::daemon::providers::ProviderAuthCheckSnapshot) -> Self {
+impl From<ctx_daemon::daemon::providers::ProviderAuthCheckSnapshot> for ProviderAuthCheckResp {
+    fn from(value: ctx_daemon::daemon::providers::ProviderAuthCheckSnapshot) -> Self {
         Self {
             provider_id: value.provider_id,
             workspace_id: value.workspace_id,

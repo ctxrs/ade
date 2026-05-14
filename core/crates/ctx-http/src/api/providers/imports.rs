@@ -3,7 +3,7 @@ use super::*;
 pub(crate) async fn list_provider_auth_import_candidates(
     _providers: State<ProvidersHandle>,
 ) -> Result<Json<ProviderAuthImportCandidatesResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    let candidates = crate::daemon::providers::list_provider_auth_import_candidates()
+    let candidates = ctx_daemon::daemon::providers::list_provider_auth_import_candidates()
         .await
         .map_err(|e| {
             (

@@ -6,9 +6,9 @@ use serde_json::json;
 use tokio::process::Command;
 
 use ctx_core::models::{Task, Workspace};
+use ctx_daemon::daemon::DaemonState;
 use ctx_fs::worktrees::managed_worktree_path;
 use ctx_http::api;
-use ctx_http::daemon::DaemonState;
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::StoreManager;
 

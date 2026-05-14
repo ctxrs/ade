@@ -19,7 +19,7 @@ async fn scoped_mcp_merge_queue_submit_is_bound_to_current_session_worktree() {
     let other_session_id = SessionId::new();
     let worktree_id = WorktreeId::new();
     let other_worktree_id = WorktreeId::new();
-    let token = crate::daemon::issue_provider_session_mcp_token(
+    let token = ctx_daemon::daemon::issue_provider_session_mcp_token(
         state.as_ref(),
         session_id,
         WorkspaceId::new(),
@@ -48,7 +48,7 @@ async fn scoped_mcp_merge_queue_submit_is_bound_to_current_session_worktree() {
         "provider-session MCP tokens must not include merge queue submit by default"
     );
 
-    let token = crate::daemon::issue_provider_session_mcp_token_with_capabilities(
+    let token = ctx_daemon::daemon::issue_provider_session_mcp_token_with_capabilities(
         state.as_ref(),
         session_id,
         WorkspaceId::new(),

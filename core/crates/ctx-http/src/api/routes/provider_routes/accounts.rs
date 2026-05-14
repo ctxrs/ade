@@ -1,4 +1,4 @@
-use crate::daemon::DaemonHandle;
+use crate::api::router::RouteState;
 
 mod amp;
 mod claude;
@@ -20,7 +20,7 @@ use kimi::kimi_account_routes;
 use mistral::mistral_account_routes;
 use qwen::qwen_account_routes;
 
-pub(super) fn provider_account_routes() -> axum::Router<DaemonHandle> {
+pub(super) fn provider_account_routes() -> axum::Router<RouteState> {
     axum::Router::new()
         .merge(codex_account_routes())
         .merge(claude_account_routes())

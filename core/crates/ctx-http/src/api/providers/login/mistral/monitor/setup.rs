@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) use crate::daemon::providers::PreparedMistralLoginPaths as MistralLoginPaths;
+pub(super) use ctx_daemon::daemon::providers::PreparedMistralLoginPaths as MistralLoginPaths;
 
 pub(super) async fn prepare_mistral_login_paths(
     providers: &ProvidersHandle,

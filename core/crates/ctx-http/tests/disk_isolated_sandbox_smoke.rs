@@ -12,8 +12,8 @@ use tokio::process::Command;
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::StoreManager;
 
+use ctx_daemon::daemon::DaemonState;
 use ctx_http::api;
-use ctx_http::daemon::DaemonState;
 
 const CONTAINER_FILE_SHA256: &str =
     "dc155555ce7bf6f6b7aa998bafe7e1cafa3c7017bc5dcdeb8ef72ebc5961c11a";

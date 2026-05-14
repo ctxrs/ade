@@ -1,5 +1,5 @@
 use super::*;
-use crate::daemon::{web_sessions::WebSessionActionError, TransportHandle};
+use ctx_daemon::daemon::{web_sessions::WebSessionActionError, TransportHandle};
 
 #[derive(Debug, Deserialize, Default)]
 pub(in crate::api) struct WebSessionListQuery {

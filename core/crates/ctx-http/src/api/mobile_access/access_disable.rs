@@ -1,5 +1,5 @@
 use super::*;
-use crate::daemon::mobile_access::DisableMobileAccessError;
+use ctx_daemon::daemon::mobile_access::DisableMobileAccessError;
 
 pub(in crate::api) async fn disable_mobile_access(
     State(state): State<CoreHandle>,

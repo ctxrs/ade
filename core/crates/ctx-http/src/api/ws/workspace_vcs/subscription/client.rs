@@ -2,11 +2,11 @@ use super::super::buffer::VcsPendingBuffer;
 use super::super::metrics::VcsStreamMetrics;
 use super::runtime::WorkspaceVcsRuntime;
 use super::snapshots::seed_current_vcs_snapshots;
-use crate::daemon::WorkspacesHandle;
 use ctx_core::ids::{WorkspaceId, WorktreeId};
 use ctx_core::models::{
     WorktreeVcsStreamClientMessage, WorktreeVcsStreamMessage, WorktreeVcsStreamTier,
 };
+use ctx_daemon::daemon::WorkspacesHandle;
 use std::collections::HashSet;
 use std::sync::Arc;
 

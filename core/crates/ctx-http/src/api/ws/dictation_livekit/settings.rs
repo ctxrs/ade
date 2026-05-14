@@ -5,7 +5,7 @@ use ctx_transport_runtime::dictation_livekit::{
 };
 use serde::Serialize;
 
-use crate::daemon::CoreHandle;
+use ctx_daemon::daemon::CoreHandle;
 
 #[derive(Debug)]
 pub(super) struct DictationStreamError {

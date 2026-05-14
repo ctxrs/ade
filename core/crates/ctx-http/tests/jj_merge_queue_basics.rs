@@ -35,7 +35,7 @@ target_branch = \"main\"\n",
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    ctx_merge_queue::spawn_merge_queue_runner::<ctx_http::daemon::DaemonState>(state.clone());
+    ctx_merge_queue::spawn_merge_queue_runner::<ctx_daemon::daemon::DaemonState>(state.clone());
     let app = common::router(state.clone());
 
     let workspace = common::create_workspace(&app, repo.path(), "jj-ws").await;

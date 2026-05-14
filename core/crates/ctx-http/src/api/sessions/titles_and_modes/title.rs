@@ -30,28 +30,28 @@ pub(crate) async fn generate_session_title(
 }
 
 fn map_generate_session_title_error(
-    error: crate::daemon::sessions::GenerateSessionTitleError,
+    error: ctx_daemon::daemon::sessions::GenerateSessionTitleError,
 ) -> (StatusCode, Json<ApiErrorResp>) {
     match error {
-        crate::daemon::sessions::GenerateSessionTitleError::NotFound => (
+        ctx_daemon::daemon::sessions::GenerateSessionTitleError::NotFound => (
             StatusCode::NOT_FOUND,
             Json(ApiErrorResp {
                 error: "session not found".to_string(),
             }),
         ),
-        crate::daemon::sessions::GenerateSessionTitleError::PromptRequired => (
+        ctx_daemon::daemon::sessions::GenerateSessionTitleError::PromptRequired => (
             StatusCode::BAD_REQUEST,
             Json(ApiErrorResp {
                 error: "prompt required".to_string(),
             }),
         ),
-        crate::daemon::sessions::GenerateSessionTitleError::Skipped => (
+        ctx_daemon::daemon::sessions::GenerateSessionTitleError::Skipped => (
             StatusCode::BAD_REQUEST,
             Json(ApiErrorResp {
                 error: "title generation skipped".to_string(),
             }),
         ),
-        crate::daemon::sessions::GenerateSessionTitleError::Internal(error) => (
+        ctx_daemon::daemon::sessions::GenerateSessionTitleError::Internal(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ApiErrorResp {
                 error: logs::redact_sensitive(&error.to_string()),

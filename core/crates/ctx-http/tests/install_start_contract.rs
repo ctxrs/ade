@@ -3,7 +3,7 @@ mod common;
 use ctx_provider_install::install_state::InstallTarget;
 
 async fn test_state() -> (
-    std::sync::Arc<ctx_http::daemon::DaemonState>,
+    std::sync::Arc<ctx_daemon::daemon::DaemonState>,
     tempfile::TempDir,
 ) {
     let data_dir = tempfile::tempdir().expect("tempdir");

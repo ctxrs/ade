@@ -2,7 +2,7 @@ use super::super::*;
 use super::delivery::queued_messages_enabled;
 use super::persistence::PostMessageParts;
 use super::request::PostMessageReq;
-use crate::daemon::sessions::{PostUserMessageError, PostUserMessageInput};
+use ctx_daemon::daemon::sessions::{PostUserMessageError, PostUserMessageInput};
 
 pub(crate) async fn post_message(
     State(state): State<SessionsHandle>,

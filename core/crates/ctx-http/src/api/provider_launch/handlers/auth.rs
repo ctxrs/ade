@@ -20,28 +20,28 @@ pub(in crate::api) async fn authenticate_provider_for_workspace(
 }
 
 fn provider_auth_check_error_json(
-    error: crate::daemon::providers::ProviderAuthCheckError,
+    error: ctx_daemon::daemon::providers::ProviderAuthCheckError,
 ) -> (StatusCode, Json<serde_json::Value>) {
     match error {
-        crate::daemon::providers::ProviderAuthCheckError::WorkspaceLoad => (
+        ctx_daemon::daemon::providers::ProviderAuthCheckError::WorkspaceLoad => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({
                 "error": "failed to load workspace",
             })),
         ),
-        crate::daemon::providers::ProviderAuthCheckError::WorkspaceNotFound => (
+        ctx_daemon::daemon::providers::ProviderAuthCheckError::WorkspaceNotFound => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({
                 "error": "workspace not found",
             })),
         ),
-        crate::daemon::providers::ProviderAuthCheckError::ExecutionSettings(error) => {
+        ctx_daemon::daemon::providers::ProviderAuthCheckError::ExecutionSettings(error) => {
             workspace_execution_settings_error_json(&error)
         }
-        crate::daemon::providers::ProviderAuthCheckError::ProviderLaunchConfig(error) => {
+        ctx_daemon::daemon::providers::ProviderAuthCheckError::ProviderLaunchConfig(error) => {
             provider_launch_config_error_response(error)
         }
-        crate::daemon::providers::ProviderAuthCheckError::Verify(error) => (
+        ctx_daemon::daemon::providers::ProviderAuthCheckError::Verify(error) => (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({
                 "error": error,

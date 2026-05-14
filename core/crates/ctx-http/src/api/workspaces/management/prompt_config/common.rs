@@ -15,13 +15,13 @@ pub(super) fn parse_workspace_id(id: &str) -> PromptConfigResult<WorkspaceId> {
 }
 
 pub(super) fn workspace_store_error(
-    error: crate::daemon::WorkspaceStoreAccessError,
+    error: ctx_daemon::daemon::WorkspaceStoreAccessError,
 ) -> (StatusCode, Json<ApiErrorResp>) {
     match error {
-        crate::daemon::WorkspaceStoreAccessError::NotFound => {
+        ctx_daemon::daemon::WorkspaceStoreAccessError::NotFound => {
             api_error(StatusCode::NOT_FOUND, "workspace not found".to_string())
         }
-        crate::daemon::WorkspaceStoreAccessError::Unavailable(error) => {
+        ctx_daemon::daemon::WorkspaceStoreAccessError::Unavailable(error) => {
             api_error(StatusCode::INTERNAL_SERVER_ERROR, redacted(error))
         }
     }

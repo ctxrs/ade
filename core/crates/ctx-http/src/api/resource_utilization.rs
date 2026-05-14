@@ -1,6 +1,6 @@
 use super::*;
-use crate::daemon::resource_utilization as daemon_resource_utilization;
-use crate::daemon::WorkspacesHandle;
+use ctx_daemon::daemon::resource_utilization as daemon_resource_utilization;
+use ctx_daemon::daemon::WorkspacesHandle;
 
 #[derive(Debug, Deserialize)]
 pub(in crate::api) struct ResourceUtilizationQuery {

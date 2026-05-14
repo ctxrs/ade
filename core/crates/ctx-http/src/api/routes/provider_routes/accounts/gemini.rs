@@ -4,9 +4,9 @@ use crate::api::providers::{
     delete_gemini_account, get_gemini_login, list_gemini_accounts, set_gemini_active_account,
     start_gemini_login, upsert_gemini_account,
 };
-use crate::daemon::DaemonHandle;
+use crate::api::router::RouteState;
 
-pub(super) fn gemini_account_routes() -> axum::Router<DaemonHandle> {
+pub(super) fn gemini_account_routes() -> axum::Router<RouteState> {
     axum::Router::new()
         .route(
             "/api/providers/gemini/accounts",

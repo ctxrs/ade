@@ -4,7 +4,7 @@ use ctx_store::store::MobileAccessConfig;
 use ctx_transport_runtime::mobile_e2ee::{self, E2eeKey};
 
 use super::super::{ApiErrorResp, MobileScope, PairMobileDevicePayload, PairMobileDeviceReq};
-use crate::daemon::CoreHandle;
+use ctx_daemon::daemon::CoreHandle;
 
 pub(super) struct VerifiedMobilePairingRequest {
     pub(super) device_uuid: uuid::Uuid,

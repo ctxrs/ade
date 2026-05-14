@@ -12,6 +12,7 @@ chrono.workspace = true
 clap.workspace = true
 ctx-avf-linux-runtime = { path = "../ctx-avf-linux-runtime" }
 ctx-core = { path = "../ctx-core" }
+ctx-daemon = { path = "../ctx-daemon" }
 ctx-events = { path = "../ctx-events" }
 ctx-execution-runtime = { path = "../ctx-execution-runtime" }
 ctx-fs = { path = "../ctx-fs" }
@@ -118,7 +119,7 @@ reqwest.workspace = true
 sqlx.workspace = true
 
 [features]
-fault_injection = ["ctx-store/fault_injection"]
+fault_injection = ["ctx-store/fault_injection", "ctx-daemon/fault_injection"]
 property_tests = []
 daemon-heap-prof = [
     "ctx-resource-utilization/daemon-heap-prof",

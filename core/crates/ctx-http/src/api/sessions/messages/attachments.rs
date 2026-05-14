@@ -23,14 +23,14 @@ pub(super) async fn normalize_message_attachments(
                     .store_inline_image_blob(&bytes, &mime_type, name.as_deref())
                     .await
                     .map_err(|error| match error {
-                        crate::daemon::sessions::SessionImageBlobStoreError::PayloadTooLarge => {
+                        ctx_daemon::daemon::sessions::SessionImageBlobStoreError::PayloadTooLarge => {
                             image_attachment_too_large_error()
                         }
-                        crate::daemon::sessions::SessionImageBlobStoreError::UnsupportedMediaType => api_error(
+                        ctx_daemon::daemon::sessions::SessionImageBlobStoreError::UnsupportedMediaType => api_error(
                             StatusCode::UNSUPPORTED_MEDIA_TYPE,
                             "Only image attachments are supported.",
                         ),
-                        crate::daemon::sessions::SessionImageBlobStoreError::Internal => api_error(
+                        ctx_daemon::daemon::sessions::SessionImageBlobStoreError::Internal => api_error(
                             StatusCode::INTERNAL_SERVER_ERROR,
                             "Failed to persist image attachment.",
                         ),

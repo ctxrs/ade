@@ -7,7 +7,7 @@ use ctx_merge_queue::MergeQueueSubmitParams;
 use super::request::MergeQueueSubmitReq;
 use crate::api::errors::ApiErrorResp;
 use crate::api::validate_scoped_mcp_session_context;
-use crate::daemon::{SessionsHandle, WorkspacesHandle};
+use ctx_daemon::daemon::{SessionsHandle, WorkspacesHandle};
 
 pub(in crate::api) async fn submit_merge_queue_entry(
     State(sessions): State<SessionsHandle>,

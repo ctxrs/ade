@@ -20,7 +20,7 @@ use ctx_core::models::{
     MessageDelivery, SandboxBinding, SandboxGuestIdentity, SandboxProfile, SandboxSubstrate,
     SessionEventType, SessionHeadDelta, SessionTurn, SessionTurnStatus, SessionTurnTool, VcsKind,
 };
-use ctx_http::daemon::DaemonState;
+use ctx_daemon::daemon::DaemonState;
 use ctx_providers::adapters::{
     ProviderAdapter, ProviderHealth, ProviderStatus, ProviderUsability, RunHandle, TurnInput,
 };

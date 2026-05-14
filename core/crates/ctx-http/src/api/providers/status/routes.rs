@@ -1,5 +1,5 @@
 use super::*;
-use crate::daemon::providers::{parse_provider_install_target, ProviderStatusResponseError};
+use ctx_daemon::daemon::providers::{parse_provider_install_target, ProviderStatusResponseError};
 
 pub(crate) async fn list_providers(
     State(providers): State<ProvidersHandle>,

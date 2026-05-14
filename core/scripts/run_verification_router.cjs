@@ -150,8 +150,8 @@ function buildOverlayCommands(changedFiles) {
   if (changedFiles.some((entry) =>
     entry.startsWith("core/crates/ctx-http/src/api/")
     || entry === "core/crates/ctx-http/src/api/mod.rs"
-    || entry === "core/crates/ctx-http/src/daemon/handle.rs"
-    || entry === "core/crates/ctx-http/src/daemon.rs"
+    || entry.startsWith("core/crates/ctx-daemon/src/daemon/")
+    || entry === "core/crates/ctx-daemon/src/daemon.rs"
   )) {
     commands.push(CTX_HTTP_DAEMON_BOUNDARY_COMMAND);
   }

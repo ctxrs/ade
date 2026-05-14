@@ -1,6 +1,6 @@
 use super::*;
-use crate::daemon::sessions::title_generation as daemon_title_generation;
-use crate::daemon::SessionsHandle;
+use ctx_daemon::daemon::sessions::title_generation as daemon_title_generation;
+use ctx_daemon::daemon::SessionsHandle;
 
 #[derive(Debug, Serialize)]
 pub(in crate::api) struct TitleGenerationLocalStatusResponse {

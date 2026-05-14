@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use crate::daemon::SessionsHandle;
 use ctx_core::models::SessionHeadSnapshot;
+use ctx_daemon::daemon::SessionsHandle;
 
 pub(super) fn record_session_head_recovery_metrics(
     state: &SessionsHandle,

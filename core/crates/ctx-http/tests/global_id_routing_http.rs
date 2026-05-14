@@ -4,7 +4,7 @@ use std::sync::Arc;
 use axum::http::StatusCode;
 use ctx_core::ids::{ArtifactId, MessageId, SessionId};
 use ctx_core::models::{Message, MessageDelivery, MessageRole, VcsKind};
-use ctx_http::daemon::DaemonState;
+use ctx_daemon::daemon::DaemonState;
 use ctx_providers::adapters::{
     ProviderAdapter, ProviderRecommendedAction, ProviderUsability, ProviderUsabilityStatus,
 };

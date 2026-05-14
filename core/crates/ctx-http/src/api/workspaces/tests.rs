@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::daemon::{DaemonHandle, DaemonState};
+use ctx_daemon::daemon::{DaemonHandle, DaemonState};
 
 #[tokio::test]
 async fn get_worktree_returns_live_root_for_bound_sandbox_worktree() {

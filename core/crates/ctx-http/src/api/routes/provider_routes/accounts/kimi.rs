@@ -4,9 +4,9 @@ use crate::api::providers::{
     delete_kimi_account, get_kimi_login, list_kimi_accounts, set_kimi_active_account,
     start_kimi_login, upsert_kimi_account,
 };
-use crate::daemon::DaemonHandle;
+use crate::api::router::RouteState;
 
-pub(super) fn kimi_account_routes() -> axum::Router<DaemonHandle> {
+pub(super) fn kimi_account_routes() -> axum::Router<RouteState> {
     axum::Router::new()
         .route(
             "/api/providers/kimi/accounts/login/start",

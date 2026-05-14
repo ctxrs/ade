@@ -31,6 +31,7 @@ members = [
   "crates/ctx-sandbox-contract",
   "crates/ctx-sandbox-materialization",
   "crates/ctx-session-service",
+  "crates/ctx-daemon",
   "crates/ctx-session-tools",
   "crates/ctx-storage-admission",
   "crates/ctx-update-service",

@@ -28,13 +28,13 @@ pub(super) use worktrees::{get_worktree, get_worktree_bootstrap_logs};
 
 use super::errors::ApiErrorResp;
 use super::shared::{map_effective_execution_settings_error, path_resolves_within_root};
-use crate::daemon::workspaces::{WorkspaceHydrationError, WorkspaceHydrationErrorKind};
-use crate::daemon::WorkspacesHandle;
 use ctx_core::ids::{WorkspaceId, WorktreeId};
 use ctx_core::models::{
     AttachmentMode, AttachmentUpdatePolicy, Workspace, WorkspaceActiveHeadBatch,
     WorkspaceActiveSnapshot, WorkspaceAttachment, WorkspaceAttachmentKind, Worktree,
 };
+use ctx_daemon::daemon::workspaces::{WorkspaceHydrationError, WorkspaceHydrationErrorKind};
+use ctx_daemon::daemon::WorkspacesHandle;
 use ctx_observability::logs;
 use ctx_workspace_attachments::AttachmentConfig;
 

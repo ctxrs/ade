@@ -7,7 +7,7 @@ use axum::http::{Method, StatusCode};
 use ctx_core::models::{
     Message, MessageRole, SessionEvent, SessionEventType, SessionTurn, SessionTurnStatus,
 };
-use ctx_http::daemon::DaemonState;
+use ctx_daemon::daemon::DaemonState;
 use serde_json::json;
 
 mod common;

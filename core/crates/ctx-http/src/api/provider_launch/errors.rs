@@ -2,7 +2,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use ctx_observability::logs;
 
-use crate::daemon::providers::{ProviderLaunchConfigError, StartProviderInstallError};
+use ctx_daemon::daemon::providers::{ProviderLaunchConfigError, StartProviderInstallError};
 
 pub(in crate::api::provider_launch) fn workspace_execution_settings_error_json(
     error: &anyhow::Error,
@@ -48,8 +48,8 @@ pub(in crate::api::provider_launch) fn provider_launch_config_error_response(
 #[cfg(test)]
 mod tests {
     use super::provider_install_error_response;
-    use crate::daemon::providers::StartProviderInstallError;
     use axum::http::StatusCode;
+    use ctx_daemon::daemon::providers::StartProviderInstallError;
 
     #[test]
     fn provider_install_error_response_maps_disabled_install_targets_to_forbidden() {

@@ -7,7 +7,7 @@ use axum::http::{Method, Request, StatusCode};
 use tower::ServiceExt;
 
 use ctx_core::models::{MessageRole, SessionEventType, SessionTurnStatus};
-use ctx_http::daemon::DaemonState;
+use ctx_daemon::daemon::DaemonState;
 use ctx_store::StoreManager;
 
 mod common;

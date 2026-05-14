@@ -5,9 +5,9 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 
 use super::errors::ApiErrorResp;
-use crate::daemon::TransportHandle;
 use ctx_core::ids::{TerminalId, WorkspaceId};
 use ctx_core::models::TerminalSession;
+use ctx_daemon::daemon::TransportHandle;
 use ctx_transport_runtime::terminal_launch::{TerminalLaunchError, TerminalLaunchErrorKind};
 
 mod request;

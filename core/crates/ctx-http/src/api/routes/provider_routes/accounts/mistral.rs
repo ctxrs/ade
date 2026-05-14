@@ -4,9 +4,9 @@ use crate::api::providers::{
     delete_mistral_account, get_mistral_login, list_mistral_accounts, set_mistral_active_account,
     start_mistral_login, upsert_mistral_account,
 };
-use crate::daemon::DaemonHandle;
+use crate::api::router::RouteState;
 
-pub(super) fn mistral_account_routes() -> axum::Router<DaemonHandle> {
+pub(super) fn mistral_account_routes() -> axum::Router<RouteState> {
     axum::Router::new()
         .route(
             "/api/providers/mistral/accounts",

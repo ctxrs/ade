@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
-use ctx_http::daemon::DaemonState;
+use ctx_daemon::daemon::DaemonState;
 
 mod common;
 

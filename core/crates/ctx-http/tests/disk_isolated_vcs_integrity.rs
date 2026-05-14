@@ -7,8 +7,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::process::Command;
 
+use ctx_daemon::daemon::DaemonState;
 use ctx_http::api;
-use ctx_http::daemon::DaemonState;
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::StoreManager;
 

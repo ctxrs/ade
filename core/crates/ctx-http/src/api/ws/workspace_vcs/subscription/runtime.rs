@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
-use crate::daemon::WorkspacesHandle;
 use ctx_core::ids::WorktreeId;
+use ctx_daemon::daemon::WorkspacesHandle;
 
 #[derive(Default)]
 pub(in crate::api::ws::workspace_vcs) struct WorkspaceVcsRuntime {

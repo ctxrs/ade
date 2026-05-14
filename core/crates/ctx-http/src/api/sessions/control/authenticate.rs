@@ -28,26 +28,26 @@ pub(crate) async fn authenticate_session(
 }
 
 fn map_session_auth_error(
-    error: crate::daemon::sessions::auth::SessionAuthError,
+    error: ctx_daemon::daemon::sessions::auth::SessionAuthError,
 ) -> (StatusCode, Json<ApiErrorResp>) {
     match error {
-        crate::daemon::sessions::auth::SessionAuthError::NotFound(entity) => (
+        ctx_daemon::daemon::sessions::auth::SessionAuthError::NotFound(entity) => (
             StatusCode::NOT_FOUND,
             Json(ApiErrorResp {
                 error: format!("{entity} not found"),
             }),
         ),
-        crate::daemon::sessions::auth::SessionAuthError::BadRequest(error) => {
+        ctx_daemon::daemon::sessions::auth::SessionAuthError::BadRequest(error) => {
             (StatusCode::BAD_REQUEST, Json(ApiErrorResp { error }))
         }
-        crate::daemon::sessions::auth::SessionAuthError::Forbidden(error) => {
+        ctx_daemon::daemon::sessions::auth::SessionAuthError::Forbidden(error) => {
             (StatusCode::FORBIDDEN, Json(ApiErrorResp { error }))
         }
-        crate::daemon::sessions::auth::SessionAuthError::Internal(error) => (
+        ctx_daemon::daemon::sessions::auth::SessionAuthError::Internal(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ApiErrorResp { error }),
         ),
-        crate::daemon::sessions::auth::SessionAuthError::AuthenticationFailed {
+        ctx_daemon::daemon::sessions::auth::SessionAuthError::AuthenticationFailed {
             redacted_message,
         } => {
             tracing::warn!("session authentication failed: {redacted_message}");
@@ -67,10 +67,11 @@ mod tests {
 
     #[test]
     fn map_session_auth_error_maps_policy_denials_to_forbidden() {
-        let (status, body) =
-            map_session_auth_error(crate::daemon::sessions::auth::SessionAuthError::Forbidden(
+        let (status, body) = map_session_auth_error(
+            ctx_daemon::daemon::sessions::auth::SessionAuthError::Forbidden(
                 "host execution is disabled by daemon policy".to_string(),
-            ));
+            ),
+        );
 
         assert_eq!(status, StatusCode::FORBIDDEN);
         assert_eq!(

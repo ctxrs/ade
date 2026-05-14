@@ -207,19 +207,19 @@ test("ctx-http checkin fanout exposes split unit suite targets without changing 
     `${CTX_HTTP_BAZEL_PACKAGE}:unit-tests-workspace-runtime`,
   ]);
   assert.deepEqual(getCtxHttpSuiteCheckinFanoutTargets("unit-tests-workspace-runtime"), [
-    `${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_workspace_runtime`,
-    `${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_workspace_runtime_reclaim_idle_runtime_with_parked_containers`,
-    `${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_workspace_runtime_reuses_running_container`,
-    `${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_workspace_runtime_prepare_starts_cached_container`,
-    `${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_workspace_runtime_reclaim_idle_machine`,
-    `${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_workspace_runtime_reclaim_idle_runtime_with_containers`,
-    `${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_workspace_runtime_reclaim_ctx_harness_container`,
-    `${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_workspace_runtime_container_status_avf`,
-    `${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_workspace_runtime_starts_avf_workspace_vm`,
-    `${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_workspace_runtime_keeps_avf_workspace_container_ready`,
-    `${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_workspace_runtime_unknown_machine_state_engine_unreachable`,
-    `${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_workspace_runtime_running_unreachable_machine_reconfiguration`,
-    `${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_workspace_runtime_recreates_machine_for_memory_profile_change`,
+    "//core/crates/ctx-daemon:unit_tests_workspace_runtime",
+    "//core/crates/ctx-daemon:unit_tests_workspace_runtime_reclaim_idle_runtime_with_parked_containers",
+    "//core/crates/ctx-daemon:unit_tests_workspace_runtime_reuses_running_container",
+    "//core/crates/ctx-daemon:unit_tests_workspace_runtime_prepare_starts_cached_container",
+    "//core/crates/ctx-daemon:unit_tests_workspace_runtime_reclaim_idle_machine",
+    "//core/crates/ctx-daemon:unit_tests_workspace_runtime_reclaim_idle_runtime_with_containers",
+    "//core/crates/ctx-daemon:unit_tests_workspace_runtime_reclaim_ctx_harness_container",
+    "//core/crates/ctx-daemon:unit_tests_workspace_runtime_container_status_avf",
+    "//core/crates/ctx-daemon:unit_tests_workspace_runtime_starts_avf_workspace_vm",
+    "//core/crates/ctx-daemon:unit_tests_workspace_runtime_keeps_avf_workspace_container_ready",
+    "//core/crates/ctx-daemon:unit_tests_workspace_runtime_unknown_machine_state_engine_unreachable",
+    "//core/crates/ctx-daemon:unit_tests_workspace_runtime_running_unreachable_machine_reconfiguration",
+    "//core/crates/ctx-daemon:unit_tests_workspace_runtime_recreates_machine_for_memory_profile_change",
   ]);
   assert.deepEqual(CTX_HTTP_CHECKIN_FANOUT_TARGET_BATCHES_BY_SUITE["bin-tests"], [
     [
@@ -256,8 +256,8 @@ test("ctx-http checkin fanout exposes split unit suite targets without changing 
       `${CTX_HTTP_BAZEL_PACKAGE}:subscription_accounts_api`,
     ],
   ]);
-  assert.equal(getCtxHttpSuiteCheckinFanoutTargetBatches("base").length, 22);
-  assert.equal(getCtxHttpSuiteCheckinFanoutTargets("base").length, 45);
+  assert.equal(getCtxHttpSuiteCheckinFanoutTargetBatches("base").length, 24);
+  assert.equal(getCtxHttpSuiteCheckinFanoutTargets("base").length, 47);
   assert.equal(
     getCtxHttpSuiteCheckinFanoutTargets("base").includes("//core/crates/ctx-managed-installs:unit_tests"),
     true,
@@ -303,7 +303,7 @@ test("ctx-http checkin fanout exposes split unit suite targets without changing 
     `${CTX_HTTP_BAZEL_PACKAGE}:noisy_output_backpressure`,
     `${CTX_HTTP_BAZEL_PACKAGE}:turn_lifecycle_events`,
     `${CTX_HTTP_BAZEL_PACKAGE}:turn_terminal_reconciliation`,
-    `${CTX_HTTP_BAZEL_PACKAGE}:unit_tests_scheduler`,
+    "//core/crates/ctx-daemon:unit_tests_scheduler",
   ]);
   assert.equal(
     getCtxHttpSuiteCheckinFanoutTargets("provider-runtime-simulated").includes(
@@ -339,7 +339,7 @@ test("ctx-http suite command builder accepts explicit multi-suite selections", (
 });
 
 test("ctx-http integration suites declare source ownership and dependency crates", () => {
-  assert.equal(CTX_HTTP_SHARED_SOURCE_GLOBS.includes("crates/ctx-http/src/daemon/**"), true);
+  assert.equal(CTX_HTTP_SHARED_SOURCE_GLOBS.includes("crates/ctx-http/src/daemon/**"), false);
   assert.deepEqual([...MANUAL_ONLY_CTX_HTTP_TEST_FILES].sort(), [
     "attachments_demo_react",
   ]);

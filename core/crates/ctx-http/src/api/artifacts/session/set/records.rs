@@ -1,5 +1,5 @@
 use super::*;
-use crate::daemon::SessionsHandle;
+use ctx_daemon::daemon::SessionsHandle;
 
 pub(super) async fn build_session_artifacts(
     state: &SessionsHandle,

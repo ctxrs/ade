@@ -1,7 +1,7 @@
 use axum::http::StatusCode;
 use serde::Deserialize;
 
-use crate::daemon::workspaces::{FileCompletionsError, FileCompletionsErrorKind};
+use ctx_daemon::daemon::workspaces::{FileCompletionsError, FileCompletionsErrorKind};
 
 #[derive(Debug, Deserialize, Default)]
 pub(crate) struct FileCompletionsQuery {

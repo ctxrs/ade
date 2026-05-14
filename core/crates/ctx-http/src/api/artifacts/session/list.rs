@@ -1,5 +1,5 @@
 use super::*;
-use crate::daemon::SessionsHandle;
+use ctx_daemon::daemon::SessionsHandle;
 
 pub(in crate::api) async fn list_session_artifacts(
     State(state): State<SessionsHandle>,

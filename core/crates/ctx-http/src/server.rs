@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
+use ctx_daemon::daemon;
 use serde_json::json;
 
-use crate::{api, daemon};
+use crate::api;
 
 pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
     let runtime = daemon::bootstrap_daemon_runtime(bind, data_dir).await?;

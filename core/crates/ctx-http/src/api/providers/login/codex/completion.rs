@@ -12,28 +12,28 @@ async fn restore_completion_token(providers: &ProvidersHandle, id: &str, complet
 }
 
 fn claim_error_response(
-    err: crate::daemon::providers::CodexLoginCallbackClaimError,
+    err: ctx_daemon::daemon::providers::CodexLoginCallbackClaimError,
 ) -> (StatusCode, Json<ApiErrorResp>) {
     match err {
-        crate::daemon::providers::CodexLoginCallbackClaimError::NotFound => (
+        ctx_daemon::daemon::providers::CodexLoginCallbackClaimError::NotFound => (
             StatusCode::NOT_FOUND,
             Json(ApiErrorResp {
                 error: "login not found".to_string(),
             }),
         ),
-        crate::daemon::providers::CodexLoginCallbackClaimError::NotPending => (
+        ctx_daemon::daemon::providers::CodexLoginCallbackClaimError::NotPending => (
             StatusCode::CONFLICT,
             Json(ApiErrorResp {
                 error: "login is not pending".to_string(),
             }),
         ),
-        crate::daemon::providers::CodexLoginCallbackClaimError::InvalidCompletionToken => (
+        ctx_daemon::daemon::providers::CodexLoginCallbackClaimError::InvalidCompletionToken => (
             StatusCode::UNAUTHORIZED,
             Json(ApiErrorResp {
                 error: "invalid completion token".to_string(),
             }),
         ),
-        crate::daemon::providers::CodexLoginCallbackClaimError::MissingExpectedCallback => (
+        ctx_daemon::daemon::providers::CodexLoginCallbackClaimError::MissingExpectedCallback => (
             StatusCode::CONFLICT,
             Json(ApiErrorResp {
                 error: "login is missing expected callback metadata".to_string(),

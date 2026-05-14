@@ -1,5 +1,5 @@
 use super::*;
-use crate::daemon::TelemetryHandle;
+use ctx_daemon::daemon::TelemetryHandle;
 
 mod request;
 mod sanitizer;

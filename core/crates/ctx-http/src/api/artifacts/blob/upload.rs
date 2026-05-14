@@ -1,8 +1,8 @@
 use super::*;
 
-use crate::daemon::CoreHandle;
 use axum::body::Bytes;
 use axum::extract::{FromRequest, Multipart};
+use ctx_daemon::daemon::CoreHandle;
 use ctx_session_tools::infer_session_upload_blob_mime_type;
 
 pub(super) struct ParsedBlobUploadFile {

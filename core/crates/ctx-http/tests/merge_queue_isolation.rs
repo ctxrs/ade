@@ -5,8 +5,8 @@ use std::time::{Duration, Instant};
 use axum::http::{Method, StatusCode};
 use ctx_core::ids::MergeQueueEntryId;
 use ctx_core::models::{MergeQueueEntry, MergeQueueEntryStatus};
+use ctx_daemon::daemon::DaemonState;
 use ctx_fs::git::git_status_porcelain;
-use ctx_http::daemon::DaemonState;
 use serde_json::json;
 use tokio::process::Command;
 

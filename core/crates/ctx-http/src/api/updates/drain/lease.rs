@@ -7,7 +7,7 @@ use super::types::{
     BeginUpdateDrainReq, BeginUpdateDrainResp, ReleaseUpdateDrainReq, ReleaseUpdateDrainResp,
 };
 use crate::api::errors::ApiErrorResp;
-use crate::daemon::{maintenance as daemon_maintenance, ExecutionHandle};
+use ctx_daemon::daemon::{maintenance as daemon_maintenance, ExecutionHandle};
 
 pub(in crate::api) async fn begin_update_drain(
     State(execution): State<ExecutionHandle>,

@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use ctx_observability::logs;
 
 use super::oauth;
-use crate::daemon::ProvidersHandle;
+use ctx_daemon::daemon::ProvidersHandle;
 
 pub(super) async fn monitor_kimi_login(
     providers: ProvidersHandle,

@@ -12,7 +12,8 @@ use tokio::process::Command;
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
 use ctx_core::models::SessionEventType;
-use ctx_http::{api, daemon::DaemonState};
+use ctx_daemon::daemon::DaemonState;
+use ctx_http::api;
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::StoreManager;
 

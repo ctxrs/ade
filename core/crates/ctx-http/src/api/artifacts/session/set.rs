@@ -1,5 +1,5 @@
 use super::*;
-use crate::daemon::SessionsHandle;
+use ctx_daemon::daemon::SessionsHandle;
 
 use self::records::build_session_artifacts;
 

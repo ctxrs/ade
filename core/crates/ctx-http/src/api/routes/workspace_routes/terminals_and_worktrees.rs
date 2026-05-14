@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn workspace_terminal_and_worktree_routes() -> axum::Router<DaemonHandle> {
+pub(super) fn workspace_terminal_and_worktree_routes() -> axum::Router<RouteState> {
     axum::Router::new()
         .route(
             "/api/workspaces/:id/terminals",

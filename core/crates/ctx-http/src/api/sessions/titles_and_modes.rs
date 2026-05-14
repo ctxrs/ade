@@ -6,9 +6,9 @@ use axum::Json;
 use serde::Deserialize;
 
 use super::super::errors::ApiErrorResp;
-use crate::daemon::SessionsHandle;
 use ctx_core::ids::SessionId;
 use ctx_core::models::Session;
+use ctx_daemon::daemon::SessionsHandle;
 use ctx_observability::logs;
 use ctx_session_tools::model_resolution::{
     compose_model_id, normalize_effort_id, resolve_model_id,

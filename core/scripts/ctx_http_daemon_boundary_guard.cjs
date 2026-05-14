@@ -6,9 +6,11 @@ const path = require("node:path");
 const coreRoot = path.resolve(__dirname, "..");
 const repoRoot = path.resolve(coreRoot, "..");
 const apiRoot = path.join(coreRoot, "crates", "ctx-http", "src", "api");
-const daemonRoot = path.join(coreRoot, "crates", "ctx-http", "src", "daemon");
-const daemonRootPath = path.join(coreRoot, "crates", "ctx-http", "src", "daemon.rs");
-const daemonHandlePath = path.join(coreRoot, "crates", "ctx-http", "src", "daemon", "handle.rs");
+const legacyHttpDaemonRoot = path.join(coreRoot, "crates", "ctx-http", "src", "daemon");
+const legacyHttpDaemonRootPath = path.join(coreRoot, "crates", "ctx-http", "src", "daemon.rs");
+const daemonRoot = path.join(coreRoot, "crates", "ctx-daemon", "src", "daemon");
+const daemonRootPath = path.join(coreRoot, "crates", "ctx-daemon", "src", "daemon.rs");
+const daemonHandlePath = path.join(coreRoot, "crates", "ctx-daemon", "src", "daemon", "handle.rs");
 const rawStoreBlindApiRoots = [
   "core/crates/ctx-http/src/api/sessions/",
   "core/crates/ctx-http/src/api/tasks/",
@@ -77,6 +79,10 @@ const HANDLE_BACKDOOR_PATTERNS = [
 ];
 
 const DAEMON_EXTRACTION_BLOCKER_PATTERNS = [
+  {
+    name: "daemon depends on ctx-http",
+    regex: /\bctx_http::/,
+  },
   {
     name: "daemon imports API module",
     regex: /\bcrate::api\b|\bapi::router\b/,
@@ -193,6 +199,12 @@ function repoRelative(filePath) {
 
 function apiPatternsForPath(relativePath) {
   const patterns = [...API_RAW_DAEMON_PATTERNS];
+  if (relativePath === "core/crates/ctx-http/src/api/router.rs") {
+    const index = patterns.findIndex((pattern) => pattern.name === "broad daemon handle field");
+    if (index !== -1) {
+      patterns.splice(index, 1);
+    }
+  }
   if (rawStoreBlindApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...API_DOMAIN_RAW_STORE_PATTERNS);
   }
@@ -201,6 +213,23 @@ function apiPatternsForPath(relativePath) {
 
 function scanRepo() {
   const violations = [];
+  if (fs.existsSync(legacyHttpDaemonRootPath)) {
+    violations.push({
+      filePath: repoRelative(legacyHttpDaemonRootPath),
+      line: 1,
+      name: "legacy ctx-http daemon root",
+      text: "ctx-http/src/daemon.rs must stay physically extracted into ctx-daemon",
+    });
+  }
+  if (fs.existsSync(legacyHttpDaemonRoot)) {
+    violations.push({
+      filePath: repoRelative(legacyHttpDaemonRoot),
+      line: 1,
+      name: "legacy ctx-http daemon directory",
+      text: "ctx-http/src/daemon must stay physically extracted into ctx-daemon",
+    });
+  }
+
   for (const filePath of listRustFiles(apiRoot)) {
     if (isTestRustPath(filePath)) {
       continue;

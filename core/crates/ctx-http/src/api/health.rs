@@ -1,5 +1,5 @@
 use super::*;
-use crate::daemon::CoreHandle;
+use ctx_daemon::daemon::CoreHandle;
 use ctx_storage_admission::StorageGuardStatus;
 
 const MOBILE_API_MIN_VERSION: i64 = 1;

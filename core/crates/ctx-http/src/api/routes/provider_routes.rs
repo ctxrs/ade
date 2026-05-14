@@ -1,4 +1,4 @@
-use crate::daemon::DaemonHandle;
+use crate::api::router::RouteState;
 
 mod accounts;
 mod auth_import;
@@ -12,7 +12,7 @@ use base::provider_base_routes;
 use harness_config::provider_harness_config_routes;
 use installs::provider_install_routes;
 
-pub(super) fn provider_routes() -> axum::Router<DaemonHandle> {
+pub(super) fn provider_routes() -> axum::Router<RouteState> {
     provider_base_routes()
         .merge(provider_harness_config_routes())
         .merge(provider_auth_import_routes())

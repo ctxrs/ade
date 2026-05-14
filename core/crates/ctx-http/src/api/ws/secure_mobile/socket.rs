@@ -3,8 +3,8 @@ use futures::StreamExt;
 
 use super::super::workspace_stream;
 use super::context::decode_mobile_secure_client_message;
-use crate::daemon::{CoreHandle, WorkspaceStreamHandle};
 use ctx_core::ids::WorkspaceId;
+use ctx_daemon::daemon::{CoreHandle, WorkspaceStreamHandle};
 
 pub(super) async fn handle_mobile_secure_ws(
     socket: WebSocket,

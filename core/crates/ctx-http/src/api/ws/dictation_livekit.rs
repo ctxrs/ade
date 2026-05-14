@@ -2,7 +2,7 @@ use axum::extract::ws::{Message as WsMessage, WebSocket};
 use ctx_transport_runtime::dictation_livekit::connect_livekit_inference_stt;
 use serde_json::json;
 
-use crate::daemon::CoreHandle;
+use ctx_daemon::daemon::CoreHandle;
 
 mod bridge;
 mod settings;

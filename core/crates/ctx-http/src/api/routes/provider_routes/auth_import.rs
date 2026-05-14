@@ -4,9 +4,9 @@ use crate::api::providers::{
     import_provider_auth_candidates, list_provider_auth_import_candidates,
     list_provider_auth_import_profiles,
 };
-use crate::daemon::DaemonHandle;
+use crate::api::router::RouteState;
 
-pub(super) fn provider_auth_import_routes() -> axum::Router<DaemonHandle> {
+pub(super) fn provider_auth_import_routes() -> axum::Router<RouteState> {
     axum::Router::new()
         .route(
             "/api/providers/auth/import/candidates",

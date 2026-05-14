@@ -5,9 +5,9 @@ use crate::api::providers::{
     import_host_codex_auth, list_codex_accounts, probe_host_codex_import, set_codex_active_account,
     start_codex_login,
 };
-use crate::daemon::DaemonHandle;
+use crate::api::router::RouteState;
 
-pub(super) fn codex_account_routes() -> axum::Router<DaemonHandle> {
+pub(super) fn codex_account_routes() -> axum::Router<RouteState> {
     axum::Router::new()
         .route("/api/providers/codex/accounts", get(list_codex_accounts))
         .route(

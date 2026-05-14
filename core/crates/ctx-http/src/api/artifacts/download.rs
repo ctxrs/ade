@@ -9,7 +9,7 @@ use ctx_session_tools::{build_session_artifact_etag, build_session_artifact_last
 use super::access::{
     open_canonical_session_artifact_file, resolve_session_artifact_accessible_path,
 };
-use crate::daemon::SessionsHandle;
+use ctx_daemon::daemon::SessionsHandle;
 
 #[path = "download/response.rs"]
 mod response;

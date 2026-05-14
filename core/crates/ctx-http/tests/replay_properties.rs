@@ -15,7 +15,7 @@ use ctx_core::models::{
     SessionTurn, SessionTurnStatus, SessionTurnTool, Task, Workspace, WorkspaceActiveSnapshotEvent,
     WorkspaceActiveSnapshotStreamMessage,
 };
-use ctx_http::daemon::DaemonState;
+use ctx_daemon::daemon::DaemonState;
 
 mod common;
 

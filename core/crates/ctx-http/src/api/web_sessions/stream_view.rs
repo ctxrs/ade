@@ -3,7 +3,7 @@ use super::*;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
-use crate::daemon::{web_sessions::WebSessionAccessError, CoreHandle, TransportHandle};
+use ctx_daemon::daemon::{web_sessions::WebSessionAccessError, CoreHandle, TransportHandle};
 
 #[derive(Debug, Serialize)]
 pub(in crate::api) struct WebSessionStreamConnectInfo {

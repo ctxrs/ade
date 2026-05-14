@@ -37,7 +37,7 @@ async fn get_install_statuses_returns_known_and_missing_installs_in_request_orde
     let missing_install_id = InstallId::new_v4();
 
     let Json(resp) = get_install_statuses(
-        State(crate::daemon::DaemonHandle::new(state).providers()),
+        State(ctx_daemon::daemon::DaemonHandle::new(state).providers()),
         Json(GetInstallStatusesReq {
             install_ids: vec![install_id.to_string(), missing_install_id.to_string()],
         }),
@@ -78,7 +78,7 @@ async fn get_install_statuses_rejects_invalid_install_ids() {
     ));
 
     let err = get_install_statuses(
-        State(crate::daemon::DaemonHandle::new(state).providers()),
+        State(ctx_daemon::daemon::DaemonHandle::new(state).providers()),
         Json(GetInstallStatusesReq {
             install_ids: vec!["not-a-uuid".to_string()],
         }),

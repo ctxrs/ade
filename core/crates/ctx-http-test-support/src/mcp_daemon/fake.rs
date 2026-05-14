@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use ctx_core::models::{ExecutionEnvironment, Session, Task, VcsKind, Workspace, Worktree};
-use ctx_http::daemon::DaemonState;
+use ctx_daemon::daemon::DaemonState;
 use ctx_providers::adapters::ProviderAdapter;
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::StoreManager;
@@ -75,7 +75,7 @@ pub(crate) async fn setup_fake_provider_parent_session() -> Result<DaemonBackedP
         .context("create parent session")?;
 
     index_parent_entities(&state, &session, workspace.id, worktree.id, task.id).await?;
-    let mcp_token = ctx_http::daemon::issue_provider_session_mcp_token(
+    let mcp_token = ctx_daemon::daemon::issue_provider_session_mcp_token(
         &state,
         session.id,
         workspace.id,

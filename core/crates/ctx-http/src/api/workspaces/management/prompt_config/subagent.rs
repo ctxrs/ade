@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::common;
 use crate::api::errors::ApiErrorResp;
-use crate::daemon::WorkspacesHandle;
+use ctx_daemon::daemon::WorkspacesHandle;
 
 #[derive(Debug, Serialize)]
 pub(in crate::api) struct SubagentSystemPromptConfigResponse {

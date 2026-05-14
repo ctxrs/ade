@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn mobile_routes() -> axum::Router<DaemonHandle> {
+pub(super) fn mobile_routes() -> axum::Router<RouteState> {
     axum::Router::new()
         .route(
             "/api/mobile/connection_profiles",

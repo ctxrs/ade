@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::daemon::ProvidersHandle;
+use ctx_daemon::daemon::ProvidersHandle;
 
 pub(super) async fn set_failed(providers: &ProvidersHandle, login_id: &str, error: String) {
     providers.set_gemini_login_failed(login_id, error).await;

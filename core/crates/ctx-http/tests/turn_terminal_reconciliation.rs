@@ -53,7 +53,7 @@ impl ProviderAdapter for StartFailProvider {
 struct TestHarness {
     _repo: tempfile::TempDir,
     _data_dir: tempfile::TempDir,
-    state: std::sync::Arc<ctx_http::daemon::DaemonState>,
+    state: std::sync::Arc<ctx_daemon::daemon::DaemonState>,
     session: ctx_core::models::Session,
     store: ctx_store::Store,
 }
@@ -138,7 +138,7 @@ async fn reconcile_terminal_state_respects_turn_finished_status() {
         .await
         .unwrap();
 
-    ctx_http::daemon::scheduler::reconcile_turn_terminal_state(
+    ctx_daemon::daemon::scheduler::reconcile_turn_terminal_state(
         &harness.state,
         harness.session.id,
         Some(run_id),
@@ -177,7 +177,7 @@ async fn reconcile_terminal_state_emits_interrupt_when_terminal_event_missing() 
     let turn_id = TurnId::new();
     insert_running_turn(&harness.store, harness.session.id, run_id, turn_id).await;
 
-    ctx_http::daemon::scheduler::reconcile_turn_terminal_state(
+    ctx_daemon::daemon::scheduler::reconcile_turn_terminal_state(
         &harness.state,
         harness.session.id,
         Some(run_id),
@@ -223,7 +223,7 @@ async fn reconcile_provider_exit_emits_failed_terminal_events_when_missing() {
     let turn_id = TurnId::new();
     insert_running_turn(&harness.store, harness.session.id, run_id, turn_id).await;
 
-    ctx_http::daemon::scheduler::reconcile_turn_failed_on_provider_exit(
+    ctx_daemon::daemon::scheduler::reconcile_turn_failed_on_provider_exit(
         &harness.state,
         harness.session.id,
         Some(run_id),

@@ -1,5 +1,5 @@
 use super::*;
-use crate::daemon::SessionsHandle;
+use ctx_daemon::daemon::SessionsHandle;
 
 pub(in crate::api) async fn validate_scoped_mcp_session_context(
     state: &SessionsHandle,
@@ -13,19 +13,19 @@ pub(in crate::api) async fn validate_scoped_mcp_session_context(
 }
 
 fn scoped_mcp_session_error(
-    error: crate::daemon::ScopedMcpSessionAccessError,
+    error: ctx_daemon::daemon::ScopedMcpSessionAccessError,
 ) -> (StatusCode, Json<ApiErrorResp>) {
     match error {
-        crate::daemon::ScopedMcpSessionAccessError::Unauthorized(message) => {
+        ctx_daemon::daemon::ScopedMcpSessionAccessError::Unauthorized(message) => {
             scoped_mcp_unauthorized(message)
         }
-        crate::daemon::ScopedMcpSessionAccessError::SessionNotFound => (
+        ctx_daemon::daemon::ScopedMcpSessionAccessError::SessionNotFound => (
             StatusCode::NOT_FOUND,
             Json(ApiErrorResp {
                 error: "session not found".to_string(),
             }),
         ),
-        crate::daemon::ScopedMcpSessionAccessError::StoreUnavailable(error) => (
+        ctx_daemon::daemon::ScopedMcpSessionAccessError::StoreUnavailable(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ApiErrorResp {
                 error: logs::redact_sensitive(&error.to_string()),

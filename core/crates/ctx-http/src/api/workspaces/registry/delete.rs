@@ -1,5 +1,5 @@
 use super::*;
-use crate::daemon::workspaces::WorkspaceDeleteError;
+use ctx_daemon::daemon::workspaces::WorkspaceDeleteError;
 
 pub(in crate::api) async fn delete_workspace(
     State(workspaces): State<WorkspacesHandle>,

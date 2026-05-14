@@ -89,7 +89,7 @@ use ws::{
 use ctx_core::{ids::*, models::*};
 use ctx_store::store::MobileDeviceUpsert;
 
-use crate::daemon::mobile_access::{
+use ctx_daemon::daemon::mobile_access::{
     default_mobile_profile_scopes, mobile_scope_set_from_strings, MobileAuthContext, MobileScope,
 };
 use ctx_observability::logs;

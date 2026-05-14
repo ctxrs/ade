@@ -162,7 +162,7 @@ test("daemon boundary guard ignores test paths", () => {
 
 test("daemon boundary guard rejects DaemonHandle raw-state backdoors", () => {
   const violations = scanText({
-    filePath: "core/crates/ctx-http/src/daemon/handle.rs",
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
     contents: `
       impl FromRef<DaemonHandle> for Arc<DaemonState> {}
       impl DaemonHandle {
@@ -183,7 +183,7 @@ test("daemon boundary guard rejects DaemonHandle raw-state backdoors", () => {
 
 test("daemon boundary guard rejects daemon API/router composition ownership", () => {
   const violations = scanText({
-    filePath: "core/crates/ctx-http/src/daemon/serve.rs",
+    filePath: "core/crates/ctx-daemon/src/daemon/runtime.rs",
     contents: `
       use axum::Router;
       use crate::api;
@@ -210,7 +210,7 @@ test("daemon boundary guard rejects daemon API/router composition ownership", ()
 
 test("daemon boundary guard rejects grouped daemon API imports", () => {
   const violations = scanText({
-    filePath: "core/crates/ctx-http/src/daemon/runtime.rs",
+    filePath: "core/crates/ctx-daemon/src/daemon/runtime.rs",
     contents: `
       use crate::{api, daemon};
       use crate::{

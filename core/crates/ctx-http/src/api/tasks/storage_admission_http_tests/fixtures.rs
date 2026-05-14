@@ -7,8 +7,8 @@ use axum::http::{Request, StatusCode};
 use serde_json::Value;
 use tower::ServiceExt;
 
-use crate::daemon::DaemonState;
 use ctx_core::ids::WorkspaceId;
+use ctx_daemon::daemon::DaemonState;
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_sandbox_materialization::set_test_preflight_storage_samples_override;
 use ctx_settings_model::{ExecutionSettings, Settings};

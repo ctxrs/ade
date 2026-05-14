@@ -4,9 +4,9 @@ use crate::api::providers::{
     delete_amp_account, get_amp_login, list_amp_accounts, set_amp_active_account, start_amp_login,
     upsert_amp_account,
 };
-use crate::daemon::DaemonHandle;
+use crate::api::router::RouteState;
 
-pub(super) fn amp_account_routes() -> axum::Router<DaemonHandle> {
+pub(super) fn amp_account_routes() -> axum::Router<RouteState> {
     axum::Router::new()
         .route(
             "/api/providers/amp/accounts/login/start",

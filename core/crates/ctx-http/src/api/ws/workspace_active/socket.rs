@@ -2,9 +2,9 @@ use axum::extract::ws::{Message as WsMessage, WebSocket};
 use futures::StreamExt;
 
 use super::super::workspace_stream;
-use crate::daemon::WorkspaceStreamHandle;
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::WorkspaceActiveSnapshotClientMessage;
+use ctx_daemon::daemon::WorkspaceStreamHandle;
 
 pub(super) async fn handle_workspace_active_snapshot_ws(
     socket: WebSocket,

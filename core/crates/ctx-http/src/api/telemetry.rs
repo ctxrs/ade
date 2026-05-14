@@ -1,6 +1,6 @@
 use super::*;
-use crate::daemon::{CoreHandle, TelemetryHandle};
 use chrono::{NaiveDate, Utc};
+use ctx_daemon::daemon::{CoreHandle, TelemetryHandle};
 use serde::Deserialize;
 
 mod semantic;

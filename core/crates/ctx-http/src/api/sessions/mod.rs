@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 
 use super::errors::ApiErrorResp;
 use super::shared::{map_file_completions_error, FileCompletionsQuery};
-use crate::daemon::SessionsHandle;
 use ctx_core::ids::*;
 use ctx_core::models::*;
+use ctx_daemon::daemon::SessionsHandle;
 use ctx_observability::logs;
 #[cfg(test)]
 use ctx_settings_model as user_settings;

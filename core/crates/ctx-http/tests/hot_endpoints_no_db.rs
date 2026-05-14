@@ -80,6 +80,7 @@ async fn assert_hot_endpoints_with_failpoints(failpoints: &[&'static str]) {
         .unwrap()
         .unwrap();
     state
+        .sessions
         .cache_session_head_snapshot(session.id, 10, true, head_snapshot)
         .await;
 

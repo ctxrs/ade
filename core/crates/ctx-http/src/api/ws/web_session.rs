@@ -7,7 +7,7 @@ use tokio_tungstenite::tungstenite::{
     protocol::CloseFrame as TungsteniteCloseFrame, Message as TungsteniteMessage,
 };
 
-use crate::daemon::{web_sessions::WebSessionAccessError, TransportHandle};
+use ctx_daemon::daemon::{web_sessions::WebSessionAccessError, TransportHandle};
 
 use super::super::web_sessions::WebSessionStreamAccessQuery;
 

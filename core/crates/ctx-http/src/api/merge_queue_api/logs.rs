@@ -7,7 +7,7 @@ use axum::response::Response;
 use ctx_core::ids::{MergeQueueEntryId, WorkspaceId};
 
 use crate::api::shared::path_resolves_within_root;
-use crate::daemon::WorkspacesHandle;
+use ctx_daemon::daemon::WorkspacesHandle;
 
 pub(in crate::api) async fn get_merge_queue_entry_logs(
     State(state): State<WorkspacesHandle>,

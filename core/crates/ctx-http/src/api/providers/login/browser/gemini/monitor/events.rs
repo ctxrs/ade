@@ -4,7 +4,7 @@ use super::status;
 use crate::api::providers::login::{
     auth_notice_code, extract_auth_url_from_value, is_auth_failure_notice_code,
 };
-use crate::daemon::ProvidersHandle;
+use ctx_daemon::daemon::ProvidersHandle;
 use ctx_observability::logs;
 use ctx_providers::events::NormalizedEvent;
 

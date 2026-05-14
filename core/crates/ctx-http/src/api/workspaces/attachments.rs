@@ -16,8 +16,8 @@ pub(in crate::api) async fn list_workspace_attachments(
         .await
         .map(Json)
         .map_err(|error| match error {
-            crate::daemon::WorkspaceStoreAccessError::NotFound => StatusCode::NOT_FOUND,
-            crate::daemon::WorkspaceStoreAccessError::Unavailable(_) => {
+            ctx_daemon::daemon::WorkspaceStoreAccessError::NotFound => StatusCode::NOT_FOUND,
+            ctx_daemon::daemon::WorkspaceStoreAccessError::Unavailable(_) => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
         })

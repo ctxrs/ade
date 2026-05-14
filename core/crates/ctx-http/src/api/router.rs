@@ -5,7 +5,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 use url::Url;
 
-use crate::daemon::{
+use ctx_daemon::daemon::{
     CoreHandle, DaemonHandle, ExecutionHandle, ProvidersHandle, SessionsHandle, TasksHandle,
     TelemetryHandle, TransportHandle, WorkspaceStreamHandle, WorkspacesHandle,
 };
@@ -59,13 +59,18 @@ fn daemon_cors_layer() -> CorsLayer {
 macro_rules! impl_route_state_extractors {
     ($($name:ident, $accessor:ident);+ $(;)?) => {
         $(
-            impl FromRef<DaemonHandle> for $name {
-                fn from_ref(handle: &DaemonHandle) -> Self {
-                    handle.$accessor()
+            impl FromRef<RouteState> for $name {
+                fn from_ref(state: &RouteState) -> Self {
+                    state.handle.$accessor()
                 }
             }
         )+
     };
+}
+
+#[derive(Clone)]
+pub(in crate::api) struct RouteState {
+    pub(in crate::api) handle: DaemonHandle,
 }
 
 impl_route_state_extractors! {
@@ -81,7 +86,9 @@ impl_route_state_extractors! {
 }
 
 pub fn router(state: impl Into<DaemonHandle>) -> axum::Router {
-    let state = state.into();
+    let state = RouteState {
+        handle: state.into(),
+    };
     let auth_state = state.clone();
     let perf_state = state.clone();
     let api = routes::api_routes()

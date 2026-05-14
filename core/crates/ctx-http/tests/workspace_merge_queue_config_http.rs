@@ -7,7 +7,7 @@ use axum::http::{Method, StatusCode};
 use chrono::Utc;
 use ctx_core::ids::{MergeQueueEntryId, WorkspaceId};
 use ctx_core::models::{MergeQueueEntry, MergeQueueEntryStatus, MergeQueuePatchSource, Workspace};
-use ctx_http::daemon::DaemonState;
+use ctx_daemon::daemon::DaemonState;
 use serde_json::Value;
 
 fn queued_entry(workspace_id: WorkspaceId, name: &str) -> MergeQueueEntry {

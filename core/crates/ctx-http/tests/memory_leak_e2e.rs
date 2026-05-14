@@ -6,7 +6,7 @@ use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use serde_json::json;
 
-use ctx_http::daemon::{provider_guard, provider_restart, resource_telemetry};
+use ctx_daemon::daemon::{provider_guard, provider_restart, resource_telemetry};
 use ctx_settings_model::{
     ProviderGuardSettings, ProviderRestartSettings, ResourceGovernanceMode, Settings,
 };

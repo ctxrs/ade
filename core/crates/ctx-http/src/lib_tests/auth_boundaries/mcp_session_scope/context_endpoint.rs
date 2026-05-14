@@ -18,7 +18,7 @@ async fn mcp_context_endpoint_requires_scoped_mcp_token() {
     let session_id = SessionId::new();
     let workspace_id = WorkspaceId::new();
     let worktree_id = WorktreeId::new();
-    let token = crate::daemon::issue_provider_session_mcp_token_with_capabilities(
+    let token = ctx_daemon::daemon::issue_provider_session_mcp_token_with_capabilities(
         state.as_ref(),
         session_id,
         workspace_id,
@@ -93,7 +93,7 @@ async fn mcp_context_endpoint_requires_scoped_token_when_daemon_auth_is_disabled
         "http://127.0.0.1:4399".to_string(),
         None,
     ));
-    let token = crate::daemon::issue_provider_session_mcp_token(
+    let token = ctx_daemon::daemon::issue_provider_session_mcp_token(
         state.as_ref(),
         SessionId::new(),
         WorkspaceId::new(),

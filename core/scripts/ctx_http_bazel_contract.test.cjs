@@ -15,6 +15,29 @@ const desktopVersion = JSON.parse(
   fs.readFileSync(path.join(coreRoot, "apps", "desktop", "package.json"), "utf8"),
 ).version;
 const ctxHttpBuild = fs.readFileSync(path.join(coreRoot, "crates", "ctx-http", "BUILD.bazel"), "utf8");
+const ctxDaemonBuild = fs.readFileSync(path.join(coreRoot, "crates", "ctx-daemon", "BUILD.bazel"), "utf8");
+const migratedDaemonUnitTargets = new Set([
+  ":unit_tests_daemon",
+  ":unit_tests_execution_effective",
+  ":unit_tests_merge_queue",
+  ":unit_tests_merge_queue_enabled_workspace_resume_after_open",
+  ":unit_tests_scheduler",
+  ":unit_tests_storage_guard",
+  ":unit_tests_vcs_hooks",
+  ":unit_tests_workspace_runtime",
+  ":unit_tests_workspace_runtime_container_status_avf",
+  ":unit_tests_workspace_runtime_keeps_avf_workspace_container_ready",
+  ":unit_tests_workspace_runtime_prepare_starts_cached_container",
+  ":unit_tests_workspace_runtime_reclaim_ctx_harness_container",
+  ":unit_tests_workspace_runtime_reclaim_idle_machine",
+  ":unit_tests_workspace_runtime_reclaim_idle_runtime_with_containers",
+  ":unit_tests_workspace_runtime_reclaim_idle_runtime_with_parked_containers",
+  ":unit_tests_workspace_runtime_recreates_machine_for_memory_profile_change",
+  ":unit_tests_workspace_runtime_reuses_running_container",
+  ":unit_tests_workspace_runtime_running_unreachable_machine_reconfiguration",
+  ":unit_tests_workspace_runtime_starts_avf_workspace_vm",
+  ":unit_tests_workspace_runtime_unknown_machine_state_engine_unreachable",
+]);
 const ctxHttpBazelTests = fs.readFileSync(
   path.join(coreRoot, "crates", "ctx-http", "ctx_http_bazel_tests.bzl"),
   "utf8",
@@ -75,7 +98,8 @@ test("ctx-http BUILD exposes Bazel-native base test targets", () => {
   assert.match(ctxHttpBazelTests, /args = \["--list"\]/);
   assert.match(ctxHttpBuild, /name = "unit_tests"/);
   assert.match(ctxHttpBuild, /name = "unit_tests_api"/);
-  assert.match(ctxHttpBuild, /name = "unit_tests_daemon"/);
+  assert.doesNotMatch(ctxDaemonBuild, /name = "unit_tests"/);
+  assert.match(ctxDaemonBuild, /name = "unit_tests_daemon"/);
   assert.match(ctxHttpBuild, /name = "unit_tests_lib"/);
   assert.match(ctxHttpBuild, /name = "unit_tests_lib_provider_routes"/);
   assert.match(
@@ -83,30 +107,30 @@ test("ctx-http BUILD exposes Bazel-native base test targets", () => {
     /sh_test\([\s\S]*name = name[\s\S]*"\$\(rootpath :\{\}\)"[\s\S]*CTX_HTTP_UNIT_TEST_HARNESS_NAME[\s\S]*data = \[":\{\}"\.format\(CTX_HTTP_UNIT_TEST_HARNESS_NAME\)\]/,
   );
   assert.match(ctxHttpBuild, /name = "unit_tests_lib_execution_launch_startup_prewarm_kind_supported"/);
-  assert.match(ctxHttpBuild, /name = "unit_tests_merge_queue"/);
-  assert.match(ctxHttpBuild, /name = "unit_tests_merge_queue_enabled_workspace_resume_after_open"/);
+  assert.match(ctxDaemonBuild, /name = "unit_tests_merge_queue"/);
+  assert.match(ctxDaemonBuild, /name = "unit_tests_merge_queue_enabled_workspace_resume_after_open"/);
   assert.match(ctxHttpBuild, /"\/\/core\/crates\/ctx-managed-installs:unit_tests"/);
   assert.match(ctxHttpBuild, /"\/\/core\/crates\/ctx-provider-matrix:unit_tests"/);
   assert.match(ctxHttpBuild, /"\/\/core\/crates\/ctx-provider-runtime:unit_tests"/);
-  assert.match(ctxHttpBuild, /name = "unit_tests_scheduler"/);
+  assert.match(ctxDaemonBuild, /name = "unit_tests_scheduler"/);
   assert.match(ctxHttpBuild, /"\/\/core\/crates\/ctx-settings-model:unit_tests"/);
   assert.match(ctxHttpBuild, /"\/\/core\/crates\/ctx-settings-service:unit_tests"/);
-  assert.match(ctxHttpBuild, /name = "unit_tests_workspace_runtime"/);
-  assert.match(ctxHttpBuild, /name = "unit_tests_workspace_runtime_reuses_running_container"/);
-  assert.match(ctxHttpBuild, /name = "unit_tests_workspace_runtime_reclaim_idle_machine"/);
-  assert.match(ctxHttpBuild, /name = "unit_tests_workspace_runtime_reclaim_idle_runtime_with_containers"/);
+  assert.match(ctxDaemonBuild, /name = "unit_tests_workspace_runtime"/);
+  assert.match(ctxDaemonBuild, /name = "unit_tests_workspace_runtime_reuses_running_container"/);
+  assert.match(ctxDaemonBuild, /name = "unit_tests_workspace_runtime_reclaim_idle_machine"/);
+  assert.match(ctxDaemonBuild, /name = "unit_tests_workspace_runtime_reclaim_idle_runtime_with_containers"/);
   assert.match(
-    ctxHttpBuild,
+    ctxDaemonBuild,
     /name = "unit_tests_workspace_runtime_running_unreachable_machine_reconfiguration"/,
   );
   assert.match(
-    ctxHttpBuild,
+    ctxDaemonBuild,
     /name = "unit_tests_workspace_runtime_recreates_machine_for_memory_profile_change"/,
   );
   assert.match(ctxHttpBuild, /name = "unit_tests_daemon_golden_path_with_fake_provider"/);
   assert.match(ctxHttpBuild, /name = "unit_tests_daemon_http_and_ws_streaming"/);
   assert.match(ctxHttpBuild, /"lib_tests::"/);
-  assert.match(ctxHttpBuild, /"daemon::workspace_runtime::"/);
+  assert.match(ctxDaemonBuild, /"daemon::workspace_runtime::"/);
   assert.match(ctxHttpBuild, /"--test-threads=1"/);
   assert.match(ctxHttpBuild, /--skip=lib_tests::daemon_smoke::golden_path::daemon_golden_path_with_fake_provider/);
   assert.match(
@@ -127,51 +151,51 @@ test("ctx-http BUILD exposes Bazel-native base test targets", () => {
     /--exact",\s*"lib_tests::execution_launch::startup_prewarm::execution_launch_startup_prewarm_kind_supported/,
   );
   assert.match(
-    ctxHttpBuild,
+    ctxDaemonBuild,
     /--skip=daemon::workspace_runtime::tests::runtime_prepare::prepare_reuses_running_workspace_container_without_front_loading_image_readiness/,
   );
   assert.match(
-    ctxHttpBuild,
+    ctxDaemonBuild,
     /--exact",\s*"daemon::workspace_runtime::tests::runtime_prepare::prepare_reuses_running_workspace_container_without_front_loading_image_readiness/,
   );
   assert.match(
-    ctxHttpBuild,
+    ctxDaemonBuild,
     /--skip=daemon::workspace_runtime::tests::reclaim::maybe_reclaim_sandbox_machine_stops_idle_machine/,
   );
   assert.match(
-    ctxHttpBuild,
+    ctxDaemonBuild,
     /--exact",\s*"daemon::workspace_runtime::tests::reclaim::maybe_reclaim_sandbox_machine_stops_idle_machine/,
   );
   assert.match(
-    ctxHttpBuild,
+    ctxDaemonBuild,
     /--skip=daemon::workspace_runtime::tests::reclaim::maybe_reclaim_sandbox_machine_stops_idle_runtime_with_running_workspace_containers/,
   );
   assert.match(
-    ctxHttpBuild,
+    ctxDaemonBuild,
     /--exact",\s*"daemon::workspace_runtime::tests::reclaim::maybe_reclaim_sandbox_machine_stops_idle_runtime_with_running_workspace_containers/,
   );
   assert.match(
-    ctxHttpBuild,
+    ctxDaemonBuild,
     /--skip=daemon::workspace_runtime::tests::machine_recovery::materialization::ensure_sandbox_machine_materialized_defers_reconfiguration_when_machine_is_running_but_engine_unreachable/,
   );
   assert.match(
-    ctxHttpBuild,
+    ctxDaemonBuild,
     /--exact",\s*"daemon::workspace_runtime::tests::machine_recovery::materialization::ensure_sandbox_machine_materialized_defers_reconfiguration_when_machine_is_running_but_engine_unreachable/,
   );
   assert.match(
-    ctxHttpBuild,
+    ctxDaemonBuild,
     /--skip=daemon::workspace_runtime::tests::machine_recovery::materialization::ensure_sandbox_machine_materialized_recreates_machine_for_memory_profile_change_when_engine_is_down/,
   );
   assert.match(
-    ctxHttpBuild,
+    ctxDaemonBuild,
     /--exact",\s*"daemon::workspace_runtime::tests::machine_recovery::materialization::ensure_sandbox_machine_materialized_recreates_machine_for_memory_profile_change_when_engine_is_down/,
   );
   assert.match(
-    ctxHttpBuild,
+    ctxDaemonBuild,
     /--skip=daemon::merge_queue::tests::resume::enabled_workspace_queued_rows_resume_only_after_open/,
   );
   assert.match(
-    ctxHttpBuild,
+    ctxDaemonBuild,
     /--exact",\s*"daemon::merge_queue::tests::resume::enabled_workspace_queued_rows_resume_only_after_open/,
   );
   assert.match(ctxHttpBuild, /name = "bin_tests"/);
@@ -194,11 +218,11 @@ test("ctx-http BUILD exposes Bazel-native base test targets", () => {
   assert.match(ctxHttpBuild, /name = "unit-tests-workspace-runtime"/);
   assert.match(
     ctxHttpBuild,
-    /":unit_tests_merge_queue_enabled_workspace_resume_after_open"/,
+    /"\/\/core\/crates\/ctx-daemon:unit_tests_merge_queue_enabled_workspace_resume_after_open"/,
   );
   assert.match(
     ctxHttpBuild,
-    /":unit_tests_workspace_runtime_recreates_machine_for_memory_profile_change"/,
+    /"\/\/core\/crates\/ctx-daemon:unit_tests_workspace_runtime_recreates_machine_for_memory_profile_change"/,
   );
   assert.match(
     ctxHttpBuild,
@@ -236,6 +260,7 @@ test("ctx-http unit-family suites cover every unit test target exactly once", ()
   ];
   const declaredUnitTargets = [...ctxHttpBuild.matchAll(/name = "(unit_tests_[^"]+)"/g)]
     .map((match) => `:${match[1]}`)
+    .filter((target) => !migratedDaemonUnitTargets.has(target))
     .sort();
   const familyTargets = unitFamilySuites
     .flatMap((suiteName) => extractTestSuiteLabels(suiteName))
@@ -244,6 +269,8 @@ test("ctx-http unit-family suites cover every unit test target exactly once", ()
 
   assertNoDuplicates("ctx-http unit-family suite targets", familyTargets);
   assert.equal(familyTargets.includes(":ctx_http_unit_test_harness"), false);
+  assert.equal(familyTargets.includes("//core/crates/ctx-daemon:unit_tests_scheduler"), true);
+  assert.equal(familyTargets.includes("//core/crates/ctx-daemon:unit_tests_workspace_runtime"), true);
   assert.equal(familyTargets.includes("//core/crates/ctx-settings-model:unit_tests"), true);
   assert.equal(familyTargets.includes("//core/crates/ctx-settings-service:unit_tests"), true);
   assert.deepEqual(localFamilyTargets, declaredUnitTargets);

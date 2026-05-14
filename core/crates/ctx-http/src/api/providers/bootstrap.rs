@@ -52,7 +52,7 @@ pub(crate) async fn get_workspace_providers_bootstrap(
                     .await
             }
         }))
-        .buffer_unordered(crate::daemon::providers::visible_provider_count_hint(
+        .buffer_unordered(ctx_daemon::daemon::providers::visible_provider_count_hint(
             provider_statuses.len(),
         ))
         .collect::<Vec<_>>()

@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn core_routes() -> axum::Router<DaemonHandle> {
+pub(super) fn core_routes() -> axum::Router<RouteState> {
     axum::Router::new()
         .route("/api/health", get(health))
         .route("/api/mcp/context", get(get_mcp_context))

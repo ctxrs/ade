@@ -62,8 +62,8 @@ impl CreateTaskDefaultSessionReq {
     pub(in crate::api::tasks) fn into_task_session_input(
         self,
         run_id_header: Option<String>,
-    ) -> crate::daemon::tasks::CreateTaskSessionInput {
-        crate::daemon::tasks::CreateTaskSessionInput {
+    ) -> ctx_daemon::daemon::tasks::CreateTaskSessionInput {
+        ctx_daemon::daemon::tasks::CreateTaskSessionInput {
             id: self.id,
             provider_id: self.provider_id,
             model_id: self.model_id,
@@ -85,8 +85,8 @@ impl CreateSessionReq {
     pub(super) fn into_task_session_input(
         self,
         run_id_header: Option<String>,
-    ) -> crate::daemon::tasks::CreateTaskSessionInput {
-        crate::daemon::tasks::CreateTaskSessionInput {
+    ) -> ctx_daemon::daemon::tasks::CreateTaskSessionInput {
+        ctx_daemon::daemon::tasks::CreateTaskSessionInput {
             id: self.id,
             provider_id: self.provider_id,
             model_id: self.model_id,

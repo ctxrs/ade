@@ -13,28 +13,28 @@ pub(in crate::api) async fn get_provider_options(
 }
 
 fn provider_options_response_error_json(
-    error: crate::daemon::providers::ProviderOptionsResponseError,
+    error: ctx_daemon::daemon::providers::ProviderOptionsResponseError,
 ) -> (StatusCode, Json<serde_json::Value>) {
     match error {
-        crate::daemon::providers::ProviderOptionsResponseError::ExecutionSettings(error) => {
+        ctx_daemon::daemon::providers::ProviderOptionsResponseError::ExecutionSettings(error) => {
             workspace_execution_settings_error_json(&error)
         }
-        crate::daemon::providers::ProviderOptionsResponseError::ProviderLaunchConfig(error) => {
-            provider_launch_config_error_response(error)
-        }
-        crate::daemon::providers::ProviderOptionsResponseError::WorkspaceLoad => (
+        ctx_daemon::daemon::providers::ProviderOptionsResponseError::ProviderLaunchConfig(
+            error,
+        ) => provider_launch_config_error_response(error),
+        ctx_daemon::daemon::providers::ProviderOptionsResponseError::WorkspaceLoad => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({
                 "error": "failed to load workspace",
             })),
         ),
-        crate::daemon::providers::ProviderOptionsResponseError::WorkspaceNotFound => (
+        ctx_daemon::daemon::providers::ProviderOptionsResponseError::WorkspaceNotFound => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({
                 "error": "workspace not found",
             })),
         ),
-        crate::daemon::providers::ProviderOptionsResponseError::WorkspaceStoreLoad(error) => (
+        ctx_daemon::daemon::providers::ProviderOptionsResponseError::WorkspaceStoreLoad(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({
                 "error": format!(
@@ -43,7 +43,9 @@ fn provider_options_response_error_json(
                 ),
             })),
         ),
-        crate::daemon::providers::ProviderOptionsResponseError::WorkspacePreferenceLoad(error) => (
+        ctx_daemon::daemon::providers::ProviderOptionsResponseError::WorkspacePreferenceLoad(
+            error,
+        ) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({
                 "error": format!(
@@ -52,7 +54,7 @@ fn provider_options_response_error_json(
                 ),
             })),
         ),
-        crate::daemon::providers::ProviderOptionsResponseError::SelectedEndpointMissing => (
+        ctx_daemon::daemon::providers::ProviderOptionsResponseError::SelectedEndpointMissing => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({
                 "error": "selected endpoint missing from provider configuration",

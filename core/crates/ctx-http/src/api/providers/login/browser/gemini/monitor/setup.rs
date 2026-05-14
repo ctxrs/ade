@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) use crate::daemon::providers::PreparedGeminiLoginPaths as GeminiLoginPaths;
+pub(super) use ctx_daemon::daemon::providers::PreparedGeminiLoginPaths as GeminiLoginPaths;
 
 pub(super) async fn prepare_gemini_login_paths(
     providers: &ProvidersHandle,

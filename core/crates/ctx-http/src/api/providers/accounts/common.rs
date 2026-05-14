@@ -13,14 +13,16 @@ pub(super) fn provider_account_delete_error(
 }
 
 pub(super) fn provider_account_mutation_error(
-    err: crate::daemon::providers::ProviderAccountMutationError,
+    err: ctx_daemon::daemon::providers::ProviderAccountMutationError,
 ) -> (StatusCode, Json<ApiErrorResp>) {
     match err {
-        crate::daemon::providers::ProviderAccountMutationError::BadRequest(err) => bad_request(err),
-        crate::daemon::providers::ProviderAccountMutationError::Delete(err) => {
+        ctx_daemon::daemon::providers::ProviderAccountMutationError::BadRequest(err) => {
+            bad_request(err)
+        }
+        ctx_daemon::daemon::providers::ProviderAccountMutationError::Delete(err) => {
             provider_account_delete_error(err)
         }
-        crate::daemon::providers::ProviderAccountMutationError::Internal(err) => {
+        ctx_daemon::daemon::providers::ProviderAccountMutationError::Internal(err) => {
             internal_error(err)
         }
     }

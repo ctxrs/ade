@@ -3,8 +3,8 @@ use axum::Json;
 use serde::Deserialize;
 
 use crate::api::errors::ApiErrorResp;
-use crate::daemon::terminals::CreateTerminalLaunchRequest;
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
+use ctx_daemon::daemon::terminals::CreateTerminalLaunchRequest;
 
 #[derive(Debug, Deserialize)]
 pub(in crate::api) struct CreateTerminalReq {

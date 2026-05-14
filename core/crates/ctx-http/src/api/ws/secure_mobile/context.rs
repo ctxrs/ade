@@ -2,7 +2,7 @@ use ctx_core::models::WorkspaceActiveSnapshotClientMessage;
 use ctx_transport_runtime::mobile_e2ee;
 
 use super::super::super::MobileSecureEnvelope;
-use crate::daemon::mobile_access::MobileSecureStreamContext;
+use ctx_daemon::daemon::mobile_access::MobileSecureStreamContext;
 
 pub(super) fn decode_mobile_secure_client_message(
     context: &MobileSecureStreamContext,

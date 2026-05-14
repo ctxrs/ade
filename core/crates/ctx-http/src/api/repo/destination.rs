@@ -1,5 +1,5 @@
 use super::*;
-use crate::daemon::CoreHandle;
+use ctx_daemon::daemon::CoreHandle;
 use ctx_workspace_services::repo_onboarding::RepoValidateDestinationRequest;
 
 #[derive(Debug, Deserialize)]

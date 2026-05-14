@@ -1,5 +1,5 @@
 use super::*;
-use crate::daemon::workspaces::WorkspaceHarnessContainerError;
+use ctx_daemon::daemon::workspaces::WorkspaceHarnessContainerError;
 
 pub(in crate::api) async fn get_workspace_harness_container(
     State(workspaces): State<WorkspacesHandle>,

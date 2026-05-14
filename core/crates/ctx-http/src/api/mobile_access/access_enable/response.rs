@@ -1,7 +1,7 @@
 use super::pairing::MobilePairingBootstrap;
 use super::profile_config::ManagedMobileAccessKeys;
 use super::*;
-use crate::daemon::mobile_access as daemon_mobile_access;
+use ctx_daemon::daemon::mobile_access as daemon_mobile_access;
 
 pub(super) async fn start_mobile_tunnel_best_effort(
     state: &CoreHandle,

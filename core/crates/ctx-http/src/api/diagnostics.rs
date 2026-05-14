@@ -1,6 +1,6 @@
 use super::health::{build_health_response, HealthResp};
 use super::*;
-use crate::daemon::{CoreHandle, ExecutionHandle, ProvidersHandle};
+use ctx_daemon::daemon::{CoreHandle, ExecutionHandle, ProvidersHandle};
 use ctx_linux_sandbox_runtime::linux_sandbox_runtime_status;
 
 #[derive(Debug, Serialize)]

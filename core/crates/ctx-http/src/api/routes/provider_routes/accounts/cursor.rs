@@ -4,9 +4,9 @@ use crate::api::providers::{
     delete_cursor_account, get_cursor_login, list_cursor_accounts, set_cursor_active_account,
     start_cursor_login, upsert_cursor_account,
 };
-use crate::daemon::DaemonHandle;
+use crate::api::router::RouteState;
 
-pub(super) fn cursor_account_routes() -> axum::Router<DaemonHandle> {
+pub(super) fn cursor_account_routes() -> axum::Router<RouteState> {
     axum::Router::new()
         .route(
             "/api/providers/cursor/accounts",

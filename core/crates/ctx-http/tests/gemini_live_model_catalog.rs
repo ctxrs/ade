@@ -6,8 +6,8 @@ use std::process::Command;
 use std::sync::Arc;
 
 use axum::http::StatusCode;
+use ctx_daemon::daemon::DaemonState;
 use ctx_http::api;
-use ctx_http::daemon::DaemonState;
 use ctx_managed_installs::{save_agent_server_config, AgentServerCommand, AgentServerConfigFile};
 use ctx_provider_accounts::add_gemini_account;
 use ctx_providers::adapters::{ProviderAdapter, ProviderHealth, ProviderStatus};

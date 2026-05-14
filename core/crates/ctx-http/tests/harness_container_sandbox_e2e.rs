@@ -13,8 +13,8 @@ use ctx_core::models::SessionEventType;
 use ctx_providers::crp::Tier1CrpAdapter;
 use ctx_store::StoreManager;
 
+use ctx_daemon::daemon::DaemonState;
 use ctx_http::api;
-use ctx_http::daemon::DaemonState;
 use ctx_managed_installs::{save_agent_server_config, AgentServerCommand, AgentServerConfigFile};
 use ctx_settings_model::{
     ContainerExecutionSettings, ContainerMountMode, ContainerNetworkMode, ExecutionMode,

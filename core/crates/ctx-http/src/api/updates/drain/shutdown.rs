@@ -5,7 +5,7 @@ use axum::Json;
 use super::helpers::{internal_error_response, local_shutdown_token_authorized};
 use super::types::{ShutdownDaemonReq, ShutdownDaemonResp};
 use crate::api::errors::ApiErrorResp;
-use crate::daemon::{maintenance as daemon_maintenance, CoreHandle, ExecutionHandle};
+use ctx_daemon::daemon::{maintenance as daemon_maintenance, CoreHandle, ExecutionHandle};
 
 pub(in crate::api) async fn shutdown_daemon(
     State(core): State<CoreHandle>,

@@ -15,7 +15,7 @@ use ctx_core::models::{
     Message, MessageDelivery, MessageRole, SessionEvent, SessionEventType, SessionHeadDelta,
     SessionTurn, SessionTurnStatus,
 };
-use ctx_http::daemon::DaemonState;
+use ctx_daemon::daemon::DaemonState;
 
 mod common;
 

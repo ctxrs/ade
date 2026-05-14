@@ -1,6 +1,6 @@
 use super::*;
-use crate::daemon::org_policy::WorkspacePolicyOverlayError;
-use crate::daemon::{CoreHandle, WorkspacesHandle};
+use ctx_daemon::daemon::org_policy::WorkspacePolicyOverlayError;
+use ctx_daemon::daemon::{CoreHandle, WorkspacesHandle};
 
 mod common;
 mod enrollments;

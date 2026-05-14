@@ -19,7 +19,7 @@ use ctx_core::models::{
     WorkspaceActiveSnapshotStreamMessage, WorktreeVcsFreshness, WorktreeVcsSnapshot,
     WorktreeVcsStreamMessage,
 };
-use ctx_http::daemon::DaemonState;
+use ctx_daemon::daemon::DaemonState;
 
 mod common;
 
@@ -1470,7 +1470,7 @@ async fn workspace_vcs_stream_emits_git_status_snapshot_on_change() {
 
     let file_path = Path::new(&worktree.root_path).join("git-status-live.txt");
     tokio::fs::write(&file_path, "change\n").await.unwrap();
-    ctx_http::daemon::git_status::request_worktree_vcs_refresh(&state, &worktree, true, false)
+    ctx_daemon::daemon::git_status::request_worktree_vcs_refresh(&state, &worktree, true, false)
         .await
         .unwrap();
 
@@ -1679,7 +1679,7 @@ async fn workspace_vcs_stream_repeat_subscribe_preserves_ready_worktree_vcs_stat
     state
         .update_worktree_vcs_activity(&HashSet::new(), &next)
         .await;
-    ctx_http::daemon::git_status::refresh_worktree_vcs_summary(state.clone(), worktree.clone())
+    ctx_daemon::daemon::git_status::refresh_worktree_vcs_summary(state.clone(), worktree.clone())
         .await
         .unwrap();
 
@@ -1788,7 +1788,7 @@ async fn workspace_vcs_stream_subscribe_does_not_reemit_when_worktree_vcs_is_alr
     state
         .update_worktree_vcs_activity(&HashSet::new(), &next)
         .await;
-    ctx_http::daemon::git_status::refresh_worktree_vcs_summary(state.clone(), worktree.clone())
+    ctx_daemon::daemon::git_status::refresh_worktree_vcs_summary(state.clone(), worktree.clone())
         .await
         .unwrap();
     tokio::fs::write(
@@ -1800,7 +1800,7 @@ async fn workspace_vcs_stream_subscribe_does_not_reemit_when_worktree_vcs_is_alr
 
     let refresh_lock = state.worktree_vcs_refresh_lock(worktree.id).await;
     let _refresh_guard = refresh_lock.lock().await;
-    ctx_http::daemon::git_status::request_worktree_vcs_refresh(&state, &worktree, true, false)
+    ctx_daemon::daemon::git_status::request_worktree_vcs_refresh(&state, &worktree, true, false)
         .await
         .unwrap();
 
@@ -1881,13 +1881,15 @@ async fn worktree_vcs_summary_refresh_reloads_live_inventory_before_ready_publis
     state
         .update_worktree_vcs_open_panes(&HashSet::new(), &next)
         .await;
-    ctx_http::daemon::git_status::emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, true)
-        .await
-        .unwrap();
+    ctx_daemon::daemon::git_status::emit_worktree_vcs_snapshot_for_worktree(
+        &state, &worktree, true,
+    )
+    .await
+    .unwrap();
 
     tokio::fs::remove_file(&first_path).await.unwrap();
     tokio::fs::write(&second_path, "second\n").await.unwrap();
-    ctx_http::daemon::git_status::request_worktree_vcs_refresh(&state, &worktree, true, true)
+    ctx_daemon::daemon::git_status::request_worktree_vcs_refresh(&state, &worktree, true, true)
         .await
         .unwrap();
 
@@ -1963,7 +1965,7 @@ async fn worktree_vcs_emit_and_summary_refresh_share_refresh_lock() {
     let emit_state = state.clone();
     let emit_worktree = worktree.clone();
     let emit_handle = tokio::spawn(async move {
-        ctx_http::daemon::git_status::emit_worktree_vcs_snapshot_for_worktree(
+        ctx_daemon::daemon::git_status::emit_worktree_vcs_snapshot_for_worktree(
             &emit_state,
             &emit_worktree,
             false,
@@ -1974,8 +1976,11 @@ async fn worktree_vcs_emit_and_summary_refresh_share_refresh_lock() {
     let summary_state = state.clone();
     let summary_worktree = worktree.clone();
     let summary_handle = tokio::spawn(async move {
-        ctx_http::daemon::git_status::refresh_worktree_vcs_summary(summary_state, summary_worktree)
-            .await
+        ctx_daemon::daemon::git_status::refresh_worktree_vcs_summary(
+            summary_state,
+            summary_worktree,
+        )
+        .await
     });
 
     tokio::time::sleep(Duration::from_millis(100)).await;

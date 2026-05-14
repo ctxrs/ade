@@ -16,7 +16,7 @@ pub(crate) async fn codex_accounts_response(
 }
 
 fn codex_accounts_response_from_snapshot(
-    snapshot: crate::daemon::providers::CodexAccountsSnapshot,
+    snapshot: ctx_daemon::daemon::providers::CodexAccountsSnapshot,
 ) -> CodexAccountsResponse {
     CodexAccountsResponse {
         active_account_id: snapshot.active_account_id,
@@ -39,7 +39,7 @@ pub(crate) async fn probe_host_codex_import(
     State(_providers): State<ProvidersHandle>,
 ) -> Result<Json<provider_accounts::CodexHostImportProbe>, (StatusCode, Json<ApiErrorResp>)> {
     Ok(Json(
-        crate::daemon::providers::probe_host_codex_auth_candidate().await,
+        ctx_daemon::daemon::providers::probe_host_codex_auth_candidate().await,
     ))
 }
 
@@ -95,10 +95,10 @@ pub(crate) async fn delete_codex_account(
 }
 
 fn codex_account_set_active_error(
-    error: crate::daemon::providers::ProviderAccountMutationError,
+    error: ctx_daemon::daemon::providers::ProviderAccountMutationError,
 ) -> (StatusCode, Json<ApiErrorResp>) {
     match error {
-        crate::daemon::providers::ProviderAccountMutationError::BadRequest(error) => {
+        ctx_daemon::daemon::providers::ProviderAccountMutationError::BadRequest(error) => {
             let msg = error.to_string();
             let status = if msg.contains("api_shape=openai_responses")
                 || msg.contains("auth_type=bearer")
@@ -110,8 +110,8 @@ fn codex_account_set_active_error(
             };
             (status, Json(ApiErrorResp { error: msg }))
         }
-        crate::daemon::providers::ProviderAccountMutationError::Delete(error)
-        | crate::daemon::providers::ProviderAccountMutationError::Internal(error) => {
+        ctx_daemon::daemon::providers::ProviderAccountMutationError::Delete(error)
+        | ctx_daemon::daemon::providers::ProviderAccountMutationError::Internal(error) => {
             internal_error(error)
         }
     }

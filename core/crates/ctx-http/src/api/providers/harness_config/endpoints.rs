@@ -6,7 +6,7 @@ use ctx_observability::logs;
 
 use super::super::types::{SetEndpointManualModelsReq, UpsertHarnessEndpointReq};
 use super::provider_harness_bad_request_error;
-use crate::daemon::ProvidersHandle;
+use ctx_daemon::daemon::ProvidersHandle;
 
 pub(crate) async fn upsert_provider_harness_endpoint(
     State(providers): State<ProvidersHandle>,

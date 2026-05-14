@@ -42,7 +42,7 @@ async fn assert_task_mutations_return_not_found(state: &Arc<DaemonState>, missin
         .expect_err("missing task unread should fail");
     assert_eq!(unread_status, StatusCode::NOT_FOUND);
 
-    let title_update = crate::daemon::DaemonHandle::new(Arc::clone(&state))
+    let title_update = ctx_daemon::daemon::DaemonHandle::new(Arc::clone(&state))
         .tasks()
         .update_task_title(missing_task_id, "renamed".to_string())
         .await

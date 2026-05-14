@@ -1,9 +1,9 @@
 use axum::routing::{get, post};
 
 use crate::api::provider_launch;
-use crate::daemon::DaemonHandle;
+use crate::api::router::RouteState;
 
-pub(super) fn provider_install_routes() -> axum::Router<DaemonHandle> {
+pub(super) fn provider_install_routes() -> axum::Router<RouteState> {
     axum::Router::new()
         .route(
             "/api/providers/install_all",

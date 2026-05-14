@@ -64,10 +64,10 @@ pub(in crate::api) async fn list_task_sessions(
     Ok(Json(sessions))
 }
 
-fn workspace_store_status(error: crate::daemon::WorkspaceStoreAccessError) -> StatusCode {
+fn workspace_store_status(error: ctx_daemon::daemon::WorkspaceStoreAccessError) -> StatusCode {
     match error {
-        crate::daemon::WorkspaceStoreAccessError::NotFound => StatusCode::NOT_FOUND,
-        crate::daemon::WorkspaceStoreAccessError::Unavailable(_) => {
+        ctx_daemon::daemon::WorkspaceStoreAccessError::NotFound => StatusCode::NOT_FOUND,
+        ctx_daemon::daemon::WorkspaceStoreAccessError::Unavailable(_) => {
             StatusCode::INTERNAL_SERVER_ERROR
         }
     }

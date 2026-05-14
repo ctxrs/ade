@@ -1,7 +1,7 @@
 use super::setup::GeminiLoginPaths;
 use super::status;
 use crate::api::providers::login::first_email_from_google_accounts;
-use crate::daemon::ProvidersHandle;
+use ctx_daemon::daemon::ProvidersHandle;
 use ctx_observability::logs;
 
 pub(super) async fn complete_gemini_login_if_credentials_exist(

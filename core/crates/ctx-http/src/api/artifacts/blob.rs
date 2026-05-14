@@ -15,7 +15,7 @@ use sha2::Digest;
 use tokio_util::io::ReaderStream;
 
 use super::super::errors::ApiErrorResp;
-use crate::daemon::CoreHandle;
+use ctx_daemon::daemon::CoreHandle;
 
 #[path = "blob/errors.rs"]
 mod errors;

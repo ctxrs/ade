@@ -5,7 +5,7 @@ use super::*;
 use crate::api::sessions::titles_and_modes::model::error::{
     internal_session_model_error, session_model_error, SessionModelHttpError, SessionModelResult,
 };
-use crate::daemon::sessions::SessionModelTargetLoadError;
+use ctx_daemon::daemon::sessions::SessionModelTargetLoadError;
 
 pub(super) struct SessionModelTarget {
     pub(super) session: Session,

@@ -1,6 +1,6 @@
 use super::super::*;
 
-use crate::daemon::sessions::command_dispatch as daemon_command_dispatch;
+use ctx_daemon::daemon::sessions::command_dispatch as daemon_command_dispatch;
 
 pub(crate) async fn cancel_session(
     State(state): State<SessionsHandle>,

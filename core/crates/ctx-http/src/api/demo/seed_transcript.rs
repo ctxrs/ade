@@ -5,11 +5,11 @@ use axum::Json;
 use super::dev_mode::dev_tools_enabled;
 use super::types::{SeedTranscriptReq, SeedTranscriptResp};
 use crate::api::errors::ApiErrorResp;
-use crate::daemon::sessions::{
+use ctx_core::ids::SessionId;
+use ctx_daemon::daemon::sessions::{
     DemoSeedTranscript, DemoSeedTranscriptError, DemoSeedTranscriptTurn,
 };
-use crate::daemon::SessionsHandle;
-use ctx_core::ids::SessionId;
+use ctx_daemon::daemon::SessionsHandle;
 
 pub(crate) async fn dev_seed_session_transcript(
     State(sessions): State<SessionsHandle>,

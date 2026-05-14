@@ -1,5 +1,4 @@
 pub mod api;
-pub mod daemon;
 mod server;
 
 #[cfg(feature = "fault_injection")]

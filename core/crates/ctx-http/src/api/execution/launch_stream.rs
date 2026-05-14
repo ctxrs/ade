@@ -11,7 +11,7 @@ use ctx_execution_runtime::{
     ExecutionLaunchSnapshot, ExecutionLaunchState, ExecutionLaunchStreamEvent,
 };
 
-use crate::daemon::ExecutionHandle;
+use ctx_daemon::daemon::ExecutionHandle;
 
 #[derive(Debug, Deserialize)]
 pub(in crate::api) struct ExecutionLaunchStatusQuery {
