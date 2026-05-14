@@ -253,6 +253,7 @@ pub(super) async fn migrate_owned_runtime_oauth_projection_to_broker_if_needed(
             clear_runtime_auth_projection_if_owned_by(data_root, account_id).await?;
             return Ok(false);
         }
+        Err(_) if broker_auth.is_some() => return Ok(false),
         Err(err) => {
             return Err(err).with_context(|| {
                 format!("invalid codex auth JSON at {}", runtime_auth_path.display())

@@ -1047,6 +1047,71 @@ async fn usage_hydration_preserves_legacy_api_key_runtime_projection_when_broker
 }
 
 #[tokio::test]
+async fn usage_hydration_ignores_corrupt_owned_runtime_auth_when_api_key_broker_exists() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let account_id = "acct-api-key";
+    let secret_ref = format!("{account_id}.json");
+    let registry_path = codex_registry_path(root);
+    tokio::fs::create_dir_all(registry_path.parent().unwrap())
+        .await
+        .unwrap();
+    let registry = serde_json::json!({
+        "active_account_id": account_id,
+        "accounts": [{
+            "id": account_id,
+            "label": "acct",
+            "created_at": Utc::now(),
+            "secret_ref": secret_ref
+        }]
+    });
+    tokio::fs::write(
+        &registry_path,
+        serde_json::to_vec_pretty(&registry).unwrap(),
+    )
+    .await
+    .unwrap();
+    tokio::fs::create_dir_all(codex_secrets_root(root))
+        .await
+        .unwrap();
+    tokio::fs::write(
+        codex_secret_path(root, &secret_ref).unwrap(),
+        br#"{"version":1,"auth":{"OPENAI_API_KEY":"secret-key"}}"#,
+    )
+    .await
+    .unwrap();
+    tokio::fs::create_dir_all(codex_broker_home(root, account_id))
+        .await
+        .unwrap();
+    tokio::fs::write(
+        codex_broker_home(root, account_id).join("auth.json"),
+        br#"{"OPENAI_API_KEY":"broker-key"}"#,
+    )
+    .await
+    .unwrap();
+    tokio::fs::create_dir_all(codex_runtime_home(root))
+        .await
+        .unwrap();
+    tokio::fs::write(codex_runtime_home(root).join("auth.json"), "{ invalid json")
+        .await
+        .unwrap();
+    write_runtime_owner_marker(root, account_id).await.unwrap();
+
+    let hydrated = hydrate_codex_account_home_from_secret(root, account_id)
+        .await
+        .unwrap();
+
+    assert!(hydrated);
+    assert!(codex_runtime_home(root).join("auth.json").exists());
+    assert!(codex_runtime_owner_path(root).exists());
+    let broker_payload =
+        tokio::fs::read_to_string(codex_broker_home(root, account_id).join("auth.json"))
+            .await
+            .unwrap();
+    assert!(broker_payload.contains("secret-key"));
+}
+
+#[tokio::test]
 async fn usage_hydration_adopts_owned_runtime_oauth_when_broker_has_api_key() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
