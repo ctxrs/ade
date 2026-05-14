@@ -488,6 +488,13 @@ pub async fn hydrate_codex_account_home_from_secret(
         return Ok(true);
     }
     let Some(secret_ref) = account.secret_ref.as_deref() else {
+        if !include_legacy_api_key
+            && hydrate_legacy_account_auth_to_broker_home(data_root, account_id, true)
+                .await?
+                .is_some()
+        {
+            return Ok(true);
+        }
         return Ok(false);
     };
     let auth = load_codex_auth_from_secret_store(data_root, secret_ref).await?;

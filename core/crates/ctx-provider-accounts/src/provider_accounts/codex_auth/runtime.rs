@@ -215,21 +215,25 @@ pub(super) async fn migrate_owned_runtime_oauth_projection_to_broker_if_needed(
     data_root: &Path,
     account_id: &str,
 ) -> Result<bool> {
+    if read_runtime_owner_marker(data_root).await?.as_deref() != Some(account_id) {
+        return Ok(false);
+    }
+    let runtime_home = codex_runtime_home(data_root);
+    let Some(auth) = read_auth_value_from_home(&runtime_home).await? else {
+        return Ok(false);
+    };
+    if !codex_auth_has_supported_shape(&auth) || !codex_auth_has_refresh_token(&auth) {
+        return Ok(false);
+    }
+
     let broker_home = codex_broker_home(data_root, account_id);
     let mut adopted = false;
-    if !broker_home.join("auth.json").exists()
-        && read_runtime_owner_marker(data_root).await?.as_deref() == Some(account_id)
-    {
-        let runtime_home = codex_runtime_home(data_root);
-        if let Some(auth) = read_auth_value_from_home(&runtime_home).await? {
-            if codex_auth_has_supported_shape(&auth) && codex_auth_has_refresh_token(&auth) {
-                ingest_auth_value_for_account(data_root, account_id, &auth).await?;
-                project_oauth_auth_to_broker_home_with_lock(data_root, account_id, &auth).await?;
-                adopted = true;
-            }
-        }
+    if !broker_home.join("auth.json").exists() {
+        ingest_auth_value_for_account(data_root, account_id, &auth).await?;
+        project_oauth_auth_to_broker_home_with_lock(data_root, account_id, &auth).await?;
+        adopted = true;
     }
-    clear_runtime_auth_projection_if_owned_by(data_root, account_id).await?;
+    clear_runtime_auth_projection(data_root).await?;
     Ok(adopted)
 }
 

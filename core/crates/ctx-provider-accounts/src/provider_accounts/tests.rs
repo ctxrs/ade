@@ -1015,6 +1015,67 @@ async fn usage_hydration_projects_raw_api_key_account_to_broker_home() {
 }
 
 #[tokio::test]
+async fn usage_hydration_projects_legacy_api_key_without_kind_to_broker_home() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let account_id = "acct-api-key";
+    let registry_path = codex_registry_path(root);
+    tokio::fs::create_dir_all(registry_path.parent().unwrap())
+        .await
+        .unwrap();
+    let registry = serde_json::json!({
+        "active_account_id": account_id,
+        "accounts": [{
+            "id": account_id,
+            "label": "acct",
+            "created_at": Utc::now()
+        }]
+    });
+    tokio::fs::write(
+        &registry_path,
+        serde_json::to_vec_pretty(&registry).unwrap(),
+    )
+    .await
+    .unwrap();
+    let account_dir = ensure_codex_account_dir(root, account_id).await.unwrap();
+    tokio::fs::write(
+        account_dir.join("auth.json"),
+        br#"{"OPENAI_API_KEY":"legacy-key"}"#,
+    )
+    .await
+    .unwrap();
+    tokio::fs::create_dir_all(codex_runtime_home(root))
+        .await
+        .unwrap();
+    tokio::fs::write(
+        codex_runtime_home(root).join("auth.json"),
+        br#"{"OPENAI_API_KEY":"runtime-key"}"#,
+    )
+    .await
+    .unwrap();
+    write_runtime_owner_marker(root, account_id).await.unwrap();
+
+    let hydrated = hydrate_codex_account_home_from_secret(root, account_id)
+        .await
+        .unwrap();
+
+    assert!(hydrated);
+    let broker_payload =
+        tokio::fs::read_to_string(codex_broker_home(root, account_id).join("auth.json"))
+            .await
+            .unwrap();
+    assert!(broker_payload.contains("legacy-key"));
+    assert!(!account_dir.join("auth.json").exists());
+    let runtime_payload = tokio::fs::read_to_string(codex_runtime_home(root).join("auth.json"))
+        .await
+        .unwrap();
+    assert!(runtime_payload.contains("runtime-key"));
+    let registry = load_codex_registry(root).await.unwrap();
+    assert_eq!(registry.accounts[0].kind, CODEX_CREDENTIAL_KIND_API_KEY);
+    assert!(registry.accounts[0].secret_ref.is_some());
+}
+
+#[tokio::test]
 async fn oauth_broker_launch_clears_legacy_runtime_projection() {
     let _env_lock = lock_env().await;
     let _guard = EnvGuard::without("CTX_CODEX_HOME");
