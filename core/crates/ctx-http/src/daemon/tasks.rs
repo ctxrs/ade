@@ -15,10 +15,12 @@ use crate::daemon::workspaces::{BranchCleanupErrorMode, TaskWorktreeCleanupTarge
 use crate::daemon::{workspaces, WorkspaceStoreAccessError};
 
 mod create_session;
+mod create_task;
 
 pub(crate) use create_session::{
     CreateTaskSessionInput, DefaultSessionSeed, TaskSessionCreateError,
 };
+pub(crate) use create_task::{CreateTaskInput, TaskCreateError};
 
 pub(crate) struct ArchiveTaskOutcome {
     pub(crate) task: Task,
@@ -412,6 +414,17 @@ impl TasksHandle {
         let Some((store, task, workspace)) = self.load_task_context(task_id).await? else {
             return Err(TaskLifecycleError::NotFound);
         };
+        self.delete_loaded_task_with_cleanup(&store, &workspace, &task)
+            .await
+    }
+
+    pub(in crate::daemon) async fn delete_loaded_task_with_cleanup(
+        &self,
+        store: &Store,
+        workspace: &Workspace,
+        task: &Task,
+    ) -> Result<(), TaskLifecycleError> {
+        let task_id = task.id;
         let sessions = store
             .list_all_sessions_for_task(task_id)
             .await

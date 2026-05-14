@@ -30,8 +30,8 @@ pub(super) async fn persist_task_for_request(
                     .create_task_with_id_result(
                         ws_id,
                         task_id,
-                        request.requested_title.clone(),
-                        request.requested_description.clone(),
+                        request.title.clone(),
+                        request.description.clone(),
                     )
                     .await
                     .map_err(internal_store_error)?;
@@ -39,11 +39,7 @@ pub(super) async fn persist_task_for_request(
             }
             None => (
                 store
-                    .create_task(
-                        ws_id,
-                        request.requested_title.clone(),
-                        request.requested_description.clone(),
-                    )
+                    .create_task(ws_id, request.title.clone(), request.description.clone())
                     .await
                     .map_err(internal_store_error)?,
                 true,
@@ -58,7 +54,7 @@ pub(super) async fn persist_task_for_request(
 }
 
 pub(super) async fn upsert_workspace_task_index(
-    handles: &TaskApiHandles,
+    handles: &TaskCreationHandles,
     task_id: TaskId,
     ws_id: WorkspaceId,
 ) {
@@ -97,8 +93,8 @@ pub(super) async fn reload_or_retry_task_for_request(
         .create_task_with_id_result(
             ws_id,
             task_id,
-            request.requested_title.clone(),
-            request.requested_description.clone(),
+            request.title.clone(),
+            request.description.clone(),
         )
         .await
         .map_err(internal_store_error)?;

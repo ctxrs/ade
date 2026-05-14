@@ -59,7 +59,7 @@ pub(in crate::api::tasks) struct CreateTaskDefaultSessionReq {
 }
 
 impl CreateTaskDefaultSessionReq {
-    pub(super) fn into_task_session_input(
+    pub(in crate::api::tasks) fn into_task_session_input(
         self,
         run_id_header: Option<String>,
     ) -> crate::daemon::tasks::CreateTaskSessionInput {
@@ -78,23 +78,6 @@ impl CreateTaskDefaultSessionReq {
             execution_environment: self.execution_environment,
             run_id_header,
         }
-    }
-
-    pub(super) fn into_replay_task_session_input(
-        self,
-        primary_session_id: SessionId,
-    ) -> crate::daemon::tasks::CreateTaskSessionInput {
-        let mut input = self.into_task_session_input(None);
-        if input
-            .id
-            .as_deref()
-            .map(str::trim)
-            .unwrap_or_default()
-            .is_empty()
-        {
-            input.id = Some(primary_session_id.0.to_string());
-        }
-        input
     }
 }
 

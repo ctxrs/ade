@@ -9,6 +9,7 @@ const apiRoot = path.join(coreRoot, "crates", "ctx-http", "src", "api");
 const daemonHandlePath = path.join(coreRoot, "crates", "ctx-http", "src", "daemon", "handle.rs");
 const rawStoreBlindApiRoots = [
   "core/crates/ctx-http/src/api/sessions/",
+  "core/crates/ctx-http/src/api/tasks/",
   "core/crates/ctx-http/src/api/workspaces/",
 ];
 

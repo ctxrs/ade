@@ -4,42 +4,27 @@ use target::resolve_default_session_target;
 #[path = "default_session_plan/target.rs"]
 mod target;
 
-async fn validate_workspace_root_is_repo(
-    workspace: &Workspace,
-) -> Result<(), (StatusCode, Json<ApiErrorResp>)> {
+pub(super) type DefaultSessionPlan = (ExecutionEnvironment, String, String, Option<String>);
+
+async fn validate_workspace_root_is_repo(workspace: &Workspace) -> Result<(), TaskCreateError> {
     let workspace_root = StdPath::new(&workspace.root_path);
     ctx_workspace_services::workspace_registration::validate_workspace_root_repo(workspace_root)
         .await
-        .map_err(|error| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(ApiErrorResp {
-                    error: error.to_string(),
-                }),
-            )
-        })?;
+        .map_err(|error| TaskCreateError::BadRequest(error.to_string()))?;
     Ok(())
 }
 
 pub(super) async fn preflight_default_session_creation(
-    handles: &TaskApiHandles,
+    handles: &TaskCreationHandles,
     store: &Store,
     workspace: &Workspace,
-) -> Result<(ExecutionEnvironment, String, String, Option<String>), (StatusCode, Json<ApiErrorResp>)>
-{
+) -> Result<DefaultSessionPlan, TaskCreateError> {
     validate_workspace_root_is_repo(workspace).await?;
     let effective = handles
         .workspaces
         .effective_execution_settings(workspace.id)
         .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
+        .map_err(TaskCreateError::internal)?;
     let execution_environment = execution_environment_from_settings(&effective);
     let (provider_id, model_id, reasoning_effort) =
         resolve_default_session_target(handles, store, workspace, execution_environment).await?;

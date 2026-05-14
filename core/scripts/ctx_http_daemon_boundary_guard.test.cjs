@@ -113,7 +113,7 @@ test("daemon boundary guard scopes raw Store ban to migrated API families", () =
     apiPatternsForPath("core/crates/ctx-http/src/api/tasks/example.rs").includes(
       API_DOMAIN_RAW_STORE_PATTERNS[0],
     ),
-    false,
+    true,
   );
 });
 

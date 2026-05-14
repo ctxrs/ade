@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+#[cfg(test)]
 use std::path::Path as StdPath;
 #[cfg(test)]
 use std::path::PathBuf;
@@ -18,12 +18,9 @@ mod handlers;
 mod task_deletion;
 #[path = "tasks/task_title.rs"]
 mod task_title;
-use crate::daemon::workspaces::{
-    execution_environment_from_settings, BranchCleanupErrorMode, TaskWorktreeCleanupTarget,
-};
 pub(in crate::api) use creation::*;
 pub(in crate::api) use handlers::*;
-pub(super) use task_deletion::{delete_loaded_task_with_cleanup, delete_task};
+pub(super) use task_deletion::delete_task;
 pub(super) use task_title::update_task_title;
 
 use super::errors::ApiErrorResp;
@@ -34,16 +31,19 @@ use crate::daemon::DaemonState;
 use crate::daemon::{
     ProvidersHandle, SessionsHandle, TasksHandle, TransportHandle, WorkspacesHandle,
 };
-use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
+#[cfg(test)]
+use ctx_core::ids::WorktreeId;
+use ctx_core::ids::{TaskId, WorkspaceId};
 #[cfg(test)]
 use ctx_core::models::SandboxBinding;
 #[cfg(test)]
+use ctx_core::models::Workspace;
+#[cfg(test)]
 use ctx_core::models::Worktree;
 use ctx_core::models::{
-    ExecutionEnvironment, Session, Task, Workspace, WorkspaceArchivedPage, WorkspaceIndexCursor,
+    ExecutionEnvironment, Session, Task, WorkspaceArchivedPage, WorkspaceIndexCursor,
 };
 use ctx_observability::logs;
-use ctx_store::Store;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -56,37 +56,35 @@ pub(super) struct CreateTaskReq {
     default_session: Option<CreateTaskDefaultSessionReq>,
 }
 
-#[derive(Clone)]
-pub(super) struct TaskApiHandles {
-    pub(super) tasks: TasksHandle,
-    pub(super) sessions: SessionsHandle,
-    pub(super) providers: ProvidersHandle,
-    pub(super) workspaces: WorkspacesHandle,
-}
-
-impl TaskApiHandles {
-    pub(super) fn new(
-        tasks: TasksHandle,
-        sessions: SessionsHandle,
-        providers: ProvidersHandle,
-        workspaces: WorkspacesHandle,
-    ) -> Self {
-        Self {
-            tasks,
-            sessions,
-            providers,
-            workspaces,
-        }
+impl CreateTaskReq {
+    fn into_create_task_input(
+        self,
+    ) -> Result<crate::daemon::tasks::CreateTaskInput, (StatusCode, Json<ApiErrorResp>)> {
+        let task_id = match self.id.as_deref().map(str::trim) {
+            Some("") | None => None,
+            Some(raw) => Some(TaskId(uuid::Uuid::parse_str(raw).map_err(|_| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiErrorResp {
+                        error: "invalid task id".to_string(),
+                    }),
+                )
+            })?)),
+        };
+        Ok(crate::daemon::tasks::CreateTaskInput {
+            task_id,
+            title: self.title,
+            description: self.description,
+            default_session: self
+                .default_session
+                .map(|default_session| default_session.into_task_session_input(None)),
+        })
     }
 }
 
 #[cfg(test)]
 pub(super) fn task_api_task_state(state: &Arc<DaemonState>) -> State<TasksHandle> {
     State(DaemonHandle::new(Arc::clone(state)).tasks())
-}
-
-fn task_request_matches(existing: &Task, title: &str, description: &Option<String>) -> bool {
-    existing.title == title && existing.description.as_deref() == description.as_deref()
 }
 
 fn task_lifecycle_status(error: crate::daemon::tasks::TaskLifecycleError) -> StatusCode {
@@ -108,6 +106,40 @@ fn task_session_create_status(error: crate::daemon::tasks::TaskSessionCreateErro
             tracing::warn!("task session creation failed: {error:#}");
             crate::api::shared::status_code_for_internal_error(&error)
         }
+    }
+}
+
+fn task_create_api_error(
+    error: crate::daemon::tasks::TaskCreateError,
+) -> (StatusCode, Json<ApiErrorResp>) {
+    match error {
+        crate::daemon::tasks::TaskCreateError::BadRequest(error) => {
+            (StatusCode::BAD_REQUEST, Json(ApiErrorResp { error }))
+        }
+        crate::daemon::tasks::TaskCreateError::NotFound(error) => {
+            (StatusCode::NOT_FOUND, Json(ApiErrorResp { error }))
+        }
+        crate::daemon::tasks::TaskCreateError::Conflict(error) => {
+            (StatusCode::CONFLICT, Json(ApiErrorResp { error }))
+        }
+        crate::daemon::tasks::TaskCreateError::Internal(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiErrorResp {
+                error: logs::redact_sensitive(&error.to_string()),
+            }),
+        ),
+        crate::daemon::tasks::TaskCreateError::DefaultSessionFailed(error) => (
+            task_session_create_status(error),
+            Json(ApiErrorResp {
+                error: "failed to create default session".to_string(),
+            }),
+        ),
+        crate::daemon::tasks::TaskCreateError::DefaultSessionConflict => (
+            StatusCode::CONFLICT,
+            Json(ApiErrorResp {
+                error: "task id already exists with a different default session".to_string(),
+            }),
+        ),
     }
 }
 #[cfg(test)]
