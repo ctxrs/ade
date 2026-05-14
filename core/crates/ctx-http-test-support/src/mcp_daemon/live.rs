@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use ctx_core::models::{Session, Task, Workspace};
-use ctx_http::daemon::AppState;
+use ctx_http::daemon::DaemonState;
 use ctx_providers::adapters::ProviderAdapter;
 use ctx_store::StoreManager;
 use serde_json::json;
@@ -26,7 +26,7 @@ pub(crate) async fn setup_live_provider_parent_session(
         provider_id.to_string(),
         router::live_provider_adapter(provider_id)?,
     );
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,

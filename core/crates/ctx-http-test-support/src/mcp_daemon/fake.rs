@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use ctx_core::models::{ExecutionEnvironment, Session, Task, VcsKind, Workspace, Worktree};
-use ctx_http::daemon::AppState;
+use ctx_http::daemon::DaemonState;
 use ctx_providers::adapters::ProviderAdapter;
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::StoreManager;
@@ -20,7 +20,7 @@ pub(crate) async fn setup_fake_provider_parent_session() -> Result<DaemonBackedP
 
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-    let state = Arc::new(AppState::new(
+    let state = Arc::new(DaemonState::new(
         data_dir.path().to_path_buf(),
         stores.clone(),
         providers,
@@ -104,7 +104,7 @@ async fn create_workspace_record(
 }
 
 async fn index_parent_entities(
-    state: &AppState,
+    state: &DaemonState,
     session: &Session,
     workspace_id: ctx_core::ids::WorkspaceId,
     worktree_id: ctx_core::ids::WorktreeId,

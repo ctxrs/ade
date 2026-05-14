@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use ctx_core::ids::SessionId;
 use ctx_core::models::{SessionEvent, SessionSummary};
-use ctx_http::daemon::AppState;
+use ctx_http::daemon::DaemonState;
 use tempfile::TempDir;
 
 mod fake;
@@ -14,7 +14,7 @@ mod router;
 pub struct DaemonBackedParentSession {
     _repo: TempDir,
     _data_dir: TempDir,
-    state: Arc<AppState>,
+    state: Arc<DaemonState>,
     base_url: String,
     session_id: SessionId,
     mcp_token: String,
@@ -24,7 +24,7 @@ impl DaemonBackedParentSession {
     pub(crate) fn new(
         repo: TempDir,
         data_dir: TempDir,
-        state: Arc<AppState>,
+        state: Arc<DaemonState>,
         base_url: String,
         session_id: SessionId,
         mcp_token: String,
