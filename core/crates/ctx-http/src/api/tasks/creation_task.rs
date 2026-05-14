@@ -19,6 +19,7 @@ use workspace::load_create_task_workspace;
 type CreateTaskApiError = (StatusCode, Json<ApiErrorResp>);
 
 pub(in crate::api) async fn create_task(
+    State(tasks): State<TasksHandle>,
     State(sessions): State<SessionsHandle>,
     State(providers): State<ProvidersHandle>,
     State(workspaces): State<WorkspacesHandle>,
@@ -26,7 +27,7 @@ pub(in crate::api) async fn create_task(
     Path(id): Path<String>,
     Json(req): Json<CreateTaskReq>,
 ) -> Result<Json<Task>, CreateTaskApiError> {
-    let handles = TaskApiHandles::new(sessions, providers, workspaces);
+    let handles = TaskApiHandles::new(tasks, sessions, providers, workspaces);
     let (ws_id, ws, store) = load_create_task_workspace(&handles, &id).await?;
     let request = CreateTaskRequestParts::from_request(req)?;
     let existing_task = load_existing_task_for_request(&handles, &store, ws_id, &request).await?;

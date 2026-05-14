@@ -4,7 +4,6 @@ use std::path::Path as StdPath;
 use std::path::PathBuf;
 #[cfg(test)]
 use std::sync::Arc;
-use std::time::Instant;
 
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -20,8 +19,7 @@ mod task_deletion;
 #[path = "tasks/task_title.rs"]
 mod task_title;
 use crate::daemon::workspaces::{
-    execution_environment_from_settings, retry_global_index_write, BranchCleanupErrorMode,
-    TaskWorktreeCleanupTarget,
+    execution_environment_from_settings, BranchCleanupErrorMode, TaskWorktreeCleanupTarget,
 };
 pub(in crate::api) use creation::*;
 pub(in crate::api) use handlers::*;
@@ -29,7 +27,6 @@ pub(super) use task_deletion::{delete_loaded_task_with_cleanup, delete_task};
 pub(super) use task_title::update_task_title;
 
 use super::errors::ApiErrorResp;
-use crate::daemon::scheduler::SchedulerCommand;
 #[cfg(test)]
 use crate::daemon::DaemonHandle;
 #[cfg(test)]
@@ -37,16 +34,16 @@ use crate::daemon::DaemonState;
 use crate::daemon::{
     ProvidersHandle, SessionsHandle, TasksHandle, TransportHandle, WorkspacesHandle,
 };
-use ctx_core::ids::{RunId, SessionId, TaskId, TurnId, WorkspaceId, WorktreeId};
+use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
 #[cfg(test)]
 use ctx_core::models::SandboxBinding;
+#[cfg(test)]
+use ctx_core::models::Worktree;
 use ctx_core::models::{
-    ExecutionEnvironment, Message, MessageDelivery, Session, SessionEventType, Task, VcsKind,
-    Workspace, WorkspaceArchivedPage, WorkspaceIndexCursor, Worktree,
+    ExecutionEnvironment, Session, Task, Workspace, WorkspaceArchivedPage, WorkspaceIndexCursor,
 };
 use ctx_observability::logs;
-use ctx_settings_model::ExecutionSettings;
-use ctx_store::{is_unique_constraint_violation, Store};
+use ctx_store::Store;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -61,6 +58,7 @@ pub(super) struct CreateTaskReq {
 
 #[derive(Clone)]
 pub(super) struct TaskApiHandles {
+    pub(super) tasks: TasksHandle,
     pub(super) sessions: SessionsHandle,
     pub(super) providers: ProvidersHandle,
     pub(super) workspaces: WorkspacesHandle,
@@ -68,11 +66,13 @@ pub(super) struct TaskApiHandles {
 
 impl TaskApiHandles {
     pub(super) fn new(
+        tasks: TasksHandle,
         sessions: SessionsHandle,
         providers: ProvidersHandle,
         workspaces: WorkspacesHandle,
     ) -> Self {
         Self {
+            tasks,
             sessions,
             providers,
             workspaces,
@@ -95,6 +95,18 @@ fn task_lifecycle_status(error: crate::daemon::tasks::TaskLifecycleError) -> Sta
         crate::daemon::tasks::TaskLifecycleError::Internal(error) => {
             tracing::warn!("task lifecycle operation failed: {error:#}");
             StatusCode::INTERNAL_SERVER_ERROR
+        }
+    }
+}
+
+fn task_session_create_status(error: crate::daemon::tasks::TaskSessionCreateError) -> StatusCode {
+    match error {
+        crate::daemon::tasks::TaskSessionCreateError::BadRequest => StatusCode::BAD_REQUEST,
+        crate::daemon::tasks::TaskSessionCreateError::NotFound => StatusCode::NOT_FOUND,
+        crate::daemon::tasks::TaskSessionCreateError::Conflict => StatusCode::CONFLICT,
+        crate::daemon::tasks::TaskSessionCreateError::Internal(error) => {
+            tracing::warn!("task session creation failed: {error:#}");
+            crate::api::shared::status_code_for_internal_error(&error)
         }
     }
 }

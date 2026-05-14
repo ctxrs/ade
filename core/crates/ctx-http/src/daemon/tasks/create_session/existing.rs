@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) struct ExistingRequestedSession<'a> {
-    pub(super) handles: &'a TaskApiHandles,
+    pub(super) handles: &'a TaskSessionHandles,
     pub(super) store: &'a Store,
     pub(super) task: &'a Task,
     pub(super) workspace: &'a Workspace,
@@ -14,7 +14,7 @@ pub(super) struct ExistingRequestedSession<'a> {
 
 pub(super) async fn resolve_existing_requested_session(
     request: ExistingRequestedSession<'_>,
-) -> Result<Option<Session>, StatusCode> {
+) -> Result<Option<Session>, TaskSessionCreateError> {
     let ExistingRequestedSession {
         handles,
         store,
@@ -33,26 +33,28 @@ pub(super) async fn resolve_existing_requested_session(
         .sessions
         .get_workspace_id_for_session(session_id)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|error| TaskSessionCreateError::Internal(error.into()))?;
     let Some(existing_ws) = existing_ws else {
         return Ok(None);
     };
     if existing_ws != task.workspace_id {
         cleanup_created_worktree(handles, store, workspace, task.id, created_worktree_id).await;
-        return Err(StatusCode::CONFLICT);
+        return Err(TaskSessionCreateError::Conflict);
     }
 
     let existing = store
         .get_session(session_id)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|error| TaskSessionCreateError::Internal(error.into()))?;
     let Some(existing) = existing else {
         cleanup_created_worktree(handles, store, workspace, task.id, created_worktree_id).await;
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        return Err(TaskSessionCreateError::Internal(anyhow::anyhow!(
+            "session index exists but session row missing"
+        )));
     };
     if !session_matches_creation_identity(&existing, identity) {
         cleanup_created_worktree(handles, store, workspace, task.id, created_worktree_id).await;
-        return Err(StatusCode::CONFLICT);
+        return Err(TaskSessionCreateError::Conflict);
     }
 
     handles.sessions.remember_session_meta(&existing).await;
@@ -79,7 +81,7 @@ pub(super) async fn resolve_existing_requested_session(
 }
 
 async fn cleanup_created_worktree(
-    handles: &TaskApiHandles,
+    handles: &TaskSessionHandles,
     store: &Store,
     workspace: &Workspace,
     task_id: TaskId,

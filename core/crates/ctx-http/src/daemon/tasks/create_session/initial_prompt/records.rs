@@ -1,10 +1,11 @@
-use axum::http::StatusCode;
 use serde_json::{json, Value};
 
 use ctx_core::ids::{MessageId, RunId, TurnId};
 use ctx_core::models::{
     Message, MessageDelivery, MessageRole, Session, SessionTurn, SessionTurnStatus,
 };
+
+use super::TaskSessionCreateError;
 
 #[derive(Clone, Copy)]
 pub(super) struct InitialPromptIds {
@@ -15,15 +16,18 @@ pub(super) struct InitialPromptIds {
 pub(super) fn parse_initial_prompt_ids(
     message_id: Option<&str>,
     turn_id: Option<&str>,
-) -> Result<InitialPromptIds, StatusCode> {
+) -> Result<InitialPromptIds, TaskSessionCreateError> {
     match (message_id, turn_id) {
         (Some(message_id), Some(turn_id)) => Ok(InitialPromptIds {
             message_id: MessageId(
-                uuid::Uuid::parse_str(message_id).map_err(|_| StatusCode::BAD_REQUEST)?,
+                uuid::Uuid::parse_str(message_id)
+                    .map_err(|_| TaskSessionCreateError::BadRequest)?,
             ),
-            turn_id: TurnId(uuid::Uuid::parse_str(turn_id).map_err(|_| StatusCode::BAD_REQUEST)?),
+            turn_id: TurnId(
+                uuid::Uuid::parse_str(turn_id).map_err(|_| TaskSessionCreateError::BadRequest)?,
+            ),
         }),
-        _ => Err(StatusCode::BAD_REQUEST),
+        _ => Err(TaskSessionCreateError::BadRequest),
     }
 }
 

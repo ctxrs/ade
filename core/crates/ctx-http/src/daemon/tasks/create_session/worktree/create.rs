@@ -1,20 +1,20 @@
 use super::*;
 
 pub(super) async fn create_session_execution_worktree(
-    handles: &TaskApiHandles,
+    handles: &TaskSessionHandles,
     store: &Store,
     task: &Task,
     workspace: &Workspace,
     workspace_effective: &ExecutionSettings,
-) -> Result<WorktreeId, StatusCode> {
+) -> Result<WorktreeId, TaskSessionCreateError> {
     let workspace_root = StdPath::new(&workspace.root_path);
     let base = ctx_workspace_services::worktree_vcs::resolve_worktree_creation_base(workspace_root)
         .await
         .map_err(|error| {
             if error.is_client_error() {
-                StatusCode::BAD_REQUEST
+                TaskSessionCreateError::BadRequest
             } else {
-                StatusCode::INTERNAL_SERVER_ERROR
+                TaskSessionCreateError::Internal(anyhow::anyhow!("{error:?}"))
             }
         })?;
     let worktree_id = WorktreeId::new();
@@ -35,7 +35,7 @@ pub(super) async fn create_session_execution_worktree(
                 worktree_id = %worktree_id.0,
                 "worktree provisioning failed: {e:#}"
             );
-            shared::status_code_for_internal_error(&e)
+            TaskSessionCreateError::Internal(e)
         })?;
 
     let worktree = Worktree {
@@ -63,6 +63,6 @@ pub(super) async fn create_session_execution_worktree(
         .workspaces
         .persist_provisioned_worktree(store, workspace, worktree, sandbox_binding)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|error| TaskSessionCreateError::Internal(error.into()))?;
     Ok(worktree_id)
 }

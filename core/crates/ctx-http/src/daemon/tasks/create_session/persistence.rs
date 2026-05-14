@@ -5,7 +5,7 @@ use record::{create_session_record, CreateSessionRecord, CreatedWorktreeCleanup}
 mod record;
 
 pub(super) struct PersistCreatedSession<'a> {
-    pub(super) handles: &'a TaskApiHandles,
+    pub(super) handles: &'a TaskSessionHandles,
     pub(super) store: &'a Store,
     pub(super) task: &'a Task,
     pub(super) workspace: &'a Workspace,
@@ -23,7 +23,7 @@ pub(super) struct PersistCreatedSession<'a> {
 
 pub(super) async fn persist_created_session(
     request: PersistCreatedSession<'_>,
-) -> Result<Session, StatusCode> {
+) -> Result<Session, TaskSessionCreateError> {
     let PersistCreatedSession {
         handles,
         store,
@@ -80,7 +80,7 @@ pub(super) async fn persist_created_session(
                 },
             )
         {
-            return Err(StatusCode::CONFLICT);
+            return Err(TaskSessionCreateError::Conflict);
         }
     }
 
@@ -94,7 +94,7 @@ pub(super) async fn persist_created_session(
     .await
     {
         tracing::warn!(session_id = %session.id.0, "failed to update session index: {e:?}");
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        return Err(TaskSessionCreateError::Internal(e));
     }
 
     if session.parent_session_id.is_none() && session.relationship.is_none() {

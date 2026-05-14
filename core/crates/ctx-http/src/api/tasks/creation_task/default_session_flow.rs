@@ -68,19 +68,23 @@ pub(super) async fn ensure_default_session_for_task(
                     }
                 }
             };
-        create_default_session_for_task(
-            handles,
-            store.clone(),
-            task.clone(),
-            workspace.clone(),
-            DefaultSessionSeed {
-                provider_id,
-                model_id,
-                reasoning_effort,
-                execution_environment,
-            },
-        )
-        .await
+        handles
+            .tasks
+            .create_session_for_loaded_task(
+                store.clone(),
+                task.clone(),
+                workspace.clone(),
+                crate::daemon::tasks::CreateTaskSessionInput::from_default_seed(
+                    crate::daemon::tasks::DefaultSessionSeed {
+                        provider_id,
+                        model_id,
+                        reasoning_effort,
+                        execution_environment,
+                    },
+                ),
+            )
+            .await
+            .map_err(task_session_create_status)
     };
     if let Err(status) = default_session_result {
         if created_task_in_this_request {

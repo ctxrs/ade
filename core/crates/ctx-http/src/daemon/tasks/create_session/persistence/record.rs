@@ -17,7 +17,7 @@ pub(super) struct CreateSessionRecord<'a> {
 
 pub(super) async fn create_session_record(
     request: CreateSessionRecord<'_>,
-) -> Result<Session, StatusCode> {
+) -> Result<Session, TaskSessionCreateError> {
     let CreateSessionRecord {
         store,
         task_id,
@@ -70,15 +70,15 @@ pub(super) async fn create_session_record(
 
     match result {
         Ok(session) => Ok(session),
-        Err(_) => {
+        Err(error) => {
             cleanup.cleanup_orphaned_worktree().await;
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            Err(TaskSessionCreateError::Internal(error.into()))
         }
     }
 }
 
 pub(super) struct CreatedWorktreeCleanup<'a> {
-    pub(super) handles: &'a TaskApiHandles,
+    pub(super) handles: &'a TaskSessionHandles,
     pub(super) store: &'a Store,
     pub(super) workspace: &'a Workspace,
     pub(super) task_id: TaskId,

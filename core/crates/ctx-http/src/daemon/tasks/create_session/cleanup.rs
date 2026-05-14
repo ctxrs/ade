@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) async fn cleanup_orphaned_provisioned_worktree(
-    handles: &TaskApiHandles,
+    handles: &TaskSessionHandles,
     store: &Store,
     workspace: &Workspace,
     task_id: TaskId,

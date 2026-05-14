@@ -16,11 +16,11 @@ pub(super) struct InitialPromptSeed {
 }
 
 pub(super) async fn seed_initial_prompt(
-    handles: &TaskApiHandles,
+    handles: &TaskSessionHandles,
     store: &Store,
     session: &Session,
     seed: InitialPromptSeed,
-) -> Result<(), StatusCode> {
+) -> Result<(), TaskSessionCreateError> {
     let Some(prompt) = seed.prompt else {
         return Ok(());
     };
@@ -33,12 +33,12 @@ pub(super) async fn seed_initial_prompt(
     if let Some(existing) = store
         .get_message(message_id)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_err(|error| TaskSessionCreateError::Internal(error.into()))?
     {
         if existing_initial_prompt_message_matches(&existing, session, turn_id, &prompt) {
             ensure_session_turn_for_initial_prompt(store, session.id, turn_id, &existing).await?;
         } else {
-            return Err(StatusCode::CONFLICT);
+            return Err(TaskSessionCreateError::Conflict);
         }
     } else {
         let prompt_for_idempotency = prompt.clone();
@@ -60,9 +60,11 @@ pub(super) async fn seed_initial_prompt(
                 let Some(existing) = store
                     .get_message(message_id)
                     .await
-                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                    .map_err(|error| TaskSessionCreateError::Internal(error.into()))?
                 else {
-                    return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                    return Err(TaskSessionCreateError::Internal(anyhow::anyhow!(
+                        "message insert conflicted but message row is missing"
+                    )));
                 };
                 if existing_initial_prompt_message_matches(
                     &existing,
@@ -72,10 +74,10 @@ pub(super) async fn seed_initial_prompt(
                 ) {
                     existing
                 } else {
-                    return Err(StatusCode::CONFLICT);
+                    return Err(TaskSessionCreateError::Conflict);
                 }
             }
-            Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
+            Err(error) => return Err(TaskSessionCreateError::Internal(error.into())),
         };
 
         let event = store
@@ -87,27 +89,29 @@ pub(super) async fn seed_initial_prompt(
                 initial_prompt_user_event_payload(&saved, order_seq),
             )
             .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            .map_err(|error| TaskSessionCreateError::Internal(error.into()))?;
         let start_seq = event.seq;
 
         let turn = initial_prompt_turn(session, ids, run_id, &saved, start_seq);
 
         if let Err(err) = store.insert_session_turn(turn).await {
             if !is_unique_constraint_violation(&err) {
-                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                return Err(TaskSessionCreateError::Internal(err.into()));
             }
             let existing = store
                 .get_session_turn_by_id(turn_id)
                 .await
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                .map_err(|error| TaskSessionCreateError::Internal(error.into()))?;
             if let Some(existing) = existing {
                 let matches =
                     existing.session_id == session.id && existing.user_message_id == Some(saved.id);
                 if !matches {
-                    return Err(StatusCode::CONFLICT);
+                    return Err(TaskSessionCreateError::Conflict);
                 }
             } else {
-                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                return Err(TaskSessionCreateError::Internal(anyhow::anyhow!(
+                    "session turn insert conflicted but turn row is missing"
+                )));
             }
         }
 
@@ -135,16 +139,16 @@ async fn ensure_session_turn_for_initial_prompt(
     session_id: SessionId,
     turn_id: TurnId,
     message: &Message,
-) -> Result<(), StatusCode> {
+) -> Result<(), TaskSessionCreateError> {
     let existing_turn = store
         .get_session_turn_by_id(turn_id)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|error| TaskSessionCreateError::Internal(error.into()))?;
     if let Some(existing) = existing_turn {
         let matches =
             existing.session_id == session_id && existing.user_message_id == Some(message.id);
         if !matches {
-            return Err(StatusCode::CONFLICT);
+            return Err(TaskSessionCreateError::Conflict);
         }
         return Ok(());
     }
@@ -153,20 +157,22 @@ async fn ensure_session_turn_for_initial_prompt(
         ctx_session_service::message_delivery::build_user_message_turn(message, turn_id, None);
     if let Err(err) = store.insert_session_turn(turn).await {
         if !is_unique_constraint_violation(&err) {
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return Err(TaskSessionCreateError::Internal(err.into()));
         }
         let existing = store
             .get_session_turn_by_id(turn_id)
             .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            .map_err(|error| TaskSessionCreateError::Internal(error.into()))?;
         if let Some(existing) = existing {
             let matches =
                 existing.session_id == session_id && existing.user_message_id == Some(message.id);
             if !matches {
-                return Err(StatusCode::CONFLICT);
+                return Err(TaskSessionCreateError::Conflict);
             }
         } else {
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return Err(TaskSessionCreateError::Internal(anyhow::anyhow!(
+                "session turn insert conflicted but turn row is missing"
+            )));
         }
     }
     Ok(())

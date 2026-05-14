@@ -7,16 +7,16 @@ pub(in crate::api::tasks) async fn create_requested_default_session_for_task(
     workspace: Workspace,
     req: CreateTaskDefaultSessionReq,
 ) -> Result<Session, StatusCode> {
-    let Json(session) = create_session_for_loaded_task_inner(
-        handles,
-        store,
-        task,
-        workspace,
-        HeaderMap::new(),
-        req.into_create_session_req(),
-    )
-    .await?;
-    Ok(session)
+    handles
+        .tasks
+        .create_session_for_loaded_task(
+            store,
+            task.clone(),
+            workspace,
+            req.into_task_session_input(None),
+        )
+        .await
+        .map_err(task_session_create_status)
 }
 
 pub(in crate::api::tasks) async fn replay_requested_default_session_for_task(
@@ -27,14 +27,14 @@ pub(in crate::api::tasks) async fn replay_requested_default_session_for_task(
     req: CreateTaskDefaultSessionReq,
     primary_session_id: SessionId,
 ) -> Result<Session, StatusCode> {
-    let Json(session) = create_session_for_loaded_task_inner(
-        handles,
-        store,
-        task,
-        workspace,
-        HeaderMap::new(),
-        req.into_replay_create_session_req(primary_session_id),
-    )
-    .await?;
-    Ok(session)
+    handles
+        .tasks
+        .create_session_for_loaded_task(
+            store,
+            task.clone(),
+            workspace,
+            req.into_replay_task_session_input(primary_session_id),
+        )
+        .await
+        .map_err(task_session_create_status)
 }

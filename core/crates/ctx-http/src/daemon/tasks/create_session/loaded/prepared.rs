@@ -20,32 +20,28 @@ pub(super) struct PreparedLoadedSessionRequest {
 }
 
 pub(super) async fn prepare_loaded_session_request(
-    handles: &TaskApiHandles,
+    handles: &TaskSessionHandles,
     store: &Store,
     task: &Task,
     workspace: &Workspace,
-    headers: &HeaderMap,
-    req: &CreateSessionReq,
-) -> Result<PreparedLoadedSessionRequest, StatusCode> {
-    let run_id_header = headers
-        .get("x-ctx-run-id")
-        .and_then(|v| v.to_str().ok())
-        .map(|v| v.to_string());
-    let provider_id = req.provider_id.trim().to_string();
+    input: &CreateTaskSessionInput,
+) -> Result<PreparedLoadedSessionRequest, TaskSessionCreateError> {
+    let run_id_header = input.run_id_header.clone();
+    let provider_id = input.provider_id.trim().to_string();
     if !handles
         .providers
         .can_create_loaded_session_for_provider(&provider_id)
         .await
     {
-        return Err(StatusCode::BAD_REQUEST);
+        return Err(TaskSessionCreateError::BadRequest);
     }
     let session_request = match validate_create_session_request(CreateSessionRequestPolicy {
-        requested_session_id: req.id.as_deref(),
-        parent_session_id: req.parent_session_id.as_deref(),
-        relationship: req.relationship.as_deref(),
-        initial_prompt_present: req.initial_prompt.is_some(),
-        initial_message_id_present: req.initial_message_id.is_some(),
-        initial_turn_id_present: req.initial_turn_id.is_some(),
+        requested_session_id: input.id.as_deref(),
+        parent_session_id: input.parent_session_id.as_deref(),
+        relationship: input.relationship.as_deref(),
+        initial_prompt_present: input.initial_prompt.is_some(),
+        initial_message_id_present: input.initial_message_id.is_some(),
+        initial_turn_id_present: input.initial_turn_id.is_some(),
         task_primary_session_id: task.primary_session_id,
     }) {
         Ok(decision) => decision,
@@ -58,17 +54,17 @@ pub(super) async fn prepare_loaded_session_request(
                     None,
                 )
                 .await;
-            return Err(StatusCode::BAD_REQUEST);
+            return Err(TaskSessionCreateError::BadRequest);
         }
         Err(CreateSessionRequestError::PrimarySessionConflict) => {
-            return Err(StatusCode::CONFLICT);
+            return Err(TaskSessionCreateError::Conflict);
         }
         Err(
             CreateSessionRequestError::InvalidSessionId
             | CreateSessionRequestError::InvalidParentSessionId
             | CreateSessionRequestError::RelationshipRequiresParent,
         ) => {
-            return Err(StatusCode::BAD_REQUEST);
+            return Err(TaskSessionCreateError::BadRequest);
         }
     };
     let session_id = session_request.session_id;
@@ -81,8 +77,8 @@ pub(super) async fn prepare_loaded_session_request(
         store,
         task,
         workspace,
-        req.worktree_id.as_deref(),
-        req.execution_environment,
+        input.worktree_id.as_deref(),
+        input.execution_environment,
     )
     .await?;
     let worktree_id = worktree_resolution.worktree_id;
@@ -100,8 +96,8 @@ pub(super) async fn prepare_loaded_session_request(
         task_id: task.id,
         provider_id: &provider_id,
         execution_environment,
-        requested_model_id: req.model_id.as_str(),
-        requested_reasoning_effort: req.reasoning_effort.as_deref(),
+        requested_model_id: input.model_id.as_str(),
+        requested_reasoning_effort: input.reasoning_effort.as_deref(),
         created_worktree_id,
     })
     .await?;

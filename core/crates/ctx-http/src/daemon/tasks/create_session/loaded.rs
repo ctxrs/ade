@@ -6,14 +6,13 @@ mod prepared;
 
 use prepared::{prepare_loaded_session_request, PreparedLoadedSessionRequest};
 
-pub(in crate::api::tasks) async fn create_session_for_loaded_task_inner(
-    handles: &TaskApiHandles,
+pub(super) async fn create_session_for_loaded_task_inner(
+    handles: &TaskSessionHandles,
     store: Store,
     task: Task,
     workspace: Workspace,
-    headers: HeaderMap,
-    req: CreateSessionReq,
-) -> Result<Json<Session>, StatusCode> {
+    input: CreateTaskSessionInput,
+) -> Result<Session, TaskSessionCreateError> {
     let PreparedLoadedSessionRequest {
         run_id_header,
         provider_id,
@@ -27,7 +26,7 @@ pub(in crate::api::tasks) async fn create_session_for_loaded_task_inner(
         model_id,
         reasoning_effort,
         preferred_model_id,
-    } = prepare_loaded_session_request(handles, &store, &task, &workspace, &headers, &req).await?;
+    } = prepare_loaded_session_request(handles, &store, &task, &workspace, &input).await?;
 
     if let Some(existing) = resolve_existing_requested_session(ExistingRequestedSession {
         handles,
@@ -47,12 +46,12 @@ pub(in crate::api::tasks) async fn create_session_for_loaded_task_inner(
             parent_session_id,
             relationship: relationship.as_deref(),
         },
-        remember_model_preference: req.remember_model_preference,
+        remember_model_preference: input.remember_model_preference,
         preferred_model_id: &preferred_model_id,
     })
     .await?
     {
-        return Ok(Json(existing));
+        return Ok(existing);
     }
 
     if let Ok(Some(worktree)) = store.get_worktree(worktree_id).await {
@@ -92,15 +91,15 @@ pub(in crate::api::tasks) async fn create_session_for_loaded_task_inner(
         &store,
         &session,
         InitialPromptSeed {
-            prompt: req.initial_prompt,
-            message_id: req.initial_message_id,
-            turn_id: req.initial_turn_id,
+            prompt: input.initial_prompt,
+            message_id: input.initial_message_id,
+            turn_id: input.initial_turn_id,
             run_id_header: run_id_header.clone(),
         },
     )
     .await?;
 
-    if req.remember_model_preference {
+    if input.remember_model_preference {
         if let Err(error) = handles
             .sessions
             .update_workspace_provider_preferred_model_id(
@@ -121,5 +120,5 @@ pub(in crate::api::tasks) async fn create_session_for_loaded_task_inner(
 
     emit_session_started_observability(handles, &session, &task).await;
 
-    Ok(Json(session))
+    Ok(session)
 }

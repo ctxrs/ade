@@ -14,6 +14,12 @@ use crate::daemon::handle::TasksHandle;
 use crate::daemon::workspaces::{BranchCleanupErrorMode, TaskWorktreeCleanupTarget};
 use crate::daemon::{workspaces, WorkspaceStoreAccessError};
 
+mod create_session;
+
+pub(crate) use create_session::{
+    CreateTaskSessionInput, DefaultSessionSeed, TaskSessionCreateError,
+};
+
 pub(crate) struct ArchiveTaskOutcome {
     pub(crate) task: Task,
     pub(crate) cleanup_failed: bool,

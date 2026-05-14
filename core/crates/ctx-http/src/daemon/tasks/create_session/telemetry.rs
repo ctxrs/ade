@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) async fn emit_session_started_observability(
-    handles: &TaskApiHandles,
+    handles: &TaskSessionHandles,
     session: &Session,
     task: &Task,
 ) {

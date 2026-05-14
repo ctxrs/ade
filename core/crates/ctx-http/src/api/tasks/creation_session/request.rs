@@ -59,8 +59,11 @@ pub(in crate::api::tasks) struct CreateTaskDefaultSessionReq {
 }
 
 impl CreateTaskDefaultSessionReq {
-    pub(super) fn into_create_session_req(self) -> CreateSessionReq {
-        CreateSessionReq {
+    pub(super) fn into_task_session_input(
+        self,
+        run_id_header: Option<String>,
+    ) -> crate::daemon::tasks::CreateTaskSessionInput {
+        crate::daemon::tasks::CreateTaskSessionInput {
             id: self.id,
             provider_id: self.provider_id,
             model_id: self.model_id,
@@ -73,24 +76,48 @@ impl CreateTaskDefaultSessionReq {
             initial_turn_id: self.initial_turn_id,
             worktree_id: self.worktree_id,
             execution_environment: self.execution_environment,
+            run_id_header,
         }
     }
 
-    pub(super) fn into_replay_create_session_req(
+    pub(super) fn into_replay_task_session_input(
         self,
         primary_session_id: SessionId,
-    ) -> CreateSessionReq {
-        let mut req = self.into_create_session_req();
-        if req
+    ) -> crate::daemon::tasks::CreateTaskSessionInput {
+        let mut input = self.into_task_session_input(None);
+        if input
             .id
             .as_deref()
             .map(str::trim)
             .unwrap_or_default()
             .is_empty()
         {
-            req.id = Some(primary_session_id.0.to_string());
+            input.id = Some(primary_session_id.0.to_string());
         }
-        req
+        input
+    }
+}
+
+impl CreateSessionReq {
+    pub(super) fn into_task_session_input(
+        self,
+        run_id_header: Option<String>,
+    ) -> crate::daemon::tasks::CreateTaskSessionInput {
+        crate::daemon::tasks::CreateTaskSessionInput {
+            id: self.id,
+            provider_id: self.provider_id,
+            model_id: self.model_id,
+            reasoning_effort: self.reasoning_effort,
+            remember_model_preference: self.remember_model_preference,
+            parent_session_id: self.parent_session_id,
+            relationship: self.relationship,
+            initial_prompt: self.initial_prompt,
+            initial_message_id: self.initial_message_id,
+            initial_turn_id: self.initial_turn_id,
+            worktree_id: self.worktree_id,
+            execution_environment: self.execution_environment,
+            run_id_header,
+        }
     }
 }
 

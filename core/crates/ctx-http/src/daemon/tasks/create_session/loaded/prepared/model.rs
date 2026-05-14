@@ -7,7 +7,7 @@ pub(super) struct ResolvedLoadedSessionModel {
 }
 
 pub(super) struct LoadedSessionModelRequest<'a> {
-    pub(super) handles: &'a TaskApiHandles,
+    pub(super) handles: &'a TaskSessionHandles,
     pub(super) store: &'a Store,
     pub(super) workspace: &'a Workspace,
     pub(super) task_id: TaskId,
@@ -20,7 +20,7 @@ pub(super) struct LoadedSessionModelRequest<'a> {
 
 pub(super) async fn resolve_loaded_session_model(
     request: LoadedSessionModelRequest<'_>,
-) -> Result<ResolvedLoadedSessionModel, StatusCode> {
+) -> Result<ResolvedLoadedSessionModel, TaskSessionCreateError> {
     let LoadedSessionModelRequest {
         handles,
         store,
@@ -51,7 +51,7 @@ pub(super) async fn resolve_loaded_session_model(
                 "failed to load provider model catalog while creating session: {error}"
             );
             cleanup_created_worktree(handles, store, workspace, task_id, created_worktree_id).await;
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return Err(TaskSessionCreateError::Internal(anyhow::anyhow!(error)));
         }
     };
     let resolved_model = match resolve_model_id(
@@ -63,7 +63,7 @@ pub(super) async fn resolve_loaded_session_model(
         Ok(model) => model,
         Err(_) => {
             cleanup_created_worktree(handles, store, workspace, task_id, created_worktree_id).await;
-            return Err(StatusCode::BAD_REQUEST);
+            return Err(TaskSessionCreateError::BadRequest);
         }
     };
     let model_id = resolved_model.model_id.clone();
@@ -78,7 +78,7 @@ pub(super) async fn resolve_loaded_session_model(
 }
 
 async fn cleanup_created_worktree(
-    handles: &TaskApiHandles,
+    handles: &TaskSessionHandles,
     store: &Store,
     workspace: &Workspace,
     task_id: TaskId,

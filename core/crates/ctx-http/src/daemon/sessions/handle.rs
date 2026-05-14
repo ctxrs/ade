@@ -49,7 +49,6 @@ use crate::daemon::workspaces::{
 };
 use crate::daemon::{
     require_scoped_mcp_session_context, ScopedMcpSessionAccessError, SessionStoreAccessError,
-    WorkspaceStoreAccessError,
 };
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -57,12 +56,6 @@ pub(crate) enum SessionImageBlobStoreError {
     PayloadTooLarge,
     UnsupportedMediaType,
     Internal,
-}
-
-pub(crate) struct TaskStoreContext {
-    pub(crate) store: Store,
-    pub(crate) task: Task,
-    pub(crate) workspace: Workspace,
 }
 
 pub(crate) struct WorkspaceStoreContext {
@@ -609,17 +602,6 @@ impl SessionsHandle {
         }
     }
 
-    async fn task_store_or_none(&self, task_id: TaskId) -> Result<Option<Store>> {
-        let Some(workspace_id) = self.get_workspace_id_for_task(task_id).await? else {
-            return Ok(None);
-        };
-        match self.existing_workspace_store(workspace_id).await {
-            Ok(store) => Ok(Some(store)),
-            Err(WorkspaceStoreAccessError::NotFound) => Ok(None),
-            Err(WorkspaceStoreAccessError::Unavailable(error)) => Err(error),
-        }
-    }
-
     async fn seed_demo_transcript_turn(
         &self,
         store: &Store,
@@ -828,26 +810,6 @@ impl SessionsHandle {
             .await
     }
 
-    pub(crate) async fn load_task_context(
-        &self,
-        task_id: TaskId,
-    ) -> Result<Option<TaskStoreContext>> {
-        let Some(store) = self.task_store_or_none(task_id).await? else {
-            return Ok(None);
-        };
-        let Some(task) = store.get_task(task_id).await? else {
-            return Ok(None);
-        };
-        let Some(workspace) = self.get_workspace(task.workspace_id).await? else {
-            return Ok(None);
-        };
-        Ok(Some(TaskStoreContext {
-            store,
-            task,
-            workspace,
-        }))
-    }
-
     pub(crate) async fn load_workspace_context(
         &self,
         workspace_id: WorkspaceId,
@@ -868,13 +830,6 @@ impl SessionsHandle {
         workspace_id: WorkspaceId,
     ) -> Result<Store> {
         self.state.store_for_workspace(workspace_id).await
-    }
-
-    pub(in crate::daemon) async fn existing_workspace_store(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> Result<Store, WorkspaceStoreAccessError> {
-        self.state.existing_workspace_store(workspace_id).await
     }
 
     pub(in crate::daemon) async fn store_for_session(

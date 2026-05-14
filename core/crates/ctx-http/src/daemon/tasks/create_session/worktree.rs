@@ -11,28 +11,29 @@ pub(super) struct SessionWorktreeResolution {
 }
 
 pub(super) async fn resolve_session_worktree_for_task(
-    handles: &TaskApiHandles,
+    handles: &TaskSessionHandles,
     store: &Store,
     task: &Task,
     workspace: &Workspace,
     requested_worktree_id: Option<&str>,
     requested_execution_environment: Option<ExecutionEnvironment>,
-) -> Result<SessionWorktreeResolution, StatusCode> {
+) -> Result<SessionWorktreeResolution, TaskSessionCreateError> {
     let workspace_effective = handles
         .workspaces
         .effective_execution_settings(workspace.id)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|error| TaskSessionCreateError::Internal(error.into()))?;
     let mut existing_worktree = None;
     let worktree_id = if let Some(worktree_id) = requested_worktree_id {
-        let worktree_id =
-            WorktreeId(uuid::Uuid::parse_str(worktree_id).map_err(|_| StatusCode::BAD_REQUEST)?);
+        let worktree_id = WorktreeId(
+            uuid::Uuid::parse_str(worktree_id).map_err(|_| TaskSessionCreateError::BadRequest)?,
+        );
         existing_worktree = Some(
             handles
                 .workspaces
                 .resolve_existing_worktree_execution(store, workspace, worktree_id)
                 .await
-                .map_err(|_| StatusCode::NOT_FOUND)?,
+                .map_err(|_| TaskSessionCreateError::NotFound)?,
         );
         worktree_id
     } else if let Some(primary) = task.primary_worktree_id {
@@ -41,7 +42,7 @@ pub(super) async fn resolve_session_worktree_for_task(
                 .workspaces
                 .resolve_existing_worktree_execution(store, workspace, primary)
                 .await
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+                .map_err(|error| TaskSessionCreateError::Internal(error.into()))?,
         );
         primary
     } else {
@@ -53,7 +54,7 @@ pub(super) async fn resolve_session_worktree_for_task(
         let persisted = existing.execution_environment();
         if let Some(requested) = requested_execution_environment {
             if requested != persisted {
-                return Err(StatusCode::BAD_REQUEST);
+                return Err(TaskSessionCreateError::BadRequest);
             }
         }
         persisted
@@ -73,7 +74,7 @@ pub(super) async fn resolve_session_worktree_for_task(
                         )
                         .await;
                     }
-                    return Err(StatusCode::BAD_REQUEST);
+                    return Err(TaskSessionCreateError::BadRequest);
                 }
                 requested
             }
