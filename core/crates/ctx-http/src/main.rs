@@ -49,7 +49,7 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::Serve { bind, data_dir } => {
-            ctx_http::daemon::serve(bind, data_dir).await?;
+            ctx_http::serve(bind, data_dir).await?;
         }
         Commands::Init { root } => {
             ctx_http::daemon::init_workspace(root).await?;

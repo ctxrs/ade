@@ -50,7 +50,7 @@ async fn main() -> Result<()> {
     let bind = format!("127.0.0.1:{port}");
     let daemon_url = format!("http://127.0.0.1:{port}");
 
-    let serve_task = tokio::spawn(ctx_http::daemon::serve(
+    let serve_task = tokio::spawn(ctx_http::serve(
         vec![bind],
         Some(data_dir.path().to_string_lossy().to_string()),
     ));

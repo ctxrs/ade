@@ -6,6 +6,8 @@ const path = require("node:path");
 const coreRoot = path.resolve(__dirname, "..");
 const repoRoot = path.resolve(coreRoot, "..");
 const apiRoot = path.join(coreRoot, "crates", "ctx-http", "src", "api");
+const daemonRoot = path.join(coreRoot, "crates", "ctx-http", "src", "daemon");
+const daemonRootPath = path.join(coreRoot, "crates", "ctx-http", "src", "daemon.rs");
 const daemonHandlePath = path.join(coreRoot, "crates", "ctx-http", "src", "daemon", "handle.rs");
 const rawStoreBlindApiRoots = [
   "core/crates/ctx-http/src/api/sessions/",
@@ -71,6 +73,22 @@ const HANDLE_BACKDOOR_PATTERNS = [
   {
     name: "secure proxy full-router backdoor",
     regex: /router\s*\(\s*handle\.clone\s*\(\s*\)\s*\)|Arc\s*<\s*axum::Router\s*>/,
+  },
+];
+
+const DAEMON_EXTRACTION_BLOCKER_PATTERNS = [
+  {
+    name: "daemon imports API module",
+    regex: /\bcrate::api\b|\bapi::router\b/,
+    contentRegex: /\buse\s+crate::\s*\{[^;]*\bapi\b[^;]*\}\s*;/gm,
+  },
+  {
+    name: "daemon depends on Axum",
+    regex: /\buse\s+axum\b|\baxum::/,
+  },
+  {
+    name: "daemon owns Axum extractor glue",
+    regex: /\bFromRef\s*</,
   },
 ];
 
@@ -153,6 +171,18 @@ function scanText({ filePath, contents, patterns }) {
         });
       }
     }
+    if (pattern.contentRegex) {
+      pattern.contentRegex.lastIndex = 0;
+      for (let match = pattern.contentRegex.exec(contents); match; match = pattern.contentRegex.exec(contents)) {
+        const line = contents.slice(0, match.index).split(/\r?\n/).length;
+        violations.push({
+          filePath,
+          line,
+          name: pattern.name,
+          text: match[0].trim().replace(/\s+/g, " "),
+        });
+      }
+    }
   }
   return violations;
 }
@@ -196,6 +226,27 @@ function scanRepo() {
     );
   }
 
+  const daemonFiles = [];
+  if (fs.existsSync(daemonRootPath)) {
+    daemonFiles.push(daemonRootPath);
+  }
+  if (fs.existsSync(daemonRoot)) {
+    daemonFiles.push(...listRustFiles(daemonRoot));
+  }
+  for (const filePath of daemonFiles) {
+    if (isTestRustPath(filePath)) {
+      continue;
+    }
+    const contents = stripCfgTestItems(fs.readFileSync(filePath, "utf8"));
+    violations.push(
+      ...scanText({
+        filePath: repoRelative(filePath),
+        contents,
+        patterns: DAEMON_EXTRACTION_BLOCKER_PATTERNS,
+      }),
+    );
+  }
+
   return violations;
 }
 
@@ -219,6 +270,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  DAEMON_EXTRACTION_BLOCKER_PATTERNS,
   API_RAW_DAEMON_PATTERNS,
   API_DOMAIN_RAW_STORE_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,

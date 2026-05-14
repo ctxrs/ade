@@ -1,12 +1,31 @@
-use super::*;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use anyhow::{Context, Result};
 use ctx_http_auth::daemon as daemon_auth;
+use ctx_observability::telemetry::TelemetryConfig;
+use ctx_store::{Store, StoreManager, StoreManagerConfig};
+use directories::BaseDirs;
+use tokio::net::TcpListener;
+
+use super::*;
 
 #[path = "serve/background.rs"]
 mod background;
 #[cfg(test)]
 pub(in crate::daemon) use background::spawn_startup_provider_status_refresh;
 
-pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
+pub(crate) struct DaemonRuntime {
+    pub(crate) _daemon_lock: std::fs::File,
+    pub(crate) handle: DaemonHandle,
+    pub(crate) listeners: Vec<TcpListener>,
+    pub(crate) daemon_url: String,
+}
+
+pub(crate) async fn bootstrap_daemon_runtime(
+    bind: Vec<String>,
+    data_dir: Option<String>,
+) -> Result<DaemonRuntime> {
     let data_root = match data_dir {
         Some(p) => PathBuf::from(p),
         None => {
@@ -16,7 +35,7 @@ pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
     };
     let data_root = daemon_auth::prepare_daemon_data_root(data_root)?;
 
-    let _daemon_lock = daemon_auth::acquire_daemon_lock(&data_root)?;
+    let daemon_lock = daemon_auth::acquire_daemon_lock(&data_root)?;
 
     let global_db_path = data_root.join("db").join("db.sqlite");
     let bootstrap_store = Store::open_sqlite(&global_db_path, None).await?;
@@ -107,30 +126,11 @@ pub async fn serve(bind: Vec<String>, data_dir: Option<String>) -> Result<()> {
         tracing::warn!("failed to apply tool cgroup settings: {err:#}");
     }
 
-    background::spawn_daemon_background_services(state.clone(), requested_binds.clone());
-    let app: Router = api::router(handle);
-
-    let bound_addrs = listeners
-        .iter()
-        .filter_map(|listener| listener.local_addr().ok())
-        .map(|addr| addr.to_string())
-        .collect::<Vec<_>>();
-    tracing::info!("ctx daemon listening on {daemon_url} (binds={bound_addrs:?})");
-    println!("{}", json!({"event":"listening","url": daemon_url}));
-    let mut servers = tokio::task::JoinSet::new();
-    for listener in listeners {
-        let app = app.clone();
-        let mut shutdown_rx = state.core.shutdown_tx.subscribe();
-        servers.spawn(async move {
-            axum::serve(listener, app)
-                .with_graceful_shutdown(async move {
-                    let _ = shutdown_rx.recv().await;
-                })
-                .await
-        });
-    }
-    while let Some(result) = servers.join_next().await {
-        result.context("daemon listener task panicked")??;
-    }
-    Ok(())
+    background::spawn_daemon_background_services(state, requested_binds);
+    Ok(DaemonRuntime {
+        _daemon_lock: daemon_lock,
+        handle,
+        listeners,
+        daemon_url,
+    })
 }

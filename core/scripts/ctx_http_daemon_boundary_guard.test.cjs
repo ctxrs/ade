@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const {
+  DAEMON_EXTRACTION_BLOCKER_PATTERNS,
   API_DOMAIN_RAW_STORE_PATTERNS,
   API_RAW_DAEMON_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
@@ -178,6 +179,55 @@ test("daemon boundary guard rejects DaemonHandle raw-state backdoors", () => {
   });
 
   assert.equal(violations.length, 4);
+});
+
+test("daemon boundary guard rejects daemon API/router composition ownership", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/daemon/serve.rs",
+    contents: `
+      use axum::Router;
+      use crate::api;
+      fn serve(handle: DaemonHandle) {
+        let app = api::router(handle);
+        let _ = axum::serve(listener, app);
+      }
+      impl FromRef<DaemonHandle> for CoreHandle {}
+    `,
+    patterns: DAEMON_EXTRACTION_BLOCKER_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "daemon imports API module",
+      "daemon imports API module",
+      "daemon depends on Axum",
+      "daemon depends on Axum",
+      "daemon owns Axum extractor glue",
+    ],
+  );
+});
+
+test("daemon boundary guard rejects grouped daemon API imports", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/daemon/runtime.rs",
+    contents: `
+      use crate::{api, daemon};
+      use crate::{
+        api as http_api,
+        daemon::runtime,
+      };
+    `,
+    patterns: DAEMON_EXTRACTION_BLOCKER_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "daemon imports API module",
+      "daemon imports API module",
+    ],
+  );
 });
 
 test("checked-in ctx-http API satisfies the daemon boundary", () => {

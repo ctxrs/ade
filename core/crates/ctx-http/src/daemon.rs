@@ -1,20 +1,15 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use axum::Router;
-use directories::BaseDirs;
 use serde::Serialize;
-use serde_json::json;
 
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{ExecutionEnvironment, SessionTurn, SessionTurnStatus};
-use ctx_store::{Store, StoreManager, StoreManagerConfig};
+#[cfg(test)]
+use ctx_store::{StoreManager, StoreManagerConfig};
 
-use crate::api;
 use crate::daemon::scheduler::reconcile_turn_terminal_state;
-use ctx_observability::telemetry::TelemetryConfig;
 use ctx_provider_runtime::provider_usage;
 
 mod activity;
@@ -43,8 +38,8 @@ pub(crate) mod resource_governance;
 pub mod resource_telemetry;
 pub(crate) mod resource_utilization;
 mod retention;
+mod runtime;
 pub mod scheduler;
-mod serve;
 pub(crate) mod sessions;
 pub(crate) mod settings;
 mod state;
@@ -58,9 +53,8 @@ mod workspace_init;
 mod workspace_runtime;
 pub(crate) mod workspaces;
 
-pub use self::serve::serve;
 #[cfg(test)]
-pub(in crate::daemon) use self::serve::spawn_startup_provider_status_refresh;
+pub(in crate::daemon) use self::runtime::spawn_startup_provider_status_refresh;
 use activity::reconcile_running_turns;
 pub(crate) use activity::reconcile_running_turns_with_reason;
 pub use activity::{
@@ -82,6 +76,7 @@ pub(crate) use mcp_auth::{
 };
 #[cfg(test)]
 pub(crate) use retention::prune_archived_session_data_for_all_workspaces;
+pub(crate) use runtime::{bootstrap_daemon_runtime, DaemonRuntime};
 pub use state::{AppRuntimeFlags, DaemonState};
 pub(crate) use state::{
     AttachmentMaterializationTask, CacheSweepConfig, SessionStoreAccessError, StoreLookup,

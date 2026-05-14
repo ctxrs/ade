@@ -1,10 +1,14 @@
+use axum::extract::FromRef;
 use axum::http::{header, HeaderValue, Method};
 use axum::middleware;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 use url::Url;
 
-use crate::daemon::DaemonHandle;
+use crate::daemon::{
+    CoreHandle, DaemonHandle, ExecutionHandle, ProvidersHandle, SessionsHandle, TasksHandle,
+    TelemetryHandle, TransportHandle, WorkspaceStreamHandle, WorkspacesHandle,
+};
 
 use super::auth::auth_middleware;
 use super::perf::perf_middleware;
@@ -50,6 +54,30 @@ fn daemon_cors_layer() -> CorsLayer {
             header::HeaderName::from_static("traceparent"),
             header::HeaderName::from_static("x-ctx-run-id"),
         ])
+}
+
+macro_rules! impl_route_state_extractors {
+    ($($name:ident, $accessor:ident);+ $(;)?) => {
+        $(
+            impl FromRef<DaemonHandle> for $name {
+                fn from_ref(handle: &DaemonHandle) -> Self {
+                    handle.$accessor()
+                }
+            }
+        )+
+    };
+}
+
+impl_route_state_extractors! {
+    CoreHandle, core;
+    SessionsHandle, sessions;
+    TasksHandle, tasks;
+    WorkspacesHandle, workspaces;
+    WorkspaceStreamHandle, workspace_stream;
+    ProvidersHandle, providers;
+    TelemetryHandle, telemetry;
+    TransportHandle, transport;
+    ExecutionHandle, execution;
 }
 
 pub fn router(state: impl Into<DaemonHandle>) -> axum::Router {

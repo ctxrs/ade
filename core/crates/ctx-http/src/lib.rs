@@ -1,8 +1,11 @@
 pub mod api;
 pub mod daemon;
+mod server;
 
 #[cfg(feature = "fault_injection")]
 pub mod fault_injection;
+
+pub use server::serve;
 
 #[cfg(test)]
 pub(crate) mod test_support;

@@ -1,7 +1,6 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use axum::extract::FromRef;
 use ctx_observability::perf_telemetry::PerfTelemetry;
 use ctx_observability::telemetry::Telemetry;
 use ctx_storage_admission::StorageGuardStatus;
@@ -121,6 +120,10 @@ impl CoreHandle {
         self.state.core.local_shutdown_token.as_deref()
     }
 
+    pub(crate) fn subscribe_shutdown(&self) -> tokio::sync::broadcast::Receiver<()> {
+        self.state.core.shutdown_tx.subscribe()
+    }
+
     pub(crate) fn storage_guard_snapshot(&self) -> StorageGuardStatus {
         self.state.storage_guard_snapshot()
     }
@@ -164,12 +167,6 @@ macro_rules! domain_handle_with_accessor {
         impl $name {
             fn new(state: Arc<DaemonState>) -> Self {
                 Self { state }
-            }
-        }
-
-        impl FromRef<DaemonHandle> for $name {
-            fn from_ref(handle: &DaemonHandle) -> Self {
-                handle.$accessor()
             }
         }
     };
