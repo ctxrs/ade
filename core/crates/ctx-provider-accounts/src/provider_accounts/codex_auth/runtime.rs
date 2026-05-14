@@ -13,6 +13,9 @@ struct PreparedCodexRuntimeAuth {
     has_auth: bool,
 }
 
+const LEGACY_CODEX_STATE_DIRS: &[&str] = &["sessions", "shell_snapshots"];
+const LEGACY_CODEX_STATE_FILES: &[&str] = &["history.jsonl", "config.toml"];
+
 fn codex_env_for_home(home: &Path) -> HashMap<String, String> {
     let mut env = HashMap::new();
     env.insert("CODEX_HOME".to_string(), home.to_string_lossy().to_string());
@@ -203,11 +206,13 @@ async fn prepare_broker_home_from_secret(
             );
         }
         write_broker_owner_marker(data_root, account_id).await?;
+        expose_legacy_codex_state_to_broker_home(data_root, &broker_home).await?;
         return Ok(broker_home);
     }
 
     project_oauth_auth_to_broker_home_with_lock(data_root, account_id, &secret_auth).await?;
     write_broker_owner_marker(data_root, account_id).await?;
+    expose_legacy_codex_state_to_broker_home(data_root, &broker_home).await?;
     Ok(broker_home)
 }
 
@@ -288,8 +293,139 @@ async fn prepare_broker_home_from_legacy_account_auth(
         hydrate_legacy_account_auth_to_broker_home(data_root, account_id, false).await?;
     if broker_home.is_some() {
         write_broker_owner_marker(data_root, account_id).await?;
+        if let Some(broker_home) = broker_home.as_ref() {
+            expose_legacy_codex_state_to_broker_home(data_root, broker_home).await?;
+        }
     }
     Ok(broker_home)
+}
+
+async fn expose_legacy_codex_state_to_broker_home(
+    data_root: &Path,
+    broker_home: &Path,
+) -> Result<()> {
+    ctx_fs::permissions::ensure_private_dir(broker_home).await?;
+    let legacy_homes = [
+        codex_runtime_home(data_root),
+        legacy_codex_runtime_home(data_root),
+    ];
+    for legacy_home in legacy_homes {
+        if legacy_home == broker_home {
+            continue;
+        }
+        expose_legacy_codex_state_from_home(&legacy_home, broker_home).await?;
+    }
+    Ok(())
+}
+
+async fn expose_legacy_codex_state_from_home(legacy_home: &Path, broker_home: &Path) -> Result<()> {
+    match tokio::fs::symlink_metadata(legacy_home).await {
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => {
+            return Err(err).with_context(|| {
+                format!(
+                    "checking legacy Codex home {} before exposing broker state",
+                    legacy_home.display()
+                )
+            });
+        }
+    }
+
+    for name in LEGACY_CODEX_STATE_DIRS
+        .iter()
+        .chain(LEGACY_CODEX_STATE_FILES.iter())
+    {
+        expose_legacy_codex_state_child(legacy_home, broker_home, name).await?;
+    }
+
+    Ok(())
+}
+
+async fn expose_legacy_codex_state_child(
+    legacy_home: &Path,
+    broker_home: &Path,
+    name: &str,
+) -> Result<()> {
+    let source = legacy_home.join(name);
+    let dest = broker_home.join(name);
+    let source_metadata = match tokio::fs::symlink_metadata(&source).await {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => {
+            return Err(err).with_context(|| {
+                format!(
+                    "checking legacy Codex state path {} before exposing broker state",
+                    source.display()
+                )
+            });
+        }
+    };
+
+    match tokio::fs::symlink_metadata(&dest).await {
+        Ok(_) => return Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => {
+            return Err(err).with_context(|| {
+                format!(
+                    "checking broker Codex state path {} before exposing legacy state",
+                    dest.display()
+                )
+            });
+        }
+    }
+
+    if let Some(parent) = dest.parent() {
+        ctx_fs::permissions::ensure_private_dir(parent).await?;
+    }
+
+    let source_for_link = source.clone();
+    let dest_for_link = dest.clone();
+    let source_is_dir = source_metadata.file_type().is_dir();
+    let link_result = tokio::task::spawn_blocking(move || {
+        create_codex_state_link(&source_for_link, &dest_for_link, source_is_dir)
+    })
+    .await
+    .context("joining Codex broker state link task")?;
+
+    match link_result {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(err) => Err(err).with_context(|| {
+            format!(
+                "linking legacy Codex state {} into broker home at {}",
+                source.display(),
+                dest.display()
+            )
+        }),
+    }
+}
+
+#[cfg(unix)]
+fn create_codex_state_link(
+    source: &Path,
+    dest: &Path,
+    _source_is_dir: bool,
+) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(source, dest)
+}
+
+#[cfg(windows)]
+fn create_codex_state_link(source: &Path, dest: &Path, source_is_dir: bool) -> std::io::Result<()> {
+    if source_is_dir {
+        std::os::windows::fs::symlink_dir(source, dest)
+    } else {
+        std::os::windows::fs::symlink_file(source, dest)
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn create_codex_state_link(source: &Path, dest: &Path, source_is_dir: bool) -> std::io::Result<()> {
+    if source_is_dir {
+        std::fs::create_dir(dest)
+    } else {
+        std::fs::hard_link(source, dest)
+    }
 }
 
 pub async fn ensure_codex_auth_ready(codex_home: &Path) -> Result<()> {

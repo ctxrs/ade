@@ -9,11 +9,12 @@ use super::shared::{container_runtime_data_roots, write_secure_file_atomic};
 use super::{
     codex_account_deletion_in_progress, codex_account_dir, codex_broker_home, codex_runtime_home,
     codex_runtime_owner_path, codex_secret_path, default_codex_api_shape, default_codex_auth_type,
-    default_codex_credential_kind, ensure_safe_account_id, load_codex_registry, normalize_label,
-    save_codex_registry, set_active_codex_account, upsert_codex_account, CodexAccountEntry,
-    CodexAccountRegistry, CodexAuthImportOutcome, CodexEndpointProfile, CodexHostImportProbe,
-    CODEX_AUTH_TYPE_BEARER, CODEX_CREDENTIAL_KIND_API_KEY, CODEX_CREDENTIAL_KIND_OAUTH,
-    CODEX_SECRET_VERSION, CTX_CODEX_HOST_AUTH_PATH_ENV, CTX_SEED_CODEX_AUTH_FROM_HOST_ENV,
+    default_codex_credential_kind, ensure_safe_account_id, legacy_codex_runtime_home,
+    load_codex_registry, normalize_label, save_codex_registry, set_active_codex_account,
+    upsert_codex_account, CodexAccountEntry, CodexAccountRegistry, CodexAuthImportOutcome,
+    CodexEndpointProfile, CodexHostImportProbe, CODEX_AUTH_TYPE_BEARER,
+    CODEX_CREDENTIAL_KIND_API_KEY, CODEX_CREDENTIAL_KIND_OAUTH, CODEX_SECRET_VERSION,
+    CTX_CODEX_HOST_AUTH_PATH_ENV, CTX_SEED_CODEX_AUTH_FROM_HOST_ENV,
 };
 
 mod host;

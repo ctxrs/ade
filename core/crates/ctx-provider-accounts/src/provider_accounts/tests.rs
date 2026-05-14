@@ -552,6 +552,124 @@ async fn oauth_secret_uses_broker_home_without_runtime_copy() {
 }
 
 #[tokio::test]
+async fn oauth_broker_home_exposes_legacy_session_state_without_copying_auth() {
+    let _env_lock = lock_env().await;
+    let _guard = EnvGuard::without("CTX_CODEX_HOME");
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let account_id = "acct-oauth";
+    let secret_ref = format!("{account_id}.json");
+    let registry = CodexAccountRegistry {
+        active_account_id: Some(account_id.to_string()),
+        accounts: vec![CodexAccountEntry {
+            id: account_id.to_string(),
+            label: "acct".to_string(),
+            kind: CODEX_CREDENTIAL_KIND_OAUTH.to_string(),
+            email: None,
+            provider_account_id: Some("upstream-acct".to_string()),
+            plan_type: None,
+            created_at: Utc::now(),
+            last_used_at: None,
+            secret_ref: Some(secret_ref.clone()),
+            endpoint_profile: CodexEndpointProfile::default(),
+        }],
+    };
+    save_codex_registry(root, &registry).await.unwrap();
+    tokio::fs::create_dir_all(codex_secrets_root(root))
+        .await
+        .unwrap();
+    tokio::fs::write(
+        codex_secret_path(root, &secret_ref).unwrap(),
+        br#"{"version":1,"auth":{"tokens":{"access_token":"access","refresh_token":"refresh","account_id":"upstream-acct"}}}"#,
+    )
+    .await
+    .unwrap();
+
+    let legacy_home = codex_runtime_home(root);
+    let legacy_rollout = legacy_home.join(
+        "sessions/2026/04/26/rollout-2026-04-26T18-38-41-019dcc28-d7b1-7233-9bf1-2d34c2752b42.jsonl",
+    );
+    let legacy_snapshot =
+        legacy_home.join("shell_snapshots/019dcc28-d7b1-7233-9bf1-2d34c2752b42.0001.sh");
+    tokio::fs::create_dir_all(legacy_rollout.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::create_dir_all(legacy_snapshot.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::write(&legacy_rollout, "{\"type\":\"session.opened\"}\n")
+        .await
+        .unwrap();
+    tokio::fs::write(&legacy_snapshot, "export PWD=/tmp/project\n")
+        .await
+        .unwrap();
+    tokio::fs::write(
+        legacy_home.join("history.jsonl"),
+        "{\"session\":\"legacy\"}\n",
+    )
+    .await
+    .unwrap();
+    tokio::fs::write(legacy_home.join("config.toml"), "[projects]\n")
+        .await
+        .unwrap();
+
+    let env = codex_env_for_active_account(root).await.unwrap();
+    let home = env.get("CODEX_HOME").unwrap();
+    let broker_home = codex_broker_home(root, account_id);
+    assert_eq!(home, &broker_home.to_string_lossy());
+    ensure_codex_auth_ready(Path::new(home)).await.unwrap();
+    assert_eq!(
+        tokio::fs::read_to_string(broker_home.join(
+            "sessions/2026/04/26/rollout-2026-04-26T18-38-41-019dcc28-d7b1-7233-9bf1-2d34c2752b42.jsonl",
+        ))
+        .await
+        .unwrap(),
+        "{\"type\":\"session.opened\"}\n"
+    );
+    assert_eq!(
+        tokio::fs::read_to_string(
+            broker_home.join("shell_snapshots/019dcc28-d7b1-7233-9bf1-2d34c2752b42.0001.sh",)
+        )
+        .await
+        .unwrap(),
+        "export PWD=/tmp/project\n"
+    );
+    assert_eq!(
+        tokio::fs::read_to_string(broker_home.join("history.jsonl"))
+            .await
+            .unwrap(),
+        "{\"session\":\"legacy\"}\n"
+    );
+    assert_eq!(
+        tokio::fs::read_to_string(broker_home.join("config.toml"))
+            .await
+            .unwrap(),
+        "[projects]\n"
+    );
+
+    #[cfg(unix)]
+    {
+        assert!(tokio::fs::symlink_metadata(broker_home.join("sessions"))
+            .await
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(
+            tokio::fs::symlink_metadata(broker_home.join("shell_snapshots"))
+                .await
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+    }
+
+    assert!(
+        !codex_runtime_home(root).join("auth.json").exists(),
+        "OAuth refresh tokens must not be copied into the shared runtime home"
+    );
+}
+
+#[tokio::test]
 async fn usage_hydration_migrates_raw_oauth_account_to_broker_home() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
