@@ -184,6 +184,45 @@ test("buildCtxCacheEnv normalizes sccache inputs when sccache is active", () => 
   }
 });
 
+test("buildCtxCacheEnv replaces unsafe inherited sccache sockets with a short socket path", () => {
+  const cwd = path.resolve(__dirname, "..", "..");
+  const volatileRoot = path.join(
+    os.tmpdir(),
+    "ctx-cache-roots-remote-real-xdg-fixture-with-deep-bundle-cache",
+    "home",
+    ".ctx",
+    "volatile",
+  );
+  const targetDir = path.join(
+    volatileRoot,
+    "cache",
+    "bundles",
+    ".build",
+    "cargo",
+    "linux-x86_64",
+  );
+  const unsafeSocket = path.join(
+    targetDir,
+    "sccache",
+    "server",
+    "sccache.sock",
+  );
+  const { env } = buildCtxCacheEnv({
+    cwd,
+    env: {
+      CTX_VOLATILE_ROOT: volatileRoot,
+      CARGO_TARGET_DIR: targetDir,
+      RUSTC_WRAPPER: "/usr/bin/sccache",
+      SCCACHE_SERVER_UDS: unsafeSocket,
+    },
+  });
+
+  if (process.platform !== "win32") {
+    assert.equal(env.SCCACHE_SERVER_UDS, resolveSccacheServerUds(targetDir));
+    assert.equal(Buffer.byteLength(env.SCCACHE_SERVER_UDS) < 100, true);
+  }
+});
+
 test("buildCtxCacheEnv disables sccache entirely when CTX_DISABLE_SCCACHE is enabled", () => {
   const cwd = path.resolve(__dirname, "..", "..");
   const volatileRoot = path.join(os.tmpdir(), "ctx-cache-roots-sccache-disabled");

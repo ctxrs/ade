@@ -8,6 +8,7 @@ const DEFAULT_EXTERNAL_CACHE_ROOT = "/Volumes/ctx-cache";
 const DEFAULT_INTERNAL_VOLATILE_ROOT = path.join(os.homedir(), ".ctx", "volatile");
 const DEFAULT_REPO_CACHE_SLUG = "ctx-monorepo";
 const CACHE_ROOT_MARKER_FILE = ".ctx-volatile-root.json";
+const SCCACHE_UNIX_SOCKET_PATH_LIMIT = 100;
 const LEGACY_TURBO_ENV_KEYS = Object.freeze([
   "CTX_CACHE_ENV_MANAGED_TURBO_CACHE_DIR",
   "TURBO_CACHE_DIR",
@@ -82,6 +83,14 @@ function appendSpaceSeparatedFlags(targetEnv, key, flags) {
 function resolveSccacheServerUds(targetPath) {
   const hash = crypto.createHash("sha1").update(path.resolve(targetPath)).digest("hex").slice(0, 12);
   return path.join("/tmp", `ctx-sccache-${hash}.sock`);
+}
+
+function shouldNormalizeSccacheServerUds(value) {
+  if (process.platform === "win32") {
+    return false;
+  }
+  const normalized = trimValue(value);
+  return !normalized || Buffer.byteLength(normalized) >= SCCACHE_UNIX_SOCKET_PATH_LIMIT;
 }
 
 function setDefaultEnvValue(targetEnv, key, value) {
@@ -605,7 +614,7 @@ function buildCtxCacheEnv({
     setDefaultEnvValue(resolvedEnv, "CTX_RUST_CACHE_SCCACHE", sccacheState);
     if (wrapperIsSccache) {
       setDefaultEnvValue(resolvedEnv, "SCCACHE_NO_DAEMON", "1");
-      if (process.platform !== "win32" && !trimValue(resolvedEnv.SCCACHE_SERVER_UDS)) {
+      if (shouldNormalizeSccacheServerUds(resolvedEnv.SCCACHE_SERVER_UDS)) {
         resolvedEnv.SCCACHE_SERVER_UDS = resolveSccacheServerUds(cargoTargetDir);
       }
       appendEnvPathListValue(resolvedEnv, "SCCACHE_BASEDIRS", [
