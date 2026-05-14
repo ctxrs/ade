@@ -47,6 +47,7 @@ pub(super) fn acquire_codex_oauth_authority_lock() -> Result<Option<File>> {
     let lock_path = codex_home.join(CODEX_OAUTH_AUTHORITY_LOCK_FILE);
     let file = OpenOptions::new()
         .create(true)
+        .truncate(false)
         .read(true)
         .write(true)
         .open(&lock_path)

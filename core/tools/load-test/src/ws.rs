@@ -13,7 +13,7 @@ use ctx_client::Client;
 use ctx_core::ids::{SessionId, WorkspaceId};
 use ctx_core::models::{
     SessionEventType, WorkspaceActiveSnapshotClientMessage, WorkspaceActiveSnapshotSessionReplay,
-    WorkspaceActiveSnapshotSessionSubscription,
+    WorkspaceActiveSnapshotSessionIntent, WorkspaceActiveSnapshotSessionSubscription,
 };
 
 use crate::metrics::{Metrics, PendingState};
@@ -177,6 +177,7 @@ pub(crate) async fn run_ws_replay_once(
         session_ids: Vec::new(),
         sessions: vec![WorkspaceActiveSnapshotSessionSubscription {
             session_id,
+            intent: Some(WorkspaceActiveSnapshotSessionIntent::Replay),
             replay: WorkspaceActiveSnapshotSessionReplay::Resume {
                 after_seq: 0,
                 after_projection_rev: 0,
