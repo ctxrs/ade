@@ -187,10 +187,18 @@ const loadTaskThoughtsV1Mock = vi.mocked(loadTaskThoughtsV1);
 const saveTaskThoughtsV1Mock = vi.mocked(saveTaskThoughtsV1);
 const SUPPORT_RACE_WAIT_TIMEOUT_MS = 5_000;
 const SUPPORT_RACE_TEST_TIMEOUT_MS = 30_000;
+const SUPERVISOR_ASYNC_WAIT_TIMEOUT_MS = 5_000;
 
 const flushSupportRace = async () => {
   await Promise.resolve();
   await new Promise((resolve) => setTimeout(resolve, 0));
+};
+
+const waitForSessionHeadCalls = async (count: number): Promise<void> => {
+  await waitForCondition(
+    () => getSessionHeadMock.mock.calls.length === count,
+    SUPERVISOR_ASYNC_WAIT_TIMEOUT_MS,
+  );
 };
 
 beforeEach(() => {
@@ -1193,7 +1201,7 @@ describe("SessionSupervisor", () => {
 
     await waitForCondition(() => Boolean(sup.getSnapshot().sessions[sessionId]));
     expect(sup.getSnapshot().sessions[sessionId]?.loadState).toBe("pending_hydration");
-    await waitForCondition(() => getSessionHeadMock.mock.calls.length === 1);
+    await waitForSessionHeadCalls(1);
     getSessionHeadMock.mockClear();
     getSessionHeadMock.mockImplementation(() => new Promise(() => {}));
 
@@ -1540,7 +1548,7 @@ describe("SessionSupervisor", () => {
     sup.openSession(sessionId, { mode: "active" });
 
     await waitForCondition(() => sup.getSnapshot().sessions[sessionId] != null);
-    await waitForCondition(() => getSessionHeadMock.mock.calls.length === 1);
+    await waitForSessionHeadCalls(1);
     getSessionHeadMock.mockClear();
 
     const now = new Date().toISOString();
@@ -2318,7 +2326,7 @@ describe("SessionSupervisor", () => {
     const sup = new SessionSupervisor();
     sup.openSession(sessionId, { mode: "active" });
 
-    await waitForCondition(() => getSessionHeadMock.mock.calls.length === 1);
+    await waitForSessionHeadCalls(1);
 
     const pendingEntry = sup.getSnapshot().sessions[sessionId];
     expect(pendingEntry?.freshness).toBe("bootstrap");
@@ -2542,7 +2550,7 @@ describe("SessionSupervisor", () => {
     getSessionHeadMock.mockImplementationOnce(() => secondHeadPromise);
     sup.openSession(sessionId, { mode: "active" });
 
-    await waitForCondition(() => getSessionHeadMock.mock.calls.length === 2);
+    await waitForSessionHeadCalls(2);
     await waitForCondition(() => {
       const entry = sup.getSnapshot().sessions[sessionId];
       return entry?.freshness === "bootstrap" && entry.lastEventSeq === 3;
@@ -2814,7 +2822,7 @@ describe("SessionSupervisor", () => {
 
     const sup = new SessionSupervisor();
     sup.openSession(sessionId, { mode: "active" });
-    await waitForCondition(() => getSessionHeadMock.mock.calls.length === 1);
+    await waitForSessionHeadCalls(1);
 
     const internals = asSupervisorInternals(sup);
     internals.handleReplicaPatches([
@@ -2917,7 +2925,7 @@ describe("SessionSupervisor", () => {
 
     const sup = new SessionSupervisor();
     sup.openSession(sessionId, { mode: "active" });
-    await waitForCondition(() => getSessionHeadMock.mock.calls.length === 1);
+    await waitForSessionHeadCalls(1);
 
     const internals = asSupervisorInternals(sup);
     internals.handleReplicaPatches([
@@ -3154,7 +3162,7 @@ describe("SessionSupervisor", () => {
     sup.setWorkspaceSnapshotState(activeState);
     sup.openSession(sessionId, { mode: "active" });
 
-    await waitForCondition(() => getSessionHeadMock.mock.calls.length === 1);
+    await waitForSessionHeadCalls(1);
     await waitForCondition(() => {
       const entry = sup.getSnapshot().sessions[sessionId];
       return (
@@ -3276,7 +3284,7 @@ describe("SessionSupervisor", () => {
     sup.setWorkspaceSnapshotState(activeState);
     sup.openSession(sessionId, { mode: "active" });
 
-    await waitForCondition(() => getSessionHeadMock.mock.calls.length === 1);
+    await waitForSessionHeadCalls(1);
     await waitForCondition(() => {
       const entry = sup.getSnapshot().sessions[sessionId];
       return (
@@ -3293,7 +3301,7 @@ describe("SessionSupervisor", () => {
     });
 
     sup.setWorkspaceSnapshotState(activeState);
-    await waitForCondition(() => getSessionHeadMock.mock.calls.length === 2);
+    await waitForSessionHeadCalls(2);
     expect(sup.getSnapshot().sessions[sessionId]?.freshness).toBe("recovering");
     expect(sup.getSnapshot().sessions[sessionId]?.loadState).toBe("recovering");
     expect(sup.getSnapshot().sessions[sessionId]?.messages.map((message) => message.id)).toEqual(["m-2"]);
@@ -3391,7 +3399,7 @@ describe("SessionSupervisor", () => {
     });
 
     sup.setWorkspaceSnapshotState(activeState);
-    await waitForCondition(() => getSessionHeadMock.mock.calls.length === 2);
+    await waitForSessionHeadCalls(2);
     await waitForCondition(() => {
       const entry = sup.getSnapshot().sessions[sessionId];
       return entry?.loadState === "live" && entry.freshness !== "recovering";
