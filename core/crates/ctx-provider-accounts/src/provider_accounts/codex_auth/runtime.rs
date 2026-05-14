@@ -221,7 +221,7 @@ pub(super) async fn migrate_owned_runtime_oauth_projection_to_broker_if_needed(
     let broker_home = codex_broker_home(data_root, account_id);
     let broker_auth = read_auth_value_from_home(&broker_home).await?;
     let broker_has_refresh_token = if let Some(broker_auth) = broker_auth.as_ref() {
-        if !codex_auth_has_supported_shape(&broker_auth) {
+        if !codex_auth_has_supported_shape(broker_auth) {
             anyhow::bail!(
                 "codex broker auth at {} has unsupported auth shape",
                 broker_home.join("auth.json").display()
