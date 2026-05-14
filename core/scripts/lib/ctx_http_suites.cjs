@@ -72,10 +72,9 @@ const CTX_HTTP_CHECKIN_FANOUT_TARGETS_BY_SUITE = Object.freeze({
     "unit_tests_daemon_http_and_ws_streaming",
   ],
   "unit-tests-provider-and-settings": [
-    "unit_tests_installer",
-    "unit_tests_provider_launch",
     "//core/crates/ctx-managed-installs:unit_tests",
     "//core/crates/ctx-provider-matrix:unit_tests",
+    "//core/crates/ctx-provider-runtime:unit_tests",
     "//core/crates/ctx-settings-model:unit_tests",
     "//core/crates/ctx-settings-service:unit_tests",
   ],
@@ -152,12 +151,9 @@ const CTX_HTTP_CHECKIN_FANOUT_TARGET_BATCHES_BY_SUITE = Object.freeze({
   ],
   "unit-tests-provider-and-settings": [
     [
-      "unit_tests_installer",
-      "unit_tests_provider_launch",
-    ],
-    [
       "//core/crates/ctx-managed-installs:unit_tests",
       "//core/crates/ctx-provider-matrix:unit_tests",
+      "//core/crates/ctx-provider-runtime:unit_tests",
       "//core/crates/ctx-settings-model:unit_tests",
       "//core/crates/ctx-settings-service:unit_tests",
     ],
