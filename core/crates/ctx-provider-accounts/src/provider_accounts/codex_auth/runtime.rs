@@ -219,24 +219,57 @@ pub(super) async fn migrate_owned_runtime_oauth_projection_to_broker_if_needed(
         return Ok(false);
     }
     let broker_home = codex_broker_home(data_root, account_id);
-    if let Some(broker_auth) = read_auth_value_from_home(&broker_home).await? {
+    let broker_auth = read_auth_value_from_home(&broker_home).await?;
+    let broker_has_refresh_token = if let Some(broker_auth) = broker_auth.as_ref() {
         if !codex_auth_has_supported_shape(&broker_auth) {
             anyhow::bail!(
                 "codex broker auth at {} has unsupported auth shape",
                 broker_home.join("auth.json").display()
             );
         }
-        if codex_auth_has_refresh_token(&broker_auth) {
+        codex_auth_has_refresh_token(broker_auth)
+    } else {
+        false
+    };
+
+    let runtime_home = codex_runtime_home(data_root);
+    let runtime_auth_path = runtime_home.join("auth.json");
+    let payload = match tokio::fs::read_to_string(&runtime_auth_path).await {
+        Ok(payload) => payload,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            if broker_has_refresh_token {
+                clear_runtime_auth_projection_if_owned_by(data_root, account_id).await?;
+            }
+            return Ok(false);
+        }
+        Err(err) => {
+            return Err(err)
+                .with_context(|| format!("reading codex auth at {}", runtime_auth_path.display()));
+        }
+    };
+    let auth: serde_json::Value = match serde_json::from_str(&payload) {
+        Ok(auth) => auth,
+        Err(_) if broker_has_refresh_token => {
+            clear_runtime_auth_projection_if_owned_by(data_root, account_id).await?;
+            return Ok(false);
+        }
+        Err(err) => {
+            return Err(err).with_context(|| {
+                format!("invalid codex auth JSON at {}", runtime_auth_path.display())
+            });
+        }
+    };
+    if !codex_auth_has_supported_shape(&auth) {
+        if broker_has_refresh_token {
             clear_runtime_auth_projection_if_owned_by(data_root, account_id).await?;
         }
         return Ok(false);
     }
-
-    let runtime_home = codex_runtime_home(data_root);
-    let Some(auth) = read_auth_value_from_home(&runtime_home).await? else {
+    if !codex_auth_has_refresh_token(&auth) {
         return Ok(false);
-    };
-    if !codex_auth_has_supported_shape(&auth) || !codex_auth_has_refresh_token(&auth) {
+    }
+    if broker_has_refresh_token {
+        clear_runtime_auth_projection_if_owned_by(data_root, account_id).await?;
         return Ok(false);
     }
 
