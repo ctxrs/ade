@@ -219,8 +219,16 @@ pub(super) async fn migrate_owned_runtime_oauth_projection_to_broker_if_needed(
         return Ok(false);
     }
     let broker_home = codex_broker_home(data_root, account_id);
-    if broker_home.join("auth.json").exists() {
-        clear_runtime_auth_projection_if_owned_by(data_root, account_id).await?;
+    if let Some(broker_auth) = read_auth_value_from_home(&broker_home).await? {
+        if !codex_auth_has_supported_shape(&broker_auth) {
+            anyhow::bail!(
+                "codex broker auth at {} has unsupported auth shape",
+                broker_home.join("auth.json").display()
+            );
+        }
+        if codex_auth_has_refresh_token(&broker_auth) {
+            clear_runtime_auth_projection_if_owned_by(data_root, account_id).await?;
+        }
         return Ok(false);
     }
 
