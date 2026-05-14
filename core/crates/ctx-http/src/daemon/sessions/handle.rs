@@ -59,7 +59,6 @@ pub(crate) enum SessionImageBlobStoreError {
 }
 
 pub(crate) struct WorkspaceStoreContext {
-    pub(crate) workspace_id: WorkspaceId,
     pub(crate) workspace: Workspace,
     pub(crate) store: Store,
 }
@@ -786,20 +785,6 @@ impl SessionsHandle {
             .await
     }
 
-    pub(crate) async fn delete_workspace_task_index(&self, task_id: TaskId) -> Result<()> {
-        self.state
-            .global_store()
-            .delete_workspace_task_index(task_id)
-            .await
-    }
-
-    pub(crate) async fn delete_workspace_session_index(&self, session_id: SessionId) -> Result<()> {
-        self.state
-            .global_store()
-            .delete_workspace_session_index(session_id)
-            .await
-    }
-
     pub(crate) async fn delete_workspace_worktree_index(
         &self,
         worktree_id: WorktreeId,
@@ -818,11 +803,7 @@ impl SessionsHandle {
             return Ok(None);
         };
         let store = self.store_for_workspace(workspace_id).await?;
-        Ok(Some(WorkspaceStoreContext {
-            workspace_id,
-            workspace,
-            store,
-        }))
+        Ok(Some(WorkspaceStoreContext { workspace, store }))
     }
 
     pub(in crate::daemon) async fn store_for_workspace(
@@ -1594,10 +1575,6 @@ impl SessionsHandle {
 
     pub(crate) async fn remember_session_meta(&self, session: &Session) {
         self.state.remember_session_meta(session).await;
-    }
-
-    pub(crate) async fn cleanup_session(&self, session_id: SessionId) {
-        self.state.cleanup_session(session_id).await;
     }
 
     pub(crate) async fn publish_event(&self, event: SessionEvent) {

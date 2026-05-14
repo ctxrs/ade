@@ -72,7 +72,7 @@ pub(super) async fn create_session_record(
         Ok(session) => Ok(session),
         Err(error) => {
             cleanup.cleanup_orphaned_worktree().await;
-            Err(TaskSessionCreateError::Internal(error.into()))
+            Err(TaskSessionCreateError::Internal(error))
         }
     }
 }

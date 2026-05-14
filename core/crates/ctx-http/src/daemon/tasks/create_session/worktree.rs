@@ -22,7 +22,7 @@ pub(super) async fn resolve_session_worktree_for_task(
         .workspaces
         .effective_execution_settings(workspace.id)
         .await
-        .map_err(|error| TaskSessionCreateError::Internal(error.into()))?;
+        .map_err(TaskSessionCreateError::Internal)?;
     let mut existing_worktree = None;
     let worktree_id = if let Some(worktree_id) = requested_worktree_id {
         let worktree_id = WorktreeId(
@@ -42,7 +42,7 @@ pub(super) async fn resolve_session_worktree_for_task(
                 .workspaces
                 .resolve_existing_worktree_execution(store, workspace, primary)
                 .await
-                .map_err(|error| TaskSessionCreateError::Internal(error.into()))?,
+                .map_err(TaskSessionCreateError::Internal)?,
         );
         primary
     } else {

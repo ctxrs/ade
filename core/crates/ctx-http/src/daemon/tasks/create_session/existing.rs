@@ -33,7 +33,7 @@ pub(super) async fn resolve_existing_requested_session(
         .sessions
         .get_workspace_id_for_session(session_id)
         .await
-        .map_err(|error| TaskSessionCreateError::Internal(error.into()))?;
+        .map_err(TaskSessionCreateError::Internal)?;
     let Some(existing_ws) = existing_ws else {
         return Ok(None);
     };
@@ -45,7 +45,7 @@ pub(super) async fn resolve_existing_requested_session(
     let existing = store
         .get_session(session_id)
         .await
-        .map_err(|error| TaskSessionCreateError::Internal(error.into()))?;
+        .map_err(TaskSessionCreateError::Internal)?;
     let Some(existing) = existing else {
         cleanup_created_worktree(handles, store, workspace, task.id, created_worktree_id).await;
         return Err(TaskSessionCreateError::Internal(anyhow::anyhow!(

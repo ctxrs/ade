@@ -33,7 +33,7 @@ pub(super) async fn seed_initial_prompt(
     if let Some(existing) = store
         .get_message(message_id)
         .await
-        .map_err(|error| TaskSessionCreateError::Internal(error.into()))?
+        .map_err(TaskSessionCreateError::Internal)?
     {
         if existing_initial_prompt_message_matches(&existing, session, turn_id, &prompt) {
             ensure_session_turn_for_initial_prompt(store, session.id, turn_id, &existing).await?;
@@ -60,7 +60,7 @@ pub(super) async fn seed_initial_prompt(
                 let Some(existing) = store
                     .get_message(message_id)
                     .await
-                    .map_err(|error| TaskSessionCreateError::Internal(error.into()))?
+                    .map_err(TaskSessionCreateError::Internal)?
                 else {
                     return Err(TaskSessionCreateError::Internal(anyhow::anyhow!(
                         "message insert conflicted but message row is missing"
@@ -77,7 +77,7 @@ pub(super) async fn seed_initial_prompt(
                     return Err(TaskSessionCreateError::Conflict);
                 }
             }
-            Err(error) => return Err(TaskSessionCreateError::Internal(error.into())),
+            Err(error) => return Err(TaskSessionCreateError::Internal(error)),
         };
 
         let event = store
@@ -89,19 +89,19 @@ pub(super) async fn seed_initial_prompt(
                 initial_prompt_user_event_payload(&saved, order_seq),
             )
             .await
-            .map_err(|error| TaskSessionCreateError::Internal(error.into()))?;
+            .map_err(TaskSessionCreateError::Internal)?;
         let start_seq = event.seq;
 
         let turn = initial_prompt_turn(session, ids, run_id, &saved, start_seq);
 
         if let Err(err) = store.insert_session_turn(turn).await {
             if !is_unique_constraint_violation(&err) {
-                return Err(TaskSessionCreateError::Internal(err.into()));
+                return Err(TaskSessionCreateError::Internal(err));
             }
             let existing = store
                 .get_session_turn_by_id(turn_id)
                 .await
-                .map_err(|error| TaskSessionCreateError::Internal(error.into()))?;
+                .map_err(TaskSessionCreateError::Internal)?;
             if let Some(existing) = existing {
                 let matches =
                     existing.session_id == session.id && existing.user_message_id == Some(saved.id);
@@ -143,7 +143,7 @@ async fn ensure_session_turn_for_initial_prompt(
     let existing_turn = store
         .get_session_turn_by_id(turn_id)
         .await
-        .map_err(|error| TaskSessionCreateError::Internal(error.into()))?;
+        .map_err(TaskSessionCreateError::Internal)?;
     if let Some(existing) = existing_turn {
         let matches =
             existing.session_id == session_id && existing.user_message_id == Some(message.id);
@@ -157,12 +157,12 @@ async fn ensure_session_turn_for_initial_prompt(
         ctx_session_service::message_delivery::build_user_message_turn(message, turn_id, None);
     if let Err(err) = store.insert_session_turn(turn).await {
         if !is_unique_constraint_violation(&err) {
-            return Err(TaskSessionCreateError::Internal(err.into()));
+            return Err(TaskSessionCreateError::Internal(err));
         }
         let existing = store
             .get_session_turn_by_id(turn_id)
             .await
-            .map_err(|error| TaskSessionCreateError::Internal(error.into()))?;
+            .map_err(TaskSessionCreateError::Internal)?;
         if let Some(existing) = existing {
             let matches =
                 existing.session_id == session_id && existing.user_message_id == Some(message.id);

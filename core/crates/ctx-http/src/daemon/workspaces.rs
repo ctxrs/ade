@@ -661,26 +661,6 @@ impl WorkspacesHandle {
         self.state.emit_workspace_task_upsert(task_id).await
     }
 
-    pub(crate) async fn emit_workspace_task_delete(
-        &self,
-        workspace_id: WorkspaceId,
-        task_id: TaskId,
-    ) {
-        self.state
-            .emit_workspace_task_delete(workspace_id, task_id)
-            .await;
-    }
-
-    pub(crate) async fn emit_workspace_archived_task_delete(
-        &self,
-        workspace_id: WorkspaceId,
-        task_id: TaskId,
-    ) {
-        self.state
-            .emit_workspace_archived_task_delete(workspace_id, task_id)
-            .await;
-    }
-
     pub(crate) async fn workspace_harness_container_status(
         &self,
         workspace_id: WorkspaceId,

@@ -63,6 +63,6 @@ pub(super) async fn create_session_execution_worktree(
         .workspaces
         .persist_provisioned_worktree(store, workspace, worktree, sandbox_binding)
         .await
-        .map_err(|error| TaskSessionCreateError::Internal(error.into()))?;
+        .map_err(TaskSessionCreateError::Internal)?;
     Ok(worktree_id)
 }

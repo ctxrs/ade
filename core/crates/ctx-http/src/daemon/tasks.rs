@@ -189,7 +189,7 @@ impl TasksHandle {
         let sessions = store
             .list_all_sessions_for_task(task_id)
             .await
-            .map_err(|error| TaskLifecycleError::Internal(error.into()))?;
+            .map_err(TaskLifecycleError::Internal)?;
         let session_ids: Vec<SessionId> = sessions.iter().map(|session| session.id).collect();
         for session in &sessions {
             self.state.cleanup_session(session.id).await;
@@ -199,7 +199,7 @@ impl TasksHandle {
         let updated = store
             .archive_task(task_id)
             .await
-            .map_err(|error| TaskLifecycleError::Internal(error.into()))?;
+            .map_err(TaskLifecycleError::Internal)?;
         if !updated {
             return Err(TaskLifecycleError::NotFound);
         }
@@ -266,7 +266,7 @@ impl TasksHandle {
         let task = store
             .get_task_with_activity(task_id)
             .await
-            .map_err(|error| TaskLifecycleError::Internal(error.into()))?
+            .map_err(TaskLifecycleError::Internal)?
             .ok_or(TaskLifecycleError::NotFound)?;
         let _ = self
             .state
@@ -313,7 +313,7 @@ impl TasksHandle {
                     worktree_id = %worktree.id.0,
                     "failed to recreate worktree: {error:#}"
                 );
-                TaskLifecycleError::Internal(error.into())
+                TaskLifecycleError::Internal(error)
             })?;
         }
 
@@ -321,7 +321,7 @@ impl TasksHandle {
             let sandbox_binding = store
                 .get_sandbox_binding(worktree.id)
                 .await
-                .map_err(|error| TaskLifecycleError::Internal(error.into()))?;
+                .map_err(TaskLifecycleError::Internal)?;
             if let Some(binding) = sandbox_binding.as_ref() {
                 let refreshed_binding = workspaces::rematerialize_sandbox_binding_for_worktree(
                     &self.state,
@@ -341,7 +341,7 @@ impl TasksHandle {
                 store
                     .upsert_sandbox_binding(refreshed_binding)
                     .await
-                    .map_err(|error| TaskLifecycleError::Internal(error.into()))?;
+                    .map_err(TaskLifecycleError::Internal)?;
             }
             if let Err(error) = workspaces::ensure_worktree_attachment_mounts_if_materialized(
                 self.state.as_ref(),
@@ -380,14 +380,14 @@ impl TasksHandle {
         let updated = store
             .unarchive_task(task_id)
             .await
-            .map_err(|error| TaskLifecycleError::Internal(error.into()))?;
+            .map_err(TaskLifecycleError::Internal)?;
         if !updated {
             return Err(TaskLifecycleError::NotFound);
         }
         let task = store
             .get_task_with_activity(task_id)
             .await
-            .map_err(|error| TaskLifecycleError::Internal(error.into()))?
+            .map_err(TaskLifecycleError::Internal)?
             .ok_or(TaskLifecycleError::NotFound)?;
         let _ = self
             .state
@@ -428,12 +428,12 @@ impl TasksHandle {
         let sessions = store
             .list_all_sessions_for_task(task_id)
             .await
-            .map_err(|error| TaskLifecycleError::Internal(error.into()))?;
+            .map_err(TaskLifecycleError::Internal)?;
         let cleanup_targets = collect_task_delete_cleanup_targets(
             self.state.as_ref(),
-            &store,
-            &workspace,
-            &task,
+            store,
+            workspace,
+            task,
             &sessions,
         )
         .await;
@@ -444,14 +444,14 @@ impl TasksHandle {
         let deleted = store
             .delete_task(task_id)
             .await
-            .map_err(|error| TaskLifecycleError::Internal(error.into()))?;
+            .map_err(TaskLifecycleError::Internal)?;
         if !deleted {
             return Err(TaskLifecycleError::NotFound);
         }
 
         let cleanup_errors = workspaces::cleanup_task_worktrees(
             self.state.as_ref(),
-            &workspace,
+            workspace,
             task_id,
             &cleanup_targets,
             BranchCleanupErrorMode::BestEffort,
@@ -467,8 +467,8 @@ impl TasksHandle {
         let cleanup_succeeded = cleanup_errors.is_empty();
         delete_unused_worktree_records_after_cleanup(
             self.state.as_ref(),
-            &store,
-            &task,
+            store,
+            task,
             &cleanup_targets,
             cleanup_succeeded,
         )
@@ -542,7 +542,7 @@ impl TasksHandle {
         let Some(task) = store
             .get_task(task_id)
             .await
-            .map_err(|error| TaskLifecycleError::Internal(error.into()))?
+            .map_err(TaskLifecycleError::Internal)?
         else {
             return Ok(None);
         };
@@ -551,7 +551,7 @@ impl TasksHandle {
             .global_store()
             .get_workspace(task.workspace_id)
             .await
-            .map_err(|error| TaskLifecycleError::Internal(error.into()))?;
+            .map_err(TaskLifecycleError::Internal)?;
         let Some(workspace) = workspace else {
             return Ok(None);
         };
@@ -683,32 +683,30 @@ async fn delete_unused_worktree_records_after_cleanup(
     }
 }
 
-fn load_archive_worktrees<'a>(
-    store: &'a Store,
-    task: &'a Task,
-    sessions: &'a [Session],
-) -> impl std::future::Future<Output = Result<Vec<Worktree>, TaskLifecycleError>> + 'a {
-    async move {
-        let mut worktree_ids: HashSet<WorktreeId> =
-            sessions.iter().map(|session| session.worktree_id).collect();
-        if let Some(primary_worktree_id) = task.primary_worktree_id {
-            worktree_ids.insert(primary_worktree_id);
-        }
-        let mut seen = HashSet::new();
-        let mut worktrees = Vec::new();
-        for worktree_id in worktree_ids {
-            if !seen.insert(worktree_id) {
-                continue;
-            }
-            let worktree = store
-                .get_worktree(worktree_id)
-                .await
-                .map_err(|error| TaskLifecycleError::Internal(error.into()))?
-                .ok_or(TaskLifecycleError::NotFound)?;
-            worktrees.push(worktree);
-        }
-        Ok(worktrees)
+async fn load_archive_worktrees(
+    store: &Store,
+    task: &Task,
+    sessions: &[Session],
+) -> Result<Vec<Worktree>, TaskLifecycleError> {
+    let mut worktree_ids: HashSet<WorktreeId> =
+        sessions.iter().map(|session| session.worktree_id).collect();
+    if let Some(primary_worktree_id) = task.primary_worktree_id {
+        worktree_ids.insert(primary_worktree_id);
     }
+    let mut seen = HashSet::new();
+    let mut worktrees = Vec::new();
+    for worktree_id in worktree_ids {
+        if !seen.insert(worktree_id) {
+            continue;
+        }
+        let worktree = store
+            .get_worktree(worktree_id)
+            .await
+            .map_err(TaskLifecycleError::Internal)?
+            .ok_or(TaskLifecycleError::NotFound)?;
+        worktrees.push(worktree);
+    }
+    Ok(worktrees)
 }
 
 struct UnarchiveWorktreePlan {
@@ -730,7 +728,7 @@ async fn load_unarchive_worktree_plan(
     let sessions = store
         .list_sessions_for_task(task_id)
         .await
-        .map_err(|error| TaskLifecycleError::Internal(error.into()))?;
+        .map_err(TaskLifecycleError::Internal)?;
     let session_ids: Vec<SessionId> = sessions.iter().map(|session| session.id).collect();
     let mut worktree_ids: HashSet<WorktreeId> =
         sessions.iter().map(|session| session.worktree_id).collect();
@@ -741,7 +739,7 @@ async fn load_unarchive_worktree_plan(
         let worktree = store
             .get_worktree(worktree_id)
             .await
-            .map_err(|error| TaskLifecycleError::Internal(error.into()))?
+            .map_err(TaskLifecycleError::Internal)?
             .ok_or(TaskLifecycleError::NotFound)?;
         if let Some(root) =
             workspaces::managed_worktree_root(handle.state.as_ref(), workspace, &worktree)
