@@ -295,7 +295,7 @@ test("updater Linux proof targets storage channel for stable dry-run proofs", ()
   assert.match(script, /daemon\.lock/);
   assert.equal(
     script.match(/^\s*stop_proof_daemons$/gm)?.length,
-    3,
+    4,
   );
   assert.match(script, /CTX_DESKTOP_APP_PATH="\$\{bootstrap_automation_app_path\}"/);
   assert.equal(
