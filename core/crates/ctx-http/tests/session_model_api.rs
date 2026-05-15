@@ -249,13 +249,13 @@ async fn set_session_model_updates_session_and_appends_init_event() {
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert("fake-set-model".to_string(), adapter.clone());
 
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:0",
     );
-    let app = common::router(state);
+    let app = common::router_for_daemon(&daemon);
     let server = common::spawn_http_server(app).await;
     let base = &server.base_url;
     let client = &server.client;
@@ -395,13 +395,13 @@ async fn set_session_model_skips_adapter_when_session_is_not_live() {
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert("fake-set-model".to_string(), adapter.clone());
 
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:0",
     );
-    let app = common::router(state);
+    let app = common::router_for_daemon(&daemon);
     let server = common::spawn_http_server(app).await;
     let base = &server.base_url;
     let client = &server.client;
@@ -476,13 +476,13 @@ async fn set_session_model_returns_structured_error_when_live_switch_fails() {
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert("fake-set-model".to_string(), adapter);
 
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:0",
     );
-    let app = common::router(state);
+    let app = common::router_for_daemon(&daemon);
     let server = common::spawn_http_server(app).await;
     let base = &server.base_url;
     let client = &server.client;
@@ -538,13 +538,13 @@ async fn create_session_splits_legacy_combined_model_id_into_reasoning_effort() 
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert("fake-set-model".to_string(), adapter);
 
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:0",
     );
-    let app = common::router(state);
+    let app = common::router_for_daemon(&daemon);
     let server = common::spawn_http_server(app).await;
     let base = &server.base_url;
     let client = &server.client;
@@ -581,13 +581,13 @@ async fn set_session_model_persists_reasoning_effort_and_forwards_full_model_id(
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert("fake-set-model".to_string(), adapter.clone());
 
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:0",
     );
-    let app = common::router(state);
+    let app = common::router_for_daemon(&daemon);
     let server = common::spawn_http_server(app).await;
     let base = &server.base_url;
     let client = &server.client;
@@ -766,13 +766,13 @@ async fn assert_live_crp_session_model_switch_case(
         .await
         .expect("set task primary session");
 
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:0",
     );
-    state.test_with_provider_options_cache(|cache| {
+    daemon.test_with_provider_options_cache(|cache| {
             cache.insert(
                 format!("{}/host/{provider_id}", workspace.id.0),
                 CachedProviderOptions {
@@ -800,7 +800,7 @@ async fn assert_live_crp_session_model_switch_case(
             );
         })
         .await;
-    let app = common::router(state);
+    let app = common::router_for_daemon(&daemon);
     let server = common::spawn_http_server(app).await;
     let base = &server.base_url;
     let client = &server.client;
@@ -943,13 +943,13 @@ async fn set_session_model_allows_explicit_model_outside_cached_catalog() {
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert("fake-set-model".to_string(), adapter.clone());
 
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
     let server = common::spawn_http_server(app).await;
     let base = &server.base_url;
     let client = &server.client;
@@ -964,7 +964,7 @@ async fn set_session_model_allows_explicit_model_outside_cached_catalog() {
         .await
         .expect("workspace json");
 
-    state
+    daemon
         .test_with_provider_options_cache(|cache| {
             cache.insert(
                 format!("{}/host/fake-set-model", workspace.id.0),
