@@ -1,4 +1,5 @@
 use super::*;
+use ctx_daemon::test_support::TestDaemon;
 use ctx_providers::adapters::{
     ProviderAdapter, ProviderHealth, ProviderProcessInfo, ProviderRestartMode, ProviderStatus,
     RunHandle, TurnInput,
@@ -11,32 +12,34 @@ use std::path::PathBuf;
 async fn codex_login_persistence_requires_auth_file() {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
+    let daemon = TestDaemon::new(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),
         "http://127.0.0.1:4399".to_string(),
         None,
-    ));
+    );
     let account_id = "acct-missing-auth";
-    provider_accounts::ensure_codex_account_dir(state.test_data_root(), account_id)
+    provider_accounts::ensure_codex_account_dir(daemon.data_root(), account_id)
         .await
         .unwrap();
 
-    let err =
-        persist_successful_codex_login(&state, account_id, "Missing Auth".to_string(), None, None)
-            .await
-            .unwrap_err();
+    let err = daemon
+        .handle()
+        .providers()
+        .persist_successful_codex_login(account_id, "Missing Auth".to_string(), None, None)
+        .await
+        .unwrap_err();
 
     assert!(err
         .to_string()
         .contains("missing persisted codex auth file"));
-    let registry = provider_accounts::load_codex_registry(state.test_data_root())
+    let registry = provider_accounts::load_codex_registry(daemon.data_root())
         .await
         .unwrap();
     assert!(registry.accounts.is_empty());
     assert!(registry.active_account_id.is_none());
-    assert!(!provider_accounts::codex_broker_home(state.test_data_root(), account_id).exists());
+    assert!(!provider_accounts::codex_broker_home(daemon.data_root(), account_id).exists());
 }
 
 struct RestartFailingAdapter;
@@ -89,7 +92,7 @@ impl ProviderAdapter for RestartFailingAdapter {
 async fn codex_login_persistence_rolls_back_when_restart_fails() {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
+    let daemon = TestDaemon::new(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::from([(
@@ -98,12 +101,11 @@ async fn codex_login_persistence_rolls_back_when_restart_fails() {
         )]),
         "http://127.0.0.1:4399".to_string(),
         None,
-    ));
+    );
     let account_id = "acct-restart-fails";
-    let account_dir =
-        provider_accounts::ensure_codex_account_dir(state.test_data_root(), account_id)
-            .await
-            .unwrap();
+    let account_dir = provider_accounts::ensure_codex_account_dir(daemon.data_root(), account_id)
+        .await
+        .unwrap();
     tokio::fs::write(
         account_dir.join("auth.json"),
         "{\"tokens\":{\"access_token\":\"token\",\"refresh_token\":\"refresh\"}}",
@@ -111,18 +113,20 @@ async fn codex_login_persistence_rolls_back_when_restart_fails() {
     .await
     .unwrap();
 
-    let err = persist_successful_codex_login(
-        &state,
-        account_id,
-        "Restart Fails".to_string(),
-        Some("restart@example.com".to_string()),
-        None,
-    )
-    .await
-    .expect_err("restart failure should bubble up");
+    let err = daemon
+        .handle()
+        .providers()
+        .persist_successful_codex_login(
+            account_id,
+            "Restart Fails".to_string(),
+            Some("restart@example.com".to_string()),
+            None,
+        )
+        .await
+        .expect_err("restart failure should bubble up");
     assert!(!err.to_string().is_empty());
 
-    let registry = provider_accounts::load_codex_registry(state.test_data_root())
+    let registry = provider_accounts::load_codex_registry(daemon.data_root())
         .await
         .unwrap();
     assert!(registry.accounts.is_empty());
@@ -133,18 +137,17 @@ async fn codex_login_persistence_rolls_back_when_restart_fails() {
 async fn codex_login_persistence_removes_account_home_auth_after_secret_ingest() {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
+    let daemon = TestDaemon::new(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),
         "http://127.0.0.1:4399".to_string(),
         None,
-    ));
+    );
     let account_id = "acct-secret-store";
-    let account_dir =
-        provider_accounts::ensure_codex_account_dir(state.test_data_root(), account_id)
-            .await
-            .unwrap();
+    let account_dir = provider_accounts::ensure_codex_account_dir(daemon.data_root(), account_id)
+        .await
+        .unwrap();
     tokio::fs::write(
         account_dir.join("auth.json"),
         "{\"tokens\":{\"access_token\":\"token\",\"refresh_token\":\"refresh\"}}",
@@ -152,17 +155,19 @@ async fn codex_login_persistence_removes_account_home_auth_after_secret_ingest()
     .await
     .unwrap();
 
-    persist_successful_codex_login(
-        &state,
-        account_id,
-        "Secret Store".to_string(),
-        Some("secret@example.com".to_string()),
-        Some("pro".to_string()),
-    )
-    .await
-    .unwrap();
+    daemon
+        .handle()
+        .providers()
+        .persist_successful_codex_login(
+            account_id,
+            "Secret Store".to_string(),
+            Some("secret@example.com".to_string()),
+            Some("pro".to_string()),
+        )
+        .await
+        .unwrap();
 
-    let registry = provider_accounts::load_codex_registry(state.test_data_root())
+    let registry = provider_accounts::load_codex_registry(daemon.data_root())
         .await
         .unwrap();
     let entry = registry
@@ -172,11 +177,9 @@ async fn codex_login_persistence_removes_account_home_auth_after_secret_ingest()
         .expect("persisted account");
     let secret_ref = entry.secret_ref.as_deref().expect("secret_ref");
     assert_eq!(registry.active_account_id.as_deref(), Some(account_id));
-    assert!(
-        provider_accounts::codex_secrets_root(state.test_data_root())
-            .join(secret_ref)
-            .exists()
-    );
+    assert!(provider_accounts::codex_secrets_root(daemon.data_root())
+        .join(secret_ref)
+        .exists());
     assert!(tokio::fs::metadata(account_dir.join("auth.json"))
         .await
         .is_err());

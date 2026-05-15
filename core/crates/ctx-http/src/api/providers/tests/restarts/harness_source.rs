@@ -1,8 +1,8 @@
 use super::*;
 use ctx_provider_runtime::{CachedProviderOptions, CachedProviderVerify};
 
-async fn insert_options_cache(state: &Arc<DaemonState>, key: &str, value: serde_json::Value) {
-    state
+async fn insert_options_cache(daemon: &TestDaemon, key: &str, value: serde_json::Value) {
+    daemon
         .test_with_provider_options_cache(|cache| {
             cache.insert(
                 key.to_string(),
@@ -15,8 +15,8 @@ async fn insert_options_cache(state: &Arc<DaemonState>, key: &str, value: serde_
         .await;
 }
 
-async fn insert_verify_cache(state: &Arc<DaemonState>, key: &str, value: serde_json::Value) {
-    state
+async fn insert_verify_cache(daemon: &TestDaemon, key: &str, value: serde_json::Value) {
+    daemon
         .test_with_provider_verify_cache(|cache| {
             cache.insert(
                 key.to_string(),
@@ -33,41 +33,41 @@ async fn insert_verify_cache(state: &Arc<DaemonState>, key: &str, value: serde_j
 async fn select_provider_harness_source_invalidates_only_matching_provider_probe_caches() {
     let temp = tempfile::tempdir().expect("tempdir");
     let stores = StoreManager::open(temp.path()).await.expect("open stores");
-    let state = Arc::new(DaemonState::new(
+    let daemon = TestDaemon::new(
         temp.path().to_path_buf(),
         stores,
         HashMap::new(),
         "http://127.0.0.1:4310".to_string(),
         None,
-    ));
+    );
 
     insert_options_cache(
-        &state,
+        &daemon,
         "ws-a/host/codex",
         serde_json::json!({ "provider_id": "codex", "probe_ok": false }),
     )
     .await;
     insert_options_cache(
-        &state,
+        &daemon,
         "ws-b/container/claude-crp",
         serde_json::json!({ "provider_id": "claude-crp", "probe_ok": true }),
     )
     .await;
     insert_verify_cache(
-        &state,
+        &daemon,
         "ws-a/host/codex",
         serde_json::json!({ "status": "error" }),
     )
     .await;
     insert_verify_cache(
-        &state,
+        &daemon,
         "ws-b/container/claude-crp",
         serde_json::json!({ "status": "ok" }),
     )
     .await;
 
     let Json(config) = select_provider_harness_source(
-        State(ctx_daemon::daemon::DaemonHandle::new(Arc::clone(&state)).providers()),
+        State(daemon.handle().providers()),
         Path("codex".to_string()),
         Json(SelectHarnessSourceReq {
             source_kind: HarnessSourceKind::Subscription,
@@ -80,7 +80,7 @@ async fn select_provider_harness_source_invalidates_only_matching_provider_probe
     assert_eq!(config.provider_id, "codex");
     assert_eq!(config.selected_source_kind, HarnessSourceKind::Subscription);
 
-    let (codex_options_cached, claude_options_cached) = state
+    let (codex_options_cached, claude_options_cached) = daemon
         .test_with_provider_options_cache(|cache| {
             (
                 cache.contains_key("ws-a/host/codex"),
@@ -91,7 +91,7 @@ async fn select_provider_harness_source_invalidates_only_matching_provider_probe
     assert!(!codex_options_cached);
     assert!(claude_options_cached);
 
-    let (codex_verify_cached, claude_verify_cached) = state
+    let (codex_verify_cached, claude_verify_cached) = daemon
         .test_with_provider_verify_cache(|cache| {
             (
                 cache.contains_key("ws-a/host/codex"),

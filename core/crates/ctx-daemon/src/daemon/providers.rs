@@ -163,6 +163,14 @@ impl ProvidersHandle {
             .await
     }
 
+    pub async fn restart_provider_for_auth_change(
+        &self,
+        provider_id: &str,
+        reason: &str,
+    ) -> anyhow::Result<()> {
+        restart_provider_for_auth_change(&self.state, provider_id, reason).await
+    }
+
     pub async fn install_target_for_workspace(
         &self,
         workspace_id: WorkspaceId,

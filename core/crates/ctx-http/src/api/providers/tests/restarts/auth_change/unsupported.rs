@@ -5,20 +5,23 @@ use super::*;
 async fn restart_provider_for_auth_change_skips_adapters_without_drain_restart() {
     let fixture =
         fixture_with_adapter(Arc::new(UnsupportedRestartAdapter) as Arc<dyn ProviderAdapter>).await;
-    let state = Arc::clone(&fixture.state);
+    let daemon = &fixture.daemon;
 
     insert_options_cache(
-        &state,
+        daemon,
         "ws-a/host/codex",
         serde_json::json!({ "provider_id": "codex", "probe_ok": false }),
     )
     .await;
 
-    restart_provider_for_auth_change(&state, "codex", "test auth updated")
+    daemon
+        .handle()
+        .providers()
+        .restart_provider_for_auth_change("codex", "test auth updated")
         .await
         .expect("unsupported restart should be skipped");
 
-    let options_cached = state
+    let options_cached = daemon
         .test_with_provider_options_cache(|cache| cache.contains_key("ws-a/host/codex"))
         .await;
     assert!(!options_cached);

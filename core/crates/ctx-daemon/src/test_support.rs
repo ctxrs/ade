@@ -4,7 +4,8 @@ use std::sync::{Arc, OnceLock};
 
 use ctx_core::ids::{SessionId, WorkspaceId, WorktreeId};
 use ctx_core::models::Session;
-use ctx_provider_runtime::provider_usage;
+use ctx_provider_install::install_state::{InstallId, InstallProgressEvent, InstallTarget};
+use ctx_provider_runtime::{provider_usage, CachedProviderOptions, CachedProviderVerify};
 use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
 use ctx_storage_admission::StorageGuardStatus;
 use ctx_store::{Store, StoreManager};
@@ -181,6 +182,32 @@ impl TestDaemon {
         f: impl FnOnce(&mut HashMap<String, provider_usage::ProviderUsageSnapshot>) -> R,
     ) -> R {
         self.state.test_with_provider_usage_cache(f).await
+    }
+
+    pub async fn test_with_provider_options_cache<R>(
+        &self,
+        f: impl FnOnce(&mut HashMap<String, CachedProviderOptions>) -> R,
+    ) -> R {
+        self.state.test_with_provider_options_cache(f).await
+    }
+
+    pub async fn test_with_provider_verify_cache<R>(
+        &self,
+        f: impl FnOnce(&mut HashMap<String, CachedProviderVerify>) -> R,
+    ) -> R {
+        self.state.test_with_provider_verify_cache(f).await
+    }
+
+    pub async fn start_install(
+        &self,
+        provider_id: String,
+        target: Option<InstallTarget>,
+    ) -> (InstallId, bool) {
+        self.state.start_install(provider_id, target).await
+    }
+
+    pub async fn emit_install_event(&self, install_id: InstallId, event: InstallProgressEvent) {
+        self.state.emit_install_event(install_id, event).await;
     }
 
     pub async fn provider_login_session_caches_empty(&self) -> bool {

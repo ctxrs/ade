@@ -4,19 +4,19 @@ use super::*;
 async fn get_install_statuses_returns_known_and_missing_installs_in_request_order() {
     let temp = tempfile::tempdir().expect("tempdir");
     let stores = StoreManager::open(temp.path()).await.expect("open stores");
-    let state = Arc::new(DaemonState::new(
+    let daemon = TestDaemon::new(
         temp.path().to_path_buf(),
         stores,
         HashMap::new(),
         "http://127.0.0.1:4310".to_string(),
         None,
-    ));
+    );
 
-    let (install_id, started_new) = state
+    let (install_id, started_new) = daemon
         .start_install("codex".to_string(), Some(InstallTarget::Container))
         .await;
     assert!(started_new);
-    state
+    daemon
         .emit_install_event(
             install_id,
             InstallProgressEvent {
@@ -37,7 +37,7 @@ async fn get_install_statuses_returns_known_and_missing_installs_in_request_orde
     let missing_install_id = InstallId::new_v4();
 
     let Json(resp) = get_install_statuses(
-        State(ctx_daemon::daemon::DaemonHandle::new(state).providers()),
+        State(daemon.handle().providers()),
         Json(GetInstallStatusesReq {
             install_ids: vec![install_id.to_string(), missing_install_id.to_string()],
         }),
@@ -69,16 +69,16 @@ async fn get_install_statuses_returns_known_and_missing_installs_in_request_orde
 async fn get_install_statuses_rejects_invalid_install_ids() {
     let temp = tempfile::tempdir().expect("tempdir");
     let stores = StoreManager::open(temp.path()).await.expect("open stores");
-    let state = Arc::new(DaemonState::new(
+    let daemon = TestDaemon::new(
         temp.path().to_path_buf(),
         stores,
         HashMap::new(),
         "http://127.0.0.1:4310".to_string(),
         None,
-    ));
+    );
 
     let err = get_install_statuses(
-        State(ctx_daemon::daemon::DaemonHandle::new(state).providers()),
+        State(daemon.handle().providers()),
         Json(GetInstallStatusesReq {
             install_ids: vec!["not-a-uuid".to_string()],
         }),
