@@ -13,13 +13,13 @@ async fn assistant_chunks_are_stream_only() {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
 
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (_task, session) =
@@ -34,7 +34,7 @@ async fn assistant_chunks_are_stream_only() {
     .await;
     assert_eq!(status, StatusCode::OK);
 
-    let store = state.store_for_session(session.id).await.unwrap();
+    let store = daemon.store_for_session(session.id).await.unwrap();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
     loop {
         let events = store.list_session_events(session.id).await.unwrap();
