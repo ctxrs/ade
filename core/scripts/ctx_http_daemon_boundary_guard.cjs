@@ -144,6 +144,7 @@ const sessionFixtureStoreFacadeTestRoots = [
   "core/crates/ctx-http/src/lib_tests/session_head_ctx_ui_sized_http/",
   "core/crates/ctx-http/src/lib_tests/session_head_large_http.rs",
   "core/crates/ctx-http/src/lib_tests/session_head_large_http/",
+  "core/crates/ctx-http/tests/task_default_session_http.rs",
 ];
 
 const API_RAW_DAEMON_PATTERNS = [
@@ -356,6 +357,10 @@ const SESSION_FIXTURE_TEST_STORE_ACCESS_PATTERNS = [
   {
     name: "direct session fixture task store access",
     regex: /\.store_for_task\s*\(/,
+  },
+  {
+    name: "direct task session creation lock access",
+    regex: /\.task_session_creation_lock\s*\(/,
   },
   {
     name: "direct session fixture StoreManager access",

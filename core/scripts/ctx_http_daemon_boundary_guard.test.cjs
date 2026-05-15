@@ -750,6 +750,7 @@ test("daemon boundary guard rejects direct session fixture store access", () => 
         daemon.store_for_workspace(workspace_id).await?;
         daemon.uncached_store_for_workspace(workspace_id).await?;
         daemon.store_for_task(task_id).await?;
+        daemon.task_session_creation_lock(task_id).await;
         daemon.stores().global().await?;
         stores.global().await?;
         stores.workspace(workspace_id).await?;
@@ -766,6 +767,7 @@ test("daemon boundary guard rejects direct session fixture store access", () => 
       "direct session fixture workspace store access",
       "direct session fixture uncached workspace store access",
       "direct session fixture task store access",
+      "direct task session creation lock access",
       "direct session fixture StoreManager access",
       "direct session fixture StoreManager global access",
       "direct session fixture StoreManager workspace access",
@@ -788,6 +790,7 @@ test("daemon boundary guard scopes session fixture store facade roots", () => {
     "core/crates/ctx-http/src/lib_tests/session_head_ctx_ui_sized_http/seed/events.rs",
     "core/crates/ctx-http/src/lib_tests/session_head_large_http.rs",
     "core/crates/ctx-http/src/lib_tests/session_head_large_http/seed.rs",
+    "core/crates/ctx-http/tests/task_default_session_http.rs",
   ]) {
     assert.deepEqual(
       sessionFixtureStorePatternsForPath(filePath),

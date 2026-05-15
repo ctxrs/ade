@@ -60,6 +60,18 @@ pub struct CtxUiSizedToolSummaryProbe {
     pub oldest_loaded_order_seq: i64,
 }
 
+pub struct TaskDefaultSessionSnapshot {
+    pub task: Option<Task>,
+    pub sessions: Vec<Session>,
+    pub task_count: usize,
+    pub worktree_count: usize,
+}
+
+pub struct TaskSessionCreationLockGuardForTest {
+    _lock: Arc<tokio::sync::Mutex<()>>,
+    _guard: tokio::sync::OwnedMutexGuard<()>,
+}
+
 struct CtxUiTurnSeed {
     index: i64,
     run_id: String,
@@ -510,6 +522,112 @@ impl TestDaemon {
 
     pub async fn task_session_creation_lock(&self, task_id: TaskId) -> Arc<tokio::sync::Mutex<()>> {
         self.state.task_session_creation_lock(task_id).await
+    }
+
+    pub async fn seed_task_default_workspace_for_test(
+        &self,
+        name: &str,
+        root_path: &Path,
+        vcs_kind: VcsKind,
+    ) -> anyhow::Result<Workspace> {
+        let workspace = self
+            .state
+            .global_store()
+            .create_workspace(
+                name.to_string(),
+                root_path.to_string_lossy().to_string(),
+                vcs_kind,
+            )
+            .await?;
+        let _ = self.state.store_for_workspace(workspace.id).await?;
+        Ok(workspace)
+    }
+
+    pub async fn task_default_session_snapshot_for_test(
+        &self,
+        workspace_id: WorkspaceId,
+        task_id: TaskId,
+    ) -> anyhow::Result<TaskDefaultSessionSnapshot> {
+        let store = self.state.store_for_workspace(workspace_id).await?;
+        let task = store.get_task(task_id).await?;
+        let sessions = store.list_sessions_for_task(task_id).await?;
+        let task_count = store.list_tasks(workspace_id).await?.len();
+        let worktree_count = store.list_worktrees(workspace_id).await?.len();
+        Ok(TaskDefaultSessionSnapshot {
+            task,
+            sessions,
+            task_count,
+            worktree_count,
+        })
+    }
+
+    pub async fn task_default_workspace_counts_for_test(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> anyhow::Result<(usize, usize)> {
+        let store = self.state.store_for_workspace(workspace_id).await?;
+        Ok((
+            store.list_tasks(workspace_id).await?.len(),
+            store.list_worktrees(workspace_id).await?.len(),
+        ))
+    }
+
+    pub async fn seed_task_default_session_task_for_test(
+        &self,
+        workspace_id: WorkspaceId,
+        title: &str,
+    ) -> anyhow::Result<Task> {
+        let store = self.state.store_for_workspace(workspace_id).await?;
+        let task = store
+            .create_task(workspace_id, title.to_string(), None)
+            .await?;
+        self.state
+            .global_store()
+            .upsert_workspace_task_index(task.id, workspace_id)
+            .await?;
+        Ok(task)
+    }
+
+    pub async fn hold_task_session_creation_lock_for_test(
+        &self,
+        task_id: TaskId,
+    ) -> TaskSessionCreationLockGuardForTest {
+        let lock = self.state.task_session_creation_lock(task_id).await;
+        let guard = lock.clone().lock_owned().await;
+        TaskSessionCreationLockGuardForTest {
+            _lock: lock,
+            _guard: guard,
+        }
+    }
+
+    pub async fn wait_for_task_persisted_for_test(
+        &self,
+        workspace_id: WorkspaceId,
+        task_id: TaskId,
+        timeout: Duration,
+    ) -> anyhow::Result<()> {
+        let store = self.state.store_for_workspace(workspace_id).await?;
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            if store.get_task(task_id).await?.is_some() {
+                return Ok(());
+            }
+            if tokio::time::Instant::now() >= deadline {
+                anyhow::bail!("task {task_id:?} was not persisted before timeout");
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    pub async fn simulate_missing_workspace_task_index_for_test(
+        &self,
+        task_id: TaskId,
+    ) -> anyhow::Result<()> {
+        self.state
+            .global_store()
+            .delete_workspace_task_index(task_id)
+            .await
+            .map_err(Into::into)
     }
 
     pub fn spawn_merge_queue_runner(&self) {

@@ -9,7 +9,7 @@ use ctx_providers::adapters::{
 };
 use ctx_providers::fake::FakeProviderAdapter;
 use serde_json::{json, Value};
-use tokio::time::{timeout, Duration};
+use tokio::time::Duration;
 
 mod common;
 
@@ -66,6 +66,16 @@ async fn setup_state(data_root: &std::path::Path, prewarm_statuses: bool) -> Tes
     state
 }
 
+async fn seed_workspace(
+    state: &TestDaemon,
+    root_path: &std::path::Path,
+) -> ctx_core::models::Workspace {
+    state
+        .seed_task_default_workspace_for_test("ws", root_path, VcsKind::Git)
+        .await
+        .unwrap()
+}
+
 #[tokio::test]
 async fn create_task_creates_default_session_when_requested() {
     let _test_lock = lock_test().await;
@@ -74,15 +84,7 @@ async fn create_task_creates_default_session_when_requested() {
     let data_dir = tempfile::tempdir().unwrap();
     let state = setup_state(data_dir.path(), true).await;
     let app = common::router_for_daemon(&state);
-    let workspace = state
-        .global_store()
-        .create_workspace(
-            "ws".to_string(),
-            repo.path().to_string_lossy().to_string(),
-            VcsKind::Git,
-        )
-        .await
-        .unwrap();
+    let workspace = seed_workspace(&state, repo.path()).await;
 
     let (status, task): (StatusCode, Task) = common::json_request(
         &app,
@@ -100,15 +102,18 @@ async fn create_task_creates_default_session_when_requested() {
         .primary_worktree_id
         .expect("default worktree should be created");
 
-    let store = state.store_for_workspace(workspace.id).await.unwrap();
-    let sessions = store.list_sessions_for_task(task.id).await.unwrap();
+    let snapshot = state
+        .task_default_session_snapshot_for_test(workspace.id, task.id)
+        .await
+        .unwrap();
+    let sessions = snapshot.sessions;
     assert_eq!(sessions.len(), 1, "expected exactly one default session");
     assert_eq!(sessions[0].id, session_id);
     assert_eq!(sessions[0].worktree_id, worktree_id);
     assert_eq!(sessions[0].provider_id, "fake");
     assert_eq!(sessions[0].model_id, "fake-model");
 
-    let persisted_task = store.get_task(task.id).await.unwrap().unwrap();
+    let persisted_task = snapshot.task.unwrap();
     assert_eq!(persisted_task.primary_session_id, Some(session_id));
     assert_eq!(persisted_task.primary_worktree_id, Some(worktree_id));
 }
@@ -121,15 +126,7 @@ async fn create_task_creates_default_session_without_prewarmed_provider_statuses
     let data_dir = tempfile::tempdir().unwrap();
     let state = setup_state(data_dir.path(), false).await;
     let app = common::router_for_daemon(&state);
-    let workspace = state
-        .global_store()
-        .create_workspace(
-            "ws".to_string(),
-            repo.path().to_string_lossy().to_string(),
-            VcsKind::Git,
-        )
-        .await
-        .unwrap();
+    let workspace = seed_workspace(&state, repo.path()).await;
 
     let (status, task): (StatusCode, Task) = common::json_request(
         &app,
@@ -142,8 +139,11 @@ async fn create_task_creates_default_session_without_prewarmed_provider_statuses
     assert!(task.primary_session_id.is_some());
     assert!(task.primary_worktree_id.is_some());
 
-    let store = state.store_for_workspace(workspace.id).await.unwrap();
-    let sessions = store.list_sessions_for_task(task.id).await.unwrap();
+    let sessions = state
+        .task_default_session_snapshot_for_test(workspace.id, task.id)
+        .await
+        .unwrap()
+        .sessions;
     assert_eq!(sessions.len(), 1, "expected exactly one default session");
     assert_eq!(sessions[0].provider_id, "fake");
     assert_eq!(sessions[0].model_id, "fake-model");
@@ -157,15 +157,7 @@ async fn create_task_rejects_legacy_create_default_session_flag() {
     let data_dir = tempfile::tempdir().unwrap();
     let state = setup_state(data_dir.path(), true).await;
     let app = common::router_for_daemon(&state);
-    let workspace = state
-        .global_store()
-        .create_workspace(
-            "ws".to_string(),
-            repo.path().to_string_lossy().to_string(),
-            VcsKind::Git,
-        )
-        .await
-        .unwrap();
+    let workspace = seed_workspace(&state, repo.path()).await;
 
     let req = Request::builder()
         .method(Method::POST)
@@ -185,10 +177,12 @@ async fn create_task_rejects_legacy_create_default_session_flag() {
         status.is_client_error(),
         "legacy task-create field must be rejected, got {status}"
     );
-    let store = state.store_for_workspace(workspace.id).await.unwrap();
-    let tasks = store.list_tasks(workspace.id).await.unwrap();
+    let (task_count, _worktree_count) = state
+        .task_default_workspace_counts_for_test(workspace.id)
+        .await
+        .unwrap();
     assert!(
-        tasks.is_empty(),
+        task_count == 0,
         "rejected legacy task-create field must not persist a task"
     );
 }
@@ -201,15 +195,7 @@ async fn create_session_rejects_second_top_level_session_for_task() {
     let data_dir = tempfile::tempdir().unwrap();
     let state = setup_state(data_dir.path(), true).await;
     let app = common::router_for_daemon(&state);
-    let workspace = state
-        .global_store()
-        .create_workspace(
-            "ws".to_string(),
-            repo.path().to_string_lossy().to_string(),
-            VcsKind::Git,
-        )
-        .await
-        .unwrap();
+    let workspace = seed_workspace(&state, repo.path()).await;
 
     let (task_status, task): (StatusCode, Task) = common::json_request(
         &app,
@@ -239,8 +225,11 @@ async fn create_session_rejects_second_top_level_session_for_task() {
     let (session_status, _body) = common::oneshot_bytes(&app, req).await;
     assert_eq!(session_status, StatusCode::CONFLICT);
 
-    let store = state.store_for_workspace(workspace.id).await.unwrap();
-    let sessions = store.list_sessions_for_task(task.id).await.unwrap();
+    let sessions = state
+        .task_default_session_snapshot_for_test(workspace.id, task.id)
+        .await
+        .unwrap()
+        .sessions;
     assert_eq!(
         sessions.len(),
         1,
@@ -257,19 +246,10 @@ async fn create_task_replay_with_same_id_does_not_create_extra_default_sessions(
     let data_dir = tempfile::tempdir().unwrap();
     let state = setup_state(data_dir.path(), true).await;
     let app = common::router_for_daemon(&state);
-    let workspace = state
-        .global_store()
-        .create_workspace(
-            "ws".to_string(),
-            repo.path().to_string_lossy().to_string(),
-            VcsKind::Git,
-        )
-        .await
-        .unwrap();
+    let workspace = seed_workspace(&state, repo.path()).await;
 
     let task_id = uuid::Uuid::new_v4().to_string();
     let uri = format!("/api/workspaces/{}/tasks", workspace.id.0);
-    let store = state.store_for_workspace(workspace.id).await.unwrap();
     let request_body = json!({
         "id": task_id,
         "title": "replayed task",
@@ -294,12 +274,14 @@ async fn create_task_replay_with_same_id_does_not_create_extra_default_sessions(
     assert!(task_a.primary_session_id.is_some());
     assert!(task_a.primary_worktree_id.is_some());
 
-    let sessions = store.list_sessions_for_task(task_a.id).await.unwrap();
+    let snapshot = state
+        .task_default_session_snapshot_for_test(workspace.id, task_a.id)
+        .await
+        .unwrap();
+    let sessions = snapshot.sessions;
     assert_eq!(sessions.len(), 1, "expected exactly one default session");
-    let worktrees = store.list_worktrees(workspace.id).await.unwrap();
     assert_eq!(
-        worktrees.len(),
-        1,
+        snapshot.worktree_count, 1,
         "expected exactly one provisioned worktree"
     );
 }
@@ -312,15 +294,7 @@ async fn create_task_replay_validates_requested_default_session() {
     let data_dir = tempfile::tempdir().unwrap();
     let state = setup_state(data_dir.path(), true).await;
     let app = common::router_for_daemon(&state);
-    let workspace = state
-        .global_store()
-        .create_workspace(
-            "ws".to_string(),
-            repo.path().to_string_lossy().to_string(),
-            VcsKind::Git,
-        )
-        .await
-        .unwrap();
+    let workspace = seed_workspace(&state, repo.path()).await;
 
     let task_id = uuid::Uuid::new_v4().to_string();
     let session_id = uuid::Uuid::new_v4().to_string();
@@ -376,8 +350,11 @@ async fn create_task_replay_validates_requested_default_session() {
     .await;
     assert_eq!(conflict_status, StatusCode::CONFLICT);
 
-    let store = state.store_for_workspace(workspace.id).await.unwrap();
-    let sessions = store.list_sessions_for_task(task_a.id).await.unwrap();
+    let sessions = state
+        .task_default_session_snapshot_for_test(workspace.id, task_a.id)
+        .await
+        .unwrap()
+        .sessions;
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0].id, task_a.primary_session_id.unwrap());
 }
@@ -390,15 +367,7 @@ async fn create_task_replay_allows_server_generated_default_session_id() {
     let data_dir = tempfile::tempdir().unwrap();
     let state = setup_state(data_dir.path(), true).await;
     let app = common::router_for_daemon(&state);
-    let workspace = state
-        .global_store()
-        .create_workspace(
-            "ws".to_string(),
-            repo.path().to_string_lossy().to_string(),
-            VcsKind::Git,
-        )
-        .await
-        .unwrap();
+    let workspace = seed_workspace(&state, repo.path()).await;
 
     let task_id = uuid::Uuid::new_v4().to_string();
     let uri = format!("/api/workspaces/{}/tasks", workspace.id.0);
@@ -428,8 +397,11 @@ async fn create_task_replay_allows_server_generated_default_session_id() {
     assert_eq!(task_b.primary_session_id, task_a.primary_session_id);
     assert_eq!(task_b.primary_worktree_id, task_a.primary_worktree_id);
 
-    let store = state.store_for_workspace(workspace.id).await.unwrap();
-    let sessions = store.list_sessions_for_task(task_a.id).await.unwrap();
+    let sessions = state
+        .task_default_session_snapshot_for_test(workspace.id, task_a.id)
+        .await
+        .unwrap()
+        .sessions;
     assert_eq!(sessions.len(), 1);
     assert_eq!(Some(sessions[0].id), task_a.primary_session_id);
 }
@@ -443,15 +415,7 @@ async fn create_task_in_non_repo_workspace_returns_bad_request() {
     let data_dir = tempfile::tempdir().unwrap();
     let state = setup_state(data_dir.path(), true).await;
     let app = common::router_for_daemon(&state);
-    let workspace = state
-        .global_store()
-        .create_workspace(
-            "ws".to_string(),
-            workspace_root.path().to_string_lossy().to_string(),
-            VcsKind::Git,
-        )
-        .await
-        .unwrap();
+    let workspace = seed_workspace(&state, workspace_root.path()).await;
 
     let (status, body): (StatusCode, Value) = common::json_request(
         &app,
@@ -467,10 +431,12 @@ async fn create_task_in_non_repo_workspace_returns_bad_request() {
         .and_then(Value::as_str)
         .is_some_and(|error| !error.is_empty()));
 
-    let store = state.store_for_workspace(workspace.id).await.unwrap();
-    let tasks = store.list_tasks(workspace.id).await.unwrap();
+    let (task_count, _worktree_count) = state
+        .task_default_workspace_counts_for_test(workspace.id)
+        .await
+        .unwrap();
     assert!(
-        tasks.is_empty(),
+        task_count == 0,
         "failed default-session preflight must not persist a task"
     );
 }
@@ -483,21 +449,13 @@ async fn create_task_rolls_back_if_default_session_preflight_fails_after_task_pe
     let data_dir = tempfile::tempdir().unwrap();
     let state = setup_state(data_dir.path(), true).await;
     let app = common::router_for_daemon(&state);
-    let workspace = state
-        .global_store()
-        .create_workspace(
-            "ws".to_string(),
-            repo.path().to_string_lossy().to_string(),
-            VcsKind::Git,
-        )
-        .await
-        .unwrap();
-    let store = state.store_for_workspace(workspace.id).await.unwrap();
+    let workspace = seed_workspace(&state, repo.path()).await;
 
     let task_uuid = common::fixed_uuid(0xfeed);
     let task_id = TaskId(task_uuid);
-    let creation_lock = state.task_session_creation_lock(task_id).await;
-    let creation_guard = creation_lock.lock_owned().await;
+    let creation_guard = state
+        .hold_task_session_creation_lock_for_test(task_id)
+        .await;
 
     let request_app = app.clone();
     let request_uri = format!("/api/workspaces/{}/tasks", workspace.id.0);
@@ -513,20 +471,13 @@ async fn create_task_rolls_back_if_default_session_preflight_fails_after_task_pe
         )
         .await
     });
-    timeout(Duration::from_secs(5), async {
-        loop {
-            if store.get_task(task_id).await.unwrap().is_some() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("request should persist the task before waiting on the session lock");
+    state
+        .wait_for_task_persisted_for_test(workspace.id, task_id, Duration::from_secs(5))
+        .await
+        .expect("request should persist the task before waiting on the session lock");
 
     state
-        .global_store()
-        .delete_workspace_task_index(task_id)
+        .simulate_missing_workspace_task_index_for_test(task_id)
         .await
         .unwrap();
     std::fs::remove_dir_all(repo.path().join(".git")).unwrap();
@@ -539,14 +490,16 @@ async fn create_task_rolls_back_if_default_session_preflight_fails_after_task_pe
         .and_then(Value::as_str)
         .is_some_and(|error| !error.is_empty()));
 
-    let tasks = store.list_tasks(workspace.id).await.unwrap();
+    let (task_count, worktree_count) = state
+        .task_default_workspace_counts_for_test(workspace.id)
+        .await
+        .unwrap();
     assert!(
-        tasks.is_empty(),
+        task_count == 0,
         "task should be rolled back if the second-phase default-session preflight fails"
     );
-    let worktrees = store.list_worktrees(workspace.id).await.unwrap();
     assert!(
-        worktrees.is_empty(),
+        worktree_count == 0,
         "second-phase preflight failure must not leave behind worktrees"
     );
 }
@@ -559,28 +512,15 @@ async fn create_session_waits_for_task_session_creation_lock() {
     let data_dir = tempfile::tempdir().unwrap();
     let state = setup_state(data_dir.path(), true).await;
     let app = common::router_for_daemon(&state);
-    let workspace = state
-        .global_store()
-        .create_workspace(
-            "ws".to_string(),
-            repo.path().to_string_lossy().to_string(),
-            VcsKind::Git,
-        )
-        .await
-        .unwrap();
-    let store = state.store_for_workspace(workspace.id).await.unwrap();
-    let task = store
-        .create_task(workspace.id, "locked session".to_string(), None)
-        .await
-        .unwrap();
-    state
-        .global_store()
-        .upsert_workspace_task_index(task.id, workspace.id)
+    let workspace = seed_workspace(&state, repo.path()).await;
+    let task = state
+        .seed_task_default_session_task_for_test(workspace.id, "locked session")
         .await
         .unwrap();
 
-    let creation_lock = state.task_session_creation_lock(task.id).await;
-    let creation_guard = creation_lock.lock_owned().await;
+    let creation_guard = state
+        .hold_task_session_creation_lock_for_test(task.id)
+        .await;
 
     let request_app = app.clone();
     let request = tokio::spawn(async move {
@@ -594,7 +534,11 @@ async fn create_session_waits_for_task_session_creation_lock() {
     });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
-    let sessions = store.list_sessions_for_task(task.id).await.unwrap();
+    let sessions = state
+        .task_default_session_snapshot_for_test(workspace.id, task.id)
+        .await
+        .unwrap()
+        .sessions;
     assert!(
         sessions.is_empty(),
         "session creation should wait behind the per-task session creation lock"
@@ -606,7 +550,11 @@ async fn create_session_waits_for_task_session_creation_lock() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(session.task_id, task.id);
 
-    let sessions = store.list_sessions_for_task(task.id).await.unwrap();
+    let sessions = state
+        .task_default_session_snapshot_for_test(workspace.id, task.id)
+        .await
+        .unwrap()
+        .sessions;
     assert_eq!(
         sessions.len(),
         1,
@@ -622,21 +570,13 @@ async fn concurrent_replayed_create_task_failures_return_validation_error_not_no
     let data_dir = tempfile::tempdir().unwrap();
     let state = setup_state(data_dir.path(), true).await;
     let app = common::router_for_daemon(&state);
-    let workspace = state
-        .global_store()
-        .create_workspace(
-            "ws".to_string(),
-            repo.path().to_string_lossy().to_string(),
-            VcsKind::Git,
-        )
-        .await
-        .unwrap();
-    let store = state.store_for_workspace(workspace.id).await.unwrap();
+    let workspace = seed_workspace(&state, repo.path()).await;
 
     let task_uuid = common::fixed_uuid(0xbeef);
     let task_id = TaskId(task_uuid);
-    let creation_lock = state.task_session_creation_lock(task_id).await;
-    let creation_guard = creation_lock.lock_owned().await;
+    let creation_guard = state
+        .hold_task_session_creation_lock_for_test(task_id)
+        .await;
 
     let uri = format!("/api/workspaces/{}/tasks", workspace.id.0);
     let body = json!({
@@ -650,16 +590,10 @@ async fn concurrent_replayed_create_task_failures_return_validation_error_not_no
     let request_a = tokio::spawn(async move {
         common::json_request::<Value>(&app_a, axum::http::Method::POST, uri_a, Some(body_a)).await
     });
-    timeout(Duration::from_secs(5), async {
-        loop {
-            if store.get_task(task_id).await.unwrap().is_some() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("first replay request should persist the shared task before waiting on the lock");
+    state
+        .wait_for_task_persisted_for_test(workspace.id, task_id, Duration::from_secs(5))
+        .await
+        .expect("first replay request should persist the shared task before waiting on the lock");
 
     let request_b = tokio::spawn(async move {
         common::json_request::<Value>(&app_b, axum::http::Method::POST, uri, Some(body)).await
@@ -686,14 +620,16 @@ async fn concurrent_replayed_create_task_failures_return_validation_error_not_no
         );
     }
 
-    let tasks = store.list_tasks(workspace.id).await.unwrap();
+    let (task_count, worktree_count) = state
+        .task_default_workspace_counts_for_test(workspace.id)
+        .await
+        .unwrap();
     assert!(
-        tasks.is_empty(),
+        task_count == 0,
         "both failed replay requests should leave no persisted task behind"
     );
-    let worktrees = store.list_worktrees(workspace.id).await.unwrap();
     assert!(
-        worktrees.is_empty(),
+        worktree_count == 0,
         "failed replay requests must not leak worktrees"
     );
 }
@@ -706,21 +642,13 @@ async fn concurrent_replayed_create_task_with_different_payload_conflicts() {
     let data_dir = tempfile::tempdir().unwrap();
     let state = setup_state(data_dir.path(), true).await;
     let app = common::router_for_daemon(&state);
-    let workspace = state
-        .global_store()
-        .create_workspace(
-            "ws".to_string(),
-            repo.path().to_string_lossy().to_string(),
-            VcsKind::Git,
-        )
-        .await
-        .unwrap();
-    let store = state.store_for_workspace(workspace.id).await.unwrap();
+    let workspace = seed_workspace(&state, repo.path()).await;
 
     let task_uuid = common::fixed_uuid(0xc0de);
     let task_id = TaskId(task_uuid);
-    let creation_lock = state.task_session_creation_lock(task_id).await;
-    let creation_guard = creation_lock.lock_owned().await;
+    let creation_guard = state
+        .hold_task_session_creation_lock_for_test(task_id)
+        .await;
 
     let uri = format!("/api/workspaces/{}/tasks", workspace.id.0);
     let app_a = app.clone();
@@ -736,16 +664,10 @@ async fn concurrent_replayed_create_task_with_different_payload_conflicts() {
         )
         .await
     });
-    timeout(Duration::from_secs(5), async {
-        loop {
-            if store.get_task(task_id).await.unwrap().is_some() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("first replay request should persist the shared task before waiting on the lock");
+    state
+        .wait_for_task_persisted_for_test(workspace.id, task_id, Duration::from_secs(5))
+        .await
+        .expect("first replay request should persist the shared task before waiting on the lock");
 
     let app_b = app.clone();
     let request_b = tokio::spawn(async move {
@@ -779,14 +701,16 @@ async fn concurrent_replayed_create_task_with_different_payload_conflicts() {
         Some("task id already exists")
     );
 
-    let tasks = store.list_tasks(workspace.id).await.unwrap();
+    let (task_count, worktree_count) = state
+        .task_default_workspace_counts_for_test(workspace.id)
+        .await
+        .unwrap();
     assert!(
-        tasks.is_empty(),
+        task_count == 0,
         "conflicting replay should not leave behind a task after the canonical request fails"
     );
-    let worktrees = store.list_worktrees(workspace.id).await.unwrap();
     assert!(
-        worktrees.is_empty(),
+        worktree_count == 0,
         "conflicting replay must not create worktrees"
     );
 }
@@ -799,15 +723,7 @@ async fn conflicting_session_id_does_not_leak_new_worktree() {
     let data_dir = tempfile::tempdir().unwrap();
     let state = setup_state(data_dir.path(), true).await;
     let app = common::router_for_daemon(&state);
-    let workspace = state
-        .global_store()
-        .create_workspace(
-            "ws".to_string(),
-            repo.path().to_string_lossy().to_string(),
-            VcsKind::Git,
-        )
-        .await
-        .unwrap();
+    let workspace = seed_workspace(&state, repo.path()).await;
 
     let (existing_status, existing_task): (StatusCode, Task) = common::json_request(
         &app,
@@ -836,8 +752,10 @@ async fn conflicting_session_id_does_not_leak_new_worktree() {
         .primary_worktree_id
         .expect("target task should have a default worktree");
 
-    let store = state.store_for_workspace(workspace.id).await.unwrap();
-    let worktree_count_before = store.list_worktrees(workspace.id).await.unwrap().len();
+    let (_task_count_before, worktree_count_before) = state
+        .task_default_workspace_counts_for_test(workspace.id)
+        .await
+        .unwrap();
 
     let req = Request::builder()
         .method(Method::POST)
@@ -862,18 +780,21 @@ async fn conflicting_session_id_does_not_leak_new_worktree() {
         "session conflict route should not return a JSON body"
     );
 
-    let sessions = store.list_sessions_for_task(target_task.id).await.unwrap();
+    let snapshot = state
+        .task_default_session_snapshot_for_test(workspace.id, target_task.id)
+        .await
+        .unwrap();
+    let sessions = snapshot.sessions;
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0].id, target_primary_session_id);
-    let refreshed_target = store.get_task(target_task.id).await.unwrap().unwrap();
+    let refreshed_target = snapshot.task.unwrap();
     assert_eq!(
         refreshed_target.primary_worktree_id,
         Some(target_primary_worktree_id),
         "conflicting explicit child session id must not change the target task primary worktree"
     );
-    let worktree_count_after = store.list_worktrees(workspace.id).await.unwrap().len();
     assert_eq!(
-        worktree_count_after, worktree_count_before,
+        snapshot.worktree_count, worktree_count_before,
         "conflicting explicit session id must not leak a newly provisioned worktree"
     );
 }
