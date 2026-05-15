@@ -13,6 +13,7 @@ const {
   FAULT_INJECTION_TEST_STORE_ACCESS_PATTERNS,
   GLOBAL_ID_ROUTING_TEST_STORE_ACCESS_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
+  IMAGE_ATTACHMENTS_TEST_STORE_ACCESS_PATTERNS,
   JJ_MERGE_QUEUE_BASICS_TEST_STORE_ACCESS_PATTERNS,
   MERGE_QUEUE_ISOLATION_TEST_STORE_ACCESS_PATTERNS,
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
@@ -45,6 +46,7 @@ const {
   fakeDaemonExternalStorePatternsForPath,
   faultInjectionStorePatternsForPath,
   globalIdRoutingStorePatternsForPath,
+  imageAttachmentsStorePatternsForPath,
   isTestRustPath,
   jjMergeQueueBasicsStorePatternsForPath,
   mergeQueueIsolationStorePatternsForPath,
@@ -1227,6 +1229,7 @@ test("daemon boundary guard scopes fake-daemon external roots without blocking c
     "core/crates/ctx-http/tests/fault_matrix.rs",
     "core/crates/ctx-http/tests/global_id_routing_http.rs",
     "core/crates/ctx-http/tests/hot_endpoints_no_db.rs",
+    "core/crates/ctx-http/tests/image_attachments_http_e2e.rs",
     "core/crates/ctx-http/tests/install_start_contract.rs",
     "core/crates/ctx-http/tests/jj_merge_queue_basics.rs",
     "core/crates/ctx-http/tests/merge_queue_isolation.rs",
@@ -1255,6 +1258,47 @@ test("daemon boundary guard scopes fake-daemon external roots without blocking c
   }
   assert.deepEqual(
     fakeDaemonExternalStorePatternsForPath("core/crates/ctx-http/tests/common/mod.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects image attachments direct store access", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/image_attachments_http_e2e.rs",
+    contents: `
+      async fn helper(daemon: TestDaemon) {
+        let app = common::router_for_daemon(&daemon);
+        daemon.global_store().insert_blob(&blob_id, &sha, bytes, "image/png", None, now).await?;
+        daemon.store_for_session(session_id).await?.count_user_messages_for_session(session_id).await?;
+        daemon.store_for_session(session_id).await?.list_messages_for_session(session_id).await?;
+      }
+    `,
+    patterns: IMAGE_ATTACHMENTS_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct image attachments daemon router composition",
+      "direct image attachments generic store access",
+      "direct image attachments generic store access",
+      "direct image attachments generic store access",
+      "direct image attachments blob store access",
+      "direct image attachments session message query",
+      "direct image attachments session message query",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes image attachments store facade root", () => {
+  assert.deepEqual(
+    imageAttachmentsStorePatternsForPath(
+      "core/crates/ctx-http/tests/image_attachments_http_e2e.rs",
+    ),
+    IMAGE_ATTACHMENTS_TEST_STORE_ACCESS_PATTERNS,
+  );
+  assert.deepEqual(
+    imageAttachmentsStorePatternsForPath("core/crates/ctx-http/tests/common/mod.rs"),
     [],
   );
 });

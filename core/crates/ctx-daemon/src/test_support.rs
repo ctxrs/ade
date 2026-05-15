@@ -1944,6 +1944,55 @@ impl TestDaemon {
             .is_empty())
     }
 
+    pub async fn seed_non_image_attachment_blob_for_test(
+        &self,
+        blob_id: &str,
+        bytes: &[u8],
+        name: &str,
+    ) -> anyhow::Result<PathBuf> {
+        let blob_path = self.state.core.data_root.join("blobs").join(blob_id);
+        if let Some(parent) = blob_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        tokio::fs::write(&blob_path, bytes).await?;
+
+        let sha256 = hex::encode(sha2::Sha256::digest(bytes));
+        self.state
+            .global_store()
+            .insert_blob(
+                blob_id,
+                &sha256,
+                bytes.len() as i64,
+                "text/plain",
+                Some(name),
+                chrono::Utc::now(),
+            )
+            .await?;
+        Ok(blob_path)
+    }
+
+    pub async fn seed_oversized_image_attachment_blob_metadata_for_test(
+        &self,
+        blob_id: &str,
+        byte_count: i64,
+        name: &str,
+    ) -> anyhow::Result<()> {
+        let sha_input = format!("{blob_id}:{byte_count}:image/png");
+        let sha256 = hex::encode(sha2::Sha256::digest(sha_input.as_bytes()));
+        self.state
+            .global_store()
+            .insert_blob(
+                blob_id,
+                &sha256,
+                byte_count,
+                "image/png",
+                Some(name),
+                chrono::Utc::now(),
+            )
+            .await?;
+        Ok(())
+    }
+
     pub async fn wait_for_assistant_message_for_test(
         &self,
         session_id: SessionId,

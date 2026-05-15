@@ -174,6 +174,7 @@ const fakeDaemonExternalStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/fault_matrix.rs",
   "core/crates/ctx-http/tests/global_id_routing_http.rs",
   "core/crates/ctx-http/tests/hot_endpoints_no_db.rs",
+  "core/crates/ctx-http/tests/image_attachments_http_e2e.rs",
   "core/crates/ctx-http/tests/install_start_contract.rs",
   "core/crates/ctx-http/tests/jj_merge_queue_basics.rs",
   "core/crates/ctx-http/tests/merge_queue_isolation.rs",
@@ -206,6 +207,10 @@ const subscriptionAccountsApiStoreFacadeTestRoots = [
 
 const sessionModelApiStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/session_model_api.rs",
+];
+
+const imageAttachmentsStoreFacadeTestRoots = [
+  "core/crates/ctx-http/tests/image_attachments_http_e2e.rs",
 ];
 
 const mcpDaemonFacadeTestRoots = [
@@ -700,6 +705,26 @@ const FAKE_DAEMON_EXTERNAL_TEST_STORE_ACCESS_PATTERNS = [
   {
     name: "direct fake-daemon external TestDaemon store access",
     regex: /\.(?:stores|global_store|store_for_session|store_for_workspace|uncached_store_for_workspace|store_for_task|store_for_worktree)\s*\(/,
+  },
+];
+
+const IMAGE_ATTACHMENTS_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct image attachments daemon router composition",
+    regex: /\b(?:crate::)?common::router_for_daemon\s*\(|\buse\s+[^;]*\brouter_for_daemon\b|\brouter_for_daemon\s*\(/,
+    contentRegex: /\buse\s+[\s\S]*?\brouter_for_daemon\b[\s\S]*?;/gm,
+  },
+  {
+    name: "direct image attachments generic store access",
+    regex: /\.(?:stores|global_store|store_for_session|store_for_workspace|uncached_store_for_workspace|store_for_task|store_for_worktree)\s*\(/,
+  },
+  {
+    name: "direct image attachments blob store access",
+    regex: /\.(?:insert_blob|get_blob)\s*\(/,
+  },
+  {
+    name: "direct image attachments session message query",
+    regex: /\.(?:count_user_messages_for_session|list_messages_for_session|get_message)\s*\(/,
   },
 ];
 
@@ -1909,6 +1934,13 @@ function sessionModelApiStorePatternsForPath(relativePath) {
   return [];
 }
 
+function imageAttachmentsStorePatternsForPath(relativePath) {
+  if (imageAttachmentsStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return IMAGE_ATTACHMENTS_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
 function mcpDaemonPatternsForPath(relativePath) {
   if (mcpDaemonFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS;
@@ -2309,6 +2341,13 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
+        patterns: imageAttachmentsStorePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
         patterns: mcpDaemonPatternsForPath(relativePath),
       }),
     );
@@ -2460,6 +2499,7 @@ module.exports = {
   FAULT_INJECTION_TEST_STORE_ACCESS_PATTERNS,
   GLOBAL_ID_ROUTING_TEST_STORE_ACCESS_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
+  IMAGE_ATTACHMENTS_TEST_STORE_ACCESS_PATTERNS,
   JJ_MERGE_QUEUE_BASICS_TEST_STORE_ACCESS_PATTERNS,
   MERGE_QUEUE_ISOLATION_TEST_STORE_ACCESS_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
@@ -2492,6 +2532,7 @@ module.exports = {
   fakeDaemonExternalStorePatternsForPath,
   faultInjectionStorePatternsForPath,
   globalIdRoutingStorePatternsForPath,
+  imageAttachmentsStorePatternsForPath,
   isTestRustPath,
   jjMergeQueueBasicsStorePatternsForPath,
   mergeQueueIsolationStorePatternsForPath,
