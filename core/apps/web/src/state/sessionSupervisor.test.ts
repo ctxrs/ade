@@ -523,7 +523,7 @@ describe("SessionSupervisor", () => {
         op: "append",
         sessionId,
         data: {
-          appendMode: "event",
+          appendMode: "stream_delta",
           events: [
             {
               seq: 2,
@@ -567,7 +567,7 @@ describe("SessionSupervisor", () => {
         op: "append",
         sessionId,
         data: {
-          appendMode: "event",
+          appendMode: "stream_delta",
           events: [
             {
               seq: 2,
