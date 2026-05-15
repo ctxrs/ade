@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use futures::{SinkExt, StreamExt};
+use futures::{future, SinkExt, StreamExt};
 use serde_json::{json, Value};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
@@ -8,6 +8,8 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 use ctx_daemon::test_support::TestDaemon;
 
 mod common;
+
+const STREAM_TAIL_DRAIN: Duration = Duration::from_millis(250);
 
 async fn setup() -> (
     tempfile::TempDir,
@@ -29,31 +31,6 @@ async fn setup() -> (
     let server = common::spawn_http_server(app).await;
 
     (repo, data_dir, daemon, server)
-}
-
-async fn sessions_have_done_events_in_store(
-    daemon: &TestDaemon,
-    sessions: &[ctx_core::models::Session],
-    expected_done_events_per_session: usize,
-) -> bool {
-    for session in sessions {
-        let store = daemon.store_for_session(session.id).await.unwrap();
-        let events = store.list_session_events(session.id).await.unwrap();
-        if events
-            .iter()
-            .any(|event| matches!(event.event_type, ctx_core::models::SessionEventType::Error))
-        {
-            panic!("unexpected session error while running activity: {events:#?}");
-        }
-        let done_count = events
-            .iter()
-            .filter(|event| matches!(event.event_type, ctx_core::models::SessionEventType::Done))
-            .count();
-        if done_count < expected_done_events_per_session {
-            return false;
-        }
-    }
-    true
 }
 
 #[tokio::test]
@@ -150,97 +127,133 @@ async fn workspace_stream_stays_live_without_gaps_under_activity() {
     }
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
-    loop {
-        let all_sent = senders.iter().all(|h| h.is_finished());
-        let enough_done = if all_sent {
-            sessions_have_done_events_in_store(&daemon, &sessions, TURNS_PER_SESSION).await
-        } else {
-            false
-        };
-        if all_sent && enough_done {
-            break;
+    let done_daemon = daemon.clone();
+    let done_sessions = sessions.clone();
+    let activity_done = async move {
+        loop {
+            if senders.iter().all(|h| h.is_finished()) {
+                break;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                anyhow::bail!("timed out waiting for activity senders to finish");
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
         }
-
-        if tokio::time::Instant::now() >= deadline {
-            panic!("timed out waiting for activity without gaps/reset_required");
+        for sender in senders {
+            sender.await?;
         }
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        let wait = remaining.min(Duration::from_millis(250));
-        let next = tokio::time::timeout(wait, socket.next()).await;
-        match next {
-            Ok(Some(Ok(WsMessage::Text(txt)))) => {
-                let value: Value = serde_json::from_str(&txt).unwrap();
-                let msg_type = value
-                    .get("type")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                match msg_type {
-                    "reset_required" => {
-                        panic!("unexpected reset_required while running activity");
-                    }
-                    "event" => {
-                        let Some(event) = value.get("event") else {
-                            continue;
-                        };
-                        let event_type = event
+        future::try_join_all(done_sessions.iter().map(|session| {
+            done_daemon.wait_for_session_done_event_count_for_test(
+                session.id,
+                TURNS_PER_SESSION,
+                remaining,
+            )
+        }))
+        .await?;
+        Ok::<(), anyhow::Error>(())
+    };
+    tokio::pin!(activity_done);
+    let mut activity_result = None;
+    loop {
+        tokio::select! {
+            result = &mut activity_done => {
+                activity_result = Some(result);
+            }
+            next = tokio::time::timeout(Duration::from_millis(250), socket.next()) => {
+                match next {
+                    Ok(Some(Ok(WsMessage::Text(txt)))) => {
+                        let value: Value = serde_json::from_str(&txt).unwrap();
+                        let msg_type = value
                             .get("type")
                             .and_then(Value::as_str)
                             .unwrap_or_default();
-                        if event_type == "session_gap" {
-                            panic!("unexpected session_gap while running activity");
-                        }
+                        match msg_type {
+                            "reset_required" => {
+                                panic!("unexpected reset_required while running activity");
+                            }
+                            "event" => {
+                                let Some(event) = value.get("event") else {
+                                    continue;
+                                };
+                                let event_type = event
+                                    .get("type")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or_default();
+                                if event_type == "session_gap" {
+                                    panic!("unexpected session_gap while running activity");
+                                }
 
-                        if event_type == "session_head_delta" {}
+                                if event_type == "session_head_delta" {}
+                            }
+                            "heads_batch" => {}
+                            "snapshot" => {}
+                            _ => {}
+                        }
                     }
-                    "heads_batch" => {}
-                    "snapshot" => {}
-                    _ => {}
+                    Ok(Some(Ok(WsMessage::Close(_)))) => {
+                        panic!("workspace stream closed unexpectedly while running activity");
+                    }
+                    Ok(Some(Ok(_))) => {}
+                    Ok(Some(Err(err))) => {
+                        panic!("workspace stream error: {err:?}");
+                    }
+                    Ok(None) => {
+                        panic!("workspace stream ended unexpectedly");
+                    }
+                    Err(_) => {
+                        // no frame in this interval; check completion progress
+                    }
                 }
-            }
-            Ok(Some(Ok(WsMessage::Close(_)))) => {
-                let all_sent = senders.iter().all(|h| h.is_finished());
-                let enough_done = if all_sent {
-                    sessions_have_done_events_in_store(&daemon, &sessions, TURNS_PER_SESSION).await
-                } else {
-                    false
-                };
-                if all_sent && enough_done {
-                    break;
-                }
-                panic!("workspace stream closed unexpectedly while running activity");
-            }
-            Ok(Some(Ok(_))) => {}
-            Ok(Some(Err(err))) => {
-                let all_sent = senders.iter().all(|h| h.is_finished());
-                let enough_done = if all_sent {
-                    sessions_have_done_events_in_store(&daemon, &sessions, TURNS_PER_SESSION).await
-                } else {
-                    false
-                };
-                if all_sent && enough_done {
-                    break;
-                }
-                panic!("workspace stream error: {err:?}");
-            }
-            Ok(None) => {
-                let all_sent = senders.iter().all(|h| h.is_finished());
-                let enough_done = if all_sent {
-                    sessions_have_done_events_in_store(&daemon, &sessions, TURNS_PER_SESSION).await
-                } else {
-                    false
-                };
-                if all_sent && enough_done {
-                    break;
-                }
-                panic!("workspace stream ended unexpectedly");
-            }
-            Err(_) => {
-                // no frame in this interval; check completion progress
             }
         }
-    }
-
-    for h in senders {
-        h.await.unwrap();
+        if let Some(result) = activity_result.take() {
+            result.unwrap_or_else(|err| {
+                panic!("timed out waiting for activity without gaps/reset_required: {err:#}")
+            });
+            let drain_until = tokio::time::Instant::now() + STREAM_TAIL_DRAIN;
+            while tokio::time::Instant::now() < drain_until {
+                match tokio::time::timeout(Duration::from_millis(10), socket.next()).await {
+                    Ok(Some(Ok(WsMessage::Text(txt)))) => {
+                        let value: Value = serde_json::from_str(&txt).unwrap();
+                        let msg_type = value
+                            .get("type")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default();
+                        match msg_type {
+                            "reset_required" => {
+                                panic!("unexpected reset_required while running activity");
+                            }
+                            "event" => {
+                                let Some(event) = value.get("event") else {
+                                    continue;
+                                };
+                                let event_type = event
+                                    .get("type")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or_default();
+                                if event_type == "session_gap" {
+                                    panic!("unexpected session_gap while running activity");
+                                }
+                            }
+                            "heads_batch" => {}
+                            "snapshot" => {}
+                            _ => {}
+                        }
+                    }
+                    Ok(Some(Ok(WsMessage::Close(_)))) => {
+                        panic!("workspace stream closed unexpectedly while running activity");
+                    }
+                    Ok(Some(Ok(_))) | Err(_) => {}
+                    Ok(Some(Err(err))) => {
+                        panic!("workspace stream error: {err:?}");
+                    }
+                    Ok(None) => {
+                        panic!("workspace stream ended unexpectedly");
+                    }
+                }
+            }
+            break;
+        }
     }
 }

@@ -177,6 +177,11 @@ const jjMergeQueueBasicsStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/jj_merge_queue_basics.rs",
 ];
 
+const streamRuntimeStoreFacadeTestRoots = [
+  "core/crates/ctx-http/tests/noisy_output_backpressure.rs",
+  "core/crates/ctx-http/tests/workspace_stream_no_gaps_under_activity.rs",
+];
+
 const schedulerRuntimeStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/assistant_chunk_stream_only.rs",
   "core/crates/ctx-http/tests/assistant_message_persistence_faults.rs",
@@ -718,6 +723,61 @@ const JJ_MERGE_QUEUE_BASICS_TEST_STORE_ACCESS_PATTERNS = [
   },
 ];
 
+const STREAM_RUNTIME_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct stream-runtime global store access",
+    regex: /\.global_store\s*\(/,
+  },
+  {
+    name: "direct stream-runtime session store access",
+    regex: /\.store_for_session\s*\(/,
+  },
+  {
+    name: "direct stream-runtime workspace store access",
+    regex: /\.store_for_workspace\s*\(/,
+  },
+  {
+    name: "direct stream-runtime uncached workspace store access",
+    regex: /\.uncached_store_for_workspace\s*\(/,
+  },
+  {
+    name: "direct stream-runtime task store access",
+    regex: /\.store_for_task\s*\(/,
+  },
+  {
+    name: "direct stream-runtime StoreManager access",
+    regex: /\.stores\s*\(/,
+  },
+  {
+    name: "direct stream-runtime StoreManager global access",
+    regex: /\b[a-zA-Z_][a-zA-Z0-9_]*\.global\s*\(/,
+    contentRegex: /\b[a-zA-Z_][a-zA-Z0-9_]*\s*\n\s*\.global\s*\(/gm,
+  },
+  {
+    name: "direct stream-runtime StoreManager workspace access",
+    regex: /\b[a-zA-Z_][a-zA-Z0-9_]*\.workspace(?:_uncached)?\s*\(/,
+    contentRegex: /\b[a-zA-Z_][a-zA-Z0-9_]*\s*\n\s*\.workspace(?:_uncached)?\s*\(/gm,
+  },
+  {
+    name: "direct stream-runtime sessions handle access",
+    regex: /a^/,
+    contentRegex: /(?:\.handle\s*\(\s*\)\s*\.\s*sessions\s*\(|\blet\s+[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*[^;\n]*\.handle\s*\(\s*\)\s*;|[a-zA-Z_][a-zA-Z0-9_]*\.sessions\s*\()/gm,
+  },
+  {
+    name: "direct stream-runtime workspaces handle access",
+    regex: /a^/,
+    contentRegex: /(?:\.handle\s*\(\s*\)\s*\.\s*workspaces\s*\(|\blet\s+[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*[^;\n]*\.handle\s*\(\s*\)\s*;|[a-zA-Z_][a-zA-Z0-9_]*\.workspaces\s*\()/gm,
+  },
+  {
+    name: "raw stream-runtime ctx_store Store",
+    regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore\b/,
+  },
+  {
+    name: "raw stream-runtime StoreManager",
+    regex: /\bStoreManager\b/,
+  },
+];
+
 const SCHEDULER_RUNTIME_TEST_STORE_ACCESS_PATTERNS = [
   {
     name: "direct scheduler-runtime global store access",
@@ -1019,6 +1079,13 @@ function jjMergeQueueBasicsStorePatternsForPath(relativePath) {
   return [];
 }
 
+function streamRuntimeStorePatternsForPath(relativePath) {
+  if (streamRuntimeStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return STREAM_RUNTIME_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
 function schedulerRuntimeStorePatternsForPath(relativePath) {
   if (schedulerRuntimeStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return SCHEDULER_RUNTIME_TEST_STORE_ACCESS_PATTERNS;
@@ -1310,6 +1377,13 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
+        patterns: streamRuntimeStorePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
         patterns: schedulerRuntimeStorePatternsForPath(relativePath),
       }),
     );
@@ -1365,6 +1439,7 @@ module.exports = {
   SCHEDULER_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
   SESSION_FIXTURE_TEST_STORE_ACCESS_PATTERNS,
   SMALL_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
+  STREAM_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
   TASK_LIFECYCLE_TEST_STORE_ACCESS_PATTERNS,
   TERMINAL_WORKSPACE_STREAM_TEST_STORE_ACCESS_PATTERNS,
   TEST_ROUTER_COMPOSITION_PATTERNS,
@@ -1386,6 +1461,7 @@ module.exports = {
   schedulerRuntimeStorePatternsForPath,
   sessionFixtureStorePatternsForPath,
   smallBoundaryStorePatternsForPath,
+  streamRuntimeStorePatternsForPath,
   taskLifecycleStorePatternsForPath,
   terminalWorkspaceStreamStorePatternsForPath,
   workspaceMergeQueueConfigStorePatternsForPath,

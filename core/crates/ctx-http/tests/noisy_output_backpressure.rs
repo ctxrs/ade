@@ -8,12 +8,12 @@ use ctx_core::models::{
     SessionEventType, WorkspaceActiveSnapshotEvent, WorkspaceActiveSnapshotStreamMessage,
 };
 use ctx_daemon::test_support::TestDaemon;
-use ctx_store::StoreManager;
 
 mod common;
 
 const STORAGE_GUARD_EMERGENCY_FREE_BYTES: u64 = 1024 * 1024 * 1024;
 const CRP_FIXTURE_FIRST_EVENT_TIMEOUT_MS: &str = "60000";
+const STREAM_TAIL_DRAIN: Duration = Duration::from_millis(250);
 
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -41,31 +41,6 @@ impl Drop for EnvGuard {
         } else {
             std::env::remove_var(self.key);
         }
-    }
-}
-
-async fn wait_for_done(daemon: &TestDaemon, session_id: ctx_core::ids::SessionId) {
-    let store = daemon.store_for_session(session_id).await.unwrap();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-    loop {
-        let events = store.list_session_events(session_id).await.unwrap();
-        if events
-            .iter()
-            .any(|event| matches!(event.event_type, SessionEventType::Done))
-        {
-            assert!(
-                !events
-                    .iter()
-                    .any(|event| matches!(event.event_type, SessionEventType::Error)),
-                "unexpected session error: {events:#?}"
-            );
-            return;
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "timed out waiting for done event: {events:#?}"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
 
@@ -116,7 +91,7 @@ async fn noisy_tool_output_stays_bounded_end_to_end() {
     let _guard_codex_home = EnvGuard::set("CTX_CODEX_HOME", &codex_home.path().to_string_lossy());
     let _guard_mcp_disabled = EnvGuard::set("CTX_MCP_DISABLED", "1");
 
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
+    let stores = common::setup_store(data_dir.path()).await;
     let script_path = common::crp_fixture_runtime::write_crp_fixture_runtime(data_dir.path());
     common::seed_managed_codex_cli_host_runtime_with_args(
         data_dir.path(),
@@ -188,67 +163,95 @@ async fn noisy_tool_output_stays_bounded_end_to_end() {
         .unwrap();
     assert!(response.status().is_success());
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-    loop {
-        if tokio::time::Instant::now() >= deadline {
-            let store = daemon.store_for_session(session.id).await.unwrap();
-            let events = store.list_session_events(session.id).await.unwrap();
-            panic!("timed out waiting for noisy session to finish: {events:#?}");
-        }
-        match tokio::time::timeout(Duration::from_millis(250), socket.next()).await {
-            Ok(Some(Ok(WsMessage::Text(text)))) => {
-                let Ok(message) =
-                    serde_json::from_str::<WorkspaceActiveSnapshotStreamMessage>(&text)
-                else {
-                    continue;
-                };
-                match message {
-                    WorkspaceActiveSnapshotStreamMessage::ResetRequired { .. } => {
-                        panic!("unexpected reset_required during noisy command");
-                    }
-                    WorkspaceActiveSnapshotStreamMessage::Event { event, .. } => {
-                        if let WorkspaceActiveSnapshotEvent::SessionGap { session_id, .. } =
-                            event.as_ref()
-                        {
-                            assert_ne!(
-                                *session_id, session.id,
-                                "unexpected session_gap during noisy command"
-                            );
+    let persistence_wait = daemon
+        .wait_for_noisy_output_persistence_snapshot_for_test(session.id, Duration::from_secs(30));
+    tokio::pin!(persistence_wait);
+    let mut persistence_result = None;
+    let snapshot = loop {
+        tokio::select! {
+            result = &mut persistence_wait => {
+                persistence_result = Some(result.unwrap());
+            }
+            next = tokio::time::timeout(Duration::from_millis(250), socket.next()) => {
+                match next {
+                    Ok(Some(Ok(WsMessage::Text(text)))) => {
+                        let Ok(message) =
+                            serde_json::from_str::<WorkspaceActiveSnapshotStreamMessage>(&text)
+                        else {
+                            continue;
+                        };
+                        match message {
+                            WorkspaceActiveSnapshotStreamMessage::ResetRequired { .. } => {
+                                panic!("unexpected reset_required during noisy command");
+                            }
+                            WorkspaceActiveSnapshotStreamMessage::Event { event, .. } => {
+                                if let WorkspaceActiveSnapshotEvent::SessionGap {
+                                    session_id,
+                                    ..
+                                } = event.as_ref()
+                                {
+                                    assert_ne!(
+                                        *session_id, session.id,
+                                        "unexpected session_gap during noisy command"
+                                    );
+                                }
+                            }
+                            WorkspaceActiveSnapshotStreamMessage::HeadsBatch { .. }
+                            | WorkspaceActiveSnapshotStreamMessage::Snapshot { .. } => {}
                         }
                     }
-                    WorkspaceActiveSnapshotStreamMessage::HeadsBatch { .. }
-                    | WorkspaceActiveSnapshotStreamMessage::Snapshot { .. } => {}
+                    Ok(Some(Ok(WsMessage::Close(_)))) => {
+                        panic!("workspace stream closed during noisy command");
+                    }
+                    Ok(Some(Ok(_))) | Err(_) => {}
+                    Ok(Some(Err(err))) => panic!("workspace stream error: {err:?}"),
+                    Ok(None) => panic!("workspace stream ended unexpectedly"),
                 }
             }
-            Ok(Some(Ok(WsMessage::Close(_)))) => {
-                panic!("workspace stream closed during noisy command");
+        }
+        if let Some(snapshot) = persistence_result.take() {
+            let drain_until = tokio::time::Instant::now() + STREAM_TAIL_DRAIN;
+            while tokio::time::Instant::now() < drain_until {
+                match tokio::time::timeout(Duration::from_millis(10), socket.next()).await {
+                    Ok(Some(Ok(WsMessage::Text(text)))) => {
+                        let Ok(message) =
+                            serde_json::from_str::<WorkspaceActiveSnapshotStreamMessage>(&text)
+                        else {
+                            continue;
+                        };
+                        match message {
+                            WorkspaceActiveSnapshotStreamMessage::ResetRequired { .. } => {
+                                panic!("unexpected reset_required during noisy command");
+                            }
+                            WorkspaceActiveSnapshotStreamMessage::Event { event, .. } => {
+                                if let WorkspaceActiveSnapshotEvent::SessionGap {
+                                    session_id, ..
+                                } = event.as_ref()
+                                {
+                                    assert_ne!(
+                                        *session_id, session.id,
+                                        "unexpected session_gap during noisy command"
+                                    );
+                                }
+                            }
+                            WorkspaceActiveSnapshotStreamMessage::HeadsBatch { .. }
+                            | WorkspaceActiveSnapshotStreamMessage::Snapshot { .. } => {}
+                        }
+                    }
+                    Ok(Some(Ok(WsMessage::Close(_)))) => {
+                        panic!("workspace stream closed during noisy command");
+                    }
+                    Ok(Some(Ok(_))) | Err(_) => {}
+                    Ok(Some(Err(err))) => panic!("workspace stream error: {err:?}"),
+                    Ok(None) => panic!("workspace stream ended unexpectedly"),
+                }
             }
-            Ok(Some(Ok(_))) | Err(_) => {}
-            Ok(Some(Err(err))) => panic!("workspace stream error: {err:?}"),
-            Ok(None) => panic!("workspace stream ended unexpectedly"),
+            break snapshot;
         }
+    };
 
-        let store = daemon.store_for_session(session.id).await.unwrap();
-        let events = store.list_session_events(session.id).await.unwrap();
-        assert!(
-            !events
-                .iter()
-                .any(|event| matches!(event.event_type, SessionEventType::Error)),
-            "unexpected session error while waiting for noisy scenario: {events:#?}"
-        );
-        if events
-            .iter()
-            .any(|event| matches!(event.event_type, SessionEventType::Done))
-        {
-            break;
-        }
-    }
-
-    wait_for_done(&daemon, session.id).await;
-
-    let store = daemon.store_for_session(session.id).await.unwrap();
-    let events = store.list_session_events(session.id).await.unwrap();
-    let messages = store.list_messages_for_session(session.id).await.unwrap();
+    let events = snapshot.events;
+    let messages = snapshot.messages;
     assert!(
         !events.iter().any(|event| {
             matches!(event.event_type, SessionEventType::Notice)

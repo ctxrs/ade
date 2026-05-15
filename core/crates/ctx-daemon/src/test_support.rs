@@ -96,6 +96,11 @@ pub struct TerminalTurnPersistenceSnapshot {
     pub assistant_messages: Vec<Message>,
 }
 
+pub struct NoisyOutputPersistenceSnapshot {
+    pub events: Vec<SessionEvent>,
+    pub messages: Vec<Message>,
+}
+
 pub struct TurnReconciliationSnapshot {
     pub turn: SessionTurn,
     pub events: Vec<SessionEvent>,
@@ -1738,6 +1743,40 @@ impl TestDaemon {
         )
         .await
         .map(|_| ())
+    }
+
+    pub async fn wait_for_noisy_output_persistence_snapshot_for_test(
+        &self,
+        session_id: SessionId,
+        timeout: Duration,
+    ) -> anyhow::Result<NoisyOutputPersistenceSnapshot> {
+        let events = self
+            .wait_for_scheduler_runtime_events_for_test(
+                session_id,
+                timeout,
+                "noisy output Done event",
+                |events| {
+                    if events
+                        .iter()
+                        .any(|event| matches!(event.event_type, SessionEventType::Error))
+                    {
+                        anyhow::bail!(
+                            "unexpected session error while waiting for noisy output persistence: {events:#?}"
+                        );
+                    }
+                    Ok(events
+                        .iter()
+                        .any(|event| matches!(event.event_type, SessionEventType::Done)))
+                },
+            )
+            .await?;
+        let messages = self
+            .state
+            .store_for_session(session_id)
+            .await?
+            .list_messages_for_session(session_id)
+            .await?;
+        Ok(NoisyOutputPersistenceSnapshot { events, messages })
     }
 
     pub async fn assistant_chunk_stream_snapshot_for_test(

@@ -15,6 +15,7 @@ const {
   SCHEDULER_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
   SESSION_FIXTURE_TEST_STORE_ACCESS_PATTERNS,
   SMALL_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
+  STREAM_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
   TASK_LIFECYCLE_TEST_STORE_ACCESS_PATTERNS,
   TERMINAL_WORKSPACE_STREAM_TEST_STORE_ACCESS_PATTERNS,
   TEST_ROUTER_COMPOSITION_PATTERNS,
@@ -36,6 +37,7 @@ const {
   schedulerRuntimeStorePatternsForPath,
   sessionFixtureStorePatternsForPath,
   smallBoundaryStorePatternsForPath,
+  streamRuntimeStorePatternsForPath,
   taskLifecycleStorePatternsForPath,
   terminalWorkspaceStreamStorePatternsForPath,
   workspaceMergeQueueConfigStorePatternsForPath,
@@ -1187,10 +1189,13 @@ test("daemon boundary guard rejects direct jj-merge-queue-basics store and workt
         daemon.stores().global().await?;
         stores.global().await?;
         stores.workspace(workspace_id).await?;
+        stores.workspace_uncached(workspace_id).await?;
         manager
           .global().await?;
         manager
           .workspace(workspace_id).await?;
+        manager
+          .workspace_uncached(workspace_id).await?;
         daemon.handle().workspaces();
         daemon.handle().sessions();
         let handle = daemon.handle();
@@ -1261,6 +1266,95 @@ test("daemon boundary guard scopes jj-merge-queue-basics store facade root", () 
   assert.deepEqual(
     jjMergeQueueBasicsStorePatternsForPath(
       "core/crates/ctx-http/tests/workspace_merge_queue_config_http.rs",
+    ),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects direct stream-runtime store and handle access", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/noisy_output_backpressure.rs",
+    contents: `
+      use ctx_store::{Store, StoreManager};
+      async fn fixture(daemon: TestDaemon, stores: StoreManager) {
+        daemon.global_store();
+        daemon.store_for_session(session_id).await?;
+        daemon.store_for_workspace(workspace_id).await?;
+        daemon.uncached_store_for_workspace(workspace_id).await?;
+        daemon.store_for_task(task_id).await?;
+        daemon.stores().global().await?;
+        stores.global().await?;
+        stores.workspace(workspace_id).await?;
+        manager
+          .global().await?;
+        manager
+          .workspace(workspace_id).await?;
+        daemon.handle().sessions();
+        daemon.handle().workspaces();
+        let handle = daemon.handle();
+        handle.sessions();
+        handle.workspaces();
+        let _raw: Store;
+      }
+    `,
+    patterns: STREAM_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct stream-runtime global store access",
+      "direct stream-runtime session store access",
+      "direct stream-runtime workspace store access",
+      "direct stream-runtime uncached workspace store access",
+      "direct stream-runtime task store access",
+      "direct stream-runtime StoreManager access",
+      "direct stream-runtime StoreManager global access",
+      "direct stream-runtime StoreManager global access",
+      "direct stream-runtime StoreManager workspace access",
+      "direct stream-runtime StoreManager workspace access",
+      "direct stream-runtime sessions handle access",
+      "direct stream-runtime sessions handle access",
+      "direct stream-runtime sessions handle access",
+      "direct stream-runtime workspaces handle access",
+      "direct stream-runtime workspaces handle access",
+      "direct stream-runtime workspaces handle access",
+      "raw stream-runtime ctx_store Store",
+      "raw stream-runtime ctx_store Store",
+      "raw stream-runtime StoreManager",
+      "raw stream-runtime StoreManager",
+    ],
+  );
+});
+
+test("daemon boundary guard allows common setup-store in stream-runtime", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/noisy_output_backpressure.rs",
+    contents: `
+      async fn fixture() {
+        let stores = common::setup_store(data_dir.path()).await;
+        let daemon = common::build_daemon(data_dir.path(), stores, common::fake_providers(), "http://127.0.0.1:0");
+      }
+    `,
+    patterns: STREAM_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(violations, []);
+});
+
+test("daemon boundary guard scopes stream-runtime store facade roots", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/tests/noisy_output_backpressure.rs",
+    "core/crates/ctx-http/tests/workspace_stream_no_gaps_under_activity.rs",
+  ]) {
+    assert.deepEqual(
+      streamRuntimeStorePatternsForPath(filePath),
+      STREAM_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
+    );
+  }
+  assert.deepEqual(
+    streamRuntimeStorePatternsForPath(
+      "core/crates/ctx-http/tests/jj_merge_queue_basics.rs",
     ),
     [],
   );
