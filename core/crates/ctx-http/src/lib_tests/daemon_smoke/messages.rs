@@ -8,10 +8,10 @@ async fn post_message_route_rejects_queueing_when_feature_flag_is_disabled() {
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
     let data_dir = tempfile::tempdir().unwrap();
-    let (state, app, session) =
+    let (daemon, app, session) =
         build_fake_app_with_session(data_dir.path(), &git_repo.path().to_string_lossy()).await;
 
-    state.set_running(session.id, true).await;
+    daemon.set_session_running(session.id, true).await;
     let (status, body) = post_session_message_json(
         &app,
         session.id,
@@ -24,7 +24,7 @@ async fn post_message_route_rejects_queueing_when_feature_flag_is_disabled() {
         Some("A turn is already running. Stop it or wait for it to finish.")
     );
 
-    state.set_running(session.id, true).await;
+    daemon.set_session_running(session.id, true).await;
     let (status, body) = post_session_message_json(
         &app,
         session.id,
@@ -37,7 +37,7 @@ async fn post_message_route_rejects_queueing_when_feature_flag_is_disabled() {
         Some("Queued messages are disabled.")
     );
 
-    let store = state.store_for_session(session.id).await.unwrap();
+    let store = daemon.store_for_session(session.id).await.unwrap();
     let messages = store.list_messages_for_session(session.id).await.unwrap();
     assert!(
         messages.is_empty(),
@@ -53,10 +53,10 @@ async fn post_message_route_allows_queueing_when_feature_flag_is_enabled() {
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
     let data_dir = tempfile::tempdir().unwrap();
-    let (state, app, session) =
+    let (daemon, app, session) =
         build_fake_app_with_session(data_dir.path(), &git_repo.path().to_string_lossy()).await;
 
-    state.set_running(session.id, true).await;
+    daemon.set_session_running(session.id, true).await;
     let (status, body) = post_session_message_json(
         &app,
         session.id,
@@ -69,7 +69,7 @@ async fn post_message_route_allows_queueing_when_feature_flag_is_enabled() {
         Some("queued")
     );
 
-    state.set_running(session.id, true).await;
+    daemon.set_session_running(session.id, true).await;
     let (status, body) = post_session_message_json(
         &app,
         session.id,

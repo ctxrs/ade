@@ -67,22 +67,16 @@ async fn create_fake_session_via_api(
 async fn build_fake_app_with_session(
     data_dir: &Path,
     git_repo_path: &str,
-) -> (Arc<DaemonState>, axum::Router, ctx_core::models::Session) {
+) -> (TestDaemon, axum::Router, ctx_core::models::Session) {
     let stores = StoreManager::open(data_dir).await.unwrap();
     let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
         HashMap::new();
     providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
 
-    let state = Arc::new(DaemonState::new(
-        data_dir.to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    ));
-    let app = api::router(state.clone());
+    let daemon = test_daemon_with_providers(data_dir, stores, providers, None);
+    let app = test_router(&daemon);
     let session = create_fake_session_via_api(&app, git_repo_path).await;
-    (state, app, session)
+    (daemon, app, session)
 }
 
 async fn post_session_message_json(

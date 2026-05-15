@@ -6,23 +6,9 @@ async fn spawn_agent_surfaces_agent_server_config_errors() {
     let git_repo = setup_git_repo().await;
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
-
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-
-    let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
-        HashMap::new();
-    providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    ));
-    let app = api::router(state.clone());
-    let session = create_fake_session_via_api(&app, &git_repo.path().to_string_lossy()).await;
+    let (daemon, app, session) =
+        build_fake_app_with_session(data_dir.path(), &git_repo.path().to_string_lossy()).await;
     {
         let mut statuses = HashMap::new();
         statuses.insert(
@@ -39,9 +25,9 @@ async fn spawn_agent_surfaces_agent_server_config_errors() {
                 usability: ctx_providers::adapters::ProviderUsability::default(),
             },
         );
-        state.test_replace_provider_statuses(statuses).await;
+        daemon.replace_provider_statuses(statuses).await;
     }
-    write_invalid_agent_server_config(data_dir.path());
+    write_invalid_agent_server_config(daemon.data_root());
 
     let req = Request::builder()
         .method("POST")
@@ -74,24 +60,10 @@ async fn authenticate_session_surfaces_agent_server_config_errors() {
     let git_repo = setup_git_repo().await;
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
-
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-
-    let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
-        HashMap::new();
-    providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    ));
-    let app = api::router(state);
-    let session = create_fake_session_via_api(&app, &git_repo.path().to_string_lossy()).await;
-    write_invalid_agent_server_config(data_dir.path());
+    let (daemon, app, session) =
+        build_fake_app_with_session(data_dir.path(), &git_repo.path().to_string_lossy()).await;
+    write_invalid_agent_server_config(daemon.data_root());
 
     let req = Request::builder()
         .method("POST")
@@ -116,24 +88,10 @@ async fn set_session_model_surfaces_agent_server_config_errors() {
     let git_repo = setup_git_repo().await;
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
-
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-
-    let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
-        HashMap::new();
-    providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    ));
-    let app = api::router(state);
-    let session = create_fake_session_via_api(&app, &git_repo.path().to_string_lossy()).await;
-    write_invalid_agent_server_config(data_dir.path());
+    let (daemon, app, session) =
+        build_fake_app_with_session(data_dir.path(), &git_repo.path().to_string_lossy()).await;
+    write_invalid_agent_server_config(daemon.data_root());
 
     let req = Request::builder()
         .method("POST")

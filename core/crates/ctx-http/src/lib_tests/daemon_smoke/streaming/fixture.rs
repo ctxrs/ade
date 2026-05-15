@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) struct StreamingServer {
-    pub(super) state: Arc<DaemonState>,
+    pub(super) daemon: TestDaemon,
     pub(super) base: String,
     pub(super) addr: std::net::SocketAddr,
     pub(super) client: reqwest::Client,
@@ -25,16 +25,10 @@ pub(super) async fn start_streaming_server() -> StreamingServer {
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        fake_provider_map(),
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    ));
-    install_fake_provider_status(&state).await;
+    let daemon = test_daemon_with_providers(data_dir.path(), stores, fake_provider_map(), None);
+    install_fake_provider_status(&daemon).await;
 
-    let app = api::router(state.clone());
+    let app = test_router(&daemon);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
@@ -42,7 +36,7 @@ pub(super) async fn start_streaming_server() -> StreamingServer {
     });
 
     StreamingServer {
-        state,
+        daemon,
         base: format!("http://{addr}"),
         addr,
         client: reqwest::Client::new(),
@@ -127,7 +121,7 @@ fn fake_provider_map() -> HashMap<String, Arc<dyn ctx_providers::adapters::Provi
     providers
 }
 
-async fn install_fake_provider_status(state: &Arc<DaemonState>) {
+async fn install_fake_provider_status(daemon: &TestDaemon) {
     let mut statuses = HashMap::new();
     statuses.insert(
         "fake".into(),
@@ -143,5 +137,5 @@ async fn install_fake_provider_status(state: &Arc<DaemonState>) {
             usability: ctx_providers::adapters::ProviderUsability::default(),
         },
     );
-    state.test_replace_provider_statuses(statuses).await;
+    daemon.replace_provider_statuses(statuses).await;
 }

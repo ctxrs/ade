@@ -60,10 +60,10 @@ pub(super) async fn wait_for_done_event(
 }
 
 pub(super) async fn assert_user_message_persisted(
-    state: &Arc<DaemonState>,
+    daemon: &TestDaemon,
     session_id: ctx_core::ids::SessionId,
 ) {
-    let store = state.store_for_session(session_id).await.unwrap();
+    let store = daemon.store_for_session(session_id).await.unwrap();
     let events = store.list_session_events(session_id).await.unwrap();
     assert!(events.iter().any(|event| matches!(
         event.event_type,

@@ -98,6 +98,10 @@ impl TestDaemon {
         let _ = self.state.core.shutdown_tx.send(());
     }
 
+    pub async fn set_session_running(&self, session_id: SessionId, running: bool) {
+        self.state.set_running(session_id, running).await;
+    }
+
     pub async fn store_for_session(&self, session_id: SessionId) -> anyhow::Result<Store> {
         self.state.store_for_session(session_id).await
     }
