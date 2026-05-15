@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 use ctx_core::ids::{SessionId, WorkspaceId, WorktreeId};
-use ctx_core::models::Session;
+use ctx_core::models::{Session, SessionHeadDelta};
 use ctx_provider_install::install_state::{
     InstallId, InstallInfo, InstallProgressEvent, InstallTarget,
 };
@@ -124,6 +125,23 @@ impl TestDaemon {
 
     pub async fn remember_session_meta(&self, session: &Session) {
         self.state.sessions.remember_session_meta(session).await;
+    }
+
+    pub async fn publish_session_head_delta(
+        &self,
+        session: &Session,
+        delta: SessionHeadDelta,
+        bump_snapshot: bool,
+    ) {
+        self.state
+            .test_publish_session_head_delta(session, delta, bump_snapshot)
+            .await;
+    }
+
+    pub async fn set_provider_inactivity_timeout(&self, timeout: Duration) {
+        self.state
+            .test_set_provider_inactivity_timeout(timeout)
+            .await;
     }
 
     pub async fn replace_provider_statuses(&self, statuses: HashMap<String, ProviderStatus>) {

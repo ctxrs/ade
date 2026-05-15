@@ -74,6 +74,7 @@ const migratedRawDaemonTestRoots = [
   "core/crates/ctx-http/tests/repo_init_initial_commit.rs",
   "core/crates/ctx-http/tests/repo_validate_destination.rs",
   "core/crates/ctx-http/tests/session_model_api.rs",
+  "core/crates/ctx-http/tests/subagent_mcp_http.rs",
   "core/crates/ctx-http/tests/system_prompt_append_http.rs",
   "core/crates/ctx-http/tests/turn_lifecycle_events.rs",
   "core/crates/ctx-http/tests/workspace_execution_config_http.rs",

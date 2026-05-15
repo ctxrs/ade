@@ -20,7 +20,7 @@ use ctx_core::models::{
     MessageDelivery, SandboxBinding, SandboxGuestIdentity, SandboxProfile, SandboxSubstrate,
     SessionEventType, SessionHeadDelta, SessionTurn, SessionTurnStatus, SessionTurnTool, VcsKind,
 };
-use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::test_support::TestDaemon;
 use ctx_providers::adapters::{
     ProviderAdapter, ProviderHealth, ProviderStatus, ProviderUsability, RunHandle, TurnInput,
 };
@@ -135,7 +135,7 @@ async fn setup_state_with_providers(
     providers: HashMap<String, Arc<dyn ProviderAdapter>>,
 ) -> (
     tempfile::TempDir,
-    Arc<DaemonState>,
+    TestDaemon,
     common::TestServer,
     Store,
     String,
@@ -143,7 +143,7 @@ async fn setup_state_with_providers(
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
     let statuses = providers.clone();
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores.clone(),
         providers,
@@ -151,9 +151,9 @@ async fn setup_state_with_providers(
     );
     for (provider_id, provider) in statuses {
         let status = provider.inspect().await.unwrap();
-        state.test_upsert_provider_status(provider_id, status).await;
+        daemon.upsert_provider_status(provider_id, status).await;
     }
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
     let server = common::spawn_http_server(app).await;
 
     let ws = stores
@@ -194,30 +194,30 @@ async fn setup_state_with_providers(
         .await
         .unwrap();
 
-    state
+    daemon
         .global_store()
         .upsert_workspace_session_index(session.id, ws.id)
         .await
         .unwrap();
-    state
+    daemon
         .global_store()
         .upsert_workspace_worktree_index(worktree.id, ws.id)
         .await
         .unwrap();
-    state
+    daemon
         .global_store()
         .upsert_workspace_task_index(task.id, ws.id)
         .await
         .unwrap();
 
-    (data_dir, state, server, store, session.id.0.to_string())
+    (data_dir, daemon, server, store, session.id.0.to_string())
 }
 
 async fn setup_state(
     repo_root: &Path,
 ) -> (
     tempfile::TempDir,
-    Arc<DaemonState>,
+    TestDaemon,
     common::TestServer,
     Store,
     String,
@@ -1304,7 +1304,7 @@ async fn archive_agent_emits_workspace_stream_session_removed_for_explicit_child
                 session_id, ..
             } if *session_id == child.id => {
                 state
-                    .test_publish_session_head_delta(
+                    .publish_session_head_delta(
                         &child,
                         SessionHeadDelta {
                             session_id: child.id,
@@ -1927,7 +1927,7 @@ async fn subagent_wait_fails_when_child_stalls_without_done_or_outcome() {
     let (_data_dir, state, server, _store, parent_id) =
         setup_state_with_providers(repo.path(), providers).await;
     state
-        .test_set_provider_inactivity_timeout(Duration::from_millis(250))
+        .set_provider_inactivity_timeout(Duration::from_millis(250))
         .await;
     let client = &server.client;
     let base = &server.base_url;
