@@ -10,7 +10,7 @@ use ctx_core::ids::{
 use ctx_core::models::{
     Message, MessageDelivery, MessageRole, Session, SessionEvent, SessionEventType,
     SessionHeadDelta, SessionTurn, SessionTurnStatus, Workspace, WorkspaceAttachmentStatus,
-    Worktree, WorktreeVcsSnapshot,
+    Worktree, WorktreeAttachmentMount, WorktreeVcsSnapshot,
 };
 use ctx_provider_install::install_state::{
     InstallId, InstallInfo, InstallProgressEvent, InstallTarget,
@@ -599,6 +599,45 @@ impl TestDaemon {
             .test_harness_container_status(workspace_id)
             .await?
             .and_then(|status| status.egress_guard))
+    }
+
+    pub async fn materialize_workspace_attachments_for_test(
+        &self,
+        workspace: &Workspace,
+        worktree: &Worktree,
+        configs: impl IntoIterator<Item = ctx_workspace_attachments::AttachmentConfig>,
+    ) -> anyhow::Result<Vec<WorktreeAttachmentMount>> {
+        for config in configs {
+            ctx_workspace_services::workspace_attachments::upsert_workspace_attachment(
+                self.state.as_ref(),
+                workspace.id,
+                config,
+            )
+            .await?;
+        }
+
+        let sync = ctx_workspace_services::workspace_attachments::sync_workspace_attachments(
+            self.state.as_ref(),
+            workspace,
+            false,
+        )
+        .await?;
+        for plan in sync.plans {
+            ctx_workspace_services::workspace_attachments::run_attachment_materialization(
+                self.state.as_ref(),
+                workspace,
+                plan.id,
+                plan.refresh,
+            )
+            .await?;
+        }
+
+        daemon::workspaces::ensure_worktree_attachment_mounts_if_materialized(
+            self.state.as_ref(),
+            workspace,
+            worktree,
+        )
+        .await
     }
 
     pub async fn replace_provider_statuses(&self, statuses: HashMap<String, ProviderStatus>) {

@@ -433,6 +433,7 @@ test("daemon boundary guard scopes migrated raw daemon constructor ban", () => {
     "core/crates/ctx-http/src/lib_tests/update_boundaries.rs",
     "core/crates/ctx-http/src/lib_tests/web_session_routes/fixtures.rs",
     "core/crates/ctx-http/src/lib_tests/workspace_active_routes.rs",
+    "core/crates/ctx-http/tests/attachments_demo_react.rs",
     "core/crates/ctx-http/tests/codex_host_import_api.rs",
     "core/crates/ctx-http/tests/codex_login_callback_api.rs",
     "core/crates/ctx-http/tests/demo_seed_transcript_http.rs",

@@ -5,10 +5,10 @@ use tokio::process::Command;
 
 use ctx_core::ids::WorktreeId;
 use ctx_core::models::{VcsKind, WorkspaceAttachmentKind, Worktree};
-use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::test_support::TestDaemon;
 use ctx_fs::git::rev_parse_head;
 use ctx_store::StoreManager;
-use ctx_workspace_services::workspace_attachments::{self, AttachmentConfig};
+use ctx_workspace_attachments::AttachmentConfig;
 
 async fn run_git(root: &Path, args: &[&str]) {
     let output = Command::new("git")
@@ -111,83 +111,43 @@ async fn attachments_demo_react_smoketest() {
         String,
         std::sync::Arc<dyn ctx_providers::adapters::ProviderAdapter>,
     > = std::collections::HashMap::new();
-    let state = std::sync::Arc::new(DaemonState::new(
+    let daemon = TestDaemon::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:0".to_string(),
         None,
-    ));
+    );
 
-    workspace_attachments::upsert_workspace_attachment(
-        state.as_ref(),
-        ws.id,
-        AttachmentConfig {
-            kind: WorkspaceAttachmentKind::ReferenceRepo,
-            name: "react".to_string(),
-            source: ws_root.to_string_lossy().to_string(),
-            revision: Some("main".to_string()),
-            subpath: None,
-            mount_relpath: None,
-            mode: None,
-            update_policy: None,
-        },
-    )
-    .await
-    .unwrap();
-    workspace_attachments::upsert_workspace_attachment(
-        state.as_ref(),
-        ws.id,
-        AttachmentConfig {
-            kind: WorkspaceAttachmentKind::DocMirror,
-            name: "react-docs".to_string(),
-            source: ".ctx/scripts/fetch-react-docs.sh".to_string(),
-            revision: None,
-            subpath: None,
-            mount_relpath: None,
-            mode: None,
-            update_policy: None,
-        },
-    )
-    .await
-    .unwrap();
-
-    let sync = workspace_attachments::sync_workspace_attachments(state.as_ref(), &ws, false)
-        .await
-        .unwrap();
-    for plan in sync.plans {
-        workspace_attachments::run_attachment_materialization(
-            state.as_ref(),
+    let mounts = daemon
+        .materialize_workspace_attachments_for_test(
             &ws,
-            plan.id,
-            plan.refresh,
+            &worktree,
+            [
+                AttachmentConfig {
+                    kind: WorkspaceAttachmentKind::ReferenceRepo,
+                    name: "react".to_string(),
+                    source: ws_root.to_string_lossy().to_string(),
+                    revision: Some("main".to_string()),
+                    subpath: None,
+                    mount_relpath: None,
+                    mode: None,
+                    update_policy: None,
+                },
+                AttachmentConfig {
+                    kind: WorkspaceAttachmentKind::DocMirror,
+                    name: "react-docs".to_string(),
+                    source: ".ctx/scripts/fetch-react-docs.sh".to_string(),
+                    revision: None,
+                    subpath: None,
+                    mount_relpath: None,
+                    mode: None,
+                    update_policy: None,
+                },
+            ],
         )
         .await
         .unwrap();
-    }
-    let store = state.store_for_workspace(ws.id).await.unwrap();
-    let attachments = store.list_workspace_attachments(ws.id).await.unwrap();
-    let worktree_root = PathBuf::from(&worktree.root_path);
-    ctx_workspace_attachments::ensure_git_exclude(state.as_ref(), &ws, worktree.id, &worktree_root)
-        .await
-        .unwrap();
-    let mut mounts = Vec::new();
-    for attachment in &attachments {
-        mounts.push(
-            ctx_workspace_attachments::ensure_attachment_mount(
-                state.as_ref(),
-                &ws,
-                worktree.id,
-                &worktree_root,
-                attachment,
-                true,
-                false,
-            )
-            .await
-            .unwrap(),
-        );
-    }
-
     assert!(!mounts.is_empty());
     assert!(ws_root.join(".ctx/attachments/refs/react").exists());
     assert!(ws_root.join(".ctx/attachments/docs/react-docs").exists());
