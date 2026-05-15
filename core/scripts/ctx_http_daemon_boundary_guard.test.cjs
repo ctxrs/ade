@@ -1217,6 +1217,11 @@ test("daemon boundary guard scopes fake-daemon external roots without blocking c
     "core/crates/ctx-http/tests/install_start_contract.rs",
     "core/crates/ctx-http/tests/jj_merge_queue_basics.rs",
     "core/crates/ctx-http/tests/message_idempotency.rs",
+    "core/crates/ctx-http/tests/terminal_workspace_stream_separation.rs",
+    "core/crates/ctx-http/tests/terminal_ws_reconnect.rs",
+    "core/crates/ctx-http/tests/workspace_stream_context_window_metrics.rs",
+    "core/crates/ctx-http/tests/workspace_stream_no_gaps_under_activity.rs",
+    "core/crates/ctx-http/tests/workspace_stream_stress_active_heads_lag.rs",
   ]) {
     assert.deepEqual(
       fakeDaemonExternalStorePatternsForPath(filePath),
@@ -1626,15 +1631,18 @@ test("daemon boundary guard rejects direct terminal-workspace-stream store acces
 });
 
 test("daemon boundary guard scopes terminal-workspace-stream store facade root", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/tests/terminal_workspace_stream_separation.rs",
+    "core/crates/ctx-http/tests/terminal_ws_reconnect.rs",
+  ]) {
+    assert.deepEqual(
+      terminalWorkspaceStreamStorePatternsForPath(filePath),
+      TERMINAL_WORKSPACE_STREAM_TEST_STORE_ACCESS_PATTERNS,
+    );
+  }
   assert.deepEqual(
     terminalWorkspaceStreamStorePatternsForPath(
-      "core/crates/ctx-http/tests/terminal_workspace_stream_separation.rs",
-    ),
-    TERMINAL_WORKSPACE_STREAM_TEST_STORE_ACCESS_PATTERNS,
-  );
-  assert.deepEqual(
-    terminalWorkspaceStreamStorePatternsForPath(
-      "core/crates/ctx-http/tests/terminal_ws_reconnect.rs",
+      "core/crates/ctx-http/tests/jj_merge_queue_basics.rs",
     ),
     [],
   );
@@ -2288,7 +2296,9 @@ test("daemon boundary guard allows common setup-store in stream-runtime", () => 
 test("daemon boundary guard scopes stream-runtime store facade roots", () => {
   for (const filePath of [
     "core/crates/ctx-http/tests/noisy_output_backpressure.rs",
+    "core/crates/ctx-http/tests/workspace_stream_context_window_metrics.rs",
     "core/crates/ctx-http/tests/workspace_stream_no_gaps_under_activity.rs",
+    "core/crates/ctx-http/tests/workspace_stream_stress_active_heads_lag.rs",
   ]) {
     assert.deepEqual(
       streamRuntimeStorePatternsForPath(filePath),

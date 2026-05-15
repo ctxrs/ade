@@ -172,6 +172,11 @@ const fakeDaemonExternalStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/install_start_contract.rs",
   "core/crates/ctx-http/tests/jj_merge_queue_basics.rs",
   "core/crates/ctx-http/tests/message_idempotency.rs",
+  "core/crates/ctx-http/tests/terminal_workspace_stream_separation.rs",
+  "core/crates/ctx-http/tests/terminal_ws_reconnect.rs",
+  "core/crates/ctx-http/tests/workspace_stream_context_window_metrics.rs",
+  "core/crates/ctx-http/tests/workspace_stream_no_gaps_under_activity.rs",
+  "core/crates/ctx-http/tests/workspace_stream_stress_active_heads_lag.rs",
 ];
 
 const mcpDaemonFacadeTestRoots = [
@@ -230,6 +235,7 @@ const globalIdRoutingStoreFacadeTestRoots = [
 
 const terminalWorkspaceStreamStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/terminal_workspace_stream_separation.rs",
+  "core/crates/ctx-http/tests/terminal_ws_reconnect.rs",
 ];
 
 const workspaceRuntimeSettingsStoreFacadeTestRoots = [
@@ -260,7 +266,9 @@ const faultInjectionStoreFacadeTestRoots = [
 
 const streamRuntimeStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/noisy_output_backpressure.rs",
+  "core/crates/ctx-http/tests/workspace_stream_context_window_metrics.rs",
   "core/crates/ctx-http/tests/workspace_stream_no_gaps_under_activity.rs",
+  "core/crates/ctx-http/tests/workspace_stream_stress_active_heads_lag.rs",
 ];
 
 const schedulerRuntimeStoreFacadeTestRoots = [

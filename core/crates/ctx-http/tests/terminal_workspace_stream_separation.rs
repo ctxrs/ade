@@ -188,17 +188,8 @@ async fn terminal_disconnect_and_reconnect_do_not_poison_workspace_control_plane
     enable_queued_messages_for_test_binary();
 
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_dir.path()).await;
-
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&daemon);
-    let server = common::spawn_http_server(app).await;
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let server = fixture.spawn_server().await;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -276,7 +267,7 @@ async fn terminal_disconnect_and_reconnect_do_not_poison_workspace_control_plane
     let client_clone = client.clone();
     let base_clone = base.to_string();
     let session_id = session.id;
-    let daemon_clone = daemon.clone();
+    let daemon_clone = fixture.daemon.clone();
     let send_messages = tokio::spawn(async move {
         for index in 0..message_count {
             wait_for_session_idle_in_memory(&daemon_clone, session_id).await;
@@ -364,7 +355,7 @@ async fn terminal_disconnect_and_reconnect_do_not_poison_workspace_control_plane
     );
 
     send_messages.await.unwrap();
-    wait_for_session_completed_turns(&daemon, session.id, message_count).await;
+    wait_for_session_completed_turns(&fixture.daemon, session.id, message_count).await;
     assert_workspace_stream_no_gap(&mut workspace_socket, &session, Duration::from_secs(5)).await;
 
     let _ = client

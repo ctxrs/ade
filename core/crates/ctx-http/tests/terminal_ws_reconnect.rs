@@ -185,17 +185,8 @@ async fn write_executable_script(path: &Path, contents: &str) {
 #[tokio::test]
 async fn terminal_ws_reconnect_sends_status_and_tail() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_dir.path()).await;
-
-    let state = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&state);
-    let server = common::spawn_http_server(app).await;
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let server = fixture.spawn_server().await;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -281,17 +272,8 @@ async fn terminal_ws_reconnect_sends_status_and_tail() {
 #[tokio::test]
 async fn terminal_ws_reconnect_resyncs_bounded_tail_after_churn() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_dir.path()).await;
-
-    let state = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&state);
-    let server = common::spawn_http_server(app).await;
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let server = fixture.spawn_server().await;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -368,17 +350,8 @@ async fn terminal_ws_reconnect_resyncs_bounded_tail_after_churn() {
 #[tokio::test]
 async fn terminal_ws_keepalive_pong() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_dir.path()).await;
-
-    let state = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&state);
-    let server = common::spawn_http_server(app).await;
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let server = fixture.spawn_server().await;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -454,17 +427,8 @@ printf 'CTX_TERM_BOUND_TAIL\n'
     )
     .await;
 
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_dir.path()).await;
-
-    let state = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&state);
-    let server = common::spawn_http_server(app).await;
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let server = fixture.spawn_server().await;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -493,7 +457,8 @@ printf 'CTX_TERM_BOUND_TAIL\n'
 
     wait_for_terminal_status(client, base, &workspace, &terminal, TerminalStatus::Exited).await;
 
-    let output_snapshot = state
+    let output_snapshot = fixture
+        .daemon
         .terminal_output_snapshot(terminal.id)
         .await
         .expect("terminal output snapshot");
