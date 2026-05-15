@@ -3,8 +3,7 @@ use super::*;
 #[tokio::test]
 async fn telemetry_export_reads_valid_daily_log() {
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
+    let state = test_daemon_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
     let app = test_router(&state);
 
     let path =
@@ -27,8 +26,7 @@ async fn telemetry_export_reads_valid_daily_log() {
 #[tokio::test]
 async fn telemetry_export_rejects_path_traversal_dates() {
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
+    let state = test_daemon_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
     let app = test_router(&state);
 
     let escaped_path = data_dir

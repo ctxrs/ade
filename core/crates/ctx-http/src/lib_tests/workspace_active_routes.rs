@@ -7,8 +7,7 @@ async fn workspace_active_snapshot_stream_returns_not_found_before_upgrade() {
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
+    let state = test_daemon_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
     let app = test_router(&state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

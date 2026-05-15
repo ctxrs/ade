@@ -18,8 +18,7 @@ async fn diagnostics_marks_provider_statuses_with_agent_server_config_errors() {
 
     let data_dir = tempfile::tempdir().unwrap();
     write_invalid_agent_server_config(data_dir.path());
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, None);
+    let state = test_daemon_for_test(data_dir.path(), None).await;
     state
         .upsert_provider_status(
             "qwen".to_string(),

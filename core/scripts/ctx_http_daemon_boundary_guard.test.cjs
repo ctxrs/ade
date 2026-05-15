@@ -14,6 +14,7 @@ const {
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
+  PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_ROUTE_SETUP_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_WORKER_REAPING_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_TEST_CACHE_ACCESS_PATTERNS,
@@ -1315,9 +1316,48 @@ test("daemon boundary guard rejects direct small-boundary store and handle acces
   );
 });
 
+test("daemon boundary guard rejects providerless lib-route direct StoreManager setup", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/lib_tests/cors.rs",
+    contents: `
+      use ctx_store::StoreManager;
+      async fn fixture() {
+        let _stores = StoreManager::open(data_dir.path()).await.unwrap();
+      }
+    `,
+    patterns: smallBoundaryStorePatternsForPath("core/crates/ctx-http/src/lib_tests/cors.rs"),
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "raw providerless lib-route StoreManager",
+      "raw providerless lib-route StoreManager",
+    ],
+  );
+});
+
 test("daemon boundary guard scopes small-boundary store facade roots", () => {
   for (const filePath of [
+    "core/crates/ctx-http/src/lib_tests/cors.rs",
+    "core/crates/ctx-http/src/lib_tests/health_diagnostics/auth.rs",
+    "core/crates/ctx-http/src/lib_tests/health_diagnostics/managed_config.rs",
+    "core/crates/ctx-http/src/lib_tests/health_diagnostics/storage.rs",
+    "core/crates/ctx-http/src/lib_tests/org_policy_routes.rs",
+    "core/crates/ctx-http/src/lib_tests/telemetry_export_boundaries.rs",
     "core/crates/ctx-http/src/lib_tests/update_boundaries.rs",
+    "core/crates/ctx-http/src/lib_tests/workspace_active_routes.rs",
+  ]) {
+    assert.deepEqual(
+      smallBoundaryStorePatternsForPath(filePath),
+      [
+        ...SMALL_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
+        ...PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
+      ],
+    );
+  }
+
+  for (const filePath of [
     "core/crates/ctx-http/src/lib_tests/execution_launch/settings_errors.rs",
     "core/crates/ctx-http/src/lib_tests/run_archive_routes.rs",
     "core/crates/ctx-http/src/api/sessions/tests.rs",

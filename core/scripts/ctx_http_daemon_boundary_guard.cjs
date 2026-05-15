@@ -186,12 +186,26 @@ const sessionFixtureStoreFacadeTestRoots = [
 ];
 
 const smallBoundaryStoreFacadeTestRoots = [
+  "core/crates/ctx-http/src/lib_tests/cors.rs",
+  "core/crates/ctx-http/src/lib_tests/health_diagnostics/",
+  "core/crates/ctx-http/src/lib_tests/org_policy_routes.rs",
+  "core/crates/ctx-http/src/lib_tests/telemetry_export_boundaries.rs",
   "core/crates/ctx-http/src/lib_tests/update_boundaries.rs",
+  "core/crates/ctx-http/src/lib_tests/workspace_active_routes.rs",
   "core/crates/ctx-http/src/lib_tests/execution_launch/settings_errors.rs",
   "core/crates/ctx-http/src/lib_tests/run_archive_routes.rs",
   "core/crates/ctx-http/src/api/sessions/tests.rs",
   "core/crates/ctx-http/src/api/sessions/tests/title_generation.rs",
   "core/crates/ctx-http/src/api/workspaces/tests.rs",
+];
+
+const providerlessLibRouteStoreFacadeTestRoots = [
+  "core/crates/ctx-http/src/lib_tests/cors.rs",
+  "core/crates/ctx-http/src/lib_tests/health_diagnostics/",
+  "core/crates/ctx-http/src/lib_tests/org_policy_routes.rs",
+  "core/crates/ctx-http/src/lib_tests/telemetry_export_boundaries.rs",
+  "core/crates/ctx-http/src/lib_tests/update_boundaries.rs",
+  "core/crates/ctx-http/src/lib_tests/workspace_active_routes.rs",
 ];
 
 const globalIdRoutingStoreFacadeTestRoots = [
@@ -706,6 +720,13 @@ const SMALL_BOUNDARY_TEST_STORE_ACCESS_PATTERNS = [
   {
     name: "raw small-boundary ctx_store Store",
     regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore\b/,
+  },
+];
+
+const PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "raw providerless lib-route StoreManager",
+    regex: /\bStoreManager\b/,
   },
 ];
 
@@ -1597,10 +1618,14 @@ function sessionFixtureStorePatternsForPath(relativePath) {
 }
 
 function smallBoundaryStorePatternsForPath(relativePath) {
+  const patterns = [];
   if (smallBoundaryStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
-    return SMALL_BOUNDARY_TEST_STORE_ACCESS_PATTERNS;
+    patterns.push(...SMALL_BOUNDARY_TEST_STORE_ACCESS_PATTERNS);
   }
-  return [];
+  if (providerlessLibRouteStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS);
+  }
+  return patterns;
 }
 
 function globalIdRoutingStorePatternsForPath(relativePath) {
@@ -2074,6 +2099,7 @@ module.exports = {
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
+  PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_ROUTE_SETUP_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_WORKER_REAPING_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_TEST_CACHE_ACCESS_PATTERNS,

@@ -39,6 +39,17 @@ fn test_daemon_with_providers(
     )
 }
 
+async fn test_daemon_for_test(data_dir: &Path, auth_token: Option<String>) -> TestDaemon {
+    TestDaemon::new_with_providers_for_test(
+        data_dir.to_path_buf(),
+        HashMap::new(),
+        "http://127.0.0.1:4399".to_string(),
+        auth_token,
+    )
+    .await
+    .unwrap()
+}
+
 fn test_router(daemon: &TestDaemon) -> axum::Router {
     api::router(api::RouteHandles::from_daemon_handle(daemon.handle()))
 }

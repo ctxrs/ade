@@ -6,8 +6,7 @@ async fn cors_preflight_allows_archived_endpoint_for_tauri_origin() {
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, Some("desktop-token".to_string()));
+    let state = test_daemon_for_test(data_dir.path(), Some("desktop-token".to_string())).await;
     let app = test_router(&state);
     let req = Request::builder()
         .method(Method::OPTIONS)
@@ -49,8 +48,7 @@ async fn cors_preflight_allows_health_endpoint_for_tauri_localhost_origin() {
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, Some("desktop-token".to_string()));
+    let state = test_daemon_for_test(data_dir.path(), Some("desktop-token".to_string())).await;
     let app = test_router(&state);
     let req = Request::builder()
         .method(Method::OPTIONS)

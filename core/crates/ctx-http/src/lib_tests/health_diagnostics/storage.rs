@@ -3,8 +3,7 @@ use super::*;
 #[tokio::test]
 async fn health_and_diagnostics_include_storage_guard_state() {
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, None);
+    let state = test_daemon_for_test(data_dir.path(), None).await;
     state.publish_storage_guard(StorageGuardStatus {
         level: StorageGuardLevel::Warning,
         reserve_file_active: true,

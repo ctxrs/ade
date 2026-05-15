@@ -3,8 +3,7 @@ use super::*;
 #[tokio::test]
 async fn update_check_rejects_path_traversal_channel() {
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
+    let state = test_daemon_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
     let app = test_router(&state);
 
     let req = Request::builder()
@@ -20,12 +19,11 @@ async fn update_check_rejects_path_traversal_channel() {
 #[tokio::test]
 async fn daemon_shutdown_endpoint_terminalizes_running_turns_before_ack() {
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let state = {
         let _serial = home_env_test_lock().lock().await;
         let _shutdown_token =
             EnvVarGuard::set("CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN", "local-shutdown-secret");
-        test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()))
+        test_daemon_for_test(data_dir.path(), Some("daemon-secret".to_string())).await
     };
 
     let fixture = state
@@ -56,12 +54,11 @@ async fn daemon_shutdown_endpoint_terminalizes_running_turns_before_ack() {
 #[tokio::test]
 async fn daemon_shutdown_endpoint_requires_local_shutdown_token() {
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let state = {
         let _serial = home_env_test_lock().lock().await;
         let _shutdown_token =
             EnvVarGuard::set("CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN", "local-shutdown-secret");
-        test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()))
+        test_daemon_for_test(data_dir.path(), Some("daemon-secret".to_string())).await
     };
     let app = test_router(&state);
 
