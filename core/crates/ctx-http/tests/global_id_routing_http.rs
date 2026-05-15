@@ -1,9 +1,8 @@
 use std::path::Path;
 
 use axum::http::StatusCode;
-use ctx_core::ids::{ArtifactId, MessageId, SessionId};
-use ctx_core::models::{Message, MessageDelivery, MessageRole, VcsKind};
-use ctx_daemon::test_support::TestDaemon;
+use ctx_core::ids::{ArtifactId, SessionId};
+use ctx_daemon::test_support::{GlobalIdRoutingWorkspaceSessionSeed, TestDaemon};
 use ctx_providers::adapters::{
     ProviderAdapter, ProviderRecommendedAction, ProviderUsability, ProviderUsabilityStatus,
 };
@@ -49,65 +48,21 @@ async fn create_workspace_session(
     name: &str,
     repo_root: &Path,
 ) -> SessionFixture {
-    let workspace = daemon
-        .global_store()
-        .create_workspace(
-            name.to_string(),
-            repo_root.to_string_lossy().to_string(),
-            VcsKind::Git,
-        )
-        .await
-        .unwrap();
-    let store = daemon.store_for_workspace(workspace.id).await.unwrap();
     let vcs = ctx_fs::vcs::driver_for_path(repo_root).await.unwrap();
     let base_commit = vcs.rev_parse_head(repo_root).await.unwrap();
-    let worktree = store
-        .create_worktree(
-            workspace.id,
-            repo_root.to_string_lossy().to_string(),
+    let fixture = daemon
+        .seed_global_id_routing_workspace_session_for_test(GlobalIdRoutingWorkspaceSessionSeed {
+            name: name.to_string(),
+            root_path: repo_root.to_path_buf(),
             base_commit,
-            None,
-        )
-        .await
-        .unwrap();
-    let task = store
-        .create_task(workspace.id, name.to_string(), None)
-        .await
-        .unwrap();
-    let session = store
-        .create_session(
-            task.id,
-            workspace.id,
-            worktree.id,
-            ctx_core::models::ExecutionEnvironment::Host,
-            "fake".into(),
-            "fake-model".into(),
-            "assistant".into(),
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-
-    daemon
-        .global_store()
-        .upsert_workspace_task_index(task.id, workspace.id)
-        .await
-        .unwrap();
-    daemon
-        .global_store()
-        .upsert_workspace_worktree_index(worktree.id, workspace.id)
-        .await
-        .unwrap();
-    daemon
-        .global_store()
-        .upsert_workspace_session_index(session.id, workspace.id)
+            provider_id: "fake".to_string(),
+            model_id: "fake-model".to_string(),
+        })
         .await
         .unwrap();
 
     SessionFixture {
-        session_id: session.id,
+        session_id: fixture.session_id,
     }
 }
 
@@ -199,34 +154,10 @@ async fn message_delete_route_is_session_scoped() {
     let repo_b = common::init_git_repo(&[("README.md", "b")]).await;
     let _workspace_a = create_workspace_session(&daemon, "a", repo_a.path()).await;
     let workspace_b = create_workspace_session(&daemon, "b", repo_b.path()).await;
-    let store = daemon
-        .store_for_session(workspace_b.session_id)
+    let message_id = daemon
+        .seed_global_id_routing_queued_message_for_test(workspace_b.session_id, "queued")
         .await
         .unwrap();
-    let session = store
-        .get_session(workspace_b.session_id)
-        .await
-        .unwrap()
-        .unwrap();
-    let message = store
-        .insert_message(Message {
-            id: MessageId::new(),
-            session_id: session.id,
-            task_id: session.task_id,
-            run_id: None,
-            turn_id: None,
-            turn_sequence: None,
-            order_seq: None,
-            role: MessageRole::User,
-            content: "queued".to_string(),
-            attachments: Vec::new(),
-            delivery: MessageDelivery::Queued,
-            delivered_at: None,
-            created_at: chrono::Utc::now(),
-        })
-        .await
-        .unwrap();
-    let message_id = message.id;
 
     let resp = server
         .client
@@ -240,7 +171,10 @@ async fn message_delete_route_is_session_scoped() {
     let status = resp.status();
     let body = resp.text().await.unwrap();
     assert_eq!(status, StatusCode::NO_CONTENT, "unexpected body: {body}");
-    assert!(store.get_message(message_id).await.unwrap().is_none());
+    assert!(!daemon
+        .global_id_routing_message_exists_for_test(workspace_b.session_id, message_id)
+        .await
+        .unwrap());
     request_shutdown(&daemon);
 }
 

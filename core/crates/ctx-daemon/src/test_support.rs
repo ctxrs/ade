@@ -103,6 +103,18 @@ pub struct TurnReconciliationSnapshot {
     pub is_working: bool,
 }
 
+pub struct GlobalIdRoutingWorkspaceSessionSeed {
+    pub name: String,
+    pub root_path: PathBuf,
+    pub base_commit: String,
+    pub provider_id: String,
+    pub model_id: String,
+}
+
+pub struct GlobalIdRoutingSessionFixture {
+    pub session_id: SessionId,
+}
+
 pub struct TaskLifecycleWorktreeSeed {
     pub workspace_id: WorkspaceId,
     pub owner_task_id: TaskId,
@@ -913,6 +925,104 @@ impl TestDaemon {
                 .await?,
             sandbox_binding: store.get_sandbox_binding(worktree_id).await?,
         })
+    }
+
+    pub async fn seed_global_id_routing_workspace_session_for_test(
+        &self,
+        seed: GlobalIdRoutingWorkspaceSessionSeed,
+    ) -> anyhow::Result<GlobalIdRoutingSessionFixture> {
+        let workspace = self
+            .state
+            .global_store()
+            .create_workspace(
+                seed.name.clone(),
+                seed.root_path.to_string_lossy().to_string(),
+                VcsKind::Git,
+            )
+            .await?;
+        let store = self.state.store_for_workspace(workspace.id).await?;
+        let worktree = store
+            .create_worktree(
+                workspace.id,
+                seed.root_path.to_string_lossy().to_string(),
+                seed.base_commit,
+                None,
+            )
+            .await?;
+        let task = store.create_task(workspace.id, seed.name, None).await?;
+        let session = store
+            .create_session(
+                task.id,
+                workspace.id,
+                worktree.id,
+                ExecutionEnvironment::Host,
+                seed.provider_id,
+                seed.model_id,
+                "assistant".to_string(),
+                None,
+                None,
+                None,
+            )
+            .await?;
+
+        self.state
+            .global_store()
+            .upsert_workspace_task_index(task.id, workspace.id)
+            .await?;
+        self.state
+            .global_store()
+            .upsert_workspace_worktree_index(worktree.id, workspace.id)
+            .await?;
+        self.state
+            .global_store()
+            .upsert_workspace_session_index(session.id, workspace.id)
+            .await?;
+
+        Ok(GlobalIdRoutingSessionFixture {
+            session_id: session.id,
+        })
+    }
+
+    pub async fn seed_global_id_routing_queued_message_for_test(
+        &self,
+        session_id: SessionId,
+        content: &str,
+    ) -> anyhow::Result<MessageId> {
+        let store = self.state.store_for_session(session_id).await?;
+        let session = store
+            .get_session(session_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("session {session_id:?} not found"))?;
+        let message = store
+            .insert_message(Message {
+                id: MessageId::new(),
+                session_id: session.id,
+                task_id: session.task_id,
+                run_id: None,
+                turn_id: None,
+                turn_sequence: None,
+                order_seq: None,
+                role: MessageRole::User,
+                content: content.to_string(),
+                attachments: Vec::new(),
+                delivery: MessageDelivery::Queued,
+                delivered_at: None,
+                created_at: chrono::Utc::now(),
+            })
+            .await?;
+        Ok(message.id)
+    }
+
+    pub async fn global_id_routing_message_exists_for_test(
+        &self,
+        session_id: SessionId,
+        message_id: MessageId,
+    ) -> anyhow::Result<bool> {
+        let store = self.state.store_for_session(session_id).await?;
+        Ok(store
+            .get_message(message_id)
+            .await?
+            .is_some_and(|message| message.session_id == session_id))
     }
 
     pub async fn seed_shutdown_running_turn_for_test(

@@ -5,6 +5,7 @@ const {
   DAEMON_EXTRACTION_BLOCKER_PATTERNS,
   API_DOMAIN_RAW_STORE_PATTERNS,
   API_RAW_DAEMON_PATTERNS,
+  GLOBAL_ID_ROUTING_TEST_STORE_ACCESS_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
@@ -17,6 +18,7 @@ const {
   TEST_ROUTER_COMPOSITION_PATTERNS,
   TEST_RAW_DAEMON_BUCKET_PATTERNS,
   apiPatternsForPath,
+  globalIdRoutingStorePatternsForPath,
   isTestRustPath,
   mcpDaemonPatternsForPath,
   migratedTestPatternsForPath,
@@ -886,6 +888,60 @@ test("daemon boundary guard scopes small-boundary store facade roots", () => {
   assert.deepEqual(
     smallBoundaryStorePatternsForPath(
       "core/crates/ctx-http/src/lib_tests/provider_routes.rs",
+    ),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects direct global-id-routing store access", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/global_id_routing_http.rs",
+    contents: `
+      use ctx_store::{Store, StoreManager};
+      async fn fixture(daemon: TestDaemon, stores: StoreManager) {
+        daemon.global_store();
+        daemon.store_for_session(session_id).await?;
+        daemon.store_for_workspace(workspace_id).await?;
+        daemon.uncached_store_for_workspace(workspace_id).await?;
+        daemon.store_for_task(task_id).await?;
+        daemon.stores().global().await?;
+        stores.global().await?;
+        stores.workspace(workspace_id).await?;
+        let _raw: Store;
+      }
+    `,
+    patterns: GLOBAL_ID_ROUTING_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct global-id-routing global store access",
+      "direct global-id-routing session store access",
+      "direct global-id-routing workspace store access",
+      "direct global-id-routing uncached workspace store access",
+      "direct global-id-routing task store access",
+      "direct global-id-routing StoreManager access",
+      "direct global-id-routing StoreManager global access",
+      "direct global-id-routing StoreManager workspace access",
+      "raw global-id-routing ctx_store Store",
+      "raw global-id-routing ctx_store Store",
+      "raw global-id-routing StoreManager",
+      "raw global-id-routing StoreManager",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes global-id-routing store facade root", () => {
+  assert.deepEqual(
+    globalIdRoutingStorePatternsForPath(
+      "core/crates/ctx-http/tests/global_id_routing_http.rs",
+    ),
+    GLOBAL_ID_ROUTING_TEST_STORE_ACCESS_PATTERNS,
+  );
+  assert.deepEqual(
+    globalIdRoutingStorePatternsForPath(
+      "core/crates/ctx-http/tests/image_attachments_http_e2e.rs",
     ),
     [],
   );

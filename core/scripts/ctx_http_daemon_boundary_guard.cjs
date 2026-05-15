@@ -156,6 +156,10 @@ const smallBoundaryStoreFacadeTestRoots = [
   "core/crates/ctx-http/src/api/workspaces/tests.rs",
 ];
 
+const globalIdRoutingStoreFacadeTestRoots = [
+  "core/crates/ctx-http/tests/global_id_routing_http.rs",
+];
+
 const schedulerRuntimeStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/assistant_chunk_stream_only.rs",
   "core/crates/ctx-http/tests/assistant_message_persistence_faults.rs",
@@ -451,6 +455,49 @@ const SMALL_BOUNDARY_TEST_STORE_ACCESS_PATTERNS = [
   },
 ];
 
+const GLOBAL_ID_ROUTING_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct global-id-routing global store access",
+    regex: /\.global_store\s*\(/,
+  },
+  {
+    name: "direct global-id-routing session store access",
+    regex: /\.store_for_session\s*\(/,
+  },
+  {
+    name: "direct global-id-routing workspace store access",
+    regex: /\.store_for_workspace\s*\(/,
+  },
+  {
+    name: "direct global-id-routing uncached workspace store access",
+    regex: /\.uncached_store_for_workspace\s*\(/,
+  },
+  {
+    name: "direct global-id-routing task store access",
+    regex: /\.store_for_task\s*\(/,
+  },
+  {
+    name: "direct global-id-routing StoreManager access",
+    regex: /\.stores\s*\(/,
+  },
+  {
+    name: "direct global-id-routing StoreManager global access",
+    regex: /\bstores\.global\s*\(/,
+  },
+  {
+    name: "direct global-id-routing StoreManager workspace access",
+    regex: /\bstores\.workspace\s*\(/,
+  },
+  {
+    name: "raw global-id-routing ctx_store Store",
+    regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore\b/,
+  },
+  {
+    name: "raw global-id-routing StoreManager",
+    regex: /\bStoreManager\b/,
+  },
+];
+
 const SCHEDULER_RUNTIME_TEST_STORE_ACCESS_PATTERNS = [
   {
     name: "direct scheduler-runtime global store access",
@@ -717,6 +764,13 @@ function smallBoundaryStorePatternsForPath(relativePath) {
   return [];
 }
 
+function globalIdRoutingStorePatternsForPath(relativePath) {
+  if (globalIdRoutingStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return GLOBAL_ID_ROUTING_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
 function schedulerRuntimeStorePatternsForPath(relativePath) {
   if (schedulerRuntimeStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return SCHEDULER_RUNTIME_TEST_STORE_ACCESS_PATTERNS;
@@ -973,6 +1027,13 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
+        patterns: globalIdRoutingStorePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
         patterns: schedulerRuntimeStorePatternsForPath(relativePath),
       }),
     );
@@ -1018,6 +1079,7 @@ module.exports = {
   DAEMON_EXTRACTION_BLOCKER_PATTERNS,
   API_RAW_DAEMON_PATTERNS,
   API_DOMAIN_RAW_STORE_PATTERNS,
+  GLOBAL_ID_ROUTING_TEST_STORE_ACCESS_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
@@ -1030,6 +1092,7 @@ module.exports = {
   TEST_ROUTER_COMPOSITION_PATTERNS,
   TEST_RAW_DAEMON_BUCKET_PATTERNS,
   apiPatternsForPath,
+  globalIdRoutingStorePatternsForPath,
   isTestRustPath,
   mcpDaemonPatternsForPath,
   migratedTestPatternsForPath,
