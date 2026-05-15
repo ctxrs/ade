@@ -8,7 +8,7 @@ use axum::http::{Method, Request, StatusCode};
 use tower::ServiceExt;
 
 use ctx_core::models::SessionEventType;
-use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::test_support::TestDaemon;
 use ctx_providers::adapters::{ProviderAdapter, ProviderSessionSweepConfig};
 use ctx_providers::crp::Tier1CrpAdapter;
 use ctx_store::StoreManager;
@@ -87,11 +87,11 @@ async fn post_message(app: &axum::Router, session_id: uuid::Uuid, content: &str)
 }
 
 async fn wait_for_done_count(
-    state: &Arc<DaemonState>,
+    daemon: &TestDaemon,
     session_id: ctx_core::ids::SessionId,
     expected_done_count: usize,
 ) {
-    let store = state.store_for_session(session_id).await.unwrap();
+    let store = daemon.store_for_session(session_id).await.unwrap();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     loop {
         let events = store.list_session_events(session_id).await.unwrap();
@@ -118,10 +118,10 @@ async fn wait_for_done_count(
 }
 
 async fn wait_for_provider_session_ref(
-    state: &Arc<DaemonState>,
+    daemon: &TestDaemon,
     session_id: ctx_core::ids::SessionId,
 ) -> String {
-    let store = state.store_for_session(session_id).await.unwrap();
+    let store = daemon.store_for_session(session_id).await.unwrap();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     loop {
         let session = store
@@ -139,10 +139,10 @@ async fn wait_for_provider_session_ref(
     }
 }
 
-async fn wait_for_session_idle(state: &Arc<DaemonState>, session_id: ctx_core::ids::SessionId) {
+async fn wait_for_session_idle(daemon: &TestDaemon, session_id: ctx_core::ids::SessionId) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     loop {
-        if !state.is_session_running(session_id).await {
+        if !daemon.is_session_running(session_id).await {
             return;
         }
         if tokio::time::Instant::now() >= deadline {
@@ -203,26 +203,26 @@ async fn assert_provider_session_resume_after_idle_reap(provider_id: &str, model
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert(provider_id.to_string(), Arc::clone(&adapter));
 
-    let state = Arc::new(DaemonState::new(
+    let daemon = TestDaemon::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:0".to_string(),
         None,
-    ));
-    let app = ctx_http::api::router(state.clone());
+    );
+    let app = ctx_http::api::router(daemon.handle());
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (_task, session) =
         common::create_task_with_session(&app, ws.id.0, "resume-test", provider_id, model_id).await;
 
     post_message(&app, session.id.0, "first").await;
-    wait_for_done_count(&state, session.id, 1).await;
+    wait_for_done_count(&daemon, session.id, 1).await;
 
-    let provider_session_ref = wait_for_provider_session_ref(&state, session.id).await;
+    let provider_session_ref = wait_for_provider_session_ref(&daemon, session.id).await;
     assert_eq!(provider_session_ref, format!("{provider_id}-thread"));
     assert_eq!(adapter.list_processes().await.len(), 1);
-    wait_for_session_idle(&state, session.id).await;
+    wait_for_session_idle(&daemon, session.id).await;
 
     let sweep_stats = adapter
         .reap_idle_sessions(ProviderSessionSweepConfig {
@@ -236,7 +236,7 @@ async fn assert_provider_session_resume_after_idle_reap(provider_id: &str, model
     assert!(adapter.list_processes().await.is_empty());
 
     post_message(&app, session.id.0, "second").await;
-    wait_for_done_count(&state, session.id, 2).await;
+    wait_for_done_count(&daemon, session.id, 2).await;
 
     let open_commands = std::fs::read_to_string(&command_log)
         .unwrap()

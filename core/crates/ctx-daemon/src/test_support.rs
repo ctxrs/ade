@@ -106,6 +106,10 @@ impl TestDaemon {
         self.state.set_running(session_id, running).await;
     }
 
+    pub async fn is_session_running(&self, session_id: SessionId) -> bool {
+        self.state.is_session_running(session_id).await
+    }
+
     pub async fn store_for_session(&self, session_id: SessionId) -> anyhow::Result<Store> {
         self.state.store_for_session(session_id).await
     }

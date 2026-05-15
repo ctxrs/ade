@@ -8,7 +8,7 @@ use ctx_core::models::{
     Session, SessionEventType, Task, TerminalSession, TerminalStatus, Workspace,
     WorkspaceActiveSnapshotEvent, WorkspaceActiveSnapshotStreamMessage,
 };
-use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::test_support::TestDaemon;
 use ctx_transport_runtime::TerminalServerMessage;
 
 mod common;
@@ -106,13 +106,13 @@ async fn read_terminal_until_marker(socket: &mut WsStream, marker: &str) -> Stri
 }
 
 async fn wait_for_session_done_events_in_store(
-    state: &std::sync::Arc<DaemonState>,
+    daemon: &TestDaemon,
     session_id: ctx_core::ids::SessionId,
     expected_done_events: usize,
 ) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     while tokio::time::Instant::now() < deadline {
-        let store = state.store_for_session(session_id).await.unwrap();
+        let store = daemon.store_for_session(session_id).await.unwrap();
         let events = store.list_session_events(session_id).await.unwrap();
         let done_count = events
             .iter()
@@ -133,12 +133,12 @@ async fn wait_for_session_done_events_in_store(
 }
 
 async fn wait_for_session_idle_in_memory(
-    state: &std::sync::Arc<DaemonState>,
+    daemon: &TestDaemon,
     session_id: ctx_core::ids::SessionId,
 ) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     while tokio::time::Instant::now() < deadline {
-        if !state.is_session_running(session_id).await {
+        if !daemon.is_session_running(session_id).await {
             return;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -201,13 +201,13 @@ async fn terminal_disconnect_and_reconnect_do_not_poison_workspace_control_plane
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
 
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
     let server = common::spawn_http_server(app).await;
     let base = &server.base_url;
     let client = &server.client;
@@ -286,10 +286,10 @@ async fn terminal_disconnect_and_reconnect_do_not_poison_workspace_control_plane
     let client_clone = client.clone();
     let base_clone = base.to_string();
     let session_id = session.id;
-    let state_clone = state.clone();
+    let daemon_clone = daemon.clone();
     let send_messages = tokio::spawn(async move {
         for index in 0..message_count {
-            wait_for_session_idle_in_memory(&state_clone, session_id).await;
+            wait_for_session_idle_in_memory(&daemon_clone, session_id).await;
             let response = client_clone
                 .post(format!(
                     "{base_clone}/api/sessions/{}/messages",
@@ -311,8 +311,8 @@ async fn terminal_disconnect_and_reconnect_do_not_poison_workspace_control_plane
                 status.is_success(),
                 "message post failed with status {status}: {body}"
             );
-            wait_for_session_done_events_in_store(&state_clone, session_id, index + 1).await;
-            wait_for_session_idle_in_memory(&state_clone, session_id).await;
+            wait_for_session_done_events_in_store(&daemon_clone, session_id, index + 1).await;
+            wait_for_session_idle_in_memory(&daemon_clone, session_id).await;
         }
     });
 
@@ -374,7 +374,7 @@ async fn terminal_disconnect_and_reconnect_do_not_poison_workspace_control_plane
     );
 
     send_messages.await.unwrap();
-    wait_for_session_done_events_in_store(&state, session.id, message_count).await;
+    wait_for_session_done_events_in_store(&daemon, session.id, message_count).await;
     assert_workspace_stream_no_gap(&mut workspace_socket, &session, Duration::from_secs(5)).await;
 
     let _ = client
