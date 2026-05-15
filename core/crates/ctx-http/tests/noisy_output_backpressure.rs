@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use std::time::Duration;
 
 use futures::{SinkExt, StreamExt};
@@ -8,7 +7,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 use ctx_core::models::{
     SessionEventType, WorkspaceActiveSnapshotEvent, WorkspaceActiveSnapshotStreamMessage,
 };
-use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::test_support::TestDaemon;
 use ctx_store::StoreManager;
 
 mod common;
@@ -45,8 +44,8 @@ impl Drop for EnvGuard {
     }
 }
 
-async fn wait_for_done(state: &Arc<DaemonState>, session_id: ctx_core::ids::SessionId) {
-    let store = state.store_for_session(session_id).await.unwrap();
+async fn wait_for_done(daemon: &TestDaemon, session_id: ctx_core::ids::SessionId) {
+    let store = daemon.store_for_session(session_id).await.unwrap();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     loop {
         let events = store.list_session_events(session_id).await.unwrap();
@@ -127,14 +126,14 @@ async fn noisy_tool_output_stays_bounded_end_to_end() {
     .await;
     let providers =
         common::crp_fixture_runtime::build_crp_fixture_providers(&["codex"], &python, &script_path);
-    let state = Arc::new(DaemonState::new(
+    let daemon = TestDaemon::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:0".to_string(),
         None,
-    ));
-    let app = common::router(state.clone());
+    );
+    let app = common::router_for_daemon(&daemon);
     let server = common::spawn_http_server(app.clone()).await;
 
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;
@@ -192,7 +191,7 @@ async fn noisy_tool_output_stays_bounded_end_to_end() {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     loop {
         if tokio::time::Instant::now() >= deadline {
-            let store = state.store_for_session(session.id).await.unwrap();
+            let store = daemon.store_for_session(session.id).await.unwrap();
             let events = store.list_session_events(session.id).await.unwrap();
             panic!("timed out waiting for noisy session to finish: {events:#?}");
         }
@@ -229,7 +228,7 @@ async fn noisy_tool_output_stays_bounded_end_to_end() {
             Ok(None) => panic!("workspace stream ended unexpectedly"),
         }
 
-        let store = state.store_for_session(session.id).await.unwrap();
+        let store = daemon.store_for_session(session.id).await.unwrap();
         let events = store.list_session_events(session.id).await.unwrap();
         assert!(
             !events
@@ -245,9 +244,9 @@ async fn noisy_tool_output_stays_bounded_end_to_end() {
         }
     }
 
-    wait_for_done(&state, session.id).await;
+    wait_for_done(&daemon, session.id).await;
 
-    let store = state.store_for_session(session.id).await.unwrap();
+    let store = daemon.store_for_session(session.id).await.unwrap();
     let events = store.list_session_events(session.id).await.unwrap();
     let messages = store.list_messages_for_session(session.id).await.unwrap();
     assert!(
