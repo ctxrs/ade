@@ -197,6 +197,22 @@ impl TestDaemon {
             .await;
     }
 
+    pub async fn mark_worktree_vcs_inactive_for_test(&self, worktree_id: WorktreeId) {
+        let mut previous_active = std::collections::HashSet::new();
+        previous_active.insert(worktree_id);
+        self.state
+            .test_update_worktree_vcs_activity(&previous_active, &std::collections::HashSet::new())
+            .await;
+    }
+
+    pub fn worktree_vcs_enabled_for_test(&self) -> bool {
+        self.state.worktree_vcs_enabled()
+    }
+
+    pub async fn is_worktree_vcs_active_for_test(&self, worktree_id: WorktreeId) -> bool {
+        self.state.is_worktree_vcs_active(worktree_id).await
+    }
+
     pub async fn emit_worktree_vcs_snapshot_for_worktree(
         &self,
         worktree: &Worktree,
@@ -210,6 +226,32 @@ impl TestDaemon {
         .await
     }
 
+    pub async fn request_worktree_vcs_refresh_for_test(
+        &self,
+        worktree: &Worktree,
+        summary: bool,
+        touched_files: bool,
+    ) -> anyhow::Result<()> {
+        daemon::git_status::request_worktree_vcs_refresh(
+            &self.state,
+            worktree,
+            summary,
+            touched_files,
+        )
+        .await
+    }
+
+    pub async fn refresh_worktree_vcs_summary_for_test(
+        &self,
+        worktree: Worktree,
+    ) -> anyhow::Result<()> {
+        daemon::git_status::refresh_worktree_vcs_summary(Arc::clone(&self.state), worktree).await
+    }
+
+    pub async fn run_git_status_watcher_for_test(&self, worktree: Worktree) -> anyhow::Result<()> {
+        daemon::git_status::run_git_status_watcher(Arc::clone(&self.state), worktree).await
+    }
+
     pub async fn load_worktree_for_test(
         &self,
         worktree_id: WorktreeId,
@@ -220,6 +262,14 @@ impl TestDaemon {
             .get_worktree(worktree_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("worktree {worktree_id:?} not found"))
+    }
+
+    pub async fn workspace_primary_branch_for_test(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> anyhow::Result<Option<String>> {
+        let store = self.state.store_for_workspace(workspace_id).await?;
+        ctx_workspace_config::load_primary_branch(&store).await
     }
 
     pub async fn set_workspace_attachment_status_for_test(

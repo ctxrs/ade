@@ -1,19 +1,18 @@
 mod common;
 
-use std::collections::HashSet;
 use std::path::Path;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-use axum::http::{Method, StatusCode};
-use ctx_core::models::{DiffUnavailableReason, WorktreeVcsFreshness};
-use ctx_daemon::daemon::git_status::{
-    emit_worktree_vcs_snapshot_for_worktree, refresh_worktree_vcs_summary,
-    request_worktree_vcs_refresh, run_git_status_watcher,
+use axum::{
+    http::{Method, StatusCode},
+    Router,
 };
-use ctx_daemon::daemon::{AppRuntimeFlags, DaemonState};
+use ctx_core::ids::WorkspaceId;
+use ctx_core::models::{DiffUnavailableReason, WorktreeVcsFreshness};
+use ctx_daemon::daemon::AppRuntimeFlags;
+use ctx_daemon::test_support::TestDaemon;
 use serde_json::Value;
-use std::sync::Arc;
 use tokio::process::Command;
 
 async fn run_git(root: &Path, args: &[&str]) {
@@ -90,8 +89,8 @@ fn worktree_vcs_snapshot_test_lock() -> &'static tokio::sync::Mutex<()> {
     LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
-fn build_vcs_disabled_state(data_dir: &Path, stores: ctx_store::StoreManager) -> Arc<DaemonState> {
-    Arc::new(DaemonState::new_with_runtime_flags(
+fn build_vcs_disabled_daemon(data_dir: &Path, stores: ctx_store::StoreManager) -> TestDaemon {
+    TestDaemon::new_with_runtime_flags(
         data_dir.to_path_buf(),
         stores,
         common::fake_providers(),
@@ -101,7 +100,18 @@ fn build_vcs_disabled_state(data_dir: &Path, stores: ctx_store::StoreManager) ->
         AppRuntimeFlags {
             worktree_vcs_enabled: false,
         },
-    ))
+    )
+}
+
+async fn set_primary_branch(app: &Router, workspace_id: WorkspaceId, primary_branch: &str) {
+    let (status, _resp): (StatusCode, Value) = common::json_request(
+        app,
+        Method::POST,
+        format!("/api/workspaces/{}/primary_branch", workspace_id.0),
+        Some(serde_json::json!({ "primary_branch": primary_branch })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -110,41 +120,35 @@ async fn worktree_vcs_disabled_mode_suppresses_projection_work() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
-    let state = build_vcs_disabled_state(data_dir.path(), stores);
-    let app = common::router(state.clone());
+    let daemon = build_vcs_disabled_daemon(data_dir.path(), stores);
+    let app = common::router_for_daemon(&daemon);
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (_task, session) =
         common::create_task_with_session(&app, ws.id.0, "vcs-disabled", "fake", "fake-model").await;
-    let worktree = state
-        .store_for_worktree(session.worktree_id)
+    let worktree = daemon
+        .load_worktree_for_test(session.worktree_id)
         .await
-        .expect("store for worktree")
-        .get_worktree(session.worktree_id)
-        .await
-        .expect("load worktree")
         .expect("worktree should exist");
+    daemon.mark_worktree_vcs_active_for_test(worktree.id).await;
 
-    let mut next_active = HashSet::new();
-    next_active.insert(worktree.id);
-    state
-        .test_update_worktree_vcs_activity(&HashSet::new(), &next_active)
-        .await;
-
-    assert!(!state.worktree_vcs_enabled());
-    assert!(!state.is_worktree_vcs_active(worktree.id).await);
-    emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, true)
+    assert!(!daemon.worktree_vcs_enabled_for_test());
+    assert!(!daemon.is_worktree_vcs_active_for_test(worktree.id).await);
+    daemon
+        .emit_worktree_vcs_snapshot_for_worktree(&worktree, true)
         .await
         .expect("disabled VCS emission should be a no-op");
-    request_worktree_vcs_refresh(&state, &worktree, true, true)
+    daemon
+        .request_worktree_vcs_refresh_for_test(&worktree, true, true)
         .await
         .expect("disabled VCS refresh should be a no-op");
-    run_git_status_watcher(state.clone(), worktree.clone())
+    daemon
+        .run_git_status_watcher_for_test(worktree.clone())
         .await
         .expect("disabled VCS watcher should be a no-op");
 
     assert!(
-        state.get_worktree_vcs_snapshot(worktree.id).await.is_none(),
+        daemon.worktree_vcs_snapshot(worktree.id).await.is_none(),
         "disabled VCS mode must not compute or cache worktree VCS snapshots"
     );
 }
@@ -155,42 +159,35 @@ async fn worktree_vcs_snapshot_clears_stale_counts_when_repo_becomes_unavailable
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (_task, session) =
         common::create_task_with_session(&app, ws.id.0, "snapshot", "fake", "fake-model").await;
-    let worktree = state
-        .store_for_worktree(session.worktree_id)
+    let worktree = daemon
+        .load_worktree_for_test(session.worktree_id)
         .await
-        .expect("store for worktree")
-        .get_worktree(session.worktree_id)
-        .await
-        .expect("load worktree")
         .expect("worktree should exist");
-    let mut next_active = HashSet::new();
-    next_active.insert(worktree.id);
-    state
-        .test_update_worktree_vcs_activity(&HashSet::new(), &next_active)
-        .await;
+    daemon.mark_worktree_vcs_active_for_test(worktree.id).await;
     tokio::fs::write(
         Path::new(&worktree.root_path).join("file.txt"),
         "hello\nchanged\n",
     )
     .await
     .expect("write changed file");
-    emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, true)
+    daemon
+        .emit_worktree_vcs_snapshot_for_worktree(&worktree, true)
         .await
         .expect("initial snapshot emission should succeed");
     let start = Instant::now();
     loop {
-        let snapshot = state.get_worktree_vcs_snapshot(worktree.id).await;
+        let snapshot = daemon.worktree_vcs_snapshot(worktree.id).await;
         if let Some(snapshot) = snapshot {
             if snapshot.summary.file_count.unwrap_or(0) > 0 {
                 break;
@@ -206,12 +203,13 @@ async fn worktree_vcs_snapshot_clears_stale_counts_when_repo_becomes_unavailable
     let _ = repo;
     poison_worktree_git_marker(worktree_root).await;
 
-    emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, true)
+    daemon
+        .emit_worktree_vcs_snapshot_for_worktree(&worktree, true)
         .await
         .expect("snapshot emission should not fail for no-repo");
 
-    let snapshot = state
-        .get_worktree_vcs_snapshot(worktree.id)
+    let snapshot = daemon
+        .worktree_vcs_snapshot(worktree.id)
         .await
         .expect("snapshot should be present");
     assert!(!snapshot.available);
@@ -242,33 +240,26 @@ async fn worktree_vcs_snapshot_populates_jj_head_commit_metadata() {
     let repo = common::init_jj_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
 
     let ws = common::create_workspace(&app, repo.path(), "jj-ws").await;
     let (_task, session) =
         common::create_task_with_session(&app, ws.id.0, "jj-vcs", "fake", "fake-model").await;
-    let worktree = state
-        .store_for_worktree(session.worktree_id)
+    let worktree = daemon
+        .load_worktree_for_test(session.worktree_id)
         .await
-        .expect("store for worktree")
-        .get_worktree(session.worktree_id)
-        .await
-        .expect("load worktree")
         .expect("worktree should exist");
 
-    let mut next_active = HashSet::new();
-    next_active.insert(worktree.id);
-    state
-        .test_update_worktree_vcs_activity(&HashSet::new(), &next_active)
-        .await;
+    daemon.mark_worktree_vcs_active_for_test(worktree.id).await;
 
-    emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, true)
+    daemon
+        .emit_worktree_vcs_snapshot_for_worktree(&worktree, true)
         .await
         .expect("snapshot emission should succeed for jj worktree");
 
@@ -279,8 +270,8 @@ async fn worktree_vcs_snapshot_populates_jj_head_commit_metadata() {
     .await
     .trim()
     .to_string();
-    let snapshot = state
-        .get_worktree_vcs_snapshot(worktree.id)
+    let snapshot = daemon
+        .worktree_vcs_snapshot(worktree.id)
         .await
         .expect("snapshot should be present");
     assert_eq!(snapshot.head_commit_sha, expected_head);
@@ -292,50 +283,40 @@ async fn worktree_vcs_snapshot_recovers_when_repo_is_reinitialized() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
-    let workspace_store = state
-        .store_for_workspace(ws.id)
-        .await
-        .expect("workspace store should open");
-    let primary_branch = ctx_workspace_config::load_primary_branch(&workspace_store)
+    let primary_branch = daemon
+        .workspace_primary_branch_for_test(ws.id)
         .await
         .expect("loading primary branch should succeed")
         .expect("workspace primary branch should be configured");
     let (_task, session) =
         common::create_task_with_session(&app, ws.id.0, "snapshot-recovery", "fake", "fake-model")
             .await;
-    let worktree = state
-        .store_for_worktree(session.worktree_id)
+    let worktree = daemon
+        .load_worktree_for_test(session.worktree_id)
         .await
-        .expect("store for worktree")
-        .get_worktree(session.worktree_id)
-        .await
-        .expect("load worktree")
         .expect("worktree should exist");
 
-    let mut next_active = HashSet::new();
-    next_active.insert(worktree.id);
-    state
-        .test_update_worktree_vcs_activity(&HashSet::new(), &next_active)
-        .await;
+    daemon.mark_worktree_vcs_active_for_test(worktree.id).await;
 
     let worktree_root = Path::new(&worktree.root_path);
     let _ = repo;
     poison_worktree_git_marker(worktree_root).await;
 
-    emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, true)
+    daemon
+        .emit_worktree_vcs_snapshot_for_worktree(&worktree, true)
         .await
         .expect("no-repo snapshot emission should succeed");
-    let unavailable = state
-        .get_worktree_vcs_snapshot(worktree.id)
+    let unavailable = daemon
+        .worktree_vcs_snapshot(worktree.id)
         .await
         .expect("unavailable snapshot should be present");
     assert!(!unavailable.available);
@@ -357,14 +338,15 @@ async fn worktree_vcs_snapshot_recovers_when_repo_is_reinitialized() {
     run_git(worktree_root, &["add", "."]).await;
     run_git(worktree_root, &["commit", "-m", "restore"]).await;
 
-    emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, true)
+    daemon
+        .emit_worktree_vcs_snapshot_for_worktree(&worktree, true)
         .await
         .expect("recovered repo snapshot emission should succeed");
 
     let start = Instant::now();
     loop {
-        let recovered = state
-            .get_worktree_vcs_snapshot(worktree.id)
+        let recovered = daemon
+            .worktree_vcs_snapshot(worktree.id)
             .await
             .expect("recovered snapshot should be present");
         if recovered.available {
@@ -388,48 +370,42 @@ async fn worktree_vcs_snapshot_noop_emit_preserves_freshness() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (_task, session) =
         common::create_task_with_session(&app, ws.id.0, "noop-fresh", "fake", "fake-model").await;
-    let worktree = state
-        .store_for_worktree(session.worktree_id)
+    let worktree = daemon
+        .load_worktree_for_test(session.worktree_id)
         .await
-        .expect("store for worktree")
-        .get_worktree(session.worktree_id)
-        .await
-        .expect("load worktree")
         .expect("worktree should exist");
 
-    let mut next_active = HashSet::new();
-    next_active.insert(worktree.id);
-    state
-        .test_update_worktree_vcs_activity(&HashSet::new(), &next_active)
-        .await;
+    daemon.mark_worktree_vcs_active_for_test(worktree.id).await;
 
-    refresh_worktree_vcs_summary(state.clone(), worktree.clone())
+    daemon
+        .refresh_worktree_vcs_summary_for_test(worktree.clone())
         .await
         .expect("seed fresh snapshot");
 
-    let seeded = state
-        .get_worktree_vcs_snapshot(worktree.id)
+    let seeded = daemon
+        .worktree_vcs_snapshot(worktree.id)
         .await
         .expect("seeded snapshot should exist");
     assert_eq!(seeded.freshness, WorktreeVcsFreshness::Fresh);
 
-    emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, false)
+    daemon
+        .emit_worktree_vcs_snapshot_for_worktree(&worktree, false)
         .await
         .expect("noop emit should succeed");
 
-    let cached = state
-        .get_worktree_vcs_snapshot(worktree.id)
+    let cached = daemon
+        .worktree_vcs_snapshot(worktree.id)
         .await
         .expect("cached snapshot should remain present");
     assert_eq!(
@@ -445,54 +421,48 @@ async fn worktree_vcs_snapshot_does_not_repopulate_cache_after_activity_eviction
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (_task, session) =
         common::create_task_with_session(&app, ws.id.0, "snapshot-eviction", "fake", "fake-model")
             .await;
-    let worktree = state
-        .store_for_worktree(session.worktree_id)
+    let worktree = daemon
+        .load_worktree_for_test(session.worktree_id)
         .await
-        .expect("store for worktree")
-        .get_worktree(session.worktree_id)
-        .await
-        .expect("load worktree")
         .expect("worktree should exist");
 
-    let mut next_active = HashSet::new();
-    next_active.insert(worktree.id);
-    state
-        .test_update_worktree_vcs_activity(&HashSet::new(), &next_active)
-        .await;
+    daemon.mark_worktree_vcs_active_for_test(worktree.id).await;
 
-    emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, true)
+    daemon
+        .emit_worktree_vcs_snapshot_for_worktree(&worktree, true)
         .await
         .expect("initial snapshot emission should succeed");
     assert!(
-        state.get_worktree_vcs_snapshot(worktree.id).await.is_some(),
+        daemon.worktree_vcs_snapshot(worktree.id).await.is_some(),
         "expected initial active snapshot to populate cache",
     );
 
-    state
-        .test_update_worktree_vcs_activity(&next_active, &HashSet::new())
+    daemon
+        .mark_worktree_vcs_inactive_for_test(worktree.id)
         .await;
     assert!(
-        state.get_worktree_vcs_snapshot(worktree.id).await.is_none(),
+        daemon.worktree_vcs_snapshot(worktree.id).await.is_none(),
         "expected activity eviction to clear worktree vcs cache",
     );
 
-    emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, true)
+    daemon
+        .emit_worktree_vcs_snapshot_for_worktree(&worktree, true)
         .await
         .expect("inactive snapshot emission should not fail");
     assert!(
-        state.get_worktree_vcs_snapshot(worktree.id).await.is_none(),
+        daemon.worktree_vcs_snapshot(worktree.id).await.is_none(),
         "inactive emit should not recreate worktree vcs cache",
     );
 }
@@ -505,54 +475,47 @@ async fn worktree_vcs_snapshot_watcher_recomputes_when_target_branch_ref_moves()
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
-    let (_status, _resp): (StatusCode, Value) = common::json_request(
-        &app,
-        Method::POST,
-        format!("/api/workspaces/{}/primary_branch", ws.id.0),
-        Some(serde_json::json!({ "primary_branch": "merge-target" })),
-    )
-    .await;
+    set_primary_branch(&app, ws.id, "merge-target").await;
 
     let (_task, session) =
         common::create_task_with_session(&app, ws.id.0, "watcher-ref-move", "fake", "fake-model")
             .await;
-    let worktree = state
-        .store_for_worktree(session.worktree_id)
+    let worktree = daemon
+        .load_worktree_for_test(session.worktree_id)
         .await
-        .expect("store for worktree")
-        .get_worktree(session.worktree_id)
-        .await
-        .expect("load worktree")
         .expect("worktree should exist");
 
-    let mut next_active = HashSet::new();
-    next_active.insert(worktree.id);
-    state
-        .test_update_worktree_vcs_activity(&HashSet::new(), &next_active)
-        .await;
+    daemon.mark_worktree_vcs_active_for_test(worktree.id).await;
 
-    let watcher = tokio::spawn(run_git_status_watcher(state.clone(), worktree.clone()));
+    let watcher_daemon = daemon.clone();
+    let watcher_worktree = worktree.clone();
+    let watcher = tokio::spawn(async move {
+        watcher_daemon
+            .run_git_status_watcher_for_test(watcher_worktree)
+            .await
+    });
 
     let worktree_root = Path::new(&worktree.root_path);
     tokio::fs::write(worktree_root.join("file.txt"), "hello\nphase1\n")
         .await
         .expect("write changed file");
-    emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, true)
+    daemon
+        .emit_worktree_vcs_snapshot_for_worktree(&worktree, true)
         .await
         .expect("initial vcs snapshot emission should succeed");
 
     let start = Instant::now();
     loop {
-        let snapshot = state
-            .get_worktree_vcs_snapshot(worktree.id)
+        let snapshot = daemon
+            .worktree_vcs_snapshot(worktree.id)
             .await
             .expect("expected worktree vcs snapshot");
         if snapshot.summary.file_count.unwrap_or(0) > 0 {
@@ -580,8 +543,8 @@ async fn worktree_vcs_snapshot_watcher_recomputes_when_target_branch_ref_moves()
 
     let start = Instant::now();
     loop {
-        let snapshot = state
-            .get_worktree_vcs_snapshot(worktree.id)
+        let snapshot = daemon
+            .worktree_vcs_snapshot(worktree.id)
             .await
             .expect("expected refreshed worktree vcs snapshot");
         if snapshot.summary.file_count.unwrap_or(-1) == 0 {
@@ -604,21 +567,15 @@ async fn worktree_vcs_snapshot_preserves_head_when_configured_target_branch_disa
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
-    let workspace_store = state
-        .store_for_workspace(ws.id)
-        .await
-        .expect("workspace store should open");
-    ctx_workspace_config::update_primary_branch(&workspace_store, "merge-target")
-        .await
-        .expect("updating primary branch should succeed");
+    set_primary_branch(&app, ws.id, "merge-target").await;
 
     let (_task, session) = common::create_task_with_session(
         &app,
@@ -628,20 +585,12 @@ async fn worktree_vcs_snapshot_preserves_head_when_configured_target_branch_disa
         "fake-model",
     )
     .await;
-    let worktree = state
-        .store_for_worktree(session.worktree_id)
+    let worktree = daemon
+        .load_worktree_for_test(session.worktree_id)
         .await
-        .expect("store for worktree")
-        .get_worktree(session.worktree_id)
-        .await
-        .expect("load worktree")
         .expect("worktree should exist");
 
-    let mut next_active = HashSet::new();
-    next_active.insert(worktree.id);
-    state
-        .test_update_worktree_vcs_activity(&HashSet::new(), &next_active)
-        .await;
+    daemon.mark_worktree_vcs_active_for_test(worktree.id).await;
 
     let worktree_root = Path::new(&worktree.root_path);
     tokio::fs::write(worktree_root.join("file.txt"), "hello\nadvanced\n")
@@ -654,12 +603,13 @@ async fn worktree_vcs_snapshot_preserves_head_when_configured_target_branch_disa
 
     run_git(repo.path(), &["branch", "-D", "merge-target"]).await;
 
-    emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, true)
+    daemon
+        .emit_worktree_vcs_snapshot_for_worktree(&worktree, true)
         .await
         .expect("snapshot emission should succeed when target branch disappears");
 
-    let snapshot = state
-        .get_worktree_vcs_snapshot(worktree.id)
+    let snapshot = daemon
+        .worktree_vcs_snapshot(worktree.id)
         .await
         .expect("snapshot should be present");
     assert!(!snapshot.available);
