@@ -182,6 +182,7 @@ const fakeDaemonExternalStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/noisy_output_backpressure.rs",
   "core/crates/ctx-http/tests/provider_current_ctx_version_regressions.rs",
   "core/crates/ctx-http/tests/provider_worker_reaping_offline.rs",
+  "core/crates/ctx-http/tests/subscription_accounts_api.rs",
   "core/crates/ctx-http/tests/terminal_workspace_stream_separation.rs",
   "core/crates/ctx-http/tests/terminal_ws_reconnect.rs",
   "core/crates/ctx-http/tests/turn_lifecycle_events.rs",
@@ -196,6 +197,10 @@ const fakeDaemonExternalStoreFacadeTestRoots = [
 
 const cacheRehydrationStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/cache_rehydration.rs",
+];
+
+const subscriptionAccountsApiStoreFacadeTestRoots = [
+  "core/crates/ctx-http/tests/subscription_accounts_api.rs",
 ];
 
 const mcpDaemonFacadeTestRoots = [
@@ -721,6 +726,13 @@ const CACHE_REHYDRATION_TEST_STORE_ACCESS_PATTERNS = [
   {
     name: "raw cache rehydration event/status model",
     regex: /\bSessionEventType\b|\bSessionTurnStatus\b/,
+  },
+];
+
+const SUBSCRIPTION_ACCOUNTS_API_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct subscription accounts daemon router composition",
+    regex: /\b(?:crate::)?common::router_for_daemon\s*\(|\brouter_for_daemon\s*\(/,
   },
 ];
 
@@ -1863,6 +1875,13 @@ function cacheRehydrationStorePatternsForPath(relativePath) {
   return [];
 }
 
+function subscriptionAccountsApiStorePatternsForPath(relativePath) {
+  if (subscriptionAccountsApiStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return SUBSCRIPTION_ACCOUNTS_API_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
 function mcpDaemonPatternsForPath(relativePath) {
   if (mcpDaemonFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS;
@@ -2249,6 +2268,13 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
+        patterns: subscriptionAccountsApiStorePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
         patterns: mcpDaemonPatternsForPath(relativePath),
       }),
     );
@@ -2415,6 +2441,7 @@ module.exports = {
   SMALL_EXTERNAL_TEST_STORE_ACCESS_PATTERNS,
   SMALL_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
   STREAM_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
+  SUBSCRIPTION_ACCOUNTS_API_TEST_STORE_ACCESS_PATTERNS,
   TASK_LIFECYCLE_TEST_STORE_ACCESS_PATTERNS,
   TERMINAL_WORKSPACE_STREAM_TEST_STORE_ACCESS_PATTERNS,
   TEST_ROUTER_COMPOSITION_PATTERNS,
@@ -2449,6 +2476,7 @@ module.exports = {
   smallExternalStorePatternsForPath,
   smallBoundaryStorePatternsForPath,
   streamRuntimeStorePatternsForPath,
+  subscriptionAccountsApiStorePatternsForPath,
   taskLifecycleStorePatternsForPath,
   terminalWorkspaceStreamStorePatternsForPath,
   worktreeArchiveStorePatternsForPath,

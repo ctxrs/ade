@@ -28,6 +28,7 @@ const {
   SMALL_EXTERNAL_TEST_STORE_ACCESS_PATTERNS,
   SMALL_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
   STREAM_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
+  SUBSCRIPTION_ACCOUNTS_API_TEST_STORE_ACCESS_PATTERNS,
   TASK_LIFECYCLE_TEST_STORE_ACCESS_PATTERNS,
   TERMINAL_WORKSPACE_STREAM_TEST_STORE_ACCESS_PATTERNS,
   TEST_ROUTER_COMPOSITION_PATTERNS,
@@ -62,6 +63,7 @@ const {
   smallExternalStorePatternsForPath,
   smallBoundaryStorePatternsForPath,
   streamRuntimeStorePatternsForPath,
+  subscriptionAccountsApiStorePatternsForPath,
   taskLifecycleStorePatternsForPath,
   terminalWorkspaceStreamStorePatternsForPath,
   worktreeArchiveStorePatternsForPath,
@@ -1231,6 +1233,7 @@ test("daemon boundary guard scopes fake-daemon external roots without blocking c
     "core/crates/ctx-http/tests/noisy_output_backpressure.rs",
     "core/crates/ctx-http/tests/provider_current_ctx_version_regressions.rs",
     "core/crates/ctx-http/tests/provider_worker_reaping_offline.rs",
+    "core/crates/ctx-http/tests/subscription_accounts_api.rs",
     "core/crates/ctx-http/tests/terminal_workspace_stream_separation.rs",
     "core/crates/ctx-http/tests/terminal_ws_reconnect.rs",
     "core/crates/ctx-http/tests/turn_lifecycle_events.rs",
@@ -1249,6 +1252,37 @@ test("daemon boundary guard scopes fake-daemon external roots without blocking c
   }
   assert.deepEqual(
     fakeDaemonExternalStorePatternsForPath("core/crates/ctx-http/tests/common/mod.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects subscription accounts direct daemon router composition", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/subscription_accounts_api.rs",
+    contents: `
+      async fn helper(daemon: &TestDaemon, app: axum::Router) {
+        let _daemon_backed = common::spawn_http_server(common::router_for_daemon(daemon)).await;
+        let _oauth_stub = common::spawn_http_server(app).await;
+      }
+    `,
+    patterns: SUBSCRIPTION_ACCOUNTS_API_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    ["direct subscription accounts daemon router composition"],
+  );
+});
+
+test("daemon boundary guard scopes subscription accounts router composition guard", () => {
+  assert.deepEqual(
+    subscriptionAccountsApiStorePatternsForPath(
+      "core/crates/ctx-http/tests/subscription_accounts_api.rs",
+    ),
+    SUBSCRIPTION_ACCOUNTS_API_TEST_STORE_ACCESS_PATTERNS,
+  );
+  assert.deepEqual(
+    subscriptionAccountsApiStorePatternsForPath("core/crates/ctx-http/tests/common/mod.rs"),
     [],
   );
 });

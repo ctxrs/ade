@@ -644,15 +644,8 @@ fn providers_with_amp_adapter(
 }
 
 async fn assert_managed_subscription_crud(provider_id: &str, upsert_body: serde_json::Value) {
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let server = fixture.spawn_server().await;
 
     let accounts_url = format!("{}/api/providers/{provider_id}/accounts", server.base_url);
     let active_url = format!(
@@ -1115,19 +1108,13 @@ async fn claude_subscription_accounts_crud_round_trip() {
 #[tokio::test]
 async fn claude_login_setup_token_path_succeeds_when_cli_invokes_browser_shim() {
     let _env_lock = CLAUDE_TOKEN_ENV_LOCK.lock().await;
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let data_dir = fixture.data_dir.path();
+    let server = fixture.spawn_server().await;
 
-    let fake_open_dir = data_dir.path().join("fake-open-bin");
+    let fake_open_dir = data_dir.join("fake-open-bin");
     std::fs::create_dir_all(&fake_open_dir).expect("create fake open dir");
-    let opened_url_path = data_dir.path().join("opened-url.txt");
+    let opened_url_path = data_dir.join("opened-url.txt");
     let fake_open_path = fake_open_dir.join("open");
     std::fs::write(
         &fake_open_path,
@@ -1148,7 +1135,7 @@ async fn claude_login_setup_token_path_succeeds_when_cli_invokes_browser_shim() 
     }
 
     let script_path = write_mock_claude_runtime(
-        data_dir.path(),
+        data_dir,
         &format!(
             r#"#!/usr/bin/env bash
 set -euo pipefail
@@ -1175,7 +1162,7 @@ echo "ZXY987654321"
             managed: None,
         },
     );
-    save_agent_server_config(data_dir.path(), &cfg)
+    save_agent_server_config(data_dir, &cfg)
         .await
         .expect("save agent config");
 
@@ -1208,20 +1195,13 @@ echo "ZXY987654321"
     );
     // Keep the mock runtime and fake browser tempdir alive until the spawned
     // setup-token process has completed.
-    assert!(data_dir.path().exists());
+    assert!(data_dir.exists());
 }
 
 #[tokio::test]
 async fn claude_login_start_requires_managed_or_configured_runtime_command() {
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let server = fixture.spawn_server().await;
 
     let start_url = format!(
         "{}/api/providers/claude-crp/accounts/login/start",
@@ -1245,17 +1225,11 @@ async fn claude_login_start_requires_managed_or_configured_runtime_command() {
 #[tokio::test]
 async fn claude_login_start_rejects_manual_copy_code_fallback_without_browser_open_capture() {
     let _env_lock = CLAUDE_TOKEN_ENV_LOCK.lock().await;
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let data_dir = fixture.data_dir.path();
+    let server = fixture.spawn_server().await;
     let script_path = write_mock_claude_runtime(
-        data_dir.path(),
+        data_dir,
         r#"#!/usr/bin/env bash
 set -euo pipefail
 echo "Browser didn't open? Use the URL below to sign in"
@@ -1273,7 +1247,7 @@ echo "https://claude.ai/oauth/authorize?redirect_uri=https%3A%2F%2Fplatform.clau
             managed: None,
         },
     );
-    save_agent_server_config(data_dir.path(), &cfg)
+    save_agent_server_config(data_dir, &cfg)
         .await
         .expect("save agent config");
 
@@ -1295,23 +1269,17 @@ echo "https://claude.ai/oauth/authorize?redirect_uri=https%3A%2F%2Fplatform.clau
         .unwrap_or_default()
         .contains("fell back to manual code entry"));
     // Keep the mock runtime tempdir alive through the async start request.
-    assert!(data_dir.path().exists());
+    assert!(data_dir.exists());
 }
 
 #[tokio::test]
 async fn claude_login_start_ignores_manual_copy_code_fallback_after_browser_open_capture() {
     let _env_lock = CLAUDE_TOKEN_ENV_LOCK.lock().await;
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let data_dir = fixture.data_dir.path();
+    let server = fixture.spawn_server().await;
 
-    let fake_open_dir = data_dir.path().join("fake-open-bin");
+    let fake_open_dir = data_dir.join("fake-open-bin");
     std::fs::create_dir_all(&fake_open_dir).expect("create fake open dir");
     let fake_open_path = fake_open_dir.join("open");
     std::fs::write(
@@ -1330,7 +1298,7 @@ async fn claude_login_start_ignores_manual_copy_code_fallback_after_browser_open
     }
 
     let script_path = write_mock_claude_runtime(
-        data_dir.path(),
+        data_dir,
         &format!(
             r#"#!/usr/bin/env bash
 set -euo pipefail
@@ -1359,7 +1327,7 @@ echo "ZXY987654321"
             managed: None,
         },
     );
-    save_agent_server_config(data_dir.path(), &cfg)
+    save_agent_server_config(data_dir, &cfg)
         .await
         .expect("save agent config");
 
@@ -1388,7 +1356,7 @@ echo "ZXY987654321"
     assert!(status.error.is_none());
     // Keep the mock runtime and fake browser tempdir alive until the spawned
     // setup-token process has completed.
-    assert!(data_dir.path().exists());
+    assert!(data_dir.exists());
 }
 
 // The real desktop/browser lane still needs OS automation, but the tests below
@@ -1396,18 +1364,12 @@ echo "ZXY987654321"
 #[tokio::test]
 #[ignore = "Claude subscription login requires full OS automation for truthful coverage; excluded from verify:quick until that lane exists"]
 async fn claude_login_start_returns_pending_setup_token_session() {
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let data_dir = fixture.data_dir.path();
+    let server = fixture.spawn_server().await;
 
     let script_path = write_mock_claude_runtime(
-        data_dir.path(),
+        data_dir,
         r#"#!/usr/bin/env bash
 set -euo pipefail
 echo "Claude setup-token URL: https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A64111%2Fcallback&state=test"
@@ -1425,7 +1387,7 @@ sleep 30
             managed: None,
         },
     );
-    save_agent_server_config(data_dir.path(), &cfg)
+    save_agent_server_config(data_dir, &cfg)
         .await
         .expect("save agent config");
 
@@ -1477,16 +1439,10 @@ sleep 30
 #[tokio::test]
 #[ignore = "Claude subscription login requires full OS automation for truthful coverage; excluded from verify:quick until that lane exists"]
 async fn claude_login_start_requires_usable_configured_login_command() {
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
-    let missing_path = data_dir.path().join("missing-claude");
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let data_dir = fixture.data_dir.path();
+    let server = fixture.spawn_server().await;
+    let missing_path = data_dir.join("missing-claude");
     let mut cfg = empty_agent_server_config();
     cfg.providers.insert(
         "claude-cli".to_string(),
@@ -1497,7 +1453,7 @@ async fn claude_login_start_requires_usable_configured_login_command() {
             managed: None,
         },
     );
-    save_agent_server_config(data_dir.path(), &cfg)
+    save_agent_server_config(data_dir, &cfg)
         .await
         .expect("save agent config");
 
@@ -1522,18 +1478,12 @@ async fn claude_login_start_requires_usable_configured_login_command() {
 #[tokio::test]
 #[ignore = "Claude subscription login requires full OS automation for truthful coverage; excluded from verify:quick until that lane exists"]
 async fn claude_login_start_reconstructs_wrapped_auth_url() {
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let data_dir = fixture.data_dir.path();
+    let server = fixture.spawn_server().await;
 
     let script_path = write_mock_claude_runtime(
-        data_dir.path(),
+        data_dir,
         r#"#!/usr/bin/env bash
 set -euo pipefail
 printf "Claude setup-token URL: https://claude.ai/oauth/authorize?redirect_uri=http%%3A%%2F%%2Flocalhost%%3A\n"
@@ -1553,7 +1503,7 @@ exit 5
             managed: None,
         },
     );
-    save_agent_server_config(data_dir.path(), &cfg)
+    save_agent_server_config(data_dir, &cfg)
         .await
         .expect("save agent config");
 
@@ -1579,18 +1529,12 @@ exit 5
 #[tokio::test]
 #[ignore = "Claude subscription login requires full OS automation for truthful coverage; excluded from verify:quick until that lane exists"]
 async fn claude_login_setup_token_path_succeeds_without_callback_submission() {
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let data_dir = fixture.data_dir.path();
+    let server = fixture.spawn_server().await;
 
     let script_path = write_mock_claude_runtime(
-        data_dir.path(),
+        data_dir,
         r#"#!/usr/bin/env bash
 set -euo pipefail
 echo "Claude setup-token URL: https://claude.ai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A64111%2Fcallback&state=test"
@@ -1613,7 +1557,7 @@ echo "ZXY987654321"
             managed: None,
         },
     );
-    save_agent_server_config(data_dir.path(), &cfg)
+    save_agent_server_config(data_dir, &cfg)
         .await
         .expect("save agent config");
 
@@ -1642,18 +1586,12 @@ echo "ZXY987654321"
 #[tokio::test]
 #[ignore = "Claude subscription login requires full OS automation for truthful coverage; excluded from verify:quick until that lane exists"]
 async fn claude_login_success_without_token_reports_actionable_error() {
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let data_dir = fixture.data_dir.path();
+    let server = fixture.spawn_server().await;
 
     let script_path = write_mock_claude_runtime(
-        data_dir.path(),
+        data_dir,
         r#"#!/usr/bin/env bash
 set -euo pipefail
 echo "Claude setup-token URL: https://claude.ai/oauth/authorize?code=test"
@@ -1672,7 +1610,7 @@ echo "Token omitted intentionally for test."
             managed: None,
         },
     );
-    save_agent_server_config(data_dir.path(), &cfg)
+    save_agent_server_config(data_dir, &cfg)
         .await
         .expect("save agent config");
 
@@ -1703,18 +1641,12 @@ echo "Token omitted intentionally for test."
 #[tokio::test]
 #[ignore = "Claude subscription login requires full OS automation for truthful coverage; excluded from verify:quick until that lane exists"]
 async fn claude_login_hang_without_auth_url_times_out_and_fails() {
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let data_dir = fixture.data_dir.path();
+    let server = fixture.spawn_server().await;
 
     let script_path = write_mock_claude_runtime(
-        data_dir.path(),
+        data_dir,
         r#"#!/usr/bin/env bash
 set -euo pipefail
 sleep 30
@@ -1731,7 +1663,7 @@ sleep 30
             managed: None,
         },
     );
-    save_agent_server_config(data_dir.path(), &cfg)
+    save_agent_server_config(data_dir, &cfg)
         .await
         .expect("save agent config");
 
@@ -1764,15 +1696,9 @@ sleep 30
 #[tokio::test]
 #[ignore = "Claude subscription login requires full OS automation for truthful coverage; excluded from verify:quick until that lane exists"]
 async fn claude_login_without_label_preserves_existing_account_label() {
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let data_dir = fixture.data_dir.path();
+    let server = fixture.spawn_server().await;
 
     let shared_token = "sk-ant-oat01-abcDEF1234567890_abcdefghijklmnopqrstuvwxyz_0123456789";
     let accounts_url = format!("{}/api/providers/claude-crp/accounts", server.base_url);
@@ -1812,7 +1738,7 @@ echo ""
 echo "{shared_token}"
 "#,
     );
-    let script_path = write_mock_claude_runtime(data_dir.path(), &script_with_token).await;
+    let script_path = write_mock_claude_runtime(data_dir, &script_with_token).await;
     let mut cfg = empty_agent_server_config();
     cfg.providers.insert(
         "claude-cli".to_string(),
@@ -1823,7 +1749,7 @@ echo "{shared_token}"
             managed: None,
         },
     );
-    save_agent_server_config(data_dir.path(), &cfg)
+    save_agent_server_config(data_dir, &cfg)
         .await
         .expect("save agent config");
 
@@ -1879,20 +1805,13 @@ async fn gemini_subscription_accounts_crud_round_trip() {
 
 #[tokio::test]
 async fn gemini_login_start_and_status_success_persists_account() {
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
     let providers = providers_with_gemini_adapter(Arc::new(GeminiLoginTestAdapter::success(
         r#"{"access_token":"access","refresh_token":"refresh"}"#,
         Some(r#"[{"email":"gemini-dev@example.com"}]"#.to_string()),
         Some("https://accounts.google.com/o/oauth2/auth?code=test".to_string()),
     )));
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:0",
-    );
-    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
+    let fixture = common::fake_daemon_fixture_with_providers(providers, "http://127.0.0.1:0").await;
+    let server = fixture.spawn_server().await;
 
     let start_url = format!(
         "{}/api/providers/gemini/accounts/login/start",
@@ -1932,18 +1851,11 @@ async fn gemini_login_start_and_status_success_persists_account() {
 
 #[tokio::test]
 async fn gemini_login_start_and_status_failure_reports_error() {
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
     let providers = providers_with_gemini_adapter(Arc::new(GeminiLoginTestAdapter::failure(
         "gemini auth failed",
     )));
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:0",
-    );
-    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
+    let fixture = common::fake_daemon_fixture_with_providers(providers, "http://127.0.0.1:0").await;
+    let server = fixture.spawn_server().await;
 
     let start_url = format!(
         "{}/api/providers/gemini/accounts/login/start",
@@ -1982,16 +1894,9 @@ async fn gemini_login_start_and_status_failure_reports_error() {
 
 #[tokio::test]
 async fn gemini_login_fails_fast_when_no_auth_url_is_emitted() {
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
     let providers = providers_with_gemini_adapter(Arc::new(GeminiLoginTestAdapter::no_auth_url()));
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:0",
-    );
-    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
+    let fixture = common::fake_daemon_fixture_with_providers(providers, "http://127.0.0.1:0").await;
+    let server = fixture.spawn_server().await;
 
     let start_url = format!(
         "{}/api/providers/gemini/accounts/login/start",
@@ -2017,19 +1922,12 @@ async fn gemini_login_fails_fast_when_no_auth_url_is_emitted() {
 
 #[tokio::test]
 async fn amp_login_auth_required_notice_reports_real_message() {
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
     let providers = providers_with_amp_adapter(Arc::new(AmpLoginTestAdapter::auth_required(
         Some("https://ampcode.com/auth".to_string()),
         "Amp needs subscription approval",
     )));
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:0",
-    );
-    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
+    let fixture = common::fake_daemon_fixture_with_providers(providers, "http://127.0.0.1:0").await;
+    let server = fixture.spawn_server().await;
 
     let start_url = format!("{}/api/providers/amp/accounts/login/start", server.base_url);
     let start_resp = server
@@ -2060,15 +1958,9 @@ async fn kimi_login_start_and_status_success_persists_oauth_account() {
     let _oauth_host = TestEnvVar::set("KIMI_CODE_OAUTH_HOST", oauth_server.0.base_url.as_str());
     let _timeout = TestEnvVar::set("CTX_KIMI_LOGIN_TIMEOUT_SECS", "5");
 
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let data_dir = fixture.data_dir.path();
+    let server = fixture.spawn_server().await;
 
     let start_url = format!(
         "{}/api/providers/kimi/accounts/login/start",
@@ -2113,7 +2005,7 @@ async fn kimi_login_start_and_status_success_persists_oauth_account() {
     assert_eq!(accounts.active_account_id, status.account_id);
     assert_eq!(accounts.accounts[0].label.as_deref(), Some("Kimi Google"));
 
-    let registry = ctx_provider_accounts::load_kimi_registry(data_dir.path())
+    let registry = ctx_provider_accounts::load_kimi_registry(data_dir)
         .await
         .unwrap();
     assert_eq!(registry.accounts.len(), 1);
@@ -2125,19 +2017,12 @@ async fn kimi_login_start_and_status_success_persists_oauth_account() {
 
 #[tokio::test]
 async fn qwen_login_start_and_status_success_persists_account() {
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
     let providers = providers_with_qwen_adapter(Arc::new(QwenLoginTestAdapter::success(
         r#"{"access_token":"access","refresh_token":"refresh"}"#,
         Some("https://chat.qwen.ai/oauth/authorize?code=test".to_string()),
     )));
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:0",
-    );
-    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
+    let fixture = common::fake_daemon_fixture_with_providers(providers, "http://127.0.0.1:0").await;
+    let server = fixture.spawn_server().await;
 
     let start_url = format!(
         "{}/api/providers/qwen/accounts/login/start",
@@ -2177,8 +2062,9 @@ async fn qwen_login_start_and_status_success_persists_account() {
 
 #[tokio::test]
 async fn kimi_accounts_list_fails_closed_on_malformed_registry_json() {
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let path = ctx_provider_accounts::kimi_registry_path(data_dir.path());
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let data_dir = fixture.data_dir.path();
+    let path = ctx_provider_accounts::kimi_registry_path(data_dir);
     tokio::fs::create_dir_all(path.parent().expect("registry parent"))
         .await
         .expect("create kimi registry parent");
@@ -2186,14 +2072,7 @@ async fn kimi_accounts_list_fails_closed_on_malformed_registry_json() {
         .await
         .expect("write malformed kimi registry");
 
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
+    let server = fixture.spawn_server().await;
 
     let accounts_url = format!("{}/api/providers/kimi/accounts", server.base_url);
     let response = server
@@ -2218,9 +2097,9 @@ async fn kimi_accounts_list_fails_closed_on_malformed_registry_json() {
 
 #[tokio::test]
 async fn auth_import_profiles_route_fails_closed_on_malformed_registry_json() {
-    let data_dir = tempfile::tempdir().expect("tempdir");
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let data_dir = fixture.data_dir.path();
     let path = data_dir
-        .path()
         .join("providers")
         .join("auth_import")
         .join("profiles.json");
@@ -2231,14 +2110,7 @@ async fn auth_import_profiles_route_fails_closed_on_malformed_registry_json() {
         .await
         .expect("write malformed import registry");
 
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
+    let server = fixture.spawn_server().await;
 
     let profiles_url = format!("{}/api/providers/auth/import/profiles", server.base_url);
     let response = server
@@ -2277,16 +2149,10 @@ async fn qwen_subscription_accounts_crud_round_trip() {
 #[tokio::test]
 async fn cursor_login_start_requires_cursor_agent_runtime() {
     let _env_lock = CLAUDE_TOKEN_ENV_LOCK.lock().await;
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
-    let _path_guard = TestEnvVar::set("PATH", data_dir.path().to_string_lossy().as_ref());
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let data_dir = fixture.data_dir.path();
+    let server = fixture.spawn_server().await;
+    let _path_guard = TestEnvVar::set("PATH", data_dir.to_string_lossy().as_ref());
 
     let start_url = format!(
         "{}/api/providers/cursor/accounts/login/start",
@@ -2309,18 +2175,12 @@ async fn cursor_login_start_requires_cursor_agent_runtime() {
 #[tokio::test]
 async fn cursor_login_start_and_status_success_persists_account() {
     let _env_lock = CLAUDE_TOKEN_ENV_LOCK.lock().await;
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let data_dir = fixture.data_dir.path();
+    let server = fixture.spawn_server().await;
 
     let cursor_script = write_mock_cursor_runtime(
-        data_dir.path(),
+        data_dir,
         r#"#!/bin/sh
 set -eu
 capture_path="${CTX_CURSOR_CAPTURE_FILE:-}"
@@ -2336,7 +2196,7 @@ fi
 
     let mut cfg = empty_agent_server_config();
     set_login_executable(&mut cfg, "cursor", &cursor_script);
-    save_agent_server_config(data_dir.path(), &cfg)
+    save_agent_server_config(data_dir, &cfg)
         .await
         .expect("save agent config");
 
@@ -2382,18 +2242,12 @@ fi
 #[tokio::test]
 async fn cursor_login_start_rejects_host_path_discovery_and_does_not_persist_login_command() {
     let _env_lock = CLAUDE_TOKEN_ENV_LOCK.lock().await;
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let data_dir = fixture.data_dir.path();
+    let server = fixture.spawn_server().await;
 
     write_mock_cursor_runtime(
-        data_dir.path(),
+        data_dir,
         r#"#!/bin/sh
 set -eu
 capture_path="${CTX_CURSOR_CAPTURE_FILE:-}"
@@ -2407,7 +2261,7 @@ fi
     )
     .await;
     let existing_path = std::env::var("PATH").unwrap_or_default();
-    let combined_path = format!("{}:{}", data_dir.path().to_string_lossy(), existing_path);
+    let combined_path = format!("{}:{}", data_dir.to_string_lossy(), existing_path);
     let _path_guard = TestEnvVar::set("PATH", &combined_path);
 
     let start_url = format!(
@@ -2428,7 +2282,7 @@ fi
         .contains("runtime_command_missing: provider=cursor-login"));
     assert!(body.error.contains("host PATH lookup is not supported"));
 
-    let cfg = load_agent_server_config(data_dir.path())
+    let cfg = load_agent_server_config(data_dir)
         .await
         .expect("load persisted agent config");
     assert!(
@@ -2439,19 +2293,12 @@ fi
 
 #[tokio::test]
 async fn mistral_login_start_and_status_success_persists_account() {
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
     let providers = providers_with_mistral_adapter(Arc::new(MistralLoginTestAdapter::success(
         Some("https://auth.mistral.ai/oauth/authorize?code=test".to_string()),
         Some("mistral-dev@example.com".to_string()),
     )));
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:0",
-    );
-    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
+    let fixture = common::fake_daemon_fixture_with_providers(providers, "http://127.0.0.1:0").await;
+    let server = fixture.spawn_server().await;
 
     let start_url = format!(
         "{}/api/providers/mistral/accounts/login/start",
@@ -2555,15 +2402,8 @@ async fn cursor_subscription_accounts_crud_round_trip() {
 
 #[tokio::test]
 async fn gemini_upsert_rejects_invalid_oauth_json() {
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let server = fixture.spawn_server().await;
     let accounts_url = format!("{}/api/providers/gemini/accounts", server.base_url);
 
     let resp = server
@@ -2583,15 +2423,8 @@ async fn gemini_upsert_rejects_invalid_oauth_json() {
 
 #[tokio::test]
 async fn kimi_upsert_rejects_invalid_credentials_json() {
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let server = fixture.spawn_server().await;
     let accounts_url = format!("{}/api/providers/kimi/accounts", server.base_url);
 
     let resp = server
