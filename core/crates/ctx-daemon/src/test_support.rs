@@ -1617,13 +1617,13 @@ impl TestDaemon {
         mut predicate: F,
     ) -> anyhow::Result<Vec<SessionEvent>>
     where
-        F: FnMut(&[SessionEvent]) -> bool,
+        F: FnMut(&[SessionEvent]) -> anyhow::Result<bool>,
     {
         let store = self.state.store_for_session(session_id).await?;
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
             let events = store.list_session_events(session_id).await?;
-            if predicate(&events) {
+            if predicate(&events)? {
                 return Ok(events);
             }
             if tokio::time::Instant::now() >= deadline {
@@ -1631,6 +1631,36 @@ impl TestDaemon {
             }
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
+    }
+
+    pub async fn wait_for_session_done_event_count_for_test(
+        &self,
+        session_id: SessionId,
+        expected_done_events: usize,
+        timeout: Duration,
+    ) -> anyhow::Result<()> {
+        self.wait_for_scheduler_runtime_events_for_test(
+            session_id,
+            timeout,
+            &format!("{expected_done_events} done events"),
+            |events| {
+                if events
+                    .iter()
+                    .any(|event| matches!(event.event_type, SessionEventType::Error))
+                {
+                    anyhow::bail!(
+                        "unexpected session error while waiting for done events: {events:#?}"
+                    );
+                }
+                let done_count = events
+                    .iter()
+                    .filter(|event| matches!(event.event_type, SessionEventType::Done))
+                    .count();
+                Ok(done_count >= expected_done_events)
+            },
+        )
+        .await
+        .map(|_| ())
     }
 
     pub async fn assistant_chunk_stream_snapshot_for_test(
@@ -1644,9 +1674,9 @@ impl TestDaemon {
                 timeout,
                 "Done event",
                 |events| {
-                    events
+                    Ok(events
                         .iter()
-                        .any(|event| matches!(event.event_type, SessionEventType::Done))
+                        .any(|event| matches!(event.event_type, SessionEventType::Done)))
                 },
             )
             .await?;

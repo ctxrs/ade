@@ -15,6 +15,7 @@ const {
   SESSION_FIXTURE_TEST_STORE_ACCESS_PATTERNS,
   SMALL_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
   TASK_LIFECYCLE_TEST_STORE_ACCESS_PATTERNS,
+  TERMINAL_WORKSPACE_STREAM_TEST_STORE_ACCESS_PATTERNS,
   TEST_ROUTER_COMPOSITION_PATTERNS,
   TEST_RAW_DAEMON_BUCKET_PATTERNS,
   apiPatternsForPath,
@@ -32,6 +33,7 @@ const {
   sessionFixtureStorePatternsForPath,
   smallBoundaryStorePatternsForPath,
   taskLifecycleStorePatternsForPath,
+  terminalWorkspaceStreamStorePatternsForPath,
   stripCfgTestItems,
 } = require("./ctx_http_daemon_boundary_guard.cjs");
 
@@ -942,6 +944,60 @@ test("daemon boundary guard scopes global-id-routing store facade root", () => {
   assert.deepEqual(
     globalIdRoutingStorePatternsForPath(
       "core/crates/ctx-http/tests/image_attachments_http_e2e.rs",
+    ),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects direct terminal-workspace-stream store access", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/terminal_workspace_stream_separation.rs",
+    contents: `
+      use ctx_store::{Store, StoreManager};
+      async fn fixture(daemon: TestDaemon, stores: StoreManager) {
+        daemon.global_store();
+        daemon.store_for_session(session_id).await?;
+        daemon.store_for_workspace(workspace_id).await?;
+        daemon.uncached_store_for_workspace(workspace_id).await?;
+        daemon.store_for_task(task_id).await?;
+        daemon.stores().global().await?;
+        stores.global().await?;
+        stores.workspace(workspace_id).await?;
+        let _raw: Store;
+      }
+    `,
+    patterns: TERMINAL_WORKSPACE_STREAM_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct terminal-workspace-stream global store access",
+      "direct terminal-workspace-stream session store access",
+      "direct terminal-workspace-stream workspace store access",
+      "direct terminal-workspace-stream uncached workspace store access",
+      "direct terminal-workspace-stream task store access",
+      "direct terminal-workspace-stream StoreManager access",
+      "direct terminal-workspace-stream StoreManager global access",
+      "direct terminal-workspace-stream StoreManager workspace access",
+      "raw terminal-workspace-stream ctx_store Store",
+      "raw terminal-workspace-stream ctx_store Store",
+      "raw terminal-workspace-stream StoreManager",
+      "raw terminal-workspace-stream StoreManager",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes terminal-workspace-stream store facade root", () => {
+  assert.deepEqual(
+    terminalWorkspaceStreamStorePatternsForPath(
+      "core/crates/ctx-http/tests/terminal_workspace_stream_separation.rs",
+    ),
+    TERMINAL_WORKSPACE_STREAM_TEST_STORE_ACCESS_PATTERNS,
+  );
+  assert.deepEqual(
+    terminalWorkspaceStreamStorePatternsForPath(
+      "core/crates/ctx-http/tests/terminal_ws_reconnect.rs",
     ),
     [],
   );

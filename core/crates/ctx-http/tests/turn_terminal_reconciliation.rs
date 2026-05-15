@@ -268,10 +268,10 @@ async fn start_failure_marks_turn_failed_and_finishes() {
             std::time::Duration::from_secs(5),
             "start failure turn finish",
             |events| {
-                events.iter().any(|event| {
+                Ok(events.iter().any(|event| {
                     event.turn_id == Some(turn_id)
                         && matches!(event.event_type, SessionEventType::TurnFinished)
-                })
+                }))
             },
         )
         .await

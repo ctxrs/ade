@@ -88,7 +88,7 @@ async fn queued_message_emits_lifecycle_events_in_order_with_interrupt() {
                     event.turn_id == Some(turn_id_two)
                         && matches!(event.event_type, SessionEventType::TurnQueued)
                 });
-                saw_started && saw_queued
+                Ok(saw_started && saw_queued)
             },
         )
         .await
@@ -126,7 +126,7 @@ async fn queued_message_emits_lifecycle_events_in_order_with_interrupt() {
                     event.turn_id == Some(turn_id_two)
                         && matches!(event.event_type, SessionEventType::TurnQueued)
                 });
-                saw_interrupted && saw_finished && saw_queue_lifecycle
+                Ok(saw_interrupted && saw_finished && saw_queue_lifecycle)
             },
         )
         .await
@@ -227,7 +227,7 @@ async fn cancel_promotes_next_queued_turn_after_interrupted_finish() {
                     event.turn_id == Some(turn_id_two)
                         && matches!(event.event_type, SessionEventType::TurnQueued)
                 });
-                saw_started && saw_queued
+                Ok(saw_started && saw_queued)
             },
         )
         .await
@@ -259,7 +259,7 @@ async fn cancel_promotes_next_queued_turn_after_interrupted_finish() {
                     event.turn_id == Some(turn_id_two)
                         && matches!(event.event_type, SessionEventType::ToolCall)
                 });
-                saw_finished && saw_promoted && saw_next_started
+                Ok(saw_finished && saw_promoted && saw_next_started)
             },
         )
         .await
@@ -357,7 +357,7 @@ async fn cancel_promotes_queued_turns_in_fifo_order_across_multiple_cancels() {
                     event.turn_id == Some(turn_id_three)
                         && matches!(event.event_type, SessionEventType::TurnQueued)
                 });
-                saw_started && saw_second_queued && saw_third_queued
+                Ok(saw_started && saw_second_queued && saw_third_queued)
             },
         )
         .await
@@ -428,7 +428,7 @@ async fn cancel_promotes_queued_turns_in_fifo_order_across_multiple_cancels() {
                     event.turn_id == Some(turn_id_two)
                         && matches!(event.event_type, SessionEventType::ToolCall)
                 });
-                first_finished && second_promoted && second_started
+                Ok(first_finished && second_promoted && second_started)
             },
         )
         .await
@@ -460,7 +460,7 @@ async fn cancel_promotes_queued_turns_in_fifo_order_across_multiple_cancels() {
                     event.turn_id == Some(turn_id_three)
                         && matches!(event.event_type, SessionEventType::ToolCall)
                 });
-                second_finished && third_promoted && third_started
+                Ok(second_finished && third_promoted && third_started)
             },
         )
         .await
