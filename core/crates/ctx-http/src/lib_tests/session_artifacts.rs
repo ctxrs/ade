@@ -26,13 +26,7 @@ async fn build_session_artifact_fixture() -> SessionArtifactFixture {
     let home = EnvVarGuard::set("HOME", &home_dir.path().to_string_lossy());
 
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-
-    let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
-        HashMap::new();
-    providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-
-    let daemon = test_daemon_with_providers(data_dir.path(), stores, providers, None);
+    let daemon = test_daemon_with_fake_provider_for_test(data_dir.path(), None).await;
     let app = test_router(&daemon);
 
     let workspace = create_workspace_via_api(&app, &git_repo.path().to_string_lossy()).await;

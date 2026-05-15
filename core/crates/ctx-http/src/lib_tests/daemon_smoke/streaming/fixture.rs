@@ -24,8 +24,7 @@ pub(super) async fn start_streaming_server() -> StreamingServer {
     let home_guard = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let daemon = test_daemon_with_providers(data_dir.path(), stores, fake_provider_map(), None);
+    let daemon = test_daemon_with_fake_provider_for_test(data_dir.path(), None).await;
     install_fake_provider_status(&daemon).await;
 
     let app = test_router(&daemon);
@@ -112,13 +111,6 @@ pub(super) async fn create_default_task_session(
         .expect("created task should list its default session");
 
     (workspace, task, session)
-}
-
-fn fake_provider_map() -> HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> {
-    let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
-        HashMap::new();
-    providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-    providers
 }
 
 async fn install_fake_provider_status(daemon: &TestDaemon) {

@@ -1215,6 +1215,7 @@ test("daemon boundary guard rejects direct session fixture store access", () => 
     contents: `
       use ctx_store::Store;
       async fn helper(daemon: &TestDaemon, store: &Store) {
+        let stores = StoreManager::open(data_dir.path()).await?;
         daemon.global_store().list_workspaces().await?;
         daemon.store_for_session(session_id).await?;
         daemon.store_for_workspace(workspace_id).await?;
@@ -1224,6 +1225,7 @@ test("daemon boundary guard rejects direct session fixture store access", () => 
         daemon.stores().global().await?;
         stores.global().await?;
         stores.workspace(workspace_id).await?;
+        test_daemon_with_providers(data_dir, stores, providers, None);
       }
     `,
     patterns: SESSION_FIXTURE_TEST_STORE_ACCESS_PATTERNS,
@@ -1241,8 +1243,10 @@ test("daemon boundary guard rejects direct session fixture store access", () => 
       "direct session fixture StoreManager access",
       "direct session fixture StoreManager global access",
       "direct session fixture StoreManager workspace access",
+      "legacy session fixture provider daemon construction",
       "raw session fixture ctx_store Store",
       "raw session fixture ctx_store Store",
+      "raw session fixture StoreManager",
     ],
   );
 });
@@ -1251,6 +1255,7 @@ test("daemon boundary guard scopes session fixture store facade roots", () => {
   for (const filePath of [
     "core/crates/ctx-http/src/lib_tests/daemon_smoke.rs",
     "core/crates/ctx-http/src/lib_tests/daemon_smoke/golden_path.rs",
+    "core/crates/ctx-http/src/lib_tests/daemon_smoke/streaming/fixture.rs",
     "core/crates/ctx-http/src/lib_tests/log_path_boundaries.rs",
     "core/crates/ctx-http/src/lib_tests/log_path_boundaries/merge_queue.rs",
     "core/crates/ctx-http/src/lib_tests/session_artifacts.rs",
@@ -1269,6 +1274,12 @@ test("daemon boundary guard scopes session fixture store facade roots", () => {
   }
   assert.deepEqual(
     sessionFixtureStorePatternsForPath("core/crates/ctx-http/src/lib_tests/provider_routes.rs"),
+    [],
+  );
+  assert.deepEqual(
+    sessionFixtureStorePatternsForPath(
+      "core/crates/ctx-http/src/lib_tests/mobile_secure_routes/fixtures.rs",
+    ),
     [],
   );
 });

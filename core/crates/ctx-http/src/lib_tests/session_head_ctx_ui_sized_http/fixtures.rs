@@ -1,4 +1,3 @@
-use ctx_providers::adapters::ProviderAdapter;
 use serde::de::DeserializeOwned;
 
 use super::*;
@@ -18,10 +17,7 @@ impl CtxUiSizedHeadFixture {
         let repo = setup_git_repo().await;
         let projection_flush_ms = EnvVarGuard::set("CTX_ACTIVE_HEAD_PROJECTION_FLUSH_MS", "600000");
         let data_dir = tempfile::tempdir().unwrap();
-        let stores = StoreManager::open(data_dir.path()).await.unwrap();
-        let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
-        providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-        let daemon = test_daemon_with_providers(data_dir.path(), stores, providers, None);
+        let daemon = test_daemon_with_fake_provider_for_test(data_dir.path(), None).await;
         let app = test_router(&daemon);
 
         Self {

@@ -677,8 +677,16 @@ const SESSION_FIXTURE_TEST_STORE_ACCESS_PATTERNS = [
     regex: /\bstores\.workspace\s*\(/,
   },
   {
+    name: "legacy session fixture provider daemon construction",
+    regex: /\btest_daemon_with_providers\s*\(/,
+  },
+  {
     name: "raw session fixture ctx_store Store",
     regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore\b/,
+  },
+  {
+    name: "raw session fixture StoreManager",
+    regex: /\bStoreManager\b/,
   },
 ];
 

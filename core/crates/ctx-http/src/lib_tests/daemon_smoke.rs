@@ -68,12 +68,7 @@ async fn build_fake_app_with_session(
     data_dir: &Path,
     git_repo_path: &str,
 ) -> (TestDaemon, axum::Router, ctx_core::models::Session) {
-    let stores = StoreManager::open(data_dir).await.unwrap();
-    let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
-        HashMap::new();
-    providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-
-    let daemon = test_daemon_with_providers(data_dir, stores, providers, None);
+    let daemon = test_daemon_with_fake_provider_for_test(data_dir, None).await;
     let app = test_router(&daemon);
     let session = create_fake_session_via_api(&app, git_repo_path).await;
     (daemon, app, session)
