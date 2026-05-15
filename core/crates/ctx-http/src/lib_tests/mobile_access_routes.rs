@@ -31,8 +31,7 @@ async fn enable_mobile_access_seeds_explicit_default_scopes() {
     let (server, _control_plane_url) = spawn_mobile_enable_control_plane().await;
 
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
+    let state = test_daemon_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
 
     let app = test_router(&state);
     let req = Request::builder()
@@ -85,8 +84,7 @@ async fn enable_mobile_access_backfills_empty_managed_profile_scopes() {
     let (server, _control_plane_url) = spawn_mobile_enable_control_plane().await;
 
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
+    let state = test_daemon_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
 
     let legacy_profile = state
         .mobile_access_for_test()

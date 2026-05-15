@@ -1344,6 +1344,7 @@ test("daemon boundary guard scopes small-boundary store facade roots", () => {
     "core/crates/ctx-http/src/lib_tests/health_diagnostics/managed_config.rs",
     "core/crates/ctx-http/src/lib_tests/health_diagnostics/storage.rs",
     "core/crates/ctx-http/src/lib_tests/org_policy_routes.rs",
+    "core/crates/ctx-http/src/lib_tests/run_archive_routes.rs",
     "core/crates/ctx-http/src/lib_tests/telemetry_export_boundaries.rs",
     "core/crates/ctx-http/src/lib_tests/update_boundaries.rs",
     "core/crates/ctx-http/src/lib_tests/workspace_active_routes.rs",
@@ -1358,8 +1359,18 @@ test("daemon boundary guard scopes small-boundary store facade roots", () => {
   }
 
   for (const filePath of [
+    "core/crates/ctx-http/src/lib_tests/mobile_access_routes.rs",
+    "core/crates/ctx-http/src/lib_tests/mobile_profile_routes.rs",
+    "core/crates/ctx-http/src/lib_tests/web_session_routes/fixtures.rs",
+  ]) {
+    assert.deepEqual(
+      smallBoundaryStorePatternsForPath(filePath),
+      PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
+    );
+  }
+
+  for (const filePath of [
     "core/crates/ctx-http/src/lib_tests/execution_launch/settings_errors.rs",
-    "core/crates/ctx-http/src/lib_tests/run_archive_routes.rs",
     "core/crates/ctx-http/src/api/sessions/tests.rs",
     "core/crates/ctx-http/src/api/sessions/tests/title_generation.rs",
     "core/crates/ctx-http/src/api/workspaces/tests.rs",
@@ -1372,6 +1383,12 @@ test("daemon boundary guard scopes small-boundary store facade roots", () => {
   assert.deepEqual(
     smallBoundaryStorePatternsForPath(
       "core/crates/ctx-http/src/lib_tests/provider_routes.rs",
+    ),
+    [],
+  );
+  assert.deepEqual(
+    smallBoundaryStorePatternsForPath(
+      "core/crates/ctx-http/src/lib_tests/mobile_secure_routes/fixtures.rs",
     ),
     [],
   );

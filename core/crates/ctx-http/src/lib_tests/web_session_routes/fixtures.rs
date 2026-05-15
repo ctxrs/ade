@@ -15,8 +15,7 @@ impl WebSessionRouteFixture {
         let home = EnvVarGuard::set("HOME", &home_dir.path().to_string_lossy());
 
         let data_dir = tempfile::tempdir().unwrap();
-        let stores = StoreManager::open(data_dir.path()).await.unwrap();
-        let state = test_daemon(data_dir.path(), stores, daemon_secret.map(str::to_string));
+        let state = test_daemon_for_test(data_dir.path(), daemon_secret.map(str::to_string)).await;
 
         Self {
             app: test_router(&state),

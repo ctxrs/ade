@@ -7,8 +7,7 @@ async fn create_mobile_connection_profile_normalizes_explicit_scopes() {
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
+    let state = test_daemon_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
 
     let app = test_router(&state);
     let req = Request::builder()
@@ -43,8 +42,7 @@ async fn create_mobile_connection_profile_rejects_unknown_scope_names() {
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
+    let state = test_daemon_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
 
     let app = test_router(&state);
     let req = Request::builder()
@@ -76,8 +74,7 @@ async fn create_mobile_connection_profile_requires_explicit_scopes_field() {
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
+    let state = test_daemon_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
 
     let app = test_router(&state);
     let req = Request::builder()
@@ -104,8 +101,7 @@ async fn delete_mobile_connection_profile_returns_not_found_after_first_removal(
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
+    let state = test_daemon_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
 
     let token = "ctxm_test_mobile_token";
     let profile = state
