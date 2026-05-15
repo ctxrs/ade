@@ -998,6 +998,7 @@ test("daemon boundary guard rejects direct task-lifecycle store access", () => {
 
 test("daemon boundary guard scopes task-lifecycle store facade roots", () => {
   for (const filePath of [
+    "core/crates/ctx-http/src/api/tasks/cleanup_lifecycle_tests.rs",
     "core/crates/ctx-http/src/api/tasks/lifecycle_tests.rs",
     "core/crates/ctx-http/src/api/tasks/lifecycle_tests/fixtures.rs",
     "core/crates/ctx-http/src/api/tasks/lifecycle_tests/delete/subagent_worktree.rs",

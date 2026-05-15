@@ -1,9 +1,7 @@
 use super::*;
 use ctx_core::models::VcsKind;
-use ctx_daemon::test_support::TestDaemon;
-use ctx_store::{Store, StoreManager};
+use ctx_daemon::test_support::{TaskLifecycleWorktreeSeed, TestDaemon};
 use ctx_workspace_services::worktree_vcs::{managed_worktree_path, standaloneize_worktree_git_dir};
-use std::collections::HashMap;
 
 fn git(args: &[&str], cwd: &StdPath) {
     let status = std::process::Command::new("git")
@@ -36,17 +34,13 @@ fn init_git_workspace(root: &StdPath) -> String {
 }
 
 async fn test_state(data_root: &StdPath) -> TestDaemon {
-    TestDaemon::new(
-        data_root.to_path_buf(),
-        StoreManager::open(data_root).await.expect("open stores"),
-        HashMap::new(),
-        "http://127.0.0.1:4310".to_string(),
-        None,
-    )
+    TestDaemon::new_for_test(data_root.to_path_buf(), "http://127.0.0.1:4310".to_string())
+        .await
+        .expect("create test daemon")
 }
 
 async fn insert_managed_worktree(
-    store: &Store,
+    state: &TestDaemon,
     data_root: &StdPath,
     workspace: &Workspace,
     owner_task_id: TaskId,
@@ -67,27 +61,15 @@ async fn insert_managed_worktree(
         ],
         repo_root,
     );
-    let worktree = store
-        .insert_worktree(Worktree {
-            id: worktree_id,
+    let worktree = state
+        .seed_task_lifecycle_worktree_for_test(TaskLifecycleWorktreeSeed {
             workspace_id: workspace.id,
-            root_path: managed_root.to_string_lossy().to_string(),
-            base_commit_sha: base_commit.to_string(),
-            git_branch: Some(branch_name),
-            vcs_kind: Some(VcsKind::Git),
-            base_revision: Some(base_commit.to_string()),
-            vcs_ref: Some("".to_string()),
-            created_at: Utc::now(),
-            bootstrap_status: None,
-            bootstrap_started_at: None,
-            bootstrap_finished_at: None,
-            bootstrap_exit_code: None,
-            bootstrap_timeout_sec: None,
-            bootstrap_error: None,
-            bootstrap_log_path: None,
-            bootstrap_log_truncated: None,
-            bootstrap_command: None,
-            bootstrap_script_path: None,
+            owner_task_id,
+            worktree_id,
+            root_path: managed_root.clone(),
+            base_commit: base_commit.to_string(),
+            git_branch: branch_name,
+            make_primary: true,
         })
         .await
         .expect("insert worktree");
@@ -102,30 +84,16 @@ async fn delete_task_prunes_and_deletes_branch_for_standalone_managed_worktree()
     let base_commit = init_git_workspace(&repo_root);
     let state = test_state(temp.path()).await;
     let workspace = state
-        .global_store()
-        .create_workspace(
-            "ws".to_string(),
-            repo_root.to_string_lossy().to_string(),
-            VcsKind::Git,
-        )
+        .seed_task_lifecycle_workspace_for_test("ws", &repo_root, VcsKind::Git)
         .await
         .expect("create workspace");
-    let store = state
-        .store_for_workspace(workspace.id)
-        .await
-        .expect("workspace store");
-    let task = store
-        .create_task(workspace.id, "task".to_string(), None)
+    let task = state
+        .seed_task_lifecycle_task_for_test(workspace.id, "task")
         .await
         .expect("create task");
-    state
-        .global_store()
-        .upsert_workspace_task_index(task.id, workspace.id)
-        .await
-        .expect("upsert task index");
 
     let (worktree, managed_root) = insert_managed_worktree(
-        &store,
+        &state,
         temp.path(),
         &workspace,
         task.id,
@@ -140,16 +108,6 @@ async fn delete_task_prunes_and_deletes_branch_for_standalone_managed_worktree()
     standaloneize_worktree_git_dir(&managed_root)
         .await
         .expect("standaloneize managed worktree");
-
-    state
-        .global_store()
-        .upsert_workspace_worktree_index(worktree.id, workspace.id)
-        .await
-        .expect("upsert worktree index");
-    store
-        .set_task_primary_worktree(task.id, worktree.id)
-        .await
-        .expect("set primary worktree");
 
     let tasks = task_api_task_state(&state);
     let status = delete_task(tasks, Path(task.id.0.to_string()))
