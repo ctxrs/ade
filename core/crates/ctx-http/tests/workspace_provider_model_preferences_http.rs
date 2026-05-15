@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::http::{Method, StatusCode};
-use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::test_support::TestDaemon;
 use ctx_providers::adapters::{
     ProviderAdapter, ProviderRecommendedAction, ProviderUsability, ProviderUsabilityStatus,
 };
@@ -18,11 +18,11 @@ fn fake_codex_providers() -> HashMap<String, Arc<dyn ProviderAdapter>> {
     providers
 }
 
-async fn build_state_with_fake_codex(
+async fn build_daemon_with_fake_codex(
     data_root: &std::path::Path,
     stores: StoreManager,
-) -> Arc<DaemonState> {
-    let state = common::build_state(
+) -> TestDaemon {
+    let daemon = common::build_daemon(
         data_root,
         stores,
         fake_codex_providers(),
@@ -41,10 +41,8 @@ async fn build_state_with_fake_codex(
         blocking_provider_ids: Vec::new(),
         recommended_action: ProviderRecommendedAction::None,
     };
-    state
-        .test_upsert_provider_status("codex".into(), status)
-        .await;
-    state
+    daemon.upsert_provider_status("codex".into(), status).await;
+    daemon
 }
 
 #[tokio::test]
@@ -52,8 +50,8 @@ async fn workspace_provider_model_preference_endpoint_round_trips() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
-    let state = build_state_with_fake_codex(data_dir.path(), stores).await;
-    let app = common::router(state);
+    let daemon = build_daemon_with_fake_codex(data_dir.path(), stores).await;
+    let app = common::router_for_daemon(&daemon);
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;
 
     let (initial_status, initial_body): (StatusCode, Value) = common::json_request(
@@ -116,8 +114,8 @@ async fn workspace_provider_model_preference_rejects_unknown_provider_ids() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
-    let state = build_state_with_fake_codex(data_dir.path(), stores).await;
-    let app = common::router(state);
+    let daemon = build_daemon_with_fake_codex(data_dir.path(), stores).await;
+    let app = common::router_for_daemon(&daemon);
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;
 
     let (status, body): (StatusCode, Value) = common::json_request(
@@ -145,8 +143,8 @@ async fn provider_options_and_bootstrap_only_surface_valid_preferred_model_ids()
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
-    let state = build_state_with_fake_codex(data_dir.path(), stores).await;
-    let app = common::router(state);
+    let daemon = build_daemon_with_fake_codex(data_dir.path(), stores).await;
+    let app = common::router_for_daemon(&daemon);
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;
 
     let (_set_status, _set_body): (StatusCode, Value) = common::json_request(
@@ -235,8 +233,8 @@ async fn provider_options_cache_is_invalidated_when_preference_changes() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
-    let state = build_state_with_fake_codex(data_dir.path(), stores).await;
-    let app = common::router(state);
+    let daemon = build_daemon_with_fake_codex(data_dir.path(), stores).await;
+    let app = common::router_for_daemon(&daemon);
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;
 
     let (_set_initial_status, _set_initial_body): (StatusCode, Value) = common::json_request(
@@ -301,10 +299,10 @@ async fn malformed_workspace_model_preferences_do_not_break_bootstrap() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
-    let state = build_state_with_fake_codex(data_dir.path(), stores).await;
-    let app = common::router(state.clone());
+    let daemon = build_daemon_with_fake_codex(data_dir.path(), stores).await;
+    let app = common::router_for_daemon(&daemon);
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;
-    let store = state
+    let store = daemon
         .store_for_workspace(workspace.id)
         .await
         .expect("load workspace store");
@@ -367,8 +365,8 @@ async fn session_creation_and_model_switch_persist_workspace_provider_preference
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
-    let state = build_state_with_fake_codex(data_dir.path(), stores).await;
-    let app = common::router(state);
+    let daemon = build_daemon_with_fake_codex(data_dir.path(), stores).await;
+    let app = common::router_for_daemon(&daemon);
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;
     let session_id = uuid::Uuid::new_v4();
 
@@ -463,8 +461,8 @@ async fn session_creation_does_not_persist_auto_seeded_workspace_provider_prefer
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
-    let state = build_state_with_fake_codex(data_dir.path(), stores).await;
-    let app = common::router(state);
+    let daemon = build_daemon_with_fake_codex(data_dir.path(), stores).await;
+    let app = common::router_for_daemon(&daemon);
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;
     let (create_status, task): (StatusCode, ctx_core::models::Task) = common::json_request(
         &app,

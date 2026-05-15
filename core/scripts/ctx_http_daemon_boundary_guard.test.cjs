@@ -343,6 +343,7 @@ test("daemon boundary guard scopes migrated raw daemon constructor ban", () => {
     "core/crates/ctx-http/tests/repo_init_initial_commit.rs",
     "core/crates/ctx-http/tests/repo_validate_destination.rs",
     "core/crates/ctx-http/tests/system_prompt_append_http.rs",
+    "core/crates/ctx-http/tests/workspace_provider_model_preferences_http.rs",
   ]) {
     assert.equal(migratedTestPatternsForPath(filePath), MIGRATED_TEST_RAW_DAEMON_PATTERNS);
   }
