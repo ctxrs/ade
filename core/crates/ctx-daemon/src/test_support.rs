@@ -4,15 +4,17 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use ctx_core::ids::{
-    ConnectionProfileId, MessageId, MobileDeviceId, RunId, SessionEventId, SessionId, TaskId,
-    TerminalId, TurnId, WorkspaceAttachmentId, WorkspaceId, WorktreeId,
+    ConnectionProfileId, MergeQueueEntryId, MergeQueueRunId, MessageId, MobileDeviceId, RunId,
+    SessionEventId, SessionId, TaskId, TerminalId, TurnId, WorkspaceAttachmentId, WorkspaceId,
+    WorktreeId,
 };
 use ctx_core::models::{
-    ExecutionEnvironment, Message, MessageDelivery, MessageRole, MobileConnectionProfile,
-    MobileDeviceRegistration, Session, SessionEvent, SessionEventType, SessionHeadDelta,
-    SessionHeadSnapshot, SessionSummary, SessionTurn, SessionTurnStatus, Task, VcsKind, Workspace,
-    WorkspaceActiveTaskSummary, WorkspaceAttachmentStatus, Worktree, WorktreeAttachmentMount,
-    WorktreeVcsSnapshot,
+    Artifact, ExecutionEnvironment, MergeQueueEntry, MergeQueueEntryStatus, MergeQueuePatchSource,
+    MergeQueueRun, MergeQueueRunStatus, Message, MessageDelivery, MessageRole,
+    MobileConnectionProfile, MobileDeviceRegistration, Session, SessionEvent, SessionEventType,
+    SessionHeadDelta, SessionHeadSnapshot, SessionSummary, SessionTurn, SessionTurnStatus, Task,
+    VcsKind, Workspace, WorkspaceActiveTaskSummary, WorkspaceAttachmentStatus, Worktree,
+    WorktreeAttachmentMount, WorktreeBootstrapStatus, WorktreeVcsSnapshot,
 };
 use ctx_provider_install::install_state::{
     InstallId, InstallInfo, InstallProgressEvent, InstallTarget,
@@ -22,8 +24,9 @@ use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
 use ctx_settings_model::{ExecutionSettings, Settings};
 use ctx_storage_admission::StorageGuardStatus;
 use ctx_store::store::{MobileAccessConfig, MobileDeviceUpsert};
-use ctx_store::{Store, StoreManager};
+use ctx_store::{Store, StoreManager, WorktreeBootstrapResultUpdate};
 use sha2::Digest;
+use sqlx::{QueryBuilder, Sqlite};
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::daemon::{self, AppRuntimeFlags, DaemonHandle, DaemonState};
@@ -170,6 +173,390 @@ impl TestDaemon {
         self.state
             .ensure_workspace_active_snapshot_hydrated(workspace_id)
             .await
+    }
+
+    pub async fn session_worktree_root_path_for_test(
+        &self,
+        session: &Session,
+    ) -> anyhow::Result<PathBuf> {
+        Ok(PathBuf::from(
+            self.load_worktree_for_test(session.worktree_id)
+                .await?
+                .root_path,
+        ))
+    }
+
+    pub async fn seed_legacy_session_artifact_by_path_for_test(
+        &self,
+        session: &Session,
+        absolute_path: &Path,
+        name: &str,
+        mime_type: &str,
+        bytes: i64,
+    ) -> anyhow::Result<Artifact> {
+        let artifact = Artifact {
+            id: ctx_core::ids::ArtifactId::new(),
+            session_id: session.id,
+            task_id: session.task_id,
+            workspace_id: session.workspace_id,
+            worktree_id: session.worktree_id,
+            name: Some(name.to_string()),
+            absolute_path: absolute_path.to_string_lossy().to_string(),
+            mime_type: mime_type.to_string(),
+            bytes,
+            created_at: chrono::Utc::now(),
+            missing: None,
+        };
+        self.state
+            .store_for_session(session.id)
+            .await?
+            .upsert_session_artifact_by_path(&artifact)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn record_worktree_bootstrap_log_for_test(
+        &self,
+        session: &Session,
+        status: WorktreeBootstrapStatus,
+        log_path: &Path,
+        error: Option<&str>,
+        command: &str,
+    ) -> anyhow::Result<WorktreeId> {
+        let worktree = self.load_worktree_for_test(session.worktree_id).await?;
+        let now = chrono::Utc::now();
+        self.state
+            .store_for_worktree(worktree.id)
+            .await?
+            .update_worktree_bootstrap_result(WorktreeBootstrapResultUpdate {
+                worktree_id: worktree.id,
+                status,
+                started_at: now,
+                finished_at: now,
+                exit_code: Some(if error.is_some() { 1 } else { 0 }),
+                timeout_sec: Some(60),
+                error: error.map(str::to_string),
+                log_path: Some(log_path.to_string_lossy().to_string()),
+                log_truncated: Some(false),
+                command: Some(command.to_string()),
+                script_path: None,
+            })
+            .await?;
+        Ok(worktree.id)
+    }
+
+    pub async fn seed_failed_merge_queue_log_run_for_test(
+        &self,
+        workspace_id: WorkspaceId,
+        message: &str,
+        log_path: &Path,
+        error_message: &str,
+    ) -> anyhow::Result<MergeQueueEntryId> {
+        let now = chrono::Utc::now();
+        let entry = MergeQueueEntry {
+            id: MergeQueueEntryId::new(),
+            workspace_id,
+            worktree_id: None,
+            session_id: None,
+            target_branch: "main".to_string(),
+            message: Some(message.to_string()),
+            patch_source: MergeQueuePatchSource::Generated,
+            base_commit_sha: Some("base".to_string()),
+            head_commit_sha: Some("head".to_string()),
+            patch_path: "/tmp/log-path-boundary.patch".to_string(),
+            patch_size: 1,
+            status: MergeQueueEntryStatus::Failed,
+            result_commit_sha: None,
+            error_message: Some("failed".to_string()),
+            created_at: now,
+            updated_at: now,
+        };
+        let run = MergeQueueRun {
+            id: MergeQueueRunId::new(),
+            entry_id: entry.id,
+            status: MergeQueueRunStatus::Failed,
+            started_at: now,
+            finished_at: Some(now),
+            exit_code: Some(1),
+            log_path: Some(log_path.to_string_lossy().to_string()),
+            error_message: Some(error_message.to_string()),
+            result_commit_sha: None,
+        };
+        let store = self.state.store_for_workspace(workspace_id).await?;
+        store.create_merge_queue_entry(&entry).await?;
+        store.create_merge_queue_run(&run).await?;
+        Ok(entry.id)
+    }
+
+    pub async fn session_has_no_persisted_messages_for_test(
+        &self,
+        session_id: SessionId,
+    ) -> anyhow::Result<bool> {
+        Ok(self
+            .state
+            .store_for_session(session_id)
+            .await?
+            .list_messages_for_session(session_id)
+            .await?
+            .is_empty())
+    }
+
+    pub async fn wait_for_assistant_message_for_test(
+        &self,
+        session_id: SessionId,
+        timeout: Duration,
+    ) -> anyhow::Result<()> {
+        let store = self.state.store_for_session(session_id).await?;
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let messages = store.list_messages_for_session(session_id).await?;
+            if messages
+                .iter()
+                .any(|message| matches!(message.role, MessageRole::Assistant))
+            {
+                return Ok(());
+            }
+            let turns = store
+                .list_session_turns_page_by_seq(session_id, None, Some(10))
+                .await?;
+            if turns.iter().any(|turn| {
+                matches!(
+                    turn.status,
+                    SessionTurnStatus::Failed | SessionTurnStatus::Interrupted
+                )
+            }) {
+                anyhow::bail!("turn failed before assistant message was produced: {turns:#?}");
+            }
+            if tokio::time::Instant::now() >= deadline {
+                let events = store.list_session_events(session_id).await?;
+                anyhow::bail!(
+                    "assistant message not produced; messages={messages:#?}; events={events:#?}; turns={turns:#?}"
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    pub async fn wait_for_session_turn_failed_for_test(
+        &self,
+        session_id: SessionId,
+        timeout: Duration,
+    ) -> anyhow::Result<()> {
+        let store = self.state.store_for_session(session_id).await?;
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let turns = store
+                .list_session_turns_page_by_seq(session_id, None, Some(10))
+                .await?;
+            if turns
+                .last()
+                .is_some_and(|turn| turn.status == SessionTurnStatus::Failed)
+            {
+                return Ok(());
+            }
+            if tokio::time::Instant::now() >= deadline {
+                anyhow::bail!("turn did not fail before timeout; turns={turns:#?}");
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    pub async fn seed_invalid_workspace_runtime_settings_for_test(
+        &self,
+        session_id: SessionId,
+        contents: &str,
+    ) -> anyhow::Result<()> {
+        let _ = self
+            .state
+            .store_for_session(session_id)
+            .await?
+            .upsert_runtime_settings_document(1, contents)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn session_has_user_message_event_for_test(
+        &self,
+        session_id: SessionId,
+    ) -> anyhow::Result<bool> {
+        let events = self
+            .state
+            .store_for_session(session_id)
+            .await?
+            .list_session_events(session_id)
+            .await?;
+        Ok(events
+            .iter()
+            .any(|event| matches!(event.event_type, SessionEventType::UserMessage)))
+    }
+
+    pub async fn seed_large_session_head_fixture_for_test(
+        &self,
+        workspace_id: WorkspaceId,
+        session_id: SessionId,
+        task_id: TaskId,
+        turns: i64,
+        timeout: Duration,
+    ) -> anyhow::Result<()> {
+        struct SeedRow {
+            index: i64,
+            event_seq: i64,
+            event_id: String,
+            message_id: String,
+            run_id: String,
+            turn_id: String,
+            created_at: String,
+            payload_json: String,
+            input_json: String,
+        }
+
+        let store = self.state.store_for_session(session_id).await?;
+        let session_id_value = session_id.0.to_string();
+        let task_id_value = task_id.0.to_string();
+        let started_at = chrono::Utc::now();
+        // Seed fixture rows directly so this response-size test does not enqueue
+        // projection work once per row before the explicit refresh below.
+        let rows = (0..turns)
+            .map(|index| {
+                let created_at = started_at + chrono::Duration::milliseconds(index);
+                SeedRow {
+                    index,
+                    event_seq: index + 1,
+                    event_id: uuid::Uuid::new_v4().to_string(),
+                    message_id: MessageId::new().0.to_string(),
+                    run_id: RunId::new().0.to_string(),
+                    turn_id: TurnId::new().0.to_string(),
+                    created_at: created_at.to_rfc3339(),
+                    payload_json: serde_json::json!({
+                        "kind": "large_head_checkpoint",
+                        "turn_index": index,
+                    })
+                    .to_string(),
+                    input_json: serde_json::json!({ "cmd": format!("echo {index}") }).to_string(),
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let mut turn_builder = QueryBuilder::<Sqlite>::new(
+            r#"INSERT INTO session_turns (
+                turn_id, session_id, run_id, user_message_id, status, start_seq, end_seq,
+                started_at, updated_at, assistant_partial, thought_partial, metrics_json,
+                tool_total, tool_pending, tool_running, tool_completed, tool_failed
+            ) "#,
+        );
+        turn_builder.push_values(&rows, |mut values, row| {
+            values
+                .push_bind(&row.turn_id)
+                .push_bind(&session_id_value)
+                .push_bind(&row.run_id)
+                .push_bind(Option::<String>::None)
+                .push_bind("completed")
+                .push_bind(row.index + 1)
+                .push_bind(row.index + 1)
+                .push_bind(&row.created_at)
+                .push_bind(&row.created_at)
+                .push_bind(Option::<String>::None)
+                .push_bind(Option::<String>::None)
+                .push_bind(Option::<String>::None)
+                .push_bind(1_i64)
+                .push_bind(0_i64)
+                .push_bind(0_i64)
+                .push_bind(1_i64)
+                .push_bind(0_i64);
+        });
+        turn_builder.build().execute(store.pool()).await?;
+
+        let mut event_builder = QueryBuilder::<Sqlite>::new(
+            r#"INSERT INTO session_events (
+                seq, id, session_id, run_id, turn_id, event_type, payload_json, transient, created_at
+            ) "#,
+        );
+        event_builder.push_values(&rows, |mut values, row| {
+            values
+                .push_bind(row.event_seq)
+                .push_bind(&row.event_id)
+                .push_bind(&session_id_value)
+                .push_bind(&row.run_id)
+                .push_bind(&row.turn_id)
+                .push_bind("notice")
+                .push_bind(&row.payload_json)
+                .push_bind(0_i64)
+                .push_bind(&row.created_at);
+        });
+        event_builder.build().execute(store.pool()).await?;
+
+        let mut message_builder = QueryBuilder::<Sqlite>::new(
+            r#"INSERT INTO messages (
+                id, session_id, task_id, run_id, turn_id, turn_sequence, order_seq, role, content,
+                attachments_json, delivery, delivered_at, created_at
+            ) "#,
+        );
+        message_builder.push_values(&rows, |mut values, row| {
+            values
+                .push_bind(&row.message_id)
+                .push_bind(&session_id_value)
+                .push_bind(&task_id_value)
+                .push_bind(&row.run_id)
+                .push_bind(&row.turn_id)
+                .push_bind(1_i64)
+                .push_bind(Option::<i64>::None)
+                .push_bind("assistant")
+                .push_bind(format!("answer {}", row.index))
+                .push_bind("[]")
+                .push_bind("immediate")
+                .push_bind(Option::<String>::None)
+                .push_bind(&row.created_at);
+        });
+        message_builder.build().execute(store.pool()).await?;
+
+        let mut tool_builder = QueryBuilder::<Sqlite>::new(
+            r#"INSERT INTO session_turn_tools (
+                session_id, tool_call_id, turn_id, tool_kind, provider_tool_name, title, subtitle,
+                status, input_json, output_text, order_seq, first_event_seq, input_truncated,
+                input_original_bytes, output_truncated, output_original_bytes, created_at, updated_at
+            ) "#,
+        );
+        tool_builder.push_values(&rows, |mut values, row| {
+            values
+                .push_bind(&session_id_value)
+                .push_bind(format!("tool-{}", row.index))
+                .push_bind(&row.turn_id)
+                .push_bind("execute")
+                .push_bind("Bash")
+                .push_bind("Bash")
+                .push_bind(format!("turn {}", row.index))
+                .push_bind("completed")
+                .push_bind(&row.input_json)
+                .push_bind(format!("output {}", row.index))
+                .push_bind(1_i64)
+                .push_bind(row.event_seq)
+                .push_bind(0_i64)
+                .push_bind(Option::<i64>::None)
+                .push_bind(0_i64)
+                .push_bind(Option::<i64>::None)
+                .push_bind(&row.created_at)
+                .push_bind(&row.created_at);
+        });
+        tool_builder.build().execute(store.pool()).await?;
+
+        tokio::time::timeout(
+            timeout,
+            store.refresh_active_session_head_projection(session_id),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("timed out refreshing active session head projection"))?
+        .map_err(|err| anyhow::anyhow!("refresh active session head projection: {err}"))?;
+
+        tokio::time::timeout(
+            timeout,
+            self.state
+                .ensure_workspace_active_snapshot_hydrated(workspace_id),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("timed out hydrating workspace active snapshot"))?
+        .map_err(|err| anyhow::anyhow!("hydrate workspace active snapshot: {err:?}"))?;
+
+        Ok(())
     }
 
     pub async fn seed_hot_endpoint_caches_for_test(

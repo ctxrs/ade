@@ -133,6 +133,17 @@ const mcpDaemonFacadeTestRoots = [
   "core/crates/ctx-http-test-support/src/mcp_daemon/",
 ];
 
+const sessionFixtureStoreFacadeTestRoots = [
+  "core/crates/ctx-http/src/lib_tests/daemon_smoke.rs",
+  "core/crates/ctx-http/src/lib_tests/daemon_smoke/",
+  "core/crates/ctx-http/src/lib_tests/log_path_boundaries.rs",
+  "core/crates/ctx-http/src/lib_tests/log_path_boundaries/",
+  "core/crates/ctx-http/src/lib_tests/session_artifacts.rs",
+  "core/crates/ctx-http/src/lib_tests/session_artifacts/",
+  "core/crates/ctx-http/src/lib_tests/session_head_large_http.rs",
+  "core/crates/ctx-http/src/lib_tests/session_head_large_http/",
+];
+
 const API_RAW_DAEMON_PATTERNS = [
   {
     name: "raw DaemonState type",
@@ -323,6 +334,45 @@ const MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS = [
   },
 ];
 
+const SESSION_FIXTURE_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct session fixture global store access",
+    regex: /\.global_store\s*\(/,
+  },
+  {
+    name: "direct session fixture session store access",
+    regex: /\.store_for_session\s*\(/,
+  },
+  {
+    name: "direct session fixture workspace store access",
+    regex: /\.store_for_workspace\s*\(/,
+  },
+  {
+    name: "direct session fixture uncached workspace store access",
+    regex: /\.uncached_store_for_workspace\s*\(/,
+  },
+  {
+    name: "direct session fixture task store access",
+    regex: /\.store_for_task\s*\(/,
+  },
+  {
+    name: "direct session fixture StoreManager access",
+    regex: /\.stores\s*\(/,
+  },
+  {
+    name: "direct session fixture StoreManager global access",
+    regex: /\bstores\.global\s*\(/,
+  },
+  {
+    name: "direct session fixture StoreManager workspace access",
+    regex: /\bstores\.workspace\s*\(/,
+  },
+  {
+    name: "raw session fixture ctx_store Store",
+    regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore\b/,
+  },
+];
+
 function isRustFile(filePath) {
   return filePath.endsWith(".rs");
 }
@@ -475,6 +525,13 @@ function providerCachePatternsForPath(relativePath) {
 function mcpDaemonPatternsForPath(relativePath) {
   if (mcpDaemonFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
+function sessionFixtureStorePatternsForPath(relativePath) {
+  if (sessionFixtureStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return SESSION_FIXTURE_TEST_STORE_ACCESS_PATTERNS;
   }
   return [];
 }
@@ -697,6 +754,13 @@ function scanRepo() {
       }),
     );
     violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
+        patterns: sessionFixtureStorePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
       ...scanRouterComposition({
         filePath: relativePath,
         contents,
@@ -736,6 +800,7 @@ module.exports = {
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_TEST_CACHE_ACCESS_PATTERNS,
+  SESSION_FIXTURE_TEST_STORE_ACCESS_PATTERNS,
   TEST_ROUTER_COMPOSITION_PATTERNS,
   TEST_RAW_DAEMON_BUCKET_PATTERNS,
   apiPatternsForPath,
@@ -748,5 +813,6 @@ module.exports = {
   scanRepo,
   scanRouterComposition,
   scanText,
+  sessionFixtureStorePatternsForPath,
   stripCfgTestItems,
 };

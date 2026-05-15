@@ -15,25 +15,15 @@ async fn session_artifacts_do_not_accept_other_session_spool_files() {
     let other_spool_path = other_spool_dir.join("foreign.txt");
     std::fs::write(&other_spool_path, b"other-session-spool\n").unwrap();
 
-    let store = fixture
+    let legacy = fixture
         .daemon
-        .store_for_session(fixture.session.id)
-        .await
-        .unwrap();
-    let legacy = store
-        .upsert_session_artifact_by_path(&ctx_core::models::Artifact {
-            id: ctx_core::ids::ArtifactId::new(),
-            session_id: fixture.session.id,
-            task_id: fixture.session.task_id,
-            workspace_id: fixture.session.workspace_id,
-            worktree_id: fixture.session.worktree_id,
-            name: Some("foreign.txt".to_string()),
-            absolute_path: other_spool_path.to_string_lossy().to_string(),
-            mime_type: "text/plain".to_string(),
-            bytes: 20,
-            created_at: chrono::Utc::now(),
-            missing: None,
-        })
+        .seed_legacy_session_artifact_by_path_for_test(
+            &fixture.session,
+            &other_spool_path,
+            "foreign.txt",
+            "text/plain",
+            20,
+        )
         .await
         .unwrap();
 

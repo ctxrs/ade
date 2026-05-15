@@ -37,10 +37,11 @@ async fn post_message_route_rejects_queueing_when_feature_flag_is_disabled() {
         Some("Queued messages are disabled.")
     );
 
-    let store = daemon.store_for_session(session.id).await.unwrap();
-    let messages = store.list_messages_for_session(session.id).await.unwrap();
     assert!(
-        messages.is_empty(),
+        daemon
+            .session_has_no_persisted_messages_for_test(session.id)
+            .await
+            .unwrap(),
         "rejected queue attempts must not persist messages"
     );
 }

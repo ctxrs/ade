@@ -15,17 +15,12 @@ impl DownloadHttpFixture {
         let wrong_session =
             create_subagent_session_via_api(&base.app, &base.task, base.session.id).await;
 
-        let store = base
+        let worktree_root = base
             .daemon
-            .store_for_session(base.session.id)
+            .session_worktree_root_path_for_test(&base.session)
             .await
             .unwrap();
-        let worktree = store
-            .get_worktree(base.session.worktree_id)
-            .await
-            .unwrap()
-            .expect("session worktree");
-        let artifact_path = PathBuf::from(worktree.root_path).join("artifact.txt");
+        let artifact_path = worktree_root.join("artifact.txt");
         std::fs::write(&artifact_path, b"artifact-body\n").unwrap();
 
         let res = post_session_artifacts(

@@ -74,6 +74,7 @@ serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
 similar = "2"
+sqlx.workspace = true
 sysinfo.workspace = true
 tar = "0.4"
 tempfile = "3"
@@ -99,7 +100,6 @@ ctx-workspace-runtime = { path = "../ctx-workspace-runtime", features = ["test-s
 blake2 = "0.10"
 ed25519-dalek = "2"
 fs2 = "0.4"
-sqlx.workspace = true
 
 [features]
 test-support = []

@@ -1,12 +1,7 @@
 use super::*;
 
-use chrono::Utc;
-use ctx_core::ids::{MergeQueueEntryId, MergeQueueRunId};
-use ctx_core::models::{
-    MergeQueueEntry, MergeQueueEntryStatus, MergeQueuePatchSource, MergeQueueRun,
-    MergeQueueRunStatus, WorktreeBootstrapStatus,
-};
-use ctx_store::WorktreeBootstrapResultUpdate;
+use ctx_core::ids::MergeQueueEntryId;
+use ctx_core::models::WorktreeBootstrapStatus;
 
 mod merge_queue;
 mod worktree_bootstrap;
@@ -81,47 +76,6 @@ async fn bootstrap_logs_response(
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     res
-}
-
-fn merge_queue_entry(workspace_id: ctx_core::ids::WorkspaceId, message: &str) -> MergeQueueEntry {
-    let now = Utc::now();
-    MergeQueueEntry {
-        id: MergeQueueEntryId::new(),
-        workspace_id,
-        worktree_id: None,
-        session_id: None,
-        target_branch: "main".to_string(),
-        message: Some(message.to_string()),
-        patch_source: MergeQueuePatchSource::Generated,
-        base_commit_sha: Some("base".to_string()),
-        head_commit_sha: Some("head".to_string()),
-        patch_path: "/tmp/log-path-boundary.patch".to_string(),
-        patch_size: 1,
-        status: MergeQueueEntryStatus::Failed,
-        result_commit_sha: None,
-        error_message: Some("failed".to_string()),
-        created_at: now,
-        updated_at: now,
-    }
-}
-
-fn merge_queue_run(
-    entry_id: MergeQueueEntryId,
-    log_path: String,
-    error_message: &str,
-) -> MergeQueueRun {
-    let now = Utc::now();
-    MergeQueueRun {
-        id: MergeQueueRunId::new(),
-        entry_id,
-        status: MergeQueueRunStatus::Failed,
-        started_at: now,
-        finished_at: Some(now),
-        exit_code: Some(1),
-        log_path: Some(log_path),
-        error_message: Some(error_message.to_string()),
-        result_commit_sha: None,
-    }
 }
 
 async fn merge_queue_logs_response(

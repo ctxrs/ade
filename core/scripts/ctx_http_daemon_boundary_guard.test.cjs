@@ -10,6 +10,7 @@ const {
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_TEST_CACHE_ACCESS_PATTERNS,
+  SESSION_FIXTURE_TEST_STORE_ACCESS_PATTERNS,
   TEST_ROUTER_COMPOSITION_PATTERNS,
   TEST_RAW_DAEMON_BUCKET_PATTERNS,
   apiPatternsForPath,
@@ -22,6 +23,7 @@ const {
   scanRepo,
   scanRouterComposition,
   scanText,
+  sessionFixtureStorePatternsForPath,
   stripCfgTestItems,
 } = require("./ctx_http_daemon_boundary_guard.cjs");
 
@@ -733,6 +735,64 @@ test("daemon boundary guard scopes MCP daemon test facade roots", () => {
   }
   assert.deepEqual(
     mcpDaemonPatternsForPath("core/crates/ctx-http-test-support/src/lib.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects direct session fixture store access", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/lib_tests/session_artifacts/root_paths.rs",
+    contents: `
+      use ctx_store::Store;
+      async fn helper(daemon: &TestDaemon, store: &Store) {
+        daemon.global_store().list_workspaces().await?;
+        daemon.store_for_session(session_id).await?;
+        daemon.store_for_workspace(workspace_id).await?;
+        daemon.uncached_store_for_workspace(workspace_id).await?;
+        daemon.store_for_task(task_id).await?;
+        daemon.stores().global().await?;
+        stores.global().await?;
+        stores.workspace(workspace_id).await?;
+      }
+    `,
+    patterns: SESSION_FIXTURE_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct session fixture global store access",
+      "direct session fixture session store access",
+      "direct session fixture workspace store access",
+      "direct session fixture uncached workspace store access",
+      "direct session fixture task store access",
+      "direct session fixture StoreManager access",
+      "direct session fixture StoreManager global access",
+      "direct session fixture StoreManager workspace access",
+      "raw session fixture ctx_store Store",
+      "raw session fixture ctx_store Store",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes session fixture store facade roots", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/src/lib_tests/daemon_smoke.rs",
+    "core/crates/ctx-http/src/lib_tests/daemon_smoke/golden_path.rs",
+    "core/crates/ctx-http/src/lib_tests/log_path_boundaries.rs",
+    "core/crates/ctx-http/src/lib_tests/log_path_boundaries/merge_queue.rs",
+    "core/crates/ctx-http/src/lib_tests/session_artifacts.rs",
+    "core/crates/ctx-http/src/lib_tests/session_artifacts/download_http/fixture.rs",
+    "core/crates/ctx-http/src/lib_tests/session_head_large_http.rs",
+    "core/crates/ctx-http/src/lib_tests/session_head_large_http/seed.rs",
+  ]) {
+    assert.deepEqual(
+      sessionFixtureStorePatternsForPath(filePath),
+      SESSION_FIXTURE_TEST_STORE_ACCESS_PATTERNS,
+    );
+  }
+  assert.deepEqual(
+    sessionFixtureStorePatternsForPath("core/crates/ctx-http/src/lib_tests/provider_routes.rs"),
     [],
   );
 });

@@ -63,12 +63,10 @@ pub(super) async fn assert_user_message_persisted(
     daemon: &TestDaemon,
     session_id: ctx_core::ids::SessionId,
 ) {
-    let store = daemon.store_for_session(session_id).await.unwrap();
-    let events = store.list_session_events(session_id).await.unwrap();
-    assert!(events.iter().any(|event| matches!(
-        event.event_type,
-        ctx_core::models::SessionEventType::UserMessage
-    )));
+    assert!(daemon
+        .session_has_user_message_event_for_test(session_id)
+        .await
+        .unwrap());
 }
 
 pub(super) async fn assert_task_read_unread_round_trip(

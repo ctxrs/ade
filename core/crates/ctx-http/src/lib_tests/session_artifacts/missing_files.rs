@@ -1,21 +1,14 @@
-use std::path::PathBuf;
-
 use super::*;
 
 #[tokio::test]
 async fn session_artifacts_report_deleted_in_root_files_as_missing() {
     let fixture = build_session_artifact_fixture().await;
-    let store = fixture
+    let worktree_root = fixture
         .daemon
-        .store_for_session(fixture.session.id)
+        .session_worktree_root_path_for_test(&fixture.session)
         .await
         .unwrap();
-    let worktree = store
-        .get_worktree(fixture.session.worktree_id)
-        .await
-        .unwrap()
-        .expect("session worktree");
-    let artifact_path = PathBuf::from(worktree.root_path).join("deleted-artifact.txt");
+    let artifact_path = worktree_root.join("deleted-artifact.txt");
     std::fs::write(&artifact_path, b"hello\n").unwrap();
 
     let res = post_session_artifacts(

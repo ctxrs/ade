@@ -3,10 +3,6 @@ use serde::de::DeserializeOwned;
 
 use super::*;
 
-mod seed;
-
-use seed::seed_large_session;
-
 #[tokio::test]
 async fn large_session_head_http_responses_are_bounded() {
     const SEEDED_TURNS: i64 = 11;
@@ -51,24 +47,16 @@ async fn large_session_head_http_responses_are_bounded() {
         .find(|session| Some(session.id) == task.primary_session_id)
         .expect("created task should list its default session");
 
-    let store = daemon.store_for_session(session.id).await.unwrap();
-    seed_large_session(&store, session.id, task.id, SEEDED_TURNS).await;
-    // Keep the bulk seed deterministic without waiting for unrelated queued
-    // projection work from background refresh scheduling.
-    tokio::time::timeout(
-        step_timeout,
-        store.refresh_active_session_head_projection(session.id),
-    )
-    .await
-    .unwrap_or_else(|_| panic!("timed out refreshing active session head projection"))
-    .unwrap();
-    tokio::time::timeout(
-        step_timeout,
-        daemon.ensure_workspace_active_snapshot_hydrated(workspace.id),
-    )
-    .await
-    .unwrap_or_else(|_| panic!("timed out hydrating workspace active snapshot"))
-    .unwrap();
+    daemon
+        .seed_large_session_head_fixture_for_test(
+            workspace.id,
+            session.id,
+            task.id,
+            SEEDED_TURNS,
+            step_timeout,
+        )
+        .await
+        .unwrap();
 
     let (heads_status, heads_body): (StatusCode, serde_json::Value) = tokio::time::timeout(
         std::time::Duration::from_secs(30),
