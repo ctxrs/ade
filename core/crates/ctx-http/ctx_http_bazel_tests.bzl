@@ -65,6 +65,7 @@ CTX_HTTP_SUITE_TESTS = {
         "repo_init_initial_commit",
         "repo_validate_destination",
         "session_diff_unavailable",
+        "workspace_execution_config_http",
         "workspace_merge_queue_config_http",
         "worktree_archive_http",
         "worktree_vcs_snapshot",

@@ -39,6 +39,14 @@ pub use worktree_bootstrap::{
 };
 
 const WORKSPACE_SETTINGS_SCHEMA_VERSION: i64 = 1;
+const WORKSPACE_RUNTIME_SETTINGS_PARSE_CONTEXT: &str =
+    "parsing workspace runtime settings document";
+
+pub fn is_workspace_runtime_settings_parse_error(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.to_string() == WORKSPACE_RUNTIME_SETTINGS_PARSE_CONTEXT)
+}
 
 pub const DEFAULT_SYSTEM_PROMPT_APPEND: &str = "You are working inside ctx, an agent development environment. Use ctx MCP tools to attach photos/videos as artifacts, start persistent web sessions (Playwright REPL/scripts), and run sub-agents for research or well-scoped implementations. Check `.ctx/attachments/refs/` and `.ctx/attachments/docs/` for extra reference repos and docs.";
 pub const DEFAULT_SUBAGENT_SYSTEM_PROMPT_APPEND: &str = "You are a subagent. The user messaging you is the primary agent who will provide your instructions.";
@@ -137,7 +145,7 @@ async fn load_workspace_settings_doc(store: &Store) -> Result<WorkspaceRuntimeSe
     };
 
     let parsed = serde_json::from_str::<WorkspaceRuntimeSettingsDoc>(&doc.settings_json)
-        .context("parsing workspace runtime settings document")?;
+        .context(WORKSPACE_RUNTIME_SETTINGS_PARSE_CONTEXT)?;
     Ok(parsed)
 }
 

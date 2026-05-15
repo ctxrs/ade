@@ -43,6 +43,16 @@ pub(in crate::api::workspaces::management) async fn load_workspace_execution_con
             source = "workspace".to_string();
         }
         Ok(None) => {}
+        Err(ctx_daemon::daemon::WorkspaceStoreAccessError::Unavailable(error))
+            if workspace_config::is_workspace_runtime_settings_parse_error(&error) =>
+        {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResp {
+                    error: logs::redact_sensitive(&error.to_string()),
+                }),
+            ));
+        }
         Err(error) => return Err(workspace_store_api_error(error)),
     }
 
