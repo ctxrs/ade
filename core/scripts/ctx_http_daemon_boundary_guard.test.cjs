@@ -296,6 +296,7 @@ test("daemon boundary guard scopes migrated raw daemon constructor ban", () => {
   );
   for (const filePath of [
     "core/crates/ctx-http/src/lib_tests/cors.rs",
+    "core/crates/ctx-http/src/lib_tests/execution_launch/example.rs",
     "core/crates/ctx-http/src/lib_tests/org_policy_routes.rs",
     "core/crates/ctx-http/src/lib_tests/run_archive_routes.rs",
     "core/crates/ctx-http/src/lib_tests/web_session_routes/fixtures.rs",

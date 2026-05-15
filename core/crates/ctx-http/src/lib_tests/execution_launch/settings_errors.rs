@@ -14,14 +14,8 @@ async fn execution_launch_start_returns_bad_request_when_execution_settings_fail
         HashMap::new();
     providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
 
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    ));
-    let app = api::router(state.clone());
+    let state = test_daemon_with_providers(data_dir.path(), stores, providers, None);
+    let app = test_router(&state);
 
     let workspace = create_workspace_via_api(&app, &git_repo.path().to_string_lossy()).await;
     let store = state.store_for_workspace(workspace.id).await.unwrap();
@@ -65,14 +59,8 @@ async fn ensure_workspace_container_returns_bad_request_when_execution_settings_
         HashMap::new();
     providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
 
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    ));
-    let app = api::router(state.clone());
+    let state = test_daemon_with_providers(data_dir.path(), stores, providers, None);
+    let app = test_router(&state);
 
     let workspace = create_workspace_via_api(&app, &git_repo.path().to_string_lossy()).await;
     let store = state.store_for_workspace(workspace.id).await.unwrap();

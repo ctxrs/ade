@@ -22,6 +22,7 @@ const rawStoreBlindApiRoots = [
 const migratedRawDaemonTestRoots = [
   "core/crates/ctx-http/src/lib_tests/auth_boundaries/",
   "core/crates/ctx-http/src/lib_tests/cors.rs",
+  "core/crates/ctx-http/src/lib_tests/execution_launch/",
   "core/crates/ctx-http/src/lib_tests/health_diagnostics/",
   "core/crates/ctx-http/src/lib_tests/mobile_access_routes.rs",
   "core/crates/ctx-http/src/lib_tests/mobile_profile_routes.rs",

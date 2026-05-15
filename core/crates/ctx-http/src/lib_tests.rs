@@ -11,7 +11,7 @@ use tokio::process::Command;
 use tower::ServiceExt;
 
 use ctx_execution_runtime::{ExecutionLaunchSnapshot, ExecutionLaunchState, ExecutionSetupJobKind};
-use ctx_providers::adapters::ProviderStatus;
+use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_storage_admission::{StorageGuardLevel, StorageGuardPathStatus, StorageGuardStatus};
 use ctx_store::StoreManager;
@@ -21,10 +21,19 @@ use ctx_daemon::daemon::DaemonState;
 use ctx_daemon::test_support::TestDaemon;
 
 fn test_daemon(data_dir: &Path, stores: StoreManager, auth_token: Option<String>) -> TestDaemon {
+    test_daemon_with_providers(data_dir, stores, HashMap::new(), auth_token)
+}
+
+fn test_daemon_with_providers(
+    data_dir: &Path,
+    stores: StoreManager,
+    providers: HashMap<String, Arc<dyn ProviderAdapter>>,
+    auth_token: Option<String>,
+) -> TestDaemon {
     TestDaemon::new(
         data_dir.to_path_buf(),
         stores,
-        HashMap::new(),
+        providers,
         "http://127.0.0.1:4399".to_string(),
         auth_token,
     )
