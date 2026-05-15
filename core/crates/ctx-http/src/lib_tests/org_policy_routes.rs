@@ -8,16 +8,8 @@ use ctx_core::models::{
 async fn daemon_enrollment_routes_do_not_return_policy_signing_keys() {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
-        HashMap::new();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    ));
-    let app = api::router(state);
+    let state = test_daemon(data_dir.path(), stores, None);
+    let app = test_router(&state);
     let org_id = ctx_core::ids::OrgId::new();
     let secret = "policy-signing-secret";
     let now = Utc::now();

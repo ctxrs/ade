@@ -294,6 +294,15 @@ test("daemon boundary guard scopes migrated raw daemon constructor ban", () => {
     migratedTestPatternsForPath("core/crates/ctx-http/src/lib_tests/mobile_profile_routes.rs"),
     MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   );
+  for (const filePath of [
+    "core/crates/ctx-http/src/lib_tests/cors.rs",
+    "core/crates/ctx-http/src/lib_tests/org_policy_routes.rs",
+    "core/crates/ctx-http/src/lib_tests/run_archive_routes.rs",
+    "core/crates/ctx-http/src/lib_tests/web_session_routes/fixtures.rs",
+    "core/crates/ctx-http/src/lib_tests/workspace_active_routes.rs",
+  ]) {
+    assert.equal(migratedTestPatternsForPath(filePath), MIGRATED_TEST_RAW_DAEMON_PATTERNS);
+  }
   assert.deepEqual(
     migratedTestPatternsForPath("core/crates/ctx-http/src/lib_tests/other/example.rs"),
     [],

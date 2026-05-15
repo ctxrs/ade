@@ -21,10 +21,15 @@ const rawStoreBlindApiRoots = [
 ];
 const migratedRawDaemonTestRoots = [
   "core/crates/ctx-http/src/lib_tests/auth_boundaries/",
+  "core/crates/ctx-http/src/lib_tests/cors.rs",
   "core/crates/ctx-http/src/lib_tests/health_diagnostics/",
   "core/crates/ctx-http/src/lib_tests/mobile_access_routes.rs",
   "core/crates/ctx-http/src/lib_tests/mobile_profile_routes.rs",
+  "core/crates/ctx-http/src/lib_tests/org_policy_routes.rs",
   "core/crates/ctx-http/src/lib_tests/provider_routes/",
+  "core/crates/ctx-http/src/lib_tests/run_archive_routes.rs",
+  "core/crates/ctx-http/src/lib_tests/web_session_routes/fixtures.rs",
+  "core/crates/ctx-http/src/lib_tests/workspace_active_routes.rs",
 ];
 
 const API_RAW_DAEMON_PATTERNS = [

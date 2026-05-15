@@ -16,18 +16,10 @@ impl WebSessionRouteFixture {
 
         let data_dir = tempfile::tempdir().unwrap();
         let stores = StoreManager::open(data_dir.path()).await.unwrap();
-        let providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
-            HashMap::new();
-        let state = Arc::new(DaemonState::new(
-            data_dir.path().to_path_buf(),
-            stores,
-            providers,
-            "http://127.0.0.1:4399".to_string(),
-            daemon_secret.map(str::to_string),
-        ));
+        let state = test_daemon(data_dir.path(), stores, daemon_secret.map(str::to_string));
 
         Self {
-            app: api::router(state),
+            app: test_router(&state),
             _data_dir: data_dir,
             _home: home,
             _home_dir: home_dir,

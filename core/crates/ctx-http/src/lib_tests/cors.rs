@@ -7,16 +7,8 @@ async fn cors_preflight_allows_archived_endpoint_for_tauri_origin() {
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
-        HashMap::new();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:4399".to_string(),
-        Some("desktop-token".to_string()),
-    ));
-    let app = api::router(state);
+    let state = test_daemon(data_dir.path(), stores, Some("desktop-token".to_string()));
+    let app = test_router(&state);
     let req = Request::builder()
         .method(Method::OPTIONS)
         .uri("/api/workspaces/00000000-0000-0000-0000-000000000000/archived_task_summaries")
@@ -58,16 +50,8 @@ async fn cors_preflight_allows_health_endpoint_for_tauri_localhost_origin() {
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
-        HashMap::new();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:4399".to_string(),
-        Some("desktop-token".to_string()),
-    ));
-    let app = api::router(state);
+    let state = test_daemon(data_dir.path(), stores, Some("desktop-token".to_string()));
+    let app = test_router(&state);
     let req = Request::builder()
         .method(Method::OPTIONS)
         .uri("/api/health")

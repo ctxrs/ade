@@ -13,16 +13,8 @@ async fn run_archive_routes_build_and_acknowledge_org_visible_batch() {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
 
-    let providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
-        HashMap::new();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    ));
-    let app = api::router(state.clone());
+    let state = test_daemon(data_dir.path(), stores, None);
+    let app = test_router(&state);
 
     let workspace = create_workspace_via_api(&app, &git_repo.path().to_string_lossy()).await;
     let store = state.store_for_workspace(workspace.id).await.unwrap();
