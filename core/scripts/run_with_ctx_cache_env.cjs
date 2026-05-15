@@ -20,12 +20,15 @@ function logCacheSummary(env) {
     return;
   }
   console.error(
-    "[ctx-cache] source=%s mode=%s scope=%s target=%s sccache=%s volatile_root_mode=%s",
+    "[ctx-cache] source=%s mode=%s scope=%s target=%s sccache=%s no_daemon=%s uds=%s tmp=%s volatile_root_mode=%s",
     env.CTX_RUST_CACHE_SOURCE || "run_with_ctx_cache_env",
     env.CTX_RUST_CACHE_MODE || "workspace",
     env.CTX_RUST_CACHE_SCOPE_KEY || "unknown",
     env.CARGO_TARGET_DIR || env.CTX_RUST_CACHE_TARGET_DIR || "unset",
     env.CTX_RUST_CACHE_SCCACHE || "unconfigured",
+    env.SCCACHE_NO_DAEMON || "unset",
+    env.SCCACHE_SERVER_UDS || "unset",
+    env.TMPDIR || "unset",
     env.CTX_RUST_CACHE_VOLATILE_ROOT_MODE || env.CTX_VOLATILE_ROOT_MODE || "unset",
   );
 }

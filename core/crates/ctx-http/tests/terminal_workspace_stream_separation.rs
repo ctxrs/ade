@@ -5,9 +5,10 @@ use serde_json::json;
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
 use ctx_core::models::{
-    Session, Task, TerminalSession, TerminalStatus, Workspace, WorkspaceActiveSnapshotEvent,
-    WorkspaceActiveSnapshotStreamMessage,
+    Session, SessionEventType, SessionTurnStatus, Task, TerminalSession, TerminalStatus,
+    Workspace, WorkspaceActiveSnapshotEvent, WorkspaceActiveSnapshotStreamMessage,
 };
+use ctx_core::session_projection::terminal_status_from_finished_payload;
 use ctx_daemon::test_support::TestDaemon;
 use ctx_transport_runtime::TerminalServerMessage;
 
@@ -105,19 +106,50 @@ async fn read_terminal_until_marker(socket: &mut WsStream, marker: &str) -> Stri
     read_terminal_until_marker_with_timeout(socket, marker, Duration::from_secs(12)).await
 }
 
-async fn wait_for_terminal_churn_done_events(
+async fn wait_for_session_done_events_in_store(
     daemon: &TestDaemon,
     session_id: ctx_core::ids::SessionId,
     expected_done_events: usize,
 ) {
-    daemon
-        .wait_for_session_done_event_count_for_test(
-            session_id,
-            expected_done_events,
-            Duration::from_secs(30),
-        )
-        .await
-        .unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    let mut recent_events = Vec::new();
+    while tokio::time::Instant::now() < deadline {
+        let store = daemon.store_for_session(session_id).await.unwrap();
+        let events = store.list_session_events(session_id).await.unwrap();
+        recent_events = events.iter().rev().take(12).cloned().collect();
+        let mut completed_turns = std::collections::HashSet::new();
+        for event in &events {
+            let completed = matches!(event.event_type, SessionEventType::Done)
+                || (matches!(event.event_type, SessionEventType::TurnFinished)
+                    && terminal_status_from_finished_payload(&event.payload_json)
+                        == Some(SessionTurnStatus::Completed));
+            if completed {
+                if let Some(turn_id) = event.turn_id {
+                    completed_turns.insert(turn_id);
+                }
+            }
+        }
+        let terminal_failure = events.iter().find(|event| {
+            matches!(
+                event.event_type,
+                SessionEventType::Error | SessionEventType::TurnInterrupted
+            ) || (matches!(event.event_type, SessionEventType::TurnFinished)
+                && matches!(
+                    terminal_status_from_finished_payload(&event.payload_json),
+                    Some(SessionTurnStatus::Failed | SessionTurnStatus::Interrupted)
+                ))
+        });
+        if let Some(event) = terminal_failure {
+            panic!("unexpected terminal session failure while terminal churn was active: {event:#?}");
+        }
+        if completed_turns.len() >= expected_done_events {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!(
+        "timed out waiting for {expected_done_events} completed turns in store; recent events: {recent_events:#?}"
+    );
 }
 
 async fn wait_for_session_idle_in_memory(
@@ -181,7 +213,7 @@ async fn assert_workspace_stream_no_gap(
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn terminal_disconnect_and_reconnect_do_not_poison_workspace_control_plane() {
     enable_queued_messages_for_test_binary();
 
@@ -299,7 +331,7 @@ async fn terminal_disconnect_and_reconnect_do_not_poison_workspace_control_plane
                 status.is_success(),
                 "message post failed with status {status}: {body}"
             );
-            wait_for_terminal_churn_done_events(&daemon_clone, session_id, index + 1).await;
+            wait_for_session_done_events_in_store(&daemon_clone, session_id, index + 1).await;
             wait_for_session_idle_in_memory(&daemon_clone, session_id).await;
         }
     });
@@ -362,7 +394,7 @@ async fn terminal_disconnect_and_reconnect_do_not_poison_workspace_control_plane
     );
 
     send_messages.await.unwrap();
-    wait_for_terminal_churn_done_events(&daemon, session.id, message_count).await;
+    wait_for_session_done_events_in_store(&daemon, session.id, message_count).await;
     assert_workspace_stream_no_gap(&mut workspace_socket, &session, Duration::from_secs(5)).await;
 
     let _ = client

@@ -130,6 +130,32 @@ write_process_snapshot() {
   ps -Ao pid=,ppid=,stat=,etime=,command= >"${out_path}" 2>&1 || true
 }
 
+write_host_resource_snapshot() {
+  local out_dir="$1"
+  local label="$2"
+  mkdir -p "$out_dir"
+  write_process_snapshot "${out_dir}/processes-${label}.log"
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltnp >"${out_dir}/sockets-${label}.log" 2>&1 || true
+  fi
+  if command -v df >/dev/null 2>&1; then
+    df -h >"${out_dir}/df-${label}.log" 2>&1 || true
+  fi
+  if command -v free >/dev/null 2>&1; then
+    free -h >"${out_dir}/free-${label}.log" 2>&1 || true
+  fi
+}
+
+kill_pids_best_effort() {
+  if [[ "$#" -eq 0 ]]; then
+    return 0
+  fi
+  kill -9 "$@" >/dev/null 2>&1 && return 0
+  if command -v sudo >/dev/null 2>&1; then
+    sudo --non-interactive kill -9 "$@" >/dev/null 2>&1 || true
+  fi
+}
+
 sweep_controller_app_processes() {
   local app_path="${RESOLVED_CONTROLLER_AUTOMATION_APP_PATH:-}"
   if [[ -z "${app_path}" ]]; then
@@ -156,7 +182,7 @@ sweep_controller_app_processes() {
   done < <(ps -Ao pid=,command= 2>/dev/null || true)
 
   if [[ "${#pids[@]}" -gt 0 ]]; then
-    kill -9 "${pids[@]}" >/dev/null 2>&1 || true
+    kill_pids_best_effort "${pids[@]}"
   fi
 }
 
@@ -245,7 +271,7 @@ sweep_stale_xvfb_processes() {
   done < <(ps -Ao pid=,ppid=,etime=,command= 2>/dev/null || true)
 
   if [[ "${#pids[@]}" -gt 0 ]]; then
-    kill -9 "${pids[@]}" >/dev/null 2>&1 || true
+    kill_pids_best_effort "${pids[@]}"
   fi
 }
 
@@ -284,7 +310,7 @@ sweep_stale_egress_proxy_processes() {
   done < <(ps -Ao pid=,etime=,command= 2>/dev/null || true)
 
   if [[ "${#pids[@]}" -gt 0 ]]; then
-    kill -9 "${pids[@]}" >/dev/null 2>&1 || true
+    kill_pids_best_effort "${pids[@]}"
   fi
 }
 
@@ -311,8 +337,50 @@ sweep_xvfb_processes_for_tmp_dir() {
   done < <(ps -Ao pid=,command= 2>/dev/null || true)
 
   if [[ "${#pids[@]}" -gt 0 ]]; then
-    kill -9 "${pids[@]}" >/dev/null 2>&1 || true
+    kill_pids_best_effort "${pids[@]}"
   fi
+}
+
+command_contains_nonempty_path() {
+  local cmd="$1"
+  local candidate="$2"
+  if [[ -z "${candidate}" ]]; then
+    return 1
+  fi
+  case "${cmd}" in
+    *"${candidate}"*) return 0 ;;
+  esac
+  return 1
+}
+
+command_matches_current_automation_scope() {
+  local cmd="$1"
+  local app_path="${RESOLVED_CONTROLLER_AUTOMATION_APP_PATH:-${CTX_DESKTOP_APP_PATH:-}}"
+  local app_dir=""
+  if [[ -n "${app_path}" ]]; then
+    app_dir="$(cd "$(dirname "${app_path}")" 2>/dev/null && pwd -P || dirname "${app_path}")"
+  fi
+  command_contains_nonempty_path "$cmd" "${artifact_dir}" && return 0
+  command_contains_nonempty_path "$cmd" "${CTX_AUTOMATION_TMPDIR:-}" && return 0
+  command_contains_nonempty_path "$cmd" "${CTX_AUTOMATION_XDG_DIR:-}" && return 0
+  command_contains_nonempty_path "$cmd" "${CTX_AUTOMATION_CN_DRIVER_LOG:-}" && return 0
+  command_contains_nonempty_path "$cmd" "${CTX_AUTOMATION_APP_LAUNCH_LOG:-}" && return 0
+  command_contains_nonempty_path "$cmd" "${CTX_DESKTOP_DAEMON_DATA_DIR:-}" && return 0
+  command_contains_nonempty_path "$cmd" "${CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR:-}" && return 0
+  command_contains_nonempty_path "$cmd" "${APPDIR:-}" && return 0
+  command_contains_nonempty_path "$cmd" "${APPIMAGE:-}" && return 0
+  command_contains_nonempty_path "$cmd" "${app_path}" && return 0
+  command_contains_nonempty_path "$cmd" "${app_dir}" && return 0
+  return 1
+}
+
+command_is_scoped_webkit_automation_helper() {
+  local cmd="$1"
+  case "${cmd}" in
+    *WebKitWebDriver*|*wkwebdriver*|*WebKitWebProcess*|*WebKitNetworkProcess*|*WebKitGPUProcess*|*WebKitPluginProcess*|*WebKitStorageProcess*|*WebKitWebExtension*) ;;
+    *) return 1 ;;
+  esac
+  command_matches_current_automation_scope "$cmd"
 }
 
 sweep_webkit_automation_helpers() {
@@ -326,15 +394,14 @@ sweep_webkit_automation_helpers() {
     if [[ -z "${pid}" || -z "${cmd:-}" ]]; then
       continue
     fi
-    case "${cmd}" in
-      *WebKitWebDriver*|*wkwebdriver*|*WebKitWebProcess*|*WebKitNetworkProcess*|*WebKitGPUProcess*|*WebKitPluginProcess*|*WebKitStorageProcess*|*WebKitWebExtension*)
-        pids+=("${pid}")
-        ;;
-    esac
+    if ! command_is_scoped_webkit_automation_helper "$cmd"; then
+      continue
+    fi
+    pids+=("${pid}")
   done < <(ps -Ao pid=,command= 2>/dev/null || true)
 
   if [[ "${#pids[@]}" -gt 0 ]]; then
-    kill -9 "${pids[@]}" >/dev/null 2>&1 || true
+    kill_pids_best_effort "${pids[@]}"
   fi
 }
 
@@ -345,6 +412,7 @@ sweep_local_automation_daemons() {
 
   local pids=()
   local pid cmd
+  local scoped_daemon_data_dir="${CTX_DESKTOP_DAEMON_DATA_DIR:-${CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR:-}}"
   while read -r pid cmd; do
     if [[ -z "${pid}" || -z "${cmd:-}" ]]; then
       continue
@@ -367,10 +435,17 @@ sweep_local_automation_daemons() {
         pids+=("${pid}")
         ;;
     esac
+    if [[ -n "${scoped_daemon_data_dir}" ]]; then
+      case "${cmd}" in
+        *"--data-dir "*"${scoped_daemon_data_dir}"* | *"--data-dir="*"${scoped_daemon_data_dir}"*)
+          pids+=("${pid}")
+          ;;
+      esac
+    fi
   done < <(ps -Ao pid=,command= 2>/dev/null || true)
 
   if [[ "${#pids[@]}" -gt 0 ]]; then
-    kill -9 "${pids[@]}" >/dev/null 2>&1 || true
+    kill_pids_best_effort "${pids[@]}"
   fi
 }
 
@@ -379,6 +454,139 @@ sweep_local_automation_processes() {
   sweep_webkit_automation_helpers
   sweep_local_automation_daemons
   sweep_stale_egress_proxy_processes
+}
+
+sweep_controller_launch_smoke_processes() {
+  local smoke_dir="$1"
+  local smoke_tmp_dir="$2"
+  local smoke_xdg_dir="$3"
+  sweep_xvfb_processes_for_tmp_dir "${smoke_tmp_dir}"
+  CTX_AUTOMATION_TMPDIR="${smoke_tmp_dir}" \
+    CTX_AUTOMATION_XDG_DIR="${smoke_xdg_dir}" \
+    CTX_AUTOMATION_APP_LAUNCH_LOG="${smoke_dir}/app-launch.log" \
+    CTX_DESKTOP_DAEMON_DATA_DIR="${smoke_dir}/controller-daemon-data" \
+    CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR="${smoke_dir}/controller-daemon-data" \
+    sweep_local_automation_processes
+}
+
+write_attempt_manifest() {
+  local out_path="$1"
+  local attempt="$2"
+  local attempt_dir="$3"
+  local driver_port="$4"
+  local backend_port="$5"
+  node - <<'NODE' "$out_path" "$attempt" "$attempt_dir" "$driver_port" "$backend_port" "${RESOLVED_CONTROLLER_AUTOMATION_APP_PATH:-}" "${APPDIR:-}" "${APPIMAGE:-}" "${CTX_AUTOMATION_CN_DRIVER_LOG:-}" "${CTX_AUTOMATION_CN_BACKEND_LOG:-}"
+const fs = require("node:fs");
+const [
+  outPath,
+  attempt,
+  attemptDir,
+  driverPort,
+  backendPort,
+  appPath,
+  appDir,
+  appImage,
+  driverLog,
+  backendLog,
+] = process.argv.slice(2);
+const platform = process.platform;
+const payload = {
+  generated_at: new Date().toISOString(),
+  platform,
+  attempt: Number(attempt),
+  attempt_dir: attemptDir,
+  app_path: appPath || null,
+  app_dir: appDir || null,
+  appimage: appImage || null,
+  driver_port: Number(driverPort),
+  backend_port: Number(backendPort),
+  driver_log: driverLog || null,
+  backend_log: backendLog || null,
+  backend_log_expected: platform === "darwin",
+  linux_native_webkit: platform === "linux",
+};
+fs.writeFileSync(outPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+NODE
+}
+
+write_linux_backend_sentinel_if_needed() {
+  if [[ "$(uname -s)" != "Linux" || -z "${CTX_AUTOMATION_CN_BACKEND_LOG:-}" ]]; then
+    return 0
+  fi
+  mkdir -p "$(dirname "${CTX_AUTOMATION_CN_BACKEND_LOG}")"
+  cat >"${CTX_AUTOMATION_CN_BACKEND_LOG}" <<'EOF'
+Linux updater proof does not start the CrabNebula test-runner-backend.
+tauri-driver launches native WebKit WebDriver directly; inspect tauri-driver.log and app-launch.log for startup failures.
+EOF
+}
+
+run_controller_launch_smoke_if_enabled() {
+  if [[ "$(uname -s)" != "Linux" ]]; then
+    return 0
+  fi
+  case "${CTX_UPDATER_REMOTE_E2E_CONTROLLER_LAUNCH_SMOKE:-1}" in
+    1|true|TRUE|yes|YES) ;;
+    0|false|FALSE|no|NO|"") return 0 ;;
+    *)
+      echo "error: CTX_UPDATER_REMOTE_E2E_CONTROLLER_LAUNCH_SMOKE must be 0 or 1" >&2
+      return 2
+      ;;
+  esac
+
+  local smoke_dir="${artifact_dir}/controller-launch-smoke"
+  local smoke_tmp_dir="${smoke_dir}/tmp"
+  local smoke_xdg_token
+  smoke_xdg_token="$(printf '%s' "${BUILDKITE_JOB_ID:-local}-smoke-$$" | tr -c 'A-Za-z0-9._-' '_')"
+  local smoke_xdg_dir="/tmp/ctx-updater-remote-smoke-${smoke_xdg_token}"
+  rm -rf "${smoke_xdg_dir}" "${smoke_dir}"
+  mkdir -p \
+    "${smoke_tmp_dir}" \
+    "${smoke_dir}/controller-daemon-data" \
+    "${smoke_xdg_dir}/home" \
+    "${smoke_xdg_dir}/runtime" \
+    "${smoke_xdg_dir}/config" \
+    "${smoke_xdg_dir}/cache" \
+    "${smoke_xdg_dir}/data"
+  chmod 700 "${smoke_xdg_dir}/runtime"
+
+  write_host_resource_snapshot "${smoke_dir}" "before"
+  sweep_stale_xvfb_processes
+  sweep_local_automation_processes
+  write_host_resource_snapshot "${smoke_dir}" "after-preflight-sweep"
+
+  local smoke_status=0
+  env \
+    APPDIR="${APPDIR:-}" \
+    APPIMAGE="${APPIMAGE:-}" \
+    APPIMAGE_EXTRACT_AND_RUN="${APPIMAGE_EXTRACT_AND_RUN:-1}" \
+    ARGV0="${ARGV0:-${APPIMAGE:-${CTX_DESKTOP_APP_PATH}}}" \
+    COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+    COREPACK_HOME="${COREPACK_HOME:-${ORIGINAL_HOME}/.cache/node/corepack}" \
+    CTX_APPIMAGE_PATH="${CTX_APPIMAGE_PATH:-${APPIMAGE:-}}" \
+    CTX_AUTOMATION_APP_LAUNCH_LOG="${smoke_dir}/app-launch.log" \
+    CTX_AUTOMATION_SHIPPED_APP=1 \
+    CTX_AUTOMATION_SHIPPED_APP_BUNDLES_DIR="${CTX_AUTOMATION_SHIPPED_APP_BUNDLES_DIR:-}" \
+    CTX_DESKTOP_DAEMON_DATA_DIR="${smoke_dir}/controller-daemon-data" \
+    CTX_DESKTOP_SSH_NO_START_REMOTE=1 \
+    CTX_DESKTOP_SSH_START_REMOTE=0 \
+    HOME="${smoke_xdg_dir}/home" \
+    TAURI_WEBVIEW_AUTOMATION=true \
+    TMPDIR="${smoke_tmp_dir}" \
+    TMP="${smoke_tmp_dir}" \
+    TEMP="${smoke_tmp_dir}" \
+    XDG_CACHE_HOME="${smoke_xdg_dir}/cache" \
+    XDG_CONFIG_HOME="${smoke_xdg_dir}/config" \
+    XDG_DATA_HOME="${smoke_xdg_dir}/data" \
+    XDG_RUNTIME_DIR="${smoke_xdg_dir}/runtime" \
+    node "${ROOT}/core/apps/desktop/scripts/linux_bundled_launch_smoke.mjs" \
+      --app "${RESOLVED_CONTROLLER_AUTOMATION_APP_PATH}" \
+      --artifact-dir "${smoke_dir}" \
+      --timeout-ms "${CTX_UPDATER_REMOTE_E2E_CONTROLLER_LAUNCH_SMOKE_TIMEOUT_MS:-60000}" \
+    >"${smoke_dir}/controller-launch-smoke.log" 2>&1 || smoke_status=$?
+  write_host_resource_snapshot "${smoke_dir}" "after"
+  sweep_controller_launch_smoke_processes "${smoke_dir}" "${smoke_tmp_dir}" "${smoke_xdg_dir}"
+  rm -rf "${smoke_xdg_dir}"
+  return "$smoke_status"
 }
 
 if [[ -n "${CTX_DESKTOP_APP_PATH:-}" && "$STRICT_PUBLISHED_ARTIFACTS" == "1" ]]; then
@@ -414,6 +622,7 @@ fi
 resolve_controller_app_for_automation "${CTX_DESKTOP_APP_PATH}"
 export CTX_DESKTOP_APP_PATH="${RESOLVED_CONTROLLER_AUTOMATION_APP_PATH}"
 normalize_local_smoke_app_permissions "${CTX_DESKTOP_APP_PATH}"
+run_controller_launch_smoke_if_enabled
 
 export CTX_UPDATER_REMOTE_E2E_REPORT="${CTX_UPDATER_REMOTE_E2E_REPORT:-${artifact_dir}/remote-proof.json}"
 export CTX_UPDATER_REMOTE_PROOF_IDLE="${CTX_UPDATER_REMOTE_PROOF_IDLE:-1}"
@@ -485,21 +694,23 @@ run_updater_remote_automation() {
       "${XDG_CACHE_HOME}" \
       "${XDG_DATA_HOME}"
     chmod 700 "${XDG_RUNTIME_DIR}"
-    write_process_snapshot "${attempt_dir}/processes-before-sweep.log"
+    write_linux_backend_sentinel_if_needed
+    write_attempt_manifest "${attempt_dir}/attempt-manifest.json" "$attempt" "$attempt_dir" "$attempt_driver_port" "$attempt_backend_port"
+    write_host_resource_snapshot "${attempt_dir}" "before-sweep"
     sweep_stale_xvfb_processes
     sweep_local_automation_processes
-    write_process_snapshot "${attempt_dir}/processes-after-preflight-sweep.log"
+    write_host_resource_snapshot "${attempt_dir}" "after-preflight-sweep"
 
     echo "[updater-remote-proof] automation attempt ${attempt}/${max_attempts} using driver port ${TAURI_DRIVER_PORT} and backend port ${TAURI_TEST_BACKEND_PORT}" >&2
     set +e
     pnpm -C "${ROOT}/core/apps/desktop" test:automation:updater-remote 2>&1 | tee "$attempt_log"
     status="${PIPESTATUS[0]}"
     set -e
-    write_process_snapshot "${attempt_dir}/processes-after-automation.log"
+    write_host_resource_snapshot "${attempt_dir}" "after-automation"
     sweep_xvfb_processes_for_tmp_dir "${attempt_tmp_dir}"
     sweep_stale_xvfb_processes
     sweep_local_automation_processes
-    write_process_snapshot "${attempt_dir}/processes-after-automation-sweep.log"
+    write_host_resource_snapshot "${attempt_dir}" "after-automation-sweep"
 
     if [[ "$status" -eq 0 ]]; then
       rm -rf "${attempt_xdg_dir}"

@@ -317,7 +317,13 @@ test("ctx cache wrapper entrypoints expose cwd-aware observability metadata", ()
 
   assert.match(runScript, /CTX_RUST_CACHE_SOURCE = "run_with_ctx_cache_env"/);
   assert.match(runScript, /CTX_RUST_CACHE_WRAPPED = "1"/);
-  assert.match(runScript, /\[ctx-cache\] source=%s mode=%s scope=%s target=%s sccache=%s volatile_root_mode=%s/);
+  assert.match(runScript, /\[ctx-cache\] source=%s mode=%s scope=%s target=%s sccache=%s no_daemon=%s uds=%s tmp=%s volatile_root_mode=%s/);
+});
+
+test("print ctx cache env exposes sccache no-daemon state", () => {
+  const printScript = read("core/scripts/print_ctx_cache_env.cjs");
+
+  assert.match(printScript, /SCCACHE_NO_DAEMON: env\.SCCACHE_NO_DAEMON/);
 });
 
 test("codex crp rust helpers export wrapper-managed cache env", () => {
@@ -565,6 +571,23 @@ test("remote daemon network soak pins cache scope across wrapped cargo calls", (
   assert.ok(scopeIndex < buildIndex, "cache scope must be pinned before the wrapped cargo build");
   assert.ok(buildIndex < metadataIndex, "metadata lookup should reuse the build cache scope");
   assert.match(scriptText, /export CTX_CACHE_SCOPE_KEY/);
+});
+
+test("nightly benchmark evidence wraps prefetch and benchmark under one cache scope", () => {
+  const scriptText = read("scripts/buildkite/run_nightly_benchmark_evidence.sh");
+  const scopeIndex = scriptText.indexOf('CTX_CACHE_SCOPE_KEY="nightly-benchmark-evidence-');
+  const prefetchIndex = scriptText.indexOf("cargo fetch --locked");
+  const benchmarkIndex = scriptText.indexOf("pnpm sdlc:agent-loop:benchmark:main-band");
+
+  assert.notEqual(scopeIndex, -1, "nightly benchmark should pin a stable cache scope");
+  assert.notEqual(prefetchIndex, -1, "nightly benchmark should prefetch cargo dependencies");
+  assert.notEqual(benchmarkIndex, -1, "nightly benchmark should run the benchmark");
+  assert.ok(scopeIndex < prefetchIndex, "cache scope must be pinned before prefetch");
+  assert.ok(prefetchIndex < benchmarkIndex, "benchmark should run after prefetch");
+  assert.match(scriptText, /node core\/scripts\/run_with_ctx_cache_env\.cjs --mode workspace --cwd core -- \\\n\s+cargo fetch/);
+  assert.match(scriptText, /node core\/scripts\/run_with_ctx_cache_env\.cjs --mode workspace --cwd core -- \\\n\s+pnpm sdlc:agent-loop:benchmark:main-band/);
+  assert.match(scriptText, /nightly-main-band-benchmark\.log/);
+  assert.match(scriptText, /trap upload_benchmark_artifacts EXIT/);
 });
 
 test("core Makefile uses the make session for both cache scope keys", () => {

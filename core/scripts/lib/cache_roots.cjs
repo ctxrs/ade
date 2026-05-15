@@ -647,19 +647,18 @@ function buildCtxCacheEnv({
     );
     setDefaultEnvValue(resolvedEnv, "CTX_RUST_CACHE_SCCACHE", sccacheState);
     if (wrapperIsSccache) {
-      if (shouldNormalizeSccacheDir(resolvedEnv.SCCACHE_DIR)) {
+      if (process.platform !== "win32") {
         resolvedEnv.SCCACHE_DIR = resolveSccacheDir(cargoTargetDir);
-      }
-      setDefaultEnvValue(resolvedEnv, "SCCACHE_NO_DAEMON", "1");
-      if (shouldNormalizeSccacheServerUds(resolvedEnv.SCCACHE_SERVER_UDS)) {
         resolvedEnv.SCCACHE_SERVER_UDS = resolveSccacheServerUds(cargoTargetDir);
-      }
-      if (shouldNormalizeSccacheTmpDir(resolvedEnv.TMPDIR)) {
-        const sccacheTmpDir = resolveSccacheTmpDir(cargoTargetDir, resolvedEnv.TMPDIR);
+        const sccacheTmpDir = resolveSccacheTmpDir(
+          cargoTargetDir,
+          trimValue(resolvedEnv.TMPDIR) || trimValue(resolvedEnv.CTX_VOLATILE_TMPDIR) || layout.tmpDir,
+        );
         resolvedEnv.TMPDIR = sccacheTmpDir;
         resolvedEnv.TMP = sccacheTmpDir;
         resolvedEnv.TEMP = sccacheTmpDir;
       }
+      resolvedEnv.SCCACHE_NO_DAEMON = "1";
       appendEnvPathListValue(resolvedEnv, "SCCACHE_BASEDIRS", [
         path.resolve(cwd),
         path.resolve(cargoTargetDir),

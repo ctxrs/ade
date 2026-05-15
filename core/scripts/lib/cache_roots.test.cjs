@@ -182,7 +182,40 @@ test("buildCtxCacheEnv normalizes sccache inputs when sccache is active", () => 
   assert.match(String(env.RUSTFLAGS), /--remap-path-prefix=.*=\/ctx-volatile/);
   assert.equal(env.SCCACHE_NO_DAEMON, "1");
   if (process.platform !== "win32") {
+    assert.equal(env.SCCACHE_DIR, resolveSccacheDir(env.CARGO_TARGET_DIR));
     assert.equal(env.SCCACHE_SERVER_UDS, resolveSccacheServerUds(env.CARGO_TARGET_DIR));
+    assert.equal(env.TMPDIR, resolveSccacheTmpDir(env.CARGO_TARGET_DIR, path.join(volatileRoot, "tmp")));
+    assert.equal(env.TMP, env.TMPDIR);
+    assert.equal(env.TEMP, env.TMPDIR);
+  }
+});
+
+test("buildCtxCacheEnv forces scoped sccache runtime over inherited host state", () => {
+  const cwd = path.resolve(__dirname, "..", "..");
+  const volatileRoot = path.join(os.tmpdir(), "ctx-cache-roots-inherited-sccache");
+  const inheritedTmp = path.join(os.tmpdir(), "shared-sccache-tmp");
+  const { env } = buildCtxCacheEnv({
+    cwd,
+    env: {
+      CTX_VOLATILE_ROOT: volatileRoot,
+      CTX_CACHE_SCOPE_KEY: "inherited-sccache",
+      RUSTC_WRAPPER: "/usr/bin/sccache",
+      SCCACHE_DIR: "/tmp/shared-sccache-dir",
+      SCCACHE_NO_DAEMON: "0",
+      SCCACHE_SERVER_UDS: "/tmp/shared-sccache.sock",
+      TMPDIR: inheritedTmp,
+      TMP: inheritedTmp,
+      TEMP: inheritedTmp,
+    },
+  });
+
+  assert.equal(env.SCCACHE_NO_DAEMON, "1");
+  if (process.platform !== "win32") {
+    assert.equal(env.SCCACHE_DIR, resolveSccacheDir(env.CARGO_TARGET_DIR));
+    assert.equal(env.SCCACHE_SERVER_UDS, resolveSccacheServerUds(env.CARGO_TARGET_DIR));
+    assert.equal(env.TMPDIR, resolveSccacheTmpDir(env.CARGO_TARGET_DIR, inheritedTmp));
+    assert.equal(env.TMP, env.TMPDIR);
+    assert.equal(env.TEMP, env.TMPDIR);
   }
 });
 

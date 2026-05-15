@@ -69,16 +69,19 @@ test("remote updater proof keeps shipped-app automation state inside the artifac
 
 test("remote updater proof sweeps scoped AppImage helper processes between attempts", () => {
   assert.match(scriptText, /write_process_snapshot\(\) \{/);
+  assert.match(scriptText, /write_host_resource_snapshot\(\) \{/);
+  assert.match(scriptText, /kill_pids_best_effort\(\) \{/);
+  assert.match(scriptText, /sudo --non-interactive kill -9/);
   assert.match(scriptText, /sweep_controller_app_processes\(\) \{/);
   assert.match(scriptText, /local app_path="\$\{RESOLVED_CONTROLLER_AUTOMATION_APP_PATH:-\}"/);
   assert.match(scriptText, /app_dir="\$\(cd "\$\(dirname "\$\{app_path\}"\)" 2>\/dev\/null && pwd -P \|\| dirname "\$\{app_path\}"\)"/);
   assert.match(scriptText, /ps -Ao pid=,command=/);
   assert.match(scriptText, /case "\$\{cmd\}" in\s+\*"\$\{app_dir\}"\*\) pids\+=\("\$\{pid\}"\) ;;\s+esac/);
-  assert.match(scriptText, /kill -9 "\$\{pids\[@\]\}"/);
-  assert.match(scriptText, /write_process_snapshot "\$\{attempt_dir\}\/processes-before-sweep\.log"/);
-  assert.match(scriptText, /write_process_snapshot "\$\{attempt_dir\}\/processes-after-preflight-sweep\.log"/);
-  assert.match(scriptText, /write_process_snapshot "\$\{attempt_dir\}\/processes-after-automation\.log"/);
-  assert.match(scriptText, /write_process_snapshot "\$\{attempt_dir\}\/processes-after-automation-sweep\.log"/);
+  assert.match(scriptText, /kill_pids_best_effort "\$\{pids\[@\]\}"/);
+  assert.match(scriptText, /write_host_resource_snapshot "\$\{attempt_dir\}" "before-sweep"/);
+  assert.match(scriptText, /write_host_resource_snapshot "\$\{attempt_dir\}" "after-preflight-sweep"/);
+  assert.match(scriptText, /write_host_resource_snapshot "\$\{attempt_dir\}" "after-automation"/);
+  assert.match(scriptText, /write_host_resource_snapshot "\$\{attempt_dir\}" "after-automation-sweep"/);
 });
 
 test("remote updater proof preflight sweeps stale automation Xvfb processes", () => {
@@ -96,7 +99,7 @@ test("remote updater proof preflight sweeps stale automation Xvfb processes", ()
   assert.match(scriptText, /\*Xvfb\*\/core\/apps\/desktop\/automation\/artifacts\/updater-remote-proof\/automation-attempt-\*\/tmp\/xvfb-run\.\*\/Xauthority\*/);
   assert.match(scriptText, /\*Xvfb\*\/core\/apps\/desktop\/automation\/artifacts\/updater-linux-proof\/\*\/volatile\/artifacts\/ctx-desktop-e2e\/\*\/xvfb-run\.\*\/Xauthority\*/);
   assert.match(scriptText, /\*Xvfb\*\/\.ctx\/volatile\/artifacts\/ctx-desktop-e2e\/\*\/xvfb-run\.\*\/Xauthority\*/);
-  assert.match(scriptText, /write_process_snapshot "\$\{attempt_dir\}\/processes-before-sweep\.log"\s+sweep_stale_xvfb_processes\s+sweep_local_automation_processes/s);
+  assert.match(scriptText, /write_host_resource_snapshot "\$\{attempt_dir\}" "before-sweep"\s+sweep_stale_xvfb_processes\s+sweep_local_automation_processes/s);
 });
 
 test("remote updater proof sweeps exact current attempt Xvfb after automation", () => {
@@ -104,20 +107,34 @@ test("remote updater proof sweeps exact current attempt Xvfb after automation", 
   assert.match(scriptText, /resolved_tmp_dir="\$\(cd "\$tmp_dir" 2>\/dev\/null && pwd -P \|\| printf '%s' "\$tmp_dir"\)"/);
   assert.match(scriptText, /ps -Ao pid=,command=/);
   assert.match(scriptText, /\*Xvfb\*"\$\{tmp_dir\}"\* \| \*Xvfb\*"\$\{resolved_tmp_dir\}"\*/);
-  assert.match(scriptText, /write_process_snapshot "\$\{attempt_dir\}\/processes-after-automation\.log"\s+sweep_xvfb_processes_for_tmp_dir "\$\{attempt_tmp_dir\}"\s+sweep_stale_xvfb_processes\s+sweep_local_automation_processes/s);
+  assert.match(scriptText, /write_host_resource_snapshot "\$\{attempt_dir\}" "after-automation"\s+sweep_xvfb_processes_for_tmp_dir "\$\{attempt_tmp_dir\}"\s+sweep_stale_xvfb_processes\s+sweep_local_automation_processes/s);
 });
 
 test("remote updater proof sweeps local WebKit helpers and e2e daemons between attempts", () => {
   assert.match(scriptText, /sweep_webkit_automation_helpers\(\) \{/);
+  assert.match(scriptText, /command_is_scoped_webkit_automation_helper\(\) \{/);
+  assert.match(scriptText, /command_matches_current_automation_scope\(\) \{/);
+  assert.match(scriptText, /command_contains_nonempty_path\(\) \{/);
   assert.match(scriptText, /\*WebKitWebDriver\*\|\*wkwebdriver\*\|\*WebKitWebProcess\*/);
+  assert.match(scriptText, /if ! command_is_scoped_webkit_automation_helper "\$cmd"; then\s+continue\s+fi\s+pids\+=\("\$\{pid\}"\)/);
+  assert.match(scriptText, /command_contains_nonempty_path "\$cmd" "\$\{artifact_dir\}"/);
+  assert.match(scriptText, /command_contains_nonempty_path "\$cmd" "\$\{CTX_AUTOMATION_TMPDIR:-\}"/);
+  assert.match(scriptText, /command_contains_nonempty_path "\$cmd" "\$\{CTX_AUTOMATION_XDG_DIR:-\}"/);
+  assert.match(scriptText, /command_contains_nonempty_path "\$cmd" "\$\{app_path\}"/);
   assert.match(scriptText, /sweep_local_automation_daemons\(\) \{/);
+  assert.match(scriptText, /sweep_local_automation_daemons\(\) \{[\s\S]*local scoped_daemon_data_dir="\$\{CTX_DESKTOP_DAEMON_DATA_DIR:-\$\{CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR:-\}\}"/);
+  assert.doesNotMatch(scriptText, /sweep_webkit_automation_helpers\(\) \{[\s\S]*local scoped_daemon_data_dir[\s\S]*sweep_local_automation_daemons\(\) \{/);
   assert.match(scriptText, /\*ctx-daemon\*" serve "\*\) ;;/);
   assert.match(scriptText, /\*"--data-dir "\*"ctx-desktop-e2e-app-daemon-"\*/);
   assert.match(scriptText, /\*"--data-dir "\*"\$\{artifact_dir\}\/automation-attempt-"\*"\/controller-daemon-data"\*/);
+  assert.match(scriptText, /\*\"--data-dir \"\*\"\$\{scoped_daemon_data_dir\}\"\* \| \*\"--data-dir=\"\*\"\$\{scoped_daemon_data_dir\}\"\*/);
   assert.match(scriptText, /sweep_local_automation_processes\(\) \{/);
+  assert.match(scriptText, /sweep_controller_launch_smoke_processes\(\) \{/);
+  assert.match(scriptText, /CTX_AUTOMATION_XDG_DIR="\$\{smoke_xdg_dir\}"/);
+  assert.match(scriptText, /CTX_DESKTOP_DAEMON_DATA_DIR="\$\{smoke_dir\}\/controller-daemon-data"/);
   assert.match(scriptText, /sweep_controller_app_processes\s+sweep_webkit_automation_helpers\s+sweep_local_automation_daemons/);
-  assert.match(scriptText, /write_process_snapshot "\$\{attempt_dir\}\/processes-before-sweep\.log"[\s\S]*sweep_stale_xvfb_processes[\s\S]*sweep_local_automation_processes[\s\S]*write_process_snapshot "\$\{attempt_dir\}\/processes-after-preflight-sweep\.log"/);
-  assert.match(scriptText, /write_process_snapshot "\$\{attempt_dir\}\/processes-after-automation\.log"[\s\S]*sweep_xvfb_processes_for_tmp_dir "\$\{attempt_tmp_dir\}"[\s\S]*sweep_stale_xvfb_processes[\s\S]*sweep_local_automation_processes[\s\S]*write_process_snapshot "\$\{attempt_dir\}\/processes-after-automation-sweep\.log"/);
+  assert.match(scriptText, /write_host_resource_snapshot "\$\{attempt_dir\}" "before-sweep"[\s\S]*sweep_stale_xvfb_processes[\s\S]*sweep_local_automation_processes[\s\S]*write_host_resource_snapshot "\$\{attempt_dir\}" "after-preflight-sweep"/);
+  assert.match(scriptText, /write_host_resource_snapshot "\$\{attempt_dir\}" "after-automation"[\s\S]*sweep_xvfb_processes_for_tmp_dir "\$\{attempt_tmp_dir\}"[\s\S]*sweep_stale_xvfb_processes[\s\S]*sweep_local_automation_processes[\s\S]*write_host_resource_snapshot "\$\{attempt_dir\}" "after-automation-sweep"/);
 });
 
 test("remote updater proof sweeps stale automation egress proxies", () => {
@@ -131,6 +148,20 @@ test("remote updater proof sweeps stale automation egress proxies", () => {
   assert.match(scriptText, /\*"\$\{artifact_dir\}"\*\) continue ;;/);
   assert.match(scriptText, /process_elapsed_seconds "\$elapsed"/);
   assert.match(scriptText, /sweep_controller_app_processes\s+sweep_webkit_automation_helpers\s+sweep_local_automation_daemons\s+sweep_stale_egress_proxy_processes/);
+});
+
+test("remote updater proof writes Linux AppRun launch diagnostics before updater automation", () => {
+  assert.match(scriptText, /run_controller_launch_smoke_if_enabled\(\) \{/);
+  assert.match(scriptText, /CTX_UPDATER_REMOTE_E2E_CONTROLLER_LAUNCH_SMOKE:-1/);
+  assert.match(scriptText, /linux_bundled_launch_smoke\.mjs/);
+  assert.match(scriptText, /controller-launch-smoke/);
+  assert.match(scriptText, /write_attempt_manifest\(\) \{/);
+  assert.match(scriptText, /attempt-manifest\.json/);
+  assert.match(scriptText, /backend_log_expected: platform === "darwin"/);
+  assert.match(scriptText, /write_linux_backend_sentinel_if_needed\(\) \{/);
+  assert.match(scriptText, /Linux updater proof does not start the CrabNebula test-runner-backend/);
+  assert.match(scriptText, /run_controller_launch_smoke_if_enabled/);
+  assert.match(scriptText, /write_host_resource_snapshot "\$\{smoke_dir\}" "after"\s+sweep_controller_launch_smoke_processes "\$\{smoke_dir\}" "\$\{smoke_tmp_dir\}" "\$\{smoke_xdg_dir\}"/s);
 });
 
 test("remote updater proof retries startup-only WebDriver session failures with preserved logs", () => {
@@ -170,4 +201,14 @@ test("release remote updater proof consumes strict published artifacts", () => {
   assert.match(releaseWrapperText, /CTX_UPDATER_REMOTE_E2E_STRICT_PUBLISHED_ARTIFACTS=1/);
   assert.match(releaseWrapperText, /CTX_UPDATER_E2E_BOOTSTRAP_REMOTE_MIGRATIONS=0/);
   assert.match(releaseWrapperText, /bash \.\/scripts\/tests\/updater_remote_daemon_e2e\.sh/);
+});
+
+test("remote workspace published mode enforces strict published updater proof artifacts", () => {
+  const remoteWorkspaceText = fs.readFileSync(
+    path.join(repoRoot, "scripts", "buildkite", "run_remote_workspace_e2e.sh"),
+    "utf8",
+  );
+
+  assert.match(remoteWorkspaceText, /CTX_UPDATER_REMOTE_E2E_STRICT_PUBLISHED_ARTIFACTS="\$\{CTX_UPDATER_REMOTE_E2E_STRICT_PUBLISHED_ARTIFACTS:-1\}"/);
+  assert.match(remoteWorkspaceText, /CTX_UPDATER_E2E_STRICT_PUBLISHED_ARTIFACTS="\$\{CTX_UPDATER_E2E_STRICT_PUBLISHED_ARTIFACTS:-1\}"/);
 });
