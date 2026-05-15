@@ -828,6 +828,8 @@ function buildStaticEntries() {
         "core/scripts/lib/dev_promotion.cjs",
         "core/scripts/promote_dev_to_main.cjs",
         "core/scripts/promote_dev_to_main.test.cjs",
+        "core/scripts/release_preflight_proof_plan.cjs",
+        "core/scripts/release_preflight_proof_plan.test.cjs",
         "core/scripts/render_buildkite_checkin_gate.cjs",
         "core/scripts/trigger_buildkite_mac_nightly.cjs",
         "core/scripts/trigger_buildkite_mac_nightly.test.cjs",
