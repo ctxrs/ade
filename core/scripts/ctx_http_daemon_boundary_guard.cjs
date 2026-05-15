@@ -19,6 +19,10 @@ const rawStoreBlindApiRoots = [
   "core/crates/ctx-http/src/api/tasks/",
   "core/crates/ctx-http/src/api/workspaces/",
 ];
+const migratedRawDaemonTestRoots = [
+  "core/crates/ctx-http/src/lib_tests/auth_boundaries/",
+  "core/crates/ctx-http/src/lib_tests/provider_routes/",
+];
 
 const API_RAW_DAEMON_PATTERNS = [
   {
@@ -105,6 +109,25 @@ const TEST_RAW_DAEMON_BUCKET_PATTERNS = [
   {
     name: "raw daemon runtime bucket field access",
     regex: /\b(?:state|app_state|daemon_state)\s*\.\s*(?:core|sessions|workspaces|providers|telemetry|transport|execution)\s*\./,
+  },
+];
+
+const MIGRATED_TEST_RAW_DAEMON_PATTERNS = [
+  {
+    name: "raw daemon state constructor in migrated test surface",
+    regex: /\bDaemonState::new(?:_with_(?:public_base_url|runtime_flags))?\s*\(/,
+  },
+  {
+    name: "raw daemon state arc in migrated test surface",
+    regex: /Arc\s*<\s*DaemonState\s*>/,
+  },
+  {
+    name: "raw daemon router wiring in migrated test surface",
+    regex: /\bapi::router\s*\(\s*state(?:\.clone\s*\(\s*\))?\s*\)/,
+  },
+  {
+    name: "raw provider-session token helper in migrated test surface",
+    regex: /(?:\bctx_daemon::daemon::|(?<!\.)\b)(?:issue_provider_session_mcp_token(?:_with_capabilities)?|revoke_provider_session_mcp_token)\s*\(/,
   },
 ];
 
@@ -236,6 +259,13 @@ function apiPatternsForPath(relativePath) {
   return patterns;
 }
 
+function migratedTestPatternsForPath(relativePath) {
+  if (migratedRawDaemonTestRoots.some((root) => relativePath.startsWith(root))) {
+    return MIGRATED_TEST_RAW_DAEMON_PATTERNS;
+  }
+  return [];
+}
+
 function scanRepo() {
   const violations = [];
   if (fs.existsSync(legacyHttpDaemonRootPath)) {
@@ -302,11 +332,19 @@ function scanRepo() {
   }
 
   for (const filePath of testSurfaceRustFiles()) {
+    const relativePath = repoRelative(filePath);
     violations.push(
       ...scanText({
-        filePath: repoRelative(filePath),
+        filePath: relativePath,
         contents: fs.readFileSync(filePath, "utf8"),
         patterns: TEST_RAW_DAEMON_BUCKET_PATTERNS,
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents: fs.readFileSync(filePath, "utf8"),
+        patterns: migratedTestPatternsForPath(relativePath),
       }),
     );
   }
@@ -338,9 +376,11 @@ module.exports = {
   API_RAW_DAEMON_PATTERNS,
   API_DOMAIN_RAW_STORE_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
+  MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   TEST_RAW_DAEMON_BUCKET_PATTERNS,
   apiPatternsForPath,
   isTestRustPath,
+  migratedTestPatternsForPath,
   scanRepo,
   scanText,
   stripCfgTestItems,

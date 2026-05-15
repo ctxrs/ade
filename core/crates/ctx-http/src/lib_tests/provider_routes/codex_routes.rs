@@ -10,14 +10,8 @@ async fn codex_accounts_usage_surfaces_agent_server_config_errors() {
     let data_dir = tempfile::tempdir().unwrap();
     write_invalid_agent_server_config(data_dir.path());
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    ));
-    let app = api::router(state);
+    let state = test_daemon(data_dir.path(), stores, None);
+    let app = test_router(&state);
 
     let req = Request::builder()
         .method("GET")
@@ -102,14 +96,8 @@ async fn codex_accounts_usage_blocks_deleting_account_broker_home() {
         .unwrap();
 
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    ));
-    let app = api::router(state);
+    let state = test_daemon(data_dir.path(), stores, None);
+    let app = test_router(&state);
 
     let req = Request::builder()
         .method("GET")
@@ -189,14 +177,8 @@ async fn codex_accounts_usage_surfaces_hydration_errors() {
     std::fs::write(&secret_path, "{ not valid json").unwrap();
 
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    ));
-    let app = api::router(state);
+    let state = test_daemon(data_dir.path(), stores, None);
+    let app = test_router(&state);
 
     let req = Request::builder()
         .method("GET")
@@ -227,13 +209,7 @@ async fn provider_usage_cache_hit_surfaces_agent_server_config_errors_for_codex(
     let data_dir = tempfile::tempdir().unwrap();
     write_invalid_agent_server_config(data_dir.path());
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    ));
+    let state = test_daemon(data_dir.path(), stores, None);
     state
         .test_with_provider_usage_cache(|cache| {
             cache.insert(
@@ -250,7 +226,7 @@ async fn provider_usage_cache_hit_surfaces_agent_server_config_errors_for_codex(
             );
         })
         .await;
-    let app = api::router(state);
+    let app = test_router(&state);
 
     let req = Request::builder()
         .method("GET")
@@ -299,13 +275,7 @@ async fn provider_usage_cache_hit_preserves_canonical_provider_id_for_codex() {
         .await
         .unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    ));
+    let state = test_daemon(data_dir.path(), stores, None);
     state
         .test_with_provider_usage_cache(|cache| {
             cache.insert(
@@ -322,7 +292,7 @@ async fn provider_usage_cache_hit_preserves_canonical_provider_id_for_codex() {
             );
         })
         .await;
-    let app = api::router(state);
+    let app = test_router(&state);
 
     let req = Request::builder()
         .method("GET")
@@ -346,14 +316,8 @@ async fn codex_login_start_surfaces_agent_server_config_errors() {
     let data_dir = tempfile::tempdir().unwrap();
     write_invalid_agent_server_config(data_dir.path());
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    ));
-    let app = api::router(state);
+    let state = test_daemon(data_dir.path(), stores, None);
+    let app = test_router(&state);
 
     let req = Request::builder()
         .method("POST")

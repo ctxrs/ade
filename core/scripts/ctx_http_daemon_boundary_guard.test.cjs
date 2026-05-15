@@ -6,9 +6,11 @@ const {
   API_DOMAIN_RAW_STORE_PATTERNS,
   API_RAW_DAEMON_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
+  MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   TEST_RAW_DAEMON_BUCKET_PATTERNS,
   apiPatternsForPath,
   isTestRustPath,
+  migratedTestPatternsForPath,
   scanRepo,
   scanText,
   stripCfgTestItems,
@@ -196,6 +198,92 @@ test("daemon boundary guard allows daemon-owned test support accessors", () => {
   });
 
   assert.deepEqual(violations, []);
+});
+
+test("daemon boundary guard rejects raw daemon constructors in migrated test roots", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/lib_tests/auth_boundaries/example.rs",
+    contents: `
+      async fn helper() {
+        let state: Arc<DaemonState> = Arc::new(DaemonState::new(
+          root,
+          stores,
+          map,
+          url,
+          Some("secret".to_string()),
+        ));
+        let app = api::router(state.clone());
+        let _ = ctx_daemon::daemon::issue_provider_session_mcp_token(&state, session, workspace, worktree).await;
+        let _ = issue_provider_session_mcp_token_with_capabilities(&state, session, workspace, worktree, capabilities).await;
+        let _ = revoke_provider_session_mcp_token(token).await;
+      }
+    `,
+    patterns: MIGRATED_TEST_RAW_DAEMON_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "raw daemon state constructor in migrated test surface",
+      "raw daemon state arc in migrated test surface",
+      "raw daemon router wiring in migrated test surface",
+      "raw provider-session token helper in migrated test surface",
+      "raw provider-session token helper in migrated test surface",
+      "raw provider-session token helper in migrated test surface",
+    ],
+  );
+});
+
+test("daemon boundary guard rejects alternate raw daemon constructors in migrated test roots", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/lib_tests/provider_routes/example.rs",
+    contents: `
+      async fn helper() {
+        let _ = DaemonState::new_with_public_base_url(root, stores, map, url, public_url, token);
+        let _ = DaemonState::new_with_runtime_flags(root, stores, map, url, public_url, token, flags);
+      }
+    `,
+    patterns: MIGRATED_TEST_RAW_DAEMON_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "raw daemon state constructor in migrated test surface",
+      "raw daemon state constructor in migrated test surface",
+    ],
+  );
+});
+
+test("daemon boundary guard allows TestDaemon provider-session token facade calls", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/lib_tests/auth_boundaries/example.rs",
+    contents: `
+      async fn helper(state: &TestDaemon) {
+        let _ = state.issue_provider_session_mcp_token(session, workspace, worktree).await;
+        let _ = state.issue_provider_session_mcp_token_with_capabilities(session, workspace, worktree, capabilities).await;
+        let _ = state.revoke_provider_session_mcp_token(token).await;
+      }
+    `,
+    patterns: MIGRATED_TEST_RAW_DAEMON_PATTERNS,
+  });
+
+  assert.deepEqual(violations, []);
+});
+
+test("daemon boundary guard scopes migrated raw daemon constructor ban", () => {
+  assert.equal(
+    migratedTestPatternsForPath("core/crates/ctx-http/src/lib_tests/auth_boundaries/example.rs"),
+    MIGRATED_TEST_RAW_DAEMON_PATTERNS,
+  );
+  assert.equal(
+    migratedTestPatternsForPath("core/crates/ctx-http/src/lib_tests/provider_routes/example.rs"),
+    MIGRATED_TEST_RAW_DAEMON_PATTERNS,
+  );
+  assert.deepEqual(
+    migratedTestPatternsForPath("core/crates/ctx-http/src/lib_tests/other/example.rs"),
+    [],
+  );
 });
 
 test("daemon boundary guard rejects DaemonHandle raw-state backdoors", () => {

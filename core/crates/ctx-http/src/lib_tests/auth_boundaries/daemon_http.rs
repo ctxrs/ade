@@ -9,14 +9,8 @@ async fn daemon_http_routes_require_bearer_header_not_query_token() {
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        Some("daemon-secret".to_string()),
-    ));
-    let app = api::router(state);
+    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
+    let app = test_router(&state);
 
     let req = Request::builder()
         .method("GET")
@@ -75,14 +69,8 @@ async fn encoded_api_path_variants_do_not_bypass_auth() {
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        Some("daemon-secret".to_string()),
-    ));
-    let app = api::router(state);
+    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
+    let app = test_router(&state);
 
     for path in ["/api/workspaces", "/%61pi/workspaces", "/api%2Fworkspaces"] {
         let req = Request::builder()

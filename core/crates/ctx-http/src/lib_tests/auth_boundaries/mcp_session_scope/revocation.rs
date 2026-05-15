@@ -8,31 +8,17 @@ async fn scoped_mcp_token_revokes_prior_token_for_same_session_scope() {
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        Some("daemon-secret".to_string()),
-    ));
+    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
     let session_id = SessionId::new();
     let workspace_id = WorkspaceId::new();
     let worktree_id = WorktreeId::new();
-    let stale_token = ctx_daemon::daemon::issue_provider_session_mcp_token(
-        state.as_ref(),
-        session_id,
-        workspace_id,
-        worktree_id,
-    )
-    .await;
-    let fresh_token = ctx_daemon::daemon::issue_provider_session_mcp_token(
-        state.as_ref(),
-        session_id,
-        workspace_id,
-        worktree_id,
-    )
-    .await;
-    let app = api::router(state);
+    let stale_token = state
+        .issue_provider_session_mcp_token(session_id, workspace_id, worktree_id)
+        .await;
+    let fresh_token = state
+        .issue_provider_session_mcp_token(session_id, workspace_id, worktree_id)
+        .await;
+    let app = test_router(&state);
 
     let req = Request::builder()
         .method("GET")
@@ -61,22 +47,12 @@ async fn scoped_mcp_token_can_be_revoked_exactly() {
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        Some("daemon-secret".to_string()),
-    ));
+    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
     let session_id = SessionId::new();
-    let token = ctx_daemon::daemon::issue_provider_session_mcp_token(
-        state.as_ref(),
-        session_id,
-        WorkspaceId::new(),
-        WorktreeId::new(),
-    )
-    .await;
-    let app = api::router(state.clone());
+    let token = state
+        .issue_provider_session_mcp_token(session_id, WorkspaceId::new(), WorktreeId::new())
+        .await;
+    let app = test_router(&state);
 
     let req = Request::builder()
         .method("GET")
@@ -87,7 +63,7 @@ async fn scoped_mcp_token_can_be_revoked_exactly() {
     let res = app.clone().oneshot(req).await.unwrap();
     assert_ne!(res.status(), StatusCode::UNAUTHORIZED);
 
-    assert!(ctx_daemon::daemon::revoke_provider_session_mcp_token(state.as_ref(), &token).await);
+    assert!(state.revoke_provider_session_mcp_token(&token).await);
 
     let req = Request::builder()
         .method("GET")

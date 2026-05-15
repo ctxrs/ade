@@ -11,14 +11,8 @@ async fn blob_download_requires_browser_capability_query_token() {
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        Some("daemon-secret".to_string()),
-    ));
-    let app = api::router(state);
+    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
+    let app = test_router(&state);
     let blob_id = "blob-auth-boundary";
 
     let req = Request::builder()
@@ -128,14 +122,8 @@ async fn session_artifact_download_requires_browser_capability_query_token() {
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        Some("daemon-secret".to_string()),
-    ));
-    let app = api::router(state);
+    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
+    let app = test_router(&state);
     let session_id = "11111111-1111-1111-1111-111111111111";
     let artifact_id = "22222222-2222-2222-2222-222222222222";
 

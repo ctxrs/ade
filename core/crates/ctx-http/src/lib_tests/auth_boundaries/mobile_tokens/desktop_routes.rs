@@ -9,13 +9,7 @@ async fn mobile_api_tokens_do_not_authorize_desktop_api_routes() {
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        Some("daemon-secret".to_string()),
-    ));
+    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
 
     let token = "ctxm_test_mobile_token";
     let mut hasher = sha2::Sha256::new();
@@ -33,7 +27,7 @@ async fn mobile_api_tokens_do_not_authorize_desktop_api_routes() {
         .await
         .unwrap();
 
-    let app = api::router(state);
+    let app = test_router(&state);
     let req = Request::builder()
         .method("GET")
         .uri("/api/workspaces")

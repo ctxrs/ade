@@ -4,6 +4,7 @@ use std::sync::{Arc, OnceLock};
 
 use ctx_core::ids::{SessionId, WorkspaceId, WorktreeId};
 use ctx_core::models::Session;
+use ctx_provider_runtime::provider_usage;
 use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
 use ctx_store::{Store, StoreManager};
 use tokio::sync::Mutex as AsyncMutex;
@@ -126,6 +127,34 @@ impl TestDaemon {
     ) -> String {
         daemon::issue_provider_session_mcp_token(&self.state, session_id, workspace_id, worktree_id)
             .await
+    }
+
+    pub async fn issue_provider_session_mcp_token_with_capabilities(
+        &self,
+        session_id: SessionId,
+        workspace_id: WorkspaceId,
+        worktree_id: WorktreeId,
+        capabilities: ctx_mcp_auth::McpAuthCapabilities,
+    ) -> String {
+        daemon::issue_provider_session_mcp_token_with_capabilities(
+            &self.state,
+            session_id,
+            workspace_id,
+            worktree_id,
+            capabilities,
+        )
+        .await
+    }
+
+    pub async fn revoke_provider_session_mcp_token(&self, token: &str) -> bool {
+        daemon::revoke_provider_session_mcp_token(&self.state, token).await
+    }
+
+    pub async fn test_with_provider_usage_cache<R>(
+        &self,
+        f: impl FnOnce(&mut HashMap<String, provider_usage::ProviderUsageSnapshot>) -> R,
+    ) -> R {
+        self.state.test_with_provider_usage_cache(f).await
     }
 }
 

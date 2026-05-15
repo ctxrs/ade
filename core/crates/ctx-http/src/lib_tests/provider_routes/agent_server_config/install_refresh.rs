@@ -9,14 +9,8 @@ async fn provider_install_surfaces_agent_server_config_errors() {
     let data_dir = tempfile::tempdir().unwrap();
     write_invalid_agent_server_config(data_dir.path());
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    ));
-    let app = api::router(state);
+    let state = test_daemon(data_dir.path(), stores, None);
+    let app = test_router(&state);
 
     let req = Request::builder()
         .method("POST")
@@ -45,14 +39,8 @@ async fn install_all_providers_surfaces_agent_server_config_errors() {
     let data_dir = tempfile::tempdir().unwrap();
     write_invalid_agent_server_config(data_dir.path());
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    ));
-    let app = api::router(state);
+    let state = test_daemon(data_dir.path(), stores, None);
+    let app = test_router(&state);
 
     let req = Request::builder()
         .method("POST")
@@ -81,14 +69,8 @@ async fn refresh_provider_matrix_surfaces_agent_server_config_errors() {
     let data_dir = tempfile::tempdir().unwrap();
     write_invalid_agent_server_config(data_dir.path());
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    ));
-    let app = api::router(state);
+    let state = test_daemon(data_dir.path(), stores, None);
+    let app = test_router(&state);
 
     let req = Request::builder()
         .method("POST")

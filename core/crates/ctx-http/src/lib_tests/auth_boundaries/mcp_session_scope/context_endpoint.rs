@@ -8,25 +8,19 @@ async fn mcp_context_endpoint_requires_scoped_mcp_token() {
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        Some("daemon-secret".to_string()),
-    ));
+    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
     let session_id = SessionId::new();
     let workspace_id = WorkspaceId::new();
     let worktree_id = WorktreeId::new();
-    let token = ctx_daemon::daemon::issue_provider_session_mcp_token_with_capabilities(
-        state.as_ref(),
-        session_id,
-        workspace_id,
-        worktree_id,
-        ctx_mcp_auth::McpAuthCapabilities::provider_turn_default(),
-    )
-    .await;
-    let app = api::router(state);
+    let token = state
+        .issue_provider_session_mcp_token_with_capabilities(
+            session_id,
+            workspace_id,
+            worktree_id,
+            ctx_mcp_auth::McpAuthCapabilities::provider_turn_default(),
+        )
+        .await;
+    let app = test_router(&state);
 
     let req = Request::builder()
         .method("GET")
@@ -86,21 +80,11 @@ async fn mcp_context_endpoint_requires_scoped_token_when_daemon_auth_is_disabled
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    ));
-    let token = ctx_daemon::daemon::issue_provider_session_mcp_token(
-        state.as_ref(),
-        SessionId::new(),
-        WorkspaceId::new(),
-        WorktreeId::new(),
-    )
-    .await;
-    let app = api::router(state);
+    let state = test_daemon(data_dir.path(), stores, None);
+    let token = state
+        .issue_provider_session_mcp_token(SessionId::new(), WorkspaceId::new(), WorktreeId::new())
+        .await;
+    let app = test_router(&state);
 
     let req = Request::builder()
         .method("GET")

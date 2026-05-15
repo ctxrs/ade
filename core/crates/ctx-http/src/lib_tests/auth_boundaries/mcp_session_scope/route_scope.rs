@@ -8,23 +8,13 @@ async fn scoped_mcp_token_is_limited_to_bound_session_routes() {
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        Some("daemon-secret".to_string()),
-    ));
+    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
     let session_id = SessionId::new();
     let other_session_id = SessionId::new();
-    let token = ctx_daemon::daemon::issue_provider_session_mcp_token(
-        state.as_ref(),
-        session_id,
-        WorkspaceId::new(),
-        WorktreeId::new(),
-    )
-    .await;
-    let app = api::router(state.clone());
+    let token = state
+        .issue_provider_session_mcp_token(session_id, WorkspaceId::new(), WorktreeId::new())
+        .await;
+    let app = test_router(&state);
 
     let req = Request::builder()
         .method("GET")

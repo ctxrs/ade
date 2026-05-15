@@ -18,6 +18,21 @@ use ctx_store::StoreManager;
 
 use crate::api;
 use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::test_support::TestDaemon;
+
+fn test_daemon(data_dir: &Path, stores: StoreManager, auth_token: Option<String>) -> TestDaemon {
+    TestDaemon::new(
+        data_dir.to_path_buf(),
+        stores,
+        HashMap::new(),
+        "http://127.0.0.1:4399".to_string(),
+        auth_token,
+    )
+}
+
+fn test_router(daemon: &TestDaemon) -> axum::Router {
+    api::router(daemon.handle())
+}
 
 async fn run_git(root: &Path, args: &[&str]) {
     let output = Command::new("git")

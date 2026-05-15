@@ -8,25 +8,15 @@ async fn scoped_mcp_merge_queue_submit_is_bound_to_current_session_worktree() {
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        Some("daemon-secret".to_string()),
-    ));
+    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
     let session_id = SessionId::new();
     let other_session_id = SessionId::new();
     let worktree_id = WorktreeId::new();
     let other_worktree_id = WorktreeId::new();
-    let token = ctx_daemon::daemon::issue_provider_session_mcp_token(
-        state.as_ref(),
-        session_id,
-        WorkspaceId::new(),
-        worktree_id,
-    )
-    .await;
-    let app = api::router(state.clone());
+    let token = state
+        .issue_provider_session_mcp_token(session_id, WorkspaceId::new(), worktree_id)
+        .await;
+    let app = test_router(&state);
 
     let req = Request::builder()
         .method("POST")
@@ -48,14 +38,14 @@ async fn scoped_mcp_merge_queue_submit_is_bound_to_current_session_worktree() {
         "provider-session MCP tokens must not include merge queue submit by default"
     );
 
-    let token = ctx_daemon::daemon::issue_provider_session_mcp_token_with_capabilities(
-        state.as_ref(),
-        session_id,
-        WorkspaceId::new(),
-        worktree_id,
-        ctx_mcp_auth::McpAuthCapabilities::provider_turn_default(),
-    )
-    .await;
+    let token = state
+        .issue_provider_session_mcp_token_with_capabilities(
+            session_id,
+            WorkspaceId::new(),
+            worktree_id,
+            ctx_mcp_auth::McpAuthCapabilities::provider_turn_default(),
+        )
+        .await;
 
     let req = Request::builder()
         .method("POST")
