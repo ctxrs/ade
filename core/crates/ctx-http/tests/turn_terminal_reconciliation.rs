@@ -6,8 +6,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::json;
 
-use ctx_core::ids::{MessageId, RunId, TurnId};
-use ctx_core::models::{SessionEventType, SessionTurn, SessionTurnStatus};
+use ctx_core::ids::{RunId, TurnId};
+use ctx_core::models::{SessionEventType, SessionTurnStatus};
 use ctx_providers::adapters::{
     ProviderAdapter, ProviderHealth, ProviderStatus, RunHandle, TurnInput,
 };
@@ -55,38 +55,6 @@ struct TestHarness {
     _data_dir: tempfile::TempDir,
     daemon: ctx_daemon::test_support::TestDaemon,
     session: ctx_core::models::Session,
-    store: ctx_store::Store,
-}
-
-async fn insert_running_turn(
-    store: &ctx_store::Store,
-    session_id: ctx_core::ids::SessionId,
-    run_id: RunId,
-    turn_id: TurnId,
-) {
-    store
-        .insert_session_turn(SessionTurn {
-            turn_id,
-            session_id,
-            run_id: Some(run_id),
-            user_message_id: Some(MessageId::new()),
-            status: SessionTurnStatus::Running,
-            start_seq: Some(1),
-            end_seq: None,
-            started_at: common::fixed_utc(0),
-            updated_at: common::fixed_utc(0),
-            assistant_partial: None,
-            thought_partial: None,
-            metrics_json: None,
-            failure: None,
-            tool_total: 0,
-            tool_pending: 0,
-            tool_running: 0,
-            tool_completed: 0,
-            tool_failed: 0,
-        })
-        .await
-        .unwrap();
 }
 
 async fn setup_state() -> TestHarness {
@@ -109,13 +77,11 @@ async fn setup_state_with_providers(
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (_task, session) =
         common::create_task_with_session(&app, ws.id.0, "t1", "fake", "fake-model").await;
-    let store = daemon.store_for_session(session.id).await.unwrap();
     TestHarness {
         _repo: repo,
         _data_dir: data_dir,
         daemon,
         session,
-        store,
     }
 }
 
@@ -124,16 +90,19 @@ async fn reconcile_terminal_state_respects_turn_finished_status() {
     let harness = setup_state().await;
     let run_id = RunId::new();
     let turn_id = TurnId::new();
-    insert_running_turn(&harness.store, harness.session.id, run_id, turn_id).await;
+    harness
+        .daemon
+        .seed_running_turn_for_reconciliation_test(harness.session.id, run_id, turn_id)
+        .await
+        .unwrap();
 
     let finished = harness
-        .store
-        .append_session_event(
+        .daemon
+        .append_turn_finished_event_for_test(
             harness.session.id,
             Some(run_id),
-            Some(turn_id),
-            SessionEventType::TurnFinished,
-            json!({"status": "interrupted"}),
+            turn_id,
+            SessionTurnStatus::Interrupted,
         )
         .await
         .unwrap();
@@ -149,26 +118,18 @@ async fn reconcile_terminal_state_respects_turn_finished_status() {
         .await
         .unwrap();
 
-    let turn = harness
-        .store
-        .get_session_turn(harness.session.id, turn_id)
+    let snapshot = harness
+        .daemon
+        .turn_reconciliation_snapshot_for_test(harness.session.id, turn_id)
         .await
-        .unwrap()
         .unwrap();
-    assert_eq!(turn.status, SessionTurnStatus::Interrupted);
-    assert_eq!(turn.end_seq, Some(finished.seq));
-    let summary = harness
-        .store
-        .get_session_snapshot(harness.session.id, 50, false)
-        .await
-        .unwrap()
-        .expect("session snapshot")
-        .summary;
+    assert_eq!(snapshot.turn.status, SessionTurnStatus::Interrupted);
+    assert_eq!(snapshot.turn.end_seq, Some(finished.seq));
     assert_eq!(
-        summary.activity.last_turn_status,
+        snapshot.last_turn_status,
         Some(SessionTurnStatus::Interrupted)
     );
-    assert!(!summary.activity.is_working);
+    assert!(!snapshot.is_working);
 }
 
 #[tokio::test]
@@ -176,7 +137,11 @@ async fn reconcile_terminal_state_emits_interrupt_when_terminal_event_missing() 
     let harness = setup_state().await;
     let run_id = RunId::new();
     let turn_id = TurnId::new();
-    insert_running_turn(&harness.store, harness.session.id, run_id, turn_id).await;
+    harness
+        .daemon
+        .seed_running_turn_for_reconciliation_test(harness.session.id, run_id, turn_id)
+        .await
+        .unwrap();
 
     harness
         .daemon
@@ -189,23 +154,19 @@ async fn reconcile_terminal_state_emits_interrupt_when_terminal_event_missing() 
         .await
         .unwrap();
 
-    let turn = harness
-        .store
-        .get_session_turn(harness.session.id, turn_id)
+    let snapshot = harness
+        .daemon
+        .turn_reconciliation_snapshot_for_test(harness.session.id, turn_id)
         .await
-        .unwrap()
         .unwrap();
-    assert_eq!(turn.status, SessionTurnStatus::Interrupted);
+    assert_eq!(snapshot.turn.status, SessionTurnStatus::Interrupted);
 
-    let events = harness
-        .store
-        .list_session_events_for_turn(harness.session.id, turn_id, false)
-        .await
-        .unwrap();
-    assert!(events
+    assert!(snapshot
+        .events
         .iter()
         .any(|event| matches!(event.event_type, SessionEventType::TurnInterrupted)));
-    let finished = events
+    let finished = snapshot
+        .events
         .iter()
         .find(|event| matches!(event.event_type, SessionEventType::TurnFinished))
         .expect("turn finished event");
@@ -223,7 +184,11 @@ async fn reconcile_provider_exit_emits_failed_terminal_events_when_missing() {
     let harness = setup_state().await;
     let run_id = RunId::new();
     let turn_id = TurnId::new();
-    insert_running_turn(&harness.store, harness.session.id, run_id, turn_id).await;
+    harness
+        .daemon
+        .seed_running_turn_for_reconciliation_test(harness.session.id, run_id, turn_id)
+        .await
+        .unwrap();
 
     harness
         .daemon
@@ -236,32 +201,17 @@ async fn reconcile_provider_exit_emits_failed_terminal_events_when_missing() {
         .await
         .unwrap();
 
-    let turn = harness
-        .store
-        .get_session_turn(harness.session.id, turn_id)
+    let snapshot = harness
+        .daemon
+        .turn_reconciliation_snapshot_for_test(harness.session.id, turn_id)
         .await
-        .unwrap()
         .unwrap();
-    assert_eq!(turn.status, SessionTurnStatus::Failed);
-    let summary = harness
-        .store
-        .get_session_snapshot(harness.session.id, 50, false)
-        .await
-        .unwrap()
-        .expect("session snapshot")
-        .summary;
-    assert_eq!(
-        summary.activity.last_turn_status,
-        Some(SessionTurnStatus::Failed)
-    );
-    assert!(!summary.activity.is_working);
+    assert_eq!(snapshot.turn.status, SessionTurnStatus::Failed);
+    assert_eq!(snapshot.last_turn_status, Some(SessionTurnStatus::Failed));
+    assert!(!snapshot.is_working);
 
-    let events = harness
-        .store
-        .list_session_events_for_turn(harness.session.id, turn_id, false)
-        .await
-        .unwrap();
-    let failed_finished = events
+    let failed_finished = snapshot
+        .events
         .iter()
         .find(|event| {
             matches!(event.event_type, SessionEventType::TurnFinished)
@@ -279,7 +229,8 @@ async fn reconcile_provider_exit_emits_failed_terminal_events_when_missing() {
             .and_then(|value| value.as_str()),
         Some("provider_exit")
     );
-    let finished = events
+    let finished = snapshot
+        .events
         .iter()
         .find(|event| matches!(event.event_type, SessionEventType::TurnFinished))
         .expect("turn finished event");
@@ -310,39 +261,29 @@ async fn start_failure_marks_turn_failed_and_finishes() {
     assert_eq!(status, axum::http::StatusCode::OK);
 
     let turn_id = message.turn_id.expect("turn id");
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
-    loop {
-        let events = harness
-            .store
-            .list_session_events(harness.session.id)
-            .await
-            .unwrap();
-        if events.iter().any(|event| {
-            event.turn_id == Some(turn_id)
-                && matches!(event.event_type, SessionEventType::TurnFinished)
-        }) {
-            break;
-        }
-        if tokio::time::Instant::now() >= deadline {
-            panic!("timed out waiting for start failure turn finish");
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-    }
-
-    let turn = harness
-        .store
-        .get_session_turn(harness.session.id, turn_id)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(turn.status, SessionTurnStatus::Failed);
-
-    let events = harness
-        .store
-        .list_session_events_for_turn(harness.session.id, turn_id, false)
+    harness
+        .daemon
+        .wait_for_scheduler_runtime_events_for_test(
+            harness.session.id,
+            std::time::Duration::from_secs(5),
+            "start failure turn finish",
+            |events| {
+                events.iter().any(|event| {
+                    event.turn_id == Some(turn_id)
+                        && matches!(event.event_type, SessionEventType::TurnFinished)
+                })
+            },
+        )
         .await
         .unwrap();
-    assert!(events.iter().any(|event| {
+
+    let snapshot = harness
+        .daemon
+        .turn_reconciliation_snapshot_for_test(harness.session.id, turn_id)
+        .await
+        .unwrap();
+    assert_eq!(snapshot.turn.status, SessionTurnStatus::Failed);
+    assert!(snapshot.events.iter().any(|event| {
         matches!(event.event_type, SessionEventType::TurnFinished)
             && event
                 .payload_json

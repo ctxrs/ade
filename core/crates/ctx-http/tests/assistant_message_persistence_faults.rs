@@ -1,12 +1,9 @@
 #![cfg(feature = "fault_injection")]
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use axum::http::{Method, StatusCode};
-use ctx_core::models::{
-    Message, MessageRole, SessionEvent, SessionEventType, SessionTurn, SessionTurnStatus,
-};
-use ctx_daemon::test_support::TestDaemon;
+use ctx_core::models::{Message, SessionEventType, SessionTurnStatus};
 use serde_json::json;
 
 mod common;
@@ -26,42 +23,6 @@ async fn post_message(app: &axum::Router, session_id: uuid::Uuid, content: &str)
     .await;
     assert_eq!(status, StatusCode::OK);
     msg
-}
-
-async fn wait_for_terminal_turn(
-    daemon: &TestDaemon,
-    session_id: ctx_core::ids::SessionId,
-    turn_id: ctx_core::ids::TurnId,
-) -> (SessionTurn, Vec<SessionEvent>) {
-    let store = daemon.store_for_session(session_id).await.unwrap();
-    let deadline = Instant::now() + Duration::from_secs(120);
-    loop {
-        let turn = store
-            .get_session_turn(session_id, turn_id)
-            .await
-            .unwrap()
-            .expect("turn should exist");
-        let events = store
-            .list_session_events_for_turn(session_id, turn_id, false)
-            .await
-            .unwrap();
-        let terminal = matches!(
-            turn.status,
-            SessionTurnStatus::Completed
-                | SessionTurnStatus::Failed
-                | SessionTurnStatus::Interrupted
-        );
-        let finished = events
-            .iter()
-            .any(|event| matches!(event.event_type, SessionEventType::TurnFinished));
-        if terminal && finished {
-            return (turn, events);
-        }
-        if Instant::now() >= deadline {
-            panic!("timed out waiting for terminal turn: {events:#?}");
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
 }
 
 #[tokio::test]
@@ -87,16 +48,26 @@ async fn assistant_message_persistence_faults_recover_or_fail_honestly() {
         let user_message = post_message(&app, session.id.0, "retry me").await;
         let turn_id = user_message.turn_id.expect("turn id");
 
-        let (turn, events) = wait_for_terminal_turn(&daemon, session.id, turn_id).await;
-        assert_eq!(turn.status, SessionTurnStatus::Completed);
+        let snapshot = daemon
+            .wait_for_terminal_turn_persistence_snapshot_for_test(
+                session.id,
+                turn_id,
+                Duration::from_secs(120),
+            )
+            .await
+            .unwrap();
+        assert_eq!(snapshot.turn.status, SessionTurnStatus::Completed);
         assert!(
-            !events
+            !snapshot
+                .events
                 .iter()
                 .any(|event| matches!(event.event_type, SessionEventType::Error)),
-            "transient persistence failure should recover cleanly: {events:#?}"
+            "transient persistence failure should recover cleanly: {:#?}",
+            snapshot.events
         );
         assert_eq!(
-            events
+            snapshot
+                .events
                 .iter()
                 .filter(|event| matches!(
                     event.event_type,
@@ -104,27 +75,19 @@ async fn assistant_message_persistence_faults_recover_or_fail_honestly() {
                 ))
                 .count(),
             1,
-            "expected exactly one inserted assistant message after retry: {events:#?}"
+            "expected exactly one inserted assistant message after retry: {:#?}",
+            snapshot.events
         );
 
-        let store = daemon.store_for_session(session.id).await.unwrap();
-        let assistant_messages = store
-            .list_messages_for_session(session.id)
-            .await
-            .unwrap()
-            .into_iter()
-            .filter(|message| {
-                message.turn_id == Some(turn_id) && matches!(message.role, MessageRole::Assistant)
-            })
-            .collect::<Vec<_>>();
         assert_eq!(
-            assistant_messages.len(),
+            snapshot.assistant_messages.len(),
             1,
             "assistant message should persist once"
         );
-        assert_eq!(assistant_messages[0].content, "done: retry me");
+        assert_eq!(snapshot.assistant_messages[0].content, "done: retry me");
 
-        let turn_finished_statuses = events
+        let turn_finished_statuses = snapshot
+            .events
             .iter()
             .filter(|event| matches!(event.event_type, SessionEventType::TurnFinished))
             .map(|event| {
@@ -160,16 +123,26 @@ async fn assistant_message_persistence_faults_recover_or_fail_honestly() {
         ctx_store::fault_injection::set_failpoint("ctx_store.insert_message.after_insert", 1);
         let turn_id = user_message.turn_id.expect("turn id");
 
-        let (turn, events) = wait_for_terminal_turn(&daemon, session.id, turn_id).await;
-        assert_eq!(turn.status, SessionTurnStatus::Completed);
+        let snapshot = daemon
+            .wait_for_terminal_turn_persistence_snapshot_for_test(
+                session.id,
+                turn_id,
+                Duration::from_secs(120),
+            )
+            .await
+            .unwrap();
+        assert_eq!(snapshot.turn.status, SessionTurnStatus::Completed);
         assert!(
-            !events
+            !snapshot
+                .events
                 .iter()
                 .any(|event| matches!(event.event_type, SessionEventType::Error)),
-            "post-insert transient persistence failure should recover cleanly: {events:#?}"
+            "post-insert transient persistence failure should recover cleanly: {:#?}",
+            snapshot.events
         );
         assert_eq!(
-            events
+            snapshot
+                .events
                 .iter()
                 .filter(|event| matches!(
                     event.event_type,
@@ -177,26 +150,17 @@ async fn assistant_message_persistence_faults_recover_or_fail_honestly() {
                 ))
                 .count(),
             1,
-            "expected exactly one inserted assistant message after transactional retry: {events:#?}"
+            "expected exactly one inserted assistant message after transactional retry: {:#?}",
+            snapshot.events
         );
 
-        let store = daemon.store_for_session(session.id).await.unwrap();
-        let assistant_messages = store
-            .list_messages_for_session(session.id)
-            .await
-            .unwrap()
-            .into_iter()
-            .filter(|message| {
-                message.turn_id == Some(turn_id) && matches!(message.role, MessageRole::Assistant)
-            })
-            .collect::<Vec<_>>();
         assert_eq!(
-            assistant_messages.len(),
+            snapshot.assistant_messages.len(),
             1,
             "assistant message should not be duplicated after post-insert retry"
         );
         assert_eq!(
-            assistant_messages[0].content,
+            snapshot.assistant_messages[0].content,
             "done: retry after partial write"
         );
 
@@ -223,10 +187,17 @@ async fn assistant_message_persistence_faults_recover_or_fail_honestly() {
         let user_message = post_message(&app, session.id.0, "fail me").await;
         let turn_id = user_message.turn_id.expect("turn id");
 
-        let (turn, events) = wait_for_terminal_turn(&daemon, session.id, turn_id).await;
-        assert_eq!(turn.status, SessionTurnStatus::Failed);
+        let snapshot = daemon
+            .wait_for_terminal_turn_persistence_snapshot_for_test(
+                session.id,
+                turn_id,
+                Duration::from_secs(120),
+            )
+            .await
+            .unwrap();
+        assert_eq!(snapshot.turn.status, SessionTurnStatus::Failed);
         assert!(
-            events.iter().any(|event| {
+            snapshot.events.iter().any(|event| {
                 matches!(event.event_type, SessionEventType::TurnFinished)
                     && event
                         .payload_json
@@ -234,10 +205,12 @@ async fn assistant_message_persistence_faults_recover_or_fail_honestly() {
                         .and_then(|value| value.as_str())
                         == Some("failed")
             }),
-            "fatal assistant persistence failure must surface as a failed turn_finished event: {events:#?}"
+            "fatal assistant persistence failure must surface as a failed turn_finished event: {:#?}",
+            snapshot.events
         );
         assert_eq!(
-            events
+            snapshot
+                .events
                 .iter()
                 .filter(|event| matches!(
                     event.event_type,
@@ -245,10 +218,12 @@ async fn assistant_message_persistence_faults_recover_or_fail_honestly() {
                 ))
                 .count(),
             0,
-            "assistant message insert should fail in this scenario: {events:#?}"
+            "assistant message insert should fail in this scenario: {:#?}",
+            snapshot.events
         );
 
-        let turn_finished_statuses = events
+        let turn_finished_statuses = snapshot
+            .events
             .iter()
             .filter(|event| matches!(event.event_type, SessionEventType::TurnFinished))
             .map(|event| {
@@ -263,21 +238,12 @@ async fn assistant_message_persistence_faults_recover_or_fail_honestly() {
         assert_eq!(
             turn_finished_statuses,
             vec!["failed".to_string()],
-            "fatal assistant persistence failure must not emit a completed TurnFinished event: {events:#?}"
+            "fatal assistant persistence failure must not emit a completed TurnFinished event: {:#?}",
+            snapshot.events
         );
 
-        let store = daemon.store_for_session(session.id).await.unwrap();
-        let assistant_messages = store
-            .list_messages_for_session(session.id)
-            .await
-            .unwrap()
-            .into_iter()
-            .filter(|message| {
-                message.turn_id == Some(turn_id) && matches!(message.role, MessageRole::Assistant)
-            })
-            .collect::<Vec<_>>();
         assert!(
-            assistant_messages.is_empty(),
+            snapshot.assistant_messages.is_empty(),
             "no assistant message should be persisted when the fatal failpoint is armed"
         );
 

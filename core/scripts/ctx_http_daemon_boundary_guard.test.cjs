@@ -10,6 +10,7 @@ const {
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_TEST_CACHE_ACCESS_PATTERNS,
+  SCHEDULER_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
   SESSION_FIXTURE_TEST_STORE_ACCESS_PATTERNS,
   SMALL_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
   TEST_ROUTER_COMPOSITION_PATTERNS,
@@ -24,6 +25,7 @@ const {
   scanRepo,
   scanRouterComposition,
   scanText,
+  schedulerRuntimeStorePatternsForPath,
   sessionFixtureStorePatternsForPath,
   smallBoundaryStorePatternsForPath,
   stripCfgTestItems,
@@ -883,6 +885,65 @@ test("daemon boundary guard scopes small-boundary store facade roots", () => {
     smallBoundaryStorePatternsForPath(
       "core/crates/ctx-http/src/lib_tests/provider_routes.rs",
     ),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects direct scheduler-runtime store and handle access", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/turn_terminal_reconciliation.rs",
+    contents: `
+      use ctx_store::{Store, StoreManager};
+      async fn fixture(daemon: TestDaemon) {
+        daemon.global_store();
+        daemon.store_for_session(session_id).await?;
+        daemon.store_for_workspace(workspace_id).await?;
+        daemon.uncached_store_for_workspace(workspace_id).await?;
+        daemon.store_for_task(task_id).await?;
+        daemon.stores().global().await?;
+        stores.global().await?;
+        stores.workspace(workspace_id).await?;
+        daemon
+          .handle()
+          .sessions();
+        let _raw: Store;
+      }
+    `,
+    patterns: SCHEDULER_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct scheduler-runtime global store access",
+      "direct scheduler-runtime session store access",
+      "direct scheduler-runtime workspace store access",
+      "direct scheduler-runtime uncached workspace store access",
+      "direct scheduler-runtime task store access",
+      "direct scheduler-runtime StoreManager access",
+      "direct scheduler-runtime StoreManager global access",
+      "direct scheduler-runtime StoreManager workspace access",
+      "direct scheduler-runtime sessions handle access",
+      "raw scheduler-runtime ctx_store Store",
+      "raw scheduler-runtime ctx_store Store",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes scheduler-runtime store facade roots", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/tests/assistant_chunk_stream_only.rs",
+    "core/crates/ctx-http/tests/assistant_message_persistence_faults.rs",
+    "core/crates/ctx-http/tests/turn_lifecycle_events.rs",
+    "core/crates/ctx-http/tests/turn_terminal_reconciliation.rs",
+  ]) {
+    assert.deepEqual(
+      schedulerRuntimeStorePatternsForPath(filePath),
+      SCHEDULER_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
+    );
+  }
+  assert.deepEqual(
+    schedulerRuntimeStorePatternsForPath("core/crates/ctx-http/tests/noisy_output_backpressure.rs"),
     [],
   );
 });

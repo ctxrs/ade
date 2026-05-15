@@ -85,6 +85,24 @@ pub struct RunArchiveRouteFixture {
     pub run_id: RunId,
 }
 
+pub struct AssistantChunkStreamSnapshot {
+    pub events: Vec<SessionEvent>,
+    pub turns: Vec<SessionTurn>,
+}
+
+pub struct TerminalTurnPersistenceSnapshot {
+    pub turn: SessionTurn,
+    pub events: Vec<SessionEvent>,
+    pub assistant_messages: Vec<Message>,
+}
+
+pub struct TurnReconciliationSnapshot {
+    pub turn: SessionTurn,
+    pub events: Vec<SessionEvent>,
+    pub last_turn_status: Option<SessionTurnStatus>,
+    pub is_working: bool,
+}
+
 struct CtxUiTurnSeed {
     index: i64,
     run_id: String,
@@ -1225,6 +1243,190 @@ impl TestDaemon {
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
+    }
+
+    pub async fn wait_for_scheduler_runtime_events_for_test<F>(
+        &self,
+        session_id: SessionId,
+        timeout: Duration,
+        label: &str,
+        mut predicate: F,
+    ) -> anyhow::Result<Vec<SessionEvent>>
+    where
+        F: FnMut(&[SessionEvent]) -> bool,
+    {
+        let store = self.state.store_for_session(session_id).await?;
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let events = store.list_session_events(session_id).await?;
+            if predicate(&events) {
+                return Ok(events);
+            }
+            if tokio::time::Instant::now() >= deadline {
+                anyhow::bail!("timed out waiting for {label}: {events:#?}");
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
+
+    pub async fn assistant_chunk_stream_snapshot_for_test(
+        &self,
+        session_id: SessionId,
+        timeout: Duration,
+    ) -> anyhow::Result<AssistantChunkStreamSnapshot> {
+        let events = self
+            .wait_for_scheduler_runtime_events_for_test(
+                session_id,
+                timeout,
+                "Done event",
+                |events| {
+                    events
+                        .iter()
+                        .any(|event| matches!(event.event_type, SessionEventType::Done))
+                },
+            )
+            .await?;
+        let turns = self
+            .state
+            .store_for_session(session_id)
+            .await?
+            .list_session_turns_page_by_seq(session_id, None, Some(1))
+            .await?;
+        Ok(AssistantChunkStreamSnapshot { events, turns })
+    }
+
+    pub async fn wait_for_terminal_turn_persistence_snapshot_for_test(
+        &self,
+        session_id: SessionId,
+        turn_id: TurnId,
+        timeout: Duration,
+    ) -> anyhow::Result<TerminalTurnPersistenceSnapshot> {
+        let store = self.state.store_for_session(session_id).await?;
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let turn = store
+                .get_session_turn(session_id, turn_id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("turn {turn_id:?} not found"))?;
+            let events = store
+                .list_session_events_for_turn(session_id, turn_id, false)
+                .await?;
+            let terminal = matches!(
+                turn.status,
+                SessionTurnStatus::Completed
+                    | SessionTurnStatus::Failed
+                    | SessionTurnStatus::Interrupted
+            );
+            let finished = events
+                .iter()
+                .any(|event| matches!(event.event_type, SessionEventType::TurnFinished));
+            if terminal && finished {
+                let assistant_messages = store
+                    .list_messages_for_session(session_id)
+                    .await?
+                    .into_iter()
+                    .filter(|message| {
+                        message.turn_id == Some(turn_id)
+                            && matches!(message.role, MessageRole::Assistant)
+                    })
+                    .collect();
+                return Ok(TerminalTurnPersistenceSnapshot {
+                    turn,
+                    events,
+                    assistant_messages,
+                });
+            }
+            if tokio::time::Instant::now() >= deadline {
+                anyhow::bail!("timed out waiting for terminal turn: {events:#?}");
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    pub async fn seed_running_turn_for_reconciliation_test(
+        &self,
+        session_id: SessionId,
+        run_id: RunId,
+        turn_id: TurnId,
+    ) -> anyhow::Result<()> {
+        self.state
+            .store_for_session(session_id)
+            .await?
+            .insert_session_turn(SessionTurn {
+                turn_id,
+                session_id,
+                run_id: Some(run_id),
+                user_message_id: Some(MessageId::new()),
+                status: SessionTurnStatus::Running,
+                start_seq: Some(1),
+                end_seq: None,
+                started_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+                assistant_partial: None,
+                thought_partial: None,
+                metrics_json: None,
+                failure: None,
+                tool_total: 0,
+                tool_pending: 0,
+                tool_running: 0,
+                tool_completed: 0,
+                tool_failed: 0,
+            })
+            .await?;
+        Ok(())
+    }
+
+    pub async fn append_turn_finished_event_for_test(
+        &self,
+        session_id: SessionId,
+        run_id: Option<RunId>,
+        turn_id: TurnId,
+        status: SessionTurnStatus,
+    ) -> anyhow::Result<SessionEvent> {
+        let status = match status {
+            SessionTurnStatus::Completed => "completed",
+            SessionTurnStatus::Failed => "failed",
+            SessionTurnStatus::Interrupted => "interrupted",
+            other => anyhow::bail!("unsupported terminal status for fixture: {other:?}"),
+        };
+        self.state
+            .store_for_session(session_id)
+            .await?
+            .append_session_event(
+                session_id,
+                run_id,
+                Some(turn_id),
+                SessionEventType::TurnFinished,
+                serde_json::json!({ "status": status }),
+            )
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn turn_reconciliation_snapshot_for_test(
+        &self,
+        session_id: SessionId,
+        turn_id: TurnId,
+    ) -> anyhow::Result<TurnReconciliationSnapshot> {
+        let store = self.state.store_for_session(session_id).await?;
+        let turn = store
+            .get_session_turn(session_id, turn_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("turn {turn_id:?} not found"))?;
+        let events = store
+            .list_session_events_for_turn(session_id, turn_id, false)
+            .await?;
+        let summary = store
+            .get_session_snapshot(session_id, 50, false)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("session snapshot {session_id:?} not found"))?
+            .summary;
+        Ok(TurnReconciliationSnapshot {
+            turn,
+            events,
+            last_turn_status: summary.activity.last_turn_status,
+            is_working: summary.activity.is_working,
+        })
     }
 
     pub async fn seed_invalid_workspace_runtime_settings_for_test(

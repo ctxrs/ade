@@ -156,6 +156,13 @@ const smallBoundaryStoreFacadeTestRoots = [
   "core/crates/ctx-http/src/api/workspaces/tests.rs",
 ];
 
+const schedulerRuntimeStoreFacadeTestRoots = [
+  "core/crates/ctx-http/tests/assistant_chunk_stream_only.rs",
+  "core/crates/ctx-http/tests/assistant_message_persistence_faults.rs",
+  "core/crates/ctx-http/tests/turn_lifecycle_events.rs",
+  "core/crates/ctx-http/tests/turn_terminal_reconciliation.rs",
+];
+
 const API_RAW_DAEMON_PATTERNS = [
   {
     name: "raw DaemonState type",
@@ -438,6 +445,50 @@ const SMALL_BOUNDARY_TEST_STORE_ACCESS_PATTERNS = [
   },
 ];
 
+const SCHEDULER_RUNTIME_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct scheduler-runtime global store access",
+    regex: /\.global_store\s*\(/,
+  },
+  {
+    name: "direct scheduler-runtime session store access",
+    regex: /\.store_for_session\s*\(/,
+  },
+  {
+    name: "direct scheduler-runtime workspace store access",
+    regex: /\.store_for_workspace\s*\(/,
+  },
+  {
+    name: "direct scheduler-runtime uncached workspace store access",
+    regex: /\.uncached_store_for_workspace\s*\(/,
+  },
+  {
+    name: "direct scheduler-runtime task store access",
+    regex: /\.store_for_task\s*\(/,
+  },
+  {
+    name: "direct scheduler-runtime StoreManager access",
+    regex: /\.stores\s*\(/,
+  },
+  {
+    name: "direct scheduler-runtime StoreManager global access",
+    regex: /\bstores\.global\s*\(/,
+  },
+  {
+    name: "direct scheduler-runtime StoreManager workspace access",
+    regex: /\bstores\.workspace\s*\(/,
+  },
+  {
+    name: "direct scheduler-runtime sessions handle access",
+    regex: /a^/,
+    contentRegex: /\.handle\s*\(\s*\)\s*\.\s*sessions\s*\(/gm,
+  },
+  {
+    name: "raw scheduler-runtime ctx_store Store",
+    regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore\b/,
+  },
+];
+
 function isRustFile(filePath) {
   return filePath.endsWith(".rs");
 }
@@ -604,6 +655,13 @@ function sessionFixtureStorePatternsForPath(relativePath) {
 function smallBoundaryStorePatternsForPath(relativePath) {
   if (smallBoundaryStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return SMALL_BOUNDARY_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
+function schedulerRuntimeStorePatternsForPath(relativePath) {
+  if (schedulerRuntimeStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return SCHEDULER_RUNTIME_TEST_STORE_ACCESS_PATTERNS;
   }
   return [];
 }
@@ -847,6 +905,13 @@ function scanRepo() {
       }),
     );
     violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
+        patterns: schedulerRuntimeStorePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
       ...scanRouterComposition({
         filePath: relativePath,
         contents,
@@ -886,6 +951,7 @@ module.exports = {
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_TEST_CACHE_ACCESS_PATTERNS,
+  SCHEDULER_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
   SESSION_FIXTURE_TEST_STORE_ACCESS_PATTERNS,
   SMALL_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
   TEST_ROUTER_COMPOSITION_PATTERNS,
@@ -900,6 +966,7 @@ module.exports = {
   scanRepo,
   scanRouterComposition,
   scanText,
+  schedulerRuntimeStorePatternsForPath,
   sessionFixtureStorePatternsForPath,
   smallBoundaryStorePatternsForPath,
   stripCfgTestItems,
