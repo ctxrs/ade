@@ -1,13 +1,12 @@
 #![cfg(feature = "fault_injection")]
 
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::http::{Method, StatusCode};
 use ctx_core::models::{
     Message, MessageRole, SessionEvent, SessionEventType, SessionTurn, SessionTurnStatus,
 };
-use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::test_support::TestDaemon;
 use serde_json::json;
 
 mod common;
@@ -30,11 +29,11 @@ async fn post_message(app: &axum::Router, session_id: uuid::Uuid, content: &str)
 }
 
 async fn wait_for_terminal_turn(
-    state: &Arc<DaemonState>,
+    daemon: &TestDaemon,
     session_id: ctx_core::ids::SessionId,
     turn_id: ctx_core::ids::TurnId,
 ) -> (SessionTurn, Vec<SessionEvent>) {
-    let store = state.store_for_session(session_id).await.unwrap();
+    let store = daemon.store_for_session(session_id).await.unwrap();
     let deadline = Instant::now() + Duration::from_secs(120);
     loop {
         let turn = store
@@ -72,13 +71,13 @@ async fn assistant_message_persistence_faults_recover_or_fail_honestly() {
         let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
         let data_dir = tempfile::tempdir().unwrap();
         let stores = common::setup_store(data_dir.path()).await;
-        let state = common::build_state(
+        let daemon = common::build_daemon(
             data_dir.path().to_path_buf(),
             stores,
             common::fake_providers(),
             "http://127.0.0.1:0",
         );
-        let app = common::router(state.clone());
+        let app = common::router_for_daemon(&daemon);
 
         ctx_http::fault_injection::set_failpoint("ctx_http.persist_assistant_message.transient", 1);
 
@@ -88,7 +87,7 @@ async fn assistant_message_persistence_faults_recover_or_fail_honestly() {
         let user_message = post_message(&app, session.id.0, "retry me").await;
         let turn_id = user_message.turn_id.expect("turn id");
 
-        let (turn, events) = wait_for_terminal_turn(&state, session.id, turn_id).await;
+        let (turn, events) = wait_for_terminal_turn(&daemon, session.id, turn_id).await;
         assert_eq!(turn.status, SessionTurnStatus::Completed);
         assert!(
             !events
@@ -108,7 +107,7 @@ async fn assistant_message_persistence_faults_recover_or_fail_honestly() {
             "expected exactly one inserted assistant message after retry: {events:#?}"
         );
 
-        let store = state.store_for_session(session.id).await.unwrap();
+        let store = daemon.store_for_session(session.id).await.unwrap();
         let assistant_messages = store
             .list_messages_for_session(session.id)
             .await
@@ -146,13 +145,13 @@ async fn assistant_message_persistence_faults_recover_or_fail_honestly() {
         let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
         let data_dir = tempfile::tempdir().unwrap();
         let stores = common::setup_store(data_dir.path()).await;
-        let state = common::build_state(
+        let daemon = common::build_daemon(
             data_dir.path().to_path_buf(),
             stores,
             common::fake_providers(),
             "http://127.0.0.1:0",
         );
-        let app = common::router(state.clone());
+        let app = common::router_for_daemon(&daemon);
 
         let ws = common::create_workspace(&app, repo.path(), "ws").await;
         let (_task, session) =
@@ -161,7 +160,7 @@ async fn assistant_message_persistence_faults_recover_or_fail_honestly() {
         ctx_store::fault_injection::set_failpoint("ctx_store.insert_message.after_insert", 1);
         let turn_id = user_message.turn_id.expect("turn id");
 
-        let (turn, events) = wait_for_terminal_turn(&state, session.id, turn_id).await;
+        let (turn, events) = wait_for_terminal_turn(&daemon, session.id, turn_id).await;
         assert_eq!(turn.status, SessionTurnStatus::Completed);
         assert!(
             !events
@@ -181,7 +180,7 @@ async fn assistant_message_persistence_faults_recover_or_fail_honestly() {
             "expected exactly one inserted assistant message after transactional retry: {events:#?}"
         );
 
-        let store = state.store_for_session(session.id).await.unwrap();
+        let store = daemon.store_for_session(session.id).await.unwrap();
         let assistant_messages = store
             .list_messages_for_session(session.id)
             .await
@@ -208,13 +207,13 @@ async fn assistant_message_persistence_faults_recover_or_fail_honestly() {
         let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
         let data_dir = tempfile::tempdir().unwrap();
         let stores = common::setup_store(data_dir.path()).await;
-        let state = common::build_state(
+        let daemon = common::build_daemon(
             data_dir.path().to_path_buf(),
             stores,
             common::fake_providers(),
             "http://127.0.0.1:0",
         );
-        let app = common::router(state.clone());
+        let app = common::router_for_daemon(&daemon);
 
         ctx_http::fault_injection::set_failpoint("ctx_http.persist_assistant_message.fatal", 1);
 
@@ -224,7 +223,7 @@ async fn assistant_message_persistence_faults_recover_or_fail_honestly() {
         let user_message = post_message(&app, session.id.0, "fail me").await;
         let turn_id = user_message.turn_id.expect("turn id");
 
-        let (turn, events) = wait_for_terminal_turn(&state, session.id, turn_id).await;
+        let (turn, events) = wait_for_terminal_turn(&daemon, session.id, turn_id).await;
         assert_eq!(turn.status, SessionTurnStatus::Failed);
         assert!(
             events.iter().any(|event| {
@@ -267,7 +266,7 @@ async fn assistant_message_persistence_faults_recover_or_fail_honestly() {
             "fatal assistant persistence failure must not emit a completed TurnFinished event: {events:#?}"
         );
 
-        let store = state.store_for_session(session.id).await.unwrap();
+        let store = daemon.store_for_session(session.id).await.unwrap();
         let assistant_messages = store
             .list_messages_for_session(session.id)
             .await

@@ -305,6 +305,7 @@ test("daemon boundary guard scopes migrated raw daemon constructor ban", () => {
   for (const filePath of [
     "core/crates/ctx-http/tests/acp_target_scoped_status.rs",
     "core/crates/ctx-http/tests/assistant_chunk_stream_only.rs",
+    "core/crates/ctx-http/tests/assistant_message_persistence_faults.rs",
     "core/crates/ctx-http/src/api/settings.rs",
     "core/crates/ctx-http/src/api/sessions/tests.rs",
     "core/crates/ctx-http/src/api/sessions/tests/title_generation.rs",
@@ -349,6 +350,7 @@ test("daemon boundary guard scopes migrated raw daemon constructor ban", () => {
     "core/crates/ctx-http/tests/repo_init_initial_commit.rs",
     "core/crates/ctx-http/tests/repo_validate_destination.rs",
     "core/crates/ctx-http/tests/system_prompt_append_http.rs",
+    "core/crates/ctx-http/tests/turn_lifecycle_events.rs",
     "core/crates/ctx-http/tests/workspace_execution_config_http.rs",
     "core/crates/ctx-http/tests/workspace_provider_model_preferences_http.rs",
     "core/crates/ctx-http/tests/workspace_stream_context_window_metrics.rs",

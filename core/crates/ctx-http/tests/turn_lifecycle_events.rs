@@ -41,13 +41,13 @@ async fn queued_message_emits_lifecycle_events_in_order_with_interrupt() {
         return;
     }
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (_task, session) =
@@ -73,7 +73,7 @@ async fn queued_message_emits_lifecycle_events_in_order_with_interrupt() {
 
     let turn_id_one = msg1.turn_id.expect("first turn id");
     let turn_id_two = msg2.turn_id.expect("second turn id");
-    let store = state.store_for_session(session.id).await.unwrap();
+    let store = daemon.store_for_session(session.id).await.unwrap();
 
     let deadline = tokio::time::Instant::now() + LIFECYCLE_EVENT_TIMEOUT;
     loop {
@@ -183,13 +183,13 @@ async fn cancel_promotes_next_queued_turn_after_interrupted_finish() {
         return;
     }
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (_task, session) =
@@ -215,7 +215,7 @@ async fn cancel_promotes_next_queued_turn_after_interrupted_finish() {
 
     let turn_id_one = msg1.turn_id.expect("first turn id");
     let turn_id_two = msg2.turn_id.expect("second turn id");
-    let store = state.store_for_session(session.id).await.unwrap();
+    let store = daemon.store_for_session(session.id).await.unwrap();
 
     let deadline = tokio::time::Instant::now() + LIFECYCLE_EVENT_TIMEOUT;
     loop {
@@ -302,13 +302,13 @@ async fn cancel_promotes_queued_turns_in_fifo_order_across_multiple_cancels() {
         return;
     }
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (_task, session) =
@@ -344,7 +344,7 @@ async fn cancel_promotes_queued_turns_in_fifo_order_across_multiple_cancels() {
     let turn_id_one = msg1.turn_id.expect("first turn id");
     let turn_id_two = msg2.turn_id.expect("second turn id");
     let turn_id_three = msg3.turn_id.expect("third turn id");
-    let store = state.store_for_session(session.id).await.unwrap();
+    let store = daemon.store_for_session(session.id).await.unwrap();
 
     let deadline = tokio::time::Instant::now() + LIFECYCLE_EVENT_TIMEOUT;
     loop {
