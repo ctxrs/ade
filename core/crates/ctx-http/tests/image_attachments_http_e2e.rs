@@ -52,13 +52,13 @@ async fn image_attachments_use_blobs_and_never_persist_base64() {
 
     let data_dir = tempfile::tempdir().unwrap();
     let store = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         store,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
 
     // 1) Upload blob and fetch it back.
     let boundary = "ctx-test-boundary";
@@ -144,13 +144,13 @@ async fn image_ref_attachments_use_stored_blob_mime_type() {
 
     let data_dir = tempfile::tempdir().unwrap();
     let store = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         store,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
 
     let boundary = "ctx-test-boundary";
     let body = multipart_body(boundary, "file", "x.png", Some("image/png"), &png_bytes);
@@ -202,13 +202,13 @@ async fn blob_upload_infers_image_mime_type_from_filename_when_part_content_type
 
     let data_dir = tempfile::tempdir().unwrap();
     let store = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         store,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
 
     let boundary = "ctx-test-boundary";
     let body = multipart_body(boundary, "file", "x.png", None, &png_bytes);
@@ -235,13 +235,13 @@ async fn blob_upload_infers_image_mime_type_from_filename_when_part_content_type
 async fn blob_upload_route_accepts_attachment_limit_and_rejects_one_byte_over() {
     let data_dir = tempfile::tempdir().unwrap();
     let store = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         store,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state);
+    let app = common::router_for_daemon(&daemon);
     let boundary = "ctx-upload-limit-boundary";
 
     let bytes_at_limit = vec![0_u8; MAX_MESSAGE_IMAGE_ATTACHMENT_BYTES];
@@ -329,13 +329,13 @@ async fn blob_upload_route_accepts_attachment_limit_and_rejects_one_byte_over() 
 async fn non_image_blob_refs_are_rejected() {
     let data_dir = tempfile::tempdir().unwrap();
     let store = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         store,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
 
     let blob_id = uuid::Uuid::new_v4().to_string();
     let bytes = b"not-an-image";
@@ -345,7 +345,7 @@ async fn non_image_blob_refs_are_rejected() {
         .await
         .unwrap();
     tokio::fs::write(&blob_path, bytes).await.unwrap();
-    state
+    daemon
         .global_store()
         .insert_blob(
             &blob_id,
@@ -380,7 +380,7 @@ async fn non_image_blob_refs_are_rejected() {
         Some("Only image attachments are supported.")
     );
 
-    let session_store = state.store_for_session(session.id).await.unwrap();
+    let session_store = daemon.store_for_session(session.id).await.unwrap();
     assert_eq!(
         session_store
             .count_user_messages_for_session(session.id)
@@ -394,13 +394,13 @@ async fn non_image_blob_refs_are_rejected() {
 async fn oversized_image_ref_attachments_are_rejected_before_turn_start() {
     let data_dir = tempfile::tempdir().unwrap();
     let store = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         store,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
 
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
@@ -408,7 +408,7 @@ async fn oversized_image_ref_attachments_are_rejected_before_turn_start() {
         common::create_task_with_session(&app, ws.id.0, "t1", "fake", "fake-model").await;
     let blob_id = uuid::Uuid::new_v4().to_string();
     let sha256 = hex::encode(sha2::Sha256::digest(b"oversized-image-ref"));
-    state
+    daemon
         .global_store()
         .insert_blob(
             &blob_id,
@@ -438,7 +438,7 @@ async fn oversized_image_ref_attachments_are_rejected_before_turn_start() {
         Some("Image attachments must be 25 MiB or smaller.")
     );
 
-    let session_store = state.store_for_session(session.id).await.unwrap();
+    let session_store = daemon.store_for_session(session.id).await.unwrap();
     assert_eq!(
         session_store
             .count_user_messages_for_session(session.id)
