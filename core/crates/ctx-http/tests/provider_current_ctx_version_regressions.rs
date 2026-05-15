@@ -8,7 +8,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use axum::http::StatusCode;
-use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::test_support::TestDaemon;
 use ctx_managed_installs::{
     load_agent_server_config, save_agent_server_config, AgentServerCommand, AgentServerConfigFile,
     ManagedInstallMetadata,
@@ -54,9 +54,9 @@ async fn env_lock() -> tokio::sync::OwnedMutexGuard<()> {
         .await
 }
 
-async fn seed_provider_status(state: &Arc<DaemonState>, status: ProviderStatus) {
+async fn seed_provider_status(daemon: &TestDaemon, status: ProviderStatus) {
     let provider_id = status.provider_id.clone();
-    state.test_upsert_provider_status(provider_id, status).await;
+    daemon.upsert_provider_status(provider_id, status).await;
 }
 
 fn ensure_test_build_identity() {
@@ -261,12 +261,12 @@ async fn save_managed_provider_target(
 }
 
 async fn wait_for_install_completion(
-    state: &Arc<DaemonState>,
+    daemon: &TestDaemon,
     install_id: InstallId,
 ) -> ctx_provider_install::install_state::InstallInfo {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
     loop {
-        let info = state
+        let info = daemon
             .get_install_info(install_id)
             .await
             .expect("missing install info");
@@ -309,16 +309,16 @@ async fn container_provider_status_fails_closed_when_hybrid_artifact_is_missing(
     );
 
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
 
     seed_provider_status(
-        &state,
+        &daemon,
         ProviderStatus {
             provider_id: "gemini".to_string(),
             installed: false,
@@ -429,13 +429,13 @@ async fn host_provider_status_surfaces_stale_installs_for_current_ctx_build() {
     .await;
 
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
 
     for (provider_id, version) in [
         ("codex", "0.124.0-ctx.1"),
@@ -443,7 +443,7 @@ async fn host_provider_status_surfaces_stale_installs_for_current_ctx_build() {
         ("cursor", "0.7.1"),
     ] {
         seed_provider_status(
-            &state,
+            &daemon,
             ProviderStatus {
                 provider_id: provider_id.to_string(),
                 installed: true,
@@ -553,13 +553,13 @@ async fn managed_install_start_uses_runtime_build_identity_for_release_resolutio
     );
 
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
 
     let (install_status, install_body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -578,7 +578,7 @@ async fn managed_install_start_uses_runtime_build_identity_for_release_resolutio
         .and_then(serde_json::Value::as_str)
         .and_then(|raw| raw.parse::<InstallId>().ok())
         .expect("install id");
-    let install_info = wait_for_install_completion(&state, install_id).await;
+    let install_info = wait_for_install_completion(&daemon, install_id).await;
     assert!(
         matches!(install_info.state, InstallStateKind::Succeeded),
         "managed install should succeed once started: {install_info:#?}"
