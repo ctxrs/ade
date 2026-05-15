@@ -53,7 +53,7 @@ impl ProviderAdapter for StartFailProvider {
 struct TestHarness {
     _repo: tempfile::TempDir,
     _data_dir: tempfile::TempDir,
-    state: std::sync::Arc<ctx_daemon::daemon::DaemonState>,
+    daemon: ctx_daemon::test_support::TestDaemon,
     session: ctx_core::models::Session,
     store: ctx_store::Store,
 }
@@ -99,21 +99,21 @@ async fn setup_state_with_providers(
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (_task, session) =
         common::create_task_with_session(&app, ws.id.0, "t1", "fake", "fake-model").await;
-    let store = state.store_for_session(session.id).await.unwrap();
+    let store = daemon.store_for_session(session.id).await.unwrap();
     TestHarness {
         _repo: repo,
         _data_dir: data_dir,
-        state,
+        daemon,
         session,
         store,
     }
@@ -138,15 +138,16 @@ async fn reconcile_terminal_state_respects_turn_finished_status() {
         .await
         .unwrap();
 
-    ctx_daemon::daemon::scheduler::reconcile_turn_terminal_state(
-        &harness.state,
-        harness.session.id,
-        Some(run_id),
-        turn_id,
-        "daemon_restart",
-    )
-    .await
-    .unwrap();
+    harness
+        .daemon
+        .reconcile_turn_terminal_state_for_test(
+            harness.session.id,
+            Some(run_id),
+            turn_id,
+            "daemon_restart",
+        )
+        .await
+        .unwrap();
 
     let turn = harness
         .store
@@ -177,15 +178,16 @@ async fn reconcile_terminal_state_emits_interrupt_when_terminal_event_missing() 
     let turn_id = TurnId::new();
     insert_running_turn(&harness.store, harness.session.id, run_id, turn_id).await;
 
-    ctx_daemon::daemon::scheduler::reconcile_turn_terminal_state(
-        &harness.state,
-        harness.session.id,
-        Some(run_id),
-        turn_id,
-        "daemon_restart",
-    )
-    .await
-    .unwrap();
+    harness
+        .daemon
+        .reconcile_turn_terminal_state_for_test(
+            harness.session.id,
+            Some(run_id),
+            turn_id,
+            "daemon_restart",
+        )
+        .await
+        .unwrap();
 
     let turn = harness
         .store
@@ -223,15 +225,16 @@ async fn reconcile_provider_exit_emits_failed_terminal_events_when_missing() {
     let turn_id = TurnId::new();
     insert_running_turn(&harness.store, harness.session.id, run_id, turn_id).await;
 
-    ctx_daemon::daemon::scheduler::reconcile_turn_failed_on_provider_exit(
-        &harness.state,
-        harness.session.id,
-        Some(run_id),
-        turn_id,
-        "provider_exit",
-    )
-    .await
-    .unwrap();
+    harness
+        .daemon
+        .reconcile_turn_failed_on_provider_exit_for_test(
+            harness.session.id,
+            Some(run_id),
+            turn_id,
+            "provider_exit",
+        )
+        .await
+        .unwrap();
 
     let turn = harness
         .store
@@ -294,7 +297,7 @@ async fn start_failure_marks_turn_failed_and_finishes() {
     let mut providers = common::fake_providers();
     providers.insert("fake".into(), Arc::new(StartFailProvider));
     let harness = setup_state_with_providers(providers).await;
-    let app = common::router(harness.state.clone());
+    let app = common::router_for_daemon(&harness.daemon);
 
     let (status, message): (axum::http::StatusCode, ctx_core::models::Message) =
         common::json_request(

@@ -88,6 +88,7 @@ const migratedRawDaemonTestRoots = [
   "core/crates/ctx-http/tests/terminal_ws_reconnect.rs",
   "core/crates/ctx-http/tests/title_generation_local_e2e.rs",
   "core/crates/ctx-http/tests/turn_lifecycle_events.rs",
+  "core/crates/ctx-http/tests/turn_terminal_reconciliation.rs",
   "core/crates/ctx-http/tests/workspace_execution_config_http.rs",
   "core/crates/ctx-http/tests/workspace_attachments_local_canonical.rs",
   "core/crates/ctx-http/tests/workspace_merge_queue_config_http.rs",
@@ -209,6 +210,24 @@ const MIGRATED_TEST_RAW_DAEMON_PATTERNS = [
   {
     name: "raw provider-session token helper in migrated test surface",
     regex: /(?:\bctx_daemon::daemon::|(?<!\.)\b)(?:issue_provider_session_mcp_token(?:_with_capabilities)?|revoke_provider_session_mcp_token)\s*\(/,
+  },
+  {
+    name: "raw daemon scheduler helper in migrated test surface",
+    regex: /\bctx_daemon::daemon::\s*scheduler\b|(?<![\w:.])daemon::scheduler::/,
+    contentRegex: /\bctx_daemon::daemon::\s*\{(?=[^}]*\bscheduler\b)[^}]*\}/g,
+  },
+  {
+    name: "raw daemon module alias in migrated test surface",
+    regex: /\bctx_daemon::daemon\s+as\s+\w+/,
+  },
+  {
+    name: "ctx-daemon crate alias in migrated test surface",
+    regex: /\b(?:use|extern\s+crate)\s+ctx_daemon\s+as\s+\w+/,
+  },
+  {
+    name: "raw ctx-daemon outer grouped daemon import in migrated test surface",
+    regex: /\bctx_daemon::\s*\{(?=[^}\n]*\b(?:daemon|self\s+as)\b)[^}\n]*\}/,
+    contentRegex: /\bctx_daemon::\s*\{(?=[^}]*\n)(?=[^}]*\b(?:daemon|self\s+as)\b)[^}]*\}/g,
   },
 ];
 

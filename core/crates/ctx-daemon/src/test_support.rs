@@ -4,7 +4,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use ctx_core::ids::{
-    SessionId, TaskId, TerminalId, WorkspaceAttachmentId, WorkspaceId, WorktreeId,
+    RunId, SessionId, TaskId, TerminalId, TurnId, WorkspaceAttachmentId, WorkspaceId, WorktreeId,
 };
 use ctx_core::models::{
     Session, SessionHeadDelta, WorkspaceAttachmentStatus, Worktree, WorktreeVcsSnapshot,
@@ -152,6 +152,40 @@ impl TestDaemon {
         self.state
             .ensure_workspace_active_snapshot_hydrated(workspace_id)
             .await
+    }
+
+    pub async fn reconcile_turn_terminal_state_for_test(
+        &self,
+        session_id: SessionId,
+        run_id: Option<RunId>,
+        turn_id: TurnId,
+        fallback_reason: &str,
+    ) -> anyhow::Result<()> {
+        daemon::scheduler::reconcile_turn_terminal_state(
+            &self.state,
+            session_id,
+            run_id,
+            turn_id,
+            fallback_reason,
+        )
+        .await
+    }
+
+    pub async fn reconcile_turn_failed_on_provider_exit_for_test(
+        &self,
+        session_id: SessionId,
+        run_id: Option<RunId>,
+        turn_id: TurnId,
+        fallback_reason: &str,
+    ) -> anyhow::Result<()> {
+        daemon::scheduler::reconcile_turn_failed_on_provider_exit(
+            &self.state,
+            session_id,
+            run_id,
+            turn_id,
+            fallback_reason,
+        )
+        .await
     }
 
     pub async fn mark_worktree_vcs_active_for_test(&self, worktree_id: WorktreeId) {

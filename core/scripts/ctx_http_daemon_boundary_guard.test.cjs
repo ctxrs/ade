@@ -263,6 +263,99 @@ test("daemon boundary guard rejects alternate raw daemon constructors in migrate
   );
 });
 
+test("daemon boundary guard rejects raw scheduler helpers in migrated test roots", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/turn_terminal_reconciliation.rs",
+    contents: `
+      use ctx_daemon::daemon::scheduler::reconcile_turn_terminal_state;
+      use ctx_daemon::daemon::scheduler as sched;
+      use ctx_daemon::daemon::{scheduler};
+      use ctx_daemon::daemon::{
+        merge_queue,
+        scheduler as daemon_scheduler,
+      };
+      use ctx_daemon::daemon as d;
+      use ctx_daemon as cd;
+      extern crate ctx_daemon as ctxd;
+
+      async fn helper() {
+        ctx_daemon::daemon::scheduler::reconcile_turn_failed_on_provider_exit(&state, session, run, turn, "provider_exit").await?;
+        daemon::scheduler::reconcile_turn_terminal_state(&state, session, run, turn, "restart").await?;
+      }
+    `,
+    patterns: MIGRATED_TEST_RAW_DAEMON_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "raw daemon scheduler helper in migrated test surface",
+      "raw daemon scheduler helper in migrated test surface",
+      "raw daemon scheduler helper in migrated test surface",
+      "raw daemon scheduler helper in migrated test surface",
+      "raw daemon scheduler helper in migrated test surface",
+      "raw daemon scheduler helper in migrated test surface",
+      "raw daemon module alias in migrated test surface",
+      "ctx-daemon crate alias in migrated test surface",
+      "ctx-daemon crate alias in migrated test surface",
+    ],
+  );
+});
+
+test("daemon boundary guard rejects outer ctx-daemon grouped imports in migrated test roots", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/turn_terminal_reconciliation.rs",
+    contents: `
+      use ctx_daemon::{daemon as daemon_alias};
+      use ctx_daemon::{self as ctxd_grouped};
+      use ctx_daemon::{daemon::scheduler};
+      use ctx_daemon::{
+        daemon::{scheduler as outer_scheduler},
+      };
+    `,
+    patterns: MIGRATED_TEST_RAW_DAEMON_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "raw ctx-daemon outer grouped daemon import in migrated test surface",
+      "raw ctx-daemon outer grouped daemon import in migrated test surface",
+      "raw ctx-daemon outer grouped daemon import in migrated test surface",
+      "raw ctx-daemon outer grouped daemon import in migrated test surface",
+    ],
+  );
+});
+
+test("daemon boundary guard allows outer grouped TestDaemon imports in migrated test roots", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/turn_terminal_reconciliation.rs",
+    contents: `
+      use ctx_daemon::{test_support::TestDaemon};
+    `,
+    patterns: MIGRATED_TEST_RAW_DAEMON_PATTERNS,
+  });
+
+  assert.deepEqual(violations, []);
+});
+
+test("daemon boundary guard keeps scheduler grouped-import matching inside braces", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/turn_terminal_reconciliation.rs",
+    contents: `
+      use ctx_daemon::daemon::{merge_queue};
+
+      async fn helper() {
+        let scheduler = "not an import";
+        assert_eq!(scheduler, "not an import");
+      }
+    `,
+    patterns: MIGRATED_TEST_RAW_DAEMON_PATTERNS,
+  });
+
+  assert.deepEqual(violations, []);
+});
+
 test("daemon boundary guard allows TestDaemon provider-session token facade calls", () => {
   const violations = scanText({
     filePath: "core/crates/ctx-http/src/lib_tests/auth_boundaries/example.rs",
@@ -271,6 +364,8 @@ test("daemon boundary guard allows TestDaemon provider-session token facade call
         let _ = state.issue_provider_session_mcp_token(session, workspace, worktree).await;
         let _ = state.issue_provider_session_mcp_token_with_capabilities(session, workspace, worktree, capabilities).await;
         let _ = state.revoke_provider_session_mcp_token(token).await;
+        state.reconcile_turn_terminal_state_for_test(session, run, turn, "restart").await?;
+        state.reconcile_turn_failed_on_provider_exit_for_test(session, run, turn, "provider_exit").await?;
       }
     `,
     patterns: MIGRATED_TEST_RAW_DAEMON_PATTERNS,
@@ -366,6 +461,7 @@ test("daemon boundary guard scopes migrated raw daemon constructor ban", () => {
     "core/crates/ctx-http/tests/terminal_ws_reconnect.rs",
     "core/crates/ctx-http/tests/title_generation_local_e2e.rs",
     "core/crates/ctx-http/tests/turn_lifecycle_events.rs",
+    "core/crates/ctx-http/tests/turn_terminal_reconciliation.rs",
     "core/crates/ctx-http/tests/workspace_execution_config_http.rs",
     "core/crates/ctx-http/tests/workspace_attachments_local_canonical.rs",
     "core/crates/ctx-http/tests/workspace_merge_queue_config_http.rs",
