@@ -7,11 +7,13 @@ const {
   API_RAW_DAEMON_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
+  MOBILE_TEST_STORE_ACCESS_PATTERNS,
   TEST_ROUTER_COMPOSITION_PATTERNS,
   TEST_RAW_DAEMON_BUCKET_PATTERNS,
   apiPatternsForPath,
   isTestRustPath,
   migratedTestPatternsForPath,
+  mobileStorePatternsForPath,
   routerCompositionPatternsForPath,
   scanRepo,
   scanRouterComposition,
@@ -612,6 +614,41 @@ test("daemon boundary guard scopes migrated raw daemon constructor ban", () => {
   }
   assert.deepEqual(
     migratedTestPatternsForPath("core/crates/ctx-http/src/lib_tests/other/example.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects direct mobile test store access in migrated roots", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/lib_tests/mobile_secure_routes/fixtures.rs",
+    contents: `
+      async fn helper(daemon: &TestDaemon) {
+        daemon.global_store().get_mobile_access_config().await?;
+      }
+    `,
+    patterns: MOBILE_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    ["direct mobile test global store access"],
+  );
+});
+
+test("daemon boundary guard scopes mobile store facade roots", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/src/lib_tests/auth_boundaries/mobile_tokens.rs",
+    "core/crates/ctx-http/src/lib_tests/auth_boundaries/mobile_tokens/registration.rs",
+    "core/crates/ctx-http/src/lib_tests/mobile_access_routes.rs",
+    "core/crates/ctx-http/src/lib_tests/mobile_profile_routes.rs",
+    "core/crates/ctx-http/src/lib_tests/mobile_secure_routes.rs",
+    "core/crates/ctx-http/src/lib_tests/mobile_secure_routes/fixtures.rs",
+    "core/crates/ctx-http/src/lib_tests/mobile_secure_routes/pairing/lifecycle.rs",
+  ]) {
+    assert.deepEqual(mobileStorePatternsForPath(filePath), MOBILE_TEST_STORE_ACCESS_PATTERNS);
+  }
+  assert.deepEqual(
+    mobileStorePatternsForPath("core/crates/ctx-http/src/lib_tests/daemon_smoke/messages.rs"),
     [],
   );
 });

@@ -11,30 +11,22 @@ async fn pair_mobile_device_preserves_token_for_invalid_device_id() {
     let daemon = test_daemon(data_dir.path(), stores, None);
     let profile_id = insert_mobile_profile(&daemon).await;
     daemon
-        .global_store()
-        .upsert_mobile_access_config(MobileAccessConfig {
-            id: "default".to_string(),
+        .mobile_access_for_test()
+        .seed_default_mobile_access_config_for_test(
             profile_id,
-            tunnel_id: "tunnel-1".to_string(),
-            public_base_url: "https://example.com".to_string(),
-            relay_base_url: "https://relay.example.com".to_string(),
-            tunnel_secret: "secret".to_string(),
-            daemon_public_key: "daemon-public".to_string(),
-            daemon_private_key: "daemon-private".to_string(),
-            enabled: true,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        })
+            true,
+            "daemon-public".to_string(),
+            "daemon-private".to_string(),
+        )
         .await
         .unwrap();
 
     let token = "valid-pairing-token";
-    let token_hash = pairing_token_hash(token);
-    daemon
-        .global_store()
-        .insert_mobile_pairing_token(
+    let token_hash = daemon
+        .mobile_access_for_test()
+        .seed_mobile_pairing_token_for_test(
             "pair-1",
-            &token_hash,
+            token,
             chrono::Utc::now() + chrono::Duration::minutes(5),
         )
         .await
@@ -64,8 +56,8 @@ async fn pair_mobile_device_preserves_token_for_invalid_device_id() {
     assert_eq!(payload["error"], "device_id must be a UUID");
     assert!(
         daemon
-            .global_store()
-            .consume_mobile_pairing_token(&token_hash)
+            .mobile_access_for_test()
+            .consume_mobile_pairing_token_hash_for_test(&token_hash)
             .await
             .unwrap(),
         "invalid device ids should not consume a valid pairing token"

@@ -112,6 +112,14 @@ const migratedRawDaemonTestRoots = [
   "core/crates/ctx-http/tests/worktree_archive_http.rs",
   "core/crates/ctx-http/tests/worktree_vcs_snapshot.rs",
 ];
+const mobileStoreFacadeTestRoots = [
+  "core/crates/ctx-http/src/lib_tests/auth_boundaries/mobile_tokens.rs",
+  "core/crates/ctx-http/src/lib_tests/auth_boundaries/mobile_tokens/",
+  "core/crates/ctx-http/src/lib_tests/mobile_access_routes.rs",
+  "core/crates/ctx-http/src/lib_tests/mobile_profile_routes.rs",
+  "core/crates/ctx-http/src/lib_tests/mobile_secure_routes.rs",
+  "core/crates/ctx-http/src/lib_tests/mobile_secure_routes/",
+];
 
 const API_RAW_DAEMON_PATTERNS = [
   {
@@ -258,6 +266,13 @@ const TEST_ROUTER_COMPOSITION_PATTERNS = [
   },
 ];
 
+const MOBILE_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct mobile test global store access",
+    regex: /\.global_store\s*\(/,
+  },
+];
+
 function isRustFile(filePath) {
   return filePath.endsWith(".rs");
 }
@@ -389,6 +404,13 @@ function apiPatternsForPath(relativePath) {
 function migratedTestPatternsForPath(relativePath) {
   if (migratedRawDaemonTestRoots.some((root) => relativePath.startsWith(root))) {
     return MIGRATED_TEST_RAW_DAEMON_PATTERNS;
+  }
+  return [];
+}
+
+function mobileStorePatternsForPath(relativePath) {
+  if (mobileStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return MOBILE_TEST_STORE_ACCESS_PATTERNS;
   }
   return [];
 }
@@ -590,6 +612,13 @@ function scanRepo() {
       }),
     );
     violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
+        patterns: mobileStorePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
       ...scanRouterComposition({
         filePath: relativePath,
         contents,
@@ -626,11 +655,13 @@ module.exports = {
   API_DOMAIN_RAW_STORE_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
+  MOBILE_TEST_STORE_ACCESS_PATTERNS,
   TEST_ROUTER_COMPOSITION_PATTERNS,
   TEST_RAW_DAEMON_BUCKET_PATTERNS,
   apiPatternsForPath,
   isTestRustPath,
   migratedTestPatternsForPath,
+  mobileStorePatternsForPath,
   routerCompositionPatternsForPath,
   scanRepo,
   scanRouterComposition,

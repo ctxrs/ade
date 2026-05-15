@@ -90,14 +90,14 @@ async fn mobile_secure_proxy_migrates_legacy_empty_scope_profiles() {
     assert_eq!(payload["status"], 200);
 
     let cfg = daemon
-        .global_store()
-        .get_mobile_access_config()
+        .mobile_access_for_test()
+        .mobile_access_config_for_test()
         .await
         .unwrap()
         .expect("mobile access config should exist");
     let profile = daemon
-        .global_store()
-        .get_mobile_connection_profile(cfg.profile_id)
+        .mobile_access_for_test()
+        .mobile_profile_for_test(cfg.profile_id)
         .await
         .unwrap()
         .expect("mobile profile should still exist");

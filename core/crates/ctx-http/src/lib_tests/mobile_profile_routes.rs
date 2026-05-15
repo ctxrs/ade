@@ -1,5 +1,4 @@
 use super::*;
-use sha2::Digest;
 
 #[tokio::test]
 async fn create_mobile_connection_profile_normalizes_explicit_scopes() {
@@ -109,18 +108,9 @@ async fn delete_mobile_connection_profile_returns_not_found_after_first_removal(
     let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
 
     let token = "ctxm_test_mobile_token";
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(token.as_bytes());
-    let token_hash = hex::encode(hasher.finalize());
     let profile = state
-        .global_store()
-        .create_mobile_connection_profile(
-            "mobile".to_string(),
-            "https://example.com".to_string(),
-            token_hash,
-            "ctxm_tes".to_string(),
-            Vec::new(),
-        )
+        .mobile_access_for_test()
+        .seed_mobile_api_profile_for_test(token, &[])
         .await
         .unwrap();
 

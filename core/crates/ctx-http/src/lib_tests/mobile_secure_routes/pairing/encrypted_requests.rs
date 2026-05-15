@@ -44,8 +44,8 @@ async fn pair_mobile_device_accepts_encrypted_pairing_request() {
 
     let device = harness
         .daemon
-        .global_store()
-        .get_mobile_device(MobileDeviceId(
+        .mobile_access_for_test()
+        .mobile_device_for_test(MobileDeviceId(
             uuid::Uuid::parse_str(key_material.device_id).unwrap(),
         ))
         .await

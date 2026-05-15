@@ -9,14 +9,11 @@ async fn mobile_secure_proxy_rejects_mobile_management_paths_after_trimming() {
     let (app, daemon, device_id, key, _data_dir) = build_mobile_secure_proxy_app(true).await;
     let target_device_id = "55555555-5555-5555-5555-555555555555";
     let pairing_token = "pairing-token-through-secure-proxy";
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(pairing_token.as_bytes());
-    let token_hash = hex::encode(hasher.finalize());
     daemon
-        .global_store()
-        .insert_mobile_pairing_token(
+        .mobile_access_for_test()
+        .seed_mobile_pairing_token_for_test(
             "pair-smuggle",
-            &token_hash,
+            pairing_token,
             chrono::Utc::now() + chrono::Duration::minutes(5),
         )
         .await
@@ -54,8 +51,8 @@ async fn mobile_secure_proxy_rejects_mobile_management_paths_after_trimming() {
     );
     assert!(
         daemon
-            .global_store()
-            .get_mobile_device(MobileDeviceId(
+            .mobile_access_for_test()
+            .mobile_device_for_test(MobileDeviceId(
                 uuid::Uuid::parse_str(target_device_id).unwrap()
             ))
             .await
@@ -93,8 +90,8 @@ async fn mobile_secure_proxy_rejects_mobile_management_paths_after_trimming() {
     assert_eq!(payload["error"], "secure proxy path must be normalized");
     assert!(
         daemon
-            .global_store()
-            .get_mobile_device(MobileDeviceId(
+            .mobile_access_for_test()
+            .mobile_device_for_test(MobileDeviceId(
                 uuid::Uuid::parse_str(target_device_id).unwrap()
             ))
             .await

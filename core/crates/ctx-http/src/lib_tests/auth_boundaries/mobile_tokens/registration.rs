@@ -11,18 +11,9 @@ async fn mobile_api_tokens_still_authorize_mobile_registration() {
     let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
 
     let token = "ctxm_test_mobile_token";
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(token.as_bytes());
-    let token_hash = hex::encode(hasher.finalize());
     state
-        .global_store()
-        .create_mobile_connection_profile(
-            "mobile".to_string(),
-            "https://example.com".to_string(),
-            token_hash,
-            "ctxm_tes".to_string(),
-            vec!["device_registration".to_string()],
-        )
+        .mobile_access_for_test()
+        .seed_mobile_api_profile_for_test(token, &["device_registration"])
         .await
         .unwrap();
 
@@ -55,18 +46,9 @@ async fn mobile_api_tokens_without_device_registration_scope_reject_registration
     let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
 
     let token = "ctxm_test_mobile_token";
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(token.as_bytes());
-    let token_hash = hex::encode(hasher.finalize());
     state
-        .global_store()
-        .create_mobile_connection_profile(
-            "mobile".to_string(),
-            "https://example.com".to_string(),
-            token_hash,
-            "ctxm_tes".to_string(),
-            vec!["workspace_read".to_string()],
-        )
+        .mobile_access_for_test()
+        .seed_mobile_api_profile_for_test(token, &["workspace_read"])
         .await
         .unwrap();
 
@@ -106,18 +88,9 @@ async fn legacy_empty_scope_mobile_tokens_migrate_to_default_scopes_on_registrat
     let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
 
     let token = "ctxm_test_mobile_token";
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(token.as_bytes());
-    let token_hash = hex::encode(hasher.finalize());
     let profile = state
-        .global_store()
-        .create_mobile_connection_profile(
-            "mobile".to_string(),
-            "https://example.com".to_string(),
-            token_hash,
-            "ctxm_tes".to_string(),
-            Vec::new(),
-        )
+        .mobile_access_for_test()
+        .seed_mobile_api_profile_for_test(token, &[])
         .await
         .unwrap();
 
@@ -139,8 +112,8 @@ async fn legacy_empty_scope_mobile_tokens_migrate_to_default_scopes_on_registrat
     assert_eq!(res.status(), StatusCode::OK);
 
     let profile = state
-        .global_store()
-        .get_mobile_connection_profile(profile.id)
+        .mobile_access_for_test()
+        .mobile_profile_for_test(profile.id)
         .await
         .unwrap()
         .expect("profile should still exist");

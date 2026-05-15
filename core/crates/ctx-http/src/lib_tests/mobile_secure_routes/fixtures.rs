@@ -1,7 +1,5 @@
 use super::*;
 use ctx_core::ids::{ConnectionProfileId, MobileDeviceId, WorkspaceId};
-use ctx_store::store::{MobileAccessConfig, MobileDeviceUpsert};
-use sha2::Digest;
 
 const TEST_MOBILE_API_TOKEN: &str = "ctxm_test_mobile_api_token";
 const TEST_MOBILE_DEFAULT_SCOPES: &[&str] =
@@ -15,18 +13,9 @@ pub(super) async fn insert_mobile_profile_with_scopes(
     daemon: &TestDaemon,
     scopes: &[&str],
 ) -> ConnectionProfileId {
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(TEST_MOBILE_API_TOKEN.as_bytes());
-    let token_hash = hex::encode(hasher.finalize());
     daemon
-        .global_store()
-        .create_mobile_connection_profile(
-            "mobile".to_string(),
-            "https://example.com".to_string(),
-            token_hash,
-            "ctxm_tes".to_string(),
-            scopes.iter().map(|scope| (*scope).to_string()).collect(),
-        )
+        .mobile_access_for_test()
+        .seed_mobile_api_profile_for_test(TEST_MOBILE_API_TOKEN, scopes)
         .await
         .unwrap()
         .id
@@ -153,35 +142,22 @@ async fn seed_mobile_access_config(
     enabled: bool,
 ) {
     daemon
-        .global_store()
-        .upsert_mobile_access_config(MobileAccessConfig {
-            id: "default".to_string(),
+        .mobile_access_for_test()
+        .seed_default_mobile_access_config_for_test(
             profile_id,
-            tunnel_id: "tunnel-1".to_string(),
-            public_base_url: "https://example.com".to_string(),
-            relay_base_url: "https://relay.example.com".to_string(),
-            tunnel_secret: "secret".to_string(),
+            enabled,
             daemon_public_key,
             daemon_private_key,
-            enabled,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        })
+        )
         .await
         .unwrap();
     daemon
-        .global_store()
-        .upsert_mobile_device(
+        .mobile_access_for_test()
+        .seed_mobile_device_for_test(
             MobileDeviceId(uuid::Uuid::parse_str(device_id).unwrap()),
             profile_id,
-            MobileDeviceUpsert {
-                device_label: Some("phone".to_string()),
-                platform: Some("ios".to_string()),
-                push_token: None,
-                push_provider: None,
-                public_key: Some(device_public_key),
-                app_version: Some("1.0.0".to_string()),
-            },
+            device_public_key,
+            "phone",
         )
         .await
         .unwrap();

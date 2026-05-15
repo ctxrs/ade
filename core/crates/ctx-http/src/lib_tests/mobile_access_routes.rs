@@ -51,14 +51,14 @@ async fn enable_mobile_access_seeds_explicit_default_scopes() {
     assert_eq!(res.status(), StatusCode::OK);
 
     let cfg = state
-        .global_store()
-        .get_mobile_access_config()
+        .mobile_access_for_test()
+        .mobile_access_config_for_test()
         .await
         .unwrap()
         .expect("mobile access config should be stored");
     let profile = state
-        .global_store()
-        .get_mobile_connection_profile(cfg.profile_id)
+        .mobile_access_for_test()
+        .mobile_profile_for_test(cfg.profile_id)
         .await
         .unwrap()
         .expect("managed mobile profile should exist");
@@ -89,33 +89,20 @@ async fn enable_mobile_access_backfills_empty_managed_profile_scopes() {
     let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
 
     let legacy_profile = state
-        .global_store()
-        .create_mobile_connection_profile(
-            "Managed Mobile Access".to_string(),
-            "https://legacy.example.com".to_string(),
-            "legacy-token-hash".to_string(),
-            "legacy-m".to_string(),
-            Vec::new(),
-        )
+        .mobile_access_for_test()
+        .seed_empty_managed_mobile_access_profile_for_test()
         .await
         .unwrap();
     let (daemon_public_key, daemon_private_key) =
         ctx_transport_runtime::mobile_e2ee::generate_keypair();
     state
-        .global_store()
-        .upsert_mobile_access_config(ctx_store::store::MobileAccessConfig {
-            id: "default".to_string(),
-            profile_id: legacy_profile.id,
-            tunnel_id: "legacy-tunnel".to_string(),
-            public_base_url: "https://legacy.example.com".to_string(),
-            relay_base_url: "https://legacy-relay.example.com".to_string(),
-            tunnel_secret: "legacy-secret".to_string(),
+        .mobile_access_for_test()
+        .seed_legacy_mobile_access_config_for_test(
+            legacy_profile.id,
+            false,
             daemon_public_key,
             daemon_private_key,
-            enabled: false,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        })
+        )
         .await
         .unwrap();
 
@@ -136,15 +123,15 @@ async fn enable_mobile_access_backfills_empty_managed_profile_scopes() {
     assert_eq!(res.status(), StatusCode::OK);
 
     let cfg = state
-        .global_store()
-        .get_mobile_access_config()
+        .mobile_access_for_test()
+        .mobile_access_config_for_test()
         .await
         .unwrap()
         .expect("mobile access config should be stored");
     assert_eq!(cfg.profile_id, legacy_profile.id);
     let profile = state
-        .global_store()
-        .get_mobile_connection_profile(cfg.profile_id)
+        .mobile_access_for_test()
+        .mobile_profile_for_test(cfg.profile_id)
         .await
         .unwrap()
         .expect("managed mobile profile should exist");

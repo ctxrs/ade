@@ -17,35 +17,22 @@ async fn mobile_secure_proxy_rejects_disabled_mobile_access_for_existing_device(
     let (device_public_key, device_secret_key) =
         ctx_transport_runtime::mobile_e2ee::generate_keypair();
     daemon
-        .global_store()
-        .upsert_mobile_access_config(MobileAccessConfig {
-            id: "default".to_string(),
+        .mobile_access_for_test()
+        .seed_default_mobile_access_config_for_test(
             profile_id,
-            tunnel_id: "tunnel-1".to_string(),
-            public_base_url: "https://example.com".to_string(),
-            relay_base_url: "https://relay.example.com".to_string(),
-            tunnel_secret: "secret".to_string(),
+            false,
             daemon_public_key,
-            daemon_private_key: daemon_private_key.clone(),
-            enabled: false,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        })
+            daemon_private_key.clone(),
+        )
         .await
         .unwrap();
     daemon
-        .global_store()
-        .upsert_mobile_device(
+        .mobile_access_for_test()
+        .seed_mobile_device_for_test(
             MobileDeviceId(uuid::Uuid::parse_str(device_id).unwrap()),
             profile_id,
-            MobileDeviceUpsert {
-                device_label: Some("phone".to_string()),
-                platform: Some("ios".to_string()),
-                push_token: None,
-                push_provider: None,
-                public_key: Some(device_public_key.clone()),
-                app_version: Some("1.0.0".to_string()),
-            },
+            device_public_key.clone(),
+            "phone",
         )
         .await
         .unwrap();
@@ -54,8 +41,8 @@ async fn mobile_secure_proxy_rejects_disabled_mobile_access_for_existing_device(
         device_id,
         &device_secret_key,
         &daemon
-            .global_store()
-            .get_mobile_access_config()
+            .mobile_access_for_test()
+            .mobile_access_config_for_test()
             .await
             .unwrap()
             .unwrap()

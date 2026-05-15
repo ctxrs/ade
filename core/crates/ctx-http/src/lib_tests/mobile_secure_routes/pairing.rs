@@ -1,11 +1,5 @@
 use super::*;
 
-fn pairing_token_hash(token: &str) -> String {
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(token.as_bytes());
-    hex::encode(hasher.finalize())
-}
-
 fn encrypted_pair_request_value(
     pairing_token: &str,
     device_id: &str,

@@ -14,30 +14,22 @@ async fn pair_mobile_device_rejects_profiles_without_device_registration_scope()
     let (daemon_public_key, daemon_private_key) =
         ctx_transport_runtime::mobile_e2ee::generate_keypair();
     daemon
-        .global_store()
-        .upsert_mobile_access_config(MobileAccessConfig {
-            id: "default".to_string(),
+        .mobile_access_for_test()
+        .seed_default_mobile_access_config_for_test(
             profile_id,
-            tunnel_id: "tunnel-1".to_string(),
-            public_base_url: "https://example.com".to_string(),
-            relay_base_url: "https://relay.example.com".to_string(),
-            tunnel_secret: "secret".to_string(),
-            daemon_public_key: daemon_public_key.clone(),
+            true,
+            daemon_public_key.clone(),
             daemon_private_key,
-            enabled: true,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        })
+        )
         .await
         .unwrap();
 
     let token = "valid-pairing-token";
-    let token_hash = pairing_token_hash(token);
-    daemon
-        .global_store()
-        .insert_mobile_pairing_token(
+    let token_hash = daemon
+        .mobile_access_for_test()
+        .seed_mobile_pairing_token_for_test(
             "pair-1",
-            &token_hash,
+            token,
             chrono::Utc::now() + chrono::Duration::minutes(5),
         )
         .await
@@ -71,8 +63,8 @@ async fn pair_mobile_device_rejects_profiles_without_device_registration_scope()
     );
     assert!(
         daemon
-            .global_store()
-            .consume_mobile_pairing_token(&token_hash)
+            .mobile_access_for_test()
+            .consume_mobile_pairing_token_hash_for_test(&token_hash)
             .await
             .unwrap(),
         "scope failures should not consume a valid pairing token"

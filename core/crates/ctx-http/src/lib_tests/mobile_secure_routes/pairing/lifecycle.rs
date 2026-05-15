@@ -11,46 +11,32 @@ async fn disable_mobile_access_clears_outstanding_pairing_tokens() {
     let daemon = test_daemon(data_dir.path(), stores, None);
     let profile_id = insert_mobile_profile(&daemon).await;
     daemon
-        .global_store()
-        .upsert_mobile_access_config(MobileAccessConfig {
-            id: "default".to_string(),
+        .mobile_access_for_test()
+        .seed_default_mobile_access_config_for_test(
             profile_id,
-            tunnel_id: "tunnel-1".to_string(),
-            public_base_url: "https://example.com".to_string(),
-            relay_base_url: "https://relay.example.com".to_string(),
-            tunnel_secret: "secret".to_string(),
-            daemon_public_key: "daemon-public".to_string(),
-            daemon_private_key: "daemon-private".to_string(),
-            enabled: true,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        })
+            true,
+            "daemon-public".to_string(),
+            "daemon-private".to_string(),
+        )
         .await
         .unwrap();
     daemon
-        .global_store()
-        .upsert_mobile_device(
+        .mobile_access_for_test()
+        .seed_mobile_device_for_test(
             MobileDeviceId(uuid::Uuid::parse_str("55555555-5555-5555-5555-555555555555").unwrap()),
             profile_id,
-            MobileDeviceUpsert {
-                device_label: Some("old-phone".to_string()),
-                platform: Some("ios".to_string()),
-                push_token: None,
-                push_provider: None,
-                public_key: Some("device-public".to_string()),
-                app_version: Some("1.0.0".to_string()),
-            },
+            "device-public".to_string(),
+            "old-phone",
         )
         .await
         .unwrap();
 
     let token = "pairing-token-to-clear";
-    let token_hash = pairing_token_hash(token);
-    daemon
-        .global_store()
-        .insert_mobile_pairing_token(
+    let token_hash = daemon
+        .mobile_access_for_test()
+        .seed_mobile_pairing_token_for_test(
             "pair-1",
-            &token_hash,
+            token,
             chrono::Utc::now() + chrono::Duration::minutes(5),
         )
         .await
@@ -67,28 +53,28 @@ async fn disable_mobile_access_clears_outstanding_pairing_tokens() {
     assert_eq!(res.status(), StatusCode::NO_CONTENT);
 
     let cfg = daemon
-        .global_store()
-        .get_mobile_access_config()
+        .mobile_access_for_test()
+        .mobile_access_config_for_test()
         .await
         .unwrap();
     assert!(cfg.is_none());
     let profile = daemon
-        .global_store()
-        .get_mobile_connection_profile(profile_id)
+        .mobile_access_for_test()
+        .mobile_profile_for_test(profile_id)
         .await
         .unwrap();
     assert!(profile.is_none());
     let device = daemon
-        .global_store()
-        .get_mobile_device(MobileDeviceId(
+        .mobile_access_for_test()
+        .mobile_device_for_test(MobileDeviceId(
             uuid::Uuid::parse_str("55555555-5555-5555-5555-555555555555").unwrap(),
         ))
         .await
         .unwrap();
     assert!(device.is_none());
     let still_allowed = daemon
-        .global_store()
-        .consume_mobile_pairing_token(&token_hash)
+        .mobile_access_for_test()
+        .consume_mobile_pairing_token_hash_for_test(&token_hash)
         .await
         .unwrap();
     assert!(!still_allowed);
