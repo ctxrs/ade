@@ -1,10 +1,9 @@
 use std::path::Path;
-use std::sync::Arc;
 
 use axum::http::StatusCode;
 use ctx_core::ids::{ArtifactId, MessageId, SessionId};
 use ctx_core::models::{Message, MessageDelivery, MessageRole, VcsKind};
-use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::test_support::TestDaemon;
 use ctx_providers::adapters::{
     ProviderAdapter, ProviderRecommendedAction, ProviderUsability, ProviderUsabilityStatus,
 };
@@ -18,14 +17,14 @@ struct SessionFixture {
     session_id: SessionId,
 }
 
-fn request_shutdown(state: &Arc<DaemonState>) {
-    state.test_request_shutdown();
+fn request_shutdown(daemon: &TestDaemon) {
+    daemon.request_shutdown();
 }
 
-async fn setup_state() -> (tempfile::TempDir, Arc<DaemonState>, common::TestServer) {
+async fn setup_state() -> (tempfile::TempDir, TestDaemon, common::TestServer) {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
@@ -40,19 +39,17 @@ async fn setup_state() -> (tempfile::TempDir, Arc<DaemonState>, common::TestServ
         blocking_provider_ids: Vec::new(),
         recommended_action: ProviderRecommendedAction::None,
     };
-    state
-        .test_upsert_provider_status("fake".into(), status)
-        .await;
-    let server = common::spawn_http_server(common::router(state.clone())).await;
-    (data_dir, state, server)
+    daemon.upsert_provider_status("fake".into(), status).await;
+    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
+    (data_dir, daemon, server)
 }
 
 async fn create_workspace_session(
-    state: &Arc<DaemonState>,
+    daemon: &TestDaemon,
     name: &str,
     repo_root: &Path,
 ) -> SessionFixture {
-    let workspace = state
+    let workspace = daemon
         .global_store()
         .create_workspace(
             name.to_string(),
@@ -61,7 +58,7 @@ async fn create_workspace_session(
         )
         .await
         .unwrap();
-    let store = state.store_for_workspace(workspace.id).await.unwrap();
+    let store = daemon.store_for_workspace(workspace.id).await.unwrap();
     let vcs = ctx_fs::vcs::driver_for_path(repo_root).await.unwrap();
     let base_commit = vcs.rev_parse_head(repo_root).await.unwrap();
     let worktree = store
@@ -93,17 +90,17 @@ async fn create_workspace_session(
         .await
         .unwrap();
 
-    state
+    daemon
         .global_store()
         .upsert_workspace_task_index(task.id, workspace.id)
         .await
         .unwrap();
-    state
+    daemon
         .global_store()
         .upsert_workspace_worktree_index(worktree.id, workspace.id)
         .await
         .unwrap();
-    state
+    daemon
         .global_store()
         .upsert_workspace_session_index(session.id, workspace.id)
         .await
@@ -116,11 +113,11 @@ async fn create_workspace_session(
 
 #[tokio::test]
 async fn artifact_route_is_session_scoped() {
-    let (_data_dir, state, server) = setup_state().await;
+    let (_data_dir, daemon, server) = setup_state().await;
     let repo_a = common::init_git_repo(&[("README.md", "a")]).await;
     let repo_b = common::init_git_repo(&[("README.md", "b")]).await;
-    let _workspace_a = create_workspace_session(&state, "a", repo_a.path()).await;
-    let workspace_b = create_workspace_session(&state, "b", repo_b.path()).await;
+    let _workspace_a = create_workspace_session(&daemon, "a", repo_a.path()).await;
+    let workspace_b = create_workspace_session(&daemon, "b", repo_b.path()).await;
 
     let artifact_path = repo_b.path().join("artifact.txt");
     tokio::fs::write(&artifact_path, b"artifact-body")
@@ -157,14 +154,14 @@ async fn artifact_route_is_session_scoped() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     assert_eq!(resp.bytes().await.unwrap().as_ref(), b"artifact-body");
-    request_shutdown(&state);
+    request_shutdown(&daemon);
 }
 
 #[tokio::test]
 async fn quicktime_artifact_upload_is_accepted() {
-    let (_data_dir, state, server) = setup_state().await;
+    let (_data_dir, daemon, server) = setup_state().await;
     let repo = common::init_git_repo(&[("README.md", "a")]).await;
-    let workspace = create_workspace_session(&state, "a", repo.path()).await;
+    let workspace = create_workspace_session(&daemon, "a", repo.path()).await;
 
     let artifact_path = repo.path().join("artifact.mov");
     tokio::fs::write(&artifact_path, b"quicktime-body")
@@ -192,17 +189,17 @@ async fn quicktime_artifact_upload_is_accepted() {
     let artifacts: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(artifacts[0]["mime_type"].as_str(), Some("video/quicktime"));
     assert_eq!(artifacts[0]["name"].as_str(), Some("artifact.mov"));
-    request_shutdown(&state);
+    request_shutdown(&daemon);
 }
 
 #[tokio::test]
 async fn message_delete_route_is_session_scoped() {
-    let (_data_dir, state, server) = setup_state().await;
+    let (_data_dir, daemon, server) = setup_state().await;
     let repo_a = common::init_git_repo(&[("README.md", "a")]).await;
     let repo_b = common::init_git_repo(&[("README.md", "b")]).await;
-    let _workspace_a = create_workspace_session(&state, "a", repo_a.path()).await;
-    let workspace_b = create_workspace_session(&state, "b", repo_b.path()).await;
-    let store = state
+    let _workspace_a = create_workspace_session(&daemon, "a", repo_a.path()).await;
+    let workspace_b = create_workspace_session(&daemon, "b", repo_b.path()).await;
+    let store = daemon
         .store_for_session(workspace_b.session_id)
         .await
         .unwrap();
@@ -244,16 +241,16 @@ async fn message_delete_route_is_session_scoped() {
     let body = resp.text().await.unwrap();
     assert_eq!(status, StatusCode::NO_CONTENT, "unexpected body: {body}");
     assert!(store.get_message(message_id).await.unwrap().is_none());
-    request_shutdown(&state);
+    request_shutdown(&daemon);
 }
 
 #[tokio::test]
 async fn subagent_invocation_route_is_session_scoped() {
-    let (_data_dir, state, server) = setup_state().await;
+    let (_data_dir, daemon, server) = setup_state().await;
     let repo_a = common::init_git_repo(&[("README.md", "a")]).await;
     let repo_b = common::init_git_repo(&[("README.md", "b")]).await;
-    let _workspace_a = create_workspace_session(&state, "a", repo_a.path()).await;
-    let workspace_b = create_workspace_session(&state, "b", repo_b.path()).await;
+    let _workspace_a = create_workspace_session(&daemon, "a", repo_a.path()).await;
+    let workspace_b = create_workspace_session(&daemon, "b", repo_b.path()).await;
 
     let resp = server
         .client
@@ -306,5 +303,5 @@ async fn subagent_invocation_route_is_session_scoped() {
     }
     let invocation: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(invocation["id"].as_str().unwrap(), invocation_id);
-    request_shutdown(&state);
+    request_shutdown(&daemon);
 }
