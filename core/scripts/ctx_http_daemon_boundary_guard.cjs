@@ -164,6 +164,10 @@ const terminalWorkspaceStreamStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/terminal_workspace_stream_separation.rs",
 ];
 
+const workspaceExecutionConfigStoreFacadeTestRoots = [
+  "core/crates/ctx-http/tests/workspace_execution_config_http.rs",
+];
+
 const schedulerRuntimeStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/assistant_chunk_stream_only.rs",
   "core/crates/ctx-http/tests/assistant_message_persistence_faults.rs",
@@ -545,6 +549,49 @@ const TERMINAL_WORKSPACE_STREAM_TEST_STORE_ACCESS_PATTERNS = [
   },
 ];
 
+const WORKSPACE_EXECUTION_CONFIG_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct workspace-execution-config global store access",
+    regex: /\.global_store\s*\(/,
+  },
+  {
+    name: "direct workspace-execution-config session store access",
+    regex: /\.store_for_session\s*\(/,
+  },
+  {
+    name: "direct workspace-execution-config workspace store access",
+    regex: /\.store_for_workspace\s*\(/,
+  },
+  {
+    name: "direct workspace-execution-config uncached workspace store access",
+    regex: /\.uncached_store_for_workspace\s*\(/,
+  },
+  {
+    name: "direct workspace-execution-config task store access",
+    regex: /\.store_for_task\s*\(/,
+  },
+  {
+    name: "direct workspace-execution-config StoreManager access",
+    regex: /\.stores\s*\(/,
+  },
+  {
+    name: "direct workspace-execution-config StoreManager global access",
+    regex: /\bstores\.global\s*\(/,
+  },
+  {
+    name: "direct workspace-execution-config StoreManager workspace access",
+    regex: /\bstores\.workspace\s*\(/,
+  },
+  {
+    name: "raw workspace-execution-config ctx_store Store",
+    regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore\b/,
+  },
+  {
+    name: "raw workspace-execution-config StoreManager",
+    regex: /\bStoreManager\b/,
+  },
+];
+
 const SCHEDULER_RUNTIME_TEST_STORE_ACCESS_PATTERNS = [
   {
     name: "direct scheduler-runtime global store access",
@@ -825,6 +872,13 @@ function terminalWorkspaceStreamStorePatternsForPath(relativePath) {
   return [];
 }
 
+function workspaceExecutionConfigStorePatternsForPath(relativePath) {
+  if (workspaceExecutionConfigStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return WORKSPACE_EXECUTION_CONFIG_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
 function schedulerRuntimeStorePatternsForPath(relativePath) {
   if (schedulerRuntimeStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return SCHEDULER_RUNTIME_TEST_STORE_ACCESS_PATTERNS;
@@ -1095,6 +1149,13 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
+        patterns: workspaceExecutionConfigStorePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
         patterns: schedulerRuntimeStorePatternsForPath(relativePath),
       }),
     );
@@ -1153,6 +1214,7 @@ module.exports = {
   TERMINAL_WORKSPACE_STREAM_TEST_STORE_ACCESS_PATTERNS,
   TEST_ROUTER_COMPOSITION_PATTERNS,
   TEST_RAW_DAEMON_BUCKET_PATTERNS,
+  WORKSPACE_EXECUTION_CONFIG_TEST_STORE_ACCESS_PATTERNS,
   apiPatternsForPath,
   globalIdRoutingStorePatternsForPath,
   isTestRustPath,
@@ -1169,5 +1231,6 @@ module.exports = {
   smallBoundaryStorePatternsForPath,
   taskLifecycleStorePatternsForPath,
   terminalWorkspaceStreamStorePatternsForPath,
+  workspaceExecutionConfigStorePatternsForPath,
   stripCfgTestItems,
 };

@@ -18,6 +18,7 @@ const {
   TERMINAL_WORKSPACE_STREAM_TEST_STORE_ACCESS_PATTERNS,
   TEST_ROUTER_COMPOSITION_PATTERNS,
   TEST_RAW_DAEMON_BUCKET_PATTERNS,
+  WORKSPACE_EXECUTION_CONFIG_TEST_STORE_ACCESS_PATTERNS,
   apiPatternsForPath,
   globalIdRoutingStorePatternsForPath,
   isTestRustPath,
@@ -34,6 +35,7 @@ const {
   smallBoundaryStorePatternsForPath,
   taskLifecycleStorePatternsForPath,
   terminalWorkspaceStreamStorePatternsForPath,
+  workspaceExecutionConfigStorePatternsForPath,
   stripCfgTestItems,
 } = require("./ctx_http_daemon_boundary_guard.cjs");
 
@@ -998,6 +1000,75 @@ test("daemon boundary guard scopes terminal-workspace-stream store facade root",
   assert.deepEqual(
     terminalWorkspaceStreamStorePatternsForPath(
       "core/crates/ctx-http/tests/terminal_ws_reconnect.rs",
+    ),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects direct workspace-execution-config store access", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/workspace_execution_config_http.rs",
+    contents: `
+      use ctx_store::{Store, StoreManager};
+      async fn fixture(daemon: TestDaemon, stores: StoreManager) {
+        daemon.global_store();
+        daemon.store_for_session(session_id).await?;
+        daemon.store_for_workspace(workspace_id).await?;
+        daemon.uncached_store_for_workspace(workspace_id).await?;
+        daemon.store_for_task(task_id).await?;
+        daemon.stores().global().await?;
+        stores.global().await?;
+        stores.workspace(workspace_id).await?;
+        let _raw: Store;
+      }
+    `,
+    patterns: WORKSPACE_EXECUTION_CONFIG_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct workspace-execution-config global store access",
+      "direct workspace-execution-config session store access",
+      "direct workspace-execution-config workspace store access",
+      "direct workspace-execution-config uncached workspace store access",
+      "direct workspace-execution-config task store access",
+      "direct workspace-execution-config StoreManager access",
+      "direct workspace-execution-config StoreManager global access",
+      "direct workspace-execution-config StoreManager workspace access",
+      "raw workspace-execution-config ctx_store Store",
+      "raw workspace-execution-config ctx_store Store",
+      "raw workspace-execution-config StoreManager",
+      "raw workspace-execution-config StoreManager",
+    ],
+  );
+});
+
+test("daemon boundary guard allows common setup-store in workspace-execution-config", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/workspace_execution_config_http.rs",
+    contents: `
+      async fn fixture() {
+        let stores = common::setup_store(data_dir.path()).await;
+        let daemon = common::build_daemon(data_dir.path(), stores, common::fake_providers(), "http://127.0.0.1:0");
+      }
+    `,
+    patterns: WORKSPACE_EXECUTION_CONFIG_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(violations, []);
+});
+
+test("daemon boundary guard scopes workspace-execution-config store facade root", () => {
+  assert.deepEqual(
+    workspaceExecutionConfigStorePatternsForPath(
+      "core/crates/ctx-http/tests/workspace_execution_config_http.rs",
+    ),
+    WORKSPACE_EXECUTION_CONFIG_TEST_STORE_ACCESS_PATTERNS,
+  );
+  assert.deepEqual(
+    workspaceExecutionConfigStorePatternsForPath(
+      "core/crates/ctx-http/tests/session_diff_unavailable.rs",
     ),
     [],
   );
