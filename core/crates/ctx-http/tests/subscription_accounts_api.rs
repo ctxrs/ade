@@ -646,13 +646,13 @@ fn providers_with_amp_adapter(
 async fn assert_managed_subscription_crud(provider_id: &str, upsert_body: serde_json::Value) {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let server = common::spawn_http_server(common::router(state)).await;
+    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
 
     let accounts_url = format!("{}/api/providers/{provider_id}/accounts", server.base_url);
     let active_url = format!(
@@ -1117,13 +1117,13 @@ async fn claude_login_setup_token_path_succeeds_when_cli_invokes_browser_shim() 
     let _env_lock = CLAUDE_TOKEN_ENV_LOCK.lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let server = common::spawn_http_server(common::router(state)).await;
+    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
 
     let fake_open_dir = data_dir.path().join("fake-open-bin");
     std::fs::create_dir_all(&fake_open_dir).expect("create fake open dir");
@@ -1215,13 +1215,13 @@ echo "ZXY987654321"
 async fn claude_login_start_requires_managed_or_configured_runtime_command() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let server = common::spawn_http_server(common::router(state)).await;
+    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
 
     let start_url = format!(
         "{}/api/providers/claude-crp/accounts/login/start",
@@ -1247,13 +1247,13 @@ async fn claude_login_start_rejects_manual_copy_code_fallback_without_browser_op
     let _env_lock = CLAUDE_TOKEN_ENV_LOCK.lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let server = common::spawn_http_server(common::router(state)).await;
+    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
     let script_path = write_mock_claude_runtime(
         data_dir.path(),
         r#"#!/usr/bin/env bash
@@ -1303,13 +1303,13 @@ async fn claude_login_start_ignores_manual_copy_code_fallback_after_browser_open
     let _env_lock = CLAUDE_TOKEN_ENV_LOCK.lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let server = common::spawn_http_server(common::router(state)).await;
+    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
 
     let fake_open_dir = data_dir.path().join("fake-open-bin");
     std::fs::create_dir_all(&fake_open_dir).expect("create fake open dir");
@@ -1398,13 +1398,13 @@ echo "ZXY987654321"
 async fn claude_login_start_returns_pending_setup_token_session() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let server = common::spawn_http_server(common::router(state)).await;
+    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
 
     let script_path = write_mock_claude_runtime(
         data_dir.path(),
@@ -1479,13 +1479,13 @@ sleep 30
 async fn claude_login_start_requires_usable_configured_login_command() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let server = common::spawn_http_server(common::router(state)).await;
+    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
     let missing_path = data_dir.path().join("missing-claude");
     let mut cfg = empty_agent_server_config();
     cfg.providers.insert(
@@ -1524,13 +1524,13 @@ async fn claude_login_start_requires_usable_configured_login_command() {
 async fn claude_login_start_reconstructs_wrapped_auth_url() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let server = common::spawn_http_server(common::router(state)).await;
+    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
 
     let script_path = write_mock_claude_runtime(
         data_dir.path(),
@@ -1581,13 +1581,13 @@ exit 5
 async fn claude_login_setup_token_path_succeeds_without_callback_submission() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let server = common::spawn_http_server(common::router(state)).await;
+    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
 
     let script_path = write_mock_claude_runtime(
         data_dir.path(),
@@ -1644,13 +1644,13 @@ echo "ZXY987654321"
 async fn claude_login_success_without_token_reports_actionable_error() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let server = common::spawn_http_server(common::router(state)).await;
+    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
 
     let script_path = write_mock_claude_runtime(
         data_dir.path(),
@@ -1705,13 +1705,13 @@ echo "Token omitted intentionally for test."
 async fn claude_login_hang_without_auth_url_times_out_and_fails() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let server = common::spawn_http_server(common::router(state)).await;
+    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
 
     let script_path = write_mock_claude_runtime(
         data_dir.path(),
@@ -1766,13 +1766,13 @@ sleep 30
 async fn claude_login_without_label_preserves_existing_account_label() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let server = common::spawn_http_server(common::router(state)).await;
+    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
 
     let shared_token = "sk-ant-oat01-abcDEF1234567890_abcdefghijklmnopqrstuvwxyz_0123456789";
     let accounts_url = format!("{}/api/providers/claude-crp/accounts", server.base_url);
@@ -1886,13 +1886,13 @@ async fn gemini_login_start_and_status_success_persists_account() {
         Some(r#"[{"email":"gemini-dev@example.com"}]"#.to_string()),
         Some("https://accounts.google.com/o/oauth2/auth?code=test".to_string()),
     )));
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:0",
     );
-    let server = common::spawn_http_server(common::router(state)).await;
+    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
 
     let start_url = format!(
         "{}/api/providers/gemini/accounts/login/start",
@@ -1937,13 +1937,13 @@ async fn gemini_login_start_and_status_failure_reports_error() {
     let providers = providers_with_gemini_adapter(Arc::new(GeminiLoginTestAdapter::failure(
         "gemini auth failed",
     )));
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:0",
     );
-    let server = common::spawn_http_server(common::router(state)).await;
+    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
 
     let start_url = format!(
         "{}/api/providers/gemini/accounts/login/start",
@@ -1985,13 +1985,13 @@ async fn gemini_login_fails_fast_when_no_auth_url_is_emitted() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
     let providers = providers_with_gemini_adapter(Arc::new(GeminiLoginTestAdapter::no_auth_url()));
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:0",
     );
-    let server = common::spawn_http_server(common::router(state)).await;
+    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
 
     let start_url = format!(
         "{}/api/providers/gemini/accounts/login/start",
@@ -2023,13 +2023,13 @@ async fn amp_login_auth_required_notice_reports_real_message() {
         Some("https://ampcode.com/auth".to_string()),
         "Amp needs subscription approval",
     )));
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:0",
     );
-    let server = common::spawn_http_server(common::router(state)).await;
+    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
 
     let start_url = format!("{}/api/providers/amp/accounts/login/start", server.base_url);
     let start_resp = server
@@ -2062,13 +2062,13 @@ async fn kimi_login_start_and_status_success_persists_oauth_account() {
 
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let server = common::spawn_http_server(common::router(state)).await;
+    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
 
     let start_url = format!(
         "{}/api/providers/kimi/accounts/login/start",
@@ -2131,13 +2131,13 @@ async fn qwen_login_start_and_status_success_persists_account() {
         r#"{"access_token":"access","refresh_token":"refresh"}"#,
         Some("https://chat.qwen.ai/oauth/authorize?code=test".to_string()),
     )));
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:0",
     );
-    let server = common::spawn_http_server(common::router(state)).await;
+    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
 
     let start_url = format!(
         "{}/api/providers/qwen/accounts/login/start",
@@ -2187,13 +2187,13 @@ async fn kimi_accounts_list_fails_closed_on_malformed_registry_json() {
         .expect("write malformed kimi registry");
 
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let server = common::spawn_http_server(common::router(state)).await;
+    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
 
     let accounts_url = format!("{}/api/providers/kimi/accounts", server.base_url);
     let response = server
@@ -2232,13 +2232,13 @@ async fn auth_import_profiles_route_fails_closed_on_malformed_registry_json() {
         .expect("write malformed import registry");
 
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let server = common::spawn_http_server(common::router(state)).await;
+    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
 
     let profiles_url = format!("{}/api/providers/auth/import/profiles", server.base_url);
     let response = server
@@ -2279,13 +2279,13 @@ async fn cursor_login_start_requires_cursor_agent_runtime() {
     let _env_lock = CLAUDE_TOKEN_ENV_LOCK.lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let server = common::spawn_http_server(common::router(state)).await;
+    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
     let _path_guard = TestEnvVar::set("PATH", data_dir.path().to_string_lossy().as_ref());
 
     let start_url = format!(
@@ -2311,13 +2311,13 @@ async fn cursor_login_start_and_status_success_persists_account() {
     let _env_lock = CLAUDE_TOKEN_ENV_LOCK.lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let server = common::spawn_http_server(common::router(state)).await;
+    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
 
     let cursor_script = write_mock_cursor_runtime(
         data_dir.path(),
@@ -2384,13 +2384,13 @@ async fn cursor_login_start_rejects_host_path_discovery_and_does_not_persist_log
     let _env_lock = CLAUDE_TOKEN_ENV_LOCK.lock().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let server = common::spawn_http_server(common::router(state)).await;
+    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
 
     write_mock_cursor_runtime(
         data_dir.path(),
@@ -2445,13 +2445,13 @@ async fn mistral_login_start_and_status_success_persists_account() {
         Some("https://auth.mistral.ai/oauth/authorize?code=test".to_string()),
         Some("mistral-dev@example.com".to_string()),
     )));
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:0",
     );
-    let server = common::spawn_http_server(common::router(state)).await;
+    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
 
     let start_url = format!(
         "{}/api/providers/mistral/accounts/login/start",
@@ -2557,13 +2557,13 @@ async fn cursor_subscription_accounts_crud_round_trip() {
 async fn gemini_upsert_rejects_invalid_oauth_json() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let server = common::spawn_http_server(common::router(state)).await;
+    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
     let accounts_url = format!("{}/api/providers/gemini/accounts", server.base_url);
 
     let resp = server
@@ -2585,13 +2585,13 @@ async fn gemini_upsert_rejects_invalid_oauth_json() {
 async fn kimi_upsert_rejects_invalid_credentials_json() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let server = common::spawn_http_server(common::router(state)).await;
+    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
     let accounts_url = format!("{}/api/providers/kimi/accounts", server.base_url);
 
     let resp = server

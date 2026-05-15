@@ -82,6 +82,7 @@ const migratedRawDaemonTestRoots = [
   "core/crates/ctx-http/tests/session_diff_unavailable.rs",
   "core/crates/ctx-http/tests/session_model_api.rs",
   "core/crates/ctx-http/tests/subagent_mcp_http.rs",
+  "core/crates/ctx-http/tests/subscription_accounts_api.rs",
   "core/crates/ctx-http/tests/system_prompt_append_http.rs",
   "core/crates/ctx-http/tests/task_default_session_http.rs",
   "core/crates/ctx-http/tests/terminal_workspace_stream_separation.rs",
