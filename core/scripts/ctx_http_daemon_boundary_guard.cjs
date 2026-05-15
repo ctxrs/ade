@@ -246,6 +246,13 @@ const MIGRATED_TEST_RAW_DAEMON_PATTERNS = [
   },
 ];
 
+const EXTERNAL_MIGRATED_TEST_RAW_DAEMON_PATTERNS = [
+  {
+    name: "direct API router composition in migrated integration test",
+    regex: /\b(?:ctx_http::)?api::router\s*\(/,
+  },
+];
+
 function isRustFile(filePath) {
   return filePath.endsWith(".rs");
 }
@@ -381,6 +388,15 @@ function apiPatternsForPath(relativePath) {
 
 function migratedTestPatternsForPath(relativePath) {
   if (migratedRawDaemonTestRoots.some((root) => relativePath.startsWith(root))) {
+    if (
+      relativePath.startsWith("core/crates/ctx-http/tests/")
+      && !relativePath.startsWith("core/crates/ctx-http/tests/common/")
+    ) {
+      return [
+        ...MIGRATED_TEST_RAW_DAEMON_PATTERNS,
+        ...EXTERNAL_MIGRATED_TEST_RAW_DAEMON_PATTERNS,
+      ];
+    }
     return MIGRATED_TEST_RAW_DAEMON_PATTERNS;
   }
   return [];
@@ -497,6 +513,7 @@ module.exports = {
   API_DOMAIN_RAW_STORE_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
+  EXTERNAL_MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   TEST_RAW_DAEMON_BUCKET_PATTERNS,
   apiPatternsForPath,
   isTestRustPath,

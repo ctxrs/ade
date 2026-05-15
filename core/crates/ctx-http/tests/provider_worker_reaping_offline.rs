@@ -210,7 +210,7 @@ async fn assert_provider_session_resume_after_idle_reap(provider_id: &str, model
         "http://127.0.0.1:0".to_string(),
         None,
     );
-    let app = ctx_http::api::router(daemon.handle());
+    let app = common::router_for_daemon(&daemon);
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (_task, session) =

@@ -5,6 +5,7 @@ const {
   DAEMON_EXTRACTION_BLOCKER_PATTERNS,
   API_DOMAIN_RAW_STORE_PATTERNS,
   API_RAW_DAEMON_PATTERNS,
+  EXTERNAL_MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   TEST_RAW_DAEMON_BUCKET_PATTERNS,
@@ -374,6 +375,30 @@ test("daemon boundary guard allows TestDaemon provider-session token facade call
   assert.deepEqual(violations, []);
 });
 
+test("daemon boundary guard rejects direct API router composition in migrated integration tests", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/fault_matrix.rs",
+    contents: `
+      fn helper(daemon: &TestDaemon) {
+        let app = api::router(daemon.handle());
+        let other = ctx_http::api::router(daemon.handle());
+      }
+    `,
+    patterns: [
+      ...MIGRATED_TEST_RAW_DAEMON_PATTERNS,
+      ...EXTERNAL_MIGRATED_TEST_RAW_DAEMON_PATTERNS,
+    ],
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct API router composition in migrated integration test",
+      "direct API router composition in migrated integration test",
+    ],
+  );
+});
+
 test("daemon boundary guard scopes migrated raw daemon constructor ban", () => {
   assert.equal(
     migratedTestPatternsForPath("core/crates/ctx-http/src/lib_tests/auth_boundaries/example.rs"),
@@ -482,7 +507,18 @@ test("daemon boundary guard scopes migrated raw daemon constructor ban", () => {
     "core/crates/ctx-http/tests/workspace_stream_no_gaps_under_activity.rs",
     "core/crates/ctx-http/tests/worktree_archive_http.rs",
   ]) {
-    assert.equal(migratedTestPatternsForPath(filePath), MIGRATED_TEST_RAW_DAEMON_PATTERNS);
+    const patterns = migratedTestPatternsForPath(filePath);
+    if (
+      filePath.startsWith("core/crates/ctx-http/tests/")
+      && !filePath.startsWith("core/crates/ctx-http/tests/common/")
+    ) {
+      assert.deepEqual(patterns, [
+        ...MIGRATED_TEST_RAW_DAEMON_PATTERNS,
+        ...EXTERNAL_MIGRATED_TEST_RAW_DAEMON_PATTERNS,
+      ]);
+    } else {
+      assert.equal(patterns, MIGRATED_TEST_RAW_DAEMON_PATTERNS);
+    }
   }
   assert.deepEqual(
     migratedTestPatternsForPath("core/crates/ctx-http/src/lib_tests/other/example.rs"),

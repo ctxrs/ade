@@ -12,8 +12,6 @@ use ctx_daemon::test_support::TestDaemon;
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::StoreManager;
 
-use ctx_http::api;
-
 const CONTAINER_FILE_SHA256: &str =
     "dc155555ce7bf6f6b7aa998bafe7e1cafa3c7017bc5dcdeb8ef72ebc5961c11a";
 const TERM_WRITE_SHA256: &str = "21ce56d2f98a9ed161e56e42a704fb47cea917ffe91bee9d75405349fdc4ee68";
@@ -22,6 +20,8 @@ struct EnvVarGuard {
     key: &'static str,
     prev: Option<std::ffi::OsString>,
 }
+
+mod common;
 
 impl EnvVarGuard {
     fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
@@ -238,7 +238,7 @@ async fn disk_isolated_smoke_sandbox_volume_attachments_and_terminal() {
         "http://127.0.0.1:4399".to_string(),
         None,
     );
-    let app = api::router(daemon.handle());
+    let app = common::router_for_daemon(&daemon);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

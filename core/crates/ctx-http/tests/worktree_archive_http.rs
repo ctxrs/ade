@@ -8,9 +8,10 @@ use tokio::process::Command;
 use ctx_core::models::{Task, Workspace};
 use ctx_daemon::test_support::TestDaemon;
 use ctx_fs::worktrees::managed_worktree_path;
-use ctx_http::api;
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::StoreManager;
+
+mod common;
 
 async fn setup_git_repo() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
@@ -80,7 +81,7 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
         "http://127.0.0.1:0".to_string(),
         None,
     );
-    let app = api::router(daemon.handle());
+    let app = common::router_for_daemon(&daemon);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {

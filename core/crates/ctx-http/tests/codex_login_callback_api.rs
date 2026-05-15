@@ -5,7 +5,6 @@ use std::time::Duration;
 
 use axum::http::StatusCode;
 use ctx_daemon::test_support::TestDaemon;
-use ctx_http::api;
 use ctx_provider_accounts::{
     save_codex_registry, CodexAccountEntry, CodexAccountRegistry, CodexEndpointProfile,
     CODEX_API_SHAPE_OPENAI_RESPONSES, CODEX_CREDENTIAL_KIND_API_KEY,
@@ -15,6 +14,8 @@ use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::StoreManager;
 use serde::Deserialize;
 use serde_json::json;
+
+mod common;
 
 #[derive(Debug, Deserialize)]
 struct CompleteResp {
@@ -30,7 +31,7 @@ struct ErrorResp {
 async fn start_http_app(
     daemon: &TestDaemon,
 ) -> (String, reqwest::Client, tokio::task::JoinHandle<()>) {
-    let app = api::router(daemon.handle());
+    let app = common::router_for_daemon(daemon);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let handle = tokio::spawn(async move {

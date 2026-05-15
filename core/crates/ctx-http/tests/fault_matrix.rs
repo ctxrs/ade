@@ -13,7 +13,6 @@ use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
 use ctx_core::models::SessionEventType;
 use ctx_daemon::test_support::TestDaemon;
-use ctx_http::api;
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::StoreManager;
 
@@ -84,7 +83,7 @@ async fn setup_server() -> (
         "http://127.0.0.1:0".to_string(),
         None,
     );
-    let app = api::router(daemon.handle());
+    let app = common::router_for_daemon(&daemon);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {

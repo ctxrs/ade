@@ -7,9 +7,10 @@ use serde_json::{json, Value};
 use tokio::process::Command;
 
 use ctx_daemon::test_support::TestDaemon;
-use ctx_http::api;
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::StoreManager;
+
+mod common;
 
 struct EnvVarGuard {
     key: &'static str,
@@ -164,7 +165,7 @@ async fn disk_isolated_task_creation_produces_valid_git_worktree() {
         "http://127.0.0.1:4399".to_string(),
         None,
     );
-    let app = api::router(daemon.handle());
+    let app = common::router_for_daemon(&daemon);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

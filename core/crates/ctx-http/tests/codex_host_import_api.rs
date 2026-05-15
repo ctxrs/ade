@@ -3,13 +3,14 @@ use std::sync::Arc;
 
 use axum::http::StatusCode;
 use ctx_daemon::test_support::TestDaemon;
-use ctx_http::api;
 use ctx_provider_accounts::{codex_env_for_active_account, ensure_codex_auth_ready};
 use ctx_providers::adapters::ProviderAdapter;
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::StoreManager;
 use serde::Deserialize;
 use serde_json::json;
+
+mod common;
 
 #[derive(Debug, Deserialize)]
 struct CodexEndpointProfile {
@@ -53,7 +54,7 @@ async fn app_daemon(data_root: &std::path::Path) -> TestDaemon {
 async fn start_http_app(
     daemon: &TestDaemon,
 ) -> (String, reqwest::Client, tokio::task::JoinHandle<()>) {
-    let app = api::router(daemon.handle());
+    let app = common::router_for_daemon(daemon);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let handle = tokio::spawn(async move {
