@@ -34,6 +34,11 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use crate::daemon::{self, AppRuntimeFlags, DaemonHandle, DaemonState};
 
+mod cache_rehydration;
+pub use cache_rehydration::{
+    CacheRehydrationSessionFixture, CacheRehydrationSubagentFixture, CacheRehydrationTurnFixture,
+};
+
 #[derive(Clone)]
 pub struct TestDaemon {
     state: Arc<DaemonState>,

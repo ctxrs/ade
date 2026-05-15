@@ -2,94 +2,22 @@ mod common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use ctx_core::models::{
-    SessionActivityState, SessionEventType, SessionHeadDelta, SessionHeadSnapshot,
-    SessionTurnStatus, VcsKind, WorkspaceActiveHeadBatch,
-};
-use tempfile::tempdir;
+use ctx_core::models::{SessionHeadSnapshot, WorkspaceActiveHeadBatch};
 
 #[tokio::test]
 async fn session_head_rehydrates_after_cache_eviction() {
-    let temp = tempdir().unwrap();
-    let stores = common::setup_store(temp.path()).await;
-    let daemon = common::build_daemon(
-        temp.path(),
-        stores.clone(),
-        common::fake_providers(),
-        "http://localhost",
-    );
+    let fixture = common::fake_daemon_fixture("http://localhost").await;
+    let daemon = &fixture.daemon;
+    let seed = daemon
+        .seed_cache_rehydration_session_for_test(true, true)
+        .await
+        .unwrap();
+    let session = &seed.session;
 
-    let workspace_root = temp.path().join("workspace");
-    tokio::fs::create_dir_all(&workspace_root).await.unwrap();
-
-    let workspace = daemon
-        .global_store()
-        .create_workspace(
-            "ws".to_string(),
-            workspace_root.to_string_lossy().to_string(),
-            VcsKind::Git,
-        )
+    let baseline = daemon
+        .cache_rehydration_full_head_for_test(session.id, 60, true)
         .await
         .unwrap();
-    let store = daemon.store_for_workspace(workspace.id).await.unwrap();
-    let worktree = store
-        .create_worktree(
-            workspace.id,
-            workspace_root.to_string_lossy().to_string(),
-            "deadbeef".to_string(),
-            None,
-        )
-        .await
-        .unwrap();
-    let task = store
-        .create_task(workspace.id, "task".to_string(), None)
-        .await
-        .unwrap();
-    let session = store
-        .create_session(
-            task.id,
-            workspace.id,
-            worktree.id,
-            ctx_core::models::ExecutionEnvironment::Host,
-            "fake".to_string(),
-            "model".to_string(),
-            "implementer".to_string(),
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-    store
-        .set_task_primary_session(task.id, session.id, worktree.id)
-        .await
-        .unwrap();
-    daemon
-        .global_store()
-        .upsert_workspace_task_index(task.id, workspace.id)
-        .await
-        .unwrap();
-    daemon
-        .global_store()
-        .upsert_workspace_task_index(task.id, workspace.id)
-        .await
-        .unwrap();
-    daemon
-        .global_store()
-        .upsert_workspace_task_index(task.id, workspace.id)
-        .await
-        .unwrap();
-    daemon
-        .global_store()
-        .upsert_workspace_session_index(session.id, workspace.id)
-        .await
-        .unwrap();
-
-    let baseline = store
-        .get_session_head_snapshot(session.id, 60, true)
-        .await
-        .unwrap()
-        .expect("session head snapshot");
     daemon
         .cache_rehydration_seed_replay_head_cache_for_test(baseline.clone())
         .await;
@@ -106,7 +34,7 @@ async fn session_head_rehydrates_after_cache_eviction() {
         .await
         .is_none());
 
-    let app = common::router_for_daemon(&daemon);
+    let app = fixture.router();
     let req = Request::builder()
         .method("GET")
         .uri(format!(
@@ -123,92 +51,41 @@ async fn session_head_rehydrates_after_cache_eviction() {
 
 #[tokio::test]
 async fn session_head_min_event_seq_bypasses_stale_active_snapshot_cache() {
-    let temp = tempdir().unwrap();
-    let stores = common::setup_store(temp.path()).await;
-    let daemon = common::build_daemon(
-        temp.path(),
-        stores.clone(),
-        common::fake_providers(),
-        "http://localhost",
-    );
+    let fixture = common::fake_daemon_fixture("http://localhost").await;
+    let daemon = &fixture.daemon;
+    let seed = daemon
+        .seed_cache_rehydration_session_for_test(false, false)
+        .await
+        .unwrap();
+    let session = &seed.session;
 
-    let workspace_root = temp.path().join("workspace");
-    tokio::fs::create_dir_all(&workspace_root).await.unwrap();
-
-    let workspace = daemon
-        .global_store()
-        .create_workspace(
-            "ws".to_string(),
-            workspace_root.to_string_lossy().to_string(),
-            VcsKind::Git,
-        )
+    let cached_head = daemon
+        .cache_rehydration_full_head_for_test(session.id, 60, true)
         .await
         .unwrap();
-    let store = daemon.store_for_workspace(workspace.id).await.unwrap();
-    let worktree = store
-        .create_worktree(
-            workspace.id,
-            workspace_root.to_string_lossy().to_string(),
-            "deadbeef".to_string(),
-            None,
-        )
-        .await
-        .unwrap();
-    let task = store
-        .create_task(workspace.id, "task".to_string(), None)
-        .await
-        .unwrap();
-    let session = store
-        .create_session(
-            task.id,
-            workspace.id,
-            worktree.id,
-            ctx_core::models::ExecutionEnvironment::Host,
-            "fake".to_string(),
-            "model".to_string(),
-            "implementer".to_string(),
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-    daemon
-        .global_store()
-        .upsert_workspace_session_index(session.id, workspace.id)
-        .await
-        .unwrap();
-
-    let cached_head = store
-        .get_session_head_snapshot(session.id, 60, true)
-        .await
-        .unwrap()
-        .expect("session head snapshot");
     daemon
         .cache_rehydration_seed_replay_head_cache_for_test(cached_head.clone())
         .await;
 
-    store
-        .append_session_event(
-            session.id,
-            None,
-            None,
-            SessionEventType::Notice,
+    daemon
+        .cache_rehydration_seed_completed_notice_for_test(
+            session,
+            seed.task.id,
             serde_json::json!({ "kind": "cache_boundary", "message": "newer than cache" }),
+            None,
         )
         .await
         .unwrap();
-    let full_head = store
-        .get_session_head_snapshot(session.id, 60, true)
+    let full_head = daemon
+        .cache_rehydration_full_head_for_test(session.id, 60, true)
         .await
-        .unwrap()
-        .expect("rebuilt session head snapshot");
+        .unwrap();
     assert!(
         full_head.last_event_seq > cached_head.last_event_seq,
         "test setup needs a stale active snapshot cache"
     );
 
-    let app = common::router_for_daemon(&daemon);
+    let app = fixture.router();
     let stale_req = Request::builder()
         .method("GET")
         .uri(format!(
@@ -239,90 +116,35 @@ async fn session_head_min_event_seq_bypasses_stale_active_snapshot_cache() {
 
 #[tokio::test]
 async fn include_events_session_heads_bypass_compact_cache() {
-    let temp = tempdir().unwrap();
-    let stores = common::setup_store(temp.path()).await;
-    let daemon = common::build_daemon(
-        temp.path(),
-        stores.clone(),
-        common::fake_providers(),
-        "http://localhost",
-    );
+    let fixture = common::fake_daemon_fixture("http://localhost").await;
+    let daemon = &fixture.daemon;
+    let seed = daemon
+        .seed_cache_rehydration_session_for_test(false, true)
+        .await
+        .unwrap();
+    let session = &seed.session;
 
-    let workspace_root = temp.path().join("workspace");
-    tokio::fs::create_dir_all(&workspace_root).await.unwrap();
-
-    let workspace = daemon
-        .global_store()
-        .create_workspace(
-            "ws".to_string(),
-            workspace_root.to_string_lossy().to_string(),
-            VcsKind::Git,
-        )
-        .await
-        .unwrap();
-    let store = daemon.store_for_workspace(workspace.id).await.unwrap();
-    let worktree = store
-        .create_worktree(
-            workspace.id,
-            workspace_root.to_string_lossy().to_string(),
-            "deadbeef".to_string(),
-            None,
-        )
-        .await
-        .unwrap();
-    let task = store
-        .create_task(workspace.id, "task".to_string(), None)
-        .await
-        .unwrap();
     daemon
-        .global_store()
-        .upsert_workspace_task_index(task.id, workspace.id)
-        .await
-        .unwrap();
-    let session = store
-        .create_session(
-            task.id,
-            workspace.id,
-            worktree.id,
-            ctx_core::models::ExecutionEnvironment::Host,
-            "fake".to_string(),
-            "model".to_string(),
-            "implementer".to_string(),
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-    daemon
-        .global_store()
-        .upsert_workspace_session_index(session.id, workspace.id)
-        .await
-        .unwrap();
-
-    store
-        .append_session_event(
-            session.id,
-            None,
-            None,
-            SessionEventType::Notice,
+        .cache_rehydration_seed_completed_notice_for_test(
+            session,
+            seed.task.id,
             serde_json::json!({ "kind": "cache_boundary", "message": "persist me" }),
+            None,
         )
         .await
         .unwrap();
 
-    let full_head = store
-        .get_session_head_snapshot(session.id, 60, true)
+    let full_head = daemon
+        .cache_rehydration_full_head_for_test(session.id, 60, true)
         .await
-        .unwrap()
-        .expect("full session head snapshot");
+        .unwrap();
     assert!(
         !full_head.events.is_empty(),
         "full session head should include the persisted event tail"
     );
 
-    let compact_head = store
-        .get_active_snapshot_head(session.id)
+    let compact_head = daemon
+        .cache_rehydration_active_head_for_test(session.id)
         .await
         .unwrap()
         .expect("compact active head");
@@ -331,7 +153,7 @@ async fn include_events_session_heads_bypass_compact_cache() {
         .cache_rehydration_seed_compact_head_cache_for_test(compact_head)
         .await;
 
-    let app = common::router_for_daemon(&daemon);
+    let app = fixture.router();
     let req = Request::builder()
         .method("GET")
         .uri(format!(
@@ -353,78 +175,28 @@ async fn include_events_session_heads_bypass_compact_cache() {
 
 #[tokio::test]
 async fn include_events_session_heads_use_hydrated_replay_cache_when_store_cannot_open() {
-    let temp = tempdir().unwrap();
-    let stores = common::setup_store(temp.path()).await;
-    let daemon = common::build_daemon(
-        temp.path(),
-        stores.clone(),
-        common::fake_providers(),
-        "http://localhost",
-    );
+    let fixture = common::fake_daemon_fixture("http://localhost").await;
+    let daemon = &fixture.daemon;
+    let seed = daemon
+        .seed_cache_rehydration_session_for_test(false, false)
+        .await
+        .unwrap();
+    let session = &seed.session;
 
-    let workspace_root = temp.path().join("workspace");
-    tokio::fs::create_dir_all(&workspace_root).await.unwrap();
-
-    let workspace = daemon
-        .global_store()
-        .create_workspace(
-            "ws".to_string(),
-            workspace_root.to_string_lossy().to_string(),
-            VcsKind::Git,
-        )
-        .await
-        .unwrap();
-    let store = daemon.store_for_workspace(workspace.id).await.unwrap();
-    let worktree = store
-        .create_worktree(
-            workspace.id,
-            workspace_root.to_string_lossy().to_string(),
-            "deadbeef".to_string(),
-            None,
-        )
-        .await
-        .unwrap();
-    let task = store
-        .create_task(workspace.id, "task".to_string(), None)
-        .await
-        .unwrap();
-    let session = store
-        .create_session(
-            task.id,
-            workspace.id,
-            worktree.id,
-            ctx_core::models::ExecutionEnvironment::Host,
-            "fake".to_string(),
-            "model".to_string(),
-            "implementer".to_string(),
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
     daemon
-        .global_store()
-        .upsert_workspace_session_index(session.id, workspace.id)
-        .await
-        .unwrap();
-
-    store
-        .append_session_event(
-            session.id,
-            None,
-            None,
-            SessionEventType::Notice,
+        .cache_rehydration_seed_completed_notice_for_test(
+            session,
+            seed.task.id,
             serde_json::json!({ "kind": "hydrated_cache", "message": "persist me" }),
+            Some("persist me"),
         )
         .await
         .unwrap();
 
-    let full_head = store
-        .get_session_head_snapshot(session.id, 60, true)
+    let full_head = daemon
+        .cache_rehydration_full_head_for_test(session.id, 60, true)
         .await
-        .unwrap()
-        .expect("full replay-capable session head");
+        .unwrap();
     assert!(
         !full_head.events.is_empty(),
         "full head should include persisted events for replay-capable caching"
@@ -433,13 +205,12 @@ async fn include_events_session_heads_use_hydrated_replay_cache_when_store_canno
         .cache_rehydration_seed_replay_head_cache_for_test(full_head.clone())
         .await;
 
-    drop(store);
     daemon
-        .cache_rehydration_make_workspace_store_unopenable_for_test(workspace.id)
+        .cache_rehydration_make_workspace_store_unopenable_for_test(seed.workspace.id)
         .await
         .unwrap();
 
-    let app = common::router_for_daemon(&daemon);
+    let app = fixture.router();
     let req = Request::builder()
         .method("GET")
         .uri(format!(
@@ -457,27 +228,19 @@ async fn include_events_session_heads_use_hydrated_replay_cache_when_store_canno
 
 #[tokio::test]
 async fn archiving_task_invalidates_cached_replay_session_head() {
-    let temp = tempdir().unwrap();
-    let stores = common::setup_store(temp.path()).await;
-    let daemon = common::build_daemon(
-        temp.path(),
-        stores.clone(),
-        common::fake_providers(),
-        "http://localhost",
-    );
+    let fixture = common::fake_daemon_fixture("http://localhost").await;
+    let daemon = &fixture.daemon;
 
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
-    let app = common::router_for_daemon(&daemon);
+    let app = fixture.router();
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;
     let (task, session) =
         common::create_task_with_session(&app, workspace.id.0, "task", "fake", "model").await;
-    let store = daemon.store_for_workspace(workspace.id).await.unwrap();
 
-    let full_head = store
-        .get_session_head_snapshot(session.id, 60, true)
+    let full_head = daemon
+        .cache_rehydration_full_head_for_test(session.id, 60, true)
         .await
-        .unwrap()
-        .expect("full replay-capable session head");
+        .unwrap();
     daemon
         .cache_rehydration_seed_replay_head_cache_for_test(full_head)
         .await;
@@ -504,67 +267,18 @@ async fn archiving_task_invalidates_cached_replay_session_head() {
 
 #[tokio::test]
 async fn non_primary_store_backed_head_is_purged_on_workspace_cleanup() {
-    let temp = tempdir().unwrap();
-    let stores = common::setup_store(temp.path()).await;
-    let daemon = common::build_daemon(
-        temp.path(),
-        stores.clone(),
-        common::fake_providers(),
-        "http://localhost",
-    );
+    let fixture = common::fake_daemon_fixture("http://localhost").await;
+    let daemon = &fixture.daemon;
+    let seed = daemon
+        .seed_cache_rehydration_session_for_test(false, false)
+        .await
+        .unwrap();
+    let session = &seed.session;
 
-    let workspace_root = temp.path().join("workspace");
-    tokio::fs::create_dir_all(&workspace_root).await.unwrap();
-
-    let workspace = daemon
-        .global_store()
-        .create_workspace(
-            "ws".to_string(),
-            workspace_root.to_string_lossy().to_string(),
-            VcsKind::Git,
-        )
+    let head = daemon
+        .cache_rehydration_full_head_for_test(session.id, 60, false)
         .await
         .unwrap();
-    let store = daemon.store_for_workspace(workspace.id).await.unwrap();
-    let worktree = store
-        .create_worktree(
-            workspace.id,
-            workspace_root.to_string_lossy().to_string(),
-            "deadbeef".to_string(),
-            None,
-        )
-        .await
-        .unwrap();
-    let task = store
-        .create_task(workspace.id, "task".to_string(), None)
-        .await
-        .unwrap();
-    let session = store
-        .create_session(
-            task.id,
-            workspace.id,
-            worktree.id,
-            ctx_core::models::ExecutionEnvironment::Host,
-            "fake".to_string(),
-            "model".to_string(),
-            "implementer".to_string(),
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-    daemon
-        .global_store()
-        .upsert_workspace_session_index(session.id, workspace.id)
-        .await
-        .unwrap();
-
-    let head = store
-        .get_session_head_snapshot(session.id, 60, false)
-        .await
-        .unwrap()
-        .expect("store-backed session head");
     daemon
         .cache_rehydration_seed_compact_head_cache_for_test(head)
         .await;
@@ -580,18 +294,11 @@ async fn non_primary_store_backed_head_is_purged_on_workspace_cleanup() {
         "event-stripped reads should not populate the replay-capable session-head cache"
     );
 
-    drop(store);
     daemon
-        .cache_rehydration_cleanup_workspace_for_test(workspace.id)
+        .cache_rehydration_cleanup_workspace_for_test(seed.workspace.id)
         .await;
     daemon
-        .global_store()
-        .delete_workspace_indexes(workspace.id)
-        .await
-        .unwrap();
-    daemon
-        .global_store()
-        .delete_workspace(workspace.id)
+        .cache_rehydration_delete_workspace_rows_for_test(seed.workspace.id)
         .await
         .unwrap();
 
@@ -600,7 +307,7 @@ async fn non_primary_store_backed_head_is_purged_on_workspace_cleanup() {
         .await
         .is_none());
 
-    let app = common::router_for_daemon(&daemon);
+    let app = fixture.router();
     let req = Request::builder()
         .method("GET")
         .uri(format!(
@@ -614,7 +321,10 @@ async fn non_primary_store_backed_head_is_purged_on_workspace_cleanup() {
 
     let req = Request::builder()
         .method("GET")
-        .uri(format!("/api/workspaces/{}/attachments", workspace.id.0))
+        .uri(format!(
+            "/api/workspaces/{}/attachments",
+            seed.workspace.id.0
+        ))
         .body(Body::empty())
         .unwrap();
     let (status, _body) = common::oneshot_bytes(&app, req).await;
@@ -623,72 +333,23 @@ async fn non_primary_store_backed_head_is_purged_on_workspace_cleanup() {
 
 #[tokio::test]
 async fn session_read_routes_return_500_when_workspace_store_cannot_open() {
-    let temp = tempdir().unwrap();
-    let stores = common::setup_store(temp.path()).await;
-    let daemon = common::build_daemon(
-        temp.path(),
-        stores.clone(),
-        common::fake_providers(),
-        "http://localhost",
-    );
+    let fixture = common::fake_daemon_fixture("http://localhost").await;
+    let daemon = &fixture.daemon;
+    let seed = daemon
+        .seed_cache_rehydration_session_for_test(false, false)
+        .await
+        .unwrap();
+    let session = &seed.session;
 
-    let workspace_root = temp.path().join("workspace");
-    tokio::fs::create_dir_all(&workspace_root).await.unwrap();
-
-    let workspace = daemon
-        .global_store()
-        .create_workspace(
-            "ws".to_string(),
-            workspace_root.to_string_lossy().to_string(),
-            VcsKind::Git,
-        )
-        .await
-        .unwrap();
-    let store = daemon.store_for_workspace(workspace.id).await.unwrap();
-    let worktree = store
-        .create_worktree(
-            workspace.id,
-            workspace_root.to_string_lossy().to_string(),
-            "deadbeef".to_string(),
-            None,
-        )
-        .await
-        .unwrap();
-    let task = store
-        .create_task(workspace.id, "task".to_string(), None)
-        .await
-        .unwrap();
-    let session = store
-        .create_session(
-            task.id,
-            workspace.id,
-            worktree.id,
-            ctx_core::models::ExecutionEnvironment::Host,
-            "fake".to_string(),
-            "model".to_string(),
-            "implementer".to_string(),
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-    daemon
-        .global_store()
-        .upsert_workspace_session_index(session.id, workspace.id)
-        .await
-        .unwrap();
-
-    drop(store);
     daemon
         .cache_rehydration_cleanup_session_for_test(session.id)
         .await;
     daemon
-        .cache_rehydration_make_workspace_store_unopenable_for_test(workspace.id)
+        .cache_rehydration_make_workspace_store_unopenable_for_test(seed.workspace.id)
         .await
         .unwrap();
 
-    let app = common::router_for_daemon(&daemon);
+    let app = fixture.router();
     let turn_id = ctx_core::ids::TurnId::new();
     let routes = [
         format!(
@@ -703,8 +364,8 @@ async fn session_read_routes_return_500_when_workspace_store_cannot_open() {
         format!("/api/sessions/{}/events?tail=1", session.id.0),
         format!("/api/sessions/{}/history?limit=60", session.id.0),
         format!("/api/sessions/{}/turns/{}/tools", session.id.0, turn_id.0),
-        format!("/api/workspaces/{}/attachments", workspace.id.0),
-        format!("/api/workspaces/{}/tasks", workspace.id.0),
+        format!("/api/workspaces/{}/attachments", seed.workspace.id.0),
+        format!("/api/workspaces/{}/tasks", seed.workspace.id.0),
     ];
     for route in routes {
         let req = Request::builder()
@@ -730,67 +391,19 @@ async fn session_read_routes_return_500_when_workspace_store_cannot_open() {
 
 #[tokio::test]
 async fn delete_in_progress_workspace_and_session_reads_return_404() {
-    let temp = tempdir().unwrap();
-    let stores = common::setup_store(temp.path()).await;
-    let daemon = common::build_daemon(
-        temp.path(),
-        stores.clone(),
-        common::fake_providers(),
-        "http://localhost",
-    );
-
-    let workspace_root = temp.path().join("workspace");
-    tokio::fs::create_dir_all(&workspace_root).await.unwrap();
-
-    let workspace = daemon
-        .global_store()
-        .create_workspace(
-            "ws".to_string(),
-            workspace_root.to_string_lossy().to_string(),
-            VcsKind::Git,
-        )
+    let fixture = common::fake_daemon_fixture("http://localhost").await;
+    let daemon = &fixture.daemon;
+    let seed = daemon
+        .seed_cache_rehydration_session_for_test(false, false)
         .await
         .unwrap();
-    let store = daemon.store_for_workspace(workspace.id).await.unwrap();
-    let worktree = store
-        .create_worktree(
-            workspace.id,
-            workspace_root.to_string_lossy().to_string(),
-            "deadbeef".to_string(),
-            None,
-        )
-        .await
-        .unwrap();
-    let task = store
-        .create_task(workspace.id, "task".to_string(), None)
-        .await
-        .unwrap();
-    let session = store
-        .create_session(
-            task.id,
-            workspace.id,
-            worktree.id,
-            ctx_core::models::ExecutionEnvironment::Host,
-            "fake".to_string(),
-            "model".to_string(),
-            "implementer".to_string(),
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-    daemon
-        .global_store()
-        .upsert_workspace_session_index(session.id, workspace.id)
-        .await
-        .unwrap();
+    let session = &seed.session;
 
     daemon
-        .cache_rehydration_begin_workspace_delete_for_test(workspace.id)
+        .cache_rehydration_begin_workspace_delete_for_test(seed.workspace.id)
         .await;
 
-    let app = common::router_for_daemon(&daemon);
+    let app = fixture.router();
     for route in [
         format!(
             "/api/sessions/{}/head?include_events=false&limit=60",
@@ -800,8 +413,8 @@ async fn delete_in_progress_workspace_and_session_reads_return_404() {
             "/api/sessions/{}/head?include_events=true&limit=60",
             session.id.0
         ),
-        format!("/api/workspaces/{}/attachments", workspace.id.0),
-        format!("/api/workspaces/{}/active_heads", workspace.id.0),
+        format!("/api/workspaces/{}/attachments", seed.workspace.id.0),
+        format!("/api/workspaces/{}/active_heads", seed.workspace.id.0),
     ] {
         let req = Request::builder()
             .method("GET")
@@ -813,177 +426,30 @@ async fn delete_in_progress_workspace_and_session_reads_return_404() {
     }
 
     daemon
-        .cache_rehydration_finish_workspace_delete_for_test(workspace.id)
+        .cache_rehydration_finish_workspace_delete_for_test(seed.workspace.id)
         .await;
 }
 
 #[tokio::test]
 async fn include_events_false_subagent_heads_fall_back_to_store_after_cold_delta() {
-    let temp = tempdir().unwrap();
-    let stores = common::setup_store(temp.path()).await;
-    let daemon = common::build_daemon(
-        temp.path(),
-        stores.clone(),
-        common::fake_providers(),
-        "http://localhost",
-    );
-
-    let workspace_root = temp.path().join("workspace");
-    tokio::fs::create_dir_all(&workspace_root).await.unwrap();
-
-    let workspace = daemon
-        .global_store()
-        .create_workspace(
-            "ws".to_string(),
-            workspace_root.to_string_lossy().to_string(),
-            VcsKind::Git,
-        )
+    let fixture = common::fake_daemon_fixture("http://localhost").await;
+    let daemon = &fixture.daemon;
+    let seed = daemon
+        .seed_cache_rehydration_primary_and_subagent_for_test()
         .await
         .unwrap();
-    let store = daemon.store_for_workspace(workspace.id).await.unwrap();
-    let worktree = store
-        .create_worktree(
-            workspace.id,
-            workspace_root.to_string_lossy().to_string(),
-            "deadbeef".to_string(),
-            None,
-        )
-        .await
-        .unwrap();
-    let task = store
-        .create_task(workspace.id, "task".to_string(), None)
-        .await
-        .unwrap();
-    let primary = store
-        .create_session(
-            task.id,
-            workspace.id,
-            worktree.id,
-            ctx_core::models::ExecutionEnvironment::Host,
-            "fake".to_string(),
-            "model".to_string(),
-            "implementer".to_string(),
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-    store
-        .set_task_primary_session(task.id, primary.id, worktree.id)
-        .await
-        .unwrap();
-    let subagent = store
-        .create_session(
-            task.id,
-            workspace.id,
-            worktree.id,
-            ctx_core::models::ExecutionEnvironment::Host,
-            "fake".to_string(),
-            "model".to_string(),
-            "reviewer".to_string(),
-            Some(primary.id),
-            Some("sub_agent".to_string()),
-            None,
-        )
-        .await
-        .unwrap();
-    daemon
-        .global_store()
-        .upsert_workspace_session_index(primary.id, workspace.id)
-        .await
-        .unwrap();
-    daemon
-        .global_store()
-        .upsert_workspace_session_index(subagent.id, workspace.id)
-        .await
-        .unwrap();
-
-    let run_id = ctx_core::ids::RunId::new();
-    let turn_id = ctx_core::ids::TurnId::new();
-    let now = chrono::Utc::now();
-    store
-        .insert_session_turn(ctx_core::models::SessionTurn {
-            turn_id,
-            session_id: subagent.id,
-            run_id: Some(run_id),
-            user_message_id: None,
-            status: SessionTurnStatus::Running,
-            start_seq: Some(1),
-            end_seq: None,
-            started_at: now,
-            updated_at: now,
-            assistant_partial: None,
-            thought_partial: None,
-            metrics_json: None,
-            failure: None,
-            tool_total: 0,
-            tool_pending: 0,
-            tool_running: 0,
-            tool_completed: 0,
-            tool_failed: 0,
-        })
-        .await
-        .unwrap();
-    let event = store
-        .append_session_event(
-            subagent.id,
-            Some(run_id),
-            Some(turn_id),
-            SessionEventType::Notice,
+    let subagent = &seed.subagent;
+    let turn = daemon
+        .cache_rehydration_seed_completed_notice_for_test(
+            subagent,
+            seed.task.id,
             serde_json::json!({"msg":"subagent durable history"}),
+            Some("subagent answer"),
         )
         .await
         .unwrap();
-    store
-        .update_session_turn_status(
-            subagent.id,
-            turn_id,
-            SessionTurnStatus::Completed,
-            Some(event.seq),
-            None,
-            chrono::Utc::now(),
-        )
-        .await
-        .unwrap();
-    store
-        .insert_message(ctx_core::models::Message {
-            id: ctx_core::ids::MessageId::new(),
-            session_id: subagent.id,
-            task_id: task.id,
-            run_id: Some(run_id),
-            turn_id: Some(turn_id),
-            turn_sequence: Some(1),
-            order_seq: None,
-            role: ctx_core::models::MessageRole::Assistant,
-            content: "subagent answer".to_string(),
-            attachments: vec![],
-            delivery: ctx_core::models::MessageDelivery::Immediate,
-            delivered_at: None,
-            created_at: chrono::Utc::now(),
-        })
-        .await
-        .unwrap();
-
-    let projection_rev = store.get_session_projection_rev(subagent.id).await.unwrap();
-    let delta = SessionHeadDelta {
-        session_id: subagent.id,
-        last_event_seq: event.seq,
-        projection_rev,
-        state_rev: event.seq,
-        emitted_at_ms: None,
-        session: None,
-        activity: Some(SessionActivityState {
-            is_working: true,
-            last_turn_status: Some(SessionTurnStatus::Running),
-        }),
-        event: None,
-        turn: None,
-        message: None,
-        tool_summaries: Vec::new(),
-    };
     daemon
-        .publish_session_head_delta(&subagent, delta, true)
+        .cache_rehydration_publish_cold_running_delta_for_test(subagent, &turn)
         .await;
     assert!(
         daemon
@@ -993,7 +459,7 @@ async fn include_events_false_subagent_heads_fall_back_to_store_after_cold_delta
         "cold subagent delta should not synthesize an in-memory head"
     );
 
-    let app = common::router_for_daemon(&daemon);
+    let app = fixture.router();
     let req = Request::builder()
         .method("GET")
         .uri(format!("/api/sessions/{}/head?limit=60", subagent.id.0))
@@ -1002,130 +468,39 @@ async fn include_events_false_subagent_heads_fall_back_to_store_after_cold_delta
     let (status, head): (StatusCode, SessionHeadSnapshot) = common::oneshot_json(&app, req).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(head.session.id, subagent.id);
-    assert_eq!(head.last_event_seq, event.seq);
+    assert_eq!(head.last_event_seq, turn.event.seq);
     assert_eq!(head.messages.len(), 1);
     assert_eq!(head.messages[0].content, "subagent answer");
 }
 
 #[tokio::test]
 async fn unarchive_repopulates_active_heads_for_hydrated_workspace() {
-    let temp = tempdir().unwrap();
-    let stores = common::setup_store(temp.path()).await;
-    let daemon = common::build_daemon(
-        temp.path(),
-        stores.clone(),
-        common::fake_providers(),
-        "http://localhost",
-    );
-
-    let workspace_root = temp.path().join("workspace");
-    tokio::fs::create_dir_all(&workspace_root).await.unwrap();
-
-    let workspace = daemon
-        .global_store()
-        .create_workspace(
-            "ws".to_string(),
-            workspace_root.to_string_lossy().to_string(),
-            VcsKind::Git,
-        )
+    let fixture = common::fake_daemon_fixture("http://localhost").await;
+    let daemon = &fixture.daemon;
+    let seed = daemon
+        .seed_cache_rehydration_session_for_test(false, true)
         .await
         .unwrap();
-    let store = daemon.store_for_workspace(workspace.id).await.unwrap();
-    let worktree = store
-        .create_worktree(
-            workspace.id,
-            workspace_root.to_string_lossy().to_string(),
-            "deadbeef".to_string(),
-            None,
-        )
-        .await
-        .unwrap();
-    let task = store
-        .create_task(workspace.id, "task".to_string(), None)
-        .await
-        .unwrap();
-    let session = store
-        .create_session(
+    let workspace = &seed.workspace;
+    let task = &seed.task;
+    let session = &seed.session;
+    daemon
+        .cache_rehydration_seed_completed_notice_for_test(
+            session,
             task.id,
-            workspace.id,
-            worktree.id,
-            ctx_core::models::ExecutionEnvironment::Host,
-            "fake".to_string(),
-            "model".to_string(),
-            "implementer".to_string(),
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-    daemon
-        .global_store()
-        .upsert_workspace_task_index(task.id, workspace.id)
-        .await
-        .unwrap();
-    daemon
-        .global_store()
-        .upsert_workspace_session_index(session.id, workspace.id)
-        .await
-        .unwrap();
-    let run_id = ctx_core::ids::RunId::new();
-    let turn_id = ctx_core::ids::TurnId::new();
-    let now = chrono::Utc::now();
-    store
-        .insert_session_turn(ctx_core::models::SessionTurn {
-            turn_id,
-            session_id: session.id,
-            run_id: Some(run_id),
-            user_message_id: None,
-            status: SessionTurnStatus::Running,
-            start_seq: Some(1),
-            end_seq: None,
-            started_at: now,
-            updated_at: now,
-            assistant_partial: None,
-            thought_partial: None,
-            metrics_json: None,
-            failure: None,
-            tool_total: 0,
-            tool_pending: 0,
-            tool_running: 0,
-            tool_completed: 0,
-            tool_failed: 0,
-        })
-        .await
-        .unwrap();
-    let event = store
-        .append_session_event(
-            session.id,
-            Some(run_id),
-            Some(turn_id),
-            SessionEventType::Notice,
             serde_json::json!({"note": "seed"}),
-        )
-        .await
-        .unwrap();
-    store
-        .update_session_turn_status(
-            session.id,
-            turn_id,
-            SessionTurnStatus::Completed,
-            Some(event.seq),
             None,
-            chrono::Utc::now(),
         )
         .await
         .unwrap();
-    let active_summary = store
-        .get_workspace_active_task_summary(task.id)
+    let active_summary = daemon
+        .cache_rehydration_active_task_summary_for_test(task.id)
         .await
-        .unwrap()
-        .expect("active task summary");
-    let head = store
-        .get_session_head_snapshot(session.id, 60, true)
+        .unwrap();
+    let head = daemon
+        .cache_rehydration_full_head_for_test(session.id, 60, true)
         .await
-        .unwrap()
-        .expect("session head snapshot");
+        .unwrap();
     daemon
         .cache_rehydration_hydrate_snapshot_for_test(
             workspace.id,
@@ -1136,7 +511,7 @@ async fn unarchive_repopulates_active_heads_for_hydrated_workspace() {
         )
         .await;
 
-    let app = common::router_for_daemon(&daemon);
+    let app = fixture.router();
 
     let heads_req = Request::builder()
         .method("GET")
@@ -1167,10 +542,7 @@ async fn unarchive_repopulates_active_heads_for_hydrated_workspace() {
         common::oneshot_json(&app, unarchive_req).await;
     assert_eq!(unarchive_status, StatusCode::OK);
     let durable_head = daemon
-        .store_for_session(session.id)
-        .await
-        .unwrap()
-        .get_active_snapshot_head(session.id)
+        .cache_rehydration_active_head_for_test(session.id)
         .await
         .unwrap();
     assert!(durable_head.is_some());
@@ -1193,115 +565,26 @@ async fn unarchive_repopulates_active_heads_for_hydrated_workspace() {
 
 #[tokio::test]
 async fn unarchive_replaces_stale_session_head_cache_before_workspace_hydration() {
-    let temp = tempdir().unwrap();
-    let stores = common::setup_store(temp.path()).await;
-    let daemon = common::build_daemon(
-        temp.path(),
-        stores.clone(),
-        common::fake_providers(),
-        "http://localhost",
-    );
-
-    let workspace_root = temp.path().join("workspace");
-    tokio::fs::create_dir_all(&workspace_root).await.unwrap();
-
-    let workspace = daemon
-        .global_store()
-        .create_workspace(
-            "ws".to_string(),
-            workspace_root.to_string_lossy().to_string(),
-            VcsKind::Git,
-        )
+    let fixture = common::fake_daemon_fixture("http://localhost").await;
+    let daemon = &fixture.daemon;
+    let seed = daemon
+        .seed_cache_rehydration_session_for_test(false, true)
         .await
         .unwrap();
-    let store = daemon.store_for_workspace(workspace.id).await.unwrap();
-    let worktree = store
-        .create_worktree(
-            workspace.id,
-            workspace_root.to_string_lossy().to_string(),
-            "deadbeef".to_string(),
-            None,
-        )
-        .await
-        .unwrap();
-    let task = store
-        .create_task(workspace.id, "task".to_string(), None)
-        .await
-        .unwrap();
-    let session = store
-        .create_session(
+    let workspace = &seed.workspace;
+    let task = &seed.task;
+    let session = &seed.session;
+    daemon
+        .cache_rehydration_seed_completed_notice_for_test(
+            session,
             task.id,
-            workspace.id,
-            worktree.id,
-            ctx_core::models::ExecutionEnvironment::Host,
-            "fake".to_string(),
-            "model".to_string(),
-            "implementer".to_string(),
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-    daemon
-        .global_store()
-        .upsert_workspace_task_index(task.id, workspace.id)
-        .await
-        .unwrap();
-    daemon
-        .global_store()
-        .upsert_workspace_session_index(session.id, workspace.id)
-        .await
-        .unwrap();
-    let run_id = ctx_core::ids::RunId::new();
-    let turn_id = ctx_core::ids::TurnId::new();
-    let now = chrono::Utc::now();
-    store
-        .insert_session_turn(ctx_core::models::SessionTurn {
-            turn_id,
-            session_id: session.id,
-            run_id: Some(run_id),
-            user_message_id: None,
-            status: SessionTurnStatus::Running,
-            start_seq: Some(1),
-            end_seq: None,
-            started_at: now,
-            updated_at: now,
-            assistant_partial: None,
-            thought_partial: None,
-            metrics_json: None,
-            failure: None,
-            tool_total: 0,
-            tool_pending: 0,
-            tool_running: 0,
-            tool_completed: 0,
-            tool_failed: 0,
-        })
-        .await
-        .unwrap();
-    let event = store
-        .append_session_event(
-            session.id,
-            Some(run_id),
-            Some(turn_id),
-            SessionEventType::Notice,
             serde_json::json!({"note": "seed"}),
-        )
-        .await
-        .unwrap();
-    store
-        .update_session_turn_status(
-            session.id,
-            turn_id,
-            SessionTurnStatus::Completed,
-            Some(event.seq),
             None,
-            chrono::Utc::now(),
         )
         .await
         .unwrap();
 
-    let app = common::router_for_daemon(&daemon);
+    let app = fixture.router();
 
     let archive_req = Request::builder()
         .method("POST")
@@ -1354,151 +637,24 @@ async fn unarchive_replaces_stale_session_head_cache_before_workspace_hydration(
 
 #[tokio::test]
 async fn include_events_false_primary_heads_fall_back_to_store_after_cold_delta() {
-    let temp = tempdir().unwrap();
-    let stores = common::setup_store(temp.path()).await;
-    let daemon = common::build_daemon(
-        temp.path(),
-        stores.clone(),
-        common::fake_providers(),
-        "http://localhost",
-    );
-
-    let workspace_root = temp.path().join("workspace");
-    tokio::fs::create_dir_all(&workspace_root).await.unwrap();
-
-    let workspace = daemon
-        .global_store()
-        .create_workspace(
-            "ws".to_string(),
-            workspace_root.to_string_lossy().to_string(),
-            VcsKind::Git,
-        )
+    let fixture = common::fake_daemon_fixture("http://localhost").await;
+    let daemon = &fixture.daemon;
+    let seed = daemon
+        .seed_cache_rehydration_session_for_test(true, false)
         .await
         .unwrap();
-    let store = daemon.store_for_workspace(workspace.id).await.unwrap();
-    let worktree = store
-        .create_worktree(
-            workspace.id,
-            workspace_root.to_string_lossy().to_string(),
-            "deadbeef".to_string(),
-            None,
-        )
-        .await
-        .unwrap();
-    let task = store
-        .create_task(workspace.id, "task".to_string(), None)
-        .await
-        .unwrap();
-    let primary = store
-        .create_session(
-            task.id,
-            workspace.id,
-            worktree.id,
-            ctx_core::models::ExecutionEnvironment::Host,
-            "fake".to_string(),
-            "model".to_string(),
-            "implementer".to_string(),
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-    store
-        .set_task_primary_session(task.id, primary.id, worktree.id)
-        .await
-        .unwrap();
-    daemon
-        .global_store()
-        .upsert_workspace_session_index(primary.id, workspace.id)
-        .await
-        .unwrap();
-
-    let run_id = ctx_core::ids::RunId::new();
-    let turn_id = ctx_core::ids::TurnId::new();
-    let now = chrono::Utc::now();
-    store
-        .insert_session_turn(ctx_core::models::SessionTurn {
-            turn_id,
-            session_id: primary.id,
-            run_id: Some(run_id),
-            user_message_id: None,
-            status: SessionTurnStatus::Running,
-            start_seq: Some(1),
-            end_seq: None,
-            started_at: now,
-            updated_at: now,
-            assistant_partial: None,
-            thought_partial: None,
-            metrics_json: None,
-            failure: None,
-            tool_total: 0,
-            tool_pending: 0,
-            tool_running: 0,
-            tool_completed: 0,
-            tool_failed: 0,
-        })
-        .await
-        .unwrap();
-    let event = store
-        .append_session_event(
-            primary.id,
-            Some(run_id),
-            Some(turn_id),
-            SessionEventType::Notice,
+    let primary = &seed.session;
+    let turn = daemon
+        .cache_rehydration_seed_completed_notice_for_test(
+            primary,
+            seed.task.id,
             serde_json::json!({"msg":"primary durable history"}),
+            Some("primary answer"),
         )
         .await
         .unwrap();
-    store
-        .update_session_turn_status(
-            primary.id,
-            turn_id,
-            SessionTurnStatus::Completed,
-            Some(event.seq),
-            None,
-            chrono::Utc::now(),
-        )
-        .await
-        .unwrap();
-    store
-        .insert_message(ctx_core::models::Message {
-            id: ctx_core::ids::MessageId::new(),
-            session_id: primary.id,
-            task_id: task.id,
-            run_id: Some(run_id),
-            turn_id: Some(turn_id),
-            turn_sequence: Some(1),
-            order_seq: None,
-            role: ctx_core::models::MessageRole::Assistant,
-            content: "primary answer".to_string(),
-            attachments: vec![],
-            delivery: ctx_core::models::MessageDelivery::Immediate,
-            delivered_at: None,
-            created_at: chrono::Utc::now(),
-        })
-        .await
-        .unwrap();
-
-    let projection_rev = store.get_session_projection_rev(primary.id).await.unwrap();
-    let delta = SessionHeadDelta {
-        session_id: primary.id,
-        last_event_seq: event.seq,
-        projection_rev,
-        state_rev: event.seq,
-        emitted_at_ms: None,
-        session: None,
-        activity: Some(SessionActivityState {
-            is_working: true,
-            last_turn_status: Some(SessionTurnStatus::Running),
-        }),
-        event: None,
-        turn: None,
-        message: None,
-        tool_summaries: Vec::new(),
-    };
     daemon
-        .publish_session_head_delta(&primary, delta, true)
+        .cache_rehydration_publish_cold_running_delta_for_test(primary, &turn)
         .await;
     assert!(
         daemon
@@ -1508,7 +664,7 @@ async fn include_events_false_primary_heads_fall_back_to_store_after_cold_delta(
         "cold primary delta should stay unservable until the store-backed head is loaded"
     );
 
-    let app = common::router_for_daemon(&daemon);
+    let app = fixture.router();
     let req = Request::builder()
         .method("GET")
         .uri(format!("/api/sessions/{}/head?limit=60", primary.id.0))
@@ -1517,7 +673,7 @@ async fn include_events_false_primary_heads_fall_back_to_store_after_cold_delta(
     let (status, head): (StatusCode, SessionHeadSnapshot) = common::oneshot_json(&app, req).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(head.session.id, primary.id);
-    assert_eq!(head.last_event_seq, event.seq);
+    assert_eq!(head.last_event_seq, turn.event.seq);
     assert_eq!(head.messages.len(), 1);
     assert_eq!(head.messages[0].content, "primary answer");
 
@@ -1525,7 +681,7 @@ async fn include_events_false_primary_heads_fall_back_to_store_after_cold_delta(
         .cache_rehydration_session_head_for_read_cached_for_test(primary.id)
         .await
         .expect("store-backed read should hydrate the compact per-session head cache");
-    assert_eq!(cached.last_event_seq, event.seq);
+    assert_eq!(cached.last_event_seq, turn.event.seq);
     assert_eq!(cached.messages.len(), 1);
     assert_eq!(cached.messages[0].content, "primary answer");
     assert!(

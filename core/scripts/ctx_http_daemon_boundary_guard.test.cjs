@@ -3,6 +3,7 @@ const test = require("node:test");
 
 const {
   AUTH_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
+  CACHE_REHYDRATION_TEST_STORE_ACCESS_PATTERNS,
   DAEMON_EXTRACTION_BLOCKER_PATTERNS,
   API_DOMAIN_RAW_STORE_PATTERNS,
   API_RAW_DAEMON_PATTERNS,
@@ -35,6 +36,7 @@ const {
   WORKTREE_ARCHIVE_TEST_STORE_ACCESS_PATTERNS,
   apiPatternsForPath,
   authBoundaryStorePatternsForPath,
+  cacheRehydrationStorePatternsForPath,
   externalProviderRouteStorePatternsForPath,
   executionLaunchStorePatternsForPath,
   fakeDaemonExternalStorePatternsForPath,
@@ -1214,6 +1216,7 @@ test("daemon boundary guard scopes fake-daemon external roots without blocking c
   for (const filePath of [
     "core/crates/ctx-http/tests/acp_target_scoped_status.rs",
     "core/crates/ctx-http/tests/assistant_message_persistence_faults.rs",
+    "core/crates/ctx-http/tests/cache_rehydration.rs",
     "core/crates/ctx-http/tests/demo_seed_transcript_http.rs",
     "core/crates/ctx-http/tests/fault_matrix.rs",
     "core/crates/ctx-http/tests/global_id_routing_http.rs",
@@ -1243,6 +1246,51 @@ test("daemon boundary guard scopes fake-daemon external roots without blocking c
   }
   assert.deepEqual(
     fakeDaemonExternalStorePatternsForPath("core/crates/ctx-http/tests/common/mod.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects direct cache rehydration store/projection access", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/cache_rehydration.rs",
+    contents: `
+      async fn helper(daemon: &TestDaemon, store: &Store) {
+        daemon.global_store().list_workspaces().await?;
+        daemon.store_for_session(session_id).await?;
+        store.create_workspace(name, root, VcsKind::Git).await?;
+        store.insert_session_turn(turn).await?;
+        store.append_session_event(session_id, None, None, SessionEventType::Notice, json!({})).await?;
+        store.get_session_head_snapshot(session_id, 60, true).await?;
+        store.get_session_projection_rev(session_id).await?;
+        daemon.publish_session_head_delta(&session, SessionHeadDelta { session_id, ..delta }).await;
+      }
+    `,
+    patterns: CACHE_REHYDRATION_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct cache rehydration store access",
+      "direct cache rehydration store access",
+      "direct cache rehydration store creation",
+      "direct cache rehydration session event write",
+      "direct cache rehydration session event write",
+      "direct cache rehydration projection read",
+      "direct cache rehydration projection read",
+      "direct cache rehydration head delta publication",
+      "raw cache rehydration event/status model",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes cache rehydration store facade roots", () => {
+  assert.deepEqual(
+    cacheRehydrationStorePatternsForPath("core/crates/ctx-http/tests/cache_rehydration.rs"),
+    CACHE_REHYDRATION_TEST_STORE_ACCESS_PATTERNS,
+  );
+  assert.deepEqual(
+    cacheRehydrationStorePatternsForPath("core/crates/ctx-http/tests/common/mod.rs"),
     [],
   );
 });

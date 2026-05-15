@@ -169,6 +169,7 @@ const smallExternalStoreFacadeTestRoots = [
 const fakeDaemonExternalStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/acp_target_scoped_status.rs",
   "core/crates/ctx-http/tests/assistant_message_persistence_faults.rs",
+  "core/crates/ctx-http/tests/cache_rehydration.rs",
   "core/crates/ctx-http/tests/demo_seed_transcript_http.rs",
   "core/crates/ctx-http/tests/fault_matrix.rs",
   "core/crates/ctx-http/tests/global_id_routing_http.rs",
@@ -190,6 +191,10 @@ const fakeDaemonExternalStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/workspace_stream_no_gaps_under_activity.rs",
   "core/crates/ctx-http/tests/workspace_stream_stress_active_heads_lag.rs",
   "core/crates/ctx-http/tests/worktree_archive_http.rs",
+];
+
+const cacheRehydrationStoreFacadeTestRoots = [
+  "core/crates/ctx-http/tests/cache_rehydration.rs",
 ];
 
 const mcpDaemonFacadeTestRoots = [
@@ -680,6 +685,37 @@ const FAKE_DAEMON_EXTERNAL_TEST_STORE_ACCESS_PATTERNS = [
   {
     name: "direct fake-daemon external TestDaemon store access",
     regex: /\.(?:stores|global_store|store_for_session|store_for_workspace|uncached_store_for_workspace|store_for_task|store_for_worktree)\s*\(/,
+  },
+];
+
+const CACHE_REHYDRATION_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct cache rehydration store access",
+    regex: /\.(?:stores|global_store|store_for_session|store_for_workspace|uncached_store_for_workspace|store_for_task|store_for_worktree)\s*\(/,
+  },
+  {
+    name: "direct cache rehydration store creation",
+    regex: /\.(?:create_workspace|create_worktree|create_task|create_session|upsert_workspace_task_index|upsert_workspace_session_index)\s*\(/,
+  },
+  {
+    name: "direct cache rehydration session event write",
+    regex: /\.(?:insert_session_turn|append_session_event|update_session_turn_status|insert_message)\s*\(/,
+  },
+  {
+    name: "direct cache rehydration projection read",
+    regex: /\.(?:get_session_head_snapshot|get_active_snapshot_head|get_workspace_active_task_summary|get_session_projection_rev)\s*\(/,
+  },
+  {
+    name: "direct cache rehydration workspace delete",
+    regex: /\.(?:delete_workspace_indexes|delete_workspace)\s*\(/,
+  },
+  {
+    name: "direct cache rehydration head delta publication",
+    regex: /\.publish_session_head_delta\s*\(|\bSessionHeadDelta\b/,
+  },
+  {
+    name: "raw cache rehydration event/status model",
+    regex: /\bSessionEventType\b|\bSessionTurnStatus\b/,
   },
 ];
 
@@ -1740,6 +1776,13 @@ function fakeDaemonExternalStorePatternsForPath(relativePath) {
   return [];
 }
 
+function cacheRehydrationStorePatternsForPath(relativePath) {
+  if (cacheRehydrationStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return CACHE_REHYDRATION_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
 function mcpDaemonPatternsForPath(relativePath) {
   if (mcpDaemonFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS;
@@ -2112,6 +2155,13 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
+        patterns: cacheRehydrationStorePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
         patterns: mcpDaemonPatternsForPath(relativePath),
       }),
     );
@@ -2246,6 +2296,7 @@ if (require.main === module) {
 
 module.exports = {
   AUTH_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
+  CACHE_REHYDRATION_TEST_STORE_ACCESS_PATTERNS,
   DAEMON_EXTRACTION_BLOCKER_PATTERNS,
   API_RAW_DAEMON_PATTERNS,
   API_DOMAIN_RAW_STORE_PATTERNS,
@@ -2278,6 +2329,7 @@ module.exports = {
   WORKTREE_ARCHIVE_TEST_STORE_ACCESS_PATTERNS,
   apiPatternsForPath,
   authBoundaryStorePatternsForPath,
+  cacheRehydrationStorePatternsForPath,
   externalProviderRouteStorePatternsForPath,
   executionLaunchStorePatternsForPath,
   fakeDaemonExternalStorePatternsForPath,
