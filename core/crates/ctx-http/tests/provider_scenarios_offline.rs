@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::Duration;
 
 use axum::body::Body;
@@ -7,7 +6,7 @@ use axum::http::{Method, Request, StatusCode};
 use tower::ServiceExt;
 
 use ctx_core::models::{MessageRole, SessionEventType, SessionTurnStatus};
-use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::test_support::TestDaemon;
 use ctx_store::StoreManager;
 
 mod common;
@@ -113,19 +112,19 @@ async fn post_message(app: &axum::Router, session_id: uuid::Uuid, content: &str)
     assert_eq!(res.status(), StatusCode::OK);
 }
 
-async fn wait_for_done(state: &Arc<DaemonState>, session_id: ctx_core::ids::SessionId) {
+async fn wait_for_done(state: &TestDaemon, session_id: ctx_core::ids::SessionId) {
     wait_for_done_inner(state, session_id, false).await;
 }
 
 async fn wait_for_done_and_completed_turn(
-    state: &Arc<DaemonState>,
+    state: &TestDaemon,
     session_id: ctx_core::ids::SessionId,
 ) {
     wait_for_done_inner(state, session_id, true).await;
 }
 
 async fn wait_for_done_inner(
-    state: &Arc<DaemonState>,
+    state: &TestDaemon,
     session_id: ctx_core::ids::SessionId,
     require_completed_turn: bool,
 ) {
@@ -142,7 +141,7 @@ async fn wait_for_done_inner(
             .iter()
             .any(|e| matches!(e.event_type, SessionEventType::Error))
         {
-            let provider_logs = provider_log_snapshot(state.test_data_root());
+            let provider_logs = provider_log_snapshot(state.data_root());
             panic!("saw Error event(s): {events:#?}\nprovider logs:\n{provider_logs}");
         }
         let saw_done = events
@@ -169,7 +168,7 @@ async fn wait_for_done_inner(
             }
         }
         if tokio::time::Instant::now() >= deadline {
-            let provider_logs = provider_log_snapshot(state.test_data_root());
+            let provider_logs = provider_log_snapshot(state.data_root());
             let turns = store
                 .list_session_turns_page_by_seq(session_id, None, Some(3))
                 .await
@@ -380,14 +379,8 @@ async fn provider_scenarios_offline_crp_fixtures() {
         &script_path,
     );
 
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:0".to_string(),
-        None,
-    ));
-    let app = ctx_http::api::router(state.clone());
+    let state = common::build_daemon(data_dir.path(), stores, providers, "http://127.0.0.1:0");
+    let app = common::router_for_daemon(&state);
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
 
@@ -476,14 +469,8 @@ async fn provider_scenarios_offline_interleaved_assistant_tools_do_not_fragment_
     let providers =
         common::crp_fixture_runtime::build_crp_fixture_providers(&["codex"], &python, &script_path);
 
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:0".to_string(),
-        None,
-    ));
-    let app = ctx_http::api::router(state.clone());
+    let state = common::build_daemon(data_dir.path(), stores, providers, "http://127.0.0.1:0");
+    let app = common::router_for_daemon(&state);
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (_task, session) =
@@ -586,14 +573,8 @@ async fn provider_scenarios_offline_crp_fixtures_persist_context_window_metrics(
         &script_path,
     );
 
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:0".to_string(),
-        None,
-    ));
-    let app = ctx_http::api::router(state.clone());
+    let state = common::build_daemon(data_dir.path(), stores, providers, "http://127.0.0.1:0");
+    let app = common::router_for_daemon(&state);
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
 

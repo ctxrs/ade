@@ -323,6 +323,14 @@ impl TestDaemon {
             .await
     }
 
+    pub async fn install_title_generation_local_with_progress(
+        &self,
+        install_id: InstallId,
+    ) -> anyhow::Result<()> {
+        let state: Arc<ctx_managed_installs::AppState> = self.state.clone();
+        ctx_managed_installs::install_title_generation_local_with_progress(state, install_id).await
+    }
+
     pub async fn emit_install_event(&self, install_id: InstallId, event: InstallProgressEvent) {
         self.state.emit_install_event(install_id, event).await;
     }

@@ -6,12 +6,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::http::StatusCode;
-use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::test_support::TestDaemon;
 use ctx_harness_sources::{
     set_provider_source_selection, upsert_provider_endpoint, HarnessApiShape,
     HarnessEndpointUpsert, HarnessSourceKind,
 };
-use ctx_http::api;
 use ctx_managed_installs::{
     load_agent_server_config, save_agent_server_config, AgentServerCommand, ManagedInstallMetadata,
 };
@@ -382,31 +381,31 @@ exit 1
     )
 }
 
-async fn app_state(data_root: &Path) -> Arc<DaemonState> {
+async fn app_state(data_root: &Path) -> TestDaemon {
     let stores = StoreManager::open(data_root).await.expect("open stores");
     let providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
-    Arc::new(DaemonState::new(
+    TestDaemon::new(
         data_root.to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:0".to_string(),
         None,
-    ))
+    )
 }
 
-async fn seed_provider_status(state: &Arc<DaemonState>, status: ProviderStatus) {
+async fn seed_provider_status(state: &TestDaemon, status: ProviderStatus) {
     let provider_id = status.provider_id.clone();
-    state.test_upsert_provider_status(provider_id, status).await;
+    state.upsert_provider_status(provider_id, status).await;
 }
 
 async fn seed_runtime_and_status(
-    state: &Arc<DaemonState>,
+    state: &TestDaemon,
     provider_id: &str,
     runtime_cmd: String,
     dep_bin_rel: String,
 ) {
     let dep_id = format!("runtime-node-host-{provider_id}");
-    let mut cfg = load_agent_server_config(state.test_data_root())
+    let mut cfg = load_agent_server_config(state.data_root())
         .await
         .unwrap_or_default();
     cfg.providers.insert(
@@ -432,7 +431,7 @@ async fn seed_runtime_and_status(
             last_error: None,
         },
     );
-    save_agent_server_config(state.test_data_root(), &cfg)
+    save_agent_server_config(state.data_root(), &cfg)
         .await
         .expect("save runtime config");
 
@@ -454,8 +453,8 @@ async fn seed_runtime_and_status(
 }
 
 #[cfg(unix)]
-async fn seed_managed_codex_cli_dependency(state: &Arc<DaemonState>, dep_bin_rel: &str) {
-    let dep_bin_dir = state.test_data_root().join(dep_bin_rel);
+async fn seed_managed_codex_cli_dependency(state: &TestDaemon, dep_bin_rel: &str) {
+    let dep_bin_dir = state.data_root().join(dep_bin_rel);
     std::fs::create_dir_all(&dep_bin_dir).expect("create codex-cli dep bin dir");
     let codex_cmd = dep_bin_dir.join("codex");
     write_executable(
@@ -465,7 +464,7 @@ exit 0
 "#,
     );
 
-    let mut cfg = load_agent_server_config(state.test_data_root())
+    let mut cfg = load_agent_server_config(state.data_root())
         .await
         .unwrap_or_default();
     cfg.managed_provider_targets.insert(
@@ -494,7 +493,7 @@ exit 0
             last_error: None,
         },
     );
-    save_agent_server_config(state.test_data_root(), &cfg)
+    save_agent_server_config(state.data_root(), &cfg)
         .await
         .expect("save codex-cli managed dependency");
 }
@@ -603,7 +602,7 @@ async fn provider_options_probe_uses_managed_dependency_path() {
     seed_active_codex_subscription_account(data_dir.path()).await;
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let state = app_state(data_dir.path()).await;
-    let app = api::router(state.clone());
+    let app = common::router_for_daemon(&state);
 
     let (runtime_cmd, dep_bin_rel) =
         setup_runtime_command_with_managed_interpreter(data_dir.path(), "codex");
@@ -642,7 +641,7 @@ async fn provider_options_preserve_live_runtime_catalog_for_preferred_models() {
     seed_active_codex_subscription_account(data_dir.path()).await;
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let state = app_state(data_dir.path()).await;
-    let app = api::router(state.clone());
+    let app = common::router_for_daemon(&state);
 
     let (runtime_cmd, dep_bin_rel) = setup_runtime_command_with_managed_interpreter_response(
         data_dir.path(),
@@ -712,7 +711,7 @@ async fn kimi_provider_options_expose_live_runtime_catalog_and_bootstrap_stays_h
     let data_dir = tempfile::tempdir().expect("tempdir");
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let state = app_state(data_dir.path()).await;
-    let app = api::router(state.clone());
+    let app = common::router_for_daemon(&state);
 
     add_kimi_account(
         data_dir.path(),
@@ -818,7 +817,7 @@ async fn kimi_provider_options_fail_closed_on_account_registry_errors() {
     write_invalid_kimi_account_registry(data_dir.path());
 
     let state = app_state(data_dir.path()).await;
-    let app = api::router(state.clone());
+    let app = common::router_for_daemon(&state);
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (status, body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -862,7 +861,7 @@ async fn provider_bootstrap_fails_closed_on_kimi_account_registry_errors() {
     write_invalid_kimi_account_registry(data_dir.path());
 
     let state = app_state(data_dir.path()).await;
-    let app = api::router(state.clone());
+    let app = common::router_for_daemon(&state);
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (status, body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -909,7 +908,7 @@ async fn codex_provider_options_surface_stale_selected_endpoint_errors() {
         },
     )
     .await;
-    let app = api::router(state.clone());
+    let app = common::router_for_daemon(&state);
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (status, body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -957,7 +956,7 @@ async fn provider_bootstrap_surfaces_stale_selected_endpoint_errors() {
         },
     )
     .await;
-    let app = api::router(state.clone());
+    let app = common::router_for_daemon(&state);
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (status, body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -987,7 +986,7 @@ async fn amp_provider_options_include_live_runtime_model_catalog() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let state = app_state(data_dir.path()).await;
-    let app = api::router(state.clone());
+    let app = common::router_for_daemon(&state);
 
     upsert_amp_account(
         data_dir.path(),
@@ -1081,7 +1080,7 @@ async fn amp_provider_options_fail_when_runtime_probe_returns_no_live_model_cata
     let data_dir = tempfile::tempdir().expect("tempdir");
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let state = app_state(data_dir.path()).await;
-    let app = api::router(state.clone());
+    let app = common::router_for_daemon(&state);
 
     upsert_amp_account(
         data_dir.path(),
@@ -1136,7 +1135,7 @@ async fn copilot_provider_options_include_pinned_model_catalog_when_live_probe_i
     let data_dir = tempfile::tempdir().expect("tempdir");
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let state = app_state(data_dir.path()).await;
-    let app = api::router(state.clone());
+    let app = common::router_for_daemon(&state);
 
     add_copilot_account(
         data_dir.path(),
@@ -1220,7 +1219,7 @@ async fn providers_bootstrap_includes_pinned_codex_claude_and_gemini_catalogs() 
     let data_dir = tempfile::tempdir().expect("tempdir");
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let state = app_state(data_dir.path()).await;
-    let app = api::router(state.clone());
+    let app = common::router_for_daemon(&state);
 
     seed_provider_status(
         &state,
@@ -1333,7 +1332,7 @@ async fn gemini_provider_options_use_live_acp_catalog_when_probe_succeeds() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let state = app_state(data_dir.path()).await;
-    let app = api::router(state.clone());
+    let app = common::router_for_daemon(&state);
 
     add_gemini_account(
         data_dir.path(),
@@ -1429,7 +1428,7 @@ async fn fake_provider_bootstrap_and_options_are_ready_without_browser_rewrite()
     let data_dir = tempfile::tempdir().expect("tempdir");
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let state = app_state(data_dir.path()).await;
-    let app = api::router(state.clone());
+    let app = common::router_for_daemon(&state);
 
     seed_provider_status(
         &state,
@@ -1558,7 +1557,7 @@ async fn provider_verify_probe_uses_managed_dependency_path() {
     seed_active_codex_subscription_account(data_dir.path()).await;
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let state = app_state(data_dir.path()).await;
-    let app = api::router(state.clone());
+    let app = common::router_for_daemon(&state);
 
     let (runtime_cmd, dep_bin_rel) =
         setup_runtime_command_with_managed_interpreter(data_dir.path(), "codex");
@@ -1619,7 +1618,7 @@ async fn provider_verify_selected_endpoint_uses_crp_handshake() {
     .expect("select codex endpoint");
 
     let state = app_state(data_dir.path()).await;
-    let app = api::router(state.clone());
+    let app = common::router_for_daemon(&state);
 
     let (runtime_cmd, dep_bin_rel, handshake_marker) =
         setup_runtime_command_requiring_crp_handshake(data_dir.path(), "codex");
@@ -1664,7 +1663,7 @@ async fn provider_bootstrap_avoids_runtime_preparation_when_sandbox_runtime_prep
     };
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let state = app_state(data_dir.path()).await;
-    let app = api::router(state.clone());
+    let app = common::router_for_daemon(&state);
 
     upsert_amp_account(
         data_dir.path(),
@@ -1794,7 +1793,7 @@ async fn provider_options_probe_uses_workspace_runtime_context_for_container_mod
     };
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let state = app_state(data_dir.path()).await;
-    let app = api::router(state.clone());
+    let app = common::router_for_daemon(&state);
 
     let fake_sandbox_cli = data_dir.path().join("sandbox-cli");
     write_fake_sandbox_cli(&fake_sandbox_cli);

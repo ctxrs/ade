@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use ctx_managed_installs as installer;
 use ctx_managed_installs::title_generation_local;
 use ctx_session_service::title_generation;
 use ctx_settings_model::{
@@ -58,7 +57,7 @@ async fn generate_title_local_real_runtime() {
     };
 
     let stores = StoreManager::open(&data_root).await.unwrap();
-    let state = common::build_state(
+    let state = common::build_daemon(
         data_root.clone(),
         stores,
         common::fake_providers(),
@@ -68,7 +67,8 @@ async fn generate_title_local_real_runtime() {
     let (install_id, _started) = state
         .start_install("title_generation_local".to_string(), None)
         .await;
-    installer::install_title_generation_local_with_progress(state.clone(), install_id)
+    state
+        .install_title_generation_local_with_progress(install_id)
         .await
         .unwrap();
 
