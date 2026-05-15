@@ -4,11 +4,11 @@ mod common;
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
 use std::time::Instant;
 
 use axum::http::StatusCode;
-use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::test_support::TestDaemon;
 use ctx_managed_installs::{
     resolve_matrix_target_key, save_agent_server_config, AgentServerCommand, AgentServerConfigFile,
     ManagedInstallMetadata,
@@ -54,9 +54,9 @@ fn write_runtime_fixture(path: &Path) {
     std::fs::write(path, "#!/bin/sh\nexit 0\n").expect("write runtime fixture");
 }
 
-async fn seed_provider_status(state: &Arc<DaemonState>, status: ProviderStatus) {
+async fn seed_provider_status(daemon: &TestDaemon, status: ProviderStatus) {
     let provider_id = status.provider_id.clone();
-    state.test_upsert_provider_status(provider_id, status).await;
+    daemon.upsert_provider_status(provider_id, status).await;
 }
 
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -211,17 +211,17 @@ async fn seed_container_only_install(data_root: &Path, provider_id: &str) -> std
 async fn host_target_reports_target_mismatch_for_container_only_acp_installs() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
 
     for provider_id in ["kimi", "mistral", "qwen"] {
         let _command_path = seed_container_only_install(data_dir.path(), provider_id).await;
-        seed_provider_status(&state, bridge_missing_status(provider_id)).await;
+        seed_provider_status(&daemon, bridge_missing_status(provider_id)).await;
 
         let (status, body): (StatusCode, serde_json::Value) = common::json_request(
             &app,
@@ -279,15 +279,15 @@ async fn host_target_reports_target_mismatch_for_container_only_acp_installs() {
 async fn acp_provider_reports_missing_bridge_as_blocking_dependency() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
 
-    seed_provider_status(&state, bridge_missing_status("qwen")).await;
+    seed_provider_status(&daemon, bridge_missing_status("qwen")).await;
 
     let (status, body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -357,17 +357,17 @@ async fn workspace_options_use_workspace_target_status_for_acp_provider() {
     };
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
 
     let provider_id = "mistral";
     let _command_path = seed_container_only_install(data_dir.path(), provider_id).await;
-    seed_provider_status(&state, bridge_missing_status(provider_id)).await;
+    seed_provider_status(&daemon, bridge_missing_status(provider_id)).await;
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (host_status, host_body): (StatusCode, serde_json::Value) = common::json_request(
@@ -417,7 +417,7 @@ async fn workspace_options_use_workspace_target_status_for_acp_provider() {
 
     let cache_key_host = format!("{}/host/{provider_id}", ws.id.0);
     let cache_key_container = format!("{}/container/{provider_id}", ws.id.0);
-    state
+    daemon
         .test_with_provider_options_cache(|cache| {
             cache.insert(
                 cache_key_host,
