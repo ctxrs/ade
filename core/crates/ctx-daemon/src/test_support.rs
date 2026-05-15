@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use ctx_core::ids::{SessionId, WorkspaceId, WorktreeId};
+use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{Session, SessionHeadDelta};
 use ctx_provider_install::install_state::{
     InstallId, InstallInfo, InstallProgressEvent, InstallTarget,
@@ -112,6 +112,10 @@ impl TestDaemon {
 
     pub async fn store_for_workspace(&self, workspace_id: WorkspaceId) -> anyhow::Result<Store> {
         self.state.store_for_workspace(workspace_id).await
+    }
+
+    pub async fn store_for_task(&self, task_id: TaskId) -> anyhow::Result<Store> {
+        self.state.store_for_task(task_id).await
     }
 
     pub async fn ensure_workspace_active_snapshot_hydrated(

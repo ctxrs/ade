@@ -6,7 +6,7 @@ use serde_json::json;
 use tokio::process::Command;
 
 use ctx_core::models::{Task, Workspace};
-use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::test_support::TestDaemon;
 use ctx_fs::worktrees::managed_worktree_path;
 use ctx_http::api;
 use ctx_providers::fake::FakeProviderAdapter;
@@ -73,14 +73,14 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
         HashMap::new();
     providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
 
-    let state = Arc::new(DaemonState::new(
+    let daemon = TestDaemon::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:0".to_string(),
         None,
-    ));
-    let app = api::router(state.clone());
+    );
+    let app = api::router(daemon.handle());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
@@ -156,7 +156,7 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
         second_child_resp.status()
     );
 
-    let store = state.store_for_task(task.id).await.unwrap();
+    let store = daemon.store_for_task(task.id).await.unwrap();
     let sessions = store.list_sessions_for_task(task.id).await.unwrap();
     assert_eq!(sessions.len(), 3);
     let task = store

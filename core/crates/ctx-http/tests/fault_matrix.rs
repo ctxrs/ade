@@ -12,7 +12,7 @@ use tokio::process::Command;
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
 use ctx_core::models::SessionEventType;
-use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::test_support::TestDaemon;
 use ctx_http::api;
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::StoreManager;
@@ -62,7 +62,7 @@ async fn setup_git_repo() -> tempfile::TempDir {
 }
 
 async fn setup_server() -> (
-    Arc<DaemonState>,
+    TestDaemon,
     tokio::task::JoinHandle<()>,
     std::net::SocketAddr,
     ctx_core::models::Workspace,
@@ -77,14 +77,14 @@ async fn setup_server() -> (
         HashMap::new();
     providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
 
-    let state = Arc::new(DaemonState::new(
+    let daemon = TestDaemon::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:0".to_string(),
         None,
-    ));
-    let app = api::router(state.clone());
+    );
+    let app = api::router(daemon.handle());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
@@ -114,7 +114,7 @@ async fn setup_server() -> (
         .unwrap();
 
     let session = common::load_primary_session_http(&client, &base, &task).await;
-    let store = state.store_for_task(task.id).await.unwrap();
+    let store = daemon.store_for_task(task.id).await.unwrap();
     let sessions = store.list_sessions_for_task(task.id).await.unwrap();
     assert!(
         sessions.iter().any(|stored| stored.id == session.id),
@@ -133,7 +133,7 @@ async fn setup_server() -> (
         .unwrap()
         .seq;
 
-    (state, server, addr, ws, session, last)
+    (daemon, server, addr, ws, session, last)
 }
 
 fn clear_all_failpoints() {
@@ -290,8 +290,8 @@ async fn fault_matrix_replay_errors_become_gaps() {
 
 #[tokio::test]
 async fn fault_matrix_snapshot_send_failure_reconnects_cleanly() {
-    let (state, server, addr, ws, _session, _last_seq) = setup_server().await;
-    state
+    let (daemon, server, addr, ws, _session, _last_seq) = setup_server().await;
+    daemon
         .ensure_workspace_active_snapshot_hydrated(ws.id)
         .await
         .unwrap();

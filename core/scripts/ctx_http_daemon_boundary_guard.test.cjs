@@ -341,6 +341,7 @@ test("daemon boundary guard scopes migrated raw daemon constructor ban", () => {
     "core/crates/ctx-http/tests/codex_host_import_api.rs",
     "core/crates/ctx-http/tests/codex_login_callback_api.rs",
     "core/crates/ctx-http/tests/demo_seed_transcript_http.rs",
+    "core/crates/ctx-http/tests/fault_matrix.rs",
     "core/crates/ctx-http/tests/gemini_live_model_catalog.rs",
     "core/crates/ctx-http/tests/global_id_routing_http.rs",
     "core/crates/ctx-http/tests/image_attachments_http_e2e.rs",
@@ -359,6 +360,7 @@ test("daemon boundary guard scopes migrated raw daemon constructor ban", () => {
     "core/crates/ctx-http/tests/workspace_provider_model_preferences_http.rs",
     "core/crates/ctx-http/tests/workspace_stream_context_window_metrics.rs",
     "core/crates/ctx-http/tests/workspace_stream_no_gaps_under_activity.rs",
+    "core/crates/ctx-http/tests/worktree_archive_http.rs",
   ]) {
     assert.equal(migratedTestPatternsForPath(filePath), MIGRATED_TEST_RAW_DAEMON_PATTERNS);
   }
