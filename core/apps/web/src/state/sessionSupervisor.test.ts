@@ -146,6 +146,11 @@ type TestInternalEntry = {
   messagesRev: number;
   events: SessionEvent[];
   eventsRev: number;
+  assistantStreamingByTurnId: Record<
+    string,
+    { content: string; providerMessageId: string | null; orderSeq: number | null }
+  >;
+  assistantStreamingRev: number;
   queue: Message[];
   hasMoreTurns: boolean;
   historyExtended: boolean;
@@ -500,6 +505,94 @@ describe("SessionSupervisor", () => {
     expect(entry.turns).toHaveLength(1);
     expect(entry.turns[0]?.status).toBe("completed");
     expect(entry.turnsRev).toBeGreaterThan(beforeTurnsRev);
+  });
+
+  it("preserves assistant chunk order_seq in supervisor streaming state", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-assistant-chunk-order";
+    const turnId = "turn-1";
+    const createdAt = new Date().toISOString();
+    const sup = new SessionSupervisor();
+    const internals = asSupervisorInternals(sup);
+    const entry = internals.ensureEntry(sessionId);
+    entry.turns = [mkTurn({ sessionId, turnId, status: "running", startSeq: 1, startedAt: createdAt })];
+
+    internals.handleReplicaPatches([
+      {
+        op: "append",
+        sessionId,
+        data: {
+          appendMode: "event",
+          events: [
+            {
+              seq: 2,
+              id: "event-assistant-chunk",
+              session_id: sessionId,
+              run_id: "run-1",
+              turn_id: turnId,
+              event_type: "assistant_chunk",
+              payload_json: {
+                content_fragment: "done: hello",
+                message_id: "provider-message-1",
+                order_seq: 2,
+              },
+              created_at: createdAt,
+            },
+          ],
+        },
+      },
+    ]);
+
+    expect(entry.assistantStreamingByTurnId[turnId]).toMatchObject({
+      content: "done: hello",
+      providerMessageId: "provider-message-1",
+      orderSeq: 2,
+    });
+  });
+
+  it("preserves assistant complete order_seq in supervisor streaming state", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sessionId = "session-assistant-complete-order";
+    const turnId = "turn-1";
+    const createdAt = new Date().toISOString();
+    const sup = new SessionSupervisor();
+    const internals = asSupervisorInternals(sup);
+    const entry = internals.ensureEntry(sessionId);
+    entry.turns = [mkTurn({ sessionId, turnId, status: "running", startSeq: 1, startedAt: createdAt })];
+
+    internals.handleReplicaPatches([
+      {
+        op: "append",
+        sessionId,
+        data: {
+          appendMode: "event",
+          events: [
+            {
+              seq: 2,
+              id: "event-assistant-complete",
+              session_id: sessionId,
+              run_id: "run-1",
+              turn_id: turnId,
+              event_type: "assistant_complete",
+              payload_json: {
+                full_content: "done: hello",
+                message_id: "provider-message-1",
+                orderSeq: 2,
+              },
+              created_at: createdAt,
+            },
+          ],
+        },
+      },
+    ]);
+
+    expect(entry.assistantStreamingByTurnId[turnId]).toMatchObject({
+      content: "done: hello",
+      providerMessageId: "provider-message-1",
+      orderSeq: 2,
+    });
   });
 
   it("re-emits subscribed session ids when active-task membership changes under an open session", async () => {

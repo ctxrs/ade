@@ -17,7 +17,7 @@ import {
 import { compareSessionTurnOrder, mergeSessionMessages } from "../sessionHeadState";
 import { appendFragment, isPartialEvent, mergeTurn, mergeTurnStatus } from "./cachePolicy";
 import type { InternalEntry } from "./entryState";
-import { asRecord, messageFromEvent, readPayloadObject } from "./eventHydration";
+import { asRecord, messageFromEvent, readPayloadNumber, readPayloadObject } from "./eventHydration";
 import { readPayloadString } from "./eventNormalization";
 import { normalizeGitStatusSummaryInput } from "./gitStatusNormalization";
 import {
@@ -310,8 +310,9 @@ export function applyEventToTurns(
       const fragment = String(event.payload_json?.content_fragment ?? "");
       if (fragment) {
         const providerMessageId = readPayloadString(event.payload_json, ["message_id", "messageId"]);
+        const orderSeq = readPayloadNumber(event.payload_json, ["order_seq", "orderSeq"]);
         changed =
-          applyAssistantChunkToStreaming(entry as AssistantStreamingStore, turnId, fragment, providerMessageId) ||
+          applyAssistantChunkToStreaming(entry as AssistantStreamingStore, turnId, fragment, providerMessageId, orderSeq) ||
           changed;
       }
       break;
@@ -335,12 +336,14 @@ export function applyEventToTurns(
         event.payload_json?.content ??
         entry.assistantStreamingByTurnId[turnId]?.content;
       const providerMessageId = readPayloadString(event.payload_json, ["message_id", "messageId"]);
+      const orderSeq = readPayloadNumber(event.payload_json, ["order_seq", "orderSeq"]);
       changed =
         applyAssistantCompleteToStreaming(
           entry as AssistantStreamingStore,
           turnId,
           String(full ?? ""),
           providerMessageId,
+          orderSeq,
         ) || changed;
       break;
     }
