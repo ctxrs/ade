@@ -4,26 +4,24 @@ use ctx_core::ids::WorktreeId;
 use ctx_core::models::{
     SandboxBinding, SandboxGuestIdentity, SandboxProfile, SandboxSubstrate, VcsKind,
 };
+use ctx_daemon::test_support::TestDaemon;
 use ctx_store::StoreManager;
 use std::collections::HashMap;
-use std::sync::Arc;
 use uuid::Uuid;
-
-use ctx_daemon::daemon::{DaemonHandle, DaemonState};
 
 #[tokio::test]
 async fn get_worktree_returns_live_root_for_bound_sandbox_worktree() {
     let temp = tempfile::tempdir().expect("tempdir");
     let workspace_root = temp.path().join("repo");
     std::fs::create_dir_all(&workspace_root).expect("create workspace root");
-    let state = Arc::new(DaemonState::new(
+    let daemon = TestDaemon::new(
         temp.path().to_path_buf(),
         StoreManager::open(temp.path()).await.expect("open stores"),
         HashMap::new(),
         "http://127.0.0.1:4310".to_string(),
         None,
-    ));
-    let workspace = state
+    );
+    let workspace = daemon
         .global_store()
         .create_workspace(
             "ws".to_string(),
@@ -32,7 +30,7 @@ async fn get_worktree_returns_live_root_for_bound_sandbox_worktree() {
         )
         .await
         .expect("create workspace");
-    let store = state
+    let store = daemon
         .store_for_workspace(workspace.id)
         .await
         .expect("workspace store");
@@ -79,14 +77,14 @@ async fn get_worktree_returns_live_root_for_bound_sandbox_worktree() {
         })
         .await
         .expect("upsert sandbox binding");
-    state
+    daemon
         .global_store()
         .upsert_workspace_worktree_index(worktree.id, workspace.id)
         .await
         .expect("upsert worktree index");
 
     let Json(response) = get_worktree(
-        State(DaemonHandle::new(state.clone()).workspaces()),
+        State(daemon.handle().workspaces()),
         Path(worktree.id.0.to_string()),
     )
     .await
@@ -98,20 +96,20 @@ async fn get_worktree_returns_live_root_for_bound_sandbox_worktree() {
     );
     assert_eq!(response.id, worktree.id);
     assert_eq!(response.workspace_id, worktree.workspace_id);
-    state.test_request_shutdown();
+    daemon.request_shutdown();
 }
 
 #[tokio::test]
 async fn missing_worktree_routes_return_not_found() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let state = Arc::new(DaemonState::new(
+    let daemon = TestDaemon::new(
         temp.path().to_path_buf(),
         StoreManager::open(temp.path()).await.expect("open stores"),
         HashMap::new(),
         "http://127.0.0.1:4310".to_string(),
         None,
-    ));
-    let workspaces = State(DaemonHandle::new(state.clone()).workspaces());
+    );
+    let workspaces = State(daemon.handle().workspaces());
     let missing_worktree_id = WorktreeId(Uuid::new_v4()).0.to_string();
 
     let status = get_worktree(workspaces.clone(), Path(missing_worktree_id.clone()))
@@ -124,5 +122,5 @@ async fn missing_worktree_routes_return_not_found() {
         .expect_err("missing worktree bootstrap log should not resolve");
     assert_eq!(status, StatusCode::NOT_FOUND);
 
-    state.test_request_shutdown();
+    daemon.request_shutdown();
 }

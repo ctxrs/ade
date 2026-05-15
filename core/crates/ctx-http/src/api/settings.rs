@@ -49,12 +49,11 @@ mod tests {
     use super::*;
 
     use std::collections::HashMap;
-    use std::sync::Arc;
 
+    use ctx_daemon::test_support::TestDaemon;
     use ctx_store::StoreManager;
     use serde_json::json;
 
-    use ctx_daemon::daemon::{DaemonHandle, DaemonState};
     use ctx_settings_service::EXECUTION_POLICY_TEST_ENV_LOCK;
 
     struct EnvVarGuard {
@@ -92,13 +91,13 @@ mod tests {
         let _policy = EnvVarGuard::set("CTX_HOST_EXECUTION_POLICY", "sandbox_only");
         let _mode = EnvVarGuard::remove("CTX_EXECUTION_MODE");
         let temp = tempfile::tempdir().expect("tempdir");
-        let state = Arc::new(DaemonState::new(
+        let daemon = TestDaemon::new(
             temp.path().to_path_buf(),
             StoreManager::open(temp.path()).await.expect("open stores"),
             HashMap::new(),
             "http://127.0.0.1:4310".to_string(),
             None,
-        ));
+        );
         let req = serde_json::from_value::<user_settings::UpdateSettingsReq>(json!({
             "execution": {
                 "mode": "host"
@@ -106,7 +105,7 @@ mod tests {
         }))
         .expect("settings update request");
 
-        let err = update_settings(State(DaemonHandle::new(state).core()), Json(req))
+        let err = update_settings(State(daemon.handle().core()), Json(req))
             .await
             .expect_err("sandbox-only policy should reject host execution settings update");
 

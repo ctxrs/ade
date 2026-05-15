@@ -1,14 +1,14 @@
 use super::*;
 use std::collections::HashMap;
 
-use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::test_support::TestDaemon;
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::StoreManager;
 
 #[path = "tests/title_generation.rs"]
 mod title_generation_tests;
 
-async fn setup_state() -> (tempfile::TempDir, Arc<DaemonState>, Session) {
+async fn setup_state() -> (tempfile::TempDir, TestDaemon, Session) {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
 
@@ -74,13 +74,13 @@ async fn setup_state() -> (tempfile::TempDir, Arc<DaemonState>, Session) {
         HashMap::new();
     providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
 
-    let state = Arc::new(DaemonState::new(
+    let daemon = TestDaemon::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:0".to_string(),
         None,
-    ));
+    );
 
-    (data_dir, state, session)
+    (data_dir, daemon, session)
 }

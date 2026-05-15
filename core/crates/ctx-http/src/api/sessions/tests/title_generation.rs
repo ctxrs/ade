@@ -1,24 +1,22 @@
 use super::*;
 use ctx_daemon::daemon::sessions::title_generation::{
-    generate_title_for_prompt, schedule_session_title_generation, TitleGenerationSource,
+    generate_title_for_prompt, TitleGenerationSource,
 };
 use ctx_managed_installs::title_generation_local;
 
 #[tokio::test]
 async fn schedule_title_generation_falls_back_without_config() {
-    let (_data_dir, state, session) = setup_state().await;
+    let (_data_dir, daemon, session) = setup_state().await;
     let prompt = "make the title this: hello world";
-    let spawned = schedule_session_title_generation(
-        state.clone(),
-        session.clone(),
-        prompt.to_string(),
-        false,
-    )
-    .await;
+    let spawned = daemon
+        .handle()
+        .sessions()
+        .schedule_session_title_generation(session.clone(), prompt.to_string(), false)
+        .await;
 
     assert!(!spawned);
 
-    let store = state.store_for_session(session.id).await.unwrap();
+    let store = daemon.store_for_session(session.id).await.unwrap();
     let updated = store.get_session(session.id).await.unwrap().unwrap();
     let expected = title_generation::fallback_title_from_prompt(prompt);
     assert_eq!(updated.title, expected);

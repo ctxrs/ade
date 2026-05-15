@@ -20,6 +20,10 @@ const rawStoreBlindApiRoots = [
   "core/crates/ctx-http/src/api/workspaces/",
 ];
 const migratedRawDaemonTestRoots = [
+  "core/crates/ctx-http/src/api/settings.rs",
+  "core/crates/ctx-http/src/api/sessions/tests.rs",
+  "core/crates/ctx-http/src/api/sessions/tests/",
+  "core/crates/ctx-http/src/api/workspaces/tests.rs",
   "core/crates/ctx-http/src/lib_tests/auth_boundaries/",
   "core/crates/ctx-http/src/lib_tests/cors.rs",
   "core/crates/ctx-http/src/lib_tests/daemon_smoke.rs",
@@ -172,7 +176,12 @@ function isTestRustPath(filePath) {
 function testSurfaceRustFiles() {
   const files = [];
   if (fs.existsSync(ctxHttpSrcRoot)) {
-    files.push(...listRustFiles(ctxHttpSrcRoot).filter(isTestRustPath));
+    files.push(
+      ...listRustFiles(ctxHttpSrcRoot).filter((filePath) => {
+        const relativePath = repoRelative(filePath);
+        return isTestRustPath(filePath) || migratedTestPatternsForPath(relativePath).length > 0;
+      }),
+    );
   }
   for (const root of [ctxHttpTestsRoot, ctxHttpTestSupportSrcRoot]) {
     if (fs.existsSync(root)) {
