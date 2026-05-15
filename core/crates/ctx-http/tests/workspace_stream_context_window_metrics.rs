@@ -1,34 +1,33 @@
-use std::sync::Arc;
 use std::time::Duration;
 
 use futures::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
-use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::test_support::TestDaemon;
 
 mod common;
 
 async fn setup() -> (
     tempfile::TempDir,
     tempfile::TempDir,
-    Arc<DaemonState>,
+    TestDaemon,
     common::TestServer,
 ) {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
 
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
     let server = common::spawn_http_server(app).await;
 
-    (repo, data_dir, state, server)
+    (repo, data_dir, daemon, server)
 }
 
 fn deltas_from_stream_message(value: &Value) -> Vec<Value> {

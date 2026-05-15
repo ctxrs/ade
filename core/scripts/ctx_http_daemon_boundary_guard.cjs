@@ -69,6 +69,8 @@ const migratedRawDaemonTestRoots = [
   "core/crates/ctx-http/tests/system_prompt_append_http.rs",
   "core/crates/ctx-http/tests/workspace_execution_config_http.rs",
   "core/crates/ctx-http/tests/workspace_provider_model_preferences_http.rs",
+  "core/crates/ctx-http/tests/workspace_stream_context_window_metrics.rs",
+  "core/crates/ctx-http/tests/workspace_stream_no_gaps_under_activity.rs",
 ];
 
 const API_RAW_DAEMON_PATTERNS = [
