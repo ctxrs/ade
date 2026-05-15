@@ -25,16 +25,9 @@ target_branch = \"main\"\n",
     .await
     .unwrap();
 
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    daemon.spawn_merge_queue_runner();
-    let app = common::router_for_daemon(&daemon);
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    fixture.daemon.spawn_merge_queue_runner();
+    let app = fixture.router();
 
     let workspace = common::create_workspace(&app, repo.path(), "jj-ws").await;
     let (_task, session) = common::create_task_with_session(
@@ -46,7 +39,8 @@ target_branch = \"main\"\n",
     )
     .await;
 
-    let worktree_root = daemon
+    let worktree_root = fixture
+        .daemon
         .session_worktree_root_path_for_test(&session)
         .await
         .unwrap();

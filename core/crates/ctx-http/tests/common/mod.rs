@@ -421,6 +421,34 @@ pub fn build_daemon(
     TestDaemon::new(data_root.into(), stores, providers, base_url.into(), None)
 }
 
+pub struct FakeDaemonFixture {
+    pub data_dir: tempfile::TempDir,
+    pub daemon: TestDaemon,
+}
+
+impl FakeDaemonFixture {
+    pub fn router(&self) -> axum::Router {
+        router_for_daemon(&self.daemon)
+    }
+
+    pub async fn spawn_server(&self) -> TestServer {
+        spawn_http_server(self.router()).await
+    }
+}
+
+pub async fn fake_daemon_fixture(base_url: impl Into<String>) -> FakeDaemonFixture {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let daemon = TestDaemon::new_with_providers_for_test(
+        data_dir.path().to_path_buf(),
+        fake_providers(),
+        base_url.into(),
+        None,
+    )
+    .await
+    .expect("create fake-provider daemon");
+    FakeDaemonFixture { data_dir, daemon }
+}
+
 pub async fn provider_route_fake_daemon(data_root: &Path) -> TestDaemon {
     TestDaemon::new_with_providers_for_test(
         data_root.to_path_buf(),

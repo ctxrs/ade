@@ -21,14 +21,8 @@ fn request_shutdown(daemon: &TestDaemon) {
 }
 
 async fn setup_state() -> (tempfile::TempDir, TestDaemon, common::TestServer) {
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
+    let common::FakeDaemonFixture { data_dir, daemon } =
+        common::fake_daemon_fixture("http://127.0.0.1:0").await;
     let mut status = FakeProviderAdapter::new().inspect().await.unwrap();
     status.usability = ProviderUsability {
         usable: true,

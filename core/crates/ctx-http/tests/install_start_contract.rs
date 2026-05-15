@@ -3,15 +3,8 @@ mod common;
 use ctx_provider_install::install_state::InstallTarget;
 
 async fn test_daemon() -> (ctx_daemon::test_support::TestDaemon, tempfile::TempDir) {
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let data_root = data_dir.path().to_path_buf();
-    let stores = common::setup_store(&data_root).await;
-    let daemon = common::build_daemon(
-        data_root,
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:4399",
-    );
+    let common::FakeDaemonFixture { data_dir, daemon } =
+        common::fake_daemon_fixture("http://127.0.0.1:4399").await;
     (daemon, data_dir)
 }
 

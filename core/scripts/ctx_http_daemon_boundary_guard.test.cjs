@@ -8,6 +8,7 @@ const {
   API_RAW_DAEMON_PATTERNS,
   EXECUTION_LAUNCH_TEST_STORE_ACCESS_PATTERNS,
   EXTERNAL_PROVIDER_ROUTE_TEST_STORE_ACCESS_PATTERNS,
+  FAKE_DAEMON_EXTERNAL_TEST_STORE_ACCESS_PATTERNS,
   FAULT_INJECTION_TEST_STORE_ACCESS_PATTERNS,
   GLOBAL_ID_ROUTING_TEST_STORE_ACCESS_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
@@ -36,6 +37,7 @@ const {
   authBoundaryStorePatternsForPath,
   externalProviderRouteStorePatternsForPath,
   executionLaunchStorePatternsForPath,
+  fakeDaemonExternalStorePatternsForPath,
   faultInjectionStorePatternsForPath,
   globalIdRoutingStorePatternsForPath,
   isTestRustPath,
@@ -1171,6 +1173,58 @@ test("daemon boundary guard scopes small external store facade roots", () => {
   }
   assert.deepEqual(
     smallExternalStorePatternsForPath("core/crates/ctx-http/tests/title_generation_local.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects fake-daemon external raw setup", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/demo_seed_transcript_http.rs",
+    contents: `
+      async fn helper(daemon: TestDaemon) {
+        let stores = common::setup_store(data_dir.path()).await;
+        let daemon = common::build_daemon(data_root, stores, common::fake_providers(), base_url);
+        let _stores = StoreManager::open(data_root).await?;
+        let _raw = ctx_store::Store::open_sqlite(path, None).await?;
+        let daemon = TestDaemon::new(data_root, stores, common::fake_providers(), base_url, None);
+        let daemon = TestDaemon::new_with_providers_for_test(data_root, common::fake_providers(), base_url, None).await?;
+        daemon.stores().global().await?;
+        daemon.store_for_session(session_id).await?;
+      }
+    `,
+    patterns: FAKE_DAEMON_EXTERNAL_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct fake-daemon external StoreManager access",
+      "raw fake-daemon external ctx_store Store",
+      "direct fake-daemon external store manager helper",
+      "direct fake-daemon external daemon construction helper",
+      "direct fake-daemon external TestDaemon construction",
+      "direct fake-daemon external TestDaemon construction",
+      "direct fake-daemon external TestDaemon store access",
+      "direct fake-daemon external TestDaemon store access",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes fake-daemon external roots without blocking common helper", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/tests/demo_seed_transcript_http.rs",
+    "core/crates/ctx-http/tests/global_id_routing_http.rs",
+    "core/crates/ctx-http/tests/install_start_contract.rs",
+    "core/crates/ctx-http/tests/jj_merge_queue_basics.rs",
+    "core/crates/ctx-http/tests/message_idempotency.rs",
+  ]) {
+    assert.deepEqual(
+      fakeDaemonExternalStorePatternsForPath(filePath),
+      FAKE_DAEMON_EXTERNAL_TEST_STORE_ACCESS_PATTERNS,
+    );
+  }
+  assert.deepEqual(
+    fakeDaemonExternalStorePatternsForPath("core/crates/ctx-http/tests/common/mod.rs"),
     [],
   );
 });

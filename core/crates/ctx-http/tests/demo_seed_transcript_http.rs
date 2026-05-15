@@ -41,15 +41,8 @@ async fn dev_seed_session_transcript_populates_prior_turns() {
     let _dev_mode = EnvVarGuard::set("CTX_DEV_MODE", "1");
 
     let repo = common::init_git_repo(&[("README.md", "fixture\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&daemon);
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let app = fixture.router();
 
     let workspace = common::create_workspace(&app, repo.path(), "demo").await;
     let (task, session) = common::create_task_with_session(

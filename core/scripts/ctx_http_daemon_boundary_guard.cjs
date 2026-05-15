@@ -166,6 +166,14 @@ const smallExternalStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/workspace_provider_model_preferences_http.rs",
 ];
 
+const fakeDaemonExternalStoreFacadeTestRoots = [
+  "core/crates/ctx-http/tests/demo_seed_transcript_http.rs",
+  "core/crates/ctx-http/tests/global_id_routing_http.rs",
+  "core/crates/ctx-http/tests/install_start_contract.rs",
+  "core/crates/ctx-http/tests/jj_merge_queue_basics.rs",
+  "core/crates/ctx-http/tests/message_idempotency.rs",
+];
+
 const mcpDaemonFacadeTestRoots = [
   "core/crates/ctx-http-test-support/src/mcp_daemon.rs",
   "core/crates/ctx-http-test-support/src/mcp_daemon/",
@@ -620,6 +628,36 @@ const SMALL_EXTERNAL_TEST_STORE_ACCESS_PATTERNS = [
   },
   {
     name: "direct small external TestDaemon store access",
+    regex: /\.(?:stores|global_store|store_for_session|store_for_workspace|uncached_store_for_workspace|store_for_task|store_for_worktree)\s*\(/,
+  },
+];
+
+const FAKE_DAEMON_EXTERNAL_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct fake-daemon external StoreManager access",
+    regex: /\bStoreManager\b/,
+  },
+  {
+    name: "raw fake-daemon external ctx_store Store",
+    regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore::/,
+    contentRegex: /\buse\s+ctx_store::\{(?=[^}]*\n)[\s\S]*?\bStore\b[\s\S]*?\}/gm,
+  },
+  {
+    name: "direct fake-daemon external store manager helper",
+    regex: /\b(?:crate::)?common::setup_store\s*\(|\buse\s+[^;]*\bsetup_store\b|\bsetup_store\s*\(/,
+    contentRegex: /\buse\s+[\s\S]*?\bsetup_store\b[\s\S]*?;/gm,
+  },
+  {
+    name: "direct fake-daemon external daemon construction helper",
+    regex: /\b(?:crate::)?common::build_daemon\s*\(|\buse\s+[^;]*\bbuild_daemon\b|\bbuild_daemon\s*\(/,
+    contentRegex: /\buse\s+[\s\S]*?\bbuild_daemon\b[\s\S]*?;/gm,
+  },
+  {
+    name: "direct fake-daemon external TestDaemon construction",
+    regex: /\bTestDaemon::new[A-Za-z0-9_]*\s*\(/,
+  },
+  {
+    name: "direct fake-daemon external TestDaemon store access",
     regex: /\.(?:stores|global_store|store_for_session|store_for_workspace|uncached_store_for_workspace|store_for_task|store_for_worktree)\s*\(/,
   },
 ];
@@ -1674,6 +1712,13 @@ function smallExternalStorePatternsForPath(relativePath) {
   return [];
 }
 
+function fakeDaemonExternalStorePatternsForPath(relativePath) {
+  if (fakeDaemonExternalStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return FAKE_DAEMON_EXTERNAL_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
 function mcpDaemonPatternsForPath(relativePath) {
   if (mcpDaemonFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS;
@@ -2039,6 +2084,13 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
+        patterns: fakeDaemonExternalStorePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
         patterns: mcpDaemonPatternsForPath(relativePath),
       }),
     );
@@ -2178,6 +2230,7 @@ module.exports = {
   API_DOMAIN_RAW_STORE_PATTERNS,
   EXECUTION_LAUNCH_TEST_STORE_ACCESS_PATTERNS,
   EXTERNAL_PROVIDER_ROUTE_TEST_STORE_ACCESS_PATTERNS,
+  FAKE_DAEMON_EXTERNAL_TEST_STORE_ACCESS_PATTERNS,
   FAULT_INJECTION_TEST_STORE_ACCESS_PATTERNS,
   GLOBAL_ID_ROUTING_TEST_STORE_ACCESS_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
@@ -2206,6 +2259,7 @@ module.exports = {
   authBoundaryStorePatternsForPath,
   externalProviderRouteStorePatternsForPath,
   executionLaunchStorePatternsForPath,
+  fakeDaemonExternalStorePatternsForPath,
   faultInjectionStorePatternsForPath,
   globalIdRoutingStorePatternsForPath,
   isTestRustPath,
