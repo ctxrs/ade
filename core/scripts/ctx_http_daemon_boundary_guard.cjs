@@ -154,6 +154,11 @@ const smallApiUnitStoreFacadeTestRoots = [
   "core/crates/ctx-http/src/api/workspaces/tests.rs",
 ];
 
+const smallExternalStoreFacadeTestRoots = [
+  "core/crates/ctx-http/tests/title_generation_local_e2e.rs",
+  "core/crates/ctx-http/tests/workspace_provider_model_preferences_http.rs",
+];
+
 const mcpDaemonFacadeTestRoots = [
   "core/crates/ctx-http-test-support/src/mcp_daemon.rs",
   "core/crates/ctx-http-test-support/src/mcp_daemon/",
@@ -553,6 +558,32 @@ const SMALL_API_UNIT_TEST_STORE_ACCESS_PATTERNS = [
     regex: /a^/,
     contentRegex: /(?:\b[a-zA-Z_][a-zA-Z0-9_]*\s*\.\s*handle\s*\(\s*\)\s*\.\s*providers\s*\(|\blet\s+[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*[^;]*?\.handle\s*\(\s*\)\s*;|\b[a-zA-Z_][a-zA-Z0-9_]*\s*\.\s*providers\s*\()/gm,
     allowSmallApiUnitProviderHandlerState: true,
+  },
+];
+
+const SMALL_EXTERNAL_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct small external StoreManager access",
+    regex: /\bStoreManager\b/,
+  },
+  {
+    name: "raw small external ctx_store Store",
+    regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore::/,
+    contentRegex: /\buse\s+ctx_store::\{(?=[^}]*\n)[\s\S]*?\bStore\b[\s\S]*?\}/gm,
+  },
+  {
+    name: "direct small external store manager helper",
+    regex: /\b(?:crate::)?common::setup_store\s*\(|\buse\s+[^;]*\bsetup_store\b|\bsetup_store\s*\(/,
+    contentRegex: /\buse\s+[\s\S]*?\bsetup_store\b[\s\S]*?;/gm,
+  },
+  {
+    name: "direct small external daemon construction helper",
+    regex: /\b(?:crate::)?common::build_daemon\s*\(|\buse\s+[^;]*\bbuild_daemon\b|\bbuild_daemon\s*\(/,
+    contentRegex: /\buse\s+[\s\S]*?\bbuild_daemon\b[\s\S]*?;/gm,
+  },
+  {
+    name: "direct small external TestDaemon store access",
+    regex: /\.(?:stores|global_store|store_for_session|store_for_workspace|uncached_store_for_workspace|store_for_task|store_for_worktree)\s*\(/,
   },
 ];
 
@@ -1537,6 +1568,13 @@ function smallApiUnitStorePatternsForPath(relativePath) {
   return [];
 }
 
+function smallExternalStorePatternsForPath(relativePath) {
+  if (smallExternalStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return SMALL_EXTERNAL_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
 function mcpDaemonPatternsForPath(relativePath) {
   if (mcpDaemonFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS;
@@ -1884,6 +1922,13 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
+        patterns: smallExternalStorePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
         patterns: mcpDaemonPatternsForPath(relativePath),
       }),
     );
@@ -2028,6 +2073,7 @@ module.exports = {
   SCHEDULER_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
   SESSION_FIXTURE_TEST_STORE_ACCESS_PATTERNS,
   SMALL_API_UNIT_TEST_STORE_ACCESS_PATTERNS,
+  SMALL_EXTERNAL_TEST_STORE_ACCESS_PATTERNS,
   SMALL_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
   STREAM_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
   TASK_LIFECYCLE_TEST_STORE_ACCESS_PATTERNS,
@@ -2057,6 +2103,7 @@ module.exports = {
   schedulerRuntimeStorePatternsForPath,
   sessionFixtureStorePatternsForPath,
   smallApiUnitStorePatternsForPath,
+  smallExternalStorePatternsForPath,
   smallBoundaryStorePatternsForPath,
   streamRuntimeStorePatternsForPath,
   taskLifecycleStorePatternsForPath,

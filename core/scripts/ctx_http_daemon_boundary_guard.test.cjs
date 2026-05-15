@@ -20,6 +20,7 @@ const {
   SCHEDULER_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
   SESSION_FIXTURE_TEST_STORE_ACCESS_PATTERNS,
   SMALL_API_UNIT_TEST_STORE_ACCESS_PATTERNS,
+  SMALL_EXTERNAL_TEST_STORE_ACCESS_PATTERNS,
   SMALL_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
   STREAM_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
   TASK_LIFECYCLE_TEST_STORE_ACCESS_PATTERNS,
@@ -49,6 +50,7 @@ const {
   schedulerRuntimeStorePatternsForPath,
   sessionFixtureStorePatternsForPath,
   smallApiUnitStorePatternsForPath,
+  smallExternalStorePatternsForPath,
   smallBoundaryStorePatternsForPath,
   streamRuntimeStorePatternsForPath,
   taskLifecycleStorePatternsForPath,
@@ -1058,6 +1060,100 @@ test("daemon boundary guard scopes small API unit store facade roots", () => {
     smallApiUnitStorePatternsForPath(
       "core/crates/ctx-http/src/api/providers/tests/restarts/auth_change/failures.rs",
     ),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects small external direct store setup", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/workspace_provider_model_preferences_http.rs",
+    contents: `
+      use ctx_store::{Store, StoreManager};
+      use ctx_store::{
+        Store as RawStore,
+      };
+      use common::{setup_store, build_daemon};
+      use common::{
+        setup_store as setup_store_alias,
+        build_daemon as build_daemon_alias,
+      };
+      use crate::common::{
+        setup_store as setup_store_crate_alias,
+        build_daemon as build_daemon_crate_alias,
+      };
+      use crate::{
+        common::setup_store as setup_store_root_alias,
+        common::build_daemon as build_daemon_root_alias,
+      };
+      async fn helper(daemon: TestDaemon) {
+        let stores = common::setup_store(data_dir.path()).await;
+        let stores = crate::common::setup_store(data_dir.path()).await;
+        let daemon = common::build_daemon(data_root, stores, common::fake_providers(), base_url);
+        let daemon = crate::common::build_daemon(data_root, stores, common::fake_providers(), base_url);
+        let stores = setup_store(data_dir.path()).await;
+        let daemon = build_daemon(data_root, stores, common::fake_providers(), base_url);
+        let stores = setup_store_alias(data_dir.path()).await;
+        let daemon = build_daemon_alias(data_root, stores, common::fake_providers(), base_url);
+        let stores = setup_store_crate_alias(data_dir.path()).await;
+        let daemon = build_daemon_crate_alias(data_root, stores, common::fake_providers(), base_url);
+        let stores = setup_store_root_alias(data_dir.path()).await;
+        let daemon = build_daemon_root_alias(data_root, stores, common::fake_providers(), base_url);
+        let _stores = StoreManager::open(data_root).await?;
+        let _raw = ctx_store::Store::open_sqlite(path, None).await?;
+        Store::open_sqlite(path, None).await?;
+        RawStore::open_sqlite(path, None).await?;
+        daemon.stores().global().await?;
+        daemon.store_for_workspace(workspace_id).await?;
+        daemon.uncached_store_for_workspace(workspace_id).await?;
+      }
+    `,
+    patterns: SMALL_EXTERNAL_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct small external StoreManager access",
+      "direct small external StoreManager access",
+      "raw small external ctx_store Store",
+      "raw small external ctx_store Store",
+      "raw small external ctx_store Store",
+      "raw small external ctx_store Store",
+      "direct small external store manager helper",
+      "direct small external store manager helper",
+      "direct small external store manager helper",
+      "direct small external store manager helper",
+      "direct small external store manager helper",
+      "direct small external store manager helper",
+      "direct small external store manager helper",
+      "direct small external store manager helper",
+      "direct small external daemon construction helper",
+      "direct small external daemon construction helper",
+      "direct small external daemon construction helper",
+      "direct small external daemon construction helper",
+      "direct small external daemon construction helper",
+      "direct small external daemon construction helper",
+      "direct small external daemon construction helper",
+      "direct small external daemon construction helper",
+      "direct small external TestDaemon store access",
+      "direct small external TestDaemon store access",
+      "direct small external TestDaemon store access",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes small external store facade roots", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/tests/title_generation_local_e2e.rs",
+    "core/crates/ctx-http/tests/workspace_provider_model_preferences_http.rs",
+  ]) {
+    assert.deepEqual(
+      smallExternalStorePatternsForPath(filePath),
+      SMALL_EXTERNAL_TEST_STORE_ACCESS_PATTERNS,
+    );
+  }
+  assert.deepEqual(
+    smallExternalStorePatternsForPath("core/crates/ctx-http/tests/title_generation_local.rs"),
     [],
   );
 });
