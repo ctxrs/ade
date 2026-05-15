@@ -1,15 +1,14 @@
 mod common;
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
-use std::sync::Arc;
 
 use axum::http::StatusCode;
 use ctx_daemon::test_support::TestDaemon;
 use ctx_managed_installs::{save_agent_server_config, AgentServerCommand, AgentServerConfigFile};
 use ctx_provider_accounts::add_gemini_account;
-use ctx_providers::adapters::{ProviderAdapter, ProviderHealth, ProviderStatus};
+use ctx_providers::adapters::{ProviderHealth, ProviderStatus};
 
 fn trimmed_env(name: &str) -> Option<String> {
     std::env::var(name)
@@ -122,18 +121,6 @@ fn catalog_snapshot(models: &serde_json::Value) -> (String, Vec<String>) {
     (current_model_id, ids)
 }
 
-async fn app_daemon(data_root: &Path) -> TestDaemon {
-    let stores = common::setup_store(data_root).await;
-    let providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
-    TestDaemon::new(
-        data_root.to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:0".to_string(),
-        None,
-    )
-}
-
 async fn seed_provider_status(daemon: &TestDaemon, status: ProviderStatus) {
     let provider_id = status.provider_id.clone();
     daemon.upsert_provider_status(provider_id, status).await;
@@ -172,7 +159,7 @@ async fn live_gemini_model_catalog_matches_pinned_snapshot() {
 
     let data_dir = tempfile::tempdir().expect("tempdir");
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
-    let daemon = app_daemon(data_dir.path()).await;
+    let daemon = common::provider_route_providerless_daemon(data_dir.path()).await;
     let app = common::router_for_daemon(&daemon);
 
     add_gemini_account(

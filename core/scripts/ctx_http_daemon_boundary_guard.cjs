@@ -138,6 +138,12 @@ const authBoundaryStoreFacadeTestRoots = [
   "core/crates/ctx-http/src/lib_tests/auth_boundaries/",
 ];
 
+const externalProviderRouteStoreFacadeTestRoots = [
+  "core/crates/ctx-http/tests/codex_host_import_api.rs",
+  "core/crates/ctx-http/tests/codex_login_callback_api.rs",
+  "core/crates/ctx-http/tests/gemini_live_model_catalog.rs",
+];
+
 const mcpDaemonFacadeTestRoots = [
   "core/crates/ctx-http-test-support/src/mcp_daemon.rs",
   "core/crates/ctx-http-test-support/src/mcp_daemon/",
@@ -481,6 +487,43 @@ const AUTH_BOUNDARY_TEST_STORE_ACCESS_PATTERNS = [
   },
   {
     name: "raw auth-boundary ctx_store Store",
+    regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore\b/,
+  },
+];
+
+const EXTERNAL_PROVIDER_ROUTE_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct external provider-route global store access",
+    regex: /\.global_store\s*\(/,
+  },
+  {
+    name: "direct external provider-route session store access",
+    regex: /\.store_for_session\s*\(/,
+  },
+  {
+    name: "direct external provider-route workspace store access",
+    regex: /\.store_for_workspace\s*\(/,
+  },
+  {
+    name: "direct external provider-route StoreManager access",
+    regex: /\.stores\s*\(|\bStoreManager\b/,
+  },
+  {
+    name: "direct external provider-route provider handle access",
+    regex: /a^/,
+    contentRegex: /(?:\.handle\s*\(\s*\)\s*\.\s*providers\s*\(|\blet\s+[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*[^;\n]*\.handle\s*\(\s*\)\s*;|[a-zA-Z_][a-zA-Z0-9_]*\.providers\s*\()/gm,
+  },
+  {
+    name: "direct external provider-route provider facade import",
+    regex: /\bProvidersHandle\b|\bctx_daemon::daemon::providers\b|\bctx_daemon::daemon::\{[^}]*\bproviders\b[^}]*\}/,
+    contentRegex: /\bctx_daemon::daemon::\{[^}]*\bproviders\b[^}]*\}/gm,
+  },
+  {
+    name: "direct external provider-route codex login session API access",
+    regex: /\b(?:start_codex_login_session|codex_login_status|codex_login_statuses|claim_codex_login_callback|restore_codex_login_completion_token|remove_codex_login_session)\b/,
+  },
+  {
+    name: "raw external provider-route ctx_store Store",
     regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore\b/,
   },
 ];
@@ -1396,6 +1439,13 @@ function authBoundaryStorePatternsForPath(relativePath) {
   return [];
 }
 
+function externalProviderRouteStorePatternsForPath(relativePath) {
+  if (externalProviderRouteStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return EXTERNAL_PROVIDER_ROUTE_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
 function mcpDaemonPatternsForPath(relativePath) {
   if (mcpDaemonFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS;
@@ -1729,6 +1779,13 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
+        patterns: externalProviderRouteStorePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
         patterns: mcpDaemonPatternsForPath(relativePath),
       }),
     );
@@ -1859,6 +1916,7 @@ module.exports = {
   DAEMON_EXTRACTION_BLOCKER_PATTERNS,
   API_RAW_DAEMON_PATTERNS,
   API_DOMAIN_RAW_STORE_PATTERNS,
+  EXTERNAL_PROVIDER_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   FAULT_INJECTION_TEST_STORE_ACCESS_PATTERNS,
   GLOBAL_ID_ROUTING_TEST_STORE_ACCESS_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
@@ -1882,6 +1940,7 @@ module.exports = {
   WORKTREE_ARCHIVE_TEST_STORE_ACCESS_PATTERNS,
   apiPatternsForPath,
   authBoundaryStorePatternsForPath,
+  externalProviderRouteStorePatternsForPath,
   faultInjectionStorePatternsForPath,
   globalIdRoutingStorePatternsForPath,
   isTestRustPath,

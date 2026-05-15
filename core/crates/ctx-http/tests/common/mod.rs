@@ -26,7 +26,7 @@ use fs2::FileExt;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tokio::process::Command;
-use tokio::sync::{OwnedSemaphorePermit, Semaphore, SemaphorePermit};
+use tokio::sync::{Mutex as AsyncMutex, OwnedSemaphorePermit, Semaphore, SemaphorePermit};
 use tokio::task::JoinHandle;
 use tower::ServiceExt;
 
@@ -196,6 +196,12 @@ impl TestEnvGuard {
         std::env::set_var(key, value);
         Self { key, prev }
     }
+
+    pub fn unset(key: &'static str) -> Self {
+        let prev = std::env::var_os(key);
+        std::env::remove_var(key);
+        Self { key, prev }
+    }
 }
 
 impl Drop for TestEnvGuard {
@@ -210,6 +216,11 @@ impl Drop for TestEnvGuard {
 
 pub fn set_ctx_mcp_command_env_for_test() -> TestEnvGuard {
     TestEnvGuard::set("CTX_MCP_COMMAND", resolve_ctx_mcp_command_for_test())
+}
+
+pub fn process_env_test_lock() -> &'static AsyncMutex<()> {
+    static LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| AsyncMutex::new(()))
 }
 
 pub fn resolve_manifest_dir() -> PathBuf {
@@ -408,6 +419,28 @@ pub fn build_daemon(
     base_url: impl Into<String>,
 ) -> TestDaemon {
     TestDaemon::new(data_root.into(), stores, providers, base_url.into(), None)
+}
+
+pub async fn provider_route_fake_daemon(data_root: &Path) -> TestDaemon {
+    TestDaemon::new_with_providers_for_test(
+        data_root.to_path_buf(),
+        fake_providers(),
+        "http://127.0.0.1:0".to_string(),
+        None,
+    )
+    .await
+    .expect("create fake-provider daemon")
+}
+
+pub async fn provider_route_providerless_daemon(data_root: &Path) -> TestDaemon {
+    TestDaemon::new_with_providers_for_test(
+        data_root.to_path_buf(),
+        HashMap::new(),
+        "http://127.0.0.1:0".to_string(),
+        None,
+    )
+    .await
+    .expect("create providerless daemon")
 }
 
 pub async fn spawn_http_server(app: axum::Router) -> TestServer {

@@ -3277,6 +3277,30 @@ impl TestDaemon {
             .await;
     }
 
+    pub async fn seed_pending_codex_login_for_test(
+        &self,
+        account_id: &str,
+        expected_callback_url: Option<&str>,
+    ) -> String {
+        daemon::providers::start_codex_login_session(
+            &self.state,
+            account_id.to_string(),
+            "https://chat.openai.com/oauth/authorize".to_string(),
+            expected_callback_url.map(str::to_string),
+        )
+        .await
+        .completion_token
+    }
+
+    pub async fn codex_login_completion_token_state_for_test(
+        &self,
+        account_id: &str,
+    ) -> Option<Option<String>> {
+        daemon::providers::codex_login_status(&self.state, account_id)
+            .await
+            .map(|status| status.completion_token)
+    }
+
     pub fn publish_storage_guard(&self, status: StorageGuardStatus) {
         self.state.test_publish_storage_guard(status);
     }

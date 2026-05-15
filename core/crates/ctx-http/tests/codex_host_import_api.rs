@@ -1,12 +1,6 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-
 use axum::http::StatusCode;
 use ctx_daemon::test_support::TestDaemon;
 use ctx_provider_accounts::{codex_env_for_active_account, ensure_codex_auth_ready};
-use ctx_providers::adapters::ProviderAdapter;
-use ctx_providers::fake::FakeProviderAdapter;
-use ctx_store::StoreManager;
 use serde::Deserialize;
 use serde_json::json;
 
@@ -38,19 +32,6 @@ struct CodexHostImportProbe {
     auth_kind: Option<String>,
 }
 
-async fn app_daemon(data_root: &std::path::Path) -> TestDaemon {
-    let stores = StoreManager::open(data_root).await.unwrap();
-    let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
-    providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-    TestDaemon::new(
-        data_root.to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:0".to_string(),
-        None,
-    )
-}
-
 async fn start_http_app(
     daemon: &TestDaemon,
 ) -> (String, reqwest::Client, tokio::task::JoinHandle<()>) {
@@ -65,6 +46,7 @@ async fn start_http_app(
 
 #[tokio::test]
 async fn host_import_probe_and_import_projects_runtime_auth() {
+    let _env_lock = common::process_env_test_lock().lock().await;
     let data_dir = tempfile::tempdir().unwrap();
     let host_dir = tempfile::tempdir().unwrap();
     let host_auth_path = host_dir.path().join("auth.json");
@@ -72,13 +54,13 @@ async fn host_import_probe_and_import_projects_runtime_auth() {
         .await
         .unwrap();
 
-    let prev = std::env::var("CTX_CODEX_HOST_AUTH_PATH").ok();
-    std::env::set_var(
+    let _host_auth_path = common::TestEnvGuard::set(
         "CTX_CODEX_HOST_AUTH_PATH",
         host_auth_path.to_string_lossy().as_ref(),
     );
+    let _codex_home = common::TestEnvGuard::unset("CTX_CODEX_HOME");
 
-    let daemon = app_daemon(data_dir.path()).await;
+    let daemon = common::provider_route_fake_daemon(data_dir.path()).await;
     let (base, client, server_handle) = start_http_app(&daemon).await;
 
     let probe = client
@@ -118,9 +100,4 @@ async fn host_import_probe_and_import_projects_runtime_auth() {
         .unwrap();
 
     server_handle.abort();
-    if let Some(value) = prev {
-        std::env::set_var("CTX_CODEX_HOST_AUTH_PATH", value);
-    } else {
-        std::env::remove_var("CTX_CODEX_HOST_AUTH_PATH");
-    }
 }

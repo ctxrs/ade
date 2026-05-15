@@ -6,6 +6,7 @@ const {
   DAEMON_EXTRACTION_BLOCKER_PATTERNS,
   API_DOMAIN_RAW_STORE_PATTERNS,
   API_RAW_DAEMON_PATTERNS,
+  EXTERNAL_PROVIDER_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   FAULT_INJECTION_TEST_STORE_ACCESS_PATTERNS,
   GLOBAL_ID_ROUTING_TEST_STORE_ACCESS_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
@@ -29,6 +30,7 @@ const {
   WORKTREE_ARCHIVE_TEST_STORE_ACCESS_PATTERNS,
   apiPatternsForPath,
   authBoundaryStorePatternsForPath,
+  externalProviderRouteStorePatternsForPath,
   faultInjectionStorePatternsForPath,
   globalIdRoutingStorePatternsForPath,
   isTestRustPath,
@@ -892,6 +894,80 @@ test("daemon boundary guard scopes auth-boundary store facade roots", () => {
   assert.deepEqual(
     authBoundaryStorePatternsForPath(
       "core/crates/ctx-http/src/lib_tests/provider_routes/codex_routes.rs",
+    ),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects external provider-route direct store and provider facade access", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/codex_login_callback_api.rs",
+    contents: `
+      use ctx_daemon::daemon::providers::{codex_login_status, start_codex_login_session};
+      use ctx_daemon::daemon::{providers as daemon_providers};
+      use ctx_daemon::daemon::{
+        providers,
+      };
+      use ctx_daemon::daemon::providers::ProvidersHandle;
+      use ctx_store::{Store, StoreManager};
+      async fn helper(daemon: TestDaemon, stores: StoreManager) {
+        let stores = StoreManager::open(data_dir.path()).await?;
+        daemon.global_store();
+        daemon.store_for_session(session_id).await?;
+        daemon.store_for_workspace(workspace_id).await?;
+        daemon.stores().global().await?;
+        daemon.handle().providers();
+        let handle = daemon.handle();
+        handle.providers();
+        providers.start_codex_login_session(account_id, auth_url, None).await;
+        providers.codex_login_status(account_id).await;
+        let _raw: Store;
+      }
+    `,
+    patterns: EXTERNAL_PROVIDER_ROUTE_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct external provider-route global store access",
+      "direct external provider-route session store access",
+      "direct external provider-route workspace store access",
+      "direct external provider-route StoreManager access",
+      "direct external provider-route StoreManager access",
+      "direct external provider-route StoreManager access",
+      "direct external provider-route StoreManager access",
+      "direct external provider-route provider handle access",
+      "direct external provider-route provider handle access",
+      "direct external provider-route provider handle access",
+      "direct external provider-route provider facade import",
+      "direct external provider-route provider facade import",
+      "direct external provider-route provider facade import",
+      "direct external provider-route provider facade import",
+      "direct external provider-route provider facade import",
+      "direct external provider-route codex login session API access",
+      "direct external provider-route codex login session API access",
+      "direct external provider-route codex login session API access",
+      "raw external provider-route ctx_store Store",
+      "raw external provider-route ctx_store Store",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes external provider-route store facade roots", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/tests/codex_host_import_api.rs",
+    "core/crates/ctx-http/tests/codex_login_callback_api.rs",
+    "core/crates/ctx-http/tests/gemini_live_model_catalog.rs",
+  ]) {
+    assert.deepEqual(
+      externalProviderRouteStorePatternsForPath(filePath),
+      EXTERNAL_PROVIDER_ROUTE_TEST_STORE_ACCESS_PATTERNS,
+    );
+  }
+  assert.deepEqual(
+    externalProviderRouteStorePatternsForPath(
+      "core/crates/ctx-http/tests/provider_probe_runtime_env.rs",
     ),
     [],
   );

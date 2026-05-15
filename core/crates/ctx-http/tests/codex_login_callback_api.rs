@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -9,9 +8,6 @@ use ctx_provider_accounts::{
     save_codex_registry, CodexAccountEntry, CodexAccountRegistry, CodexEndpointProfile,
     CODEX_API_SHAPE_OPENAI_RESPONSES, CODEX_CREDENTIAL_KIND_API_KEY,
 };
-use ctx_providers::adapters::ProviderAdapter;
-use ctx_providers::fake::FakeProviderAdapter;
-use ctx_store::StoreManager;
 use serde::Deserialize;
 use serde_json::json;
 
@@ -113,40 +109,20 @@ async fn start_redirecting_callback_server(
     )
 }
 
-async fn app_daemon(data_root: &std::path::Path) -> TestDaemon {
-    let stores = StoreManager::open(data_root).await.unwrap();
-    let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
-    providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-    TestDaemon::new(
-        data_root.to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:0".to_string(),
-        None,
-    )
-}
-
 async fn insert_pending_login(
     daemon: &TestDaemon,
     account_id: &str,
     expected_callback_url: Option<&str>,
 ) -> String {
     daemon
-        .handle()
-        .providers()
-        .start_codex_login_session(
-            account_id.to_string(),
-            "https://chat.openai.com/oauth/authorize".to_string(),
-            expected_callback_url.map(str::to_string),
-        )
+        .seed_pending_codex_login_for_test(account_id, expected_callback_url)
         .await
-        .completion_token
 }
 
 #[tokio::test]
 async fn complete_login_replays_loopback_callback_and_clears_token() {
     let data_dir = tempfile::tempdir().unwrap();
-    let daemon = app_daemon(data_dir.path()).await;
+    let daemon = common::provider_route_fake_daemon(data_dir.path()).await;
     let (callback_base, callback_handle) = start_callback_server().await;
     let expected_callback = format!("{callback_base}/auth/callback");
     let callback_url = format!("{expected_callback}?code=abc&state=xyz");
@@ -170,14 +146,12 @@ async fn complete_login_replays_loopback_callback_and_clears_token() {
     assert!(body.accepted);
     assert_eq!(body.status_code, 200);
 
-    let status = daemon
-        .handle()
-        .providers()
-        .codex_login_status(account_id)
+    let completion_token = daemon
+        .codex_login_completion_token_state_for_test(account_id)
         .await
         .expect("login status");
     assert!(
-        status.completion_token.is_none(),
+        completion_token.is_none(),
         "completion token should be single-use"
     );
 
@@ -188,7 +162,7 @@ async fn complete_login_replays_loopback_callback_and_clears_token() {
 #[tokio::test]
 async fn complete_login_replays_localhost_callback_via_ipv4_override() {
     let data_dir = tempfile::tempdir().unwrap();
-    let daemon = app_daemon(data_dir.path()).await;
+    let daemon = common::provider_route_fake_daemon(data_dir.path()).await;
     let (callback_base, callback_handle) = start_callback_server().await;
     let callback_port = callback_base
         .rsplit_once(':')
@@ -225,7 +199,7 @@ async fn complete_login_replays_localhost_callback_via_ipv4_override() {
 #[tokio::test]
 async fn complete_login_rejects_invalid_completion_token() {
     let data_dir = tempfile::tempdir().unwrap();
-    let daemon = app_daemon(data_dir.path()).await;
+    let daemon = common::provider_route_fake_daemon(data_dir.path()).await;
     let expected_callback = "http://localhost:43210/auth/callback";
     let _token = insert_pending_login(&daemon, "acct-token", Some(expected_callback)).await;
     let (base, client, server_handle) = start_http_app(&daemon).await;
@@ -251,7 +225,7 @@ async fn complete_login_rejects_invalid_completion_token() {
 #[tokio::test]
 async fn complete_login_rejects_missing_expected_callback_metadata() {
     let data_dir = tempfile::tempdir().unwrap();
-    let daemon = app_daemon(data_dir.path()).await;
+    let daemon = common::provider_route_fake_daemon(data_dir.path()).await;
     let (callback_base, callback_hits, callback_handle) =
         start_delayed_callback_server(Duration::from_millis(0)).await;
     let callback_url = format!("{callback_base}/auth/callback?code=abc");
@@ -274,13 +248,11 @@ async fn complete_login_rejects_missing_expected_callback_metadata() {
     let body: ErrorResp = resp.json().await.unwrap();
     assert!(body.error.contains("expected callback"));
 
-    let status = daemon
-        .handle()
-        .providers()
-        .codex_login_status(account_id)
+    let completion_token = daemon
+        .codex_login_completion_token_state_for_test(account_id)
         .await
         .expect("login status");
-    assert_eq!(status.completion_token.as_deref(), Some(token.as_str()));
+    assert_eq!(completion_token.as_deref(), Some(token.as_str()));
     assert_eq!(callback_hits.load(Ordering::SeqCst), 0);
 
     callback_handle.abort();
@@ -290,7 +262,7 @@ async fn complete_login_rejects_missing_expected_callback_metadata() {
 #[tokio::test]
 async fn complete_login_rejects_non_loopback_host() {
     let data_dir = tempfile::tempdir().unwrap();
-    let daemon = app_daemon(data_dir.path()).await;
+    let daemon = common::provider_route_fake_daemon(data_dir.path()).await;
     let token = insert_pending_login(
         &daemon,
         "acct-host",
@@ -320,7 +292,7 @@ async fn complete_login_rejects_non_loopback_host() {
 #[tokio::test]
 async fn complete_login_rejects_expected_path_mismatch() {
     let data_dir = tempfile::tempdir().unwrap();
-    let daemon = app_daemon(data_dir.path()).await;
+    let daemon = common::provider_route_fake_daemon(data_dir.path()).await;
     let token = insert_pending_login(
         &daemon,
         "acct-path",
@@ -350,7 +322,7 @@ async fn complete_login_rejects_expected_path_mismatch() {
 #[tokio::test]
 async fn complete_login_accepts_loopback_alias_for_expected_host() {
     let data_dir = tempfile::tempdir().unwrap();
-    let daemon = app_daemon(data_dir.path()).await;
+    let daemon = common::provider_route_fake_daemon(data_dir.path()).await;
     let (callback_base, callback_handle) = start_callback_server().await;
     let expected_callback = format!("{callback_base}/auth/callback");
     let parsed = reqwest::Url::parse(&expected_callback).unwrap();
@@ -378,7 +350,7 @@ async fn complete_login_accepts_loopback_alias_for_expected_host() {
 #[tokio::test]
 async fn complete_login_token_is_single_use() {
     let data_dir = tempfile::tempdir().unwrap();
-    let daemon = app_daemon(data_dir.path()).await;
+    let daemon = common::provider_route_fake_daemon(data_dir.path()).await;
     let (callback_base, callback_handle) = start_callback_server().await;
     let expected_callback = format!("{callback_base}/auth/callback");
     let callback_url = format!("{expected_callback}?code=one-time");
@@ -420,7 +392,7 @@ async fn complete_login_token_is_single_use() {
 #[tokio::test]
 async fn complete_login_allows_only_one_concurrent_callback_replay() {
     let data_dir = tempfile::tempdir().unwrap();
-    let daemon = app_daemon(data_dir.path()).await;
+    let daemon = common::provider_route_fake_daemon(data_dir.path()).await;
     let (callback_base, callback_hits, callback_handle) =
         start_delayed_callback_server(Duration::from_millis(250)).await;
     let expected_callback = format!("{callback_base}/auth/callback");
@@ -450,7 +422,7 @@ async fn complete_login_allows_only_one_concurrent_callback_replay() {
 #[tokio::test]
 async fn complete_login_rejects_redirecting_callback_replay() {
     let data_dir = tempfile::tempdir().unwrap();
-    let daemon = app_daemon(data_dir.path()).await;
+    let daemon = common::provider_route_fake_daemon(data_dir.path()).await;
     let (callback_base, redirected_hits, callback_handle) =
         start_redirecting_callback_server().await;
     let expected_callback = format!("{callback_base}/auth/callback");
@@ -481,7 +453,7 @@ async fn complete_login_rejects_redirecting_callback_replay() {
 #[tokio::test]
 async fn set_active_account_rejects_incompatible_endpoint_profile() {
     let data_dir = tempfile::tempdir().unwrap();
-    let daemon = app_daemon(data_dir.path()).await;
+    let daemon = common::provider_route_fake_daemon(data_dir.path()).await;
     let registry = CodexAccountRegistry {
         active_account_id: None,
         accounts: vec![CodexAccountEntry {
