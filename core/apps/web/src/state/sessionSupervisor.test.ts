@@ -175,6 +175,7 @@ type SessionSupervisorInternals = {
   entries: Map<string, TestInternalEntry>;
   stateCacheBySessionId: Map<string, { state: { git_status: unknown }; stateRev?: number }>;
   ensureEntry: (sessionId: string) => TestInternalEntry;
+  mergeEvents: (entry: TestInternalEntry, events: SessionEvent[]) => void;
   handleReplicaPatches: (patches: SessionReplicaPatch[]) => void;
 };
 
@@ -517,31 +518,21 @@ describe("SessionSupervisor", () => {
     const internals = asSupervisorInternals(sup);
     const entry = internals.ensureEntry(sessionId);
     entry.turns = [mkTurn({ sessionId, turnId, status: "running", startSeq: 1, startedAt: createdAt })];
-    entry.startedTurnIds.add(turnId);
 
-    internals.handleReplicaPatches([
+    internals.mergeEvents(entry, [
       {
-        op: "append",
-        sessionId,
-        data: {
-          appendMode: "stream_delta",
-          events: [
-            {
-              seq: 2,
-              id: "event-assistant-chunk",
-              session_id: sessionId,
-              run_id: "run-1",
-              turn_id: turnId,
-              event_type: "assistant_chunk",
-              payload_json: {
-                content_fragment: "done: hello",
-                message_id: "provider-message-1",
-                order_seq: 2,
-              },
-              created_at: createdAt,
-            },
-          ],
+        seq: 2,
+        id: "event-assistant-chunk",
+        session_id: sessionId,
+        run_id: "run-1",
+        turn_id: turnId,
+        event_type: "assistant_chunk",
+        payload_json: {
+          content_fragment: "done: hello",
+          message_id: "provider-message-1",
+          order_seq: 2,
         },
+        created_at: createdAt,
       },
     ]);
 
@@ -562,31 +553,21 @@ describe("SessionSupervisor", () => {
     const internals = asSupervisorInternals(sup);
     const entry = internals.ensureEntry(sessionId);
     entry.turns = [mkTurn({ sessionId, turnId, status: "running", startSeq: 1, startedAt: createdAt })];
-    entry.startedTurnIds.add(turnId);
 
-    internals.handleReplicaPatches([
+    internals.mergeEvents(entry, [
       {
-        op: "append",
-        sessionId,
-        data: {
-          appendMode: "stream_delta",
-          events: [
-            {
-              seq: 2,
-              id: "event-assistant-complete",
-              session_id: sessionId,
-              run_id: "run-1",
-              turn_id: turnId,
-              event_type: "assistant_complete",
-              payload_json: {
-                full_content: "done: hello",
-                message_id: "provider-message-1",
-                orderSeq: 2,
-              },
-              created_at: createdAt,
-            },
-          ],
+        seq: 2,
+        id: "event-assistant-complete",
+        session_id: sessionId,
+        run_id: "run-1",
+        turn_id: turnId,
+        event_type: "assistant_complete",
+        payload_json: {
+          full_content: "done: hello",
+          message_id: "provider-message-1",
+          orderSeq: 2,
         },
+        created_at: createdAt,
       },
     ]);
 
