@@ -28,73 +28,8 @@ async fn daemon_shutdown_endpoint_terminalizes_running_turns_before_ack() {
         test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()))
     };
 
-    let workspace = state
-        .global_store()
-        .create_workspace(
-            "ws".to_string(),
-            data_dir.path().join("ws").to_string_lossy().to_string(),
-            ctx_core::models::VcsKind::Git,
-        )
-        .await
-        .unwrap();
-    let store = state.store_for_workspace(workspace.id).await.unwrap();
-    let worktree = store
-        .create_worktree(
-            workspace.id,
-            data_dir.path().join("ws").to_string_lossy().to_string(),
-            "deadbeef".to_string(),
-            None,
-        )
-        .await
-        .unwrap();
-    let task = store
-        .create_task(workspace.id, "task".to_string(), None)
-        .await
-        .unwrap();
-    let session = store
-        .create_session(
-            task.id,
-            workspace.id,
-            worktree.id,
-            ctx_core::models::ExecutionEnvironment::Host,
-            "fake".to_string(),
-            "model".to_string(),
-            "implementer".to_string(),
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-    state
-        .global_store()
-        .upsert_workspace_session_index(session.id, workspace.id)
-        .await
-        .unwrap();
-
-    let turn_id = ctx_core::ids::TurnId::new();
-    let now = chrono::Utc::now();
-    store
-        .insert_session_turn(ctx_core::models::SessionTurn {
-            turn_id,
-            session_id: session.id,
-            run_id: Some(ctx_core::ids::RunId::new()),
-            user_message_id: None,
-            status: ctx_core::models::SessionTurnStatus::Running,
-            start_seq: Some(1),
-            end_seq: None,
-            started_at: now,
-            updated_at: now,
-            assistant_partial: None,
-            thought_partial: None,
-            metrics_json: None,
-            failure: None,
-            tool_total: 0,
-            tool_pending: 0,
-            tool_running: 0,
-            tool_completed: 0,
-            tool_failed: 0,
-        })
+    let fixture = state
+        .seed_shutdown_running_turn_for_test(&data_dir.path().join("ws"), "fake", "model")
         .await
         .unwrap();
 
@@ -110,15 +45,12 @@ async fn daemon_shutdown_endpoint_terminalizes_running_turns_before_ack() {
     let res = app.oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
 
-    let turn = store
-        .get_session_turn(session.id, turn_id)
+    let status = state
+        .session_turn_status_for_test(fixture.session_id, fixture.turn_id)
         .await
         .unwrap()
         .expect("turn exists");
-    assert_eq!(
-        turn.status,
-        ctx_core::models::SessionTurnStatus::Interrupted
-    );
+    assert_eq!(status, ctx_core::models::SessionTurnStatus::Interrupted);
 }
 
 #[tokio::test]

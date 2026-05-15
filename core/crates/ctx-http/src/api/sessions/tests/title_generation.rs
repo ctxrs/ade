@@ -9,17 +9,16 @@ async fn schedule_title_generation_falls_back_without_config() {
     let (_data_dir, daemon, session) = setup_state().await;
     let prompt = "make the title this: hello world";
     let spawned = daemon
-        .handle()
-        .sessions()
-        .schedule_session_title_generation(session.clone(), prompt.to_string(), false)
+        .schedule_fallback_title_generation_for_test(session.id, prompt, false)
         .await;
 
-    assert!(!spawned);
+    assert!(!spawned.unwrap());
 
-    let store = daemon.store_for_session(session.id).await.unwrap();
-    let updated = store.get_session(session.id).await.unwrap().unwrap();
     let expected = title_generation::fallback_title_from_prompt(prompt);
-    assert_eq!(updated.title, expected);
+    assert_eq!(
+        daemon.session_title_for_test(session.id).await.unwrap(),
+        Some(expected)
+    );
 }
 
 #[tokio::test]

@@ -11,6 +11,7 @@ const {
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_TEST_CACHE_ACCESS_PATTERNS,
   SESSION_FIXTURE_TEST_STORE_ACCESS_PATTERNS,
+  SMALL_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
   TEST_ROUTER_COMPOSITION_PATTERNS,
   TEST_RAW_DAEMON_BUCKET_PATTERNS,
   apiPatternsForPath,
@@ -24,6 +25,7 @@ const {
   scanRouterComposition,
   scanText,
   sessionFixtureStorePatternsForPath,
+  smallBoundaryStorePatternsForPath,
   stripCfgTestItems,
 } = require("./ctx_http_daemon_boundary_guard.cjs");
 
@@ -481,6 +483,21 @@ test("daemon boundary guard allows only sanctioned router helper bodies", () => 
       `,
     },
     {
+      filePath: "core/crates/ctx-http/src/api/workspaces/tests.rs",
+      allowed: `
+        fn test_router(daemon: &TestDaemon) -> axum::Router {
+          crate::api::router(crate::api::RouteHandles::from_daemon_handle(
+            daemon.handle(),
+          ))
+        }
+      `,
+      denied: `
+        fn other_router(daemon: &TestDaemon) -> axum::Router {
+          crate::api::router(crate::api::RouteHandles::from_daemon_handle(daemon.handle()))
+        }
+      `,
+    },
+    {
       filePath: "core/crates/ctx-http-test-support/src/mcp_daemon/router.rs",
       allowed: `
         pub(crate) fn spawn_router_for_daemon(listener: tokio::net::TcpListener, daemon: &TestDaemon) {
@@ -799,6 +816,73 @@ test("daemon boundary guard scopes session fixture store facade roots", () => {
   }
   assert.deepEqual(
     sessionFixtureStorePatternsForPath("core/crates/ctx-http/src/lib_tests/provider_routes.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects direct small-boundary store and handle access", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/lib_tests/update_boundaries.rs",
+    contents: `
+      use ctx_store::{Store, StoreManager};
+      async fn fixture(daemon: TestDaemon, stores: StoreManager) {
+        daemon.global_store();
+        daemon.store_for_session(session_id).await?;
+        daemon.store_for_workspace(workspace_id).await?;
+        daemon.uncached_store_for_workspace(workspace_id).await?;
+        daemon.store_for_task(task_id).await?;
+        daemon.stores().global().await?;
+        stores.global().await?;
+        stores.workspace(workspace_id).await?;
+        daemon
+          .handle()
+          .sessions();
+        daemon
+          .handle()
+          .workspaces();
+        let _raw: Store;
+      }
+    `,
+    patterns: SMALL_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct small-boundary global store access",
+      "direct small-boundary session store access",
+      "direct small-boundary workspace store access",
+      "direct small-boundary uncached workspace store access",
+      "direct small-boundary task store access",
+      "direct small-boundary StoreManager access",
+      "direct small-boundary StoreManager global access",
+      "direct small-boundary StoreManager workspace access",
+      "direct sessions handle access in migrated test",
+      "direct workspaces handle access in migrated test",
+      "raw small-boundary ctx_store Store",
+      "raw small-boundary ctx_store Store",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes small-boundary store facade roots", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/src/lib_tests/update_boundaries.rs",
+    "core/crates/ctx-http/src/lib_tests/execution_launch/settings_errors.rs",
+    "core/crates/ctx-http/src/lib_tests/run_archive_routes.rs",
+    "core/crates/ctx-http/src/api/sessions/tests.rs",
+    "core/crates/ctx-http/src/api/sessions/tests/title_generation.rs",
+    "core/crates/ctx-http/src/api/workspaces/tests.rs",
+  ]) {
+    assert.deepEqual(
+      smallBoundaryStorePatternsForPath(filePath),
+      SMALL_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
+    );
+  }
+  assert.deepEqual(
+    smallBoundaryStorePatternsForPath(
+      "core/crates/ctx-http/src/lib_tests/provider_routes.rs",
+    ),
     [],
   );
 });

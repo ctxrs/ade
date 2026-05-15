@@ -1,13 +1,18 @@
 use super::*;
-use chrono::Utc;
+use axum::body::{to_bytes, Body};
+use axum::http::Request;
 use ctx_core::ids::WorktreeId;
-use ctx_core::models::{
-    SandboxBinding, SandboxGuestIdentity, SandboxProfile, SandboxSubstrate, VcsKind,
-};
 use ctx_daemon::test_support::TestDaemon;
 use ctx_store::StoreManager;
 use std::collections::HashMap;
+use tower::ServiceExt;
 use uuid::Uuid;
+
+fn test_router(daemon: &TestDaemon) -> axum::Router {
+    crate::api::router(crate::api::RouteHandles::from_daemon_handle(
+        daemon.handle(),
+    ))
+}
 
 #[tokio::test]
 async fn get_worktree_returns_live_root_for_bound_sandbox_worktree() {
@@ -21,74 +26,23 @@ async fn get_worktree_returns_live_root_for_bound_sandbox_worktree() {
         "http://127.0.0.1:4310".to_string(),
         None,
     );
-    let workspace = daemon
-        .global_store()
-        .create_workspace(
-            "ws".to_string(),
-            workspace_root.to_string_lossy().to_string(),
-            VcsKind::Git,
-        )
-        .await
-        .expect("create workspace");
-    let store = daemon
-        .store_for_workspace(workspace.id)
-        .await
-        .expect("workspace store");
     let host_root = temp.path().join("managed-worktree");
     std::fs::create_dir_all(&host_root).expect("create managed worktree");
-    let worktree = store
-        .insert_worktree(Worktree {
-            id: WorktreeId(Uuid::new_v4()),
-            workspace_id: workspace.id,
-            root_path: host_root.to_string_lossy().to_string(),
-            base_commit_sha: "abc123".to_string(),
-            git_branch: Some("ctx/test".to_string()),
-            vcs_kind: Some(VcsKind::Git),
-            base_revision: Some("abc123".to_string()),
-            vcs_ref: Some("ctx/test".to_string()),
-            created_at: Utc::now(),
-            bootstrap_status: None,
-            bootstrap_started_at: None,
-            bootstrap_finished_at: None,
-            bootstrap_exit_code: None,
-            bootstrap_timeout_sec: None,
-            bootstrap_error: None,
-            bootstrap_log_path: None,
-            bootstrap_log_truncated: None,
-            bootstrap_command: None,
-            bootstrap_script_path: None,
-        })
+    let worktree = daemon
+        .seed_sandbox_bound_worktree_for_test("ws", &workspace_root, &host_root, "/ctx/ws")
         .await
-        .expect("insert worktree");
-    store
-        .upsert_sandbox_binding(SandboxBinding {
-            worktree_id: worktree.id,
-            workspace_id: workspace.id,
-            sandbox_instance_id: ctx_core::models::sandbox_instance_id_for_workspace(workspace.id),
-            substrate: SandboxSubstrate::SharedVmContainer,
-            guest_identity: SandboxGuestIdentity::linux_container_ubuntu(),
-            profile: SandboxProfile::Standard,
-            live_workspace_root: "/ctx/ws".to_string(),
-            live_worktree_root: format!("/ctx/ws/worktrees/{}", worktree.id.0),
-            execution_settings_json: None,
-            container_name: Some("ctx-test".to_string()),
-            host_materialization_root: None,
-            created_at: Utc::now(),
-        })
-        .await
-        .expect("upsert sandbox binding");
-    daemon
-        .global_store()
-        .upsert_workspace_worktree_index(worktree.id, workspace.id)
-        .await
-        .expect("upsert worktree index");
+        .expect("seed sandbox-bound worktree");
 
-    let Json(response) = get_worktree(
-        State(daemon.handle().workspaces()),
-        Path(worktree.id.0.to_string()),
-    )
-    .await
-    .expect("get worktree");
+    let app = test_router(&daemon);
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/api/worktrees/{}", worktree.id.0))
+        .body(Body::empty())
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let response: Worktree = serde_json::from_slice(&body).unwrap();
 
     assert_eq!(
         response.root_path,
@@ -109,18 +63,26 @@ async fn missing_worktree_routes_return_not_found() {
         "http://127.0.0.1:4310".to_string(),
         None,
     );
-    let workspaces = State(daemon.handle().workspaces());
     let missing_worktree_id = WorktreeId(Uuid::new_v4()).0.to_string();
+    let app = test_router(&daemon);
 
-    let status = get_worktree(workspaces.clone(), Path(missing_worktree_id.clone()))
-        .await
-        .expect_err("missing worktree should not resolve");
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/api/worktrees/{missing_worktree_id}"))
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
 
-    let status = get_worktree_bootstrap_logs(workspaces, Path(missing_worktree_id))
-        .await
-        .expect_err("missing worktree bootstrap log should not resolve");
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/api/worktrees/{missing_worktree_id}/bootstrap/logs"
+        ))
+        .body(Body::empty())
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
 
     daemon.request_shutdown();
 }

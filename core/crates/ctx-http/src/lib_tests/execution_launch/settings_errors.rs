@@ -18,9 +18,8 @@ async fn execution_launch_start_returns_bad_request_when_execution_settings_fail
     let app = test_router(&state);
 
     let workspace = create_workspace_via_api(&app, &git_repo.path().to_string_lossy()).await;
-    let store = state.store_for_workspace(workspace.id).await.unwrap();
-    store
-        .upsert_runtime_settings_document(1, "{")
+    state
+        .seed_invalid_workspace_runtime_settings_document_for_test(workspace.id, "{")
         .await
         .unwrap();
 
@@ -63,9 +62,8 @@ async fn ensure_workspace_container_returns_bad_request_when_execution_settings_
     let app = test_router(&state);
 
     let workspace = create_workspace_via_api(&app, &git_repo.path().to_string_lossy()).await;
-    let store = state.store_for_workspace(workspace.id).await.unwrap();
-    store
-        .upsert_runtime_settings_document(1, "{")
+    state
+        .seed_invalid_workspace_runtime_settings_document_for_test(workspace.id, "{")
         .await
         .unwrap();
 

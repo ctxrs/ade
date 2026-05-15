@@ -147,6 +147,15 @@ const sessionFixtureStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/task_default_session_http.rs",
 ];
 
+const smallBoundaryStoreFacadeTestRoots = [
+  "core/crates/ctx-http/src/lib_tests/update_boundaries.rs",
+  "core/crates/ctx-http/src/lib_tests/execution_launch/settings_errors.rs",
+  "core/crates/ctx-http/src/lib_tests/run_archive_routes.rs",
+  "core/crates/ctx-http/src/api/sessions/tests.rs",
+  "core/crates/ctx-http/src/api/sessions/tests/title_generation.rs",
+  "core/crates/ctx-http/src/api/workspaces/tests.rs",
+];
+
 const API_RAW_DAEMON_PATTERNS = [
   {
     name: "raw DaemonState type",
@@ -380,6 +389,55 @@ const SESSION_FIXTURE_TEST_STORE_ACCESS_PATTERNS = [
   },
 ];
 
+const SMALL_BOUNDARY_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct small-boundary global store access",
+    regex: /\.global_store\s*\(/,
+  },
+  {
+    name: "direct small-boundary session store access",
+    regex: /\.store_for_session\s*\(/,
+  },
+  {
+    name: "direct small-boundary workspace store access",
+    regex: /\.store_for_workspace\s*\(/,
+  },
+  {
+    name: "direct small-boundary uncached workspace store access",
+    regex: /\.uncached_store_for_workspace\s*\(/,
+  },
+  {
+    name: "direct small-boundary task store access",
+    regex: /\.store_for_task\s*\(/,
+  },
+  {
+    name: "direct small-boundary StoreManager access",
+    regex: /\.stores\s*\(/,
+  },
+  {
+    name: "direct small-boundary StoreManager global access",
+    regex: /\bstores\.global\s*\(/,
+  },
+  {
+    name: "direct small-boundary StoreManager workspace access",
+    regex: /\bstores\.workspace\s*\(/,
+  },
+  {
+    name: "direct sessions handle access in migrated test",
+    regex: /a^/,
+    contentRegex: /\.handle\s*\(\s*\)\s*\.\s*sessions\s*\(/gm,
+  },
+  {
+    name: "direct workspaces handle access in migrated test",
+    regex: /a^/,
+    contentRegex: /\.handle\s*\(\s*\)\s*\.\s*workspaces\s*\(/gm,
+  },
+  {
+    name: "raw small-boundary ctx_store Store",
+    regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore\b/,
+  },
+];
+
 function isRustFile(filePath) {
   return filePath.endsWith(".rs");
 }
@@ -543,6 +601,13 @@ function sessionFixtureStorePatternsForPath(relativePath) {
   return [];
 }
 
+function smallBoundaryStorePatternsForPath(relativePath) {
+  if (smallBoundaryStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return SMALL_BOUNDARY_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
 function routerCompositionPatternsForPath(relativePath) {
   const isLibTestsRoot = relativePath === "core/crates/ctx-http/src/lib_tests.rs";
   if (
@@ -621,6 +686,13 @@ function isAllowedRouterHelperComposition({ filePath, lines, index, line }) {
     filePath === "core/crates/ctx-http/src/api/tasks/storage_admission_http_tests/fixtures.rs"
     && /crate::api::router\s*\(\s*crate::api::RouteHandles::from_daemon_handle\s*\(\s*state\.handle\s*\(\s*\)\s*\)\s*\)/.test(line)
     && isInsideDeclaredFunction(lines, index, /\bpub\s*\(\s*super\s*\)\s+fn\s+test_router\s*\(/)
+  ) {
+    return true;
+  }
+  if (
+    filePath === "core/crates/ctx-http/src/api/workspaces/tests.rs"
+    && /crate::api::router\s*\(\s*crate::api::RouteHandles::from_daemon_handle\s*\(\s*daemon\.handle\s*\(\s*\)\s*,?\s*\)\s*\)/.test(lines.slice(index, index + 4).join(" "))
+    && isInsideDeclaredFunction(lines, index, /\bfn\s+test_router\s*\(/)
   ) {
     return true;
   }
@@ -768,6 +840,13 @@ function scanRepo() {
       }),
     );
     violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
+        patterns: smallBoundaryStorePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
       ...scanRouterComposition({
         filePath: relativePath,
         contents,
@@ -808,6 +887,7 @@ module.exports = {
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_TEST_CACHE_ACCESS_PATTERNS,
   SESSION_FIXTURE_TEST_STORE_ACCESS_PATTERNS,
+  SMALL_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
   TEST_ROUTER_COMPOSITION_PATTERNS,
   TEST_RAW_DAEMON_BUCKET_PATTERNS,
   apiPatternsForPath,
@@ -821,5 +901,6 @@ module.exports = {
   scanRouterComposition,
   scanText,
   sessionFixtureStorePatternsForPath,
+  smallBoundaryStorePatternsForPath,
   stripCfgTestItems,
 };
