@@ -9,14 +9,8 @@ async fn mobile_secure_workspace_stream_returns_unauthorized_before_upgrade_for_
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        Some("daemon-secret".to_string()),
-    ));
-    let app = api::router(state);
+    let daemon = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
+    let app = test_router(&daemon);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
@@ -47,7 +41,7 @@ async fn mobile_secure_workspace_stream_returns_not_found_before_upgrade_for_aut
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
-    let (app, _state, _workspace_id, device_id, key, _data_dir) =
+    let (app, _daemon, _workspace_id, device_id, key, _data_dir) =
         build_mobile_access_app(true).await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -86,14 +80,8 @@ async fn mobile_secure_workspace_stream_returns_unauthorized_before_upgrade_with
     let git_repo = setup_git_repo().await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    ));
-    let app = api::router(state);
+    let daemon = test_daemon(data_dir.path(), stores, None);
+    let app = test_router(&daemon);
     let workspace = create_workspace_via_api(&app, &git_repo.path().to_string_lossy()).await;
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -126,7 +114,7 @@ async fn mobile_secure_workspace_stream_rejects_disabled_mobile_access_before_up
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
-    let (app, _state, workspace_id, device_id, key, _data_dir) =
+    let (app, _daemon, workspace_id, device_id, key, _data_dir) =
         build_mobile_access_app(false).await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -159,7 +147,7 @@ async fn mobile_secure_workspace_stream_returns_unauthorized_without_workspace_s
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
-    let (app, _state, workspace_id, device_id, key, _data_dir) =
+    let (app, _daemon, workspace_id, device_id, key, _data_dir) =
         build_mobile_access_app_with_scopes(true, &["device_registration", "workspace_read"]).await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

@@ -7,7 +7,7 @@ async fn mobile_secure_proxy_rejects_provider_management_routes() {
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
-    let (app, state, device_id, key, _data_dir) = build_mobile_secure_proxy_app(true).await;
+    let (app, daemon, device_id, key, _data_dir) = build_mobile_secure_proxy_app(true).await;
     let cases = [
         ("GET", "/api/providers", None),
         ("GET", "/api/providers/auth/import/candidates", None),
@@ -92,14 +92,14 @@ async fn mobile_secure_proxy_rejects_provider_management_routes() {
     }
 
     let codex_registry =
-        ctx_provider_accounts::provider_accounts::load_codex_registry(state.test_data_root())
+        ctx_provider_accounts::provider_accounts::load_codex_registry(daemon.data_root())
             .await
             .unwrap();
     assert!(codex_registry.accounts.is_empty());
     assert!(codex_registry.active_account_id.is_none());
 
     let qwen_config = ctx_harness_sources::harness_sources::get_provider_source_config(
-        state.test_data_root(),
+        daemon.data_root(),
         "qwen",
     )
     .await

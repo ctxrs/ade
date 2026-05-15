@@ -30,6 +30,7 @@ const migratedRawDaemonTestRoots = [
   "core/crates/ctx-http/src/lib_tests/log_path_boundaries/",
   "core/crates/ctx-http/src/lib_tests/mobile_access_routes.rs",
   "core/crates/ctx-http/src/lib_tests/mobile_profile_routes.rs",
+  "core/crates/ctx-http/src/lib_tests/mobile_secure_routes/",
   "core/crates/ctx-http/src/lib_tests/org_policy_routes.rs",
   "core/crates/ctx-http/src/lib_tests/provider_routes/",
   "core/crates/ctx-http/src/lib_tests/run_archive_routes.rs",

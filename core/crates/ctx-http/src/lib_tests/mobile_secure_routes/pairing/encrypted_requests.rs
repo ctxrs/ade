@@ -43,7 +43,7 @@ async fn pair_mobile_device_accepts_encrypted_pairing_request() {
     assert_eq!(payload["paired"], true);
 
     let device = harness
-        .state
+        .daemon
         .global_store()
         .get_mobile_device(MobileDeviceId(
             uuid::Uuid::parse_str(key_material.device_id).unwrap(),

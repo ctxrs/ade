@@ -8,21 +8,15 @@ async fn mobile_secure_proxy_rejects_disabled_mobile_access_for_existing_device(
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        Some("daemon-secret".to_string()),
-    ));
-    let profile_id = insert_mobile_profile(&state).await;
+    let daemon = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
+    let profile_id = insert_mobile_profile(&daemon).await;
 
     let device_id = "44444444-4444-4444-4444-444444444444";
     let (daemon_public_key, daemon_private_key) =
         ctx_transport_runtime::mobile_e2ee::generate_keypair();
     let (device_public_key, device_secret_key) =
         ctx_transport_runtime::mobile_e2ee::generate_keypair();
-    state
+    daemon
         .global_store()
         .upsert_mobile_access_config(MobileAccessConfig {
             id: "default".to_string(),
@@ -39,7 +33,7 @@ async fn mobile_secure_proxy_rejects_disabled_mobile_access_for_existing_device(
         })
         .await
         .unwrap();
-    state
+    daemon
         .global_store()
         .upsert_mobile_device(
             MobileDeviceId(uuid::Uuid::parse_str(device_id).unwrap()),
@@ -59,7 +53,7 @@ async fn mobile_secure_proxy_rejects_disabled_mobile_access_for_existing_device(
     let key = ctx_transport_runtime::mobile_e2ee::derive_client_key(
         device_id,
         &device_secret_key,
-        &state
+        &daemon
             .global_store()
             .get_mobile_access_config()
             .await
@@ -77,7 +71,7 @@ async fn mobile_secure_proxy_rejects_disabled_mobile_access_for_existing_device(
     let envelope =
         ctx_transport_runtime::mobile_e2ee::encrypt(&key, device_id, 1, &plaintext).unwrap();
 
-    let app = api::router(state);
+    let app = test_router(&daemon);
     let req = Request::builder()
         .method("POST")
         .uri("/api/mobile/secure")

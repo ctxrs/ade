@@ -6,13 +6,13 @@ async fn mobile_secure_proxy_rejects_mobile_management_paths_after_trimming() {
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
-    let (app, state, device_id, key, _data_dir) = build_mobile_secure_proxy_app(true).await;
+    let (app, daemon, device_id, key, _data_dir) = build_mobile_secure_proxy_app(true).await;
     let target_device_id = "55555555-5555-5555-5555-555555555555";
     let pairing_token = "pairing-token-through-secure-proxy";
     let mut hasher = sha2::Sha256::new();
     hasher.update(pairing_token.as_bytes());
     let token_hash = hex::encode(hasher.finalize());
-    state
+    daemon
         .global_store()
         .insert_mobile_pairing_token(
             "pair-smuggle",
@@ -53,7 +53,7 @@ async fn mobile_secure_proxy_rejects_mobile_management_paths_after_trimming() {
         "secure proxy cannot target mobile management endpoints"
     );
     assert!(
-        state
+        daemon
             .global_store()
             .get_mobile_device(MobileDeviceId(
                 uuid::Uuid::parse_str(target_device_id).unwrap()
@@ -92,7 +92,7 @@ async fn mobile_secure_proxy_rejects_mobile_management_paths_after_trimming() {
     let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(payload["error"], "secure proxy path must be normalized");
     assert!(
-        state
+        daemon
             .global_store()
             .get_mobile_device(MobileDeviceId(
                 uuid::Uuid::parse_str(target_device_id).unwrap()

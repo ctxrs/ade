@@ -8,18 +8,12 @@ async fn pair_mobile_device_rejects_profiles_without_device_registration_scope()
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    ));
+    let daemon = test_daemon(data_dir.path(), stores, None);
     let profile_id =
-        insert_mobile_profile_with_scopes(&state, &["workspace_read", "workspace_stream"]).await;
+        insert_mobile_profile_with_scopes(&daemon, &["workspace_read", "workspace_stream"]).await;
     let (daemon_public_key, daemon_private_key) =
         ctx_transport_runtime::mobile_e2ee::generate_keypair();
-    state
+    daemon
         .global_store()
         .upsert_mobile_access_config(MobileAccessConfig {
             id: "default".to_string(),
@@ -39,7 +33,7 @@ async fn pair_mobile_device_rejects_profiles_without_device_registration_scope()
 
     let token = "valid-pairing-token";
     let token_hash = pairing_token_hash(token);
-    state
+    daemon
         .global_store()
         .insert_mobile_pairing_token(
             "pair-1",
@@ -59,7 +53,7 @@ async fn pair_mobile_device_rejects_profiles_without_device_registration_scope()
         &device_public_key,
         &device_secret_key,
     );
-    let app = api::router(state.clone());
+    let app = test_router(&daemon);
     let req = Request::builder()
         .method("POST")
         .uri("/api/mobile/pair")
@@ -76,7 +70,7 @@ async fn pair_mobile_device_rejects_profiles_without_device_registration_scope()
         "mobile profile lacks device_registration scope"
     );
     assert!(
-        state
+        daemon
             .global_store()
             .consume_mobile_pairing_token(&token_hash)
             .await

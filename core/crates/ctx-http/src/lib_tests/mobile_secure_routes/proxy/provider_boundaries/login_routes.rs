@@ -7,7 +7,7 @@ async fn mobile_secure_proxy_rejects_provider_login_routes() {
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
-    let (app, state, device_id, key, _data_dir) = build_mobile_secure_proxy_app(true).await;
+    let (app, daemon, device_id, key, _data_dir) = build_mobile_secure_proxy_app(true).await;
     let cases = [
         (
             "POST",
@@ -122,44 +122,5 @@ async fn mobile_secure_proxy_rejects_provider_login_routes() {
     let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(payload["error"], "secure proxy path must be normalized");
 
-    assert!(
-        state
-            .test_with_gemini_login_sessions(|map| map.is_empty())
-            .await
-    );
-    assert!(
-        state
-            .test_with_qwen_login_sessions(|map| map.is_empty())
-            .await
-    );
-    assert!(
-        state
-            .test_with_amp_login_sessions(|map| map.is_empty())
-            .await
-    );
-    assert!(
-        state
-            .test_with_mistral_login_sessions(|map| map.is_empty())
-            .await
-    );
-    assert!(
-        state
-            .test_with_kimi_login_sessions(|map| map.is_empty())
-            .await
-    );
-    assert!(
-        state
-            .test_with_claude_login_sessions(|map| map.is_empty())
-            .await
-    );
-    assert!(
-        state
-            .test_with_codex_login_sessions(|map| map.is_empty())
-            .await
-    );
-    assert!(
-        state
-            .test_with_cursor_login_sessions(|map| map.is_empty())
-            .await
-    );
+    assert!(daemon.provider_login_session_caches_empty().await);
 }

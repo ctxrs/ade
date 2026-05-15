@@ -2,7 +2,7 @@ use super::*;
 
 pub(super) struct EncryptedPairingHarness {
     pub(super) app: axum::Router,
-    pub(super) state: Arc<DaemonState>,
+    pub(super) daemon: TestDaemon,
     pub(super) token: &'static str,
     pub(super) token_hash: String,
     pub(super) daemon_public_key: String,
@@ -39,17 +39,11 @@ pub(super) async fn encrypted_pairing_harness() -> EncryptedPairingHarness {
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    ));
-    let profile_id = insert_mobile_profile(&state).await;
+    let daemon = test_daemon(data_dir.path(), stores, None);
+    let profile_id = insert_mobile_profile(&daemon).await;
     let (daemon_public_key, daemon_private_key) =
         ctx_transport_runtime::mobile_e2ee::generate_keypair();
-    state
+    daemon
         .global_store()
         .upsert_mobile_access_config(MobileAccessConfig {
             id: "default".to_string(),
@@ -69,7 +63,7 @@ pub(super) async fn encrypted_pairing_harness() -> EncryptedPairingHarness {
 
     let token = "valid-pairing-token";
     let token_hash = pairing_token_hash(token);
-    state
+    daemon
         .global_store()
         .insert_mobile_pairing_token(
             "pair-1",
@@ -80,8 +74,8 @@ pub(super) async fn encrypted_pairing_harness() -> EncryptedPairingHarness {
         .unwrap();
 
     EncryptedPairingHarness {
-        app: api::router(state.clone()),
-        state,
+        app: test_router(&daemon),
+        daemon,
         token,
         token_hash,
         daemon_public_key,
@@ -141,7 +135,7 @@ pub(super) fn decrypt_pairing_response(
 
 pub(super) async fn assert_pairing_token_consumable(harness: &EncryptedPairingHarness) -> bool {
     harness
-        .state
+        .daemon
         .global_store()
         .consume_mobile_pairing_token(&harness.token_hash)
         .await

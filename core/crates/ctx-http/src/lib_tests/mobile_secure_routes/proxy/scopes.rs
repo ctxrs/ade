@@ -6,7 +6,7 @@ async fn mobile_secure_proxy_grants_mobile_auth_for_proxied_api_routes() {
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
-    let (app, _state, device_id, key, _data_dir) = build_mobile_secure_proxy_app(true).await;
+    let (app, _daemon, device_id, key, _data_dir) = build_mobile_secure_proxy_app(true).await;
     let res = post_mobile_secure_request(
         &app,
         &device_id,
@@ -36,7 +36,7 @@ async fn mobile_secure_proxy_rejects_profiles_without_workspace_read_scope() {
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
-    let (app, _state, device_id, key, _data_dir) =
+    let (app, _daemon, device_id, key, _data_dir) =
         build_mobile_secure_proxy_app_with_scopes(true, &["device_registration"]).await;
     let res = post_mobile_secure_request(
         &app,
@@ -70,7 +70,7 @@ async fn mobile_secure_proxy_migrates_legacy_empty_scope_profiles() {
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
-    let (app, state, device_id, key, _data_dir) =
+    let (app, daemon, device_id, key, _data_dir) =
         build_mobile_secure_proxy_app_with_scopes(true, &[]).await;
     let res = post_mobile_secure_request(
         &app,
@@ -89,13 +89,13 @@ async fn mobile_secure_proxy_migrates_legacy_empty_scope_profiles() {
     let payload = decode_mobile_secure_response(res, &device_id, &key).await;
     assert_eq!(payload["status"], 200);
 
-    let cfg = state
+    let cfg = daemon
         .global_store()
         .get_mobile_access_config()
         .await
         .unwrap()
         .expect("mobile access config should exist");
-    let profile = state
+    let profile = daemon
         .global_store()
         .get_mobile_connection_profile(cfg.profile_id)
         .await

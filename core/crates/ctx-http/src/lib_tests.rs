@@ -17,7 +17,6 @@ use ctx_storage_admission::{StorageGuardLevel, StorageGuardPathStatus, StorageGu
 use ctx_store::StoreManager;
 
 use crate::api;
-use ctx_daemon::daemon::DaemonState;
 use ctx_daemon::test_support::TestDaemon;
 
 fn test_daemon(data_dir: &Path, stores: StoreManager, auth_token: Option<String>) -> TestDaemon {

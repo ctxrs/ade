@@ -8,15 +8,9 @@ async fn disable_mobile_access_clears_outstanding_pairing_tokens() {
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    ));
-    let profile_id = insert_mobile_profile(&state).await;
-    state
+    let daemon = test_daemon(data_dir.path(), stores, None);
+    let profile_id = insert_mobile_profile(&daemon).await;
+    daemon
         .global_store()
         .upsert_mobile_access_config(MobileAccessConfig {
             id: "default".to_string(),
@@ -33,7 +27,7 @@ async fn disable_mobile_access_clears_outstanding_pairing_tokens() {
         })
         .await
         .unwrap();
-    state
+    daemon
         .global_store()
         .upsert_mobile_device(
             MobileDeviceId(uuid::Uuid::parse_str("55555555-5555-5555-5555-555555555555").unwrap()),
@@ -52,7 +46,7 @@ async fn disable_mobile_access_clears_outstanding_pairing_tokens() {
 
     let token = "pairing-token-to-clear";
     let token_hash = pairing_token_hash(token);
-    state
+    daemon
         .global_store()
         .insert_mobile_pairing_token(
             "pair-1",
@@ -62,7 +56,7 @@ async fn disable_mobile_access_clears_outstanding_pairing_tokens() {
         .await
         .unwrap();
 
-    let app = api::router(state.clone());
+    let app = test_router(&daemon);
     let req = Request::builder()
         .method("POST")
         .uri("/api/mobile/access/disable")
@@ -72,19 +66,19 @@ async fn disable_mobile_access_clears_outstanding_pairing_tokens() {
     let res = app.oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::NO_CONTENT);
 
-    let cfg = state
+    let cfg = daemon
         .global_store()
         .get_mobile_access_config()
         .await
         .unwrap();
     assert!(cfg.is_none());
-    let profile = state
+    let profile = daemon
         .global_store()
         .get_mobile_connection_profile(profile_id)
         .await
         .unwrap();
     assert!(profile.is_none());
-    let device = state
+    let device = daemon
         .global_store()
         .get_mobile_device(MobileDeviceId(
             uuid::Uuid::parse_str("55555555-5555-5555-5555-555555555555").unwrap(),
@@ -92,7 +86,7 @@ async fn disable_mobile_access_clears_outstanding_pairing_tokens() {
         .await
         .unwrap();
     assert!(device.is_none());
-    let still_allowed = state
+    let still_allowed = daemon
         .global_store()
         .consume_mobile_pairing_token(&token_hash)
         .await

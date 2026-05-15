@@ -182,6 +182,42 @@ impl TestDaemon {
     ) -> R {
         self.state.test_with_provider_usage_cache(f).await
     }
+
+    pub async fn provider_login_session_caches_empty(&self) -> bool {
+        let gemini = self
+            .state
+            .test_with_gemini_login_sessions(|map| map.is_empty())
+            .await;
+        let qwen = self
+            .state
+            .test_with_qwen_login_sessions(|map| map.is_empty())
+            .await;
+        let amp = self
+            .state
+            .test_with_amp_login_sessions(|map| map.is_empty())
+            .await;
+        let mistral = self
+            .state
+            .test_with_mistral_login_sessions(|map| map.is_empty())
+            .await;
+        let kimi = self
+            .state
+            .test_with_kimi_login_sessions(|map| map.is_empty())
+            .await;
+        let claude = self
+            .state
+            .test_with_claude_login_sessions(|map| map.is_empty())
+            .await;
+        let codex = self
+            .state
+            .test_with_codex_login_sessions(|map| map.is_empty())
+            .await;
+        let cursor = self
+            .state
+            .test_with_cursor_login_sessions(|map| map.is_empty())
+            .await;
+        gemini && qwen && amp && mistral && kimi && claude && codex && cursor
+    }
 }
 
 /// Workspace-runtime tests historically used a sandbox-specific name for the

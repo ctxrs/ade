@@ -6,7 +6,7 @@ async fn mobile_secure_proxy_rejects_stale_sequence_without_rolling_back_counter
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
-    let (app, _state, device_id, key, _data_dir) = build_mobile_secure_proxy_app(true).await;
+    let (app, _daemon, device_id, key, _data_dir) = build_mobile_secure_proxy_app(true).await;
 
     let first = post_mobile_secure_request(
         &app,

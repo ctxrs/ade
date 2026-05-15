@@ -8,15 +8,9 @@ async fn pair_mobile_device_preserves_token_for_invalid_device_id() {
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    ));
-    let profile_id = insert_mobile_profile(&state).await;
-    state
+    let daemon = test_daemon(data_dir.path(), stores, None);
+    let profile_id = insert_mobile_profile(&daemon).await;
+    daemon
         .global_store()
         .upsert_mobile_access_config(MobileAccessConfig {
             id: "default".to_string(),
@@ -36,7 +30,7 @@ async fn pair_mobile_device_preserves_token_for_invalid_device_id() {
 
     let token = "valid-pairing-token";
     let token_hash = pairing_token_hash(token);
-    state
+    daemon
         .global_store()
         .insert_mobile_pairing_token(
             "pair-1",
@@ -46,7 +40,7 @@ async fn pair_mobile_device_preserves_token_for_invalid_device_id() {
         .await
         .unwrap();
 
-    let app = api::router(state.clone());
+    let app = test_router(&daemon);
     let req = Request::builder()
         .method("POST")
         .uri("/api/mobile/pair")
@@ -69,7 +63,7 @@ async fn pair_mobile_device_preserves_token_for_invalid_device_id() {
     let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(payload["error"], "device_id must be a UUID");
     assert!(
-        state
+        daemon
             .global_store()
             .consume_mobile_pairing_token(&token_hash)
             .await
