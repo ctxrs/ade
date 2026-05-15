@@ -1,6 +1,6 @@
 #![cfg(feature = "property_tests")]
 
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use chrono::{Duration as ChronoDuration, Utc};
@@ -15,7 +15,7 @@ use ctx_core::models::{
     SessionTurn, SessionTurnStatus, SessionTurnTool, Task, Workspace, WorkspaceActiveSnapshotEvent,
     WorkspaceActiveSnapshotStreamMessage,
 };
-use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::test_support::TestDaemon;
 
 mod common;
 
@@ -89,7 +89,7 @@ fn projection_fixtures() -> &'static ProjectionFixtureFile {
 struct ProjectionHarness {
     _repo: tempfile::TempDir,
     _data_dir: tempfile::TempDir,
-    state: Arc<DaemonState>,
+    daemon: TestDaemon,
     server: common::TestServer,
     workspace: Workspace,
     task: Task,
@@ -117,13 +117,13 @@ async fn setup_projection_harness() -> ProjectionHarness {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
     let server = common::spawn_http_server(app).await;
 
     let workspace: Workspace = server
@@ -156,12 +156,12 @@ async fn setup_projection_harness() -> ProjectionHarness {
 
     let session = common::load_primary_session_http(&server.client, &server.base_url, &task).await;
 
-    state.remember_session_meta(&session).await;
+    daemon.remember_session_meta(&session).await;
 
     ProjectionHarness {
         _repo: repo,
         _data_dir: data_dir,
-        state,
+        daemon,
         server,
         workspace,
         task,
@@ -177,7 +177,7 @@ async fn seed_active_projection_case(
     fixture: &ActiveProjectionEquivalenceFixture,
 ) -> Vec<i64> {
     let store = harness
-        .state
+        .daemon
         .store_for_session(harness.session.id)
         .await
         .unwrap();
@@ -299,7 +299,10 @@ async fn seed_active_projection_case(
             .await
             .unwrap();
         seqs.push(event.seq);
-        harness.state.publish_event(event).await;
+        harness
+            .daemon
+            .publish_replay_fixture_event_for_test(event)
+            .await;
     }
     store
         .update_session_turn_status(
@@ -326,7 +329,10 @@ async fn seed_active_projection_case(
         )
         .await
         .unwrap();
-    harness.state.publish_event(partial).await;
+    harness
+        .daemon
+        .publish_replay_fixture_event_for_test(partial)
+        .await;
 
     store
         .upsert_session_turn_tool(SessionTurnTool {
@@ -353,20 +359,16 @@ async fn seed_active_projection_case(
         .unwrap();
 
     harness
-        .state
-        .ensure_workspace_active_snapshot_hydrated(harness.workspace.id)
+        .daemon
+        .refresh_replay_projection_fixture_for_test(harness.workspace.id, harness.session.id)
         .await
         .unwrap();
-    harness
-        .state
-        .refresh_session_head_cache(harness.session.id)
-        .await;
     seqs
 }
 
 async fn seed_gap_case(harness: &ProjectionHarness, fixture: &SessionGapSeedRehydrateFixture) {
     let store = harness
-        .state
+        .daemon
         .store_for_session(harness.session.id)
         .await
         .unwrap();
@@ -450,7 +452,10 @@ async fn seed_gap_case(harness: &ProjectionHarness, fixture: &SessionGapSeedRehy
         )
         .await
         .unwrap();
-    harness.state.publish_event(user_message).await;
+    harness
+        .daemon
+        .publish_replay_fixture_event_for_test(user_message)
+        .await;
 
     for idx in 0..2003 {
         let event = store
@@ -467,7 +472,10 @@ async fn seed_gap_case(harness: &ProjectionHarness, fixture: &SessionGapSeedRehy
             )
             .await
             .unwrap();
-        harness.state.publish_event(event).await;
+        harness
+            .daemon
+            .publish_replay_fixture_event_for_test(event)
+            .await;
     }
 
     let assistant_complete = store
@@ -485,13 +493,17 @@ async fn seed_gap_case(harness: &ProjectionHarness, fixture: &SessionGapSeedRehy
         )
         .await
         .unwrap();
-    harness.state.publish_event(assistant_complete).await;
+    let assistant_complete_seq = assistant_complete.seq;
+    harness
+        .daemon
+        .publish_replay_fixture_event_for_test(assistant_complete)
+        .await;
     store
         .update_session_turn_status(
             harness.session.id,
             harness.turn_id,
             SessionTurnStatus::Completed,
-            Some(assistant_complete.seq),
+            Some(assistant_complete_seq),
             None,
             updated_at,
         )
@@ -499,12 +511,8 @@ async fn seed_gap_case(harness: &ProjectionHarness, fixture: &SessionGapSeedRehy
         .unwrap();
 
     harness
-        .state
-        .refresh_session_head_cache(harness.session.id)
-        .await;
-    harness
-        .state
-        .ensure_workspace_active_snapshot_hydrated(harness.workspace.id)
+        .daemon
+        .refresh_replay_projection_fixture_for_test(harness.workspace.id, harness.session.id)
         .await
         .unwrap();
 }
@@ -512,7 +520,7 @@ async fn seed_gap_case(harness: &ProjectionHarness, fixture: &SessionGapSeedRehy
 async fn setup_replay_fixture(event_count: usize) -> ReplayFixture {
     let harness = setup_projection_harness().await;
     let store = harness
-        .state
+        .daemon
         .store_for_session(harness.session.id)
         .await
         .unwrap();
@@ -529,17 +537,16 @@ async fn setup_replay_fixture(event_count: usize) -> ReplayFixture {
             )
             .await
             .unwrap();
-        harness.state.publish_event(event.clone()).await;
+        harness
+            .daemon
+            .publish_replay_fixture_event_for_test(event.clone())
+            .await;
         seqs.push(event.seq);
     }
 
     harness
-        .state
-        .refresh_session_head_cache(harness.session.id)
-        .await;
-    harness
-        .state
-        .ensure_workspace_active_snapshot_hydrated(harness.workspace.id)
+        .daemon
+        .refresh_replay_projection_fixture_for_test(harness.workspace.id, harness.session.id)
         .await
         .unwrap();
 
@@ -686,10 +693,8 @@ async fn fixture_projection_equivalence_aligns_snapshot_heads_and_replay() {
         .await
         .unwrap();
     harness
-        .state
-        .workspaces
-        .workspace_active_snapshot
-        .remove_session_head(harness.session.id)
+        .daemon
+        .remove_replay_session_head_for_test(harness.session.id)
         .await;
     let session_head: SessionHeadSnapshot = harness
         .server

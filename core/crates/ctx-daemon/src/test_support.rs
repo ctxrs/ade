@@ -392,6 +392,30 @@ impl TestDaemon {
             .await;
     }
 
+    pub async fn publish_replay_fixture_event_for_test(&self, event: SessionEvent) {
+        self.state.publish_event(event).await;
+    }
+
+    pub async fn refresh_replay_projection_fixture_for_test(
+        &self,
+        workspace_id: WorkspaceId,
+        session_id: SessionId,
+    ) -> anyhow::Result<()> {
+        self.state.refresh_session_head_cache(session_id).await;
+        self.state
+            .ensure_workspace_active_snapshot_hydrated(workspace_id)
+            .await
+            .map_err(|err| anyhow::anyhow!("hydrate replay projection fixture: {err:?}"))
+    }
+
+    pub async fn remove_replay_session_head_for_test(&self, session_id: SessionId) {
+        self.state
+            .workspaces
+            .workspace_active_snapshot
+            .remove_session_head(session_id)
+            .await;
+    }
+
     pub async fn reconcile_turn_terminal_state_for_test(
         &self,
         session_id: SessionId,

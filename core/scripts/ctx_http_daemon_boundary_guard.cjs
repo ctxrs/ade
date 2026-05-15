@@ -85,6 +85,7 @@ const migratedRawDaemonTestRoots = [
   "core/crates/ctx-http/tests/provider_scenarios_offline.rs",
   "core/crates/ctx-http/tests/provider_target_scoped_installs.rs",
   "core/crates/ctx-http/tests/provider_worker_reaping_offline.rs",
+  "core/crates/ctx-http/tests/replay_properties.rs",
   "core/crates/ctx-http/tests/repo_clone_branch_and_safety.rs",
   "core/crates/ctx-http/tests/repo_init_initial_commit.rs",
   "core/crates/ctx-http/tests/repo_validate_destination.rs",
