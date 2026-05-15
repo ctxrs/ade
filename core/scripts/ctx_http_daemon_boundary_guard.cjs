@@ -418,6 +418,14 @@ const MOBILE_TEST_STORE_ACCESS_PATTERNS = [
     name: "direct mobile test global store access",
     regex: /\.global_store\s*\(/,
   },
+  {
+    name: "legacy mobile test daemon construction",
+    regex: /\btest_daemon\s*\(/,
+  },
+  {
+    name: "raw mobile test StoreManager",
+    regex: /\bStoreManager\b/,
+  },
 ];
 
 const PROVIDER_TEST_CACHE_ACCESS_PATTERNS = [

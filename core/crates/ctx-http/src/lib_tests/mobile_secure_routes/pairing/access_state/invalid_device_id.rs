@@ -7,8 +7,7 @@ async fn pair_mobile_device_preserves_token_for_invalid_device_id() {
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let daemon = test_daemon(data_dir.path(), stores, None);
+    let daemon = test_daemon_for_test(data_dir.path(), None).await;
     let profile_id = insert_mobile_profile(&daemon).await;
     daemon
         .mobile_access_for_test()

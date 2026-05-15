@@ -47,8 +47,7 @@ pub(super) async fn build_mobile_access_app_with_scopes(
 ) {
     let git_repo = setup_git_repo().await;
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let daemon = test_daemon(data_dir.path(), stores, None);
+    let daemon = test_daemon_for_test(data_dir.path(), None).await;
     let app = test_router(&daemon);
     let workspace = create_workspace_via_api(&app, &git_repo.path().to_string_lossy()).await;
     let profile_id = insert_mobile_profile_with_scopes(&daemon, scopes).await;
@@ -102,8 +101,7 @@ pub(super) async fn build_mobile_secure_proxy_app_with_scopes(
     tempfile::TempDir,
 ) {
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let daemon = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
+    let daemon = test_daemon_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
     let profile_id = insert_mobile_profile_with_scopes(&daemon, scopes).await;
 
     let device_id = "44444444-4444-4444-4444-444444444444".to_string();

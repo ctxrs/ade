@@ -38,8 +38,7 @@ pub(super) async fn encrypted_pairing_harness() -> EncryptedPairingHarness {
     let home_guard = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let daemon = test_daemon(data_dir.path(), stores, None);
+    let daemon = test_daemon_for_test(data_dir.path(), None).await;
     let profile_id = insert_mobile_profile(&daemon).await;
     let (daemon_public_key, daemon_private_key) =
         ctx_transport_runtime::mobile_e2ee::generate_keypair();

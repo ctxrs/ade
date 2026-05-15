@@ -15,29 +15,9 @@ use ctx_execution_runtime::{ExecutionLaunchSnapshot, ExecutionLaunchState, Execu
 use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_storage_admission::{StorageGuardLevel, StorageGuardPathStatus, StorageGuardStatus};
-use ctx_store::StoreManager;
 
 use crate::api;
 use ctx_daemon::test_support::{CtxUiSizedHeadSeedSpec, TestDaemon};
-
-fn test_daemon(data_dir: &Path, stores: StoreManager, auth_token: Option<String>) -> TestDaemon {
-    test_daemon_with_providers(data_dir, stores, HashMap::new(), auth_token)
-}
-
-fn test_daemon_with_providers(
-    data_dir: &Path,
-    stores: StoreManager,
-    providers: HashMap<String, Arc<dyn ProviderAdapter>>,
-    auth_token: Option<String>,
-) -> TestDaemon {
-    TestDaemon::new(
-        data_dir.to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:4399".to_string(),
-        auth_token,
-    )
-}
 
 async fn test_daemon_for_test(data_dir: &Path, auth_token: Option<String>) -> TestDaemon {
     TestDaemon::new_with_providers_for_test(

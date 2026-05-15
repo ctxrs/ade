@@ -7,8 +7,7 @@ async fn mobile_secure_proxy_rejects_disabled_mobile_access_for_existing_device(
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let daemon = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
+    let daemon = test_daemon_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
     let profile_id = insert_mobile_profile(&daemon).await;
 
     let device_id = "44444444-4444-4444-4444-444444444444";

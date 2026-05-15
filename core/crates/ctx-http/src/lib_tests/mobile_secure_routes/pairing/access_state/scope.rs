@@ -7,8 +7,7 @@ async fn pair_mobile_device_rejects_profiles_without_device_registration_scope()
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let daemon = test_daemon(data_dir.path(), stores, None);
+    let daemon = test_daemon_for_test(data_dir.path(), None).await;
     let profile_id =
         insert_mobile_profile_with_scopes(&daemon, &["workspace_read", "workspace_stream"]).await;
     let (daemon_public_key, daemon_private_key) =

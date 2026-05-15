@@ -681,7 +681,10 @@ test("daemon boundary guard rejects direct mobile test store access in migrated 
     filePath: "core/crates/ctx-http/src/lib_tests/mobile_secure_routes/fixtures.rs",
     contents: `
       async fn helper(daemon: &TestDaemon) {
+        let stores = StoreManager::open(data_dir.path()).await?;
         daemon.global_store().get_mobile_access_config().await?;
+        test_daemon(data_dir, stores, None);
+        test_daemon_for_test(data_dir, None).await;
       }
     `,
     patterns: MOBILE_TEST_STORE_ACCESS_PATTERNS,
@@ -689,7 +692,11 @@ test("daemon boundary guard rejects direct mobile test store access in migrated 
 
   assert.deepEqual(
     violations.map((violation) => violation.name),
-    ["direct mobile test global store access"],
+    [
+      "direct mobile test global store access",
+      "legacy mobile test daemon construction",
+      "raw mobile test StoreManager",
+    ],
   );
 });
 
