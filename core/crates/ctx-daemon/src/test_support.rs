@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
-use ctx_core::models::{Session, SessionHeadDelta};
+use ctx_core::ids::{SessionId, TaskId, TerminalId, WorkspaceId, WorktreeId};
+use ctx_core::models::{Session, SessionHeadDelta, Worktree, WorktreeVcsSnapshot};
 use ctx_provider_install::install_state::{
     InstallId, InstallInfo, InstallProgressEvent, InstallTarget,
 };
@@ -148,6 +148,53 @@ impl TestDaemon {
         self.state
             .ensure_workspace_active_snapshot_hydrated(workspace_id)
             .await
+    }
+
+    pub async fn mark_worktree_vcs_active_for_test(&self, worktree_id: WorktreeId) {
+        let mut next_active = std::collections::HashSet::new();
+        next_active.insert(worktree_id);
+        self.state
+            .test_update_worktree_vcs_activity(&std::collections::HashSet::new(), &next_active)
+            .await;
+    }
+
+    pub async fn emit_worktree_vcs_snapshot_for_worktree(
+        &self,
+        worktree: &Worktree,
+        include_commit_info: bool,
+    ) -> anyhow::Result<()> {
+        daemon::git_status::emit_worktree_vcs_snapshot_for_worktree(
+            &self.state,
+            worktree,
+            include_commit_info,
+        )
+        .await
+    }
+
+    pub async fn load_worktree_for_test(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> anyhow::Result<Worktree> {
+        self.state
+            .store_for_worktree(worktree_id)
+            .await?
+            .get_worktree(worktree_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("worktree {worktree_id:?} not found"))
+    }
+
+    pub async fn worktree_vcs_snapshot(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> Option<WorktreeVcsSnapshot> {
+        self.state.get_worktree_vcs_snapshot(worktree_id).await
+    }
+
+    pub async fn terminal_output_snapshot(&self, terminal_id: TerminalId) -> Option<Vec<u8>> {
+        self.state
+            .test_terminal_handle(terminal_id)
+            .await
+            .map(|handle| handle.output_snapshot())
     }
 
     pub async fn remember_session_meta(&self, session: &Session) {

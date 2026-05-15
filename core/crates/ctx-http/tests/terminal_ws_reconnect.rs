@@ -188,13 +188,13 @@ async fn terminal_ws_reconnect_sends_status_and_tail() {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
 
-    let state = common::build_state(
+    let state = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&state);
     let server = common::spawn_http_server(app).await;
     let base = &server.base_url;
     let client = &server.client;
@@ -284,13 +284,13 @@ async fn terminal_ws_reconnect_resyncs_bounded_tail_after_churn() {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
 
-    let state = common::build_state(
+    let state = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&state);
     let server = common::spawn_http_server(app).await;
     let base = &server.base_url;
     let client = &server.client;
@@ -371,13 +371,13 @@ async fn terminal_ws_keepalive_pong() {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
 
-    let state = common::build_state(
+    let state = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&state);
     let server = common::spawn_http_server(app).await;
     let base = &server.base_url;
     let client = &server.client;
@@ -457,13 +457,13 @@ printf 'CTX_TERM_BOUND_TAIL\n'
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
 
-    let state = common::build_state(
+    let state = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&state);
     let server = common::spawn_http_server(app).await;
     let base = &server.base_url;
     let client = &server.client;
@@ -493,8 +493,10 @@ printf 'CTX_TERM_BOUND_TAIL\n'
 
     wait_for_terminal_status(client, base, &workspace, &terminal, TerminalStatus::Exited).await;
 
-    let handle = state.test_terminal_handle(terminal.id).await.unwrap();
-    let output_snapshot = handle.output_snapshot();
+    let output_snapshot = state
+        .terminal_output_snapshot(terminal.id)
+        .await
+        .expect("terminal output snapshot");
     let buffered = String::from_utf8_lossy(&output_snapshot).to_string();
     assert!(
         output_snapshot.len() <= 1024 * 1024,

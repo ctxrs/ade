@@ -1,12 +1,10 @@
 mod common;
 
-use std::collections::HashSet;
 use std::path::Path;
 use std::process::Command;
 
 use axum::http::{Method, StatusCode};
 use ctx_core::models::Worktree;
-use ctx_daemon::daemon::git_status::emit_worktree_vcs_snapshot_for_worktree;
 use serde_json::Value;
 
 #[tokio::test]
@@ -14,13 +12,13 @@ async fn session_diff_endpoints_return_no_repo_unavailable() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let state = common::build_daemon(
         data_dir.path(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state);
+    let app = common::router_for_daemon(&state);
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (_task, session) =
@@ -93,13 +91,13 @@ async fn session_diff_endpoints_return_no_target_branch_unavailable() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let state = common::build_daemon(
         data_dir.path(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&state);
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let ws_store = state
@@ -172,13 +170,13 @@ async fn workspace_primary_branch_endpoint_updates_branch() {
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let state = common::build_daemon(
         data_dir.path(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&state);
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
 
     let (get_status, before): (StatusCode, Value) = common::json_request(
@@ -234,23 +232,16 @@ async fn workspace_primary_branch_endpoint_updates_branch() {
     )
     .await;
     let worktree = state
-        .store_for_worktree(session.worktree_id)
+        .load_worktree_for_test(session.worktree_id)
         .await
-        .expect("store for worktree")
-        .get_worktree(session.worktree_id)
-        .await
-        .expect("load worktree")
         .expect("worktree should exist");
-    let mut next_active = HashSet::new();
-    next_active.insert(worktree.id);
+    state.mark_worktree_vcs_active_for_test(worktree.id).await;
     state
-        .test_update_worktree_vcs_activity(&HashSet::new(), &next_active)
-        .await;
-    emit_worktree_vcs_snapshot_for_worktree(&state, &worktree, true)
+        .emit_worktree_vcs_snapshot_for_worktree(&worktree, true)
         .await
         .expect("initial vcs snapshot emission should succeed");
     let before_snapshot = state
-        .get_worktree_vcs_snapshot(worktree.id)
+        .worktree_vcs_snapshot(worktree.id)
         .await
         .expect("expected cached worktree vcs snapshot");
     assert_eq!(
@@ -282,7 +273,7 @@ async fn workspace_primary_branch_endpoint_updates_branch() {
     );
 
     let refreshed = state
-        .get_worktree_vcs_snapshot(worktree.id)
+        .worktree_vcs_snapshot(worktree.id)
         .await
         .expect("expected refreshed worktree vcs snapshot");
     assert_eq!(refreshed.target_branch.as_deref(), Some("release-target"));
@@ -293,13 +284,13 @@ async fn workspace_merge_queue_config_endpoint_supports_get_and_post() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let state = common::build_daemon(
         data_dir.path(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state);
+    let app = common::router_for_daemon(&state);
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
 
     let (get_status_before, before): (StatusCode, Value) = common::json_request(
