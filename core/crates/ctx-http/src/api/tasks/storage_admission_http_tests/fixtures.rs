@@ -61,6 +61,10 @@ pub(super) async fn save_test_execution_settings(state: &TestDaemon, execution: 
     .expect("save test execution settings");
 }
 
+pub(super) fn test_router(state: &TestDaemon) -> axum::Router {
+    crate::api::router(state.handle())
+}
+
 pub(super) fn install_unreleased_host_reserve_storage_override(
     workspace_id: WorkspaceId,
 ) -> impl Drop {

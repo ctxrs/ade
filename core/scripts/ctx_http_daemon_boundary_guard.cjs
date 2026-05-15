@@ -246,10 +246,10 @@ const MIGRATED_TEST_RAW_DAEMON_PATTERNS = [
   },
 ];
 
-const EXTERNAL_MIGRATED_TEST_RAW_DAEMON_PATTERNS = [
+const TEST_ROUTER_COMPOSITION_PATTERNS = [
   {
-    name: "direct API router composition in migrated integration test",
-    regex: /\b(?:ctx_http::)?api::router\s*\(/,
+    name: "direct API router composition outside test router helper",
+    regex: /\b(?:ctx_http::)?api::router\s*\(|\bcrate::api::router\s*\(/,
   },
 ];
 
@@ -263,6 +263,7 @@ function isTestRustPath(filePath) {
   return normalized.includes("/tests/")
     || normalized.includes("/lib_tests/")
     || normalized.includes("/test_support/")
+    || base === "test_support.rs"
     || normalized.includes("/lifecycle_tests/")
     || normalized.includes("/storage_admission_http_tests/")
     || normalized.includes("/cleanup_lifecycle_tests")
@@ -388,18 +389,123 @@ function apiPatternsForPath(relativePath) {
 
 function migratedTestPatternsForPath(relativePath) {
   if (migratedRawDaemonTestRoots.some((root) => relativePath.startsWith(root))) {
-    if (
-      relativePath.startsWith("core/crates/ctx-http/tests/")
-      && !relativePath.startsWith("core/crates/ctx-http/tests/common/")
-    ) {
-      return [
-        ...MIGRATED_TEST_RAW_DAEMON_PATTERNS,
-        ...EXTERNAL_MIGRATED_TEST_RAW_DAEMON_PATTERNS,
-      ];
-    }
     return MIGRATED_TEST_RAW_DAEMON_PATTERNS;
   }
   return [];
+}
+
+function routerCompositionPatternsForPath(relativePath) {
+  const isLibTestsRoot = relativePath === "core/crates/ctx-http/src/lib_tests.rs";
+  if (
+    !relativePath.startsWith("core/crates/ctx-http/tests/")
+    && !isLibTestsRoot
+    && !relativePath.startsWith("core/crates/ctx-http/src/lib_tests/")
+    && !relativePath.startsWith("core/crates/ctx-http/src/api/")
+    && !relativePath.startsWith("core/crates/ctx-http/src/test_support")
+    && !relativePath.startsWith("core/crates/ctx-http-test-support/src/")
+  ) {
+    return [];
+  }
+  if (
+    relativePath === "core/crates/ctx-http/src/api/router.rs"
+  ) {
+    return [];
+  }
+  return TEST_ROUTER_COMPOSITION_PATTERNS;
+}
+
+function countRustBlockDelta(line) {
+  let delta = 0;
+  for (const char of line) {
+    if (char === "{") {
+      delta += 1;
+    } else if (char === "}") {
+      delta -= 1;
+    }
+  }
+  return delta;
+}
+
+function functionSpanForDeclaration(lines, declarationIndex) {
+  let sawBody = false;
+  let depth = 0;
+  for (let index = declarationIndex; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line.includes("{")) {
+      sawBody = true;
+    }
+    depth += countRustBlockDelta(line);
+    if (sawBody && depth <= 0) {
+      return { start: declarationIndex, end: index };
+    }
+  }
+  return null;
+}
+
+function isInsideDeclaredFunction(lines, index, declarationRegex) {
+  for (let declarationIndex = index; declarationIndex >= 0; declarationIndex -= 1) {
+    if (!declarationRegex.test(lines[declarationIndex])) {
+      continue;
+    }
+    const span = functionSpanForDeclaration(lines, declarationIndex);
+    return span !== null && index >= span.start && index <= span.end;
+  }
+  return false;
+}
+
+function isAllowedRouterHelperComposition({ filePath, lines, index, line }) {
+  if (
+    filePath === "core/crates/ctx-http/tests/common/mod.rs"
+    && /api::router\s*\(\s*daemon\.handle\s*\(\s*\)\s*\)/.test(line)
+    && isInsideDeclaredFunction(lines, index, /\bpub\s+fn\s+router_for_daemon\s*\(/)
+  ) {
+    return true;
+  }
+  if (
+    filePath === "core/crates/ctx-http/src/lib_tests.rs"
+    && /api::router\s*\(\s*daemon\.handle\s*\(\s*\)\s*\)/.test(line)
+    && isInsideDeclaredFunction(lines, index, /\bfn\s+test_router\s*\(/)
+  ) {
+    return true;
+  }
+  if (
+    filePath === "core/crates/ctx-http/src/api/tasks/storage_admission_http_tests/fixtures.rs"
+    && /crate::api::router\s*\(\s*state\.handle\s*\(\s*\)\s*\)/.test(line)
+    && isInsideDeclaredFunction(lines, index, /\bpub\s*\(\s*super\s*\)\s+fn\s+test_router\s*\(/)
+  ) {
+    return true;
+  }
+  if (
+    filePath === "core/crates/ctx-http-test-support/src/mcp_daemon/router.rs"
+    && /ctx_http::api::router\s*\(\s*handle\s*\)/.test(line)
+    && isInsideDeclaredFunction(lines, index, /\bpub\s*\(\s*crate\s*\)\s+fn\s+spawn_router\s*\(/)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function scanRouterComposition({ filePath, contents, patterns }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    for (const pattern of patterns) {
+      if (!pattern.regex.test(line)) {
+        continue;
+      }
+      if (isAllowedRouterHelperComposition({ filePath, lines, index, line })) {
+        continue;
+      }
+      violations.push({
+        filePath,
+        line: index + 1,
+        name: pattern.name,
+        text: line.trim(),
+      });
+    }
+  }
+  return violations;
 }
 
 function scanRepo() {
@@ -469,18 +575,26 @@ function scanRepo() {
 
   for (const filePath of testSurfaceRustFiles()) {
     const relativePath = repoRelative(filePath);
+    const contents = fs.readFileSync(filePath, "utf8");
     violations.push(
       ...scanText({
         filePath: relativePath,
-        contents: fs.readFileSync(filePath, "utf8"),
+        contents,
         patterns: TEST_RAW_DAEMON_BUCKET_PATTERNS,
       }),
     );
     violations.push(
       ...scanText({
         filePath: relativePath,
-        contents: fs.readFileSync(filePath, "utf8"),
+        contents,
         patterns: migratedTestPatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanRouterComposition({
+        filePath: relativePath,
+        contents,
+        patterns: routerCompositionPatternsForPath(relativePath),
       }),
     );
   }
@@ -513,12 +627,14 @@ module.exports = {
   API_DOMAIN_RAW_STORE_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
-  EXTERNAL_MIGRATED_TEST_RAW_DAEMON_PATTERNS,
+  TEST_ROUTER_COMPOSITION_PATTERNS,
   TEST_RAW_DAEMON_BUCKET_PATTERNS,
   apiPatternsForPath,
   isTestRustPath,
   migratedTestPatternsForPath,
+  routerCompositionPatternsForPath,
   scanRepo,
+  scanRouterComposition,
   scanText,
   stripCfgTestItems,
 };

@@ -5,14 +5,16 @@ const {
   DAEMON_EXTRACTION_BLOCKER_PATTERNS,
   API_DOMAIN_RAW_STORE_PATTERNS,
   API_RAW_DAEMON_PATTERNS,
-  EXTERNAL_MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
+  TEST_ROUTER_COMPOSITION_PATTERNS,
   TEST_RAW_DAEMON_BUCKET_PATTERNS,
   apiPatternsForPath,
   isTestRustPath,
   migratedTestPatternsForPath,
+  routerCompositionPatternsForPath,
   scanRepo,
+  scanRouterComposition,
   scanText,
   stripCfgTestItems,
 } = require("./ctx_http_daemon_boundary_guard.cjs");
@@ -375,28 +377,124 @@ test("daemon boundary guard allows TestDaemon provider-session token facade call
   assert.deepEqual(violations, []);
 });
 
-test("daemon boundary guard rejects direct API router composition in migrated integration tests", () => {
-  const violations = scanText({
+test("daemon boundary guard rejects direct API router composition outside test router helpers", () => {
+  const violations = scanRouterComposition({
     filePath: "core/crates/ctx-http/tests/fault_matrix.rs",
     contents: `
       fn helper(daemon: &TestDaemon) {
         let app = api::router(daemon.handle());
         let other = ctx_http::api::router(daemon.handle());
+        let third = crate::api::router(daemon.handle());
       }
     `,
-    patterns: [
-      ...MIGRATED_TEST_RAW_DAEMON_PATTERNS,
-      ...EXTERNAL_MIGRATED_TEST_RAW_DAEMON_PATTERNS,
-    ],
+    patterns: TEST_ROUTER_COMPOSITION_PATTERNS,
   });
 
   assert.deepEqual(
     violations.map((violation) => violation.name),
     [
-      "direct API router composition in migrated integration test",
-      "direct API router composition in migrated integration test",
+      "direct API router composition outside test router helper",
+      "direct API router composition outside test router helper",
+      "direct API router composition outside test router helper",
     ],
   );
+});
+
+test("daemon boundary guard allows only router_for_daemon in integration common", () => {
+  const violations = scanRouterComposition({
+    filePath: "core/crates/ctx-http/tests/common/mod.rs",
+    contents: `
+      pub fn router_for_daemon(daemon: &TestDaemon) -> axum::Router {
+        api::router(daemon.handle())
+      }
+
+      pub fn router(state: Arc<DaemonState>) -> axum::Router {
+        api::router(state)
+      }
+    `,
+    patterns: TEST_ROUTER_COMPOSITION_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    ["direct API router composition outside test router helper"],
+  );
+});
+
+test("daemon boundary guard requires router calls to be inside sanctioned helper bodies", () => {
+  const violations = scanRouterComposition({
+    filePath: "core/crates/ctx-http/tests/common/mod.rs",
+    contents: `
+      pub fn router_for_daemon(daemon: &TestDaemon) -> axum::Router {
+        api::router(daemon.handle())
+      }
+      pub fn other_router(daemon: &TestDaemon) -> axum::Router {
+        api::router(daemon.handle())
+      }
+    `,
+    patterns: TEST_ROUTER_COMPOSITION_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    ["direct API router composition outside test router helper"],
+  );
+});
+
+test("daemon boundary guard allows only sanctioned router helper bodies", () => {
+  const cases = [
+    {
+      filePath: "core/crates/ctx-http/src/lib_tests.rs",
+      allowed: `
+        fn test_router(daemon: &TestDaemon) -> axum::Router {
+          api::router(daemon.handle())
+        }
+      `,
+      denied: `
+        fn other_router(daemon: &TestDaemon) -> axum::Router {
+          api::router(daemon.handle())
+        }
+      `,
+    },
+    {
+      filePath: "core/crates/ctx-http/src/api/tasks/storage_admission_http_tests/fixtures.rs",
+      allowed: `
+        pub(super) fn test_router(state: &TestDaemon) -> axum::Router {
+          crate::api::router(state.handle())
+        }
+      `,
+      denied: `
+        pub(super) fn other_router(state: &TestDaemon) -> axum::Router {
+          crate::api::router(state.handle())
+        }
+      `,
+    },
+    {
+      filePath: "core/crates/ctx-http-test-support/src/mcp_daemon/router.rs",
+      allowed: `
+        pub(crate) fn spawn_router(listener: tokio::net::TcpListener, handle: DaemonHandle) {
+          let app = ctx_http::api::router(handle);
+        }
+      `,
+      denied: `
+        pub(crate) fn other_router(handle: DaemonHandle) {
+          let app = ctx_http::api::router(handle);
+        }
+      `,
+    },
+  ];
+
+  for (const item of cases) {
+    const violations = scanRouterComposition({
+      filePath: item.filePath,
+      contents: `${item.allowed}\n${item.denied}`,
+      patterns: TEST_ROUTER_COMPOSITION_PATTERNS,
+    });
+    assert.deepEqual(
+      violations.map((violation) => violation.name),
+      ["direct API router composition outside test router helper"],
+    );
+  }
 });
 
 test("daemon boundary guard scopes migrated raw daemon constructor ban", () => {
@@ -507,22 +605,56 @@ test("daemon boundary guard scopes migrated raw daemon constructor ban", () => {
     "core/crates/ctx-http/tests/workspace_stream_no_gaps_under_activity.rs",
     "core/crates/ctx-http/tests/worktree_archive_http.rs",
   ]) {
-    const patterns = migratedTestPatternsForPath(filePath);
-    if (
-      filePath.startsWith("core/crates/ctx-http/tests/")
-      && !filePath.startsWith("core/crates/ctx-http/tests/common/")
-    ) {
-      assert.deepEqual(patterns, [
-        ...MIGRATED_TEST_RAW_DAEMON_PATTERNS,
-        ...EXTERNAL_MIGRATED_TEST_RAW_DAEMON_PATTERNS,
-      ]);
-    } else {
-      assert.equal(patterns, MIGRATED_TEST_RAW_DAEMON_PATTERNS);
-    }
+    assert.equal(migratedTestPatternsForPath(filePath), MIGRATED_TEST_RAW_DAEMON_PATTERNS);
   }
   assert.deepEqual(
     migratedTestPatternsForPath("core/crates/ctx-http/src/lib_tests/other/example.rs"),
     [],
+  );
+});
+
+test("daemon boundary guard scopes test router composition to sanctioned helpers", () => {
+  assert.deepEqual(
+    routerCompositionPatternsForPath("core/crates/ctx-http/tests/fault_matrix.rs"),
+    TEST_ROUTER_COMPOSITION_PATTERNS,
+  );
+  assert.deepEqual(
+    routerCompositionPatternsForPath("core/crates/ctx-http/tests/common/mod.rs"),
+    TEST_ROUTER_COMPOSITION_PATTERNS,
+  );
+  assert.deepEqual(
+    routerCompositionPatternsForPath("core/crates/ctx-http/src/lib_tests.rs"),
+    TEST_ROUTER_COMPOSITION_PATTERNS,
+  );
+  assert.deepEqual(
+    routerCompositionPatternsForPath("core/crates/ctx-http/src/api/router.rs"),
+    [],
+  );
+  assert.deepEqual(
+    routerCompositionPatternsForPath(
+      "core/crates/ctx-http/src/api/tasks/storage_admission_http_tests/fixtures.rs",
+    ),
+    TEST_ROUTER_COMPOSITION_PATTERNS,
+  );
+  assert.deepEqual(
+    routerCompositionPatternsForPath(
+      "core/crates/ctx-http/src/api/tasks/storage_admission_http_tests.rs",
+    ),
+    TEST_ROUTER_COMPOSITION_PATTERNS,
+  );
+  assert.deepEqual(
+    routerCompositionPatternsForPath("core/crates/ctx-http/src/test_support.rs"),
+    TEST_ROUTER_COMPOSITION_PATTERNS,
+  );
+  assert.deepEqual(
+    routerCompositionPatternsForPath("core/crates/ctx-http-test-support/src/mcp_daemon.rs"),
+    TEST_ROUTER_COMPOSITION_PATTERNS,
+  );
+  assert.deepEqual(
+    routerCompositionPatternsForPath(
+      "core/crates/ctx-http-test-support/src/mcp_daemon/router.rs",
+    ),
+    TEST_ROUTER_COMPOSITION_PATTERNS,
   );
 });
 

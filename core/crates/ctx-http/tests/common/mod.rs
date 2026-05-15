@@ -12,7 +12,6 @@ use std::time::Duration;
 use axum::body::{to_bytes, Body};
 use axum::http::{Method, Request, StatusCode};
 use ctx_core::models::{Session, Task, Workspace};
-use ctx_daemon::daemon::DaemonState;
 use ctx_daemon::test_support::TestDaemon;
 use ctx_http::api;
 use ctx_managed_installs::{
@@ -402,21 +401,6 @@ pub fn fake_providers() -> HashMap<String, Arc<dyn ProviderAdapter>> {
     providers
 }
 
-pub fn build_state(
-    data_root: impl Into<std::path::PathBuf>,
-    stores: StoreManager,
-    providers: HashMap<String, Arc<dyn ProviderAdapter>>,
-    base_url: impl Into<String>,
-) -> Arc<DaemonState> {
-    Arc::new(DaemonState::new(
-        data_root.into(),
-        stores,
-        providers,
-        base_url.into(),
-        None,
-    ))
-}
-
 pub fn build_daemon(
     data_root: impl Into<std::path::PathBuf>,
     stores: StoreManager,
@@ -459,10 +443,6 @@ impl Drop for TestServer {
     fn drop(&mut self) {
         self.handle.abort();
     }
-}
-
-pub fn router(state: Arc<DaemonState>) -> axum::Router {
-    api::router(state)
 }
 
 pub fn router_for_daemon(daemon: &TestDaemon) -> axum::Router {

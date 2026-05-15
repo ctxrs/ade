@@ -12,7 +12,7 @@ use ctx_settings_model::{
 use assertions::assert_storage_admission_rejected_before_copy;
 use fixtures::{
     init_git_workspace, install_unreleased_host_reserve_storage_override, post_json,
-    save_test_execution_settings, test_state, EnvVarGuard,
+    save_test_execution_settings, test_router, test_state, EnvVarGuard,
 };
 
 #[cfg(unix)]
@@ -68,7 +68,7 @@ async fn create_task_rejects_before_disk_isolated_copy_when_host_reserve_is_unre
     )
     .await;
 
-    let app = crate::api::router(state.handle());
+    let app = test_router(&state);
     let _storage_override = install_unreleased_host_reserve_storage_override(workspace.id);
 
     let (status, body) = post_json(
