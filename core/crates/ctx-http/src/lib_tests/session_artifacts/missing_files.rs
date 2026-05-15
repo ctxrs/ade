@@ -6,7 +6,7 @@ use super::*;
 async fn session_artifacts_report_deleted_in_root_files_as_missing() {
     let fixture = build_session_artifact_fixture().await;
     let store = fixture
-        .state
+        .daemon
         .store_for_session(fixture.session.id)
         .await
         .unwrap();

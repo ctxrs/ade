@@ -4,7 +4,7 @@ use super::*;
 async fn worktree_bootstrap_logs_return_in_root_log_file() {
     let fixture = build_log_path_fixture().await;
     let (_task, session) = create_task_with_primary_session(&fixture).await;
-    let store = fixture.state.store_for_session(session.id).await.unwrap();
+    let store = fixture.daemon.store_for_session(session.id).await.unwrap();
     let worktree = store
         .get_worktree(session.worktree_id)
         .await
@@ -44,7 +44,7 @@ async fn worktree_bootstrap_logs_return_in_root_log_file() {
 async fn worktree_bootstrap_logs_fail_closed_for_legacy_outside_paths() {
     let fixture = build_log_path_fixture().await;
     let (_task, session) = create_task_with_primary_session(&fixture).await;
-    let store = fixture.state.store_for_session(session.id).await.unwrap();
+    let store = fixture.daemon.store_for_session(session.id).await.unwrap();
     let worktree = store
         .get_worktree(session.worktree_id)
         .await

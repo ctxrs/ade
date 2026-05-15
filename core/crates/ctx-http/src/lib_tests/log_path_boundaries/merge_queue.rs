@@ -4,7 +4,7 @@ use super::*;
 async fn merge_queue_entry_logs_return_in_root_log_file() {
     let fixture = build_log_path_fixture().await;
     let store = fixture
-        .state
+        .daemon
         .store_for_workspace(fixture.workspace.id)
         .await
         .unwrap();
@@ -39,7 +39,7 @@ async fn merge_queue_entry_logs_return_in_root_log_file() {
 async fn merge_queue_entry_logs_fail_closed_for_legacy_outside_paths() {
     let fixture = build_log_path_fixture().await;
     let store = fixture
-        .state
+        .daemon
         .store_for_workspace(fixture.workspace.id)
         .await
         .unwrap();

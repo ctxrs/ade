@@ -23,7 +23,7 @@ async fn ctx_ui_sized_active_session_head_recovery_is_bounded() {
     let fixture = CtxUiSizedHeadFixture::new().await;
     let (workspace, task, session) = fixture.create_default_session().await;
 
-    let store = fixture.state.store_for_session(session.id).await.unwrap();
+    let store = fixture.daemon.store_for_session(session.id).await.unwrap();
     seed_ctx_ui_sized_session(
         &store,
         session.id,
@@ -69,7 +69,7 @@ async fn ctx_ui_sized_active_session_head_recovery_is_bounded() {
     tokio::time::timeout(
         step_timeout,
         fixture
-            .state
+            .daemon
             .ensure_workspace_active_snapshot_hydrated(workspace.id),
     )
     .await

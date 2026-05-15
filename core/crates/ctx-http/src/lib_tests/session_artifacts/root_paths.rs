@@ -26,7 +26,7 @@ async fn session_artifacts_reject_outside_root_paths_and_fail_closed_for_legacy_
     );
 
     let store = fixture
-        .state
+        .daemon
         .store_for_session(fixture.session.id)
         .await
         .unwrap();

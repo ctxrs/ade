@@ -4,16 +4,8 @@ use super::*;
 async fn telemetry_export_reads_valid_daily_log() {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
-        HashMap::new();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:4399".to_string(),
-        Some("daemon-secret".to_string()),
-    ));
-    let app = api::router(state.clone());
+    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
+    let app = test_router(&state);
 
     let path =
         ctx_observability::perf_telemetry::perf_log_path_for_date(data_dir.path(), "2026-04-24");
@@ -36,16 +28,8 @@ async fn telemetry_export_reads_valid_daily_log() {
 async fn telemetry_export_rejects_path_traversal_dates() {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
-        HashMap::new();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:4399".to_string(),
-        Some("daemon-secret".to_string()),
-    ));
-    let app = api::router(state);
+    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
+    let app = test_router(&state);
 
     let escaped_path = data_dir
         .path()

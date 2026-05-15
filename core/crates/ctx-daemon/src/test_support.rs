@@ -78,6 +78,10 @@ impl TestDaemon {
         &self.state.core.data_root
     }
 
+    pub fn tool_output_spool_dir(&self) -> &Path {
+        self.state.test_tool_output_spool_dir()
+    }
+
     pub fn daemon_url(&self) -> &str {
         &self.state.core.daemon_url
     }
@@ -100,6 +104,15 @@ impl TestDaemon {
 
     pub async fn store_for_workspace(&self, workspace_id: WorkspaceId) -> anyhow::Result<Store> {
         self.state.store_for_workspace(workspace_id).await
+    }
+
+    pub async fn ensure_workspace_active_snapshot_hydrated(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> std::result::Result<(), daemon::workspaces::WorkspaceHydrationError> {
+        self.state
+            .ensure_workspace_active_snapshot_hydrated(workspace_id)
+            .await
     }
 
     pub async fn remember_session_meta(&self, session: &Session) {

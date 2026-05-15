@@ -4,7 +4,7 @@ use serde::de::DeserializeOwned;
 use super::*;
 
 pub(super) struct CtxUiSizedHeadFixture {
-    pub(super) state: Arc<DaemonState>,
+    pub(super) daemon: TestDaemon,
     app: axum::Router,
     repo: tempfile::TempDir,
     _projection_flush_ms: EnvVarGuard,
@@ -21,17 +21,11 @@ impl CtxUiSizedHeadFixture {
         let stores = StoreManager::open(data_dir.path()).await.unwrap();
         let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
         providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-        let state = Arc::new(DaemonState::new(
-            data_dir.path().to_path_buf(),
-            stores,
-            providers,
-            "http://127.0.0.1:0".to_string(),
-            None,
-        ));
-        let app = api::router(state.clone());
+        let daemon = test_daemon_with_providers(data_dir.path(), stores, providers, None);
+        let app = test_router(&daemon);
 
         Self {
-            state,
+            daemon,
             app,
             repo,
             _projection_flush_ms: projection_flush_ms,

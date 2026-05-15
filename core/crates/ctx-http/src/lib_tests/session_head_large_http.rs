@@ -20,14 +20,8 @@ async fn large_session_head_http_responses_are_bounded() {
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:0".to_string(),
-        None,
-    ));
-    let app = api::router(state.clone());
+    let daemon = test_daemon_with_providers(data_dir.path(), stores, providers, None);
+    let app = test_router(&daemon);
 
     let workspace = create_workspace_via_api(&app, &repo.path().to_string_lossy()).await;
     let (task_status, task): (StatusCode, ctx_core::models::Task) = json_request(
@@ -57,7 +51,7 @@ async fn large_session_head_http_responses_are_bounded() {
         .find(|session| Some(session.id) == task.primary_session_id)
         .expect("created task should list its default session");
 
-    let store = state.store_for_session(session.id).await.unwrap();
+    let store = daemon.store_for_session(session.id).await.unwrap();
     seed_large_session(&store, session.id, task.id, SEEDED_TURNS).await;
     // Keep the bulk seed deterministic without waiting for unrelated queued
     // projection work from background refresh scheduling.
@@ -70,7 +64,7 @@ async fn large_session_head_http_responses_are_bounded() {
     .unwrap();
     tokio::time::timeout(
         step_timeout,
-        state.ensure_workspace_active_snapshot_hydrated(workspace.id),
+        daemon.ensure_workspace_active_snapshot_hydrated(workspace.id),
     )
     .await
     .unwrap_or_else(|_| panic!("timed out hydrating workspace active snapshot"))

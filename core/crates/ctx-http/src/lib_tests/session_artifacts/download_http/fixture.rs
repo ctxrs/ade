@@ -15,7 +15,11 @@ impl DownloadHttpFixture {
         let wrong_session =
             create_subagent_session_via_api(&base.app, &base.task, base.session.id).await;
 
-        let store = base.state.store_for_session(base.session.id).await.unwrap();
+        let store = base
+            .daemon
+            .store_for_session(base.session.id)
+            .await
+            .unwrap();
         let worktree = store
             .get_worktree(base.session.worktree_id)
             .await

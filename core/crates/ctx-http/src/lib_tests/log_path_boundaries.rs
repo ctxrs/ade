@@ -18,7 +18,7 @@ struct LogPathFixture {
     data_dir: tempfile::TempDir,
     git_repo: tempfile::TempDir,
     app: axum::Router,
-    state: Arc<DaemonState>,
+    daemon: TestDaemon,
     workspace: ctx_core::models::Workspace,
 }
 
@@ -35,14 +35,8 @@ async fn build_log_path_fixture() -> LogPathFixture {
         HashMap::new();
     providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
 
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    ));
-    let app = api::router(state.clone());
+    let daemon = test_daemon_with_providers(data_dir.path(), stores, providers, None);
+    let app = test_router(&daemon);
 
     let workspace = create_workspace_via_api(&app, &git_repo.path().to_string_lossy()).await;
 
@@ -53,7 +47,7 @@ async fn build_log_path_fixture() -> LogPathFixture {
         data_dir,
         git_repo,
         app,
-        state,
+        daemon,
         workspace,
     }
 }
