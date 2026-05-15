@@ -209,19 +209,14 @@ async fn seed_container_only_install(data_root: &Path, provider_id: &str) -> std
 
 #[tokio::test]
 async fn host_target_reports_target_mismatch_for_container_only_acp_installs() {
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&daemon);
+    let fixture =
+        common::fake_daemon_fixture_with_providers(HashMap::new(), "http://127.0.0.1:0").await;
+    let daemon = &fixture.daemon;
+    let app = fixture.router();
 
     for provider_id in ["kimi", "mistral", "qwen"] {
-        let _command_path = seed_container_only_install(data_dir.path(), provider_id).await;
-        seed_provider_status(&daemon, bridge_missing_status(provider_id)).await;
+        let _command_path = seed_container_only_install(fixture.data_dir.path(), provider_id).await;
+        seed_provider_status(daemon, bridge_missing_status(provider_id)).await;
 
         let (status, body): (StatusCode, serde_json::Value) = common::json_request(
             &app,
@@ -277,17 +272,12 @@ async fn host_target_reports_target_mismatch_for_container_only_acp_installs() {
 
 #[tokio::test]
 async fn acp_provider_reports_missing_bridge_as_blocking_dependency() {
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&daemon);
+    let fixture =
+        common::fake_daemon_fixture_with_providers(HashMap::new(), "http://127.0.0.1:0").await;
+    let daemon = &fixture.daemon;
+    let app = fixture.router();
 
-    seed_provider_status(&daemon, bridge_missing_status("qwen")).await;
+    seed_provider_status(daemon, bridge_missing_status("qwen")).await;
 
     let (status, body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -356,18 +346,18 @@ async fn workspace_options_use_workspace_target_status_for_acp_provider() {
         )
     };
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
+    let fixture = common::fake_daemon_fixture_in_data_dir_with_providers(
+        data_dir,
         HashMap::new(),
         "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&daemon);
+    )
+    .await;
+    let daemon = &fixture.daemon;
+    let app = fixture.router();
 
     let provider_id = "mistral";
-    let _command_path = seed_container_only_install(data_dir.path(), provider_id).await;
-    seed_provider_status(&daemon, bridge_missing_status(provider_id)).await;
+    let _command_path = seed_container_only_install(fixture.data_dir.path(), provider_id).await;
+    seed_provider_status(daemon, bridge_missing_status(provider_id)).await;
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (host_status, host_body): (StatusCode, serde_json::Value) = common::json_request(

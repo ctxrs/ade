@@ -26,14 +26,8 @@ async fn workspace_attachments_are_db_canonical_and_ignore_repo_file() {
         .unwrap();
     let before = tokio::fs::read_to_string(&cfg_path).await.unwrap();
 
-    let data_root = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_root.path()).await;
-    let state = common::build_daemon(
-        data_root.path(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let state = &fixture.daemon;
     state
         .handle()
         .core()
@@ -49,7 +43,7 @@ async fn workspace_attachments_are_db_canonical_and_ignore_repo_file() {
         })
         .await
         .unwrap();
-    let app = common::router_for_daemon(&state);
+    let app = fixture.router();
 
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;
 
@@ -117,15 +111,9 @@ async fn workspace_attachments_are_db_canonical_and_ignore_repo_file() {
 async fn workspace_attachments_sync_heals_stale_pending_when_materialized_exists() {
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
 
-    let data_root = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_root.path()).await;
-    let state = common::build_daemon(
-        data_root.path(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&state);
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let state = &fixture.daemon;
+    let app = fixture.router();
 
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;
     let attachment = state
@@ -147,7 +135,8 @@ async fn workspace_attachments_sync_heals_stale_pending_when_materialized_exists
         .await
         .unwrap();
 
-    let materialized = data_root
+    let materialized = fixture
+        .data_dir
         .path()
         .join("attachments")
         .join("reference-repos")
@@ -192,15 +181,8 @@ async fn workspace_attachments_reject_doc_mirror_local_script_sources() {
         .await
         .unwrap();
 
-    let data_root = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_root.path()).await;
-    let state = common::build_daemon(
-        data_root.path(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&state);
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let app = fixture.router();
 
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;
 
@@ -225,15 +207,8 @@ async fn workspace_attachments_reject_doc_mirror_local_script_sources() {
 async fn workspace_attachments_reject_doc_mirror_rw_mode() {
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
 
-    let data_root = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_root.path()).await;
-    let state = common::build_daemon(
-        data_root.path(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&state);
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let app = fixture.router();
 
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;
 

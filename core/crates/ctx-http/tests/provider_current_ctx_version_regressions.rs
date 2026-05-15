@@ -308,17 +308,17 @@ async fn container_provider_status_fails_closed_when_hybrid_artifact_is_missing(
         matrix_path.to_str().expect("matrix path utf-8"),
     );
 
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
+    let fixture = common::fake_daemon_fixture_in_data_dir_with_providers(
+        data_dir,
         HashMap::new(),
         "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&daemon);
+    )
+    .await;
+    let daemon = &fixture.daemon;
+    let app = fixture.router();
 
     seed_provider_status(
-        &daemon,
+        daemon,
         ProviderStatus {
             provider_id: "gemini".to_string(),
             installed: false,
@@ -428,14 +428,14 @@ async fn host_provider_status_surfaces_stale_installs_for_current_ctx_build() {
     )
     .await;
 
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
+    let fixture = common::fake_daemon_fixture_in_data_dir_with_providers(
+        data_dir,
         HashMap::new(),
         "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&daemon);
+    )
+    .await;
+    let daemon = &fixture.daemon;
+    let app = fixture.router();
 
     for (provider_id, version) in [
         ("codex", "0.124.0-ctx.1"),
@@ -443,7 +443,7 @@ async fn host_provider_status_surfaces_stale_installs_for_current_ctx_build() {
         ("cursor", "0.7.1"),
     ] {
         seed_provider_status(
-            &daemon,
+            daemon,
             ProviderStatus {
                 provider_id: provider_id.to_string(),
                 installed: true,
@@ -552,14 +552,14 @@ async fn managed_install_start_uses_runtime_build_identity_for_release_resolutio
         matrix_path.to_str().expect("matrix path utf-8"),
     );
 
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
+    let fixture = common::fake_daemon_fixture_in_data_dir_with_providers(
+        data_dir,
         HashMap::new(),
         "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&daemon);
+    )
+    .await;
+    let daemon = &fixture.daemon;
+    let app = fixture.router();
 
     let (install_status, install_body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -578,13 +578,13 @@ async fn managed_install_start_uses_runtime_build_identity_for_release_resolutio
         .and_then(serde_json::Value::as_str)
         .and_then(|raw| raw.parse::<InstallId>().ok())
         .expect("install id");
-    let install_info = wait_for_install_completion(&daemon, install_id).await;
+    let install_info = wait_for_install_completion(daemon, install_id).await;
     assert!(
         matches!(install_info.state, InstallStateKind::Succeeded),
         "managed install should succeed once started: {install_info:#?}"
     );
 
-    let cfg = load_agent_server_config(data_dir.path())
+    let cfg = load_agent_server_config(fixture.data_dir.path())
         .await
         .expect("load managed provider config after install");
     let host_meta = cfg
