@@ -110,6 +110,7 @@ RUST_BAZEL_DEPS = {
             "@crates//:serde_json",
             "@crates//:sha2",
             "@crates//:similar",
+            "@crates//:sqlx",
             "@crates//:sysinfo",
             "@crates//:tar",
             "@crates//:tempfile",
@@ -135,7 +136,6 @@ RUST_BAZEL_DEPS = {
             "@crates//:blake2",
             "@crates//:ed25519-dalek",
             "@crates//:fs2",
-            "@crates//:sqlx",
         ],
         dev_proc_macro_deps = [],
         proc_macro_deps = [
