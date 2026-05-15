@@ -167,6 +167,7 @@ const smallExternalStoreFacadeTestRoots = [
 ];
 
 const fakeDaemonExternalStoreFacadeTestRoots = [
+  "core/crates/ctx-http/tests/assistant_message_persistence_faults.rs",
   "core/crates/ctx-http/tests/demo_seed_transcript_http.rs",
   "core/crates/ctx-http/tests/global_id_routing_http.rs",
   "core/crates/ctx-http/tests/install_start_contract.rs",
@@ -174,9 +175,12 @@ const fakeDaemonExternalStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/message_idempotency.rs",
   "core/crates/ctx-http/tests/terminal_workspace_stream_separation.rs",
   "core/crates/ctx-http/tests/terminal_ws_reconnect.rs",
+  "core/crates/ctx-http/tests/turn_lifecycle_events.rs",
+  "core/crates/ctx-http/tests/turn_terminal_reconciliation.rs",
   "core/crates/ctx-http/tests/workspace_stream_context_window_metrics.rs",
   "core/crates/ctx-http/tests/workspace_stream_no_gaps_under_activity.rs",
   "core/crates/ctx-http/tests/workspace_stream_stress_active_heads_lag.rs",
+  "core/crates/ctx-http/tests/worktree_archive_http.rs",
 ];
 
 const mcpDaemonFacadeTestRoots = [

@@ -52,8 +52,8 @@ impl ProviderAdapter for StartFailProvider {
 
 struct TestHarness {
     _repo: tempfile::TempDir,
-    _data_dir: tempfile::TempDir,
     daemon: ctx_daemon::test_support::TestDaemon,
+    _data_dir: tempfile::TempDir,
     session: ctx_core::models::Session,
 }
 
@@ -65,22 +65,15 @@ async fn setup_state_with_providers(
     providers: HashMap<String, Arc<dyn ProviderAdapter>>,
 ) -> TestHarness {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&daemon);
+    let fixture = common::fake_daemon_fixture_with_providers(providers, "http://127.0.0.1:0").await;
+    let app = fixture.router();
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (_task, session) =
         common::create_task_with_session(&app, ws.id.0, "t1", "fake", "fake-model").await;
     TestHarness {
         _repo: repo,
-        _data_dir: data_dir,
-        daemon,
+        daemon: fixture.daemon,
+        _data_dir: fixture.data_dir,
         session,
     }
 }

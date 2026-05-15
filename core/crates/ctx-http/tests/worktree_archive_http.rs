@@ -1,13 +1,9 @@
-use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Arc;
 
 use serde_json::json;
 use tokio::process::Command;
 
 use ctx_core::models::{Task, Workspace};
-use ctx_daemon::test_support::TestDaemon;
-use ctx_providers::fake::FakeProviderAdapter;
 
 mod common;
 
@@ -65,28 +61,10 @@ async fn branch_exists(root: &Path, branch: &str) -> bool {
 #[tokio::test]
 async fn archive_and_unarchive_recreates_managed_worktrees() {
     let repo = setup_git_repo().await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_dir.path()).await;
-
-    let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
-        HashMap::new();
-    providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-
-    let daemon = TestDaemon::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:0".to_string(),
-        None,
-    );
-    let app = common::router_for_daemon(&daemon);
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    let base = format!("http://{addr}");
-    let client = reqwest::Client::new();
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let server = fixture.spawn_server().await;
+    let base = &server.base_url;
+    let client = &server.client;
 
     let ws: Workspace = client
         .post(format!("{base}/api/workspaces"))
@@ -155,7 +133,8 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
         second_child_resp.status()
     );
 
-    let managed_snapshot = daemon
+    let managed_snapshot = fixture
+        .daemon
         .task_archive_managed_worktrees_snapshot_for_test(ws.id, task.id)
         .await
         .unwrap();
@@ -217,6 +196,4 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
     for branch in &managed_branches {
         assert!(branch_exists(repo.path(), branch).await);
     }
-
-    server.abort();
 }

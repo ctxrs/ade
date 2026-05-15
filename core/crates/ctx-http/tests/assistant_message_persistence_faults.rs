@@ -30,15 +30,9 @@ async fn assistant_message_persistence_faults_recover_or_fail_honestly() {
     clear_all_failpoints();
     {
         let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
-        let data_dir = tempfile::tempdir().unwrap();
-        let stores = common::setup_store(data_dir.path()).await;
-        let daemon = common::build_daemon(
-            data_dir.path().to_path_buf(),
-            stores,
-            common::fake_providers(),
-            "http://127.0.0.1:0",
-        );
-        let app = common::router_for_daemon(&daemon);
+        let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+        let daemon = &fixture.daemon;
+        let app = fixture.router();
 
         ctx_http::fault_injection::set_failpoint("ctx_http.persist_assistant_message.transient", 1);
 
@@ -106,15 +100,9 @@ async fn assistant_message_persistence_faults_recover_or_fail_honestly() {
 
     {
         let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
-        let data_dir = tempfile::tempdir().unwrap();
-        let stores = common::setup_store(data_dir.path()).await;
-        let daemon = common::build_daemon(
-            data_dir.path().to_path_buf(),
-            stores,
-            common::fake_providers(),
-            "http://127.0.0.1:0",
-        );
-        let app = common::router_for_daemon(&daemon);
+        let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+        let daemon = &fixture.daemon;
+        let app = fixture.router();
 
         let ws = common::create_workspace(&app, repo.path(), "ws").await;
         let (_task, session) =
@@ -169,15 +157,9 @@ async fn assistant_message_persistence_faults_recover_or_fail_honestly() {
 
     {
         let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
-        let data_dir = tempfile::tempdir().unwrap();
-        let stores = common::setup_store(data_dir.path()).await;
-        let daemon = common::build_daemon(
-            data_dir.path().to_path_buf(),
-            stores,
-            common::fake_providers(),
-            "http://127.0.0.1:0",
-        );
-        let app = common::router_for_daemon(&daemon);
+        let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+        let daemon = &fixture.daemon;
+        let app = fixture.router();
 
         ctx_http::fault_injection::set_failpoint("ctx_http.persist_assistant_message.fatal", 1);
 

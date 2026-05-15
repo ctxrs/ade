@@ -422,8 +422,8 @@ pub fn build_daemon(
 }
 
 pub struct FakeDaemonFixture {
-    pub data_dir: tempfile::TempDir,
     pub daemon: TestDaemon,
+    pub data_dir: tempfile::TempDir,
 }
 
 impl FakeDaemonFixture {
@@ -436,17 +436,32 @@ impl FakeDaemonFixture {
     }
 }
 
-pub async fn fake_daemon_fixture(base_url: impl Into<String>) -> FakeDaemonFixture {
+pub async fn fake_daemon_fixture_with_providers(
+    providers: HashMap<String, Arc<dyn ProviderAdapter>>,
+    base_url: impl Into<String>,
+) -> FakeDaemonFixture {
     let data_dir = tempfile::tempdir().expect("tempdir");
+    fake_daemon_fixture_in_data_dir_with_providers(data_dir, providers, base_url).await
+}
+
+pub async fn fake_daemon_fixture_in_data_dir_with_providers(
+    data_dir: tempfile::TempDir,
+    providers: HashMap<String, Arc<dyn ProviderAdapter>>,
+    base_url: impl Into<String>,
+) -> FakeDaemonFixture {
     let daemon = TestDaemon::new_with_providers_for_test(
         data_dir.path().to_path_buf(),
-        fake_providers(),
+        providers,
         base_url.into(),
         None,
     )
     .await
     .expect("create fake-provider daemon");
-    FakeDaemonFixture { data_dir, daemon }
+    FakeDaemonFixture { daemon, data_dir }
+}
+
+pub async fn fake_daemon_fixture(base_url: impl Into<String>) -> FakeDaemonFixture {
+    fake_daemon_fixture_with_providers(fake_providers(), base_url).await
 }
 
 pub async fn provider_route_fake_daemon(data_root: &Path) -> TestDaemon {

@@ -40,14 +40,14 @@ async fn queued_message_emits_lifecycle_events_in_order_with_interrupt() {
         eprintln!("skipping: storage guard would trip on low-disk test host");
         return;
     }
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
+    let fixture = common::fake_daemon_fixture_in_data_dir_with_providers(
+        data_dir,
         common::fake_providers(),
         "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&daemon);
+    )
+    .await;
+    let daemon = &fixture.daemon;
+    let app = fixture.router();
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (_task, session) =
@@ -179,14 +179,14 @@ async fn cancel_promotes_next_queued_turn_after_interrupted_finish() {
         eprintln!("skipping: storage guard would trip on low-disk test host");
         return;
     }
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
+    let fixture = common::fake_daemon_fixture_in_data_dir_with_providers(
+        data_dir,
         common::fake_providers(),
         "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&daemon);
+    )
+    .await;
+    let daemon = &fixture.daemon;
+    let app = fixture.router();
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (_task, session) =
@@ -295,14 +295,14 @@ async fn cancel_promotes_queued_turns_in_fifo_order_across_multiple_cancels() {
         eprintln!("skipping: storage guard would trip on low-disk test host");
         return;
     }
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
+    let fixture = common::fake_daemon_fixture_in_data_dir_with_providers(
+        data_dir,
         common::fake_providers(),
         "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&daemon);
+    )
+    .await;
+    let daemon = &fixture.daemon;
+    let app = fixture.router();
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (_task, session) =
