@@ -9,15 +9,9 @@ async fn create_mobile_connection_profile_normalizes_explicit_scopes() {
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        Some("daemon-secret".to_string()),
-    ));
+    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
 
-    let app = api::router(state);
+    let app = test_router(&state);
     let req = Request::builder()
         .method("POST")
         .uri("/api/mobile/connection_profiles")
@@ -51,15 +45,9 @@ async fn create_mobile_connection_profile_rejects_unknown_scope_names() {
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        Some("daemon-secret".to_string()),
-    ));
+    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
 
-    let app = api::router(state);
+    let app = test_router(&state);
     let req = Request::builder()
         .method("POST")
         .uri("/api/mobile/connection_profiles")
@@ -90,15 +78,9 @@ async fn create_mobile_connection_profile_requires_explicit_scopes_field() {
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        Some("daemon-secret".to_string()),
-    ));
+    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
 
-    let app = api::router(state);
+    let app = test_router(&state);
     let req = Request::builder()
         .method("POST")
         .uri("/api/mobile/connection_profiles")
@@ -124,13 +106,7 @@ async fn delete_mobile_connection_profile_returns_not_found_after_first_removal(
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        Some("daemon-secret".to_string()),
-    ));
+    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
 
     let token = "ctxm_test_mobile_token";
     let mut hasher = sha2::Sha256::new();
@@ -148,7 +124,7 @@ async fn delete_mobile_connection_profile_returns_not_found_after_first_removal(
         .await
         .unwrap();
 
-    let app = api::router(state);
+    let app = test_router(&state);
     let req = Request::builder()
         .method("DELETE")
         .uri(format!("/api/mobile/connection_profiles/{}", profile.id.0))

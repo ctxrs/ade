@@ -32,15 +32,9 @@ async fn enable_mobile_access_seeds_explicit_default_scopes() {
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        Some("daemon-secret".to_string()),
-    ));
+    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
 
-    let app = api::router(state.clone());
+    let app = test_router(&state);
     let req = Request::builder()
         .method("POST")
         .uri("/api/mobile/access/enable")
@@ -77,7 +71,7 @@ async fn enable_mobile_access_seeds_explicit_default_scopes() {
         ]
     );
 
-    state.test_stop_mobile_tunnel().await;
+    state.stop_mobile_tunnel().await;
     server.abort();
     let _ = server.await;
 }
@@ -92,13 +86,7 @@ async fn enable_mobile_access_backfills_empty_managed_profile_scopes() {
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        Some("daemon-secret".to_string()),
-    ));
+    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
 
     let legacy_profile = state
         .global_store()
@@ -131,7 +119,7 @@ async fn enable_mobile_access_backfills_empty_managed_profile_scopes() {
         .await
         .unwrap();
 
-    let app = api::router(state.clone());
+    let app = test_router(&state);
     let req = Request::builder()
         .method("POST")
         .uri("/api/mobile/access/enable")
@@ -169,7 +157,7 @@ async fn enable_mobile_access_backfills_empty_managed_profile_scopes() {
         ]
     );
 
-    state.test_stop_mobile_tunnel().await;
+    state.stop_mobile_tunnel().await;
     server.abort();
     let _ = server.await;
 }

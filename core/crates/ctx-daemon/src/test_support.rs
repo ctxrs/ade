@@ -124,6 +124,10 @@ impl TestDaemon {
         self.state.test_publish_storage_guard(status);
     }
 
+    pub async fn stop_mobile_tunnel(&self) {
+        self.state.test_stop_mobile_tunnel().await;
+    }
+
     pub async fn issue_provider_session_mcp_token(
         &self,
         session_id: SessionId,
