@@ -3,8 +3,12 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use ctx_core::ids::{SessionId, TaskId, TerminalId, WorkspaceId, WorktreeId};
-use ctx_core::models::{Session, SessionHeadDelta, Worktree, WorktreeVcsSnapshot};
+use ctx_core::ids::{
+    SessionId, TaskId, TerminalId, WorkspaceAttachmentId, WorkspaceId, WorktreeId,
+};
+use ctx_core::models::{
+    Session, SessionHeadDelta, WorkspaceAttachmentStatus, Worktree, WorktreeVcsSnapshot,
+};
 use ctx_provider_install::install_state::{
     InstallId, InstallInfo, InstallProgressEvent, InstallTarget,
 };
@@ -181,6 +185,25 @@ impl TestDaemon {
             .get_worktree(worktree_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("worktree {worktree_id:?} not found"))
+    }
+
+    pub async fn set_workspace_attachment_status_for_test(
+        &self,
+        workspace_id: WorkspaceId,
+        attachment_id: WorkspaceAttachmentId,
+        status: WorkspaceAttachmentStatus,
+    ) -> anyhow::Result<()> {
+        self.state
+            .store_for_workspace(workspace_id)
+            .await?
+            .update_workspace_attachment_status(
+                attachment_id,
+                status,
+                None,
+                None,
+                chrono::Utc::now(),
+            )
+            .await
     }
 
     pub async fn worktree_vcs_snapshot(

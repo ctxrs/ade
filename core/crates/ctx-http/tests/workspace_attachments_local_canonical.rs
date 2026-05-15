@@ -8,7 +8,7 @@ use ctx_core::models::{
 use ctx_settings_model::{
     ContainerExecutionSettings, ContainerRuntimeKind, ExecutionMode, ExecutionSettings, Settings,
 };
-use ctx_workspace_services::workspace_attachments::{self, AttachmentConfig};
+use ctx_workspace_attachments::AttachmentConfig;
 use serde_json::json;
 
 #[tokio::test]
@@ -28,15 +28,16 @@ async fn workspace_attachments_are_db_canonical_and_ignore_repo_file() {
 
     let data_root = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_root.path()).await;
-    let state = common::build_state(
+    let state = common::build_daemon(
         data_root.path(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    ctx_settings_service::save_settings(
-        state.global_store(),
-        &Settings {
+    state
+        .handle()
+        .core()
+        .save_settings(&Settings {
             execution: Some(ExecutionSettings {
                 mode: ExecutionMode::Host,
                 container: ContainerExecutionSettings {
@@ -45,11 +46,10 @@ async fn workspace_attachments_are_db_canonical_and_ignore_repo_file() {
                 },
             }),
             ..Settings::default()
-        },
-    )
-    .await
-    .unwrap();
-    let app = common::router(state);
+        })
+        .await
+        .unwrap();
+    let app = common::router_for_daemon(&state);
 
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;
 
@@ -119,31 +119,33 @@ async fn workspace_attachments_sync_heals_stale_pending_when_materialized_exists
 
     let data_root = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_root.path()).await;
-    let state = common::build_state(
+    let state = common::build_daemon(
         data_root.path(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&state);
 
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;
-    let attachment = workspace_attachments::upsert_workspace_attachment(
-        state.as_ref(),
-        workspace.id,
-        AttachmentConfig {
-            kind: WorkspaceAttachmentKind::ReferenceRepo,
-            name: "ref-fixture".to_string(),
-            source: repo.path().to_string_lossy().to_string(),
-            revision: None,
-            subpath: None,
-            mount_relpath: None,
-            mode: Some(AttachmentMode::Ro),
-            update_policy: Some(AttachmentUpdatePolicy::Manual),
-        },
-    )
-    .await
-    .unwrap();
+    let attachment = state
+        .handle()
+        .workspaces()
+        .upsert_workspace_attachment(
+            workspace.id,
+            AttachmentConfig {
+                kind: WorkspaceAttachmentKind::ReferenceRepo,
+                name: "ref-fixture".to_string(),
+                source: repo.path().to_string_lossy().to_string(),
+                revision: None,
+                subpath: None,
+                mount_relpath: None,
+                mode: Some(AttachmentMode::Ro),
+                update_policy: Some(AttachmentUpdatePolicy::Manual),
+            },
+        )
+        .await
+        .unwrap();
 
     let materialized = data_root
         .path()
@@ -157,14 +159,11 @@ async fn workspace_attachments_sync_heals_stale_pending_when_materialized_exists
         .await
         .unwrap();
 
-    let store = state.store_for_workspace(workspace.id).await.unwrap();
-    store
-        .update_workspace_attachment_status(
+    state
+        .set_workspace_attachment_status_for_test(
+            workspace.id,
             attachment.id,
             WorkspaceAttachmentStatus::Pending,
-            None,
-            None,
-            chrono::Utc::now(),
         )
         .await
         .unwrap();
@@ -195,13 +194,13 @@ async fn workspace_attachments_reject_doc_mirror_local_script_sources() {
 
     let data_root = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_root.path()).await;
-    let state = common::build_state(
+    let state = common::build_daemon(
         data_root.path(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state);
+    let app = common::router_for_daemon(&state);
 
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;
 
@@ -228,13 +227,13 @@ async fn workspace_attachments_reject_doc_mirror_rw_mode() {
 
     let data_root = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_root.path()).await;
-    let state = common::build_state(
+    let state = common::build_daemon(
         data_root.path(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state);
+    let app = common::router_for_daemon(&state);
 
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;
 
