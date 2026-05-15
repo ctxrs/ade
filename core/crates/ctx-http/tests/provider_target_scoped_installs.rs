@@ -11,10 +11,10 @@ use std::time::Duration;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use ctx_core::models::SessionEventType;
-use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::test_support::TestDaemon;
 use ctx_managed_installs::{
-    agent_server_config_path, load_agent_server_config, refresh_provider_statuses,
-    save_agent_server_config, AgentServerCommand, AgentServerConfigFile, ManagedInstallMetadata,
+    agent_server_config_path, load_agent_server_config, save_agent_server_config,
+    AgentServerCommand, AgentServerConfigFile, ManagedInstallMetadata,
 };
 use ctx_provider_install::install_state::{
     InstallErrorCode, InstallId, InstallInfo, InstallProgressEvent, InstallStateKind, InstallTarget,
@@ -102,9 +102,9 @@ async fn write_invalid_agent_server_config(data_root: &Path) {
         .expect("write invalid agent server config");
 }
 
-async fn seed_provider_status(state: &Arc<DaemonState>, status: ProviderStatus) {
+async fn seed_provider_status(daemon: &TestDaemon, status: ProviderStatus) {
     let provider_id = status.provider_id.clone();
-    state.test_upsert_provider_status(provider_id, status).await;
+    daemon.upsert_provider_status(provider_id, status).await;
 }
 
 fn write_fake_node_runtime(path: &Path, tag: &str) {
@@ -412,7 +412,7 @@ async fn seed_target_scoped_codex_runtime(data_root: &Path) -> SeededRuntime {
     }
 }
 
-async fn build_state_with_host_codex(data_root: &Path, host_command: &str) -> Arc<DaemonState> {
+async fn build_state_with_host_codex(data_root: &Path, host_command: &str) -> TestDaemon {
     let stores = common::setup_store(data_root).await;
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert(
@@ -423,13 +423,14 @@ async fn build_state_with_host_codex(data_root: &Path, host_command: &str) -> Ar
             Vec::new(),
         )),
     );
-    let state = common::build_state(
+    let state = common::build_daemon(
         data_root.to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:0",
     );
-    refresh_provider_statuses(state.as_ref())
+    state
+        .refresh_provider_statuses()
         .await
         .expect("refresh provider statuses");
     state
@@ -490,12 +491,11 @@ async fn set_workspace_container_execution(
 }
 
 async fn write_workspace_container_execution_without_runtime_probe(
-    state: &Arc<DaemonState>,
+    state: &TestDaemon,
     workspace_id: uuid::Uuid,
 ) {
     let store = state
-        .test_store_manager()
-        .workspace(ctx_core::ids::WorkspaceId(workspace_id))
+        .store_for_workspace(ctx_core::ids::WorkspaceId(workspace_id))
         .await
         .expect("workspace store");
     ctx_workspace_config::update_execution_config(
@@ -512,20 +512,15 @@ async fn write_workspace_container_execution_without_runtime_probe(
 }
 
 async fn assert_target_adapter_not_cached(
-    state: &Arc<DaemonState>,
+    state: &TestDaemon,
     provider_id: &str,
     target: InstallTarget,
     context: &str,
 ) {
     let cache_key = target_adapter_cache_key(provider_id, target)
         .expect("non-host target should have a target adapter cache key");
-    let cached = state.test_has_target_provider_adapter(&cache_key).await;
-    let keys = state
-        .test_target_provider_adapter_entries()
-        .await
-        .into_iter()
-        .map(|(key, _)| key)
-        .collect::<Vec<_>>();
+    let cached = state.has_target_provider_adapter(&cache_key).await;
+    let keys = state.target_provider_adapter_cache_keys().await;
     assert!(
         !cached,
         "{context}: invalid managed config should not seed target adapter cache entry {cache_key}; keys={keys:?}"
@@ -877,14 +872,14 @@ fn npm_harness_with_archive_targets_fixture_entry(
 }
 
 async fn wait_for_install_completion(
-    state: &Arc<DaemonState>,
+    state: &TestDaemon,
     install_id: InstallId,
 ) -> ctx_provider_install::install_state::InstallInfo {
     wait_for_install_completion_with_timeout(state, install_id, Duration::from_secs(60)).await
 }
 
 async fn wait_for_install_completion_with_timeout(
-    state: &Arc<DaemonState>,
+    state: &TestDaemon,
     install_id: InstallId,
     timeout: Duration,
 ) -> ctx_provider_install::install_state::InstallInfo {
@@ -968,7 +963,7 @@ async fn get_install_info_api(app: &axum::Router, install_id: InstallId) -> Inst
 }
 
 async fn wait_for_running_install_progress(
-    state: &Arc<DaemonState>,
+    state: &TestDaemon,
     install_id: InstallId,
 ) -> ctx_provider_install::install_state::InstallInfo {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
@@ -989,7 +984,7 @@ async fn wait_for_running_install_progress(
 }
 
 async fn wait_for_running_install_id(
-    state: &DaemonState,
+    state: &TestDaemon,
     provider_id: &str,
     target: Option<InstallTarget>,
 ) -> InstallId {
@@ -1007,14 +1002,14 @@ async fn wait_for_running_install_id(
 }
 
 async fn wait_for_tracked_install_id(
-    state: &Arc<DaemonState>,
+    state: &TestDaemon,
     provider_id: &str,
     target: Option<InstallTarget>,
 ) -> InstallId {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     loop {
         if let Some(install_id) = state
-            .test_tracked_install_ids(provider_id, target)
+            .tracked_install_ids(provider_id, target)
             .await
             .into_iter()
             .next()
@@ -1030,7 +1025,7 @@ async fn wait_for_tracked_install_id(
 }
 
 async fn wait_for_prerequisite_visibility(
-    state: &Arc<DaemonState>,
+    state: &TestDaemon,
     app: &axum::Router,
     install_id: InstallId,
     prerequisite_install_id: InstallId,
@@ -1119,7 +1114,7 @@ async fn post_message(app: &axum::Router, session_id: uuid::Uuid, content: &str)
     assert_eq!(status, StatusCode::OK, "message post failed: {body:#?}");
 }
 
-async fn wait_for_done(state: &Arc<DaemonState>, session_id: ctx_core::ids::SessionId) {
+async fn wait_for_done(state: &TestDaemon, session_id: ctx_core::ids::SessionId) {
     let store = state.store_for_session(session_id).await.expect("store");
     let deadline = tokio::time::Instant::now() + Duration::from_secs(90);
     loop {
@@ -1194,7 +1189,7 @@ async fn provider_status_http_keeps_host_and_container_installs_independent() {
     let runtime = seed_target_scoped_codex_runtime(data_dir.path()).await;
     configure_container_image_defaults(data_dir.path()).await;
     let state = build_state_with_host_codex(data_dir.path(), &runtime.host_command).await;
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&state);
 
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     common::create_workspace(&app, repo.path(), "host-ws").await;
@@ -1293,13 +1288,13 @@ async fn host_hybrid_npm_provider_uses_published_archive_target_when_available()
     .await;
 
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let state = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&state);
 
     let (install_status, install_body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -1371,13 +1366,13 @@ async fn acp_container_install_surfaces_bridge_as_installable_prerequisite() {
     )
     .await;
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let state = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&state);
 
     seed_provider_status(
         &state,
@@ -1475,13 +1470,13 @@ async fn acp_host_install_surfaces_bridge_as_installable_prerequisite() {
     )
     .await;
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let state = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&state);
 
     seed_provider_status(
         &state,
@@ -1579,13 +1574,13 @@ async fn acp_container_install_keeps_invalid_bridge_runtime_repairable_before_st
     )
     .await;
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let state = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&state);
 
     save_invalid_container_bridge_runtime(data_dir.path()).await;
 
@@ -1682,13 +1677,13 @@ async fn provider_target_scoped_installs_install_all_repairs_invalid_bridge_and_
     save_invalid_container_bridge_runtime(data_dir.path()).await;
 
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let state = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&state);
 
     let (install_status, install_body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -1744,13 +1739,13 @@ async fn provider_target_scoped_installs_install_all_repairs_invalid_bridge_and_
     }
 
     let reloaded_stores = common::setup_store(data_dir.path()).await;
-    let reloaded_state = common::build_state(
+    let reloaded_state = common::build_daemon(
         data_dir.path().to_path_buf(),
         reloaded_stores,
         HashMap::new(),
         "http://127.0.0.1:0",
     );
-    let reloaded_app = common::router(reloaded_state);
+    let reloaded_app = common::router_for_daemon(&reloaded_state);
 
     for provider_id in ["kimi", "qwen"] {
         let (provider_status, provider_body): (StatusCode, serde_json::Value) =
@@ -1824,13 +1819,13 @@ async fn provider_target_scoped_installs_install_all_container_js_archive_harnes
         .expect("save seeded node runtimes");
 
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let state = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&state);
 
     let (install_status, install_body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -1878,13 +1873,13 @@ async fn provider_target_scoped_installs_install_all_container_js_archive_harnes
     }
 
     let reloaded_stores = common::setup_store(data_dir.path()).await;
-    let reloaded_state = common::build_state(
+    let reloaded_state = common::build_daemon(
         data_dir.path().to_path_buf(),
         reloaded_stores,
         HashMap::new(),
         "http://127.0.0.1:0",
     );
-    let reloaded_app = common::router(reloaded_state);
+    let reloaded_app = common::router_for_daemon(&reloaded_state);
 
     for (provider_id, expected_version) in [("amp", "0.1.2"), ("pi", "0.1.1")] {
         let (provider_status, provider_body): (StatusCode, serde_json::Value) =
@@ -1992,13 +1987,13 @@ async fn provider_target_scoped_installs_install_all_repairs_invalid_bridge_when
     save_invalid_container_bridge_runtime(data_dir.path()).await;
 
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let state = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&state);
 
     let (install_status, install_body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -2038,7 +2033,7 @@ async fn provider_target_scoped_installs_install_all_repairs_invalid_bridge_when
     }
 
     let bridge_install_ids = state
-        .test_tracked_install_ids("acp-crp-bridge", Some(InstallTarget::Container))
+        .tracked_install_ids("acp-crp-bridge", Some(InstallTarget::Container))
         .await;
     assert_eq!(
         bridge_install_ids,
@@ -2066,13 +2061,13 @@ async fn acp_container_install_happy_path_installs_bridge_prerequisite_and_keeps
     .await;
 
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let state = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&state);
 
     let (install_status, install_body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -2099,7 +2094,7 @@ async fn acp_container_install_happy_path_installs_bridge_prerequisite_and_keeps
     );
 
     let bridge_install_id = state
-        .test_tracked_install_ids("acp-crp-bridge", Some(InstallTarget::Container))
+        .tracked_install_ids("acp-crp-bridge", Some(InstallTarget::Container))
         .await
         .into_iter()
         .next()
@@ -2145,13 +2140,13 @@ async fn acp_container_install_happy_path_installs_bridge_prerequisite_and_keeps
     );
 
     let reloaded_stores = common::setup_store(data_dir.path()).await;
-    let reloaded_state = common::build_state(
+    let reloaded_state = common::build_daemon(
         data_dir.path().to_path_buf(),
         reloaded_stores,
         HashMap::new(),
         "http://127.0.0.1:0",
     );
-    let reloaded_app = common::router(reloaded_state);
+    let reloaded_app = common::router_for_daemon(&reloaded_state);
 
     let (provider_status, provider_body): (StatusCode, serde_json::Value) = common::json_request(
         &reloaded_app,
@@ -2213,7 +2208,7 @@ async fn tracked_provider_install_surfaces_agent_server_config_errors() {
     write_invalid_agent_server_config(data_dir.path()).await;
 
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let state = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),
@@ -2224,14 +2219,10 @@ async fn tracked_provider_install_surfaces_agent_server_config_errors() {
         .await;
     assert!(started_new, "tracked install should start cleanly");
 
-    let err = ctx_managed_installs::install_provider_with_progress(
-        state.clone(),
-        install_id,
-        "kimi".to_string(),
-        InstallTarget::Container,
-    )
-    .await
-    .expect_err("invalid managed config should fail tracked install");
+    let err = state
+        .install_provider_with_progress(install_id, "kimi".to_string(), InstallTarget::Container)
+        .await
+        .expect_err("invalid managed config should fail tracked install");
     let err_text = format!("{err:#}");
     assert!(
         err_text.contains("loading agent server config for provider install contract resolution")
@@ -2270,13 +2261,13 @@ async fn invalid_managed_config_container_routes_do_not_seed_target_adapter_cach
 
     let repo = common::init_git_repo(&[("note.txt", "container\n")]).await;
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let state = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&state);
     let workspace = common::create_workspace(&app, repo.path(), "container-ws").await;
     write_workspace_container_execution_without_runtime_probe(&state, workspace.id.0).await;
 
@@ -2379,13 +2370,13 @@ async fn acp_container_install_repairs_invalid_bridge_runtime_and_keeps_registry
     save_invalid_container_bridge_runtime(data_dir.path()).await;
 
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let state = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&state);
 
     let (install_status, install_body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -2471,13 +2462,13 @@ async fn acp_container_install_parent_polling_stays_bounded_while_bridge_prerequ
     .await;
 
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let state = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&state);
 
     let (install_status, install_body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -2579,13 +2570,13 @@ async fn acp_container_install_joins_existing_bridge_install_and_surfaces_short_
     .await;
 
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let state = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&state);
 
     let (bridge_status, bridge_body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -2756,7 +2747,7 @@ async fn acp_container_install_joins_existing_bridge_install_and_surfaces_short_
     );
 
     let bridge_install_ids = state
-        .test_tracked_install_ids("acp-crp-bridge", Some(InstallTarget::Container))
+        .tracked_install_ids("acp-crp-bridge", Some(InstallTarget::Container))
         .await;
     assert_eq!(
         bridge_install_ids,
@@ -2818,13 +2809,13 @@ async fn claude_container_install_starts_host_cli_dependency_and_stays_not_ready
     .await;
 
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let state = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         HashMap::new(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&state);
 
     let (install_status, install_body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -3010,13 +3001,13 @@ async fn claude_container_install_starts_host_cli_dependency_and_stays_not_ready
     );
 
     let reloaded_stores = common::setup_store(data_dir.path()).await;
-    let reloaded_state = common::build_state(
+    let reloaded_state = common::build_daemon(
         data_dir.path().to_path_buf(),
         reloaded_stores,
         HashMap::new(),
         "http://127.0.0.1:0",
     );
-    let reloaded_app = common::router(reloaded_state);
+    let reloaded_app = common::router_for_daemon(&reloaded_state);
     let (provider_status, provider_body): (StatusCode, serde_json::Value) = common::json_request(
         &reloaded_app,
         axum::http::Method::GET,
@@ -3086,7 +3077,7 @@ async fn provider_target_scoped_installs_work_for_host_and_container_workspaces(
     let runtime = seed_target_scoped_codex_runtime(data_dir.path()).await;
     configure_container_image_defaults(data_dir.path()).await;
     let state = build_state_with_host_codex(data_dir.path(), &runtime.host_command).await;
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&state);
 
     let host_repo = common::init_git_repo(&[("note.txt", "host\n")]).await;
     let container_repo = common::init_git_repo(&[("note.txt", "container\n")]).await;

@@ -178,6 +178,10 @@ impl TestDaemon {
             .await;
     }
 
+    pub async fn refresh_provider_statuses(&self) -> anyhow::Result<()> {
+        ctx_managed_installs::refresh_provider_statuses(self.state.as_ref()).await
+    }
+
     pub async fn upsert_provider_status(&self, provider_id: String, status: ProviderStatus) {
         self.state
             .providers
@@ -253,12 +257,54 @@ impl TestDaemon {
         self.state.start_install(provider_id, target).await
     }
 
+    pub async fn find_running_install(
+        &self,
+        provider_id: &str,
+        target: Option<InstallTarget>,
+    ) -> Option<InstallId> {
+        self.state.find_running_install(provider_id, target).await
+    }
+
+    pub async fn install_provider_with_progress(
+        &self,
+        install_id: InstallId,
+        provider_id: String,
+        target: InstallTarget,
+    ) -> anyhow::Result<()> {
+        let state: Arc<ctx_managed_installs::AppState> = self.state.clone();
+        ctx_managed_installs::install_provider_with_progress(state, install_id, provider_id, target)
+            .await
+    }
+
     pub async fn emit_install_event(&self, install_id: InstallId, event: InstallProgressEvent) {
         self.state.emit_install_event(install_id, event).await;
     }
 
     pub async fn get_install_info(&self, install_id: InstallId) -> Option<InstallInfo> {
         self.state.get_install_info(install_id).await
+    }
+
+    pub async fn tracked_install_ids(
+        &self,
+        provider_id: &str,
+        target: Option<InstallTarget>,
+    ) -> Vec<InstallId> {
+        self.state
+            .test_tracked_install_ids(provider_id, target)
+            .await
+    }
+
+    pub async fn has_target_provider_adapter(&self, cache_key: &str) -> bool {
+        self.state.test_has_target_provider_adapter(cache_key).await
+    }
+
+    pub async fn target_provider_adapter_cache_keys(&self) -> Vec<String> {
+        self.state
+            .test_target_provider_adapter_entries()
+            .await
+            .into_iter()
+            .map(|(cache_key, _)| cache_key)
+            .collect()
     }
 
     pub async fn get_install_polling_info(&self, install_id: InstallId) -> Option<InstallInfo> {
