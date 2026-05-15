@@ -4,10 +4,12 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use ctx_core::ids::{
-    RunId, SessionId, TaskId, TerminalId, TurnId, WorkspaceAttachmentId, WorkspaceId, WorktreeId,
+    MessageId, RunId, SessionEventId, SessionId, TaskId, TerminalId, TurnId, WorkspaceAttachmentId,
+    WorkspaceId, WorktreeId,
 };
 use ctx_core::models::{
-    Session, SessionEvent, SessionEventType, SessionHeadDelta, WorkspaceAttachmentStatus, Worktree,
+    Message, MessageDelivery, MessageRole, Session, SessionEvent, SessionEventType,
+    SessionHeadDelta, SessionTurn, SessionTurnStatus, WorkspaceAttachmentStatus, Worktree,
     WorktreeVcsSnapshot,
 };
 use ctx_provider_install::install_state::{
@@ -25,6 +27,12 @@ use crate::daemon::{self, AppRuntimeFlags, DaemonHandle, DaemonState};
 #[derive(Clone)]
 pub struct TestDaemon {
     state: Arc<DaemonState>,
+}
+
+fn fixed_test_utc(offset_seconds: i64) -> chrono::DateTime<chrono::Utc> {
+    let base = chrono::DateTime::from_timestamp(1735689600, 0)
+        .expect("fixed test timestamp should be valid");
+    base + chrono::Duration::seconds(offset_seconds)
 }
 
 impl TestDaemon {
@@ -287,6 +295,101 @@ impl TestDaemon {
             anyhow::anyhow!("expected active head for workspace {workspace_id:?}")
         })?;
         Ok(head.last_event_seq)
+    }
+
+    pub async fn seed_workspace_stream_stress_session_head_for_test(
+        &self,
+        session: &Session,
+        turns_per_session: i64,
+        message_content: &str,
+        head_limit: u32,
+    ) -> anyhow::Result<()> {
+        let store = self.state.store_for_session(session.id).await?;
+        for turn_sequence in 0..turns_per_session {
+            let turn_id = TurnId::new();
+            let at = fixed_test_utc(turn_sequence);
+            store
+                .insert_session_turn(SessionTurn {
+                    turn_id,
+                    session_id: session.id,
+                    run_id: None,
+                    user_message_id: None,
+                    status: SessionTurnStatus::Completed,
+                    start_seq: Some(turn_sequence),
+                    end_seq: Some(turn_sequence),
+                    started_at: at,
+                    updated_at: at,
+                    assistant_partial: None,
+                    thought_partial: None,
+                    metrics_json: None,
+                    failure: None,
+                    tool_total: 0,
+                    tool_pending: 0,
+                    tool_running: 0,
+                    tool_completed: 0,
+                    tool_failed: 0,
+                })
+                .await?;
+
+            store
+                .insert_message(Message {
+                    id: MessageId::new(),
+                    session_id: session.id,
+                    task_id: session.task_id,
+                    run_id: None,
+                    turn_id: Some(turn_id),
+                    turn_sequence: Some(turn_sequence),
+                    order_seq: None,
+                    role: MessageRole::User,
+                    content: message_content.to_string(),
+                    attachments: Vec::new(),
+                    delivery: MessageDelivery::Immediate,
+                    delivered_at: None,
+                    created_at: at,
+                })
+                .await?;
+        }
+
+        let head = store
+            .get_session_head_snapshot(session.id, head_limit, true)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("session head snapshot {:?} not found", session.id))?;
+        self.state.test_update_session_head(head).await;
+        Ok(())
+    }
+
+    pub async fn publish_workspace_stream_stress_delta_for_test(
+        &self,
+        workspace_id: WorkspaceId,
+        session: &Session,
+        seq: i64,
+    ) {
+        let delta = SessionHeadDelta {
+            session_id: session.id,
+            last_event_seq: seq,
+            projection_rev: seq,
+            state_rev: 0,
+            emitted_at_ms: None,
+            session: None,
+            activity: None,
+            event: Some(SessionEvent {
+                seq,
+                id: SessionEventId::new(),
+                session_id: session.id,
+                run_id: None,
+                turn_id: None,
+                event_type: SessionEventType::Done,
+                payload_json: serde_json::json!({"ok": true}),
+                transient: false,
+                created_at: chrono::Utc::now(),
+            }),
+            turn: None,
+            message: None,
+            tool_summaries: Vec::new(),
+        };
+        self.state
+            .test_publish_session_head_delta_for_workspace(workspace_id, session, delta, false)
+            .await;
     }
 
     pub async fn reconcile_turn_terminal_state_for_test(

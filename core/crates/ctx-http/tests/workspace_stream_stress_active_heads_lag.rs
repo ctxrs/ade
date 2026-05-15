@@ -4,41 +4,35 @@ use std::sync::{
 };
 use std::time::Duration;
 
-use chrono::Utc;
 use futures::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
-use ctx_core::ids::{MessageId, SessionEventId, TurnId};
-use ctx_core::models::{
-    Message, MessageDelivery, MessageRole, SessionEvent, SessionEventType, SessionHeadDelta,
-    SessionTurn, SessionTurnStatus,
-};
-use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::test_support::TestDaemon;
 
 mod common;
 
 async fn setup() -> (
     tempfile::TempDir,
     tempfile::TempDir,
-    Arc<DaemonState>,
+    TestDaemon,
     common::TestServer,
 ) {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
 
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
     let server = common::spawn_http_server(app).await;
 
-    (repo, data_dir, state, server)
+    (repo, data_dir, daemon, server)
 }
 
 fn big_content(bytes: usize) -> String {
@@ -62,7 +56,7 @@ async fn workspace_stream_does_not_reset_during_hydration_when_active_heads_are_
     // - On older baselines (without compaction), hydration can take long enough that the head
     //   batch buffer overflows, causing reset_required.
 
-    let (repo, _data_dir, state, server) = setup().await;
+    let (repo, _data_dir, daemon, server) = setup().await;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -108,7 +102,7 @@ async fn workspace_stream_does_not_reset_during_hydration_when_active_heads_are_
     }
 
     // Hydrate active snapshot so update_session_head knows which sessions are primary.
-    state
+    daemon
         .ensure_workspace_active_snapshot_hydrated(ws.id)
         .await
         .unwrap();
@@ -117,57 +111,15 @@ async fn workspace_stream_does_not_reset_during_hydration_when_active_heads_are_
 
     // Seed turns+messages directly in the store to create large session heads.
     for session in &sessions {
-        let store = state.store_for_session(session.id).await.unwrap();
-        for t in 0..turns_per_session {
-            let turn_id = TurnId::new();
-            let at = common::fixed_utc(t);
-            let turn = SessionTurn {
-                turn_id,
-                session_id: session.id,
-                run_id: None,
-                user_message_id: None,
-                status: SessionTurnStatus::Completed,
-                start_seq: Some(t),
-                end_seq: Some(t),
-                started_at: at,
-                updated_at: at,
-                assistant_partial: None,
-                thought_partial: None,
-                metrics_json: None,
-                failure: None,
-                tool_total: 0,
-                tool_pending: 0,
-                tool_running: 0,
-                tool_completed: 0,
-                tool_failed: 0,
-            };
-            store.insert_session_turn(turn).await.unwrap();
-
-            let msg = Message {
-                id: MessageId::new(),
-                session_id: session.id,
-                task_id: session.task_id,
-                run_id: None,
-                turn_id: Some(turn_id),
-                turn_sequence: Some(t),
-                order_seq: None,
-                role: MessageRole::User,
-                content: content.clone(),
-                attachments: Vec::new(),
-                delivery: MessageDelivery::Immediate,
-                delivered_at: None,
-                created_at: at,
-            };
-            store.insert_message(msg).await.unwrap();
-        }
-
-        // Cache the head into workspace active snapshot.
-        let head = store
-            .get_session_head_snapshot(session.id, 200, true)
+        daemon
+            .seed_workspace_stream_stress_session_head_for_test(
+                session,
+                turns_per_session,
+                &content,
+                200,
+            )
             .await
-            .unwrap()
             .unwrap();
-        state.test_update_session_head(head).await;
     }
 
     let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
@@ -213,7 +165,7 @@ async fn workspace_stream_does_not_reset_during_hydration_when_active_heads_are_
     // while hydrating, so on a slow/large snapshot this should eventually overflow and reset.
     let stop = Arc::new(AtomicBool::new(false));
     let stop_pub = stop.clone();
-    let state_pub = state.clone();
+    let daemon_pub = daemon.clone();
     let ws_id = ws.id;
     let sessions_pub = sessions.clone();
 
@@ -225,31 +177,8 @@ async fn workspace_stream_does_not_reset_during_hydration_when_active_heads_are_
             let session = &sessions_pub[idx % sessions_pub.len()];
             idx += 1;
 
-            let delta = SessionHeadDelta {
-                session_id: session.id,
-                last_event_seq: seq,
-                projection_rev: seq,
-                state_rev: 0,
-                emitted_at_ms: None,
-                session: None,
-                activity: None,
-                event: Some(SessionEvent {
-                    seq,
-                    id: SessionEventId::new(),
-                    session_id: session.id,
-                    run_id: None,
-                    turn_id: None,
-                    event_type: SessionEventType::Done,
-                    payload_json: json!({"ok": true}),
-                    transient: false,
-                    created_at: Utc::now(),
-                }),
-                turn: None,
-                message: None,
-                tool_summaries: Vec::new(),
-            };
-            state_pub
-                .test_publish_session_head_delta_for_workspace(ws_id, session, delta, false)
+            daemon_pub
+                .publish_workspace_stream_stress_delta_for_test(ws_id, session, seq)
                 .await;
             seq += 1;
 
