@@ -6,6 +6,7 @@ const {
   DAEMON_EXTRACTION_BLOCKER_PATTERNS,
   API_DOMAIN_RAW_STORE_PATTERNS,
   API_RAW_DAEMON_PATTERNS,
+  EXECUTION_LAUNCH_TEST_STORE_ACCESS_PATTERNS,
   EXTERNAL_PROVIDER_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   FAULT_INJECTION_TEST_STORE_ACCESS_PATTERNS,
   GLOBAL_ID_ROUTING_TEST_STORE_ACCESS_PATTERNS,
@@ -34,6 +35,7 @@ const {
   apiPatternsForPath,
   authBoundaryStorePatternsForPath,
   externalProviderRouteStorePatternsForPath,
+  executionLaunchStorePatternsForPath,
   faultInjectionStorePatternsForPath,
   globalIdRoutingStorePatternsForPath,
   isTestRustPath,
@@ -1337,6 +1339,47 @@ test("daemon boundary guard rejects providerless lib-route direct StoreManager s
   );
 });
 
+test("daemon boundary guard rejects execution-launch direct store setup", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/lib_tests/execution_launch/host_mode.rs",
+    contents: `
+      use ctx_store::{Store, StoreManager};
+      async fn fixture(daemon: TestDaemon, stores: StoreManager) {
+        daemon.global_store();
+        daemon.store_for_session(session_id).await?;
+        daemon.store_for_workspace(workspace_id).await?;
+        daemon.uncached_store_for_workspace(workspace_id).await?;
+        daemon.store_for_task(task_id).await?;
+        daemon.stores();
+        stores.global();
+        stores.workspace(workspace_id);
+        test_daemon_with_providers(data_dir, stores, providers, None);
+      }
+    `,
+    patterns: executionLaunchStorePatternsForPath(
+      "core/crates/ctx-http/src/lib_tests/execution_launch/host_mode.rs",
+    ),
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct execution-launch global store access",
+      "direct execution-launch session store access",
+      "direct execution-launch workspace store access",
+      "direct execution-launch uncached workspace store access",
+      "direct execution-launch task store access",
+      "direct execution-launch StoreManager access",
+      "direct execution-launch StoreManager global access",
+      "direct execution-launch StoreManager workspace access",
+      "legacy execution-launch provider daemon construction",
+      "raw execution-launch ctx_store Store",
+      "raw execution-launch StoreManager",
+      "raw execution-launch StoreManager",
+    ],
+  );
+});
+
 test("daemon boundary guard scopes small-boundary store facade roots", () => {
   for (const filePath of [
     "core/crates/ctx-http/src/lib_tests/cors.rs",
@@ -1370,7 +1413,6 @@ test("daemon boundary guard scopes small-boundary store facade roots", () => {
   }
 
   for (const filePath of [
-    "core/crates/ctx-http/src/lib_tests/execution_launch/settings_errors.rs",
     "core/crates/ctx-http/src/api/sessions/tests.rs",
     "core/crates/ctx-http/src/api/sessions/tests/title_generation.rs",
     "core/crates/ctx-http/src/api/workspaces/tests.rs",
@@ -1380,6 +1422,30 @@ test("daemon boundary guard scopes small-boundary store facade roots", () => {
       SMALL_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
     );
   }
+  assert.deepEqual(
+    smallBoundaryStorePatternsForPath(
+      "core/crates/ctx-http/src/lib_tests/execution_launch/settings_errors.rs",
+    ),
+    [],
+  );
+  assert.deepEqual(
+    executionLaunchStorePatternsForPath(
+      "core/crates/ctx-http/src/lib_tests/execution_launch/settings_errors.rs",
+    ),
+    EXECUTION_LAUNCH_TEST_STORE_ACCESS_PATTERNS,
+  );
+  assert.deepEqual(
+    executionLaunchStorePatternsForPath(
+      "core/crates/ctx-http/src/lib_tests/execution_launch.rs",
+    ),
+    EXECUTION_LAUNCH_TEST_STORE_ACCESS_PATTERNS,
+  );
+  assert.deepEqual(
+    executionLaunchStorePatternsForPath(
+      "core/crates/ctx-http/src/lib_tests/cors.rs",
+    ),
+    [],
+  );
   assert.deepEqual(
     smallBoundaryStorePatternsForPath(
       "core/crates/ctx-http/src/lib_tests/provider_routes.rs",

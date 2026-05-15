@@ -192,11 +192,15 @@ const smallBoundaryStoreFacadeTestRoots = [
   "core/crates/ctx-http/src/lib_tests/telemetry_export_boundaries.rs",
   "core/crates/ctx-http/src/lib_tests/update_boundaries.rs",
   "core/crates/ctx-http/src/lib_tests/workspace_active_routes.rs",
-  "core/crates/ctx-http/src/lib_tests/execution_launch/settings_errors.rs",
   "core/crates/ctx-http/src/lib_tests/run_archive_routes.rs",
   "core/crates/ctx-http/src/api/sessions/tests.rs",
   "core/crates/ctx-http/src/api/sessions/tests/title_generation.rs",
   "core/crates/ctx-http/src/api/workspaces/tests.rs",
+];
+
+const executionLaunchStoreFacadeTestRoots = [
+  "core/crates/ctx-http/src/lib_tests/execution_launch.rs",
+  "core/crates/ctx-http/src/lib_tests/execution_launch/",
 ];
 
 const providerlessLibRouteStoreFacadeTestRoots = [
@@ -730,6 +734,53 @@ const SMALL_BOUNDARY_TEST_STORE_ACCESS_PATTERNS = [
 const PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS = [
   {
     name: "raw providerless lib-route StoreManager",
+    regex: /\bStoreManager\b/,
+  },
+];
+
+const EXECUTION_LAUNCH_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct execution-launch global store access",
+    regex: /\.global_store\s*\(/,
+  },
+  {
+    name: "direct execution-launch session store access",
+    regex: /\.store_for_session\s*\(/,
+  },
+  {
+    name: "direct execution-launch workspace store access",
+    regex: /\.store_for_workspace\s*\(/,
+  },
+  {
+    name: "direct execution-launch uncached workspace store access",
+    regex: /\.uncached_store_for_workspace\s*\(/,
+  },
+  {
+    name: "direct execution-launch task store access",
+    regex: /\.store_for_task\s*\(/,
+  },
+  {
+    name: "direct execution-launch StoreManager access",
+    regex: /\.stores\s*\(/,
+  },
+  {
+    name: "direct execution-launch StoreManager global access",
+    regex: /\bstores\.global\s*\(/,
+  },
+  {
+    name: "direct execution-launch StoreManager workspace access",
+    regex: /\bstores\.workspace\s*\(/,
+  },
+  {
+    name: "legacy execution-launch provider daemon construction",
+    regex: /\btest_daemon_with_providers\s*\(/,
+  },
+  {
+    name: "raw execution-launch ctx_store Store",
+    regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore\b/,
+  },
+  {
+    name: "raw execution-launch StoreManager",
     regex: /\bStoreManager\b/,
   },
 ];
@@ -1632,6 +1683,13 @@ function smallBoundaryStorePatternsForPath(relativePath) {
   return patterns;
 }
 
+function executionLaunchStorePatternsForPath(relativePath) {
+  if (executionLaunchStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return EXECUTION_LAUNCH_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
 function globalIdRoutingStorePatternsForPath(relativePath) {
   if (globalIdRoutingStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return GLOBAL_ID_ROUTING_TEST_STORE_ACCESS_PATTERNS;
@@ -1986,6 +2044,13 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
+        patterns: executionLaunchStorePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
         patterns: globalIdRoutingStorePatternsForPath(relativePath),
       }),
     );
@@ -2095,6 +2160,7 @@ module.exports = {
   DAEMON_EXTRACTION_BLOCKER_PATTERNS,
   API_RAW_DAEMON_PATTERNS,
   API_DOMAIN_RAW_STORE_PATTERNS,
+  EXECUTION_LAUNCH_TEST_STORE_ACCESS_PATTERNS,
   EXTERNAL_PROVIDER_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   FAULT_INJECTION_TEST_STORE_ACCESS_PATTERNS,
   GLOBAL_ID_ROUTING_TEST_STORE_ACCESS_PATTERNS,
@@ -2123,6 +2189,7 @@ module.exports = {
   apiPatternsForPath,
   authBoundaryStorePatternsForPath,
   externalProviderRouteStorePatternsForPath,
+  executionLaunchStorePatternsForPath,
   faultInjectionStorePatternsForPath,
   globalIdRoutingStorePatternsForPath,
   isTestRustPath,

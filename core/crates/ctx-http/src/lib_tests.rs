@@ -50,6 +50,26 @@ async fn test_daemon_for_test(data_dir: &Path, auth_token: Option<String>) -> Te
     .unwrap()
 }
 
+fn fake_provider_map_for_test() -> HashMap<String, Arc<dyn ProviderAdapter>> {
+    let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
+    providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
+    providers
+}
+
+async fn test_daemon_with_fake_provider_for_test(
+    data_dir: &Path,
+    auth_token: Option<String>,
+) -> TestDaemon {
+    TestDaemon::new_with_providers_for_test(
+        data_dir.to_path_buf(),
+        fake_provider_map_for_test(),
+        "http://127.0.0.1:4399".to_string(),
+        auth_token,
+    )
+    .await
+    .unwrap()
+}
+
 fn test_router(daemon: &TestDaemon) -> axum::Router {
     api::router(api::RouteHandles::from_daemon_handle(daemon.handle()))
 }

@@ -12,13 +12,7 @@ async fn execution_launch_startup_prewarm_kind_supported() {
         "CTX_HARNESS_SANDBOX_CLI_PATH",
         &sandbox_cli_path.to_string_lossy(),
     );
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-
-    let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
-        HashMap::new();
-    providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-
-    let state = test_daemon_with_providers(data_dir.path(), stores, providers, None);
+    let state = test_daemon_with_fake_provider_for_test(data_dir.path(), None).await;
     let app = test_router(&state);
 
     let req = Request::builder()

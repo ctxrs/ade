@@ -8,13 +8,7 @@ async fn execution_launch_start_returns_bad_request_when_execution_settings_fail
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-
-    let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
-        HashMap::new();
-    providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-
-    let state = test_daemon_with_providers(data_dir.path(), stores, providers, None);
+    let state = test_daemon_with_fake_provider_for_test(data_dir.path(), None).await;
     let app = test_router(&state);
 
     let workspace = create_workspace_via_api(&app, &git_repo.path().to_string_lossy()).await;
@@ -52,13 +46,7 @@ async fn ensure_workspace_container_returns_bad_request_when_execution_settings_
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-
-    let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
-        HashMap::new();
-    providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-
-    let state = test_daemon_with_providers(data_dir.path(), stores, providers, None);
+    let state = test_daemon_with_fake_provider_for_test(data_dir.path(), None).await;
     let app = test_router(&state);
 
     let workspace = create_workspace_via_api(&app, &git_repo.path().to_string_lossy()).await;
