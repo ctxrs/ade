@@ -1,11 +1,9 @@
 use std::path::Path;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::http::{Method, StatusCode};
-use ctx_core::ids::MergeQueueEntryId;
+use ctx_core::ids::{MergeQueueEntryId, WorkspaceId};
 use ctx_core::models::{MergeQueueEntry, MergeQueueEntryStatus};
-use ctx_daemon::daemon::DaemonState;
 use ctx_fs::git::git_status_porcelain;
 use serde_json::json;
 use tokio::process::Command;
@@ -104,19 +102,21 @@ async fn git_success(root: &Path, args: &[&str]) -> bool {
 }
 
 async fn wait_for_entry(
-    state: &Arc<DaemonState>,
-    workspace_id: ctx_core::ids::WorkspaceId,
+    store: &ctx_store::Store,
+    workspace_id: WorkspaceId,
     entry_id: MergeQueueEntryId,
 ) -> MergeQueueEntry {
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
-        let entry = ctx_merge_queue::get_workspace_merge_queue_entry::<DaemonState>(
-            state,
-            workspace_id,
-            entry_id,
-        )
-        .await
-        .unwrap();
+        let entry = store
+            .get_merge_queue_entry(entry_id)
+            .await
+            .unwrap()
+            .expect("expected merge queue entry");
+        assert_eq!(
+            entry.workspace_id, workspace_id,
+            "merge queue entry must belong to the expected workspace"
+        );
         match entry.status {
             MergeQueueEntryStatus::Queued | MergeQueueEntryStatus::Running => {
                 if Instant::now() > deadline {
@@ -151,17 +151,17 @@ async fn merge_queue_accepts_unrebased_changes() {
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
-    ctx_merge_queue::spawn_merge_queue_runner::<DaemonState>(state.clone());
+    let app = common::router_for_daemon(&daemon);
+    daemon.spawn_merge_queue_runner();
 
     let workspace = common::create_workspace(&app, repo.path(), "mq-unrebased").await;
-    let store = state.store_for_workspace(workspace.id).await.unwrap();
+    let store = daemon.store_for_workspace(workspace.id).await.unwrap();
     write_merge_queue_config(&store, &target_branch, "never").await;
 
     let worktree_root = tempfile::tempdir().unwrap();
@@ -196,7 +196,7 @@ async fn merge_queue_accepts_unrebased_changes() {
         )
         .await
         .unwrap();
-    state
+    daemon
         .global_store()
         .upsert_workspace_worktree_index(worktree.id, workspace.id)
         .await
@@ -213,7 +213,7 @@ async fn merge_queue_accepts_unrebased_changes() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let entry = wait_for_entry(&state, workspace.id, entry.id).await;
+    let entry = wait_for_entry(&store, workspace.id, entry.id).await;
     assert_eq!(entry.status, MergeQueueEntryStatus::Passed);
     let merge_queue_repo = repo.path().join(".ctx/merge-queue/repo");
     let mq_head = git_output(&merge_queue_repo, &["rev-parse", &target_branch]).await;
@@ -229,17 +229,17 @@ async fn merge_queue_conflict_message_and_cleanup() {
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
-    ctx_merge_queue::spawn_merge_queue_runner::<DaemonState>(state.clone());
+    let app = common::router_for_daemon(&daemon);
+    daemon.spawn_merge_queue_runner();
 
     let workspace = common::create_workspace(&app, repo.path(), "mq-conflict").await;
-    let store = state.store_for_workspace(workspace.id).await.unwrap();
+    let store = daemon.store_for_workspace(workspace.id).await.unwrap();
     write_merge_queue_config(&store, &target_branch, "never").await;
 
     let worktree_root = tempfile::tempdir().unwrap();
@@ -278,7 +278,7 @@ async fn merge_queue_conflict_message_and_cleanup() {
         )
         .await
         .unwrap();
-    state
+    daemon
         .global_store()
         .upsert_workspace_worktree_index(worktree.id, workspace.id)
         .await
@@ -303,7 +303,7 @@ async fn merge_queue_conflict_message_and_cleanup() {
         .into_iter()
         .next()
         .expect("expected merge queue entry");
-    let entry = wait_for_entry(&state, workspace.id, entry.id).await;
+    let entry = wait_for_entry(&store, workspace.id, entry.id).await;
     assert_eq!(entry.status, MergeQueueEntryStatus::Conflict);
     assert_eq!(
         entry.error_message.as_deref(),
@@ -337,17 +337,17 @@ async fn merge_queue_verify_failure_keeps_target_branch_and_records_commit() {
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
-    ctx_merge_queue::spawn_merge_queue_runner::<DaemonState>(state.clone());
+    let app = common::router_for_daemon(&daemon);
+    daemon.spawn_merge_queue_runner();
 
     let workspace = common::create_workspace(&app, repo.path(), "mq-verify-fail").await;
-    let store = state.store_for_workspace(workspace.id).await.unwrap();
+    let store = daemon.store_for_workspace(workspace.id).await.unwrap();
     write_merge_queue_config_with_options(
         &store,
         &target_branch,
@@ -387,7 +387,7 @@ async fn merge_queue_verify_failure_keeps_target_branch_and_records_commit() {
         )
         .await
         .unwrap();
-    state
+    daemon
         .global_store()
         .upsert_workspace_worktree_index(worktree.id, workspace.id)
         .await
@@ -406,7 +406,7 @@ async fn merge_queue_verify_failure_keeps_target_branch_and_records_commit() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
     let entry = wait_for_entry(
-        &state,
+        &store,
         workspace.id,
         latest_entry(&store, workspace.id).await.id,
     )
@@ -478,17 +478,17 @@ async fn merge_queue_push_failure_does_not_advance_target_branch() {
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
-    ctx_merge_queue::spawn_merge_queue_runner::<DaemonState>(state.clone());
+    let app = common::router_for_daemon(&daemon);
+    daemon.spawn_merge_queue_runner();
 
     let workspace = common::create_workspace(&app, repo.path(), "mq-push-fail").await;
-    let store = state.store_for_workspace(workspace.id).await.unwrap();
+    let store = daemon.store_for_workspace(workspace.id).await.unwrap();
     write_merge_queue_config_with_options(
         &store,
         &target_branch,
@@ -528,7 +528,7 @@ async fn merge_queue_push_failure_does_not_advance_target_branch() {
         )
         .await
         .unwrap();
-    state
+    daemon
         .global_store()
         .upsert_workspace_worktree_index(worktree.id, workspace.id)
         .await
@@ -547,7 +547,7 @@ async fn merge_queue_push_failure_does_not_advance_target_branch() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
     let entry = wait_for_entry(
-        &state,
+        &store,
         workspace.id,
         latest_entry(&store, workspace.id).await.id,
     )
@@ -598,17 +598,17 @@ async fn merge_queue_push_on_success_updates_remote_after_success() {
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
-    ctx_merge_queue::spawn_merge_queue_runner::<DaemonState>(state.clone());
+    let app = common::router_for_daemon(&daemon);
+    daemon.spawn_merge_queue_runner();
 
     let workspace = common::create_workspace(&app, repo.path(), "mq-push-success").await;
-    let store = state.store_for_workspace(workspace.id).await.unwrap();
+    let store = daemon.store_for_workspace(workspace.id).await.unwrap();
     write_merge_queue_config_with_options(
         &store,
         &target_branch,
@@ -648,7 +648,7 @@ async fn merge_queue_push_on_success_updates_remote_after_success() {
         )
         .await
         .unwrap();
-    state
+    daemon
         .global_store()
         .upsert_workspace_worktree_index(worktree.id, workspace.id)
         .await
@@ -666,7 +666,7 @@ async fn merge_queue_push_on_success_updates_remote_after_success() {
     .await;
     assert_eq!(status, StatusCode::OK);
 
-    let entry = wait_for_entry(&state, workspace.id, entry.id).await;
+    let entry = wait_for_entry(&store, workspace.id, entry.id).await;
     assert_eq!(entry.status, MergeQueueEntryStatus::Passed);
     let result_commit_sha = entry
         .result_commit_sha
@@ -708,17 +708,17 @@ async fn merge_queue_push_on_success_does_not_push_if_target_branch_advanced() {
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
-    ctx_merge_queue::spawn_merge_queue_runner::<DaemonState>(state.clone());
+    let app = common::router_for_daemon(&daemon);
+    daemon.spawn_merge_queue_runner();
 
     let workspace = common::create_workspace(&app, repo.path(), "mq-push-branch-advanced").await;
-    let store = state.store_for_workspace(workspace.id).await.unwrap();
+    let store = daemon.store_for_workspace(workspace.id).await.unwrap();
     write_merge_queue_config_with_options(
         &store,
         &target_branch,
@@ -758,7 +758,7 @@ async fn merge_queue_push_on_success_does_not_push_if_target_branch_advanced() {
         )
         .await
         .unwrap();
-    state
+    daemon
         .global_store()
         .upsert_workspace_worktree_index(worktree.id, workspace.id)
         .await
@@ -777,7 +777,7 @@ async fn merge_queue_push_on_success_does_not_push_if_target_branch_advanced() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
     let entry = wait_for_entry(
-        &state,
+        &store,
         workspace.id,
         latest_entry(&store, workspace.id).await.id,
     )
@@ -815,17 +815,17 @@ async fn merge_queue_isolation_and_canonical_sync() {
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
-    ctx_merge_queue::spawn_merge_queue_runner::<DaemonState>(state.clone());
+    let app = common::router_for_daemon(&daemon);
+    daemon.spawn_merge_queue_runner();
 
     let workspace = common::create_workspace(&app, repo.path(), "mq-test").await;
-    let store = state.store_for_workspace(workspace.id).await.unwrap();
+    let store = daemon.store_for_workspace(workspace.id).await.unwrap();
     write_merge_queue_config(&store, &target_branch, "never").await;
 
     let worktree_root = tempfile::tempdir().unwrap();
@@ -857,7 +857,7 @@ async fn merge_queue_isolation_and_canonical_sync() {
         )
         .await
         .unwrap();
-    state
+    daemon
         .global_store()
         .upsert_workspace_worktree_index(worktree1.id, workspace.id)
         .await
@@ -874,7 +874,7 @@ async fn merge_queue_isolation_and_canonical_sync() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let entry = wait_for_entry(&state, workspace.id, entry.id).await;
+    let entry = wait_for_entry(&store, workspace.id, entry.id).await;
     assert_eq!(entry.status, MergeQueueEntryStatus::Passed);
 
     let canonical_head = git_output(repo.path(), &["rev-parse", "HEAD"]).await;
@@ -924,7 +924,7 @@ async fn merge_queue_isolation_and_canonical_sync() {
         )
         .await
         .unwrap();
-    state
+    daemon
         .global_store()
         .upsert_workspace_worktree_index(worktree2.id, workspace.id)
         .await
@@ -941,7 +941,7 @@ async fn merge_queue_isolation_and_canonical_sync() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let entry = wait_for_entry(&state, workspace.id, entry.id).await;
+    let entry = wait_for_entry(&store, workspace.id, entry.id).await;
     assert_eq!(entry.status, MergeQueueEntryStatus::Passed);
     let canonical_head = git_output(repo.path(), &["rev-parse", "HEAD"]).await;
     let expected = entry.result_commit_sha.clone().unwrap();
@@ -972,7 +972,7 @@ async fn merge_queue_isolation_and_canonical_sync() {
         )
         .await
         .unwrap();
-    state
+    daemon
         .global_store()
         .upsert_workspace_worktree_index(worktree3.id, workspace.id)
         .await
@@ -991,7 +991,7 @@ async fn merge_queue_isolation_and_canonical_sync() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let entry = wait_for_entry(&state, workspace.id, entry.id).await;
+    let entry = wait_for_entry(&store, workspace.id, entry.id).await;
     assert_eq!(entry.status, MergeQueueEntryStatus::Passed);
 
     let canonical_dirty = git_status_porcelain(repo.path()).await.unwrap();
@@ -1019,17 +1019,17 @@ async fn merge_queue_submit_uses_worktree_root() {
 
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
-    ctx_merge_queue::spawn_merge_queue_runner::<DaemonState>(state.clone());
+    let app = common::router_for_daemon(&daemon);
+    daemon.spawn_merge_queue_runner();
 
     let workspace = common::create_workspace(&app, repo.path(), "mq-root").await;
-    let store = state.store_for_workspace(workspace.id).await.unwrap();
+    let store = daemon.store_for_workspace(workspace.id).await.unwrap();
     write_merge_queue_config(&store, &target_branch, "never").await;
     let (_task, session) =
         common::create_task_with_session(&app, workspace.id.0, "mq-root", "fake", "fake-model")
@@ -1067,7 +1067,7 @@ async fn merge_queue_submit_uses_worktree_root() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let entry = wait_for_entry(&state, workspace.id, entry.id).await;
+    let entry = wait_for_entry(&store, workspace.id, entry.id).await;
     assert_eq!(entry.status, MergeQueueEntryStatus::Passed);
     assert_eq!(
         entry.head_commit_sha.as_deref(),
