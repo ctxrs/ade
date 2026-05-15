@@ -1,5 +1,4 @@
 use super::*;
-use ctx_core::models::SandboxProfile;
 
 #[tokio::test]
 async fn archive_task_reclaims_managed_worktree_but_preserves_rematerialization_state() {
@@ -11,7 +10,6 @@ async fn archive_task_reclaims_managed_worktree_but_preserves_rematerialization_
         repo_root,
         state,
         workspace,
-        store,
         task,
         worktree,
         managed_root,
@@ -19,14 +17,11 @@ async fn archive_task_reclaims_managed_worktree_but_preserves_rematerialization_
 
     let host_materialization_root = temp.path().join("host-shadow");
     std::fs::create_dir_all(&host_materialization_root).expect("create host shadow root");
-    store
-        .upsert_sandbox_binding(SandboxBinding {
+    state
+        .seed_task_lifecycle_sandbox_binding_for_test(TaskLifecycleSandboxBindingSeed {
             worktree_id: worktree.id,
             workspace_id: workspace.id,
-            sandbox_instance_id: ctx_core::models::sandbox_instance_id_for_workspace(workspace.id),
             substrate: SandboxSubstrate::SharedVmContainer,
-            guest_identity: SandboxGuestIdentity::linux_container_ubuntu(),
-            profile: SandboxProfile::Standard,
             live_workspace_root: ctx_sandbox_contract::CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
             live_worktree_root: ctx_sandbox_contract::container_worktree_root(worktree.id)
                 .to_string_lossy()
@@ -35,10 +30,7 @@ async fn archive_task_reclaims_managed_worktree_but_preserves_rematerialization_
             container_name: Some(ctx_workspace_container::workspace_container_name(
                 workspace.id,
             )),
-            host_materialization_root: Some(
-                host_materialization_root.to_string_lossy().to_string(),
-            ),
-            created_at: Utc::now(),
+            host_materialization_root: Some(host_materialization_root.clone()),
         })
         .await
         .expect("insert sandbox binding");
@@ -59,11 +51,8 @@ async fn archive_task_reclaims_managed_worktree_but_preserves_rematerialization_
     let Json(_) = archive_task(tasks, Path(task.id.0.to_string()))
         .await
         .expect("archive task");
-    let archived_task = store
-        .get_task(task.id)
-        .await
-        .expect("load archived task")
-        .expect("archived task exists");
+    let snapshot = task_lifecycle_snapshot(&state, workspace.id, task.id, worktree.id).await;
+    let archived_task = snapshot.task.expect("archived task exists");
     assert!(
         archived_task.archived_at.is_some(),
         "task should be archived after archive_task"
@@ -82,19 +71,11 @@ async fn archive_task_reclaims_managed_worktree_but_preserves_rematerialization_
         "archive should reclaim the task worktree branch"
     );
     assert!(
-        store
-            .get_worktree(worktree.id)
-            .await
-            .expect("load worktree")
-            .is_some(),
+        snapshot.worktree.is_some(),
         "archive should preserve the worktree row"
     );
     assert!(
-        store
-            .get_sandbox_binding(worktree.id)
-            .await
-            .expect("load binding")
-            .is_some(),
+        snapshot.sandbox_binding.is_some(),
         "archive should preserve the sandbox binding row for rematerialization"
     );
     assert!(

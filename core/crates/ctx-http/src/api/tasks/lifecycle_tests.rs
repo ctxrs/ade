@@ -1,5 +1,8 @@
 use super::*;
-use ctx_core::models::{SandboxGuestIdentity, SandboxSubstrate, VcsKind};
+use ctx_core::models::{SandboxSubstrate, VcsKind};
+use ctx_daemon::test_support::{
+    TaskLifecycleSandboxBindingSeed, TaskLifecycleSessionSeed, TaskLifecycleWorktreeSeed,
+};
 use ctx_workspace_services::worktree_vcs::{branch_exists, managed_worktree_path};
 
 #[path = "lifecycle_tests/archive.rs"]

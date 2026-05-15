@@ -103,6 +103,44 @@ pub struct TurnReconciliationSnapshot {
     pub is_working: bool,
 }
 
+pub struct TaskLifecycleWorktreeSeed {
+    pub workspace_id: WorkspaceId,
+    pub owner_task_id: TaskId,
+    pub worktree_id: WorktreeId,
+    pub root_path: PathBuf,
+    pub base_commit: String,
+    pub git_branch: String,
+    pub make_primary: bool,
+}
+
+pub struct TaskLifecycleSandboxBindingSeed {
+    pub worktree_id: WorktreeId,
+    pub workspace_id: WorkspaceId,
+    pub substrate: SandboxSubstrate,
+    pub live_workspace_root: String,
+    pub live_worktree_root: String,
+    pub execution_settings_json: Option<String>,
+    pub container_name: Option<String>,
+    pub host_materialization_root: Option<PathBuf>,
+}
+
+pub struct TaskLifecycleSessionSeed {
+    pub task_id: TaskId,
+    pub workspace_id: WorkspaceId,
+    pub worktree_id: WorktreeId,
+    pub execution_environment: ExecutionEnvironment,
+    pub title: String,
+    pub parent_session_id: Option<SessionId>,
+    pub role: Option<String>,
+}
+
+pub struct TaskLifecycleSnapshot {
+    pub task: Option<Task>,
+    pub worktree: Option<Worktree>,
+    pub worktree_index_workspace_id: Option<WorkspaceId>,
+    pub sandbox_binding: Option<SandboxBinding>,
+}
+
 struct CtxUiTurnSeed {
     index: i64,
     run_id: String,
@@ -450,6 +488,17 @@ impl TestDaemon {
         Self::new_with_public_base_url(data_root, stores, providers, daemon_url, None, auth_token)
     }
 
+    pub async fn new_for_test(data_root: PathBuf, daemon_url: String) -> anyhow::Result<Self> {
+        let stores = StoreManager::open(&data_root).await?;
+        Ok(Self::new(
+            data_root,
+            stores,
+            HashMap::new(),
+            daemon_url,
+            None,
+        ))
+    }
+
     pub fn new_with_public_base_url(
         data_root: PathBuf,
         stores: StoreManager,
@@ -659,6 +708,211 @@ impl TestDaemon {
             .delete_workspace_task_index(task_id)
             .await
             .map_err(Into::into)
+    }
+
+    pub async fn seed_task_lifecycle_workspace_for_test(
+        &self,
+        name: &str,
+        root_path: &Path,
+        vcs_kind: VcsKind,
+    ) -> anyhow::Result<Workspace> {
+        let workspace = self
+            .state
+            .global_store()
+            .create_workspace(
+                name.to_string(),
+                root_path.to_string_lossy().to_string(),
+                vcs_kind,
+            )
+            .await?;
+        let _ = self.state.store_for_workspace(workspace.id).await?;
+        Ok(workspace)
+    }
+
+    pub async fn seed_task_lifecycle_task_for_test(
+        &self,
+        workspace_id: WorkspaceId,
+        title: &str,
+    ) -> anyhow::Result<Task> {
+        let store = self.state.store_for_workspace(workspace_id).await?;
+        let task = store
+            .create_task(workspace_id, title.to_string(), None)
+            .await?;
+        self.state
+            .global_store()
+            .upsert_workspace_task_index(task.id, workspace_id)
+            .await?;
+        Ok(task)
+    }
+
+    pub async fn seed_task_lifecycle_stale_task_index_for_test(
+        &self,
+        task_id: TaskId,
+        workspace_id: WorkspaceId,
+    ) -> anyhow::Result<()> {
+        self.state
+            .global_store()
+            .upsert_workspace_task_index(task_id, workspace_id)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn seed_task_lifecycle_worktree_for_test(
+        &self,
+        seed: TaskLifecycleWorktreeSeed,
+    ) -> anyhow::Result<Worktree> {
+        let store = self.state.store_for_workspace(seed.workspace_id).await?;
+        let worktree = store
+            .insert_worktree(Worktree {
+                id: seed.worktree_id,
+                workspace_id: seed.workspace_id,
+                root_path: seed.root_path.to_string_lossy().to_string(),
+                base_commit_sha: seed.base_commit.clone(),
+                git_branch: Some(seed.git_branch),
+                vcs_kind: Some(VcsKind::Git),
+                base_revision: Some(seed.base_commit),
+                vcs_ref: Some(String::new()),
+                created_at: chrono::Utc::now(),
+                bootstrap_status: None,
+                bootstrap_started_at: None,
+                bootstrap_finished_at: None,
+                bootstrap_exit_code: None,
+                bootstrap_timeout_sec: None,
+                bootstrap_error: None,
+                bootstrap_log_path: None,
+                bootstrap_log_truncated: None,
+                bootstrap_command: None,
+                bootstrap_script_path: None,
+            })
+            .await?;
+        self.state
+            .global_store()
+            .upsert_workspace_worktree_index(worktree.id, seed.workspace_id)
+            .await?;
+        if seed.make_primary {
+            store
+                .set_task_primary_worktree(seed.owner_task_id, worktree.id)
+                .await?;
+        }
+        Ok(worktree)
+    }
+
+    pub async fn seed_task_lifecycle_sandbox_binding_for_test(
+        &self,
+        seed: TaskLifecycleSandboxBindingSeed,
+    ) -> anyhow::Result<()> {
+        let store = self.state.store_for_workspace(seed.workspace_id).await?;
+        store
+            .upsert_sandbox_binding(SandboxBinding {
+                worktree_id: seed.worktree_id,
+                workspace_id: seed.workspace_id,
+                sandbox_instance_id: ctx_core::models::sandbox_instance_id_for_workspace(
+                    seed.workspace_id,
+                ),
+                substrate: seed.substrate,
+                guest_identity: SandboxGuestIdentity::linux_container_ubuntu(),
+                profile: SandboxProfile::Standard,
+                live_workspace_root: seed.live_workspace_root,
+                live_worktree_root: seed.live_worktree_root,
+                execution_settings_json: seed.execution_settings_json,
+                container_name: seed.container_name,
+                host_materialization_root: seed
+                    .host_materialization_root
+                    .map(|path| path.to_string_lossy().to_string()),
+                created_at: chrono::Utc::now(),
+            })
+            .await?;
+        Ok(())
+    }
+
+    pub async fn save_task_lifecycle_execution_settings_for_test(
+        &self,
+        execution: ExecutionSettings,
+    ) -> anyhow::Result<()> {
+        let settings = Settings {
+            execution: Some(execution),
+            ..Default::default()
+        };
+        ctx_settings_service::save_settings(self.state.global_store(), &settings).await?;
+        Ok(())
+    }
+
+    pub async fn task_lifecycle_effective_execution_settings_for_test(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> anyhow::Result<ExecutionSettings> {
+        self.handle()
+            .workspaces()
+            .effective_execution_settings(workspace_id)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn seed_task_lifecycle_session_for_test(
+        &self,
+        seed: TaskLifecycleSessionSeed,
+    ) -> anyhow::Result<Session> {
+        let store = self.state.store_for_workspace(seed.workspace_id).await?;
+        let session = store
+            .create_session(
+                seed.task_id,
+                seed.workspace_id,
+                seed.worktree_id,
+                seed.execution_environment,
+                "fake".to_string(),
+                "model".to_string(),
+                seed.title,
+                seed.parent_session_id,
+                seed.role,
+                None,
+            )
+            .await?;
+        self.state
+            .global_store()
+            .upsert_workspace_session_index(session.id, seed.workspace_id)
+            .await?;
+        Ok(session)
+    }
+
+    pub async fn archive_task_lifecycle_row_for_test(
+        &self,
+        workspace_id: WorkspaceId,
+        task_id: TaskId,
+    ) -> anyhow::Result<bool> {
+        let store = self.state.store_for_workspace(workspace_id).await?;
+        store.archive_task(task_id).await.map_err(Into::into)
+    }
+
+    pub async fn archive_task_lifecycle_subagent_session_for_test(
+        &self,
+        workspace_id: WorkspaceId,
+        parent_session_id: SessionId,
+        child_session_id: SessionId,
+    ) -> anyhow::Result<bool> {
+        let store = self.state.store_for_workspace(workspace_id).await?;
+        store
+            .archive_subagent_session(parent_session_id, child_session_id)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn task_lifecycle_snapshot_for_test(
+        &self,
+        workspace_id: WorkspaceId,
+        task_id: TaskId,
+        worktree_id: WorktreeId,
+    ) -> anyhow::Result<TaskLifecycleSnapshot> {
+        let store = self.state.store_for_workspace(workspace_id).await?;
+        Ok(TaskLifecycleSnapshot {
+            task: store.get_task(task_id).await?,
+            worktree: store.get_worktree(worktree_id).await?,
+            worktree_index_workspace_id: self
+                .state
+                .global_store()
+                .get_workspace_id_for_worktree(worktree_id)
+                .await?,
+            sandbox_binding: store.get_sandbox_binding(worktree_id).await?,
+        })
     }
 
     pub async fn seed_shutdown_running_turn_for_test(

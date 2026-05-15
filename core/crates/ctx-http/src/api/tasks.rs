@@ -28,8 +28,6 @@ use super::errors::ApiErrorResp;
 use ctx_core::ids::WorktreeId;
 use ctx_core::ids::{TaskId, WorkspaceId};
 #[cfg(test)]
-use ctx_core::models::SandboxBinding;
-#[cfg(test)]
 use ctx_core::models::Workspace;
 #[cfg(test)]
 use ctx_core::models::Worktree;

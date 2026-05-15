@@ -163,6 +163,11 @@ const schedulerRuntimeStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/turn_terminal_reconciliation.rs",
 ];
 
+const taskLifecycleStoreFacadeTestRoots = [
+  "core/crates/ctx-http/src/api/tasks/lifecycle_tests.rs",
+  "core/crates/ctx-http/src/api/tasks/lifecycle_tests/",
+];
+
 const API_RAW_DAEMON_PATTERNS = [
   {
     name: "raw DaemonState type",
@@ -489,6 +494,58 @@ const SCHEDULER_RUNTIME_TEST_STORE_ACCESS_PATTERNS = [
   },
 ];
 
+const TASK_LIFECYCLE_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct task-lifecycle global store access",
+    regex: /\.global_store\s*\(/,
+  },
+  {
+    name: "direct task-lifecycle session store access",
+    regex: /\.store_for_session\s*\(/,
+  },
+  {
+    name: "direct task-lifecycle workspace store access",
+    regex: /\.store_for_workspace\s*\(/,
+  },
+  {
+    name: "direct task-lifecycle uncached workspace store access",
+    regex: /\.uncached_store_for_workspace\s*\(/,
+  },
+  {
+    name: "direct task-lifecycle task store access",
+    regex: /\.store_for_task\s*\(/,
+  },
+  {
+    name: "direct task-lifecycle StoreManager access",
+    regex: /\.stores\s*\(/,
+  },
+  {
+    name: "direct task-lifecycle StoreManager global access",
+    regex: /\bstores\.global\s*\(/,
+  },
+  {
+    name: "direct task-lifecycle StoreManager workspace access",
+    regex: /\bstores\.workspace\s*\(/,
+  },
+  {
+    name: "direct task-lifecycle settings persistence",
+    regex: /\bctx_settings_service::save_settings\s*\(/,
+  },
+  {
+    name: "direct task-lifecycle workspaces handle access",
+    regex: /a^/,
+    contentRegex: /\.handle\s*\(\s*\)\s*\.\s*workspaces\s*\(/gm,
+  },
+  {
+    name: "raw task-lifecycle ctx_store Store",
+    regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore\b/,
+  },
+  {
+    name: "raw task-lifecycle StoreManager",
+    regex: /\bStoreManager\b/,
+  },
+];
+
 function isRustFile(filePath) {
   return filePath.endsWith(".rs");
 }
@@ -662,6 +719,13 @@ function smallBoundaryStorePatternsForPath(relativePath) {
 function schedulerRuntimeStorePatternsForPath(relativePath) {
   if (schedulerRuntimeStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return SCHEDULER_RUNTIME_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
+function taskLifecycleStorePatternsForPath(relativePath) {
+  if (taskLifecycleStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return TASK_LIFECYCLE_TEST_STORE_ACCESS_PATTERNS;
   }
   return [];
 }
@@ -912,6 +976,13 @@ function scanRepo() {
       }),
     );
     violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
+        patterns: taskLifecycleStorePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
       ...scanRouterComposition({
         filePath: relativePath,
         contents,
@@ -954,6 +1025,7 @@ module.exports = {
   SCHEDULER_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
   SESSION_FIXTURE_TEST_STORE_ACCESS_PATTERNS,
   SMALL_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
+  TASK_LIFECYCLE_TEST_STORE_ACCESS_PATTERNS,
   TEST_ROUTER_COMPOSITION_PATTERNS,
   TEST_RAW_DAEMON_BUCKET_PATTERNS,
   apiPatternsForPath,
@@ -969,5 +1041,6 @@ module.exports = {
   schedulerRuntimeStorePatternsForPath,
   sessionFixtureStorePatternsForPath,
   smallBoundaryStorePatternsForPath,
+  taskLifecycleStorePatternsForPath,
   stripCfgTestItems,
 };

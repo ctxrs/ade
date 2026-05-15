@@ -3,100 +3,55 @@ use super::*;
 #[tokio::test]
 async fn delete_task_cleans_up_archived_subagent_worktree() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let repo_root = temp.path().join("repo");
-    std::fs::create_dir_all(&repo_root).expect("create repo root");
-    let base_commit = init_git_workspace(&repo_root);
-    let state = test_state(temp.path()).await;
-    let workspace = state
-        .global_store()
-        .create_workspace(
-            "ws".to_string(),
-            repo_root.to_string_lossy().to_string(),
-            VcsKind::Git,
-        )
-        .await
-        .expect("create workspace");
-    let store = state
-        .store_for_workspace(workspace.id)
-        .await
-        .expect("workspace store");
-    let task = store
-        .create_task(workspace.id, "task".to_string(), None)
-        .await
-        .expect("create task");
-    state
-        .global_store()
-        .upsert_workspace_task_index(task.id, workspace.id)
-        .await
-        .expect("upsert task index");
-    let (parent_worktree, parent_root) = insert_managed_worktree(
-        &store,
-        temp.path(),
-        &workspace,
-        task.id,
-        &repo_root,
-        &base_commit,
-    )
-    .await;
+    let ManagedTaskFixture {
+        repo_root,
+        state,
+        workspace,
+        task,
+        worktree: parent_worktree,
+        managed_root: parent_root,
+    } = create_managed_task_fixture(temp.path()).await;
+    let base_commit = parent_worktree.base_commit_sha.clone();
     let (child_worktree, child_root) = insert_managed_worktree(
-        &store,
+        &state,
         temp.path(),
         &workspace,
         task.id,
         &repo_root,
         &base_commit,
+        false,
     )
     .await;
-    for worktree in [&parent_worktree, &child_worktree] {
-        state
-            .global_store()
-            .upsert_workspace_worktree_index(worktree.id, workspace.id)
-            .await
-            .expect("upsert worktree index");
-    }
-    store
-        .set_task_primary_worktree(task.id, parent_worktree.id)
-        .await
-        .expect("set primary worktree");
-    let parent_session = store
-        .create_session(
-            task.id,
-            workspace.id,
-            parent_worktree.id,
-            ExecutionEnvironment::Sandbox,
-            "fake".to_string(),
-            "model".to_string(),
-            "parent".to_string(),
-            None,
-            None,
-            None,
-        )
+    let parent_session = state
+        .seed_task_lifecycle_session_for_test(TaskLifecycleSessionSeed {
+            task_id: task.id,
+            workspace_id: workspace.id,
+            worktree_id: parent_worktree.id,
+            execution_environment: ExecutionEnvironment::Sandbox,
+            title: "parent".to_string(),
+            parent_session_id: None,
+            role: None,
+        })
         .await
         .expect("create parent session");
-    let child_session = store
-        .create_session(
-            task.id,
-            workspace.id,
-            child_worktree.id,
-            ExecutionEnvironment::Sandbox,
-            "fake".to_string(),
-            "model".to_string(),
-            "child".to_string(),
-            Some(parent_session.id),
-            Some("sub_agent".to_string()),
-            None,
-        )
+    let child_session = state
+        .seed_task_lifecycle_session_for_test(TaskLifecycleSessionSeed {
+            task_id: task.id,
+            workspace_id: workspace.id,
+            worktree_id: child_worktree.id,
+            execution_environment: ExecutionEnvironment::Sandbox,
+            title: "child".to_string(),
+            parent_session_id: Some(parent_session.id),
+            role: Some("sub_agent".to_string()),
+        })
         .await
         .expect("create child session");
-    for session in [&parent_session, &child_session] {
-        state
-            .global_store()
-            .upsert_workspace_session_index(session.id, workspace.id)
-            .await
-            .expect("upsert session index");
-    }
-    assert!(store
-        .archive_subagent_session(parent_session.id, child_session.id)
+    assert!(state
+        .archive_task_lifecycle_subagent_session_for_test(
+            workspace.id,
+            parent_session.id,
+            child_session.id,
+        )
         .await
         .expect("archive child session"));
 
@@ -107,36 +62,30 @@ async fn delete_task_cleans_up_archived_subagent_worktree() {
     assert_eq!(status, StatusCode::NO_CONTENT);
 
     assert!(
-        store
-            .get_worktree(parent_worktree.id)
+        task_lifecycle_snapshot(&state, workspace.id, task.id, parent_worktree.id)
             .await
-            .expect("load parent worktree")
+            .worktree
             .is_none(),
         "delete should remove the parent worktree row"
     );
     assert!(
-        store
-            .get_worktree(child_worktree.id)
+        task_lifecycle_snapshot(&state, workspace.id, task.id, child_worktree.id)
             .await
-            .expect("load child worktree")
+            .worktree
             .is_none(),
         "delete should remove the archived child worktree row"
     );
     assert!(
-        state
-            .global_store()
-            .get_workspace_id_for_worktree(parent_worktree.id)
+        task_lifecycle_snapshot(&state, workspace.id, task.id, parent_worktree.id)
             .await
-            .expect("load parent worktree index")
+            .worktree_index_workspace_id
             .is_none(),
         "delete should remove the parent worktree index"
     );
     assert!(
-        state
-            .global_store()
-            .get_workspace_id_for_worktree(child_worktree.id)
+        task_lifecycle_snapshot(&state, workspace.id, task.id, child_worktree.id)
             .await
-            .expect("load child worktree index")
+            .worktree_index_workspace_id
             .is_none(),
         "delete should remove the archived child worktree index"
     );

@@ -1,5 +1,4 @@
 use super::super::*;
-use ctx_core::models::SandboxProfile;
 
 #[tokio::test]
 async fn unarchive_task_fails_closed_for_corrupt_binding_snapshot() {
@@ -7,58 +6,19 @@ async fn unarchive_task_fails_closed_for_corrupt_binding_snapshot() {
         .lock()
         .await;
     let temp = tempfile::tempdir().expect("tempdir");
-    let repo_root = temp.path().join("repo");
-    std::fs::create_dir_all(&repo_root).expect("create repo root");
-    let base_commit = init_git_workspace(&repo_root);
-    let state = test_state(temp.path()).await;
-    let workspace = state
-        .global_store()
-        .create_workspace(
-            "ws".to_string(),
-            repo_root.to_string_lossy().to_string(),
-            VcsKind::Git,
-        )
-        .await
-        .expect("create workspace");
-    let store = state
-        .store_for_workspace(workspace.id)
-        .await
-        .expect("workspace store");
-    let task = store
-        .create_task(workspace.id, "task".to_string(), None)
-        .await
-        .expect("create task");
+    let ManagedTaskFixture {
+        state,
+        workspace,
+        task,
+        worktree,
+        managed_root,
+        ..
+    } = create_managed_task_fixture(temp.path()).await;
     state
-        .global_store()
-        .upsert_workspace_task_index(task.id, workspace.id)
-        .await
-        .expect("upsert task index");
-    let (worktree, managed_root) = insert_managed_worktree(
-        &store,
-        temp.path(),
-        &workspace,
-        task.id,
-        &repo_root,
-        &base_commit,
-    )
-    .await;
-    state
-        .global_store()
-        .upsert_workspace_worktree_index(worktree.id, workspace.id)
-        .await
-        .expect("upsert worktree index");
-    store
-        .set_task_primary_worktree(task.id, worktree.id)
-        .await
-        .expect("set primary worktree");
-    store
-        .upsert_sandbox_binding(SandboxBinding {
+        .seed_task_lifecycle_sandbox_binding_for_test(TaskLifecycleSandboxBindingSeed {
             worktree_id: worktree.id,
             workspace_id: workspace.id,
-            sandbox_instance_id: ctx_core::models::sandbox_instance_id_for_workspace(workspace.id),
             substrate: SandboxSubstrate::NativeContainer,
-            guest_identity: SandboxGuestIdentity::linux_container_ubuntu(),
-            profile: SandboxProfile::Standard,
             live_workspace_root: ctx_sandbox_contract::CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
             live_worktree_root: ctx_sandbox_contract::container_worktree_root(worktree.id)
                 .to_string_lossy()
@@ -80,7 +40,6 @@ async fn unarchive_task_fails_closed_for_corrupt_binding_snapshot() {
                 workspace.id,
             )),
             host_materialization_root: None,
-            created_at: Utc::now(),
         })
         .await
         .expect("insert corrupt sandbox binding");
@@ -107,11 +66,10 @@ async fn unarchive_task_fails_closed_for_corrupt_binding_snapshot() {
         .await
         .expect_err("corrupt binding snapshot should fail closed");
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    let snapshot = task_lifecycle_snapshot(&state, workspace.id, task.id, worktree.id).await;
     assert!(
-        store
-            .get_task(task.id)
-            .await
-            .expect("load task after failed unarchive")
+        snapshot
+            .task
             .expect("task should still exist")
             .archived_at
             .is_some(),
@@ -122,11 +80,7 @@ async fn unarchive_task_fails_closed_for_corrupt_binding_snapshot() {
         "failed unarchive should not destroy the canonical managed worktree root"
     );
     assert!(
-        store
-            .get_sandbox_binding(worktree.id)
-            .await
-            .expect("load binding after failed unarchive")
-            .is_some(),
+        snapshot.sandbox_binding.is_some(),
         "failed unarchive should preserve the persisted binding row for repair"
     );
 }

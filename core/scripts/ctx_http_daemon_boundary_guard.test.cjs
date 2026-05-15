@@ -13,6 +13,7 @@ const {
   SCHEDULER_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
   SESSION_FIXTURE_TEST_STORE_ACCESS_PATTERNS,
   SMALL_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
+  TASK_LIFECYCLE_TEST_STORE_ACCESS_PATTERNS,
   TEST_ROUTER_COMPOSITION_PATTERNS,
   TEST_RAW_DAEMON_BUCKET_PATTERNS,
   apiPatternsForPath,
@@ -28,6 +29,7 @@ const {
   schedulerRuntimeStorePatternsForPath,
   sessionFixtureStorePatternsForPath,
   smallBoundaryStorePatternsForPath,
+  taskLifecycleStorePatternsForPath,
   stripCfgTestItems,
 } = require("./ctx_http_daemon_boundary_guard.cjs");
 
@@ -944,6 +946,71 @@ test("daemon boundary guard scopes scheduler-runtime store facade roots", () => 
   }
   assert.deepEqual(
     schedulerRuntimeStorePatternsForPath("core/crates/ctx-http/tests/noisy_output_backpressure.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects direct task-lifecycle store access", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/tasks/lifecycle_tests/fixtures.rs",
+    contents: `
+      use ctx_store::{Store, StoreManager};
+      async fn fixture(daemon: TestDaemon, stores: StoreManager) {
+        daemon.global_store();
+        daemon.store_for_session(session_id).await?;
+        daemon.store_for_workspace(workspace_id).await?;
+        daemon.uncached_store_for_workspace(workspace_id).await?;
+        daemon.store_for_task(task_id).await?;
+        daemon.stores().global().await?;
+        stores.global().await?;
+        stores.workspace(workspace_id).await?;
+        ctx_settings_service::save_settings(daemon.global_store(), &settings).await?;
+        daemon
+          .handle()
+          .workspaces();
+        let _raw: Store;
+      }
+    `,
+    patterns: TASK_LIFECYCLE_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct task-lifecycle global store access",
+      "direct task-lifecycle global store access",
+      "direct task-lifecycle session store access",
+      "direct task-lifecycle workspace store access",
+      "direct task-lifecycle uncached workspace store access",
+      "direct task-lifecycle task store access",
+      "direct task-lifecycle StoreManager access",
+      "direct task-lifecycle StoreManager global access",
+      "direct task-lifecycle StoreManager workspace access",
+      "direct task-lifecycle settings persistence",
+      "direct task-lifecycle workspaces handle access",
+      "raw task-lifecycle ctx_store Store",
+      "raw task-lifecycle ctx_store Store",
+      "raw task-lifecycle StoreManager",
+      "raw task-lifecycle StoreManager",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes task-lifecycle store facade roots", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/src/api/tasks/lifecycle_tests.rs",
+    "core/crates/ctx-http/src/api/tasks/lifecycle_tests/fixtures.rs",
+    "core/crates/ctx-http/src/api/tasks/lifecycle_tests/delete/subagent_worktree.rs",
+  ]) {
+    assert.deepEqual(
+      taskLifecycleStorePatternsForPath(filePath),
+      TASK_LIFECYCLE_TEST_STORE_ACCESS_PATTERNS,
+    );
+  }
+  assert.deepEqual(
+    taskLifecycleStorePatternsForPath(
+      "core/crates/ctx-http/src/api/tasks/storage_admission_http_tests/fixtures.rs",
+    ),
     [],
   );
 });

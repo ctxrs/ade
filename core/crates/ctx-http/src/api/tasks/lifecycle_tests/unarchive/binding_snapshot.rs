@@ -1,5 +1,4 @@
 use super::super::*;
-use ctx_core::models::SandboxProfile;
 
 #[tokio::test]
 async fn unarchive_task_recreates_managed_root_and_keeps_binding_snapshot_runtime() {
@@ -11,7 +10,6 @@ async fn unarchive_task_recreates_managed_root_and_keeps_binding_snapshot_runtim
         repo_root,
         state,
         workspace,
-        store,
         task,
         worktree,
         managed_root,
@@ -27,14 +25,11 @@ async fn unarchive_task_recreates_managed_root_and_keeps_binding_snapshot_runtim
             ..ctx_settings_model::ContainerExecutionSettings::default()
         },
     };
-    store
-        .upsert_sandbox_binding(SandboxBinding {
+    state
+        .seed_task_lifecycle_sandbox_binding_for_test(TaskLifecycleSandboxBindingSeed {
             worktree_id: worktree.id,
             workspace_id: workspace.id,
-            sandbox_instance_id: ctx_core::models::sandbox_instance_id_for_workspace(workspace.id),
             substrate: SandboxSubstrate::NativeContainer,
-            guest_identity: SandboxGuestIdentity::linux_container_ubuntu(),
-            profile: SandboxProfile::Standard,
             live_workspace_root: ctx_sandbox_contract::CTX_CONTAINER_WORKSPACE_ROOT.to_string(),
             live_worktree_root: ctx_sandbox_contract::container_worktree_root(worktree.id)
                 .to_string_lossy()
@@ -46,7 +41,6 @@ async fn unarchive_task_recreates_managed_root_and_keeps_binding_snapshot_runtim
                 workspace.id,
             )),
             host_materialization_root: None,
-            created_at: Utc::now(),
         })
         .await
         .expect("insert sandbox binding");
@@ -155,9 +149,7 @@ async fn unarchive_task_recreates_managed_root_and_keeps_binding_snapshot_runtim
     );
 
     let current_effective = state
-        .handle()
-        .workspaces()
-        .effective_execution_settings(workspace.id)
+        .task_lifecycle_effective_execution_settings_for_test(workspace.id)
         .await
         .expect("load current effective settings");
     assert_eq!(
@@ -166,10 +158,9 @@ async fn unarchive_task_recreates_managed_root_and_keeps_binding_snapshot_runtim
         "workspace defaults should now point at the new runtime"
     );
 
-    let binding = store
-        .get_sandbox_binding(worktree.id)
+    let binding = task_lifecycle_snapshot(&state, workspace.id, task.id, worktree.id)
         .await
-        .expect("load rematerialized binding")
+        .sandbox_binding
         .expect("binding should remain present after unarchive");
     assert_eq!(binding.substrate, SandboxSubstrate::NativeContainer);
     assert_eq!(

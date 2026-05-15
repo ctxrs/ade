@@ -14,8 +14,7 @@ async fn task_mutations_return_not_found_for_stale_task_index() {
     let state = test_state(temp.path()).await;
     let stale_task_id = TaskId::new();
     state
-        .global_store()
-        .upsert_workspace_task_index(stale_task_id, WorkspaceId::new())
+        .seed_task_lifecycle_stale_task_index_for_test(stale_task_id, WorkspaceId::new())
         .await
         .expect("seed stale task index");
 
