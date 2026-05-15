@@ -6,7 +6,6 @@ use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use serde_json::json;
 
-use ctx_daemon::daemon::{provider_guard, provider_restart, resource_telemetry};
 use ctx_settings_model::{
     ProviderGuardSettings, ProviderRestartSettings, ResourceGovernanceMode, Settings,
 };
@@ -98,13 +97,13 @@ async fn run_scenario(label: &'static str, monitoring_enabled: bool) -> LeakRepo
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let session_count = env_u64("CTX_MEMLEAK_SESSION_COUNT").unwrap_or(6);
@@ -140,16 +139,11 @@ async fn run_scenario(label: &'static str, monitoring_enabled: bool) -> LeakRepo
         }),
         ..Default::default()
     };
-    provider_guard::apply_settings(&state, &settings)
+    daemon
+        .apply_provider_monitoring_settings_for_test(&settings)
         .await
         .unwrap();
-    provider_restart::apply_settings(&state, &settings)
-        .await
-        .unwrap();
-
-    resource_telemetry::spawn_resource_telemetry(state.clone());
-    provider_guard::spawn_provider_guard(state.clone());
-    provider_restart::spawn_provider_restart(state.clone());
+    daemon.spawn_provider_monitoring_for_test();
 
     let duration_secs = env_u64("CTX_MEMLEAK_DURATION_SECS").unwrap_or(60);
     let delay_ms = env_u64("CTX_MEMLEAK_MESSAGE_INTERVAL_MS").unwrap_or(50);
@@ -213,7 +207,7 @@ async fn run_scenario(label: &'static str, monitoring_enabled: bool) -> LeakRepo
         slope_mb_per_min
     );
 
-    state.test_request_shutdown();
+    daemon.request_shutdown();
 
     LeakReport {
         label,

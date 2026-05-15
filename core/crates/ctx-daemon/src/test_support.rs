@@ -14,6 +14,7 @@ use ctx_provider_install::install_state::{
 };
 use ctx_provider_runtime::{provider_usage, CachedProviderOptions, CachedProviderVerify};
 use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
+use ctx_settings_model::Settings;
 use ctx_storage_admission::StorageGuardStatus;
 use ctx_store::{Store, StoreManager};
 use tokio::sync::Mutex as AsyncMutex;
@@ -273,6 +274,21 @@ impl TestDaemon {
         self.state
             .test_set_provider_inactivity_timeout(timeout)
             .await;
+    }
+
+    pub async fn apply_provider_monitoring_settings_for_test(
+        &self,
+        settings: &Settings,
+    ) -> anyhow::Result<()> {
+        daemon::provider_guard::apply_settings(self.state.as_ref(), settings).await?;
+        daemon::provider_restart::apply_settings(self.state.as_ref(), settings).await?;
+        Ok(())
+    }
+
+    pub fn spawn_provider_monitoring_for_test(&self) {
+        daemon::resource_telemetry::spawn_resource_telemetry(Arc::clone(&self.state));
+        daemon::provider_guard::spawn_provider_guard(Arc::clone(&self.state));
+        daemon::provider_restart::spawn_provider_restart(Arc::clone(&self.state));
     }
 
     pub async fn replace_provider_statuses(&self, statuses: HashMap<String, ProviderStatus>) {
