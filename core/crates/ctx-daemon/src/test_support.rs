@@ -557,6 +557,207 @@ impl TestDaemon {
             .await
     }
 
+    pub async fn workspace_active_snapshot_make_store_unopenable_for_test(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> anyhow::Result<()> {
+        self.cache_rehydration_make_workspace_store_unopenable_for_test(workspace_id)
+            .await
+    }
+
+    pub async fn workspace_active_snapshot_append_and_publish_event_for_test(
+        &self,
+        session: &Session,
+        run_id: Option<RunId>,
+        turn_id: Option<TurnId>,
+        event_type: SessionEventType,
+        payload_json: serde_json::Value,
+    ) -> anyhow::Result<SessionEvent> {
+        self.state.sessions.remember_session_meta(session).await;
+        let event = self
+            .state
+            .store_for_session(session.id)
+            .await?
+            .append_session_event(session.id, run_id, turn_id, event_type, payload_json)
+            .await?;
+        self.state.publish_event(event.clone()).await;
+        Ok(event)
+    }
+
+    pub async fn workspace_active_snapshot_seed_completed_turn_with_partials_for_test(
+        &self,
+        session: &Session,
+        assistant_partial: &str,
+        thought_partial: &str,
+    ) -> anyhow::Result<TurnId> {
+        let store = self.state.store_for_session(session.id).await?;
+        let now = chrono::Utc::now();
+        let turn_id = TurnId::new();
+        store
+            .insert_session_turn(SessionTurn {
+                turn_id,
+                session_id: session.id,
+                run_id: None,
+                user_message_id: None,
+                status: SessionTurnStatus::Running,
+                start_seq: Some(1),
+                end_seq: None,
+                started_at: now,
+                updated_at: now,
+                assistant_partial: Some(assistant_partial.to_string()),
+                thought_partial: Some(thought_partial.to_string()),
+                metrics_json: None,
+                failure: None,
+                tool_total: 0,
+                tool_pending: 0,
+                tool_running: 0,
+                tool_completed: 0,
+                tool_failed: 0,
+            })
+            .await?;
+        store
+            .append_session_event(
+                session.id,
+                None,
+                Some(turn_id),
+                SessionEventType::AssistantComplete,
+                serde_json::json!({
+                    "full_content": "final answer",
+                    "message_id": "provider-msg-1",
+                    "order_seq": 2
+                }),
+            )
+            .await?;
+        let checkpoint_event = store
+            .append_session_event(
+                session.id,
+                None,
+                Some(turn_id),
+                SessionEventType::Notice,
+                serde_json::json!({ "kind": "test_checkpoint", "message": "stable" }),
+            )
+            .await?;
+        store
+            .update_session_turn_status(
+                session.id,
+                turn_id,
+                SessionTurnStatus::Completed,
+                Some(checkpoint_event.seq),
+                None,
+                chrono::Utc::now(),
+            )
+            .await?;
+        Ok(turn_id)
+    }
+
+    pub async fn workspace_active_snapshot_task_contains_sessions_for_test(
+        &self,
+        task_id: TaskId,
+        expected_sessions: &[SessionId],
+    ) -> anyhow::Result<bool> {
+        let store = self.state.store_for_task(task_id).await?;
+        let sessions = store.list_sessions_for_task(task_id).await?;
+        Ok(expected_sessions
+            .iter()
+            .all(|session_id| sessions.iter().any(|stored| stored.id == *session_id)))
+    }
+
+    pub async fn workspace_active_snapshot_load_session_worktree_for_test(
+        &self,
+        session: &Session,
+    ) -> anyhow::Result<Worktree> {
+        self.load_worktree_for_test(session.worktree_id).await
+    }
+
+    pub async fn workspace_active_snapshot_mark_vcs_pane_open_for_test(
+        &self,
+        worktree_id: WorktreeId,
+    ) {
+        let mut next_open = std::collections::HashSet::new();
+        next_open.insert(worktree_id);
+        self.state
+            .update_worktree_vcs_open_panes(&std::collections::HashSet::new(), &next_open)
+            .await;
+    }
+
+    pub async fn workspace_active_snapshot_mark_vcs_pane_closed_for_test(
+        &self,
+        worktree_id: WorktreeId,
+    ) {
+        let mut previous_open = std::collections::HashSet::new();
+        previous_open.insert(worktree_id);
+        self.state
+            .update_worktree_vcs_open_panes(&previous_open, &std::collections::HashSet::new())
+            .await;
+    }
+
+    pub async fn workspace_active_snapshot_worktree_has_vcs_watcher_for_test(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> bool {
+        self.state
+            .test_worktree_has_git_status_watcher(worktree_id)
+            .await
+    }
+
+    pub async fn workspace_active_snapshot_hold_vcs_refresh_lock_for_test(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> tokio::sync::OwnedMutexGuard<()> {
+        let refresh_lock = self.state.worktree_vcs_refresh_lock(worktree_id).await;
+        refresh_lock.lock_owned().await
+    }
+
+    pub async fn workspace_active_snapshot_vcs_refresh_lock_token_for_test(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> usize {
+        let refresh_lock = self.state.worktree_vcs_refresh_lock(worktree_id).await;
+        Arc::as_ptr(&refresh_lock) as *const () as usize
+    }
+
+    pub async fn workspace_active_snapshot_verify_vcs_refresh_lock_eviction_for_test(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> anyhow::Result<()> {
+        self.mark_worktree_vcs_active_for_test(worktree_id).await;
+        let initial_lock = self.state.worktree_vcs_refresh_lock(worktree_id).await;
+        self.mark_worktree_vcs_inactive_for_test(worktree_id).await;
+
+        let next_lock = self.state.worktree_vcs_refresh_lock(worktree_id).await;
+        if !Arc::ptr_eq(&initial_lock, &next_lock) {
+            anyhow::bail!("worktree VCS reactivation should reuse an in-flight refresh lock");
+        }
+
+        let old_lock = Arc::downgrade(&initial_lock);
+        drop(next_lock);
+        drop(initial_lock);
+
+        let replacement_lock = self.state.worktree_vcs_refresh_lock(worktree_id).await;
+        if old_lock.upgrade().is_some() {
+            anyhow::bail!("evicted refresh lock should be released once no refreshes are using it");
+        }
+        if Arc::strong_count(&replacement_lock) != 1 {
+            anyhow::bail!(
+                "replacement refresh lock should have one strong reference, got {}",
+                Arc::strong_count(&replacement_lock)
+            );
+        }
+        Ok(())
+    }
+
+    pub async fn workspace_active_snapshot_seed_ready_vcs_summary_for_test(
+        &self,
+        worktree: Worktree,
+    ) -> anyhow::Result<WorktreeVcsSnapshot> {
+        self.mark_worktree_vcs_active_for_test(worktree.id).await;
+        self.refresh_worktree_vcs_summary_for_test(worktree.clone())
+            .await?;
+        self.worktree_vcs_snapshot(worktree.id)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("expected VCS snapshot for worktree {:?}", worktree.id))
+    }
+
     pub async fn reconcile_turn_terminal_state_for_test(
         &self,
         session_id: SessionId,

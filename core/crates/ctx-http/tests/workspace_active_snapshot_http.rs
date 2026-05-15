@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -12,14 +10,12 @@ use tokio_tungstenite::{
     connect_async, tungstenite::Message as WsMessage, MaybeTlsStream, WebSocketStream,
 };
 
-use chrono::Utc;
 use ctx_core::ids::{TurnId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
-    SessionEventType, SessionTurn, SessionTurnStatus, WorkspaceActiveSnapshotEvent,
-    WorkspaceActiveSnapshotStreamMessage, WorktreeVcsFreshness, WorktreeVcsSnapshot,
-    WorktreeVcsStreamMessage,
+    SessionEventType, WorkspaceActiveSnapshotEvent, WorkspaceActiveSnapshotStreamMessage,
+    WorktreeVcsFreshness, WorktreeVcsSnapshot, WorktreeVcsStreamMessage,
 };
-use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::test_support::TestDaemon;
 
 mod common;
 
@@ -137,7 +133,7 @@ async fn setup_with_root(
 ) -> (
     tempfile::TempDir,
     tempfile::TempDir,
-    Arc<DaemonState>,
+    TestDaemon,
     common::TestServer,
 ) {
     let permit = workspace_http_test_gate()
@@ -148,24 +144,24 @@ async fn setup_with_root(
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
 
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
     let server = common::spawn_http_server(app)
         .await
         .with_resource_permit(permit);
 
-    (repo, data_dir, state, server)
+    (repo, data_dir, daemon, server)
 }
 
 async fn setup() -> (
     tempfile::TempDir,
     tempfile::TempDir,
-    Arc<DaemonState>,
+    TestDaemon,
     common::TestServer,
 ) {
     setup_with_root(common::init_git_repo(&[("file.txt", "hello\n")]).await).await
@@ -174,7 +170,7 @@ async fn setup() -> (
 async fn setup_git() -> (
     tempfile::TempDir,
     tempfile::TempDir,
-    Arc<DaemonState>,
+    TestDaemon,
     common::TestServer,
 ) {
     setup().await
@@ -183,7 +179,7 @@ async fn setup_git() -> (
 #[tokio::test]
 async fn workspace_active_hydration_returns_500_for_store_open_failures_and_404_for_missing_workspaces(
 ) {
-    let (repo, data_dir, state, server) = setup().await;
+    let (repo, _data_dir, daemon, server) = setup().await;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -207,27 +203,8 @@ async fn workspace_active_hydration_returns_500_for_store_open_failures_and_404_
         .unwrap();
     assert_eq!(missing.status(), reqwest::StatusCode::NOT_FOUND);
 
-    let blocked_workspace_store_dir = data_dir
-        .path()
-        .join("db")
-        .join("workspaces")
-        .join(ws.id.0.to_string());
-    state.test_store_manager().evict_workspace(ws.id).await;
-    if let Ok(metadata) = tokio::fs::metadata(&blocked_workspace_store_dir).await {
-        if metadata.is_dir() {
-            tokio::fs::remove_dir_all(&blocked_workspace_store_dir)
-                .await
-                .unwrap();
-        } else {
-            tokio::fs::remove_file(&blocked_workspace_store_dir)
-                .await
-                .unwrap();
-        }
-    }
-    tokio::fs::create_dir_all(blocked_workspace_store_dir.parent().unwrap())
-        .await
-        .unwrap();
-    tokio::fs::write(&blocked_workspace_store_dir, b"blocked workspace store")
+    daemon
+        .workspace_active_snapshot_make_store_unopenable_for_test(ws.id)
         .await
         .unwrap();
 
@@ -260,54 +237,15 @@ async fn decode_json_response<T: DeserializeOwned>(response: reqwest::Response) 
     })
 }
 
-async fn insert_worktree(
-    state: &Arc<DaemonState>,
-    workspace_id: ctx_core::ids::WorkspaceId,
-    _task_id: ctx_core::ids::TaskId,
-    root_path: &Path,
-) -> ctx_core::models::Worktree {
-    let worktree = ctx_core::models::Worktree {
-        id: WorktreeId::new(),
-        workspace_id,
-        root_path: root_path.to_string_lossy().to_string(),
-        base_commit_sha: "test-base".to_string(),
-        git_branch: None,
-        vcs_kind: None,
-        base_revision: None,
-        vcs_ref: None,
-        created_at: Utc::now(),
-        bootstrap_status: None,
-        bootstrap_started_at: None,
-        bootstrap_finished_at: None,
-        bootstrap_exit_code: None,
-        bootstrap_timeout_sec: None,
-        bootstrap_error: None,
-        bootstrap_log_path: None,
-        bootstrap_log_truncated: None,
-        bootstrap_command: None,
-        bootstrap_script_path: None,
-    };
-
-    let store = state.store_for_workspace(workspace_id).await.unwrap();
-    store.insert_worktree(worktree.clone()).await.unwrap();
-    state
-        .global_store()
-        .upsert_workspace_worktree_index(worktree.id, workspace_id)
-        .await
-        .unwrap();
-    worktree
-}
-
 async fn create_task_with_primary_worktree(
     client: &reqwest::Client,
-    state: &Arc<DaemonState>,
+    _daemon: &TestDaemon,
     base: &str,
     workspace_id: ctx_core::ids::WorkspaceId,
-    root_path: &Path,
+    _root_path: &std::path::Path,
     title: &str,
 ) -> ctx_core::models::Task {
     let task_id = ctx_core::ids::TaskId::new();
-    let worktree = insert_worktree(state, workspace_id, task_id, root_path).await;
     let response = client
         .post(format!("{base}/api/workspaces/{}/tasks", workspace_id.0))
         .json(&json!({
@@ -316,7 +254,6 @@ async fn create_task_with_primary_worktree(
             "default_session": {
                 "provider_id": "fake",
                 "model_id": "fake-model",
-                "worktree_id": worktree.id.0.to_string(),
             },
         }))
         .send()
@@ -329,7 +266,7 @@ async fn create_task_with_primary_worktree(
         response.status()
     );
     let task: ctx_core::models::Task = decode_json_response(response).await;
-    assert_eq!(task.primary_worktree_id, Some(worktree.id));
+    assert!(task.primary_worktree_id.is_some());
     assert!(task.primary_session_id.is_some());
     task
 }
@@ -394,6 +331,24 @@ async fn create_child_worktree_session_with_request(
     request: Value,
 ) -> ctx_core::models::Session {
     create_session_with_request(client, base, task_id, request).await
+}
+
+async fn append_and_publish_event(
+    daemon: &TestDaemon,
+    session: &ctx_core::models::Session,
+    event_type: SessionEventType,
+    payload_json: Value,
+) -> ctx_core::models::SessionEvent {
+    daemon
+        .workspace_active_snapshot_append_and_publish_event_for_test(
+            session,
+            None,
+            None,
+            event_type,
+            payload_json,
+        )
+        .await
+        .unwrap()
 }
 
 #[tokio::test]
@@ -592,64 +547,9 @@ async fn workspace_active_heads_batch_strips_partials() {
 
     let session = create_primary_worktree_session(client, base, task.id).await;
 
-    let store = state.store_for_session(session.id).await.unwrap();
-    let now = Utc::now();
-    let turn_id = TurnId::new();
-    store
-        .insert_session_turn(SessionTurn {
-            turn_id,
-            session_id: session.id,
-            run_id: None,
-            user_message_id: None,
-            status: SessionTurnStatus::Running,
-            start_seq: Some(1),
-            end_seq: None,
-            started_at: now,
-            updated_at: now,
-            assistant_partial: Some("partial".to_string()),
-            thought_partial: Some("thinking".to_string()),
-            metrics_json: None,
-            failure: None,
-            tool_total: 0,
-            tool_pending: 0,
-            tool_running: 0,
-            tool_completed: 0,
-            tool_failed: 0,
-        })
-        .await
-        .unwrap();
-    store
-        .append_session_event(
-            session.id,
-            None,
-            Some(turn_id),
-            SessionEventType::AssistantComplete,
-            json!({
-                "full_content": "final answer",
-                "message_id": "provider-msg-1",
-                "order_seq": 2
-            }),
-        )
-        .await
-        .unwrap();
-    let checkpoint_event = store
-        .append_session_event(
-            session.id,
-            None,
-            Some(turn_id),
-            SessionEventType::Notice,
-            json!({ "kind": "test_checkpoint", "message": "stable" }),
-        )
-        .await
-        .unwrap();
-    store
-        .update_session_turn_status(
-            session.id,
-            turn_id,
-            SessionTurnStatus::Completed,
-            Some(checkpoint_event.seq),
-            None,
-            Utc::now(),
+    state
+        .workspace_active_snapshot_seed_completed_turn_with_partials_for_test(
+            &session, "partial", "thinking",
         )
         .await
         .unwrap();
@@ -771,42 +671,27 @@ async fn workspace_stream_replays_from_after_seq() {
         create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "replay").await;
 
     let session = create_primary_worktree_session(client, base, task.id).await;
-    state.remember_session_meta(&session).await;
-
-    let store = state.store_for_session(session.id).await.unwrap();
-    let ev1 = store
-        .append_session_event(
-            session.id,
-            None,
-            None,
-            SessionEventType::Notice,
-            json!({"msg":"one"}),
-        )
-        .await
-        .unwrap();
-    state.publish_event(ev1.clone()).await;
-    let ev2 = store
-        .append_session_event(
-            session.id,
-            None,
-            None,
-            SessionEventType::Notice,
-            json!({"msg":"two"}),
-        )
-        .await
-        .unwrap();
-    state.publish_event(ev2.clone()).await;
-    let ev3 = store
-        .append_session_event(
-            session.id,
-            None,
-            None,
-            SessionEventType::Notice,
-            json!({"msg":"three"}),
-        )
-        .await
-        .unwrap();
-    state.publish_event(ev3.clone()).await;
+    let ev1 = append_and_publish_event(
+        &state,
+        &session,
+        SessionEventType::Notice,
+        json!({"msg":"one"}),
+    )
+    .await;
+    let ev2 = append_and_publish_event(
+        &state,
+        &session,
+        SessionEventType::Notice,
+        json!({"msg":"two"}),
+    )
+    .await;
+    let ev3 = append_and_publish_event(
+        &state,
+        &session,
+        SessionEventType::Notice,
+        json!({"msg":"three"}),
+    )
+    .await;
 
     let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
     let (mut socket, _) = connect_async(&ws_url).await.unwrap();
@@ -921,42 +806,27 @@ async fn workspace_stream_reset_replay_waits_for_fresh_resume_cursor() {
         create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "replay").await;
 
     let session = create_primary_worktree_session(client, base, task.id).await;
-    state.remember_session_meta(&session).await;
-
-    let store = state.store_for_session(session.id).await.unwrap();
-    let ev1 = store
-        .append_session_event(
-            session.id,
-            None,
-            None,
-            SessionEventType::Notice,
-            json!({"msg":"one"}),
-        )
-        .await
-        .unwrap();
-    state.publish_event(ev1.clone()).await;
-    let ev2 = store
-        .append_session_event(
-            session.id,
-            None,
-            None,
-            SessionEventType::Notice,
-            json!({"msg":"two"}),
-        )
-        .await
-        .unwrap();
-    state.publish_event(ev2.clone()).await;
-    let ev3 = store
-        .append_session_event(
-            session.id,
-            None,
-            None,
-            SessionEventType::Notice,
-            json!({"msg":"three"}),
-        )
-        .await
-        .unwrap();
-    state.publish_event(ev3.clone()).await;
+    let _ev1 = append_and_publish_event(
+        &state,
+        &session,
+        SessionEventType::Notice,
+        json!({"msg":"one"}),
+    )
+    .await;
+    let ev2 = append_and_publish_event(
+        &state,
+        &session,
+        SessionEventType::Notice,
+        json!({"msg":"two"}),
+    )
+    .await;
+    let ev3 = append_and_publish_event(
+        &state,
+        &session,
+        SessionEventType::Notice,
+        json!({"msg":"three"}),
+    )
+    .await;
 
     fn message_contains_seq(
         message: &ctx_core::models::WorkspaceActiveSnapshotStreamMessage,
@@ -1046,17 +916,13 @@ async fn workspace_stream_reset_replay_waits_for_fresh_resume_cursor() {
         .unwrap();
     tokio::time::sleep(Duration::from_millis(150)).await;
 
-    let ev4 = store
-        .append_session_event(
-            session.id,
-            None,
-            None,
-            SessionEventType::Notice,
-            json!({"msg":"four"}),
-        )
-        .await
-        .unwrap();
-    state.publish_event(ev4.clone()).await;
+    let ev4 = append_and_publish_event(
+        &state,
+        &session,
+        SessionEventType::Notice,
+        json!({"msg":"four"}),
+    )
+    .await;
 
     let mut saw_reset_window_event = false;
     let reset_deadline = tokio::time::Instant::now() + Duration::from_millis(750);
@@ -1142,43 +1008,28 @@ async fn workspace_stream_replays_tool_events() {
             .await;
 
     let session = create_primary_worktree_session(client, base, task.id).await;
-    state.remember_session_meta(&session).await;
-
-    let store = state.store_for_session(session.id).await.unwrap();
-    let ev1 = store
-        .append_session_event(
-            session.id,
-            None,
-            None,
-            SessionEventType::Notice,
-            json!({"msg":"seed"}),
-        )
-        .await
-        .unwrap();
-    state.publish_event(ev1.clone()).await;
+    let ev1 = append_and_publish_event(
+        &state,
+        &session,
+        SessionEventType::Notice,
+        json!({"msg":"seed"}),
+    )
+    .await;
     let tool_call_id = "tool-1";
-    let ev2 = store
-        .append_session_event(
-            session.id,
-            None,
-            None,
-            SessionEventType::ToolCall,
-            json!({"tool_call_id": tool_call_id, "name": "fake_tool", "args": {}}),
-        )
-        .await
-        .unwrap();
-    state.publish_event(ev2.clone()).await;
-    let ev3 = store
-        .append_session_event(
-            session.id,
-            None,
-            None,
-            SessionEventType::ToolResult,
-            json!({"tool_call_id": tool_call_id, "result": "ok"}),
-        )
-        .await
-        .unwrap();
-    state.publish_event(ev3.clone()).await;
+    let ev2 = append_and_publish_event(
+        &state,
+        &session,
+        SessionEventType::ToolCall,
+        json!({"tool_call_id": tool_call_id, "name": "fake_tool", "args": {}}),
+    )
+    .await;
+    let ev3 = append_and_publish_event(
+        &state,
+        &session,
+        SessionEventType::ToolResult,
+        json!({"tool_call_id": tool_call_id, "result": "ok"}),
+    )
+    .await;
 
     let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
     let (mut socket, _) = connect_async(&ws_url).await.unwrap();
@@ -1291,7 +1142,6 @@ async fn workspace_stream_under_load_no_gap_or_reset() {
         create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "load").await;
 
     let session = create_primary_worktree_session(client, base, task.id).await;
-    state.remember_session_meta(&session).await;
 
     let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
     let (mut socket, _) = connect_async(&ws_url).await.unwrap();
@@ -1319,22 +1169,17 @@ async fn workspace_stream_under_load_no_gap_or_reset() {
 
     tokio::time::sleep(Duration::from_millis(150)).await;
 
-    let store = state.store_for_session(session.id).await.unwrap();
     let total_events = 150usize;
     let mut last_seq = 0;
     for i in 0..total_events {
-        let ev = store
-            .append_session_event(
-                session.id,
-                None,
-                None,
-                SessionEventType::Notice,
-                json!({"msg": format!("load-{i}")}),
-            )
-            .await
-            .unwrap();
+        let ev = append_and_publish_event(
+            &state,
+            &session,
+            SessionEventType::Notice,
+            json!({"msg": format!("load-{i}")}),
+        )
+        .await;
         last_seq = ev.seq;
-        state.publish_event(ev).await;
     }
 
     let mut saw_reset = false;
@@ -1435,13 +1280,10 @@ async fn workspace_vcs_stream_emits_git_status_snapshot_on_change() {
             .await;
 
     let session = create_primary_worktree_session(client, base, task.id).await;
-    state.remember_session_meta(&session).await;
-    let store = state.store_for_session(session.id).await.unwrap();
-    let worktree = store
-        .get_worktree(session.worktree_id)
+    let worktree = state
+        .workspace_active_snapshot_load_session_worktree_for_test(&session)
         .await
-        .unwrap()
-        .expect("missing worktree");
+        .unwrap();
     let worktree_id = worktree.id;
 
     let mut socket = open_workspace_vcs_stream(base, ws.id, &[worktree_id], &[]).await;
@@ -1468,9 +1310,10 @@ async fn workspace_vcs_stream_emits_git_status_snapshot_on_change() {
         "expected initial clean git status snapshot"
     );
 
-    let file_path = Path::new(&worktree.root_path).join("git-status-live.txt");
+    let file_path = std::path::Path::new(&worktree.root_path).join("git-status-live.txt");
     tokio::fs::write(&file_path, "change\n").await.unwrap();
-    ctx_daemon::daemon::git_status::request_worktree_vcs_refresh(&state, &worktree, true, false)
+    state
+        .request_worktree_vcs_refresh_for_test(&worktree, true, false)
         .await
         .unwrap();
 
@@ -1524,13 +1367,10 @@ async fn workspace_vcs_stream_emits_git_status_snapshot_for_new_subscriber() {
     .await;
 
     let session_one = create_primary_worktree_session(client, base, task.id).await;
-    state.remember_session_meta(&session_one).await;
-    let store_one = state.store_for_session(session_one.id).await.unwrap();
-    let worktree_one = store_one
-        .get_worktree(session_one.worktree_id)
+    let worktree_one = state
+        .workspace_active_snapshot_load_session_worktree_for_test(&session_one)
         .await
-        .unwrap()
-        .expect("missing worktree");
+        .unwrap();
     let worktree_one_id = worktree_one.id;
 
     let mut socket_one = open_workspace_vcs_stream(base, ws.id, &[worktree_one_id], &[]).await;
@@ -1556,13 +1396,10 @@ async fn workspace_vcs_stream_emits_git_status_snapshot_for_new_subscriber() {
     assert!(saw_initial, "expected initial git status snapshot");
 
     let session_two = create_primary_worktree_session(client, base, task.id).await;
-    state.remember_session_meta(&session_two).await;
-    let store_two = state.store_for_session(session_two.id).await.unwrap();
-    let worktree_two = store_two
-        .get_worktree(session_two.worktree_id)
+    let worktree_two = state
+        .workspace_active_snapshot_load_session_worktree_for_test(&session_two)
         .await
-        .unwrap()
-        .expect("missing worktree");
+        .unwrap();
     let worktree_two_id = worktree_two.id;
 
     let mut socket_two = open_workspace_vcs_stream(base, ws.id, &[worktree_two_id], &[]).await;
@@ -1612,14 +1449,12 @@ async fn workspace_vcs_stream_delivers_summary_after_subscription() {
             .await;
     let session = create_primary_worktree_session(client, base, task.id).await;
 
-    let store = state.store_for_session(session.id).await.unwrap();
-    let worktree = store
-        .get_worktree(session.worktree_id)
+    let worktree = state
+        .workspace_active_snapshot_load_session_worktree_for_test(&session)
         .await
-        .unwrap()
-        .expect("missing worktree");
+        .unwrap();
     tokio::fs::write(
-        Path::new(&worktree.root_path).join("file.txt"),
+        std::path::Path::new(&worktree.root_path).join("file.txt"),
         "hello\nchanged\n",
     )
     .await
@@ -1667,26 +1502,15 @@ async fn workspace_vcs_stream_repeat_subscribe_preserves_ready_worktree_vcs_stat
         create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "ready-vcs")
             .await;
     let session = create_primary_worktree_session(client, base, task.id).await;
-    let store = state.store_for_session(session.id).await.unwrap();
-    let worktree = store
-        .get_worktree(session.worktree_id)
-        .await
-        .unwrap()
-        .expect("missing worktree");
-
-    let mut next = HashSet::new();
-    next.insert(worktree.id);
-    state
-        .update_worktree_vcs_activity(&HashSet::new(), &next)
-        .await;
-    ctx_daemon::daemon::git_status::refresh_worktree_vcs_summary(state.clone(), worktree.clone())
+    let worktree = state
+        .workspace_active_snapshot_load_session_worktree_for_test(&session)
         .await
         .unwrap();
 
     let seeded = state
-        .get_worktree_vcs_snapshot(worktree.id)
+        .workspace_active_snapshot_seed_ready_vcs_summary_for_test(worktree.clone())
         .await
-        .expect("expected seeded worktree vcs snapshot");
+        .unwrap();
     assert_eq!(seeded.freshness, WorktreeVcsFreshness::Fresh);
 
     let mut socket = open_workspace_vcs_stream(base, ws.id, &[worktree.id], &[]).await;
@@ -1719,7 +1543,7 @@ async fn workspace_vcs_stream_repeat_subscribe_preserves_ready_worktree_vcs_stat
     let watcher_deadline = tokio::time::Instant::now() + Duration::from_secs(2);
     loop {
         if state
-            .test_worktree_has_git_status_watcher(worktree.id)
+            .workspace_active_snapshot_worktree_has_vcs_watcher_for_test(worktree.id)
             .await
         {
             break;
@@ -1738,7 +1562,7 @@ async fn workspace_vcs_stream_repeat_subscribe_preserves_ready_worktree_vcs_stat
     let deadline = tokio::time::Instant::now() + Duration::from_millis(250);
     while tokio::time::Instant::now() < deadline {
         let current = state
-            .get_worktree_vcs_snapshot(worktree.id)
+            .worktree_vcs_snapshot(worktree.id)
             .await
             .expect("expected worktree snapshot to remain cached");
         assert_eq!(
@@ -1776,36 +1600,32 @@ async fn workspace_vcs_stream_subscribe_does_not_reemit_when_worktree_vcs_is_alr
     )
     .await;
     let session = create_primary_worktree_session(client, base, task.id).await;
-    let store = state.store_for_session(session.id).await.unwrap();
-    let worktree = store
-        .get_worktree(session.worktree_id)
+    let worktree = state
+        .workspace_active_snapshot_load_session_worktree_for_test(&session)
         .await
-        .unwrap()
-        .expect("missing worktree");
+        .unwrap();
 
-    let mut next = HashSet::new();
-    next.insert(worktree.id);
     state
-        .update_worktree_vcs_activity(&HashSet::new(), &next)
-        .await;
-    ctx_daemon::daemon::git_status::refresh_worktree_vcs_summary(state.clone(), worktree.clone())
+        .workspace_active_snapshot_seed_ready_vcs_summary_for_test(worktree.clone())
         .await
         .unwrap();
     tokio::fs::write(
-        Path::new(&worktree.root_path).join("file.txt"),
+        std::path::Path::new(&worktree.root_path).join("file.txt"),
         "hello\nchanged\n",
     )
     .await
     .unwrap();
 
-    let refresh_lock = state.worktree_vcs_refresh_lock(worktree.id).await;
-    let _refresh_guard = refresh_lock.lock().await;
-    ctx_daemon::daemon::git_status::request_worktree_vcs_refresh(&state, &worktree, true, false)
+    let _refresh_guard = state
+        .workspace_active_snapshot_hold_vcs_refresh_lock_for_test(worktree.id)
+        .await;
+    state
+        .request_worktree_vcs_refresh_for_test(&worktree, true, false)
         .await
         .unwrap();
 
     let seeded = state
-        .get_worktree_vcs_snapshot(worktree.id)
+        .worktree_vcs_snapshot(worktree.id)
         .await
         .expect("expected seeded worktree vcs snapshot");
     assert_eq!(seeded.freshness, WorktreeVcsFreshness::Stale);
@@ -1825,7 +1645,7 @@ async fn workspace_vcs_stream_subscribe_does_not_reemit_when_worktree_vcs_is_alr
     let deadline = tokio::time::Instant::now() + Duration::from_millis(300);
     while tokio::time::Instant::now() < deadline {
         let snapshot = state
-            .get_worktree_vcs_snapshot(worktree.id)
+            .worktree_vcs_snapshot(worktree.id)
             .await
             .expect("expected worktree vcs snapshot to remain present");
         assert_eq!(
@@ -1862,41 +1682,35 @@ async fn worktree_vcs_summary_refresh_reloads_live_inventory_before_ready_publis
     )
     .await;
     let session = create_primary_worktree_session(client, base, task.id).await;
-    let store = state.store_for_session(session.id).await.unwrap();
-    let worktree = store
-        .get_worktree(session.worktree_id)
+    let worktree = state
+        .workspace_active_snapshot_load_session_worktree_for_test(&session)
         .await
-        .unwrap()
-        .expect("missing worktree");
+        .unwrap();
 
-    let first_path = Path::new(&worktree.root_path).join("first.txt");
-    let second_path = Path::new(&worktree.root_path).join("second.txt");
+    let first_path = std::path::Path::new(&worktree.root_path).join("first.txt");
+    let second_path = std::path::Path::new(&worktree.root_path).join("second.txt");
     tokio::fs::write(&first_path, "first\n").await.unwrap();
 
-    let mut next = HashSet::new();
-    next.insert(worktree.id);
+    state.mark_worktree_vcs_active_for_test(worktree.id).await;
     state
-        .update_worktree_vcs_activity(&HashSet::new(), &next)
+        .workspace_active_snapshot_mark_vcs_pane_open_for_test(worktree.id)
         .await;
     state
-        .update_worktree_vcs_open_panes(&HashSet::new(), &next)
-        .await;
-    ctx_daemon::daemon::git_status::emit_worktree_vcs_snapshot_for_worktree(
-        &state, &worktree, true,
-    )
-    .await
-    .unwrap();
+        .emit_worktree_vcs_snapshot_for_worktree(&worktree, true)
+        .await
+        .unwrap();
 
     tokio::fs::remove_file(&first_path).await.unwrap();
     tokio::fs::write(&second_path, "second\n").await.unwrap();
-    ctx_daemon::daemon::git_status::request_worktree_vcs_refresh(&state, &worktree, true, true)
+    state
+        .request_worktree_vcs_refresh_for_test(&worktree, true, true)
         .await
         .unwrap();
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
     while tokio::time::Instant::now() < deadline {
         let snapshot = state
-            .get_worktree_vcs_snapshot(worktree.id)
+            .worktree_vcs_snapshot(worktree.id)
             .await
             .expect("expected worktree vcs snapshot");
         if snapshot.freshness == WorktreeVcsFreshness::Fresh {
@@ -1948,39 +1762,31 @@ async fn worktree_vcs_emit_and_summary_refresh_share_refresh_lock() {
     )
     .await;
     let session = create_primary_worktree_session(client, base, task.id).await;
-    let store = state.store_for_session(session.id).await.unwrap();
-    let worktree = store
-        .get_worktree(session.worktree_id)
+    let worktree = state
+        .workspace_active_snapshot_load_session_worktree_for_test(&session)
         .await
-        .unwrap()
-        .expect("worktree");
+        .unwrap();
 
-    state
-        .update_worktree_vcs_activity(&HashSet::new(), &HashSet::from([worktree.id]))
+    state.mark_worktree_vcs_active_for_test(worktree.id).await;
+
+    let refresh_guard = state
+        .workspace_active_snapshot_hold_vcs_refresh_lock_for_test(worktree.id)
         .await;
-
-    let refresh_lock = state.worktree_vcs_refresh_lock(worktree.id).await;
-    let refresh_guard = refresh_lock.lock().await;
 
     let emit_state = state.clone();
     let emit_worktree = worktree.clone();
     let emit_handle = tokio::spawn(async move {
-        ctx_daemon::daemon::git_status::emit_worktree_vcs_snapshot_for_worktree(
-            &emit_state,
-            &emit_worktree,
-            false,
-        )
-        .await
+        emit_state
+            .emit_worktree_vcs_snapshot_for_worktree(&emit_worktree, false)
+            .await
     });
 
     let summary_state = state.clone();
     let summary_worktree = worktree.clone();
     let summary_handle = tokio::spawn(async move {
-        ctx_daemon::daemon::git_status::refresh_worktree_vcs_summary(
-            summary_state,
-            summary_worktree,
-        )
-        .await
+        summary_state
+            .refresh_worktree_vcs_summary_for_test(summary_worktree)
+            .await
     });
 
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -2025,39 +1831,15 @@ async fn worktree_vcs_activity_eviction_drops_refresh_lock() {
     )
     .await;
     let session = create_primary_worktree_session(client, base, task.id).await;
-    let store = state.store_for_session(session.id).await.unwrap();
-    let worktree = store
-        .get_worktree(session.worktree_id)
+    let worktree = state
+        .workspace_active_snapshot_load_session_worktree_for_test(&session)
         .await
-        .unwrap()
-        .expect("worktree");
+        .unwrap();
 
-    let active = HashSet::from([worktree.id]);
     state
-        .update_worktree_vcs_activity(&HashSet::new(), &active)
-        .await;
-
-    let initial_lock = state.worktree_vcs_refresh_lock(worktree.id).await;
-    state
-        .update_worktree_vcs_activity(&active, &HashSet::new())
-        .await;
-
-    let next_lock = state.worktree_vcs_refresh_lock(worktree.id).await;
-    assert!(
-        Arc::ptr_eq(&initial_lock, &next_lock),
-        "worktree VCS reactivation should reuse an in-flight refresh lock"
-    );
-
-    let old_lock = Arc::downgrade(&initial_lock);
-    drop(next_lock);
-    drop(initial_lock);
-
-    let replacement_lock = state.worktree_vcs_refresh_lock(worktree.id).await;
-    assert!(
-        old_lock.upgrade().is_none(),
-        "evicted refresh lock should eventually be released once no refreshes are using it"
-    );
-    assert_eq!(Arc::strong_count(&replacement_lock), 1);
+        .workspace_active_snapshot_verify_vcs_refresh_lock_eviction_for_test(worktree.id)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -2080,26 +1862,22 @@ async fn workspace_stream_emits_gap_when_replay_exceeds_daemon_head_window() {
         create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "gap").await;
 
     let session = create_primary_worktree_session(client, base, task.id).await;
-    state.remember_session_meta(&session).await;
-    let store = state.store_for_task(task.id).await.unwrap();
-    let sessions = store.list_sessions_for_task(task.id).await.unwrap();
     assert!(
-        sessions.iter().any(|stored| stored.id == session.id),
+        state
+            .workspace_active_snapshot_task_contains_sessions_for_test(task.id, &[session.id])
+            .await
+            .unwrap(),
         "expected session to be stored"
     );
 
     for _ in 0..65 {
-        let event = store
-            .append_session_event(
-                session.id,
-                None,
-                None,
-                SessionEventType::Notice,
-                json!({"msg":"spam"}),
-            )
-            .await
-            .unwrap();
-        state.publish_event(event).await;
+        append_and_publish_event(
+            &state,
+            &session,
+            SessionEventType::Notice,
+            json!({"msg":"spam"}),
+        )
+        .await;
     }
 
     let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
@@ -2273,7 +2051,6 @@ async fn workspace_stream_session_updates_emit_task_delta_without_full_active_ta
     let task =
         create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "delta").await;
     let session = create_primary_worktree_session(client, base, task.id).await;
-    state.remember_session_meta(&session).await;
 
     let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
     let (mut socket, _) = connect_async(&ws_url).await.unwrap();
@@ -2322,10 +2099,9 @@ async fn workspace_stream_session_updates_emit_task_delta_without_full_active_ta
         "expected initial active snapshot after subscribe"
     );
 
-    let store = state.store_for_task(task.id).await.unwrap();
-    let event = store
-        .append_session_event(
-            session.id,
+    state
+        .workspace_active_snapshot_append_and_publish_event_for_test(
+            &session,
             None,
             Some(TurnId::new()),
             SessionEventType::UserMessage,
@@ -2336,7 +2112,6 @@ async fn workspace_stream_session_updates_emit_task_delta_without_full_active_ta
         )
         .await
         .unwrap();
-    state.publish_event(event).await;
 
     let mut saw_summary_delta = false;
     let mut saw_task_delta = false;
@@ -2519,7 +2294,6 @@ async fn workspace_active_snapshot_stream_filters_session_head_deltas() {
         create_task_with_primary_worktree(client, &state, base, ws.id, repo.path(), "live").await;
 
     let session_a = create_primary_worktree_session(client, base, task.id).await;
-    let session_b_worktree = insert_worktree(&state, ws.id, task.id, repo.path()).await;
     let session_b = create_child_worktree_session_with_request(
         client,
         base,
@@ -2527,7 +2301,6 @@ async fn workspace_active_snapshot_stream_filters_session_head_deltas() {
         json!({
             "provider_id": "fake",
             "model_id": "fake-model",
-            "worktree_id": session_b_worktree.id.0.to_string(),
             "parent_session_id": session_a.id.0.to_string(),
             "relationship": "secondary",
         }),
@@ -2537,15 +2310,15 @@ async fn workspace_active_snapshot_stream_filters_session_head_deltas() {
         session_a.id, session_b.id,
         "filter coverage requires a distinct unsubscribed session"
     );
-    let store = state.store_for_task(task.id).await.unwrap();
-    let sessions = store.list_sessions_for_task(task.id).await.unwrap();
     assert!(
-        sessions.iter().any(|stored| stored.id == session_a.id),
-        "expected session a to be stored"
-    );
-    assert!(
-        sessions.iter().any(|stored| stored.id == session_b.id),
-        "expected session b to be stored"
+        state
+            .workspace_active_snapshot_task_contains_sessions_for_test(
+                task.id,
+                &[session_a.id, session_b.id],
+            )
+            .await
+            .unwrap(),
+        "expected sessions to be stored"
     );
 
     let ws_url = format!("{base}/api/workspaces/{}/stream", ws.id.0).replace("http://", "ws://");
