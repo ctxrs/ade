@@ -4,16 +4,8 @@ use super::*;
 async fn health_and_diagnostics_include_storage_guard_state() {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
-        HashMap::new();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    ));
-    state.test_publish_storage_guard(StorageGuardStatus {
+    let state = test_daemon(data_dir.path(), stores, None);
+    state.publish_storage_guard(StorageGuardStatus {
         level: StorageGuardLevel::Warning,
         reserve_file_active: true,
         active: Some(StorageGuardPathStatus {
@@ -26,7 +18,7 @@ async fn health_and_diagnostics_include_storage_guard_state() {
         ..StorageGuardStatus::default()
     });
 
-    let app = api::router(state);
+    let app = test_router(&state);
 
     let req = Request::builder()
         .method(Method::GET)

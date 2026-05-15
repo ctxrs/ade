@@ -4,16 +4,8 @@ use super::*;
 async fn unauthenticated_health_omits_sensitive_fields_when_daemon_auth_is_enabled() {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
-        HashMap::new();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:4399".to_string(),
-        Some("daemon-secret".to_string()),
-    ));
-    let app = api::router(state);
+    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
+    let app = test_router(&state);
 
     let req = Request::builder()
         .method(Method::GET)
@@ -66,16 +58,8 @@ async fn unauthenticated_health_omits_sensitive_fields_when_daemon_auth_is_enabl
 async fn authorized_health_keeps_sensitive_fields_when_daemon_auth_is_enabled() {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
-        HashMap::new();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:4399".to_string(),
-        Some("daemon-secret".to_string()),
-    ));
-    let app = api::router(state);
+    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
+    let app = test_router(&state);
 
     let req = Request::builder()
         .method(Method::GET)

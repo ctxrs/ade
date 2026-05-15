@@ -19,15 +19,9 @@ async fn diagnostics_marks_provider_statuses_with_agent_server_config_errors() {
     let data_dir = tempfile::tempdir().unwrap();
     write_invalid_agent_server_config(data_dir.path());
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    ));
+    let state = test_daemon(data_dir.path(), stores, None);
     state
-        .test_upsert_provider_status(
+        .upsert_provider_status(
             "qwen".to_string(),
             ProviderStatus {
                 provider_id: "qwen".to_string(),
@@ -42,7 +36,7 @@ async fn diagnostics_marks_provider_statuses_with_agent_server_config_errors() {
             },
         )
         .await;
-    let app = api::router(state);
+    let app = test_router(&state);
 
     let req = Request::builder()
         .method(Method::GET)

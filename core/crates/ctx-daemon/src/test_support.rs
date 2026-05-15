@@ -6,6 +6,7 @@ use ctx_core::ids::{SessionId, WorkspaceId, WorktreeId};
 use ctx_core::models::Session;
 use ctx_provider_runtime::provider_usage;
 use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
+use ctx_storage_admission::StorageGuardStatus;
 use ctx_store::{Store, StoreManager};
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -117,6 +118,10 @@ impl TestDaemon {
             .providers
             .upsert_provider_status(provider_id, status)
             .await;
+    }
+
+    pub fn publish_storage_guard(&self, status: StorageGuardStatus) {
+        self.state.test_publish_storage_guard(status);
     }
 
     pub async fn issue_provider_session_mcp_token(
