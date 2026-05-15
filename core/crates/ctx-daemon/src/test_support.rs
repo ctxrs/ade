@@ -9,15 +9,15 @@ use ctx_core::ids::{
 };
 use ctx_core::models::{
     Message, MessageDelivery, MessageRole, Session, SessionEvent, SessionEventType,
-    SessionHeadDelta, SessionTurn, SessionTurnStatus, WorkspaceAttachmentStatus, Worktree,
-    WorktreeVcsSnapshot,
+    SessionHeadDelta, SessionTurn, SessionTurnStatus, Workspace, WorkspaceAttachmentStatus,
+    Worktree, WorktreeVcsSnapshot,
 };
 use ctx_provider_install::install_state::{
     InstallId, InstallInfo, InstallProgressEvent, InstallTarget,
 };
 use ctx_provider_runtime::{provider_usage, CachedProviderOptions, CachedProviderVerify};
 use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
-use ctx_settings_model::Settings;
+use ctx_settings_model::{ExecutionSettings, Settings};
 use ctx_storage_admission::StorageGuardStatus;
 use ctx_store::{Store, StoreManager};
 use tokio::sync::Mutex as AsyncMutex;
@@ -576,6 +576,29 @@ impl TestDaemon {
         daemon::resource_telemetry::spawn_resource_telemetry(Arc::clone(&self.state));
         daemon::provider_guard::spawn_provider_guard(Arc::clone(&self.state));
         daemon::provider_restart::spawn_provider_restart(Arc::clone(&self.state));
+    }
+
+    pub async fn prepare_workspace_harness_for_test(
+        &self,
+        workspace: &Workspace,
+        worktree: &Worktree,
+        execution_settings: &ExecutionSettings,
+    ) -> anyhow::Result<()> {
+        self.state
+            .test_prepare_harness(workspace, worktree, execution_settings)
+            .await
+            .map(|_| ())
+    }
+
+    pub async fn workspace_harness_egress_guard_for_test(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> anyhow::Result<Option<bool>> {
+        Ok(self
+            .state
+            .test_harness_container_status(workspace_id)
+            .await?
+            .and_then(|status| status.egress_guard))
     }
 
     pub async fn replace_provider_statuses(&self, statuses: HashMap<String, ProviderStatus>) {

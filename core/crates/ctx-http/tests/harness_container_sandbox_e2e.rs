@@ -10,17 +10,18 @@ use tokio::process::Command;
 use tower::ServiceExt;
 
 use ctx_core::models::SessionEventType;
+use ctx_daemon::test_support::TestDaemon;
 use ctx_providers::crp::Tier1CrpAdapter;
 use ctx_store::StoreManager;
 
-use ctx_daemon::daemon::DaemonState;
-use ctx_http::api;
 use ctx_managed_installs::{save_agent_server_config, AgentServerCommand, AgentServerConfigFile};
 use ctx_settings_model::{
     ContainerExecutionSettings, ContainerMountMode, ContainerNetworkMode, ExecutionMode,
     ExecutionSettings, Settings,
 };
 use ctx_settings_service::{load_settings, save_settings};
+
+mod common;
 
 struct EnvGuard {
     key: &'static str,
@@ -312,8 +313,8 @@ async fn post_message(app: &mut axum::Router, session_id: &str, content: &str) {
     assert_eq!(res.status(), StatusCode::OK);
 }
 
-async fn wait_for_done(state: &Arc<DaemonState>, session_id: ctx_core::ids::SessionId) {
-    let store = state.store_for_session(session_id).await.unwrap();
+async fn wait_for_done(daemon: &TestDaemon, session_id: ctx_core::ids::SessionId) {
+    let store = daemon.store_for_session(session_id).await.unwrap();
     let mut attempts = 0;
     loop {
         let events = store.list_session_events(session_id).await.unwrap();
@@ -380,19 +381,19 @@ async fn harness_container_sandbox_fake_acp() {
         )),
     );
 
-    let state = Arc::new(DaemonState::new(
+    let daemon = TestDaemon::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:4399".to_string(),
         None,
-    ));
-    let mut app = api::router(state.clone());
+    );
+    let mut app = common::router_for_daemon(&daemon);
     let session = create_session_with_provider(&mut app, git_repo.path(), "codex").await;
 
     let session_id = session.id.0.to_string();
     post_message(&mut app, &session_id, PROMPT).await;
-    wait_for_done(&state, session.id).await;
+    wait_for_done(&daemon, session.id).await;
 }
 
 #[tokio::test]
@@ -458,25 +459,23 @@ async fn harness_container_sandbox_egress_allowlist() {
         )),
     );
 
-    let state = Arc::new(DaemonState::new(
+    let daemon = TestDaemon::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:4399".to_string(),
         None,
-    ));
-    let mut app = api::router(state.clone());
+    );
+    let mut app = common::router_for_daemon(&daemon);
     let session = create_session_with_provider(&mut app, git_repo.path(), "codex").await;
-    let workspace = state
-        .test_store_manager()
-        .global()
+    let workspace = daemon
+        .global_store()
         .get_workspace(session.workspace_id)
         .await
         .unwrap()
         .expect("workspace");
-    let workspace_store = state
-        .test_store_manager()
-        .workspace(session.workspace_id)
+    let workspace_store = daemon
+        .store_for_workspace(session.workspace_id)
         .await
         .unwrap();
     let worktree = workspace_store
@@ -484,23 +483,20 @@ async fn harness_container_sandbox_egress_allowlist() {
         .await
         .unwrap()
         .expect("worktree");
-    state
-        .test_prepare_harness(&workspace, &worktree, &execution_settings)
+    daemon
+        .prepare_workspace_harness_for_test(&workspace, &worktree, &execution_settings)
         .await
         .expect("failed to prepare container runtime");
 
     let session_id = session.id.0.to_string();
     post_message(&mut app, &session_id, PROMPT).await;
-    wait_for_done(&state, session.id).await;
-    let container_status = state
-        .test_harness_container_status(session.workspace_id)
+    wait_for_done(&daemon, session.id).await;
+    let egress_guard = daemon
+        .workspace_harness_egress_guard_for_test(session.workspace_id)
         .await
         .unwrap();
     assert!(
-        container_status
-            .as_ref()
-            .and_then(|status| status.egress_guard)
-            .unwrap_or(false),
+        egress_guard.unwrap_or(false),
         "egress guard was not configured"
     );
 
@@ -593,25 +589,23 @@ async fn harness_container_sandbox_egress_allow_all() {
         )),
     );
 
-    let state = Arc::new(DaemonState::new(
+    let daemon = TestDaemon::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:4399".to_string(),
         None,
-    ));
-    let mut app = api::router(state.clone());
+    );
+    let mut app = common::router_for_daemon(&daemon);
     let session = create_session_with_provider(&mut app, git_repo.path(), "codex").await;
-    let workspace = state
-        .test_store_manager()
-        .global()
+    let workspace = daemon
+        .global_store()
         .get_workspace(session.workspace_id)
         .await
         .unwrap()
         .expect("workspace");
-    let workspace_store = state
-        .test_store_manager()
-        .workspace(session.workspace_id)
+    let workspace_store = daemon
+        .store_for_workspace(session.workspace_id)
         .await
         .unwrap();
     let worktree = workspace_store
@@ -619,22 +613,20 @@ async fn harness_container_sandbox_egress_allow_all() {
         .await
         .unwrap()
         .expect("worktree");
-    state
-        .test_prepare_harness(&workspace, &worktree, &execution_settings)
+    daemon
+        .prepare_workspace_harness_for_test(&workspace, &worktree, &execution_settings)
         .await
         .expect("failed to prepare container runtime");
 
     let session_id = session.id.0.to_string();
     post_message(&mut app, &session_id, PROMPT).await;
-    wait_for_done(&state, session.id).await;
-    let container_status = state
-        .test_harness_container_status(session.workspace_id)
+    wait_for_done(&daemon, session.id).await;
+    let egress_guard = daemon
+        .workspace_harness_egress_guard_for_test(session.workspace_id)
         .await
         .unwrap();
     assert_eq!(
-        container_status
-            .as_ref()
-            .and_then(|status| status.egress_guard),
+        egress_guard,
         Some(false),
         "egress guard should be disabled for allow-all"
     );
@@ -715,25 +707,23 @@ async fn harness_container_sandbox_egress_deny_all() {
         )),
     );
 
-    let state = Arc::new(DaemonState::new(
+    let daemon = TestDaemon::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:4399".to_string(),
         None,
-    ));
-    let mut app = api::router(state.clone());
+    );
+    let mut app = common::router_for_daemon(&daemon);
     let session = create_session_with_provider(&mut app, git_repo.path(), "codex").await;
-    let workspace = state
-        .test_store_manager()
-        .global()
+    let workspace = daemon
+        .global_store()
         .get_workspace(session.workspace_id)
         .await
         .unwrap()
         .expect("workspace");
-    let workspace_store = state
-        .test_store_manager()
-        .workspace(session.workspace_id)
+    let workspace_store = daemon
+        .store_for_workspace(session.workspace_id)
         .await
         .unwrap();
     let worktree = workspace_store
@@ -741,23 +731,20 @@ async fn harness_container_sandbox_egress_deny_all() {
         .await
         .unwrap()
         .expect("worktree");
-    state
-        .test_prepare_harness(&workspace, &worktree, &execution_settings)
+    daemon
+        .prepare_workspace_harness_for_test(&workspace, &worktree, &execution_settings)
         .await
         .expect("failed to prepare container runtime");
 
     let session_id = session.id.0.to_string();
     post_message(&mut app, &session_id, PROMPT).await;
-    wait_for_done(&state, session.id).await;
-    let container_status = state
-        .test_harness_container_status(session.workspace_id)
+    wait_for_done(&daemon, session.id).await;
+    let egress_guard = daemon
+        .workspace_harness_egress_guard_for_test(session.workspace_id)
         .await
         .unwrap();
     assert!(
-        container_status
-            .as_ref()
-            .and_then(|status| status.egress_guard)
-            .unwrap_or(false),
+        egress_guard.unwrap_or(false),
         "egress guard was not configured"
     );
 
