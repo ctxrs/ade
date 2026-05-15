@@ -1,11 +1,9 @@
-use std::sync::Arc;
-
 use axum::body::Body;
 use axum::http::StatusCode;
 use axum::http::{Method, Request};
 use ctx_core::ids::TaskId;
 use ctx_core::models::{Session, Task, VcsKind};
-use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::test_support::TestDaemon;
 use ctx_providers::adapters::{
     ProviderAdapter, ProviderRecommendedAction, ProviderUsability, ProviderUsabilityStatus,
 };
@@ -44,9 +42,9 @@ impl Drop for EnvVarGuard {
     }
 }
 
-async fn setup_state(data_root: &std::path::Path, prewarm_statuses: bool) -> Arc<DaemonState> {
+async fn setup_state(data_root: &std::path::Path, prewarm_statuses: bool) -> TestDaemon {
     let stores = common::setup_store(data_root).await;
-    let state = common::build_state(
+    let state = common::build_daemon(
         data_root.to_path_buf(),
         stores,
         common::fake_providers(),
@@ -64,9 +62,7 @@ async fn setup_state(data_root: &std::path::Path, prewarm_statuses: bool) -> Arc
         blocking_provider_ids: Vec::new(),
         recommended_action: ProviderRecommendedAction::None,
     };
-    state
-        .test_upsert_provider_status("fake".into(), status)
-        .await;
+    state.upsert_provider_status("fake".into(), status).await;
     state
 }
 
@@ -77,7 +73,7 @@ async fn create_task_creates_default_session_when_requested() {
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let state = setup_state(data_dir.path(), true).await;
-    let app = common::router(Arc::clone(&state));
+    let app = common::router_for_daemon(&state);
     let workspace = state
         .global_store()
         .create_workspace(
@@ -124,7 +120,7 @@ async fn create_task_creates_default_session_without_prewarmed_provider_statuses
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let state = setup_state(data_dir.path(), false).await;
-    let app = common::router(Arc::clone(&state));
+    let app = common::router_for_daemon(&state);
     let workspace = state
         .global_store()
         .create_workspace(
@@ -160,7 +156,7 @@ async fn create_task_rejects_legacy_create_default_session_flag() {
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let state = setup_state(data_dir.path(), true).await;
-    let app = common::router(Arc::clone(&state));
+    let app = common::router_for_daemon(&state);
     let workspace = state
         .global_store()
         .create_workspace(
@@ -204,7 +200,7 @@ async fn create_session_rejects_second_top_level_session_for_task() {
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let state = setup_state(data_dir.path(), true).await;
-    let app = common::router(Arc::clone(&state));
+    let app = common::router_for_daemon(&state);
     let workspace = state
         .global_store()
         .create_workspace(
@@ -260,7 +256,7 @@ async fn create_task_replay_with_same_id_does_not_create_extra_default_sessions(
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let state = setup_state(data_dir.path(), true).await;
-    let app = common::router(Arc::clone(&state));
+    let app = common::router_for_daemon(&state);
     let workspace = state
         .global_store()
         .create_workspace(
@@ -315,7 +311,7 @@ async fn create_task_replay_validates_requested_default_session() {
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let state = setup_state(data_dir.path(), true).await;
-    let app = common::router(Arc::clone(&state));
+    let app = common::router_for_daemon(&state);
     let workspace = state
         .global_store()
         .create_workspace(
@@ -393,7 +389,7 @@ async fn create_task_replay_allows_server_generated_default_session_id() {
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let state = setup_state(data_dir.path(), true).await;
-    let app = common::router(Arc::clone(&state));
+    let app = common::router_for_daemon(&state);
     let workspace = state
         .global_store()
         .create_workspace(
@@ -446,7 +442,7 @@ async fn create_task_in_non_repo_workspace_returns_bad_request() {
     std::fs::write(workspace_root.path().join("README.md"), "hello\n").unwrap();
     let data_dir = tempfile::tempdir().unwrap();
     let state = setup_state(data_dir.path(), true).await;
-    let app = common::router(Arc::clone(&state));
+    let app = common::router_for_daemon(&state);
     let workspace = state
         .global_store()
         .create_workspace(
@@ -486,7 +482,7 @@ async fn create_task_rolls_back_if_default_session_preflight_fails_after_task_pe
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let state = setup_state(data_dir.path(), true).await;
-    let app = common::router(Arc::clone(&state));
+    let app = common::router_for_daemon(&state);
     let workspace = state
         .global_store()
         .create_workspace(
@@ -562,7 +558,7 @@ async fn create_session_waits_for_task_session_creation_lock() {
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let state = setup_state(data_dir.path(), true).await;
-    let app = common::router(Arc::clone(&state));
+    let app = common::router_for_daemon(&state);
     let workspace = state
         .global_store()
         .create_workspace(
@@ -625,7 +621,7 @@ async fn concurrent_replayed_create_task_failures_return_validation_error_not_no
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let state = setup_state(data_dir.path(), true).await;
-    let app = common::router(Arc::clone(&state));
+    let app = common::router_for_daemon(&state);
     let workspace = state
         .global_store()
         .create_workspace(
@@ -709,7 +705,7 @@ async fn concurrent_replayed_create_task_with_different_payload_conflicts() {
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let state = setup_state(data_dir.path(), true).await;
-    let app = common::router(Arc::clone(&state));
+    let app = common::router_for_daemon(&state);
     let workspace = state
         .global_store()
         .create_workspace(
@@ -802,7 +798,7 @@ async fn conflicting_session_id_does_not_leak_new_worktree() {
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let state = setup_state(data_dir.path(), true).await;
-    let app = common::router(Arc::clone(&state));
+    let app = common::router_for_daemon(&state);
     let workspace = state
         .global_store()
         .create_workspace(

@@ -133,6 +133,10 @@ impl TestDaemon {
         self.state.store_for_task(task_id).await
     }
 
+    pub async fn task_session_creation_lock(&self, task_id: TaskId) -> Arc<tokio::sync::Mutex<()>> {
+        self.state.task_session_creation_lock(task_id).await
+    }
+
     pub fn spawn_merge_queue_runner(&self) {
         daemon::merge_queue::spawn_merge_queue_runner(Arc::clone(&self.state));
     }
