@@ -4,16 +4,8 @@ use super::*;
 async fn update_check_rejects_path_traversal_channel() {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
-        HashMap::new();
-    let state = Arc::new(DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:4399".to_string(),
-        Some("daemon-secret".to_string()),
-    ));
-    let app = api::router(state);
+    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
+    let app = test_router(&state);
 
     let req = Request::builder()
         .method(Method::GET)
@@ -29,15 +21,12 @@ async fn update_check_rejects_path_traversal_channel() {
 async fn daemon_shutdown_endpoint_terminalizes_running_turns_before_ack() {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let mut app_state = DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        Some("daemon-secret".to_string()),
-    );
-    app_state.test_set_local_shutdown_token(Some("local-shutdown-secret".to_string()));
-    let state = Arc::new(app_state);
+    let state = {
+        let _serial = home_env_test_lock().lock().await;
+        let _shutdown_token =
+            EnvVarGuard::set("CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN", "local-shutdown-secret");
+        test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()))
+    };
 
     let workspace = state
         .global_store()
@@ -109,7 +98,7 @@ async fn daemon_shutdown_endpoint_terminalizes_running_turns_before_ack() {
         .await
         .unwrap();
 
-    let app = api::router(state.clone());
+    let app = test_router(&state);
     let req = Request::builder()
         .method(Method::POST)
         .uri("/api/daemon/shutdown")
@@ -136,15 +125,13 @@ async fn daemon_shutdown_endpoint_terminalizes_running_turns_before_ack() {
 async fn daemon_shutdown_endpoint_requires_local_shutdown_token() {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let mut app_state = DaemonState::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:4399".to_string(),
-        Some("daemon-secret".to_string()),
-    );
-    app_state.test_set_local_shutdown_token(Some("local-shutdown-secret".to_string()));
-    let app = api::router(Arc::new(app_state));
+    let state = {
+        let _serial = home_env_test_lock().lock().await;
+        let _shutdown_token =
+            EnvVarGuard::set("CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN", "local-shutdown-secret");
+        test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()))
+    };
+    let app = test_router(&state);
 
     let req = Request::builder()
         .method(Method::POST)
