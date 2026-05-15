@@ -37,4 +37,7 @@ rust_library(
 rust_test(
     name = "unit_tests",
     crate = ":lib",
+    deps = [
+        "@crates//:fs2",
+    ],
 )
