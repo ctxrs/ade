@@ -12,6 +12,7 @@ const {
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
+  PROVIDER_ROUTE_SETUP_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_WORKER_REAPING_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_TEST_CACHE_ACCESS_PATTERNS,
   SCHEDULER_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
@@ -35,6 +36,7 @@ const {
   mobileStorePatternsForPath,
   providerWorkerReapingStorePatternsForPath,
   providerCachePatternsForPath,
+  providerRouteSetupStorePatternsForPath,
   routerCompositionPatternsForPath,
   scanRepo,
   scanRouterComposition,
@@ -733,6 +735,84 @@ test("daemon boundary guard scopes provider cache facade roots", () => {
   }
   assert.deepEqual(
     providerCachePatternsForPath("core/crates/ctx-http/src/api/providers/tests/install_statuses.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects provider-route direct store setup", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/lib_tests/provider_routes/codex_routes.rs",
+    contents: `
+      use ctx_store::{Store, StoreManager};
+      async fn helper(daemon: TestDaemon, stores: StoreManager) {
+        let stores = StoreManager::open(data_dir.path()).await?;
+        daemon.global_store();
+        daemon.store_for_session(session_id).await?;
+        daemon.store_for_workspace(workspace_id).await?;
+        daemon.uncached_store_for_workspace(workspace_id).await?;
+        daemon.store_for_task(task_id).await?;
+        daemon.store_for_worktree(worktree_id).await?;
+        daemon.stores().global().await?;
+        stores.global().await?;
+        stores.workspace(workspace_id).await?;
+        manager
+          .global().await?;
+        manager
+          .workspace_uncached(workspace_id).await?;
+        daemon.handle().providers();
+        let handle = daemon.handle();
+        handle.sessions();
+        handle.workspaces();
+        handle.tasks();
+        let _raw: Store;
+      }
+    `,
+    patterns: PROVIDER_ROUTE_SETUP_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct provider-route global store access",
+      "direct provider-route session store access",
+      "direct provider-route workspace store access",
+      "direct provider-route uncached workspace store access",
+      "direct provider-route task store access",
+      "direct provider-route worktree store access",
+      "direct provider-route StoreManager access",
+      "direct provider-route StoreManager access",
+      "direct provider-route StoreManager access",
+      "direct provider-route StoreManager access",
+      "direct provider-route StoreManager global access",
+      "direct provider-route StoreManager global access",
+      "direct provider-route StoreManager workspace access",
+      "direct provider-route StoreManager workspace access",
+      "direct provider-route handle access",
+      "direct provider-route handle access",
+      "direct provider-route handle access",
+      "direct provider-route handle access",
+      "direct provider-route handle access",
+      "raw provider-route ctx_store Store",
+      "raw provider-route ctx_store Store",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes provider-route setup roots", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/src/lib_tests/provider_routes.rs",
+    "core/crates/ctx-http/src/lib_tests/provider_routes/codex_routes.rs",
+    "core/crates/ctx-http/src/lib_tests/provider_routes/agent_server_config/status_auth.rs",
+  ]) {
+    assert.deepEqual(
+      providerRouteSetupStorePatternsForPath(filePath),
+      PROVIDER_ROUTE_SETUP_TEST_STORE_ACCESS_PATTERNS,
+    );
+  }
+  assert.deepEqual(
+    providerRouteSetupStorePatternsForPath(
+      "core/crates/ctx-http/src/lib_tests/auth_boundaries/daemon_http.rs",
+    ),
     [],
   );
 });

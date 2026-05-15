@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -159,13 +160,19 @@ fn write_failing_sandbox_cli_shim(dir: &Path) -> std::path::PathBuf {
 
 struct EnvVarGuard {
     key: &'static str,
-    prev: Option<String>,
+    prev: Option<OsString>,
 }
 
 impl EnvVarGuard {
     fn set(key: &'static str, value: &str) -> Self {
-        let prev = std::env::var(key).ok();
+        let prev = std::env::var_os(key);
         std::env::set_var(key, value);
+        Self { key, prev }
+    }
+
+    fn unset(key: &'static str) -> Self {
+        let prev = std::env::var_os(key);
+        std::env::remove_var(key);
         Self { key, prev }
     }
 }
@@ -173,7 +180,7 @@ impl EnvVarGuard {
 impl Drop for EnvVarGuard {
     fn drop(&mut self) {
         if let Some(v) = self.prev.take() {
-            std::env::set_var(self.key, v);
+            std::env::set_var(self.key, &v);
         } else {
             std::env::remove_var(self.key);
         }

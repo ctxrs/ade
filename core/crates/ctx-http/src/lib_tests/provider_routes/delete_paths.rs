@@ -2,14 +2,8 @@ use super::*;
 
 #[tokio::test]
 async fn missing_provider_account_deletes_return_not_found() {
-    let _serial = home_env_test_lock().lock().await;
-    let home = tempfile::tempdir().unwrap();
-    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
-
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
-    let app = test_router(&state);
+    let fixture = ProviderRouteFixture::with_auth_token("daemon-secret").await;
+    let app = fixture.app();
 
     for route in [
         "/api/providers/codex/accounts/missing",
@@ -35,14 +29,8 @@ async fn missing_provider_account_deletes_return_not_found() {
 
 #[tokio::test]
 async fn missing_provider_harness_endpoint_delete_returns_not_found() {
-    let _serial = home_env_test_lock().lock().await;
-    let home = tempfile::tempdir().unwrap();
-    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
-
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
-    let app = test_router(&state);
+    let fixture = ProviderRouteFixture::with_auth_token("daemon-secret").await;
+    let app = fixture.app();
 
     let req = Request::builder()
         .method("DELETE")

@@ -128,6 +128,11 @@ const providerCacheFacadeTestRoots = [
   "core/crates/ctx-http/src/lib_tests/provider_routes/",
 ];
 
+const providerRouteSetupStoreFacadeTestRoots = [
+  "core/crates/ctx-http/src/lib_tests/provider_routes.rs",
+  "core/crates/ctx-http/src/lib_tests/provider_routes/",
+];
+
 const mcpDaemonFacadeTestRoots = [
   "core/crates/ctx-http-test-support/src/mcp_daemon.rs",
   "core/crates/ctx-http-test-support/src/mcp_daemon/",
@@ -372,6 +377,56 @@ const PROVIDER_TEST_CACHE_ACCESS_PATTERNS = [
   {
     name: "direct provider usage cache closure access",
     regex: /\.test_with_provider_usage_cache\s*\(/,
+  },
+];
+
+const PROVIDER_ROUTE_SETUP_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct provider-route global store access",
+    regex: /\.global_store\s*\(/,
+  },
+  {
+    name: "direct provider-route session store access",
+    regex: /\.store_for_session\s*\(/,
+  },
+  {
+    name: "direct provider-route workspace store access",
+    regex: /\.store_for_workspace\s*\(/,
+  },
+  {
+    name: "direct provider-route uncached workspace store access",
+    regex: /\.uncached_store_for_workspace\s*\(/,
+  },
+  {
+    name: "direct provider-route task store access",
+    regex: /\.store_for_task\s*\(/,
+  },
+  {
+    name: "direct provider-route worktree store access",
+    regex: /\.store_for_worktree\s*\(/,
+  },
+  {
+    name: "direct provider-route StoreManager access",
+    regex: /\.stores\s*\(|\bStoreManager\b/,
+  },
+  {
+    name: "direct provider-route StoreManager global access",
+    regex: /\b[a-zA-Z_][a-zA-Z0-9_]*\.global\s*\(/,
+    contentRegex: /\b[a-zA-Z_][a-zA-Z0-9_]*\s*\n\s*\.global\s*\(/gm,
+  },
+  {
+    name: "direct provider-route StoreManager workspace access",
+    regex: /\b[a-zA-Z_][a-zA-Z0-9_]*\.workspace(?:_uncached)?\s*\(/,
+    contentRegex: /\b[a-zA-Z_][a-zA-Z0-9_]*\s*\n\s*\.workspace(?:_uncached)?\s*\(/gm,
+  },
+  {
+    name: "direct provider-route handle access",
+    regex: /a^/,
+    contentRegex: /(?:\.handle\s*\(\s*\)\s*\.\s*(?:providers|sessions|workspaces|tasks)\s*\(|\blet\s+[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*[^;\n]*\.handle\s*\(\s*\)\s*;|[a-zA-Z_][a-zA-Z0-9_]*\.(?:providers|sessions|workspaces|tasks)\s*\()/gm,
+  },
+  {
+    name: "raw provider-route ctx_store Store",
+    regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore\b/,
   },
 ];
 
@@ -1272,6 +1327,13 @@ function providerCachePatternsForPath(relativePath) {
   return [];
 }
 
+function providerRouteSetupStorePatternsForPath(relativePath) {
+  if (providerRouteSetupStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return PROVIDER_ROUTE_SETUP_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
 function mcpDaemonPatternsForPath(relativePath) {
   if (mcpDaemonFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS;
@@ -1591,6 +1653,13 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
+        patterns: providerRouteSetupStorePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
         patterns: mcpDaemonPatternsForPath(relativePath),
       }),
     );
@@ -1727,6 +1796,7 @@ module.exports = {
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
+  PROVIDER_ROUTE_SETUP_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_WORKER_REAPING_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_TEST_CACHE_ACCESS_PATTERNS,
   SCHEDULER_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
@@ -1750,6 +1820,7 @@ module.exports = {
   mobileStorePatternsForPath,
   providerWorkerReapingStorePatternsForPath,
   providerCachePatternsForPath,
+  providerRouteSetupStorePatternsForPath,
   routerCompositionPatternsForPath,
   scanRepo,
   scanRouterComposition,

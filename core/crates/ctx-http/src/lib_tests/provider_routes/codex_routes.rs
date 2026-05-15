@@ -2,15 +2,9 @@ use super::*;
 
 #[tokio::test]
 async fn codex_accounts_usage_surfaces_agent_server_config_errors() {
-    let _serial = home_env_test_lock().lock().await;
-    let home = tempfile::tempdir().unwrap();
-    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
-
-    let data_dir = tempfile::tempdir().unwrap();
-    write_invalid_agent_server_config(data_dir.path());
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, None);
-    let app = test_router(&state);
+    let fixture = ProviderRouteFixture::new().await;
+    write_invalid_agent_server_config(fixture.data_root());
+    let app = fixture.app();
 
     let req = Request::builder()
         .method("GET")
@@ -28,9 +22,7 @@ async fn codex_accounts_usage_surfaces_agent_server_config_errors() {
 
 #[tokio::test]
 async fn codex_accounts_usage_blocks_deleting_account_broker_home() {
-    let _serial = home_env_test_lock().lock().await;
-    let home = tempfile::tempdir().unwrap();
-    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
+    let fixture = ProviderRouteFixture::new().await;
     let codex_bin_dir = tempfile::tempdir().unwrap();
     let codex_bin = codex_bin_dir.path().join("codex");
     std::fs::write(&codex_bin, "#!/bin/sh\n").unwrap();
@@ -41,8 +33,7 @@ async fn codex_accounts_usage_blocks_deleting_account_broker_home() {
         std::fs::set_permissions(&codex_bin, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
-    let data_dir = tempfile::tempdir().unwrap();
-    clear_agent_server_config(data_dir.path());
+    clear_agent_server_config(fixture.data_root());
     let mut cfg = ctx_managed_installs::AgentServerConfigFile::default();
     cfg.providers.insert(
         "codex-cli".to_string(),
@@ -53,13 +44,13 @@ async fn codex_accounts_usage_blocks_deleting_account_broker_home() {
             managed: None,
         },
     );
-    ctx_managed_installs::save_agent_server_config(data_dir.path(), &cfg)
+    ctx_managed_installs::save_agent_server_config(fixture.data_root(), &cfg)
         .await
         .unwrap();
 
     let account_id = "acct-deleting";
     ctx_provider_accounts::save_codex_registry(
-        data_dir.path(),
+        fixture.data_root(),
         &ctx_provider_accounts::CodexAccountRegistry {
             active_account_id: Some(account_id.to_string()),
             accounts: vec![ctx_provider_accounts::CodexAccountEntry {
@@ -78,7 +69,7 @@ async fn codex_accounts_usage_blocks_deleting_account_broker_home() {
     )
     .await
     .unwrap();
-    let broker_home = ctx_provider_accounts::codex_broker_home(data_dir.path(), account_id);
+    let broker_home = ctx_provider_accounts::codex_broker_home(fixture.data_root(), account_id);
     std::fs::create_dir_all(&broker_home).unwrap();
     std::fs::write(
         broker_home.join("auth.json"),
@@ -90,13 +81,11 @@ async fn codex_accounts_usage_blocks_deleting_account_broker_home() {
         "chatgpt_base_url = \"http://127.0.0.1:9\"",
     )
     .unwrap();
-    ctx_provider_accounts::begin_codex_account_deletion(data_dir.path(), account_id)
+    ctx_provider_accounts::begin_codex_account_deletion(fixture.data_root(), account_id)
         .await
         .unwrap();
 
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, None);
-    let app = test_router(&state);
+    let app = fixture.app();
 
     let req = Request::builder()
         .method("GET")
@@ -120,9 +109,7 @@ async fn codex_accounts_usage_blocks_deleting_account_broker_home() {
 
 #[tokio::test]
 async fn codex_accounts_usage_surfaces_hydration_errors() {
-    let _serial = home_env_test_lock().lock().await;
-    let home = tempfile::tempdir().unwrap();
-    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
+    let fixture = ProviderRouteFixture::new().await;
     let codex_bin_dir = tempfile::tempdir().unwrap();
     let codex_bin = codex_bin_dir.path().join("codex");
     std::fs::write(&codex_bin, "#!/bin/sh\n").unwrap();
@@ -133,8 +120,7 @@ async fn codex_accounts_usage_surfaces_hydration_errors() {
         std::fs::set_permissions(&codex_bin, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
-    let data_dir = tempfile::tempdir().unwrap();
-    clear_agent_server_config(data_dir.path());
+    clear_agent_server_config(fixture.data_root());
     let mut cfg = ctx_managed_installs::AgentServerConfigFile::default();
     cfg.providers.insert(
         "codex-cli".to_string(),
@@ -145,14 +131,14 @@ async fn codex_accounts_usage_surfaces_hydration_errors() {
             managed: None,
         },
     );
-    ctx_managed_installs::save_agent_server_config(data_dir.path(), &cfg)
+    ctx_managed_installs::save_agent_server_config(fixture.data_root(), &cfg)
         .await
         .unwrap();
 
     let account_id = "acct-bad-secret";
     let secret_ref = format!("{account_id}.json");
     ctx_provider_accounts::save_codex_registry(
-        data_dir.path(),
+        fixture.data_root(),
         &ctx_provider_accounts::CodexAccountRegistry {
             active_account_id: None,
             accounts: vec![ctx_provider_accounts::CodexAccountEntry {
@@ -171,13 +157,12 @@ async fn codex_accounts_usage_surfaces_hydration_errors() {
     )
     .await
     .unwrap();
-    let secret_path = ctx_provider_accounts::codex_secrets_root(data_dir.path()).join(secret_ref);
+    let secret_path =
+        ctx_provider_accounts::codex_secrets_root(fixture.data_root()).join(secret_ref);
     std::fs::create_dir_all(secret_path.parent().unwrap()).unwrap();
     std::fs::write(&secret_path, "{ not valid json").unwrap();
 
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, None);
-    let app = test_router(&state);
+    let app = fixture.app();
 
     let req = Request::builder()
         .method("GET")
@@ -199,16 +184,9 @@ async fn codex_accounts_usage_surfaces_hydration_errors() {
 
 #[tokio::test]
 async fn provider_usage_cache_hit_surfaces_agent_server_config_errors_for_codex() {
-    let _serial = home_env_test_lock().lock().await;
-    let home = tempfile::tempdir().unwrap();
-    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
-    let codex_home = tempfile::tempdir().unwrap();
-    let _codex_home = EnvVarGuard::set("CTX_CODEX_HOME", &codex_home.path().to_string_lossy());
-
-    let data_dir = tempfile::tempdir().unwrap();
-    write_invalid_agent_server_config(data_dir.path());
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, None);
+    let fixture = ProviderRouteFixture::with_codex_home().await;
+    write_invalid_agent_server_config(fixture.data_root());
+    let state = fixture.daemon();
     state
         .seed_provider_usage_success_for_test(
             "codex",
@@ -218,7 +196,7 @@ async fn provider_usage_cache_hit_surfaces_agent_server_config_errors_for_codex(
             }),
         )
         .await;
-    let app = test_router(&state);
+    let app = fixture.app();
 
     let req = Request::builder()
         .method("GET")
@@ -236,11 +214,7 @@ async fn provider_usage_cache_hit_surfaces_agent_server_config_errors_for_codex(
 
 #[tokio::test]
 async fn provider_usage_cache_hit_preserves_canonical_provider_id_for_codex() {
-    let _serial = home_env_test_lock().lock().await;
-    let home = tempfile::tempdir().unwrap();
-    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
-    let codex_home = tempfile::tempdir().unwrap();
-    let _codex_home = EnvVarGuard::set("CTX_CODEX_HOME", &codex_home.path().to_string_lossy());
+    let fixture = ProviderRouteFixture::with_codex_home().await;
     let codex_bin_dir = tempfile::tempdir().unwrap();
     let codex_bin = codex_bin_dir.path().join("codex");
     std::fs::write(&codex_bin, "#!/bin/sh\n").unwrap();
@@ -251,8 +225,7 @@ async fn provider_usage_cache_hit_preserves_canonical_provider_id_for_codex() {
         std::fs::set_permissions(&codex_bin, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
-    let data_dir = tempfile::tempdir().unwrap();
-    clear_agent_server_config(data_dir.path());
+    clear_agent_server_config(fixture.data_root());
     let mut cfg = ctx_managed_installs::AgentServerConfigFile::default();
     cfg.providers.insert(
         "codex-cli".to_string(),
@@ -263,11 +236,10 @@ async fn provider_usage_cache_hit_preserves_canonical_provider_id_for_codex() {
             managed: None,
         },
     );
-    ctx_managed_installs::save_agent_server_config(data_dir.path(), &cfg)
+    ctx_managed_installs::save_agent_server_config(fixture.data_root(), &cfg)
         .await
         .unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, None);
+    let state = fixture.daemon();
     state
         .seed_provider_usage_success_for_test(
             "codex",
@@ -277,7 +249,7 @@ async fn provider_usage_cache_hit_preserves_canonical_provider_id_for_codex() {
             }),
         )
         .await;
-    let app = test_router(&state);
+    let app = fixture.app();
 
     let req = Request::builder()
         .method("GET")
@@ -294,15 +266,9 @@ async fn provider_usage_cache_hit_preserves_canonical_provider_id_for_codex() {
 
 #[tokio::test]
 async fn codex_login_start_surfaces_agent_server_config_errors() {
-    let _serial = home_env_test_lock().lock().await;
-    let home = tempfile::tempdir().unwrap();
-    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
-
-    let data_dir = tempfile::tempdir().unwrap();
-    write_invalid_agent_server_config(data_dir.path());
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, None);
-    let app = test_router(&state);
+    let fixture = ProviderRouteFixture::new().await;
+    write_invalid_agent_server_config(fixture.data_root());
+    let app = fixture.app();
 
     let req = Request::builder()
         .method("POST")

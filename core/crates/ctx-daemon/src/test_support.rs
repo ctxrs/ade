@@ -530,6 +530,18 @@ impl TestDaemon {
         ))
     }
 
+    pub async fn new_with_providers_for_test(
+        data_root: PathBuf,
+        providers: HashMap<String, Arc<dyn ProviderAdapter>>,
+        daemon_url: String,
+        auth_token: Option<String>,
+    ) -> anyhow::Result<Self> {
+        let stores = StoreManager::open(&data_root).await?;
+        Ok(Self::new(
+            data_root, stores, providers, daemon_url, auth_token,
+        ))
+    }
+
     pub fn new_with_public_base_url(
         data_root: PathBuf,
         stores: StoreManager,

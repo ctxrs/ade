@@ -2,16 +2,10 @@ use super::*;
 
 #[tokio::test]
 async fn provider_options_surface_harness_config_errors() {
-    let _serial = home_env_test_lock().lock().await;
     let git_repo = setup_git_repo().await;
-    let home = tempfile::tempdir().unwrap();
-    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
-
-    let data_dir = tempfile::tempdir().unwrap();
-    write_invalid_harness_registry(data_dir.path());
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, None);
-    let app = test_router(&state);
+    let fixture = ProviderRouteFixture::new().await;
+    write_invalid_harness_registry(fixture.data_root());
+    let app = fixture.app();
     let workspace = create_workspace_via_api(&app, &git_repo.path().to_string_lossy()).await;
 
     let req = Request::builder()
@@ -35,16 +29,10 @@ async fn provider_options_surface_harness_config_errors() {
 
 #[tokio::test]
 async fn provider_bootstrap_surfaces_harness_config_errors() {
-    let _serial = home_env_test_lock().lock().await;
     let git_repo = setup_git_repo().await;
-    let home = tempfile::tempdir().unwrap();
-    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
-
-    let data_dir = tempfile::tempdir().unwrap();
-    write_invalid_harness_registry(data_dir.path());
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, None);
-    let app = test_router(&state);
+    let fixture = ProviderRouteFixture::new().await;
+    write_invalid_harness_registry(fixture.data_root());
+    let app = fixture.app();
     let workspace = create_workspace_via_api(&app, &git_repo.path().to_string_lossy()).await;
 
     let req = Request::builder()
@@ -67,16 +55,10 @@ async fn provider_bootstrap_surfaces_harness_config_errors() {
 
 #[tokio::test]
 async fn provider_verify_surfaces_harness_config_errors() {
-    let _serial = home_env_test_lock().lock().await;
     let git_repo = setup_git_repo().await;
-    let home = tempfile::tempdir().unwrap();
-    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
-
-    let data_dir = tempfile::tempdir().unwrap();
-    write_invalid_harness_registry(data_dir.path());
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, None);
-    let app = test_router(&state);
+    let fixture = ProviderRouteFixture::new().await;
+    write_invalid_harness_registry(fixture.data_root());
+    let app = fixture.app();
     let workspace = create_workspace_via_api(&app, &git_repo.path().to_string_lossy()).await;
 
     let req = Request::builder()

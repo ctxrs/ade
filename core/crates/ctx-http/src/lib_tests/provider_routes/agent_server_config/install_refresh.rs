@@ -2,15 +2,9 @@ use super::*;
 
 #[tokio::test]
 async fn provider_install_surfaces_agent_server_config_errors() {
-    let _serial = home_env_test_lock().lock().await;
-    let home = tempfile::tempdir().unwrap();
-    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
-
-    let data_dir = tempfile::tempdir().unwrap();
-    write_invalid_agent_server_config(data_dir.path());
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, None);
-    let app = test_router(&state);
+    let fixture = ProviderRouteFixture::new().await;
+    write_invalid_agent_server_config(fixture.data_root());
+    let app = fixture.app();
 
     let req = Request::builder()
         .method("POST")
@@ -32,15 +26,9 @@ async fn provider_install_surfaces_agent_server_config_errors() {
 
 #[tokio::test]
 async fn install_all_providers_surfaces_agent_server_config_errors() {
-    let _serial = home_env_test_lock().lock().await;
-    let home = tempfile::tempdir().unwrap();
-    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
-
-    let data_dir = tempfile::tempdir().unwrap();
-    write_invalid_agent_server_config(data_dir.path());
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, None);
-    let app = test_router(&state);
+    let fixture = ProviderRouteFixture::new().await;
+    write_invalid_agent_server_config(fixture.data_root());
+    let app = fixture.app();
 
     let req = Request::builder()
         .method("POST")
@@ -62,15 +50,9 @@ async fn install_all_providers_surfaces_agent_server_config_errors() {
 
 #[tokio::test]
 async fn refresh_provider_matrix_surfaces_agent_server_config_errors() {
-    let _serial = home_env_test_lock().lock().await;
-    let home = tempfile::tempdir().unwrap();
-    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
-
-    let data_dir = tempfile::tempdir().unwrap();
-    write_invalid_agent_server_config(data_dir.path());
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, None);
-    let app = test_router(&state);
+    let fixture = ProviderRouteFixture::new().await;
+    write_invalid_agent_server_config(fixture.data_root());
+    let app = fixture.app();
 
     let req = Request::builder()
         .method("POST")
