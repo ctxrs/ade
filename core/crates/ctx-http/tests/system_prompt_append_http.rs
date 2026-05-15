@@ -7,13 +7,7 @@ use serde_json::Value;
 async fn subagent_system_prompt_endpoint_returns_default_append() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
+    let daemon = common::provider_route_fake_daemon(data_dir.path()).await;
     let app = common::router_for_daemon(&daemon);
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
 

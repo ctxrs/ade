@@ -1144,7 +1144,14 @@ test("daemon boundary guard rejects small external direct store setup", () => {
 
 test("daemon boundary guard scopes small external store facade roots", () => {
   for (const filePath of [
+    "core/crates/ctx-http/tests/assistant_chunk_stream_only.rs",
+    "core/crates/ctx-http/tests/repo_clone_branch_and_safety.rs",
+    "core/crates/ctx-http/tests/repo_init_initial_commit.rs",
+    "core/crates/ctx-http/tests/repo_validate_destination.rs",
+    "core/crates/ctx-http/tests/system_prompt_append_http.rs",
     "core/crates/ctx-http/tests/title_generation_local_e2e.rs",
+    "core/crates/ctx-http/tests/workspace_execution_config_http.rs",
+    "core/crates/ctx-http/tests/workspace_merge_queue_config_http.rs",
     "core/crates/ctx-http/tests/workspace_provider_model_preferences_http.rs",
   ]) {
     assert.deepEqual(

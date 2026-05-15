@@ -10,13 +10,7 @@ use serde_json::Value;
 async fn enabling_merge_queue_on_open_workspace_reschedules_queued_rows() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
+    let daemon = common::provider_route_fake_daemon(data_dir.path()).await;
     let app = common::router_for_daemon(&daemon);
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;
 
@@ -67,13 +61,7 @@ async fn enabling_merge_queue_on_open_workspace_reschedules_queued_rows() {
 async fn disabling_merge_queue_cancels_existing_queued_rows() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
+    let daemon = common::provider_route_fake_daemon(data_dir.path()).await;
     let app = common::router_for_daemon(&daemon);
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;
 

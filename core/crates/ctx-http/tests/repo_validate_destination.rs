@@ -7,13 +7,7 @@ use serde_json::json;
 #[tokio::test]
 async fn repo_validate_destination_rejects_non_empty_dir_when_required() {
     let data_root = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_root.path()).await;
-    let daemon = common::build_daemon(
-        data_root.path(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
+    let daemon = common::provider_route_fake_daemon(data_root.path()).await;
     let app = common::router_for_daemon(&daemon);
 
     let dir = tempfile::tempdir().unwrap();
@@ -52,13 +46,7 @@ async fn repo_validate_destination_rejects_non_empty_dir_when_required() {
 #[tokio::test]
 async fn repo_validate_destination_rejects_existing_dir_when_must_not_exist() {
     let data_root = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_root.path()).await;
-    let daemon = common::build_daemon(
-        data_root.path(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
+    let daemon = common::provider_route_fake_daemon(data_root.path()).await;
     let app = common::router_for_daemon(&daemon);
 
     let dir = tempfile::tempdir().unwrap();
@@ -94,13 +82,7 @@ async fn repo_validate_destination_rejects_existing_dir_when_must_not_exist() {
 #[tokio::test]
 async fn repo_validate_destination_allows_missing_path() {
     let data_root = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_root.path()).await;
-    let daemon = common::build_daemon(
-        data_root.path(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
+    let daemon = common::provider_route_fake_daemon(data_root.path()).await;
     let app = common::router_for_daemon(&daemon);
 
     let dir = tempfile::tempdir().unwrap();
@@ -135,13 +117,7 @@ async fn repo_validate_destination_allows_missing_path() {
 #[tokio::test]
 async fn repo_validate_destination_accepts_get_query() {
     let data_root = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_root.path()).await;
-    let daemon = common::build_daemon(
-        data_root.path(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
+    let daemon = common::provider_route_fake_daemon(data_root.path()).await;
     let app = common::router_for_daemon(&daemon);
 
     let dir = tempfile::tempdir().unwrap();
