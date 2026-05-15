@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use axum::body::Body;
 use axum::http::{Method, StatusCode};
 use serde_json::json;
@@ -39,7 +37,7 @@ target_branch = \"main\"\n",
     let app = common::router_for_daemon(&daemon);
 
     let workspace = common::create_workspace(&app, repo.path(), "jj-ws").await;
-    let (task, session) = common::create_task_with_session(
+    let (_task, session) = common::create_task_with_session(
         &app,
         workspace.id.into(),
         "jj merge queue",
@@ -48,13 +46,10 @@ target_branch = \"main\"\n",
     )
     .await;
 
-    let store = daemon.store_for_task(task.id).await.unwrap();
-    let worktree = store
-        .get_worktree(session.worktree_id)
+    let worktree_root = daemon
+        .session_worktree_root_path_for_test(&session)
         .await
-        .unwrap()
         .unwrap();
-    let worktree_root = Path::new(&worktree.root_path);
 
     tokio::fs::write(worktree_root.join("file.txt"), "hello\njj\n")
         .await
@@ -66,7 +61,7 @@ target_branch = \"main\"\n",
         .header("content-type", "application/json")
         .body(Body::from(
             json!({
-                "worktree_id": worktree.id.0.to_string(),
+                "worktree_id": session.worktree_id.0.to_string(),
                 "message": "jj merge"
             })
             .to_string(),

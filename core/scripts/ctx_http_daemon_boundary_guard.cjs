@@ -173,6 +173,10 @@ const workspaceMergeQueueConfigStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/workspace_merge_queue_config_http.rs",
 ];
 
+const jjMergeQueueBasicsStoreFacadeTestRoots = [
+  "core/crates/ctx-http/tests/jj_merge_queue_basics.rs",
+];
+
 const schedulerRuntimeStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/assistant_chunk_stream_only.rs",
   "core/crates/ctx-http/tests/assistant_message_persistence_faults.rs",
@@ -651,6 +655,69 @@ const WORKSPACE_MERGE_QUEUE_CONFIG_TEST_STORE_ACCESS_PATTERNS = [
   },
 ];
 
+const JJ_MERGE_QUEUE_BASICS_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct jj-merge-queue-basics global store access",
+    regex: /\.global_store\s*\(/,
+  },
+  {
+    name: "direct jj-merge-queue-basics session store access",
+    regex: /\.store_for_session\s*\(/,
+  },
+  {
+    name: "direct jj-merge-queue-basics workspace store access",
+    regex: /\.store_for_workspace\s*\(/,
+  },
+  {
+    name: "direct jj-merge-queue-basics uncached workspace store access",
+    regex: /\.uncached_store_for_workspace\s*\(/,
+  },
+  {
+    name: "direct jj-merge-queue-basics task store access",
+    regex: /\.store_for_task\s*\(/,
+  },
+  {
+    name: "direct jj-merge-queue-basics StoreManager access",
+    regex: /\.stores\s*\(/,
+  },
+  {
+    name: "direct jj-merge-queue-basics StoreManager global access",
+    regex: /\b[a-zA-Z_][a-zA-Z0-9_]*\.global\s*\(/,
+    contentRegex: /\b[a-zA-Z_][a-zA-Z0-9_]*\s*\n\s*\.global\s*\(/gm,
+  },
+  {
+    name: "direct jj-merge-queue-basics StoreManager workspace access",
+    regex: /\b[a-zA-Z_][a-zA-Z0-9_]*\.workspace\s*\(/,
+    contentRegex: /\b[a-zA-Z_][a-zA-Z0-9_]*\s*\n\s*\.workspace\s*\(/gm,
+  },
+  {
+    name: "direct jj-merge-queue-basics workspaces handle access",
+    regex: /a^/,
+    contentRegex: /(?:\.handle\s*\(\s*\)\s*\.\s*workspaces\s*\(|\blet\s+[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*[^;\n]*\.handle\s*\(\s*\)\s*;|[a-zA-Z_][a-zA-Z0-9_]*\.workspaces\s*\()/gm,
+  },
+  {
+    name: "direct jj-merge-queue-basics sessions handle access",
+    regex: /a^/,
+    contentRegex: /(?:\.handle\s*\(\s*\)\s*\.\s*sessions\s*\(|\blet\s+[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*[^;\n]*\.handle\s*\(\s*\)\s*;|[a-zA-Z_][a-zA-Z0-9_]*\.sessions\s*\()/gm,
+  },
+  {
+    name: "direct jj-merge-queue-basics daemon merge-queue module access",
+    regex: /\bctx_daemon::daemon::merge_queue\b|\bdaemon::merge_queue\b|\bmerge_queue::/,
+  },
+  {
+    name: "direct jj-merge-queue-basics worktree row load",
+    regex: /\.get_worktree\s*\(|\.load_worktree_for_test\s*\(/,
+  },
+  {
+    name: "raw jj-merge-queue-basics ctx_store Store",
+    regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore\b/,
+  },
+  {
+    name: "raw jj-merge-queue-basics StoreManager",
+    regex: /\bStoreManager\b/,
+  },
+];
+
 const SCHEDULER_RUNTIME_TEST_STORE_ACCESS_PATTERNS = [
   {
     name: "direct scheduler-runtime global store access",
@@ -945,6 +1012,13 @@ function workspaceMergeQueueConfigStorePatternsForPath(relativePath) {
   return [];
 }
 
+function jjMergeQueueBasicsStorePatternsForPath(relativePath) {
+  if (jjMergeQueueBasicsStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return JJ_MERGE_QUEUE_BASICS_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
 function schedulerRuntimeStorePatternsForPath(relativePath) {
   if (schedulerRuntimeStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return SCHEDULER_RUNTIME_TEST_STORE_ACCESS_PATTERNS;
@@ -1229,6 +1303,13 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
+        patterns: jjMergeQueueBasicsStorePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
         patterns: schedulerRuntimeStorePatternsForPath(relativePath),
       }),
     );
@@ -1276,6 +1357,7 @@ module.exports = {
   API_DOMAIN_RAW_STORE_PATTERNS,
   GLOBAL_ID_ROUTING_TEST_STORE_ACCESS_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
+  JJ_MERGE_QUEUE_BASICS_TEST_STORE_ACCESS_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
@@ -1292,6 +1374,7 @@ module.exports = {
   apiPatternsForPath,
   globalIdRoutingStorePatternsForPath,
   isTestRustPath,
+  jjMergeQueueBasicsStorePatternsForPath,
   mcpDaemonPatternsForPath,
   migratedTestPatternsForPath,
   mobileStorePatternsForPath,

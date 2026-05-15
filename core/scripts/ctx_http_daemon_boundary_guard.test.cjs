@@ -7,6 +7,7 @@ const {
   API_RAW_DAEMON_PATTERNS,
   GLOBAL_ID_ROUTING_TEST_STORE_ACCESS_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
+  JJ_MERGE_QUEUE_BASICS_TEST_STORE_ACCESS_PATTERNS,
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
@@ -23,6 +24,7 @@ const {
   apiPatternsForPath,
   globalIdRoutingStorePatternsForPath,
   isTestRustPath,
+  jjMergeQueueBasicsStorePatternsForPath,
   mcpDaemonPatternsForPath,
   migratedTestPatternsForPath,
   mobileStorePatternsForPath,
@@ -1165,6 +1167,100 @@ test("daemon boundary guard scopes workspace-merge-queue-config store facade roo
   assert.deepEqual(
     workspaceMergeQueueConfigStorePatternsForPath(
       "core/crates/ctx-http/tests/workspace_execution_config_http.rs",
+    ),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects direct jj-merge-queue-basics store and worktree access", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/jj_merge_queue_basics.rs",
+    contents: `
+      use ctx_daemon::daemon::merge_queue;
+      use ctx_store::{Store, StoreManager};
+      async fn fixture(daemon: TestDaemon, stores: StoreManager) {
+        daemon.global_store();
+        daemon.store_for_session(session_id).await?;
+        daemon.store_for_workspace(workspace_id).await?;
+        daemon.uncached_store_for_workspace(workspace_id).await?;
+        let store = daemon.store_for_task(task.id).await.unwrap();
+        daemon.stores().global().await?;
+        stores.global().await?;
+        stores.workspace(workspace_id).await?;
+        manager
+          .global().await?;
+        manager
+          .workspace(workspace_id).await?;
+        daemon.handle().workspaces();
+        daemon.handle().sessions();
+        let handle = daemon.handle();
+        handle.workspaces();
+        handle.sessions();
+        merge_queue::activate_workspace_merge_queue(&state, workspace_id).await;
+        store.get_worktree(session.worktree_id).await?;
+        daemon.load_worktree_for_test(session.worktree_id).await?;
+        let _raw: Store;
+      }
+    `,
+    patterns: JJ_MERGE_QUEUE_BASICS_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct jj-merge-queue-basics global store access",
+      "direct jj-merge-queue-basics session store access",
+      "direct jj-merge-queue-basics workspace store access",
+      "direct jj-merge-queue-basics uncached workspace store access",
+      "direct jj-merge-queue-basics task store access",
+      "direct jj-merge-queue-basics StoreManager access",
+      "direct jj-merge-queue-basics StoreManager global access",
+      "direct jj-merge-queue-basics StoreManager global access",
+      "direct jj-merge-queue-basics StoreManager workspace access",
+      "direct jj-merge-queue-basics StoreManager workspace access",
+      "direct jj-merge-queue-basics workspaces handle access",
+      "direct jj-merge-queue-basics workspaces handle access",
+      "direct jj-merge-queue-basics workspaces handle access",
+      "direct jj-merge-queue-basics sessions handle access",
+      "direct jj-merge-queue-basics sessions handle access",
+      "direct jj-merge-queue-basics sessions handle access",
+      "direct jj-merge-queue-basics daemon merge-queue module access",
+      "direct jj-merge-queue-basics daemon merge-queue module access",
+      "direct jj-merge-queue-basics worktree row load",
+      "direct jj-merge-queue-basics worktree row load",
+      "raw jj-merge-queue-basics ctx_store Store",
+      "raw jj-merge-queue-basics ctx_store Store",
+      "raw jj-merge-queue-basics StoreManager",
+      "raw jj-merge-queue-basics StoreManager",
+    ],
+  );
+});
+
+test("daemon boundary guard allows common setup-store in jj-merge-queue-basics", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/jj_merge_queue_basics.rs",
+    contents: `
+      async fn fixture() {
+        let stores = common::setup_store(data_dir.path()).await;
+        let daemon = common::build_daemon(data_dir.path(), stores, common::fake_providers(), "http://127.0.0.1:0");
+      }
+    `,
+    patterns: JJ_MERGE_QUEUE_BASICS_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(violations, []);
+});
+
+test("daemon boundary guard scopes jj-merge-queue-basics store facade root", () => {
+  assert.deepEqual(
+    jjMergeQueueBasicsStorePatternsForPath(
+      "core/crates/ctx-http/tests/jj_merge_queue_basics.rs",
+    ),
+    JJ_MERGE_QUEUE_BASICS_TEST_STORE_ACCESS_PATTERNS,
+  );
+  assert.deepEqual(
+    jjMergeQueueBasicsStorePatternsForPath(
+      "core/crates/ctx-http/tests/workspace_merge_queue_config_http.rs",
     ),
     [],
   );
