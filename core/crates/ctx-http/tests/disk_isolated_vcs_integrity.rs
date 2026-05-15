@@ -2,12 +2,11 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::{env, fs};
 
-use axum::Router;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::process::Command;
 
-use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::test_support::TestDaemon;
 use ctx_http::api;
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::StoreManager;
@@ -158,14 +157,14 @@ async fn disk_isolated_task_creation_produces_valid_git_worktree() {
         "fake".into(),
         std::sync::Arc::new(FakeProviderAdapter::new()),
     );
-    let state = std::sync::Arc::new(DaemonState::new(
+    let daemon = TestDaemon::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:4399".to_string(),
         None,
-    ));
-    let app: Router = api::router(state.clone());
+    );
+    let app = api::router(daemon.handle());
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

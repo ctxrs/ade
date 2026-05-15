@@ -3,16 +3,15 @@ use std::path::Path;
 use std::time::Duration;
 use std::{env, fs};
 
-use axum::Router;
 use futures::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::json;
 use tokio::process::Command;
 
+use ctx_daemon::test_support::TestDaemon;
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_store::StoreManager;
 
-use ctx_daemon::daemon::DaemonState;
 use ctx_http::api;
 
 const CONTAINER_FILE_SHA256: &str =
@@ -232,14 +231,14 @@ async fn disk_isolated_smoke_sandbox_volume_attachments_and_terminal() {
         std::sync::Arc::new(FakeProviderAdapter::new()),
     );
 
-    let state = std::sync::Arc::new(DaemonState::new(
+    let daemon = TestDaemon::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:4399".to_string(),
         None,
-    ));
-    let app: Router = api::router(state.clone());
+    );
+    let app = api::router(daemon.handle());
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
