@@ -1138,6 +1138,18 @@ impl TestDaemon {
         Ok(())
     }
 
+    pub async fn seed_workspace_runtime_settings_without_target_branch_for_test(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> anyhow::Result<()> {
+        self.state
+            .store_for_workspace(workspace_id)
+            .await?
+            .upsert_runtime_settings_document(1, "{}")
+            .await?;
+        Ok(())
+    }
+
     pub async fn seed_org_visible_run_archive_fixture_for_test(
         &self,
         workspace_id: WorkspaceId,

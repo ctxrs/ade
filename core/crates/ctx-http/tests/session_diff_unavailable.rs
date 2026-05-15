@@ -100,14 +100,10 @@ async fn session_diff_endpoints_return_no_target_branch_unavailable() {
     let app = common::router_for_daemon(&state);
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
-    let ws_store = state
-        .store_for_workspace(ws.id)
+    state
+        .seed_workspace_runtime_settings_without_target_branch_for_test(ws.id)
         .await
-        .expect("workspace store should open");
-    ws_store
-        .upsert_runtime_settings_document(1, "{}")
-        .await
-        .expect("clearing runtime settings should succeed");
+        .expect("clearing workspace target branch should succeed");
 
     let (_task, session) =
         common::create_task_with_session(&app, ws.id.0, "diff", "fake", "fake-model").await;

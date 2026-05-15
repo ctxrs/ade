@@ -164,7 +164,8 @@ const terminalWorkspaceStreamStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/terminal_workspace_stream_separation.rs",
 ];
 
-const workspaceExecutionConfigStoreFacadeTestRoots = [
+const workspaceRuntimeSettingsStoreFacadeTestRoots = [
+  "core/crates/ctx-http/tests/session_diff_unavailable.rs",
   "core/crates/ctx-http/tests/workspace_execution_config_http.rs",
 ];
 
@@ -549,45 +550,45 @@ const TERMINAL_WORKSPACE_STREAM_TEST_STORE_ACCESS_PATTERNS = [
   },
 ];
 
-const WORKSPACE_EXECUTION_CONFIG_TEST_STORE_ACCESS_PATTERNS = [
+const WORKSPACE_RUNTIME_SETTINGS_TEST_STORE_ACCESS_PATTERNS = [
   {
-    name: "direct workspace-execution-config global store access",
+    name: "direct workspace-runtime-settings global store access",
     regex: /\.global_store\s*\(/,
   },
   {
-    name: "direct workspace-execution-config session store access",
+    name: "direct workspace-runtime-settings session store access",
     regex: /\.store_for_session\s*\(/,
   },
   {
-    name: "direct workspace-execution-config workspace store access",
+    name: "direct workspace-runtime-settings workspace store access",
     regex: /\.store_for_workspace\s*\(/,
   },
   {
-    name: "direct workspace-execution-config uncached workspace store access",
+    name: "direct workspace-runtime-settings uncached workspace store access",
     regex: /\.uncached_store_for_workspace\s*\(/,
   },
   {
-    name: "direct workspace-execution-config task store access",
+    name: "direct workspace-runtime-settings task store access",
     regex: /\.store_for_task\s*\(/,
   },
   {
-    name: "direct workspace-execution-config StoreManager access",
+    name: "direct workspace-runtime-settings StoreManager access",
     regex: /\.stores\s*\(/,
   },
   {
-    name: "direct workspace-execution-config StoreManager global access",
+    name: "direct workspace-runtime-settings StoreManager global access",
     regex: /\bstores\.global\s*\(/,
   },
   {
-    name: "direct workspace-execution-config StoreManager workspace access",
+    name: "direct workspace-runtime-settings StoreManager workspace access",
     regex: /\bstores\.workspace\s*\(/,
   },
   {
-    name: "raw workspace-execution-config ctx_store Store",
+    name: "raw workspace-runtime-settings ctx_store Store",
     regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore\b/,
   },
   {
-    name: "raw workspace-execution-config StoreManager",
+    name: "raw workspace-runtime-settings StoreManager",
     regex: /\bStoreManager\b/,
   },
 ];
@@ -872,9 +873,9 @@ function terminalWorkspaceStreamStorePatternsForPath(relativePath) {
   return [];
 }
 
-function workspaceExecutionConfigStorePatternsForPath(relativePath) {
-  if (workspaceExecutionConfigStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
-    return WORKSPACE_EXECUTION_CONFIG_TEST_STORE_ACCESS_PATTERNS;
+function workspaceRuntimeSettingsStorePatternsForPath(relativePath) {
+  if (workspaceRuntimeSettingsStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return WORKSPACE_RUNTIME_SETTINGS_TEST_STORE_ACCESS_PATTERNS;
   }
   return [];
 }
@@ -1149,7 +1150,7 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
-        patterns: workspaceExecutionConfigStorePatternsForPath(relativePath),
+        patterns: workspaceRuntimeSettingsStorePatternsForPath(relativePath),
       }),
     );
     violations.push(
@@ -1214,7 +1215,7 @@ module.exports = {
   TERMINAL_WORKSPACE_STREAM_TEST_STORE_ACCESS_PATTERNS,
   TEST_ROUTER_COMPOSITION_PATTERNS,
   TEST_RAW_DAEMON_BUCKET_PATTERNS,
-  WORKSPACE_EXECUTION_CONFIG_TEST_STORE_ACCESS_PATTERNS,
+  WORKSPACE_RUNTIME_SETTINGS_TEST_STORE_ACCESS_PATTERNS,
   apiPatternsForPath,
   globalIdRoutingStorePatternsForPath,
   isTestRustPath,
@@ -1231,6 +1232,6 @@ module.exports = {
   smallBoundaryStorePatternsForPath,
   taskLifecycleStorePatternsForPath,
   terminalWorkspaceStreamStorePatternsForPath,
-  workspaceExecutionConfigStorePatternsForPath,
+  workspaceRuntimeSettingsStorePatternsForPath,
   stripCfgTestItems,
 };

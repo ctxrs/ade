@@ -18,7 +18,7 @@ const {
   TERMINAL_WORKSPACE_STREAM_TEST_STORE_ACCESS_PATTERNS,
   TEST_ROUTER_COMPOSITION_PATTERNS,
   TEST_RAW_DAEMON_BUCKET_PATTERNS,
-  WORKSPACE_EXECUTION_CONFIG_TEST_STORE_ACCESS_PATTERNS,
+  WORKSPACE_RUNTIME_SETTINGS_TEST_STORE_ACCESS_PATTERNS,
   apiPatternsForPath,
   globalIdRoutingStorePatternsForPath,
   isTestRustPath,
@@ -35,7 +35,7 @@ const {
   smallBoundaryStorePatternsForPath,
   taskLifecycleStorePatternsForPath,
   terminalWorkspaceStreamStorePatternsForPath,
-  workspaceExecutionConfigStorePatternsForPath,
+  workspaceRuntimeSettingsStorePatternsForPath,
   stripCfgTestItems,
 } = require("./ctx_http_daemon_boundary_guard.cjs");
 
@@ -1005,7 +1005,7 @@ test("daemon boundary guard scopes terminal-workspace-stream store facade root",
   );
 });
 
-test("daemon boundary guard rejects direct workspace-execution-config store access", () => {
+test("daemon boundary guard rejects direct workspace-runtime-settings store access", () => {
   const violations = scanText({
     filePath: "core/crates/ctx-http/tests/workspace_execution_config_http.rs",
     contents: `
@@ -1022,29 +1022,29 @@ test("daemon boundary guard rejects direct workspace-execution-config store acce
         let _raw: Store;
       }
     `,
-    patterns: WORKSPACE_EXECUTION_CONFIG_TEST_STORE_ACCESS_PATTERNS,
+    patterns: WORKSPACE_RUNTIME_SETTINGS_TEST_STORE_ACCESS_PATTERNS,
   });
 
   assert.deepEqual(
     violations.map((violation) => violation.name),
     [
-      "direct workspace-execution-config global store access",
-      "direct workspace-execution-config session store access",
-      "direct workspace-execution-config workspace store access",
-      "direct workspace-execution-config uncached workspace store access",
-      "direct workspace-execution-config task store access",
-      "direct workspace-execution-config StoreManager access",
-      "direct workspace-execution-config StoreManager global access",
-      "direct workspace-execution-config StoreManager workspace access",
-      "raw workspace-execution-config ctx_store Store",
-      "raw workspace-execution-config ctx_store Store",
-      "raw workspace-execution-config StoreManager",
-      "raw workspace-execution-config StoreManager",
+      "direct workspace-runtime-settings global store access",
+      "direct workspace-runtime-settings session store access",
+      "direct workspace-runtime-settings workspace store access",
+      "direct workspace-runtime-settings uncached workspace store access",
+      "direct workspace-runtime-settings task store access",
+      "direct workspace-runtime-settings StoreManager access",
+      "direct workspace-runtime-settings StoreManager global access",
+      "direct workspace-runtime-settings StoreManager workspace access",
+      "raw workspace-runtime-settings ctx_store Store",
+      "raw workspace-runtime-settings ctx_store Store",
+      "raw workspace-runtime-settings StoreManager",
+      "raw workspace-runtime-settings StoreManager",
     ],
   );
 });
 
-test("daemon boundary guard allows common setup-store in workspace-execution-config", () => {
+test("daemon boundary guard allows common setup-store in workspace-runtime-settings", () => {
   const violations = scanText({
     filePath: "core/crates/ctx-http/tests/workspace_execution_config_http.rs",
     contents: `
@@ -1053,22 +1053,25 @@ test("daemon boundary guard allows common setup-store in workspace-execution-con
         let daemon = common::build_daemon(data_dir.path(), stores, common::fake_providers(), "http://127.0.0.1:0");
       }
     `,
-    patterns: WORKSPACE_EXECUTION_CONFIG_TEST_STORE_ACCESS_PATTERNS,
+    patterns: WORKSPACE_RUNTIME_SETTINGS_TEST_STORE_ACCESS_PATTERNS,
   });
 
   assert.deepEqual(violations, []);
 });
 
-test("daemon boundary guard scopes workspace-execution-config store facade root", () => {
+test("daemon boundary guard scopes workspace-runtime-settings store facade root", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/tests/session_diff_unavailable.rs",
+    "core/crates/ctx-http/tests/workspace_execution_config_http.rs",
+  ]) {
+    assert.deepEqual(
+      workspaceRuntimeSettingsStorePatternsForPath(filePath),
+      WORKSPACE_RUNTIME_SETTINGS_TEST_STORE_ACCESS_PATTERNS,
+    );
+  }
   assert.deepEqual(
-    workspaceExecutionConfigStorePatternsForPath(
-      "core/crates/ctx-http/tests/workspace_execution_config_http.rs",
-    ),
-    WORKSPACE_EXECUTION_CONFIG_TEST_STORE_ACCESS_PATTERNS,
-  );
-  assert.deepEqual(
-    workspaceExecutionConfigStorePatternsForPath(
-      "core/crates/ctx-http/tests/session_diff_unavailable.rs",
+    workspaceRuntimeSettingsStorePatternsForPath(
+      "core/crates/ctx-http/tests/workspace_merge_queue_config_http.rs",
     ),
     [],
   );
