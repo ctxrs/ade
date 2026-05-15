@@ -16,7 +16,7 @@ async fn serve_runtime(runtime: daemon::DaemonRuntime) -> Result<()> {
         listeners,
         daemon_url,
     } = runtime;
-    let app = api::router(handle.clone());
+    let app = api::router(api::RouteHandles::from_daemon_handle(handle.clone()));
     let bound_addrs = listeners
         .iter()
         .filter_map(|listener| listener.local_addr().ok())

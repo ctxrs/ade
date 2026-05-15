@@ -76,7 +76,7 @@ use web_sessions::*;
 use workspaces::*;
 
 use request_base::{public_route_url, public_websocket_url, resolve_request_base_url};
-pub use router::router;
+pub use router::{router, RouteHandles};
 
 use auth::{generate_mobile_api_token, generate_pairing_token, hash_api_token, hash_pairing_token};
 use demo::*;

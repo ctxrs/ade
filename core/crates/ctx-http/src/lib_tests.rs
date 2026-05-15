@@ -39,7 +39,7 @@ fn test_daemon_with_providers(
 }
 
 fn test_router(daemon: &TestDaemon) -> axum::Router {
-    api::router(daemon.handle())
+    api::router(api::RouteHandles::from_daemon_handle(daemon.handle()))
 }
 
 async fn run_git(root: &Path, args: &[&str]) {

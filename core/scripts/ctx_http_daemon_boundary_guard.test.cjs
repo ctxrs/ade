@@ -128,6 +128,9 @@ test("daemon boundary guard rejects broad daemon handle fields", () => {
   const violations = scanText({
     filePath: "core/crates/ctx-http/src/api/example.rs",
     contents: `
+      pub fn router(
+        state: impl Into<DaemonHandle>,
+      ) {}
       struct ProxyState {
         handle: DaemonHandle,
       }
@@ -137,7 +140,7 @@ test("daemon boundary guard rejects broad daemon handle fields", () => {
 
   assert.deepEqual(
     violations.map((violation) => violation.name),
-    ["broad daemon handle field"],
+    ["router accepts broad daemon handle", "broad daemon handle field"],
   );
 });
 
@@ -405,7 +408,7 @@ test("daemon boundary guard allows only router_for_daemon in integration common"
     filePath: "core/crates/ctx-http/tests/common/mod.rs",
     contents: `
       pub fn router_for_daemon(daemon: &TestDaemon) -> axum::Router {
-        api::router(daemon.handle())
+        api::router(api::RouteHandles::from_daemon_handle(daemon.handle()))
       }
 
       pub fn router(state: Arc<DaemonState>) -> axum::Router {
@@ -426,10 +429,10 @@ test("daemon boundary guard requires router calls to be inside sanctioned helper
     filePath: "core/crates/ctx-http/tests/common/mod.rs",
     contents: `
       pub fn router_for_daemon(daemon: &TestDaemon) -> axum::Router {
-        api::router(daemon.handle())
+        api::router(api::RouteHandles::from_daemon_handle(daemon.handle()))
       }
       pub fn other_router(daemon: &TestDaemon) -> axum::Router {
-        api::router(daemon.handle())
+        api::router(api::RouteHandles::from_daemon_handle(daemon.handle()))
       }
     `,
     patterns: TEST_ROUTER_COMPOSITION_PATTERNS,
@@ -447,12 +450,12 @@ test("daemon boundary guard allows only sanctioned router helper bodies", () => 
       filePath: "core/crates/ctx-http/src/lib_tests.rs",
       allowed: `
         fn test_router(daemon: &TestDaemon) -> axum::Router {
-          api::router(daemon.handle())
+          api::router(api::RouteHandles::from_daemon_handle(daemon.handle()))
         }
       `,
       denied: `
         fn other_router(daemon: &TestDaemon) -> axum::Router {
-          api::router(daemon.handle())
+          api::router(api::RouteHandles::from_daemon_handle(daemon.handle()))
         }
       `,
     },
@@ -460,12 +463,12 @@ test("daemon boundary guard allows only sanctioned router helper bodies", () => 
       filePath: "core/crates/ctx-http/src/api/tasks/storage_admission_http_tests/fixtures.rs",
       allowed: `
         pub(super) fn test_router(state: &TestDaemon) -> axum::Router {
-          crate::api::router(state.handle())
+          crate::api::router(crate::api::RouteHandles::from_daemon_handle(state.handle()))
         }
       `,
       denied: `
         pub(super) fn other_router(state: &TestDaemon) -> axum::Router {
-          crate::api::router(state.handle())
+          crate::api::router(crate::api::RouteHandles::from_daemon_handle(state.handle()))
         }
       `,
     },
@@ -473,12 +476,12 @@ test("daemon boundary guard allows only sanctioned router helper bodies", () => 
       filePath: "core/crates/ctx-http-test-support/src/mcp_daemon/router.rs",
       allowed: `
         pub(crate) fn spawn_router(listener: tokio::net::TcpListener, handle: DaemonHandle) {
-          let app = ctx_http::api::router(handle);
+          let app = ctx_http::api::router(ctx_http::api::RouteHandles::from_daemon_handle(handle));
         }
       `,
       denied: `
         pub(crate) fn other_router(handle: DaemonHandle) {
-          let app = ctx_http::api::router(handle);
+          let app = ctx_http::api::router(ctx_http::api::RouteHandles::from_daemon_handle(handle));
         }
       `,
     },

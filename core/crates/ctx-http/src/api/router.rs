@@ -61,7 +61,7 @@ macro_rules! impl_route_state_extractors {
         $(
             impl FromRef<RouteState> for $name {
                 fn from_ref(state: &RouteState) -> Self {
-                    state.handle.$accessor()
+                    state.handles.$accessor.clone()
                 }
             }
         )+
@@ -69,8 +69,37 @@ macro_rules! impl_route_state_extractors {
 }
 
 #[derive(Clone)]
+pub struct RouteHandles {
+    pub(in crate::api) core: CoreHandle,
+    pub(in crate::api) sessions: SessionsHandle,
+    pub(in crate::api) tasks: TasksHandle,
+    pub(in crate::api) workspaces: WorkspacesHandle,
+    pub(in crate::api) workspace_stream: WorkspaceStreamHandle,
+    pub(in crate::api) providers: ProvidersHandle,
+    pub(in crate::api) telemetry: TelemetryHandle,
+    pub(in crate::api) transport: TransportHandle,
+    pub(in crate::api) execution: ExecutionHandle,
+}
+
+impl RouteHandles {
+    pub fn from_daemon_handle(handle: DaemonHandle) -> Self {
+        Self {
+            core: handle.core(),
+            sessions: handle.sessions(),
+            tasks: handle.tasks(),
+            workspaces: handle.workspaces(),
+            workspace_stream: handle.workspace_stream(),
+            providers: handle.providers(),
+            telemetry: handle.telemetry(),
+            transport: handle.transport(),
+            execution: handle.execution(),
+        }
+    }
+}
+
+#[derive(Clone)]
 pub(in crate::api) struct RouteState {
-    pub(in crate::api) handle: DaemonHandle,
+    pub(in crate::api) handles: RouteHandles,
 }
 
 impl_route_state_extractors! {
@@ -85,10 +114,8 @@ impl_route_state_extractors! {
     ExecutionHandle, execution;
 }
 
-pub fn router(state: impl Into<DaemonHandle>) -> axum::Router {
-    let state = RouteState {
-        handle: state.into(),
-    };
+pub fn router(handles: RouteHandles) -> axum::Router {
+    let state = RouteState { handles };
     let auth_state = state.clone();
     let perf_state = state.clone();
     let api = routes::api_routes()

@@ -131,6 +131,11 @@ const API_RAW_DAEMON_PATTERNS = [
     regex: /State\s*<\s*DaemonHandle\s*>/,
   },
   {
+    name: "router accepts broad daemon handle",
+    regex: /a^/,
+    contentRegex: /\bfn\s+router\s*\([^)]*\bDaemonHandle\b[^)]*\)/gm,
+  },
+  {
     name: "daemon handle escalation call",
     regex: /\.daemon_handle\s*\(/,
   },
@@ -375,12 +380,6 @@ function repoRelative(filePath) {
 
 function apiPatternsForPath(relativePath) {
   const patterns = [...API_RAW_DAEMON_PATTERNS];
-  if (relativePath === "core/crates/ctx-http/src/api/router.rs") {
-    const index = patterns.findIndex((pattern) => pattern.name === "broad daemon handle field");
-    if (index !== -1) {
-      patterns.splice(index, 1);
-    }
-  }
   if (rawStoreBlindApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...API_DOMAIN_RAW_STORE_PATTERNS);
   }
@@ -456,28 +455,28 @@ function isInsideDeclaredFunction(lines, index, declarationRegex) {
 function isAllowedRouterHelperComposition({ filePath, lines, index, line }) {
   if (
     filePath === "core/crates/ctx-http/tests/common/mod.rs"
-    && /api::router\s*\(\s*daemon\.handle\s*\(\s*\)\s*\)/.test(line)
+    && /api::router\s*\(\s*api::RouteHandles::from_daemon_handle\s*\(\s*daemon\.handle\s*\(\s*\)\s*\)\s*\)/.test(line)
     && isInsideDeclaredFunction(lines, index, /\bpub\s+fn\s+router_for_daemon\s*\(/)
   ) {
     return true;
   }
   if (
     filePath === "core/crates/ctx-http/src/lib_tests.rs"
-    && /api::router\s*\(\s*daemon\.handle\s*\(\s*\)\s*\)/.test(line)
+    && /api::router\s*\(\s*api::RouteHandles::from_daemon_handle\s*\(\s*daemon\.handle\s*\(\s*\)\s*\)\s*\)/.test(line)
     && isInsideDeclaredFunction(lines, index, /\bfn\s+test_router\s*\(/)
   ) {
     return true;
   }
   if (
     filePath === "core/crates/ctx-http/src/api/tasks/storage_admission_http_tests/fixtures.rs"
-    && /crate::api::router\s*\(\s*state\.handle\s*\(\s*\)\s*\)/.test(line)
+    && /crate::api::router\s*\(\s*crate::api::RouteHandles::from_daemon_handle\s*\(\s*state\.handle\s*\(\s*\)\s*\)\s*\)/.test(line)
     && isInsideDeclaredFunction(lines, index, /\bpub\s*\(\s*super\s*\)\s+fn\s+test_router\s*\(/)
   ) {
     return true;
   }
   if (
     filePath === "core/crates/ctx-http-test-support/src/mcp_daemon/router.rs"
-    && /ctx_http::api::router\s*\(\s*handle\s*\)/.test(line)
+    && /ctx_http::api::router\s*\(\s*ctx_http::api::RouteHandles::from_daemon_handle\s*\(\s*handle\s*\)\s*\)/.test(line)
     && isInsideDeclaredFunction(lines, index, /\bpub\s*\(\s*crate\s*\)\s+fn\s+spawn_router\s*\(/)
   ) {
     return true;

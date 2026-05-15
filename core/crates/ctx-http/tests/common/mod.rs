@@ -446,7 +446,7 @@ impl Drop for TestServer {
 }
 
 pub fn router_for_daemon(daemon: &TestDaemon) -> axum::Router {
-    api::router(daemon.handle())
+    api::router(api::RouteHandles::from_daemon_handle(daemon.handle()))
 }
 
 pub async fn oneshot_json<T: DeserializeOwned>(

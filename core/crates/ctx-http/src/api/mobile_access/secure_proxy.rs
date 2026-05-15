@@ -20,8 +20,8 @@ pub(in crate::api) struct SecureProxyRouterState {
 impl axum::extract::FromRef<RouteState> for SecureProxyRouterState {
     fn from_ref(state: &RouteState) -> Self {
         Self {
-            core: state.handle.core(),
-            workspaces: state.handle.workspaces(),
+            core: state.handles.core.clone(),
+            workspaces: state.handles.workspaces.clone(),
         }
     }
 }

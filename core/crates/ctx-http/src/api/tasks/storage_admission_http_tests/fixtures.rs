@@ -62,7 +62,7 @@ pub(super) async fn save_test_execution_settings(state: &TestDaemon, execution: 
 }
 
 pub(super) fn test_router(state: &TestDaemon) -> axum::Router {
-    crate::api::router(state.handle())
+    crate::api::router(crate::api::RouteHandles::from_daemon_handle(state.handle()))
 }
 
 pub(super) fn install_unreleased_host_reserve_storage_override(
