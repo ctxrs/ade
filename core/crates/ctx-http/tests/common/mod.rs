@@ -13,6 +13,7 @@ use axum::body::{to_bytes, Body};
 use axum::http::{Method, Request, StatusCode};
 use ctx_core::models::{Session, Task, Workspace};
 use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::test_support::TestDaemon;
 use ctx_http::api;
 use ctx_managed_installs::{
     load_agent_server_config, save_agent_server_config, AgentServerCommand, AgentServerConfigFile,
@@ -416,6 +417,15 @@ pub fn build_state(
     ))
 }
 
+pub fn build_daemon(
+    data_root: impl Into<std::path::PathBuf>,
+    stores: StoreManager,
+    providers: HashMap<String, Arc<dyn ProviderAdapter>>,
+    base_url: impl Into<String>,
+) -> TestDaemon {
+    TestDaemon::new(data_root.into(), stores, providers, base_url.into(), None)
+}
+
 pub async fn spawn_http_server(app: axum::Router) -> TestServer {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -453,6 +463,10 @@ impl Drop for TestServer {
 
 pub fn router(state: Arc<DaemonState>) -> axum::Router {
     api::router(state)
+}
+
+pub fn router_for_daemon(daemon: &TestDaemon) -> axum::Router {
+    api::router(daemon.handle())
 }
 
 pub async fn oneshot_json<T: DeserializeOwned>(

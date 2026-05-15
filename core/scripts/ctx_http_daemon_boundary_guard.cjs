@@ -57,6 +57,12 @@ const migratedRawDaemonTestRoots = [
   "core/crates/ctx-http/src/lib_tests/update_boundaries.rs",
   "core/crates/ctx-http/src/lib_tests/web_session_routes/fixtures.rs",
   "core/crates/ctx-http/src/lib_tests/workspace_active_routes.rs",
+  "core/crates/ctx-http/tests/demo_seed_transcript_http.rs",
+  "core/crates/ctx-http/tests/message_idempotency.rs",
+  "core/crates/ctx-http/tests/repo_clone_branch_and_safety.rs",
+  "core/crates/ctx-http/tests/repo_init_initial_commit.rs",
+  "core/crates/ctx-http/tests/repo_validate_destination.rs",
+  "core/crates/ctx-http/tests/system_prompt_append_http.rs",
 ];
 
 const API_RAW_DAEMON_PATTERNS = [
@@ -159,6 +165,14 @@ const MIGRATED_TEST_RAW_DAEMON_PATTERNS = [
   {
     name: "raw daemon router wiring in migrated test surface",
     regex: /\bapi::router\s*\(\s*state(?:\.clone\s*\(\s*\))?\s*\)/,
+  },
+  {
+    name: "raw common daemon state helper in migrated test surface",
+    regex: /(?:\bcommon::|(?<![\w:.])\b)build_state\s*\(/,
+  },
+  {
+    name: "raw common router helper in migrated test surface",
+    regex: /(?:\bcommon::|(?<![\w:.])\b)router\s*\(/,
   },
   {
     name: "raw provider-session token helper in migrated test surface",

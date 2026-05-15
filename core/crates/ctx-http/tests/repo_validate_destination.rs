@@ -8,13 +8,13 @@ use serde_json::json;
 async fn repo_validate_destination_rejects_non_empty_dir_when_required() {
     let data_root = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_root.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_root.path(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state);
+    let app = common::router_for_daemon(&daemon);
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("existing");
@@ -53,13 +53,13 @@ async fn repo_validate_destination_rejects_non_empty_dir_when_required() {
 async fn repo_validate_destination_rejects_existing_dir_when_must_not_exist() {
     let data_root = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_root.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_root.path(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state);
+    let app = common::router_for_daemon(&daemon);
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("existing");
@@ -95,13 +95,13 @@ async fn repo_validate_destination_rejects_existing_dir_when_must_not_exist() {
 async fn repo_validate_destination_allows_missing_path() {
     let data_root = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_root.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_root.path(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state);
+    let app = common::router_for_daemon(&daemon);
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("missing");
@@ -136,13 +136,13 @@ async fn repo_validate_destination_allows_missing_path() {
 async fn repo_validate_destination_accepts_get_query() {
     let data_root = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_root.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_root.path(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state);
+    let app = common::router_for_daemon(&daemon);
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("missing");

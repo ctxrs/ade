@@ -8,13 +8,13 @@ use serde_json::json;
 async fn repo_clone_accepts_branch_option() {
     let data_root = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_root.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_root.path(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state);
+    let app = common::router_for_daemon(&daemon);
 
     let src = common::init_git_repo(&[("README.md", "hi")]).await;
     let src_root = src.path();
@@ -61,13 +61,13 @@ async fn repo_clone_accepts_branch_option() {
 async fn repo_clone_rejects_dest_name_traversal() {
     let data_root = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_root.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_root.path(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state);
+    let app = common::router_for_daemon(&daemon);
 
     let src = common::init_git_repo(&[("README.md", "hi")]).await;
     let src_root = src.path();

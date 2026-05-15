@@ -213,6 +213,10 @@ test("daemon boundary guard rejects raw daemon constructors in migrated test roo
           Some("secret".to_string()),
         ));
         let app = api::router(state.clone());
+        let state = common::build_state(root, stores, map, url);
+        let app = common::router(state);
+        let state = build_state(root, stores, map, url);
+        let app = router(state.clone());
         let _ = ctx_daemon::daemon::issue_provider_session_mcp_token(&state, session, workspace, worktree).await;
         let _ = issue_provider_session_mcp_token_with_capabilities(&state, session, workspace, worktree, capabilities).await;
         let _ = revoke_provider_session_mcp_token(token).await;
@@ -227,6 +231,10 @@ test("daemon boundary guard rejects raw daemon constructors in migrated test roo
       "raw daemon state constructor in migrated test surface",
       "raw daemon state arc in migrated test surface",
       "raw daemon router wiring in migrated test surface",
+      "raw common daemon state helper in migrated test surface",
+      "raw common daemon state helper in migrated test surface",
+      "raw common router helper in migrated test surface",
+      "raw common router helper in migrated test surface",
       "raw provider-session token helper in migrated test surface",
       "raw provider-session token helper in migrated test surface",
       "raw provider-session token helper in migrated test surface",
@@ -327,6 +335,12 @@ test("daemon boundary guard scopes migrated raw daemon constructor ban", () => {
     "core/crates/ctx-http/src/lib_tests/update_boundaries.rs",
     "core/crates/ctx-http/src/lib_tests/web_session_routes/fixtures.rs",
     "core/crates/ctx-http/src/lib_tests/workspace_active_routes.rs",
+    "core/crates/ctx-http/tests/demo_seed_transcript_http.rs",
+    "core/crates/ctx-http/tests/message_idempotency.rs",
+    "core/crates/ctx-http/tests/repo_clone_branch_and_safety.rs",
+    "core/crates/ctx-http/tests/repo_init_initial_commit.rs",
+    "core/crates/ctx-http/tests/repo_validate_destination.rs",
+    "core/crates/ctx-http/tests/system_prompt_append_http.rs",
   ]) {
     assert.equal(migratedTestPatternsForPath(filePath), MIGRATED_TEST_RAW_DAEMON_PATTERNS);
   }

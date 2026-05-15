@@ -21,13 +21,13 @@ async fn post_message_idempotent_same_payload() {
     .await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = bounded("setup store", common::setup_store(data_dir.path())).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
 
     let ws = bounded(
         "create workspace",
@@ -86,13 +86,13 @@ async fn post_message_idempotent_conflict_on_change() {
     .await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = bounded("setup store", common::setup_store(data_dir.path())).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
 
     let ws = bounded(
         "create workspace",
