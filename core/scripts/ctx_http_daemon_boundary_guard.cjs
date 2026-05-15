@@ -176,6 +176,7 @@ const fakeDaemonExternalStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/hot_endpoints_no_db.rs",
   "core/crates/ctx-http/tests/install_start_contract.rs",
   "core/crates/ctx-http/tests/jj_merge_queue_basics.rs",
+  "core/crates/ctx-http/tests/merge_queue_isolation.rs",
   "core/crates/ctx-http/tests/memory_leak_e2e.rs",
   "core/crates/ctx-http/tests/message_idempotency.rs",
   "core/crates/ctx-http/tests/noisy_output_backpressure.rs",
@@ -267,6 +268,10 @@ const workspaceMergeQueueConfigStoreFacadeTestRoots = [
 
 const jjMergeQueueBasicsStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/jj_merge_queue_basics.rs",
+];
+
+const mergeQueueIsolationStoreFacadeTestRoots = [
+  "core/crates/ctx-http/tests/merge_queue_isolation.rs",
 ];
 
 const providerWorkerReapingStoreFacadeTestRoots = [
@@ -1142,6 +1147,81 @@ const JJ_MERGE_QUEUE_BASICS_TEST_STORE_ACCESS_PATTERNS = [
   },
 ];
 
+const MERGE_QUEUE_ISOLATION_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct merge-queue-isolation global store access",
+    regex: /\.global_store\s*\(/,
+  },
+  {
+    name: "direct merge-queue-isolation session store access",
+    regex: /\.store_for_session\s*\(/,
+  },
+  {
+    name: "direct merge-queue-isolation workspace store access",
+    regex: /\.store_for_workspace\s*\(/,
+  },
+  {
+    name: "direct merge-queue-isolation uncached workspace store access",
+    regex: /\.uncached_store_for_workspace\s*\(/,
+  },
+  {
+    name: "direct merge-queue-isolation task store access",
+    regex: /\.store_for_task\s*\(/,
+  },
+  {
+    name: "direct merge-queue-isolation worktree store access",
+    regex: /\.store_for_worktree\s*\(/,
+  },
+  {
+    name: "direct merge-queue-isolation StoreManager access",
+    regex: /\.stores\s*\(/,
+  },
+  {
+    name: "direct merge-queue-isolation StoreManager global access",
+    regex: /\b[a-zA-Z_][a-zA-Z0-9_]*\.global\s*\(/,
+    contentRegex: /\b[a-zA-Z_][a-zA-Z0-9_]*\s*\n\s*\.global\s*\(/gm,
+  },
+  {
+    name: "direct merge-queue-isolation StoreManager workspace access",
+    regex: /\b[a-zA-Z_][a-zA-Z0-9_]*\.workspace(?:_uncached)?\s*\(/,
+    contentRegex: /\b[a-zA-Z_][a-zA-Z0-9_]*\s*\n\s*\.workspace(?:_uncached)?\s*\(/gm,
+  },
+  {
+    name: "direct merge-queue-isolation workspaces handle access",
+    regex: /a^/,
+    contentRegex: /(?:\.handle\s*\(\s*\)\s*\.\s*workspaces\s*\(|\blet\s+[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*[^;\n]*\.handle\s*\(\s*\)\s*;|[a-zA-Z_][a-zA-Z0-9_]*\.workspaces\s*\()/gm,
+  },
+  {
+    name: "direct merge-queue-isolation sessions handle access",
+    regex: /a^/,
+    contentRegex: /(?:\.handle\s*\(\s*\)\s*\.\s*sessions\s*\(|\blet\s+[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*[^;\n]*\.handle\s*\(\s*\)\s*;|[a-zA-Z_][a-zA-Z0-9_]*\.sessions\s*\()/gm,
+  },
+  {
+    name: "direct merge-queue-isolation workspace config write",
+    regex: /\bctx_workspace_config::|\bupdate_merge_queue_config\s*\(|\bMergeQueueConfigUpdate\b|\bMergeQueueCanonicalSync\b/,
+  },
+  {
+    name: "direct merge-queue-isolation daemon merge-queue module access",
+    regex: /\bctx_daemon::daemon::merge_queue\b|\bdaemon::merge_queue\b|\bmerge_queue::/,
+  },
+  {
+    name: "direct merge-queue-isolation worktree row access",
+    regex: /\.(?:create_worktree|insert_worktree|get_worktree|load_worktree_for_test|upsert_workspace_worktree_index)\s*\(/,
+  },
+  {
+    name: "direct merge-queue-isolation entry or run row access",
+    regex: /\.(?:get_merge_queue_entry|list_merge_queue_entries|get_latest_merge_queue_run|create_merge_queue_entry|create_merge_queue_run)\s*\(/,
+  },
+  {
+    name: "raw merge-queue-isolation ctx_store Store",
+    regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore\b/,
+  },
+  {
+    name: "raw merge-queue-isolation StoreManager",
+    regex: /\bStoreManager\b/,
+  },
+];
+
 const PROVIDER_WORKER_REAPING_TEST_STORE_ACCESS_PATTERNS = [
   {
     name: "direct provider-worker-reaping global store access",
@@ -1850,6 +1930,13 @@ function jjMergeQueueBasicsStorePatternsForPath(relativePath) {
   return [];
 }
 
+function mergeQueueIsolationStorePatternsForPath(relativePath) {
+  if (mergeQueueIsolationStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return MERGE_QUEUE_ISOLATION_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
 function providerWorkerReapingStorePatternsForPath(relativePath) {
   if (providerWorkerReapingStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return PROVIDER_WORKER_REAPING_TEST_STORE_ACCESS_PATTERNS;
@@ -2225,6 +2312,13 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
+        patterns: mergeQueueIsolationStorePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
         patterns: providerWorkerReapingStorePatternsForPath(relativePath),
       }),
     );
@@ -2307,6 +2401,7 @@ module.exports = {
   GLOBAL_ID_ROUTING_TEST_STORE_ACCESS_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
   JJ_MERGE_QUEUE_BASICS_TEST_STORE_ACCESS_PATTERNS,
+  MERGE_QUEUE_ISOLATION_TEST_STORE_ACCESS_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
@@ -2337,6 +2432,7 @@ module.exports = {
   globalIdRoutingStorePatternsForPath,
   isTestRustPath,
   jjMergeQueueBasicsStorePatternsForPath,
+  mergeQueueIsolationStorePatternsForPath,
   mcpDaemonPatternsForPath,
   migratedTestPatternsForPath,
   mobileStorePatternsForPath,

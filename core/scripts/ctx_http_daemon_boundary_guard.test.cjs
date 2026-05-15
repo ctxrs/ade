@@ -14,6 +14,7 @@ const {
   GLOBAL_ID_ROUTING_TEST_STORE_ACCESS_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
   JJ_MERGE_QUEUE_BASICS_TEST_STORE_ACCESS_PATTERNS,
+  MERGE_QUEUE_ISOLATION_TEST_STORE_ACCESS_PATTERNS,
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
@@ -44,6 +45,7 @@ const {
   globalIdRoutingStorePatternsForPath,
   isTestRustPath,
   jjMergeQueueBasicsStorePatternsForPath,
+  mergeQueueIsolationStorePatternsForPath,
   mcpDaemonPatternsForPath,
   migratedTestPatternsForPath,
   mobileStorePatternsForPath,
@@ -1223,6 +1225,7 @@ test("daemon boundary guard scopes fake-daemon external roots without blocking c
     "core/crates/ctx-http/tests/hot_endpoints_no_db.rs",
     "core/crates/ctx-http/tests/install_start_contract.rs",
     "core/crates/ctx-http/tests/jj_merge_queue_basics.rs",
+    "core/crates/ctx-http/tests/merge_queue_isolation.rs",
     "core/crates/ctx-http/tests/memory_leak_e2e.rs",
     "core/crates/ctx-http/tests/message_idempotency.rs",
     "core/crates/ctx-http/tests/noisy_output_backpressure.rs",
@@ -1964,6 +1967,114 @@ test("daemon boundary guard scopes jj-merge-queue-basics store facade root", () 
   assert.deepEqual(
     jjMergeQueueBasicsStorePatternsForPath(
       "core/crates/ctx-http/tests/workspace_merge_queue_config_http.rs",
+    ),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects direct merge-queue-isolation store/config access", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/merge_queue_isolation.rs",
+    contents: `
+      use ctx_daemon::daemon::merge_queue;
+      use ctx_store::{Store, StoreManager};
+      async fn fixture(daemon: TestDaemon, stores: StoreManager, store: Store) {
+        daemon.global_store();
+        daemon.store_for_session(session_id).await?;
+        daemon.store_for_workspace(workspace_id).await?;
+        daemon.uncached_store_for_workspace(workspace_id).await?;
+        daemon.store_for_task(task_id).await?;
+        daemon.store_for_worktree(worktree_id).await?;
+        daemon.stores().global().await?;
+        stores.global().await?;
+        stores.workspace(workspace_id).await?;
+        stores.workspace_uncached(workspace_id).await?;
+        manager
+          .global().await?;
+        manager
+          .workspace(workspace_id).await?;
+        manager
+          .workspace_uncached(workspace_id).await?;
+        daemon.handle().workspaces();
+        daemon.handle().sessions();
+        let handle = daemon.handle();
+        handle.workspaces();
+        handle.sessions();
+        ctx_workspace_config::update_merge_queue_config(&store, update).await?;
+        let _update: MergeQueueConfigUpdate;
+        let _sync = MergeQueueCanonicalSync::Never;
+        merge_queue::activate_workspace_merge_queue(&state, workspace_id).await;
+        store.create_worktree(workspace_id, root, head, branch).await?;
+        store.insert_worktree(worktree).await?;
+        store.get_worktree(worktree_id).await?;
+        daemon.load_worktree_for_test(worktree_id).await?;
+        daemon.global_store().upsert_workspace_worktree_index(worktree_id, workspace_id).await?;
+        store.get_merge_queue_entry(entry_id).await?;
+        store.list_merge_queue_entries(workspace_id, Some(1)).await?;
+        store.get_latest_merge_queue_run(entry_id).await?;
+        store.create_merge_queue_entry(&entry).await?;
+        store.create_merge_queue_run(&run).await?;
+        let _raw: Store;
+      }
+    `,
+    patterns: MERGE_QUEUE_ISOLATION_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct merge-queue-isolation global store access",
+      "direct merge-queue-isolation global store access",
+      "direct merge-queue-isolation session store access",
+      "direct merge-queue-isolation workspace store access",
+      "direct merge-queue-isolation uncached workspace store access",
+      "direct merge-queue-isolation task store access",
+      "direct merge-queue-isolation worktree store access",
+      "direct merge-queue-isolation StoreManager access",
+      "direct merge-queue-isolation StoreManager global access",
+      "direct merge-queue-isolation StoreManager global access",
+      "direct merge-queue-isolation StoreManager workspace access",
+      "direct merge-queue-isolation StoreManager workspace access",
+      "direct merge-queue-isolation StoreManager workspace access",
+      "direct merge-queue-isolation StoreManager workspace access",
+      "direct merge-queue-isolation workspaces handle access",
+      "direct merge-queue-isolation workspaces handle access",
+      "direct merge-queue-isolation workspaces handle access",
+      "direct merge-queue-isolation sessions handle access",
+      "direct merge-queue-isolation sessions handle access",
+      "direct merge-queue-isolation sessions handle access",
+      "direct merge-queue-isolation workspace config write",
+      "direct merge-queue-isolation workspace config write",
+      "direct merge-queue-isolation workspace config write",
+      "direct merge-queue-isolation daemon merge-queue module access",
+      "direct merge-queue-isolation daemon merge-queue module access",
+      "direct merge-queue-isolation worktree row access",
+      "direct merge-queue-isolation worktree row access",
+      "direct merge-queue-isolation worktree row access",
+      "direct merge-queue-isolation worktree row access",
+      "direct merge-queue-isolation worktree row access",
+      "direct merge-queue-isolation entry or run row access",
+      "direct merge-queue-isolation entry or run row access",
+      "direct merge-queue-isolation entry or run row access",
+      "direct merge-queue-isolation entry or run row access",
+      "direct merge-queue-isolation entry or run row access",
+      "raw merge-queue-isolation ctx_store Store",
+      "raw merge-queue-isolation ctx_store Store",
+      "raw merge-queue-isolation ctx_store Store",
+      "raw merge-queue-isolation StoreManager",
+      "raw merge-queue-isolation StoreManager",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes merge-queue-isolation store facade root", () => {
+  assert.deepEqual(
+    mergeQueueIsolationStorePatternsForPath("core/crates/ctx-http/tests/merge_queue_isolation.rs"),
+    MERGE_QUEUE_ISOLATION_TEST_STORE_ACCESS_PATTERNS,
+  );
+  assert.deepEqual(
+    mergeQueueIsolationStorePatternsForPath(
+      "core/crates/ctx-http/tests/jj_merge_queue_basics.rs",
     ),
     [],
   );
