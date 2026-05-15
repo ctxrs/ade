@@ -95,15 +95,9 @@ async fn run_scenario(label: &'static str, monitoring_enabled: bool) -> LeakRepo
     let _telemetry_children = EnvGuard::set_if_missing("CTX_RESOURCE_TELEMETRY_CHILD_LIMIT", "0");
 
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&daemon);
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let daemon = &fixture.daemon;
+    let app = fixture.router();
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let session_count = env_u64("CTX_MEMLEAK_SESSION_COUNT").unwrap_or(6);

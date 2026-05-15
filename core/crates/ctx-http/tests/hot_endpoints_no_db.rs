@@ -21,16 +21,9 @@ async fn assert_hot_endpoints_with_failpoints(failpoints: &[&'static str]) {
     let _guard = FAILPOINT_LOCK.lock().await;
     ctx_store::fault_injection::clear_failpoints();
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_dir.path()).await;
-
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&daemon);
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let daemon = &fixture.daemon;
+    let app = fixture.router();
     let server = common::spawn_http_server(app).await;
     let base = &server.base_url;
     let client = &server.client;
@@ -213,16 +206,8 @@ async fn cold_workspace_active_endpoints_fail_closed_when_hydration_fails() {
     let _guard = FAILPOINT_LOCK.lock().await;
     ctx_store::fault_injection::clear_failpoints();
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_dir.path()).await;
-
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&daemon);
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let app = fixture.router();
     let server = common::spawn_http_server(app).await;
     let base = &server.base_url;
     let client = &server.client;
@@ -276,16 +261,9 @@ async fn publish_event_does_not_trigger_full_session_head_rebuilds() {
     let _guard = FAILPOINT_LOCK.lock().await;
     ctx_store::fault_injection::clear_failpoints();
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_dir.path()).await;
-
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&daemon);
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let daemon = &fixture.daemon;
+    let app = fixture.router();
     let server = common::spawn_http_server(app).await;
     let base = &server.base_url;
     let client = &server.client;

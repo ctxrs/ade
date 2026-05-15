@@ -11,7 +11,6 @@ use serde_json::json;
 use tokio::process::Command;
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
-use ctx_daemon::test_support::TestDaemon;
 use ctx_providers::fake::FakeProviderAdapter;
 
 static FAILPOINT_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -61,7 +60,7 @@ async fn setup_git_repo() -> tempfile::TempDir {
 }
 
 async fn setup_server() -> (
-    TestDaemon,
+    common::FakeDaemonFixture,
     tokio::task::JoinHandle<()>,
     std::net::SocketAddr,
     ctx_core::models::Workspace,
@@ -69,21 +68,12 @@ async fn setup_server() -> (
     i64,
 ) {
     let repo = setup_git_repo().await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_dir.path()).await;
-
     let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
         HashMap::new();
     providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
 
-    let daemon = TestDaemon::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:0".to_string(),
-        None,
-    );
-    let app = common::router_for_daemon(&daemon);
+    let fixture = common::fake_daemon_fixture_with_providers(providers, "http://127.0.0.1:0").await;
+    let app = fixture.router();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
@@ -113,12 +103,13 @@ async fn setup_server() -> (
         .unwrap();
 
     let session = common::load_primary_session_http(&client, &base, &task).await;
-    let last = daemon
+    let last = fixture
+        .daemon
         .seed_fault_matrix_replay_notice_for_test(task.id, session.id)
         .await
         .unwrap();
 
-    (daemon, server, addr, ws, session, last)
+    (fixture, server, addr, ws, session, last)
 }
 
 fn clear_all_failpoints() {
@@ -225,7 +216,7 @@ async fn wait_for_disconnect_without_reset(
 #[tokio::test]
 async fn fault_matrix_replay_errors_become_gaps() {
     let _failpoint_guard = FAILPOINT_LOCK.lock().await;
-    let (_state, server, addr, ws, session, _last_seq) = setup_server().await;
+    let (_fixture, server, addr, ws, session, _last_seq) = setup_server().await;
 
     struct Case {
         name: &'static str,
@@ -277,8 +268,9 @@ async fn fault_matrix_replay_errors_become_gaps() {
 #[tokio::test]
 async fn fault_matrix_snapshot_send_failure_reconnects_cleanly() {
     let _failpoint_guard = FAILPOINT_LOCK.lock().await;
-    let (daemon, server, addr, ws, _session, _last_seq) = setup_server().await;
-    daemon
+    let (fixture, server, addr, ws, _session, _last_seq) = setup_server().await;
+    fixture
+        .daemon
         .ensure_workspace_active_snapshot_hydrated(ws.id)
         .await
         .unwrap();
@@ -360,7 +352,7 @@ async fn fault_matrix_snapshot_send_failure_reconnects_cleanly() {
 #[tokio::test]
 async fn fault_matrix_reset_emit_failure_disconnects_stream() {
     let _failpoint_guard = FAILPOINT_LOCK.lock().await;
-    let (_state, server, addr, ws, session, _last_seq) = setup_server().await;
+    let (_fixture, server, addr, ws, session, _last_seq) = setup_server().await;
 
     let mut socket = connect_workspace_stream(addr, ws.id).await;
     clear_all_failpoints();

@@ -157,7 +157,6 @@ async fn assert_provider_session_resume_after_idle_reap(provider_id: &str, model
     };
     let _guard_mcp_disabled = EnvGuard::set("CTX_MCP_DISABLED", "1");
 
-    let stores = common::setup_store(data_dir.path()).await;
     let script_path = common::crp_fixture_runtime::write_crp_fixture_runtime(data_dir.path());
     if provider_id == "codex" {
         common::seed_managed_codex_cli_host_runtime_with_args(
@@ -175,14 +174,14 @@ async fn assert_provider_session_resume_after_idle_reap(provider_id: &str, model
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert(provider_id.to_string(), Arc::clone(&adapter));
 
-    let daemon = TestDaemon::new(
-        data_dir.path().to_path_buf(),
-        stores,
+    let fixture = common::fake_daemon_fixture_in_data_dir_with_providers(
+        data_dir,
         providers,
-        "http://127.0.0.1:0".to_string(),
-        None,
-    );
-    let app = common::router_for_daemon(&daemon);
+        "http://127.0.0.1:0",
+    )
+    .await;
+    let daemon = &fixture.daemon;
+    let app = fixture.router();
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (_task, session) =

@@ -7,7 +7,6 @@ use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 use ctx_core::models::{
     SessionEventType, WorkspaceActiveSnapshotEvent, WorkspaceActiveSnapshotStreamMessage,
 };
-use ctx_daemon::test_support::TestDaemon;
 
 mod common;
 
@@ -91,7 +90,6 @@ async fn noisy_tool_output_stays_bounded_end_to_end() {
     let _guard_codex_home = EnvGuard::set("CTX_CODEX_HOME", &codex_home.path().to_string_lossy());
     let _guard_mcp_disabled = EnvGuard::set("CTX_MCP_DISABLED", "1");
 
-    let stores = common::setup_store(data_dir.path()).await;
     let script_path = common::crp_fixture_runtime::write_crp_fixture_runtime(data_dir.path());
     common::seed_managed_codex_cli_host_runtime_with_args(
         data_dir.path(),
@@ -101,14 +99,14 @@ async fn noisy_tool_output_stays_bounded_end_to_end() {
     .await;
     let providers =
         common::crp_fixture_runtime::build_crp_fixture_providers(&["codex"], &python, &script_path);
-    let daemon = TestDaemon::new(
-        data_dir.path().to_path_buf(),
-        stores,
+    let fixture = common::fake_daemon_fixture_in_data_dir_with_providers(
+        data_dir,
         providers,
-        "http://127.0.0.1:0".to_string(),
-        None,
-    );
-    let app = common::router_for_daemon(&daemon);
+        "http://127.0.0.1:0",
+    )
+    .await;
+    let daemon = &fixture.daemon;
+    let app = fixture.router();
     let server = common::spawn_http_server(app.clone()).await;
 
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;
