@@ -114,8 +114,23 @@ impl TestDaemon {
         self.state.store_for_workspace(workspace_id).await
     }
 
+    pub async fn uncached_store_for_workspace(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> anyhow::Result<Store> {
+        self.state
+            .core
+            .stores
+            .workspace_uncached(workspace_id)
+            .await
+    }
+
     pub async fn store_for_task(&self, task_id: TaskId) -> anyhow::Result<Store> {
         self.state.store_for_task(task_id).await
+    }
+
+    pub fn spawn_merge_queue_runner(&self) {
+        daemon::merge_queue::spawn_merge_queue_runner(Arc::clone(&self.state));
     }
 
     pub async fn ensure_workspace_active_snapshot_hydrated(

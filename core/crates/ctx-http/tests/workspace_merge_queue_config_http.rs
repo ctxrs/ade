@@ -1,13 +1,12 @@
 mod common;
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use axum::http::{Method, StatusCode};
 use chrono::Utc;
 use ctx_core::ids::{MergeQueueEntryId, WorkspaceId};
 use ctx_core::models::{MergeQueueEntry, MergeQueueEntryStatus, MergeQueuePatchSource, Workspace};
-use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::test_support::TestDaemon;
 use serde_json::Value;
 
 fn queued_entry(workspace_id: WorkspaceId, name: &str) -> MergeQueueEntry {
@@ -33,17 +32,13 @@ fn queued_entry(workspace_id: WorkspaceId, name: &str) -> MergeQueueEntry {
 }
 
 async fn wait_for_non_queued_status(
-    state: &Arc<DaemonState>,
+    daemon: &TestDaemon,
     workspace: &Workspace,
     entry_id: MergeQueueEntryId,
 ) -> MergeQueueEntry {
     tokio::time::timeout(Duration::from_secs(2), async {
         loop {
-            let store = state
-                .test_store_manager()
-                .workspace(workspace.id)
-                .await
-                .unwrap();
+            let store = daemon.store_for_workspace(workspace.id).await.unwrap();
             let entry = store
                 .get_merge_queue_entry(entry_id)
                 .await
@@ -64,20 +59,19 @@ async fn enabling_merge_queue_on_open_workspace_reschedules_queued_rows() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;
 
-    ctx_merge_queue::spawn_merge_queue_runner::<DaemonState>(state.clone());
+    daemon.spawn_merge_queue_runner();
 
-    let store = state
-        .test_store_manager()
-        .workspace_uncached(workspace.id)
+    let store = daemon
+        .uncached_store_for_workspace(workspace.id)
         .await
         .unwrap();
     let entry = queued_entry(workspace.id, "queued-before-enable");
@@ -85,9 +79,8 @@ async fn enabling_merge_queue_on_open_workspace_reschedules_queued_rows() {
     store.close().await;
 
     tokio::time::sleep(Duration::from_millis(100)).await;
-    let queued = state
-        .test_store_manager()
-        .workspace_uncached(workspace.id)
+    let queued = daemon
+        .uncached_store_for_workspace(workspace.id)
         .await
         .unwrap()
         .get_merge_queue_entry(entry.id)
@@ -109,7 +102,7 @@ async fn enabling_merge_queue_on_open_workspace_reschedules_queued_rows() {
     assert_eq!(set_status, StatusCode::OK);
     assert_eq!(set_resp.get("ok").and_then(Value::as_bool), Some(true));
 
-    let resumed = wait_for_non_queued_status(&state, &workspace, entry.id).await;
+    let resumed = wait_for_non_queued_status(&daemon, &workspace, entry.id).await;
     assert_ne!(resumed.status, MergeQueueEntryStatus::Queued);
     assert_ne!(resumed.status, MergeQueueEntryStatus::Cancelled);
     assert_ne!(
@@ -123,16 +116,16 @@ async fn disabling_merge_queue_cancels_existing_queued_rows() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;
 
-    ctx_merge_queue::spawn_merge_queue_runner::<DaemonState>(state.clone());
+    daemon.spawn_merge_queue_runner();
 
     let (enable_status, _enable_resp): (StatusCode, Value) = common::json_request(
         &app,
@@ -146,9 +139,8 @@ async fn disabling_merge_queue_cancels_existing_queued_rows() {
     .await;
     assert_eq!(enable_status, StatusCode::OK);
 
-    let store = state
-        .test_store_manager()
-        .workspace_uncached(workspace.id)
+    let store = daemon
+        .uncached_store_for_workspace(workspace.id)
         .await
         .unwrap();
     let entry = queued_entry(workspace.id, "queued-before-disable");
@@ -168,7 +160,7 @@ async fn disabling_merge_queue_cancels_existing_queued_rows() {
     assert_eq!(disable_status, StatusCode::OK);
     assert_eq!(disable_resp.get("ok").and_then(Value::as_bool), Some(true));
 
-    let disabled = wait_for_non_queued_status(&state, &workspace, entry.id).await;
+    let disabled = wait_for_non_queued_status(&daemon, &workspace, entry.id).await;
     assert_eq!(disabled.status, MergeQueueEntryStatus::Cancelled);
     assert_eq!(
         disabled.error_message.as_deref(),
