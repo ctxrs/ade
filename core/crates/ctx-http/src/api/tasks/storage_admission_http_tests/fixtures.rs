@@ -8,7 +8,7 @@ use serde_json::Value;
 use tower::ServiceExt;
 
 use ctx_core::ids::WorkspaceId;
-use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::test_support::TestDaemon;
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_sandbox_materialization::set_test_preflight_storage_samples_override;
 use ctx_settings_model::{ExecutionSettings, Settings};
@@ -36,23 +36,20 @@ fn git(args: &[&str], cwd: &Path) {
     assert!(status.success(), "git {args:?} failed");
 }
 
-pub(super) async fn test_state(data_root: &Path) -> Arc<DaemonState> {
+pub(super) async fn test_state(data_root: &Path) -> TestDaemon {
     let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
         HashMap::new();
     providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-    Arc::new(DaemonState::new(
+    TestDaemon::new(
         data_root.to_path_buf(),
         StoreManager::open(data_root).await.expect("open stores"),
         providers,
         "http://127.0.0.1:4311".to_string(),
         None,
-    ))
+    )
 }
 
-pub(super) async fn save_test_execution_settings(
-    state: &Arc<DaemonState>,
-    execution: ExecutionSettings,
-) {
+pub(super) async fn save_test_execution_settings(state: &TestDaemon, execution: ExecutionSettings) {
     ctx_settings_service::save_settings(
         state.global_store(),
         &Settings {

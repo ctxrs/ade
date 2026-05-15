@@ -1,6 +1,6 @@
 use super::*;
 use ctx_core::models::{Task, VcsKind, Workspace, Worktree};
-use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::test_support::TestDaemon;
 use ctx_store::{Store, StoreManager};
 use std::collections::HashMap;
 
@@ -11,7 +11,7 @@ pub(super) use git::{create_branch_lock, git, init_git_workspace};
 
 pub(super) struct ManagedTaskFixture {
     pub(super) repo_root: PathBuf,
-    pub(super) state: Arc<DaemonState>,
+    pub(super) state: TestDaemon,
     pub(super) workspace: Workspace,
     pub(super) store: Store,
     pub(super) task: Task,
@@ -76,18 +76,18 @@ pub(super) async fn create_managed_task_fixture(data_root: &StdPath) -> ManagedT
     }
 }
 
-pub(super) async fn test_state(data_root: &StdPath) -> Arc<DaemonState> {
-    Arc::new(DaemonState::new(
+pub(super) async fn test_state(data_root: &StdPath) -> TestDaemon {
+    TestDaemon::new(
         data_root.to_path_buf(),
         StoreManager::open(data_root).await.expect("open stores"),
         HashMap::new(),
         "http://127.0.0.1:4310".to_string(),
         None,
-    ))
+    )
 }
 
 pub(super) async fn save_test_execution_settings(
-    state: &Arc<DaemonState>,
+    state: &TestDaemon,
     execution: ctx_settings_model::ExecutionSettings,
 ) {
     let settings = ctx_settings_model::Settings {

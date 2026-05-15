@@ -1,6 +1,6 @@
 use super::*;
 use ctx_core::models::VcsKind;
-use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::test_support::TestDaemon;
 use ctx_store::{Store, StoreManager};
 use ctx_workspace_services::worktree_vcs::{managed_worktree_path, standaloneize_worktree_git_dir};
 use std::collections::HashMap;
@@ -35,14 +35,14 @@ fn init_git_workspace(root: &StdPath) -> String {
     git_output(&["rev-parse", "HEAD"], root)
 }
 
-async fn test_state(data_root: &StdPath) -> Arc<DaemonState> {
-    Arc::new(DaemonState::new(
+async fn test_state(data_root: &StdPath) -> TestDaemon {
+    TestDaemon::new(
         data_root.to_path_buf(),
         StoreManager::open(data_root).await.expect("open stores"),
         HashMap::new(),
         "http://127.0.0.1:4310".to_string(),
         None,
-    ))
+    )
 }
 
 async fn insert_managed_worktree(

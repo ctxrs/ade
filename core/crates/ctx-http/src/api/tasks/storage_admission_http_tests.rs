@@ -68,7 +68,7 @@ async fn create_task_rejects_before_disk_isolated_copy_when_host_reserve_is_unre
     )
     .await;
 
-    let app = crate::api::router(state.clone());
+    let app = crate::api::router(state.handle());
     let _storage_override = install_unreleased_host_reserve_storage_override(workspace.id);
 
     let (status, body) = post_json(

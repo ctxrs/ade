@@ -154,10 +154,12 @@ async fn unarchive_task_recreates_managed_root_and_keeps_binding_snapshot_runtim
         "unarchive should keep the existing managed worktree branch attached"
     );
 
-    let current_effective =
-        ctx_daemon::daemon::execution_effective::effective_execution_settings(&state, workspace.id)
-            .await
-            .expect("load current effective settings");
+    let current_effective = state
+        .handle()
+        .workspaces()
+        .effective_execution_settings(workspace.id)
+        .await
+        .expect("load current effective settings");
     assert_eq!(
         current_effective.container.runtime,
         ctx_settings_model::ContainerRuntimeKind::SharedVmContainer,

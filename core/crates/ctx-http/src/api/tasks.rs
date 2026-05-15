@@ -36,13 +36,11 @@ use ctx_core::models::Worktree;
 use ctx_core::models::{
     ExecutionEnvironment, Session, Task, WorkspaceArchivedPage, WorkspaceIndexCursor,
 };
-#[cfg(test)]
-use ctx_daemon::daemon::DaemonHandle;
-#[cfg(test)]
-use ctx_daemon::daemon::DaemonState;
 use ctx_daemon::daemon::{
     ProvidersHandle, SessionsHandle, TasksHandle, TransportHandle, WorkspacesHandle,
 };
+#[cfg(test)]
+use ctx_daemon::test_support::TestDaemon;
 use ctx_observability::logs;
 
 #[derive(Debug, Deserialize)]
@@ -83,8 +81,8 @@ impl CreateTaskReq {
 }
 
 #[cfg(test)]
-pub(super) fn task_api_task_state(state: &Arc<DaemonState>) -> State<TasksHandle> {
-    State(DaemonHandle::new(Arc::clone(state)).tasks())
+pub(super) fn task_api_task_state(daemon: &TestDaemon) -> State<TasksHandle> {
+    State(daemon.handle().tasks())
 }
 
 fn task_lifecycle_status(error: ctx_daemon::daemon::tasks::TaskLifecycleError) -> StatusCode {

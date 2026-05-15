@@ -1,5 +1,4 @@
 use super::*;
-use std::sync::Arc;
 
 #[tokio::test]
 async fn task_mutations_return_not_found_for_unknown_task() {
@@ -23,7 +22,7 @@ async fn task_mutations_return_not_found_for_stale_task_index() {
     assert_task_mutations_return_not_found(&state, stale_task_id).await;
 }
 
-async fn assert_task_mutations_return_not_found(state: &Arc<DaemonState>, missing_task_id: TaskId) {
+async fn assert_task_mutations_return_not_found(state: &TestDaemon, missing_task_id: TaskId) {
     let tasks = task_api_task_state(state);
 
     let task_sessions_status =
@@ -42,7 +41,8 @@ async fn assert_task_mutations_return_not_found(state: &Arc<DaemonState>, missin
         .expect_err("missing task unread should fail");
     assert_eq!(unread_status, StatusCode::NOT_FOUND);
 
-    let title_update = ctx_daemon::daemon::DaemonHandle::new(Arc::clone(&state))
+    let title_update = state
+        .handle()
         .tasks()
         .update_task_title(missing_task_id, "renamed".to_string())
         .await
