@@ -59,13 +59,18 @@ pub use self::claude::{
     ClaudeLoginStatus,
 };
 pub use self::codex_auth::{
-    codex_env_for_active_account, codex_env_for_active_account_with_runtime_root,
-    codex_env_for_runtime_home, codex_has_active_auth, codex_has_active_auth_with_runtime_root,
-    ensure_codex_auth_ready, ensure_codex_endpoint_profile_compatible, host_codex_auth_path,
+    acquire_codex_runtime_continuity_lock_from_env, codex_env_for_active_account,
+    codex_env_for_active_account_with_runtime_root, codex_env_for_runtime_home,
+    codex_has_active_auth, codex_has_active_auth_with_runtime_root, ensure_codex_auth_ready,
+    ensure_codex_endpoint_profile_compatible, host_codex_auth_path,
     hydrate_codex_account_home_from_secret, import_codex_auth_value_to_secret_store,
     import_host_codex_auth_to_secret_store, ingest_codex_account_auth_to_secret_store,
     probe_host_codex_auth_candidate, remove_codex_account_home_auth_if_present,
     seed_codex_auth_from_host, seeding_codex_auth_from_host_enabled,
+};
+#[cfg(test)]
+pub(crate) use self::codex_auth::{
+    expose_legacy_codex_state_from_home, expose_legacy_codex_state_to_broker_home,
 };
 pub use self::copilot::copilot_models_value_for_version;
 pub use self::copilot::{

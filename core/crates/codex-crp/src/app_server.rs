@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 use std::io::Write as _;
 use std::path::Path;
 use std::process::Stdio;
@@ -18,7 +18,7 @@ mod auth_lock;
 #[path = "app_server/types.rs"]
 mod types;
 
-use self::auth_lock::acquire_codex_oauth_authority_lock;
+use self::auth_lock::{acquire_codex_oauth_authority_lock, CodexRuntimeLocks};
 pub use self::types::*;
 
 const CODEX_APP_SERVER_BASE_ARGS: [&str; 4] = ["-s", "danger-full-access", "-a", "never"];
@@ -50,7 +50,7 @@ pub struct AppServerClient {
     inbound_rx: mpsc::UnboundedReceiver<AppServerInbound>,
     child: Option<Child>,
     next_id: i64,
-    _auth_lock: Option<File>,
+    _auth_lock: Option<CodexRuntimeLocks>,
 }
 
 fn maybe_dump_app_server_message(direction: &str, value: &Value) {

@@ -59,6 +59,19 @@ impl ProviderUsageHost for TestUsageHost {
     }
 }
 
+fn hold_exclusive_codex_runtime_lock(home: &Path) -> std::fs::File {
+    std::fs::create_dir_all(home).expect("create runtime home");
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(home.join(".ctx-continuity-runtime.lock"))
+        .expect("open continuity lock");
+    fs2::FileExt::try_lock_exclusive(&lock).expect("exclusive continuity lock");
+    lock
+}
+
 #[tokio::test]
 async fn refresh_provider_usage_surfaces_agent_server_config_errors() {
     let data_root = tempfile::tempdir().expect("tempdir");
@@ -190,5 +203,38 @@ async fn codex_usage_missing_auth_returns_error_snapshot() {
     assert!(
         error.contains("missing codex auth.json"),
         "unexpected error: {error}"
+    );
+}
+
+#[tokio::test]
+async fn codex_api_key_usage_takes_continuity_lock_before_app_server_spawn() {
+    let runtime_home = tempfile::tempdir().expect("runtime home");
+    tokio::fs::write(
+        runtime_home.path().join("auth.json"),
+        serde_json::json!({"OPENAI_API_KEY": "sk-test"}).to_string(),
+    )
+    .await
+    .expect("write auth.json");
+    let _lock = hold_exclusive_codex_runtime_lock(runtime_home.path());
+    let codex_bin = std::env::current_exe().expect("current executable");
+
+    let snapshot = fetch_codex_usage_snapshot(HashMap::from([
+        (
+            "CODEX_HOME".to_string(),
+            runtime_home.path().to_string_lossy().to_string(),
+        ),
+        (
+            "CTX_CODEX_BIN_PATH".to_string(),
+            codex_bin.to_string_lossy().to_string(),
+        ),
+    ]))
+    .await
+    .expect("usage snapshot should represent lock contention as an error snapshot");
+
+    assert_eq!(snapshot.source, "error");
+    let error = snapshot.error.as_deref().expect("usage error");
+    assert!(
+        error.contains("undergoing continuity migration"),
+        "usage poll must take the shared runtime lock before spawning app-server, got {error}"
     );
 }

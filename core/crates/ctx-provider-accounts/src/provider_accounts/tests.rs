@@ -7,9 +7,958 @@ fn assert_unknown_account_error(err: anyhow::Error) {
     );
 }
 
+fn hold_codex_runtime_lock(home: &Path) -> std::fs::File {
+    std::fs::create_dir_all(home).unwrap();
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(home.join(".ctx-continuity-runtime.lock"))
+        .unwrap();
+    fs2::FileExt::try_lock_shared(&lock).unwrap();
+    lock
+}
+
 static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 const CLAUDE_TEST_SETUP_TOKEN: &str =
     "sk-ant-oat01-abcDEF1234567890_abcdefghijklmnopqrstuvwxyz_0123456789";
+
+#[test]
+fn codex_storage_manifest_keeps_auth_authority_out_of_continuity_state() {
+    let continuity_names: Vec<&str> = CODEX_CONTINUITY_STATE_CHILDREN
+        .iter()
+        .map(|child| child.name)
+        .collect();
+    assert_eq!(
+        continuity_names,
+        vec![
+            "sessions",
+            "shell_snapshots",
+            "history.jsonl",
+            "config.toml",
+            "prompts"
+        ]
+    );
+    assert_eq!(CODEX_AUTHORITY_CHILDREN.len(), 1);
+    assert_eq!(CODEX_AUTHORITY_CHILDREN[0].name, "auth.json");
+    assert!(
+        !continuity_names.contains(&"auth.json"),
+        "OAuth auth authority must not be handled by continuity migration"
+    );
+}
+
+#[tokio::test]
+async fn oauth_broker_home_defers_shared_state_repair_when_other_broker_active() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let target_broker_home = codex_broker_home(root, "acct-target");
+    let other_broker_home = codex_broker_home(root, "acct-other");
+    let _other_lock = hold_codex_runtime_lock(&other_broker_home);
+
+    let legacy_history = legacy_codex_runtime_home(root).join("history.jsonl");
+    tokio::fs::create_dir_all(legacy_history.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::write(&legacy_history, "legacy-history\n")
+        .await
+        .unwrap();
+
+    let shared_history = codex_runtime_home(root).join("history.jsonl");
+    tokio::fs::create_dir_all(shared_history.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::write(&shared_history, "active-shared-history\n")
+        .await
+        .unwrap();
+
+    let error = expose_legacy_codex_state_to_broker_home(root, &target_broker_home)
+        .await
+        .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("repair is blocked by an active runtime"),
+        "missing broker links must fail closed while another runtime is active, got: {error:#}"
+    );
+
+    assert_eq!(
+        tokio::fs::read_to_string(&shared_history).await.unwrap(),
+        "active-shared-history\n"
+    );
+    assert!(
+        tokio::fs::symlink_metadata(target_broker_home.join("history.jsonl"))
+            .await
+            .is_err(),
+        "migration must defer instead of linking while any broker using shared continuity is active"
+    );
+}
+
+#[tokio::test]
+async fn oauth_broker_home_defers_shared_state_repair_when_shared_home_active() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let target_broker_home = codex_broker_home(root, "acct-target");
+    let shared_home = codex_runtime_home(root);
+    let _shared_lock = hold_codex_runtime_lock(&shared_home);
+
+    let legacy_history = legacy_codex_runtime_home(root).join("history.jsonl");
+    tokio::fs::create_dir_all(legacy_history.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::write(&legacy_history, "legacy-history\n")
+        .await
+        .unwrap();
+    tokio::fs::write(shared_home.join("history.jsonl"), "active-shared-history\n")
+        .await
+        .unwrap();
+
+    let error = expose_legacy_codex_state_to_broker_home(root, &target_broker_home)
+        .await
+        .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("repair is blocked by an active runtime"),
+        "missing broker links must fail closed while the shared runtime home is active, got: {error:#}"
+    );
+
+    assert_eq!(
+        tokio::fs::read_to_string(shared_home.join("history.jsonl"))
+            .await
+            .unwrap(),
+        "active-shared-history\n"
+    );
+    assert!(
+        tokio::fs::symlink_metadata(target_broker_home.join("history.jsonl"))
+            .await
+            .is_err(),
+        "migration must defer instead of linking while the shared runtime home is active"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn oauth_broker_home_rejects_symlinked_provider_root_before_repair_lock() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let outside = tempfile::tempdir().unwrap();
+    tokio::fs::create_dir_all(root.join("providers"))
+        .await
+        .unwrap();
+    std::os::unix::fs::symlink(outside.path(), root.join("providers/codex")).unwrap();
+
+    let broker_home = codex_broker_home(root, "acct-target");
+    let error = expose_legacy_codex_state_to_broker_home(root, &broker_home)
+        .await
+        .unwrap_err();
+    assert!(
+        format!("{error:#}")
+            .contains("must not contain a symlink component before lock acquisition"),
+        "provider-root symlink must be rejected before repair lock creation, got: {error:#}"
+    );
+    assert!(
+        !outside
+            .path()
+            .join(".ctx-continuity-migration.lock")
+            .exists(),
+        "failed provider-root validation must not create the repair lock through the symlink"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn oauth_broker_home_rejects_symlinked_provider_root_before_runtime_oauth_projection() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let outside = tempfile::tempdir().unwrap();
+    let account_id = "acct-oauth";
+    tokio::fs::create_dir_all(root.join("providers"))
+        .await
+        .unwrap();
+    std::os::unix::fs::symlink(outside.path(), root.join("providers/codex")).unwrap();
+
+    let error =
+        crate::provider_accounts::codex_auth::migrate_owned_runtime_oauth_projection_to_broker_if_needed(
+            root, account_id,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        format!("{error:#}")
+            .contains("must not contain a symlink component before broker storage access"),
+        "provider-root symlink must be rejected before runtime OAuth projection migration, got: {error:#}"
+    );
+    assert!(
+        !outside.path().join("brokers").exists(),
+        "failed provider-root validation must not create broker auth state through the symlink"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn oauth_broker_home_rejects_symlinked_provider_root_before_hydration_registry_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let outside = tempfile::tempdir().unwrap();
+    tokio::fs::create_dir_all(root.join("providers"))
+        .await
+        .unwrap();
+    std::os::unix::fs::symlink(outside.path(), root.join("providers/codex")).unwrap();
+
+    let error = hydrate_codex_account_home_from_secret(root, "missing-account")
+        .await
+        .unwrap_err();
+    assert!(
+        format!("{error:#}")
+            .contains("must not contain a symlink component before broker storage access"),
+        "provider-root symlink must be rejected before hydration reads registry state, got: {error:#}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn oauth_broker_home_rejects_symlinked_provider_root_before_import_broker_lock() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let outside = tempfile::tempdir().unwrap();
+    tokio::fs::create_dir_all(root.join("providers"))
+        .await
+        .unwrap();
+    std::os::unix::fs::symlink(outside.path(), root.join("providers/codex")).unwrap();
+    let auth = serde_json::json!({
+        "tokens": {
+            "access_token": "access",
+            "refresh_token": "refresh",
+            "account_id": "upstream-acct"
+        }
+    });
+
+    let error = import_codex_auth_value_to_secret_store(root, None, &auth)
+        .await
+        .unwrap_err();
+    assert!(
+        format!("{error:#}")
+            .contains("must not contain a symlink component before broker storage access"),
+        "provider-root symlink must be rejected before import creates broker state, got: {error:#}"
+    );
+    assert!(
+        !outside.path().join("accounts").exists() && !outside.path().join("brokers").exists(),
+        "failed provider-root validation must not create registry or broker state through the symlink"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn oauth_broker_home_rejects_symlinked_runtime_home_before_owner_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let outside = tempfile::tempdir().unwrap();
+    let account_id = "acct-oauth";
+    tokio::fs::create_dir_all(root.join("providers/codex"))
+        .await
+        .unwrap();
+    std::os::unix::fs::symlink(outside.path(), root.join("providers/codex/home")).unwrap();
+    tokio::fs::write(outside.path().join(CODEX_RUNTIME_OWNER_FILE), account_id)
+        .await
+        .unwrap();
+    tokio::fs::write(
+        outside.path().join("auth.json"),
+        br#"{"tokens":{"access_token":"access","refresh_token":"refresh","account_id":"upstream-acct"}}"#,
+    )
+    .await
+    .unwrap();
+
+    let error =
+        crate::provider_accounts::codex_auth::migrate_owned_runtime_oauth_projection_to_broker_if_needed(
+            root, account_id,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("Codex runtime home path")
+            && format!("{error:#}").contains("before broker storage access"),
+        "symlinked runtime home must be rejected before owner/auth reads, got: {error:#}"
+    );
+    assert!(
+        !codex_brokers_root(root).exists(),
+        "failed runtime-home validation must not create broker state"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn oauth_broker_home_rejects_symlinked_brokers_root_before_import_lock() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let outside = tempfile::tempdir().unwrap();
+    tokio::fs::create_dir_all(root.join("providers/codex"))
+        .await
+        .unwrap();
+    std::os::unix::fs::symlink(outside.path(), root.join("providers/codex/brokers")).unwrap();
+    let auth = serde_json::json!({
+        "tokens": {
+            "access_token": "access",
+            "refresh_token": "refresh",
+            "account_id": "upstream-acct"
+        }
+    });
+
+    let error = import_codex_auth_value_to_secret_store(root, None, &auth)
+        .await
+        .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("Codex broker home path")
+            && format!("{error:#}").contains("before broker storage access"),
+        "symlinked brokers root must be rejected before broker lock creation, got: {error:#}"
+    );
+    assert!(
+        std::fs::read_dir(outside.path()).unwrap().next().is_none(),
+        "failed brokers-root validation must not create lock or auth state through the symlink"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn oauth_broker_home_rejects_symlinked_broker_entry_before_broker_auth_probe() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let outside = tempfile::tempdir().unwrap();
+    let account_id = "acct-oauth";
+    let runtime_home = codex_runtime_home(root);
+    tokio::fs::create_dir_all(&runtime_home).await.unwrap();
+    tokio::fs::write(codex_runtime_owner_path(root), account_id)
+        .await
+        .unwrap();
+    tokio::fs::write(
+        runtime_home.join("auth.json"),
+        br#"{"tokens":{"access_token":"runtime-access","refresh_token":"runtime-refresh","account_id":"upstream-acct"}}"#,
+    )
+    .await
+    .unwrap();
+    let brokers_root = codex_brokers_root(root);
+    tokio::fs::create_dir_all(&brokers_root).await.unwrap();
+    tokio::fs::create_dir_all(outside.path().join("home"))
+        .await
+        .unwrap();
+    tokio::fs::write(
+        outside.path().join("home/auth.json"),
+        br#"{"tokens":{"access_token":"outside-access","refresh_token":"outside-refresh","account_id":"upstream-acct"}}"#,
+    )
+    .await
+    .unwrap();
+    std::os::unix::fs::symlink(outside.path(), brokers_root.join(account_id)).unwrap();
+
+    let error =
+        crate::provider_accounts::codex_auth::migrate_owned_runtime_oauth_projection_to_broker_if_needed(
+            root, account_id,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("Codex broker home path")
+            && format!("{error:#}").contains("before broker storage access"),
+        "symlinked broker entry must be rejected before broker auth probes, got: {error:#}"
+    );
+    assert!(
+        runtime_home.join("auth.json").exists(),
+        "failed broker-home validation must not read outside broker auth and clear runtime auth"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn oauth_broker_home_rejects_symlinked_broker_entry_before_lock_scan() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let outside = tempfile::tempdir().unwrap();
+    let brokers_root = codex_brokers_root(root);
+    tokio::fs::create_dir_all(&brokers_root).await.unwrap();
+    tokio::fs::create_dir_all(outside.path().join("home"))
+        .await
+        .unwrap();
+    std::os::unix::fs::symlink(outside.path(), brokers_root.join("acct-symlink")).unwrap();
+
+    let target_broker_home = codex_broker_home(root, "acct-target");
+    let error = expose_legacy_codex_state_to_broker_home(root, &target_broker_home)
+        .await
+        .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("must not be a symlink before lock acquisition"),
+        "symlinked broker entry must be rejected before lock scan dereferences it, got: {error:#}"
+    );
+    assert!(
+        !outside
+            .path()
+            .join("home/.ctx-continuity-runtime.lock")
+            .exists(),
+        "failed broker scan validation must not create a runtime lock through the symlink"
+    );
+}
+
+#[tokio::test]
+async fn oauth_broker_home_skips_regular_broker_root_entries_before_lock_scan() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let brokers_root = codex_brokers_root(root);
+    tokio::fs::create_dir_all(&brokers_root).await.unwrap();
+    tokio::fs::write(brokers_root.join(".DS_Store"), b"metadata")
+        .await
+        .unwrap();
+
+    let target_broker_home = codex_broker_home(root, "acct-target");
+    expose_legacy_codex_state_to_broker_home(root, &target_broker_home)
+        .await
+        .unwrap();
+
+    assert!(
+        target_broker_home.join("history.jsonl").exists(),
+        "regular broker-root files must not block continuity preparation"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn oauth_broker_home_rejects_unsafe_broker_child_before_deferred_repair() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let target_broker_home = codex_broker_home(root, "acct-target");
+    let other_broker_home = codex_broker_home(root, "acct-other");
+    let _other_lock = hold_codex_runtime_lock(&other_broker_home);
+
+    tokio::fs::create_dir_all(&target_broker_home)
+        .await
+        .unwrap();
+    let shared_home = codex_runtime_home(root);
+    tokio::fs::create_dir_all(shared_home.join("sessions"))
+        .await
+        .unwrap();
+    tokio::fs::create_dir_all(shared_home.join("shell_snapshots"))
+        .await
+        .unwrap();
+    std::os::unix::fs::symlink(
+        shared_home.join("sessions"),
+        target_broker_home.join("sessions"),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(
+        shared_home.join("shell_snapshots"),
+        target_broker_home.join("shell_snapshots"),
+    )
+    .unwrap();
+    tokio::fs::write(
+        target_broker_home.join("auth.json"),
+        br#"{"tokens":{"access_token":"access","refresh_token":"refresh"}}"#,
+    )
+    .await
+    .unwrap();
+    std::os::unix::fs::symlink("auth.json", target_broker_home.join("history.jsonl")).unwrap();
+
+    let error = expose_legacy_codex_state_to_broker_home(root, &target_broker_home)
+        .await
+        .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("target is not a declared Codex continuity child path"),
+        "unsafe target broker child must fail closed before deferred repair, got: {error:#}"
+    );
+}
+
+#[tokio::test]
+async fn oauth_broker_home_waits_for_in_progress_repair_before_first_launch() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let target_broker_home = codex_broker_home(root, "acct-target");
+    let shared_home = codex_runtime_home(root);
+    tokio::fs::create_dir_all(&shared_home).await.unwrap();
+    tokio::fs::write(shared_home.join("history.jsonl"), "shared-history\n")
+        .await
+        .unwrap();
+
+    let repair_lock_root = shared_home.parent().unwrap().to_path_buf();
+    std::fs::create_dir_all(&repair_lock_root).unwrap();
+    let repair_lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(repair_lock_root.join(".ctx-continuity-migration.lock"))
+        .unwrap();
+    fs2::FileExt::lock_exclusive(&repair_lock).unwrap();
+
+    let root_for_task = root.to_path_buf();
+    let broker_for_task = target_broker_home.clone();
+    let handle = tokio::spawn(async move {
+        expose_legacy_codex_state_to_broker_home(&root_for_task, &broker_for_task).await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert!(
+        !handle.is_finished(),
+        "first launch must wait for the in-progress continuity repair instead of launching unlinked"
+    );
+
+    drop(repair_lock);
+    handle.await.unwrap().unwrap();
+    assert_eq!(
+        tokio::fs::read_to_string(target_broker_home.join("history.jsonl"))
+            .await
+            .unwrap(),
+        "shared-history\n"
+    );
+}
+
+#[tokio::test]
+async fn oauth_broker_home_defers_legacy_import_when_legacy_home_active() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let target_broker_home = codex_broker_home(root, "acct-target");
+    let legacy_home = legacy_codex_runtime_home(root);
+    let _legacy_lock = hold_codex_runtime_lock(&legacy_home);
+
+    let legacy_history = legacy_home.join("history.jsonl");
+    tokio::fs::write(&legacy_history, "legacy-history\n")
+        .await
+        .unwrap();
+
+    let error = expose_legacy_codex_state_to_broker_home(root, &target_broker_home)
+        .await
+        .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("repair is blocked by an active runtime"),
+        "missing broker links must fail closed while the legacy runtime home is active, got: {error:#}"
+    );
+
+    assert!(
+        tokio::fs::symlink_metadata(codex_runtime_home(root).join("history.jsonl"))
+            .await
+            .is_err(),
+        "migration must defer instead of importing from an active legacy runtime home"
+    );
+    assert!(
+        tokio::fs::symlink_metadata(target_broker_home.join("history.jsonl"))
+            .await
+            .is_err(),
+        "migration must not link broker continuity after deferring active legacy import"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn oauth_broker_home_rejects_stale_link_to_auth_authority() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let broker_home = codex_broker_home(root, "acct-target");
+    tokio::fs::create_dir_all(&broker_home).await.unwrap();
+    tokio::fs::write(
+        broker_home.join("auth.json"),
+        br#"{"tokens":{"access_token":"access","refresh_token":"refresh"}}"#,
+    )
+    .await
+    .unwrap();
+    std::os::unix::fs::symlink("auth.json", broker_home.join("history.jsonl")).unwrap();
+
+    let error = expose_legacy_codex_state_to_broker_home(root, &broker_home)
+        .await
+        .unwrap_err();
+
+    assert!(
+        format!("{error:#}").contains("refusing to merge stale Codex continuity link target"),
+        "expected auth-target stale link rejection, got {error:#}"
+    );
+    assert!(
+        tokio::fs::symlink_metadata(codex_runtime_home(root).join("history.jsonl"))
+            .await
+            .is_err(),
+        "auth authority must not be copied into shared continuity state"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn oauth_broker_home_rejects_stale_link_to_same_named_undeclared_target() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let broker_home = codex_broker_home(root, "acct-target");
+    let external_dir = tempfile::tempdir().unwrap();
+    let external_history = external_dir.path().join("history.jsonl");
+    tokio::fs::write(
+        &external_history,
+        br#"{"tokens":{"access_token":"access","refresh_token":"refresh"}}"#,
+    )
+    .await
+    .unwrap();
+    tokio::fs::create_dir_all(&broker_home).await.unwrap();
+    std::os::unix::fs::symlink(&external_history, broker_home.join("history.jsonl")).unwrap();
+
+    let error = expose_legacy_codex_state_to_broker_home(root, &broker_home)
+        .await
+        .unwrap_err();
+
+    assert!(
+        format!("{error:#}").contains("target is not a declared Codex continuity child path"),
+        "expected undeclared stale link rejection, got {error:#}"
+    );
+    assert!(
+        tokio::fs::symlink_metadata(codex_runtime_home(root).join("history.jsonl"))
+            .await
+            .is_err(),
+        "undeclared same-name target must not be copied into shared continuity state"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn oauth_broker_home_skips_symlinked_legacy_file_child() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let broker_home = codex_broker_home(root, "acct-target");
+    let legacy_home = legacy_codex_runtime_home(root);
+    tokio::fs::create_dir_all(&legacy_home).await.unwrap();
+    tokio::fs::write(
+        legacy_home.join("auth.json"),
+        br#"{"tokens":{"access_token":"access","refresh_token":"refresh"}}"#,
+    )
+    .await
+    .unwrap();
+    std::os::unix::fs::symlink("auth.json", legacy_home.join("history.jsonl")).unwrap();
+
+    expose_legacy_codex_state_to_broker_home(root, &broker_home)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        tokio::fs::read_to_string(codex_runtime_home(root).join("history.jsonl"))
+            .await
+            .unwrap(),
+        ""
+    );
+    assert_eq!(
+        tokio::fs::read_to_string(broker_home.join("history.jsonl"))
+            .await
+            .unwrap(),
+        ""
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn oauth_broker_home_rejects_stale_link_to_symlinked_legacy_child() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let broker_home = codex_broker_home(root, "acct-target");
+    let legacy_home = legacy_codex_runtime_home(root);
+    tokio::fs::create_dir_all(&broker_home).await.unwrap();
+    tokio::fs::create_dir_all(&legacy_home).await.unwrap();
+    tokio::fs::write(
+        legacy_home.join("auth.json"),
+        br#"{"tokens":{"access_token":"access","refresh_token":"refresh"}}"#,
+    )
+    .await
+    .unwrap();
+    std::os::unix::fs::symlink("auth.json", legacy_home.join("history.jsonl")).unwrap();
+    std::os::unix::fs::symlink(
+        legacy_home.join("history.jsonl"),
+        broker_home.join("history.jsonl"),
+    )
+    .unwrap();
+
+    let error = expose_legacy_codex_state_to_broker_home(root, &broker_home)
+        .await
+        .unwrap_err();
+
+    assert!(
+        format!("{error:#}").contains("target is a symlink"),
+        "expected symlinked legacy child rejection, got {error:#}"
+    );
+    assert!(
+        tokio::fs::symlink_metadata(codex_runtime_home(root).join("history.jsonl"))
+            .await
+            .is_err(),
+        "symlinked legacy child must not be copied into shared continuity state"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn oauth_broker_home_rejects_broker_link_through_symlink_alias() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let broker_home = codex_broker_home(root, "acct-target");
+    let alias_dir = tempfile::tempdir().unwrap();
+    let shared_history = codex_runtime_home(root).join("history.jsonl");
+    tokio::fs::create_dir_all(shared_history.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::write(&shared_history, "shared-history\n")
+        .await
+        .unwrap();
+    let alias = alias_dir.path().join("history-alias");
+    std::os::unix::fs::symlink(&shared_history, &alias).unwrap();
+    tokio::fs::create_dir_all(&broker_home).await.unwrap();
+    std::os::unix::fs::symlink(&alias, broker_home.join("history.jsonl")).unwrap();
+
+    let error = expose_legacy_codex_state_to_broker_home(root, &broker_home)
+        .await
+        .unwrap_err();
+
+    assert!(
+        format!("{error:#}").contains("target is a symlink"),
+        "expected symlink alias rejection, got {error:#}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn oauth_broker_home_rejects_broker_link_through_symlink_parent_alias() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let broker_home = codex_broker_home(root, "acct-target");
+    let alias_dir = tempfile::tempdir().unwrap();
+    let shared_home = codex_runtime_home(root);
+    let shared_history = shared_home.join("history.jsonl");
+    tokio::fs::create_dir_all(&shared_home).await.unwrap();
+    tokio::fs::write(&shared_history, "shared-history\n")
+        .await
+        .unwrap();
+    let alias = alias_dir.path().join("shared-home-alias");
+    std::os::unix::fs::symlink(&shared_home, &alias).unwrap();
+    tokio::fs::create_dir_all(&broker_home).await.unwrap();
+    std::os::unix::fs::symlink(
+        alias.join("history.jsonl"),
+        broker_home.join("history.jsonl"),
+    )
+    .unwrap();
+
+    let error = expose_legacy_codex_state_to_broker_home(root, &broker_home)
+        .await
+        .unwrap_err();
+
+    assert!(
+        format!("{error:#}").contains("target path contains a symlink"),
+        "expected symlink parent alias rejection, got {error:#}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn oauth_broker_home_rejects_symlinked_shared_file_before_repair() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let broker_home = codex_broker_home(root, "acct-target");
+    tokio::fs::create_dir_all(codex_runtime_home(root))
+        .await
+        .unwrap();
+    tokio::fs::create_dir_all(&broker_home).await.unwrap();
+    tokio::fs::write(
+        broker_home.join("auth.json"),
+        br#"{"tokens":{"access_token":"access","refresh_token":"refresh"}}"#,
+    )
+    .await
+    .unwrap();
+    std::os::unix::fs::symlink(
+        broker_home.join("auth.json"),
+        codex_runtime_home(root).join("history.jsonl"),
+    )
+    .unwrap();
+    tokio::fs::write(broker_home.join("history.jsonl"), "broker-history\n")
+        .await
+        .unwrap();
+
+    let error = expose_legacy_codex_state_to_broker_home(root, &broker_home)
+        .await
+        .unwrap_err();
+
+    assert!(
+        format!("{error:#}").contains("must not be a symlink"),
+        "expected symlinked shared child rejection, got {error:#}"
+    );
+    assert_eq!(
+        tokio::fs::read_to_string(broker_home.join("history.jsonl"))
+            .await
+            .unwrap(),
+        "broker-history\n"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn oauth_broker_home_rejects_invalid_shared_file_before_linking() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let broker_home = codex_broker_home(root, "acct-target");
+    tokio::fs::create_dir_all(codex_runtime_home(root))
+        .await
+        .unwrap();
+    tokio::fs::create_dir_all(&broker_home).await.unwrap();
+    tokio::fs::write(
+        broker_home.join("auth.json"),
+        br#"{"tokens":{"access_token":"access","refresh_token":"refresh"}}"#,
+    )
+    .await
+    .unwrap();
+    std::os::unix::fs::symlink(
+        broker_home.join("auth.json"),
+        codex_runtime_home(root).join("history.jsonl"),
+    )
+    .unwrap();
+
+    let error = expose_legacy_codex_state_to_broker_home(root, &broker_home)
+        .await
+        .unwrap_err();
+
+    assert!(
+        format!("{error:#}").contains("must not be a symlink"),
+        "expected invalid shared child rejection, got {error:#}"
+    );
+    assert!(
+        tokio::fs::symlink_metadata(broker_home.join("history.jsonl"))
+            .await
+            .is_err(),
+        "broker must not be linked to invalid shared continuity child"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn oauth_broker_home_rejects_wrong_kind_shared_child_for_existing_broker_link() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let broker_home = codex_broker_home(root, "acct-target");
+    let shared_history_dir = codex_runtime_home(root).join("history.jsonl");
+    tokio::fs::create_dir_all(&shared_history_dir)
+        .await
+        .unwrap();
+    tokio::fs::create_dir_all(&broker_home).await.unwrap();
+    std::os::unix::fs::symlink(&shared_history_dir, broker_home.join("history.jsonl")).unwrap();
+
+    let error = expose_legacy_codex_state_to_broker_home(root, &broker_home)
+        .await
+        .unwrap_err();
+
+    assert!(
+        format!("{error:#}").contains("kind does not match manifest"),
+        "expected wrong-kind shared child rejection, got {error:#}"
+    );
+}
+
+#[tokio::test]
+async fn oauth_broker_home_rejects_wrong_kind_broker_backup_before_merge() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let broker_home = codex_broker_home(root, "acct-target");
+    tokio::fs::create_dir_all(codex_runtime_home(root))
+        .await
+        .unwrap();
+    tokio::fs::write(codex_runtime_home(root).join("history.jsonl"), "shared\n")
+        .await
+        .unwrap();
+    tokio::fs::create_dir_all(broker_home.join("history.jsonl"))
+        .await
+        .unwrap();
+
+    let error = expose_legacy_codex_state_to_broker_home(root, &broker_home)
+        .await
+        .unwrap_err();
+
+    assert!(
+        format!("{error:#}").contains("kind does not match manifest"),
+        "expected wrong-kind broker backup rejection, got {error:#}"
+    );
+    assert!(
+        tokio::fs::symlink_metadata(broker_home.join("history.jsonl"))
+            .await
+            .unwrap()
+            .file_type()
+            .is_dir(),
+        "failed repair should roll the wrong-kind broker child back"
+    );
+}
+
+#[tokio::test]
+async fn oauth_broker_home_rejects_wrong_kind_legacy_child() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let legacy_history_dir = legacy_codex_runtime_home(root).join("history.jsonl");
+    tokio::fs::create_dir_all(&legacy_history_dir)
+        .await
+        .unwrap();
+
+    let error = expose_legacy_codex_state_to_broker_home(root, &codex_broker_home(root, "acct"))
+        .await
+        .unwrap_err();
+
+    assert!(
+        format!("{error:#}").contains("kind does not match manifest"),
+        "expected wrong-kind legacy child rejection, got {error:#}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn oauth_broker_home_rejects_symlinked_legacy_home_before_import() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let outside_home = root.join("outside-legacy-home");
+    tokio::fs::create_dir_all(&outside_home).await.unwrap();
+    tokio::fs::write(outside_home.join("history.jsonl"), "outside-history\n")
+        .await
+        .unwrap();
+    let legacy_home = legacy_codex_runtime_home(root);
+    tokio::fs::create_dir_all(legacy_home.parent().unwrap())
+        .await
+        .unwrap();
+    std::os::unix::fs::symlink(&outside_home, &legacy_home).unwrap();
+
+    let error = expose_legacy_codex_state_to_broker_home(root, &codex_broker_home(root, "acct"))
+        .await
+        .unwrap_err();
+
+    assert!(
+        format!("{error:#}").contains("symlink component"),
+        "expected symlinked legacy home rejection, got {error:#}"
+    );
+    assert!(
+        !codex_runtime_home(root).join("history.jsonl").exists(),
+        "symlinked legacy home must not be imported into shared continuity"
+    );
+    assert!(
+        !outside_home.join(".ctx-continuity-runtime.lock").exists(),
+        "symlinked legacy home must be rejected before acquiring an external runtime lock"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn oauth_broker_home_rejects_symlinked_shared_directory_before_merge() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let external_dir = tempfile::tempdir().unwrap();
+    let legacy_rollout = legacy_codex_runtime_home(root).join("sessions/rollout.jsonl");
+    tokio::fs::create_dir_all(legacy_rollout.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::write(&legacy_rollout, "legacy-session\n")
+        .await
+        .unwrap();
+    tokio::fs::create_dir_all(codex_runtime_home(root))
+        .await
+        .unwrap();
+    std::os::unix::fs::symlink(
+        external_dir.path(),
+        codex_runtime_home(root).join("sessions"),
+    )
+    .unwrap();
+
+    let error = expose_legacy_codex_state_to_broker_home(root, &codex_broker_home(root, "acct"))
+        .await
+        .unwrap_err();
+
+    assert!(
+        format!("{error:#}").contains("must not be a symlink"),
+        "expected symlinked shared directory rejection, got {error:#}"
+    );
+    assert!(
+        tokio::fs::symlink_metadata(external_dir.path().join("rollout.jsonl"))
+            .await
+            .is_err(),
+        "merge must not follow shared directory symlink"
+    );
+}
 
 async fn lock_env() -> tokio::sync::MutexGuard<'static, ()> {
     ENV_LOCK.lock().await
@@ -82,6 +1031,51 @@ async fn codex_env_mirrors_active_account_auth_into_runtime_home() {
         .await
         .unwrap();
     assert!(mirrored.contains("OPENAI_API_KEY"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn codex_env_rejects_symlinked_runtime_home_before_api_key_projection() {
+    let _env_lock = lock_env().await;
+    let _guard = EnvGuard::without("CTX_CODEX_HOME");
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let registry = CodexAccountRegistry {
+        active_account_id: Some("acct-123".to_string()),
+        accounts: vec![CodexAccountEntry {
+            id: "acct-123".to_string(),
+            label: "Account".to_string(),
+            kind: CODEX_CREDENTIAL_KIND_API_KEY.to_string(),
+            email: None,
+            provider_account_id: None,
+            plan_type: None,
+            created_at: Utc::now(),
+            last_used_at: None,
+            secret_ref: None,
+            endpoint_profile: CodexEndpointProfile::default(),
+        }],
+    };
+    save_codex_registry(root, &registry).await.unwrap();
+    let account_dir = ensure_codex_account_dir(root, "acct-123").await.unwrap();
+    tokio::fs::write(
+        account_dir.join("auth.json"),
+        br#"{"OPENAI_API_KEY":"test-key"}"#,
+    )
+    .await
+    .unwrap();
+    std::os::unix::fs::symlink(outside.path(), codex_runtime_home(root)).unwrap();
+
+    let error = codex_env_for_active_account(root).await.unwrap_err();
+    assert!(
+        format!("{error:#}").contains("Codex runtime home path")
+            && format!("{error:#}").contains("before broker storage access"),
+        "symlinked runtime home must be rejected before API-key auth projection, got: {error:#}"
+    );
+    assert!(
+        !outside.path().join("auth.json").exists(),
+        "failed runtime-home validation must not write auth through the symlink"
+    );
 }
 
 #[tokio::test]
@@ -174,6 +1168,117 @@ async fn codex_env_projects_active_account_auth_into_runtime_root() {
             .await
             .unwrap();
     assert!(mirrored.contains("OPENAI_API_KEY"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn codex_env_rejects_symlinked_sandbox_runtime_home_before_api_key_projection() {
+    let _env_lock = lock_env().await;
+    let _guard = EnvGuard::without("CTX_CODEX_HOME");
+    let dir = tempfile::tempdir().unwrap();
+    let runtime_root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let registry = CodexAccountRegistry {
+        active_account_id: Some("acct-123".to_string()),
+        accounts: vec![CodexAccountEntry {
+            id: "acct-123".to_string(),
+            label: "Account".to_string(),
+            kind: CODEX_CREDENTIAL_KIND_API_KEY.to_string(),
+            email: None,
+            provider_account_id: None,
+            plan_type: None,
+            created_at: Utc::now(),
+            last_used_at: None,
+            secret_ref: None,
+            endpoint_profile: CodexEndpointProfile::default(),
+        }],
+    };
+    save_codex_registry(root, &registry).await.unwrap();
+    let account_dir = ensure_codex_account_dir(root, "acct-123").await.unwrap();
+    tokio::fs::write(
+        account_dir.join("auth.json"),
+        br#"{"OPENAI_API_KEY":"test-key"}"#,
+    )
+    .await
+    .unwrap();
+    tokio::fs::create_dir_all(runtime_root.path().join("providers/codex"))
+        .await
+        .unwrap();
+    std::os::unix::fs::symlink(outside.path(), codex_runtime_home(runtime_root.path())).unwrap();
+
+    let error = codex_env_for_active_account_with_runtime_root(root, runtime_root.path())
+        .await
+        .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("Codex runtime home path")
+            && format!("{error:#}").contains("before broker storage access"),
+        "symlinked sandbox runtime home must be rejected before API-key auth projection, got: {error:#}"
+    );
+    assert!(
+        !outside.path().join("auth.json").exists(),
+        "failed sandbox runtime-home validation must not write auth through the symlink"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn codex_env_rejects_symlinked_source_provider_root_before_sandbox_projection() {
+    let _env_lock = lock_env().await;
+    let _guard = EnvGuard::without("CTX_CODEX_HOME");
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let runtime_root = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    tokio::fs::create_dir_all(root.join("providers"))
+        .await
+        .unwrap();
+    std::os::unix::fs::symlink(outside.path(), root.join("providers/codex")).unwrap();
+    let registry = CodexAccountRegistry {
+        active_account_id: Some("acct-123".to_string()),
+        accounts: vec![CodexAccountEntry {
+            id: "acct-123".to_string(),
+            label: "Account".to_string(),
+            kind: CODEX_CREDENTIAL_KIND_API_KEY.to_string(),
+            email: None,
+            provider_account_id: None,
+            plan_type: None,
+            created_at: Utc::now(),
+            last_used_at: None,
+            secret_ref: None,
+            endpoint_profile: CodexEndpointProfile::default(),
+        }],
+    };
+    tokio::fs::create_dir_all(outside.path().join("accounts/acct-123"))
+        .await
+        .unwrap();
+    tokio::fs::write(
+        outside.path().join("accounts/index.json"),
+        serde_json::to_vec_pretty(&registry).unwrap(),
+    )
+    .await
+    .unwrap();
+    tokio::fs::write(
+        outside.path().join("accounts/acct-123/auth.json"),
+        br#"{"OPENAI_API_KEY":"test-key"}"#,
+    )
+    .await
+    .unwrap();
+
+    let error = codex_env_for_active_account_with_runtime_root(root, runtime_root.path())
+        .await
+        .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("Codex provider root path")
+            && format!("{error:#}").contains("before broker storage access"),
+        "symlinked source provider root must be rejected before sandbox registry/auth reads, got: {error:#}"
+    );
+    assert!(
+        !codex_runtime_home(runtime_root.path())
+            .join("auth.json")
+            .exists(),
+        "failed source provider-root validation must not project auth into the sandbox runtime"
+    );
 }
 
 #[tokio::test]
@@ -666,6 +1771,820 @@ async fn oauth_broker_home_exposes_legacy_session_state_without_copying_auth() {
     assert!(
         !codex_runtime_home(root).join("auth.json").exists(),
         "OAuth refresh tokens must not be copied into the shared runtime home"
+    );
+}
+
+#[tokio::test]
+async fn oauth_broker_home_repairs_preinitialized_continuity_dirs() {
+    let _env_lock = lock_env().await;
+    let _guard = EnvGuard::without("CTX_CODEX_HOME");
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let account_id = "acct-oauth";
+    let secret_ref = format!("{account_id}.json");
+    let registry = CodexAccountRegistry {
+        active_account_id: Some(account_id.to_string()),
+        accounts: vec![CodexAccountEntry {
+            id: account_id.to_string(),
+            label: "acct".to_string(),
+            kind: CODEX_CREDENTIAL_KIND_OAUTH.to_string(),
+            email: None,
+            provider_account_id: Some("upstream-acct".to_string()),
+            plan_type: None,
+            created_at: Utc::now(),
+            last_used_at: None,
+            secret_ref: Some(secret_ref.clone()),
+            endpoint_profile: CodexEndpointProfile::default(),
+        }],
+    };
+    save_codex_registry(root, &registry).await.unwrap();
+    tokio::fs::create_dir_all(codex_secrets_root(root))
+        .await
+        .unwrap();
+    tokio::fs::write(
+        codex_secret_path(root, &secret_ref).unwrap(),
+        br#"{"version":1,"auth":{"tokens":{"access_token":"access","refresh_token":"refresh","account_id":"upstream-acct"}}}"#,
+    )
+    .await
+    .unwrap();
+
+    let shared_rollout = codex_runtime_home(root).join(
+        "sessions/2026/04/26/rollout-2026-04-26T18-38-41-019dcc28-d7b1-7233-9bf1-2d34c2752b42.jsonl",
+    );
+    let broker_rollout = codex_broker_home(root, account_id).join(
+        "sessions/2026/05/14/rollout-2026-05-14T19-20-30-019e2700-0000-7000-9000-000000000001.jsonl",
+    );
+    let broker_snapshot = codex_broker_home(root, account_id)
+        .join("shell_snapshots/019e2700-0000-7000-9000-000000000001.0001.sh");
+    let broker_prompt = codex_broker_home(root, account_id).join("prompts/custom.md");
+    tokio::fs::create_dir_all(shared_rollout.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::create_dir_all(broker_rollout.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::create_dir_all(broker_snapshot.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::create_dir_all(broker_prompt.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::write(&shared_rollout, "{\"thread\":\"legacy-shared\"}\n")
+        .await
+        .unwrap();
+    tokio::fs::write(&broker_rollout, "{\"thread\":\"broker-local\"}\n")
+        .await
+        .unwrap();
+    tokio::fs::write(&broker_snapshot, "export PWD=/tmp/broker\n")
+        .await
+        .unwrap();
+    tokio::fs::write(&broker_prompt, "custom prompt\n")
+        .await
+        .unwrap();
+
+    let env = codex_env_for_active_account(root).await.unwrap();
+    let broker_home = PathBuf::from(env.get("CODEX_HOME").unwrap());
+    assert_eq!(broker_home, codex_broker_home(root, account_id));
+    assert_eq!(
+        tokio::fs::read_to_string(&shared_rollout).await.unwrap(),
+        "{\"thread\":\"legacy-shared\"}\n"
+    );
+    assert_eq!(
+        tokio::fs::read_to_string(codex_runtime_home(root).join(
+            "sessions/2026/05/14/rollout-2026-05-14T19-20-30-019e2700-0000-7000-9000-000000000001.jsonl",
+        ))
+        .await
+        .unwrap(),
+        "{\"thread\":\"broker-local\"}\n"
+    );
+    assert_eq!(
+        tokio::fs::read_to_string(broker_home.join(
+            "sessions/2026/04/26/rollout-2026-04-26T18-38-41-019dcc28-d7b1-7233-9bf1-2d34c2752b42.jsonl",
+        ))
+        .await
+        .unwrap(),
+        "{\"thread\":\"legacy-shared\"}\n"
+    );
+    assert_eq!(
+        tokio::fs::read_to_string(
+            broker_home.join("shell_snapshots/019e2700-0000-7000-9000-000000000001.0001.sh",)
+        )
+        .await
+        .unwrap(),
+        "export PWD=/tmp/broker\n"
+    );
+    assert_eq!(
+        tokio::fs::read_to_string(broker_home.join("prompts/custom.md"))
+            .await
+            .unwrap(),
+        "custom prompt\n"
+    );
+
+    #[cfg(unix)]
+    {
+        assert!(tokio::fs::symlink_metadata(broker_home.join("sessions"))
+            .await
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(
+            tokio::fs::symlink_metadata(broker_home.join("shell_snapshots"))
+                .await
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert!(tokio::fs::symlink_metadata(broker_home.join("prompts"))
+            .await
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
+    assert!(
+        broker_home
+            .join(".ctx-continuity-migration-backups/sessions.0")
+            .exists(),
+        "preinitialized broker sessions should be backed up before link repair"
+    );
+    assert!(
+        !codex_runtime_home(root).join("auth.json").exists(),
+        "OAuth refresh tokens must not be copied into the shared runtime home"
+    );
+}
+
+#[tokio::test]
+async fn oauth_broker_home_links_missing_continuity_files_before_launch() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let account_id = "acct-oauth";
+    let broker_home = codex_broker_home(root, account_id);
+
+    expose_legacy_codex_state_to_broker_home(root, &broker_home)
+        .await
+        .unwrap();
+
+    assert!(codex_runtime_home(root).join("history.jsonl").exists());
+    assert!(codex_runtime_home(root).join("config.toml").exists());
+    assert!(broker_home.join("history.jsonl").exists());
+    assert!(broker_home.join("config.toml").exists());
+    #[cfg(unix)]
+    {
+        assert_eq!(
+            std::fs::canonicalize(std::fs::read_link(broker_home.join("history.jsonl")).unwrap())
+                .unwrap(),
+            std::fs::canonicalize(codex_runtime_home(root).join("history.jsonl")).unwrap()
+        );
+        assert_eq!(
+            std::fs::canonicalize(std::fs::read_link(broker_home.join("config.toml")).unwrap())
+                .unwrap(),
+            std::fs::canonicalize(codex_runtime_home(root).join("config.toml")).unwrap()
+        );
+    }
+}
+
+#[tokio::test]
+async fn oauth_broker_home_allows_system_temp_symlink_ancestors() {
+    let dir = tempfile::Builder::new()
+        .prefix("ctx-provider-accounts-")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let root = dir.path();
+    let account_id = "acct-oauth";
+    let broker_home = codex_broker_home(root, account_id);
+
+    expose_legacy_codex_state_to_broker_home(root, &broker_home)
+        .await
+        .unwrap();
+
+    assert!(broker_home.join("history.jsonl").exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn oauth_broker_home_accepts_existing_link_through_system_temp_alias() {
+    let dir = tempfile::Builder::new()
+        .prefix("ctx-provider-accounts-")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let root = dir.path();
+    let account_id = "acct-oauth";
+    let broker_home = codex_broker_home(root, account_id);
+    let shared_history = codex_runtime_home(root).join("history.jsonl");
+    tokio::fs::create_dir_all(shared_history.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::write(&shared_history, "{\"thread\":\"shared\"}\n")
+        .await
+        .unwrap();
+    tokio::fs::create_dir_all(&broker_home).await.unwrap();
+    std::os::unix::fs::symlink(&shared_history, broker_home.join("history.jsonl")).unwrap();
+
+    expose_legacy_codex_state_to_broker_home(root, &broker_home)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        tokio::fs::read_to_string(broker_home.join("history.jsonl"))
+            .await
+            .unwrap(),
+        "{\"thread\":\"shared\"}\n"
+    );
+}
+
+#[tokio::test]
+async fn oauth_broker_home_adopts_broker_local_file_before_placeholder_creation() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let account_id = "acct-oauth";
+    let broker_home = codex_broker_home(root, account_id);
+    tokio::fs::create_dir_all(&broker_home).await.unwrap();
+    tokio::fs::write(
+        broker_home.join("history.jsonl"),
+        "{\"session\":\"broker-only\"}\n",
+    )
+    .await
+    .unwrap();
+
+    expose_legacy_codex_state_to_broker_home(root, &broker_home)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        tokio::fs::read_to_string(codex_runtime_home(root).join("history.jsonl"))
+            .await
+            .unwrap(),
+        "{\"session\":\"broker-only\"}\n"
+    );
+    assert_eq!(
+        tokio::fs::read_to_string(broker_home.join("history.jsonl"))
+            .await
+            .unwrap(),
+        "{\"session\":\"broker-only\"}\n"
+    );
+    #[cfg(unix)]
+    assert_eq!(
+        std::fs::read_link(broker_home.join("history.jsonl")).unwrap(),
+        codex_runtime_home(root).join("history.jsonl")
+    );
+}
+
+#[tokio::test]
+async fn oauth_broker_home_does_not_overwrite_empty_shared_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let account_id = "acct-oauth";
+    let broker_home = codex_broker_home(root, account_id);
+    tokio::fs::create_dir_all(codex_runtime_home(root))
+        .await
+        .unwrap();
+    tokio::fs::write(codex_runtime_home(root).join("history.jsonl"), "")
+        .await
+        .unwrap();
+    tokio::fs::create_dir_all(&broker_home).await.unwrap();
+    tokio::fs::write(
+        broker_home.join("history.jsonl"),
+        "{\"session\":\"broker-real\"}\n",
+    )
+    .await
+    .unwrap();
+
+    expose_legacy_codex_state_to_broker_home(root, &broker_home)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        tokio::fs::read_to_string(codex_runtime_home(root).join("history.jsonl"))
+            .await
+            .unwrap(),
+        ""
+    );
+    assert_eq!(
+        tokio::fs::read_to_string(
+            broker_home
+                .join(".ctx-continuity-migration-backups")
+                .join("history.jsonl.0")
+        )
+        .await
+        .unwrap(),
+        "{\"session\":\"broker-real\"}\n"
+    );
+}
+
+#[tokio::test]
+async fn oauth_broker_home_active_broker_home_defers_repair_without_mutation() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let account_id = "acct-oauth";
+    let broker_home = codex_broker_home(root, account_id);
+    let broker_rollout = broker_home.join(
+        "sessions/2026/05/14/rollout-2026-05-14T19-20-30-019e2700-0000-7000-9000-000000000004.jsonl",
+    );
+    tokio::fs::create_dir_all(broker_rollout.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::write(&broker_rollout, "{\"thread\":\"active-broker\"}\n")
+        .await
+        .unwrap();
+
+    let _lock = hold_codex_runtime_lock(&broker_home);
+
+    let error = expose_legacy_codex_state_to_broker_home(root, &broker_home)
+        .await
+        .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("requires repair while repair is blocked"),
+        "broker-local active state should fail closed without mutation, got: {error:#}"
+    );
+    assert!(tokio::fs::symlink_metadata(broker_home.join("sessions"))
+        .await
+        .unwrap()
+        .file_type()
+        .is_dir());
+    assert_eq!(
+        tokio::fs::read_to_string(&broker_rollout).await.unwrap(),
+        "{\"thread\":\"active-broker\"}\n"
+    );
+    assert!(
+        !codex_runtime_home(root)
+            .join(
+                "sessions/2026/05/14/rollout-2026-05-14T19-20-30-019e2700-0000-7000-9000-000000000004.jsonl",
+            )
+            .exists(),
+        "active broker state must not be moved while the broker runtime lease is held"
+    );
+}
+
+#[tokio::test]
+async fn oauth_broker_home_resumes_pending_backup_when_destination_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let account_id = "acct-oauth";
+    let broker_home = codex_broker_home(root, account_id);
+    let backup = broker_home.join(".ctx-continuity-migration-backups/history.jsonl.0");
+    tokio::fs::create_dir_all(backup.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::write(&backup, "{\"thread\":\"pending-backup\"}\n")
+        .await
+        .unwrap();
+
+    expose_legacy_codex_state_to_broker_home(root, &broker_home)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        tokio::fs::read_to_string(codex_runtime_home(root).join("history.jsonl"))
+            .await
+            .unwrap(),
+        "{\"thread\":\"pending-backup\"}\n"
+    );
+    assert_eq!(
+        tokio::fs::read_to_string(broker_home.join("history.jsonl"))
+            .await
+            .unwrap(),
+        "{\"thread\":\"pending-backup\"}\n"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn oauth_broker_home_rejects_symlinked_backup_root_before_moving_child() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let account_id = "acct-oauth";
+    let broker_home = codex_broker_home(root, account_id);
+    let external_backup_root = root.join("external-backups");
+    tokio::fs::create_dir_all(&broker_home).await.unwrap();
+    tokio::fs::create_dir_all(&external_backup_root)
+        .await
+        .unwrap();
+    std::os::unix::fs::symlink(
+        &external_backup_root,
+        broker_home.join(".ctx-continuity-migration-backups"),
+    )
+    .unwrap();
+    tokio::fs::write(
+        broker_home.join("history.jsonl"),
+        "{\"thread\":\"broker-local\"}\n",
+    )
+    .await
+    .unwrap();
+
+    let error = expose_legacy_codex_state_to_broker_home(root, &broker_home)
+        .await
+        .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("backup root"),
+        "expected symlinked backup root rejection, got {error:#}"
+    );
+    assert_eq!(
+        tokio::fs::read_to_string(broker_home.join("history.jsonl"))
+            .await
+            .unwrap(),
+        "{\"thread\":\"broker-local\"}\n",
+        "failed repair must leave the broker child in place"
+    );
+    assert!(
+        std::fs::read_dir(&external_backup_root)
+            .unwrap()
+            .next()
+            .is_none(),
+        "symlinked backup root must not receive moved continuity state"
+    );
+}
+
+#[tokio::test]
+async fn oauth_broker_home_repair_rolls_back_failed_backup_move() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let account_id = "acct-oauth";
+    let broker_home = codex_broker_home(root, account_id);
+    tokio::fs::create_dir_all(&broker_home).await.unwrap();
+    tokio::fs::write(
+        broker_home.join("history.jsonl"),
+        "{\"thread\":\"rollback\"}\n",
+    )
+    .await
+    .unwrap();
+    tokio::fs::create_dir_all(codex_runtime_home(root).join("history.jsonl"))
+        .await
+        .unwrap();
+
+    let error = expose_legacy_codex_state_to_broker_home(root, &broker_home)
+        .await
+        .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("repairing preexisting broker Codex state"),
+        "expected repair failure, got {error:#}"
+    );
+    assert_eq!(
+        tokio::fs::read_to_string(broker_home.join("history.jsonl"))
+            .await
+            .unwrap(),
+        "{\"thread\":\"rollback\"}\n",
+        "failed repair should roll the moved broker file back into the active path"
+    );
+    assert!(
+        tokio::fs::symlink_metadata(broker_home.join("history.jsonl"))
+            .await
+            .unwrap()
+            .file_type()
+            .is_file()
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn oauth_broker_home_read_only_probe_allows_active_correct_links() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let account_id = "acct-oauth";
+    let broker_home = codex_broker_home(root, account_id);
+    let shared_home = codex_runtime_home(root);
+    tokio::fs::create_dir_all(shared_home.join("sessions"))
+        .await
+        .unwrap();
+    tokio::fs::create_dir_all(shared_home.join("shell_snapshots"))
+        .await
+        .unwrap();
+    tokio::fs::create_dir_all(shared_home.join("prompts"))
+        .await
+        .unwrap();
+    tokio::fs::write(
+        shared_home.join("history.jsonl"),
+        "{\"session\":\"shared\"}\n",
+    )
+    .await
+    .unwrap();
+    tokio::fs::write(shared_home.join("config.toml"), "[projects]\n")
+        .await
+        .unwrap();
+    let legacy_home = legacy_codex_runtime_home(root);
+    tokio::fs::create_dir_all(&legacy_home).await.unwrap();
+    tokio::fs::write(
+        legacy_home.join("history.jsonl"),
+        "{\"session\":\"legacy\"}\n",
+    )
+    .await
+    .unwrap();
+    tokio::fs::create_dir_all(&broker_home).await.unwrap();
+    std::os::unix::fs::symlink(shared_home.join("sessions"), broker_home.join("sessions")).unwrap();
+    std::os::unix::fs::symlink(
+        shared_home.join("shell_snapshots"),
+        broker_home.join("shell_snapshots"),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(
+        shared_home.join("history.jsonl"),
+        broker_home.join("history.jsonl"),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(
+        shared_home.join("config.toml"),
+        broker_home.join("config.toml"),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(shared_home.join("prompts"), broker_home.join("prompts")).unwrap();
+
+    let _lock = hold_codex_runtime_lock(&broker_home);
+
+    expose_legacy_codex_state_to_broker_home(root, &broker_home)
+        .await
+        .unwrap();
+    assert_eq!(
+        tokio::fs::read_to_string(broker_home.join("history.jsonl"))
+            .await
+            .unwrap(),
+        "{\"session\":\"shared\"}\n"
+    );
+    assert_eq!(
+        tokio::fs::read_to_string(shared_home.join("history.jsonl"))
+            .await
+            .unwrap(),
+        "{\"session\":\"shared\"}\n",
+        "active correct-link probes must not merge legacy state while the app-server lock is held"
+    );
+}
+
+#[tokio::test]
+async fn oauth_broker_home_keeps_existing_shared_history_idempotent() {
+    let _env_lock = lock_env().await;
+    let _guard = EnvGuard::without("CTX_CODEX_HOME");
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let account_id = "acct-oauth";
+    let secret_ref = format!("{account_id}.json");
+    let registry = CodexAccountRegistry {
+        active_account_id: Some(account_id.to_string()),
+        accounts: vec![CodexAccountEntry {
+            id: account_id.to_string(),
+            label: "acct".to_string(),
+            kind: CODEX_CREDENTIAL_KIND_OAUTH.to_string(),
+            email: None,
+            provider_account_id: Some("upstream-acct".to_string()),
+            plan_type: None,
+            created_at: Utc::now(),
+            last_used_at: None,
+            secret_ref: Some(secret_ref.clone()),
+            endpoint_profile: CodexEndpointProfile::default(),
+        }],
+    };
+    save_codex_registry(root, &registry).await.unwrap();
+    tokio::fs::create_dir_all(codex_secrets_root(root))
+        .await
+        .unwrap();
+    tokio::fs::write(
+        codex_secret_path(root, &secret_ref).unwrap(),
+        br#"{"version":1,"auth":{"tokens":{"access_token":"access","refresh_token":"refresh","account_id":"upstream-acct"}}}"#,
+    )
+    .await
+    .unwrap();
+
+    tokio::fs::create_dir_all(codex_runtime_home(root))
+        .await
+        .unwrap();
+    tokio::fs::create_dir_all(legacy_codex_runtime_home(root))
+        .await
+        .unwrap();
+    tokio::fs::write(
+        codex_runtime_home(root).join("history.jsonl"),
+        "{\"session\":\"shared\"}\n",
+    )
+    .await
+    .unwrap();
+    tokio::fs::write(
+        legacy_codex_runtime_home(root).join("history.jsonl"),
+        "{\"session\":\"legacy\"}\n",
+    )
+    .await
+    .unwrap();
+
+    let first_env = codex_env_for_active_account(root).await.unwrap();
+    let second_env = codex_env_for_active_account(root).await.unwrap();
+    let broker_home = PathBuf::from(second_env.get("CODEX_HOME").unwrap());
+    assert_eq!(first_env.get("CODEX_HOME"), second_env.get("CODEX_HOME"));
+    assert_eq!(
+        tokio::fs::read_to_string(codex_runtime_home(root).join("history.jsonl"))
+            .await
+            .unwrap(),
+        "{\"session\":\"shared\"}\n"
+    );
+    assert_eq!(
+        tokio::fs::read_to_string(broker_home.join("history.jsonl"))
+            .await
+            .unwrap(),
+        "{\"session\":\"shared\"}\n"
+    );
+    assert_eq!(
+        tokio::fs::read_to_string(legacy_codex_runtime_home(root).join("history.jsonl"))
+            .await
+            .unwrap(),
+        "{\"session\":\"legacy\"}\n"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn oauth_broker_home_concurrent_repair_does_not_deadlock_current_thread() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let account_id = "acct-oauth";
+    let broker_home = codex_broker_home(root, account_id);
+    let broker_rollout = broker_home.join(
+        "sessions/2026/05/14/rollout-2026-05-14T19-20-30-019e2700-0000-7000-9000-000000000002.jsonl",
+    );
+    tokio::fs::create_dir_all(broker_rollout.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::write(&broker_rollout, "{\"thread\":\"broker-local\"}\n")
+        .await
+        .unwrap();
+
+    let (first, second) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        tokio::join!(
+            expose_legacy_codex_state_to_broker_home(root, &broker_home),
+            expose_legacy_codex_state_to_broker_home(root, &broker_home)
+        )
+    })
+    .await
+    .expect("concurrent broker repair should not deadlock the current-thread runtime");
+    first.unwrap();
+    second.unwrap();
+    assert_eq!(
+        tokio::fs::read_to_string(codex_runtime_home(root).join(
+            "sessions/2026/05/14/rollout-2026-05-14T19-20-30-019e2700-0000-7000-9000-000000000002.jsonl",
+        ))
+        .await
+        .unwrap(),
+        "{\"thread\":\"broker-local\"}\n"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn oauth_broker_home_retargets_stale_continuity_symlink() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let account_id = "acct-oauth";
+    let broker_home = codex_broker_home(root, account_id);
+    let legacy_sessions = legacy_codex_runtime_home(root).join("sessions");
+    let legacy_rollout = legacy_sessions
+        .join("2026/05/14/rollout-2026-05-14T19-20-30-019e2700-0000-7000-9000-000000000003.jsonl");
+    tokio::fs::create_dir_all(legacy_rollout.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::create_dir_all(&broker_home).await.unwrap();
+    tokio::fs::write(&legacy_rollout, "{\"thread\":\"legacy-link\"}\n")
+        .await
+        .unwrap();
+    std::os::unix::fs::symlink(&legacy_sessions, broker_home.join("sessions")).unwrap();
+
+    expose_legacy_codex_state_to_broker_home(root, &broker_home)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        std::fs::read_link(broker_home.join("sessions")).unwrap(),
+        codex_runtime_home(root).join("sessions")
+    );
+    assert_eq!(
+        tokio::fs::read_to_string(codex_runtime_home(root).join(
+            "sessions/2026/05/14/rollout-2026-05-14T19-20-30-019e2700-0000-7000-9000-000000000003.jsonl",
+        ))
+        .await
+        .unwrap(),
+        "{\"thread\":\"legacy-link\"}\n"
+    );
+    assert_eq!(
+        tokio::fs::read_to_string(broker_home.join(
+            "sessions/2026/05/14/rollout-2026-05-14T19-20-30-019e2700-0000-7000-9000-000000000003.jsonl",
+        ))
+        .await
+        .unwrap(),
+        "{\"thread\":\"legacy-link\"}\n"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn oauth_broker_home_retargets_broken_stale_directory_link_to_created_canonical_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let account_id = "acct-oauth";
+    let broker_home = codex_broker_home(root, account_id);
+    tokio::fs::create_dir_all(&broker_home).await.unwrap();
+    std::os::unix::fs::symlink(
+        legacy_codex_runtime_home(root).join("missing-sessions"),
+        broker_home.join("sessions"),
+    )
+    .unwrap();
+
+    expose_legacy_codex_state_to_broker_home(root, &broker_home)
+        .await
+        .unwrap();
+
+    assert!(codex_runtime_home(root).join("sessions").is_dir());
+    assert_eq!(
+        std::fs::read_link(broker_home.join("sessions")).unwrap(),
+        codex_runtime_home(root).join("sessions")
+    );
+    assert!(broker_home.join("sessions").is_dir());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn oauth_broker_home_rejects_stale_file_link_to_special_file_target() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let account_id = "acct-oauth";
+    let broker_home = codex_broker_home(root, account_id);
+    let empty_legacy_home = root.join("empty-legacy-home");
+    let stale_target = legacy_codex_runtime_home(root).join("history.jsonl");
+    tokio::fs::create_dir_all(&empty_legacy_home).await.unwrap();
+    tokio::fs::create_dir_all(stale_target.parent().unwrap())
+        .await
+        .unwrap();
+    let _listener = std::os::unix::net::UnixListener::bind(&stale_target).unwrap();
+    tokio::fs::create_dir_all(&broker_home).await.unwrap();
+    std::os::unix::fs::symlink(&stale_target, broker_home.join("history.jsonl")).unwrap();
+
+    let error = expose_legacy_codex_state_from_home(root, &empty_legacy_home, &broker_home)
+        .await
+        .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("not a regular file"),
+        "expected special-file stale target rejection, got {error:#}"
+    );
+    assert_eq!(
+        std::fs::read_link(broker_home.join("history.jsonl")).unwrap(),
+        stale_target,
+        "failed repair must leave the old broker link intact"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn oauth_broker_home_rejects_broken_stale_link_to_symlinked_legacy_child() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let account_id = "acct-oauth";
+    let broker_home = codex_broker_home(root, account_id);
+    let stale_target = legacy_codex_runtime_home(root).join("history.jsonl");
+    tokio::fs::create_dir_all(stale_target.parent().unwrap())
+        .await
+        .unwrap();
+    std::os::unix::fs::symlink("missing-auth.json", &stale_target).unwrap();
+    tokio::fs::create_dir_all(&broker_home).await.unwrap();
+    std::os::unix::fs::symlink(&stale_target, broker_home.join("history.jsonl")).unwrap();
+
+    let error = expose_legacy_codex_state_to_broker_home(root, &broker_home)
+        .await
+        .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("target is a symlink"),
+        "expected broken symlink stale target rejection, got {error:#}"
+    );
+    assert_eq!(
+        std::fs::read_link(broker_home.join("history.jsonl")).unwrap(),
+        stale_target,
+        "failed repair must leave the old broker link intact"
+    );
+    assert!(
+        !codex_runtime_home(root).join("history.jsonl").exists(),
+        "broken symlink stale target must not be treated as a missing canonical file"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn oauth_broker_home_rejects_invalid_shared_file_before_removing_stale_link() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let account_id = "acct-oauth";
+    let broker_home = codex_broker_home(root, account_id);
+    let stale_target = legacy_codex_runtime_home(root).join("history.jsonl");
+    tokio::fs::create_dir_all(stale_target.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::write(&stale_target, "{\"thread\":\"legacy-stale\"}\n")
+        .await
+        .unwrap();
+    tokio::fs::create_dir_all(codex_runtime_home(root).join("history.jsonl"))
+        .await
+        .unwrap();
+    tokio::fs::create_dir_all(&broker_home).await.unwrap();
+    std::os::unix::fs::symlink(&stale_target, broker_home.join("history.jsonl")).unwrap();
+
+    let error = expose_legacy_codex_state_to_broker_home(root, &broker_home)
+        .await
+        .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("kind does not match manifest"),
+        "expected invalid shared child rejection, got {error:#}"
+    );
+    assert_eq!(
+        std::fs::read_link(broker_home.join("history.jsonl")).unwrap(),
+        stale_target,
+        "failed repair must not remove the old broker link"
     );
 }
 

@@ -1516,6 +1516,7 @@ dependencies = [
  "ctx-provider-matrix",
  "ctx-providers",
  "directories",
+ "fs2",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

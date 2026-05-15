@@ -6,6 +6,12 @@ use fs2::FileExt;
 use serde_json::Value;
 
 const CODEX_OAUTH_AUTHORITY_LOCK_FILE: &str = ".ctx-refresh-token.lock";
+const CODEX_CONTINUITY_RUNTIME_LOCK_FILE: &str = ".ctx-continuity-runtime.lock";
+
+pub(super) struct CodexRuntimeLocks {
+    _continuity: File,
+    _oauth_authority: Option<File>,
+}
 
 fn codex_home_from_env() -> Option<PathBuf> {
     std::env::var("CODEX_HOME")
@@ -35,15 +41,56 @@ fn codex_home_has_refresh_token(home: &Path) -> Result<bool> {
         .is_some_and(|value| !value.trim().is_empty()))
 }
 
-pub(super) fn acquire_codex_oauth_authority_lock() -> Result<Option<File>> {
+pub(super) fn acquire_codex_oauth_authority_lock() -> Result<Option<CodexRuntimeLocks>> {
     let Some(codex_home) = codex_home_from_env() else {
         return Ok(None);
     };
-    if !codex_home_has_refresh_token(&codex_home)? {
-        return Ok(None);
-    }
     std::fs::create_dir_all(&codex_home)
         .with_context(|| format!("creating Codex home at {}", codex_home.display()))?;
+    let continuity = acquire_codex_continuity_runtime_lock(&codex_home)?;
+    let oauth_authority = if codex_home_has_refresh_token(&codex_home)? {
+        Some(acquire_codex_oauth_authority_lock_for_home(&codex_home)?)
+    } else {
+        None
+    };
+    Ok(Some(CodexRuntimeLocks {
+        _continuity: continuity,
+        _oauth_authority: oauth_authority,
+    }))
+}
+
+fn acquire_codex_continuity_runtime_lock(codex_home: &Path) -> Result<File> {
+    let lock_path = codex_home.join(CODEX_CONTINUITY_RUNTIME_LOCK_FILE);
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .with_context(|| {
+            format!(
+                "opening Codex continuity runtime lock {}",
+                lock_path.display()
+            )
+        })?;
+    match fs2::FileExt::try_lock_shared(&file) {
+        Ok(()) => Ok(file),
+        Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+            anyhow::bail!(
+                "Codex home {} is undergoing continuity migration. Retry after launch preparation finishes.",
+                codex_home.display()
+            )
+        }
+        Err(err) => Err(err).with_context(|| {
+            format!(
+                "locking Codex continuity runtime lock {}",
+                lock_path.display()
+            )
+        }),
+    }
+}
+
+fn acquire_codex_oauth_authority_lock_for_home(codex_home: &Path) -> Result<File> {
     let lock_path = codex_home.join(CODEX_OAUTH_AUTHORITY_LOCK_FILE);
     let file = OpenOptions::new()
         .create(true)
@@ -53,7 +100,7 @@ pub(super) fn acquire_codex_oauth_authority_lock() -> Result<Option<File>> {
         .open(&lock_path)
         .with_context(|| format!("opening Codex OAuth authority lock {}", lock_path.display()))?;
     match file.try_lock_exclusive() {
-        Ok(()) => Ok(Some(file)),
+        Ok(()) => Ok(file),
         Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
             anyhow::bail!(
                 "Another Codex session is already using this signed-in account. ctx serializes Codex OAuth sessions to protect rotating refresh tokens; wait for the active session to finish or sign in with a separate Codex account."
@@ -108,13 +155,14 @@ mod tests {
 
         let first = acquire_codex_oauth_authority_lock()
             .expect("first lock")
-            .expect("oauth lock");
+            .expect("runtime locks");
+        assert!(tempdir.path().join(".ctx-continuity-runtime.lock").exists());
         assert!(tempdir.path().join(".ctx-refresh-token.lock").exists());
         drop(first);
     }
 
     #[test]
-    fn oauth_authority_lock_skips_api_key_home() {
+    fn runtime_lock_is_taken_for_api_key_home_without_oauth_authority_lock() {
         let _lock = ENV_LOCK.lock().expect("env lock");
         let tempdir = tempfile::tempdir().expect("tempdir");
         std::fs::write(
@@ -124,8 +172,11 @@ mod tests {
         .expect("write auth");
         let _guard = EnvGuard::set("CODEX_HOME", tempdir.path().to_string_lossy().as_ref());
 
-        assert!(acquire_codex_oauth_authority_lock()
-            .expect("api key homes do not need OAuth lock")
-            .is_none());
+        let first = acquire_codex_oauth_authority_lock()
+            .expect("api key home runtime lock")
+            .expect("runtime locks");
+        assert!(tempdir.path().join(".ctx-continuity-runtime.lock").exists());
+        assert!(!tempdir.path().join(".ctx-refresh-token.lock").exists());
+        drop(first);
     }
 }

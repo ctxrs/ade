@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
 use ctx_core::provider_policy::CODEX_APP_SERVER_ARGS;
+use ctx_provider_accounts as provider_accounts;
 use serde_json::json;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
@@ -15,6 +16,7 @@ const CODEX_RPC_TIMEOUT: Duration = Duration::from_secs(10);
 pub(super) async fn fetch_codex_usage_rpc(
     env: &HashMap<String, String>,
 ) -> Result<serde_json::Value> {
+    let _continuity_lock = provider_accounts::acquire_codex_runtime_continuity_lock_from_env(env)?;
     let mut child = spawn_codex_app_server(env)?;
     let stdout = child
         .stdout
@@ -74,6 +76,7 @@ fn spawn_codex_app_server(env: &HashMap<String, String>) -> Result<Child> {
         anyhow::bail!("CTX_CODEX_BIN_PATH must be absolute, got `{codex_bin}`");
     }
     let mut cmd = Command::new(codex_bin);
+    cmd.kill_on_drop(true);
     cmd.args(CODEX_APP_SERVER_ARGS)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

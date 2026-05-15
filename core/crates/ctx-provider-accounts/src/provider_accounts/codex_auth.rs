@@ -17,16 +17,16 @@ use super::{
     CTX_CODEX_HOST_AUTH_PATH_ENV, CTX_SEED_CODEX_AUTH_FROM_HOST_ENV,
 };
 
+mod continuity;
 mod host;
 mod runtime;
 mod secret_store;
 
+pub use self::continuity::acquire_codex_runtime_continuity_lock_from_env;
 pub use self::host::{
     host_codex_auth_path, probe_host_codex_auth_candidate, seed_codex_auth_from_host,
     seeding_codex_auth_from_host_enabled,
 };
-#[cfg(test)]
-pub(crate) use self::runtime::write_runtime_owner_marker;
 pub(crate) use self::runtime::{
     clear_runtime_auth_projection, clear_runtime_auth_projection_for_runtime_roots,
 };
@@ -39,6 +39,13 @@ pub use self::secret_store::{
     hydrate_codex_account_home_from_secret, import_codex_auth_value_to_secret_store,
     import_host_codex_auth_to_secret_store, ingest_codex_account_auth_to_secret_store,
     remove_codex_account_home_auth_if_present,
+};
+#[cfg(test)]
+pub(crate) use self::{
+    continuity::{expose_legacy_codex_state_from_home, expose_legacy_codex_state_to_broker_home},
+    runtime::{
+        migrate_owned_runtime_oauth_projection_to_broker_if_needed, write_runtime_owner_marker,
+    },
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

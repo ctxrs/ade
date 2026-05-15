@@ -25,4 +25,5 @@ toml = "0.8"
 tracing.workspace = true
 
 [dev-dependencies]
+fs2 = "0.4"
 tempfile = "3"

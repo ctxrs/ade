@@ -500,6 +500,35 @@ prepare_attempt_corepack() {
   COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare "${package_manager}" --activate
 }
 
+cleanup_attempt_xdg_dir() {
+  local attempt_xdg_dir="$1"
+  local cleanup_mode="${2:-advisory}"
+  if [[ -z "${attempt_xdg_dir}" ]]; then
+    return 0
+  fi
+  if [[ ! -e "${attempt_xdg_dir}" && ! -L "${attempt_xdg_dir}" ]]; then
+    return 0
+  fi
+  if [[ -L "${attempt_xdg_dir}" ]]; then
+    if ! rm -f "${attempt_xdg_dir}" >/dev/null 2>&1; then
+      if [[ "${cleanup_mode}" == "required" ]]; then
+        echo "[remote-contracts] error: failed to clean pre-attempt state ${attempt_xdg_dir}" >&2
+        return 2
+      fi
+      echo "[remote-contracts] warning: non-fatal cleanup failed for ${attempt_xdg_dir}" >&2
+    fi
+    return 0
+  fi
+  chmod -R u+rwX "${attempt_xdg_dir}" >/dev/null 2>&1 || true
+  if ! rm -rf "${attempt_xdg_dir}" >/dev/null 2>&1; then
+    if [[ "${cleanup_mode}" == "required" ]]; then
+      echo "[remote-contracts] error: failed to clean pre-attempt state ${attempt_xdg_dir}" >&2
+      return 2
+    fi
+    echo "[remote-contracts] warning: non-fatal cleanup failed for ${attempt_xdg_dir}" >&2
+  fi
+}
+
 printf "lane\tstatus\texit_code\tartifact_dir\treason\n" >"${SUMMARY_TSV}"
 
 run_lane() {
@@ -540,7 +569,7 @@ run_lane() {
       local attempt_home_dir="${attempt_xdg_dir}/home"
       local attempt_corepack_home="${attempt_xdg_dir}/corepack"
       rm -f "${report_path}"
-      rm -rf "${attempt_xdg_dir}"
+      cleanup_attempt_xdg_dir "${attempt_xdg_dir}" required
       mkdir -p \
         "${attempt_tmp_dir}" \
         "${attempt_daemon_data_dir}" \
@@ -589,7 +618,7 @@ run_lane() {
       sweep_stale_xvfb_processes
       sweep_local_automation_processes
       write_process_snapshot "${attempt_dir}/processes-after-automation-sweep.log"
-      rm -rf "${attempt_xdg_dir}"
+      cleanup_attempt_xdg_dir "${attempt_xdg_dir}"
       cp "${attempt_log}" "${wdio_log}"
       if [[ "${cmd_exit}" -eq 0 ]]; then
         break

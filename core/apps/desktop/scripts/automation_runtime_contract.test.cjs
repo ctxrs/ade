@@ -224,6 +224,14 @@ test("remote real CI wrapper retries startup-only WebDriver session failures", (
   assert.match(script, /core_package_manager\(\) \{/);
   assert.match(script, /prepare_attempt_corepack\(\) \{/);
   assert.match(script, /corepack prepare "\$\{package_manager\}" --activate/);
+  assert.match(script, /cleanup_attempt_xdg_dir\(\) \{/);
+  assert.match(script, /! -e "\$\{attempt_xdg_dir\}" && ! -L "\$\{attempt_xdg_dir\}"/);
+  assert.match(script, /if \[\[ -L "\$\{attempt_xdg_dir\}" \]\]; then/);
+  assert.match(script, /rm -f "\$\{attempt_xdg_dir\}"/);
+  assert.match(script, /chmod -R u\+rwX "\$\{attempt_xdg_dir\}"/);
+  assert.match(script, /cleanup_attempt_xdg_dir "\$\{attempt_xdg_dir\}" required/);
+  assert.match(script, /non-fatal cleanup failed/);
+  assert.match(script, /cleanup_attempt_xdg_dir "\$\{attempt_xdg_dir\}"/);
   assert.match(script, /sweep_webkit_automation_helpers/);
   assert.match(script, /\[\[ -f "\$\{report_path\}" \]\]/);
   assert.match(script, /wdio-attempt-\$\{attempt\}\.log/);
