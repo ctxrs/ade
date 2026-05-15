@@ -4,11 +4,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::http::StatusCode;
-use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::test_support::TestDaemon;
 use ctx_http::api;
 use ctx_provider_accounts::{
     save_codex_registry, CodexAccountEntry, CodexAccountRegistry, CodexEndpointProfile,
-    CodexLoginStatus, CODEX_API_SHAPE_OPENAI_RESPONSES, CODEX_CREDENTIAL_KIND_API_KEY,
+    CODEX_API_SHAPE_OPENAI_RESPONSES, CODEX_CREDENTIAL_KIND_API_KEY,
 };
 use ctx_providers::adapters::ProviderAdapter;
 use ctx_providers::fake::FakeProviderAdapter;
@@ -28,9 +28,9 @@ struct ErrorResp {
 }
 
 async fn start_http_app(
-    state: Arc<DaemonState>,
+    daemon: &TestDaemon,
 ) -> (String, reqwest::Client, tokio::task::JoinHandle<()>) {
-    let app = api::router(state);
+    let app = api::router(daemon.handle());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let handle = tokio::spawn(async move {
@@ -112,54 +112,47 @@ async fn start_redirecting_callback_server(
     )
 }
 
-async fn app_state(data_root: &std::path::Path) -> Arc<DaemonState> {
+async fn app_daemon(data_root: &std::path::Path) -> TestDaemon {
     let stores = StoreManager::open(data_root).await.unwrap();
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-    Arc::new(DaemonState::new(
+    TestDaemon::new(
         data_root.to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:0".to_string(),
         None,
-    ))
+    )
 }
 
 async fn insert_pending_login(
-    state: &Arc<DaemonState>,
+    daemon: &TestDaemon,
     account_id: &str,
-    completion_token: &str,
-    expected_callback_url: &str,
-) {
-    state
-        .test_with_codex_login_sessions(|map| {
-            map.insert(
-                account_id.to_string(),
-                CodexLoginStatus {
-                    account_id: account_id.to_string(),
-                    auth_url: "https://chat.openai.com/oauth/authorize".to_string(),
-                    expected_callback_url: Some(expected_callback_url.to_string()),
-                    completion_token: Some(completion_token.to_string()),
-                    status: "pending".to_string(),
-                    error: None,
-                },
-            );
-        })
-        .await;
+    expected_callback_url: Option<&str>,
+) -> String {
+    daemon
+        .handle()
+        .providers()
+        .start_codex_login_session(
+            account_id.to_string(),
+            "https://chat.openai.com/oauth/authorize".to_string(),
+            expected_callback_url.map(str::to_string),
+        )
+        .await
+        .completion_token
 }
 
 #[tokio::test]
 async fn complete_login_replays_loopback_callback_and_clears_token() {
     let data_dir = tempfile::tempdir().unwrap();
-    let state = app_state(data_dir.path()).await;
+    let daemon = app_daemon(data_dir.path()).await;
     let (callback_base, callback_handle) = start_callback_server().await;
     let expected_callback = format!("{callback_base}/auth/callback");
     let callback_url = format!("{expected_callback}?code=abc&state=xyz");
     let account_id = "acct-success";
-    let token = "completion-token";
-    insert_pending_login(&state, account_id, token, &expected_callback).await;
+    let token = insert_pending_login(&daemon, account_id, Some(&expected_callback)).await;
 
-    let (base, client, server_handle) = start_http_app(state.clone()).await;
+    let (base, client, server_handle) = start_http_app(&daemon).await;
     let resp = client
         .post(format!(
             "{base}/api/providers/codex/accounts/login/{account_id}"
@@ -176,8 +169,10 @@ async fn complete_login_replays_loopback_callback_and_clears_token() {
     assert!(body.accepted);
     assert_eq!(body.status_code, 200);
 
-    let status = state
-        .test_with_codex_login_sessions(|map| map.get(account_id).cloned())
+    let status = daemon
+        .handle()
+        .providers()
+        .codex_login_status(account_id)
         .await
         .expect("login status");
     assert!(
@@ -192,7 +187,7 @@ async fn complete_login_replays_loopback_callback_and_clears_token() {
 #[tokio::test]
 async fn complete_login_replays_localhost_callback_via_ipv4_override() {
     let data_dir = tempfile::tempdir().unwrap();
-    let state = app_state(data_dir.path()).await;
+    let daemon = app_daemon(data_dir.path()).await;
     let (callback_base, callback_handle) = start_callback_server().await;
     let callback_port = callback_base
         .rsplit_once(':')
@@ -203,10 +198,9 @@ async fn complete_login_replays_localhost_callback_via_ipv4_override() {
     let expected_callback = format!("http://localhost:{callback_port}/auth/callback");
     let callback_url = format!("{expected_callback}?code=abc&state=xyz");
     let account_id = "acct-localhost";
-    let token = "completion-token";
-    insert_pending_login(&state, account_id, token, &expected_callback).await;
+    let token = insert_pending_login(&daemon, account_id, Some(&expected_callback)).await;
 
-    let (base, client, server_handle) = start_http_app(state.clone()).await;
+    let (base, client, server_handle) = start_http_app(&daemon).await;
     let resp = client
         .post(format!(
             "{base}/api/providers/codex/accounts/login/{account_id}"
@@ -230,10 +224,10 @@ async fn complete_login_replays_localhost_callback_via_ipv4_override() {
 #[tokio::test]
 async fn complete_login_rejects_invalid_completion_token() {
     let data_dir = tempfile::tempdir().unwrap();
-    let state = app_state(data_dir.path()).await;
+    let daemon = app_daemon(data_dir.path()).await;
     let expected_callback = "http://localhost:43210/auth/callback";
-    insert_pending_login(&state, "acct-token", "expected-token", expected_callback).await;
-    let (base, client, server_handle) = start_http_app(state).await;
+    let _token = insert_pending_login(&daemon, "acct-token", Some(expected_callback)).await;
+    let (base, client, server_handle) = start_http_app(&daemon).await;
 
     let resp = client
         .post(format!(
@@ -256,28 +250,13 @@ async fn complete_login_rejects_invalid_completion_token() {
 #[tokio::test]
 async fn complete_login_rejects_missing_expected_callback_metadata() {
     let data_dir = tempfile::tempdir().unwrap();
-    let state = app_state(data_dir.path()).await;
+    let daemon = app_daemon(data_dir.path()).await;
     let (callback_base, callback_hits, callback_handle) =
         start_delayed_callback_server(Duration::from_millis(0)).await;
     let callback_url = format!("{callback_base}/auth/callback?code=abc");
     let account_id = "acct-missing-expected-callback";
-    let token = "token-missing-expected-callback";
-    state
-        .test_with_codex_login_sessions(|map| {
-            map.insert(
-                account_id.to_string(),
-                CodexLoginStatus {
-                    account_id: account_id.to_string(),
-                    auth_url: "https://chat.openai.com/oauth/authorize".to_string(),
-                    expected_callback_url: None,
-                    completion_token: Some(token.to_string()),
-                    status: "pending".to_string(),
-                    error: None,
-                },
-            );
-        })
-        .await;
-    let (base, client, server_handle) = start_http_app(state.clone()).await;
+    let token = insert_pending_login(&daemon, account_id, None).await;
+    let (base, client, server_handle) = start_http_app(&daemon).await;
 
     let resp = client
         .post(format!(
@@ -294,11 +273,13 @@ async fn complete_login_rejects_missing_expected_callback_metadata() {
     let body: ErrorResp = resp.json().await.unwrap();
     assert!(body.error.contains("expected callback"));
 
-    let status = state
-        .test_with_codex_login_sessions(|map| map.get(account_id).cloned())
+    let status = daemon
+        .handle()
+        .providers()
+        .codex_login_status(account_id)
         .await
         .expect("login status");
-    assert_eq!(status.completion_token.as_deref(), Some(token));
+    assert_eq!(status.completion_token.as_deref(), Some(token.as_str()));
     assert_eq!(callback_hits.load(Ordering::SeqCst), 0);
 
     callback_handle.abort();
@@ -308,15 +289,14 @@ async fn complete_login_rejects_missing_expected_callback_metadata() {
 #[tokio::test]
 async fn complete_login_rejects_non_loopback_host() {
     let data_dir = tempfile::tempdir().unwrap();
-    let state = app_state(data_dir.path()).await;
-    insert_pending_login(
-        &state,
+    let daemon = app_daemon(data_dir.path()).await;
+    let token = insert_pending_login(
+        &daemon,
         "acct-host",
-        "token-host",
-        "http://localhost:12345/auth/callback",
+        Some("http://localhost:12345/auth/callback"),
     )
     .await;
-    let (base, client, server_handle) = start_http_app(state).await;
+    let (base, client, server_handle) = start_http_app(&daemon).await;
 
     let resp = client
         .post(format!(
@@ -324,7 +304,7 @@ async fn complete_login_rejects_non_loopback_host() {
         ))
         .json(&json!({
             "callback_url": "http://example.com:12345/auth/callback?code=abc",
-            "completion_token": "token-host"
+            "completion_token": token
         }))
         .send()
         .await
@@ -339,15 +319,14 @@ async fn complete_login_rejects_non_loopback_host() {
 #[tokio::test]
 async fn complete_login_rejects_expected_path_mismatch() {
     let data_dir = tempfile::tempdir().unwrap();
-    let state = app_state(data_dir.path()).await;
-    insert_pending_login(
-        &state,
+    let daemon = app_daemon(data_dir.path()).await;
+    let token = insert_pending_login(
+        &daemon,
         "acct-path",
-        "token-path",
-        "http://localhost:24567/auth/callback",
+        Some("http://localhost:24567/auth/callback"),
     )
     .await;
-    let (base, client, server_handle) = start_http_app(state).await;
+    let (base, client, server_handle) = start_http_app(&daemon).await;
 
     let resp = client
         .post(format!(
@@ -355,7 +334,7 @@ async fn complete_login_rejects_expected_path_mismatch() {
         ))
         .json(&json!({
             "callback_url": "http://localhost:24567/auth/other?code=abc",
-            "completion_token": "token-path"
+            "completion_token": token
         }))
         .send()
         .await
@@ -370,19 +349,13 @@ async fn complete_login_rejects_expected_path_mismatch() {
 #[tokio::test]
 async fn complete_login_accepts_loopback_alias_for_expected_host() {
     let data_dir = tempfile::tempdir().unwrap();
-    let state = app_state(data_dir.path()).await;
+    let daemon = app_daemon(data_dir.path()).await;
     let (callback_base, callback_handle) = start_callback_server().await;
     let expected_callback = format!("{callback_base}/auth/callback");
     let parsed = reqwest::Url::parse(&expected_callback).unwrap();
     let port = parsed.port().unwrap();
-    insert_pending_login(
-        &state,
-        "acct-host-mismatch",
-        "token-host-mismatch",
-        &expected_callback,
-    )
-    .await;
-    let (base, client, server_handle) = start_http_app(state).await;
+    let token = insert_pending_login(&daemon, "acct-host-mismatch", Some(&expected_callback)).await;
+    let (base, client, server_handle) = start_http_app(&daemon).await;
 
     let resp = client
         .post(format!(
@@ -390,7 +363,7 @@ async fn complete_login_accepts_loopback_alias_for_expected_host() {
         ))
         .json(&json!({
             "callback_url": format!("http://localhost:{port}/auth/callback?code=abc"),
-            "completion_token": "token-host-mismatch"
+            "completion_token": token
         }))
         .send()
         .await
@@ -404,20 +377,20 @@ async fn complete_login_accepts_loopback_alias_for_expected_host() {
 #[tokio::test]
 async fn complete_login_token_is_single_use() {
     let data_dir = tempfile::tempdir().unwrap();
-    let state = app_state(data_dir.path()).await;
+    let daemon = app_daemon(data_dir.path()).await;
     let (callback_base, callback_handle) = start_callback_server().await;
     let expected_callback = format!("{callback_base}/auth/callback");
     let callback_url = format!("{expected_callback}?code=one-time");
-    insert_pending_login(&state, "acct-replay", "token-replay", &expected_callback).await;
+    let token = insert_pending_login(&daemon, "acct-replay", Some(&expected_callback)).await;
 
-    let (base, client, server_handle) = start_http_app(state).await;
+    let (base, client, server_handle) = start_http_app(&daemon).await;
     let first = client
         .post(format!(
             "{base}/api/providers/codex/accounts/login/acct-replay"
         ))
         .json(&json!({
             "callback_url": callback_url,
-            "completion_token": "token-replay"
+            "completion_token": token
         }))
         .send()
         .await
@@ -430,7 +403,7 @@ async fn complete_login_token_is_single_use() {
         ))
         .json(&json!({
             "callback_url": "http://localhost:1/auth/callback?code=replay",
-            "completion_token": "token-replay"
+            "completion_token": token
         }))
         .send()
         .await
@@ -446,18 +419,18 @@ async fn complete_login_token_is_single_use() {
 #[tokio::test]
 async fn complete_login_allows_only_one_concurrent_callback_replay() {
     let data_dir = tempfile::tempdir().unwrap();
-    let state = app_state(data_dir.path()).await;
+    let daemon = app_daemon(data_dir.path()).await;
     let (callback_base, callback_hits, callback_handle) =
         start_delayed_callback_server(Duration::from_millis(250)).await;
     let expected_callback = format!("{callback_base}/auth/callback");
     let callback_url = format!("{expected_callback}?code=race");
-    insert_pending_login(&state, "acct-race", "token-race", &expected_callback).await;
+    let token = insert_pending_login(&daemon, "acct-race", Some(&expected_callback)).await;
 
-    let (base, client, server_handle) = start_http_app(state).await;
+    let (base, client, server_handle) = start_http_app(&daemon).await;
     let request_url = format!("{base}/api/providers/codex/accounts/login/acct-race");
     let payload = json!({
         "callback_url": callback_url,
-        "completion_token": "token-race"
+        "completion_token": token
     });
 
     let first = client.post(request_url.clone()).json(&payload).send();
@@ -476,27 +449,21 @@ async fn complete_login_allows_only_one_concurrent_callback_replay() {
 #[tokio::test]
 async fn complete_login_rejects_redirecting_callback_replay() {
     let data_dir = tempfile::tempdir().unwrap();
-    let state = app_state(data_dir.path()).await;
+    let daemon = app_daemon(data_dir.path()).await;
     let (callback_base, redirected_hits, callback_handle) =
         start_redirecting_callback_server().await;
     let expected_callback = format!("{callback_base}/auth/callback");
     let callback_url = format!("{expected_callback}?code=redirect");
-    insert_pending_login(
-        &state,
-        "acct-redirect",
-        "token-redirect",
-        &expected_callback,
-    )
-    .await;
+    let token = insert_pending_login(&daemon, "acct-redirect", Some(&expected_callback)).await;
 
-    let (base, client, server_handle) = start_http_app(state).await;
+    let (base, client, server_handle) = start_http_app(&daemon).await;
     let resp = client
         .post(format!(
             "{base}/api/providers/codex/accounts/login/acct-redirect"
         ))
         .json(&json!({
             "callback_url": callback_url,
-            "completion_token": "token-redirect"
+            "completion_token": token
         }))
         .send()
         .await
@@ -513,7 +480,7 @@ async fn complete_login_rejects_redirecting_callback_replay() {
 #[tokio::test]
 async fn set_active_account_rejects_incompatible_endpoint_profile() {
     let data_dir = tempfile::tempdir().unwrap();
-    let state = app_state(data_dir.path()).await;
+    let daemon = app_daemon(data_dir.path()).await;
     let registry = CodexAccountRegistry {
         active_account_id: None,
         accounts: vec![CodexAccountEntry {
@@ -537,7 +504,7 @@ async fn set_active_account_rejects_incompatible_endpoint_profile() {
         .await
         .unwrap();
 
-    let (base, client, server_handle) = start_http_app(state).await;
+    let (base, client, server_handle) = start_http_app(&daemon).await;
     let resp = client
         .put(format!("{base}/api/providers/codex/active-account"))
         .json(&json!({ "account_id": "acct-incompatible" }))

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::http::StatusCode;
-use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::test_support::TestDaemon;
 use ctx_http::api;
 use ctx_provider_accounts::{codex_env_for_active_account, ensure_codex_auth_ready};
 use ctx_providers::adapters::ProviderAdapter;
@@ -37,23 +37,23 @@ struct CodexHostImportProbe {
     auth_kind: Option<String>,
 }
 
-async fn app_state(data_root: &std::path::Path) -> Arc<DaemonState> {
+async fn app_daemon(data_root: &std::path::Path) -> TestDaemon {
     let stores = StoreManager::open(data_root).await.unwrap();
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-    Arc::new(DaemonState::new(
+    TestDaemon::new(
         data_root.to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:0".to_string(),
         None,
-    ))
+    )
 }
 
 async fn start_http_app(
-    state: Arc<DaemonState>,
+    daemon: &TestDaemon,
 ) -> (String, reqwest::Client, tokio::task::JoinHandle<()>) {
-    let app = api::router(state);
+    let app = api::router(daemon.handle());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let handle = tokio::spawn(async move {
@@ -77,8 +77,8 @@ async fn host_import_probe_and_import_projects_runtime_auth() {
         host_auth_path.to_string_lossy().as_ref(),
     );
 
-    let state = app_state(data_dir.path()).await;
-    let (base, client, server_handle) = start_http_app(state).await;
+    let daemon = app_daemon(data_dir.path()).await;
+    let (base, client, server_handle) = start_http_app(&daemon).await;
 
     let probe = client
         .get(format!("{base}/api/providers/codex/import/host"))
