@@ -11,6 +11,7 @@ use ctx_core::models::{
     WorkspaceActiveSnapshotClientMessage, WorkspaceActiveSnapshotEvent,
     WorkspaceActiveSnapshotStreamMessage,
 };
+use ctx_daemon::test_support::HotEndpointManualHeadProbe;
 
 mod common;
 
@@ -316,7 +317,6 @@ async fn publish_event_does_not_trigger_full_session_head_rebuilds() {
         .await
         .unwrap();
 
-    let store = daemon.store_for_session(session.id).await.unwrap();
     let event = daemon
         .append_hot_endpoint_delta_notice_for_test(session.id)
         .await
@@ -335,9 +335,12 @@ async fn publish_event_does_not_trigger_full_session_head_rebuilds() {
         .unwrap();
     assert_eq!(last_event_seq, event.seq);
 
-    let manual_refresh = store.get_session_head_snapshot(session.id, 10, true).await;
+    let manual_refresh = daemon
+        .probe_hot_endpoint_manual_session_head_for_test(session.id)
+        .await
+        .unwrap();
     assert!(
-        manual_refresh.is_err(),
+        matches!(manual_refresh, HotEndpointManualHeadProbe::FailedClosed),
         "manual session head fetch should consume the one-shot failpoint because publish_event no longer rebuilds full heads"
     );
 

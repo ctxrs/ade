@@ -78,6 +78,11 @@ pub struct TaskArchiveManagedWorktreesSnapshot {
     pub managed_branches: Vec<String>,
 }
 
+pub enum HotEndpointManualHeadProbe {
+    UnexpectedlySucceeded,
+    FailedClosed,
+}
+
 pub struct TaskSessionCreationLockGuardForTest {
     _lock: Arc<tokio::sync::Mutex<()>>,
     _guard: tokio::sync::OwnedMutexGuard<()>,
@@ -2481,6 +2486,17 @@ impl TestDaemon {
             .map_err(|err| anyhow::anyhow!("append delta session event: {err}"))
     }
 
+    pub async fn probe_hot_endpoint_manual_session_head_for_test(
+        &self,
+        session_id: SessionId,
+    ) -> anyhow::Result<HotEndpointManualHeadProbe> {
+        let store = self.state.store_for_session(session_id).await?;
+        match store.get_session_head_snapshot(session_id, 10, true).await {
+            Ok(_) => Ok(HotEndpointManualHeadProbe::UnexpectedlySucceeded),
+            Err(_) => Ok(HotEndpointManualHeadProbe::FailedClosed),
+        }
+    }
+
     pub async fn publish_hot_endpoint_event_and_active_head_seq_for_test(
         &self,
         workspace_id: WorkspaceId,
@@ -2499,6 +2515,28 @@ impl TestDaemon {
             anyhow::anyhow!("expected active head for workspace {workspace_id:?}")
         })?;
         Ok(head.last_event_seq)
+    }
+
+    pub async fn seed_fault_matrix_replay_notice_for_test(
+        &self,
+        task_id: TaskId,
+        session_id: SessionId,
+    ) -> anyhow::Result<i64> {
+        let store = self.state.store_for_task(task_id).await?;
+        let sessions = store.list_sessions_for_task(task_id).await?;
+        if !sessions.iter().any(|session| session.id == session_id) {
+            anyhow::bail!("expected session {session_id:?} to belong to task {task_id:?}");
+        }
+        Ok(store
+            .append_session_event(
+                session_id,
+                None,
+                None,
+                SessionEventType::Notice,
+                serde_json::json!({"msg":"last"}),
+            )
+            .await?
+            .seq)
     }
 
     pub async fn seed_workspace_stream_stress_session_head_for_test(

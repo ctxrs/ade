@@ -11,10 +11,10 @@ use serde_json::json;
 use tokio::process::Command;
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
-use ctx_core::models::SessionEventType;
 use ctx_daemon::test_support::TestDaemon;
 use ctx_providers::fake::FakeProviderAdapter;
-use ctx_store::StoreManager;
+
+static FAILPOINT_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 async fn setup_git_repo() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
@@ -70,7 +70,7 @@ async fn setup_server() -> (
 ) {
     let repo = setup_git_repo().await;
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
+    let stores = common::setup_store(data_dir.path()).await;
 
     let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
         HashMap::new();
@@ -113,24 +113,10 @@ async fn setup_server() -> (
         .unwrap();
 
     let session = common::load_primary_session_http(&client, &base, &task).await;
-    let store = daemon.store_for_task(task.id).await.unwrap();
-    let sessions = store.list_sessions_for_task(task.id).await.unwrap();
-    assert!(
-        sessions.iter().any(|stored| stored.id == session.id),
-        "expected session to be stored"
-    );
-
-    let last = store
-        .append_session_event(
-            session.id,
-            None,
-            None,
-            SessionEventType::Notice,
-            json!({"msg":"last"}),
-        )
+    let last = daemon
+        .seed_fault_matrix_replay_notice_for_test(task.id, session.id)
         .await
-        .unwrap()
-        .seq;
+        .unwrap();
 
     (daemon, server, addr, ws, session, last)
 }
@@ -238,6 +224,7 @@ async fn wait_for_disconnect_without_reset(
 
 #[tokio::test]
 async fn fault_matrix_replay_errors_become_gaps() {
+    let _failpoint_guard = FAILPOINT_LOCK.lock().await;
     let (_state, server, addr, ws, session, _last_seq) = setup_server().await;
 
     struct Case {
@@ -289,6 +276,7 @@ async fn fault_matrix_replay_errors_become_gaps() {
 
 #[tokio::test]
 async fn fault_matrix_snapshot_send_failure_reconnects_cleanly() {
+    let _failpoint_guard = FAILPOINT_LOCK.lock().await;
     let (daemon, server, addr, ws, _session, _last_seq) = setup_server().await;
     daemon
         .ensure_workspace_active_snapshot_hydrated(ws.id)
@@ -371,6 +359,7 @@ async fn fault_matrix_snapshot_send_failure_reconnects_cleanly() {
 
 #[tokio::test]
 async fn fault_matrix_reset_emit_failure_disconnects_stream() {
+    let _failpoint_guard = FAILPOINT_LOCK.lock().await;
     let (_state, server, addr, ws, session, _last_seq) = setup_server().await;
 
     let mut socket = connect_workspace_stream(addr, ws.id).await;

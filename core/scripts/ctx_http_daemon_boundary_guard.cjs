@@ -185,6 +185,11 @@ const worktreeArchiveStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/worktree_archive_http.rs",
 ];
 
+const faultInjectionStoreFacadeTestRoots = [
+  "core/crates/ctx-http/tests/fault_matrix.rs",
+  "core/crates/ctx-http/tests/hot_endpoints_no_db.rs",
+];
+
 const streamRuntimeStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/noisy_output_backpressure.rs",
   "core/crates/ctx-http/tests/workspace_stream_no_gaps_under_activity.rs",
@@ -887,6 +892,86 @@ const WORKTREE_ARCHIVE_TEST_STORE_ACCESS_PATTERNS = [
   },
 ];
 
+const FAULT_INJECTION_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct fault-injection global store access",
+    regex: /\.global_store\s*\(/,
+  },
+  {
+    name: "direct fault-injection session store access",
+    regex: /\.store_for_session\s*\(/,
+  },
+  {
+    name: "direct fault-injection workspace store access",
+    regex: /\.store_for_workspace\s*\(/,
+  },
+  {
+    name: "direct fault-injection uncached workspace store access",
+    regex: /\.uncached_store_for_workspace\s*\(/,
+  },
+  {
+    name: "direct fault-injection task store access",
+    regex: /\.store_for_task\s*\(/,
+  },
+  {
+    name: "direct fault-injection worktree store access",
+    regex: /\.store_for_worktree\s*\(/,
+  },
+  {
+    name: "direct fault-injection StoreManager access",
+    regex: /\.stores\s*\(/,
+  },
+  {
+    name: "direct fault-injection StoreManager global access",
+    regex: /\b[a-zA-Z_][a-zA-Z0-9_]*\.global\s*\(/,
+    contentRegex: /\b[a-zA-Z_][a-zA-Z0-9_]*\s*\n\s*\.global\s*\(/gm,
+  },
+  {
+    name: "direct fault-injection StoreManager workspace access",
+    regex: /\b[a-zA-Z_][a-zA-Z0-9_]*\.workspace(?:_uncached)?\s*\(/,
+    contentRegex: /\b[a-zA-Z_][a-zA-Z0-9_]*\s*\n\s*\.workspace(?:_uncached)?\s*\(/gm,
+  },
+  {
+    name: "direct fault-injection task-session query",
+    regex: /\.list_sessions_for_task\s*\(/,
+  },
+  {
+    name: "direct fault-injection session event append",
+    regex: /\.append_session_event\s*\(/,
+  },
+  {
+    name: "direct fault-injection session head store query",
+    regex: /\.get_session_head_snapshot\s*\(/,
+  },
+  {
+    name: "direct fault-injection sessions handle access",
+    regex: /a^/,
+    contentRegex: /(?:\.handle\s*\(\s*\)\s*\.\s*sessions\s*\(|\blet\s+[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*[^;\n]*\.handle\s*\(\s*\)\s*;|[a-zA-Z_][a-zA-Z0-9_]*\.sessions\s*\()/gm,
+  },
+  {
+    name: "direct fault-injection workspaces handle access",
+    regex: /a^/,
+    contentRegex: /(?:\.handle\s*\(\s*\)\s*\.\s*workspaces\s*\(|\blet\s+[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*[^;\n]*\.handle\s*\(\s*\)\s*;|[a-zA-Z_][a-zA-Z0-9_]*\.workspaces\s*\()/gm,
+  },
+  {
+    name: "direct fault-injection tasks handle access",
+    regex: /a^/,
+    contentRegex: /(?:\.handle\s*\(\s*\)\s*\.\s*tasks\s*\(|\blet\s+[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*[^;\n]*\.handle\s*\(\s*\)\s*;|[a-zA-Z_][a-zA-Z0-9_]*\.tasks\s*\()/gm,
+  },
+  {
+    name: "direct fault-injection SessionEventType",
+    regex: /\bSessionEventType\b/,
+  },
+  {
+    name: "raw fault-injection ctx_store Store",
+    regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore\b/,
+  },
+  {
+    name: "raw fault-injection StoreManager",
+    regex: /\bStoreManager\b/,
+  },
+];
+
 const STREAM_RUNTIME_TEST_STORE_ACCESS_PATTERNS = [
   {
     name: "direct stream-runtime global store access",
@@ -1257,6 +1342,13 @@ function worktreeArchiveStorePatternsForPath(relativePath) {
   return [];
 }
 
+function faultInjectionStorePatternsForPath(relativePath) {
+  if (faultInjectionStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return FAULT_INJECTION_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
 function streamRuntimeStorePatternsForPath(relativePath) {
   if (streamRuntimeStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return STREAM_RUNTIME_TEST_STORE_ACCESS_PATTERNS;
@@ -1569,6 +1661,13 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
+        patterns: faultInjectionStorePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
         patterns: streamRuntimeStorePatternsForPath(relativePath),
       }),
     );
@@ -1621,6 +1720,7 @@ module.exports = {
   DAEMON_EXTRACTION_BLOCKER_PATTERNS,
   API_RAW_DAEMON_PATTERNS,
   API_DOMAIN_RAW_STORE_PATTERNS,
+  FAULT_INJECTION_TEST_STORE_ACCESS_PATTERNS,
   GLOBAL_ID_ROUTING_TEST_STORE_ACCESS_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
   JJ_MERGE_QUEUE_BASICS_TEST_STORE_ACCESS_PATTERNS,
@@ -1641,6 +1741,7 @@ module.exports = {
   WORKSPACE_RUNTIME_SETTINGS_TEST_STORE_ACCESS_PATTERNS,
   WORKTREE_ARCHIVE_TEST_STORE_ACCESS_PATTERNS,
   apiPatternsForPath,
+  faultInjectionStorePatternsForPath,
   globalIdRoutingStorePatternsForPath,
   isTestRustPath,
   jjMergeQueueBasicsStorePatternsForPath,

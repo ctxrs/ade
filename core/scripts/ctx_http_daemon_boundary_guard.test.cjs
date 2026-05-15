@@ -5,6 +5,7 @@ const {
   DAEMON_EXTRACTION_BLOCKER_PATTERNS,
   API_DOMAIN_RAW_STORE_PATTERNS,
   API_RAW_DAEMON_PATTERNS,
+  FAULT_INJECTION_TEST_STORE_ACCESS_PATTERNS,
   GLOBAL_ID_ROUTING_TEST_STORE_ACCESS_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
   JJ_MERGE_QUEUE_BASICS_TEST_STORE_ACCESS_PATTERNS,
@@ -25,6 +26,7 @@ const {
   WORKSPACE_RUNTIME_SETTINGS_TEST_STORE_ACCESS_PATTERNS,
   WORKTREE_ARCHIVE_TEST_STORE_ACCESS_PATTERNS,
   apiPatternsForPath,
+  faultInjectionStorePatternsForPath,
   globalIdRoutingStorePatternsForPath,
   isTestRustPath,
   jjMergeQueueBasicsStorePatternsForPath,
@@ -1478,6 +1480,112 @@ test("daemon boundary guard scopes worktree-archive store facade root", () => {
   assert.deepEqual(
     worktreeArchiveStorePatternsForPath(
       "core/crates/ctx-http/tests/worktree_vcs_snapshot.rs",
+    ),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects direct fault-injection store access", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/fault_matrix.rs",
+    contents: `
+      use ctx_core::models::SessionEventType;
+      use ctx_store::{Store, StoreManager};
+      async fn fixture(daemon: TestDaemon, stores: StoreManager) {
+        daemon.global_store();
+        daemon.store_for_session(session_id).await?;
+        daemon.store_for_workspace(workspace_id).await?;
+        daemon.uncached_store_for_workspace(workspace_id).await?;
+        daemon.store_for_task(task_id).await?;
+        daemon.store_for_worktree(worktree_id).await?;
+        daemon.stores().global().await?;
+        stores.global().await?;
+        stores.workspace(workspace_id).await?;
+        manager
+          .global().await?;
+        manager
+          .workspace_uncached(workspace_id).await?;
+        store.list_sessions_for_task(task_id).await?;
+        store.append_session_event(session_id, None, None, SessionEventType::Notice, json!({})).await?;
+        store.get_session_head_snapshot(session_id, 10, true).await?;
+        daemon.handle().sessions();
+        daemon.handle().workspaces();
+        daemon.handle().tasks();
+        let handle = daemon.handle();
+        handle.sessions();
+        handle.workspaces();
+        handle.tasks();
+        let _raw: Store;
+      }
+    `,
+    patterns: FAULT_INJECTION_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct fault-injection global store access",
+      "direct fault-injection session store access",
+      "direct fault-injection workspace store access",
+      "direct fault-injection uncached workspace store access",
+      "direct fault-injection task store access",
+      "direct fault-injection worktree store access",
+      "direct fault-injection StoreManager access",
+      "direct fault-injection StoreManager global access",
+      "direct fault-injection StoreManager global access",
+      "direct fault-injection StoreManager workspace access",
+      "direct fault-injection StoreManager workspace access",
+      "direct fault-injection task-session query",
+      "direct fault-injection session event append",
+      "direct fault-injection session head store query",
+      "direct fault-injection sessions handle access",
+      "direct fault-injection sessions handle access",
+      "direct fault-injection sessions handle access",
+      "direct fault-injection workspaces handle access",
+      "direct fault-injection workspaces handle access",
+      "direct fault-injection workspaces handle access",
+      "direct fault-injection tasks handle access",
+      "direct fault-injection tasks handle access",
+      "direct fault-injection tasks handle access",
+      "direct fault-injection SessionEventType",
+      "direct fault-injection SessionEventType",
+      "raw fault-injection ctx_store Store",
+      "raw fault-injection ctx_store Store",
+      "raw fault-injection StoreManager",
+      "raw fault-injection StoreManager",
+    ],
+  );
+});
+
+test("daemon boundary guard allows intentional fault-injection controls", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/hot_endpoints_no_db.rs",
+    contents: `
+      fn fixture() {
+        ctx_store::fault_injection::clear_failpoints();
+        ctx_store::fault_injection::set_failpoint("ctx_store.get_session_head_snapshot", 1);
+        ctx_http::fault_injection::set_failpoint("ctx_http.send_workspace_active_reset", 1);
+      }
+    `,
+    patterns: FAULT_INJECTION_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(violations, []);
+});
+
+test("daemon boundary guard scopes fault-injection store facade roots", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/tests/fault_matrix.rs",
+    "core/crates/ctx-http/tests/hot_endpoints_no_db.rs",
+  ]) {
+    assert.deepEqual(
+      faultInjectionStorePatternsForPath(filePath),
+      FAULT_INJECTION_TEST_STORE_ACCESS_PATTERNS,
+    );
+  }
+  assert.deepEqual(
+    faultInjectionStorePatternsForPath(
+      "core/crates/ctx-http/tests/provider_worker_reaping_offline.rs",
     ),
     [],
   );
