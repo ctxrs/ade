@@ -133,6 +133,11 @@ const providerRouteSetupStoreFacadeTestRoots = [
   "core/crates/ctx-http/src/lib_tests/provider_routes/",
 ];
 
+const authBoundaryStoreFacadeTestRoots = [
+  "core/crates/ctx-http/src/lib_tests/auth_boundaries.rs",
+  "core/crates/ctx-http/src/lib_tests/auth_boundaries/",
+];
+
 const mcpDaemonFacadeTestRoots = [
   "core/crates/ctx-http-test-support/src/mcp_daemon.rs",
   "core/crates/ctx-http-test-support/src/mcp_daemon/",
@@ -426,6 +431,56 @@ const PROVIDER_ROUTE_SETUP_TEST_STORE_ACCESS_PATTERNS = [
   },
   {
     name: "raw provider-route ctx_store Store",
+    regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore\b/,
+  },
+];
+
+const AUTH_BOUNDARY_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct auth-boundary global store access",
+    regex: /\.global_store\s*\(/,
+  },
+  {
+    name: "direct auth-boundary session store access",
+    regex: /\.store_for_session\s*\(/,
+  },
+  {
+    name: "direct auth-boundary workspace store access",
+    regex: /\.store_for_workspace\s*\(/,
+  },
+  {
+    name: "direct auth-boundary uncached workspace store access",
+    regex: /\.uncached_store_for_workspace\s*\(/,
+  },
+  {
+    name: "direct auth-boundary task store access",
+    regex: /\.store_for_task\s*\(/,
+  },
+  {
+    name: "direct auth-boundary worktree store access",
+    regex: /\.store_for_worktree\s*\(/,
+  },
+  {
+    name: "direct auth-boundary StoreManager access",
+    regex: /\.stores\s*\(|\bStoreManager\b/,
+  },
+  {
+    name: "direct auth-boundary StoreManager global access",
+    regex: /\b[a-zA-Z_][a-zA-Z0-9_]*\.global\s*\(/,
+    contentRegex: /\b[a-zA-Z_][a-zA-Z0-9_]*\s*\n\s*\.global\s*\(/gm,
+  },
+  {
+    name: "direct auth-boundary StoreManager workspace access",
+    regex: /\b[a-zA-Z_][a-zA-Z0-9_]*\.workspace(?:_uncached)?\s*\(/,
+    contentRegex: /\b[a-zA-Z_][a-zA-Z0-9_]*\s*\n\s*\.workspace(?:_uncached)?\s*\(/gm,
+  },
+  {
+    name: "direct auth-boundary handle access",
+    regex: /a^/,
+    contentRegex: /(?:\.handle\s*\(\s*\)\s*\.\s*(?:providers|sessions|workspaces|tasks)\s*\(|\blet\s+[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*[^;\n]*\.handle\s*\(\s*\)\s*;|[a-zA-Z_][a-zA-Z0-9_]*\.(?:providers|sessions|workspaces|tasks)\s*\()/gm,
+  },
+  {
+    name: "raw auth-boundary ctx_store Store",
     regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore\b/,
   },
 ];
@@ -1334,6 +1389,13 @@ function providerRouteSetupStorePatternsForPath(relativePath) {
   return [];
 }
 
+function authBoundaryStorePatternsForPath(relativePath) {
+  if (authBoundaryStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return AUTH_BOUNDARY_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
 function mcpDaemonPatternsForPath(relativePath) {
   if (mcpDaemonFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS;
@@ -1660,6 +1722,13 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
+        patterns: authBoundaryStorePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
         patterns: mcpDaemonPatternsForPath(relativePath),
       }),
     );
@@ -1786,6 +1855,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  AUTH_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
   DAEMON_EXTRACTION_BLOCKER_PATTERNS,
   API_RAW_DAEMON_PATTERNS,
   API_DOMAIN_RAW_STORE_PATTERNS,
@@ -1811,6 +1881,7 @@ module.exports = {
   WORKSPACE_RUNTIME_SETTINGS_TEST_STORE_ACCESS_PATTERNS,
   WORKTREE_ARCHIVE_TEST_STORE_ACCESS_PATTERNS,
   apiPatternsForPath,
+  authBoundaryStorePatternsForPath,
   faultInjectionStorePatternsForPath,
   globalIdRoutingStorePatternsForPath,
   isTestRustPath,

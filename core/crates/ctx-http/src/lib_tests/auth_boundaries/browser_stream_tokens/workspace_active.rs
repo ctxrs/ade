@@ -2,15 +2,10 @@ use super::*;
 
 #[tokio::test]
 async fn workspace_active_websocket_stream_requires_browser_scoped_query_token() {
-    let _serial = home_env_test_lock().lock().await;
-    let home = tempfile::tempdir().unwrap();
-    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
+    let fixture = AuthBoundaryFixture::new().await;
     let git_repo = setup_git_repo().await;
 
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
-    let app = test_router(&state);
+    let app = fixture.app();
 
     let req = Request::builder()
         .method("POST")

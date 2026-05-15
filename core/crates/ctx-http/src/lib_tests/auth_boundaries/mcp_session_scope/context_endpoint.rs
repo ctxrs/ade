@@ -2,13 +2,9 @@ use super::*;
 
 #[tokio::test]
 async fn mcp_context_endpoint_requires_scoped_mcp_token() {
-    let _serial = home_env_test_lock().lock().await;
-    let home = tempfile::tempdir().unwrap();
-    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
+    let fixture = AuthBoundaryFixture::new().await;
 
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
+    let state = fixture.daemon();
     let session_id = SessionId::new();
     let workspace_id = WorkspaceId::new();
     let worktree_id = WorktreeId::new();
@@ -20,7 +16,7 @@ async fn mcp_context_endpoint_requires_scoped_mcp_token() {
             ctx_mcp_auth::McpAuthCapabilities::provider_turn_default(),
         )
         .await;
-    let app = test_router(&state);
+    let app = fixture.app();
 
     let req = Request::builder()
         .method("GET")
@@ -74,17 +70,13 @@ async fn mcp_context_endpoint_requires_scoped_mcp_token() {
 
 #[tokio::test]
 async fn mcp_context_endpoint_requires_scoped_token_when_daemon_auth_is_disabled() {
-    let _serial = home_env_test_lock().lock().await;
-    let home = tempfile::tempdir().unwrap();
-    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
+    let fixture = AuthBoundaryFixture::without_auth_token().await;
 
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, None);
+    let state = fixture.daemon();
     let token = state
         .issue_provider_session_mcp_token(SessionId::new(), WorkspaceId::new(), WorktreeId::new())
         .await;
-    let app = test_router(&state);
+    let app = fixture.app();
 
     let req = Request::builder()
         .method("GET")

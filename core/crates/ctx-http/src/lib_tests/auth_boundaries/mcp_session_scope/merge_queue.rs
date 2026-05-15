@@ -2,13 +2,9 @@ use super::*;
 
 #[tokio::test]
 async fn scoped_mcp_merge_queue_submit_is_bound_to_current_session_worktree() {
-    let _serial = home_env_test_lock().lock().await;
-    let home = tempfile::tempdir().unwrap();
-    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
+    let fixture = AuthBoundaryFixture::new().await;
 
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
+    let state = fixture.daemon();
     let session_id = SessionId::new();
     let other_session_id = SessionId::new();
     let worktree_id = WorktreeId::new();
@@ -16,7 +12,7 @@ async fn scoped_mcp_merge_queue_submit_is_bound_to_current_session_worktree() {
     let token = state
         .issue_provider_session_mcp_token(session_id, WorkspaceId::new(), worktree_id)
         .await;
-    let app = test_router(&state);
+    let app = fixture.app();
 
     let req = Request::builder()
         .method("POST")

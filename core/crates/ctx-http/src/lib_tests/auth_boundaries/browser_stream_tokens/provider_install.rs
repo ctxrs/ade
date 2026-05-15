@@ -2,14 +2,8 @@ use super::*;
 
 #[tokio::test]
 async fn provider_install_stream_requires_browser_scoped_query_token() {
-    let _serial = home_env_test_lock().lock().await;
-    let home = tempfile::tempdir().unwrap();
-    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
-
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
-    let app = test_router(&state);
+    let fixture = AuthBoundaryFixture::new().await;
+    let app = fixture.app();
     let install_id = "11111111-1111-1111-1111-111111111111";
 
     let req = Request::builder()

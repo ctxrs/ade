@@ -2,15 +2,10 @@ use super::*;
 
 #[tokio::test]
 async fn daemon_http_routes_require_bearer_header_not_query_token() {
-    let _serial = home_env_test_lock().lock().await;
-    let home = tempfile::tempdir().unwrap();
-    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
+    let fixture = AuthBoundaryFixture::new().await;
     let git_repo = setup_git_repo().await;
 
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
-    let app = test_router(&state);
+    let app = fixture.app();
 
     let req = Request::builder()
         .method("GET")
@@ -63,14 +58,8 @@ async fn daemon_http_routes_require_bearer_header_not_query_token() {
 
 #[tokio::test]
 async fn encoded_api_path_variants_do_not_bypass_auth() {
-    let _serial = home_env_test_lock().lock().await;
-    let home = tempfile::tempdir().unwrap();
-    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
-
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let state = test_daemon(data_dir.path(), stores, Some("daemon-secret".to_string()));
-    let app = test_router(&state);
+    let fixture = AuthBoundaryFixture::new().await;
+    let app = fixture.app();
 
     for path in ["/api/workspaces", "/%61pi/workspaces", "/api%2Fworkspaces"] {
         let req = Request::builder()

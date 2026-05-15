@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const {
+  AUTH_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
   DAEMON_EXTRACTION_BLOCKER_PATTERNS,
   API_DOMAIN_RAW_STORE_PATTERNS,
   API_RAW_DAEMON_PATTERNS,
@@ -27,6 +28,7 @@ const {
   WORKSPACE_RUNTIME_SETTINGS_TEST_STORE_ACCESS_PATTERNS,
   WORKTREE_ARCHIVE_TEST_STORE_ACCESS_PATTERNS,
   apiPatternsForPath,
+  authBoundaryStorePatternsForPath,
   faultInjectionStorePatternsForPath,
   globalIdRoutingStorePatternsForPath,
   isTestRustPath,
@@ -812,6 +814,84 @@ test("daemon boundary guard scopes provider-route setup roots", () => {
   assert.deepEqual(
     providerRouteSetupStorePatternsForPath(
       "core/crates/ctx-http/src/lib_tests/auth_boundaries/daemon_http.rs",
+    ),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects auth-boundary direct store setup", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/lib_tests/auth_boundaries/daemon_http.rs",
+    contents: `
+      use ctx_store::{Store, StoreManager};
+      async fn helper(daemon: TestDaemon, stores: StoreManager) {
+        let stores = StoreManager::open(data_dir.path()).await?;
+        daemon.global_store();
+        daemon.store_for_session(session_id).await?;
+        daemon.store_for_workspace(workspace_id).await?;
+        daemon.uncached_store_for_workspace(workspace_id).await?;
+        daemon.store_for_task(task_id).await?;
+        daemon.store_for_worktree(worktree_id).await?;
+        daemon.stores().global().await?;
+        stores.global().await?;
+        stores.workspace(workspace_id).await?;
+        manager
+          .global().await?;
+        manager
+          .workspace_uncached(workspace_id).await?;
+        daemon.handle().sessions();
+        let handle = daemon.handle();
+        handle.providers();
+        handle.workspaces();
+        handle.tasks();
+        let _raw: Store;
+      }
+    `,
+    patterns: AUTH_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct auth-boundary global store access",
+      "direct auth-boundary session store access",
+      "direct auth-boundary workspace store access",
+      "direct auth-boundary uncached workspace store access",
+      "direct auth-boundary task store access",
+      "direct auth-boundary worktree store access",
+      "direct auth-boundary StoreManager access",
+      "direct auth-boundary StoreManager access",
+      "direct auth-boundary StoreManager access",
+      "direct auth-boundary StoreManager access",
+      "direct auth-boundary StoreManager global access",
+      "direct auth-boundary StoreManager global access",
+      "direct auth-boundary StoreManager workspace access",
+      "direct auth-boundary StoreManager workspace access",
+      "direct auth-boundary handle access",
+      "direct auth-boundary handle access",
+      "direct auth-boundary handle access",
+      "direct auth-boundary handle access",
+      "direct auth-boundary handle access",
+      "raw auth-boundary ctx_store Store",
+      "raw auth-boundary ctx_store Store",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes auth-boundary store facade roots", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/src/lib_tests/auth_boundaries.rs",
+    "core/crates/ctx-http/src/lib_tests/auth_boundaries/daemon_http.rs",
+    "core/crates/ctx-http/src/lib_tests/auth_boundaries/browser_http_bearers/basic.rs",
+  ]) {
+    assert.deepEqual(
+      authBoundaryStorePatternsForPath(filePath),
+      AUTH_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
+    );
+  }
+  assert.deepEqual(
+    authBoundaryStorePatternsForPath(
+      "core/crates/ctx-http/src/lib_tests/provider_routes/codex_routes.rs",
     ),
     [],
   );
