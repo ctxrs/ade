@@ -4,7 +4,9 @@ use std::sync::{Arc, OnceLock};
 
 use ctx_core::ids::{SessionId, WorkspaceId, WorktreeId};
 use ctx_core::models::Session;
-use ctx_provider_install::install_state::{InstallId, InstallProgressEvent, InstallTarget};
+use ctx_provider_install::install_state::{
+    InstallId, InstallInfo, InstallProgressEvent, InstallTarget,
+};
 use ctx_provider_runtime::{provider_usage, CachedProviderOptions, CachedProviderVerify};
 use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
 use ctx_storage_admission::StorageGuardStatus;
@@ -208,6 +210,21 @@ impl TestDaemon {
 
     pub async fn emit_install_event(&self, install_id: InstallId, event: InstallProgressEvent) {
         self.state.emit_install_event(install_id, event).await;
+    }
+
+    pub async fn get_install_info(&self, install_id: InstallId) -> Option<InstallInfo> {
+        self.state.get_install_info(install_id).await
+    }
+
+    pub async fn get_install_polling_info(&self, install_id: InstallId) -> Option<InstallInfo> {
+        self.state.get_install_polling_info(install_id).await
+    }
+
+    pub async fn get_install_events(
+        &self,
+        install_id: InstallId,
+    ) -> Option<Vec<InstallProgressEvent>> {
+        self.state.get_install_events(install_id).await
     }
 
     pub async fn provider_login_session_caches_empty(&self) -> bool {

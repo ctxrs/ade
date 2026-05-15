@@ -2,27 +2,24 @@ mod common;
 
 use ctx_provider_install::install_state::InstallTarget;
 
-async fn test_state() -> (
-    std::sync::Arc<ctx_daemon::daemon::DaemonState>,
-    tempfile::TempDir,
-) {
+async fn test_daemon() -> (ctx_daemon::test_support::TestDaemon, tempfile::TempDir) {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let data_root = data_dir.path().to_path_buf();
     let stores = common::setup_store(&data_root).await;
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_root,
         stores,
         common::fake_providers(),
         "http://127.0.0.1:4399",
     );
-    (state, data_dir)
+    (daemon, data_dir)
 }
 
 #[tokio::test]
 async fn start_install_seeds_same_start_event_into_info_polling_and_history() {
-    let (state, _data_dir) = test_state().await;
+    let (daemon, _data_dir) = test_daemon().await;
 
-    let (install_id, started_new) = state
+    let (install_id, started_new) = daemon
         .start_install("title_generation_local".to_string(), None)
         .await;
 
@@ -31,15 +28,15 @@ async fn start_install_seeds_same_start_event_into_info_polling_and_history() {
         "new install should be marked as freshly started"
     );
 
-    let info = state
+    let info = daemon
         .get_install_info(install_id)
         .await
         .expect("missing install info");
-    let polling_info = state
+    let polling_info = daemon
         .get_install_polling_info(install_id)
         .await
         .expect("missing polling install info");
-    let events = state
+    let events = daemon
         .get_install_events(install_id)
         .await
         .expect("missing install history");
@@ -68,13 +65,13 @@ async fn start_install_seeds_same_start_event_into_info_polling_and_history() {
 
 #[tokio::test]
 async fn start_install_dedupes_concurrent_requests_and_seeds_shared_start_event() {
-    let (state, _data_dir) = test_state().await;
+    let (daemon, _data_dir) = test_daemon().await;
 
     let mut tasks = Vec::new();
     for _ in 0..8 {
-        let state = state.clone();
+        let daemon = daemon.clone();
         tasks.push(tokio::spawn(async move {
-            state
+            daemon
                 .start_install("acp-crp-bridge".to_string(), Some(InstallTarget::Container))
                 .await
         }));
@@ -102,11 +99,11 @@ async fn start_install_dedupes_concurrent_requests_and_seeds_shared_start_event(
     );
 
     let install_id = *install_ids.first().expect("missing shared install id");
-    let info = state
+    let info = daemon
         .get_install_info(install_id)
         .await
         .expect("missing shared install info");
-    let events = state
+    let events = daemon
         .get_install_events(install_id)
         .await
         .expect("missing shared install events");

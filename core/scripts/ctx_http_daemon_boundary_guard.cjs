@@ -60,6 +60,7 @@ const migratedRawDaemonTestRoots = [
   "core/crates/ctx-http/tests/codex_host_import_api.rs",
   "core/crates/ctx-http/tests/codex_login_callback_api.rs",
   "core/crates/ctx-http/tests/demo_seed_transcript_http.rs",
+  "core/crates/ctx-http/tests/install_start_contract.rs",
   "core/crates/ctx-http/tests/message_idempotency.rs",
   "core/crates/ctx-http/tests/repo_clone_branch_and_safety.rs",
   "core/crates/ctx-http/tests/repo_init_initial_commit.rs",
