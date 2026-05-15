@@ -24,30 +24,19 @@ pub(super) async fn fixture_with_adapter(
     }
 }
 
-pub(super) async fn insert_options_cache(daemon: &TestDaemon, key: &str, value: serde_json::Value) {
+pub(super) async fn seed_options_probe_cache(
+    daemon: &TestDaemon,
+    key: &str,
+    provider_id: &str,
+    probe_ok: bool,
+) {
     daemon
-        .test_with_provider_options_cache(|cache| {
-            cache.insert(
-                key.to_string(),
-                CachedProviderOptions {
-                    cached_at: std::time::Instant::now(),
-                    value,
-                },
-            );
-        })
+        .seed_provider_options_probe_cache_for_test(key, provider_id, probe_ok)
         .await;
 }
 
-pub(super) async fn insert_verify_cache(daemon: &TestDaemon, key: &str, value: serde_json::Value) {
+pub(super) async fn seed_verify_cache_status(daemon: &TestDaemon, key: &str, status: &str) {
     daemon
-        .test_with_provider_verify_cache(|cache| {
-            cache.insert(
-                key.to_string(),
-                CachedProviderVerify {
-                    cached_at: std::time::Instant::now(),
-                    value,
-                },
-            );
-        })
+        .seed_provider_verify_cache_status_for_test(key, status)
         .await;
 }

@@ -121,6 +121,13 @@ const mobileStoreFacadeTestRoots = [
   "core/crates/ctx-http/src/lib_tests/mobile_secure_routes/",
 ];
 
+const providerCacheFacadeTestRoots = [
+  "core/crates/ctx-http/src/api/providers/tests/restarts.rs",
+  "core/crates/ctx-http/src/api/providers/tests/restarts/",
+  "core/crates/ctx-http/src/lib_tests/provider_routes.rs",
+  "core/crates/ctx-http/src/lib_tests/provider_routes/",
+];
+
 const API_RAW_DAEMON_PATTERNS = [
   {
     name: "raw DaemonState type",
@@ -273,6 +280,21 @@ const MOBILE_TEST_STORE_ACCESS_PATTERNS = [
   },
 ];
 
+const PROVIDER_TEST_CACHE_ACCESS_PATTERNS = [
+  {
+    name: "direct provider options cache closure access",
+    regex: /\.test_with_provider_options_cache\s*\(/,
+  },
+  {
+    name: "direct provider verify cache closure access",
+    regex: /\.test_with_provider_verify_cache\s*\(/,
+  },
+  {
+    name: "direct provider usage cache closure access",
+    regex: /\.test_with_provider_usage_cache\s*\(/,
+  },
+];
+
 function isRustFile(filePath) {
   return filePath.endsWith(".rs");
 }
@@ -411,6 +433,13 @@ function migratedTestPatternsForPath(relativePath) {
 function mobileStorePatternsForPath(relativePath) {
   if (mobileStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return MOBILE_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
+function providerCachePatternsForPath(relativePath) {
+  if (providerCacheFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return PROVIDER_TEST_CACHE_ACCESS_PATTERNS;
   }
   return [];
 }
@@ -619,6 +648,13 @@ function scanRepo() {
       }),
     );
     violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
+        patterns: providerCachePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
       ...scanRouterComposition({
         filePath: relativePath,
         contents,
@@ -656,12 +692,14 @@ module.exports = {
   HANDLE_BACKDOOR_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
+  PROVIDER_TEST_CACHE_ACCESS_PATTERNS,
   TEST_ROUTER_COMPOSITION_PATTERNS,
   TEST_RAW_DAEMON_BUCKET_PATTERNS,
   apiPatternsForPath,
   isTestRustPath,
   migratedTestPatternsForPath,
   mobileStorePatternsForPath,
+  providerCachePatternsForPath,
   routerCompositionPatternsForPath,
   scanRepo,
   scanRouterComposition,

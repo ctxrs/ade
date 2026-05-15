@@ -1094,6 +1094,76 @@ impl TestDaemon {
         self.state.test_with_provider_verify_cache(f).await
     }
 
+    pub async fn seed_provider_options_probe_cache_for_test(
+        &self,
+        key: &str,
+        provider_id: &str,
+        probe_ok: bool,
+    ) {
+        self.state
+            .test_with_provider_options_cache(|cache| {
+                cache.insert(
+                    key.to_string(),
+                    CachedProviderOptions {
+                        cached_at: std::time::Instant::now(),
+                        value: serde_json::json!({
+                            "provider_id": provider_id,
+                            "probe_ok": probe_ok,
+                        }),
+                    },
+                );
+            })
+            .await;
+    }
+
+    pub async fn provider_options_probe_cache_contains_for_test(&self, key: &str) -> bool {
+        self.state
+            .test_with_provider_options_cache(|cache| cache.contains_key(key))
+            .await
+    }
+
+    pub async fn seed_provider_verify_cache_status_for_test(&self, key: &str, status: &str) {
+        self.state
+            .test_with_provider_verify_cache(|cache| {
+                cache.insert(
+                    key.to_string(),
+                    CachedProviderVerify {
+                        cached_at: std::time::Instant::now(),
+                        value: serde_json::json!({ "status": status }),
+                    },
+                );
+            })
+            .await;
+    }
+
+    pub async fn provider_verify_cache_contains_for_test(&self, key: &str) -> bool {
+        self.state
+            .test_with_provider_verify_cache(|cache| cache.contains_key(key))
+            .await
+    }
+
+    pub async fn seed_provider_usage_success_for_test(
+        &self,
+        provider_id: &str,
+        source: &str,
+        payload: serde_json::Value,
+    ) {
+        self.state
+            .test_with_provider_usage_cache(|cache| {
+                cache.insert(
+                    provider_id.to_string(),
+                    provider_usage::ProviderUsageSnapshot {
+                        provider_id: provider_id.to_string(),
+                        source: source.to_string(),
+                        fetched_at: chrono::Utc::now(),
+                        payload: Some(payload),
+                        error: None,
+                    },
+                );
+            })
+            .await;
+    }
+
     pub async fn start_install(
         &self,
         provider_id: String,

@@ -1,5 +1,4 @@
 use super::*;
-use ctx_provider_runtime::provider_usage::ProviderUsageSnapshot;
 
 #[tokio::test]
 async fn codex_accounts_usage_surfaces_agent_server_config_errors() {
@@ -211,20 +210,13 @@ async fn provider_usage_cache_hit_surfaces_agent_server_config_errors_for_codex(
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let state = test_daemon(data_dir.path(), stores, None);
     state
-        .test_with_provider_usage_cache(|cache| {
-            cache.insert(
-                "codex".to_string(),
-                ProviderUsageSnapshot {
-                    provider_id: "codex".to_string(),
-                    source: "oauth".to_string(),
-                    fetched_at: chrono::Utc::now(),
-                    payload: Some(serde_json::json!({
-                        "cached": true
-                    })),
-                    error: None,
-                },
-            );
-        })
+        .seed_provider_usage_success_for_test(
+            "codex",
+            "oauth",
+            serde_json::json!({
+                "cached": true
+            }),
+        )
         .await;
     let app = test_router(&state);
 
@@ -277,20 +269,13 @@ async fn provider_usage_cache_hit_preserves_canonical_provider_id_for_codex() {
     let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let state = test_daemon(data_dir.path(), stores, None);
     state
-        .test_with_provider_usage_cache(|cache| {
-            cache.insert(
-                "codex".to_string(),
-                ProviderUsageSnapshot {
-                    provider_id: "codex".to_string(),
-                    source: "oauth".to_string(),
-                    fetched_at: chrono::Utc::now(),
-                    payload: Some(serde_json::json!({
-                        "cached": true
-                    })),
-                    error: None,
-                },
-            );
-        })
+        .seed_provider_usage_success_for_test(
+            "codex",
+            "oauth",
+            serde_json::json!({
+                "cached": true
+            }),
+        )
         .await;
     let app = test_router(&state);
 

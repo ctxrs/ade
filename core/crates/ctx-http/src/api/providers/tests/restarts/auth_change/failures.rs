@@ -1,4 +1,4 @@
-use super::fixtures::{fixture_with_adapter, insert_options_cache};
+use super::fixtures::{fixture_with_adapter, seed_options_probe_cache};
 use super::*;
 
 #[tokio::test]
@@ -7,12 +7,7 @@ async fn restart_provider_for_auth_change_returns_error_when_adapter_restart_fai
     let fixture = fixture_with_adapter(adapter.clone() as Arc<dyn ProviderAdapter>).await;
     let daemon = &fixture.daemon;
 
-    insert_options_cache(
-        daemon,
-        "ws-a/host/codex",
-        serde_json::json!({ "provider_id": "codex", "probe_ok": false }),
-    )
-    .await;
+    seed_options_probe_cache(daemon, "ws-a/host/codex", "codex", false).await;
 
     let err = daemon
         .handle()
@@ -25,7 +20,7 @@ async fn restart_provider_for_auth_change_returns_error_when_adapter_restart_fai
         .contains("provider auth updated but drain-restart failed for codex"));
 
     let options_cached = daemon
-        .test_with_provider_options_cache(|cache| cache.contains_key("ws-a/host/codex"))
+        .provider_options_probe_cache_contains_for_test("ws-a/host/codex")
         .await;
     assert!(!options_cached);
 

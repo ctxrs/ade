@@ -8,12 +8,14 @@ const {
   HANDLE_BACKDOOR_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
+  PROVIDER_TEST_CACHE_ACCESS_PATTERNS,
   TEST_ROUTER_COMPOSITION_PATTERNS,
   TEST_RAW_DAEMON_BUCKET_PATTERNS,
   apiPatternsForPath,
   isTestRustPath,
   migratedTestPatternsForPath,
   mobileStorePatternsForPath,
+  providerCachePatternsForPath,
   routerCompositionPatternsForPath,
   scanRepo,
   scanRouterComposition,
@@ -649,6 +651,45 @@ test("daemon boundary guard scopes mobile store facade roots", () => {
   }
   assert.deepEqual(
     mobileStorePatternsForPath("core/crates/ctx-http/src/lib_tests/daemon_smoke/messages.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects direct provider cache access in migrated roots", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/providers/tests/restarts/harness_source.rs",
+    contents: `
+      async fn helper(daemon: &TestDaemon) {
+        daemon.test_with_provider_options_cache(|cache| cache.clear()).await;
+        daemon.test_with_provider_verify_cache(|cache| cache.clear()).await;
+        daemon.test_with_provider_usage_cache(|cache| cache.clear()).await;
+      }
+    `,
+    patterns: PROVIDER_TEST_CACHE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct provider options cache closure access",
+      "direct provider verify cache closure access",
+      "direct provider usage cache closure access",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes provider cache facade roots", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/src/api/providers/tests/restarts.rs",
+    "core/crates/ctx-http/src/api/providers/tests/restarts/auth_change/failures.rs",
+    "core/crates/ctx-http/src/api/providers/tests/restarts/harness_source.rs",
+    "core/crates/ctx-http/src/lib_tests/provider_routes.rs",
+    "core/crates/ctx-http/src/lib_tests/provider_routes/codex_routes.rs",
+  ]) {
+    assert.deepEqual(providerCachePatternsForPath(filePath), PROVIDER_TEST_CACHE_ACCESS_PATTERNS);
+  }
+  assert.deepEqual(
+    providerCachePatternsForPath("core/crates/ctx-http/src/api/providers/tests/install_statuses.rs"),
     [],
   );
 });
