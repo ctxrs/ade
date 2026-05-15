@@ -1,5 +1,5 @@
-use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 
 use serde_json::json;
@@ -7,9 +7,7 @@ use tokio::process::Command;
 
 use ctx_core::models::{Task, Workspace};
 use ctx_daemon::test_support::TestDaemon;
-use ctx_fs::worktrees::managed_worktree_path;
 use ctx_providers::fake::FakeProviderAdapter;
-use ctx_store::StoreManager;
 
 mod common;
 
@@ -68,7 +66,7 @@ async fn branch_exists(root: &Path, branch: &str) -> bool {
 async fn archive_and_unarchive_recreates_managed_worktrees() {
     let repo = setup_git_repo().await;
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
+    let stores = common::setup_store(data_dir.path()).await;
 
     let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
         HashMap::new();
@@ -157,42 +155,19 @@ async fn archive_and_unarchive_recreates_managed_worktrees() {
         second_child_resp.status()
     );
 
-    let store = daemon.store_for_task(task.id).await.unwrap();
-    let sessions = store.list_sessions_for_task(task.id).await.unwrap();
-    assert_eq!(sessions.len(), 3);
-    let task = store
-        .get_task(task.id)
+    let managed_snapshot = daemon
+        .task_archive_managed_worktrees_snapshot_for_test(ws.id, task.id)
         .await
-        .unwrap()
-        .expect("task should still exist");
-    let mut worktree_ids: HashSet<_> = sessions.iter().map(|session| session.worktree_id).collect();
-    if let Some(primary_worktree_id) = task.primary_worktree_id {
-        worktree_ids.insert(primary_worktree_id);
-    }
-    let expected_managed_count = worktree_ids.len();
-    let mut managed = Vec::new();
-    for worktree_id in worktree_ids {
-        let worktree = store.get_worktree(worktree_id).await.unwrap().unwrap();
-        let root = PathBuf::from(&worktree.root_path);
-        let expected = managed_worktree_path(data_dir.path(), ws.id, worktree.id);
-        if root == expected {
-            managed.push(worktree);
-        }
-    }
-    assert_eq!(managed.len(), expected_managed_count);
-
-    let mut managed_roots: Vec<PathBuf> = managed
-        .iter()
-        .map(|worktree| PathBuf::from(&worktree.root_path))
-        .collect();
-    managed_roots.sort();
-    managed_roots.dedup();
-    let mut managed_branches: Vec<String> = managed
-        .iter()
-        .map(|worktree| worktree.git_branch.clone().unwrap())
-        .collect();
-    managed_branches.sort();
-    managed_branches.dedup();
+        .unwrap();
+    assert_eq!(managed_snapshot.session_count, 3);
+    assert_eq!(
+        managed_snapshot.managed_worktree_count,
+        managed_snapshot.worktree_count
+    );
+    let managed_roots = managed_snapshot.managed_roots;
+    let managed_branches = managed_snapshot.managed_branches;
+    assert!(!managed_roots.is_empty());
+    assert!(!managed_branches.is_empty());
 
     tokio::fs::write(managed_roots[0].join("dirty.txt"), "dirty")
         .await

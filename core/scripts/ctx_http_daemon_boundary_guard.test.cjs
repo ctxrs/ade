@@ -11,6 +11,7 @@ const {
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
+  PROVIDER_WORKER_REAPING_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_TEST_CACHE_ACCESS_PATTERNS,
   SCHEDULER_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
   SESSION_FIXTURE_TEST_STORE_ACCESS_PATTERNS,
@@ -22,6 +23,7 @@ const {
   TEST_RAW_DAEMON_BUCKET_PATTERNS,
   WORKSPACE_MERGE_QUEUE_CONFIG_TEST_STORE_ACCESS_PATTERNS,
   WORKSPACE_RUNTIME_SETTINGS_TEST_STORE_ACCESS_PATTERNS,
+  WORKTREE_ARCHIVE_TEST_STORE_ACCESS_PATTERNS,
   apiPatternsForPath,
   globalIdRoutingStorePatternsForPath,
   isTestRustPath,
@@ -29,6 +31,7 @@ const {
   mcpDaemonPatternsForPath,
   migratedTestPatternsForPath,
   mobileStorePatternsForPath,
+  providerWorkerReapingStorePatternsForPath,
   providerCachePatternsForPath,
   routerCompositionPatternsForPath,
   scanRepo,
@@ -40,6 +43,7 @@ const {
   streamRuntimeStorePatternsForPath,
   taskLifecycleStorePatternsForPath,
   terminalWorkspaceStreamStorePatternsForPath,
+  worktreeArchiveStorePatternsForPath,
   workspaceMergeQueueConfigStorePatternsForPath,
   workspaceRuntimeSettingsStorePatternsForPath,
   stripCfgTestItems,
@@ -1266,6 +1270,214 @@ test("daemon boundary guard scopes jj-merge-queue-basics store facade root", () 
   assert.deepEqual(
     jjMergeQueueBasicsStorePatternsForPath(
       "core/crates/ctx-http/tests/workspace_merge_queue_config_http.rs",
+    ),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects direct provider-worker-reaping store access", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/provider_worker_reaping_offline.rs",
+    contents: `
+      use ctx_core::models::SessionEventType;
+      use ctx_store::{Store, StoreManager};
+      async fn fixture(daemon: TestDaemon, stores: StoreManager) {
+        daemon.global_store();
+        daemon.store_for_session(session_id).await?;
+        daemon.store_for_workspace(workspace_id).await?;
+        daemon.uncached_store_for_workspace(workspace_id).await?;
+        daemon.store_for_task(task_id).await?;
+        daemon.store_for_worktree(worktree_id).await?;
+        daemon.stores().global().await?;
+        stores.global().await?;
+        stores.workspace(workspace_id).await?;
+        manager
+          .global().await?;
+        manager
+          .workspace_uncached(workspace_id).await?;
+        store.list_session_events(session_id).await?;
+        store.get_session(session_id).await?;
+        daemon.handle().sessions();
+        daemon.handle().workspaces();
+        daemon.handle().tasks();
+        let handle = daemon.handle();
+        handle.sessions();
+        handle.workspaces();
+        handle.tasks();
+        let _raw: Store;
+      }
+    `,
+    patterns: PROVIDER_WORKER_REAPING_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct provider-worker-reaping global store access",
+      "direct provider-worker-reaping session store access",
+      "direct provider-worker-reaping workspace store access",
+      "direct provider-worker-reaping uncached workspace store access",
+      "direct provider-worker-reaping task store access",
+      "direct provider-worker-reaping worktree store access",
+      "direct provider-worker-reaping StoreManager access",
+      "direct provider-worker-reaping StoreManager global access",
+      "direct provider-worker-reaping StoreManager global access",
+      "direct provider-worker-reaping StoreManager workspace access",
+      "direct provider-worker-reaping StoreManager workspace access",
+      "direct provider-worker-reaping session event query",
+      "direct provider-worker-reaping session row query",
+      "direct provider-worker-reaping sessions handle access",
+      "direct provider-worker-reaping sessions handle access",
+      "direct provider-worker-reaping sessions handle access",
+      "direct provider-worker-reaping workspaces handle access",
+      "direct provider-worker-reaping workspaces handle access",
+      "direct provider-worker-reaping workspaces handle access",
+      "direct provider-worker-reaping tasks handle access",
+      "direct provider-worker-reaping tasks handle access",
+      "direct provider-worker-reaping tasks handle access",
+      "direct provider-worker-reaping SessionEventType",
+      "raw provider-worker-reaping ctx_store Store",
+      "raw provider-worker-reaping ctx_store Store",
+      "raw provider-worker-reaping StoreManager",
+      "raw provider-worker-reaping StoreManager",
+    ],
+  );
+});
+
+test("daemon boundary guard allows common setup-store in provider-worker-reaping", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/provider_worker_reaping_offline.rs",
+    contents: `
+      async fn fixture() {
+        let stores = common::setup_store(data_dir.path()).await;
+        let daemon = common::build_daemon(data_dir.path(), stores, common::fake_providers(), "http://127.0.0.1:0");
+      }
+    `,
+    patterns: PROVIDER_WORKER_REAPING_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(violations, []);
+});
+
+test("daemon boundary guard scopes provider-worker-reaping store facade root", () => {
+  assert.deepEqual(
+    providerWorkerReapingStorePatternsForPath(
+      "core/crates/ctx-http/tests/provider_worker_reaping_offline.rs",
+    ),
+    PROVIDER_WORKER_REAPING_TEST_STORE_ACCESS_PATTERNS,
+  );
+  assert.deepEqual(
+    providerWorkerReapingStorePatternsForPath(
+      "core/crates/ctx-http/tests/provider_scenarios_offline.rs",
+    ),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects direct worktree-archive store and path access", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/worktree_archive_http.rs",
+    contents: `
+      use ctx_daemon::daemon::workspaces::managed_worktree_root;
+      use ctx_fs::worktrees::managed_worktree_path;
+      use ctx_store::{Store, StoreManager};
+      async fn fixture(daemon: TestDaemon, stores: StoreManager) {
+        daemon.global_store();
+        daemon.store_for_session(session_id).await?;
+        daemon.store_for_workspace(workspace_id).await?;
+        daemon.uncached_store_for_workspace(workspace_id).await?;
+        daemon.store_for_task(task_id).await?;
+        daemon.store_for_worktree(worktree_id).await?;
+        daemon.stores().global().await?;
+        stores.global().await?;
+        stores.workspace(workspace_id).await?;
+        manager
+          .global().await?;
+        manager
+          .workspace_uncached(workspace_id).await?;
+        store.get_task(task_id).await?;
+        store.list_sessions_for_task(task_id).await?;
+        store.get_worktree(worktree_id).await?;
+        daemon.load_worktree_for_test(worktree_id).await?;
+        daemon.handle().sessions();
+        daemon.handle().workspaces();
+        daemon.handle().tasks();
+        let handle = daemon.handle();
+        handle.sessions();
+        handle.workspaces();
+        handle.tasks();
+        let root = managed_worktree_path(data_dir.path(), workspace_id, worktree_id);
+        let root = managed_worktree_root(state, workspace, worktree);
+        let _raw: Store;
+      }
+    `,
+    patterns: WORKTREE_ARCHIVE_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct worktree-archive global store access",
+      "direct worktree-archive session store access",
+      "direct worktree-archive workspace store access",
+      "direct worktree-archive uncached workspace store access",
+      "direct worktree-archive task store access",
+      "direct worktree-archive worktree store access",
+      "direct worktree-archive StoreManager access",
+      "direct worktree-archive StoreManager global access",
+      "direct worktree-archive StoreManager global access",
+      "direct worktree-archive StoreManager workspace access",
+      "direct worktree-archive StoreManager workspace access",
+      "direct worktree-archive task row query",
+      "direct worktree-archive task-session query",
+      "direct worktree-archive worktree row query",
+      "direct worktree-archive worktree row query",
+      "direct worktree-archive sessions handle access",
+      "direct worktree-archive sessions handle access",
+      "direct worktree-archive sessions handle access",
+      "direct worktree-archive workspaces handle access",
+      "direct worktree-archive workspaces handle access",
+      "direct worktree-archive workspaces handle access",
+      "direct worktree-archive tasks handle access",
+      "direct worktree-archive tasks handle access",
+      "direct worktree-archive tasks handle access",
+      "direct worktree-archive managed worktree path reconstruction",
+      "direct worktree-archive managed worktree path reconstruction",
+      "direct worktree-archive managed worktree path reconstruction",
+      "direct worktree-archive managed worktree path reconstruction",
+      "raw worktree-archive ctx_store Store",
+      "raw worktree-archive ctx_store Store",
+      "raw worktree-archive StoreManager",
+      "raw worktree-archive StoreManager",
+    ],
+  );
+});
+
+test("daemon boundary guard allows common setup-store in worktree-archive", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/worktree_archive_http.rs",
+    contents: `
+      async fn fixture() {
+        let stores = common::setup_store(data_dir.path()).await;
+        let daemon = common::build_daemon(data_dir.path(), stores, common::fake_providers(), "http://127.0.0.1:0");
+      }
+    `,
+    patterns: WORKTREE_ARCHIVE_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(violations, []);
+});
+
+test("daemon boundary guard scopes worktree-archive store facade root", () => {
+  assert.deepEqual(
+    worktreeArchiveStorePatternsForPath(
+      "core/crates/ctx-http/tests/worktree_archive_http.rs",
+    ),
+    WORKTREE_ARCHIVE_TEST_STORE_ACCESS_PATTERNS,
+  );
+  assert.deepEqual(
+    worktreeArchiveStorePatternsForPath(
+      "core/crates/ctx-http/tests/worktree_vcs_snapshot.rs",
     ),
     [],
   );

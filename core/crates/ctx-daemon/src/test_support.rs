@@ -18,6 +18,7 @@ use ctx_core::models::{
     WorkspaceActiveTaskSummary, WorkspaceAttachmentStatus, Worktree, WorktreeAttachmentMount,
     WorktreeBootstrapStatus, WorktreeVcsSnapshot,
 };
+use ctx_core::session_projection::terminal_status_from_finished_payload;
 use ctx_provider_install::install_state::{
     InstallId, InstallInfo, InstallProgressEvent, InstallTarget,
 };
@@ -67,6 +68,14 @@ pub struct TaskDefaultSessionSnapshot {
     pub sessions: Vec<Session>,
     pub task_count: usize,
     pub worktree_count: usize,
+}
+
+pub struct TaskArchiveManagedWorktreesSnapshot {
+    pub session_count: usize,
+    pub worktree_count: usize,
+    pub managed_worktree_count: usize,
+    pub managed_roots: Vec<PathBuf>,
+    pub managed_branches: Vec<String>,
 }
 
 pub struct TaskSessionCreationLockGuardForTest {
@@ -667,6 +676,80 @@ impl TestDaemon {
             store.list_tasks(workspace_id).await?.len(),
             store.list_worktrees(workspace_id).await?.len(),
         ))
+    }
+
+    pub async fn task_archive_managed_worktrees_snapshot_for_test(
+        &self,
+        workspace_id: WorkspaceId,
+        task_id: TaskId,
+    ) -> anyhow::Result<TaskArchiveManagedWorktreesSnapshot> {
+        let workspace = self
+            .state
+            .global_store()
+            .get_workspace(workspace_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("workspace {workspace_id:?} not found"))?;
+        let store = self.state.store_for_workspace(workspace_id).await?;
+        let task = store
+            .get_task(task_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("task {task_id:?} not found"))?;
+        let sessions = store.list_sessions_for_task(task_id).await?;
+
+        let mut worktree_ids: std::collections::HashSet<WorktreeId> =
+            sessions.iter().map(|session| session.worktree_id).collect();
+        if let Some(primary_worktree_id) = task.primary_worktree_id {
+            worktree_ids.insert(primary_worktree_id);
+        }
+        if worktree_ids.is_empty() {
+            anyhow::bail!("task {task_id:?} has no worktrees to archive");
+        }
+
+        let worktree_count = worktree_ids.len();
+        let mut managed_roots = Vec::new();
+        let mut managed_branches = Vec::new();
+        let mut managed_worktree_count = 0;
+        for worktree_id in worktree_ids {
+            let worktree = store
+                .get_worktree(worktree_id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("worktree {worktree_id:?} not found"))?;
+            let managed_root = daemon::workspaces::managed_worktree_root(
+                self.state.as_ref(),
+                &workspace,
+                &worktree,
+            )
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "worktree {:?} for task {:?} is not managed",
+                    worktree.id,
+                    task_id
+                )
+            })?;
+            let branch = worktree.git_branch.clone().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "managed worktree {:?} for task {:?} has no git branch",
+                    worktree.id,
+                    task_id
+                )
+            })?;
+            managed_roots.push(managed_root);
+            managed_branches.push(branch);
+            managed_worktree_count += 1;
+        }
+
+        managed_roots.sort();
+        managed_roots.dedup();
+        managed_branches.sort();
+        managed_branches.dedup();
+
+        Ok(TaskArchiveManagedWorktreesSnapshot {
+            session_count: sessions.len(),
+            worktree_count,
+            managed_worktree_count,
+            managed_roots,
+            managed_branches,
+        })
     }
 
     pub async fn seed_task_default_session_task_for_test(
@@ -1743,6 +1826,75 @@ impl TestDaemon {
         )
         .await
         .map(|_| ())
+    }
+
+    pub async fn wait_for_session_completed_turn_count_for_test(
+        &self,
+        session_id: SessionId,
+        expected_completed_turns: usize,
+        timeout: Duration,
+    ) -> anyhow::Result<()> {
+        self.wait_for_scheduler_runtime_events_for_test(
+            session_id,
+            timeout,
+            &format!("{expected_completed_turns} completed turns"),
+            |events| {
+                let terminal_failure = events.iter().find(|event| {
+                    matches!(
+                        event.event_type,
+                        SessionEventType::Error | SessionEventType::TurnInterrupted
+                    ) || (matches!(event.event_type, SessionEventType::TurnFinished)
+                        && matches!(
+                            terminal_status_from_finished_payload(&event.payload_json),
+                            Some(SessionTurnStatus::Failed | SessionTurnStatus::Interrupted)
+                        ))
+                });
+                if let Some(event) = terminal_failure {
+                    anyhow::bail!(
+                        "unexpected terminal session failure while waiting for completed turns: {event:#?}"
+                    );
+                }
+
+                let mut completed_turns = std::collections::HashSet::new();
+                for event in events {
+                    let completed = matches!(event.event_type, SessionEventType::Done)
+                        || (matches!(event.event_type, SessionEventType::TurnFinished)
+                            && terminal_status_from_finished_payload(&event.payload_json)
+                                == Some(SessionTurnStatus::Completed));
+                    if completed {
+                        if let Some(turn_id) = event.turn_id {
+                            completed_turns.insert(turn_id);
+                        }
+                    }
+                }
+
+                Ok(completed_turns.len() >= expected_completed_turns)
+            },
+        )
+        .await
+        .map(|_| ())
+    }
+
+    pub async fn wait_for_provider_session_ref_for_test(
+        &self,
+        session_id: SessionId,
+        timeout: Duration,
+    ) -> anyhow::Result<String> {
+        let store = self.state.store_for_session(session_id).await?;
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let session = store
+                .get_session(session_id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("session {session_id:?} not found"))?;
+            if let Some(provider_session_ref) = session.provider_session_ref {
+                return Ok(provider_session_ref);
+            }
+            if tokio::time::Instant::now() >= deadline {
+                anyhow::bail!("timed out waiting for provider_session_ref on {session_id:?}");
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
     }
 
     pub async fn wait_for_noisy_output_persistence_snapshot_for_test(

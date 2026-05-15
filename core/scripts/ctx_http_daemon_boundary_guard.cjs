@@ -177,6 +177,14 @@ const jjMergeQueueBasicsStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/jj_merge_queue_basics.rs",
 ];
 
+const providerWorkerReapingStoreFacadeTestRoots = [
+  "core/crates/ctx-http/tests/provider_worker_reaping_offline.rs",
+];
+
+const worktreeArchiveStoreFacadeTestRoots = [
+  "core/crates/ctx-http/tests/worktree_archive_http.rs",
+];
+
 const streamRuntimeStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/noisy_output_backpressure.rs",
   "core/crates/ctx-http/tests/workspace_stream_no_gaps_under_activity.rs",
@@ -723,6 +731,162 @@ const JJ_MERGE_QUEUE_BASICS_TEST_STORE_ACCESS_PATTERNS = [
   },
 ];
 
+const PROVIDER_WORKER_REAPING_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct provider-worker-reaping global store access",
+    regex: /\.global_store\s*\(/,
+  },
+  {
+    name: "direct provider-worker-reaping session store access",
+    regex: /\.store_for_session\s*\(/,
+  },
+  {
+    name: "direct provider-worker-reaping workspace store access",
+    regex: /\.store_for_workspace\s*\(/,
+  },
+  {
+    name: "direct provider-worker-reaping uncached workspace store access",
+    regex: /\.uncached_store_for_workspace\s*\(/,
+  },
+  {
+    name: "direct provider-worker-reaping task store access",
+    regex: /\.store_for_task\s*\(/,
+  },
+  {
+    name: "direct provider-worker-reaping worktree store access",
+    regex: /\.store_for_worktree\s*\(/,
+  },
+  {
+    name: "direct provider-worker-reaping StoreManager access",
+    regex: /\.stores\s*\(/,
+  },
+  {
+    name: "direct provider-worker-reaping StoreManager global access",
+    regex: /\b[a-zA-Z_][a-zA-Z0-9_]*\.global\s*\(/,
+    contentRegex: /\b[a-zA-Z_][a-zA-Z0-9_]*\s*\n\s*\.global\s*\(/gm,
+  },
+  {
+    name: "direct provider-worker-reaping StoreManager workspace access",
+    regex: /\b[a-zA-Z_][a-zA-Z0-9_]*\.workspace(?:_uncached)?\s*\(/,
+    contentRegex: /\b[a-zA-Z_][a-zA-Z0-9_]*\s*\n\s*\.workspace(?:_uncached)?\s*\(/gm,
+  },
+  {
+    name: "direct provider-worker-reaping session event query",
+    regex: /\.list_session_events\s*\(/,
+  },
+  {
+    name: "direct provider-worker-reaping session row query",
+    regex: /\.get_session\s*\(/,
+  },
+  {
+    name: "direct provider-worker-reaping sessions handle access",
+    regex: /a^/,
+    contentRegex: /(?:\.handle\s*\(\s*\)\s*\.\s*sessions\s*\(|\blet\s+[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*[^;\n]*\.handle\s*\(\s*\)\s*;|[a-zA-Z_][a-zA-Z0-9_]*\.sessions\s*\()/gm,
+  },
+  {
+    name: "direct provider-worker-reaping workspaces handle access",
+    regex: /a^/,
+    contentRegex: /(?:\.handle\s*\(\s*\)\s*\.\s*workspaces\s*\(|\blet\s+[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*[^;\n]*\.handle\s*\(\s*\)\s*;|[a-zA-Z_][a-zA-Z0-9_]*\.workspaces\s*\()/gm,
+  },
+  {
+    name: "direct provider-worker-reaping tasks handle access",
+    regex: /a^/,
+    contentRegex: /(?:\.handle\s*\(\s*\)\s*\.\s*tasks\s*\(|\blet\s+[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*[^;\n]*\.handle\s*\(\s*\)\s*;|[a-zA-Z_][a-zA-Z0-9_]*\.tasks\s*\()/gm,
+  },
+  {
+    name: "direct provider-worker-reaping SessionEventType",
+    regex: /\bSessionEventType\b/,
+  },
+  {
+    name: "raw provider-worker-reaping ctx_store Store",
+    regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore\b/,
+  },
+  {
+    name: "raw provider-worker-reaping StoreManager",
+    regex: /\bStoreManager\b/,
+  },
+];
+
+const WORKTREE_ARCHIVE_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct worktree-archive global store access",
+    regex: /\.global_store\s*\(/,
+  },
+  {
+    name: "direct worktree-archive session store access",
+    regex: /\.store_for_session\s*\(/,
+  },
+  {
+    name: "direct worktree-archive workspace store access",
+    regex: /\.store_for_workspace\s*\(/,
+  },
+  {
+    name: "direct worktree-archive uncached workspace store access",
+    regex: /\.uncached_store_for_workspace\s*\(/,
+  },
+  {
+    name: "direct worktree-archive task store access",
+    regex: /\.store_for_task\s*\(/,
+  },
+  {
+    name: "direct worktree-archive worktree store access",
+    regex: /\.store_for_worktree\s*\(/,
+  },
+  {
+    name: "direct worktree-archive StoreManager access",
+    regex: /\.stores\s*\(/,
+  },
+  {
+    name: "direct worktree-archive StoreManager global access",
+    regex: /\b[a-zA-Z_][a-zA-Z0-9_]*\.global\s*\(/,
+    contentRegex: /\b[a-zA-Z_][a-zA-Z0-9_]*\s*\n\s*\.global\s*\(/gm,
+  },
+  {
+    name: "direct worktree-archive StoreManager workspace access",
+    regex: /\b[a-zA-Z_][a-zA-Z0-9_]*\.workspace(?:_uncached)?\s*\(/,
+    contentRegex: /\b[a-zA-Z_][a-zA-Z0-9_]*\s*\n\s*\.workspace(?:_uncached)?\s*\(/gm,
+  },
+  {
+    name: "direct worktree-archive task row query",
+    regex: /\.get_task\s*\(/,
+  },
+  {
+    name: "direct worktree-archive task-session query",
+    regex: /\.list_sessions_for_task\s*\(/,
+  },
+  {
+    name: "direct worktree-archive worktree row query",
+    regex: /\.get_worktree\s*\(|\.load_worktree_for_test\s*\(/,
+  },
+  {
+    name: "direct worktree-archive sessions handle access",
+    regex: /a^/,
+    contentRegex: /(?:\.handle\s*\(\s*\)\s*\.\s*sessions\s*\(|\blet\s+[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*[^;\n]*\.handle\s*\(\s*\)\s*;|[a-zA-Z_][a-zA-Z0-9_]*\.sessions\s*\()/gm,
+  },
+  {
+    name: "direct worktree-archive workspaces handle access",
+    regex: /a^/,
+    contentRegex: /(?:\.handle\s*\(\s*\)\s*\.\s*workspaces\s*\(|\blet\s+[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*[^;\n]*\.handle\s*\(\s*\)\s*;|[a-zA-Z_][a-zA-Z0-9_]*\.workspaces\s*\()/gm,
+  },
+  {
+    name: "direct worktree-archive tasks handle access",
+    regex: /a^/,
+    contentRegex: /(?:\.handle\s*\(\s*\)\s*\.\s*tasks\s*\(|\blet\s+[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*[^;\n]*\.handle\s*\(\s*\)\s*;|[a-zA-Z_][a-zA-Z0-9_]*\.tasks\s*\()/gm,
+  },
+  {
+    name: "direct worktree-archive managed worktree path reconstruction",
+    regex: /\bctx_fs::worktrees::managed_worktree_path\b|\bmanaged_worktree_path\b|\bmatching_managed_worktree_path\b|\bctx_workspace_services::worktree_vcs\b|\bctx_daemon::daemon::workspaces::managed_worktree_root\b|\bdaemon::workspaces::managed_worktree_root\b|\bworkspaces::managed_worktree_root\b|\bmanaged_worktree_root\b/,
+  },
+  {
+    name: "raw worktree-archive ctx_store Store",
+    regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore\b/,
+  },
+  {
+    name: "raw worktree-archive StoreManager",
+    regex: /\bStoreManager\b/,
+  },
+];
+
 const STREAM_RUNTIME_TEST_STORE_ACCESS_PATTERNS = [
   {
     name: "direct stream-runtime global store access",
@@ -1079,6 +1243,20 @@ function jjMergeQueueBasicsStorePatternsForPath(relativePath) {
   return [];
 }
 
+function providerWorkerReapingStorePatternsForPath(relativePath) {
+  if (providerWorkerReapingStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return PROVIDER_WORKER_REAPING_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
+function worktreeArchiveStorePatternsForPath(relativePath) {
+  if (worktreeArchiveStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return WORKTREE_ARCHIVE_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
 function streamRuntimeStorePatternsForPath(relativePath) {
   if (streamRuntimeStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return STREAM_RUNTIME_TEST_STORE_ACCESS_PATTERNS;
@@ -1377,6 +1555,20 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
+        patterns: providerWorkerReapingStorePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
+        patterns: worktreeArchiveStorePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
         patterns: streamRuntimeStorePatternsForPath(relativePath),
       }),
     );
@@ -1435,6 +1627,7 @@ module.exports = {
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
+  PROVIDER_WORKER_REAPING_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_TEST_CACHE_ACCESS_PATTERNS,
   SCHEDULER_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
   SESSION_FIXTURE_TEST_STORE_ACCESS_PATTERNS,
@@ -1446,6 +1639,7 @@ module.exports = {
   TEST_RAW_DAEMON_BUCKET_PATTERNS,
   WORKSPACE_MERGE_QUEUE_CONFIG_TEST_STORE_ACCESS_PATTERNS,
   WORKSPACE_RUNTIME_SETTINGS_TEST_STORE_ACCESS_PATTERNS,
+  WORKTREE_ARCHIVE_TEST_STORE_ACCESS_PATTERNS,
   apiPatternsForPath,
   globalIdRoutingStorePatternsForPath,
   isTestRustPath,
@@ -1453,6 +1647,7 @@ module.exports = {
   mcpDaemonPatternsForPath,
   migratedTestPatternsForPath,
   mobileStorePatternsForPath,
+  providerWorkerReapingStorePatternsForPath,
   providerCachePatternsForPath,
   routerCompositionPatternsForPath,
   scanRepo,
@@ -1464,6 +1659,7 @@ module.exports = {
   streamRuntimeStorePatternsForPath,
   taskLifecycleStorePatternsForPath,
   terminalWorkspaceStreamStorePatternsForPath,
+  worktreeArchiveStorePatternsForPath,
   workspaceMergeQueueConfigStorePatternsForPath,
   workspaceRuntimeSettingsStorePatternsForPath,
   stripCfgTestItems,

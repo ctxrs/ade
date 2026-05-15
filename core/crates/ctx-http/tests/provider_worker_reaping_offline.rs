@@ -7,11 +7,9 @@ use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use tower::ServiceExt;
 
-use ctx_core::models::SessionEventType;
 use ctx_daemon::test_support::TestDaemon;
 use ctx_providers::adapters::{ProviderAdapter, ProviderSessionSweepConfig};
 use ctx_providers::crp::Tier1CrpAdapter;
-use ctx_store::StoreManager;
 
 mod common;
 
@@ -91,52 +89,26 @@ async fn wait_for_done_count(
     session_id: ctx_core::ids::SessionId,
     expected_done_count: usize,
 ) {
-    let store = daemon.store_for_session(session_id).await.unwrap();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
-    loop {
-        let events = store.list_session_events(session_id).await.unwrap();
-        let done_count = events
-            .iter()
-            .filter(|event| matches!(event.event_type, SessionEventType::Done))
-            .count();
-        assert!(
-            !events
-                .iter()
-                .any(|event| matches!(event.event_type, SessionEventType::Error)),
-            "unexpected Error event(s): {events:#?}"
-        );
-        if done_count >= expected_done_count {
-            return;
-        }
-        if tokio::time::Instant::now() >= deadline {
-            panic!(
-                "timed out waiting for {expected_done_count} Done events; saw {done_count}: {events:#?}"
-            );
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    daemon
+        .wait_for_session_done_event_count_for_test(
+            session_id,
+            expected_done_count,
+            Duration::from_secs(60),
+        )
+        .await
+        .unwrap_or_else(|err| {
+            panic!("timed out waiting for {expected_done_count} Done events: {err:#}")
+        });
 }
 
 async fn wait_for_provider_session_ref(
     daemon: &TestDaemon,
     session_id: ctx_core::ids::SessionId,
 ) -> String {
-    let store = daemon.store_for_session(session_id).await.unwrap();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    loop {
-        let session = store
-            .get_session(session_id)
-            .await
-            .unwrap()
-            .expect("session should exist");
-        if let Some(provider_session_ref) = session.provider_session_ref {
-            return provider_session_ref;
-        }
-        if tokio::time::Instant::now() >= deadline {
-            panic!("timed out waiting for provider_session_ref");
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
+    daemon
+        .wait_for_provider_session_ref_for_test(session_id, Duration::from_secs(10))
+        .await
+        .unwrap_or_else(|err| panic!("timed out waiting for provider_session_ref: {err:#}"))
 }
 
 async fn wait_for_session_idle(daemon: &TestDaemon, session_id: ctx_core::ids::SessionId) {
@@ -185,7 +157,7 @@ async fn assert_provider_session_resume_after_idle_reap(provider_id: &str, model
     };
     let _guard_mcp_disabled = EnvGuard::set("CTX_MCP_DISABLED", "1");
 
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
+    let stores = common::setup_store(data_dir.path()).await;
     let script_path = common::crp_fixture_runtime::write_crp_fixture_runtime(data_dir.path());
     if provider_id == "codex" {
         common::seed_managed_codex_cli_host_runtime_with_args(
