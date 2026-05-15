@@ -7,7 +7,8 @@ use ctx_core::ids::{
     RunId, SessionId, TaskId, TerminalId, TurnId, WorkspaceAttachmentId, WorkspaceId, WorktreeId,
 };
 use ctx_core::models::{
-    Session, SessionHeadDelta, WorkspaceAttachmentStatus, Worktree, WorktreeVcsSnapshot,
+    Session, SessionEvent, SessionEventType, SessionHeadDelta, WorkspaceAttachmentStatus, Worktree,
+    WorktreeVcsSnapshot,
 };
 use ctx_provider_install::install_state::{
     InstallId, InstallInfo, InstallProgressEvent, InstallTarget,
@@ -153,6 +154,139 @@ impl TestDaemon {
         self.state
             .ensure_workspace_active_snapshot_hydrated(workspace_id)
             .await
+    }
+
+    pub async fn seed_hot_endpoint_caches_for_test(
+        &self,
+        workspace_id: WorkspaceId,
+        task_id: TaskId,
+        session_id: SessionId,
+        limit: i64,
+        session_head_limit: u32,
+        include_events: bool,
+        timeout: Duration,
+    ) -> anyhow::Result<()> {
+        let store = self.state.store_for_session(session_id).await?;
+        let _ = store
+            .append_session_event(
+                session_id,
+                None,
+                None,
+                SessionEventType::Notice,
+                serde_json::json!({"msg":"warm"}),
+            )
+            .await
+            .map_err(|err| anyhow::anyhow!("append warm session event: {err}"))?;
+        let _ = store
+            .refresh_active_session_head_projection(session_id)
+            .await
+            .map_err(|err| anyhow::anyhow!("refresh active session head projection: {err}"))?;
+
+        self.state.emit_workspace_task_upsert(task_id).await?;
+        self.state.refresh_session_head_cache(session_id).await;
+
+        let head_snapshot = store
+            .get_session_head_snapshot(session_id, session_head_limit, include_events)
+            .await
+            .map_err(|err| anyhow::anyhow!("load session head snapshot: {err}"))?
+            .ok_or_else(|| anyhow::anyhow!("session head snapshot {session_id:?} not found"))?;
+        self.state
+            .sessions
+            .cache_session_head_snapshot(
+                session_id,
+                session_head_limit,
+                include_events,
+                head_snapshot,
+            )
+            .await;
+
+        let deadline = tokio::time::Instant::now() + timeout;
+        let mut cached_snapshot = self
+            .state
+            .workspaces
+            .workspace_active_snapshot
+            .active_snapshot(workspace_id, limit)
+            .await;
+        while cached_snapshot.active.tasks.is_empty() && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            cached_snapshot = self
+                .state
+                .workspaces
+                .workspace_active_snapshot
+                .active_snapshot(workspace_id, limit)
+                .await;
+        }
+        if cached_snapshot.active.tasks.is_empty() {
+            anyhow::bail!("expected active snapshot to be cached for workspace {workspace_id:?}");
+        }
+        self.state
+            .cache_workspace_active_snapshot(cached_snapshot)
+            .await;
+
+        self.state
+            .ensure_workspace_active_snapshot_hydrated(workspace_id)
+            .await
+            .map_err(|err| anyhow::anyhow!("hydrate workspace active snapshot: {err:?}"))?;
+
+        let mut cached_heads = self
+            .state
+            .workspaces
+            .workspace_active_snapshot
+            .active_heads(workspace_id)
+            .await;
+        while cached_heads.heads.is_empty() && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            cached_heads = self
+                .state
+                .workspaces
+                .workspace_active_snapshot
+                .active_heads(workspace_id)
+                .await;
+        }
+        if cached_heads.heads.is_empty() {
+            anyhow::bail!("expected active heads to be cached for workspace {workspace_id:?}");
+        }
+        self.state.cache_workspace_active_heads(cached_heads).await;
+
+        Ok(())
+    }
+
+    pub async fn append_hot_endpoint_delta_notice_for_test(
+        &self,
+        session_id: SessionId,
+    ) -> anyhow::Result<SessionEvent> {
+        self.state
+            .store_for_session(session_id)
+            .await?
+            .append_session_event(
+                session_id,
+                None,
+                None,
+                SessionEventType::Notice,
+                serde_json::json!({"msg":"delta only"}),
+            )
+            .await
+            .map_err(|err| anyhow::anyhow!("append delta session event: {err}"))
+    }
+
+    pub async fn publish_hot_endpoint_event_and_active_head_seq_for_test(
+        &self,
+        workspace_id: WorkspaceId,
+        event: SessionEvent,
+        settle_for: Duration,
+    ) -> anyhow::Result<i64> {
+        self.state.publish_event(event).await;
+        tokio::time::sleep(settle_for).await;
+        let active_heads = self
+            .state
+            .workspaces
+            .workspace_active_snapshot
+            .active_heads(workspace_id)
+            .await;
+        let head = active_heads.heads.first().ok_or_else(|| {
+            anyhow::anyhow!("expected active head for workspace {workspace_id:?}")
+        })?;
+        Ok(head.last_event_seq)
     }
 
     pub async fn reconcile_turn_terminal_state_for_test(

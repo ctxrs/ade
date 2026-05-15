@@ -7,7 +7,7 @@ use serde_json::json;
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
 use ctx_core::models::{
-    SessionEventType, SessionHeadSnapshot, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot,
+    SessionHeadSnapshot, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot,
     WorkspaceActiveSnapshotClientMessage, WorkspaceActiveSnapshotEvent,
     WorkspaceActiveSnapshotStreamMessage,
 };
@@ -23,13 +23,13 @@ async fn assert_hot_endpoints_with_failpoints(failpoints: &[&'static str]) {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
 
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
     let server = common::spawn_http_server(app).await;
     let base = &server.base_url;
     let client = &server.client;
@@ -56,78 +56,16 @@ async fn assert_hot_endpoints_with_failpoints(failpoints: &[&'static str]) {
 
     let session = common::load_primary_session_http(client, base, &task).await;
 
-    let store = state.store_for_session(session.id).await.unwrap();
-    let _ = store
-        .append_session_event(
+    daemon
+        .seed_hot_endpoint_caches_for_test(
+            ws.id,
+            task.id,
             session.id,
-            None,
-            None,
-            SessionEventType::Notice,
-            json!({"msg":"warm"}),
+            50,
+            10,
+            true,
+            Duration::from_secs(2),
         )
-        .await
-        .unwrap();
-    let _ = store
-        .refresh_active_session_head_projection(session.id)
-        .await;
-
-    state.emit_workspace_task_upsert(task.id).await.unwrap();
-    state.refresh_session_head_cache(session.id).await;
-
-    let head_snapshot = store
-        .get_session_head_snapshot(session.id, 10, true)
-        .await
-        .unwrap()
-        .unwrap();
-    state
-        .sessions
-        .cache_session_head_snapshot(session.id, 10, true, head_snapshot)
-        .await;
-
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
-    let mut cached_snapshot = state
-        .workspaces
-        .workspace_active_snapshot
-        .active_snapshot(ws.id, 50)
-        .await;
-    while cached_snapshot.active.tasks.is_empty() && tokio::time::Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        cached_snapshot = state
-            .workspaces
-            .workspace_active_snapshot
-            .active_snapshot(ws.id, 50)
-            .await;
-    }
-    assert!(
-        !cached_snapshot.active.tasks.is_empty(),
-        "expected active snapshot to be cached"
-    );
-    state
-        .cache_workspace_active_snapshot(cached_snapshot.clone())
-        .await;
-
-    let mut cached_heads = state
-        .workspaces
-        .workspace_active_snapshot
-        .active_heads(ws.id)
-        .await;
-    while cached_heads.heads.is_empty() && tokio::time::Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        cached_heads = state
-            .workspaces
-            .workspace_active_snapshot
-            .active_heads(ws.id)
-            .await;
-    }
-    assert!(
-        !cached_heads.heads.is_empty(),
-        "expected active heads to be cached"
-    );
-    state
-        .cache_workspace_active_heads(cached_heads.clone())
-        .await;
-    state
-        .ensure_workspace_active_snapshot_hydrated(ws.id)
         .await
         .unwrap();
 
@@ -277,13 +215,13 @@ async fn cold_workspace_active_endpoints_fail_closed_when_hydration_fails() {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
 
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
     let server = common::spawn_http_server(app).await;
     let base = &server.base_url;
     let client = &server.client;
@@ -340,13 +278,13 @@ async fn publish_event_does_not_trigger_full_session_head_rebuilds() {
     let data_dir = tempfile::tempdir().unwrap();
     let stores = common::setup_store(data_dir.path()).await;
 
-    let state = common::build_state(
+    let daemon = common::build_daemon(
         data_dir.path().to_path_buf(),
         stores,
         common::fake_providers(),
         "http://127.0.0.1:0",
     );
-    let app = common::router(state.clone());
+    let app = common::router_for_daemon(&daemon);
     let server = common::spawn_http_server(app).await;
     let base = &server.base_url;
     let client = &server.client;
@@ -373,36 +311,29 @@ async fn publish_event_does_not_trigger_full_session_head_rebuilds() {
 
     let session = common::load_primary_session_http(client, base, &task).await;
 
-    state
+    daemon
         .ensure_workspace_active_snapshot_hydrated(ws.id)
         .await
         .unwrap();
 
-    let store = state.store_for_session(session.id).await.unwrap();
-    let event = store
-        .append_session_event(
-            session.id,
-            None,
-            None,
-            SessionEventType::Notice,
-            json!({"msg":"delta only"}),
-        )
+    let store = daemon.store_for_session(session.id).await.unwrap();
+    let event = daemon
+        .append_hot_endpoint_delta_notice_for_test(session.id)
         .await
         .unwrap();
 
     ctx_store::fault_injection::clear_failpoints();
     ctx_store::fault_injection::set_failpoint("ctx_store.get_session_head_snapshot", 1);
 
-    state.publish_event(event.clone()).await;
-    tokio::time::sleep(Duration::from_millis(400)).await;
-
-    let active_heads = state
-        .workspaces
-        .workspace_active_snapshot
-        .active_heads(ws.id)
-        .await;
-    assert_eq!(active_heads.heads.len(), 1);
-    assert_eq!(active_heads.heads[0].last_event_seq, event.seq);
+    let last_event_seq = daemon
+        .publish_hot_endpoint_event_and_active_head_seq_for_test(
+            ws.id,
+            event.clone(),
+            Duration::from_millis(400),
+        )
+        .await
+        .unwrap();
+    assert_eq!(last_event_seq, event.seq);
 
     let manual_refresh = store.get_session_head_snapshot(session.id, 10, true).await;
     assert!(
