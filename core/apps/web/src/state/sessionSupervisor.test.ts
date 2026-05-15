@@ -517,6 +517,7 @@ describe("SessionSupervisor", () => {
     const internals = asSupervisorInternals(sup);
     const entry = internals.ensureEntry(sessionId);
     entry.turns = [mkTurn({ sessionId, turnId, status: "running", startSeq: 1, startedAt: createdAt })];
+    entry.startedTurnIds.add(turnId);
 
     internals.handleReplicaPatches([
       {
@@ -561,6 +562,7 @@ describe("SessionSupervisor", () => {
     const internals = asSupervisorInternals(sup);
     const entry = internals.ensureEntry(sessionId);
     entry.turns = [mkTurn({ sessionId, turnId, status: "running", startSeq: 1, startedAt: createdAt })];
+    entry.startedTurnIds.add(turnId);
 
     internals.handleReplicaPatches([
       {
