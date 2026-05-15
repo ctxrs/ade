@@ -90,6 +90,16 @@ function resolveSccacheDir(targetPath) {
   return path.join("/tmp", `ctx-sccache-cache-${hash}`);
 }
 
+function resolveSccacheTmpDir(targetPath, tmpPath = os.tmpdir()) {
+  const hash = crypto.createHash("sha1")
+    .update(path.resolve(targetPath))
+    .update("\0")
+    .update(path.resolve(trimValue(tmpPath) || os.tmpdir()))
+    .digest("hex")
+    .slice(0, 12);
+  return path.join("/tmp", `ctx-sccache-tmp-${hash}`);
+}
+
 function shouldNormalizeSccacheServerUds(value) {
   if (process.platform === "win32") {
     return false;
@@ -107,6 +117,14 @@ function shouldNormalizeSccacheDir(value) {
     return false;
   }
   return Buffer.byteLength(path.join(normalized, "sccache.sock")) >= SCCACHE_UNIX_SOCKET_PATH_LIMIT;
+}
+
+function shouldNormalizeSccacheTmpDir(value) {
+  if (process.platform === "win32") {
+    return false;
+  }
+  const normalized = trimValue(value) || os.tmpdir();
+  return Buffer.byteLength(path.join(normalized, "sccache-startup-notify", "sock")) >= SCCACHE_UNIX_SOCKET_PATH_LIMIT;
 }
 
 function setDefaultEnvValue(targetEnv, key, value) {
@@ -636,6 +654,12 @@ function buildCtxCacheEnv({
       if (shouldNormalizeSccacheServerUds(resolvedEnv.SCCACHE_SERVER_UDS)) {
         resolvedEnv.SCCACHE_SERVER_UDS = resolveSccacheServerUds(cargoTargetDir);
       }
+      if (shouldNormalizeSccacheTmpDir(resolvedEnv.TMPDIR)) {
+        const sccacheTmpDir = resolveSccacheTmpDir(cargoTargetDir, resolvedEnv.TMPDIR);
+        resolvedEnv.TMPDIR = sccacheTmpDir;
+        resolvedEnv.TMP = sccacheTmpDir;
+        resolvedEnv.TEMP = sccacheTmpDir;
+      }
       appendEnvPathListValue(resolvedEnv, "SCCACHE_BASEDIRS", [
         path.resolve(cwd),
         path.resolve(cargoTargetDir),
@@ -662,6 +686,10 @@ function buildCtxCacheEnv({
     const sccacheDir = trimValue(cacheEnvResult.env.SCCACHE_DIR);
     if (sccacheDir) {
       fs.mkdirSync(sccacheDir, { recursive: true });
+    }
+    const tmpDir = trimValue(cacheEnvResult.env.TMPDIR);
+    if (tmpDir) {
+      fs.mkdirSync(tmpDir, { recursive: true });
     }
   }
 
@@ -723,6 +751,7 @@ module.exports = {
   resolveRepoScopeKey,
   resolveSccacheDir,
   resolveSccacheServerUds,
+  resolveSccacheTmpDir,
   resolveVolatileSelection,
   writeCacheRootMarker,
 };

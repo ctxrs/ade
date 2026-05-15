@@ -1,6 +1,6 @@
 [package]
 name = "ctx-daemon"
-version = "0.65.25"
+version = "0.65.26"
 edition.workspace = true
 
 [dependencies]

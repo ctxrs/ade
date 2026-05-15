@@ -166,7 +166,7 @@ CTX_HTTP_INTEGRATION_SOURCE_DEPS = {
 
 CTX_HTTP_SUITE_EXTRA_TARGETS = {
     "scheduler-runtime": [
-        ":unit_tests_scheduler",
+        "//core/crates/ctx-daemon:unit_tests_scheduler",
     ],
 }
 

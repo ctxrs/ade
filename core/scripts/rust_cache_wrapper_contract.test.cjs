@@ -311,6 +311,9 @@ test("ctx cache wrapper entrypoints expose cwd-aware observability metadata", ()
   assert.match(printScript, /CTX_RUST_CACHE_MODE/);
   assert.match(printScript, /CTX_RUST_CACHE_SCOPE_KEY/);
   assert.match(printScript, /CTX_RUST_CACHE_SCCACHE/);
+  assert.match(printScript, /TMPDIR: env\.TMPDIR/);
+  assert.match(printScript, /TMP: env\.TMP/);
+  assert.match(printScript, /TEMP: env\.TEMP/);
 
   assert.match(runScript, /CTX_RUST_CACHE_SOURCE = "run_with_ctx_cache_env"/);
   assert.match(runScript, /CTX_RUST_CACHE_WRAPPED = "1"/);
@@ -548,6 +551,20 @@ test("repo-owned automation rust callers use ctx cache wrappers instead of naked
       `${entry.path} should not invoke cargo directly from the script body`,
     );
   }
+});
+
+test("remote daemon network soak pins cache scope across wrapped cargo calls", () => {
+  const scriptText = read("scripts/buildkite/run_remote_daemon_ui_network_soak.sh");
+  const scopeIndex = scriptText.indexOf('CTX_CACHE_SCOPE_KEY="remote-daemon-ui-network-soak-');
+  const buildIndex = scriptText.indexOf("cargo build");
+  const metadataIndex = scriptText.indexOf("cargo metadata");
+
+  assert.notEqual(scopeIndex, -1, "remote daemon soak should derive a stable cache scope");
+  assert.notEqual(buildIndex, -1, "remote daemon soak should build ctx binaries");
+  assert.notEqual(metadataIndex, -1, "remote daemon soak should read cargo metadata");
+  assert.ok(scopeIndex < buildIndex, "cache scope must be pinned before the wrapped cargo build");
+  assert.ok(buildIndex < metadataIndex, "metadata lookup should reuse the build cache scope");
+  assert.match(scriptText, /export CTX_CACHE_SCOPE_KEY/);
 });
 
 test("core Makefile uses the make session for both cache scope keys", () => {

@@ -12,6 +12,7 @@ const {
   resolveRepoScopeKey,
   resolveSccacheDir,
   resolveSccacheServerUds,
+  resolveSccacheTmpDir,
   resolveVolatileSelection,
 } = require("./cache_roots.cjs");
 
@@ -255,6 +256,56 @@ test("buildCtxCacheEnv shortens sccache dir when its default socket path would b
     assert.equal(Buffer.byteLength(path.join(env.SCCACHE_DIR, "sccache.sock")) < 100, true);
     assert.equal(env.SCCACHE_SERVER_UDS, resolveSccacheServerUds(targetDir));
     assert.equal(Buffer.byteLength(env.SCCACHE_SERVER_UDS) < 100, true);
+  }
+});
+
+test("buildCtxCacheEnv shortens sccache temp root when startup socket path would be unsafe", () => {
+  const cwd = path.resolve(__dirname, "..", "..");
+  const volatileRoot = path.join(
+    os.tmpdir(),
+    "ctx-cache-roots-remote-real-xdg-fixture-with-deep-bundle-cache",
+    "home",
+    ".ctx",
+    "volatile",
+  );
+  const targetDir = path.join(
+    volatileRoot,
+    "cache",
+    "bundles",
+    ".build",
+    "cargo",
+    "linux-x86_64",
+  );
+  const unsafeTmpDir = path.join(
+    volatileRoot,
+    "remote-workspace-artifacts",
+    "automation-attempt",
+    "tmp",
+  );
+  const { env } = buildCtxCacheEnv({
+    cwd,
+    env: {
+      CTX_VOLATILE_ROOT: volatileRoot,
+      CARGO_TARGET_DIR: targetDir,
+      RUSTC_WRAPPER: "/usr/bin/sccache",
+      TMPDIR: unsafeTmpDir,
+      TMP: unsafeTmpDir,
+      TEMP: unsafeTmpDir,
+    },
+  });
+
+  if (process.platform !== "win32") {
+    assert.equal(env.TMPDIR, resolveSccacheTmpDir(targetDir, unsafeTmpDir));
+    assert.equal(env.TMP, env.TMPDIR);
+    assert.equal(env.TEMP, env.TMPDIR);
+    assert.notEqual(
+      resolveSccacheTmpDir(targetDir, path.join(volatileRoot, "remote-workspace-artifacts", "automation-attempt-2", "tmp")),
+      env.TMPDIR,
+    );
+    assert.equal(
+      Buffer.byteLength(path.join(env.TMPDIR, "sccache-startup-notify", "sock")) < 100,
+      true,
+    );
   }
 });
 

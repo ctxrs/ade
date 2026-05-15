@@ -369,6 +369,11 @@ test("ctx-http Bazel helper keeps quick-path and manual-only suites explicit", (
   assert.match(ctxHttpBazelTests, /binary_data\.get\(source_name, \[\]\)/);
   assert.match(ctxHttpBazelTests, /binary_rustc_env\.get\(source_name, \{\}\)/);
   assert.doesNotMatch(ctxHttpBazelTests, /merged\["CARGO_BIN_EXE_ctx-mcp"\]/);
+  assert.match(
+    ctxHttpBazelTests,
+    /"scheduler-runtime": \[\s*"\/\/core\/crates\/ctx-daemon:unit_tests_scheduler",\s*\]/,
+  );
+  assert.doesNotMatch(ctxHttpBazelTests, /"scheduler-runtime": \[\s*":unit_tests_scheduler"/);
 });
 
 test("ctx-http Bazel rust mapping covers the non-manual suite labels only", () => {
