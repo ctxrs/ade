@@ -3,56 +3,8 @@ mod common;
 use std::time::Duration;
 
 use axum::http::{Method, StatusCode};
-use chrono::Utc;
-use ctx_core::ids::{MergeQueueEntryId, WorkspaceId};
-use ctx_core::models::{MergeQueueEntry, MergeQueueEntryStatus, MergeQueuePatchSource, Workspace};
-use ctx_daemon::test_support::TestDaemon;
+use ctx_core::models::MergeQueueEntryStatus;
 use serde_json::Value;
-
-fn queued_entry(workspace_id: WorkspaceId, name: &str) -> MergeQueueEntry {
-    let now = Utc::now();
-    MergeQueueEntry {
-        id: MergeQueueEntryId::new(),
-        workspace_id,
-        worktree_id: None,
-        session_id: None,
-        target_branch: "main".to_string(),
-        message: Some(name.to_string()),
-        patch_source: MergeQueuePatchSource::Generated,
-        base_commit_sha: Some(format!("{name}-base")),
-        head_commit_sha: Some(format!("{name}-head")),
-        patch_path: format!("/tmp/{name}.patch"),
-        patch_size: 1,
-        status: MergeQueueEntryStatus::Queued,
-        result_commit_sha: None,
-        error_message: None,
-        created_at: now,
-        updated_at: now,
-    }
-}
-
-async fn wait_for_non_queued_status(
-    daemon: &TestDaemon,
-    workspace: &Workspace,
-    entry_id: MergeQueueEntryId,
-) -> MergeQueueEntry {
-    tokio::time::timeout(Duration::from_secs(2), async {
-        loop {
-            let store = daemon.store_for_workspace(workspace.id).await.unwrap();
-            let entry = store
-                .get_merge_queue_entry(entry_id)
-                .await
-                .unwrap()
-                .unwrap();
-            if entry.status != MergeQueueEntryStatus::Queued {
-                break entry;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("timed out waiting for merge queue entry to resume")
-}
 
 #[tokio::test]
 async fn enabling_merge_queue_on_open_workspace_reschedules_queued_rows() {
@@ -70,22 +22,15 @@ async fn enabling_merge_queue_on_open_workspace_reschedules_queued_rows() {
 
     daemon.spawn_merge_queue_runner();
 
-    let store = daemon
-        .uncached_store_for_workspace(workspace.id)
+    let entry = daemon
+        .seed_workspace_merge_queue_queued_entry_for_test(workspace.id, "queued-before-enable")
         .await
         .unwrap();
-    let entry = queued_entry(workspace.id, "queued-before-enable");
-    store.create_merge_queue_entry(&entry).await.unwrap();
-    store.close().await;
 
     tokio::time::sleep(Duration::from_millis(100)).await;
     let queued = daemon
-        .uncached_store_for_workspace(workspace.id)
+        .load_workspace_merge_queue_entry_for_test(workspace.id, entry.id)
         .await
-        .unwrap()
-        .get_merge_queue_entry(entry.id)
-        .await
-        .unwrap()
         .unwrap();
     assert_eq!(queued.status, MergeQueueEntryStatus::Queued);
 
@@ -102,7 +47,14 @@ async fn enabling_merge_queue_on_open_workspace_reschedules_queued_rows() {
     assert_eq!(set_status, StatusCode::OK);
     assert_eq!(set_resp.get("ok").and_then(Value::as_bool), Some(true));
 
-    let resumed = wait_for_non_queued_status(&daemon, &workspace, entry.id).await;
+    let resumed = daemon
+        .wait_for_workspace_merge_queue_entry_to_leave_queued_for_test(
+            workspace.id,
+            entry.id,
+            Duration::from_secs(2),
+        )
+        .await
+        .unwrap();
     assert_ne!(resumed.status, MergeQueueEntryStatus::Queued);
     assert_ne!(resumed.status, MergeQueueEntryStatus::Cancelled);
     assert_ne!(
@@ -139,13 +91,10 @@ async fn disabling_merge_queue_cancels_existing_queued_rows() {
     .await;
     assert_eq!(enable_status, StatusCode::OK);
 
-    let store = daemon
-        .uncached_store_for_workspace(workspace.id)
+    let entry = daemon
+        .seed_workspace_merge_queue_queued_entry_for_test(workspace.id, "queued-before-disable")
         .await
         .unwrap();
-    let entry = queued_entry(workspace.id, "queued-before-disable");
-    store.create_merge_queue_entry(&entry).await.unwrap();
-    store.close().await;
 
     let (disable_status, disable_resp): (StatusCode, Value) = common::json_request(
         &app,
@@ -160,7 +109,14 @@ async fn disabling_merge_queue_cancels_existing_queued_rows() {
     assert_eq!(disable_status, StatusCode::OK);
     assert_eq!(disable_resp.get("ok").and_then(Value::as_bool), Some(true));
 
-    let disabled = wait_for_non_queued_status(&daemon, &workspace, entry.id).await;
+    let disabled = daemon
+        .wait_for_workspace_merge_queue_entry_to_leave_queued_for_test(
+            workspace.id,
+            entry.id,
+            Duration::from_secs(2),
+        )
+        .await
+        .unwrap();
     assert_eq!(disabled.status, MergeQueueEntryStatus::Cancelled);
     assert_eq!(
         disabled.error_message.as_deref(),

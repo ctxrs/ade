@@ -18,6 +18,7 @@ const {
   TERMINAL_WORKSPACE_STREAM_TEST_STORE_ACCESS_PATTERNS,
   TEST_ROUTER_COMPOSITION_PATTERNS,
   TEST_RAW_DAEMON_BUCKET_PATTERNS,
+  WORKSPACE_MERGE_QUEUE_CONFIG_TEST_STORE_ACCESS_PATTERNS,
   WORKSPACE_RUNTIME_SETTINGS_TEST_STORE_ACCESS_PATTERNS,
   apiPatternsForPath,
   globalIdRoutingStorePatternsForPath,
@@ -35,6 +36,7 @@ const {
   smallBoundaryStorePatternsForPath,
   taskLifecycleStorePatternsForPath,
   terminalWorkspaceStreamStorePatternsForPath,
+  workspaceMergeQueueConfigStorePatternsForPath,
   workspaceRuntimeSettingsStorePatternsForPath,
   stripCfgTestItems,
 } = require("./ctx_http_daemon_boundary_guard.cjs");
@@ -1072,6 +1074,97 @@ test("daemon boundary guard scopes workspace-runtime-settings store facade root"
   assert.deepEqual(
     workspaceRuntimeSettingsStorePatternsForPath(
       "core/crates/ctx-http/tests/workspace_merge_queue_config_http.rs",
+    ),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects direct workspace-merge-queue-config store and handle access", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/workspace_merge_queue_config_http.rs",
+    contents: `
+      use ctx_daemon::daemon::merge_queue;
+      use ctx_store::{Store, StoreManager};
+      async fn fixture(daemon: TestDaemon, stores: StoreManager) {
+        daemon.global_store();
+        daemon.store_for_session(session_id).await?;
+        daemon.store_for_workspace(workspace_id).await?;
+        daemon.uncached_store_for_workspace(workspace_id).await?;
+        daemon.store_for_task(task_id).await?;
+        daemon.stores().global().await?;
+        stores.global().await?;
+        stores.workspace(workspace_id).await?;
+        daemon
+          .handle()
+          .workspaces();
+        let handle = daemon.handle();
+        handle.workspaces();
+        merge_queue::activate_workspace_merge_queue(&state, workspace_id).await;
+        manager.global().await?;
+        manager.workspace(workspace_id).await?;
+        manager
+          .global().await?;
+        manager
+          .workspace(workspace_id).await?;
+        let _raw: Store;
+      }
+    `,
+    patterns: WORKSPACE_MERGE_QUEUE_CONFIG_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct workspace-merge-queue-config global store access",
+      "direct workspace-merge-queue-config session store access",
+      "direct workspace-merge-queue-config workspace store access",
+      "direct workspace-merge-queue-config uncached workspace store access",
+      "direct workspace-merge-queue-config task store access",
+      "direct workspace-merge-queue-config StoreManager access",
+      "direct workspace-merge-queue-config StoreManager global access",
+      "direct workspace-merge-queue-config StoreManager global access",
+      "direct workspace-merge-queue-config StoreManager global access",
+      "direct workspace-merge-queue-config StoreManager workspace access",
+      "direct workspace-merge-queue-config StoreManager workspace access",
+      "direct workspace-merge-queue-config StoreManager workspace access",
+      "direct workspace-merge-queue-config workspaces handle access",
+      "direct workspace-merge-queue-config workspaces handle access",
+      "direct workspace-merge-queue-config workspaces handle access",
+      "direct workspace-merge-queue-config daemon merge-queue module access",
+      "direct workspace-merge-queue-config daemon merge-queue module access",
+      "raw workspace-merge-queue-config ctx_store Store",
+      "raw workspace-merge-queue-config ctx_store Store",
+      "raw workspace-merge-queue-config StoreManager",
+      "raw workspace-merge-queue-config StoreManager",
+    ],
+  );
+});
+
+test("daemon boundary guard allows common setup-store in workspace-merge-queue-config", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/workspace_merge_queue_config_http.rs",
+    contents: `
+      async fn fixture() {
+        let stores = common::setup_store(data_dir.path()).await;
+        let daemon = common::build_daemon(data_dir.path(), stores, common::fake_providers(), "http://127.0.0.1:0");
+      }
+    `,
+    patterns: WORKSPACE_MERGE_QUEUE_CONFIG_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(violations, []);
+});
+
+test("daemon boundary guard scopes workspace-merge-queue-config store facade root", () => {
+  assert.deepEqual(
+    workspaceMergeQueueConfigStorePatternsForPath(
+      "core/crates/ctx-http/tests/workspace_merge_queue_config_http.rs",
+    ),
+    WORKSPACE_MERGE_QUEUE_CONFIG_TEST_STORE_ACCESS_PATTERNS,
+  );
+  assert.deepEqual(
+    workspaceMergeQueueConfigStorePatternsForPath(
+      "core/crates/ctx-http/tests/workspace_execution_config_http.rs",
     ),
     [],
   );

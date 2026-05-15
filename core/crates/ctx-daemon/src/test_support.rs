@@ -1426,6 +1426,71 @@ impl TestDaemon {
         daemon::merge_queue::spawn_merge_queue_runner(Arc::clone(&self.state));
     }
 
+    pub async fn seed_workspace_merge_queue_queued_entry_for_test(
+        &self,
+        workspace_id: WorkspaceId,
+        name: &str,
+    ) -> anyhow::Result<MergeQueueEntry> {
+        let now = chrono::Utc::now();
+        let entry = MergeQueueEntry {
+            id: MergeQueueEntryId::new(),
+            workspace_id,
+            worktree_id: None,
+            session_id: None,
+            target_branch: "main".to_string(),
+            message: Some(name.to_string()),
+            patch_source: MergeQueuePatchSource::Generated,
+            base_commit_sha: Some(format!("{name}-base")),
+            head_commit_sha: Some(format!("{name}-head")),
+            patch_path: format!("/tmp/{name}.patch"),
+            patch_size: 1,
+            status: MergeQueueEntryStatus::Queued,
+            result_commit_sha: None,
+            error_message: None,
+            created_at: now,
+            updated_at: now,
+        };
+        let store = self.uncached_store_for_workspace(workspace_id).await?;
+        store.create_merge_queue_entry(&entry).await?;
+        store.close().await;
+        Ok(entry)
+    }
+
+    pub async fn load_workspace_merge_queue_entry_for_test(
+        &self,
+        workspace_id: WorkspaceId,
+        entry_id: MergeQueueEntryId,
+    ) -> anyhow::Result<MergeQueueEntry> {
+        let store = self.uncached_store_for_workspace(workspace_id).await?;
+        let entry = store
+            .get_merge_queue_entry(entry_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("merge queue entry {entry_id:?} should exist"))?;
+        store.close().await;
+        Ok(entry)
+    }
+
+    pub async fn wait_for_workspace_merge_queue_entry_to_leave_queued_for_test(
+        &self,
+        workspace_id: WorkspaceId,
+        entry_id: MergeQueueEntryId,
+        timeout: Duration,
+    ) -> anyhow::Result<MergeQueueEntry> {
+        tokio::time::timeout(timeout, async {
+            loop {
+                let entry = self
+                    .load_workspace_merge_queue_entry_for_test(workspace_id, entry_id)
+                    .await?;
+                if entry.status != MergeQueueEntryStatus::Queued {
+                    break Ok(entry);
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("timed out waiting for merge queue entry to resume"))?
+    }
+
     pub async fn ensure_workspace_active_snapshot_hydrated(
         &self,
         workspace_id: WorkspaceId,
