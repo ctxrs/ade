@@ -182,6 +182,7 @@ const fakeDaemonExternalStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/noisy_output_backpressure.rs",
   "core/crates/ctx-http/tests/provider_current_ctx_version_regressions.rs",
   "core/crates/ctx-http/tests/provider_worker_reaping_offline.rs",
+  "core/crates/ctx-http/tests/session_model_api.rs",
   "core/crates/ctx-http/tests/subscription_accounts_api.rs",
   "core/crates/ctx-http/tests/terminal_workspace_stream_separation.rs",
   "core/crates/ctx-http/tests/terminal_ws_reconnect.rs",
@@ -201,6 +202,10 @@ const cacheRehydrationStoreFacadeTestRoots = [
 
 const subscriptionAccountsApiStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/subscription_accounts_api.rs",
+];
+
+const sessionModelApiStoreFacadeTestRoots = [
+  "core/crates/ctx-http/tests/session_model_api.rs",
 ];
 
 const mcpDaemonFacadeTestRoots = [
@@ -733,6 +738,21 @@ const SUBSCRIPTION_ACCOUNTS_API_TEST_STORE_ACCESS_PATTERNS = [
   {
     name: "direct subscription accounts daemon router composition",
     regex: /\b(?:crate::)?common::router_for_daemon\s*\(|\brouter_for_daemon\s*\(/,
+  },
+];
+
+const SESSION_MODEL_API_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct session model daemon router composition",
+    regex: /\b(?:crate::)?common::router_for_daemon\s*\(|\brouter_for_daemon\s*\(/,
+  },
+  {
+    name: "direct session model provider options cache mutation",
+    regex: /\.test_with_provider_options_cache\s*\(|\bCachedProviderOptions\b/,
+  },
+  {
+    name: "direct session model store seeding",
+    regex: /\.(?:create_workspace|create_worktree|create_task|create_session|create_session_with_reasoning_effort|upsert_workspace_worktree_index|upsert_workspace_task_index|upsert_workspace_session_index|set_task_primary_session)\s*\(/,
   },
 ];
 
@@ -1882,6 +1902,13 @@ function subscriptionAccountsApiStorePatternsForPath(relativePath) {
   return [];
 }
 
+function sessionModelApiStorePatternsForPath(relativePath) {
+  if (sessionModelApiStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return SESSION_MODEL_API_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
 function mcpDaemonPatternsForPath(relativePath) {
   if (mcpDaemonFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS;
@@ -2275,6 +2302,13 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
+        patterns: sessionModelApiStorePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
         patterns: mcpDaemonPatternsForPath(relativePath),
       }),
     );
@@ -2437,6 +2471,7 @@ module.exports = {
   PROVIDER_TEST_CACHE_ACCESS_PATTERNS,
   SCHEDULER_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
   SESSION_FIXTURE_TEST_STORE_ACCESS_PATTERNS,
+  SESSION_MODEL_API_TEST_STORE_ACCESS_PATTERNS,
   SMALL_API_UNIT_TEST_STORE_ACCESS_PATTERNS,
   SMALL_EXTERNAL_TEST_STORE_ACCESS_PATTERNS,
   SMALL_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
@@ -2471,6 +2506,7 @@ module.exports = {
   scanRouterComposition,
   scanText,
   schedulerRuntimeStorePatternsForPath,
+  sessionModelApiStorePatternsForPath,
   sessionFixtureStorePatternsForPath,
   smallApiUnitStorePatternsForPath,
   smallExternalStorePatternsForPath,

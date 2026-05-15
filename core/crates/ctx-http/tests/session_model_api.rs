@@ -7,8 +7,7 @@ use async_trait::async_trait;
 use serde_json::json;
 use tokio::sync::{mpsc, Mutex as AsyncMutex};
 
-use ctx_core::models::{Session, SessionEventType, SessionHeadSnapshot};
-use ctx_provider_runtime::CachedProviderOptions;
+use ctx_core::models::{Session, SessionEventType, SessionHeadSnapshot, Task, Workspace};
 use ctx_providers::adapters::{
     ProviderAdapter, ProviderCapabilities, ProviderHealth, ProviderProcessInfo,
     ProviderRestartMode, ProviderStatus, RunHandle, TurnInput,
@@ -109,33 +108,74 @@ async fn create_task_with_default_session(
     workspace_id: ctx_core::ids::WorkspaceId,
     provider_id: &str,
     model_id: &str,
-) -> (ctx_core::models::Task, Session) {
+) -> (Task, Session) {
+    create_task_with_default_session_and_reasoning(
+        client,
+        base,
+        workspace_id,
+        provider_id,
+        model_id,
+        None,
+    )
+    .await
+}
+
+async fn create_task_with_default_session_and_reasoning(
+    client: &reqwest::Client,
+    base: &str,
+    workspace_id: ctx_core::ids::WorkspaceId,
+    provider_id: &str,
+    model_id: &str,
+    reasoning_effort: Option<&str>,
+) -> (Task, Session) {
     let session_id = uuid::Uuid::new_v4().to_string();
-    let task: ctx_core::models::Task = client
+    let mut default_session = json!({
+        "id": session_id,
+        "provider_id": provider_id,
+        "model_id": model_id,
+    });
+    if let Some(reasoning_effort) = reasoning_effort {
+        default_session["reasoning_effort"] = json!(reasoning_effort);
+    }
+
+    let task_response = client
         .post(format!("{base}/api/workspaces/{}/tasks", workspace_id.0))
         .json(&json!({
             "title": "session-model",
-            "default_session": {
-                "id": session_id,
-                "provider_id": provider_id,
-                "model_id": model_id,
-            }
+            "default_session": default_session
         }))
         .send()
         .await
-        .expect("create task")
-        .json()
-        .await
-        .expect("task json");
+        .expect("create task");
+    let task_status = task_response.status();
+    let task_body = task_response.text().await.expect("task response body");
+    assert!(
+        task_status.is_success(),
+        "create task failed with {task_status}: {task_body}"
+    );
+    let task: Task = serde_json::from_str(&task_body).unwrap_or_else(|err| {
+        panic!("decode task response failed for status {task_status}: {err}; body: {task_body}")
+    });
 
-    let sessions: Vec<Session> = client
+    let sessions_response = client
         .get(format!("{base}/api/tasks/{}/sessions", task.id.0))
         .send()
         .await
-        .expect("list sessions")
-        .json()
+        .expect("list sessions");
+    let sessions_status = sessions_response.status();
+    let sessions_body = sessions_response
+        .text()
         .await
-        .expect("sessions json");
+        .expect("sessions response body");
+    assert!(
+        sessions_status.is_success(),
+        "list sessions failed with {sessions_status}: {sessions_body}"
+    );
+    let sessions: Vec<Session> = serde_json::from_str(&sessions_body).unwrap_or_else(|err| {
+        panic!(
+            "decode sessions response failed for status {sessions_status}: {err}; body: {sessions_body}"
+        )
+    });
     let session = sessions
         .into_iter()
         .find(|session| Some(session.id) == task.primary_session_id)
@@ -243,24 +283,15 @@ impl ProviderAdapter for RecordingSetModelAdapter {
 #[tokio::test]
 async fn set_session_model_updates_session_and_appends_init_event() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
     let adapter = Arc::new(RecordingSetModelAdapter::live());
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert("fake-set-model".to_string(), adapter.clone());
-
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&daemon);
-    let server = common::spawn_http_server(app).await;
+    let fixture = common::fake_daemon_fixture_with_providers(providers, "http://127.0.0.1:0").await;
+    let server = fixture.spawn_server().await;
     let base = &server.base_url;
     let client = &server.client;
 
-    let workspace: ctx_core::models::Workspace = client
+    let workspace: Workspace = client
         .post(format!("{base}/api/workspaces"))
         .json(&json!({"root_path": repo.path(), "name": "ws"}))
         .send()
@@ -389,24 +420,15 @@ async fn live_crp_fixture_authenticate_session_emits_ready_signals_and_stays_liv
 #[tokio::test]
 async fn set_session_model_skips_adapter_when_session_is_not_live() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
     let adapter = Arc::new(RecordingSetModelAdapter::default());
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert("fake-set-model".to_string(), adapter.clone());
-
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&daemon);
-    let server = common::spawn_http_server(app).await;
+    let fixture = common::fake_daemon_fixture_with_providers(providers, "http://127.0.0.1:0").await;
+    let server = fixture.spawn_server().await;
     let base = &server.base_url;
     let client = &server.client;
 
-    let workspace: ctx_core::models::Workspace = client
+    let workspace: Workspace = client
         .post(format!("{base}/api/workspaces"))
         .json(&json!({"root_path": repo.path(), "name": "ws"}))
         .send()
@@ -468,26 +490,17 @@ async fn set_session_model_skips_adapter_when_session_is_not_live() {
 #[tokio::test]
 async fn set_session_model_returns_structured_error_when_live_switch_fails() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
     let adapter = Arc::new(RecordingSetModelAdapter::live_failing(
         "timed out waiting for session model update",
     ));
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert("fake-set-model".to_string(), adapter);
-
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&daemon);
-    let server = common::spawn_http_server(app).await;
+    let fixture = common::fake_daemon_fixture_with_providers(providers, "http://127.0.0.1:0").await;
+    let server = fixture.spawn_server().await;
     let base = &server.base_url;
     let client = &server.client;
 
-    let workspace: ctx_core::models::Workspace = client
+    let workspace: Workspace = client
         .post(format!("{base}/api/workspaces"))
         .json(&json!({"root_path": repo.path(), "name": "ws"}))
         .send()
@@ -532,24 +545,15 @@ async fn set_session_model_returns_structured_error_when_live_switch_fails() {
 #[tokio::test]
 async fn create_session_splits_legacy_combined_model_id_into_reasoning_effort() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
     let adapter = Arc::new(RecordingSetModelAdapter::live());
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert("fake-set-model".to_string(), adapter);
-
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&daemon);
-    let server = common::spawn_http_server(app).await;
+    let fixture = common::fake_daemon_fixture_with_providers(providers, "http://127.0.0.1:0").await;
+    let server = fixture.spawn_server().await;
     let base = &server.base_url;
     let client = &server.client;
 
-    let workspace: ctx_core::models::Workspace = client
+    let workspace: Workspace = client
         .post(format!("{base}/api/workspaces"))
         .json(&json!({"root_path": repo.path(), "name": "ws"}))
         .send()
@@ -575,24 +579,15 @@ async fn create_session_splits_legacy_combined_model_id_into_reasoning_effort() 
 #[tokio::test]
 async fn set_session_model_persists_reasoning_effort_and_forwards_full_model_id() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
     let adapter = Arc::new(RecordingSetModelAdapter::live());
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert("fake-set-model".to_string(), adapter.clone());
-
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&daemon);
-    let server = common::spawn_http_server(app).await;
+    let fixture = common::fake_daemon_fixture_with_providers(providers, "http://127.0.0.1:0").await;
+    let server = fixture.spawn_server().await;
     let base = &server.base_url;
     let client = &server.client;
 
-    let workspace: ctx_core::models::Workspace = client
+    let workspace: Workspace = client
         .post(format!("{base}/api/workspaces"))
         .json(&json!({"root_path": repo.path(), "name": "ws"}))
         .send()
@@ -705,105 +700,45 @@ async fn assert_live_crp_session_model_switch_case(
     ));
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert(provider_id.to_string(), adapter.clone());
-
-    let stores = common::setup_store(data_dir.path()).await;
-    let global_store = stores.global().clone();
-    let workspace = global_store
-        .create_workspace(
-            "ws".to_string(),
-            repo.path().to_string_lossy().to_string(),
-            ctx_core::models::VcsKind::Git,
-        )
-        .await
-        .expect("create workspace");
-    let store = stores
-        .workspace(workspace.id)
-        .await
-        .expect("open workspace store");
-    let worktree = store
-        .create_worktree(
-            workspace.id,
-            repo.path().to_string_lossy().to_string(),
-            "test-base".to_string(),
-            None,
-        )
-        .await
-        .expect("create worktree");
-    global_store
-        .upsert_workspace_worktree_index(worktree.id, workspace.id)
-        .await
-        .expect("index worktree");
-    let task = store
-        .create_task(workspace.id, "session-model".to_string(), None)
-        .await
-        .expect("create task");
-    global_store
-        .upsert_workspace_task_index(task.id, workspace.id)
-        .await
-        .expect("index task");
-    let session = store
-        .create_session_with_reasoning_effort(
-            task.id,
-            workspace.id,
-            worktree.id,
-            ctx_core::models::ExecutionEnvironment::Host,
-            provider_id.to_string(),
-            initial_model_id.to_string(),
-            Some(initial_reasoning_effort.to_string()),
-            "assistant".to_string(),
-            None,
-            None,
-            None,
-        )
-        .await
-        .expect("create session");
-    global_store
-        .upsert_workspace_session_index(session.id, workspace.id)
-        .await
-        .expect("index session");
-    store
-        .set_task_primary_session(task.id, session.id, worktree.id)
-        .await
-        .expect("set task primary session");
-
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
+    let fixture = common::fake_daemon_fixture_in_data_dir_with_providers(
+        data_dir,
         providers,
         "http://127.0.0.1:0",
-    );
-    daemon.test_with_provider_options_cache(|cache| {
-            cache.insert(
-                format!("{}/host/{provider_id}", workspace.id.0),
-                CachedProviderOptions {
-                    cached_at: std::time::Instant::now(),
-                    value: json!({
-                        "models": {
-                            "models": [
-                                {
-                                    "id": format!("{initial_model_id}/{initial_reasoning_effort}"),
-                                    "name": format!("{provider_id} initial")
-                                },
-                                {
-                                    "id": format!("{next_model_id}/{next_reasoning_effort}"),
-                                    "name": format!("{provider_id} next")
-                                }
-                            ],
-                            "current_model_id": format!("{initial_model_id}/{initial_reasoning_effort}"),
-                            "meta": {
-                                "source_kind": "subscription",
-                                "refresh_pending": false
-                            }
-                        }
-                    }),
-                },
-            );
-        })
-        .await;
-    let app = common::router_for_daemon(&daemon);
-    let server = common::spawn_http_server(app).await;
+    )
+    .await;
+    let server = fixture.spawn_server().await;
     let base = &server.base_url;
     let client = &server.client;
+
+    let seeded = fixture
+        .daemon
+        .seed_session_model_switch_session_for_test(
+            repo.path(),
+            provider_id,
+            initial_model_id,
+            Some(initial_reasoning_effort),
+        )
+        .await
+        .expect("seed session model switch session");
+    fixture
+        .daemon
+        .seed_host_session_model_catalog_cache_for_test(
+            seeded.workspace.id,
+            provider_id,
+            format!("{initial_model_id}/{initial_reasoning_effort}"),
+            vec![
+                (
+                    format!("{initial_model_id}/{initial_reasoning_effort}"),
+                    format!("{provider_id} initial"),
+                ),
+                (
+                    format!("{next_model_id}/{next_reasoning_effort}"),
+                    format!("{provider_id} next"),
+                ),
+            ],
+        )
+        .await;
+    let session = seeded.session;
 
     let seeded_head: SessionHeadSnapshot = client
         .get(format!(
@@ -937,24 +872,15 @@ async fn live_acp_runtime_catalog_harnesses_session_model_switch_succeeds_end_to
 #[tokio::test]
 async fn set_session_model_allows_explicit_model_outside_cached_catalog() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().expect("tempdir");
-    let stores = common::setup_store(data_dir.path()).await;
     let adapter = Arc::new(RecordingSetModelAdapter::live());
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert("fake-set-model".to_string(), adapter.clone());
-
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&daemon);
-    let server = common::spawn_http_server(app).await;
+    let fixture = common::fake_daemon_fixture_with_providers(providers, "http://127.0.0.1:0").await;
+    let server = fixture.spawn_server().await;
     let base = &server.base_url;
     let client = &server.client;
 
-    let workspace: ctx_core::models::Workspace = client
+    let workspace: Workspace = client
         .post(format!("{base}/api/workspaces"))
         .json(&json!({"root_path": repo.path(), "name": "ws"}))
         .send()
@@ -964,27 +890,14 @@ async fn set_session_model_allows_explicit_model_outside_cached_catalog() {
         .await
         .expect("workspace json");
 
-    daemon
-        .test_with_provider_options_cache(|cache| {
-            cache.insert(
-                format!("{}/host/fake-set-model", workspace.id.0),
-                CachedProviderOptions {
-                    cached_at: std::time::Instant::now(),
-                    value: json!({
-                        "models": {
-                            "models": [
-                                { "id": "known-model" }
-                            ],
-                            "current_model_id": "known-model",
-                            "meta": {
-                                "source_kind": "subscription",
-                                "refresh_pending": false
-                            }
-                        }
-                    }),
-                },
-            );
-        })
+    fixture
+        .daemon
+        .seed_host_session_model_catalog_cache_for_test(
+            workspace.id,
+            "fake-set-model",
+            "known-model",
+            vec![("known-model".to_string(), "Known Model".to_string())],
+        )
         .await;
 
     let (_task, session) = create_task_with_default_session(

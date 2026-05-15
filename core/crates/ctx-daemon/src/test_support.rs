@@ -62,6 +62,12 @@ pub struct CtxUiSizedHeadSeedStats {
     pub message_count: i64,
 }
 
+pub struct SessionModelSwitchFixture {
+    pub workspace: Workspace,
+    pub task: Task,
+    pub session: Session,
+}
+
 pub struct CtxUiSizedToolSummaryProbe {
     pub latest_turn_id: TurnId,
     pub bounded_tool_count: usize,
@@ -1424,6 +1430,71 @@ impl TestDaemon {
             .upsert_workspace_session_index(session.id, workspace.id)
             .await?;
         Ok(session)
+    }
+
+    pub async fn seed_session_model_switch_session_for_test(
+        &self,
+        root_path: &Path,
+        provider_id: &str,
+        model_id: &str,
+        reasoning_effort: Option<&str>,
+    ) -> anyhow::Result<SessionModelSwitchFixture> {
+        let workspace = self
+            .state
+            .global_store()
+            .create_workspace(
+                "ws".to_string(),
+                root_path.to_string_lossy().to_string(),
+                VcsKind::Git,
+            )
+            .await?;
+        let store = self.state.store_for_workspace(workspace.id).await?;
+        let worktree = store
+            .create_worktree(
+                workspace.id,
+                root_path.to_string_lossy().to_string(),
+                "test-base".to_string(),
+                None,
+            )
+            .await?;
+        self.state
+            .global_store()
+            .upsert_workspace_worktree_index(worktree.id, workspace.id)
+            .await?;
+        let task = store
+            .create_task(workspace.id, "session-model".to_string(), None)
+            .await?;
+        self.state
+            .global_store()
+            .upsert_workspace_task_index(task.id, workspace.id)
+            .await?;
+        let session = store
+            .create_session_with_reasoning_effort(
+                task.id,
+                workspace.id,
+                worktree.id,
+                ExecutionEnvironment::Host,
+                provider_id.to_string(),
+                model_id.to_string(),
+                reasoning_effort.map(str::to_string),
+                "assistant".to_string(),
+                None,
+                None,
+                None,
+            )
+            .await?;
+        self.state
+            .global_store()
+            .upsert_workspace_session_index(session.id, workspace.id)
+            .await?;
+        store
+            .set_task_primary_session(task.id, session.id, worktree.id)
+            .await?;
+        Ok(SessionModelSwitchFixture {
+            workspace,
+            task,
+            session,
+        })
     }
 
     pub async fn schedule_fallback_title_generation_for_test(
@@ -3539,6 +3610,45 @@ impl TestDaemon {
                         value: serde_json::json!({
                             "provider_id": provider_id,
                             "probe_ok": probe_ok,
+                        }),
+                    },
+                );
+            })
+            .await;
+    }
+
+    pub async fn seed_host_session_model_catalog_cache_for_test(
+        &self,
+        workspace_id: WorkspaceId,
+        provider_id: &str,
+        current_model_id: impl Into<String>,
+        models: Vec<(String, String)>,
+    ) {
+        let current_model_id = current_model_id.into();
+        let model_entries: Vec<serde_json::Value> = models
+            .into_iter()
+            .map(|(id, name)| {
+                serde_json::json!({
+                    "id": id,
+                    "name": name,
+                })
+            })
+            .collect();
+        self.state
+            .test_with_provider_options_cache(|cache| {
+                cache.insert(
+                    format!("{}/host/{provider_id}", workspace_id.0),
+                    CachedProviderOptions {
+                        cached_at: std::time::Instant::now(),
+                        value: serde_json::json!({
+                            "models": {
+                                "models": model_entries,
+                                "current_model_id": current_model_id,
+                                "meta": {
+                                    "source_kind": "subscription",
+                                    "refresh_pending": false,
+                                },
+                            },
                         }),
                     },
                 );

@@ -24,6 +24,7 @@ const {
   PROVIDER_TEST_CACHE_ACCESS_PATTERNS,
   SCHEDULER_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
   SESSION_FIXTURE_TEST_STORE_ACCESS_PATTERNS,
+  SESSION_MODEL_API_TEST_STORE_ACCESS_PATTERNS,
   SMALL_API_UNIT_TEST_STORE_ACCESS_PATTERNS,
   SMALL_EXTERNAL_TEST_STORE_ACCESS_PATTERNS,
   SMALL_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
@@ -58,6 +59,7 @@ const {
   scanRouterComposition,
   scanText,
   schedulerRuntimeStorePatternsForPath,
+  sessionModelApiStorePatternsForPath,
   sessionFixtureStorePatternsForPath,
   smallApiUnitStorePatternsForPath,
   smallExternalStorePatternsForPath,
@@ -1233,6 +1235,7 @@ test("daemon boundary guard scopes fake-daemon external roots without blocking c
     "core/crates/ctx-http/tests/noisy_output_backpressure.rs",
     "core/crates/ctx-http/tests/provider_current_ctx_version_regressions.rs",
     "core/crates/ctx-http/tests/provider_worker_reaping_offline.rs",
+    "core/crates/ctx-http/tests/session_model_api.rs",
     "core/crates/ctx-http/tests/subscription_accounts_api.rs",
     "core/crates/ctx-http/tests/terminal_workspace_stream_separation.rs",
     "core/crates/ctx-http/tests/terminal_ws_reconnect.rs",
@@ -1283,6 +1286,44 @@ test("daemon boundary guard scopes subscription accounts router composition guar
   );
   assert.deepEqual(
     subscriptionAccountsApiStorePatternsForPath("core/crates/ctx-http/tests/common/mod.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects direct session model store and cache access", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/session_model_api.rs",
+    contents: `
+      use ctx_provider_runtime::CachedProviderOptions;
+      async fn helper(daemon: &TestDaemon, store: &Store) {
+        let _app = common::router_for_daemon(daemon);
+        daemon.test_with_provider_options_cache(|cache| cache.clear()).await;
+        store.create_session_with_reasoning_effort(task_id, workspace_id, worktree_id, env, provider, model, effort, agent, None, None, None).await?;
+        store.upsert_workspace_session_index(session_id, workspace_id).await?;
+      }
+    `,
+    patterns: SESSION_MODEL_API_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct session model daemon router composition",
+      "direct session model provider options cache mutation",
+      "direct session model provider options cache mutation",
+      "direct session model store seeding",
+      "direct session model store seeding",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes session model store facade root", () => {
+  assert.deepEqual(
+    sessionModelApiStorePatternsForPath("core/crates/ctx-http/tests/session_model_api.rs"),
+    SESSION_MODEL_API_TEST_STORE_ACCESS_PATTERNS,
+  );
+  assert.deepEqual(
+    sessionModelApiStorePatternsForPath("core/crates/ctx-http/tests/common/mod.rs"),
     [],
   );
 });
