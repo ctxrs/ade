@@ -8,10 +8,11 @@ use ctx_core::ids::{
     TerminalId, TurnId, WorkspaceAttachmentId, WorkspaceId, WorktreeId,
 };
 use ctx_core::models::{
-    Message, MessageDelivery, MessageRole, MobileConnectionProfile, MobileDeviceRegistration,
-    Session, SessionEvent, SessionEventType, SessionHeadDelta, SessionHeadSnapshot, SessionTurn,
-    SessionTurnStatus, Workspace, WorkspaceActiveTaskSummary, WorkspaceAttachmentStatus, Worktree,
-    WorktreeAttachmentMount, WorktreeVcsSnapshot,
+    ExecutionEnvironment, Message, MessageDelivery, MessageRole, MobileConnectionProfile,
+    MobileDeviceRegistration, Session, SessionEvent, SessionEventType, SessionHeadDelta,
+    SessionHeadSnapshot, SessionSummary, SessionTurn, SessionTurnStatus, Task, VcsKind, Workspace,
+    WorkspaceActiveTaskSummary, WorkspaceAttachmentStatus, Worktree, WorktreeAttachmentMount,
+    WorktreeVcsSnapshot,
 };
 use ctx_provider_install::install_state::{
     InstallId, InstallInfo, InstallProgressEvent, InstallTarget,
@@ -1162,6 +1163,83 @@ impl TestDaemon {
                 );
             })
             .await;
+    }
+
+    pub async fn seed_mcp_parent_session_for_test(
+        &self,
+        repo_path: &Path,
+        base_commit: String,
+        provider_id: &str,
+        model_id: &str,
+    ) -> anyhow::Result<Session> {
+        let workspace: Workspace = self
+            .state
+            .global_store()
+            .create_workspace(
+                "test".into(),
+                repo_path.to_string_lossy().to_string(),
+                VcsKind::Git,
+            )
+            .await?;
+        let store = self.state.store_for_workspace(workspace.id).await?;
+        let worktree: Worktree = store
+            .create_worktree(
+                workspace.id,
+                repo_path.to_string_lossy().to_string(),
+                base_commit,
+                None,
+            )
+            .await?;
+        let task: Task = store.create_task(workspace.id, "task".into(), None).await?;
+        let session = store
+            .create_session(
+                task.id,
+                workspace.id,
+                worktree.id,
+                ExecutionEnvironment::Host,
+                provider_id.into(),
+                model_id.into(),
+                "assistant".into(),
+                None,
+                None,
+                None,
+            )
+            .await?;
+        self.state
+            .global_store()
+            .upsert_workspace_session_index(session.id, workspace.id)
+            .await?;
+        self.state
+            .global_store()
+            .upsert_workspace_worktree_index(worktree.id, workspace.id)
+            .await?;
+        self.state
+            .global_store()
+            .upsert_workspace_task_index(task.id, workspace.id)
+            .await?;
+        Ok(session)
+    }
+
+    pub async fn mcp_parent_session_events_for_test(
+        &self,
+        session_id: SessionId,
+    ) -> anyhow::Result<Vec<SessionEvent>> {
+        self.state
+            .store_for_session(session_id)
+            .await?
+            .list_session_events(session_id)
+            .await
+    }
+
+    pub async fn mcp_subagent_sessions_for_test(
+        &self,
+        parent_session_id: SessionId,
+    ) -> anyhow::Result<Vec<SessionSummary>> {
+        self.state
+            .store_for_session(parent_session_id)
+            .await?
+            .list_subagent_sessions(parent_session_id)
+            .await
     }
 
     pub async fn start_install(

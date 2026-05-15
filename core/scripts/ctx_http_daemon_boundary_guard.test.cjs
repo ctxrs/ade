@@ -6,6 +6,7 @@ const {
   API_DOMAIN_RAW_STORE_PATTERNS,
   API_RAW_DAEMON_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
+  MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_TEST_CACHE_ACCESS_PATTERNS,
@@ -13,6 +14,7 @@ const {
   TEST_RAW_DAEMON_BUCKET_PATTERNS,
   apiPatternsForPath,
   isTestRustPath,
+  mcpDaemonPatternsForPath,
   migratedTestPatternsForPath,
   mobileStorePatternsForPath,
   providerCachePatternsForPath,
@@ -479,8 +481,8 @@ test("daemon boundary guard allows only sanctioned router helper bodies", () => 
     {
       filePath: "core/crates/ctx-http-test-support/src/mcp_daemon/router.rs",
       allowed: `
-        pub(crate) fn spawn_router(listener: tokio::net::TcpListener, handle: DaemonHandle) {
-          let app = ctx_http::api::router(ctx_http::api::RouteHandles::from_daemon_handle(handle));
+        pub(crate) fn spawn_router_for_daemon(listener: tokio::net::TcpListener, daemon: &TestDaemon) {
+          let app = ctx_http::api::router(ctx_http::api::RouteHandles::from_daemon_handle(daemon.handle()));
         }
       `,
       denied: `
@@ -690,6 +692,47 @@ test("daemon boundary guard scopes provider cache facade roots", () => {
   }
   assert.deepEqual(
     providerCachePatternsForPath("core/crates/ctx-http/src/api/providers/tests/install_statuses.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects direct MCP daemon test store access", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http-test-support/src/mcp_daemon/fake.rs",
+    contents: `
+      async fn helper(daemon: &TestDaemon, stores: &StoreManager, session_id: SessionId) {
+        daemon.global_store().list_workspaces().await?;
+        daemon.store_for_session(session_id).await?;
+        daemon.store_for_workspace(WorkspaceId::new()).await?;
+        stores.global().list_workspaces().await?;
+        stores.workspace(WorkspaceId::new()).await?;
+      }
+    `,
+    patterns: MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct MCP daemon global store access",
+      "direct MCP daemon session store access",
+      "direct MCP daemon workspace store access",
+      "direct MCP daemon StoreManager global access",
+      "direct MCP daemon StoreManager workspace access",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes MCP daemon test facade roots", () => {
+  for (const filePath of [
+    "core/crates/ctx-http-test-support/src/mcp_daemon.rs",
+    "core/crates/ctx-http-test-support/src/mcp_daemon/fake.rs",
+    "core/crates/ctx-http-test-support/src/mcp_daemon/router.rs",
+  ]) {
+    assert.deepEqual(mcpDaemonPatternsForPath(filePath), MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS);
+  }
+  assert.deepEqual(
+    mcpDaemonPatternsForPath("core/crates/ctx-http-test-support/src/lib.rs"),
     [],
   );
 });

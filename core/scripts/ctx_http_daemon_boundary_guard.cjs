@@ -128,6 +128,11 @@ const providerCacheFacadeTestRoots = [
   "core/crates/ctx-http/src/lib_tests/provider_routes/",
 ];
 
+const mcpDaemonFacadeTestRoots = [
+  "core/crates/ctx-http-test-support/src/mcp_daemon.rs",
+  "core/crates/ctx-http-test-support/src/mcp_daemon/",
+];
+
 const API_RAW_DAEMON_PATTERNS = [
   {
     name: "raw DaemonState type",
@@ -295,6 +300,29 @@ const PROVIDER_TEST_CACHE_ACCESS_PATTERNS = [
   },
 ];
 
+const MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct MCP daemon global store access",
+    regex: /\.global_store\s*\(/,
+  },
+  {
+    name: "direct MCP daemon session store access",
+    regex: /\.store_for_session\s*\(/,
+  },
+  {
+    name: "direct MCP daemon workspace store access",
+    regex: /\.store_for_workspace\s*\(/,
+  },
+  {
+    name: "direct MCP daemon StoreManager global access",
+    regex: /\bstores\.global\s*\(/,
+  },
+  {
+    name: "direct MCP daemon StoreManager workspace access",
+    regex: /\bstores\.workspace\s*\(/,
+  },
+];
+
 function isRustFile(filePath) {
   return filePath.endsWith(".rs");
 }
@@ -444,6 +472,13 @@ function providerCachePatternsForPath(relativePath) {
   return [];
 }
 
+function mcpDaemonPatternsForPath(relativePath) {
+  if (mcpDaemonFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
 function routerCompositionPatternsForPath(relativePath) {
   const isLibTestsRoot = relativePath === "core/crates/ctx-http/src/lib_tests.rs";
   if (
@@ -527,8 +562,8 @@ function isAllowedRouterHelperComposition({ filePath, lines, index, line }) {
   }
   if (
     filePath === "core/crates/ctx-http-test-support/src/mcp_daemon/router.rs"
-    && /ctx_http::api::router\s*\(\s*ctx_http::api::RouteHandles::from_daemon_handle\s*\(\s*handle\s*\)\s*\)/.test(line)
-    && isInsideDeclaredFunction(lines, index, /\bpub\s*\(\s*crate\s*\)\s+fn\s+spawn_router\s*\(/)
+    && /ctx_http::api::router\s*\(\s*ctx_http::api::RouteHandles::from_daemon_handle\s*\(\s*daemon\.handle\s*\(\s*\)\s*,?\s*\)\s*\)/.test(lines.slice(index, index + 4).join(" "))
+    && isInsideDeclaredFunction(lines, index, /\bpub\s*\(\s*crate\s*\)\s+fn\s+spawn_router_for_daemon\s*\(/)
   ) {
     return true;
   }
@@ -655,6 +690,13 @@ function scanRepo() {
       }),
     );
     violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
+        patterns: mcpDaemonPatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
       ...scanRouterComposition({
         filePath: relativePath,
         contents,
@@ -691,12 +733,14 @@ module.exports = {
   API_DOMAIN_RAW_STORE_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
+  MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_TEST_CACHE_ACCESS_PATTERNS,
   TEST_ROUTER_COMPOSITION_PATTERNS,
   TEST_RAW_DAEMON_BUCKET_PATTERNS,
   apiPatternsForPath,
   isTestRustPath,
+  mcpDaemonPatternsForPath,
   migratedTestPatternsForPath,
   mobileStorePatternsForPath,
   providerCachePatternsForPath,

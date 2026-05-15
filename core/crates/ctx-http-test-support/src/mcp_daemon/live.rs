@@ -33,7 +33,7 @@ pub(crate) async fn setup_live_provider_parent_session(
         base_url.clone(),
         None,
     );
-    router::spawn_router(listener, daemon.handle());
+    router::spawn_router_for_daemon(listener, &daemon);
 
     let session = create_live_provider_session(&base_url, repo.path(), provider_id, model_id)
         .await

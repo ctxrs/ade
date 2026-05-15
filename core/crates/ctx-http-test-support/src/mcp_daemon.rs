@@ -50,25 +50,15 @@ impl DaemonBackedParentSession {
     }
 
     pub async fn list_session_events(&self) -> Result<Vec<SessionEvent>> {
-        let store = self
-            .daemon
-            .store_for_session(self.session_id)
-            .await
-            .context("load session store")?;
-        store
-            .list_session_events(self.session_id)
+        self.daemon
+            .mcp_parent_session_events_for_test(self.session_id)
             .await
             .context("list session events")
     }
 
     pub async fn list_subagent_sessions(&self) -> Result<Vec<SessionSummary>> {
-        let store = self
-            .daemon
-            .store_for_session(self.session_id)
-            .await
-            .context("load session store")?;
-        store
-            .list_subagent_sessions(self.session_id)
+        self.daemon
+            .mcp_subagent_sessions_for_test(self.session_id)
             .await
             .context("list subagent sessions")
     }
