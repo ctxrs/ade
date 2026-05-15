@@ -9,8 +9,9 @@ use ctx_core::ids::{
 };
 use ctx_core::models::{
     Message, MessageDelivery, MessageRole, Session, SessionEvent, SessionEventType,
-    SessionHeadDelta, SessionTurn, SessionTurnStatus, Workspace, WorkspaceAttachmentStatus,
-    Worktree, WorktreeAttachmentMount, WorktreeVcsSnapshot,
+    SessionHeadDelta, SessionHeadSnapshot, SessionTurn, SessionTurnStatus, Workspace,
+    WorkspaceActiveTaskSummary, WorkspaceAttachmentStatus, Worktree, WorktreeAttachmentMount,
+    WorktreeVcsSnapshot,
 };
 use ctx_provider_install::install_state::{
     InstallId, InstallInfo, InstallProgressEvent, InstallTarget,
@@ -414,6 +415,146 @@ impl TestDaemon {
             .workspace_active_snapshot
             .remove_session_head(session_id)
             .await;
+    }
+
+    pub async fn cache_rehydration_seed_replay_head_cache_for_test(
+        &self,
+        head: SessionHeadSnapshot,
+    ) {
+        self.state
+            .workspaces
+            .workspace_active_snapshot
+            .update_session_head(head)
+            .await;
+    }
+
+    pub async fn cache_rehydration_seed_compact_head_cache_for_test(
+        &self,
+        head: SessionHeadSnapshot,
+    ) {
+        self.state
+            .workspaces
+            .workspace_active_snapshot
+            .update_compact_session_head(head)
+            .await;
+    }
+
+    pub async fn cache_rehydration_replay_session_head_cached_for_test(
+        &self,
+        session_id: SessionId,
+    ) -> Option<SessionHeadSnapshot> {
+        self.state
+            .workspaces
+            .workspace_active_snapshot
+            .get_session_head(session_id)
+            .await
+    }
+
+    pub async fn cache_rehydration_session_head_for_read_cached_for_test(
+        &self,
+        session_id: SessionId,
+    ) -> Option<SessionHeadSnapshot> {
+        self.state
+            .workspaces
+            .workspace_active_snapshot
+            .get_cached_session_head_for_read(session_id)
+            .await
+    }
+
+    pub async fn cache_rehydration_cleanup_session_for_test(&self, session_id: SessionId) {
+        self.state.cleanup_session(session_id).await;
+    }
+
+    pub async fn cache_rehydration_cleanup_workspace_for_test(&self, workspace_id: WorkspaceId) {
+        self.state.cleanup_workspace(workspace_id).await;
+    }
+
+    pub async fn cache_rehydration_make_workspace_store_unopenable_for_test(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> anyhow::Result<()> {
+        self.state.core.stores.evict_workspace(workspace_id).await;
+        let workspace_store_path = self
+            .data_root()
+            .join("db")
+            .join("workspaces")
+            .join(workspace_id.0.to_string());
+        match tokio::fs::metadata(&workspace_store_path).await {
+            Ok(metadata) if metadata.is_dir() => {
+                tokio::fs::remove_dir_all(&workspace_store_path).await?;
+            }
+            Ok(_) => {
+                tokio::fs::remove_file(&workspace_store_path).await?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        let parent = workspace_store_path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("workspace store path has no parent"))?;
+        tokio::fs::create_dir_all(parent).await?;
+        tokio::fs::write(&workspace_store_path, b"blocked workspace store").await?;
+        Ok(())
+    }
+
+    pub async fn cache_rehydration_begin_workspace_delete_for_test(
+        &self,
+        workspace_id: WorkspaceId,
+    ) {
+        self.state
+            .core
+            .stores
+            .begin_workspace_delete(workspace_id)
+            .await;
+    }
+
+    pub async fn cache_rehydration_finish_workspace_delete_for_test(
+        &self,
+        workspace_id: WorkspaceId,
+    ) {
+        self.state
+            .core
+            .stores
+            .finish_workspace_delete(workspace_id)
+            .await;
+    }
+
+    pub async fn cache_rehydration_hydrate_snapshot_for_test(
+        &self,
+        workspace_id: WorkspaceId,
+        snapshot_rev: i64,
+        archived_rev: i64,
+        tasks: Vec<WorkspaceActiveTaskSummary>,
+        heads: Vec<SessionHeadSnapshot>,
+    ) {
+        self.state
+            .workspaces
+            .workspace_active_snapshot
+            .hydrate_snapshot(workspace_id, snapshot_rev, archived_rev, tasks, heads)
+            .await;
+    }
+
+    pub async fn cache_rehydration_active_task_summary_cached_for_test(
+        &self,
+        workspace_id: WorkspaceId,
+        task_id: TaskId,
+    ) -> Option<WorkspaceActiveTaskSummary> {
+        self.state
+            .workspaces
+            .workspace_active_snapshot
+            .active_task_summary(workspace_id, task_id)
+            .await
+    }
+
+    pub async fn cache_rehydration_workspace_needs_hydration_for_test(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> bool {
+        self.state
+            .workspaces
+            .workspace_active_snapshot
+            .needs_hydration(workspace_id)
+            .await
     }
 
     pub async fn reconcile_turn_terminal_state_for_test(
