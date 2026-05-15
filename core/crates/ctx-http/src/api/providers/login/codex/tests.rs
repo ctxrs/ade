@@ -4,30 +4,25 @@ use ctx_providers::adapters::{
     ProviderAdapter, ProviderHealth, ProviderProcessInfo, ProviderRestartMode, ProviderStatus,
     RunHandle, TurnInput,
 };
-use ctx_store::StoreManager;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 #[tokio::test]
 async fn codex_login_persistence_requires_auth_file() {
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let daemon = TestDaemon::new(
+    let daemon = TestDaemon::new_for_test(
         data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
         "http://127.0.0.1:4399".to_string(),
-        None,
-    );
+    )
+    .await
+    .unwrap();
     let account_id = "acct-missing-auth";
     provider_accounts::ensure_codex_account_dir(daemon.data_root(), account_id)
         .await
         .unwrap();
 
     let err = daemon
-        .handle()
-        .providers()
-        .persist_successful_codex_login(account_id, "Missing Auth".to_string(), None, None)
+        .persist_successful_codex_login_for_test(account_id, "Missing Auth".to_string(), None, None)
         .await
         .unwrap_err();
 
@@ -91,17 +86,17 @@ impl ProviderAdapter for RestartFailingAdapter {
 #[tokio::test]
 async fn codex_login_persistence_rolls_back_when_restart_fails() {
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let daemon = TestDaemon::new(
+    let daemon = TestDaemon::new_with_providers_for_test(
         data_dir.path().to_path_buf(),
-        stores,
         HashMap::from([(
             "codex".to_string(),
             Arc::new(RestartFailingAdapter) as Arc<dyn ProviderAdapter>,
         )]),
         "http://127.0.0.1:4399".to_string(),
         None,
-    );
+    )
+    .await
+    .unwrap();
     let account_id = "acct-restart-fails";
     let account_dir = provider_accounts::ensure_codex_account_dir(daemon.data_root(), account_id)
         .await
@@ -114,9 +109,7 @@ async fn codex_login_persistence_rolls_back_when_restart_fails() {
     .unwrap();
 
     let err = daemon
-        .handle()
-        .providers()
-        .persist_successful_codex_login(
+        .persist_successful_codex_login_for_test(
             account_id,
             "Restart Fails".to_string(),
             Some("restart@example.com".to_string()),
@@ -136,14 +129,12 @@ async fn codex_login_persistence_rolls_back_when_restart_fails() {
 #[tokio::test]
 async fn codex_login_persistence_removes_account_home_auth_after_secret_ingest() {
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let daemon = TestDaemon::new(
+    let daemon = TestDaemon::new_for_test(
         data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
         "http://127.0.0.1:4399".to_string(),
-        None,
-    );
+    )
+    .await
+    .unwrap();
     let account_id = "acct-secret-store";
     let account_dir = provider_accounts::ensure_codex_account_dir(daemon.data_root(), account_id)
         .await
@@ -156,9 +147,7 @@ async fn codex_login_persistence_removes_account_home_auth_after_secret_ingest()
     .unwrap();
 
     daemon
-        .handle()
-        .providers()
-        .persist_successful_codex_login(
+        .persist_successful_codex_login_for_test(
             account_id,
             "Secret Store".to_string(),
             Some("secret@example.com".to_string()),

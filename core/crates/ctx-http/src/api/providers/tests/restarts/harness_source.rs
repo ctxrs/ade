@@ -20,14 +20,12 @@ async fn seed_verify_cache_status(daemon: &TestDaemon, key: &str, status: &str) 
 #[tokio::test]
 async fn select_provider_harness_source_invalidates_only_matching_provider_probe_caches() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let stores = StoreManager::open(temp.path()).await.expect("open stores");
-    let daemon = TestDaemon::new(
+    let daemon = TestDaemon::new_for_test(
         temp.path().to_path_buf(),
-        stores,
-        HashMap::new(),
         "http://127.0.0.1:4310".to_string(),
-        None,
-    );
+    )
+    .await
+    .expect("create daemon");
 
     seed_options_probe_cache(&daemon, "ws-a/host/codex", "codex", false).await;
     seed_options_probe_cache(&daemon, "ws-b/container/claude-crp", "claude-crp", true).await;

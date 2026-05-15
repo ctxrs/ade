@@ -19,6 +19,7 @@ const {
   PROVIDER_TEST_CACHE_ACCESS_PATTERNS,
   SCHEDULER_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
   SESSION_FIXTURE_TEST_STORE_ACCESS_PATTERNS,
+  SMALL_API_UNIT_TEST_STORE_ACCESS_PATTERNS,
   SMALL_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
   STREAM_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
   TASK_LIFECYCLE_TEST_STORE_ACCESS_PATTERNS,
@@ -47,6 +48,7 @@ const {
   scanText,
   schedulerRuntimeStorePatternsForPath,
   sessionFixtureStorePatternsForPath,
+  smallApiUnitStorePatternsForPath,
   smallBoundaryStorePatternsForPath,
   streamRuntimeStorePatternsForPath,
   taskLifecycleStorePatternsForPath,
@@ -968,6 +970,93 @@ test("daemon boundary guard scopes external provider-route store facade roots", 
   assert.deepEqual(
     externalProviderRouteStorePatternsForPath(
       "core/crates/ctx-http/tests/provider_probe_runtime_env.rs",
+    ),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects small API unit direct store setup", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/providers/login/codex/tests.rs",
+    contents: `
+      use ctx_store::{Store, StoreManager};
+      use ctx_store::{
+        Store as RawStore,
+      };
+      async fn helper(daemon: TestDaemon) {
+        let stores = StoreManager::open(data_dir.path()).await?;
+        daemon.stores().global().await?;
+        let _raw = ctx_store::Store::open_sqlite(path, None).await?;
+        Store::open_sqlite(path, None).await?;
+        RawStore::open_sqlite(path, None).await?;
+        daemon.handle().providers().persist_successful_codex_login(account_id, label, None, None).await?;
+        daemon
+          .handle()
+          .providers()
+          .persist_successful_codex_login(account_id, label, None, None)
+          .await?;
+        let Json(resp) = get_install_statuses(
+          State(daemon.handle().providers()),
+          Json(req),
+        ).await?;
+        get_install_statuses(
+          State(other), State(daemon.handle().providers()),
+          Json(req),
+        ).await?;
+        get_install_statuses(foo, State(daemon.handle().providers()), Json(req)).await?;
+        let bypass = State(daemon.handle().providers());
+        let handle = daemon.handle();
+        handle.providers();
+        let Json(resp) = get_install_statuses(
+          State(handle.providers()),
+          Json(req),
+        ).await?;
+        let label = "Secret Store";
+      }
+    `,
+    patterns: SMALL_API_UNIT_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct small API unit StoreManager access",
+      "direct small API unit StoreManager access",
+      "direct small API unit StoreManager access",
+      "raw small API unit ctx_store Store",
+      "raw small API unit ctx_store Store",
+      "raw small API unit ctx_store Store",
+      "raw small API unit ctx_store Store",
+      "direct small API unit provider handle reach-through",
+      "direct small API unit provider handle reach-through",
+      "direct small API unit provider handle reach-through",
+      "direct small API unit provider handle reach-through",
+      "direct small API unit provider handle reach-through",
+      "direct small API unit provider handle reach-through",
+      "direct small API unit provider handle reach-through",
+      "direct small API unit provider handle reach-through",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes small API unit store facade roots", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/src/api/providers/login/codex/tests.rs",
+    "core/crates/ctx-http/src/api/providers/tests/mod.rs",
+    "core/crates/ctx-http/src/api/providers/tests/install_statuses.rs",
+    "core/crates/ctx-http/src/api/providers/tests/restarts/auth_change/fixtures.rs",
+    "core/crates/ctx-http/src/api/providers/tests/restarts/harness_source.rs",
+    "core/crates/ctx-http/src/api/sessions/tests.rs",
+    "core/crates/ctx-http/src/api/workspaces/tests.rs",
+  ]) {
+    assert.deepEqual(
+      smallApiUnitStorePatternsForPath(filePath),
+      SMALL_API_UNIT_TEST_STORE_ACCESS_PATTERNS,
+    );
+  }
+  assert.deepEqual(
+    smallApiUnitStorePatternsForPath(
+      "core/crates/ctx-http/src/api/providers/tests/restarts/auth_change/failures.rs",
     ),
     [],
   );

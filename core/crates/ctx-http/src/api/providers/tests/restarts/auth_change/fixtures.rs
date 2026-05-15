@@ -9,14 +9,14 @@ pub(super) async fn fixture_with_adapter(
     adapter: Arc<dyn ProviderAdapter>,
 ) -> ProviderRestartFixture {
     let temp = tempfile::tempdir().expect("tempdir");
-    let stores = StoreManager::open(temp.path()).await.expect("open stores");
-    let daemon = TestDaemon::new(
+    let daemon = TestDaemon::new_with_providers_for_test(
         temp.path().to_path_buf(),
-        stores,
         HashMap::from([("codex".to_string(), adapter)]),
         "http://127.0.0.1:4310".to_string(),
         None,
-    );
+    )
+    .await
+    .expect("create daemon");
 
     ProviderRestartFixture {
         _temp: temp,

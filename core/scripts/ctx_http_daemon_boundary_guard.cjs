@@ -144,6 +144,16 @@ const externalProviderRouteStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/gemini_live_model_catalog.rs",
 ];
 
+const smallApiUnitStoreFacadeTestRoots = [
+  "core/crates/ctx-http/src/api/providers/login/codex/tests.rs",
+  "core/crates/ctx-http/src/api/providers/tests/mod.rs",
+  "core/crates/ctx-http/src/api/providers/tests/install_statuses.rs",
+  "core/crates/ctx-http/src/api/providers/tests/restarts/auth_change/fixtures.rs",
+  "core/crates/ctx-http/src/api/providers/tests/restarts/harness_source.rs",
+  "core/crates/ctx-http/src/api/sessions/tests.rs",
+  "core/crates/ctx-http/src/api/workspaces/tests.rs",
+];
+
 const mcpDaemonFacadeTestRoots = [
   "core/crates/ctx-http-test-support/src/mcp_daemon.rs",
   "core/crates/ctx-http-test-support/src/mcp_daemon/",
@@ -525,6 +535,24 @@ const EXTERNAL_PROVIDER_ROUTE_TEST_STORE_ACCESS_PATTERNS = [
   {
     name: "raw external provider-route ctx_store Store",
     regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore\b/,
+  },
+];
+
+const SMALL_API_UNIT_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct small API unit StoreManager access",
+    regex: /\.stores\s*\(|\bStoreManager\b/,
+  },
+  {
+    name: "raw small API unit ctx_store Store",
+    regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore::/,
+    contentRegex: /\buse\s+ctx_store::\{(?=[^}]*\n)[\s\S]*?\bStore\b[\s\S]*?\}/gm,
+  },
+  {
+    name: "direct small API unit provider handle reach-through",
+    regex: /a^/,
+    contentRegex: /(?:\b[a-zA-Z_][a-zA-Z0-9_]*\s*\.\s*handle\s*\(\s*\)\s*\.\s*providers\s*\(|\blet\s+[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*[^;]*?\.handle\s*\(\s*\)\s*;|\b[a-zA-Z_][a-zA-Z0-9_]*\s*\.\s*providers\s*\()/gm,
+    allowSmallApiUnitProviderHandlerState: true,
   },
 ];
 
@@ -1362,9 +1390,40 @@ function stripCfgTestItems(contents) {
   return kept.join("\n");
 }
 
+function isAllowedSmallApiUnitProviderHandlerState(lines, lineIndex, matchColumn, matchText) {
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*\s*\.\s*handle\s*\(\s*\)\s*\.\s*providers\s*\(/.test(matchText)) {
+    return false;
+  }
+  const line = lines[lineIndex] ?? "";
+  const prefix = line.slice(0, matchColumn);
+  if (!/^\s*State\s*\(\s*$/.test(prefix)) {
+    return false;
+  }
+  const previous = lines[lineIndex - 1]?.trim() ?? "";
+  return /^(?:let\s+(?:Json\([^)]*\)|err)\s*=\s*)?(?:get_install_statuses|select_provider_harness_source|set_codex_active_account)\s*\($/.test(
+    previous,
+  );
+}
+
 function scanText({ filePath, contents, patterns }) {
   const violations = [];
   const lines = contents.split(/\r?\n/);
+  const lineStartOffsets = [];
+  let offset = 0;
+  for (const line of lines) {
+    lineStartOffsets.push(offset);
+    offset += line.length + 1;
+  }
+  const lineForOffset = (matchOffset) => {
+    let lineIndex = 0;
+    for (let index = 0; index < lineStartOffsets.length; index += 1) {
+      if (lineStartOffsets[index] > matchOffset) {
+        break;
+      }
+      lineIndex = index;
+    }
+    return lineIndex;
+  };
   for (const pattern of patterns) {
     for (let index = 0; index < lines.length; index += 1) {
       if (pattern.regex.test(lines[index])) {
@@ -1378,11 +1437,36 @@ function scanText({ filePath, contents, patterns }) {
     }
     if (pattern.contentRegex) {
       pattern.contentRegex.lastIndex = 0;
+      const allowedRanges = [];
+      if (pattern.allowContentRegex) {
+        pattern.allowContentRegex.lastIndex = 0;
+        for (
+          let allowed = pattern.allowContentRegex.exec(contents);
+          allowed;
+          allowed = pattern.allowContentRegex.exec(contents)
+        ) {
+          allowedRanges.push([allowed.index, allowed.index + allowed[0].length]);
+        }
+      }
       for (let match = pattern.contentRegex.exec(contents); match; match = pattern.contentRegex.exec(contents)) {
-        const line = contents.slice(0, match.index).split(/\r?\n/).length;
+        const lineIndex = lineForOffset(match.index);
+        if (
+          pattern.allowSmallApiUnitProviderHandlerState &&
+          isAllowedSmallApiUnitProviderHandlerState(
+            lines,
+            lineIndex,
+            match.index - lineStartOffsets[lineIndex],
+            match[0],
+          )
+        ) {
+          continue;
+        }
+        if (allowedRanges.some(([start, end]) => match.index >= start && match.index < end)) {
+          continue;
+        }
         violations.push({
           filePath,
-          line,
+          line: lineIndex + 1,
           name: pattern.name,
           text: match[0].trim().replace(/\s+/g, " "),
         });
@@ -1442,6 +1526,13 @@ function authBoundaryStorePatternsForPath(relativePath) {
 function externalProviderRouteStorePatternsForPath(relativePath) {
   if (externalProviderRouteStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return EXTERNAL_PROVIDER_ROUTE_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
+function smallApiUnitStorePatternsForPath(relativePath) {
+  if (smallApiUnitStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return SMALL_API_UNIT_TEST_STORE_ACCESS_PATTERNS;
   }
   return [];
 }
@@ -1786,6 +1877,13 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
+        patterns: smallApiUnitStorePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
         patterns: mcpDaemonPatternsForPath(relativePath),
       }),
     );
@@ -1929,6 +2027,7 @@ module.exports = {
   PROVIDER_TEST_CACHE_ACCESS_PATTERNS,
   SCHEDULER_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
   SESSION_FIXTURE_TEST_STORE_ACCESS_PATTERNS,
+  SMALL_API_UNIT_TEST_STORE_ACCESS_PATTERNS,
   SMALL_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
   STREAM_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
   TASK_LIFECYCLE_TEST_STORE_ACCESS_PATTERNS,
@@ -1957,6 +2056,7 @@ module.exports = {
   scanText,
   schedulerRuntimeStorePatternsForPath,
   sessionFixtureStorePatternsForPath,
+  smallApiUnitStorePatternsForPath,
   smallBoundaryStorePatternsForPath,
   streamRuntimeStorePatternsForPath,
   taskLifecycleStorePatternsForPath,

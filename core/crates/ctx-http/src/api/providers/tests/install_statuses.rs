@@ -3,14 +3,12 @@ use super::*;
 #[tokio::test]
 async fn get_install_statuses_returns_known_and_missing_installs_in_request_order() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let stores = StoreManager::open(temp.path()).await.expect("open stores");
-    let daemon = TestDaemon::new(
+    let daemon = TestDaemon::new_for_test(
         temp.path().to_path_buf(),
-        stores,
-        HashMap::new(),
         "http://127.0.0.1:4310".to_string(),
-        None,
-    );
+    )
+    .await
+    .expect("create daemon");
 
     let (install_id, started_new) = daemon
         .start_install("codex".to_string(), Some(InstallTarget::Container))
@@ -68,14 +66,12 @@ async fn get_install_statuses_returns_known_and_missing_installs_in_request_orde
 #[tokio::test]
 async fn get_install_statuses_rejects_invalid_install_ids() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let stores = StoreManager::open(temp.path()).await.expect("open stores");
-    let daemon = TestDaemon::new(
+    let daemon = TestDaemon::new_for_test(
         temp.path().to_path_buf(),
-        stores,
-        HashMap::new(),
         "http://127.0.0.1:4310".to_string(),
-        None,
-    );
+    )
+    .await
+    .expect("create daemon");
 
     let err = get_install_statuses(
         State(daemon.handle().providers()),

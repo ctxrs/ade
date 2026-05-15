@@ -3301,6 +3301,23 @@ impl TestDaemon {
             .map(|status| status.completion_token)
     }
 
+    pub async fn persist_successful_codex_login_for_test(
+        &self,
+        account_id: &str,
+        label: String,
+        email: Option<String>,
+        plan_type: Option<String>,
+    ) -> anyhow::Result<()> {
+        daemon::providers::persist_successful_codex_login(
+            &self.state,
+            account_id,
+            label,
+            email,
+            plan_type,
+        )
+        .await
+    }
+
     pub fn publish_storage_guard(&self, status: StorageGuardStatus) {
         self.state.test_publish_storage_guard(status);
     }

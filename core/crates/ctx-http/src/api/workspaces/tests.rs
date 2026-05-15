@@ -3,8 +3,6 @@ use axum::body::{to_bytes, Body};
 use axum::http::Request;
 use ctx_core::ids::WorktreeId;
 use ctx_daemon::test_support::TestDaemon;
-use ctx_store::StoreManager;
-use std::collections::HashMap;
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -19,13 +17,12 @@ async fn get_worktree_returns_live_root_for_bound_sandbox_worktree() {
     let temp = tempfile::tempdir().expect("tempdir");
     let workspace_root = temp.path().join("repo");
     std::fs::create_dir_all(&workspace_root).expect("create workspace root");
-    let daemon = TestDaemon::new(
+    let daemon = TestDaemon::new_for_test(
         temp.path().to_path_buf(),
-        StoreManager::open(temp.path()).await.expect("open stores"),
-        HashMap::new(),
         "http://127.0.0.1:4310".to_string(),
-        None,
-    );
+    )
+    .await
+    .expect("create daemon");
     let host_root = temp.path().join("managed-worktree");
     std::fs::create_dir_all(&host_root).expect("create managed worktree");
     let worktree = daemon
@@ -56,13 +53,12 @@ async fn get_worktree_returns_live_root_for_bound_sandbox_worktree() {
 #[tokio::test]
 async fn missing_worktree_routes_return_not_found() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let daemon = TestDaemon::new(
+    let daemon = TestDaemon::new_for_test(
         temp.path().to_path_buf(),
-        StoreManager::open(temp.path()).await.expect("open stores"),
-        HashMap::new(),
         "http://127.0.0.1:4310".to_string(),
-        None,
-    );
+    )
+    .await
+    .expect("create daemon");
     let missing_worktree_id = WorktreeId(Uuid::new_v4()).0.to_string();
     let app = test_router(&daemon);
 
