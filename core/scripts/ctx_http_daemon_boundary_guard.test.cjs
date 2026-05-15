@@ -783,6 +783,9 @@ test("daemon boundary guard scopes session fixture store facade roots", () => {
     "core/crates/ctx-http/src/lib_tests/log_path_boundaries/merge_queue.rs",
     "core/crates/ctx-http/src/lib_tests/session_artifacts.rs",
     "core/crates/ctx-http/src/lib_tests/session_artifacts/download_http/fixture.rs",
+    "core/crates/ctx-http/src/lib_tests/session_head_ctx_ui_sized_http.rs",
+    "core/crates/ctx-http/src/lib_tests/session_head_ctx_ui_sized_http/fixtures.rs",
+    "core/crates/ctx-http/src/lib_tests/session_head_ctx_ui_sized_http/seed/events.rs",
     "core/crates/ctx-http/src/lib_tests/session_head_large_http.rs",
     "core/crates/ctx-http/src/lib_tests/session_head_large_http/seed.rs",
   ]) {

@@ -140,6 +140,8 @@ const sessionFixtureStoreFacadeTestRoots = [
   "core/crates/ctx-http/src/lib_tests/log_path_boundaries/",
   "core/crates/ctx-http/src/lib_tests/session_artifacts.rs",
   "core/crates/ctx-http/src/lib_tests/session_artifacts/",
+  "core/crates/ctx-http/src/lib_tests/session_head_ctx_ui_sized_http.rs",
+  "core/crates/ctx-http/src/lib_tests/session_head_ctx_ui_sized_http/",
   "core/crates/ctx-http/src/lib_tests/session_head_large_http.rs",
   "core/crates/ctx-http/src/lib_tests/session_head_large_http/",
 ];

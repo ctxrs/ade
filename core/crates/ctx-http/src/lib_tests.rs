@@ -17,7 +17,7 @@ use ctx_storage_admission::{StorageGuardLevel, StorageGuardPathStatus, StorageGu
 use ctx_store::StoreManager;
 
 use crate::api;
-use ctx_daemon::test_support::TestDaemon;
+use ctx_daemon::test_support::{CtxUiSizedHeadSeedSpec, TestDaemon};
 
 fn test_daemon(data_dir: &Path, stores: StoreManager, auth_token: Option<String>) -> TestDaemon {
     test_daemon_with_providers(data_dir, stores, HashMap::new(), auth_token)

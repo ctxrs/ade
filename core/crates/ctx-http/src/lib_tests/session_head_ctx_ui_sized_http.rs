@@ -2,10 +2,8 @@ use std::time::{Duration, Instant};
 
 use super::*;
 use fixtures::CtxUiSizedHeadFixture;
-use seed::{latest_turn_id, seed_ctx_ui_sized_session, tail_turn_ids, CtxUiSizedSeed};
 
 mod fixtures;
-mod seed;
 
 #[tokio::test]
 async fn ctx_ui_sized_active_session_head_recovery_is_bounded() {
@@ -23,58 +21,41 @@ async fn ctx_ui_sized_active_session_head_recovery_is_bounded() {
     let fixture = CtxUiSizedHeadFixture::new().await;
     let (workspace, task, session) = fixture.create_default_session().await;
 
-    let store = fixture.daemon.store_for_session(session.id).await.unwrap();
-    seed_ctx_ui_sized_session(
-        &store,
-        session.id,
-        task.id,
-        CtxUiSizedSeed {
-            turn_count: TURN_COUNT,
-            message_count: MESSAGE_COUNT,
-            tool_count: TOOL_COUNT,
-            event_count: EVENT_COUNT,
-            tool_output_bytes: TOOL_OUTPUT_BYTES,
-        },
-    )
-    .await;
-    let event_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM session_events WHERE session_id = ?")
-            .bind(session.id.0.to_string())
-            .fetch_one(store.pool())
-            .await
-            .unwrap();
-    let tool_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM session_turn_tools WHERE session_id = ?")
-            .bind(session.id.0.to_string())
-            .fetch_one(store.pool())
-            .await
-            .unwrap();
-    let message_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM messages WHERE session_id = ?")
-            .bind(session.id.0.to_string())
-            .fetch_one(store.pool())
-            .await
-            .unwrap();
-    assert_eq!(event_count, EVENT_COUNT);
-    assert_eq!(tool_count, TOOL_COUNT);
-    assert_eq!(message_count, MESSAGE_COUNT);
+    let stats = fixture
+        .daemon
+        .seed_ctx_ui_sized_session_head_fixture_for_test(
+            workspace.id,
+            session.id,
+            task.id,
+            CtxUiSizedHeadSeedSpec {
+                turn_count: TURN_COUNT,
+                message_count: MESSAGE_COUNT,
+                tool_count: TOOL_COUNT,
+                event_count: EVENT_COUNT,
+                tool_output_bytes: TOOL_OUTPUT_BYTES,
+            },
+            step_timeout,
+        )
+        .await
+        .unwrap();
+    assert_eq!(stats.event_count, EVENT_COUNT);
+    assert_eq!(stats.tool_count, TOOL_COUNT);
+    assert_eq!(stats.message_count, MESSAGE_COUNT);
 
-    tokio::time::timeout(
-        step_timeout,
-        store.refresh_active_session_head_projection(session.id),
-    )
-    .await
-    .unwrap_or_else(|_| panic!("timed out refreshing active projection for ctx-ui fixture"))
-    .unwrap();
-    tokio::time::timeout(
-        step_timeout,
-        fixture
-            .daemon
-            .ensure_workspace_active_snapshot_hydrated(workspace.id),
-    )
-    .await
-    .unwrap_or_else(|_| panic!("timed out hydrating workspace active snapshot"))
-    .unwrap();
+    let probe = fixture
+        .daemon
+        .ctx_ui_sized_recent_tool_summary_probe_for_test(session.id, HEAD_LIMIT, TOOL_SUMMARY_LIMIT)
+        .await
+        .unwrap();
+    assert_eq!(
+        probe.bounded_tool_count,
+        TOOL_SUMMARY_LIMIT + 1,
+        "tool-summary recovery must fetch exactly one sentinel row past the visible limit"
+    );
+    assert!(
+        probe.oldest_loaded_order_seq >= TOOL_COUNT - (TOOL_SUMMARY_LIMIT as i64 + 1),
+        "tool-summary recovery must seek into the latest hot rows, not load the long tail"
+    );
 
     let started = Instant::now();
     let (head_status, head_body): (StatusCode, serde_json::Value) = tokio::time::timeout(
@@ -96,9 +77,9 @@ async fn ctx_ui_sized_active_session_head_recovery_is_bounded() {
     eprintln!(
         "ctx-ui-sized-head elapsed_ms={} events={} tools={} messages={} response_bytes={}",
         elapsed.as_millis(),
-        event_count,
-        tool_count,
-        message_count,
+        stats.event_count,
+        stats.tool_count,
+        stats.message_count,
         serde_json::to_vec(&head_body).unwrap().len(),
     );
     assert!(
@@ -136,35 +117,16 @@ async fn ctx_ui_sized_active_session_head_recovery_is_bounded() {
             <= HEAD_BYTE_LIMIT as i64,
         "head window bytes must stay within the bounded recovery policy"
     );
-    let latest_turn_id = latest_turn_id(&store, session.id).await;
     let latest_visible_tool_count = head_body["tool_summaries"]
         .as_array()
         .into_iter()
         .flatten()
-        .filter(|tool| tool["turn_id"].as_str() == Some(latest_turn_id.0.to_string().as_str()))
+        .filter(|tool| {
+            tool["turn_id"].as_str() == Some(probe.latest_turn_id.0.to_string().as_str())
+        })
         .count();
     assert!(
         latest_visible_tool_count > 0,
         "head must rebuild missing tool summaries for the latest visible running turn"
-    );
-
-    let tail_turn_ids = tail_turn_ids(&store, session.id, HEAD_LIMIT).await;
-    let bounded_tools = store
-        .list_recent_turn_tool_summaries_for_turns(session.id, &tail_turn_ids, TOOL_SUMMARY_LIMIT)
-        .await
-        .unwrap();
-    assert_eq!(
-        bounded_tools.len(),
-        TOOL_SUMMARY_LIMIT + 1,
-        "tool-summary recovery must fetch exactly one sentinel row past the visible limit"
-    );
-    let oldest_loaded_order_seq = bounded_tools
-        .iter()
-        .map(|tool| tool.order_seq)
-        .min()
-        .unwrap_or(i64::MIN);
-    assert!(
-        oldest_loaded_order_seq >= TOOL_COUNT - (TOOL_SUMMARY_LIMIT as i64 + 1),
-        "tool-summary recovery must seek into the latest hot rows, not load the long tail"
     );
 }
