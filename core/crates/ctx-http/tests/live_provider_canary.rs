@@ -10,7 +10,7 @@ use serde_json::Value;
 use tower::ServiceExt;
 
 use ctx_core::models::SessionEventType;
-use ctx_daemon::daemon::DaemonState;
+use ctx_daemon::test_support::TestDaemon;
 use ctx_managed_installs::{save_agent_server_config, AgentServerCommand, AgentServerConfigFile};
 use ctx_providers::adapters::{ProviderAdapter, ProviderHealth, ProviderStatus};
 use ctx_providers::crp::Tier1CrpAdapter;
@@ -31,8 +31,8 @@ async fn post_message(app: &axum::Router, session_id: uuid::Uuid, content: &str)
     assert_eq!(res.status(), StatusCode::OK);
 }
 
-async fn wait_for_terminal(state: &Arc<DaemonState>, session_id: ctx_core::ids::SessionId) {
-    let store = state.store_for_session(session_id).await.unwrap();
+async fn wait_for_terminal(daemon: &TestDaemon, session_id: ctx_core::ids::SessionId) {
+    let store = daemon.store_for_session(session_id).await.unwrap();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(240);
     loop {
         let events = store.list_session_events(session_id).await.unwrap();
@@ -138,9 +138,9 @@ async fn seed_claude_runtime_config(data_root: &Path, command_abs_path: &str) {
         .expect("write agent server config");
 }
 
-async fn seed_provider_status_ok(state: &Arc<DaemonState>, provider_id: &str) {
-    state
-        .test_upsert_provider_status(
+async fn seed_provider_status_ok(daemon: &TestDaemon, provider_id: &str) {
+    daemon
+        .upsert_provider_status(
             provider_id.to_string(),
             ProviderStatus {
                 provider_id: provider_id.to_string(),
@@ -187,14 +187,14 @@ async fn live_provider_canary_turn_invariants() {
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert(provider_id.clone(), adapter);
 
-    let state = Arc::new(DaemonState::new(
+    let daemon = TestDaemon::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:0".to_string(),
         None,
-    ));
-    let app = ctx_http::api::router(state.clone());
+    );
+    let app = common::router_for_daemon(&daemon);
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (_task, session) =
         common::create_task_with_session(&app, ws.id.0, "t1", &provider_id, &model_id).await;
@@ -206,9 +206,9 @@ async fn live_provider_canary_turn_invariants() {
         &format!("Reply with exactly this token: {expected_token}"),
     )
     .await;
-    wait_for_terminal(&state, session.id).await;
+    wait_for_terminal(&daemon, session.id).await;
 
-    let store = state.store_for_session(session.id).await.unwrap();
+    let store = daemon.store_for_session(session.id).await.unwrap();
     let events = store.list_session_events(session.id).await.unwrap();
 
     let assistant_messages = assistant_messages_from_events(&events);
@@ -241,14 +241,14 @@ async fn live_codex_canary_can_edit_workspace_file() {
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert(provider_id.clone(), Arc::new(Tier1CrpAdapter::codex()));
 
-    let state = Arc::new(DaemonState::new(
+    let daemon = TestDaemon::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:0".to_string(),
         None,
-    ));
-    let app = ctx_http::api::router(state.clone());
+    );
+    let app = common::router_for_daemon(&daemon);
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (_task, session) =
         common::create_task_with_session(&app, ws.id.0, "codex-write", &provider_id, &model_id)
@@ -260,7 +260,7 @@ async fn live_codex_canary_can_edit_workspace_file() {
         "Create or overwrite the workspace file {relative_path}. Write exactly this content and nothing else: {expected_token}. The file must contain exactly those characters with no trailing newline or extra whitespace. If you use a shell command to write the file, use printf rather than echo -n, because echo -n is not portable and may write the literal text -n. After writing the file, reply with exactly this token: {expected_token}"
     );
     post_message(&app, session.id.0, &prompt).await;
-    wait_for_terminal(&state, session.id).await;
+    wait_for_terminal(&daemon, session.id).await;
 
     let actual = tokio::fs::read_to_string(repo.path().join(relative_path))
         .await
@@ -271,7 +271,7 @@ async fn live_codex_canary_can_edit_workspace_file() {
         "live Codex canary wrote unexpected file contents"
     );
 
-    let store = state.store_for_session(session.id).await.unwrap();
+    let store = daemon.store_for_session(session.id).await.unwrap();
     let events = store.list_session_events(session.id).await.unwrap();
     let assistant_messages = assistant_messages_from_events(&events);
     assert!(
@@ -328,16 +328,16 @@ async fn live_claude_endpoint_profile_api_key_round_trip() {
     providers.insert("claude-crp".to_string(), Arc::clone(&claude_adapter));
     providers.insert("claude".to_string(), claude_adapter);
 
-    let state = Arc::new(DaemonState::new(
+    let daemon = TestDaemon::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:0".to_string(),
         None,
-    ));
-    let app = ctx_http::api::router(state.clone());
+    );
+    let app = common::router_for_daemon(&daemon);
     let provider_id = "claude-crp".to_string();
-    seed_provider_status_ok(&state, &provider_id).await;
+    seed_provider_status_ok(&daemon, &provider_id).await;
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let endpoint_name = format!("live-claude-endpoint-{}", uuid::Uuid::new_v4());
@@ -464,9 +464,9 @@ async fn live_claude_endpoint_profile_api_key_round_trip() {
         "Reply with exactly this token: CLAUDE_ENDPOINT_E2E_OK",
     )
     .await;
-    wait_for_terminal(&state, session.id).await;
+    wait_for_terminal(&daemon, session.id).await;
 
-    let store = state.store_for_session(session.id).await.unwrap();
+    let store = daemon.store_for_session(session.id).await.unwrap();
     let events = store.list_session_events(session.id).await.unwrap();
     let assistant_messages: Vec<String> = events
         .iter()
@@ -542,16 +542,16 @@ async fn live_claude_openrouter_opus_v1_base_url_normalization_round_trip() {
     providers.insert("claude-crp".to_string(), Arc::clone(&claude_adapter));
     providers.insert("claude".to_string(), claude_adapter);
 
-    let state = Arc::new(DaemonState::new(
+    let daemon = TestDaemon::new(
         data_dir.path().to_path_buf(),
         stores,
         providers,
         "http://127.0.0.1:0".to_string(),
         None,
-    ));
-    let app = ctx_http::api::router(state.clone());
+    );
+    let app = common::router_for_daemon(&daemon);
     let provider_id = "claude-crp".to_string();
-    seed_provider_status_ok(&state, &provider_id).await;
+    seed_provider_status_ok(&daemon, &provider_id).await;
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let endpoint_name = format!("live-claude-openrouter-{}", uuid::Uuid::new_v4());
@@ -648,7 +648,7 @@ async fn live_claude_openrouter_opus_v1_base_url_normalization_round_trip() {
         "Reply with exactly this token: OPENROUTER_CLAUDE_OPUS_46_OK",
     )
     .await;
-    wait_for_terminal(&state, session.id).await;
+    wait_for_terminal(&daemon, session.id).await;
 
     let (head_status, head_body): (StatusCode, Value) = common::json_request(
         &app,

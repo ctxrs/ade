@@ -73,6 +73,7 @@ const migratedRawDaemonTestRoots = [
   "core/crates/ctx-http/tests/image_attachments_http_e2e.rs",
   "core/crates/ctx-http/tests/install_start_contract.rs",
   "core/crates/ctx-http/tests/jj_merge_queue_basics.rs",
+  "core/crates/ctx-http/tests/live_provider_canary.rs",
   "core/crates/ctx-http/tests/memory_leak_e2e.rs",
   "core/crates/ctx-http/tests/merge_queue_isolation.rs",
   "core/crates/ctx-http/tests/message_idempotency.rs",
