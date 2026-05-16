@@ -23,6 +23,7 @@ const {
   LIVE_PROVIDER_CANARY_TEST_STORE_ACCESS_PATTERNS,
   MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS,
   CURSOR_PROCESS_LOGIN_API_ORCHESTRATION_PATTERNS,
+  CODEX_APP_SERVER_LOGIN_API_ORCHESTRATION_PATTERNS,
   MERGE_QUEUE_ISOLATION_TEST_STORE_ACCESS_PATTERNS,
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
@@ -2857,6 +2858,105 @@ test("daemon boundary guard scopes Cursor process login orchestration patterns",
   assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/providers/login/codex.rs").includes(
       CURSOR_PROCESS_LOGIN_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    false,
+  );
+});
+
+test("daemon boundary guard rejects Codex app-server login orchestration in HTTP", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/providers/login/codex.rs",
+    contents: `
+      mod app_server;
+      mod completion;
+      mod process;
+
+      async fn handler(providers: ProvidersHandle) {
+        tokio::spawn(async move {});
+        let mut cmd = tokio::process::Command::new("codex");
+        cmd.stdin(Stdio::null());
+        let _ = CODEX_APP_SERVER_ARGS;
+        let _ = CODEX_LOGIN_RPC_TIMEOUT;
+        for key in DAEMON_AUTH_ENV_VARS {}
+        send_codex_jsonrpc(&mut stdin, &request).await?;
+        wait_for_codex_response(&mut reader, 1, timeout).await?;
+        spawn_codex_app_server(dir, bin)?;
+        start_codex_login_process(dir, bin).await?;
+        monitor_codex_login(providers.clone(), account_id, label, login).await;
+        wait_for_codex_login_completion(&mut reader, login_id).await?;
+        fetch_codex_account_details(&mut stdin, &mut reader).await?;
+        providers.prepare_codex_login_start(label).await?;
+        providers.start_codex_login_session(account_id, auth_url, expected).await;
+        providers.claim_codex_login_callback(account_id, token).await?;
+        providers.restore_codex_login_completion_token(account_id, token).await;
+        providers.finish_codex_login_session(account_id, true, None).await;
+        providers.persist_successful_codex_login(account_id, label, None, None).await?;
+        let _ = reqwest::Client::builder();
+        callback_replay_client(callback_url)?;
+        replay_codex_callback(callback_url).await?;
+        let _err = CallbackReplayError::Request("boom".into());
+        remove_dir_all(account_dir).await?;
+      }
+    `,
+    patterns: CODEX_APP_SERVER_LOGIN_API_ORCHESTRATION_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "Codex app-server login API owns monitor task spawning",
+      "Codex app-server login API declares app-server modules",
+      "Codex app-server login API declares app-server modules",
+      "Codex app-server login API declares app-server modules",
+      "Codex app-server login API owns process spawning",
+      "Codex app-server login API owns process spawning",
+      "Codex app-server login API owns app-server runtime policy",
+      "Codex app-server login API owns app-server runtime policy",
+      "Codex app-server login API owns app-server runtime policy",
+      "Codex app-server login API owns app-server JSON-RPC",
+      "Codex app-server login API owns app-server JSON-RPC",
+      "Codex app-server login API owns app-server JSON-RPC",
+      "Codex app-server login API owns app-server JSON-RPC",
+      "Codex app-server login API owns app-server JSON-RPC",
+      "Codex app-server login API owns app-server JSON-RPC",
+      "Codex app-server login API owns app-server JSON-RPC",
+      "Codex app-server login API mutates login sessions directly",
+      "Codex app-server login API mutates login sessions directly",
+      "Codex app-server login API mutates login sessions directly",
+      "Codex app-server login API mutates login sessions directly",
+      "Codex app-server login API mutates login sessions directly",
+      "Codex app-server login API finalizes Codex accounts directly",
+      "Codex app-server login API owns callback replay",
+      "Codex app-server login API owns callback replay",
+      "Codex app-server login API owns callback replay",
+      "Codex app-server login API owns callback replay",
+      "Codex app-server login API owns login cleanup",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes Codex app-server login orchestration patterns", () => {
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers/login.rs").includes(
+      CODEX_APP_SERVER_LOGIN_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers/login/codex.rs").includes(
+      CODEX_APP_SERVER_LOGIN_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/providers/login/codex/app_server.rs",
+    ).includes(CODEX_APP_SERVER_LOGIN_API_ORCHESTRATION_PATTERNS[0]),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers/cursor_login.rs").includes(
+      CODEX_APP_SERVER_LOGIN_API_ORCHESTRATION_PATTERNS[0],
     ),
     false,
   );

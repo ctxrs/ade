@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Context};
 use tokio::io::{AsyncWriteExt, BufReader};
 
-pub(in crate::api::providers::login::codex) async fn send_codex_jsonrpc(
+pub(in crate::daemon::providers::codex_app_login) async fn send_codex_jsonrpc(
     stdin: &mut tokio::process::ChildStdin,
     value: &serde_json::Value,
 ) -> anyhow::Result<()> {
@@ -14,7 +14,7 @@ pub(in crate::api::providers::login::codex) async fn send_codex_jsonrpc(
     Ok(())
 }
 
-pub(in crate::api::providers::login::codex) async fn wait_for_codex_response(
+pub(in crate::daemon::providers::codex_app_login) async fn wait_for_codex_response(
     reader: &mut tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
     request_id: i64,
     timeout: Duration,

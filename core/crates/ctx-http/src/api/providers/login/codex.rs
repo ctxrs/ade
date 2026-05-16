@@ -1,12 +1,5 @@
 use super::*;
 
-mod app_server;
-mod completion;
-mod process;
-
-pub(crate) use completion::complete_codex_login;
-use process::{monitor_codex_login, start_codex_login_process};
-
 #[derive(Debug, Deserialize)]
 pub(crate) struct CodexLoginStartReq {
     label: Option<String>,
@@ -39,46 +32,17 @@ pub(crate) async fn start_codex_login(
     Json(req): Json<CodexLoginStartReq>,
 ) -> Result<Json<CodexLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let ctx_daemon::daemon::providers::PreparedCodexLoginStart {
-        account_id,
-        label,
-        account_dir,
-        codex_bin,
-    } = providers
-        .prepare_codex_login_start(req.label)
+    let started_login = providers
+        .start_codex_app_server_login(req.label)
         .await
-        .map_err(|e| {
+        .map_err(|err| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ApiErrorResp {
-                    error: e.to_string(),
+                    error: err.route_safe_message().to_string(),
                 }),
             )
         })?;
-    let login = match start_codex_login_process(&account_dir, &codex_bin).await {
-        Ok(login) => login,
-        Err(e) => {
-            let _ = tokio::fs::remove_dir_all(&account_dir).await;
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: e.to_string(),
-                }),
-            ));
-        }
-    };
-    let started_login = providers
-        .start_codex_login_session(
-            account_id,
-            login.auth_url.clone(),
-            expected_callback_from_auth_url(&login.auth_url),
-        )
-        .await;
-    let providers_clone = providers.clone();
-    let account_id_for_task = started_login.account_id.clone();
-    tokio::spawn(async move {
-        monitor_codex_login(providers_clone, account_id_for_task, label, login).await;
-    });
 
     Ok(Json(CodexLoginStartResp {
         account_id: started_login.account_id,
@@ -103,6 +67,44 @@ pub(crate) async fn get_codex_login(
         )
     })?;
     Ok(Json(status))
+}
+
+pub(crate) async fn complete_codex_login(
+    State(providers): State<ProvidersHandle>,
+    Path(id): Path<String>,
+    mobile_auth: Option<Extension<MobileAuthContext>>,
+    Json(req): Json<CodexLoginCompleteReq>,
+) -> Result<Json<CodexLoginCompleteResp>, (StatusCode, Json<ApiErrorResp>)> {
+    reject_mobile_auth(mobile_auth)?;
+    let response = providers
+        .complete_codex_app_server_login(&id, req.callback_url, &req.completion_token)
+        .await
+        .map_err(codex_login_complete_error)?;
+    Ok(Json(CodexLoginCompleteResp {
+        accepted: response.accepted,
+        status_code: response.status_code,
+    }))
+}
+
+fn codex_login_complete_error(
+    err: ctx_daemon::daemon::providers::CodexLoginCompleteError,
+) -> (StatusCode, Json<ApiErrorResp>) {
+    use ctx_daemon::daemon::providers::CodexLoginCompleteErrorKind;
+
+    let status = match err.kind() {
+        CodexLoginCompleteErrorKind::BadRequest => StatusCode::BAD_REQUEST,
+        CodexLoginCompleteErrorKind::NotFound => StatusCode::NOT_FOUND,
+        CodexLoginCompleteErrorKind::Conflict => StatusCode::CONFLICT,
+        CodexLoginCompleteErrorKind::Unauthorized => StatusCode::UNAUTHORIZED,
+        CodexLoginCompleteErrorKind::BadGateway => StatusCode::BAD_GATEWAY,
+        CodexLoginCompleteErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    (
+        status,
+        Json(ApiErrorResp {
+            error: err.route_safe_message().to_string(),
+        }),
+    )
 }
 
 #[cfg(test)]

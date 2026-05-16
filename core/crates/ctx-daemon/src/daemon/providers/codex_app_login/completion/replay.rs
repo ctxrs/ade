@@ -1,34 +1,43 @@
 use std::time::Duration;
 
-use axum::http::StatusCode;
 use url::Url;
 
-pub(super) enum CallbackReplayError {
+use super::super::{CodexLoginCompleteError, CodexLoginCompleteErrorKind};
+
+pub(in crate::daemon::providers::codex_app_login) enum CallbackReplayError {
     InvalidCallbackUrl(String),
     BuildClient(String),
     Request(String),
-    NonSuccess(StatusCode),
+    NonSuccess(reqwest::StatusCode),
 }
 
 impl CallbackReplayError {
-    pub(super) fn status_code(&self) -> StatusCode {
-        match self {
-            Self::InvalidCallbackUrl(_) => StatusCode::BAD_REQUEST,
-            Self::BuildClient(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            Self::Request(_) | Self::NonSuccess(_) => StatusCode::BAD_GATEWAY,
-        }
-    }
-
-    pub(super) fn should_restore_completion_token(&self) -> bool {
+    pub(in crate::daemon::providers::codex_app_login) fn should_restore_completion_token(
+        &self,
+    ) -> bool {
         matches!(self, Self::Request(_) | Self::NonSuccess(_))
     }
 
-    pub(super) fn into_message(self) -> String {
+    pub(in crate::daemon::providers::codex_app_login) fn into_route_error(
+        self,
+    ) -> CodexLoginCompleteError {
         match self {
-            Self::InvalidCallbackUrl(err) => format!("invalid callback_url: {err}"),
-            Self::BuildClient(err) => format!("failed to build callback replay client: {err}"),
-            Self::Request(err) => format!("failed to replay callback: {err}"),
-            Self::NonSuccess(status) => format!("callback replay returned {status}"),
+            Self::InvalidCallbackUrl(err) => CodexLoginCompleteError::new(
+                CodexLoginCompleteErrorKind::BadRequest,
+                format!("invalid callback_url: {err}"),
+            ),
+            Self::BuildClient(err) => CodexLoginCompleteError::new(
+                CodexLoginCompleteErrorKind::Internal,
+                format!("failed to build callback replay client: {err}"),
+            ),
+            Self::Request(err) => CodexLoginCompleteError::new(
+                CodexLoginCompleteErrorKind::BadGateway,
+                format!("failed to replay callback: {err}"),
+            ),
+            Self::NonSuccess(status) => CodexLoginCompleteError::new(
+                CodexLoginCompleteErrorKind::BadGateway,
+                format!("callback replay returned {status}"),
+            ),
         }
     }
 }
@@ -54,7 +63,9 @@ fn callback_replay_client(callback_url: &str) -> Result<reqwest::Client, Callbac
         .map_err(|err| CallbackReplayError::BuildClient(err.to_string()))
 }
 
-pub(super) async fn replay_codex_callback(callback_url: &str) -> Result<u16, CallbackReplayError> {
+pub(in crate::daemon::providers::codex_app_login) async fn replay_codex_callback(
+    callback_url: &str,
+) -> Result<u16, CallbackReplayError> {
     let client = callback_replay_client(callback_url)?;
     let response = client
         .get(callback_url)

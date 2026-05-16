@@ -19,6 +19,7 @@ mod auth_check;
 mod auth_import;
 mod bootstrap;
 mod browser_logins;
+mod codex_app_login;
 mod cursor_process_login;
 mod diagnostics;
 mod harness_config;
@@ -76,6 +77,10 @@ pub use bootstrap::{
 pub use browser_logins::{
     start_amp_browser_login, start_gemini_browser_login, start_mistral_browser_login,
     start_qwen_browser_login,
+};
+pub use codex_app_login::{
+    complete_codex_app_server_login, start_codex_app_server_login, CodexLoginCompleteError,
+    CodexLoginCompleteErrorKind, CodexLoginCompleteResponse, CodexLoginStartError,
 };
 pub use cursor_process_login::{
     start_cursor_process_login, CursorProcessLoginStartError, CursorProcessLoginStartErrorKind,
@@ -974,20 +979,11 @@ impl ProvidersHandle {
         kimi_login_status(&self.state, login_id).await
     }
 
-    pub async fn prepare_codex_login_start(
+    pub async fn start_codex_app_server_login(
         &self,
         label: Option<String>,
-    ) -> anyhow::Result<PreparedCodexLoginStart> {
-        prepare_codex_login_start(&self.state, label).await
-    }
-
-    pub async fn start_codex_login_session(
-        &self,
-        account_id: String,
-        auth_url: String,
-        expected_callback_url: Option<String>,
-    ) -> StartedCodexLoginSession {
-        start_codex_login_session(&self.state, account_id, auth_url, expected_callback_url).await
+    ) -> Result<StartedCodexLoginSession, CodexLoginStartError> {
+        start_codex_app_server_login(&self.state, label).await
     }
 
     pub async fn codex_login_status(
@@ -997,39 +993,19 @@ impl ProvidersHandle {
         codex_login_status(&self.state, account_id).await
     }
 
-    pub async fn claim_codex_login_callback(
+    pub async fn complete_codex_app_server_login(
         &self,
         account_id: &str,
+        callback_url: String,
         completion_token: &str,
-    ) -> Result<String, CodexLoginCallbackClaimError> {
-        claim_codex_login_callback(&self.state, account_id, completion_token).await
-    }
-
-    pub async fn restore_codex_login_completion_token(
-        &self,
-        account_id: &str,
-        completion_token: &str,
-    ) {
-        restore_codex_login_completion_token(&self.state, account_id, completion_token).await;
-    }
-
-    pub async fn persist_successful_codex_login(
-        &self,
-        account_id: &str,
-        label: String,
-        email: Option<String>,
-        plan_type: Option<String>,
-    ) -> anyhow::Result<()> {
-        persist_successful_codex_login(&self.state, account_id, label, email, plan_type).await
-    }
-
-    pub async fn finish_codex_login_session(
-        &self,
-        account_id: &str,
-        success: bool,
-        error: Option<String>,
-    ) {
-        finish_codex_login_session(&self.state, account_id, success, error).await;
+    ) -> Result<CodexLoginCompleteResponse, CodexLoginCompleteError> {
+        complete_codex_app_server_login(
+            &self.state,
+            account_id,
+            callback_url,
+            completion_token.to_string(),
+        )
+        .await
     }
 
     pub async fn start_claude_login_session(

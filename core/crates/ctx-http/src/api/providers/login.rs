@@ -1,9 +1,6 @@
 use super::*;
 use crate::api::MobileAuthContext;
 use axum::Extension;
-use ctx_core::provider_policy::CODEX_APP_SERVER_ARGS;
-use std::path::PathBuf;
-use tokio::io::{AsyncBufReadExt, BufReader};
 
 mod auth_url;
 mod browser;
@@ -21,9 +18,9 @@ pub(crate) use browser::{
     get_amp_login, get_gemini_login, get_qwen_login, start_amp_login, start_gemini_login,
     start_qwen_login,
 };
-pub(super) use callback::{
-    expected_callback_from_auth_url, is_loopback_host, validate_callback_url,
-};
+pub(super) use callback::is_loopback_host;
+#[cfg(test)]
+pub(super) use callback::{expected_callback_from_auth_url, validate_callback_url};
 #[cfg(test)]
 pub(super) use claude::resolve_claude_login_runtime_from_config;
 pub(crate) use claude::{get_claude_login, start_claude_login};
@@ -31,7 +28,6 @@ pub(crate) use codex::{complete_codex_login, get_codex_login, start_codex_login}
 pub(crate) use kimi::{get_kimi_login, start_kimi_login};
 pub(crate) use mistral::{get_mistral_login, start_mistral_login};
 
-const CODEX_LOGIN_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 const CLAUDE_LOGIN_URL_WAIT: Duration = Duration::from_secs(20);
 
 pub(super) fn reject_mobile_auth(

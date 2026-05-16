@@ -195,6 +195,12 @@ const cursorProcessLoginApiRoots = [
   "core/crates/ctx-http/src/api/providers/cursor_login/",
 ];
 
+const codexAppServerLoginApiRoots = [
+  "core/crates/ctx-http/src/api/providers/login.rs",
+  "core/crates/ctx-http/src/api/providers/login/codex.rs",
+  "core/crates/ctx-http/src/api/providers/login/codex/",
+];
+
 const taskSessionCreationApiRoots = [
   "core/crates/ctx-http/src/api/tasks/creation_session.rs",
   "core/crates/ctx-http/src/api/tasks/creation_session/",
@@ -1155,6 +1161,48 @@ const CURSOR_PROCESS_LOGIN_API_ORCHESTRATION_PATTERNS = [
   {
     name: "Cursor process login API declares process monitor module",
     regex: /(?:#\s*\[\s*path\s*=\s*"[^"]*session\.rs"\s*\]\s*)?mod\s+session\s*;/,
+  },
+];
+
+const CODEX_APP_SERVER_LOGIN_API_ORCHESTRATION_PATTERNS = [
+  {
+    name: "Codex app-server login API owns monitor task spawning",
+    regex: /\btokio::spawn\s*\(/,
+  },
+  {
+    name: "Codex app-server login API declares app-server modules",
+    regex: /(?:#\s*\[\s*path\s*=\s*"[^"]*"\s*\]\s*)?mod\s+(?:app_server|completion|process)\s*;/,
+  },
+  {
+    name: "Codex app-server login API owns process spawning",
+    regex: /\b(?:tokio::process::Command|std::process::Command|Command::new|Stdio::)\b/,
+  },
+  {
+    name: "Codex app-server login API owns app-server runtime policy",
+    regex: /\b(?:CODEX_APP_SERVER_ARGS|CODEX_LOGIN_RPC_TIMEOUT|DAEMON_AUTH_ENV_VARS)\b/,
+  },
+  {
+    name: "Codex app-server login API owns app-server JSON-RPC",
+    regex:
+      /\b(?:send_codex_jsonrpc|wait_for_codex_response|spawn_codex_app_server|start_codex_login_process|monitor_codex_login|wait_for_codex_login_completion|fetch_codex_account_details)\b/,
+  },
+  {
+    name: "Codex app-server login API mutates login sessions directly",
+    regex:
+      /\b(?:prepare_codex_login_start|start_codex_login_session|claim_codex_login_callback|restore_codex_login_completion_token|finish_codex_login_session)\s*\(/,
+  },
+  {
+    name: "Codex app-server login API finalizes Codex accounts directly",
+    regex: /\bpersist_successful_codex_login\s*\(/,
+  },
+  {
+    name: "Codex app-server login API owns callback replay",
+    regex:
+      /\b(?:reqwest::Client::builder|callback_replay_client|replay_codex_callback|CallbackReplayError)\b/,
+  },
+  {
+    name: "Codex app-server login API owns login cleanup",
+    regex: /\bremove_dir_all\s*\(/,
   },
 ];
 
@@ -3335,6 +3383,9 @@ function apiPatternsForPath(relativePath) {
   if (cursorProcessLoginApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...CURSOR_PROCESS_LOGIN_API_ORCHESTRATION_PATTERNS);
   }
+  if (codexAppServerLoginApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...CODEX_APP_SERVER_LOGIN_API_ORCHESTRATION_PATTERNS);
+  }
   if (taskSessionCreationApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...TASK_SESSION_CREATION_API_ADMISSION_PATTERNS);
   }
@@ -4316,6 +4367,7 @@ module.exports = {
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
   MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS,
   CURSOR_PROCESS_LOGIN_API_ORCHESTRATION_PATTERNS,
+  CODEX_APP_SERVER_LOGIN_API_ORCHESTRATION_PATTERNS,
   PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS,
   PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS,
   SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS,

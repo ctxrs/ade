@@ -1,3 +1,4 @@
+#[cfg(test)]
 use super::*;
 
 pub(in crate::api::providers) fn is_loopback_host(value: &str) -> bool {
@@ -11,10 +12,12 @@ pub(in crate::api::providers) fn is_loopback_host(value: &str) -> bool {
     false
 }
 
+#[cfg(test)]
 fn normalized_host(value: &str) -> String {
     value.trim().to_ascii_lowercase()
 }
 
+#[cfg(test)]
 pub(in crate::api::providers) fn expected_callback_from_auth_url(auth_url: &str) -> Option<String> {
     let parsed = Url::parse(auth_url).ok()?;
     let redirect = parsed
@@ -28,6 +31,7 @@ pub(in crate::api::providers) fn expected_callback_from_auth_url(auth_url: &str)
     Some(callback.to_string())
 }
 
+#[cfg(test)]
 pub(in crate::api::providers) fn validate_callback_url(
     callback_url: &str,
     expected_callback_url: Option<&str>,

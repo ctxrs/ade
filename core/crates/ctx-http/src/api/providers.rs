@@ -1,16 +1,15 @@
 #[cfg(test)]
 use std::collections::HashMap;
-use std::process::Stdio;
 #[cfg(test)]
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+#[cfg(test)]
 use anyhow::Context;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
-use tokio::process::Command;
 use tokio::sync::mpsc;
 use url::Url;
 
