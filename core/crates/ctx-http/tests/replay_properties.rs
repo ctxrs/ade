@@ -80,10 +80,9 @@ struct ProjectionFixtureFile {
 fn projection_fixtures() -> &'static ProjectionFixtureFile {
     static FIXTURES: OnceLock<ProjectionFixtureFile> = OnceLock::new();
     FIXTURES.get_or_init(|| {
-        serde_json::from_str(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../apps/web/src/testdata/projectionEquivalence.fixtures.json"
-        )))
+        serde_json::from_str(include_str!(
+            "../../../apps/web/src/testdata/projectionEquivalence.fixtures.json"
+        ))
         .expect("projection equivalence fixture JSON should parse")
     })
 }

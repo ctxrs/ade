@@ -24,7 +24,9 @@ CTX_HTTP_RUNTIME_COMPILE_DATA = [
     "//core/packages:web-session-worker/package.json",
 ]
 
-CTX_HTTP_COMPILE_DATA = CTX_HTTP_RUNTIME_COMPILE_DATA
+CTX_HTTP_COMPILE_DATA = CTX_HTTP_RUNTIME_COMPILE_DATA + [
+    "//core/apps/web:src/testdata/projectionEquivalence.fixtures.json",
+]
 
 CTX_HTTP_TEST_COMMON_SRCS = glob(["tests/common/**/*.rs"])
 CTX_HTTP_TEST_CORPUS_DATA = glob(["tests/corpus/**"])
