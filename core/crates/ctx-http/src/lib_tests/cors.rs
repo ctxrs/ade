@@ -6,8 +6,9 @@ async fn cors_preflight_allows_archived_endpoint_for_tauri_origin() {
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
     let data_dir = tempfile::tempdir().unwrap();
-    let state = test_daemon_for_test(data_dir.path(), Some("desktop-token".to_string())).await;
-    let app = test_router(&state);
+    let fixture =
+        test_daemon_fixture_for_test(data_dir.path(), Some("desktop-token".to_string())).await;
+    let app = fixture.router();
     let req = Request::builder()
         .method(Method::OPTIONS)
         .uri("/api/workspaces/00000000-0000-0000-0000-000000000000/archived_task_summaries")
@@ -48,8 +49,9 @@ async fn cors_preflight_allows_health_endpoint_for_tauri_localhost_origin() {
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
     let data_dir = tempfile::tempdir().unwrap();
-    let state = test_daemon_for_test(data_dir.path(), Some("desktop-token".to_string())).await;
-    let app = test_router(&state);
+    let fixture =
+        test_daemon_fixture_for_test(data_dir.path(), Some("desktop-token".to_string())).await;
+    let app = fixture.router();
     let req = Request::builder()
         .method(Method::OPTIONS)
         .uri("/api/health")

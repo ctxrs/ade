@@ -8,8 +8,9 @@ async fn post_message_route_rejects_queueing_when_feature_flag_is_disabled() {
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
     let data_dir = tempfile::tempdir().unwrap();
-    let (daemon, app, session) =
+    let (fixture, app, session) =
         build_fake_app_with_session(data_dir.path(), &git_repo.path().to_string_lossy()).await;
+    let daemon = fixture.daemon();
 
     daemon.set_session_running(session.id, true).await;
     let (status, body) = post_session_message_json(
@@ -54,8 +55,9 @@ async fn post_message_route_allows_queueing_when_feature_flag_is_enabled() {
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
     let data_dir = tempfile::tempdir().unwrap();
-    let (daemon, app, session) =
+    let (fixture, app, session) =
         build_fake_app_with_session(data_dir.path(), &git_repo.path().to_string_lossy()).await;
+    let daemon = fixture.daemon();
 
     daemon.set_session_running(session.id, true).await;
     let (status, body) = post_session_message_json(

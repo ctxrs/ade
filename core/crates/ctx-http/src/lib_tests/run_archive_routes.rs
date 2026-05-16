@@ -7,8 +7,9 @@ async fn run_archive_routes_build_and_acknowledge_org_visible_batch() {
     let git_repo = setup_git_repo().await;
     let data_dir = tempfile::tempdir().unwrap();
 
-    let state = test_daemon_for_test(data_dir.path(), None).await;
-    let app = test_router(&state);
+    let fixture = test_daemon_fixture_for_test(data_dir.path(), None).await;
+    let state = fixture.daemon();
+    let app = fixture.router();
 
     let workspace = create_workspace_via_api(&app, &git_repo.path().to_string_lossy()).await;
     let fixture = state

@@ -67,11 +67,15 @@ async fn create_fake_session_via_api(
 async fn build_fake_app_with_session(
     data_dir: &Path,
     git_repo_path: &str,
-) -> (TestDaemon, axum::Router, ctx_core::models::Session) {
-    let daemon = test_daemon_with_fake_provider_for_test(data_dir, None).await;
-    let app = test_router(&daemon);
+) -> (
+    DataRootTestDaemonFixture,
+    axum::Router,
+    ctx_core::models::Session,
+) {
+    let fixture = test_daemon_fixture_with_fake_provider_for_test(data_dir, None).await;
+    let app = fixture.router();
     let session = create_fake_session_via_api(&app, git_repo_path).await;
-    (daemon, app, session)
+    (fixture, app, session)
 }
 
 async fn post_session_message_json(

@@ -8,8 +8,9 @@ async fn mobile_secure_workspace_stream_returns_unauthorized_before_upgrade_for_
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
     let data_dir = tempfile::tempdir().unwrap();
-    let daemon = test_daemon_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
-    let app = test_router(&daemon);
+    let fixture =
+        test_daemon_fixture_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
+    let app = fixture.router();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
@@ -78,8 +79,8 @@ async fn mobile_secure_workspace_stream_returns_unauthorized_before_upgrade_with
 
     let git_repo = setup_git_repo().await;
     let data_dir = tempfile::tempdir().unwrap();
-    let daemon = test_daemon_for_test(data_dir.path(), None).await;
-    let app = test_router(&daemon);
+    let fixture = test_daemon_fixture_for_test(data_dir.path(), None).await;
+    let app = fixture.router();
     let workspace = create_workspace_via_api(&app, &git_repo.path().to_string_lossy()).await;
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

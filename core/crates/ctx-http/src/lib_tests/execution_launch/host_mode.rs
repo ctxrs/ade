@@ -8,8 +8,8 @@ async fn execution_launch_start_and_status_host_mode() {
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
     let data_dir = tempfile::tempdir().unwrap();
-    let state = test_daemon_with_fake_provider_for_test(data_dir.path(), None).await;
-    let app = test_router(&state);
+    let fixture = test_daemon_fixture_with_fake_provider_for_test(data_dir.path(), None).await;
+    let app = fixture.router();
 
     let req = Request::builder()
         .method("POST")

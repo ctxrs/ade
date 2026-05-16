@@ -7,7 +7,7 @@ async fn session_artifacts_do_not_accept_other_session_spool_files() {
         create_subagent_session_via_api(&fixture.app, &fixture.task, fixture.session.id).await;
 
     let other_spool_dir = fixture
-        .daemon
+        .daemon()
         .tool_output_spool_dir()
         .join(other_session.id.0.to_string())
         .join(uuid::Uuid::new_v4().to_string());
@@ -16,7 +16,7 @@ async fn session_artifacts_do_not_accept_other_session_spool_files() {
     std::fs::write(&other_spool_path, b"other-session-spool\n").unwrap();
 
     let legacy = fixture
-        .daemon
+        .daemon()
         .seed_legacy_session_artifact_by_path_for_test(
             &fixture.session,
             &other_spool_path,

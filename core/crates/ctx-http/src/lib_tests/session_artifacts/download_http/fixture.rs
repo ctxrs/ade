@@ -16,7 +16,7 @@ impl DownloadHttpFixture {
             create_subagent_session_via_api(&base.app, &base.task, base.session.id).await;
 
         let worktree_root = base
-            .daemon
+            .daemon()
             .session_worktree_root_path_for_test(&base.session)
             .await
             .unwrap();

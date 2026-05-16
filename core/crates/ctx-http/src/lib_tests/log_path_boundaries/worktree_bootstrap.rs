@@ -12,7 +12,7 @@ async fn worktree_bootstrap_logs_return_in_root_log_file() {
     std::fs::write(&log_path, b"inside bootstrap log\n").unwrap();
 
     let worktree_id = fixture
-        .daemon
+        .daemon()
         .record_worktree_bootstrap_log_for_test(
             &session,
             WorktreeBootstrapStatus::Success,
@@ -39,7 +39,7 @@ async fn worktree_bootstrap_logs_fail_closed_for_legacy_outside_paths() {
     std::fs::write(&outside_path, b"outside bootstrap log\n").unwrap();
 
     let worktree_id = fixture
-        .daemon
+        .daemon()
         .record_worktree_bootstrap_log_for_test(
             &session,
             WorktreeBootstrapStatus::Failed,

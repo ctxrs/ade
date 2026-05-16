@@ -70,7 +70,7 @@ async fn mobile_secure_proxy_migrates_legacy_empty_scope_profiles() {
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
-    let (app, daemon, device_id, key, _data_dir) =
+    let (app, fixture, device_id, key, _data_dir) =
         build_mobile_secure_proxy_app_with_scopes(true, &[]).await;
     let res = post_mobile_secure_request(
         &app,
@@ -89,13 +89,15 @@ async fn mobile_secure_proxy_migrates_legacy_empty_scope_profiles() {
     let payload = decode_mobile_secure_response(res, &device_id, &key).await;
     assert_eq!(payload["status"], 200);
 
-    let cfg = daemon
+    let cfg = fixture
+        .daemon()
         .mobile_access_for_test()
         .mobile_access_config_for_test()
         .await
         .unwrap()
         .expect("mobile access config should exist");
-    let profile = daemon
+    let profile = fixture
+        .daemon()
         .mobile_access_for_test()
         .mobile_profile_for_test(cfg.profile_id)
         .await

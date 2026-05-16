@@ -7,8 +7,9 @@ async fn post_message_fails_turn_start_when_agent_server_config_is_invalid() {
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
     let data_dir = tempfile::tempdir().unwrap();
-    let (daemon, app, session) =
+    let (fixture, app, session) =
         build_fake_app_with_session(data_dir.path(), &git_repo.path().to_string_lossy()).await;
+    let daemon = fixture.daemon();
     write_invalid_agent_server_config(daemon.data_root());
 
     let req = Request::builder()
@@ -33,8 +34,9 @@ async fn post_message_fails_turn_start_when_workspace_runtime_settings_are_inval
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
     let data_dir = tempfile::tempdir().unwrap();
-    let (daemon, app, session) =
+    let (fixture, app, session) =
         build_fake_app_with_session(data_dir.path(), &git_repo.path().to_string_lossy()).await;
+    let daemon = fixture.daemon();
     daemon
         .seed_invalid_workspace_runtime_settings_for_test(session.id, "{ not valid json")
         .await

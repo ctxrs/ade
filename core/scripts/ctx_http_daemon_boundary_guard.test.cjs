@@ -16,6 +16,7 @@ const {
   HANDLE_BACKDOOR_PATTERNS,
   IMAGE_ATTACHMENTS_TEST_STORE_ACCESS_PATTERNS,
   JJ_MERGE_QUEUE_BASICS_TEST_STORE_ACCESS_PATTERNS,
+  LIB_TEST_DATA_ROOT_FIXTURE_PATTERNS,
   MERGE_QUEUE_ISOLATION_TEST_STORE_ACCESS_PATTERNS,
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
@@ -58,6 +59,7 @@ const {
   imageAttachmentsStorePatternsForPath,
   isTestRustPath,
   jjMergeQueueBasicsStorePatternsForPath,
+  libTestDataRootFixturePatternsForPath,
   mergeQueueIsolationStorePatternsForPath,
   mcpDaemonPatternsForPath,
   migratedTestPatternsForPath,
@@ -519,19 +521,6 @@ test("daemon boundary guard requires router calls to be inside sanctioned helper
 
 test("daemon boundary guard allows only sanctioned router helper bodies", () => {
   const cases = [
-    {
-      filePath: "core/crates/ctx-http/src/lib_tests.rs",
-      allowed: `
-        fn test_router(daemon: &TestDaemon) -> axum::Router {
-          api::router(api::RouteHandles::from_daemon_handle(daemon.handle()))
-        }
-      `,
-      denied: `
-        fn other_router(daemon: &TestDaemon) -> axum::Router {
-          api::router(api::RouteHandles::from_daemon_handle(daemon.handle()))
-        }
-      `,
-    },
     {
       filePath: "core/crates/ctx-http/src/api/workspaces/tests.rs",
       allowed: `
@@ -3344,6 +3333,79 @@ test("daemon boundary guard allows storage-admission data-root daemon fixture", 
   });
 
   assert.deepEqual(violations, []);
+});
+
+test("daemon boundary guard rejects lib-test raw daemon/router helpers", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/lib_tests/mobile_secure_routes/fixtures.rs",
+    contents: `
+      use ctx_daemon::test_support::TestDaemon as RawDaemon;
+      use ctx_daemon::test_support::{Other, TestDaemon as GroupedRawDaemon};
+      async fn helper(state: &TestDaemon) {
+        let daemon = TestDaemon::new_for_test(data_root, base_url).await?;
+        let daemon = RawDaemon::new_with_providers_for_test(data_root, providers, base_url, None).await?;
+        let daemon = GroupedRawDaemon::new_for_test(data_root, base_url).await?;
+        type DaemonAlias = TestDaemon;
+        let daemon = DaemonAlias::new_for_test(data_root, base_url).await?;
+        type QualifiedDaemonAlias = ctx_daemon::test_support::TestDaemon;
+        let daemon = QualifiedDaemonAlias::new_for_test(data_root, base_url).await?;
+        let daemon = test_daemon_for_test(data_root, None).await;
+        let daemon = test_daemon_with_fake_provider_for_test(data_root, None).await;
+        let app = test_router(state);
+        crate::api::router(crate::api::RouteHandles::from_daemon_handle(state.handle()))
+      }
+    `,
+    patterns: LIB_TEST_DATA_ROOT_FIXTURE_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct lib-test raw TestDaemon construction",
+      "direct lib-test raw TestDaemon construction",
+      "direct lib-test raw TestDaemon construction",
+      "direct lib-test raw TestDaemon construction",
+      "direct lib-test raw TestDaemon construction",
+      "direct lib-test legacy daemon helper",
+      "direct lib-test legacy daemon helper",
+      "direct lib-test router helper",
+      "direct lib-test router composition",
+    ],
+  );
+});
+
+test("daemon boundary guard allows lib-test data-root daemon fixtures", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/lib_tests/mobile_secure_routes/fixtures.rs",
+    contents: `
+      async fn helper(data_root: &Path) {
+        let fixture = test_daemon_fixture_with_fake_provider_for_test(data_root, None).await;
+        let daemon = fixture.daemon();
+        let app = fixture.router();
+        daemon.mobile_access_for_test();
+      }
+    `,
+    patterns: LIB_TEST_DATA_ROOT_FIXTURE_PATTERNS,
+  });
+
+  assert.deepEqual(violations, []);
+});
+
+test("daemon boundary guard scopes lib-test data-root fixture roots", () => {
+  assert.deepEqual(
+    libTestDataRootFixturePatternsForPath("core/crates/ctx-http/src/lib_tests.rs"),
+    LIB_TEST_DATA_ROOT_FIXTURE_PATTERNS,
+  );
+  assert.deepEqual(
+    libTestDataRootFixturePatternsForPath(
+      "core/crates/ctx-http/src/lib_tests/mobile_secure_routes/fixtures.rs",
+    ),
+    LIB_TEST_DATA_ROOT_FIXTURE_PATTERNS,
+  );
+  assert.deepEqual(
+    libTestDataRootFixturePatternsForPath("core/crates/ctx-http/tests/common/mod.rs"),
+    [],
+  );
 });
 
 test("daemon boundary guard scopes task-lifecycle store facade roots", () => {

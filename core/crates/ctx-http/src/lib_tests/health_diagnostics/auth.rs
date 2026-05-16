@@ -3,8 +3,9 @@ use super::*;
 #[tokio::test]
 async fn unauthenticated_health_omits_sensitive_fields_when_daemon_auth_is_enabled() {
     let data_dir = tempfile::tempdir().unwrap();
-    let state = test_daemon_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
-    let app = test_router(&state);
+    let fixture =
+        test_daemon_fixture_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
+    let app = fixture.router();
 
     let req = Request::builder()
         .method(Method::GET)
@@ -56,8 +57,9 @@ async fn unauthenticated_health_omits_sensitive_fields_when_daemon_auth_is_enabl
 #[tokio::test]
 async fn authorized_health_keeps_sensitive_fields_when_daemon_auth_is_enabled() {
     let data_dir = tempfile::tempdir().unwrap();
-    let state = test_daemon_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
-    let app = test_router(&state);
+    let fixture =
+        test_daemon_fixture_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
+    let app = fixture.router();
 
     let req = Request::builder()
         .method(Method::GET)

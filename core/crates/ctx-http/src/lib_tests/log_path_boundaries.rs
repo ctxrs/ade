@@ -7,14 +7,20 @@ mod merge_queue;
 mod worktree_bootstrap;
 
 struct LogPathFixture {
+    app: axum::Router,
+    daemon: DataRootTestDaemonFixture,
+    workspace: ctx_core::models::Workspace,
     _home_lock: tokio::sync::MutexGuard<'static, ()>,
     _home: EnvVarGuard,
     _home_dir: tempfile::TempDir,
     data_dir: tempfile::TempDir,
     git_repo: tempfile::TempDir,
-    app: axum::Router,
-    daemon: TestDaemon,
-    workspace: ctx_core::models::Workspace,
+}
+
+impl LogPathFixture {
+    fn daemon(&self) -> &TestDaemon {
+        self.daemon.daemon()
+    }
 }
 
 async fn build_log_path_fixture() -> LogPathFixture {
@@ -24,8 +30,8 @@ async fn build_log_path_fixture() -> LogPathFixture {
     let home = EnvVarGuard::set("HOME", &home_dir.path().to_string_lossy());
 
     let data_dir = tempfile::tempdir().unwrap();
-    let daemon = test_daemon_with_fake_provider_for_test(data_dir.path(), None).await;
-    let app = test_router(&daemon);
+    let daemon = test_daemon_fixture_with_fake_provider_for_test(data_dir.path(), None).await;
+    let app = daemon.router();
 
     let workspace = create_workspace_via_api(&app, &git_repo.path().to_string_lossy()).await;
 

@@ -16,18 +16,20 @@ use ctx_providers::adapters::{ProviderAdapter, ProviderStatus};
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_storage_admission::{StorageGuardLevel, StorageGuardPathStatus, StorageGuardStatus};
 
-use crate::api;
+use crate::test_support::DataRootTestDaemonFixture;
 use ctx_daemon::test_support::{CtxUiSizedHeadSeedSpec, TestDaemon};
 
-async fn test_daemon_for_test(data_dir: &Path, auth_token: Option<String>) -> TestDaemon {
-    TestDaemon::new_with_providers_for_test(
-        data_dir.to_path_buf(),
+async fn test_daemon_fixture_for_test(
+    data_dir: &Path,
+    auth_token: Option<String>,
+) -> DataRootTestDaemonFixture {
+    DataRootTestDaemonFixture::with_providers_and_auth_token(
+        data_dir,
         HashMap::new(),
         "http://127.0.0.1:4399".to_string(),
         auth_token,
     )
     .await
-    .unwrap()
 }
 
 fn fake_provider_map_for_test() -> HashMap<String, Arc<dyn ProviderAdapter>> {
@@ -36,22 +38,17 @@ fn fake_provider_map_for_test() -> HashMap<String, Arc<dyn ProviderAdapter>> {
     providers
 }
 
-async fn test_daemon_with_fake_provider_for_test(
+async fn test_daemon_fixture_with_fake_provider_for_test(
     data_dir: &Path,
     auth_token: Option<String>,
-) -> TestDaemon {
-    TestDaemon::new_with_providers_for_test(
-        data_dir.to_path_buf(),
+) -> DataRootTestDaemonFixture {
+    DataRootTestDaemonFixture::with_providers_and_auth_token(
+        data_dir,
         fake_provider_map_for_test(),
         "http://127.0.0.1:4399".to_string(),
         auth_token,
     )
     .await
-    .unwrap()
-}
-
-fn test_router(daemon: &TestDaemon) -> axum::Router {
-    api::router(api::RouteHandles::from_daemon_handle(daemon.handle()))
 }
 
 async fn run_git(root: &Path, args: &[&str]) {

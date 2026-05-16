@@ -8,15 +8,21 @@ mod spool_isolation;
 mod symlink_swap;
 
 struct SessionArtifactFixture {
+    app: axum::Router,
+    daemon: DataRootTestDaemonFixture,
+    task: ctx_core::models::Task,
+    session: ctx_core::models::Session,
     _home_lock: tokio::sync::MutexGuard<'static, ()>,
     _home: EnvVarGuard,
     _home_dir: tempfile::TempDir,
     _data_dir: tempfile::TempDir,
     _git_repo: tempfile::TempDir,
-    app: axum::Router,
-    daemon: TestDaemon,
-    task: ctx_core::models::Task,
-    session: ctx_core::models::Session,
+}
+
+impl SessionArtifactFixture {
+    fn daemon(&self) -> &TestDaemon {
+        self.daemon.daemon()
+    }
 }
 
 async fn build_session_artifact_fixture() -> SessionArtifactFixture {
@@ -26,8 +32,8 @@ async fn build_session_artifact_fixture() -> SessionArtifactFixture {
     let home = EnvVarGuard::set("HOME", &home_dir.path().to_string_lossy());
 
     let data_dir = tempfile::tempdir().unwrap();
-    let daemon = test_daemon_with_fake_provider_for_test(data_dir.path(), None).await;
-    let app = test_router(&daemon);
+    let daemon = test_daemon_fixture_with_fake_provider_for_test(data_dir.path(), None).await;
+    let app = daemon.router();
 
     let workspace = create_workspace_via_api(&app, &git_repo.path().to_string_lossy()).await;
     let req = Request::builder()

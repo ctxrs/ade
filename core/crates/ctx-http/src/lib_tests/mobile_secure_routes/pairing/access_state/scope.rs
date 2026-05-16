@@ -7,9 +7,10 @@ async fn pair_mobile_device_rejects_profiles_without_device_registration_scope()
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
     let data_dir = tempfile::tempdir().unwrap();
-    let daemon = test_daemon_for_test(data_dir.path(), None).await;
+    let fixture = test_daemon_fixture_for_test(data_dir.path(), None).await;
+    let daemon = fixture.daemon();
     let profile_id =
-        insert_mobile_profile_with_scopes(&daemon, &["workspace_read", "workspace_stream"]).await;
+        insert_mobile_profile_with_scopes(daemon, &["workspace_read", "workspace_stream"]).await;
     let (daemon_public_key, daemon_private_key) =
         ctx_transport_runtime::mobile_e2ee::generate_keypair();
     daemon
@@ -44,7 +45,7 @@ async fn pair_mobile_device_rejects_profiles_without_device_registration_scope()
         &device_public_key,
         &device_secret_key,
     );
-    let app = test_router(&daemon);
+    let app = fixture.router();
     let req = Request::builder()
         .method("POST")
         .uri("/api/mobile/pair")

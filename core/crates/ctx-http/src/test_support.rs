@@ -97,11 +97,20 @@ impl DataRootTestDaemonFixture {
         providers: HashMap<String, Arc<dyn ProviderAdapter>>,
         base_url: impl Into<String>,
     ) -> Self {
+        Self::with_providers_and_auth_token(data_root, providers, base_url, None).await
+    }
+
+    pub(crate) async fn with_providers_and_auth_token(
+        data_root: &Path,
+        providers: HashMap<String, Arc<dyn ProviderAdapter>>,
+        base_url: impl Into<String>,
+        auth_token: Option<String>,
+    ) -> Self {
         let daemon = TestDaemon::new_with_providers_for_test(
             data_root.to_path_buf(),
             providers,
             base_url.into(),
-            None,
+            auth_token,
         )
         .await
         .expect("create data-root test daemon");

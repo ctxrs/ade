@@ -2,7 +2,7 @@ use super::*;
 
 pub(super) struct EncryptedPairingHarness {
     pub(super) app: axum::Router,
-    pub(super) daemon: TestDaemon,
+    daemon: DataRootTestDaemonFixture,
     pub(super) token: &'static str,
     pub(super) token_hash: String,
     pub(super) daemon_public_key: String,
@@ -17,6 +17,12 @@ pub(super) struct PairingKeyMaterial {
     pub(super) device_public_key: String,
     device_secret_key: String,
     daemon_public_key: String,
+}
+
+impl EncryptedPairingHarness {
+    pub(super) fn daemon(&self) -> &TestDaemon {
+        self.daemon.daemon()
+    }
 }
 
 impl PairingKeyMaterial {
@@ -38,11 +44,12 @@ pub(super) async fn encrypted_pairing_harness() -> EncryptedPairingHarness {
     let home_guard = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
     let data_dir = tempfile::tempdir().unwrap();
-    let daemon = test_daemon_for_test(data_dir.path(), None).await;
-    let profile_id = insert_mobile_profile(&daemon).await;
+    let daemon = test_daemon_fixture_for_test(data_dir.path(), None).await;
+    let profile_id = insert_mobile_profile(daemon.daemon()).await;
     let (daemon_public_key, daemon_private_key) =
         ctx_transport_runtime::mobile_e2ee::generate_keypair();
     daemon
+        .daemon()
         .mobile_access_for_test()
         .seed_default_mobile_access_config_for_test(
             profile_id,
@@ -55,6 +62,7 @@ pub(super) async fn encrypted_pairing_harness() -> EncryptedPairingHarness {
 
     let token = "valid-pairing-token";
     let token_hash = daemon
+        .daemon()
         .mobile_access_for_test()
         .seed_mobile_pairing_token_for_test(
             "pair-1",
@@ -65,7 +73,7 @@ pub(super) async fn encrypted_pairing_harness() -> EncryptedPairingHarness {
         .unwrap();
 
     EncryptedPairingHarness {
-        app: test_router(&daemon),
+        app: daemon.router(),
         daemon,
         token,
         token_hash,
@@ -127,6 +135,7 @@ pub(super) fn decrypt_pairing_response(
 pub(super) async fn assert_pairing_token_consumable(harness: &EncryptedPairingHarness) -> bool {
     harness
         .daemon
+        .daemon()
         .mobile_access_for_test()
         .consume_mobile_pairing_token_hash_for_test(&harness.token_hash)
         .await

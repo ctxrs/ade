@@ -4,7 +4,7 @@ use super::*;
 async fn session_artifacts_report_deleted_in_root_files_as_missing() {
     let fixture = build_session_artifact_fixture().await;
     let worktree_root = fixture
-        .daemon
+        .daemon()
         .session_worktree_root_path_for_test(&fixture.session)
         .await
         .unwrap();

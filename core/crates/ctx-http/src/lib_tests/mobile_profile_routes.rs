@@ -7,9 +7,10 @@ async fn create_mobile_connection_profile_normalizes_explicit_scopes() {
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
     let data_dir = tempfile::tempdir().unwrap();
-    let state = test_daemon_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
+    let fixture =
+        test_daemon_fixture_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
 
-    let app = test_router(&state);
+    let app = fixture.router();
     let req = Request::builder()
         .method("POST")
         .uri("/api/mobile/connection_profiles")
@@ -42,9 +43,10 @@ async fn create_mobile_connection_profile_rejects_unknown_scope_names() {
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
     let data_dir = tempfile::tempdir().unwrap();
-    let state = test_daemon_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
+    let fixture =
+        test_daemon_fixture_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
 
-    let app = test_router(&state);
+    let app = fixture.router();
     let req = Request::builder()
         .method("POST")
         .uri("/api/mobile/connection_profiles")
@@ -74,9 +76,10 @@ async fn create_mobile_connection_profile_requires_explicit_scopes_field() {
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
     let data_dir = tempfile::tempdir().unwrap();
-    let state = test_daemon_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
+    let fixture =
+        test_daemon_fixture_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
 
-    let app = test_router(&state);
+    let app = fixture.router();
     let req = Request::builder()
         .method("POST")
         .uri("/api/mobile/connection_profiles")
@@ -101,7 +104,9 @@ async fn delete_mobile_connection_profile_returns_not_found_after_first_removal(
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
     let data_dir = tempfile::tempdir().unwrap();
-    let state = test_daemon_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
+    let fixture =
+        test_daemon_fixture_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
+    let state = fixture.daemon();
 
     let token = "ctxm_test_mobile_token";
     let profile = state
@@ -110,7 +115,7 @@ async fn delete_mobile_connection_profile_returns_not_found_after_first_removal(
         .await
         .unwrap();
 
-    let app = test_router(&state);
+    let app = fixture.router();
     let req = Request::builder()
         .method("DELETE")
         .uri(format!("/api/mobile/connection_profiles/{}", profile.id.0))

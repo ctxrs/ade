@@ -8,8 +8,9 @@ async fn execution_launch_start_returns_bad_request_when_execution_settings_fail
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
     let data_dir = tempfile::tempdir().unwrap();
-    let state = test_daemon_with_fake_provider_for_test(data_dir.path(), None).await;
-    let app = test_router(&state);
+    let fixture = test_daemon_fixture_with_fake_provider_for_test(data_dir.path(), None).await;
+    let state = fixture.daemon();
+    let app = fixture.router();
 
     let workspace = create_workspace_via_api(&app, &git_repo.path().to_string_lossy()).await;
     state
@@ -46,8 +47,9 @@ async fn ensure_workspace_container_returns_bad_request_when_execution_settings_
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
     let data_dir = tempfile::tempdir().unwrap();
-    let state = test_daemon_with_fake_provider_for_test(data_dir.path(), None).await;
-    let app = test_router(&state);
+    let fixture = test_daemon_fixture_with_fake_provider_for_test(data_dir.path(), None).await;
+    let state = fixture.daemon();
+    let app = fixture.router();
 
     let workspace = create_workspace_via_api(&app, &git_repo.path().to_string_lossy()).await;
     state

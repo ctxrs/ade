@@ -12,8 +12,8 @@ async fn execution_launch_startup_prewarm_kind_supported() {
         "CTX_HARNESS_SANDBOX_CLI_PATH",
         &sandbox_cli_path.to_string_lossy(),
     );
-    let state = test_daemon_with_fake_provider_for_test(data_dir.path(), None).await;
-    let app = test_router(&state);
+    let fixture = test_daemon_fixture_with_fake_provider_for_test(data_dir.path(), None).await;
+    let app = fixture.router();
 
     let req = Request::builder()
         .method("POST")

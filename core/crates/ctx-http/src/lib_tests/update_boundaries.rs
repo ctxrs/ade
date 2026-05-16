@@ -3,8 +3,9 @@ use super::*;
 #[tokio::test]
 async fn update_check_rejects_path_traversal_channel() {
     let data_dir = tempfile::tempdir().unwrap();
-    let state = test_daemon_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
-    let app = test_router(&state);
+    let fixture =
+        test_daemon_fixture_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
+    let app = fixture.router();
 
     let req = Request::builder()
         .method(Method::GET)
@@ -19,19 +20,20 @@ async fn update_check_rejects_path_traversal_channel() {
 #[tokio::test]
 async fn daemon_shutdown_endpoint_terminalizes_running_turns_before_ack() {
     let data_dir = tempfile::tempdir().unwrap();
-    let state = {
+    let fixture = {
         let _serial = home_env_test_lock().lock().await;
         let _shutdown_token =
             EnvVarGuard::set("CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN", "local-shutdown-secret");
-        test_daemon_for_test(data_dir.path(), Some("daemon-secret".to_string())).await
+        test_daemon_fixture_for_test(data_dir.path(), Some("daemon-secret".to_string())).await
     };
+    let state = fixture.daemon();
 
-    let fixture = state
+    let turn_fixture = state
         .seed_shutdown_running_turn_for_test(&data_dir.path().join("ws"), "fake", "model")
         .await
         .unwrap();
 
-    let app = test_router(&state);
+    let app = fixture.router();
     let req = Request::builder()
         .method(Method::POST)
         .uri("/api/daemon/shutdown")
@@ -44,7 +46,7 @@ async fn daemon_shutdown_endpoint_terminalizes_running_turns_before_ack() {
     assert_eq!(res.status(), StatusCode::OK);
 
     let status = state
-        .session_turn_status_for_test(fixture.session_id, fixture.turn_id)
+        .session_turn_status_for_test(turn_fixture.session_id, turn_fixture.turn_id)
         .await
         .unwrap()
         .expect("turn exists");
@@ -54,13 +56,13 @@ async fn daemon_shutdown_endpoint_terminalizes_running_turns_before_ack() {
 #[tokio::test]
 async fn daemon_shutdown_endpoint_requires_local_shutdown_token() {
     let data_dir = tempfile::tempdir().unwrap();
-    let state = {
+    let fixture = {
         let _serial = home_env_test_lock().lock().await;
         let _shutdown_token =
             EnvVarGuard::set("CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN", "local-shutdown-secret");
-        test_daemon_for_test(data_dir.path(), Some("daemon-secret".to_string())).await
+        test_daemon_fixture_for_test(data_dir.path(), Some("daemon-secret".to_string())).await
     };
-    let app = test_router(&state);
+    let app = fixture.router();
 
     let req = Request::builder()
         .method(Method::POST)

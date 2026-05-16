@@ -7,12 +7,16 @@ async fn mobile_secure_proxy_rejects_repo_path_management_routes() {
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
-    let (app, daemon, device_id, key, _data_dir) = build_mobile_secure_proxy_app(true).await;
+    let (app, fixture, device_id, key, _data_dir) = build_mobile_secure_proxy_app(true).await;
     let sandbox = tempfile::tempdir().unwrap();
     let clone_parent = sandbox.path().join("mobile-clone-parent");
     let init_path = sandbox.path().join("mobile-init-target");
     let existing_repo = setup_git_repo().await;
-    let staging_root = daemon.data_root().join("workspaces").join("staging");
+    let staging_root = fixture
+        .daemon()
+        .data_root()
+        .join("workspaces")
+        .join("staging");
 
     let cases = [
         (

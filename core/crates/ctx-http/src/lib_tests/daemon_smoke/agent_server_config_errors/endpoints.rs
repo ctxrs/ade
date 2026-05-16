@@ -7,8 +7,9 @@ async fn spawn_agent_surfaces_agent_server_config_errors() {
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
     let data_dir = tempfile::tempdir().unwrap();
-    let (daemon, app, session) =
+    let (fixture, app, session) =
         build_fake_app_with_session(data_dir.path(), &git_repo.path().to_string_lossy()).await;
+    let daemon = fixture.daemon();
     {
         let mut statuses = HashMap::new();
         statuses.insert(
@@ -61,8 +62,9 @@ async fn authenticate_session_surfaces_agent_server_config_errors() {
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
     let data_dir = tempfile::tempdir().unwrap();
-    let (daemon, app, session) =
+    let (fixture, app, session) =
         build_fake_app_with_session(data_dir.path(), &git_repo.path().to_string_lossy()).await;
+    let daemon = fixture.daemon();
     write_invalid_agent_server_config(daemon.data_root());
 
     let req = Request::builder()
@@ -89,8 +91,9 @@ async fn set_session_model_surfaces_agent_server_config_errors() {
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
     let data_dir = tempfile::tempdir().unwrap();
-    let (daemon, app, session) =
+    let (fixture, app, session) =
         build_fake_app_with_session(data_dir.path(), &git_repo.path().to_string_lossy()).await;
+    let daemon = fixture.daemon();
     write_invalid_agent_server_config(daemon.data_root());
 
     let req = Request::builder()

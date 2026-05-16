@@ -7,8 +7,9 @@ async fn pair_mobile_device_preserves_token_for_invalid_device_id() {
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
     let data_dir = tempfile::tempdir().unwrap();
-    let daemon = test_daemon_for_test(data_dir.path(), None).await;
-    let profile_id = insert_mobile_profile(&daemon).await;
+    let fixture = test_daemon_fixture_for_test(data_dir.path(), None).await;
+    let daemon = fixture.daemon();
+    let profile_id = insert_mobile_profile(daemon).await;
     daemon
         .mobile_access_for_test()
         .seed_default_mobile_access_config_for_test(
@@ -31,7 +32,7 @@ async fn pair_mobile_device_preserves_token_for_invalid_device_id() {
         .await
         .unwrap();
 
-    let app = test_router(&daemon);
+    let app = fixture.router();
     let req = Request::builder()
         .method("POST")
         .uri("/api/mobile/pair")

@@ -169,6 +169,11 @@ const smallExternalStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/workspace_provider_model_preferences_http.rs",
 ];
 
+const libTestDataRootFixtureRoots = [
+  "core/crates/ctx-http/src/lib_tests.rs",
+  "core/crates/ctx-http/src/lib_tests/",
+];
+
 const fakeDaemonExternalStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/acp_target_scoped_status.rs",
   "core/crates/ctx-http/tests/assistant_message_persistence_faults.rs",
@@ -1978,6 +1983,40 @@ const STORAGE_ADMISSION_FIXTURE_PATTERNS = [
   },
 ];
 
+const LIB_TEST_DATA_ROOT_FIXTURE_PATTERNS = [
+  {
+    name: "direct lib-test raw TestDaemon construction",
+    regex: /\bTestDaemon::new[A-Za-z0-9_]*\s*\(/,
+  },
+  {
+    name: "direct lib-test raw TestDaemon construction",
+    regex: /a^/,
+    contentRegex: /\buse\s+ctx_daemon::test_support::TestDaemon\s+as\s+([A-Za-z_][A-Za-z0-9_]*)\s*;[\s\S]*?\b\1::new[A-Za-z0-9_]*\s*\(/gm,
+  },
+  {
+    name: "direct lib-test raw TestDaemon construction",
+    regex: /a^/,
+    contentRegex: /\buse\s+ctx_daemon::test_support::\{[^}]*\bTestDaemon\s+as\s+([A-Za-z_][A-Za-z0-9_]*)[^}]*\}\s*;[\s\S]*?\b\1::new[A-Za-z0-9_]*\s*\(/gm,
+  },
+  {
+    name: "direct lib-test raw TestDaemon construction",
+    regex: /a^/,
+    contentRegex: /\btype\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:ctx_daemon::test_support::)?TestDaemon\s*;[\s\S]*?\b\1::new[A-Za-z0-9_]*\s*\(/gm,
+  },
+  {
+    name: "direct lib-test legacy daemon helper",
+    regex: /\btest_daemon_(?:with_fake_provider_)?for_test\s*\(/,
+  },
+  {
+    name: "direct lib-test router helper",
+    regex: /\btest_router\s*\(/,
+  },
+  {
+    name: "direct lib-test router composition",
+    regex: /\b(?:crate::)?api::router\s*\(|\bRouteHandles::from_daemon_handle\s*\(/,
+  },
+];
+
 function isRustFile(filePath) {
   return filePath.endsWith(".rs");
 }
@@ -2425,6 +2464,13 @@ function storageAdmissionFixturePatternsForPath(relativePath) {
   return [];
 }
 
+function libTestDataRootFixturePatternsForPath(relativePath) {
+  if (libTestDataRootFixtureRoots.some((root) => relativePath.startsWith(root))) {
+    return LIB_TEST_DATA_ROOT_FIXTURE_PATTERNS;
+  }
+  return [];
+}
+
 function routerCompositionPatternsForPath(relativePath) {
   const isLibTestsRoot = relativePath === "core/crates/ctx-http/src/lib_tests.rs";
   if (
@@ -2489,13 +2535,6 @@ function isAllowedRouterHelperComposition({ filePath, lines, index, line }) {
     filePath === "core/crates/ctx-http/tests/common/mod.rs"
     && /api::router\s*\(\s*api::RouteHandles::from_daemon_handle\s*\(\s*daemon\.handle\s*\(\s*\)\s*\)\s*\)/.test(line)
     && isInsideDeclaredFunction(lines, index, /\bpub\s+fn\s+router_for_daemon\s*\(/)
-  ) {
-    return true;
-  }
-  if (
-    filePath === "core/crates/ctx-http/src/lib_tests.rs"
-    && /api::router\s*\(\s*api::RouteHandles::from_daemon_handle\s*\(\s*daemon\.handle\s*\(\s*\)\s*\)\s*\)/.test(line)
-    && isInsideDeclaredFunction(lines, index, /\bfn\s+test_router\s*\(/)
   ) {
     return true;
   }
@@ -2881,6 +2920,13 @@ function scanRepo() {
       }),
     );
     violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
+        patterns: libTestDataRootFixturePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
       ...scanRouterComposition({
         filePath: relativePath,
         contents,
@@ -2926,6 +2972,7 @@ module.exports = {
   HANDLE_BACKDOOR_PATTERNS,
   IMAGE_ATTACHMENTS_TEST_STORE_ACCESS_PATTERNS,
   JJ_MERGE_QUEUE_BASICS_TEST_STORE_ACCESS_PATTERNS,
+  LIB_TEST_DATA_ROOT_FIXTURE_PATTERNS,
   MERGE_QUEUE_ISOLATION_TEST_STORE_ACCESS_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
@@ -2968,6 +3015,7 @@ module.exports = {
   imageAttachmentsStorePatternsForPath,
   isTestRustPath,
   jjMergeQueueBasicsStorePatternsForPath,
+  libTestDataRootFixturePatternsForPath,
   mergeQueueIsolationStorePatternsForPath,
   mcpDaemonPatternsForPath,
   migratedTestPatternsForPath,

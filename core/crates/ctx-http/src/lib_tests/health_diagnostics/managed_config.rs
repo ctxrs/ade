@@ -18,7 +18,8 @@ async fn diagnostics_marks_provider_statuses_with_agent_server_config_errors() {
 
     let data_dir = tempfile::tempdir().unwrap();
     write_invalid_agent_server_config(data_dir.path());
-    let state = test_daemon_for_test(data_dir.path(), None).await;
+    let fixture = test_daemon_fixture_for_test(data_dir.path(), None).await;
+    let state = fixture.daemon();
     state
         .upsert_provider_status(
             "qwen".to_string(),
@@ -35,7 +36,7 @@ async fn diagnostics_marks_provider_statuses_with_agent_server_config_errors() {
             },
         )
         .await;
-    let app = test_router(&state);
+    let app = fixture.router();
 
     let req = Request::builder()
         .method(Method::GET)

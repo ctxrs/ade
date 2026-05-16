@@ -7,7 +7,7 @@ async fn create_session_rejects_unknown_provider_id() {
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
     let data_dir = tempfile::tempdir().unwrap();
-    let (_daemon, app, primary_session) =
+    let (_fixture, app, primary_session) =
         build_fake_app_with_session(data_dir.path(), &git_repo.path().to_string_lossy()).await;
     let req = Request::builder()
         .method("POST")

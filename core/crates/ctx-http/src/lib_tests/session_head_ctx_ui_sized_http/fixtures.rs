@@ -3,8 +3,8 @@ use serde::de::DeserializeOwned;
 use super::*;
 
 pub(super) struct CtxUiSizedHeadFixture {
-    pub(super) daemon: TestDaemon,
     app: axum::Router,
+    daemon: DataRootTestDaemonFixture,
     repo: tempfile::TempDir,
     _projection_flush_ms: EnvVarGuard,
     _data_dir: tempfile::TempDir,
@@ -17,8 +17,8 @@ impl CtxUiSizedHeadFixture {
         let repo = setup_git_repo().await;
         let projection_flush_ms = EnvVarGuard::set("CTX_ACTIVE_HEAD_PROJECTION_FLUSH_MS", "600000");
         let data_dir = tempfile::tempdir().unwrap();
-        let daemon = test_daemon_with_fake_provider_for_test(data_dir.path(), None).await;
-        let app = test_router(&daemon);
+        let daemon = test_daemon_fixture_with_fake_provider_for_test(data_dir.path(), None).await;
+        let app = daemon.router();
 
         Self {
             daemon,
@@ -28,6 +28,10 @@ impl CtxUiSizedHeadFixture {
             _data_dir: data_dir,
             _serial: serial,
         }
+    }
+
+    pub(super) fn daemon(&self) -> &TestDaemon {
+        self.daemon.daemon()
     }
 
     pub(super) async fn create_default_session(

@@ -31,9 +31,11 @@ async fn enable_mobile_access_seeds_explicit_default_scopes() {
     let (server, _control_plane_url) = spawn_mobile_enable_control_plane().await;
 
     let data_dir = tempfile::tempdir().unwrap();
-    let state = test_daemon_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
+    let fixture =
+        test_daemon_fixture_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
+    let state = fixture.daemon();
 
-    let app = test_router(&state);
+    let app = fixture.router();
     let req = Request::builder()
         .method("POST")
         .uri("/api/mobile/access/enable")
@@ -84,7 +86,9 @@ async fn enable_mobile_access_backfills_empty_managed_profile_scopes() {
     let (server, _control_plane_url) = spawn_mobile_enable_control_plane().await;
 
     let data_dir = tempfile::tempdir().unwrap();
-    let state = test_daemon_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
+    let fixture =
+        test_daemon_fixture_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
+    let state = fixture.daemon();
 
     let legacy_profile = state
         .mobile_access_for_test()
@@ -104,7 +108,7 @@ async fn enable_mobile_access_backfills_empty_managed_profile_scopes() {
         .await
         .unwrap();
 
-    let app = test_router(&state);
+    let app = fixture.router();
     let req = Request::builder()
         .method("POST")
         .uri("/api/mobile/access/enable")

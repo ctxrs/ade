@@ -22,7 +22,7 @@ async fn ctx_ui_sized_active_session_head_recovery_is_bounded() {
     let (workspace, task, session) = fixture.create_default_session().await;
 
     let stats = fixture
-        .daemon
+        .daemon()
         .seed_ctx_ui_sized_session_head_fixture_for_test(
             workspace.id,
             session.id,
@@ -43,7 +43,7 @@ async fn ctx_ui_sized_active_session_head_recovery_is_bounded() {
     assert_eq!(stats.message_count, MESSAGE_COUNT);
 
     let probe = fixture
-        .daemon
+        .daemon()
         .ctx_ui_sized_recent_tool_summary_probe_for_test(session.id, HEAD_LIMIT, TOOL_SUMMARY_LIMIT)
         .await
         .unwrap();

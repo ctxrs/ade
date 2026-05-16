@@ -55,6 +55,6 @@ async fn daemon_http_and_ws_streaming() {
         .unwrap();
 
     wait_for_done_event(&mut ws_stream, session.id).await;
-    assert_user_message_persisted(&harness.daemon, session.id).await;
+    assert_user_message_persisted(harness.daemon(), session.id).await;
     assert_task_read_unread_round_trip(&harness.client, &harness.base, task.id).await;
 }

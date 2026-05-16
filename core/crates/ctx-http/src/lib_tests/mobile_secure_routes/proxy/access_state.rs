@@ -7,8 +7,10 @@ async fn mobile_secure_proxy_rejects_disabled_mobile_access_for_existing_device(
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
     let data_dir = tempfile::tempdir().unwrap();
-    let daemon = test_daemon_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
-    let profile_id = insert_mobile_profile(&daemon).await;
+    let fixture =
+        test_daemon_fixture_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
+    let daemon = fixture.daemon();
+    let profile_id = insert_mobile_profile(daemon).await;
 
     let device_id = "44444444-4444-4444-4444-444444444444";
     let (daemon_public_key, daemon_private_key) =
@@ -57,7 +59,7 @@ async fn mobile_secure_proxy_rejects_disabled_mobile_access_for_existing_device(
     let envelope =
         ctx_transport_runtime::mobile_e2ee::encrypt(&key, device_id, 1, &plaintext).unwrap();
 
-    let app = test_router(&daemon);
+    let app = fixture.router();
     let req = Request::builder()
         .method("POST")
         .uri("/api/mobile/secure")

@@ -26,7 +26,7 @@ async fn session_artifacts_reject_outside_root_paths_and_fail_closed_for_legacy_
     );
 
     let legacy = fixture
-        .daemon
+        .daemon()
         .seed_legacy_session_artifact_by_path_for_test(
             &fixture.session,
             &outside_path,

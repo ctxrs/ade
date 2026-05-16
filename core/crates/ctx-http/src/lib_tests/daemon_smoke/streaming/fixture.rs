@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) struct StreamingServer {
-    pub(super) daemon: TestDaemon,
+    daemon: DataRootTestDaemonFixture,
     pub(super) base: String,
     pub(super) addr: std::net::SocketAddr,
     pub(super) client: reqwest::Client,
@@ -18,16 +18,22 @@ impl Drop for StreamingServer {
     }
 }
 
+impl StreamingServer {
+    pub(super) fn daemon(&self) -> &TestDaemon {
+        self.daemon.daemon()
+    }
+}
+
 pub(super) async fn start_streaming_server() -> StreamingServer {
     let git_repo = setup_git_repo().await;
     let home = tempfile::tempdir().unwrap();
     let home_guard = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
     let data_dir = tempfile::tempdir().unwrap();
-    let daemon = test_daemon_with_fake_provider_for_test(data_dir.path(), None).await;
-    install_fake_provider_status(&daemon).await;
+    let daemon = test_daemon_fixture_with_fake_provider_for_test(data_dir.path(), None).await;
+    install_fake_provider_status(daemon.daemon()).await;
 
-    let app = test_router(&daemon);
+    let app = daemon.router();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {

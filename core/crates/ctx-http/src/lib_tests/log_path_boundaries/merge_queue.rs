@@ -14,7 +14,7 @@ async fn merge_queue_entry_logs_return_in_root_log_file() {
     std::fs::write(&log_path, b"inside merge queue log\n").unwrap();
 
     let entry_id = fixture
-        .daemon
+        .daemon()
         .seed_failed_merge_queue_log_run_for_test(
             fixture.workspace.id,
             "inside log",
@@ -39,7 +39,7 @@ async fn merge_queue_entry_logs_fail_closed_for_legacy_outside_paths() {
     std::fs::write(&outside_path, b"outside merge queue log\n").unwrap();
 
     let entry_id = fixture
-        .daemon
+        .daemon()
         .seed_failed_merge_queue_log_run_for_test(
             fixture.workspace.id,
             "legacy outside log",

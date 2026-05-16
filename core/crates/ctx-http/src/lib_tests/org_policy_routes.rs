@@ -7,8 +7,8 @@ use ctx_core::models::{
 #[tokio::test]
 async fn daemon_enrollment_routes_do_not_return_policy_signing_keys() {
     let data_dir = tempfile::tempdir().unwrap();
-    let state = test_daemon_for_test(data_dir.path(), None).await;
-    let app = test_router(&state);
+    let fixture = test_daemon_fixture_for_test(data_dir.path(), None).await;
+    let app = fixture.router();
     let org_id = ctx_core::ids::OrgId::new();
     let secret = "policy-signing-secret";
     let now = Utc::now();
