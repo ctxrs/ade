@@ -231,6 +231,7 @@ const CTX_HTTP_CHECKIN_FANOUT_TARGET_BATCHES_BY_SUITE = Object.freeze({
       "repo_clone_branch_and_safety",
       "repo_init_initial_commit",
       "repo_validate_destination",
+      "repo_status_and_staging",
     ],
     [
       "session_diff_unavailable",
@@ -653,6 +654,7 @@ const CTX_HTTP_SUITES = [
       "merge_queue_isolation",
       "repo_clone_branch_and_safety",
       "repo_init_initial_commit",
+      "repo_status_and_staging",
       "repo_validate_destination",
       "session_diff_unavailable",
       "workspace_merge_queue_config_http",
@@ -680,6 +682,7 @@ const CTX_HTTP_SUITES = [
       "merge_queue_isolation",
       "repo_clone_branch_and_safety",
       "repo_init_initial_commit",
+      "repo_status_and_staging",
       "repo_validate_destination",
       "session_diff_unavailable",
       "workspace_merge_queue_config_http",
