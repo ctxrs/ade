@@ -159,6 +159,11 @@ const sessionVcsApiRoots = [
   "core/crates/ctx-http/src/api/sessions/snapshot/vcs/",
 ];
 
+const taskSessionCreationApiRoots = [
+  "core/crates/ctx-http/src/api/tasks/creation_session.rs",
+  "core/crates/ctx-http/src/api/tasks/creation_session/",
+];
+
 const smallApiUnitStoreFacadeTestRoots = [
   "core/crates/ctx-http/src/api/settings.rs",
   "core/crates/ctx-http/src/api/providers/login/codex/tests.rs",
@@ -823,6 +828,21 @@ const SESSION_VCS_API_ORCHESTRATION_PATTERNS = [
   {
     name: "session VCS API references workspace VCS service type",
     regex: /\b(?:WorktreeDiffBaseResolution|WorktreeVcsDiffBaseQuery|WorktreeVcsSessionDiffOutcome|WorktreeVcsSessionDiffSummaryOutcome|WorktreeVcsDiffSummaryCounts|GitStatusSnapshot|GitStatusEntry)\b/,
+  },
+];
+
+const TASK_SESSION_CREATION_API_ADMISSION_PATTERNS = [
+  {
+    name: "task session API owns sessions handle",
+    regex: /\bSessionsHandle\b/,
+  },
+  {
+    name: "task session API owns session creation lock",
+    regex: /\btask_session_creation_lock\s*\(/,
+  },
+  {
+    name: "task session API bypasses locked create-session entrypoint",
+    regex: /\bcreate_session_for_loaded_task\s*\(/,
   },
 ];
 
@@ -2609,6 +2629,9 @@ function apiPatternsForPath(relativePath) {
   if (sessionVcsApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...SESSION_VCS_API_ORCHESTRATION_PATTERNS);
   }
+  if (taskSessionCreationApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...TASK_SESSION_CREATION_API_ADMISSION_PATTERNS);
+  }
   return patterns;
 }
 
@@ -3538,6 +3561,7 @@ module.exports = {
   MOBILE_ACCESS_STORE_DTO_API_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
   SESSION_VCS_API_ORCHESTRATION_PATTERNS,
+  TASK_SESSION_CREATION_API_ADMISSION_PATTERNS,
   PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,

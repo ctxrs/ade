@@ -27,6 +27,7 @@ const {
   MOBILE_ACCESS_STORE_DTO_API_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
   SESSION_VCS_API_ORCHESTRATION_PATTERNS,
+  TASK_SESSION_CREATION_API_ADMISSION_PATTERNS,
   PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,
@@ -1225,6 +1226,53 @@ test("daemon boundary guard scopes session VCS orchestration patterns to API VCS
   assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/sessions/snapshot/head.rs").includes(
       SESSION_VCS_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    false,
+  );
+});
+
+test("daemon boundary guard rejects task-session API admission ownership", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/tasks/creation_session/create.rs",
+    contents: `
+      async fn handler(
+        State(_sessions): State<SessionsHandle>,
+        State(sessions): State<ctx_daemon::daemon::SessionsHandle>,
+      ) {
+        let creation_lock = sessions.task_session_creation_lock(task_id).await;
+        let _ = tasks.create_session_for_loaded_task(store, task, workspace, input).await;
+      }
+    `,
+    patterns: TASK_SESSION_CREATION_API_ADMISSION_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "task session API owns sessions handle",
+      "task session API owns sessions handle",
+      "task session API owns session creation lock",
+      "task session API bypasses locked create-session entrypoint",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes task-session admission patterns to creation-session roots", () => {
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/tasks/creation_session/create.rs").includes(
+      TASK_SESSION_CREATION_API_ADMISSION_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/tasks/creation_session.rs").includes(
+      TASK_SESSION_CREATION_API_ADMISSION_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/tasks/task_deletion.rs").includes(
+      TASK_SESSION_CREATION_API_ADMISSION_PATTERNS[0],
     ),
     false,
   );

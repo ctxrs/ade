@@ -126,6 +126,9 @@ impl TasksHandle {
         task_id: TaskId,
         input: CreateTaskSessionInput,
     ) -> Result<Session, TaskSessionCreateError> {
+        let handles = TaskSessionHandles::new(self);
+        let creation_lock = handles.sessions.task_session_creation_lock(task_id).await;
+        let _creation_guard = creation_lock.lock().await;
         let context = self
             .load_task_context(task_id)
             .await
@@ -138,7 +141,6 @@ impl TasksHandle {
         let Some((store, task, workspace)) = context else {
             return Err(TaskSessionCreateError::NotFound);
         };
-        let handles = TaskSessionHandles::new(self);
         create_session_for_loaded_task_inner(&handles, store, task, workspace, input).await
     }
 
