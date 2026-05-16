@@ -37,6 +37,7 @@ const {
   WORKSPACE_STREAM_EVENT_ROUTE_PLAN_API_PATTERNS,
   WORKSPACE_STREAM_LIVE_EVENT_APPLICATION_API_PATTERNS,
   WORKSPACE_STREAM_SUBSCRIPTION_EVENT_API_PATTERNS,
+  WORKSPACE_VCS_DEMAND_API_PATTERNS,
   PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,
@@ -857,6 +858,57 @@ test("daemon boundary guard scopes workspace stream subscription event mutation 
   assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/ws/workspace_stream/events/route.rs").includes(
       WORKSPACE_STREAM_SUBSCRIPTION_EVENT_API_PATTERNS[0],
+    ),
+    false,
+  );
+});
+
+test("daemon boundary guard rejects workspace VCS demand planning in HTTP", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/ws/workspace_vcs/subscription/client.rs",
+    contents: `
+      impl WorkspaceVcsRuntime {
+        fn active_worktree_ids(&self) {}
+      }
+
+      async fn handler(state: WorkspacesHandle, previous: HashSet<WorktreeId>, next: HashSet<WorktreeId>) {
+        let filtered = state.filter_workspace_worktree_ids(workspace_id, ids).await;
+        state.update_worktree_vcs_activity(&previous, &next).await;
+        state.update_worktree_vcs_open_panes(&previous, &next).await;
+        let added = next.difference(&previous).copied().collect::<Vec<_>>();
+      }
+    `,
+    patterns: WORKSPACE_VCS_DEMAND_API_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "workspace VCS API calls raw demand filter directly",
+      "workspace VCS API mutates demand refs directly",
+      "workspace VCS API mutates demand refs directly",
+      "workspace VCS API computes demand set differences locally",
+      "workspace VCS API owns active demand helper",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes workspace VCS demand planning ban", () => {
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/ws/workspace_vcs/subscription/client.rs",
+    ).includes(WORKSPACE_VCS_DEMAND_API_PATTERNS[0]),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/ws/workspace_vcs/subscription/runtime.rs",
+    ).includes(WORKSPACE_VCS_DEMAND_API_PATTERNS[0]),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/ws/workspace_vcs/socket.rs").includes(
+      WORKSPACE_VCS_DEMAND_API_PATTERNS[0],
     ),
     false,
   );

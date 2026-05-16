@@ -16,7 +16,7 @@ use ctx_core::models::{
     WorkspaceActiveSnapshotEvent, WorkspaceActiveSnapshotSessionIntent,
     WorkspaceActiveSnapshotSessionReplay, WorkspaceActiveSnapshotSessionSubscription,
     WorkspaceActiveTaskSummary, WorkspaceTaskSummary, WorktreeBootstrapNotice,
-    WorktreeBootstrapStatus,
+    WorktreeBootstrapStatus, WorktreeVcsStreamTier,
 };
 use ctx_workspace_active_snapshot::{
     ResolvedWorkspaceActiveSessionReplay, ResolvedWorkspaceActiveSessionSubscription,
@@ -1519,4 +1519,186 @@ async fn worktree_vcs_filter_removes_cross_workspace_duplicate_and_missing_ids()
     let mut expected = vec![worktree_a1.id, worktree_a2.id];
     expected.sort_by_key(|worktree_id| worktree_id.0);
     assert_eq!(filtered, expected);
+}
+
+#[tokio::test]
+async fn workspace_vcs_subscription_plan_filters_dedupes_and_updates_demand() {
+    let root = tempfile::tempdir().unwrap();
+    let state = test_state(root.path()).await;
+    let handle = DaemonHandle::new(state.clone()).workspaces();
+    let (workspace_a, worktree_a1) = create_workspace_worktree(&state, root.path()).await;
+    let worktree_a2 = create_worktree_for_workspace(&state, root.path(), workspace_a).await;
+    let (_workspace_b, worktree_b) = create_workspace_worktree(&state, root.path()).await;
+
+    let plan = plan_workspace_vcs_subscription_update(
+        &state,
+        workspace_a,
+        WorkspaceVcsDemandState::default(),
+        vec![
+            worktree_b.id,
+            worktree_a2.id,
+            worktree_a1.id,
+            worktree_a1.id,
+        ],
+        vec![worktree_a2.id, worktree_b.id, worktree_a2.id],
+    )
+    .await;
+
+    let mut expected_summary = vec![worktree_a1.id, worktree_a2.id];
+    expected_summary.sort_by_key(|worktree_id| worktree_id.0);
+    assert_eq!(plan.summary_subscribed_worktree_ids, expected_summary);
+    assert_eq!(plan.detail_subscribed_worktree_ids, vec![worktree_a2.id]);
+    assert_eq!(plan.state.demand_generation, 1);
+    assert_eq!(
+        plan.summary_seed_worktree_ids,
+        HashSet::from([worktree_a1.id, worktree_a2.id])
+    );
+    assert_eq!(
+        plan.detail_seed_worktree_ids,
+        HashSet::from([worktree_a2.id])
+    );
+    assert_eq!(plan.summary_refresh_worktree_ids, expected_summary);
+    assert_eq!(plan.detail_refresh_worktree_ids, vec![worktree_a2.id]);
+    assert!(
+        handle.is_worktree_vcs_active_for_test(worktree_a1.id).await,
+        "summary demand should mark worktree active",
+    );
+    assert!(
+        handle.is_worktree_vcs_active_for_test(worktree_a2.id).await,
+        "detail demand should mark worktree active",
+    );
+    assert!(
+        handle
+            .is_worktree_vcs_pane_open_for_test(worktree_a2.id)
+            .await,
+        "detail demand should mark pane open",
+    );
+    assert!(
+        !handle.is_worktree_vcs_active_for_test(worktree_b.id).await,
+        "foreign worktree must be filtered before activity mutation",
+    );
+}
+
+#[tokio::test]
+async fn workspace_vcs_subscription_plan_preserves_repeat_and_tier_transition_semantics() {
+    let root = tempfile::tempdir().unwrap();
+    let state = test_state(root.path()).await;
+    let workspace_id = create_workspace_worktree(&state, root.path()).await.0;
+    let worktree = create_worktree_for_workspace(&state, root.path(), workspace_id).await;
+
+    let initial = plan_workspace_vcs_subscription_update(
+        &state,
+        workspace_id,
+        WorkspaceVcsDemandState::default(),
+        vec![worktree.id],
+        Vec::new(),
+    )
+    .await;
+    let repeat = plan_workspace_vcs_subscription_update(
+        &state,
+        workspace_id,
+        initial.state.clone(),
+        vec![worktree.id],
+        Vec::new(),
+    )
+    .await;
+    assert_eq!(repeat.state.demand_generation, 2);
+    assert!(repeat.summary_seed_worktree_ids.is_empty());
+    assert!(repeat.detail_seed_worktree_ids.is_empty());
+    assert!(repeat.summary_refresh_worktree_ids.is_empty());
+    assert!(repeat.detail_refresh_worktree_ids.is_empty());
+
+    let upgrade = plan_workspace_vcs_subscription_update(
+        &state,
+        workspace_id,
+        repeat.state.clone(),
+        vec![worktree.id],
+        vec![worktree.id],
+    )
+    .await;
+    assert_eq!(upgrade.state.demand_generation, 3);
+    assert!(upgrade.summary_seed_worktree_ids.is_empty());
+    assert_eq!(
+        upgrade.detail_seed_worktree_ids,
+        HashSet::from([worktree.id])
+    );
+    assert!(upgrade.summary_refresh_worktree_ids.is_empty());
+    assert_eq!(upgrade.detail_refresh_worktree_ids, vec![worktree.id]);
+
+    let demotion = plan_workspace_vcs_subscription_update(
+        &state,
+        workspace_id,
+        upgrade.state.clone(),
+        vec![worktree.id],
+        Vec::new(),
+    )
+    .await;
+    assert_eq!(demotion.state.demand_generation, 4);
+    assert!(demotion.summary_seed_worktree_ids.is_empty());
+    assert!(demotion.detail_seed_worktree_ids.is_empty());
+    assert!(demotion.summary_refresh_worktree_ids.is_empty());
+    assert!(demotion.detail_refresh_worktree_ids.is_empty());
+}
+
+#[tokio::test]
+async fn workspace_vcs_refresh_plan_filters_workspace_and_respects_tier() {
+    let root = tempfile::tempdir().unwrap();
+    let state = test_state(root.path()).await;
+    let (workspace_a, worktree_a1) = create_workspace_worktree(&state, root.path()).await;
+    let worktree_a2 = create_worktree_for_workspace(&state, root.path(), workspace_a).await;
+    let (_workspace_b, worktree_b) = create_workspace_worktree(&state, root.path()).await;
+
+    let summary = plan_workspace_vcs_refresh(
+        &state,
+        workspace_a,
+        vec![
+            worktree_b.id,
+            worktree_a2.id,
+            worktree_a1.id,
+            worktree_a1.id,
+        ],
+        WorktreeVcsStreamTier::Summary,
+    )
+    .await;
+    let mut expected = vec![worktree_a1.id, worktree_a2.id];
+    expected.sort_by_key(|worktree_id| worktree_id.0);
+    assert_eq!(summary.summary_refresh_worktree_ids, expected);
+    assert!(summary.detail_refresh_worktree_ids.is_empty());
+
+    let details = plan_workspace_vcs_refresh(
+        &state,
+        workspace_a,
+        vec![worktree_b.id, worktree_a2.id],
+        WorktreeVcsStreamTier::Details,
+    )
+    .await;
+    assert!(details.summary_refresh_worktree_ids.is_empty());
+    assert_eq!(details.detail_refresh_worktree_ids, vec![worktree_a2.id]);
+}
+
+#[tokio::test]
+async fn workspace_vcs_release_clears_final_demand_state() {
+    let root = tempfile::tempdir().unwrap();
+    let state = test_state(root.path()).await;
+    let handle = DaemonHandle::new(state.clone()).workspaces();
+    let workspace_id = create_workspace_worktree(&state, root.path()).await.0;
+    let summary = create_worktree_for_workspace(&state, root.path(), workspace_id).await;
+    let detail = create_worktree_for_workspace(&state, root.path(), workspace_id).await;
+    let plan = plan_workspace_vcs_subscription_update(
+        &state,
+        workspace_id,
+        WorkspaceVcsDemandState::default(),
+        vec![summary.id],
+        vec![detail.id],
+    )
+    .await;
+    assert!(handle.is_worktree_vcs_active_for_test(summary.id).await);
+    assert!(handle.is_worktree_vcs_active_for_test(detail.id).await);
+    assert!(handle.is_worktree_vcs_pane_open_for_test(detail.id).await);
+
+    release_workspace_vcs_demand(&state, &plan.state).await;
+
+    assert!(!handle.is_worktree_vcs_active_for_test(summary.id).await);
+    assert!(!handle.is_worktree_vcs_active_for_test(detail.id).await);
+    assert!(!handle.is_worktree_vcs_pane_open_for_test(detail.id).await);
 }

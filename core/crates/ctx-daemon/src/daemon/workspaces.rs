@@ -811,6 +811,46 @@ impl WorkspacesHandle {
             .await;
     }
 
+    #[cfg(test)]
+    pub async fn is_worktree_vcs_active_for_test(&self, worktree_id: WorktreeId) -> bool {
+        self.state.is_worktree_vcs_active(worktree_id).await
+    }
+
+    #[cfg(test)]
+    pub async fn is_worktree_vcs_pane_open_for_test(&self, worktree_id: WorktreeId) -> bool {
+        self.state.is_worktree_vcs_pane_open(worktree_id).await
+    }
+
+    pub async fn plan_workspace_vcs_subscription_update(
+        &self,
+        workspace_id: WorkspaceId,
+        current: stream::WorkspaceVcsDemandState,
+        summary_worktree_ids: Vec<WorktreeId>,
+        detail_worktree_ids: Vec<WorktreeId>,
+    ) -> stream::WorkspaceVcsSubscriptionPlan {
+        stream::plan_workspace_vcs_subscription_update(
+            &self.state,
+            workspace_id,
+            current,
+            summary_worktree_ids,
+            detail_worktree_ids,
+        )
+        .await
+    }
+
+    pub async fn plan_workspace_vcs_refresh(
+        &self,
+        workspace_id: WorkspaceId,
+        worktree_ids: Vec<WorktreeId>,
+        tier: ctx_core::models::WorktreeVcsStreamTier,
+    ) -> stream::WorkspaceVcsRefreshPlan {
+        stream::plan_workspace_vcs_refresh(&self.state, workspace_id, worktree_ids, tier).await
+    }
+
+    pub async fn release_workspace_vcs_demand(&self, demand: &stream::WorkspaceVcsDemandState) {
+        stream::release_workspace_vcs_demand(&self.state, demand).await;
+    }
+
     pub async fn record_workspace_vcs_stream_metric(&self, name: &str, value: u64) {
         let mut labels = HashMap::new();
         labels.insert("source".to_string(), "daemon".to_string());

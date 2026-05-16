@@ -223,6 +223,11 @@ const workspaceStreamSubscriptionEventApiRoots = [
   "core/crates/ctx-http/src/api/ws/workspace_stream/events.rs",
 ];
 
+const workspaceVcsDemandApiRoots = [
+  "core/crates/ctx-http/src/api/ws/workspace_vcs/subscription/client.rs",
+  "core/crates/ctx-http/src/api/ws/workspace_vcs/subscription/runtime.rs",
+];
+
 const smallApiUnitStoreFacadeTestRoots = [
   "core/crates/ctx-http/src/api/settings.rs",
   "core/crates/ctx-http/src/api/providers/login/codex/tests.rs",
@@ -1072,6 +1077,25 @@ const WORKSPACE_STREAM_SUBSCRIPTION_EVENT_API_PATTERNS = [
     name: "workspace stream API owns active subscription mutation helper",
     regex:
       /\bfn\s+(?:remove_active_task_subscription_if_unused|remove_runtime_subscription)\s*\(/,
+  },
+];
+
+const WORKSPACE_VCS_DEMAND_API_PATTERNS = [
+  {
+    name: "workspace VCS API calls raw demand filter directly",
+    regex: /\.\s*filter_workspace_worktree_ids\s*\(/,
+  },
+  {
+    name: "workspace VCS API mutates demand refs directly",
+    regex: /\.\s*(?:update_worktree_vcs_activity|update_worktree_vcs_open_panes)\s*\(/,
+  },
+  {
+    name: "workspace VCS API computes demand set differences locally",
+    regex: /\.\s*difference\s*\(/,
+  },
+  {
+    name: "workspace VCS API owns active demand helper",
+    regex: /\bfn\s+active_worktree_ids\s*\(/,
   },
 ];
 
@@ -2888,6 +2912,9 @@ function apiPatternsForPath(relativePath) {
   if (workspaceStreamSubscriptionEventApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...WORKSPACE_STREAM_SUBSCRIPTION_EVENT_API_PATTERNS);
   }
+  if (workspaceVcsDemandApiRoots.some((root) => relativePath === root)) {
+    patterns.push(...WORKSPACE_VCS_DEMAND_API_PATTERNS);
+  }
   return patterns;
 }
 
@@ -3827,6 +3854,7 @@ module.exports = {
   WORKSPACE_STREAM_EVENT_ROUTE_PLAN_API_PATTERNS,
   WORKSPACE_STREAM_LIVE_EVENT_APPLICATION_API_PATTERNS,
   WORKSPACE_STREAM_SUBSCRIPTION_EVENT_API_PATTERNS,
+  WORKSPACE_VCS_DEMAND_API_PATTERNS,
   PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,

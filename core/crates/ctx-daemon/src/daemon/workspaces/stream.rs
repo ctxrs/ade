@@ -47,7 +47,12 @@ pub use subscriptions::{
     WorkspaceStreamSubscriptionPlan, WorkspaceStreamSubscriptionReplayFinalization,
     WorkspaceStreamSubscriptionResolutionError, WorkspaceStreamSubscriptionTransactionPlan,
 };
-pub use vcs::{filter_workspace_worktree_ids, refresh_worktree_vcs_for_worktrees};
+pub use vcs::{
+    filter_workspace_worktree_ids, plan_workspace_vcs_refresh,
+    plan_workspace_vcs_subscription_update, refresh_worktree_vcs_for_worktrees,
+    release_workspace_vcs_demand, WorkspaceVcsDemandState, WorkspaceVcsRefreshPlan,
+    WorkspaceVcsSubscriptionPlan,
+};
 
 #[cfg(test)]
 mod tests;
