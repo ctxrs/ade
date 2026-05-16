@@ -559,6 +559,21 @@ test("daemon boundary guard allows only sanctioned router helper bodies", () => 
       `,
     },
     {
+      filePath: "core/crates/ctx-http/src/test_support.rs",
+      allowed: `
+        pub(crate) fn router(&self) -> axum::Router {
+          crate::api::router(crate::api::RouteHandles::from_daemon_handle(
+            self.daemon.handle(),
+          ))
+        }
+      `,
+      denied: `
+        pub(crate) fn other_router(&self) -> axum::Router {
+          crate::api::router(crate::api::RouteHandles::from_daemon_handle(self.daemon.handle()))
+        }
+      `,
+    },
+    {
       filePath: "core/crates/ctx-http-test-support/src/mcp_daemon/router.rs",
       allowed: `
         pub(crate) fn spawn_router_for_daemon(listener: tokio::net::TcpListener, daemon: &TestDaemon) {
@@ -1031,6 +1046,8 @@ test("daemon boundary guard rejects small API unit direct store setup", () => {
         daemon.stores().global().await?;
         daemon.global_store();
         let daemon = TestDaemon::new(data_dir, stores, providers, "http://127.0.0.1:0".into(), None);
+        let daemon = TestDaemon::new_for_test(data_root, "http://127.0.0.1:4310".to_string()).await?;
+        let _app = crate::api::router(RouteHandles::from_daemon_handle(daemon.handle()));
         ctx_settings_service::save_settings(daemon.global_store(), &settings).await?;
         save_settings(daemon.global_store(), &settings).await?;
         persist_settings(daemon.global_store(), &settings).await?;
@@ -1055,6 +1072,8 @@ test("daemon boundary guard rejects small API unit direct store setup", () => {
         let bypass = State(daemon.handle().providers());
         let handle = daemon.handle();
         handle.providers();
+        update_settings(State(daemon.handle().core()), Json(req)).await?;
+        update_settings(State(handle.core()), Json(req)).await?;
         let Json(resp) = get_install_statuses(
           State(handle.providers()),
           Json(req),
@@ -1083,7 +1102,11 @@ test("daemon boundary guard rejects small API unit direct store setup", () => {
       "direct small API unit provider handle reach-through",
       "direct small API unit provider handle reach-through",
       "direct small API unit provider handle reach-through",
+      "direct small API unit core handle reach-through",
+      "direct small API unit core handle reach-through",
       "direct small API unit raw TestDaemon construction",
+      "direct small API unit raw TestDaemon construction",
+      "direct small API unit router composition",
       "direct small API unit global store access",
       "direct small API unit global store access",
       "direct small API unit global store access",
@@ -1101,9 +1124,10 @@ test("daemon boundary guard allows small API unit test daemon facades and handle
     filePath: "core/crates/ctx-http/src/api/settings.rs",
     contents: `
       async fn helper() {
-        let daemon = TestDaemon::new_for_test(data_root, "http://127.0.0.1:4310".to_string()).await?;
-        let daemon = TestDaemon::new_with_providers_for_test(data_root, providers, "http://127.0.0.1:4310".to_string(), None).await?;
-        update_settings(State(daemon.handle().core()), Json(req)).await?;
+        let fixture = crate::test_support::TestDaemonFixture::new("http://127.0.0.1:4310").await;
+        update_settings(State(fixture.core()), Json(req)).await?;
+        get_install_statuses(State(fixture.providers()), Json(req)).await?;
+        fixture.providers().restart_provider_for_auth_change("codex", "test").await?;
       }
     `,
     patterns: SMALL_API_UNIT_TEST_STORE_ACCESS_PATTERNS,
@@ -1119,8 +1143,10 @@ test("daemon boundary guard scopes small API unit store facade roots", () => {
     "core/crates/ctx-http/src/api/providers/tests/mod.rs",
     "core/crates/ctx-http/src/api/providers/tests/install_statuses.rs",
     "core/crates/ctx-http/src/api/providers/tests/restarts/auth_change/fixtures.rs",
+    "core/crates/ctx-http/src/api/providers/tests/restarts/auth_change/failures.rs",
     "core/crates/ctx-http/src/api/providers/tests/restarts/harness_source.rs",
     "core/crates/ctx-http/src/api/sessions/tests.rs",
+    "core/crates/ctx-http/src/api/sessions/tests/title_generation.rs",
     "core/crates/ctx-http/src/api/workspaces/tests.rs",
   ]) {
     assert.deepEqual(
@@ -1130,7 +1156,7 @@ test("daemon boundary guard scopes small API unit store facade roots", () => {
   }
   assert.deepEqual(
     smallApiUnitStorePatternsForPath(
-      "core/crates/ctx-http/src/api/providers/tests/restarts/auth_change/failures.rs",
+      "core/crates/ctx-http/src/api/providers/tests/restarts/support.rs",
     ),
     [],
   );

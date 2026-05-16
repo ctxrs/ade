@@ -150,8 +150,10 @@ const smallApiUnitStoreFacadeTestRoots = [
   "core/crates/ctx-http/src/api/providers/tests/mod.rs",
   "core/crates/ctx-http/src/api/providers/tests/install_statuses.rs",
   "core/crates/ctx-http/src/api/providers/tests/restarts/auth_change/fixtures.rs",
+  "core/crates/ctx-http/src/api/providers/tests/restarts/auth_change/",
   "core/crates/ctx-http/src/api/providers/tests/restarts/harness_source.rs",
   "core/crates/ctx-http/src/api/sessions/tests.rs",
+  "core/crates/ctx-http/src/api/sessions/tests/",
   "core/crates/ctx-http/src/api/workspaces/tests.rs",
 ];
 
@@ -699,11 +701,22 @@ const SMALL_API_UNIT_TEST_STORE_ACCESS_PATTERNS = [
     name: "direct small API unit provider handle reach-through",
     regex: /a^/,
     contentRegex: /(?:\b[a-zA-Z_][a-zA-Z0-9_]*\s*\.\s*handle\s*\(\s*\)\s*\.\s*providers\s*\(|\blet\s+[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*[^;]*?\.handle\s*\(\s*\)\s*;|\b[a-zA-Z_][a-zA-Z0-9_]*\s*\.\s*providers\s*\()/gm,
+    allowContentRegex: /\b(?:fixture|self\.fixture)\s*\.\s*providers\s*\(/gm,
     allowSmallApiUnitProviderHandlerState: true,
   },
   {
+    name: "direct small API unit core handle reach-through",
+    regex: /a^/,
+    contentRegex: /(?:\b[a-zA-Z_][a-zA-Z0-9_]*\s*\.\s*handle\s*\(\s*\)\s*\.\s*core\s*\(|\b[a-zA-Z_][a-zA-Z0-9_]*\s*\.\s*core\s*\()/gm,
+    allowContentRegex: /\b(?:fixture|self\.fixture)\s*\.\s*core\s*\(/gm,
+  },
+  {
     name: "direct small API unit raw TestDaemon construction",
-    regex: /\bTestDaemon::(?:new|new_with_public_base_url|new_with_runtime_flags)\s*\(/,
+    regex: /\bTestDaemon::new[A-Za-z0-9_]*\s*\(/,
+  },
+  {
+    name: "direct small API unit router composition",
+    regex: /\b(?:crate::)?api::router\s*\(|\bRouteHandles::from_daemon_handle\s*\(/,
   },
   {
     name: "direct small API unit global store access",
@@ -2441,6 +2454,13 @@ function isAllowedRouterHelperComposition({ filePath, lines, index, line }) {
     filePath === "core/crates/ctx-http/src/api/workspaces/tests.rs"
     && /crate::api::router\s*\(\s*crate::api::RouteHandles::from_daemon_handle\s*\(\s*daemon\.handle\s*\(\s*\)\s*,?\s*\)\s*\)/.test(lines.slice(index, index + 4).join(" "))
     && isInsideDeclaredFunction(lines, index, /\bfn\s+test_router\s*\(/)
+  ) {
+    return true;
+  }
+  if (
+    filePath === "core/crates/ctx-http/src/test_support.rs"
+    && /crate::api::router\s*\(\s*crate::api::RouteHandles::from_daemon_handle\s*\(\s*self\.daemon\.handle\s*\(\s*\)\s*,?\s*\)\s*\)/.test(lines.slice(index, index + 4).join(" "))
+    && isInsideDeclaredFunction(lines, index, /\bpub\s*\(\s*crate\s*\)\s+fn\s+router\s*\(/)
   ) {
     return true;
   }

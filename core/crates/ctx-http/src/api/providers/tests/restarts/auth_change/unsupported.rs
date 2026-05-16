@@ -5,12 +5,11 @@ use super::*;
 async fn restart_provider_for_auth_change_skips_adapters_without_drain_restart() {
     let fixture =
         fixture_with_adapter(Arc::new(UnsupportedRestartAdapter) as Arc<dyn ProviderAdapter>).await;
-    let daemon = &fixture.daemon;
+    let daemon = fixture.daemon();
 
     seed_options_probe_cache(daemon, "ws-a/host/codex", "codex", false).await;
 
-    daemon
-        .handle()
+    fixture
         .providers()
         .restart_provider_for_auth_change("codex", "test auth updated")
         .await

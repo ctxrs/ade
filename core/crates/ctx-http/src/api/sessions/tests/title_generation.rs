@@ -6,7 +6,8 @@ use ctx_managed_installs::title_generation_local;
 
 #[tokio::test]
 async fn schedule_title_generation_falls_back_without_config() {
-    let (_data_dir, daemon, session) = setup_state().await;
+    let (fixture, session) = setup_state().await;
+    let daemon = fixture.daemon();
     let prompt = "make the title this: hello world";
     let spawned = daemon
         .schedule_fallback_title_generation_for_test(session.id, prompt, false)

@@ -2,13 +2,8 @@ use super::*;
 
 #[tokio::test]
 async fn get_install_statuses_returns_known_and_missing_installs_in_request_order() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let daemon = TestDaemon::new_for_test(
-        temp.path().to_path_buf(),
-        "http://127.0.0.1:4310".to_string(),
-    )
-    .await
-    .expect("create daemon");
+    let fixture = crate::test_support::TestDaemonFixture::new("http://127.0.0.1:4310").await;
+    let daemon = fixture.daemon();
 
     let (install_id, started_new) = daemon
         .start_install("codex".to_string(), Some(InstallTarget::Container))
@@ -35,7 +30,7 @@ async fn get_install_statuses_returns_known_and_missing_installs_in_request_orde
     let missing_install_id = InstallId::new_v4();
 
     let Json(resp) = get_install_statuses(
-        State(daemon.handle().providers()),
+        State(fixture.providers()),
         Json(GetInstallStatusesReq {
             install_ids: vec![install_id.to_string(), missing_install_id.to_string()],
         }),
@@ -65,16 +60,10 @@ async fn get_install_statuses_returns_known_and_missing_installs_in_request_orde
 
 #[tokio::test]
 async fn get_install_statuses_rejects_invalid_install_ids() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let daemon = TestDaemon::new_for_test(
-        temp.path().to_path_buf(),
-        "http://127.0.0.1:4310".to_string(),
-    )
-    .await
-    .expect("create daemon");
+    let fixture = crate::test_support::TestDaemonFixture::new("http://127.0.0.1:4310").await;
 
     let err = get_install_statuses(
-        State(daemon.handle().providers()),
+        State(fixture.providers()),
         Json(GetInstallStatusesReq {
             install_ids: vec!["not-a-uuid".to_string()],
         }),

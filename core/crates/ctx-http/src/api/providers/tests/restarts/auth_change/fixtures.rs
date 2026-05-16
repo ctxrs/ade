@@ -1,27 +1,29 @@
 use super::*;
 
 pub(super) struct ProviderRestartFixture {
-    pub(super) _temp: tempfile::TempDir,
-    pub(super) daemon: TestDaemon,
+    fixture: crate::test_support::TestDaemonFixture,
+}
+
+impl ProviderRestartFixture {
+    pub(super) fn daemon(&self) -> &TestDaemon {
+        self.fixture.daemon()
+    }
+
+    pub(super) fn providers(&self) -> ctx_daemon::daemon::ProvidersHandle {
+        self.fixture.providers()
+    }
 }
 
 pub(super) async fn fixture_with_adapter(
     adapter: Arc<dyn ProviderAdapter>,
 ) -> ProviderRestartFixture {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let daemon = TestDaemon::new_with_providers_for_test(
-        temp.path().to_path_buf(),
+    let fixture = crate::test_support::TestDaemonFixture::with_providers(
         HashMap::from([("codex".to_string(), adapter)]),
-        "http://127.0.0.1:4310".to_string(),
-        None,
+        "http://127.0.0.1:4310",
     )
-    .await
-    .expect("create daemon");
+    .await;
 
-    ProviderRestartFixture {
-        _temp: temp,
-        daemon,
-    }
+    ProviderRestartFixture { fixture }
 }
 
 pub(super) async fn seed_options_probe_cache(

@@ -1,4 +1,10 @@
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::sync::{Arc, OnceLock};
+
+use ctx_daemon::daemon::{CoreHandle, ProvidersHandle};
+use ctx_daemon::test_support::TestDaemon;
+use ctx_providers::adapters::ProviderAdapter;
+use ctx_providers::fake::FakeProviderAdapter;
 use tokio::sync::Mutex as AsyncMutex;
 
 #[cfg(test)]
@@ -18,6 +24,62 @@ pub(crate) fn process_env_test_lock() -> &'static AsyncMutex<()> {
 pub(crate) fn sandbox_cli_env_test_lock() -> &'static AsyncMutex<()> {
     static LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| AsyncMutex::new(()))
+}
+
+pub(crate) struct TestDaemonFixture {
+    daemon: TestDaemon,
+    data_dir: tempfile::TempDir,
+}
+
+impl TestDaemonFixture {
+    pub(crate) async fn new(base_url: impl Into<String>) -> Self {
+        Self::with_providers(fake_providers(), base_url).await
+    }
+
+    pub(crate) async fn with_providers(
+        providers: HashMap<String, Arc<dyn ProviderAdapter>>,
+        base_url: impl Into<String>,
+    ) -> Self {
+        let data_dir = tempfile::tempdir().expect("tempdir");
+        let daemon = TestDaemon::new_with_providers_for_test(
+            data_dir.path().to_path_buf(),
+            providers,
+            base_url.into(),
+            None,
+        )
+        .await
+        .expect("create test daemon");
+        Self { daemon, data_dir }
+    }
+
+    pub(crate) fn daemon(&self) -> &TestDaemon {
+        &self.daemon
+    }
+
+    pub(crate) fn data_root(&self) -> &Path {
+        self.data_dir.path()
+    }
+
+    pub(crate) fn router(&self) -> axum::Router {
+        crate::api::router(crate::api::RouteHandles::from_daemon_handle(
+            self.daemon.handle(),
+        ))
+    }
+
+    pub(crate) fn core(&self) -> CoreHandle {
+        self.daemon.handle().core()
+    }
+
+    pub(crate) fn providers(&self) -> ProvidersHandle {
+        self.daemon.handle().providers()
+    }
+}
+
+fn fake_providers() -> HashMap<String, Arc<dyn ProviderAdapter>> {
+    HashMap::from([(
+        "fake".to_string(),
+        Arc::new(FakeProviderAdapter::new()) as Arc<dyn ProviderAdapter>,
+    )])
 }
 
 #[cfg(unix)]

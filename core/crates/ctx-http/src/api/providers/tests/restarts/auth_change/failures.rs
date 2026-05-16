@@ -5,12 +5,11 @@ use super::*;
 async fn restart_provider_for_auth_change_returns_error_when_adapter_restart_fails() {
     let adapter = Arc::new(RestartFailingAdapter::default());
     let fixture = fixture_with_adapter(adapter.clone() as Arc<dyn ProviderAdapter>).await;
-    let daemon = &fixture.daemon;
+    let daemon = fixture.daemon();
 
     seed_options_probe_cache(daemon, "ws-a/host/codex", "codex", false).await;
 
-    let err = daemon
-        .handle()
+    let err = fixture
         .providers()
         .restart_provider_for_auth_change("codex", "test auth updated")
         .await
@@ -30,7 +29,7 @@ async fn restart_provider_for_auth_change_returns_error_when_adapter_restart_fai
 #[tokio::test]
 async fn set_codex_active_account_returns_error_when_restart_fails() {
     let fixture = fixture_with_adapter(Arc::new(RestartFailingAdapter::default())).await;
-    let daemon = &fixture.daemon;
+    let daemon = fixture.daemon();
     provider_accounts::upsert_codex_account(
         daemon.data_root(),
         provider_accounts::CodexAccountEntry {
@@ -50,7 +49,7 @@ async fn set_codex_active_account_returns_error_when_restart_fails() {
     .expect("seed codex account");
 
     let err = set_codex_active_account(
-        State(daemon.handle().providers()),
+        State(fixture.providers()),
         Json(CodexActiveAccountReq {
             account_id: Some("acct".to_string()),
         }),
@@ -69,7 +68,7 @@ async fn set_codex_active_account_returns_error_when_restart_fails() {
 async fn delete_codex_account_keeps_account_when_restart_fails() {
     let adapter = Arc::new(RestartFailingAdapter::default());
     let fixture = fixture_with_adapter(adapter.clone() as Arc<dyn ProviderAdapter>).await;
-    let daemon = &fixture.daemon;
+    let daemon = fixture.daemon();
     provider_accounts::upsert_codex_account(
         daemon.data_root(),
         provider_accounts::CodexAccountEntry {
@@ -98,8 +97,7 @@ async fn delete_codex_account_keeps_account_when_restart_fails() {
     .await
     .expect("write broker auth");
 
-    let err = match daemon
-        .handle()
+    let err = match fixture
         .providers()
         .remove_codex_account("acct-delete")
         .await
@@ -132,7 +130,7 @@ async fn delete_codex_account_keeps_account_when_restart_fails() {
 async fn delete_codex_account_stops_provider_immediately_before_broker_cleanup() {
     let adapter = Arc::new(RestartTrackingAdapter::default());
     let fixture = fixture_with_adapter(adapter.clone() as Arc<dyn ProviderAdapter>).await;
-    let daemon = &fixture.daemon;
+    let daemon = fixture.daemon();
     provider_accounts::upsert_codex_account(
         daemon.data_root(),
         provider_accounts::CodexAccountEntry {
@@ -161,8 +159,7 @@ async fn delete_codex_account_stops_provider_immediately_before_broker_cleanup()
     .await
     .expect("write broker auth");
 
-    daemon
-        .handle()
+    fixture
         .providers()
         .remove_codex_account("acct-delete")
         .await
@@ -191,14 +188,8 @@ async fn delete_codex_account_stops_provider_immediately_before_broker_cleanup()
 async fn delete_unknown_codex_account_does_not_stop_provider() {
     let adapter = Arc::new(RestartTrackingAdapter::default());
     let fixture = fixture_with_adapter(adapter.clone() as Arc<dyn ProviderAdapter>).await;
-    let daemon = &fixture.daemon;
 
-    let err = match daemon
-        .handle()
-        .providers()
-        .remove_codex_account("missing")
-        .await
-    {
+    let err = match fixture.providers().remove_codex_account("missing").await {
         Ok(_) => panic!("missing account should not be deleted"),
         Err(err) => err,
     };
@@ -210,7 +201,7 @@ async fn delete_unknown_codex_account_does_not_stop_provider() {
 async fn delete_codex_account_keeps_account_when_broker_cleanup_fails() {
     let adapter = Arc::new(RestartTrackingAdapter::default());
     let fixture = fixture_with_adapter(adapter.clone() as Arc<dyn ProviderAdapter>).await;
-    let daemon = &fixture.daemon;
+    let daemon = fixture.daemon();
     provider_accounts::upsert_codex_account(
         daemon.data_root(),
         provider_accounts::CodexAccountEntry {
@@ -237,8 +228,7 @@ async fn delete_codex_account_keeps_account_when_broker_cleanup_fails() {
         .await
         .expect("write broker root file");
 
-    let err = match daemon
-        .handle()
+    let err = match fixture
         .providers()
         .remove_codex_account("acct-delete")
         .await

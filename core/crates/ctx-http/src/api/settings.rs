@@ -48,7 +48,6 @@ pub(super) async fn update_settings(
 mod tests {
     use super::*;
 
-    use ctx_daemon::test_support::TestDaemon;
     use serde_json::json;
 
     use ctx_settings_service::EXECUTION_POLICY_TEST_ENV_LOCK;
@@ -87,13 +86,7 @@ mod tests {
         let _env_guard = EXECUTION_POLICY_TEST_ENV_LOCK.lock().await;
         let _policy = EnvVarGuard::set("CTX_HOST_EXECUTION_POLICY", "sandbox_only");
         let _mode = EnvVarGuard::remove("CTX_EXECUTION_MODE");
-        let temp = tempfile::tempdir().expect("tempdir");
-        let daemon = TestDaemon::new_for_test(
-            temp.path().to_path_buf(),
-            "http://127.0.0.1:4310".to_string(),
-        )
-        .await
-        .expect("create test daemon");
+        let fixture = crate::test_support::TestDaemonFixture::new("http://127.0.0.1:4310").await;
         let req = serde_json::from_value::<user_settings::UpdateSettingsReq>(json!({
             "execution": {
                 "mode": "host"
@@ -101,7 +94,7 @@ mod tests {
         }))
         .expect("settings update request");
 
-        let err = update_settings(State(daemon.handle().core()), Json(req))
+        let err = update_settings(State(fixture.core()), Json(req))
             .await
             .expect_err("sandbox-only policy should reject host execution settings update");
 

@@ -1,5 +1,4 @@
 use super::*;
-use ctx_daemon::test_support::TestDaemon;
 use ctx_providers::adapters::{
     ProviderAdapter, ProviderHealth, ProviderProcessInfo, ProviderRestartMode, ProviderStatus,
     RunHandle, TurnInput,
@@ -9,13 +8,8 @@ use std::path::PathBuf;
 
 #[tokio::test]
 async fn codex_login_persistence_requires_auth_file() {
-    let data_dir = tempfile::tempdir().unwrap();
-    let daemon = TestDaemon::new_for_test(
-        data_dir.path().to_path_buf(),
-        "http://127.0.0.1:4399".to_string(),
-    )
-    .await
-    .unwrap();
+    let fixture = crate::test_support::TestDaemonFixture::new("http://127.0.0.1:4399").await;
+    let daemon = fixture.daemon();
     let account_id = "acct-missing-auth";
     provider_accounts::ensure_codex_account_dir(daemon.data_root(), account_id)
         .await
@@ -85,18 +79,15 @@ impl ProviderAdapter for RestartFailingAdapter {
 
 #[tokio::test]
 async fn codex_login_persistence_rolls_back_when_restart_fails() {
-    let data_dir = tempfile::tempdir().unwrap();
-    let daemon = TestDaemon::new_with_providers_for_test(
-        data_dir.path().to_path_buf(),
+    let fixture = crate::test_support::TestDaemonFixture::with_providers(
         HashMap::from([(
             "codex".to_string(),
             Arc::new(RestartFailingAdapter) as Arc<dyn ProviderAdapter>,
         )]),
-        "http://127.0.0.1:4399".to_string(),
-        None,
+        "http://127.0.0.1:4399",
     )
-    .await
-    .unwrap();
+    .await;
+    let daemon = fixture.daemon();
     let account_id = "acct-restart-fails";
     let account_dir = provider_accounts::ensure_codex_account_dir(daemon.data_root(), account_id)
         .await
@@ -128,13 +119,8 @@ async fn codex_login_persistence_rolls_back_when_restart_fails() {
 
 #[tokio::test]
 async fn codex_login_persistence_removes_account_home_auth_after_secret_ingest() {
-    let data_dir = tempfile::tempdir().unwrap();
-    let daemon = TestDaemon::new_for_test(
-        data_dir.path().to_path_buf(),
-        "http://127.0.0.1:4399".to_string(),
-    )
-    .await
-    .unwrap();
+    let fixture = crate::test_support::TestDaemonFixture::new("http://127.0.0.1:4399").await;
+    let daemon = fixture.daemon();
     let account_id = "acct-secret-store";
     let account_dir = provider_accounts::ensure_codex_account_dir(daemon.data_root(), account_id)
         .await
