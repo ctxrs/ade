@@ -235,6 +235,10 @@ const subagentMcpStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/subagent_mcp_http.rs",
 ];
 
+const replayPropertiesStoreFacadeTestRoots = [
+  "core/crates/ctx-http/tests/replay_properties.rs",
+];
+
 const worktreeVcsSnapshotStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/worktree_vcs_snapshot.rs",
 ];
@@ -1227,6 +1231,37 @@ const SUBAGENT_MCP_TEST_STORE_ACCESS_PATTERNS = [
   {
     name: "direct subagent MCP head delta publication",
     regex: /\.publish_session_head_delta\s*\(|\bSessionHeadDelta\b/,
+  },
+];
+
+const REPLAY_PROPERTIES_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct replay properties raw Store type",
+    regex: /\bctx_store::Store\b|\buse\s+ctx_store::Store\b|\buse\s+ctx_store::\{[^}]*\bStore(?:\s+as\s+\w+)?\b[^}]*\}/s,
+  },
+  {
+    name: "direct replay properties StoreManager access",
+    regex: /\bStoreManager\b|\bStore::open_sqlite\s*\(/,
+  },
+  {
+    name: "direct replay properties common setup helper",
+    regex: /\bcommon::(?:setup_store|build_daemon|router_for_daemon)\s*\(/,
+  },
+  {
+    name: "direct replay properties daemon store access",
+    regex: /\.(?:global_store|stores|store_for_workspace|store_for_session|store_for_task)\s*\(/,
+  },
+  {
+    name: "direct replay properties raw row mutation",
+    regex: /\.(?:insert_session_turn|insert_message|append_session_event|update_session_turn_status|upsert_session_turn_tool)\s*\(/,
+  },
+  {
+    name: "direct replay properties raw replay projection helper",
+    regex: /\.(?:publish_replay_fixture_event_for_test|refresh_replay_projection_fixture_for_test|remove_replay_session_head_for_test)\s*\(/,
+  },
+  {
+    name: "direct replay properties raw projection seed model",
+    regex: /\b(?:SessionTurn|SessionTurnStatus|SessionTurnTool|MessageRole|MessageDelivery|SessionEventType)\b/,
   },
 ];
 
@@ -2446,6 +2481,13 @@ function subagentMcpStorePatternsForPath(relativePath) {
   return [];
 }
 
+function replayPropertiesStorePatternsForPath(relativePath) {
+  if (replayPropertiesStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return REPLAY_PROPERTIES_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
 function worktreeVcsSnapshotStorePatternsForPath(relativePath) {
   if (worktreeVcsSnapshotStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return WORKTREE_VCS_SNAPSHOT_TEST_STORE_ACCESS_PATTERNS;
@@ -2930,6 +2972,13 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
+        patterns: replayPropertiesStorePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
         patterns: worktreeVcsSnapshotStorePatternsForPath(relativePath),
       }),
     );
@@ -3159,6 +3208,7 @@ module.exports = {
   PROVIDER_TARGET_SCOPED_INSTALLS_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_WORKER_REAPING_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_TEST_CACHE_ACCESS_PATTERNS,
+  REPLAY_PROPERTIES_TEST_STORE_ACCESS_PATTERNS,
   SCHEDULER_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
   SESSION_FIXTURE_TEST_STORE_ACCESS_PATTERNS,
   SESSION_MODEL_API_TEST_STORE_ACCESS_PATTERNS,
@@ -3204,6 +3254,7 @@ module.exports = {
   providerProbeRuntimeEnvStorePatternsForPath,
   providerRouteSetupStorePatternsForPath,
   providerTargetScopedInstallsStorePatternsForPath,
+  replayPropertiesStorePatternsForPath,
   routerCompositionPatternsForPath,
   scanRepo,
   scanRouterComposition,

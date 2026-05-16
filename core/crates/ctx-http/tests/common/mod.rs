@@ -569,6 +569,63 @@ pub async fn subagent_mcp_daemon_fixture(
     subagent_mcp_daemon_fixture_with_providers(repo_root, fake_providers(), base_url).await
 }
 
+pub struct ReplayProjectionDaemonFixture {
+    pub data_dir: tempfile::TempDir,
+    pub daemon: TestDaemon,
+    pub server: TestServer,
+    pub workspace: Workspace,
+    pub task: Task,
+    pub session: Session,
+}
+
+pub async fn replay_projection_daemon_fixture(
+    repo_root: &Path,
+    base_url: impl Into<String>,
+) -> ReplayProjectionDaemonFixture {
+    let fixture = fake_daemon_fixture(base_url).await;
+    let server = fixture.spawn_server().await;
+
+    let workspace: Workspace = server
+        .client
+        .post(format!("{}/api/workspaces", server.base_url))
+        .json(&serde_json::json!({
+            "root_path": repo_root,
+            "name": "projection-fixture",
+        }))
+        .send()
+        .await
+        .expect("create replay projection workspace")
+        .json()
+        .await
+        .expect("decode replay projection workspace");
+
+    let task: Task = server
+        .client
+        .post(format!(
+            "{}/api/workspaces/{}/tasks",
+            server.base_url, workspace.id.0
+        ))
+        .json(&serde_json::json!({ "title": "projection-fixture-task" }))
+        .send()
+        .await
+        .expect("create replay projection task")
+        .json()
+        .await
+        .expect("decode replay projection task");
+
+    let session = load_primary_session_http(&server.client, &server.base_url, &task).await;
+    fixture.daemon.remember_session_meta(&session).await;
+
+    ReplayProjectionDaemonFixture {
+        data_dir: fixture.data_dir,
+        daemon: fixture.daemon,
+        server,
+        workspace,
+        task,
+        session,
+    }
+}
+
 pub async fn fake_daemon_fixture_with_providers(
     providers: HashMap<String, Arc<dyn ProviderAdapter>>,
     base_url: impl Into<String>,

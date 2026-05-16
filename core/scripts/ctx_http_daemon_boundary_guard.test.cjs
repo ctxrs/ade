@@ -28,6 +28,7 @@ const {
   PROVIDER_TARGET_SCOPED_INSTALLS_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_WORKER_REAPING_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_TEST_CACHE_ACCESS_PATTERNS,
+  REPLAY_PROPERTIES_TEST_STORE_ACCESS_PATTERNS,
   SCHEDULER_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
   SESSION_FIXTURE_TEST_STORE_ACCESS_PATTERNS,
   SESSION_MODEL_API_TEST_STORE_ACCESS_PATTERNS,
@@ -73,6 +74,7 @@ const {
   providerProbeRuntimeEnvStorePatternsForPath,
   providerRouteSetupStorePatternsForPath,
   providerTargetScopedInstallsStorePatternsForPath,
+  replayPropertiesStorePatternsForPath,
   routerCompositionPatternsForPath,
   scanRepo,
   scanRouterComposition,
@@ -2262,6 +2264,81 @@ test("daemon boundary guard scopes subagent MCP store facade roots", () => {
   );
   assert.deepEqual(
     subagentMcpStorePatternsForPath("core/crates/ctx-http/tests/common/mod.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects direct replay properties store/projection access", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/replay_properties.rs",
+    contents: `
+      use ctx_store::Store;
+      use ctx_store::{Store as RawStore};
+      async fn helper(daemon: &TestDaemon, stores: &StoreManager, store: &Store) {
+        let _stores = StoreManager::open(data_dir.path()).await?;
+        common::setup_store(data_dir.path()).await;
+        common::build_daemon(data_root, stores.clone(), providers, base);
+        common::router_for_daemon(&daemon);
+        daemon.global_store().list_workspaces().await?;
+        daemon.stores().global().await?;
+        daemon.store_for_workspace(workspace_id).await?;
+        daemon.store_for_session(session_id).await?;
+        daemon.store_for_task(task_id).await?;
+        store.insert_session_turn(SessionTurn { ..turn }).await?;
+        store.insert_message(message).await?;
+        store.append_session_event(session_id, None, None, SessionEventType::Notice, payload).await?;
+        store.update_session_turn_status(session_id, turn_id, SessionTurnStatus::Completed, None, None, now).await?;
+        store.upsert_session_turn_tool(SessionTurnTool { ..tool }).await?;
+        daemon.publish_replay_fixture_event_for_test(event).await;
+        daemon.refresh_replay_projection_fixture_for_test(workspace_id, session_id).await?;
+        daemon.remove_replay_session_head_for_test(session_id).await;
+        let _role = MessageRole::Assistant;
+        let _delivery = MessageDelivery::Immediate;
+      }
+    `,
+    patterns: REPLAY_PROPERTIES_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct replay properties raw Store type",
+      "direct replay properties raw Store type",
+      "direct replay properties StoreManager access",
+      "direct replay properties StoreManager access",
+      "direct replay properties common setup helper",
+      "direct replay properties common setup helper",
+      "direct replay properties common setup helper",
+      "direct replay properties daemon store access",
+      "direct replay properties daemon store access",
+      "direct replay properties daemon store access",
+      "direct replay properties daemon store access",
+      "direct replay properties daemon store access",
+      "direct replay properties raw row mutation",
+      "direct replay properties raw row mutation",
+      "direct replay properties raw row mutation",
+      "direct replay properties raw row mutation",
+      "direct replay properties raw row mutation",
+      "direct replay properties raw replay projection helper",
+      "direct replay properties raw replay projection helper",
+      "direct replay properties raw replay projection helper",
+      "direct replay properties raw projection seed model",
+      "direct replay properties raw projection seed model",
+      "direct replay properties raw projection seed model",
+      "direct replay properties raw projection seed model",
+      "direct replay properties raw projection seed model",
+      "direct replay properties raw projection seed model",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes replay properties store facade roots", () => {
+  assert.deepEqual(
+    replayPropertiesStorePatternsForPath("core/crates/ctx-http/tests/replay_properties.rs"),
+    REPLAY_PROPERTIES_TEST_STORE_ACCESS_PATTERNS,
+  );
+  assert.deepEqual(
+    replayPropertiesStorePatternsForPath("core/crates/ctx-http/tests/common/mod.rs"),
     [],
   );
 });

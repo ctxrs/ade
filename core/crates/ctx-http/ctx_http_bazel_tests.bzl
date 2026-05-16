@@ -164,6 +164,10 @@ CTX_HTTP_INTEGRATION_SOURCE_DEPS = {
     ],
 }
 
+CTX_HTTP_INTEGRATION_CRATE_FEATURES = {
+    "replay_properties": ["property_tests"],
+}
+
 CTX_HTTP_SUITE_EXTRA_TARGETS = {
     "scheduler-runtime": [
         "//core/crates/ctx-daemon:unit_tests_scheduler",
@@ -375,6 +379,9 @@ def _declare_ctx_http_test(name, source_name, binary_data, binary_rustc_env, com
         kwargs["timeout"] = timeout
     elif name in CTX_HTTP_TIMING_SENSITIVE_INTEGRATION_TESTS:
         kwargs["timeout"] = "long"
+    crate_features = CTX_HTTP_INTEGRATION_CRATE_FEATURES.get(source_name)
+    if crate_features:
+        kwargs["crate_features"] = crate_features
     rust_test(
         name = name,
         crate_name = name,

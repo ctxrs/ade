@@ -3,7 +3,6 @@
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use chrono::{Duration as ChronoDuration, Utc};
 use futures::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -11,9 +10,11 @@ use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage, WebSoc
 
 use ctx_core::ids::{MessageId, SessionId, TurnId, WorkspaceId};
 use ctx_core::models::{
-    Message, MessageDelivery, MessageRole, Session, SessionEventType, SessionHeadSnapshot,
-    SessionTurn, SessionTurnStatus, SessionTurnTool, Task, Workspace, WorkspaceActiveSnapshotEvent,
+    Session, SessionHeadSnapshot, Task, Workspace, WorkspaceActiveSnapshotEvent,
     WorkspaceActiveSnapshotStreamMessage,
+};
+use ctx_daemon::test_support::replay_projection::{
+    ReplayProjectionActiveCaseSeed, ReplayProjectionGapCaseSeed, ReplayProjectionTailSeed,
 };
 use ctx_daemon::test_support::TestDaemon;
 
@@ -33,6 +34,7 @@ struct ReplayExpectation {
 #[serde(rename_all = "camelCase")]
 struct ActiveProjectionExpected {
     head_last_event_seq: i64,
+    summary_last_event_seq: i64,
     persisted_event_types: Vec<String>,
     stable_event_types: Vec<String>,
 }
@@ -115,57 +117,16 @@ struct ReplayObservation {
 
 async fn setup_projection_harness() -> ProjectionHarness {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&daemon);
-    let server = common::spawn_http_server(app).await;
-
-    let workspace: Workspace = server
-        .client
-        .post(format!("{}/api/workspaces", server.base_url))
-        .json(&json!({
-            "root_path": repo.path(),
-            "name": "projection-fixture",
-        }))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-
-    let task: Task = server
-        .client
-        .post(format!(
-            "{}/api/workspaces/{}/tasks",
-            server.base_url, workspace.id.0
-        ))
-        .json(&json!({ "title": "projection-fixture-task" }))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-
-    let session = common::load_primary_session_http(&server.client, &server.base_url, &task).await;
-
-    daemon.remember_session_meta(&session).await;
+    let fixture = common::replay_projection_daemon_fixture(repo.path(), "http://127.0.0.1:0").await;
 
     ProjectionHarness {
         _repo: repo,
-        _data_dir: data_dir,
-        daemon,
-        server,
-        workspace,
-        task,
-        session,
+        _data_dir: fixture.data_dir,
+        daemon: fixture.daemon,
+        server: fixture.server,
+        workspace: fixture.workspace,
+        task: fixture.task,
+        session: fixture.session,
         turn_id: TurnId::new(),
         user_message_id: MessageId::new(),
         assistant_message_id: MessageId::new(),
@@ -176,377 +137,55 @@ async fn seed_active_projection_case(
     harness: &ProjectionHarness,
     fixture: &ActiveProjectionEquivalenceFixture,
 ) -> Vec<i64> {
-    let store = harness
-        .daemon
-        .store_for_session(harness.session.id)
-        .await
-        .unwrap();
-    let started_at = Utc::now();
-    let tool_at = started_at + ChronoDuration::seconds(1);
-    let assistant_at = started_at + ChronoDuration::seconds(2);
-    let updated_at = started_at + ChronoDuration::seconds(3);
-
-    let turn = SessionTurn {
-        turn_id: harness.turn_id,
-        session_id: harness.session.id,
-        run_id: None,
-        user_message_id: Some(harness.user_message_id),
-        status: SessionTurnStatus::Running,
-        start_seq: Some(1),
-        end_seq: None,
-        started_at,
-        updated_at,
-        assistant_partial: None,
-        thought_partial: None,
-        metrics_json: None,
-        failure: None,
-        tool_total: 1,
-        tool_pending: 0,
-        tool_running: 0,
-        tool_completed: 1,
-        tool_failed: 0,
-    };
-    store.insert_session_turn(turn).await.unwrap();
-
-    store
-        .insert_message(Message {
-            id: harness.user_message_id,
-            session_id: harness.session.id,
-            task_id: harness.task.id,
-            run_id: None,
-            turn_id: Some(harness.turn_id),
-            turn_sequence: Some(1),
-            order_seq: Some(1),
-            role: MessageRole::User,
-            content: fixture.user_content.clone(),
-            attachments: Vec::new(),
-            delivery: MessageDelivery::Immediate,
-            delivered_at: Some(started_at),
-            created_at: started_at,
-        })
-        .await
-        .unwrap();
-    store
-        .insert_message(Message {
-            id: harness.assistant_message_id,
-            session_id: harness.session.id,
-            task_id: harness.task.id,
-            run_id: None,
-            turn_id: Some(harness.turn_id),
-            turn_sequence: Some(3),
-            order_seq: Some(3),
-            role: MessageRole::Assistant,
-            content: fixture.assistant_content.clone(),
-            attachments: Vec::new(),
-            delivery: MessageDelivery::Immediate,
-            delivered_at: Some(assistant_at),
-            created_at: assistant_at,
-        })
-        .await
-        .unwrap();
-
-    let mut seqs = Vec::new();
-    let durable_specs = [
-        (
-            SessionEventType::UserMessage,
-            json!({
-                "message_id": harness.user_message_id.0,
-                "content": fixture.user_content.clone(),
-                "attachments": [],
-                "order_seq": 1,
-            }),
-        ),
-        (
-            SessionEventType::ToolCall,
-            json!({
-                "tool_call_id": fixture.tool_call_id.clone(),
-                "title": fixture.tool_title.clone(),
-                "kind": fixture.tool_kind.clone(),
-                "input": fixture.tool_input.clone(),
-                "order_seq": 2,
-            }),
-        ),
-        (
-            SessionEventType::ToolResult,
-            json!({
-                "tool_call_id": fixture.tool_call_id.clone(),
-                "title": fixture.tool_title.clone(),
-                "kind": fixture.tool_kind.clone(),
-                "outputText": fixture.tool_output.clone(),
-                "order_seq": 2,
-            }),
-        ),
-        (
-            SessionEventType::AssistantComplete,
-            json!({
-                "message_id": harness.assistant_message_id.0,
-                "content": fixture.assistant_content.clone(),
-                "full_content": fixture.assistant_content.clone(),
-                "order_seq": 3,
-            }),
-        ),
-    ];
-
-    for (event_type, payload) in durable_specs {
-        let event = store
-            .append_session_event(
-                harness.session.id,
-                None,
-                Some(harness.turn_id),
-                event_type,
-                payload,
-            )
-            .await
-            .unwrap();
-        seqs.push(event.seq);
-        harness
-            .daemon
-            .publish_replay_fixture_event_for_test(event)
-            .await;
-    }
-    store
-        .update_session_turn_status(
-            harness.session.id,
-            harness.turn_id,
-            SessionTurnStatus::Completed,
-            seqs.last().copied(),
-            None,
-            updated_at,
-        )
-        .await
-        .unwrap();
-
-    let partial = store
-        .append_session_event(
-            harness.session.id,
-            None,
-            Some(harness.turn_id),
-            SessionEventType::AssistantChunk,
-            json!({
-                "content_fragment": fixture.stream_assistant_chunk.clone(),
-                "order_seq": 3,
-            }),
-        )
-        .await
-        .unwrap();
     harness
         .daemon
-        .publish_replay_fixture_event_for_test(partial)
-        .await;
-
-    store
-        .upsert_session_turn_tool(SessionTurnTool {
+        .seed_replay_active_projection_case_for_test(ReplayProjectionActiveCaseSeed {
+            workspace_id: harness.workspace.id,
             session_id: harness.session.id,
-            tool_call_id: fixture.tool_call_id.clone(),
+            task_id: harness.task.id,
             turn_id: harness.turn_id,
-            tool_kind: Some(fixture.tool_kind.clone()),
-            provider_tool_name: Some(fixture.tool_kind.clone()),
-            title: Some(fixture.tool_title.clone()),
-            subtitle: Some("fixture subtitle".to_string()),
-            status: Some("completed".to_string()),
-            input_json: Some(fixture.tool_input.clone()),
-            output_text: Some(fixture.tool_output.clone()),
-            order_seq: 3,
-            first_event_seq: Some(2),
-            input_truncated: None,
-            input_original_bytes: None,
-            output_truncated: None,
-            output_original_bytes: None,
-            created_at: tool_at,
-            updated_at,
+            user_message_id: harness.user_message_id,
+            assistant_message_id: harness.assistant_message_id,
+            user_content: fixture.user_content.clone(),
+            assistant_content: fixture.assistant_content.clone(),
+            tool_call_id: fixture.tool_call_id.clone(),
+            tool_title: fixture.tool_title.clone(),
+            tool_kind: fixture.tool_kind.clone(),
+            tool_input: fixture.tool_input.clone(),
+            tool_output: fixture.tool_output.clone(),
+            stream_assistant_chunk: fixture.stream_assistant_chunk.clone(),
         })
         .await
-        .unwrap();
-
-    harness
-        .daemon
-        .refresh_replay_projection_fixture_for_test(harness.workspace.id, harness.session.id)
-        .await
-        .unwrap();
-    seqs
+        .unwrap()
 }
 
 async fn seed_gap_case(harness: &ProjectionHarness, fixture: &SessionGapSeedRehydrateFixture) {
-    let store = harness
+    harness
         .daemon
-        .store_for_session(harness.session.id)
-        .await
-        .unwrap();
-    let started_at = Utc::now();
-    let assistant_at = started_at + ChronoDuration::seconds(2);
-    let updated_at = started_at + ChronoDuration::seconds(3);
-
-    store
-        .insert_session_turn(SessionTurn {
+        .seed_replay_gap_case_for_test(ReplayProjectionGapCaseSeed {
+            workspace_id: harness.workspace.id,
+            session_id: harness.session.id,
+            task_id: harness.task.id,
             turn_id: harness.turn_id,
-            session_id: harness.session.id,
-            run_id: None,
-            user_message_id: Some(harness.user_message_id),
-            status: SessionTurnStatus::Running,
-            start_seq: Some(1),
-            end_seq: None,
-            started_at,
-            updated_at,
-            assistant_partial: None,
-            thought_partial: None,
-            metrics_json: None,
-            failure: None,
-            tool_total: 0,
-            tool_pending: 0,
-            tool_running: 0,
-            tool_completed: 0,
-            tool_failed: 0,
+            user_message_id: harness.user_message_id,
+            assistant_message_id: harness.assistant_message_id,
+            user_content: fixture.user_content.clone(),
+            assistant_content: fixture.assistant_content.clone(),
+            notice_count: 2003,
         })
-        .await
-        .unwrap();
-
-    store
-        .insert_message(Message {
-            id: harness.user_message_id,
-            session_id: harness.session.id,
-            task_id: harness.task.id,
-            run_id: None,
-            turn_id: Some(harness.turn_id),
-            turn_sequence: Some(1),
-            order_seq: Some(1),
-            role: MessageRole::User,
-            content: fixture.user_content.clone(),
-            attachments: Vec::new(),
-            delivery: MessageDelivery::Immediate,
-            delivered_at: Some(started_at),
-            created_at: started_at,
-        })
-        .await
-        .unwrap();
-    store
-        .insert_message(Message {
-            id: harness.assistant_message_id,
-            session_id: harness.session.id,
-            task_id: harness.task.id,
-            run_id: None,
-            turn_id: Some(harness.turn_id),
-            turn_sequence: Some(3),
-            order_seq: Some(3),
-            role: MessageRole::Assistant,
-            content: fixture.assistant_content.clone(),
-            attachments: Vec::new(),
-            delivery: MessageDelivery::Immediate,
-            delivered_at: Some(assistant_at),
-            created_at: assistant_at,
-        })
-        .await
-        .unwrap();
-
-    let user_message = store
-        .append_session_event(
-            harness.session.id,
-            None,
-            Some(harness.turn_id),
-            SessionEventType::UserMessage,
-            json!({
-                "message_id": harness.user_message_id.0,
-                "content": fixture.user_content.clone(),
-                "attachments": [],
-                "order_seq": 1,
-            }),
-        )
-        .await
-        .unwrap();
-    harness
-        .daemon
-        .publish_replay_fixture_event_for_test(user_message)
-        .await;
-
-    for idx in 0..2003 {
-        let event = store
-            .append_session_event(
-                harness.session.id,
-                None,
-                Some(harness.turn_id),
-                SessionEventType::Notice,
-                json!({
-                    "message_id": format!("gap-note-{idx}"),
-                    "content": format!("note-{idx}"),
-                    "order_seq": 2,
-                }),
-            )
-            .await
-            .unwrap();
-        harness
-            .daemon
-            .publish_replay_fixture_event_for_test(event)
-            .await;
-    }
-
-    let assistant_complete = store
-        .append_session_event(
-            harness.session.id,
-            None,
-            Some(harness.turn_id),
-            SessionEventType::AssistantComplete,
-            json!({
-                "message_id": harness.assistant_message_id.0,
-                "content": fixture.assistant_content.clone(),
-                "full_content": fixture.assistant_content.clone(),
-                "order_seq": 3,
-            }),
-        )
-        .await
-        .unwrap();
-    let assistant_complete_seq = assistant_complete.seq;
-    harness
-        .daemon
-        .publish_replay_fixture_event_for_test(assistant_complete)
-        .await;
-    store
-        .update_session_turn_status(
-            harness.session.id,
-            harness.turn_id,
-            SessionTurnStatus::Completed,
-            Some(assistant_complete_seq),
-            None,
-            updated_at,
-        )
-        .await
-        .unwrap();
-
-    harness
-        .daemon
-        .refresh_replay_projection_fixture_for_test(harness.workspace.id, harness.session.id)
         .await
         .unwrap();
 }
 
 async fn setup_replay_fixture(event_count: usize) -> ReplayFixture {
     let harness = setup_projection_harness().await;
-    let store = harness
+    let seqs = harness
         .daemon
-        .store_for_session(harness.session.id)
-        .await
-        .unwrap();
-
-    let mut seqs = Vec::with_capacity(event_count);
-    for i in 0..event_count {
-        let event = store
-            .append_session_event(
-                harness.session.id,
-                None,
-                None,
-                SessionEventType::Notice,
-                json!({ "i": i }),
-            )
-            .await
-            .unwrap();
-        harness
-            .daemon
-            .publish_replay_fixture_event_for_test(event.clone())
-            .await;
-        seqs.push(event.seq);
-    }
-
-    harness
-        .daemon
-        .refresh_replay_projection_fixture_for_test(harness.workspace.id, harness.session.id)
+        .seed_replay_tail_events_for_test(ReplayProjectionTailSeed {
+            workspace_id: harness.workspace.id,
+            session_id: harness.session.id,
+            event_count,
+        })
         .await
         .unwrap();
 
@@ -694,7 +333,7 @@ async fn fixture_projection_equivalence_aligns_snapshot_heads_and_replay() {
         .unwrap();
     harness
         .daemon
-        .remove_replay_session_head_for_test(harness.session.id)
+        .clear_replay_projection_head_for_test(harness.session.id)
         .await;
     let session_head: SessionHeadSnapshot = harness
         .server
@@ -812,7 +451,10 @@ async fn fixture_projection_equivalence_aligns_snapshot_heads_and_replay() {
             .map(|event| event.seq)
             .collect::<Vec<_>>()
     );
-    assert!(snapshot_task.primary_session.last_event_seq.is_none());
+    assert_eq!(
+        snapshot_task.primary_session.last_event_seq,
+        Some(fixture.expected.summary_last_event_seq)
+    );
     assert_eq!(
         heads_head
             .tool_summaries
@@ -966,11 +608,6 @@ async fn property_replay_respects_after_seq_and_monotonicity() {
 #[tokio::test]
 async fn property_replay_is_idempotent_for_same_after_seq() {
     let fixture = setup_replay_fixture(12).await;
-    let mut socket = connect_workspace_stream(
-        &fixture.harness.server.base_url,
-        fixture.harness.workspace.id,
-    )
-    .await;
     let after_seq = fixture.seqs[4];
     let expected: Vec<i64> = fixture
         .seqs
@@ -979,15 +616,25 @@ async fn property_replay_is_idempotent_for_same_after_seq() {
         .filter(|seq| *seq > after_seq)
         .collect();
 
+    let mut first_socket = connect_workspace_stream(
+        &fixture.harness.server.base_url,
+        fixture.harness.workspace.id,
+    )
+    .await;
     let first = subscribe_and_observe(
-        &mut socket,
+        &mut first_socket,
         fixture.harness.session.id,
         after_seq,
         Duration::from_secs(2),
     )
     .await;
+    let mut second_socket = connect_workspace_stream(
+        &fixture.harness.server.base_url,
+        fixture.harness.workspace.id,
+    )
+    .await;
     let second = subscribe_and_observe(
-        &mut socket,
+        &mut second_socket,
         fixture.harness.session.id,
         after_seq,
         Duration::from_secs(2),

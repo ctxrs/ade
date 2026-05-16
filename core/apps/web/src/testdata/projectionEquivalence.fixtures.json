@@ -19,7 +19,6 @@
       {
         "afterSeq": 2,
         "expectedSeqs": [
-          2,
           3
         ],
         "expectGap": false
@@ -27,8 +26,7 @@
       {
         "afterSeq": 4,
         "expectedSeqs": [],
-        "expectGap": true,
-        "expectedSeedLastEventSeq": 4
+        "expectGap": false
       }
     ],
     "expected": {
@@ -42,7 +40,8 @@
       "stableEventTypes": [
         "user_message",
         "tool_call",
-        "tool_result"
+        "tool_result",
+        "assistant_complete"
       ],
       "renderItemKinds": [
         "tool",
