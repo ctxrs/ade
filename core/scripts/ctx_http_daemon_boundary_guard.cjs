@@ -231,6 +231,10 @@ const providerTargetScopedInstallsStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/provider_target_scoped_installs.rs",
 ];
 
+const subagentMcpStoreFacadeTestRoots = [
+  "core/crates/ctx-http/tests/subagent_mcp_http.rs",
+];
+
 const worktreeVcsSnapshotStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/worktree_vcs_snapshot.rs",
 ];
@@ -1184,6 +1188,45 @@ const MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS = [
   {
     name: "direct MCP daemon StoreManager workspace access",
     regex: /\bstores\.workspace\s*\(/,
+  },
+];
+
+const SUBAGENT_MCP_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct subagent MCP raw Store type",
+    regex: /\bctx_store::Store\b|\buse\s+ctx_store::Store\b|\buse\s+ctx_store::\{[^}]*\bStore(?:\s+as\s+\w+)?\b[^}]*\}/s,
+  },
+  {
+    name: "direct subagent MCP StoreManager access",
+    regex: /\bStoreManager\b|\bStore::open_sqlite\s*\(/,
+  },
+  {
+    name: "direct subagent MCP common setup helper",
+    regex: /\bcommon::(?:setup_store|build_daemon|router_for_daemon)\s*\(/,
+  },
+  {
+    name: "direct subagent MCP daemon store access",
+    regex: /\.(?:global_store|stores|store_for_workspace|store_for_session|store_for_task)\s*\(/,
+  },
+  {
+    name: "direct subagent MCP raw session seed/probe",
+    regex: /\.(?:create_session|update_session_title|get_subagent_session_by_label|list_session_turns_page_by_seq|get_message|list_session_events_for_turn|is_archived_subagent_session|count_active_subagent_sessions)\s*\(/,
+  },
+  {
+    name: "direct subagent MCP raw turn/tool write",
+    regex: /\.(?:insert_session_turn|upsert_session_turn_tool)\s*\(/,
+  },
+  {
+    name: "direct subagent MCP raw sandbox/worktree probe",
+    regex: /\.(?:upsert_sandbox_binding|get_worktree|get_sandbox_binding)\s*\(/,
+  },
+  {
+    name: "direct subagent MCP bootstrap config write",
+    regex: /\bctx_workspace_config::update_worktree_bootstrap_config\s*\(/,
+  },
+  {
+    name: "direct subagent MCP head delta publication",
+    regex: /\.publish_session_head_delta\s*\(|\bSessionHeadDelta\b/,
   },
 ];
 
@@ -2396,6 +2439,13 @@ function providerTargetScopedInstallsStorePatternsForPath(relativePath) {
   return [];
 }
 
+function subagentMcpStorePatternsForPath(relativePath) {
+  if (subagentMcpStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return SUBAGENT_MCP_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
 function worktreeVcsSnapshotStorePatternsForPath(relativePath) {
   if (worktreeVcsSnapshotStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return WORKTREE_VCS_SNAPSHOT_TEST_STORE_ACCESS_PATTERNS;
@@ -2873,6 +2923,13 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
+        patterns: subagentMcpStorePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
         patterns: worktreeVcsSnapshotStorePatternsForPath(relativePath),
       }),
     );
@@ -3111,6 +3168,7 @@ module.exports = {
   SMALL_ROUTE_FIXTURE_PATTERNS,
   STORAGE_ADMISSION_FIXTURE_PATTERNS,
   STREAM_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
+  SUBAGENT_MCP_TEST_STORE_ACCESS_PATTERNS,
   SUBSCRIPTION_ACCOUNTS_API_TEST_STORE_ACCESS_PATTERNS,
   TASK_LIFECYCLE_TEST_STORE_ACCESS_PATTERNS,
   TERMINAL_WORKSPACE_STREAM_TEST_STORE_ACCESS_PATTERNS,
@@ -3159,6 +3217,7 @@ module.exports = {
   smallRouteFixturePatternsForPath,
   storageAdmissionFixturePatternsForPath,
   streamRuntimeStorePatternsForPath,
+  subagentMcpStorePatternsForPath,
   subscriptionAccountsApiStorePatternsForPath,
   taskLifecycleStorePatternsForPath,
   terminalWorkspaceStreamStorePatternsForPath,

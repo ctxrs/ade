@@ -15,17 +15,11 @@ use tokio::sync::oneshot;
 use tokio::time::sleep;
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
-use ctx_core::ids::{RunId, SessionId, TurnId};
-use ctx_core::models::{
-    MessageDelivery, SandboxBinding, SandboxGuestIdentity, SandboxProfile, SandboxSubstrate,
-    SessionEventType, SessionHeadDelta, SessionTurn, SessionTurnStatus, SessionTurnTool, VcsKind,
-};
-use ctx_daemon::test_support::TestDaemon;
+use ctx_core::models::{MessageDelivery, SessionEventType, SessionTurnStatus};
 use ctx_providers::adapters::{
     ProviderAdapter, ProviderHealth, ProviderStatus, ProviderUsability, RunHandle, TurnInput,
 };
 use ctx_providers::events::NormalizedEvent;
-use ctx_store::Store;
 use uuid::Uuid;
 
 mod common;
@@ -133,95 +127,12 @@ impl ProviderAdapter for BrokenOutcomeProviderAdapter {
 async fn setup_state_with_providers(
     repo_root: &Path,
     providers: HashMap<String, Arc<dyn ProviderAdapter>>,
-) -> (
-    tempfile::TempDir,
-    TestDaemon,
-    common::TestServer,
-    Store,
-    String,
-) {
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_dir.path()).await;
-    let statuses = providers.clone();
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores.clone(),
-        providers,
-        "http://127.0.0.1:0",
-    );
-    for (provider_id, provider) in statuses {
-        let status = provider.inspect().await.unwrap();
-        daemon.upsert_provider_status(provider_id, status).await;
-    }
-    let app = common::router_for_daemon(&daemon);
-    let server = common::spawn_http_server(app).await;
-
-    let ws = stores
-        .global()
-        .create_workspace(
-            "test".into(),
-            repo_root.to_string_lossy().to_string(),
-            VcsKind::Git,
-        )
+) -> common::SubagentMcpDaemonFixture {
+    common::subagent_mcp_daemon_fixture_with_providers(repo_root, providers, "http://127.0.0.1:0")
         .await
-        .unwrap();
-    let store = stores.workspace(ws.id).await.unwrap();
-    let vcs = ctx_fs::vcs::driver_for_path(repo_root).await.unwrap();
-    let base_commit = vcs.rev_parse_head(repo_root).await.unwrap();
-    let worktree = store
-        .create_worktree(
-            ws.id,
-            repo_root.to_string_lossy().to_string(),
-            base_commit,
-            None,
-        )
-        .await
-        .unwrap();
-    let task = store.create_task(ws.id, "task".into(), None).await.unwrap();
-    let session = store
-        .create_session(
-            task.id,
-            ws.id,
-            worktree.id,
-            ctx_core::models::ExecutionEnvironment::Host,
-            "fake".into(),
-            "fake-model".into(),
-            "assistant".into(),
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-
-    daemon
-        .global_store()
-        .upsert_workspace_session_index(session.id, ws.id)
-        .await
-        .unwrap();
-    daemon
-        .global_store()
-        .upsert_workspace_worktree_index(worktree.id, ws.id)
-        .await
-        .unwrap();
-    daemon
-        .global_store()
-        .upsert_workspace_task_index(task.id, ws.id)
-        .await
-        .unwrap();
-
-    (data_dir, daemon, server, store, session.id.0.to_string())
 }
 
-async fn setup_state(
-    repo_root: &Path,
-) -> (
-    tempfile::TempDir,
-    TestDaemon,
-    common::TestServer,
-    Store,
-    String,
-) {
+async fn setup_state(repo_root: &Path) -> common::SubagentMcpDaemonFixture {
     setup_state_with_providers(repo_root, common::fake_providers()).await
 }
 
@@ -375,30 +286,6 @@ fn write_running_container_sandbox_cli_shim(
     path
 }
 
-async fn insert_test_sandbox_binding(
-    store: &Store,
-    workspace_id: ctx_core::ids::WorkspaceId,
-    worktree_id: ctx_core::ids::WorktreeId,
-) {
-    store
-        .upsert_sandbox_binding(SandboxBinding {
-            worktree_id,
-            workspace_id,
-            sandbox_instance_id: ctx_core::models::sandbox_instance_id_for_workspace(workspace_id),
-            substrate: SandboxSubstrate::SharedVmContainer,
-            guest_identity: SandboxGuestIdentity::linux_container_ubuntu(),
-            profile: SandboxProfile::Standard,
-            live_workspace_root: "/workspace".to_string(),
-            live_worktree_root: format!("/workspace/worktrees/{}", worktree_id.0),
-            execution_settings_json: None,
-            container_name: None,
-            host_materialization_root: None,
-            created_at: chrono::Utc::now(),
-        })
-        .await
-        .unwrap();
-}
-
 async fn recv_workspace_stream_text(
     socket: &mut tokio_tungstenite::WebSocketStream<
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
@@ -418,9 +305,10 @@ async fn recv_workspace_stream_text(
 #[tokio::test]
 async fn spawn_agent_accepts_raw_provider_status_when_derived_status_is_ready() {
     let repo = common::init_git_repo(&[("README.md", "ok")]).await;
-    let (_data_dir, _state, server, _store, parent_id) = setup_state(repo.path()).await;
-    let client = &server.client;
-    let base = &server.base_url;
+    let fixture = setup_state(repo.path()).await;
+    let client = &fixture.server.client;
+    let base = &fixture.server.base_url;
+    let parent_id = fixture.parent_id_string();
 
     let resp = client
         .post(format!("{base}/api/mcp/sessions/{parent_id}/spawn_agent"))
@@ -444,9 +332,10 @@ async fn spawn_agent_accepts_raw_provider_status_when_derived_status_is_ready() 
 #[tokio::test]
 async fn wait_agent_rejects_duplicate_agent_ids() {
     let repo = common::init_git_repo(&[("README.md", "ok")]).await;
-    let (_data_dir, _state, server, _store, parent_id) = setup_state(repo.path()).await;
-    let client = &server.client;
-    let base = &server.base_url;
+    let fixture = setup_state(repo.path()).await;
+    let client = &fixture.server.client;
+    let base = &fixture.server.base_url;
+    let parent_id = fixture.parent_id_string();
     let spawned = spawn_agent(client, base, &parent_id, "Dup", "a", "fake", "fake-model").await;
     let agent_id = spawned_agent_id(&spawned);
 
@@ -470,39 +359,15 @@ async fn wait_agent_rejects_duplicate_agent_ids() {
 #[tokio::test]
 async fn spawn_agent_rejects_existing_task_label() {
     let repo = common::init_git_repo(&[("README.md", "ok")]).await;
-    let (_data_dir, state, server, store, parent_id) = setup_state(repo.path()).await;
-    let parent = store
-        .get_session(SessionId(Uuid::parse_str(&parent_id).unwrap()))
-        .await
-        .unwrap()
-        .unwrap();
-    let child = store
-        .create_session(
-            parent.task_id,
-            parent.workspace_id,
-            parent.worktree_id,
-            parent.execution_environment,
-            "fake".into(),
-            "fake-model".into(),
-            "subagent".into(),
-            Some(parent.id),
-            Some("sub_agent".into()),
-            None,
-        )
+    let fixture = setup_state(repo.path()).await;
+    fixture
+        .daemon
+        .seed_subagent_mcp_existing_label_child_for_test(fixture.parent_session.id, "Existing")
         .await
         .unwrap();
-    store
-        .update_session_title(child.id, "Existing".into())
-        .await
-        .unwrap();
-    state
-        .global_store()
-        .upsert_workspace_session_index(child.id, parent.workspace_id)
-        .await
-        .unwrap();
-
-    let client = &server.client;
-    let base = &server.base_url;
+    let client = &fixture.server.client;
+    let base = &fixture.server.base_url;
+    let parent_id = fixture.parent_id_string();
     let resp = client
         .post(format!("{base}/api/mcp/sessions/{parent_id}/spawn_agent"))
         .json(&json!({
@@ -527,9 +392,10 @@ async fn spawn_agent_rejects_existing_task_label() {
 #[tokio::test]
 async fn wait_agent_rejects_since_seq_for_multiple_agents() {
     let repo = common::init_git_repo(&[("README.md", "ok")]).await;
-    let (_data_dir, _state, server, _store, parent_id) = setup_state(repo.path()).await;
-    let client = &server.client;
-    let base = &server.base_url;
+    let fixture = setup_state(repo.path()).await;
+    let client = &fixture.server.client;
+    let base = &fixture.server.base_url;
+    let parent_id = fixture.parent_id_string();
     let first = spawn_agent(client, base, &parent_id, "One", "a", "fake", "fake-model").await;
     let second = spawn_agent(client, base, &parent_id, "Two", "b", "fake", "fake-model").await;
 
@@ -557,9 +423,10 @@ async fn spawn_agent_rejects_worktree_new_when_dirty() {
     let repo = common::init_git_repo(&[("README.md", "ok")]).await;
     fs::write(repo.path().join("dirty.txt"), "dirty").unwrap();
 
-    let (_data_dir, _state, server, _store, parent_id) = setup_state(repo.path()).await;
-    let client = &server.client;
-    let base = &server.base_url;
+    let fixture = setup_state(repo.path()).await;
+    let client = &fixture.server.client;
+    let base = &fixture.server.base_url;
+    let parent_id = fixture.parent_id_string();
 
     let resp = client
         .post(format!("{base}/api/mcp/sessions/{parent_id}/spawn_agent"))
@@ -585,9 +452,10 @@ async fn spawn_agent_rejects_worktree_new_when_dirty() {
 #[tokio::test]
 async fn send_input_queues_when_agent_is_busy() {
     let repo = common::init_git_repo(&[("README.md", "ok")]).await;
-    let (_data_dir, _state, server, store, parent_id) = setup_state(repo.path()).await;
-    let client = &server.client;
-    let base = &server.base_url;
+    let fixture = setup_state(repo.path()).await;
+    let client = &fixture.server.client;
+    let base = &fixture.server.base_url;
+    let parent_id = fixture.parent_id_string();
     let spawned = spawn_agent(
         client,
         base,
@@ -614,133 +482,39 @@ async fn send_input_queues_when_agent_is_busy() {
         .unwrap_or("")
         .starts_with("run_"));
 
-    let parent = store
-        .get_session(SessionId(Uuid::parse_str(&parent_id).unwrap()))
+    let latest_turn = fixture
+        .daemon
+        .subagent_mcp_latest_turn_snapshot_for_test(fixture.parent_session.id, "BusyQueued")
         .await
-        .unwrap()
         .unwrap();
-    let child = store
-        .get_subagent_session_by_label(parent.id, "BusyQueued")
-        .await
-        .unwrap()
-        .expect("child session");
-    let latest_turn = store
-        .list_session_turns_page_by_seq(child.id, None, Some(1))
-        .await
-        .unwrap()
-        .into_iter()
-        .next()
-        .expect("latest turn");
     assert!(matches!(
         latest_turn.status,
         SessionTurnStatus::Queued | SessionTurnStatus::Starting | SessionTurnStatus::Running
     ));
-    let latest_message = store
-        .get_message(latest_turn.user_message_id.expect("queued message id"))
-        .await
-        .unwrap()
-        .expect("queued message");
-    match latest_message.delivery {
-        MessageDelivery::Queued => assert!(latest_message.delivered_at.is_none()),
-        MessageDelivery::Immediate => assert!(latest_message.delivered_at.is_some()),
+    match latest_turn.message_delivery {
+        Some(MessageDelivery::Queued) => assert!(!latest_turn.delivered_at_present),
+        Some(MessageDelivery::Immediate) => assert!(latest_turn.delivered_at_present),
+        other => panic!("unexpected queued message delivery: {other:?}"),
     }
 }
 
 #[tokio::test]
 async fn archive_agent_hides_child_and_frees_active_slot_and_label() {
     let repo = common::init_git_repo(&[("README.md", "ok")]).await;
-    let (_data_dir, state, server, store, parent_id) = setup_state(repo.path()).await;
-    let parent = store
-        .get_session(SessionId(Uuid::parse_str(&parent_id).unwrap()))
+    let fixture = setup_state(repo.path()).await;
+    let archived_history = fixture
+        .daemon
+        .seed_subagent_mcp_archived_history_children_for_test(
+            fixture.parent_session.id,
+            12,
+            "Reusable",
+        )
         .await
-        .unwrap()
         .unwrap();
 
-    let mut archived_child_id = None;
-    let mut archived_turn_id = None;
-    for idx in 0..12 {
-        let child = store
-            .create_session(
-                parent.task_id,
-                parent.workspace_id,
-                parent.worktree_id,
-                parent.execution_environment,
-                "fake".into(),
-                "fake-model".into(),
-                "subagent".into(),
-                Some(parent.id),
-                Some("sub_agent".into()),
-                None,
-            )
-            .await
-            .unwrap();
-        let label = if idx == 0 {
-            archived_child_id = Some(child.id);
-            "Reusable".to_string()
-        } else {
-            format!("Child {idx}")
-        };
-        store.update_session_title(child.id, label).await.unwrap();
-        state
-            .global_store()
-            .upsert_workspace_session_index(child.id, parent.workspace_id)
-            .await
-            .unwrap();
-        if idx == 0 {
-            let turn_id = TurnId::new();
-            archived_turn_id = Some(turn_id);
-            let now = chrono::Utc::now();
-            store
-                .insert_session_turn(SessionTurn {
-                    turn_id,
-                    session_id: child.id,
-                    run_id: Some(RunId::new()),
-                    user_message_id: None,
-                    status: SessionTurnStatus::Completed,
-                    start_seq: Some(1),
-                    end_seq: Some(2),
-                    started_at: now,
-                    updated_at: now,
-                    assistant_partial: None,
-                    thought_partial: None,
-                    metrics_json: None,
-                    failure: None,
-                    tool_total: 1,
-                    tool_pending: 0,
-                    tool_running: 0,
-                    tool_completed: 1,
-                    tool_failed: 0,
-                })
-                .await
-                .unwrap();
-            store
-                .upsert_session_turn_tool(SessionTurnTool {
-                    session_id: child.id,
-                    tool_call_id: "archived-tool".to_string(),
-                    turn_id,
-                    tool_kind: Some("execute".to_string()),
-                    provider_tool_name: Some("Bash".to_string()),
-                    title: Some("Bash".to_string()),
-                    subtitle: Some("archived tool".to_string()),
-                    status: Some("completed".to_string()),
-                    input_json: Some(json!({ "cmd": "echo archived" })),
-                    output_text: Some("archived output".to_string()),
-                    order_seq: 1,
-                    first_event_seq: None,
-                    input_truncated: Some(false),
-                    input_original_bytes: None,
-                    output_truncated: Some(false),
-                    output_original_bytes: None,
-                    created_at: now,
-                    updated_at: now,
-                })
-                .await
-                .unwrap();
-        }
-    }
-
-    let client = &server.client;
-    let base = &server.base_url;
+    let client = &fixture.server.client;
+    let base = &fixture.server.base_url;
+    let parent_id = fixture.parent_id_string();
     let list_resp = client
         .get(format!("{base}/api/mcp/sessions/{parent_id}/list_agents"))
         .send()
@@ -799,7 +573,7 @@ async fn archive_agent_hides_child_and_frees_active_slot_and_label() {
     let write_archived_resp = client
         .post(format!(
             "{base}/api/sessions/{}/messages",
-            archived_child_id.expect("archived child id").0
+            archived_history.child_session_id.0
         ))
         .json(&json!({ "content": "should fail" }))
         .send()
@@ -809,7 +583,7 @@ async fn archive_agent_hides_child_and_frees_active_slot_and_label() {
     let snapshot_archived_resp = client
         .get(format!(
             "{base}/api/sessions/{}/snapshot",
-            archived_child_id.expect("archived child id").0
+            archived_history.child_session_id.0
         ))
         .send()
         .await
@@ -818,13 +592,12 @@ async fn archive_agent_hides_child_and_frees_active_slot_and_label() {
     let snapshot_body: serde_json::Value = snapshot_archived_resp.json().await.unwrap();
     assert_eq!(
         snapshot_body["summary"]["session"]["id"],
-        archived_child_id.expect("archived child id").0.to_string()
+        archived_history.child_session_id.0.to_string()
     );
     let archived_turn_tools_resp = client
         .get(format!(
             "{base}/api/sessions/{}/turns/{}/tools",
-            archived_child_id.expect("archived child id").0,
-            archived_turn_id.expect("archived child turn id").0
+            archived_history.child_session_id.0, archived_history.turn_id.0
         ))
         .send()
         .await
@@ -835,7 +608,7 @@ async fn archive_agent_hides_child_and_frees_active_slot_and_label() {
     let completions_archived_resp = client
         .get(format!(
             "{base}/api/sessions/{}/file-completions",
-            archived_child_id.expect("archived child id").0
+            archived_history.child_session_id.0
         ))
         .send()
         .await
@@ -844,7 +617,7 @@ async fn archive_agent_hides_child_and_frees_active_slot_and_label() {
     let archived_parent_list_resp = client
         .get(format!(
             "{base}/api/mcp/sessions/{}/list_agents",
-            archived_child_id.expect("archived child id").0
+            archived_history.child_session_id.0
         ))
         .send()
         .await
@@ -880,15 +653,16 @@ async fn archive_agent_hides_child_and_frees_active_slot_and_label() {
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["agent"]["agent"]["task_label"], "Reusable");
 
-    let replacement = store
-        .get_subagent_session_by_label(parent.id, "Reusable")
+    let replacement = fixture
+        .daemon
+        .subagent_mcp_child_by_label_for_test(fixture.parent_session.id, "Reusable")
         .await
-        .unwrap()
-        .expect("replacement child session");
-    assert_ne!(Some(replacement.id), archived_child_id);
+        .unwrap();
+    assert_ne!(replacement.session_id, archived_history.child_session_id);
     assert_eq!(
-        store
-            .count_active_subagent_sessions(parent.id)
+        fixture
+            .daemon
+            .subagent_mcp_active_child_count_for_test(fixture.parent_session.id)
             .await
             .unwrap(),
         12
@@ -898,18 +672,15 @@ async fn archive_agent_hides_child_and_frees_active_slot_and_label() {
 #[tokio::test]
 async fn archive_agent_reclaims_dedicated_child_worktree() {
     let repo = common::init_git_repo(&[("README.md", "ok")]).await;
-    let (_data_dir, state, server, store, parent_id) = setup_state(repo.path()).await;
-    let parent = store
-        .get_session(SessionId(Uuid::parse_str(&parent_id).unwrap()))
-        .await
-        .unwrap()
-        .unwrap();
+    let fixture = setup_state(repo.path()).await;
+    let parent_id = fixture.parent_id_string();
 
-    let spawn_resp = server
+    let spawn_resp = fixture
+        .server
         .client
         .post(format!(
             "{}/api/mcp/sessions/{parent_id}/spawn_agent",
-            server.base_url
+            fixture.server.base_url
         ))
         .json(&json!({
             "worktree": "new",
@@ -929,35 +700,38 @@ async fn archive_agent_reclaims_dedicated_child_worktree() {
             .as_str()
             .expect("worktree_path"),
     );
-    let child = store
-        .get_subagent_session_by_label(parent.id, "DedicatedCleanup")
+    let child = fixture
+        .daemon
+        .subagent_mcp_child_worktree_snapshot_for_test(
+            fixture.parent_session.id,
+            "DedicatedCleanup",
+        )
         .await
-        .unwrap()
-        .expect("dedicated child session");
-    let child_worktree = store
-        .get_worktree(child.worktree_id)
-        .await
-        .unwrap()
-        .expect("child worktree");
-    let child_branch = child_worktree.git_branch.clone().expect("child branch");
+        .unwrap();
+    let child_branch = child.git_branch.clone().expect("child branch");
     let _serial = sandbox_cli_env_test_lock().lock().await;
-    let log_path = _data_dir.path().join("sandbox-cli.log");
+    let log_path = fixture.data_dir.path().join("sandbox-cli.log");
     let sandbox_cli_path = write_running_container_sandbox_cli_shim(
-        _data_dir.path(),
+        fixture.data_dir.path(),
         &log_path,
         &ctx_workspace_container::workspace_container_name(child.workspace_id),
     );
     let _sandbox_cli = EnvVarGuard::set_path("CTX_HARNESS_SANDBOX_CLI_PATH", &sandbox_cli_path);
-    insert_test_sandbox_binding(&store, child.workspace_id, child.worktree_id).await;
-    assert_ne!(child.worktree_id, parent.worktree_id);
+    fixture
+        .daemon
+        .seed_subagent_mcp_sandbox_binding_for_test(child.workspace_id, child.worktree_id)
+        .await
+        .unwrap();
+    assert_ne!(child.worktree_id, fixture.parent_session.worktree_id);
     assert!(worktree_path.exists());
     assert!(git_branch_exists(repo.path(), &child_branch).await);
 
-    let wait_resp = server
+    let wait_resp = fixture
+        .server
         .client
         .post(format!(
             "{}/api/mcp/sessions/{parent_id}/wait_agent",
-            server.base_url
+            fixture.server.base_url
         ))
         .json(&json!({ "agent_id": agent_id, "timeout_ms": MATCH_WAIT_TIMEOUT_MS }))
         .send()
@@ -965,11 +739,12 @@ async fn archive_agent_reclaims_dedicated_child_worktree() {
         .unwrap();
     assert_eq!(wait_resp.status(), StatusCode::OK);
 
-    let archive_resp = server
+    let archive_resp = fixture
+        .server
         .client
         .post(format!(
             "{}/api/mcp/sessions/{parent_id}/archive_agent",
-            server.base_url
+            fixture.server.base_url
         ))
         .json(&json!({ "agent_id": agent_id }))
         .send()
@@ -979,21 +754,18 @@ async fn archive_agent_reclaims_dedicated_child_worktree() {
     let archive_body: serde_json::Value = archive_resp.json().await.unwrap();
     assert_eq!(archive_body["cleanup_failed"], false);
 
-    assert!(store.is_archived_subagent_session(child.id).await.unwrap());
+    let cleanup = fixture
+        .daemon
+        .subagent_mcp_cleanup_snapshot_for_test(child.session_id)
+        .await
+        .unwrap();
+    assert!(cleanup.archived);
     assert!(
-        store
-            .get_sandbox_binding(child.worktree_id)
-            .await
-            .unwrap()
-            .is_none(),
+        !cleanup.sandbox_binding_present,
         "successful dedicated child cleanup should remove the dedicated sandbox binding"
     );
     assert!(
-        store
-            .get_worktree(child.worktree_id)
-            .await
-            .unwrap()
-            .is_some(),
+        cleanup.worktree_metadata_present,
         "archived child should keep worktree metadata for transcript history"
     );
     assert!(
@@ -1005,12 +777,7 @@ async fn archive_agent_reclaims_dedicated_child_worktree() {
         "archive_agent should reclaim dedicated child branches"
     );
     assert!(
-        state
-            .global_store()
-            .get_workspace_id_for_worktree(child.worktree_id)
-            .await
-            .unwrap()
-            .is_some(),
+        cleanup.workspace_index_present,
         "archived child should keep its workspace index because the session still references the worktree metadata"
     );
 }
@@ -1018,18 +785,15 @@ async fn archive_agent_reclaims_dedicated_child_worktree() {
 #[tokio::test]
 async fn archive_agent_reports_cleanup_failure_when_dedicated_cleanup_is_incomplete() {
     let repo = common::init_git_repo(&[("README.md", "ok")]).await;
-    let (_data_dir, _state, server, store, parent_id) = setup_state(repo.path()).await;
-    let parent = store
-        .get_session(SessionId(Uuid::parse_str(&parent_id).unwrap()))
-        .await
-        .unwrap()
-        .unwrap();
+    let fixture = setup_state(repo.path()).await;
+    let parent_id = fixture.parent_id_string();
 
-    let spawn_resp = server
+    let spawn_resp = fixture
+        .server
         .client
         .post(format!(
             "{}/api/mcp/sessions/{parent_id}/spawn_agent",
-            server.base_url
+            fixture.server.base_url
         ))
         .json(&json!({
             "worktree": "new",
@@ -1049,32 +813,35 @@ async fn archive_agent_reports_cleanup_failure_when_dedicated_cleanup_is_incompl
             .as_str()
             .expect("worktree_path"),
     );
-    let child = store
-        .get_subagent_session_by_label(parent.id, "DedicatedCleanupFailure")
+    let child = fixture
+        .daemon
+        .subagent_mcp_child_worktree_snapshot_for_test(
+            fixture.parent_session.id,
+            "DedicatedCleanupFailure",
+        )
         .await
-        .unwrap()
-        .expect("dedicated child session");
-    let child_worktree = store
-        .get_worktree(child.worktree_id)
-        .await
-        .unwrap()
-        .expect("child worktree");
-    let child_branch = child_worktree.git_branch.clone().expect("child branch");
+        .unwrap();
+    let child_branch = child.git_branch.clone().expect("child branch");
     let _serial = sandbox_cli_env_test_lock().lock().await;
-    let log_path = _data_dir.path().join("sandbox-cli.log");
+    let log_path = fixture.data_dir.path().join("sandbox-cli.log");
     let sandbox_cli_path = write_running_container_sandbox_cli_shim(
-        _data_dir.path(),
+        fixture.data_dir.path(),
         &log_path,
         &ctx_workspace_container::workspace_container_name(child.workspace_id),
     );
     let _sandbox_cli = EnvVarGuard::set_path("CTX_HARNESS_SANDBOX_CLI_PATH", &sandbox_cli_path);
-    insert_test_sandbox_binding(&store, child.workspace_id, child.worktree_id).await;
+    fixture
+        .daemon
+        .seed_subagent_mcp_sandbox_binding_for_test(child.workspace_id, child.worktree_id)
+        .await
+        .unwrap();
 
-    let wait_resp = server
+    let wait_resp = fixture
+        .server
         .client
         .post(format!(
             "{}/api/mcp/sessions/{parent_id}/wait_agent",
-            server.base_url
+            fixture.server.base_url
         ))
         .json(&json!({ "agent_id": agent_id, "timeout_ms": MATCH_WAIT_TIMEOUT_MS }))
         .send()
@@ -1084,11 +851,12 @@ async fn archive_agent_reports_cleanup_failure_when_dedicated_cleanup_is_incompl
 
     let _branch_lock = create_branch_lock(repo.path(), &child_branch);
 
-    let archive_resp = server
+    let archive_resp = fixture
+        .server
         .client
         .post(format!(
             "{}/api/mcp/sessions/{parent_id}/archive_agent",
-            server.base_url
+            fixture.server.base_url
         ))
         .json(&json!({ "agent_id": agent_id }))
         .send()
@@ -1099,13 +867,14 @@ async fn archive_agent_reports_cleanup_failure_when_dedicated_cleanup_is_incompl
     assert_eq!(archive_body["archived"], true);
     assert_eq!(archive_body["cleanup_failed"], true);
 
-    assert!(store.is_archived_subagent_session(child.id).await.unwrap());
+    let cleanup = fixture
+        .daemon
+        .subagent_mcp_cleanup_snapshot_for_test(child.session_id)
+        .await
+        .unwrap();
+    assert!(cleanup.archived);
     assert!(
-        store
-            .get_sandbox_binding(child.worktree_id)
-            .await
-            .unwrap()
-            .is_some(),
+        cleanup.sandbox_binding_present,
         "partial dedicated child cleanup should preserve the sandbox binding so leaked materialization can still be reclaimed"
     );
     assert!(
@@ -1121,18 +890,15 @@ async fn archive_agent_reports_cleanup_failure_when_dedicated_cleanup_is_incompl
 #[tokio::test]
 async fn archive_agent_preserves_inherited_parent_worktree() {
     let repo = common::init_git_repo(&[("README.md", "ok")]).await;
-    let (_data_dir, _state, server, store, parent_id) = setup_state(repo.path()).await;
-    let parent = store
-        .get_session(SessionId(Uuid::parse_str(&parent_id).unwrap()))
-        .await
-        .unwrap()
-        .unwrap();
+    let fixture = setup_state(repo.path()).await;
+    let parent_id = fixture.parent_id_string();
 
-    let spawn_resp = server
+    let spawn_resp = fixture
+        .server
         .client
         .post(format!(
             "{}/api/mcp/sessions/{parent_id}/spawn_agent",
-            server.base_url
+            fixture.server.base_url
         ))
         .json(&json!({
             "worktree": "inherit",
@@ -1147,18 +913,19 @@ async fn archive_agent_preserves_inherited_parent_worktree() {
     assert_eq!(spawn_resp.status(), StatusCode::OK);
     let spawn_body: serde_json::Value = spawn_resp.json().await.unwrap();
     let agent_id = spawned_agent_id(&spawn_body);
-    let child = store
-        .get_subagent_session_by_label(parent.id, "InheritedCleanup")
+    let child = fixture
+        .daemon
+        .subagent_mcp_child_by_label_for_test(fixture.parent_session.id, "InheritedCleanup")
         .await
-        .unwrap()
-        .expect("inherited child session");
-    assert_eq!(child.worktree_id, parent.worktree_id);
+        .unwrap();
+    assert_eq!(child.worktree_id, fixture.parent_session.worktree_id);
 
-    let wait_resp = server
+    let wait_resp = fixture
+        .server
         .client
         .post(format!(
             "{}/api/mcp/sessions/{parent_id}/wait_agent",
-            server.base_url
+            fixture.server.base_url
         ))
         .json(&json!({ "agent_id": agent_id, "timeout_ms": MATCH_WAIT_TIMEOUT_MS }))
         .send()
@@ -1166,11 +933,12 @@ async fn archive_agent_preserves_inherited_parent_worktree() {
         .unwrap();
     assert_eq!(wait_resp.status(), StatusCode::OK);
 
-    let archive_resp = server
+    let archive_resp = fixture
+        .server
         .client
         .post(format!(
             "{}/api/mcp/sessions/{parent_id}/archive_agent",
-            server.base_url
+            fixture.server.base_url
         ))
         .json(&json!({ "agent_id": agent_id }))
         .send()
@@ -1180,7 +948,12 @@ async fn archive_agent_preserves_inherited_parent_worktree() {
     let archive_body: serde_json::Value = archive_resp.json().await.unwrap();
     assert_eq!(archive_body["cleanup_failed"], false);
 
-    assert!(store.is_archived_subagent_session(child.id).await.unwrap());
+    let cleanup = fixture
+        .daemon
+        .subagent_mcp_cleanup_snapshot_for_test(child.session_id)
+        .await
+        .unwrap();
+    assert!(cleanup.archived);
     assert!(
         repo.path().exists(),
         "archive_agent must not reclaim the parent worktree for inherited children"
@@ -1190,40 +963,17 @@ async fn archive_agent_preserves_inherited_parent_worktree() {
 #[tokio::test]
 async fn archive_agent_emits_workspace_stream_session_removed_for_explicit_child_subscription() {
     let repo = common::init_git_repo(&[("README.md", "ok")]).await;
-    let (_data_dir, state, server, store, parent_id) = setup_state(repo.path()).await;
-    let parent = store
-        .get_session(SessionId(Uuid::parse_str(&parent_id).unwrap()))
-        .await
-        .unwrap()
-        .unwrap();
+    let fixture = setup_state(repo.path()).await;
+    let parent_id = fixture.parent_id_string();
 
-    let child = store
-        .create_session(
-            parent.task_id,
-            parent.workspace_id,
-            parent.worktree_id,
-            parent.execution_environment,
-            "fake".into(),
-            "fake-model".into(),
-            "subagent".into(),
-            Some(parent.id),
-            Some("sub_agent".into()),
-            None,
-        )
-        .await
-        .unwrap();
-    store
-        .update_session_title(child.id, "Watch Me".to_string())
-        .await
-        .unwrap();
-    state
-        .global_store()
-        .upsert_workspace_session_index(child.id, parent.workspace_id)
+    let child = fixture
+        .daemon
+        .seed_subagent_mcp_existing_label_child_for_test(fixture.parent_session.id, "Watch Me")
         .await
         .unwrap();
     let ws_url = format!(
         "{}/api/workspaces/{}/stream",
-        server.base_url, parent.workspace_id.0
+        fixture.server.base_url, fixture.parent_session.workspace_id.0
     )
     .replace("http://", "ws://");
     let (mut socket, _) = connect_async(&ws_url).await.unwrap();
@@ -1242,7 +992,7 @@ async fn archive_agent_emits_workspace_stream_session_removed_for_explicit_child
             json!({
                 "type": "subscribe",
                 "sessions": [{
-                    "session_id": child.id.0,
+                    "session_id": child.session_id.0,
                     "replay": { "mode": "auto" }
                 }],
                 "include_active_heads": true,
@@ -1255,11 +1005,12 @@ async fn archive_agent_emits_workspace_stream_session_removed_for_explicit_child
 
     let _initial_snapshot = recv_workspace_stream_text(&mut socket).await;
 
-    let list_resp = server
+    let list_resp = fixture
+        .server
         .client
         .get(format!(
             "{}/api/mcp/sessions/{parent_id}/list_agents",
-            server.base_url
+            fixture.server.base_url
         ))
         .send()
         .await
@@ -1275,11 +1026,12 @@ async fn archive_agent_emits_workspace_stream_session_removed_for_explicit_child
         .expect("watch me agent id")
         .to_string();
 
-    let archive_resp = server
+    let archive_resp = fixture
+        .server
         .client
         .post(format!(
             "{}/api/mcp/sessions/{parent_id}/archive_agent",
-            server.base_url
+            fixture.server.base_url
         ))
         .json(&json!({ "agent_id": child_agent_id }))
         .send()
@@ -1302,26 +1054,12 @@ async fn archive_agent_emits_workspace_stream_session_removed_for_explicit_child
         match event.as_ref() {
             ctx_core::models::WorkspaceActiveSnapshotEvent::SessionRemoved {
                 session_id, ..
-            } if *session_id == child.id => {
-                state
-                    .publish_session_head_delta(
-                        &child,
-                        SessionHeadDelta {
-                            session_id: child.id,
-                            last_event_seq: 1,
-                            projection_rev: 1,
-                            state_rev: 0,
-                            emitted_at_ms: None,
-                            session: None,
-                            activity: None,
-                            event: None,
-                            turn: None,
-                            message: None,
-                            tool_summaries: Vec::new(),
-                        },
-                        true,
-                    )
-                    .await;
+            } if *session_id == child.session_id => {
+                fixture
+                    .daemon
+                    .publish_subagent_mcp_head_delta_for_test(child.session_id)
+                    .await
+                    .unwrap();
                 let leaked = tokio::time::timeout(Duration::from_millis(300), socket.next()).await;
                 if let Ok(Some(Ok(WsMessage::Text(txt)))) = leaked {
                     let message: ctx_core::models::WorkspaceActiveSnapshotStreamMessage =
@@ -1347,63 +1085,16 @@ async fn archive_agent_emits_workspace_stream_session_removed_for_explicit_child
 #[tokio::test]
 async fn archive_agent_rejects_busy_child() {
     let repo = common::init_git_repo(&[("README.md", "ok")]).await;
-    let (_data_dir, state, server, store, parent_id) = setup_state(repo.path()).await;
-    let parent = store
-        .get_session(SessionId(Uuid::parse_str(&parent_id).unwrap()))
-        .await
-        .unwrap()
-        .unwrap();
-
-    let child = store
-        .create_session(
-            parent.task_id,
-            parent.workspace_id,
-            parent.worktree_id,
-            parent.execution_environment,
-            "fake".into(),
-            "fake-model".into(),
-            "subagent".into(),
-            Some(parent.id),
-            Some("sub_agent".into()),
-            None,
-        )
-        .await
-        .unwrap();
-    store
-        .update_session_title(child.id, "BusyArchive".into())
-        .await
-        .unwrap();
-    state
-        .global_store()
-        .upsert_workspace_session_index(child.id, parent.workspace_id)
-        .await
-        .unwrap();
-    store
-        .insert_session_turn(SessionTurn {
-            turn_id: TurnId::new(),
-            session_id: child.id,
-            run_id: Some(RunId::new()),
-            user_message_id: None,
-            status: SessionTurnStatus::Running,
-            start_seq: Some(1),
-            end_seq: None,
-            started_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-            assistant_partial: None,
-            thought_partial: None,
-            metrics_json: None,
-            failure: None,
-            tool_total: 0,
-            tool_pending: 0,
-            tool_running: 0,
-            tool_completed: 0,
-            tool_failed: 0,
-        })
+    let fixture = setup_state(repo.path()).await;
+    let parent_id = fixture.parent_id_string();
+    fixture
+        .daemon
+        .seed_subagent_mcp_busy_archive_child_for_test(fixture.parent_session.id, "BusyArchive")
         .await
         .unwrap();
 
-    let client = &server.client;
-    let base = &server.base_url;
+    let client = &fixture.server.client;
+    let base = &fixture.server.base_url;
     let list_resp = client
         .get(format!("{base}/api/mcp/sessions/{parent_id}/list_agents"))
         .send()
@@ -1432,39 +1123,19 @@ async fn archive_agent_rejects_busy_child() {
 #[tokio::test]
 async fn spawn_agent_rejects_nested_child_depth() {
     let repo = common::init_git_repo(&[("README.md", "ok")]).await;
-    let (_data_dir, state, server, store, parent_id) = setup_state(repo.path()).await;
-    let parent = store
-        .get_session(SessionId(Uuid::parse_str(&parent_id).unwrap()))
-        .await
-        .unwrap()
-        .unwrap();
-    let child = store
-        .create_session(
-            parent.task_id,
-            parent.workspace_id,
-            parent.worktree_id,
-            parent.execution_environment,
-            "fake".into(),
-            "fake-model".into(),
-            "subagent".into(),
-            Some(parent.id),
-            Some("sub_agent".into()),
-            None,
-        )
-        .await
-        .unwrap();
-    state
-        .global_store()
-        .upsert_workspace_session_index(child.id, parent.workspace_id)
+    let fixture = setup_state(repo.path()).await;
+    let child = fixture
+        .daemon
+        .seed_subagent_mcp_existing_label_child_for_test(fixture.parent_session.id, "Nested")
         .await
         .unwrap();
 
-    let client = &server.client;
-    let base = &server.base_url;
+    let client = &fixture.server.client;
+    let base = &fixture.server.base_url;
     let resp = client
         .post(format!(
             "{base}/api/mcp/sessions/{}/spawn_agent",
-            child.id.0
+            child.session_id.0
         ))
         .json(&json!({
             "worktree": "inherit",
@@ -1488,40 +1159,16 @@ async fn spawn_agent_rejects_nested_child_depth() {
 #[tokio::test]
 async fn send_input_reports_immediate_delivery_when_agent_is_idle() {
     let repo = common::init_git_repo(&[("README.md", "ok")]).await;
-    let (_data_dir, state, server, store, parent_id) = setup_state(repo.path()).await;
-    let parent = store
-        .get_session(SessionId(Uuid::parse_str(&parent_id).unwrap()))
-        .await
-        .unwrap()
-        .unwrap();
-
-    let child = store
-        .create_session(
-            parent.task_id,
-            parent.workspace_id,
-            parent.worktree_id,
-            parent.execution_environment,
-            "fake".into(),
-            "fake-model".into(),
-            "subagent".into(),
-            Some(parent.id),
-            Some("sub_agent".into()),
-            None,
-        )
-        .await
-        .unwrap();
-    store
-        .update_session_title(child.id, "IdleImmediate".into())
-        .await
-        .unwrap();
-    state
-        .global_store()
-        .upsert_workspace_session_index(child.id, parent.workspace_id)
+    let fixture = setup_state(repo.path()).await;
+    let parent_id = fixture.parent_id_string();
+    fixture
+        .daemon
+        .seed_subagent_mcp_existing_label_child_for_test(fixture.parent_session.id, "IdleImmediate")
         .await
         .unwrap();
 
-    let client = &server.client;
-    let base = &server.base_url;
+    let client = &fixture.server.client;
+    let base = &fixture.server.base_url;
     let list_resp = client
         .get(format!("{base}/api/mcp/sessions/{parent_id}/list_agents"))
         .send()
@@ -1550,89 +1197,31 @@ async fn send_input_reports_immediate_delivery_when_agent_is_idle() {
         .starts_with("run_"));
     assert_eq!(body["agent"]["agent"]["state"], "starting");
 
-    let latest_turn = store
-        .list_session_turns_page_by_seq(child.id, None, Some(1))
+    let latest_turn = fixture
+        .daemon
+        .subagent_mcp_latest_turn_snapshot_for_test(fixture.parent_session.id, "IdleImmediate")
         .await
-        .unwrap()
-        .into_iter()
-        .next()
-        .expect("latest turn");
+        .unwrap();
     assert_eq!(latest_turn.status, SessionTurnStatus::Starting);
-    let latest_message = store
-        .get_message(latest_turn.user_message_id.expect("immediate message id"))
-        .await
-        .unwrap()
-        .expect("immediate message");
     assert!(matches!(
-        latest_message.delivery,
-        MessageDelivery::Immediate
+        latest_turn.message_delivery,
+        Some(MessageDelivery::Immediate)
     ));
 }
 
 #[tokio::test]
 async fn list_agents_is_summary_only_and_get_agent_returns_context_window() {
     let repo = common::init_git_repo(&[("README.md", "ok")]).await;
-    let (_data_dir, state, server, store, parent_id) = setup_state(repo.path()).await;
-    let parent = store
-        .get_session(SessionId(Uuid::parse_str(&parent_id).unwrap()))
-        .await
-        .unwrap()
-        .unwrap();
-
-    let child = store
-        .create_session(
-            parent.task_id,
-            parent.workspace_id,
-            parent.worktree_id,
-            parent.execution_environment,
-            "fake".into(),
-            "fake-model".into(),
-            "subagent".into(),
-            Some(parent.id),
-            Some("sub_agent".into()),
-            None,
-        )
-        .await
-        .unwrap();
-    store
-        .update_session_title(child.id, "Alpha".into())
-        .await
-        .unwrap();
-    state
-        .global_store()
-        .upsert_workspace_session_index(child.id, parent.workspace_id)
+    let fixture = setup_state(repo.path()).await;
+    let parent_id = fixture.parent_id_string();
+    fixture
+        .daemon
+        .seed_subagent_mcp_context_window_child_for_test(fixture.parent_session.id, "Alpha")
         .await
         .unwrap();
 
-    let turn = SessionTurn {
-        turn_id: TurnId::new(),
-        session_id: child.id,
-        run_id: Some(RunId::new()),
-        user_message_id: None,
-        status: SessionTurnStatus::Completed,
-        start_seq: Some(1),
-        end_seq: Some(2),
-        started_at: chrono::Utc::now(),
-        updated_at: chrono::Utc::now(),
-        assistant_partial: None,
-        thought_partial: None,
-        metrics_json: Some(json!({
-            "context_window_tokens": 100,
-            "context_tokens_estimate": 40,
-            "remaining_tokens_estimate": 60,
-            "remaining_fraction": 0.6
-        })),
-        failure: None,
-        tool_total: 0,
-        tool_pending: 0,
-        tool_running: 0,
-        tool_completed: 0,
-        tool_failed: 0,
-    };
-    store.insert_session_turn(turn).await.unwrap();
-
-    let client = &server.client;
-    let base = &server.base_url;
+    let client = &fixture.server.client;
+    let base = &fixture.server.base_url;
     let list_resp = client
         .get(format!("{base}/api/mcp/sessions/{parent_id}/list_agents"))
         .send()
@@ -1670,110 +1259,16 @@ async fn list_agents_is_summary_only_and_get_agent_returns_context_window() {
 #[tokio::test]
 async fn list_agents_reports_queued_turn_as_active_and_preserves_latest_result() {
     let repo = common::init_git_repo(&[("README.md", "ok")]).await;
-    let (_data_dir, state, server, store, parent_id) = setup_state(repo.path()).await;
-    let parent = store
-        .get_session(SessionId(Uuid::parse_str(&parent_id).unwrap()))
-        .await
-        .unwrap()
-        .unwrap();
-
-    let child = store
-        .create_session(
-            parent.task_id,
-            parent.workspace_id,
-            parent.worktree_id,
-            parent.execution_environment,
-            "fake".into(),
-            "fake-model".into(),
-            "subagent".into(),
-            Some(parent.id),
-            Some("sub_agent".into()),
-            None,
-        )
-        .await
-        .unwrap();
-    store
-        .update_session_title(child.id, "QueuedAgent".into())
-        .await
-        .unwrap();
-    state
-        .global_store()
-        .upsert_workspace_session_index(child.id, parent.workspace_id)
+    let fixture = setup_state(repo.path()).await;
+    let parent_id = fixture.parent_id_string();
+    fixture
+        .daemon
+        .seed_subagent_mcp_queued_history_child_for_test(fixture.parent_session.id, "QueuedAgent")
         .await
         .unwrap();
 
-    store
-        .insert_session_turn(SessionTurn {
-            turn_id: TurnId::new(),
-            session_id: child.id,
-            run_id: Some(RunId::new()),
-            user_message_id: None,
-            status: SessionTurnStatus::Completed,
-            start_seq: Some(1),
-            end_seq: Some(2),
-            started_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-            assistant_partial: None,
-            thought_partial: None,
-            metrics_json: None,
-            failure: None,
-            tool_total: 0,
-            tool_pending: 0,
-            tool_running: 0,
-            tool_completed: 0,
-            tool_failed: 0,
-        })
-        .await
-        .unwrap();
-    store
-        .insert_session_turn(SessionTurn {
-            turn_id: TurnId::new(),
-            session_id: child.id,
-            run_id: Some(RunId::new()),
-            user_message_id: None,
-            status: SessionTurnStatus::Failed,
-            start_seq: Some(3),
-            end_seq: Some(4),
-            started_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-            assistant_partial: None,
-            thought_partial: None,
-            metrics_json: None,
-            failure: None,
-            tool_total: 0,
-            tool_pending: 0,
-            tool_running: 0,
-            tool_completed: 0,
-            tool_failed: 0,
-        })
-        .await
-        .unwrap();
-    store
-        .insert_session_turn(SessionTurn {
-            turn_id: TurnId::new(),
-            session_id: child.id,
-            run_id: Some(RunId::new()),
-            user_message_id: None,
-            status: SessionTurnStatus::Queued,
-            start_seq: Some(5),
-            end_seq: None,
-            started_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-            assistant_partial: None,
-            thought_partial: None,
-            metrics_json: None,
-            failure: None,
-            tool_total: 0,
-            tool_pending: 0,
-            tool_running: 0,
-            tool_completed: 0,
-            tool_failed: 0,
-        })
-        .await
-        .unwrap();
-
-    let client = &server.client;
-    let base = &server.base_url;
+    let client = &fixture.server.client;
+    let base = &fixture.server.base_url;
     let list_resp = client
         .get(format!("{base}/api/mcp/sessions/{parent_id}/list_agents"))
         .send()
@@ -1808,9 +1303,10 @@ async fn list_agents_reports_queued_turn_as_active_and_preserves_latest_result()
 #[tokio::test]
 async fn subagent_wait_fails_when_child_exits_without_terminal_event() {
     let repo = common::init_git_repo(&[("README.md", "ok")]).await;
-    let (_data_dir, _state, server, _store, parent_id) = setup_state(repo.path()).await;
-    let client = &server.client;
-    let base = &server.base_url;
+    let fixture = setup_state(repo.path()).await;
+    let client = &fixture.server.client;
+    let base = &fixture.server.base_url;
+    let parent_id = fixture.parent_id_string();
 
     let spawned = spawn_agent(
         client,
@@ -1846,10 +1342,10 @@ async fn subagent_wait_fails_when_child_finishes_without_reporting_outcome() {
     let repo = common::init_git_repo(&[("README.md", "ok")]).await;
     let mut providers = common::fake_providers();
     providers.insert("broken".into(), Arc::new(BrokenOutcomeProviderAdapter));
-    let (_data_dir, _state, server, _store, parent_id) =
-        setup_state_with_providers(repo.path(), providers).await;
-    let client = &server.client;
-    let base = &server.base_url;
+    let fixture = setup_state_with_providers(repo.path(), providers).await;
+    let client = &fixture.server.client;
+    let base = &fixture.server.base_url;
+    let parent_id = fixture.parent_id_string();
 
     let spawned = spawn_agent(
         client,
@@ -1885,10 +1381,10 @@ async fn subagent_wait_fails_when_child_closes_outcome_without_reporting() {
     let repo = common::init_git_repo(&[("README.md", "ok")]).await;
     let mut providers = common::fake_providers();
     providers.insert("broken".into(), Arc::new(BrokenOutcomeProviderAdapter));
-    let (_data_dir, _state, server, _store, parent_id) =
-        setup_state_with_providers(repo.path(), providers).await;
-    let client = &server.client;
-    let base = &server.base_url;
+    let fixture = setup_state_with_providers(repo.path(), providers).await;
+    let client = &fixture.server.client;
+    let base = &fixture.server.base_url;
+    let parent_id = fixture.parent_id_string();
 
     let spawned = spawn_agent(
         client,
@@ -1924,13 +1420,14 @@ async fn subagent_wait_fails_when_child_stalls_without_done_or_outcome() {
     let repo = common::init_git_repo(&[("README.md", "ok")]).await;
     let mut providers = common::fake_providers();
     providers.insert("broken".into(), Arc::new(BrokenOutcomeProviderAdapter));
-    let (_data_dir, state, server, _store, parent_id) =
-        setup_state_with_providers(repo.path(), providers).await;
-    state
+    let fixture = setup_state_with_providers(repo.path(), providers).await;
+    fixture
+        .daemon
         .set_provider_inactivity_timeout(Duration::from_millis(250))
         .await;
-    let client = &server.client;
-    let base = &server.base_url;
+    let client = &fixture.server.client;
+    let base = &fixture.server.base_url;
+    let parent_id = fixture.parent_id_string();
 
     let spawned = spawn_agent(
         client,
@@ -1961,9 +1458,10 @@ async fn subagent_wait_fails_when_child_stalls_without_done_or_outcome() {
 #[tokio::test]
 async fn subagent_interrupt_does_not_override_completed_child_outcome() {
     let repo = common::init_git_repo(&[("README.md", "ok")]).await;
-    let (_data_dir, _state, server, store, parent_id) = setup_state(repo.path()).await;
-    let client = &server.client;
-    let base = &server.base_url;
+    let fixture = setup_state(repo.path()).await;
+    let client = &fixture.server.client;
+    let base = &fixture.server.base_url;
+    let parent_id = fixture.parent_id_string();
 
     let spawned = spawn_agent(
         client,
@@ -2007,33 +1505,14 @@ async fn subagent_interrupt_does_not_override_completed_child_outcome() {
         "completed"
     );
 
-    let parent = store
-        .get_session(SessionId(Uuid::parse_str(&parent_id).unwrap()))
-        .await
-        .unwrap()
-        .unwrap();
-    let child = store
-        .get_subagent_session_by_label(parent.id, "CancelCompletes")
-        .await
-        .unwrap()
-        .expect("child session");
-    let turn = store
-        .list_session_turns_page_by_seq(child.id, None, Some(1))
-        .await
-        .unwrap()
-        .into_iter()
-        .next()
-        .expect("child turn");
-    assert_eq!(turn.status, SessionTurnStatus::Completed);
-
-    let events = store
-        .list_session_events_for_turn(child.id, turn.turn_id, false)
+    let latest_turn = fixture
+        .daemon
+        .subagent_mcp_latest_turn_snapshot_for_test(fixture.parent_session.id, "CancelCompletes")
         .await
         .unwrap();
+    assert_eq!(latest_turn.status, SessionTurnStatus::Completed);
     assert!(
-        !events
-            .iter()
-            .any(|event| matches!(event.event_type, SessionEventType::TurnInterrupted)),
+        !latest_turn.turn_interrupted,
         "completed-on-cancel flow should not persist an interrupted event"
     );
 }
@@ -2043,10 +1522,10 @@ async fn subagent_interrupt_falls_back_to_interrupted_when_child_never_reports_o
     let repo = common::init_git_repo(&[("README.md", "ok")]).await;
     let mut providers = common::fake_providers();
     providers.insert("broken".into(), Arc::new(BrokenOutcomeProviderAdapter));
-    let (_data_dir, _state, server, store, parent_id) =
-        setup_state_with_providers(repo.path(), providers).await;
-    let client = &server.client;
-    let base = &server.base_url;
+    let fixture = setup_state_with_providers(repo.path(), providers).await;
+    let client = &fixture.server.client;
+    let base = &fixture.server.base_url;
+    let parent_id = fixture.parent_id_string();
 
     let spawned = spawn_agent(
         client,
@@ -2092,31 +1571,16 @@ async fn subagent_interrupt_falls_back_to_interrupted_when_child_never_reports_o
         "interrupted"
     );
 
-    let parent = store
-        .get_session(SessionId(Uuid::parse_str(&parent_id).unwrap()))
-        .await
-        .unwrap()
-        .unwrap();
-    let child = store
-        .get_subagent_session_by_label(parent.id, "MissingInterruptOutcome")
-        .await
-        .unwrap()
-        .expect("child session");
-    let turn = store
-        .list_session_turns_page_by_seq(child.id, None, Some(1))
-        .await
-        .unwrap()
-        .into_iter()
-        .next()
-        .expect("child turn");
-    let events = store
-        .list_session_events_for_turn(child.id, turn.turn_id, false)
+    let latest_turn = fixture
+        .daemon
+        .subagent_mcp_latest_turn_snapshot_for_test(
+            fixture.parent_session.id,
+            "MissingInterruptOutcome",
+        )
         .await
         .unwrap();
     assert!(
-        events
-            .iter()
-            .any(|event| matches!(event.event_type, SessionEventType::TurnInterrupted)),
+        latest_turn.turn_interrupted,
         "fallback interrupt should persist TurnInterrupted"
     );
 }
@@ -2126,10 +1590,10 @@ async fn subagent_interrupt_falls_back_to_interrupted_when_child_closes_outcome(
     let repo = common::init_git_repo(&[("README.md", "ok")]).await;
     let mut providers = common::fake_providers();
     providers.insert("broken".into(), Arc::new(BrokenOutcomeProviderAdapter));
-    let (_data_dir, _state, server, store, parent_id) =
-        setup_state_with_providers(repo.path(), providers).await;
-    let client = &server.client;
-    let base = &server.base_url;
+    let fixture = setup_state_with_providers(repo.path(), providers).await;
+    let client = &fixture.server.client;
+    let base = &fixture.server.base_url;
+    let parent_id = fixture.parent_id_string();
 
     let spawned = spawn_agent(
         client,
@@ -2175,31 +1639,16 @@ async fn subagent_interrupt_falls_back_to_interrupted_when_child_closes_outcome(
         "interrupted"
     );
 
-    let parent = store
-        .get_session(SessionId(Uuid::parse_str(&parent_id).unwrap()))
-        .await
-        .unwrap()
-        .unwrap();
-    let child = store
-        .get_subagent_session_by_label(parent.id, "ClosedInterruptOutcome")
-        .await
-        .unwrap()
-        .expect("child session");
-    let turn = store
-        .list_session_turns_page_by_seq(child.id, None, Some(1))
-        .await
-        .unwrap()
-        .into_iter()
-        .next()
-        .expect("child turn");
-    let events = store
-        .list_session_events_for_turn(child.id, turn.turn_id, false)
+    let latest_turn = fixture
+        .daemon
+        .subagent_mcp_latest_turn_snapshot_for_test(
+            fixture.parent_session.id,
+            "ClosedInterruptOutcome",
+        )
         .await
         .unwrap();
     assert!(
-        events
-            .iter()
-            .any(|event| matches!(event.event_type, SessionEventType::TurnInterrupted)),
+        latest_turn.turn_interrupted,
         "closed-channel fallback interrupt should persist TurnInterrupted"
     );
 }
@@ -2207,21 +1656,18 @@ async fn subagent_interrupt_falls_back_to_interrupted_when_child_closes_outcome(
 #[tokio::test]
 async fn spawn_agent_worktree_new_runs_bootstrap() {
     let repo = common::init_git_repo(&[("README.md", "ok")]).await;
-    let (_data_dir, _state, server, store, parent_id) = setup_state(repo.path()).await;
-    ctx_workspace_config::update_worktree_bootstrap_config(
-        &store,
-        ctx_workspace_config::WorktreeBootstrapConfigUpdate {
-            setup_command: Some(
-                "sh -c \"mkdir -p .ctx && echo bootstrapped > .ctx/bootstrap.txt\"".to_string(),
-            ),
-            timeout_sec: None,
-            wait_for_completion: Some(true),
-        },
-    )
-    .await
-    .unwrap();
-    let client = &server.client;
-    let base = &server.base_url;
+    let fixture = setup_state(repo.path()).await;
+    fixture
+        .daemon
+        .seed_subagent_mcp_worktree_bootstrap_config_for_test(
+            fixture.parent_session.id,
+            "sh -c \"mkdir -p .ctx && echo bootstrapped > .ctx/bootstrap.txt\"".to_string(),
+        )
+        .await
+        .unwrap();
+    let client = &fixture.server.client;
+    let base = &fixture.server.base_url;
+    let parent_id = fixture.parent_id_string();
 
     let resp = client
         .post(format!("{base}/api/mcp/sessions/{parent_id}/spawn_agent"))

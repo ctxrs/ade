@@ -38,6 +38,7 @@ mod cache_rehydration;
 pub use cache_rehydration::{
     CacheRehydrationSessionFixture, CacheRehydrationSubagentFixture, CacheRehydrationTurnFixture,
 };
+pub mod subagent_mcp;
 
 #[derive(Clone)]
 pub struct TestDaemon {

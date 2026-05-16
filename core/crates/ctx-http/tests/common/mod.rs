@@ -505,6 +505,70 @@ pub async fn reopen_provider_install_daemon_fixture_for_data_root_with_providers
         .await
 }
 
+pub struct SubagentMcpDaemonFixture {
+    pub data_dir: tempfile::TempDir,
+    pub daemon: TestDaemon,
+    pub server: TestServer,
+    pub parent_session: Session,
+}
+
+impl SubagentMcpDaemonFixture {
+    pub fn parent_id_string(&self) -> String {
+        self.parent_session.id.0.to_string()
+    }
+}
+
+pub async fn subagent_mcp_daemon_fixture_with_providers(
+    repo_root: &Path,
+    providers: HashMap<String, Arc<dyn ProviderAdapter>>,
+    base_url: impl Into<String>,
+) -> SubagentMcpDaemonFixture {
+    let data_dir = tempfile::tempdir().expect("create subagent MCP data root");
+    let statuses = providers.clone();
+    let daemon = TestDaemon::new_with_providers_for_test(
+        data_dir.path().to_path_buf(),
+        providers,
+        base_url.into(),
+        None,
+    )
+    .await
+    .expect("create subagent MCP daemon");
+    for (provider_id, provider) in statuses {
+        let status = provider
+            .inspect()
+            .await
+            .expect("inspect subagent MCP provider");
+        daemon.upsert_provider_status(provider_id, status).await;
+    }
+
+    let vcs = ctx_fs::vcs::driver_for_path(repo_root)
+        .await
+        .expect("subagent MCP repo VCS driver");
+    let base_commit = vcs
+        .rev_parse_head(repo_root)
+        .await
+        .expect("subagent MCP repo HEAD");
+    let parent_session = daemon
+        .seed_mcp_parent_session_for_test(repo_root, base_commit, "fake", "fake-model")
+        .await
+        .expect("seed subagent MCP parent session");
+    let server = spawn_http_server(router_for_daemon(&daemon)).await;
+
+    SubagentMcpDaemonFixture {
+        data_dir,
+        daemon,
+        server,
+        parent_session,
+    }
+}
+
+pub async fn subagent_mcp_daemon_fixture(
+    repo_root: &Path,
+    base_url: impl Into<String>,
+) -> SubagentMcpDaemonFixture {
+    subagent_mcp_daemon_fixture_with_providers(repo_root, fake_providers(), base_url).await
+}
+
 pub async fn fake_daemon_fixture_with_providers(
     providers: HashMap<String, Arc<dyn ProviderAdapter>>,
     base_url: impl Into<String>,

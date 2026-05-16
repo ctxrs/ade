@@ -37,6 +37,7 @@ const {
   SMALL_ROUTE_FIXTURE_PATTERNS,
   STORAGE_ADMISSION_FIXTURE_PATTERNS,
   STREAM_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
+  SUBAGENT_MCP_TEST_STORE_ACCESS_PATTERNS,
   SUBSCRIPTION_ACCOUNTS_API_TEST_STORE_ACCESS_PATTERNS,
   TASK_LIFECYCLE_TEST_STORE_ACCESS_PATTERNS,
   TERMINAL_WORKSPACE_STREAM_TEST_STORE_ACCESS_PATTERNS,
@@ -85,6 +86,7 @@ const {
   smallRouteFixturePatternsForPath,
   storageAdmissionFixturePatternsForPath,
   streamRuntimeStorePatternsForPath,
+  subagentMcpStorePatternsForPath,
   subscriptionAccountsApiStorePatternsForPath,
   taskLifecycleStorePatternsForPath,
   terminalWorkspaceStreamStorePatternsForPath,
@@ -2179,6 +2181,87 @@ test("daemon boundary guard scopes MCP daemon test facade roots", () => {
   }
   assert.deepEqual(
     mcpDaemonPatternsForPath("core/crates/ctx-http-test-support/src/lib.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects direct subagent MCP store/probe access", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/subagent_mcp_http.rs",
+    contents: `
+      use ctx_store::Store;
+      use ctx_store::{Store as RawStore};
+      async fn helper(daemon: &TestDaemon, stores: &StoreManager, store: &Store) {
+        let _stores = StoreManager::open(data_dir.path()).await?;
+        common::setup_store(data_dir.path()).await;
+        common::build_daemon(data_root, stores.clone(), providers, base);
+        common::router_for_daemon(&daemon);
+        daemon.global_store().list_workspaces().await?;
+        daemon.stores().global().await?;
+        daemon.store_for_workspace(workspace_id).await?;
+        daemon.store_for_session(session_id).await?;
+        daemon.store_for_task(task_id).await?;
+        store.create_session(task_id, workspace_id, worktree_id, env, provider, model, role, None, None, None).await?;
+        store.update_session_title(session_id, "label".into()).await?;
+        store.get_subagent_session_by_label(parent_id, "child").await?;
+        store.list_session_turns_page_by_seq(session_id, None, Some(1)).await?;
+        store.get_message(message_id).await?;
+        store.list_session_events_for_turn(session_id, turn_id, false).await?;
+        store.is_archived_subagent_session(session_id).await?;
+        store.count_active_subagent_sessions(parent_id).await?;
+        store.insert_session_turn(turn).await?;
+        store.upsert_session_turn_tool(tool).await?;
+        store.upsert_sandbox_binding(binding).await?;
+        store.get_worktree(worktree_id).await?;
+        store.get_sandbox_binding(worktree_id).await?;
+        ctx_workspace_config::update_worktree_bootstrap_config(&store, update).await?;
+        daemon.publish_session_head_delta(&session, SessionHeadDelta { session_id, ..delta }, true).await;
+      }
+    `,
+    patterns: SUBAGENT_MCP_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct subagent MCP raw Store type",
+      "direct subagent MCP raw Store type",
+      "direct subagent MCP StoreManager access",
+      "direct subagent MCP StoreManager access",
+      "direct subagent MCP common setup helper",
+      "direct subagent MCP common setup helper",
+      "direct subagent MCP common setup helper",
+      "direct subagent MCP daemon store access",
+      "direct subagent MCP daemon store access",
+      "direct subagent MCP daemon store access",
+      "direct subagent MCP daemon store access",
+      "direct subagent MCP daemon store access",
+      "direct subagent MCP raw session seed/probe",
+      "direct subagent MCP raw session seed/probe",
+      "direct subagent MCP raw session seed/probe",
+      "direct subagent MCP raw session seed/probe",
+      "direct subagent MCP raw session seed/probe",
+      "direct subagent MCP raw session seed/probe",
+      "direct subagent MCP raw session seed/probe",
+      "direct subagent MCP raw session seed/probe",
+      "direct subagent MCP raw turn/tool write",
+      "direct subagent MCP raw turn/tool write",
+      "direct subagent MCP raw sandbox/worktree probe",
+      "direct subagent MCP raw sandbox/worktree probe",
+      "direct subagent MCP raw sandbox/worktree probe",
+      "direct subagent MCP bootstrap config write",
+      "direct subagent MCP head delta publication",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes subagent MCP store facade roots", () => {
+  assert.deepEqual(
+    subagentMcpStorePatternsForPath("core/crates/ctx-http/tests/subagent_mcp_http.rs"),
+    SUBAGENT_MCP_TEST_STORE_ACCESS_PATTERNS,
+  );
+  assert.deepEqual(
+    subagentMcpStorePatternsForPath("core/crates/ctx-http/tests/common/mod.rs"),
     [],
   );
 });
