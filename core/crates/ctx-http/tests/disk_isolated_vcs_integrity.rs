@@ -1,14 +1,9 @@
-use std::collections::HashMap;
 use std::path::Path;
 use std::{env, fs};
 
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::process::Command;
-
-use ctx_daemon::test_support::TestDaemon;
-use ctx_providers::fake::FakeProviderAdapter;
-use ctx_store::StoreManager;
 
 mod common;
 
@@ -148,24 +143,12 @@ async fn disk_isolated_task_creation_produces_valid_git_worktree() {
     }
 
     let repo = setup_git_repo().await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-    let mut providers: HashMap<
-        String,
-        std::sync::Arc<dyn ctx_providers::adapters::ProviderAdapter>,
-    > = HashMap::new();
-    providers.insert(
-        "fake".into(),
-        std::sync::Arc::new(FakeProviderAdapter::new()),
-    );
-    let daemon = TestDaemon::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    );
-    let app = common::router_for_daemon(&daemon);
+    let fixture = common::fake_daemon_fixture_with_providers(
+        common::fake_providers(),
+        "http://127.0.0.1:4399",
+    )
+    .await;
+    let app = fixture.router();
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -266,7 +249,7 @@ async fn disk_isolated_task_creation_produces_valid_git_worktree() {
         .arg("sh")
         .arg("-lc")
         .arg("git rev-parse --is-inside-work-tree && git rev-parse HEAD >/dev/null");
-    for (k, v) in sandbox_cli_env_for_data_root(data_dir.path()) {
+    for (k, v) in sandbox_cli_env_for_data_root(fixture.data_dir.path()) {
         cmd.env(k, v);
     }
     let output = cmd.output().await.unwrap();
@@ -291,7 +274,7 @@ async fn disk_isolated_task_creation_produces_valid_git_worktree() {
         .arg("sh")
         .arg("-lc")
         .arg("printf 'hello from container\\n' > file.txt");
-    for (k, v) in sandbox_cli_env_for_data_root(data_dir.path()) {
+    for (k, v) in sandbox_cli_env_for_data_root(fixture.data_dir.path()) {
         mutate.env(k, v);
     }
     let mutate_out = mutate.output().await.unwrap();

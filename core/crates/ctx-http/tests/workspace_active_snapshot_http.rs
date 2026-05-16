@@ -132,8 +132,7 @@ async fn setup_with_root(
     repo: tempfile::TempDir,
 ) -> (
     tempfile::TempDir,
-    tempfile::TempDir,
-    TestDaemon,
+    common::FakeDaemonFixture,
     common::TestServer,
 ) {
     let permit = workspace_http_test_gate()
@@ -141,27 +140,15 @@ async fn setup_with_root(
         .acquire_owned()
         .await
         .unwrap();
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_dir.path()).await;
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let server = fixture.spawn_server().await.with_resource_permit(permit);
 
-    let daemon = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&daemon);
-    let server = common::spawn_http_server(app)
-        .await
-        .with_resource_permit(permit);
-
-    (repo, data_dir, daemon, server)
+    (repo, fixture, server)
 }
 
 async fn setup() -> (
     tempfile::TempDir,
-    tempfile::TempDir,
-    TestDaemon,
+    common::FakeDaemonFixture,
     common::TestServer,
 ) {
     setup_with_root(common::init_git_repo(&[("file.txt", "hello\n")]).await).await
@@ -169,8 +156,7 @@ async fn setup() -> (
 
 async fn setup_git() -> (
     tempfile::TempDir,
-    tempfile::TempDir,
-    TestDaemon,
+    common::FakeDaemonFixture,
     common::TestServer,
 ) {
     setup().await
@@ -179,7 +165,8 @@ async fn setup_git() -> (
 #[tokio::test]
 async fn workspace_active_hydration_returns_500_for_store_open_failures_and_404_for_missing_workspaces(
 ) {
-    let (repo, _data_dir, daemon, server) = setup().await;
+    let (repo, fixture, server) = setup().await;
+    let daemon = &fixture.daemon;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -353,7 +340,8 @@ async fn append_and_publish_event(
 
 #[tokio::test]
 async fn workspace_active_snapshot_includes_sessions() {
-    let (repo, _data_dir, state, server) = setup().await;
+    let (repo, fixture, server) = setup().await;
+    let state = &fixture.daemon;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -393,7 +381,8 @@ async fn workspace_active_snapshot_includes_sessions() {
 
 #[tokio::test]
 async fn create_session_rejects_initial_prompt_without_client_ids() {
-    let (repo, _data_dir, state, server) = setup().await;
+    let (repo, fixture, server) = setup().await;
+    let state = &fixture.daemon;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -462,7 +451,8 @@ async fn create_session_rejects_initial_prompt_without_client_ids() {
 
 #[tokio::test]
 async fn workspace_active_snapshot_includes_active_tasks_only() {
-    let (repo, _data_dir, state, server) = setup_git().await;
+    let (repo, fixture, server) = setup_git().await;
+    let state = &fixture.daemon;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -527,7 +517,8 @@ async fn workspace_active_snapshot_includes_active_tasks_only() {
 
 #[tokio::test]
 async fn workspace_active_heads_batch_strips_partials() {
-    let (repo, _data_dir, state, server) = setup().await;
+    let (repo, fixture, server) = setup().await;
+    let state = &fixture.daemon;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -579,7 +570,8 @@ async fn workspace_active_heads_batch_strips_partials() {
 
 #[tokio::test]
 async fn session_snapshot_returns_summary_only() {
-    let (repo, _data_dir, state, server) = setup().await;
+    let (repo, fixture, server) = setup().await;
+    let state = &fixture.daemon;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -617,7 +609,8 @@ async fn session_snapshot_returns_summary_only() {
 
 #[tokio::test]
 async fn session_head_returns_head() {
-    let (repo, _data_dir, state, server) = setup().await;
+    let (repo, fixture, server) = setup().await;
+    let state = &fixture.daemon;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -653,7 +646,8 @@ async fn session_head_returns_head() {
 
 #[tokio::test]
 async fn workspace_stream_replays_from_after_seq() {
-    let (repo, _data_dir, state, server) = setup().await;
+    let (repo, fixture, server) = setup().await;
+    let state = &fixture.daemon;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -788,7 +782,8 @@ async fn workspace_stream_replays_from_after_seq() {
 
 #[tokio::test]
 async fn workspace_stream_reset_replay_waits_for_fresh_resume_cursor() {
-    let (repo, _data_dir, state, server) = setup().await;
+    let (repo, fixture, server) = setup().await;
+    let state = &fixture.daemon;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -989,7 +984,8 @@ async fn workspace_stream_reset_replay_waits_for_fresh_resume_cursor() {
 
 #[tokio::test]
 async fn workspace_stream_replays_tool_events() {
-    let (repo, _data_dir, state, server) = setup().await;
+    let (repo, fixture, server) = setup().await;
+    let state = &fixture.daemon;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -1124,7 +1120,8 @@ async fn workspace_stream_replays_tool_events() {
 
 #[tokio::test]
 async fn workspace_stream_under_load_no_gap_or_reset() {
-    let (repo, _data_dir, state, server) = setup().await;
+    let (repo, fixture, server) = setup().await;
+    let state = &fixture.daemon;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -1261,7 +1258,8 @@ async fn workspace_stream_under_load_no_gap_or_reset() {
 
 #[tokio::test]
 async fn workspace_vcs_stream_emits_git_status_snapshot_on_change() {
-    let (repo, _data_dir, state, server) = setup_git().await;
+    let (repo, fixture, server) = setup_git().await;
+    let state = &fixture.daemon;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -1342,7 +1340,8 @@ async fn workspace_vcs_stream_emits_git_status_snapshot_on_change() {
 
 #[tokio::test]
 async fn workspace_vcs_stream_emits_git_status_snapshot_for_new_subscriber() {
-    let (repo, _data_dir, state, server) = setup_git().await;
+    let (repo, fixture, server) = setup_git().await;
+    let state = &fixture.daemon;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -1430,7 +1429,8 @@ async fn workspace_vcs_stream_emits_git_status_snapshot_for_new_subscriber() {
 
 #[tokio::test]
 async fn workspace_vcs_stream_delivers_summary_after_subscription() {
-    let (repo, _data_dir, state, server) = setup_git().await;
+    let (repo, fixture, server) = setup_git().await;
+    let state = &fixture.daemon;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -1484,7 +1484,8 @@ async fn workspace_vcs_stream_delivers_summary_after_subscription() {
 
 #[tokio::test]
 async fn workspace_vcs_stream_repeat_subscribe_preserves_ready_worktree_vcs_state() {
-    let (repo, _data_dir, state, server) = setup_git().await;
+    let (repo, fixture, server) = setup_git().await;
+    let state = &fixture.daemon;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -1576,7 +1577,8 @@ async fn workspace_vcs_stream_repeat_subscribe_preserves_ready_worktree_vcs_stat
 
 #[tokio::test]
 async fn workspace_vcs_stream_subscribe_does_not_reemit_when_worktree_vcs_is_already_computing() {
-    let (repo, _data_dir, state, server) = setup_git().await;
+    let (repo, fixture, server) = setup_git().await;
+    let state = &fixture.daemon;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -1658,7 +1660,8 @@ async fn workspace_vcs_stream_subscribe_does_not_reemit_when_worktree_vcs_is_alr
 
 #[tokio::test]
 async fn worktree_vcs_summary_refresh_reloads_live_inventory_before_ready_publish() {
-    let (repo, _data_dir, state, server) = setup_git().await;
+    let (repo, fixture, server) = setup_git().await;
+    let state = &fixture.daemon;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -1738,7 +1741,8 @@ async fn worktree_vcs_summary_refresh_reloads_live_inventory_before_ready_publis
 
 #[tokio::test]
 async fn worktree_vcs_emit_and_summary_refresh_share_refresh_lock() {
-    let (repo, _data_dir, state, server) = setup_git().await;
+    let (repo, fixture, server) = setup_git().await;
+    let state = &fixture.daemon;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -1807,7 +1811,8 @@ async fn worktree_vcs_emit_and_summary_refresh_share_refresh_lock() {
 
 #[tokio::test]
 async fn worktree_vcs_activity_eviction_drops_refresh_lock() {
-    let (repo, _data_dir, state, server) = setup_git().await;
+    let (repo, fixture, server) = setup_git().await;
+    let state = &fixture.daemon;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -1844,7 +1849,8 @@ async fn worktree_vcs_activity_eviction_drops_refresh_lock() {
 
 #[tokio::test]
 async fn workspace_stream_emits_gap_when_replay_exceeds_daemon_head_window() {
-    let (repo, _data_dir, state, server) = setup().await;
+    let (repo, fixture, server) = setup().await;
+    let state = &fixture.daemon;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -1959,7 +1965,8 @@ async fn workspace_stream_emits_gap_when_replay_exceeds_daemon_head_window() {
 
 #[tokio::test]
 async fn workspace_active_snapshot_stream_pushes_updates() {
-    let (repo, _data_dir, state, server) = setup().await;
+    let (repo, fixture, server) = setup().await;
+    let state = &fixture.daemon;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -2034,7 +2041,8 @@ async fn workspace_active_snapshot_stream_pushes_updates() {
 
 #[tokio::test]
 async fn workspace_stream_session_updates_emit_task_delta_without_full_active_task_upsert() {
-    let (repo, _data_dir, state, server) = setup().await;
+    let (repo, fixture, server) = setup().await;
+    let state = &fixture.daemon;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -2171,7 +2179,8 @@ async fn workspace_stream_session_updates_emit_task_delta_without_full_active_ta
 
 #[tokio::test]
 async fn workspace_stream_archived_task_upsert_has_no_snapshot_payload() {
-    let (repo, _data_dir, state, server) = setup().await;
+    let (repo, fixture, server) = setup().await;
+    let state = &fixture.daemon;
     let base = &server.base_url;
     let client = &server.client;
 
@@ -2276,7 +2285,8 @@ async fn workspace_stream_archived_task_upsert_has_no_snapshot_payload() {
 
 #[tokio::test]
 async fn workspace_active_snapshot_stream_filters_session_head_deltas() {
-    let (repo, _data_dir, state, server) = setup().await;
+    let (repo, fixture, server) = setup().await;
+    let state = &fixture.daemon;
     let base = &server.base_url;
     let client = &server.client;
 

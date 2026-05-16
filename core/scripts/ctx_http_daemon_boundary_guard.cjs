@@ -229,6 +229,12 @@ const defaultSessionAndDiffFakeDaemonFixtureTestRoots = [
   "core/crates/ctx-http/tests/task_default_session_http.rs",
 ];
 
+const workspaceVcsSetupFixtureTestRoots = [
+  "core/crates/ctx-http/tests/disk_isolated_sandbox_smoke.rs",
+  "core/crates/ctx-http/tests/disk_isolated_vcs_integrity.rs",
+  "core/crates/ctx-http/tests/workspace_active_snapshot_http.rs",
+];
+
 const mcpDaemonFacadeTestRoots = [
   "core/crates/ctx-http-test-support/src/mcp_daemon.rs",
   "core/crates/ctx-http-test-support/src/mcp_daemon/",
@@ -805,6 +811,41 @@ const DEFAULT_SESSION_AND_DIFF_FAKE_DAEMON_FIXTURE_PATTERNS = [
   },
   {
     name: "raw default-session/diff ctx_store Store",
+    regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore::/,
+    contentRegex: /\buse\s+ctx_store::\{(?=[^}]*\n)[\s\S]*?\bStore\b[\s\S]*?\}/gm,
+  },
+];
+
+const WORKSPACE_VCS_SETUP_FIXTURE_PATTERNS = [
+  {
+    name: "direct workspace/VCS setup store manager helper",
+    regex: /\b(?:crate::)?common::setup_store\s*\(|\buse\s+[^;]*\bsetup_store\b|\bsetup_store\s*\(/,
+    contentRegex: /^\s*use\s+[^\n;]*\bsetup_store\b[^\n;]*;/gm,
+  },
+  {
+    name: "direct workspace/VCS setup daemon construction helper",
+    regex: /\b(?:crate::)?common::build_daemon\s*\(|\buse\s+[^;]*\bbuild_daemon\b|\bbuild_daemon\s*\(/,
+    contentRegex: /^\s*use\s+[^\n;]*\bbuild_daemon\b[^\n;]*;/gm,
+  },
+  {
+    name: "direct workspace/VCS setup daemon router composition",
+    regex: /\b(?:crate::)?common::router_for_daemon\s*\(|\buse\s+[^;]*\brouter_for_daemon\b|\brouter_for_daemon\s*\(/,
+    contentRegex: /^\s*use\s+[^\n;]*\brouter_for_daemon\b[^\n;]*;/gm,
+  },
+  {
+    name: "direct workspace/VCS setup TestDaemon construction",
+    regex: /\bTestDaemon::new[A-Za-z0-9_]*\s*\(/,
+  },
+  {
+    name: "direct workspace/VCS setup TestDaemon store access",
+    regex: /\.(?:stores|global_store|store_for_session|store_for_workspace|uncached_store_for_workspace|store_for_task|store_for_worktree)\s*\(/,
+  },
+  {
+    name: "raw workspace/VCS setup StoreManager",
+    regex: /\bStoreManager\b/,
+  },
+  {
+    name: "raw workspace/VCS setup ctx_store Store",
     regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore::/,
     contentRegex: /\buse\s+ctx_store::\{(?=[^}]*\n)[\s\S]*?\bStore\b[\s\S]*?\}/gm,
   },
@@ -2049,6 +2090,13 @@ function defaultSessionAndDiffFakeDaemonFixturePatternsForPath(relativePath) {
   return [];
 }
 
+function workspaceVcsSetupFixturePatternsForPath(relativePath) {
+  if (workspaceVcsSetupFixtureTestRoots.some((root) => relativePath.startsWith(root))) {
+    return WORKSPACE_VCS_SETUP_FIXTURE_PATTERNS;
+  }
+  return [];
+}
+
 function mcpDaemonPatternsForPath(relativePath) {
   if (mcpDaemonFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS;
@@ -2477,6 +2525,13 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
+        patterns: workspaceVcsSetupFixturePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
         patterns: mcpDaemonPatternsForPath(relativePath),
       }),
     );
@@ -2654,6 +2709,7 @@ module.exports = {
   TEST_RAW_DAEMON_BUCKET_PATTERNS,
   WORKSPACE_MERGE_QUEUE_CONFIG_TEST_STORE_ACCESS_PATTERNS,
   WORKSPACE_RUNTIME_SETTINGS_TEST_STORE_ACCESS_PATTERNS,
+  WORKSPACE_VCS_SETUP_FIXTURE_PATTERNS,
   WORKTREE_ARCHIVE_TEST_STORE_ACCESS_PATTERNS,
   WORKTREE_VCS_SNAPSHOT_TEST_STORE_ACCESS_PATTERNS,
   apiPatternsForPath,
@@ -2693,6 +2749,7 @@ module.exports = {
   worktreeArchiveStorePatternsForPath,
   workspaceMergeQueueConfigStorePatternsForPath,
   workspaceRuntimeSettingsStorePatternsForPath,
+  workspaceVcsSetupFixturePatternsForPath,
   worktreeVcsSnapshotStorePatternsForPath,
   stripCfgTestItems,
 };

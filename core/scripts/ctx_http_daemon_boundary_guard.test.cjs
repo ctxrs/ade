@@ -39,6 +39,7 @@ const {
   TEST_RAW_DAEMON_BUCKET_PATTERNS,
   WORKSPACE_MERGE_QUEUE_CONFIG_TEST_STORE_ACCESS_PATTERNS,
   WORKSPACE_RUNTIME_SETTINGS_TEST_STORE_ACCESS_PATTERNS,
+  WORKSPACE_VCS_SETUP_FIXTURE_PATTERNS,
   WORKTREE_ARCHIVE_TEST_STORE_ACCESS_PATTERNS,
   WORKTREE_VCS_SNAPSHOT_TEST_STORE_ACCESS_PATTERNS,
   apiPatternsForPath,
@@ -78,6 +79,7 @@ const {
   worktreeArchiveStorePatternsForPath,
   workspaceMergeQueueConfigStorePatternsForPath,
   workspaceRuntimeSettingsStorePatternsForPath,
+  workspaceVcsSetupFixturePatternsForPath,
   worktreeVcsSnapshotStorePatternsForPath,
   stripCfgTestItems,
 } = require("./ctx_http_daemon_boundary_guard.cjs");
@@ -1489,6 +1491,73 @@ test("daemon boundary guard scopes default-session/diff fake-daemon fixture root
     defaultSessionAndDiffFakeDaemonFixturePatternsForPath(
       "core/crates/ctx-http/tests/provider_probe_runtime_env.rs",
     ),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects workspace/VCS raw daemon fixture setup", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/workspace_active_snapshot_http.rs",
+    contents: `
+      use ctx_store::{Store, StoreManager};
+      async fn helper(daemon: &TestDaemon) {
+        let stores = common::setup_store(data_dir.path()).await;
+        let daemon = common::build_daemon(data_dir.path(), stores, common::fake_providers(), "http://127.0.0.1:0");
+        let app = common::router_for_daemon(&daemon);
+        let daemon = TestDaemon::new(data_dir, stores, providers, "http://127.0.0.1:0".into(), None);
+        daemon.store_for_workspace(workspace_id).await?;
+      }
+    `,
+    patterns: WORKSPACE_VCS_SETUP_FIXTURE_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct workspace/VCS setup store manager helper",
+      "direct workspace/VCS setup daemon construction helper",
+      "direct workspace/VCS setup daemon router composition",
+      "direct workspace/VCS setup TestDaemon construction",
+      "direct workspace/VCS setup TestDaemon store access",
+      "raw workspace/VCS setup StoreManager",
+      "raw workspace/VCS setup ctx_store Store",
+    ],
+  );
+});
+
+test("daemon boundary guard allows workspace/VCS fake-daemon fixture router", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/disk_isolated_sandbox_smoke.rs",
+    contents: `
+      async fn helper() {
+        let fixture = common::fake_daemon_fixture_with_providers(
+          common::fake_providers(),
+          "http://127.0.0.1:4399",
+        ).await;
+        let app = fixture.router();
+        let data_root = fixture.data_dir.path();
+        assert!(sandbox_volume_exists(data_root, &vol_name).await);
+      }
+    `,
+    patterns: WORKSPACE_VCS_SETUP_FIXTURE_PATTERNS,
+  });
+
+  assert.deepEqual(violations, []);
+});
+
+test("daemon boundary guard scopes workspace/VCS fixture roots", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/tests/workspace_active_snapshot_http.rs",
+    "core/crates/ctx-http/tests/disk_isolated_sandbox_smoke.rs",
+    "core/crates/ctx-http/tests/disk_isolated_vcs_integrity.rs",
+  ]) {
+    assert.deepEqual(
+      workspaceVcsSetupFixturePatternsForPath(filePath),
+      WORKSPACE_VCS_SETUP_FIXTURE_PATTERNS,
+    );
+  }
+  assert.deepEqual(
+    workspaceVcsSetupFixturePatternsForPath("core/crates/ctx-http/tests/common/mod.rs"),
     [],
   );
 });

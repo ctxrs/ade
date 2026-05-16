@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 use std::{env, fs};
@@ -7,10 +6,6 @@ use futures::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::json;
 use tokio::process::Command;
-
-use ctx_daemon::test_support::TestDaemon;
-use ctx_providers::fake::FakeProviderAdapter;
-use ctx_store::StoreManager;
 
 const CONTAINER_FILE_SHA256: &str =
     "dc155555ce7bf6f6b7aa998bafe7e1cafa3c7017bc5dcdeb8ef72ebc5961c11a";
@@ -219,26 +214,12 @@ async fn disk_isolated_smoke_sandbox_volume_attachments_and_terminal() {
     let home = tempfile::tempdir().unwrap();
     let _home_guard = EnvVarGuard::set("HOME", home.path());
 
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-
-    let mut providers: HashMap<
-        String,
-        std::sync::Arc<dyn ctx_providers::adapters::ProviderAdapter>,
-    > = HashMap::new();
-    providers.insert(
-        "fake".into(),
-        std::sync::Arc::new(FakeProviderAdapter::new()),
-    );
-
-    let daemon = TestDaemon::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    );
-    let app = common::router_for_daemon(&daemon);
+    let fixture = common::fake_daemon_fixture_with_providers(
+        common::fake_providers(),
+        "http://127.0.0.1:4399",
+    )
+    .await;
+    let app = fixture.router();
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -675,7 +656,7 @@ async fn disk_isolated_smoke_sandbox_volume_attachments_and_terminal() {
 
     // Deleting the workspace should clean up the disk-isolated volume.
     let vol_name = format!("ctx-ws-{}", ws.id.0);
-    assert!(sandbox_volume_exists(data_dir.path(), &vol_name).await);
+    assert!(sandbox_volume_exists(fixture.data_dir.path(), &vol_name).await);
     let _ = client
         .delete(format!("{base}/api/workspaces/{}", ws.id.0))
         .send()
@@ -683,5 +664,5 @@ async fn disk_isolated_smoke_sandbox_volume_attachments_and_terminal() {
         .unwrap();
     // Give the async cleanup a brief moment.
     tokio::time::sleep(Duration::from_millis(300)).await;
-    assert!(!sandbox_volume_exists(data_dir.path(), &vol_name).await);
+    assert!(!sandbox_volume_exists(fixture.data_dir.path(), &vol_name).await);
 }
