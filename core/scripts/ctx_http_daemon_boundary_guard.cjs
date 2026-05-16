@@ -250,6 +250,7 @@ const workspaceWsAdmissionApiRoots = [
 ];
 
 const orgPolicyApiRoots = [
+  "core/crates/ctx-http/src/api/org_policy.rs",
   "core/crates/ctx-http/src/api/org_policy/",
 ];
 

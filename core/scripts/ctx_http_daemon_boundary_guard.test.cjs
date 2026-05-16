@@ -1219,6 +1219,12 @@ test("daemon boundary guard scopes org policy orchestration bans", () => {
     true,
   );
   assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/org_policy.rs").includes(
+      ORG_POLICY_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/org_policy/workspace_overlay.rs").includes(
       ORG_POLICY_API_ORCHESTRATION_PATTERNS[0],
     ),
