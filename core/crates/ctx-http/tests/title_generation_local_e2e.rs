@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use ctx_daemon::test_support::TestDaemon;
 use ctx_managed_installs::title_generation_local;
 use ctx_session_service::title_generation;
 use ctx_settings_model::{
@@ -56,14 +55,8 @@ async fn generate_title_local_real_runtime() {
         path
     };
 
-    let state = TestDaemon::new_with_providers_for_test(
-        data_root.clone(),
-        common::fake_providers(),
-        "http://127.0.0.1:0".to_string(),
-        None,
-    )
-    .await
-    .unwrap();
+    let fixture = common::fake_daemon_fixture_for_data_root(&data_root, "http://127.0.0.1:0").await;
+    let state = &fixture.daemon;
 
     let (install_id, _started) = state
         .start_install("title_generation_local".to_string(), None)

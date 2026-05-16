@@ -1211,6 +1211,15 @@ test("daemon boundary guard rejects small external direct store setup", () => {
         let _raw = ctx_store::Store::open_sqlite(path, None).await?;
         Store::open_sqlite(path, None).await?;
         RawStore::open_sqlite(path, None).await?;
+        let daemon = TestDaemon::new_with_providers_for_test(data_root, providers, base_url, None).await?;
+        use ctx_daemon::test_support::TestDaemon as RawDaemon;
+        let daemon = RawDaemon::new_with_providers_for_test(data_root, providers, base_url, None).await?;
+        use ctx_daemon::test_support::{Other, TestDaemon as GroupedRawDaemon};
+        let daemon = GroupedRawDaemon::new_for_test(data_root, base_url).await?;
+        type DaemonAlias = TestDaemon;
+        let daemon = DaemonAlias::new_for_test(data_root, base_url).await?;
+        type QualifiedDaemonAlias = ctx_daemon::test_support::TestDaemon;
+        let daemon = QualifiedDaemonAlias::new_for_test(data_root, base_url).await?;
         daemon.stores().global().await?;
         daemon.store_for_workspace(workspace_id).await?;
         daemon.uncached_store_for_workspace(workspace_id).await?;
@@ -1244,11 +1253,32 @@ test("daemon boundary guard rejects small external direct store setup", () => {
       "direct small external daemon construction helper",
       "direct small external daemon construction helper",
       "direct small external daemon construction helper",
+      "direct small external TestDaemon construction",
+      "direct small external TestDaemon construction",
+      "direct small external TestDaemon construction",
+      "direct small external TestDaemon construction",
+      "direct small external TestDaemon construction",
       "direct small external TestDaemon store access",
       "direct small external TestDaemon store access",
       "direct small external TestDaemon store access",
     ],
   );
+});
+
+test("daemon boundary guard allows small external data-root fake-daemon fixture", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/title_generation_local_e2e.rs",
+    contents: `
+      async fn helper(data_root: &Path) {
+        let fixture = common::fake_daemon_fixture_for_data_root(data_root, "http://127.0.0.1:0").await;
+        let state = &fixture.daemon;
+        state.start_install("title_generation_local".to_string(), None).await;
+      }
+    `,
+    patterns: SMALL_EXTERNAL_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(violations, []);
 });
 
 test("daemon boundary guard scopes small external store facade roots", () => {

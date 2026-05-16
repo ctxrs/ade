@@ -779,6 +779,11 @@ const SMALL_EXTERNAL_TEST_STORE_ACCESS_PATTERNS = [
     contentRegex: /\buse\s+[\s\S]*?\bbuild_daemon\b[\s\S]*?;/gm,
   },
   {
+    name: "direct small external TestDaemon construction",
+    regex: /\bTestDaemon::new[A-Za-z0-9_]*\s*\(/,
+    contentRegex: /\buse\s+ctx_daemon::test_support::(?:TestDaemon\s+as\s+[A-Za-z_][A-Za-z0-9_]*|\{[^}]*\bTestDaemon\s+as\s+[A-Za-z_][A-Za-z0-9_]*[^}]*\})\s*;[\s\S]*?\b[A-Za-z_][A-Za-z0-9_]*::new[A-Za-z0-9_]*\s*\(|\btype\s+[A-Za-z_][A-Za-z0-9_]*\s*=\s*(?:ctx_daemon::test_support::)?TestDaemon\s*;[\s\S]*?\b[A-Za-z_][A-Za-z0-9_]*::new[A-Za-z0-9_]*\s*\(/gm,
+  },
+  {
     name: "direct small external TestDaemon store access",
     regex: /\.(?:stores|global_store|store_for_session|store_for_workspace|uncached_store_for_workspace|store_for_task|store_for_worktree)\s*\(/,
   },
