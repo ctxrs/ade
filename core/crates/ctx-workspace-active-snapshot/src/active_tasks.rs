@@ -315,11 +315,7 @@ mod tests {
         Task, TaskStatus, WorkspaceActiveSnapshotEvent,
     };
 
-    fn test_session(
-        workspace_id: WorkspaceId,
-        task_id: TaskId,
-        session_id: SessionId,
-    ) -> Session {
+    fn test_session(workspace_id: WorkspaceId, task_id: TaskId, session_id: SessionId) -> Session {
         let now = Utc.timestamp_opt(0, 0).unwrap();
         Session {
             id: session_id,

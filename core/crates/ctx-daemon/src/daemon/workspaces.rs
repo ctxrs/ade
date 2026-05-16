@@ -1018,6 +1018,21 @@ impl WorkspaceStreamHandle {
         )
     }
 
+    pub fn finalize_workspace_stream_subscription_replay(
+        &self,
+        current_state: &WorkspaceActiveSubscriptionState,
+        current_subscriptions: &HashMap<SessionId, SessionReplayCursor>,
+        replayed_subscriptions: HashMap<SessionId, SessionReplayCursor>,
+        transaction_sessions: &[stream::WorkspaceStreamResolvedSession],
+    ) -> stream::WorkspaceStreamSubscriptionReplayFinalization {
+        stream::finalize_workspace_stream_subscription_replay(
+            current_state,
+            current_subscriptions,
+            replayed_subscriptions,
+            transaction_sessions,
+        )
+    }
+
     pub async fn active_task_subscription_cursor(
         &self,
         workspace_id: WorkspaceId,
@@ -1096,6 +1111,35 @@ impl WorkspaceStreamHandle {
         ))
     }
 
+    pub async fn plan_workspace_stream_subscription_transaction(
+        &self,
+        workspace_id: WorkspaceId,
+        message: WorkspaceActiveSnapshotClientMessage,
+        current_subscriptions: &HashMap<SessionId, SessionReplayCursor>,
+        current_fingerprint: Option<&str>,
+    ) -> Result<
+        stream::WorkspaceStreamSubscriptionTransactionPlan,
+        stream::WorkspaceStreamSubscriptionResolutionError,
+    > {
+        stream::prepare_subscription_read_model(&self.state, workspace_id)
+            .await
+            .map_err(stream::WorkspaceStreamSubscriptionResolutionError::Hydration)?;
+        let resolved = stream::resolve_workspace_active_snapshot_subscriptions(
+            &self.state,
+            workspace_id,
+            message.clone(),
+            current_subscriptions,
+        )
+        .await
+        .map_err(|_| stream::WorkspaceStreamSubscriptionResolutionError::Resolution)?;
+        Ok(stream::plan_workspace_stream_subscription_transaction(
+            &message,
+            resolved,
+            current_subscriptions,
+            current_fingerprint,
+        ))
+    }
+
     pub async fn replay_session_events<F, Fut>(
         &self,
         workspace_id: WorkspaceId,
@@ -1127,6 +1171,27 @@ impl WorkspaceStreamHandle {
 
     pub async fn detach_session_pin(&self, session_id: SessionId) {
         self.state.detach_session(session_id).await;
+    }
+
+    pub async fn apply_workspace_stream_session_pin_changes(
+        &self,
+        pin_changes: &stream::WorkspaceStreamSessionPinChanges,
+    ) {
+        for session_id in &pin_changes.attach {
+            self.state.attach_session(*session_id).await;
+        }
+        for session_id in &pin_changes.detach {
+            self.state.detach_session(*session_id).await;
+        }
+    }
+
+    pub async fn release_workspace_stream_session_pins<I>(&self, session_ids: I)
+    where
+        I: IntoIterator<Item = SessionId>,
+    {
+        for session_id in session_ids {
+            self.state.detach_session(session_id).await;
+        }
     }
 
     pub async fn emit_workspace_stream_incident(

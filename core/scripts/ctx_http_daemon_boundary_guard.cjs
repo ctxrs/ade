@@ -176,6 +176,12 @@ const workspaceStreamSubscriptionPlanApiRoots = [
   "core/crates/ctx-http/src/api/ws/workspace_stream/subscription/replay/",
 ];
 
+const workspaceStreamSubscriptionTransactionApiRoots = [
+  "core/crates/ctx-http/src/api/ws/workspace_stream/subscription.rs",
+  "core/crates/ctx-http/src/api/ws/workspace_stream/events/subscriptions.rs",
+  "core/crates/ctx-http/src/api/ws/common/pins.rs",
+];
+
 const workspaceStreamReplayCursorApiRoots = [
   "core/crates/ctx-http/src/api/ws/common/cursor.rs",
   "core/crates/ctx-http/src/api/ws/queue/buffers/head/state.rs",
@@ -905,6 +911,35 @@ const WORKSPACE_STREAM_SUBSCRIPTION_PLAN_API_PATTERNS = [
   {
     name: "workspace stream API references raw subscription-resolution type",
     regex: /\b(?:ResolvedWorkspaceActiveSessionSubscription|ResolvedWorkspaceActiveSubscriptions|ResolvedWorkspaceActiveSessionReplay)\b/,
+  },
+];
+
+const WORKSPACE_STREAM_SUBSCRIPTION_TRANSACTION_API_PATTERNS = [
+  {
+    name: "workspace stream API calls raw subscription resolution directly",
+    regex: /\.resolve_workspace_active_snapshot_subscriptions\s*\(/,
+  },
+  {
+    name: "workspace stream API merges replayed subscription cursors locally",
+    regex:
+      /\b(?:merge_replayed_and_live_subscriptions|merge_replayed_and_live_subscription_cursors)\s*\(/,
+  },
+  {
+    name: "workspace stream API defines local replay merge helper",
+    regex: /\bfn\s+merge_replayed_and_live_subscriptions\s*\(/,
+  },
+  {
+    name: "workspace stream API computes subscription pin diffs locally",
+    regex:
+      /\b(?:sync_workspace_stream_session_pins|fn\s+sync_workspace_stream_session_pins)\b/,
+  },
+  {
+    name: "workspace stream API computes subscription pin set differences locally",
+    regex: /\b(?:current|next)\s*\.\s*difference\s*\(\s*&(?:current|next)\s*\)/,
+  },
+  {
+    name: "workspace stream API mutates session pins directly",
+    regex: /\.(?:attach_session_pin|detach_session_pin)\s*\(/,
   },
 ];
 
@@ -2812,6 +2847,9 @@ function apiPatternsForPath(relativePath) {
   if (workspaceStreamSubscriptionPlanApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...WORKSPACE_STREAM_SUBSCRIPTION_PLAN_API_PATTERNS);
   }
+  if (workspaceStreamSubscriptionTransactionApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...WORKSPACE_STREAM_SUBSCRIPTION_TRANSACTION_API_PATTERNS);
+  }
   if (workspaceStreamReplayCursorApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...WORKSPACE_STREAM_REPLAY_CURSOR_API_PATTERNS);
   }
@@ -3759,6 +3797,7 @@ module.exports = {
   TASK_SESSION_CREATION_API_ADMISSION_PATTERNS,
   WORKSPACE_STREAM_READ_MODEL_API_PATTERNS,
   WORKSPACE_STREAM_SUBSCRIPTION_PLAN_API_PATTERNS,
+  WORKSPACE_STREAM_SUBSCRIPTION_TRANSACTION_API_PATTERNS,
   WORKSPACE_STREAM_REPLAY_CURSOR_API_PATTERNS,
   WORKSPACE_STREAM_REPLAY_PROGRAM_API_PATTERNS,
   WORKSPACE_STREAM_EVENT_ROUTING_API_PATTERNS,

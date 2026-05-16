@@ -51,6 +51,18 @@ fn cursor(last_event_seq: i64, projection_rev: i64) -> SessionReplayCursor {
     }
 }
 
+fn resolved_stream_session(
+    session_id: SessionId,
+    intent: WorkspaceActiveSnapshotSessionIntent,
+    replay: WorkspaceStreamSessionReplay,
+) -> WorkspaceStreamResolvedSession {
+    WorkspaceStreamResolvedSession {
+        session_id,
+        intent,
+        replay,
+    }
+}
+
 fn test_session_metadata(workspace_id: WorkspaceId, session_id: SessionId) -> SessionMetadata {
     SessionMetadata {
         id: session_id,
@@ -506,6 +518,105 @@ fn subscription_plan_derives_initial_snapshot_fingerprint_and_provisional_cursor
 }
 
 #[test]
+fn subscription_transaction_returns_no_change_for_matching_fingerprint() {
+    let session_id = session_id("00000000-0000-0000-0000-000000000011");
+    let message = WorkspaceActiveSnapshotClientMessage::Subscribe {
+        session_ids: vec![session_id],
+        sessions: vec![WorkspaceActiveSnapshotSessionSubscription {
+            session_id,
+            intent: Some(WorkspaceActiveSnapshotSessionIntent::Replay),
+            replay: WorkspaceActiveSnapshotSessionReplay::Auto,
+        }],
+        task_ids: Vec::new(),
+        foreground_session_id: None,
+        scope: None,
+        include_active_heads: false,
+    };
+    let resolved = ResolvedWorkspaceActiveSubscriptions {
+        sessions: vec![ResolvedWorkspaceActiveSessionSubscription {
+            session_id,
+            intent: WorkspaceActiveSnapshotSessionIntent::Replay,
+            replay: ResolvedWorkspaceActiveSessionReplay::Resume {
+                after_seq: 5,
+                after_projection_rev: 6,
+            },
+        }],
+        state: WorkspaceActiveSubscriptionState::default(),
+    };
+    let current = HashMap::from([(session_id, cursor(5, 6))]);
+    let fingerprint = plan_workspace_stream_subscription(&message, resolved, &current).fingerprint;
+    let resolved = ResolvedWorkspaceActiveSubscriptions {
+        sessions: vec![ResolvedWorkspaceActiveSessionSubscription {
+            session_id,
+            intent: WorkspaceActiveSnapshotSessionIntent::Replay,
+            replay: ResolvedWorkspaceActiveSessionReplay::Resume {
+                after_seq: 5,
+                after_projection_rev: 6,
+            },
+        }],
+        state: WorkspaceActiveSubscriptionState::default(),
+    };
+
+    let transaction = plan_workspace_stream_subscription_transaction(
+        &message,
+        resolved,
+        &current,
+        Some(fingerprint.as_str()),
+    );
+
+    assert!(matches!(
+        transaction,
+        WorkspaceStreamSubscriptionTransactionPlan::NoChange
+    ));
+}
+
+#[test]
+fn subscription_transaction_plans_provisional_cursors_and_pin_deltas() {
+    let old_session_id = session_id("00000000-0000-0000-0000-000000000012");
+    let new_session_id = session_id("00000000-0000-0000-0000-000000000013");
+    let message = WorkspaceActiveSnapshotClientMessage::Subscribe {
+        session_ids: vec![new_session_id],
+        sessions: vec![WorkspaceActiveSnapshotSessionSubscription {
+            session_id: new_session_id,
+            intent: Some(WorkspaceActiveSnapshotSessionIntent::Replay),
+            replay: WorkspaceActiveSnapshotSessionReplay::Resume {
+                after_seq: 10,
+                after_projection_rev: 12,
+            },
+        }],
+        task_ids: Vec::new(),
+        foreground_session_id: None,
+        scope: None,
+        include_active_heads: false,
+    };
+    let resolved = ResolvedWorkspaceActiveSubscriptions {
+        sessions: vec![ResolvedWorkspaceActiveSessionSubscription {
+            session_id: new_session_id,
+            intent: WorkspaceActiveSnapshotSessionIntent::Replay,
+            replay: ResolvedWorkspaceActiveSessionReplay::Resume {
+                after_seq: 10,
+                after_projection_rev: 12,
+            },
+        }],
+        state: WorkspaceActiveSubscriptionState::default(),
+    };
+    let current = HashMap::from([(old_session_id, cursor(30, 31))]);
+
+    let WorkspaceStreamSubscriptionTransactionPlan::Apply(plan) =
+        plan_workspace_stream_subscription_transaction(&message, resolved, &current, None)
+    else {
+        panic!("changed transaction should produce an apply plan");
+    };
+
+    assert_eq!(
+        plan.provisional_subscriptions.get(&new_session_id).copied(),
+        Some(cursor(10, 12))
+    );
+    assert_eq!(plan.pin_changes.attach, vec![new_session_id]);
+    assert_eq!(plan.pin_changes.detach, vec![old_session_id]);
+}
+
+#[test]
 fn snapshot_read_model_active_head_cursors_use_delivered_heads() {
     let workspace_id = ctx_core::ids::WorkspaceId::new();
     let session_id = ctx_core::ids::SessionId::new();
@@ -693,6 +804,100 @@ fn replay_live_cursor_merge_keeps_live_authoritative() {
     );
 }
 
+#[test]
+fn replay_finalization_adds_still_subscribed_head_only_sessions() {
+    let live_session_id = SessionId::new();
+    let head_session_id = SessionId::new();
+    let mut state = WorkspaceActiveSubscriptionState::default();
+    state.explicit_sessions.insert(head_session_id);
+    let current = HashMap::from([(live_session_id, cursor(7, 7))]);
+    let replayed = HashMap::from([(head_session_id, cursor(20, 21))]);
+
+    let finalization = finalize_workspace_stream_subscription_replay(
+        &state,
+        &current,
+        replayed,
+        &[resolved_stream_session(
+            head_session_id,
+            WorkspaceActiveSnapshotSessionIntent::Head,
+            WorkspaceStreamSessionReplay::Reset,
+        )],
+    );
+
+    assert_eq!(
+        finalization.subscriptions.get(&head_session_id).copied(),
+        Some(cursor(20, 21))
+    );
+    assert_eq!(finalization.pin_changes.attach, vec![head_session_id]);
+    assert!(finalization.pin_changes.detach.is_empty());
+}
+
+#[test]
+fn replay_finalization_ignores_head_only_sessions_removed_during_replay() {
+    let head_session_id = SessionId::new();
+    let current = HashMap::new();
+    let replayed = HashMap::from([(head_session_id, cursor(20, 21))]);
+
+    let finalization = finalize_workspace_stream_subscription_replay(
+        &WorkspaceActiveSubscriptionState::default(),
+        &current,
+        replayed,
+        &[resolved_stream_session(
+            head_session_id,
+            WorkspaceActiveSnapshotSessionIntent::Head,
+            WorkspaceStreamSessionReplay::Reset,
+        )],
+    );
+
+    assert!(!finalization.subscriptions.contains_key(&head_session_id));
+    assert!(finalization.pin_changes.attach.is_empty());
+    assert!(finalization.pin_changes.detach.is_empty());
+}
+
+#[test]
+fn replay_finalization_keeps_live_cursor_authoritative() {
+    let session_id = SessionId::new();
+    let live_only_session_id = SessionId::new();
+    let removed_session_id = SessionId::new();
+    let current = HashMap::from([
+        (session_id, cursor(15, 16)),
+        (live_only_session_id, cursor(7, 8)),
+    ]);
+    let replayed = HashMap::from([
+        (session_id, cursor(10, 12)),
+        (removed_session_id, cursor(30, 31)),
+    ]);
+
+    let finalization = finalize_workspace_stream_subscription_replay(
+        &WorkspaceActiveSubscriptionState::default(),
+        &current,
+        replayed,
+        &[resolved_stream_session(
+            session_id,
+            WorkspaceActiveSnapshotSessionIntent::Replay,
+            WorkspaceStreamSessionReplay::Resume {
+                after_seq: 10,
+                after_projection_rev: 12,
+            },
+        )],
+    );
+
+    assert_eq!(
+        finalization.subscriptions.get(&session_id).copied(),
+        Some(cursor(15, 16))
+    );
+    assert_eq!(
+        finalization
+            .subscriptions
+            .get(&live_only_session_id)
+            .copied(),
+        Some(cursor(7, 8))
+    );
+    assert!(!finalization.subscriptions.contains_key(&removed_session_id));
+    assert!(finalization.pin_changes.attach.is_empty());
+    assert!(finalization.pin_changes.detach.is_empty());
+}
+
 #[tokio::test]
 async fn subscription_event_session_removed_updates_state_without_active_scope() {
     let root = tempfile::tempdir().unwrap();
@@ -724,7 +929,7 @@ async fn subscription_event_session_removed_updates_state_without_active_scope()
     assert!(applied.state.replay_sessions.is_empty());
     assert!(applied.state.foreground_session_ids.is_none());
     assert!(applied.subscriptions.is_empty());
-    assert_eq!(applied.removed_subscriptions, vec![session_id]);
+    assert_eq!(applied.pin_changes.detach, vec![session_id]);
 }
 
 #[tokio::test]
@@ -768,7 +973,7 @@ async fn subscription_event_active_task_upsert_seeds_missing_and_preserves_exist
         seeded.subscriptions.get(&seeded_session_id).copied(),
         Some(SessionReplayCursor::default()),
     );
-    assert_eq!(seeded.added_subscriptions, vec![seeded_session_id]);
+    assert_eq!(seeded.pin_changes.attach, vec![seeded_session_id]);
 
     let existing_cursor = cursor(12, 13);
     let preserved = apply_workspace_stream_subscription_event(
@@ -792,7 +997,7 @@ async fn subscription_event_active_task_upsert_seeds_missing_and_preserves_exist
         Some(existing_cursor),
         "active-task upsert must not overwrite an existing live cursor",
     );
-    assert!(preserved.added_subscriptions.is_empty());
+    assert!(preserved.pin_changes.attach.is_empty());
 }
 
 #[tokio::test]
@@ -837,7 +1042,7 @@ async fn subscription_event_active_task_delete_retains_shared_and_explicit_sessi
     )
     .await;
     assert!(shared_retained.subscriptions.contains_key(&session_id));
-    assert!(shared_retained.removed_subscriptions.is_empty());
+    assert!(shared_retained.pin_changes.detach.is_empty());
 
     let explicit_retained = apply_workspace_stream_subscription_event(
         &state,
@@ -854,7 +1059,7 @@ async fn subscription_event_active_task_delete_retains_shared_and_explicit_sessi
     assert!(explicit_retained
         .subscriptions
         .contains_key(&explicit_session_id));
-    assert!(explicit_retained.removed_subscriptions.is_empty());
+    assert!(explicit_retained.pin_changes.detach.is_empty());
 }
 
 #[tokio::test]
@@ -891,7 +1096,7 @@ async fn subscription_event_archive_removes_unused_active_session() {
     assert!(applied.should_route);
     assert!(applied.state.active_task_sessions.is_empty());
     assert!(applied.subscriptions.is_empty());
-    assert_eq!(applied.removed_subscriptions, vec![session_id]);
+    assert_eq!(applied.pin_changes.detach, vec![session_id]);
 }
 
 #[tokio::test]
@@ -919,7 +1124,7 @@ async fn subscription_event_active_task_changes_noop_without_active_scope() {
     assert!(applied.should_route);
     assert!(applied.state.active_task_sessions.is_empty());
     assert!(applied.subscriptions.is_empty());
-    assert!(applied.added_subscriptions.is_empty());
+    assert!(applied.pin_changes.attach.is_empty());
 }
 
 #[tokio::test]

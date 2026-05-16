@@ -30,9 +30,9 @@ mod workspace_stream;
 mod workspace_vcs;
 
 use common::{
-    bump_latest_snapshot_rev, release_workspace_stream_session_pins,
-    sync_workspace_stream_session_pins, SessionCursor, StreamSendControl, HEAD_BATCH_SESSION_LIMIT,
-    WORKSPACE_STREAM_QUEUE_LIMIT, WORKSPACE_STREAM_QUEUE_MAX_AGE,
+    bump_latest_snapshot_rev, release_workspace_stream_session_pins, SessionCursor,
+    StreamSendControl, HEAD_BATCH_SESSION_LIMIT, WORKSPACE_STREAM_QUEUE_LIMIT,
+    WORKSPACE_STREAM_QUEUE_MAX_AGE,
 };
 use queue::{
     log_head_batch_push_error, log_summary_batch_push_error, push_stream_message, HeadBatchBuffer,

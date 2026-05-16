@@ -28,11 +28,8 @@ pub(super) async fn update_workspace_stream_subscriptions_for_event(
         .into_iter()
         .map(|(session_id, last_sent)| (session_id, SessionCursor { last_sent }))
         .collect();
-    for session_id in application.added_subscriptions {
-        state.attach_session_pin(session_id).await;
-    }
-    for session_id in application.removed_subscriptions {
-        state.detach_session_pin(session_id).await;
-    }
+    state
+        .apply_workspace_stream_session_pin_changes(&application.pin_changes)
+        .await;
     application.should_route
 }

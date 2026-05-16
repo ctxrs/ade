@@ -30,6 +30,7 @@ const {
   TASK_SESSION_CREATION_API_ADMISSION_PATTERNS,
   WORKSPACE_STREAM_READ_MODEL_API_PATTERNS,
   WORKSPACE_STREAM_SUBSCRIPTION_PLAN_API_PATTERNS,
+  WORKSPACE_STREAM_SUBSCRIPTION_TRANSACTION_API_PATTERNS,
   WORKSPACE_STREAM_REPLAY_CURSOR_API_PATTERNS,
   WORKSPACE_STREAM_REPLAY_PROGRAM_API_PATTERNS,
   WORKSPACE_STREAM_EVENT_ROUTING_API_PATTERNS,
@@ -320,6 +321,87 @@ test("daemon boundary guard scopes workspace stream subscription-plan ban", () =
   assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/ws/workspace_stream/events.rs").includes(
       WORKSPACE_STREAM_SUBSCRIPTION_PLAN_API_PATTERNS[0],
+    ),
+    false,
+  );
+});
+
+test("daemon boundary guard rejects workspace stream subscription transaction policy in HTTP", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/ws/workspace_stream/events/subscriptions.rs",
+    contents: `
+      async fn handler(state: WorkspaceStreamHandle) {
+        let resolved = state.resolve_workspace_active_snapshot_subscriptions(workspace_id, message, existing).await?;
+        let merged = merge_replayed_and_live_subscriptions(&state, live, replayed);
+        let merged = merge_replayed_and_live_subscription_cursors(live, replayed);
+        sync_workspace_stream_session_pins(state, current, next).await;
+        let attach = next.difference(&current).copied().collect::<Vec<_>>();
+        state.attach_session_pin(session_id).await;
+        state.detach_session_pin(session_id).await;
+      }
+
+      fn merge_replayed_and_live_subscriptions() {}
+    `,
+    patterns: WORKSPACE_STREAM_SUBSCRIPTION_TRANSACTION_API_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "workspace stream API calls raw subscription resolution directly",
+      "workspace stream API merges replayed subscription cursors locally",
+      "workspace stream API merges replayed subscription cursors locally",
+      "workspace stream API merges replayed subscription cursors locally",
+      "workspace stream API defines local replay merge helper",
+      "workspace stream API computes subscription pin diffs locally",
+      "workspace stream API computes subscription pin set differences locally",
+      "workspace stream API mutates session pins directly",
+      "workspace stream API mutates session pins directly",
+    ],
+  );
+});
+
+test("daemon boundary guard allows daemon workspace stream subscription transaction DTOs", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/ws/workspace_stream/subscription.rs",
+    contents: `
+      async fn handler(state: WorkspaceStreamHandle) {
+        let plan = state
+          .plan_workspace_stream_subscription_transaction(workspace_id, message, current, fingerprint)
+          .await?;
+        let finalization = state.finalize_workspace_stream_subscription_replay(state, live, replayed, sessions);
+        state.apply_workspace_stream_session_pin_changes(&pin_changes).await;
+        state.release_workspace_stream_session_pins(current).await;
+      }
+    `,
+    patterns: WORKSPACE_STREAM_SUBSCRIPTION_TRANSACTION_API_PATTERNS,
+  });
+
+  assert.deepEqual(violations, []);
+});
+
+test("daemon boundary guard scopes workspace stream subscription transaction ban", () => {
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/ws/workspace_stream/subscription.rs",
+    ).includes(WORKSPACE_STREAM_SUBSCRIPTION_TRANSACTION_API_PATTERNS[0]),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/ws/common/pins.rs").includes(
+      WORKSPACE_STREAM_SUBSCRIPTION_TRANSACTION_API_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/ws/workspace_stream/events/subscriptions.rs",
+    ).includes(WORKSPACE_STREAM_SUBSCRIPTION_TRANSACTION_API_PATTERNS[0]),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/ws/workspace_stream/events.rs").includes(
+      WORKSPACE_STREAM_SUBSCRIPTION_TRANSACTION_API_PATTERNS[0],
     ),
     false,
   );

@@ -2,6 +2,7 @@ use super::lifecycle::{clear_runtime_queues, queue_workspace_stream_reset};
 use super::*;
 use ctx_daemon::daemon::workspaces::stream::{
     WorkspaceStreamReplayStepHook, WorkspaceStreamSubscriptionResolutionError,
+    WorkspaceStreamSubscriptionTransactionPlan,
 };
 use std::collections::HashSet;
 
@@ -13,26 +14,6 @@ use replay::{
     drain_live_events_blocking_pending_replay, replay_should_stop,
     replay_workspace_stream_subscriptions, WorkspaceStreamReplayRequest,
 };
-
-fn merge_replayed_and_live_subscriptions(
-    state: &WorkspaceStreamHandle,
-    live_subscriptions: &HashMap<SessionId, SessionCursor>,
-    replayed_subscriptions: HashMap<SessionId, SessionCursor>,
-) -> HashMap<SessionId, SessionCursor> {
-    let live_cursors = live_subscriptions
-        .iter()
-        .map(|(session_id, cursor)| (*session_id, cursor.last_sent))
-        .collect::<HashMap<_, _>>();
-    let replayed_cursors = replayed_subscriptions
-        .into_iter()
-        .map(|(session_id, cursor)| (session_id, cursor.last_sent))
-        .collect::<HashMap<_, _>>();
-    state
-        .merge_replayed_and_live_subscription_cursors(&live_cursors, replayed_cursors)
-        .into_iter()
-        .map(|(session_id, last_sent)| (session_id, SessionCursor { last_sent }))
-        .collect()
-}
 
 struct ReplayPlanningDrainHook<'a> {
     state: &'a WorkspaceStreamHandle,
@@ -84,15 +65,17 @@ pub(crate) async fn handle_workspace_stream_subscription(
         .iter()
         .map(|(session_id, cursor)| (*session_id, cursor.last_sent))
         .collect::<HashMap<_, _>>();
-    let resolved = match state
-        .resolve_workspace_active_snapshot_subscriptions(
+    let apply_plan = match state
+        .plan_workspace_stream_subscription_transaction(
             workspace_id,
             message,
             &existing_replay_cursors,
+            runtime.last_subscription_fingerprint.as_deref(),
         )
         .await
     {
-        Ok(next) => next,
+        Ok(WorkspaceStreamSubscriptionTransactionPlan::NoChange) => return Ok(()),
+        Ok(WorkspaceStreamSubscriptionTransactionPlan::Apply(plan)) => plan,
         Err(WorkspaceStreamSubscriptionResolutionError::Hydration(error)) => {
             tracing::error!(
                 target: "ctx_http.ws_active_snapshot",
@@ -112,17 +95,13 @@ pub(crate) async fn handle_workspace_stream_subscription(
             return Ok(());
         }
     };
-    let include_initial_snapshot = resolved.include_initial_snapshot;
-    let fingerprint = resolved.fingerprint;
-    if runtime.last_subscription_fingerprint.as_deref() == Some(fingerprint.as_str()) {
-        return Ok(());
-    }
-    let previous_subscription_ids = runtime.subscriptions.keys().copied().collect::<Vec<_>>();
+    let include_initial_snapshot = apply_plan.include_initial_snapshot;
+    let fingerprint = apply_plan.fingerprint;
 
     clear_runtime_queues(runtime).await;
     runtime.reset_queued = false;
     runtime.send_control.clear_disconnect_after_flush();
-    runtime.subscriptions = resolved
+    runtime.subscriptions = apply_plan
         .provisional_subscriptions
         .iter()
         .map(|(session_id, last_sent)| {
@@ -134,13 +113,10 @@ pub(crate) async fn handle_workspace_stream_subscription(
             )
         })
         .collect();
-    runtime.subscription_state = resolved.state.clone();
-    sync_workspace_stream_session_pins(
-        state,
-        previous_subscription_ids,
-        runtime.subscriptions.keys().copied(),
-    )
-    .await;
+    runtime.subscription_state = apply_plan.state.clone();
+    state
+        .apply_workspace_stream_session_pin_changes(&apply_plan.pin_changes)
+        .await;
     let active_head_cursors = if include_initial_snapshot {
         runtime.send_control.set_hydrating();
         let read_model = if let Ok(read_model) =
@@ -171,7 +147,7 @@ pub(crate) async fn handle_workspace_stream_subscription(
     let replay_program = state
         .plan_workspace_stream_replay_program_with_step_hook(
             workspace_id,
-            &resolved.sessions,
+            &apply_plan.sessions,
             &replay_live_cursors,
             &active_head_cursors,
             include_initial_snapshot,
@@ -197,15 +173,29 @@ pub(crate) async fn handle_workspace_stream_subscription(
         return Ok(());
     };
 
-    let final_map = merge_replayed_and_live_subscriptions(state, &runtime.subscriptions, next_map);
-
-    sync_workspace_stream_session_pins(
-        state,
-        runtime.subscriptions.keys().copied(),
-        final_map.keys().copied(),
-    )
-    .await;
-    runtime.subscriptions = final_map;
+    let live_cursors = runtime
+        .subscriptions
+        .iter()
+        .map(|(session_id, cursor)| (*session_id, cursor.last_sent))
+        .collect::<HashMap<_, _>>();
+    let replayed_cursors = next_map
+        .into_iter()
+        .map(|(session_id, cursor)| (session_id, cursor.last_sent))
+        .collect::<HashMap<_, _>>();
+    let finalization = state.finalize_workspace_stream_subscription_replay(
+        &runtime.subscription_state,
+        &live_cursors,
+        replayed_cursors,
+        &apply_plan.sessions,
+    );
+    state
+        .apply_workspace_stream_session_pin_changes(&finalization.pin_changes)
+        .await;
+    runtime.subscriptions = finalization
+        .subscriptions
+        .into_iter()
+        .map(|(session_id, last_sent)| (session_id, SessionCursor { last_sent }))
+        .collect();
     runtime.last_subscription_fingerprint = Some(fingerprint);
     Ok(())
 }

@@ -22,38 +22,44 @@ async fn merge_replayed_and_live_subscriptions_keeps_live_cursor_authoritative_a
     let live_only_session_id = SessionId::new();
     let removed_session_id = SessionId::new();
     let live_subscriptions = HashMap::from([
-        (replayed_session_id, cursor(15, 15)),
-        (live_only_session_id, cursor(7, 7)),
+        (replayed_session_id, cursor(15, 15).last_sent),
+        (live_only_session_id, cursor(7, 7).last_sent),
     ]);
     let replayed_subscriptions = HashMap::from([
-        (replayed_session_id, cursor(12, 12)),
-        (removed_session_id, cursor(20, 20)),
+        (replayed_session_id, cursor(12, 12).last_sent),
+        (removed_session_id, cursor(20, 20).last_sent),
     ]);
 
-    let merged =
-        merge_replayed_and_live_subscriptions(&state, &live_subscriptions, replayed_subscriptions);
+    let finalization = state.finalize_workspace_stream_subscription_replay(
+        &WorkspaceActiveSubscriptionState::default(),
+        &live_subscriptions,
+        replayed_subscriptions,
+        &[],
+    );
 
-    assert_eq!(merged.len(), 2);
+    assert_eq!(finalization.subscriptions.len(), 2);
     assert_eq!(
-        merged
+        finalization
+            .subscriptions
             .get(&replayed_session_id)
-            .map(|subscription| subscription.last_sent),
+            .copied(),
         Some(SessionReplayCursor {
             last_event_seq: 15,
             projection_rev: 15,
         })
     );
     assert_eq!(
-        merged
+        finalization
+            .subscriptions
             .get(&live_only_session_id)
-            .map(|subscription| subscription.last_sent),
+            .copied(),
         Some(SessionReplayCursor {
             last_event_seq: 7,
             projection_rev: 7,
         })
     );
     assert!(
-        !merged.contains_key(&removed_session_id),
+        !finalization.subscriptions.contains_key(&removed_session_id),
         "live subscription state must remain authoritative for removed sessions",
     );
 }
