@@ -10,6 +10,7 @@ const tauriConfPath = path.join(coreRoot, "apps", "desktop", "src-tauri", "tauri
 const tauriCargoTomlPath = path.join(coreRoot, "apps", "desktop", "src-tauri", "Cargo.toml");
 const daemonCargoTomlPath = path.join(coreRoot, "crates", "ctx-http", "Cargo.toml");
 const daemonBazelBuildPath = path.join(coreRoot, "crates", "ctx-http", "BUILD.bazel");
+const cargoLockPath = path.join(coreRoot, "Cargo.lock");
 
 const VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
@@ -115,6 +116,25 @@ const updateBazelCargoPkgVersion = (buildPath, nextVersion) => {
   writeIfChanged(buildPath, next);
 };
 
+const updateCargoLockPackageVersion = (lockPath, packageName, nextVersion) => {
+  const text = fs.readFileSync(lockPath, "utf8");
+  const escapedPackageName = packageName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`(\\[\\[package\\]\\]\\nname = "${escapedPackageName}"\\nversion = ")([^"]+)(")`);
+  const match = text.match(pattern);
+  if (!match) {
+    throw new Error(`failed to update ${packageName} version in ${lockPath}`);
+  }
+  if (match[2] === nextVersion) {
+    return;
+  }
+  const next = replaceFirst(
+    text,
+    pattern,
+    (_, prefix, _old, suffix) => `${prefix}${nextVersion}${suffix}`,
+  );
+  writeIfChanged(lockPath, next);
+};
+
 const setDesktopVersion = (nextVersion, { root = coreRoot } = {}) => {
   const normalizedVersion = assertValidVersion(nextVersion);
   const resolvedDesktopPkgJsonPath = path.join(root, "apps", "desktop", "package.json");
@@ -122,6 +142,7 @@ const setDesktopVersion = (nextVersion, { root = coreRoot } = {}) => {
   const resolvedTauriCargoTomlPath = path.join(root, "apps", "desktop", "src-tauri", "Cargo.toml");
   const resolvedDaemonCargoTomlPath = path.join(root, "crates", "ctx-http", "Cargo.toml");
   const resolvedDaemonBazelBuildPath = path.join(root, "crates", "ctx-http", "BUILD.bazel");
+  const resolvedCargoLockPath = path.join(root, "Cargo.lock");
 
   const desktopPkg = readJson(resolvedDesktopPkgJsonPath);
   if (desktopPkg.version !== normalizedVersion) {
@@ -134,6 +155,7 @@ const setDesktopVersion = (nextVersion, { root = coreRoot } = {}) => {
   updateCargoPackageVersion(resolvedTauriCargoTomlPath, normalizedVersion);
   updateCargoPackageVersion(resolvedDaemonCargoTomlPath, normalizedVersion);
   updateBazelCargoPkgVersion(resolvedDaemonBazelBuildPath, normalizedVersion);
+  updateCargoLockPackageVersion(resolvedCargoLockPath, "ctx-http", normalizedVersion);
 
   return {
     root,
@@ -146,7 +168,7 @@ const main = () => {
   const nextVersion = assertValidVersion(nextVersionRaw);
   const result = setDesktopVersion(nextVersion);
   console.log(
-    `desktop_set_version: updated desktop+daemon to ${result.version} (${desktopPkgJsonPath}, ${tauriConfPath}, ${tauriCargoTomlPath}, ${daemonCargoTomlPath}, ${daemonBazelBuildPath})`,
+    `desktop_set_version: updated desktop+daemon to ${result.version} (${desktopPkgJsonPath}, ${tauriConfPath}, ${tauriCargoTomlPath}, ${daemonCargoTomlPath}, ${daemonBazelBuildPath}, ${cargoLockPath})`,
   );
 };
 
@@ -164,4 +186,5 @@ module.exports = {
   VERSION_RE,
   assertValidVersion,
   setDesktopVersion,
+  updateCargoLockPackageVersion,
 };

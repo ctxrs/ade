@@ -24,6 +24,10 @@ const writeFixture = (coreRoot) => {
       "crates/ctx-http/BUILD.bazel",
       'CTX_HTTP_RUSTC_ENV = {\n    "CARGO_PKG_VERSION": "0.1.0",\n}\n',
     ],
+    [
+      "Cargo.lock",
+      '[[package]]\nname = "ctx-http"\nversion = "0.1.0"\ndependencies = []\n',
+    ],
   ]);
 
   for (const [relativePath, contents] of files) {
@@ -54,6 +58,10 @@ test("setDesktopVersion updates Cargo and Bazel daemon versions", () => {
   assert.match(
     fs.readFileSync(path.join(coreRoot, "crates/ctx-http/BUILD.bazel"), "utf8"),
     /"CARGO_PKG_VERSION": "0\.62\.42"/,
+  );
+  assert.match(
+    fs.readFileSync(path.join(coreRoot, "Cargo.lock"), "utf8"),
+    /name = "ctx-http"\nversion = "0\.62\.42"/,
   );
 });
 
