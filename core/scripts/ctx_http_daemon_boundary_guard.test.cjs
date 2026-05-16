@@ -26,6 +26,7 @@ const {
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   MOBILE_ACCESS_STORE_DTO_API_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
+  PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS,
   SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS,
   SESSION_VCS_API_ORCHESTRATION_PATTERNS,
   TASK_SESSION_CREATION_API_ADMISSION_PATTERNS,
@@ -2537,6 +2538,66 @@ test("daemon boundary guard scopes session model switch patterns to model route 
   assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/sessions/snapshot/head.rs").includes(
       SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    false,
+  );
+});
+
+test("daemon boundary guard rejects provider bootstrap orchestration in HTTP", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/providers/bootstrap.rs",
+    contents: `
+      async fn handler(providers: ProvidersHandle) {
+        providers.workspace_exists(ws_id).await?;
+        providers.install_target_for_workspace(ws_id).await?;
+        providers.load_preferred_new_session_models(ws_id).await?;
+        providers.providers_statuses_response(target, true).await;
+        providers.build_bootstrap_options(ws_id, provider_status, preferred).await;
+        visible_provider_count_hint(12);
+        provider.detail_flag("ui_hidden");
+        load_bootstrap_workspace(&providers, ws_id).await?;
+        load_preferred_model_by_provider(&providers, ws_id).await?;
+        load_bootstrap_accounts(&providers).await?;
+        accounts::codex_accounts_response(&providers).await?;
+      }
+    `,
+    patterns: PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "provider bootstrap API checks workspace existence directly",
+      "provider bootstrap API resolves install target directly",
+      "provider bootstrap API loads preferred models directly",
+      "provider bootstrap API loads preferred models directly",
+      "provider bootstrap API loads provider statuses directly",
+      "provider bootstrap API builds provider options directly",
+      "provider bootstrap API owns provider visibility filtering",
+      "provider bootstrap API owns provider visibility filtering",
+      "provider bootstrap API owns bootstrap workspace helper",
+      "provider bootstrap API loads bootstrap accounts directly",
+      "provider bootstrap API loads bootstrap accounts directly",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes provider bootstrap orchestration patterns", () => {
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers/bootstrap.rs").includes(
+      PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers/bootstrap/load.rs").includes(
+      PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers/status/routes.rs").includes(
+      PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS[0],
     ),
     false,
   );

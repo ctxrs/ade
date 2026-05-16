@@ -165,6 +165,11 @@ const sessionModelSwitchApiRoots = [
   "core/crates/ctx-http/src/api/sessions/titles_and_modes/",
 ];
 
+const providerBootstrapApiRoots = [
+  "core/crates/ctx-http/src/api/providers/bootstrap.rs",
+  "core/crates/ctx-http/src/api/providers/bootstrap/",
+];
+
 const taskSessionCreationApiRoots = [
   "core/crates/ctx-http/src/api/tasks/creation_session.rs",
   "core/crates/ctx-http/src/api/tasks/creation_session/",
@@ -968,6 +973,41 @@ const SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS = [
     name: "session model API defines old orchestration helpers",
     regex:
       /\b(?:load_session_model_target|resolve_session_model_update|switch_live_session_model|persist_session_model_update)\s*\(/,
+  },
+];
+
+const PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS = [
+  {
+    name: "provider bootstrap API checks workspace existence directly",
+    regex: /(?:\.|\bProvidersHandle::)workspace_exists\s*\(/,
+  },
+  {
+    name: "provider bootstrap API resolves install target directly",
+    regex: /(?:\.|\bProvidersHandle::)install_target_for_workspace\s*\(/,
+  },
+  {
+    name: "provider bootstrap API loads preferred models directly",
+    regex: /(?:\.|\bProvidersHandle::)load_preferred_new_session_models\s*\(|\bload_preferred_model_by_provider\s*\(/,
+  },
+  {
+    name: "provider bootstrap API loads provider statuses directly",
+    regex: /(?:\.|\bProvidersHandle::)providers_statuses_response\s*\(/,
+  },
+  {
+    name: "provider bootstrap API builds provider options directly",
+    regex: /(?:\.|\bProvidersHandle::)build_bootstrap_options\s*\(/,
+  },
+  {
+    name: "provider bootstrap API owns provider visibility filtering",
+    regex: /\bvisible_provider_count_hint\s*\(|\.detail_flag\s*\(\s*"ui_hidden"/,
+  },
+  {
+    name: "provider bootstrap API owns bootstrap workspace helper",
+    regex: /\bload_bootstrap_workspace\s*\(/,
+  },
+  {
+    name: "provider bootstrap API loads bootstrap accounts directly",
+    regex: /\bload_bootstrap_accounts\s*\(|\baccounts::(?:codex|claude|gemini|qwen|kimi|mistral|copilot|cursor|amp)_accounts_response\s*\(/,
   },
 ];
 
@@ -3136,6 +3176,9 @@ function apiPatternsForPath(relativePath) {
   if (sessionModelSwitchApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS);
   }
+  if (providerBootstrapApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS);
+  }
   if (taskSessionCreationApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...TASK_SESSION_CREATION_API_ADMISSION_PATTERNS);
   }
@@ -4115,6 +4158,7 @@ module.exports = {
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MOBILE_ACCESS_STORE_DTO_API_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
+  PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS,
   SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS,
   SESSION_VCS_API_ORCHESTRATION_PATTERNS,
   TASK_SESSION_CREATION_API_ADMISSION_PATTERNS,

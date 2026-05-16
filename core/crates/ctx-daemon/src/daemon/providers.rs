@@ -67,7 +67,10 @@ pub use auth_import::{
     import_provider_auth_candidates, list_provider_auth_import_candidates,
     list_provider_auth_import_profiles,
 };
-pub use bootstrap::{build_bootstrap_options, visible_provider_count_hint};
+pub use bootstrap::{
+    workspace_providers_bootstrap, ProvidersBootstrapError, ProvidersBootstrapErrorKind,
+    ProvidersBootstrapResponse,
+};
 pub use diagnostics::provider_diagnostics_snapshot;
 pub use harness_config::{
     delete_provider_harness_endpoint, get_provider_harness_config,
@@ -176,22 +179,6 @@ impl ProvidersHandle {
         workspace_id: WorkspaceId,
     ) -> anyhow::Result<InstallTarget> {
         install_target_for_workspace(&self.state, workspace_id).await
-    }
-
-    pub async fn workspace_exists(&self, workspace_id: WorkspaceId) -> anyhow::Result<bool> {
-        self.state
-            .global_store()
-            .get_workspace(workspace_id)
-            .await
-            .map(|workspace| workspace.is_some())
-    }
-
-    pub async fn load_preferred_new_session_models(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> anyhow::Result<HashMap<String, String>> {
-        let store = self.state.store_for_workspace(workspace_id).await?;
-        ctx_workspace_config::load_preferred_new_session_models(&store).await
     }
 
     pub async fn providers_statuses_response(
@@ -509,23 +496,11 @@ impl ProvidersHandle {
         remove_qwen_account(&self.state, account_id).await
     }
 
-    pub async fn build_bootstrap_options(
+    pub async fn workspace_providers_bootstrap(
         &self,
         workspace_id: WorkspaceId,
-        provider_status: ProviderStatus,
-        preferred_model_id: Option<String>,
-    ) -> (
-        String,
-        Value,
-        Option<harness_sources::HarnessProviderSourceConfig>,
-    ) {
-        build_bootstrap_options(
-            &self.state,
-            workspace_id,
-            provider_status,
-            preferred_model_id,
-        )
-        .await
+    ) -> Result<ProvidersBootstrapResponse, ProvidersBootstrapError> {
+        workspace_providers_bootstrap(&self.state, workspace_id).await
     }
 
     pub async fn get_provider_options_response(
