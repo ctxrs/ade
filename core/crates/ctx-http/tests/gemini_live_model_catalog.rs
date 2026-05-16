@@ -159,8 +159,13 @@ async fn live_gemini_model_catalog_matches_pinned_snapshot() {
 
     let data_dir = tempfile::tempdir().expect("tempdir");
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
-    let daemon = common::provider_route_providerless_daemon(data_dir.path()).await;
-    let app = common::router_for_daemon(&daemon);
+    let fixture = common::fake_daemon_fixture_for_data_root_with_providers(
+        data_dir.path(),
+        HashMap::new(),
+        "http://127.0.0.1:0",
+    )
+    .await;
+    let app = fixture.router();
 
     add_gemini_account(
         data_dir.path(),
@@ -196,7 +201,7 @@ async fn live_gemini_model_catalog_matches_pinned_snapshot() {
         .expect("save live gemini runtime config");
 
     seed_provider_status(
-        &daemon,
+        &fixture.daemon,
         ProviderStatus {
             provider_id: "gemini".to_string(),
             installed: true,

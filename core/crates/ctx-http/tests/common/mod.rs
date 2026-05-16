@@ -739,17 +739,6 @@ pub async fn provider_route_fake_daemon(data_root: &Path) -> TestDaemon {
     .expect("create fake-provider daemon")
 }
 
-pub async fn provider_route_providerless_daemon(data_root: &Path) -> TestDaemon {
-    TestDaemon::new_with_providers_for_test(
-        data_root.to_path_buf(),
-        HashMap::new(),
-        "http://127.0.0.1:0".to_string(),
-        None,
-    )
-    .await
-    .expect("create providerless daemon")
-}
-
 pub async fn spawn_http_server(app: axum::Router) -> TestServer {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

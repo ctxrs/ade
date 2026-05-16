@@ -144,6 +144,10 @@ const externalProviderRouteStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/gemini_live_model_catalog.rs",
 ];
 
+const geminiLiveModelCatalogStoreFacadeTestRoots = [
+  "core/crates/ctx-http/tests/gemini_live_model_catalog.rs",
+];
+
 const smallApiUnitStoreFacadeTestRoots = [
   "core/crates/ctx-http/src/api/settings.rs",
   "core/crates/ctx-http/src/api/providers/login/codex/tests.rs",
@@ -750,6 +754,28 @@ const EXTERNAL_PROVIDER_ROUTE_TEST_STORE_ACCESS_PATTERNS = [
   {
     name: "raw external provider-route ctx_store Store",
     regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore\b/,
+  },
+];
+
+const GEMINI_LIVE_MODEL_CATALOG_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct Gemini live catalog common setup helper",
+    regex: /\b(?:crate\s*::\s*)?common\s*::\s*(?:setup_store|build_daemon|router_for_daemon)\s*\(|\b(?:setup_store|build_daemon|router_for_daemon)\s*\(/,
+    contentRegex: /\buse\s+[\s\S]*?\b(?:setup_store|build_daemon|router_for_daemon)\b[\s\S]*?;/gm,
+  },
+  {
+    name: "direct Gemini live catalog providerless daemon helper",
+    regex: /\b(?:crate\s*::\s*)?common\s*::\s*provider_route_providerless_daemon\s*\(|\bprovider_route_providerless_daemon\s*\(/,
+    contentRegex: /\buse\s+[\s\S]*?\bprovider_route_providerless_daemon\b[\s\S]*?;/gm,
+  },
+  {
+    name: "direct Gemini live catalog TestDaemon construction",
+    regex: /\bTestDaemon\s*::\s*new[A-Za-z0-9_]*\s*\(/,
+  },
+  {
+    name: "raw Gemini live catalog store setup",
+    regex: /\bStoreManager\b|\bctx_store\s*::\s*Store\b|\b[A-Za-z_][A-Za-z0-9_]*\s*::\s*open_sqlite\s*\(/,
+    contentRegex: /\buse\s+ctx_store\s*::\s*\{(?=[^}]*\n)[\s\S]*?\bStore\b[\s\S]*?\}/gm,
   },
 ];
 
@@ -2578,6 +2604,13 @@ function externalProviderRouteStorePatternsForPath(relativePath) {
   return [];
 }
 
+function geminiLiveModelCatalogStorePatternsForPath(relativePath) {
+  if (geminiLiveModelCatalogStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return GEMINI_LIVE_MODEL_CATALOG_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
 function smallApiUnitStorePatternsForPath(relativePath) {
   if (smallApiUnitStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return SMALL_API_UNIT_TEST_STORE_ACCESS_PATTERNS;
@@ -3101,6 +3134,13 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
+        patterns: geminiLiveModelCatalogStorePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
         patterns: smallApiUnitStorePatternsForPath(relativePath),
       }),
     );
@@ -3420,6 +3460,7 @@ module.exports = {
   EXTERNAL_PROVIDER_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   FAKE_DAEMON_EXTERNAL_TEST_STORE_ACCESS_PATTERNS,
   FAULT_INJECTION_TEST_STORE_ACCESS_PATTERNS,
+  GEMINI_LIVE_MODEL_CATALOG_TEST_STORE_ACCESS_PATTERNS,
   GLOBAL_ID_ROUTING_TEST_STORE_ACCESS_PATTERNS,
   HARNESS_CONTAINER_SANDBOX_TEST_STORE_ACCESS_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
@@ -3471,6 +3512,7 @@ module.exports = {
   executionLaunchStorePatternsForPath,
   fakeDaemonExternalStorePatternsForPath,
   faultInjectionStorePatternsForPath,
+  geminiLiveModelCatalogStorePatternsForPath,
   globalIdRoutingStorePatternsForPath,
   harnessContainerSandboxStorePatternsForPath,
   imageAttachmentsStorePatternsForPath,

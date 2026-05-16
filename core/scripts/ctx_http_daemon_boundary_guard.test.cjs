@@ -13,6 +13,7 @@ const {
   EXTERNAL_PROVIDER_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   FAKE_DAEMON_EXTERNAL_TEST_STORE_ACCESS_PATTERNS,
   FAULT_INJECTION_TEST_STORE_ACCESS_PATTERNS,
+  GEMINI_LIVE_MODEL_CATALOG_TEST_STORE_ACCESS_PATTERNS,
   GLOBAL_ID_ROUTING_TEST_STORE_ACCESS_PATTERNS,
   HARNESS_CONTAINER_SANDBOX_TEST_STORE_ACCESS_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
@@ -64,6 +65,7 @@ const {
   executionLaunchStorePatternsForPath,
   fakeDaemonExternalStorePatternsForPath,
   faultInjectionStorePatternsForPath,
+  geminiLiveModelCatalogStorePatternsForPath,
   globalIdRoutingStorePatternsForPath,
   harnessContainerSandboxStorePatternsForPath,
   imageAttachmentsStorePatternsForPath,
@@ -1039,6 +1041,70 @@ test("daemon boundary guard scopes external provider-route store facade roots", 
   assert.deepEqual(
     externalProviderRouteStorePatternsForPath(
       "core/crates/ctx-http/tests/provider_probe_runtime_env.rs",
+    ),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects Gemini live catalog raw fixture setup", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/gemini_live_model_catalog.rs",
+    contents: `
+      use ctx_store::{Store, StoreManager};
+      use common::{
+        router_for_daemon as route_app,
+        provider_route_providerless_daemon as providerless,
+      };
+      async fn helper(daemon: TestDaemon) {
+        let stores = StoreManager::open(data_root).await?;
+        let _raw = ctx_store::Store::open_sqlite(path, None).await?;
+        Store::open_sqlite(path, None).await?;
+        let app = common::router_for_daemon(&daemon);
+        let app = common :: router_for_daemon(&daemon);
+        let app = route_app(&daemon);
+        let daemon = common::provider_route_providerless_daemon(data_root).await;
+        let daemon = common :: provider_route_providerless_daemon(data_root).await;
+        let daemon = providerless(data_root).await;
+        let daemon = common::setup_store(data_root).await;
+        let daemon = common::build_daemon(data_root, stores, providers, base_url);
+        let daemon = TestDaemon::new(data_root, stores, providers, base_url, None);
+        let daemon = TestDaemon :: new_with_providers_for_test(data_root, providers, base_url, None).await?;
+      }
+    `,
+    patterns: GEMINI_LIVE_MODEL_CATALOG_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct Gemini live catalog common setup helper",
+      "direct Gemini live catalog common setup helper",
+      "direct Gemini live catalog common setup helper",
+      "direct Gemini live catalog common setup helper",
+      "direct Gemini live catalog common setup helper",
+      "direct Gemini live catalog providerless daemon helper",
+      "direct Gemini live catalog providerless daemon helper",
+      "direct Gemini live catalog providerless daemon helper",
+      "direct Gemini live catalog TestDaemon construction",
+      "direct Gemini live catalog TestDaemon construction",
+      "raw Gemini live catalog store setup",
+      "raw Gemini live catalog store setup",
+      "raw Gemini live catalog store setup",
+      "raw Gemini live catalog store setup",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes Gemini live catalog fixture root", () => {
+  assert.deepEqual(
+    geminiLiveModelCatalogStorePatternsForPath(
+      "core/crates/ctx-http/tests/gemini_live_model_catalog.rs",
+    ),
+    GEMINI_LIVE_MODEL_CATALOG_TEST_STORE_ACCESS_PATTERNS,
+  );
+  assert.deepEqual(
+    geminiLiveModelCatalogStorePatternsForPath(
+      "core/crates/ctx-http/tests/live_provider_canary.rs",
     ),
     [],
   );
