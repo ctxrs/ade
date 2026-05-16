@@ -16,13 +16,27 @@ struct SessionFixture {
     session_id: SessionId,
 }
 
+struct GlobalIdRoutingHarness {
+    server: common::TestServer,
+    fixture: common::FakeDaemonFixture,
+}
+
+impl GlobalIdRoutingHarness {
+    fn daemon(&self) -> &TestDaemon {
+        &self.fixture.daemon
+    }
+
+    fn server(&self) -> &common::TestServer {
+        &self.server
+    }
+}
+
 fn request_shutdown(daemon: &TestDaemon) {
     daemon.request_shutdown();
 }
 
-async fn setup_state() -> (tempfile::TempDir, TestDaemon, common::TestServer) {
-    let common::FakeDaemonFixture { data_dir, daemon } =
-        common::fake_daemon_fixture("http://127.0.0.1:0").await;
+async fn setup_state() -> GlobalIdRoutingHarness {
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
     let mut status = FakeProviderAdapter::new().inspect().await.unwrap();
     status.usability = ProviderUsability {
         usable: true,
@@ -32,9 +46,12 @@ async fn setup_state() -> (tempfile::TempDir, TestDaemon, common::TestServer) {
         blocking_provider_ids: Vec::new(),
         recommended_action: ProviderRecommendedAction::None,
     };
-    daemon.upsert_provider_status("fake".into(), status).await;
-    let server = common::spawn_http_server(common::router_for_daemon(&daemon)).await;
-    (data_dir, daemon, server)
+    fixture
+        .daemon
+        .upsert_provider_status("fake".into(), status)
+        .await;
+    let server = fixture.spawn_server().await;
+    GlobalIdRoutingHarness { server, fixture }
 }
 
 async fn create_workspace_session(
@@ -62,11 +79,13 @@ async fn create_workspace_session(
 
 #[tokio::test]
 async fn artifact_route_is_session_scoped() {
-    let (_data_dir, daemon, server) = setup_state().await;
+    let harness = setup_state().await;
+    let daemon = harness.daemon();
+    let server = harness.server();
     let repo_a = common::init_git_repo(&[("README.md", "a")]).await;
     let repo_b = common::init_git_repo(&[("README.md", "b")]).await;
-    let _workspace_a = create_workspace_session(&daemon, "a", repo_a.path()).await;
-    let workspace_b = create_workspace_session(&daemon, "b", repo_b.path()).await;
+    let _workspace_a = create_workspace_session(daemon, "a", repo_a.path()).await;
+    let workspace_b = create_workspace_session(daemon, "b", repo_b.path()).await;
 
     let artifact_path = repo_b.path().join("artifact.txt");
     tokio::fs::write(&artifact_path, b"artifact-body")
@@ -103,14 +122,16 @@ async fn artifact_route_is_session_scoped() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     assert_eq!(resp.bytes().await.unwrap().as_ref(), b"artifact-body");
-    request_shutdown(&daemon);
+    request_shutdown(daemon);
 }
 
 #[tokio::test]
 async fn quicktime_artifact_upload_is_accepted() {
-    let (_data_dir, daemon, server) = setup_state().await;
+    let harness = setup_state().await;
+    let daemon = harness.daemon();
+    let server = harness.server();
     let repo = common::init_git_repo(&[("README.md", "a")]).await;
-    let workspace = create_workspace_session(&daemon, "a", repo.path()).await;
+    let workspace = create_workspace_session(daemon, "a", repo.path()).await;
 
     let artifact_path = repo.path().join("artifact.mov");
     tokio::fs::write(&artifact_path, b"quicktime-body")
@@ -138,16 +159,18 @@ async fn quicktime_artifact_upload_is_accepted() {
     let artifacts: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(artifacts[0]["mime_type"].as_str(), Some("video/quicktime"));
     assert_eq!(artifacts[0]["name"].as_str(), Some("artifact.mov"));
-    request_shutdown(&daemon);
+    request_shutdown(daemon);
 }
 
 #[tokio::test]
 async fn message_delete_route_is_session_scoped() {
-    let (_data_dir, daemon, server) = setup_state().await;
+    let harness = setup_state().await;
+    let daemon = harness.daemon();
+    let server = harness.server();
     let repo_a = common::init_git_repo(&[("README.md", "a")]).await;
     let repo_b = common::init_git_repo(&[("README.md", "b")]).await;
-    let _workspace_a = create_workspace_session(&daemon, "a", repo_a.path()).await;
-    let workspace_b = create_workspace_session(&daemon, "b", repo_b.path()).await;
+    let _workspace_a = create_workspace_session(daemon, "a", repo_a.path()).await;
+    let workspace_b = create_workspace_session(daemon, "b", repo_b.path()).await;
     let message_id = daemon
         .seed_global_id_routing_queued_message_for_test(workspace_b.session_id, "queued")
         .await
@@ -169,16 +192,18 @@ async fn message_delete_route_is_session_scoped() {
         .global_id_routing_message_exists_for_test(workspace_b.session_id, message_id)
         .await
         .unwrap());
-    request_shutdown(&daemon);
+    request_shutdown(daemon);
 }
 
 #[tokio::test]
 async fn subagent_invocation_route_is_session_scoped() {
-    let (_data_dir, daemon, server) = setup_state().await;
+    let harness = setup_state().await;
+    let daemon = harness.daemon();
+    let server = harness.server();
     let repo_a = common::init_git_repo(&[("README.md", "a")]).await;
     let repo_b = common::init_git_repo(&[("README.md", "b")]).await;
-    let _workspace_a = create_workspace_session(&daemon, "a", repo_a.path()).await;
-    let workspace_b = create_workspace_session(&daemon, "b", repo_b.path()).await;
+    let _workspace_a = create_workspace_session(daemon, "a", repo_a.path()).await;
+    let workspace_b = create_workspace_session(daemon, "b", repo_b.path()).await;
 
     let resp = server
         .client
@@ -231,5 +256,5 @@ async fn subagent_invocation_route_is_session_scoped() {
     }
     let invocation: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(invocation["id"].as_str().unwrap(), invocation_id);
-    request_shutdown(&daemon);
+    request_shutdown(daemon);
 }

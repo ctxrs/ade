@@ -349,6 +349,12 @@ const smallRouteFixtureTestRoots = [
   "core/crates/ctx-http/tests/workspace_merge_queue_config_http.rs",
 ];
 
+const providerAuthGlobalIdFixtureTestRoots = [
+  "core/crates/ctx-http/tests/codex_host_import_api.rs",
+  "core/crates/ctx-http/tests/codex_login_callback_api.rs",
+  "core/crates/ctx-http/tests/global_id_routing_http.rs",
+];
+
 const taskLifecycleStoreFacadeTestRoots = [
   "core/crates/ctx-http/src/api/tasks/cleanup_lifecycle_tests.rs",
   "core/crates/ctx-http/src/api/tasks/lifecycle_tests.rs",
@@ -887,6 +893,36 @@ const SMALL_ROUTE_FIXTURE_PATTERNS = [
   },
   {
     name: "raw small-route ctx_store Store",
+    regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore::/,
+    contentRegex: /\buse\s+ctx_store::\{(?=[^}]*\n)[\s\S]*?\bStore\b[\s\S]*?\}/gm,
+  },
+];
+
+const PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS = [
+  {
+    name: "direct provider-auth/global-id provider daemon fixture helper",
+    regex: /\b(?:crate::)?common::provider_route_fake_daemon\s*\(|\buse\s+[^;]*\bprovider_route_fake_daemon\b|\bprovider_route_fake_daemon\s*\(/,
+    contentRegex: /\buse\s+[\s\S]*?\bprovider_route_fake_daemon\b[\s\S]*?;/gm,
+  },
+  {
+    name: "direct provider-auth/global-id daemon router composition",
+    regex: /\b(?:crate::)?common::router_for_daemon\s*\(|\buse\s+[^;]*\brouter_for_daemon\b|\brouter_for_daemon\s*\(/,
+    contentRegex: /\buse\s+[\s\S]*?\brouter_for_daemon\b[\s\S]*?;/gm,
+  },
+  {
+    name: "direct provider-auth/global-id TestDaemon construction",
+    regex: /\bTestDaemon::new[A-Za-z0-9_]*\s*\(/,
+  },
+  {
+    name: "direct provider-auth/global-id TestDaemon store access",
+    regex: /\.(?:stores|global_store|store_for_session|store_for_workspace|uncached_store_for_workspace|store_for_task|store_for_worktree)\s*\(/,
+  },
+  {
+    name: "raw provider-auth/global-id StoreManager",
+    regex: /\bStoreManager\b/,
+  },
+  {
+    name: "raw provider-auth/global-id ctx_store Store",
     regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore::/,
     contentRegex: /\buse\s+ctx_store::\{(?=[^}]*\n)[\s\S]*?\bStore\b[\s\S]*?\}/gm,
   },
@@ -2145,6 +2181,13 @@ function smallRouteFixturePatternsForPath(relativePath) {
   return [];
 }
 
+function providerAuthGlobalIdFixturePatternsForPath(relativePath) {
+  if (providerAuthGlobalIdFixtureTestRoots.some((root) => relativePath.startsWith(root))) {
+    return PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS;
+  }
+  return [];
+}
+
 function mcpDaemonPatternsForPath(relativePath) {
   if (mcpDaemonFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS;
@@ -2587,6 +2630,13 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
+        patterns: providerAuthGlobalIdFixturePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
         patterns: mcpDaemonPatternsForPath(relativePath),
       }),
     );
@@ -2745,6 +2795,7 @@ module.exports = {
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
+  PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_ROUTE_SETUP_TEST_STORE_ACCESS_PATTERNS,
@@ -2784,6 +2835,7 @@ module.exports = {
   mcpDaemonPatternsForPath,
   migratedTestPatternsForPath,
   mobileStorePatternsForPath,
+  providerAuthGlobalIdFixturePatternsForPath,
   providerWorkerReapingStorePatternsForPath,
   providerCachePatternsForPath,
   providerProbeRuntimeEnvStorePatternsForPath,

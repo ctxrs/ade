@@ -1,5 +1,4 @@
 use axum::http::StatusCode;
-use ctx_daemon::test_support::TestDaemon;
 use ctx_provider_accounts::{codex_env_for_active_account, ensure_codex_auth_ready};
 use serde::Deserialize;
 use serde_json::json;
@@ -32,22 +31,9 @@ struct CodexHostImportProbe {
     auth_kind: Option<String>,
 }
 
-async fn start_http_app(
-    daemon: &TestDaemon,
-) -> (String, reqwest::Client, tokio::task::JoinHandle<()>) {
-    let app = common::router_for_daemon(daemon);
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let handle = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    (format!("http://{addr}"), reqwest::Client::new(), handle)
-}
-
 #[tokio::test]
 async fn host_import_probe_and_import_projects_runtime_auth() {
     let _env_lock = common::process_env_test_lock().lock().await;
-    let data_dir = tempfile::tempdir().unwrap();
     let host_dir = tempfile::tempdir().unwrap();
     let host_auth_path = host_dir.path().join("auth.json");
     tokio::fs::write(&host_auth_path, br#"{"OPENAI_API_KEY":"test-key"}"#)
@@ -60,8 +46,10 @@ async fn host_import_probe_and_import_projects_runtime_auth() {
     );
     let _codex_home = common::TestEnvGuard::unset("CTX_CODEX_HOME");
 
-    let daemon = common::provider_route_fake_daemon(data_dir.path()).await;
-    let (base, client, server_handle) = start_http_app(&daemon).await;
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let server = fixture.spawn_server().await;
+    let base = &server.base_url;
+    let client = &server.client;
 
     let probe = client
         .get(format!("{base}/api/providers/codex/import/host"))
@@ -93,11 +81,11 @@ async fn host_import_probe_and_import_projects_runtime_auth() {
     assert_eq!(account.endpoint_profile.api_shape, "openai_responses");
     assert_eq!(account.endpoint_profile.auth_type, "bearer");
 
-    let env = codex_env_for_active_account(data_dir.path()).await.unwrap();
+    let env = codex_env_for_active_account(fixture.data_dir.path())
+        .await
+        .unwrap();
     let home = env.get("CODEX_HOME").expect("CODEX_HOME");
     ensure_codex_auth_ready(std::path::Path::new(home))
         .await
         .unwrap();
-
-    server_handle.abort();
 }

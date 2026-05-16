@@ -20,6 +20,7 @@ const {
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
+  PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_ROUTE_SETUP_TEST_STORE_ACCESS_PATTERNS,
@@ -59,6 +60,7 @@ const {
   mcpDaemonPatternsForPath,
   migratedTestPatternsForPath,
   mobileStorePatternsForPath,
+  providerAuthGlobalIdFixturePatternsForPath,
   providerWorkerReapingStorePatternsForPath,
   providerCachePatternsForPath,
   providerProbeRuntimeEnvStorePatternsForPath,
@@ -1639,6 +1641,83 @@ test("daemon boundary guard scopes small-route fixture roots", () => {
   }
   assert.deepEqual(
     smallRouteFixturePatternsForPath("core/crates/ctx-http/tests/common/mod.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects provider-auth/global-id raw daemon fixture setup", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/codex_login_callback_api.rs",
+    contents: `
+      use ctx_store::{Store, StoreManager};
+      use common::{
+        provider_route_fake_daemon as fake_daemon,
+        router_for_daemon as router,
+      };
+      async fn helper(daemon: &TestDaemon) {
+        let daemon = common::provider_route_fake_daemon(data_dir.path()).await;
+        let app = common::router_for_daemon(&daemon);
+        let daemon = provider_route_fake_daemon(data_dir.path()).await;
+        let app = router_for_daemon(&daemon);
+        let app = router(&daemon);
+        let daemon = fake_daemon(data_dir.path()).await;
+        let daemon = TestDaemon::new(data_dir, stores, providers, "http://127.0.0.1:0".into(), None);
+        daemon.store_for_session(session_id).await?;
+      }
+    `,
+    patterns: PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct provider-auth/global-id provider daemon fixture helper",
+      "direct provider-auth/global-id provider daemon fixture helper",
+      "direct provider-auth/global-id provider daemon fixture helper",
+      "direct provider-auth/global-id daemon router composition",
+      "direct provider-auth/global-id daemon router composition",
+      "direct provider-auth/global-id daemon router composition",
+      "direct provider-auth/global-id TestDaemon construction",
+      "direct provider-auth/global-id TestDaemon store access",
+      "raw provider-auth/global-id StoreManager",
+      "raw provider-auth/global-id ctx_store Store",
+    ],
+  );
+});
+
+test("daemon boundary guard allows provider-auth/global-id fixtures", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/global_id_routing_http.rs",
+    contents: `
+      async fn helper() {
+        let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+        let server = fixture.spawn_server().await;
+        let daemon = &fixture.daemon;
+        let data_root = fixture.data_dir.path();
+        daemon.seed_global_id_routing_workspace_session_for_test(seed).await?;
+        assert!(!data_root.as_os_str().is_empty());
+        assert!(!server.base_url.is_empty());
+      }
+    `,
+    patterns: PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
+  });
+
+  assert.deepEqual(violations, []);
+});
+
+test("daemon boundary guard scopes provider-auth/global-id fixture roots", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/tests/codex_host_import_api.rs",
+    "core/crates/ctx-http/tests/codex_login_callback_api.rs",
+    "core/crates/ctx-http/tests/global_id_routing_http.rs",
+  ]) {
+    assert.deepEqual(
+      providerAuthGlobalIdFixturePatternsForPath(filePath),
+      PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
+    );
+  }
+  assert.deepEqual(
+    providerAuthGlobalIdFixturePatternsForPath("core/crates/ctx-http/tests/common/mod.rs"),
     [],
   );
 });
