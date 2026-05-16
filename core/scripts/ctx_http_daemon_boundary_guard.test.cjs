@@ -20,6 +20,7 @@ const {
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
+  PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_ROUTE_SETUP_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_WORKER_REAPING_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_TEST_CACHE_ACCESS_PATTERNS,
@@ -56,6 +57,7 @@ const {
   mobileStorePatternsForPath,
   providerWorkerReapingStorePatternsForPath,
   providerCachePatternsForPath,
+  providerProbeRuntimeEnvStorePatternsForPath,
   providerRouteSetupStorePatternsForPath,
   routerCompositionPatternsForPath,
   scanRepo,
@@ -1239,6 +1241,7 @@ test("daemon boundary guard scopes fake-daemon external roots without blocking c
     "core/crates/ctx-http/tests/message_idempotency.rs",
     "core/crates/ctx-http/tests/noisy_output_backpressure.rs",
     "core/crates/ctx-http/tests/provider_current_ctx_version_regressions.rs",
+    "core/crates/ctx-http/tests/provider_probe_runtime_env.rs",
     "core/crates/ctx-http/tests/provider_worker_reaping_offline.rs",
     "core/crates/ctx-http/tests/session_model_api.rs",
     "core/crates/ctx-http/tests/subscription_accounts_api.rs",
@@ -1353,6 +1356,36 @@ test("daemon boundary guard scopes worktree-vcs store facade root", () => {
   );
   assert.deepEqual(
     worktreeVcsSnapshotStorePatternsForPath("core/crates/ctx-http/tests/common/mod.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects provider-probe daemon router composition", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/provider_probe_runtime_env.rs",
+    contents: `
+      async fn helper(daemon: TestDaemon) {
+        let app = common::router_for_daemon(&daemon);
+      }
+    `,
+    patterns: PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    ["direct provider-probe daemon router composition"],
+  );
+});
+
+test("daemon boundary guard scopes provider-probe runtime env root", () => {
+  assert.deepEqual(
+    providerProbeRuntimeEnvStorePatternsForPath(
+      "core/crates/ctx-http/tests/provider_probe_runtime_env.rs",
+    ),
+    PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,
+  );
+  assert.deepEqual(
+    providerProbeRuntimeEnvStorePatternsForPath("core/crates/ctx-http/tests/common/mod.rs"),
     [],
   );
 });

@@ -21,7 +21,6 @@ use ctx_provider_accounts::{
 };
 use ctx_provider_install::install_state::InstallTarget;
 use ctx_providers::adapters::{ProviderAdapter, ProviderHealth, ProviderStatus};
-use ctx_store::StoreManager;
 
 static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -381,16 +380,14 @@ exit 1
     )
 }
 
-async fn app_state(data_root: &Path) -> TestDaemon {
-    let stores = StoreManager::open(data_root).await.expect("open stores");
+async fn provider_probe_fixture(data_dir: tempfile::TempDir) -> common::FakeDaemonFixture {
     let providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
-    TestDaemon::new(
-        data_root.to_path_buf(),
-        stores,
+    common::fake_daemon_fixture_in_data_dir_with_providers(
+        data_dir,
         providers,
-        "http://127.0.0.1:0".to_string(),
-        None,
+        "http://127.0.0.1:0",
     )
+    .await
 }
 
 async fn seed_provider_status(state: &TestDaemon, status: ProviderStatus) {
@@ -601,11 +598,12 @@ async fn provider_options_probe_uses_managed_dependency_path() {
     let _env_guards = configure_hermetic_codex_host_auth(data_dir.path()).await;
     seed_active_codex_subscription_account(data_dir.path()).await;
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
-    let state = app_state(data_dir.path()).await;
-    let app = common::router_for_daemon(&state);
+    let fixture = provider_probe_fixture(data_dir).await;
+    let state = &fixture.daemon;
+    let app = fixture.router();
 
     let (runtime_cmd, dep_bin_rel) =
-        setup_runtime_command_with_managed_interpreter(data_dir.path(), "codex");
+        setup_runtime_command_with_managed_interpreter(fixture.data_dir.path(), "codex");
     seed_runtime_and_status(&state, "codex", runtime_cmd, dep_bin_rel).await;
     seed_managed_codex_cli_dependency(&state, "managed/runtime-node-codex/bin").await;
 
@@ -640,11 +638,12 @@ async fn provider_options_preserve_live_runtime_catalog_for_preferred_models() {
     let _env_guards = configure_hermetic_codex_host_auth(data_dir.path()).await;
     seed_active_codex_subscription_account(data_dir.path()).await;
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
-    let state = app_state(data_dir.path()).await;
-    let app = common::router_for_daemon(&state);
+    let fixture = provider_probe_fixture(data_dir).await;
+    let state = &fixture.daemon;
+    let app = fixture.router();
 
     let (runtime_cmd, dep_bin_rel) = setup_runtime_command_with_managed_interpreter_response(
-        data_dir.path(),
+        fixture.data_dir.path(),
         "codex",
         r#"{"seq":1,"channel":"control","type":"models.list","models":[{"id":"runtime-live"},{"id":"runtime-only"}],"current_model_id":"runtime-live","catalog_source":"live_remote"}"#,
     );
@@ -710,11 +709,12 @@ async fn kimi_provider_options_expose_live_runtime_catalog_and_bootstrap_stays_h
     let _env_lock = lock_env().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
-    let state = app_state(data_dir.path()).await;
-    let app = common::router_for_daemon(&state);
+    let fixture = provider_probe_fixture(data_dir).await;
+    let state = &fixture.daemon;
+    let app = fixture.router();
 
     add_kimi_account(
-        data_dir.path(),
+        fixture.data_dir.path(),
         Some("Kimi Test".to_string()),
         None,
         r#"{"api_key":"kimi-key"}"#.to_string(),
@@ -725,10 +725,10 @@ async fn kimi_provider_options_expose_live_runtime_catalog_and_bootstrap_stays_h
     .expect("add kimi account");
 
     let (bridge_cmd, bridge_dep_bin_rel) =
-        setup_runtime_command_with_managed_interpreter(data_dir.path(), "acp-crp-bridge");
+        setup_runtime_command_with_managed_interpreter(fixture.data_dir.path(), "acp-crp-bridge");
     seed_runtime_and_status(&state, "acp-crp-bridge", bridge_cmd, bridge_dep_bin_rel).await;
     let (runtime_cmd, dep_bin_rel) =
-        setup_runtime_command_with_managed_interpreter(data_dir.path(), "kimi");
+        setup_runtime_command_with_managed_interpreter(fixture.data_dir.path(), "kimi");
     seed_runtime_and_status(&state, "kimi", runtime_cmd, dep_bin_rel).await;
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
@@ -816,8 +816,8 @@ async fn kimi_provider_options_fail_closed_on_account_registry_errors() {
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     write_invalid_kimi_account_registry(data_dir.path());
 
-    let state = app_state(data_dir.path()).await;
-    let app = common::router_for_daemon(&state);
+    let fixture = provider_probe_fixture(data_dir).await;
+    let app = fixture.router();
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (status, body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -860,8 +860,8 @@ async fn provider_bootstrap_fails_closed_on_kimi_account_registry_errors() {
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     write_invalid_kimi_account_registry(data_dir.path());
 
-    let state = app_state(data_dir.path()).await;
-    let app = common::router_for_daemon(&state);
+    let fixture = provider_probe_fixture(data_dir).await;
+    let app = fixture.router();
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (status, body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -892,7 +892,8 @@ async fn codex_provider_options_surface_stale_selected_endpoint_errors() {
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     write_stale_codex_endpoint_selection(data_dir.path()).await;
 
-    let state = app_state(data_dir.path()).await;
+    let fixture = provider_probe_fixture(data_dir).await;
+    let state = &fixture.daemon;
     seed_provider_status(
         &state,
         ProviderStatus {
@@ -908,7 +909,7 @@ async fn codex_provider_options_surface_stale_selected_endpoint_errors() {
         },
     )
     .await;
-    let app = common::router_for_daemon(&state);
+    let app = fixture.router();
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (status, body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -940,7 +941,8 @@ async fn provider_bootstrap_surfaces_stale_selected_endpoint_errors() {
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     write_stale_codex_endpoint_selection(data_dir.path()).await;
 
-    let state = app_state(data_dir.path()).await;
+    let fixture = provider_probe_fixture(data_dir).await;
+    let state = &fixture.daemon;
     seed_provider_status(
         &state,
         ProviderStatus {
@@ -956,7 +958,7 @@ async fn provider_bootstrap_surfaces_stale_selected_endpoint_errors() {
         },
     )
     .await;
-    let app = common::router_for_daemon(&state);
+    let app = fixture.router();
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (status, body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -985,11 +987,12 @@ async fn amp_provider_options_include_live_runtime_model_catalog() {
     let _env_lock = lock_env().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
-    let state = app_state(data_dir.path()).await;
-    let app = common::router_for_daemon(&state);
+    let fixture = provider_probe_fixture(data_dir).await;
+    let state = &fixture.daemon;
+    let app = fixture.router();
 
     upsert_amp_account(
-        data_dir.path(),
+        fixture.data_dir.path(),
         Some("Amp Test".to_string()),
         Some("amp@example.com".to_string()),
     )
@@ -997,10 +1000,10 @@ async fn amp_provider_options_include_live_runtime_model_catalog() {
     .expect("upsert amp account");
 
     let (bridge_cmd, bridge_dep_bin_rel) =
-        setup_runtime_command_with_managed_interpreter(data_dir.path(), "acp-crp-bridge");
+        setup_runtime_command_with_managed_interpreter(fixture.data_dir.path(), "acp-crp-bridge");
     seed_runtime_and_status(&state, "acp-crp-bridge", bridge_cmd, bridge_dep_bin_rel).await;
     let (runtime_cmd, dep_bin_rel) =
-        setup_runtime_command_with_managed_interpreter(data_dir.path(), "amp");
+        setup_runtime_command_with_managed_interpreter(fixture.data_dir.path(), "amp");
     seed_runtime_and_status(&state, "amp", runtime_cmd, dep_bin_rel).await;
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
@@ -1079,11 +1082,12 @@ async fn amp_provider_options_fail_when_runtime_probe_returns_no_live_model_cata
     let _env_lock = lock_env().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
-    let state = app_state(data_dir.path()).await;
-    let app = common::router_for_daemon(&state);
+    let fixture = provider_probe_fixture(data_dir).await;
+    let state = &fixture.daemon;
+    let app = fixture.router();
 
     upsert_amp_account(
-        data_dir.path(),
+        fixture.data_dir.path(),
         Some("Amp Test".to_string()),
         Some("amp@example.com".to_string()),
     )
@@ -1091,13 +1095,13 @@ async fn amp_provider_options_fail_when_runtime_probe_returns_no_live_model_cata
     .expect("upsert amp account");
 
     let (bridge_cmd, bridge_dep_bin_rel) = setup_runtime_command_with_managed_interpreter_response(
-        data_dir.path(),
+        fixture.data_dir.path(),
         "acp-crp-bridge",
         r#"{"seq":1,"channel":"control","type":"models.list","models":[],"current_model_id":null}"#,
     );
     seed_runtime_and_status(&state, "acp-crp-bridge", bridge_cmd, bridge_dep_bin_rel).await;
     let (runtime_cmd, dep_bin_rel) =
-        setup_runtime_command_with_managed_interpreter(data_dir.path(), "amp");
+        setup_runtime_command_with_managed_interpreter(fixture.data_dir.path(), "amp");
     seed_runtime_and_status(&state, "amp", runtime_cmd, dep_bin_rel).await;
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
@@ -1134,11 +1138,12 @@ async fn copilot_provider_options_include_pinned_model_catalog_when_live_probe_i
     let _env_lock = lock_env().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
-    let state = app_state(data_dir.path()).await;
-    let app = common::router_for_daemon(&state);
+    let fixture = provider_probe_fixture(data_dir).await;
+    let state = &fixture.daemon;
+    let app = fixture.router();
 
     add_copilot_account(
-        data_dir.path(),
+        fixture.data_dir.path(),
         Some("Copilot Test".to_string()),
         "gho_fixture_token".to_string(),
         Some("copilot@example.com".to_string()),
@@ -1147,7 +1152,7 @@ async fn copilot_provider_options_include_pinned_model_catalog_when_live_probe_i
     .expect("add copilot account");
 
     let (bridge_cmd, bridge_dep_bin_rel) =
-        setup_runtime_command_with_managed_interpreter(data_dir.path(), "acp-crp-bridge");
+        setup_runtime_command_with_managed_interpreter(fixture.data_dir.path(), "acp-crp-bridge");
     seed_runtime_and_status(&state, "acp-crp-bridge", bridge_cmd, bridge_dep_bin_rel).await;
 
     seed_provider_status(
@@ -1218,8 +1223,9 @@ async fn providers_bootstrap_includes_pinned_codex_claude_and_gemini_catalogs() 
     let _env_lock = lock_env().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
-    let state = app_state(data_dir.path()).await;
-    let app = common::router_for_daemon(&state);
+    let fixture = provider_probe_fixture(data_dir).await;
+    let state = &fixture.daemon;
+    let app = fixture.router();
 
     seed_provider_status(
         &state,
@@ -1331,11 +1337,12 @@ async fn gemini_provider_options_use_live_acp_catalog_when_probe_succeeds() {
     let _env_lock = lock_env().await;
     let data_dir = tempfile::tempdir().expect("tempdir");
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
-    let state = app_state(data_dir.path()).await;
-    let app = common::router_for_daemon(&state);
+    let fixture = provider_probe_fixture(data_dir).await;
+    let state = &fixture.daemon;
+    let app = fixture.router();
 
     add_gemini_account(
-        data_dir.path(),
+        fixture.data_dir.path(),
         Some("Gemini Test".to_string()),
         r#"{"access_token":"fixture-gemini-token","refresh_token":"fixture-refresh-token"}"#
             .to_string(),
@@ -1346,7 +1353,7 @@ async fn gemini_provider_options_use_live_acp_catalog_when_probe_succeeds() {
     .expect("add gemini account");
 
     let gemini_cmd = setup_explicit_gemini_runtime_command_with_probe_response(
-        data_dir.path(),
+        fixture.data_dir.path(),
         &serde_json::json!({
             "seq": 1,
             "channel": "control",
@@ -1362,14 +1369,14 @@ async fn gemini_provider_options_use_live_acp_catalog_when_probe_succeeds() {
             ]
         }),
     );
-    let mut cfg = ctx_managed_installs::load_agent_server_config(data_dir.path())
+    let mut cfg = ctx_managed_installs::load_agent_server_config(fixture.data_dir.path())
         .await
         .unwrap_or_default();
     cfg.providers.insert("gemini".to_string(), gemini_cmd);
-    save_agent_server_config(data_dir.path(), &cfg)
+    save_agent_server_config(fixture.data_dir.path(), &cfg)
         .await
         .expect("save gemini runtime config");
-    seed_acp_bridge_runtime(data_dir.path()).await;
+    seed_acp_bridge_runtime(fixture.data_dir.path()).await;
     seed_provider_status(
         &state,
         ProviderStatus {
@@ -1427,8 +1434,9 @@ async fn fake_provider_bootstrap_and_options_are_ready_without_browser_rewrite()
     let _show_fake = EnvVarGuard::set("CTX_SHOW_FAKE_PROVIDER", "1");
     let data_dir = tempfile::tempdir().expect("tempdir");
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
-    let state = app_state(data_dir.path()).await;
-    let app = common::router_for_daemon(&state);
+    let fixture = provider_probe_fixture(data_dir).await;
+    let state = &fixture.daemon;
+    let app = fixture.router();
 
     seed_provider_status(
         &state,
@@ -1556,11 +1564,12 @@ async fn provider_verify_probe_uses_managed_dependency_path() {
     let _env_guards = configure_hermetic_codex_host_auth(data_dir.path()).await;
     seed_active_codex_subscription_account(data_dir.path()).await;
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
-    let state = app_state(data_dir.path()).await;
-    let app = common::router_for_daemon(&state);
+    let fixture = provider_probe_fixture(data_dir).await;
+    let state = &fixture.daemon;
+    let app = fixture.router();
 
     let (runtime_cmd, dep_bin_rel) =
-        setup_runtime_command_with_managed_interpreter(data_dir.path(), "codex");
+        setup_runtime_command_with_managed_interpreter(fixture.data_dir.path(), "codex");
     seed_runtime_and_status(&state, "codex", runtime_cmd, dep_bin_rel).await;
     seed_managed_codex_cli_dependency(&state, "managed/runtime-node-codex/bin").await;
 
@@ -1617,11 +1626,12 @@ async fn provider_verify_selected_endpoint_uses_crp_handshake() {
     .await
     .expect("select codex endpoint");
 
-    let state = app_state(data_dir.path()).await;
-    let app = common::router_for_daemon(&state);
+    let fixture = provider_probe_fixture(data_dir).await;
+    let state = &fixture.daemon;
+    let app = fixture.router();
 
     let (runtime_cmd, dep_bin_rel, handshake_marker) =
-        setup_runtime_command_requiring_crp_handshake(data_dir.path(), "codex");
+        setup_runtime_command_requiring_crp_handshake(fixture.data_dir.path(), "codex");
     seed_runtime_and_status(&state, "codex", runtime_cmd, dep_bin_rel).await;
     seed_managed_codex_cli_dependency(&state, "managed/runtime-node-codex/bin").await;
 
@@ -1662,24 +1672,25 @@ async fn provider_bootstrap_avoids_runtime_preparation_when_sandbox_runtime_prep
         )
     };
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
-    let state = app_state(data_dir.path()).await;
-    let app = common::router_for_daemon(&state);
+    let fixture = provider_probe_fixture(data_dir).await;
+    let state = &fixture.daemon;
+    let app = fixture.router();
 
     upsert_amp_account(
-        data_dir.path(),
+        fixture.data_dir.path(),
         Some("Amp Test".to_string()),
         Some("amp@example.com".to_string()),
     )
     .await
     .expect("upsert amp account");
     let (bridge_cmd, bridge_dep_bin_rel) =
-        setup_runtime_command_with_managed_interpreter(data_dir.path(), "acp-crp-bridge");
+        setup_runtime_command_with_managed_interpreter(fixture.data_dir.path(), "acp-crp-bridge");
     seed_runtime_and_status(&state, "acp-crp-bridge", bridge_cmd, bridge_dep_bin_rel).await;
     let (runtime_cmd, dep_bin_rel) =
-        setup_runtime_command_with_managed_interpreter(data_dir.path(), "amp");
+        setup_runtime_command_with_managed_interpreter(fixture.data_dir.path(), "amp");
     seed_runtime_and_status(&state, "amp", runtime_cmd, dep_bin_rel).await;
 
-    let fake_sandbox_cli = data_dir.path().join("sandbox-cli");
+    let fake_sandbox_cli = fixture.data_dir.path().join("sandbox-cli");
     write_fake_sandbox_cli(&fake_sandbox_cli);
     let _sandbox_cli_guard = EnvVarGuard::set(
         "CTX_HARNESS_SANDBOX_CLI_PATH",
@@ -1792,10 +1803,11 @@ async fn provider_options_probe_uses_workspace_runtime_context_for_container_mod
         )
     };
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
-    let state = app_state(data_dir.path()).await;
-    let app = common::router_for_daemon(&state);
+    let fixture = provider_probe_fixture(data_dir).await;
+    let state = &fixture.daemon;
+    let app = fixture.router();
 
-    let fake_sandbox_cli = data_dir.path().join("sandbox-cli");
+    let fake_sandbox_cli = fixture.data_dir.path().join("sandbox-cli");
     write_fake_sandbox_cli(&fake_sandbox_cli);
     let _sandbox_cli_guard = EnvVarGuard::set(
         "CTX_HARNESS_SANDBOX_CLI_PATH",
@@ -1805,7 +1817,7 @@ async fn provider_options_probe_uses_workspace_runtime_context_for_container_mod
     );
 
     let (runtime_cmd, dep_bin_rel) =
-        setup_runtime_command_with_managed_interpreter(data_dir.path(), "codex");
+        setup_runtime_command_with_managed_interpreter(fixture.data_dir.path(), "codex");
     seed_runtime_and_status(&state, "codex", runtime_cmd, dep_bin_rel).await;
     seed_managed_codex_cli_dependency(&state, "managed/runtime-node-codex/bin").await;
 

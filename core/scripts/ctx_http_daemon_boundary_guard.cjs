@@ -182,6 +182,7 @@ const fakeDaemonExternalStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/message_idempotency.rs",
   "core/crates/ctx-http/tests/noisy_output_backpressure.rs",
   "core/crates/ctx-http/tests/provider_current_ctx_version_regressions.rs",
+  "core/crates/ctx-http/tests/provider_probe_runtime_env.rs",
   "core/crates/ctx-http/tests/provider_worker_reaping_offline.rs",
   "core/crates/ctx-http/tests/session_model_api.rs",
   "core/crates/ctx-http/tests/subscription_accounts_api.rs",
@@ -216,6 +217,10 @@ const imageAttachmentsStoreFacadeTestRoots = [
 
 const worktreeVcsSnapshotStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/worktree_vcs_snapshot.rs",
+];
+
+const providerProbeRuntimeEnvStoreFacadeTestRoots = [
+  "core/crates/ctx-http/tests/provider_probe_runtime_env.rs",
 ];
 
 const mcpDaemonFacadeTestRoots = [
@@ -736,6 +741,14 @@ const IMAGE_ATTACHMENTS_TEST_STORE_ACCESS_PATTERNS = [
 const WORKTREE_VCS_SNAPSHOT_TEST_STORE_ACCESS_PATTERNS = [
   {
     name: "direct worktree-vcs-snapshot daemon router composition",
+    regex: /\b(?:crate::)?common::router_for_daemon\s*\(|\buse\s+[^;]*\brouter_for_daemon\b|\brouter_for_daemon\s*\(/,
+    contentRegex: /\buse\s+[\s\S]*?\brouter_for_daemon\b[\s\S]*?;/gm,
+  },
+];
+
+const PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct provider-probe daemon router composition",
     regex: /\b(?:crate::)?common::router_for_daemon\s*\(|\buse\s+[^;]*\brouter_for_daemon\b|\brouter_for_daemon\s*\(/,
     contentRegex: /\buse\s+[\s\S]*?\brouter_for_daemon\b[\s\S]*?;/gm,
   },
@@ -1961,6 +1974,13 @@ function worktreeVcsSnapshotStorePatternsForPath(relativePath) {
   return [];
 }
 
+function providerProbeRuntimeEnvStorePatternsForPath(relativePath) {
+  if (providerProbeRuntimeEnvStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
 function mcpDaemonPatternsForPath(relativePath) {
   if (mcpDaemonFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS;
@@ -2375,6 +2395,13 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
+        patterns: providerProbeRuntimeEnvStorePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
         patterns: mcpDaemonPatternsForPath(relativePath),
       }),
     );
@@ -2533,6 +2560,7 @@ module.exports = {
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
+  PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_ROUTE_SETUP_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_WORKER_REAPING_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_TEST_CACHE_ACCESS_PATTERNS,
@@ -2569,6 +2597,7 @@ module.exports = {
   mobileStorePatternsForPath,
   providerWorkerReapingStorePatternsForPath,
   providerCachePatternsForPath,
+  providerProbeRuntimeEnvStorePatternsForPath,
   providerRouteSetupStorePatternsForPath,
   routerCompositionPatternsForPath,
   scanRepo,
