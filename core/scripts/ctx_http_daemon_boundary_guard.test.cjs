@@ -25,6 +25,7 @@ const {
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_ROUTE_SETUP_TEST_STORE_ACCESS_PATTERNS,
+  PROVIDER_TARGET_SCOPED_INSTALLS_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_WORKER_REAPING_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_TEST_CACHE_ACCESS_PATTERNS,
   SCHEDULER_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
@@ -70,6 +71,7 @@ const {
   providerCachePatternsForPath,
   providerProbeRuntimeEnvStorePatternsForPath,
   providerRouteSetupStorePatternsForPath,
+  providerTargetScopedInstallsStorePatternsForPath,
   routerCompositionPatternsForPath,
   scanRepo,
   scanRouterComposition,
@@ -1501,6 +1503,86 @@ test("daemon boundary guard scopes workspace attachments demo root", () => {
   );
   assert.deepEqual(
     workspaceAttachmentsDemoStorePatternsForPath("core/crates/ctx-http/tests/common/mod.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects provider target scoped install raw setup", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/provider_target_scoped_installs.rs",
+    contents: `
+      use ctx_store::{Store, StoreManager};
+      use common::{setup_store, build_daemon, router_for_daemon};
+      async fn helper(daemon: TestDaemon) {
+        let stores = StoreManager::open(data_root).await?;
+        let _stores = common::setup_store(data_root).await;
+        let _stores = setup_store(data_root).await;
+        let _daemon = common::build_daemon(data_root, stores, providers, base_url);
+        let _daemon = build_daemon(data_root, stores, providers, base_url);
+        let _app = common::router_for_daemon(&daemon);
+        let _app = router_for_daemon(&daemon);
+        let _raw = ctx_store::Store::open_sqlite(path, None).await?;
+        Store::open_sqlite(path, None).await?;
+        daemon.store_for_workspace(workspace_id).await?;
+        daemon.store_for_session(session_id).await?;
+        daemon.get_install_info(install_id).await;
+        daemon.find_running_install("kimi", target).await;
+        daemon.tracked_install_ids("kimi", target).await;
+        daemon.has_target_provider_adapter("cache-key").await;
+        daemon.target_provider_adapter_cache_keys().await;
+        daemon.start_install("kimi".to_string(), target).await;
+        daemon.install_provider_with_progress(install_id, "kimi".to_string(), target).await?;
+      }
+    `,
+    patterns: PROVIDER_TARGET_SCOPED_INSTALLS_TEST_STORE_ACCESS_PATTERNS,
+  });
+  const names = new Set(violations.map((violation) => violation.name));
+
+  for (const name of [
+    "direct provider target scoped installs StoreManager access",
+    "raw provider target scoped installs ctx_store Store",
+    "direct provider target scoped installs store setup helper",
+    "direct provider target scoped installs daemon construction helper",
+    "direct provider target scoped installs daemon router composition",
+    "direct provider target scoped installs generic store access",
+    "direct provider target scoped installs broad install/cache observation",
+  ]) {
+    assert.ok(names.has(name), `expected violation ${name}; got ${[...names].join(", ")}`);
+  }
+});
+
+test("daemon boundary guard allows provider target scoped install fixtures", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/provider_target_scoped_installs.rs",
+    contents: `
+      async fn helper(data_root: &Path, daemon: &TestDaemon) {
+        let fixture = providerless_install_fixture(data_root).await;
+        let app = fixture.router();
+        let install_info = daemon.provider_target_install_info_for_test(install_id).await;
+        let ids = daemon.provider_target_tracked_install_ids_for_test("kimi", target).await;
+        daemon.provider_target_has_adapter_cache_entry_for_test("cache-key").await;
+        daemon.provider_target_adapter_cache_keys_for_test().await;
+        daemon.provider_target_start_tracked_install_for_test("kimi".to_string(), target).await;
+        daemon.provider_target_install_with_progress_for_test(install_id, "kimi".to_string(), target).await?;
+        daemon.write_workspace_container_execution_without_runtime_probe_for_test(workspace_id).await?;
+        daemon.provider_target_session_events_after_done_for_test(session_id, "done", timeout).await?;
+      }
+    `,
+    patterns: PROVIDER_TARGET_SCOPED_INSTALLS_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(violations, []);
+});
+
+test("daemon boundary guard scopes provider target scoped install root", () => {
+  assert.deepEqual(
+    providerTargetScopedInstallsStorePatternsForPath(
+      "core/crates/ctx-http/tests/provider_target_scoped_installs.rs",
+    ),
+    PROVIDER_TARGET_SCOPED_INSTALLS_TEST_STORE_ACCESS_PATTERNS,
+  );
+  assert.deepEqual(
+    providerTargetScopedInstallsStorePatternsForPath("core/crates/ctx-http/tests/common/mod.rs"),
     [],
   );
 });

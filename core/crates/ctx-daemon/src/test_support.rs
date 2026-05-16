@@ -775,6 +775,35 @@ impl TestDaemon {
         Ok(())
     }
 
+    pub async fn preseed_settings_for_data_root_for_test(
+        data_root: &Path,
+        settings: &Settings,
+    ) -> anyhow::Result<()> {
+        let db_path = data_root.join("db").join("db.sqlite");
+        let store = Store::open_sqlite(&db_path, None).await?;
+        ctx_settings_service::save_settings(&store, settings).await?;
+        store.close().await;
+        Ok(())
+    }
+
+    pub async fn write_workspace_container_execution_without_runtime_probe_for_test(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> anyhow::Result<()> {
+        let store = self.state.store_for_workspace(workspace_id).await?;
+        ctx_workspace_config::update_execution_config(
+            &store,
+            ctx_workspace_config::ExecutionConfigUpdate {
+                environment: ctx_workspace_config::ExecutionEnvironment::Sandbox,
+                network_mode: None,
+                allowlist: None,
+                image: None,
+            },
+        )
+        .await?;
+        Ok(())
+    }
+
     pub async fn task_default_session_snapshot_for_test(
         &self,
         workspace_id: WorkspaceId,
@@ -2198,6 +2227,40 @@ impl TestDaemon {
         )
         .await
         .map(|_| ())
+    }
+
+    pub async fn provider_target_session_events_after_done_for_test(
+        &self,
+        session_id: SessionId,
+        expected_assistant_message: &str,
+        timeout: Duration,
+    ) -> anyhow::Result<Vec<SessionEvent>> {
+        self.wait_for_scheduler_runtime_events_for_test(
+            session_id,
+            timeout,
+            "provider target scoped install session done event",
+            |events| {
+                if events
+                    .iter()
+                    .any(|event| matches!(event.event_type, SessionEventType::Error))
+                {
+                    anyhow::bail!("unexpected session error while waiting for done: {events:#?}");
+                }
+                let has_done = events
+                    .iter()
+                    .any(|event| matches!(event.event_type, SessionEventType::Done));
+                let has_expected_message = events.iter().any(|event| {
+                    matches!(event.event_type, SessionEventType::AssistantMessageInserted)
+                        && event
+                            .payload_json
+                            .get("content")
+                            .and_then(serde_json::Value::as_str)
+                            .is_some_and(|content| content.contains(expected_assistant_message))
+                });
+                Ok(has_done && has_expected_message)
+            },
+        )
+        .await
     }
 
     pub async fn wait_for_session_completed_turn_count_for_test(
@@ -3965,6 +4028,14 @@ impl TestDaemon {
         self.state.start_install(provider_id, target).await
     }
 
+    pub async fn provider_target_start_tracked_install_for_test(
+        &self,
+        provider_id: String,
+        target: Option<InstallTarget>,
+    ) -> (InstallId, bool) {
+        self.state.start_install(provider_id, target).await
+    }
+
     pub async fn find_running_install(
         &self,
         provider_id: &str,
@@ -3974,6 +4045,17 @@ impl TestDaemon {
     }
 
     pub async fn install_provider_with_progress(
+        &self,
+        install_id: InstallId,
+        provider_id: String,
+        target: InstallTarget,
+    ) -> anyhow::Result<()> {
+        let state: Arc<ctx_managed_installs::AppState> = self.state.clone();
+        ctx_managed_installs::install_provider_with_progress(state, install_id, provider_id, target)
+            .await
+    }
+
+    pub async fn provider_target_install_with_progress_for_test(
         &self,
         install_id: InstallId,
         provider_id: String,
@@ -4000,7 +4082,123 @@ impl TestDaemon {
         self.state.get_install_info(install_id).await
     }
 
+    pub async fn provider_target_install_info_for_test(
+        &self,
+        install_id: InstallId,
+    ) -> Option<InstallInfo> {
+        self.state.get_install_info(install_id).await
+    }
+
+    pub async fn wait_for_provider_target_install_completion_for_test(
+        &self,
+        install_id: InstallId,
+        timeout: Duration,
+    ) -> anyhow::Result<InstallInfo> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let info = self
+                .state
+                .get_install_info(install_id)
+                .await
+                .ok_or_else(|| anyhow::anyhow!("missing install info for {install_id}"))?;
+            if !matches!(
+                info.state,
+                ctx_provider_install::install_state::InstallStateKind::Running
+            ) {
+                return Ok(info);
+            }
+            if tokio::time::Instant::now() >= deadline {
+                anyhow::bail!("timed out waiting for install {install_id}: {info:#?}");
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    pub async fn wait_for_provider_target_running_install_progress_for_test(
+        &self,
+        install_id: InstallId,
+        timeout: Duration,
+    ) -> anyhow::Result<InstallInfo> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let info = self
+                .state
+                .get_install_info(install_id)
+                .await
+                .ok_or_else(|| anyhow::anyhow!("missing install info for {install_id}"))?;
+            if matches!(
+                info.state,
+                ctx_provider_install::install_state::InstallStateKind::Running
+            ) && info.last_event.is_some()
+            {
+                return Ok(info);
+            }
+            if tokio::time::Instant::now() >= deadline {
+                anyhow::bail!(
+                    "timed out waiting for running install {install_id} to expose real progress: {info:#?}"
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
+
+    pub async fn wait_for_provider_target_running_install_id_for_test(
+        &self,
+        provider_id: &str,
+        target: Option<InstallTarget>,
+        timeout: Duration,
+    ) -> anyhow::Result<InstallId> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            if let Some(install_id) = self.state.find_running_install(provider_id, target).await {
+                return Ok(install_id);
+            }
+            if tokio::time::Instant::now() >= deadline {
+                anyhow::bail!(
+                    "timed out waiting for running install {provider_id} with target {target:?}"
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
+
+    pub async fn wait_for_provider_target_tracked_install_id_for_test(
+        &self,
+        provider_id: &str,
+        target: Option<InstallTarget>,
+        timeout: Duration,
+    ) -> anyhow::Result<InstallId> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            if let Some(install_id) = self
+                .state
+                .test_tracked_install_ids(provider_id, target)
+                .await
+                .into_iter()
+                .next()
+            {
+                return Ok(install_id);
+            }
+            if tokio::time::Instant::now() >= deadline {
+                anyhow::bail!(
+                    "timed out waiting for tracked install {provider_id} with target {target:?}"
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
+
     pub async fn tracked_install_ids(
+        &self,
+        provider_id: &str,
+        target: Option<InstallTarget>,
+    ) -> Vec<InstallId> {
+        self.state
+            .test_tracked_install_ids(provider_id, target)
+            .await
+    }
+
+    pub async fn provider_target_tracked_install_ids_for_test(
         &self,
         provider_id: &str,
         target: Option<InstallTarget>,
@@ -4014,7 +4212,20 @@ impl TestDaemon {
         self.state.test_has_target_provider_adapter(cache_key).await
     }
 
+    pub async fn provider_target_has_adapter_cache_entry_for_test(&self, cache_key: &str) -> bool {
+        self.state.test_has_target_provider_adapter(cache_key).await
+    }
+
     pub async fn target_provider_adapter_cache_keys(&self) -> Vec<String> {
+        self.state
+            .test_target_provider_adapter_entries()
+            .await
+            .into_iter()
+            .map(|(cache_key, _)| cache_key)
+            .collect()
+    }
+
+    pub async fn provider_target_adapter_cache_keys_for_test(&self) -> Vec<String> {
         self.state
             .test_target_provider_adapter_entries()
             .await

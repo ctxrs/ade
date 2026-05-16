@@ -10,7 +10,6 @@ use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use ctx_core::models::SessionEventType;
 use ctx_daemon::test_support::TestDaemon;
 use ctx_managed_installs::{
     agent_server_config_path, load_agent_server_config, save_agent_server_config,
@@ -32,8 +31,6 @@ use ctx_settings_model::{
     ContainerExecutionSettings, ContainerMountMode, ContainerNetworkMode, ExecutionMode,
     ExecutionSettings, Settings,
 };
-use ctx_settings_service::save_settings;
-use ctx_store::Store;
 use sha2::{Digest, Sha256};
 
 struct SeededRuntime {
@@ -105,6 +102,40 @@ async fn write_invalid_agent_server_config(data_root: &Path) {
 async fn seed_provider_status(daemon: &TestDaemon, status: ProviderStatus) {
     let provider_id = status.provider_id.clone();
     daemon.upsert_provider_status(provider_id, status).await;
+}
+
+async fn provider_install_fixture(
+    data_root: &Path,
+    providers: HashMap<String, Arc<dyn ProviderAdapter>>,
+) -> common::ProviderInstallDaemonFixture {
+    common::provider_install_daemon_fixture_for_data_root_with_providers(
+        data_root,
+        providers,
+        "http://127.0.0.1:0",
+    )
+    .await
+}
+
+async fn providerless_install_fixture(data_root: &Path) -> common::ProviderInstallDaemonFixture {
+    provider_install_fixture(data_root, HashMap::new()).await
+}
+
+async fn reopen_provider_install_fixture(
+    data_root: &Path,
+    providers: HashMap<String, Arc<dyn ProviderAdapter>>,
+) -> common::ProviderInstallDaemonFixture {
+    common::reopen_provider_install_daemon_fixture_for_data_root_with_providers(
+        data_root,
+        providers,
+        "http://127.0.0.1:0",
+    )
+    .await
+}
+
+async fn reopen_providerless_install_fixture(
+    data_root: &Path,
+) -> common::ProviderInstallDaemonFixture {
+    reopen_provider_install_fixture(data_root, HashMap::new()).await
 }
 
 fn write_fake_node_runtime(path: &Path, tag: &str) {
@@ -412,8 +443,10 @@ async fn seed_target_scoped_codex_runtime(data_root: &Path) -> SeededRuntime {
     }
 }
 
-async fn build_state_with_host_codex(data_root: &Path, host_command: &str) -> TestDaemon {
-    let stores = common::setup_store(data_root).await;
+async fn build_state_with_host_codex(
+    data_root: &Path,
+    host_command: &str,
+) -> common::ProviderInstallDaemonFixture {
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert(
         "codex".to_string(),
@@ -423,28 +456,24 @@ async fn build_state_with_host_codex(data_root: &Path, host_command: &str) -> Te
             Vec::new(),
         )),
     );
-    let state = common::build_daemon(
-        data_root.to_path_buf(),
-        stores,
+    let fixture = common::provider_install_daemon_fixture_for_data_root_with_providers(
+        data_root,
         providers,
         "http://127.0.0.1:0",
-    );
-    state
+    )
+    .await;
+    fixture
+        .daemon
         .refresh_provider_statuses()
         .await
         .expect("refresh provider statuses");
-    state
+    fixture
 }
 
 async fn save_settings_to_data_root(data_root: &Path, settings: &Settings) {
-    let db_path = data_root.join("db").join("db.sqlite");
-    let store = Store::open_sqlite(&db_path, None)
+    TestDaemon::preseed_settings_for_data_root_for_test(data_root, settings)
         .await
-        .expect("open settings store");
-    save_settings(&store, settings)
-        .await
-        .expect("save settings");
-    store.close().await;
+        .expect("preseed settings");
 }
 
 async fn configure_container_image_defaults(data_root: &Path) {
@@ -494,21 +523,12 @@ async fn write_workspace_container_execution_without_runtime_probe(
     state: &TestDaemon,
     workspace_id: uuid::Uuid,
 ) {
-    let store = state
-        .store_for_workspace(ctx_core::ids::WorkspaceId(workspace_id))
+    state
+        .write_workspace_container_execution_without_runtime_probe_for_test(
+            ctx_core::ids::WorkspaceId(workspace_id),
+        )
         .await
-        .expect("workspace store");
-    ctx_workspace_config::update_execution_config(
-        &store,
-        ctx_workspace_config::ExecutionConfigUpdate {
-            environment: ctx_workspace_config::ExecutionEnvironment::Sandbox,
-            network_mode: None,
-            allowlist: None,
-            image: None,
-        },
-    )
-    .await
-    .expect("write workspace execution config");
+        .expect("write workspace execution config");
 }
 
 async fn assert_target_adapter_not_cached(
@@ -519,8 +539,10 @@ async fn assert_target_adapter_not_cached(
 ) {
     let cache_key = target_adapter_cache_key(provider_id, target)
         .expect("non-host target should have a target adapter cache key");
-    let cached = state.has_target_provider_adapter(&cache_key).await;
-    let keys = state.target_provider_adapter_cache_keys().await;
+    let cached = state
+        .provider_target_has_adapter_cache_entry_for_test(&cache_key)
+        .await;
+    let keys = state.provider_target_adapter_cache_keys_for_test().await;
     assert!(
         !cached,
         "{context}: invalid managed config should not seed target adapter cache entry {cache_key}; keys={keys:?}"
@@ -883,21 +905,10 @@ async fn wait_for_install_completion_with_timeout(
     install_id: InstallId,
     timeout: Duration,
 ) -> ctx_provider_install::install_state::InstallInfo {
-    let deadline = tokio::time::Instant::now() + timeout;
-    loop {
-        let info = state
-            .get_install_info(install_id)
-            .await
-            .expect("missing install info");
-        if !matches!(info.state, InstallStateKind::Running) {
-            return info;
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "timed out waiting for install {install_id}: {info:#?}"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    state
+        .wait_for_provider_target_install_completion_for_test(install_id, timeout)
+        .await
+        .expect("wait for install completion")
 }
 
 fn parse_install_ids(body: &serde_json::Value) -> HashMap<String, InstallId> {
@@ -966,21 +977,13 @@ async fn wait_for_running_install_progress(
     state: &TestDaemon,
     install_id: InstallId,
 ) -> ctx_provider_install::install_state::InstallInfo {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        let info = state
-            .get_install_info(install_id)
-            .await
-            .expect("missing install info");
-        if matches!(info.state, InstallStateKind::Running) && info.last_event.is_some() {
-            return info;
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "timed out waiting for running install {install_id} to expose real progress: {info:#?}"
-        );
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
+    state
+        .wait_for_provider_target_running_install_progress_for_test(
+            install_id,
+            Duration::from_secs(5),
+        )
+        .await
+        .expect("wait for running install progress")
 }
 
 async fn wait_for_running_install_id(
@@ -988,17 +991,14 @@ async fn wait_for_running_install_id(
     provider_id: &str,
     target: Option<InstallTarget>,
 ) -> InstallId {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    loop {
-        if let Some(install_id) = state.find_running_install(provider_id, target).await {
-            return install_id;
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "timed out waiting for running install {provider_id} with target {target:?}"
-        );
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
+    state
+        .wait_for_provider_target_running_install_id_for_test(
+            provider_id,
+            target,
+            Duration::from_secs(10),
+        )
+        .await
+        .expect("wait for running install id")
 }
 
 async fn wait_for_tracked_install_id(
@@ -1006,22 +1006,14 @@ async fn wait_for_tracked_install_id(
     provider_id: &str,
     target: Option<InstallTarget>,
 ) -> InstallId {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    loop {
-        if let Some(install_id) = state
-            .tracked_install_ids(provider_id, target)
-            .await
-            .into_iter()
-            .next()
-        {
-            return install_id;
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "timed out waiting for tracked install {provider_id} with target {target:?}"
-        );
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
+    state
+        .wait_for_provider_target_tracked_install_id_for_test(
+            provider_id,
+            target,
+            Duration::from_secs(10),
+        )
+        .await
+        .expect("wait for tracked install id")
 }
 
 async fn wait_for_prerequisite_visibility(
@@ -1034,7 +1026,7 @@ async fn wait_for_prerequisite_visibility(
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     loop {
         let prerequisite_info = state
-            .get_install_info(prerequisite_install_id)
+            .provider_target_install_info_for_test(prerequisite_install_id)
             .await
             .expect("missing prerequisite install info");
         let info = get_install_info_api(app, install_id).await;
@@ -1114,43 +1106,19 @@ async fn post_message(app: &axum::Router, session_id: uuid::Uuid, content: &str)
     assert_eq!(status, StatusCode::OK, "message post failed: {body:#?}");
 }
 
-async fn wait_for_done(state: &TestDaemon, session_id: ctx_core::ids::SessionId) {
-    let store = state.store_for_session(session_id).await.expect("store");
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(90);
-    loop {
-        let events = store.list_session_events(session_id).await.expect("events");
-        if events
-            .iter()
-            .any(|event| matches!(event.event_type, SessionEventType::Done))
-        {
-            assert!(
-                !events
-                    .iter()
-                    .any(|event| matches!(event.event_type, SessionEventType::Error)),
-                "unexpected error events: {events:#?}"
-            );
-            return;
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "timed out waiting for done event: {events:#?}"
-        );
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-}
-
-fn assert_assistant_message_contains(events: &[ctx_core::models::SessionEvent], expected: &str) {
-    assert!(
-        events.iter().any(|event| {
-            matches!(event.event_type, SessionEventType::AssistantMessageInserted)
-                && event
-                    .payload_json
-                    .get("content")
-                    .and_then(serde_json::Value::as_str)
-                    .is_some_and(|content| content.contains(expected))
-        }),
-        "expected assistant message to contain {expected:?}: {events:#?}"
-    );
+async fn wait_for_done_with_assistant_message(
+    state: &TestDaemon,
+    session_id: ctx_core::ids::SessionId,
+    expected: &str,
+) {
+    state
+        .provider_target_session_events_after_done_for_test(
+            session_id,
+            expected,
+            Duration::from_secs(90),
+        )
+        .await
+        .expect("wait for done event and assistant message");
 }
 
 fn sandbox_cli_binary_for_tests() -> Option<PathBuf> {
@@ -1188,8 +1156,8 @@ async fn provider_status_http_keeps_host_and_container_installs_independent() {
     let data_dir = tempfile::tempdir().expect("tempdir");
     let runtime = seed_target_scoped_codex_runtime(data_dir.path()).await;
     configure_container_image_defaults(data_dir.path()).await;
-    let state = build_state_with_host_codex(data_dir.path(), &runtime.host_command).await;
-    let app = common::router_for_daemon(&state);
+    let fixture = build_state_with_host_codex(data_dir.path(), &runtime.host_command).await;
+    let app = fixture.router();
 
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     common::create_workspace(&app, repo.path(), "host-ws").await;
@@ -1287,14 +1255,9 @@ async fn host_hybrid_npm_provider_uses_published_archive_target_when_available()
     )
     .await;
 
-    let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&state);
+    let fixture = providerless_install_fixture(data_dir.path()).await;
+    let state = fixture.daemon.clone();
+    let app = fixture.router();
 
     let (install_status, install_body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -1365,14 +1328,9 @@ async fn acp_container_install_surfaces_bridge_as_installable_prerequisite() {
         &provider_fixture_matrix(file_url(&bridge_fixture), file_url(&provider_fixture)),
     )
     .await;
-    let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&state);
+    let fixture = providerless_install_fixture(data_dir.path()).await;
+    let state = fixture.daemon.clone();
+    let app = fixture.router();
 
     seed_provider_status(
         &state,
@@ -1469,14 +1427,9 @@ async fn acp_host_install_surfaces_bridge_as_installable_prerequisite() {
         &provider_fixture_matrix(file_url(&bridge_fixture), file_url(&provider_fixture)),
     )
     .await;
-    let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&state);
+    let fixture = providerless_install_fixture(data_dir.path()).await;
+    let state = fixture.daemon.clone();
+    let app = fixture.router();
 
     seed_provider_status(
         &state,
@@ -1573,14 +1526,9 @@ async fn acp_container_install_keeps_invalid_bridge_runtime_repairable_before_st
         &provider_fixture_matrix(file_url(&bridge_fixture), file_url(&provider_fixture)),
     )
     .await;
-    let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&state);
+    let fixture = providerless_install_fixture(data_dir.path()).await;
+    let state = fixture.daemon.clone();
+    let app = fixture.router();
 
     save_invalid_container_bridge_runtime(data_dir.path()).await;
 
@@ -1676,14 +1624,9 @@ async fn provider_target_scoped_installs_install_all_repairs_invalid_bridge_and_
 
     save_invalid_container_bridge_runtime(data_dir.path()).await;
 
-    let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&state);
+    let fixture = providerless_install_fixture(data_dir.path()).await;
+    let state = fixture.daemon.clone();
+    let app = fixture.router();
 
     let (install_status, install_body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -1738,14 +1681,8 @@ async fn provider_target_scoped_installs_install_all_repairs_invalid_bridge_and_
         );
     }
 
-    let reloaded_stores = common::setup_store(data_dir.path()).await;
-    let reloaded_state = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        reloaded_stores,
-        HashMap::new(),
-        "http://127.0.0.1:0",
-    );
-    let reloaded_app = common::router_for_daemon(&reloaded_state);
+    let reloaded_fixture = reopen_providerless_install_fixture(data_dir.path()).await;
+    let reloaded_app = reloaded_fixture.router();
 
     for provider_id in ["kimi", "qwen"] {
         let (provider_status, provider_body): (StatusCode, serde_json::Value) =
@@ -1818,14 +1755,9 @@ async fn provider_target_scoped_installs_install_all_container_js_archive_harnes
         .await
         .expect("save seeded node runtimes");
 
-    let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&state);
+    let fixture = providerless_install_fixture(data_dir.path()).await;
+    let state = fixture.daemon.clone();
+    let app = fixture.router();
 
     let (install_status, install_body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -1872,14 +1804,8 @@ async fn provider_target_scoped_installs_install_all_container_js_archive_harnes
         );
     }
 
-    let reloaded_stores = common::setup_store(data_dir.path()).await;
-    let reloaded_state = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        reloaded_stores,
-        HashMap::new(),
-        "http://127.0.0.1:0",
-    );
-    let reloaded_app = common::router_for_daemon(&reloaded_state);
+    let reloaded_fixture = reopen_providerless_install_fixture(data_dir.path()).await;
+    let reloaded_app = reloaded_fixture.router();
 
     for (provider_id, expected_version) in [("amp", "0.1.2"), ("pi", "0.1.1")] {
         let (provider_status, provider_body): (StatusCode, serde_json::Value) =
@@ -1986,14 +1912,9 @@ async fn provider_target_scoped_installs_install_all_repairs_invalid_bridge_when
 
     save_invalid_container_bridge_runtime(data_dir.path()).await;
 
-    let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&state);
+    let fixture = providerless_install_fixture(data_dir.path()).await;
+    let state = fixture.daemon.clone();
+    let app = fixture.router();
 
     let (install_status, install_body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -2033,7 +1954,10 @@ async fn provider_target_scoped_installs_install_all_repairs_invalid_bridge_when
     }
 
     let bridge_install_ids = state
-        .tracked_install_ids("acp-crp-bridge", Some(InstallTarget::Container))
+        .provider_target_tracked_install_ids_for_test(
+            "acp-crp-bridge",
+            Some(InstallTarget::Container),
+        )
         .await;
     assert_eq!(
         bridge_install_ids,
@@ -2060,14 +1984,9 @@ async fn acp_container_install_happy_path_installs_bridge_prerequisite_and_keeps
     )
     .await;
 
-    let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&state);
+    let fixture = providerless_install_fixture(data_dir.path()).await;
+    let state = fixture.daemon.clone();
+    let app = fixture.router();
 
     let (install_status, install_body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -2094,13 +2013,16 @@ async fn acp_container_install_happy_path_installs_bridge_prerequisite_and_keeps
     );
 
     let bridge_install_id = state
-        .tracked_install_ids("acp-crp-bridge", Some(InstallTarget::Container))
+        .provider_target_tracked_install_ids_for_test(
+            "acp-crp-bridge",
+            Some(InstallTarget::Container),
+        )
         .await
         .into_iter()
         .next()
         .expect("bridge prerequisite install entry");
     let bridge_install = state
-        .get_install_info(bridge_install_id)
+        .provider_target_install_info_for_test(bridge_install_id)
         .await
         .expect("bridge prerequisite install entry");
     assert!(
@@ -2139,14 +2061,8 @@ async fn acp_container_install_happy_path_installs_bridge_prerequisite_and_keeps
         "provider target-scoped install metadata should remain registered"
     );
 
-    let reloaded_stores = common::setup_store(data_dir.path()).await;
-    let reloaded_state = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        reloaded_stores,
-        HashMap::new(),
-        "http://127.0.0.1:0",
-    );
-    let reloaded_app = common::router_for_daemon(&reloaded_state);
+    let reloaded_fixture = reopen_providerless_install_fixture(data_dir.path()).await;
+    let reloaded_app = reloaded_fixture.router();
 
     let (provider_status, provider_body): (StatusCode, serde_json::Value) = common::json_request(
         &reloaded_app,
@@ -2207,20 +2123,22 @@ async fn tracked_provider_install_surfaces_agent_server_config_errors() {
     .await;
     write_invalid_agent_server_config(data_dir.path()).await;
 
-    let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:0",
-    );
+    let fixture = providerless_install_fixture(data_dir.path()).await;
+    let state = fixture.daemon.clone();
     let (install_id, started_new) = state
-        .start_install("kimi".to_string(), Some(InstallTarget::Container))
+        .provider_target_start_tracked_install_for_test(
+            "kimi".to_string(),
+            Some(InstallTarget::Container),
+        )
         .await;
     assert!(started_new, "tracked install should start cleanly");
 
     let err = state
-        .install_provider_with_progress(install_id, "kimi".to_string(), InstallTarget::Container)
+        .provider_target_install_with_progress_for_test(
+            install_id,
+            "kimi".to_string(),
+            InstallTarget::Container,
+        )
         .await
         .expect_err("invalid managed config should fail tracked install");
     let err_text = format!("{err:#}");
@@ -2231,7 +2149,7 @@ async fn tracked_provider_install_surfaces_agent_server_config_errors() {
     );
 
     let install_info = state
-        .get_install_info(install_id)
+        .provider_target_install_info_for_test(install_id)
         .await
         .expect("install info should be recorded");
     assert!(
@@ -2260,14 +2178,9 @@ async fn invalid_managed_config_container_routes_do_not_seed_target_adapter_cach
     write_invalid_agent_server_config(data_dir.path()).await;
 
     let repo = common::init_git_repo(&[("note.txt", "container\n")]).await;
-    let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&state);
+    let fixture = providerless_install_fixture(data_dir.path()).await;
+    let state = fixture.daemon.clone();
+    let app = fixture.router();
     let workspace = common::create_workspace(&app, repo.path(), "container-ws").await;
     write_workspace_container_execution_without_runtime_probe(&state, workspace.id.0).await;
 
@@ -2369,14 +2282,9 @@ async fn acp_container_install_repairs_invalid_bridge_runtime_and_keeps_registry
     .await;
     save_invalid_container_bridge_runtime(data_dir.path()).await;
 
-    let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&state);
+    let fixture = providerless_install_fixture(data_dir.path()).await;
+    let state = fixture.daemon.clone();
+    let app = fixture.router();
 
     let (install_status, install_body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -2461,14 +2369,9 @@ async fn acp_container_install_parent_polling_stays_bounded_while_bridge_prerequ
     )
     .await;
 
-    let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&state);
+    let fixture = providerless_install_fixture(data_dir.path()).await;
+    let state = fixture.daemon.clone();
+    let app = fixture.router();
 
     let (install_status, install_body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -2569,14 +2472,9 @@ async fn acp_container_install_joins_existing_bridge_install_and_surfaces_short_
     )
     .await;
 
-    let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&state);
+    let fixture = providerless_install_fixture(data_dir.path()).await;
+    let state = fixture.daemon.clone();
+    let app = fixture.router();
 
     let (bridge_status, bridge_body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -2738,7 +2636,7 @@ async fn acp_container_install_joins_existing_bridge_install_and_surfaces_short_
     );
 
     let bridge_info = state
-        .get_install_info(bridge_install_id)
+        .provider_target_install_info_for_test(bridge_install_id)
         .await
         .expect("missing bridge install info");
     assert!(
@@ -2747,7 +2645,10 @@ async fn acp_container_install_joins_existing_bridge_install_and_surfaces_short_
     );
 
     let bridge_install_ids = state
-        .tracked_install_ids("acp-crp-bridge", Some(InstallTarget::Container))
+        .provider_target_tracked_install_ids_for_test(
+            "acp-crp-bridge",
+            Some(InstallTarget::Container),
+        )
         .await;
     assert_eq!(
         bridge_install_ids,
@@ -2808,14 +2709,9 @@ async fn claude_container_install_starts_host_cli_dependency_and_stays_not_ready
     )
     .await;
 
-    let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        stores,
-        HashMap::new(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&state);
+    let fixture = providerless_install_fixture(data_dir.path()).await;
+    let state = fixture.daemon.clone();
+    let app = fixture.router();
 
     let (install_status, install_body): (StatusCode, serde_json::Value) = common::json_request(
         &app,
@@ -2841,7 +2737,7 @@ async fn claude_container_install_starts_host_cli_dependency_and_stays_not_ready
     let visibility_deadline = tokio::time::Instant::now() + Duration::from_secs(8);
     let (mut parent_poll, parent_status_body) = loop {
         let dependency_info = state
-            .get_install_info(claude_cli_install_id)
+            .provider_target_install_info_for_test(claude_cli_install_id)
             .await
             .expect("missing claude-cli dependency install info");
         let parent_poll = get_install_info_api(&app, install_id).await;
@@ -2885,7 +2781,7 @@ async fn claude_container_install_starts_host_cli_dependency_and_stays_not_ready
         let progress_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         loop {
             let dependency_info = state
-                .get_install_info(claude_cli_install_id)
+                .provider_target_install_info_for_test(claude_cli_install_id)
                 .await
                 .expect("missing claude-cli dependency install info");
             parent_poll = get_install_info_api(&app, install_id).await;
@@ -3000,14 +2896,8 @@ async fn claude_container_install_starts_host_cli_dependency_and_stays_not_ready
         "claude-crp runtime should persist the managed dependency edge"
     );
 
-    let reloaded_stores = common::setup_store(data_dir.path()).await;
-    let reloaded_state = common::build_daemon(
-        data_dir.path().to_path_buf(),
-        reloaded_stores,
-        HashMap::new(),
-        "http://127.0.0.1:0",
-    );
-    let reloaded_app = common::router_for_daemon(&reloaded_state);
+    let reloaded_fixture = reopen_providerless_install_fixture(data_dir.path()).await;
+    let reloaded_app = reloaded_fixture.router();
     let (provider_status, provider_body): (StatusCode, serde_json::Value) = common::json_request(
         &reloaded_app,
         axum::http::Method::GET,
@@ -3076,8 +2966,9 @@ async fn provider_target_scoped_installs_work_for_host_and_container_workspaces(
     let data_dir = tempfile::tempdir().expect("tempdir");
     let runtime = seed_target_scoped_codex_runtime(data_dir.path()).await;
     configure_container_image_defaults(data_dir.path()).await;
-    let state = build_state_with_host_codex(data_dir.path(), &runtime.host_command).await;
-    let app = common::router_for_daemon(&state);
+    let fixture = build_state_with_host_codex(data_dir.path(), &runtime.host_command).await;
+    let state = fixture.daemon.clone();
+    let app = fixture.router();
 
     let host_repo = common::init_git_repo(&[("note.txt", "host\n")]).await;
     let container_repo = common::init_git_repo(&[("note.txt", "container\n")]).await;
@@ -3144,26 +3035,6 @@ async fn provider_target_scoped_installs_work_for_host_and_container_workspaces(
 
     post_message(&app, host_session.id.0, "reply exactly once").await;
     post_message(&app, container_session.id.0, "reply exactly once").await;
-    wait_for_done(&state, host_session.id).await;
-    wait_for_done(&state, container_session.id).await;
-
-    let store = state
-        .store_for_session(host_session.id)
-        .await
-        .expect("host store");
-    let host_events = store
-        .list_session_events(host_session.id)
-        .await
-        .expect("host events");
-    assert_assistant_message_contains(&host_events, "host-runtime");
-
-    let store = state
-        .store_for_session(container_session.id)
-        .await
-        .expect("container store");
-    let container_events = store
-        .list_session_events(container_session.id)
-        .await
-        .expect("container events");
-    assert_assistant_message_contains(&container_events, "container-runtime");
+    wait_for_done_with_assistant_message(&state, host_session.id, "host-runtime").await;
+    wait_for_done_with_assistant_message(&state, container_session.id, "container-runtime").await;
 }

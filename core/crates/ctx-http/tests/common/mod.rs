@@ -470,6 +470,41 @@ pub async fn fake_daemon_fixture_for_data_root(
     fake_daemon_fixture_for_data_root_with_providers(data_root, fake_providers(), base_url).await
 }
 
+pub struct ProviderInstallDaemonFixture {
+    pub daemon: TestDaemon,
+}
+
+impl ProviderInstallDaemonFixture {
+    pub fn router(&self) -> axum::Router {
+        router_for_daemon(&self.daemon)
+    }
+}
+
+pub async fn provider_install_daemon_fixture_for_data_root_with_providers(
+    data_root: &Path,
+    providers: HashMap<String, Arc<dyn ProviderAdapter>>,
+    base_url: impl Into<String>,
+) -> ProviderInstallDaemonFixture {
+    let daemon = TestDaemon::new_with_providers_for_test(
+        data_root.to_path_buf(),
+        providers,
+        base_url.into(),
+        None,
+    )
+    .await
+    .expect("create provider-install daemon fixture");
+    ProviderInstallDaemonFixture { daemon }
+}
+
+pub async fn reopen_provider_install_daemon_fixture_for_data_root_with_providers(
+    data_root: &Path,
+    providers: HashMap<String, Arc<dyn ProviderAdapter>>,
+    base_url: impl Into<String>,
+) -> ProviderInstallDaemonFixture {
+    provider_install_daemon_fixture_for_data_root_with_providers(data_root, providers, base_url)
+        .await
+}
+
 pub async fn fake_daemon_fixture_with_providers(
     providers: HashMap<String, Arc<dyn ProviderAdapter>>,
     base_url: impl Into<String>,
