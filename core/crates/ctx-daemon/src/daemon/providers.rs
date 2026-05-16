@@ -19,6 +19,7 @@ mod auth_check;
 mod auth_import;
 mod bootstrap;
 mod browser_logins;
+mod cursor_process_login;
 mod diagnostics;
 mod harness_config;
 mod installs;
@@ -36,22 +37,22 @@ mod usage;
 
 pub use accounts::{
     add_claude_account, add_claude_account_for_login, add_copilot_account, add_cursor_account,
-    add_cursor_oauth_account_for_login, add_gemini_account, add_gemini_account_for_login,
-    add_kimi_account, add_kimi_oauth_account_for_login, add_qwen_account,
-    add_qwen_account_for_login, ensure_amp_account_registry_from_runtime_auth,
-    import_host_codex_auth, load_amp_account_registry, load_claude_account_registry,
-    load_codex_account_registry, load_codex_accounts_snapshot, load_copilot_account_registry,
-    load_cursor_account_registry, load_gemini_account_registry, load_kimi_account_registry,
-    load_mistral_account_registry, load_qwen_account_registry, persist_successful_codex_login,
-    prepare_codex_login_start, probe_host_codex_auth_candidate, remove_amp_account,
-    remove_claude_account, remove_codex_account, remove_copilot_account, remove_cursor_account,
-    remove_gemini_account, remove_kimi_account, remove_mistral_account, remove_qwen_account,
-    set_active_amp_account, set_active_claude_account, set_active_codex_account,
-    set_active_copilot_account, set_active_cursor_account, set_active_gemini_account,
-    set_active_kimi_account, set_active_mistral_account, set_active_qwen_account,
-    upsert_amp_account, upsert_amp_account_for_login, upsert_mistral_account,
-    upsert_mistral_account_for_login, CodexAccountsSnapshot, PreparedCodexLoginStart,
-    ProviderAccountLoginMutation, ProviderAccountMutationError,
+    add_gemini_account, add_gemini_account_for_login, add_kimi_account,
+    add_kimi_oauth_account_for_login, add_qwen_account, add_qwen_account_for_login,
+    ensure_amp_account_registry_from_runtime_auth, import_host_codex_auth,
+    load_amp_account_registry, load_claude_account_registry, load_codex_account_registry,
+    load_codex_accounts_snapshot, load_copilot_account_registry, load_cursor_account_registry,
+    load_gemini_account_registry, load_kimi_account_registry, load_mistral_account_registry,
+    load_qwen_account_registry, persist_successful_codex_login, prepare_codex_login_start,
+    probe_host_codex_auth_candidate, remove_amp_account, remove_claude_account,
+    remove_codex_account, remove_copilot_account, remove_cursor_account, remove_gemini_account,
+    remove_kimi_account, remove_mistral_account, remove_qwen_account, set_active_amp_account,
+    set_active_claude_account, set_active_codex_account, set_active_copilot_account,
+    set_active_cursor_account, set_active_gemini_account, set_active_kimi_account,
+    set_active_mistral_account, set_active_qwen_account, upsert_amp_account,
+    upsert_amp_account_for_login, upsert_mistral_account, upsert_mistral_account_for_login,
+    CodexAccountsSnapshot, PreparedCodexLoginStart, ProviderAccountLoginMutation,
+    ProviderAccountMutationError,
 };
 pub use accounts::{
     AmpAccountsResponse, ClaudeAccountsResponse, CodexAccountsResponse, CopilotAccountsResponse,
@@ -76,6 +77,9 @@ pub use browser_logins::{
     start_amp_browser_login, start_gemini_browser_login, start_mistral_browser_login,
     start_qwen_browser_login,
 };
+pub use cursor_process_login::{
+    start_cursor_process_login, CursorProcessLoginStartError, CursorProcessLoginStartErrorKind,
+};
 pub use diagnostics::provider_diagnostics_snapshot;
 pub use harness_config::{
     delete_provider_harness_endpoint, get_provider_harness_config,
@@ -93,31 +97,25 @@ pub use kimi_oauth_login::{start_kimi_oauth_login, KimiOAuthLoginStartError};
 pub use launch_config::{
     load_provider_launch_config_snapshot, ProviderLaunchConfigError, ProviderLaunchConfigSnapshot,
 };
-pub use login_runtime::{
-    resolve_claude_login_runtime, resolve_cursor_login_runtime, ProviderLoginRuntimeCommand,
-};
-pub use login_runtime::{
-    resolve_claude_login_runtime_from_config, resolve_cursor_login_runtime_from_config,
-};
+pub use login_runtime::resolve_claude_login_runtime_from_config;
+pub use login_runtime::{resolve_claude_login_runtime, ProviderLoginRuntimeCommand};
 pub use login_sessions::{
     amp_login_status, claim_codex_login_callback, claude_login_status, codex_login_status,
     codex_login_statuses, cursor_login_status, finish_amp_login_session,
-    finish_claude_login_session, finish_codex_login_session, finish_cursor_login_session,
-    finish_gemini_login_session, finish_kimi_login_session, finish_mistral_login_session,
-    finish_qwen_login_session, gemini_login_status, kimi_login_status, mistral_login_status,
-    qwen_login_status, remove_codex_login_session, restore_codex_login_completion_token,
-    set_amp_login_auth_url, set_amp_login_failed, set_amp_login_failed_if_no_error,
-    set_amp_login_timeout_if_no_error, set_claude_login_auth_url, set_cursor_login_error,
-    set_gemini_login_auth_url, set_gemini_login_failed, set_gemini_login_failed_if_no_error,
-    set_gemini_login_timeout_if_no_error, set_kimi_login_failed, set_kimi_login_terminal_status,
-    set_kimi_login_timeout_if_no_error, set_mistral_login_auth_url, set_mistral_login_failed,
-    set_mistral_login_failed_if_no_error, set_mistral_login_timeout_if_no_error,
-    set_qwen_login_auth_url, set_qwen_login_failed, set_qwen_login_failed_if_no_error,
-    set_qwen_login_timeout_if_no_error, start_amp_login_session, start_claude_login_session,
-    start_codex_login_session, start_cursor_login_session, start_gemini_login_session,
+    finish_claude_login_session, finish_codex_login_session, finish_gemini_login_session,
+    finish_kimi_login_session, finish_mistral_login_session, finish_qwen_login_session,
+    gemini_login_status, kimi_login_status, mistral_login_status, qwen_login_status,
+    remove_codex_login_session, restore_codex_login_completion_token, set_amp_login_auth_url,
+    set_amp_login_failed, set_amp_login_failed_if_no_error, set_amp_login_timeout_if_no_error,
+    set_claude_login_auth_url, set_gemini_login_auth_url, set_gemini_login_failed,
+    set_gemini_login_failed_if_no_error, set_gemini_login_timeout_if_no_error,
+    set_kimi_login_failed, set_kimi_login_terminal_status, set_kimi_login_timeout_if_no_error,
+    set_mistral_login_auth_url, set_mistral_login_failed, set_mistral_login_failed_if_no_error,
+    set_mistral_login_timeout_if_no_error, set_qwen_login_auth_url, set_qwen_login_failed,
+    set_qwen_login_failed_if_no_error, set_qwen_login_timeout_if_no_error, start_amp_login_session,
+    start_claude_login_session, start_codex_login_session, start_gemini_login_session,
     start_kimi_login_session, start_mistral_login_session, start_qwen_login_session,
-    update_cursor_login_auth_url, CodexLoginCallbackClaimError, StartedCodexLoginSession,
-    StartedLoginSession,
+    CodexLoginCallbackClaimError, StartedCodexLoginSession, StartedLoginSession,
 };
 pub use options::{
     effective_preferred_model_id_for_workspace, get_provider_options_response,
@@ -1085,8 +1083,11 @@ impl ProvidersHandle {
         add_claude_account_for_login(&self.state, label, setup_token).await
     }
 
-    pub async fn start_cursor_login_session(&self) -> StartedLoginSession {
-        start_cursor_login_session(&self.state).await
+    pub async fn start_cursor_process_login(
+        &self,
+        label: Option<String>,
+    ) -> Result<StartedLoginSession, CursorProcessLoginStartError> {
+        start_cursor_process_login(&self.state, label).await
     }
 
     pub async fn cursor_login_status(
@@ -1094,49 +1095,5 @@ impl ProvidersHandle {
         login_id: &str,
     ) -> Option<provider_accounts::CursorLoginStatus> {
         cursor_login_status(&self.state, login_id).await
-    }
-
-    pub async fn set_cursor_login_error(&self, login_id: &str, error: String) {
-        set_cursor_login_error(&self.state, login_id, error).await;
-    }
-
-    pub async fn update_cursor_login_auth_url(&self, login_id: &str, auth_url: String) {
-        update_cursor_login_auth_url(&self.state, login_id, auth_url).await;
-    }
-
-    pub async fn finish_cursor_login_session(
-        &self,
-        login_id: &str,
-        status: String,
-        account_id: Option<String>,
-        error: Option<String>,
-        observed_auth_url: Option<String>,
-    ) {
-        finish_cursor_login_session(
-            &self.state,
-            login_id,
-            status,
-            account_id,
-            error,
-            observed_auth_url,
-        )
-        .await;
-    }
-
-    pub async fn resolve_cursor_login_runtime(
-        &self,
-    ) -> anyhow::Result<ProviderLoginRuntimeCommand> {
-        resolve_cursor_login_runtime(&self.state).await
-    }
-
-    pub async fn add_cursor_oauth_account_for_login(
-        &self,
-        label: Option<String>,
-        auth_token: String,
-        refresh_token: Option<String>,
-        email: Option<String>,
-    ) -> Result<ProviderAccountLoginMutation, ProviderAccountMutationError> {
-        add_cursor_oauth_account_for_login(&self.state, label, auth_token, refresh_token, email)
-            .await
     }
 }

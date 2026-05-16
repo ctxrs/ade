@@ -1,5 +1,6 @@
 use super::fixtures::{write_mock_cursor_command, TestEnvVar};
 use super::*;
+use crate::test_support::TestDaemon;
 
 #[tokio::test]
 async fn resolve_cursor_login_runtime_requires_managed_or_configured_command() {
@@ -91,4 +92,59 @@ async fn resolve_cursor_login_runtime_accepts_configured_runtime_command() {
         expected.to_string_lossy().to_string()
     );
     assert_eq!(resolved.args, vec!["cli.js".to_string()]);
+}
+
+#[tokio::test]
+async fn cursor_login_start_rejects_missing_runtime_without_session() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let daemon =
+        TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+            .await
+            .expect("test daemon");
+
+    let err = daemon
+        .handle()
+        .providers()
+        .start_cursor_process_login(None)
+        .await
+        .expect_err("missing runtime should fail before session creation");
+
+    assert_eq!(
+        err.kind(),
+        CursorProcessLoginStartErrorKind::RuntimeCommandBadRequest
+    );
+    assert!(err
+        .route_safe_message()
+        .contains("runtime_command_missing: provider=cursor-login"));
+    assert!(daemon.provider_login_session_caches_empty().await);
+}
+
+#[tokio::test]
+async fn cursor_login_start_rejects_config_parse_error_without_session() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let cfg_path = installer::agent_server_config_path(temp.path());
+    tokio::fs::create_dir_all(cfg_path.parent().expect("config parent"))
+        .await
+        .expect("create config parent");
+    tokio::fs::write(&cfg_path, b"{not-json")
+        .await
+        .expect("write malformed config");
+    let daemon =
+        TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+            .await
+            .expect("test daemon");
+
+    let err = daemon
+        .handle()
+        .providers()
+        .start_cursor_process_login(None)
+        .await
+        .expect_err("config parse failure should fail before session creation");
+
+    assert_eq!(
+        err.kind(),
+        CursorProcessLoginStartErrorKind::InternalStartup
+    );
+    assert!(err.route_safe_message().contains("agent server config"));
+    assert!(daemon.provider_login_session_caches_empty().await);
 }

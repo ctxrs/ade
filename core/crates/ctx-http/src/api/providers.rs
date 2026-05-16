@@ -1,6 +1,5 @@
 #[cfg(test)]
 use std::collections::HashMap;
-use std::path::{Path as StdPath, PathBuf};
 use std::process::Stdio;
 #[cfg(test)]
 use std::sync::Arc;

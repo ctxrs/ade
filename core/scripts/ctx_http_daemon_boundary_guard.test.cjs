@@ -22,6 +22,7 @@ const {
   LIB_TEST_DATA_ROOT_FIXTURE_PATTERNS,
   LIVE_PROVIDER_CANARY_TEST_STORE_ACCESS_PATTERNS,
   MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS,
+  CURSOR_PROCESS_LOGIN_API_ORCHESTRATION_PATTERNS,
   MERGE_QUEUE_ISOLATION_TEST_STORE_ACCESS_PATTERNS,
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
@@ -2767,6 +2768,95 @@ test("daemon boundary guard scopes managed browser login orchestration patterns"
   assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/providers/login/claude/session.rs").includes(
       MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    false,
+  );
+});
+
+test("daemon boundary guard rejects Cursor process login orchestration in HTTP", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/providers/cursor_login/session.rs",
+    contents: `
+      mod session;
+
+      async fn handler(providers: ProvidersHandle) {
+        tokio::spawn(async move {});
+        let mut cmd = tokio::process::Command::new("cursor-agent");
+        cmd.stdin(Stdio::null());
+        let _ = providers.resolve_cursor_login_runtime().await?;
+        providers.start_cursor_login_session().await;
+        providers.set_cursor_login_error(login_id, error).await;
+        providers.update_cursor_login_auth_url(login_id, auth_url).await;
+        providers.finish_cursor_login_session(login_id, status, account_id, error, auth_url).await;
+        providers.add_cursor_oauth_account_for_login(label, token, refresh, email).await?;
+        let _home = cursor_login_home(data_root, login_id);
+        ensure_private_dir(&_home).await?;
+        initialize_cursor_capture_file(path).await?;
+        write_cursor_capture_hook(path).await?;
+        let _ = CTX_CURSOR_CAPTURE_FILE;
+        let _ = NODE_OPTIONS;
+        parse_cursor_captured_tokens(path).await?;
+        spawn_cursor_login_reader(stdout, false, tx);
+        collect_cursor_login_output(providers, login_id, child).await;
+        record_cursor_login_output(providers, login_id, line, transcript, email, auth_url).await;
+        let _ = first_email_from_text("dev@example.com");
+        let _line = CursorLoginOutputLine {};
+        let _ = CTX_CURSOR_LOGIN_TIMEOUT_SECS;
+        let _ = cursor_login_timeout();
+        for key in DAEMON_AUTH_ENV_VARS {}
+      }
+    `,
+    patterns: CURSOR_PROCESS_LOGIN_API_ORCHESTRATION_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "Cursor process login API owns monitor task spawning",
+      "Cursor process login API owns process spawning",
+      "Cursor process login API owns process spawning",
+      "Cursor process login API resolves runtime directly",
+      "Cursor process login API mutates login sessions directly",
+      "Cursor process login API mutates login sessions directly",
+      "Cursor process login API mutates login sessions directly",
+      "Cursor process login API mutates login sessions directly",
+      "Cursor process login API finalizes Cursor accounts directly",
+      "Cursor process login API owns private capture workspace",
+      "Cursor process login API owns private capture workspace",
+      "Cursor process login API owns private capture workspace",
+      "Cursor process login API owns private capture workspace",
+      "Cursor process login API owns private capture workspace",
+      "Cursor process login API owns private capture workspace",
+      "Cursor process login API owns process output parsing",
+      "Cursor process login API owns process output parsing",
+      "Cursor process login API owns process output parsing",
+      "Cursor process login API owns process output parsing",
+      "Cursor process login API owns process output parsing",
+      "Cursor process login API owns process output parsing",
+      "Cursor process login API owns login timeout or env scrubbing",
+      "Cursor process login API owns login timeout or env scrubbing",
+      "Cursor process login API owns login timeout or env scrubbing",
+      "Cursor process login API declares process monitor module",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes Cursor process login orchestration patterns", () => {
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers/cursor_login.rs").includes(
+      CURSOR_PROCESS_LOGIN_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/providers/cursor_login/session/output_loop.rs",
+    ).includes(CURSOR_PROCESS_LOGIN_API_ORCHESTRATION_PATTERNS[0]),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers/login/codex.rs").includes(
+      CURSOR_PROCESS_LOGIN_API_ORCHESTRATION_PATTERNS[0],
     ),
     false,
   );

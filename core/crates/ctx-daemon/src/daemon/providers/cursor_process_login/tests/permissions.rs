@@ -1,5 +1,8 @@
 use super::fixtures::unix_mode;
-use super::*;
+use crate::daemon::providers::cursor_process_login::capture::{
+    cursor_login_home, ensure_private_dir, initialize_cursor_capture_file,
+    write_cursor_capture_hook,
+};
 
 #[cfg(unix)]
 #[tokio::test]

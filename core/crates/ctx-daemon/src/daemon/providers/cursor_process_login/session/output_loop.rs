@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Instant;
 
 use super::super::output::{
@@ -5,7 +6,7 @@ use super::super::output::{
     CURSOR_LOGIN_POLL_INTERVAL,
 };
 use super::progress::record_cursor_login_output;
-use ctx_daemon::daemon::ProvidersHandle;
+use crate::daemon::DaemonState;
 
 pub(super) struct CursorLoginOutputResult {
     pub(super) observed_auth_url: Option<String>,
@@ -15,7 +16,7 @@ pub(super) struct CursorLoginOutputResult {
 }
 
 pub(super) async fn collect_cursor_login_output(
-    providers: &ProvidersHandle,
+    state: &Arc<DaemonState>,
     login_id: &str,
     child: &mut tokio::process::Child,
 ) -> CursorLoginOutputResult {
@@ -45,7 +46,7 @@ pub(super) async fn collect_cursor_login_output(
             maybe_line = line_rx.recv() => {
                 if let Some(output_line) = maybe_line {
                     record_cursor_login_output(
-                        providers,
+                        state,
                         login_id,
                         output_line,
                         &mut transcript,
@@ -67,7 +68,7 @@ pub(super) async fn collect_cursor_login_output(
         match tokio::time::timeout(std::time::Duration::from_millis(20), line_rx.recv()).await {
             Ok(Some(output_line)) => {
                 record_cursor_login_output(
-                    providers,
+                    state,
                     login_id,
                     output_line,
                     &mut transcript,

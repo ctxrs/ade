@@ -2,22 +2,7 @@ use super::login::reject_mobile_auth;
 use super::*;
 use crate::api::MobileAuthContext;
 use axum::Extension;
-
-mod capture;
-mod output;
-mod runtime;
-mod session;
-#[cfg(test)]
-mod tests;
-
-#[cfg(test)]
-use capture::{
-    cursor_login_home, ensure_private_dir, initialize_cursor_capture_file,
-    write_cursor_capture_hook,
-};
-#[cfg(test)]
-use runtime::resolve_cursor_login_runtime_from_config;
-use session::monitor_cursor_login;
+use ctx_daemon::daemon::providers::CursorProcessLoginStartErrorKind;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct CursorLoginStartReq {
@@ -37,26 +22,25 @@ pub(crate) async fn start_cursor_login(
     Json(req): Json<CursorLoginStartReq>,
 ) -> Result<Json<CursorLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let _ = providers
-        .resolve_cursor_login_runtime()
+    let login_session = providers
+        .start_cursor_process_login(req.label)
         .await
-        .map_err(|e| {
-            let msg = e.to_string();
-            let status = if msg.contains("runtime_command_") {
-                StatusCode::BAD_REQUEST
-            } else {
-                StatusCode::INTERNAL_SERVER_ERROR
+        .map_err(|err| {
+            let status = match err.kind() {
+                CursorProcessLoginStartErrorKind::RuntimeCommandBadRequest => {
+                    StatusCode::BAD_REQUEST
+                }
+                CursorProcessLoginStartErrorKind::InternalStartup => {
+                    StatusCode::INTERNAL_SERVER_ERROR
+                }
             };
-            (status, Json(ApiErrorResp { error: msg }))
+            (
+                status,
+                Json(ApiErrorResp {
+                    error: err.route_safe_message().to_string(),
+                }),
+            )
         })?;
-
-    let login_session = providers.start_cursor_login_session().await;
-
-    let providers_clone = providers.clone();
-    let login_id_for_task = login_session.login_id.clone();
-    tokio::spawn(async move {
-        monitor_cursor_login(providers_clone, login_id_for_task, req.label).await;
-    });
 
     Ok(Json(CursorLoginStartResp {
         login_id: login_session.login_id,

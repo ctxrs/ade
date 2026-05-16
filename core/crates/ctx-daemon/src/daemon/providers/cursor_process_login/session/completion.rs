@@ -7,7 +7,7 @@ pub(super) struct CursorLoginCompletion {
 }
 
 pub(super) async fn complete_cursor_login(
-    providers: &ProvidersHandle,
+    state: &Arc<DaemonState>,
     label: Option<String>,
     capture_path: &StdPath,
     observed_email: Option<String>,
@@ -25,14 +25,14 @@ pub(super) async fn complete_cursor_login(
                     Ok((access_token, refresh_token, api_key)) => {
                         let auth_token = access_token.or(api_key);
                         if let Some(auth_token) = auth_token {
-                            match providers
-                                .add_cursor_oauth_account_for_login(
-                                    label,
-                                    auth_token,
-                                    refresh_token,
-                                    observed_email,
-                                )
-                                .await
+                            match accounts::add_cursor_oauth_account_for_login(
+                                state,
+                                label,
+                                auth_token,
+                                refresh_token,
+                                observed_email,
+                            )
+                            .await
                             {
                                 Ok(outcome) => {
                                     let restart_error = outcome.restart_error_message();

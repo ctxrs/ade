@@ -190,6 +190,11 @@ const managedBrowserLoginApiRoots = [
   "core/crates/ctx-http/src/api/providers/login/kimi/",
 ];
 
+const cursorProcessLoginApiRoots = [
+  "core/crates/ctx-http/src/api/providers/cursor_login.rs",
+  "core/crates/ctx-http/src/api/providers/cursor_login/",
+];
+
 const taskSessionCreationApiRoots = [
   "core/crates/ctx-http/src/api/tasks/creation_session.rs",
   "core/crates/ctx-http/src/api/tasks/creation_session/",
@@ -1108,6 +1113,48 @@ const MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS = [
   {
     name: "managed browser login API starts Kimi sessions directly",
     regex: /\bstart_kimi_login_session\s*\(/,
+  },
+];
+
+const CURSOR_PROCESS_LOGIN_API_ORCHESTRATION_PATTERNS = [
+  {
+    name: "Cursor process login API owns monitor task spawning",
+    regex: /\btokio::spawn\s*\(/,
+  },
+  {
+    name: "Cursor process login API owns process spawning",
+    regex: /\b(?:tokio::process::Command|std::process::Command|Command::new|Stdio::)\b/,
+  },
+  {
+    name: "Cursor process login API resolves runtime directly",
+    regex: /\bresolve_cursor_login_runtime(?:_from_config)?\s*\(/,
+  },
+  {
+    name: "Cursor process login API mutates login sessions directly",
+    regex:
+      /\b(?:start_cursor_login_session|set_cursor_login_error|update_cursor_login_auth_url|finish_cursor_login_session)\s*\(/,
+  },
+  {
+    name: "Cursor process login API finalizes Cursor accounts directly",
+    regex: /\badd_cursor_oauth_account_for_login\s*\(/,
+  },
+  {
+    name: "Cursor process login API owns private capture workspace",
+    regex:
+      /\b(?:cursor_login_home|ensure_private_dir|initialize_cursor_capture_file|write_cursor_capture_hook|prepare_cursor_login_workspace|CTX_CURSOR_CAPTURE_FILE|NODE_OPTIONS)\b/,
+  },
+  {
+    name: "Cursor process login API owns process output parsing",
+    regex:
+      /\b(?:parse_cursor_captured_tokens|spawn_cursor_login_reader|collect_cursor_login_output|record_cursor_login_output|first_email_from_text|CursorLoginOutputLine)\b/,
+  },
+  {
+    name: "Cursor process login API owns login timeout or env scrubbing",
+    regex: /\b(?:CTX_CURSOR_LOGIN_TIMEOUT_SECS|cursor_login_timeout|DAEMON_AUTH_ENV_VARS)\b/,
+  },
+  {
+    name: "Cursor process login API declares process monitor module",
+    regex: /(?:#\s*\[\s*path\s*=\s*"[^"]*session\.rs"\s*\]\s*)?mod\s+session\s*;/,
   },
 ];
 
@@ -3285,6 +3332,9 @@ function apiPatternsForPath(relativePath) {
   if (managedBrowserLoginApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS);
   }
+  if (cursorProcessLoginApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...CURSOR_PROCESS_LOGIN_API_ORCHESTRATION_PATTERNS);
+  }
   if (taskSessionCreationApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...TASK_SESSION_CREATION_API_ADMISSION_PATTERNS);
   }
@@ -4265,6 +4315,7 @@ module.exports = {
   MOBILE_ACCESS_STORE_DTO_API_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
   MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS,
+  CURSOR_PROCESS_LOGIN_API_ORCHESTRATION_PATTERNS,
   PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS,
   PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS,
   SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS,
