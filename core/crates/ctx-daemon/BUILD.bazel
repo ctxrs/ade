@@ -149,6 +149,7 @@ _CTX_DAEMON_TEST_SUPPORT_DEPS = [
     "@crates//:blake2",
     "@crates//:ed25519-dalek",
     "@crates//:fs2",
+    "@crates//:jsonwebtoken",
 ]
 
 rust_library(
