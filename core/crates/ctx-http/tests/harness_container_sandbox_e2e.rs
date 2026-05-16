@@ -3,48 +3,20 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::body::{to_bytes, Body};
-use axum::http::{Request, StatusCode};
+use axum::body::Body;
+use axum::http::{Method, Request, StatusCode};
 use serde_json::json;
 use tokio::process::Command;
-use tower::ServiceExt;
 
-use ctx_core::models::SessionEventType;
-use ctx_daemon::test_support::TestDaemon;
 use ctx_providers::crp::Tier1CrpAdapter;
-use ctx_store::StoreManager;
 
 use ctx_managed_installs::{save_agent_server_config, AgentServerCommand, AgentServerConfigFile};
 use ctx_settings_model::{
     ContainerExecutionSettings, ContainerMountMode, ContainerNetworkMode, ExecutionMode,
     ExecutionSettings, Settings,
 };
-use ctx_settings_service::{load_settings, save_settings};
 
 mod common;
-
-struct EnvGuard {
-    key: &'static str,
-    prev: Option<String>,
-}
-
-impl EnvGuard {
-    fn set(key: &'static str, value: &str) -> Self {
-        let prev = std::env::var(key).ok();
-        std::env::set_var(key, value);
-        Self { key, prev }
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        if let Some(value) = self.prev.take() {
-            std::env::set_var(self.key, value);
-        } else {
-            std::env::remove_var(self.key);
-        }
-    }
-}
 
 fn sandbox_cli_binary_for_tests() -> Option<PathBuf> {
     if let Ok(raw) = std::env::var("CTX_HARNESS_SANDBOX_CLI_PATH") {
@@ -56,32 +28,8 @@ fn sandbox_cli_binary_for_tests() -> Option<PathBuf> {
     which::which("nerdctl").ok()
 }
 
-async fn run_git(root: &Path, args: &[&str]) {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(args)
-        .output()
-        .await
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "git {:?} failed: {}",
-        args,
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
 async fn setup_git_repo() -> tempfile::TempDir {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path();
-    run_git(root, &["init"]).await;
-    run_git(root, &["config", "user.email", "test@example.com"]).await;
-    run_git(root, &["config", "user.name", "Test"]).await;
-    std::fs::write(root.join("note.txt"), "hello\n").unwrap();
-    run_git(root, &["add", "."]).await;
-    run_git(root, &["commit", "-m", "init"]).await;
-    dir
+    common::init_git_repo(&[("note.txt", "hello\n")]).await
 }
 
 fn write_fake_crp_script(root: &Path) -> PathBuf {
@@ -173,40 +121,19 @@ async fn configure_fake_provider(data_root: &Path, script_path: &Path) {
     save_agent_server_config(data_root, &cfg).await.unwrap();
 }
 
-async fn load_settings_from_data_root(data_root: &Path) -> Settings {
-    let db_path = data_root.join("db").join("db.sqlite");
-    let store = ctx_store::Store::open_sqlite(&db_path, None).await.unwrap();
-    let settings = load_settings(&store).await.unwrap();
-    store.close().await;
-    settings
-}
-
-async fn save_settings_to_data_root(data_root: &Path, settings: &Settings) {
-    let db_path = data_root.join("db").join("db.sqlite");
-    let store = ctx_store::Store::open_sqlite(&db_path, None).await.unwrap();
-    save_settings(&store, settings).await.unwrap();
-    store.close().await;
-}
-
 async fn configure_container_settings(
     data_root: &Path,
     mount_mode: ContainerMountMode,
     image: &str,
-) {
-    let settings = Settings {
-        execution: Some(ExecutionSettings {
-            mode: ExecutionMode::Sandbox,
-            container: ContainerExecutionSettings {
-                mount_mode,
-                network_mode: ContainerNetworkMode::All,
-                allowlist: Vec::new(),
-                image: Some(image.to_string()),
-                ..Default::default()
-            },
-        }),
-        ..Default::default()
-    };
-    save_settings_to_data_root(data_root, &settings).await;
+) -> ExecutionSettings {
+    configure_container_network_settings(
+        data_root,
+        mount_mode,
+        image,
+        ContainerNetworkMode::All,
+        Vec::new(),
+    )
+    .await
 }
 
 async fn configure_container_network_settings(
@@ -215,21 +142,43 @@ async fn configure_container_network_settings(
     image: &str,
     network_mode: ContainerNetworkMode,
     allowlist: Vec<String>,
-) {
+) -> ExecutionSettings {
+    let execution = ExecutionSettings {
+        mode: ExecutionMode::Sandbox,
+        container: ContainerExecutionSettings {
+            mount_mode,
+            network_mode,
+            allowlist,
+            image: Some(image.to_string()),
+            ..Default::default()
+        },
+    };
     let settings = Settings {
-        execution: Some(ExecutionSettings {
-            mode: ExecutionMode::Sandbox,
-            container: ContainerExecutionSettings {
-                mount_mode,
-                network_mode,
-                allowlist,
-                image: Some(image.to_string()),
-                ..Default::default()
-            },
-        }),
+        execution: Some(execution.clone()),
         ..Default::default()
     };
-    save_settings_to_data_root(data_root, &settings).await;
+    ctx_daemon::test_support::TestDaemon::preseed_settings_for_data_root_for_test(
+        data_root, &settings,
+    )
+    .await
+    .unwrap();
+    execution
+}
+
+fn fake_crp_providers(
+    script_path: &Path,
+) -> HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> {
+    let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
+        HashMap::new();
+    providers.insert(
+        "codex".into(),
+        Arc::new(Tier1CrpAdapter::from_raw(
+            "codex",
+            "python3".to_string(),
+            vec![script_path.to_string_lossy().to_string()],
+        )),
+    );
+    providers
 }
 
 async fn run_container_python(container_name: &str, script: &str) -> std::process::Output {
@@ -246,96 +195,69 @@ async fn run_container_python(container_name: &str, script: &str) -> std::proces
 }
 
 async fn create_session_with_provider(
-    app: &mut axum::Router,
+    app: &axum::Router,
     git_repo_root: &Path,
     provider_id: &str,
 ) -> ctx_core::models::Session {
-    let req = Request::builder()
-        .method("POST")
-        .uri("/api/workspaces")
-        .header("content-type", "application/json")
-        .body(Body::from(
-            json!({
-                "root_path": git_repo_root.to_string_lossy(),
-                "name": "ws"
-            })
-            .to_string(),
-        ))
-        .unwrap();
-    let res = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    let ws: ctx_core::models::Workspace = serde_json::from_slice(&body).unwrap();
+    let workspace = common::create_workspace(app, git_repo_root, "ws").await;
+    let (_task, session) =
+        common::create_task_with_session(app, workspace.id.0, "t1", provider_id, "fake-model")
+            .await;
+    session
+}
 
-    let req = Request::builder()
-        .method("POST")
-        .uri(format!("/api/workspaces/{}/tasks", ws.id.0))
-        .header("content-type", "application/json")
-        .body(Body::from(
-            json!({
-                "title": "t1",
-                "default_session": {
-                    "provider_id": provider_id,
-                    "model_id": "fake-model"
-                }
-            })
-            .to_string(),
-        ))
-        .unwrap();
-    let res = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    let task: ctx_core::models::Task = serde_json::from_slice(&body).unwrap();
+async fn post_message(app: &axum::Router, session_id: &str, content: &str) {
+    let (status, _message): (StatusCode, serde_json::Value) = common::json_request(
+        app,
+        Method::POST,
+        format!("/api/sessions/{session_id}/messages"),
+        Some(json!({ "content": content })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+}
 
+async fn ensure_workspace_harness_container(
+    app: &axum::Router,
+    workspace_id: ctx_core::ids::WorkspaceId,
+) {
     let req = Request::builder()
-        .method("GET")
-        .uri(format!("/api/tasks/{}/sessions", task.id.0))
+        .method(Method::POST)
+        .uri(format!(
+            "/api/workspaces/{}/harness_container/ensure",
+            workspace_id.0
+        ))
         .body(Body::empty())
         .unwrap();
-    let res = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    let sessions: Vec<ctx_core::models::Session> = serde_json::from_slice(&body).unwrap();
-    sessions
-        .into_iter()
-        .find(|session| Some(session.id) == task.primary_session_id)
-        .expect("created task should list its default session")
+    let (status, body) = common::oneshot_bytes(app, req).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(body.is_empty(), "ensure response should be empty");
 }
 
-async fn post_message(app: &mut axum::Router, session_id: &str, content: &str) {
-    let req = Request::builder()
-        .method("POST")
-        .uri(format!("/api/sessions/{session_id}/messages"))
-        .header("content-type", "application/json")
-        .body(Body::from(json!({ "content": content }).to_string()))
-        .unwrap();
-    let res = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
+async fn workspace_harness_egress_guard(
+    app: &axum::Router,
+    workspace_id: ctx_core::ids::WorkspaceId,
+) -> Option<bool> {
+    let (status, body): (StatusCode, serde_json::Value) = common::json_request(
+        app,
+        Method::GET,
+        format!("/api/workspaces/{}/harness_container", workspace_id.0),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    body.get("egress_guard")
+        .and_then(serde_json::Value::as_bool)
 }
 
-async fn wait_for_done(daemon: &TestDaemon, session_id: ctx_core::ids::SessionId) {
-    let store = daemon.store_for_session(session_id).await.unwrap();
-    let mut attempts = 0;
-    loop {
-        let events = store.list_session_events(session_id).await.unwrap();
-        if events
-            .iter()
-            .any(|e| matches!(e.event_type, SessionEventType::Done))
-        {
-            if events
-                .iter()
-                .any(|e| matches!(e.event_type, SessionEventType::Error))
-            {
-                panic!("saw Error event(s): {events:#?}");
-            }
-            break;
-        }
-        attempts += 1;
-        if attempts > 240 {
-            panic!("timed out waiting for Done event");
-        }
-        tokio::time::sleep(Duration::from_millis(250)).await;
-    }
+async fn wait_for_done(
+    daemon: &ctx_daemon::test_support::TestDaemon,
+    session_id: ctx_core::ids::SessionId,
+) {
+    daemon
+        .wait_for_session_done_event_count_for_test(session_id, 1, Duration::from_secs(60))
+        .await
+        .expect("timed out waiting for Done event");
 }
 
 const PROMPT: &str = "Reply with the exact text: done";
@@ -343,6 +265,9 @@ const PROMPT: &str = "Reply with the exact text: done";
 #[tokio::test]
 #[ignore]
 async fn harness_container_sandbox_fake_acp() {
+    let _sandbox_env_lock = ctx_daemon::test_support::sandbox_cli_env_test_lock()
+        .lock()
+        .await;
     if std::env::var("CTX_E2E_SANDBOX").ok().as_deref() != Some("1") {
         eprintln!("skipping: CTX_E2E_SANDBOX not set");
         return;
@@ -352,54 +277,42 @@ async fn harness_container_sandbox_fake_acp() {
         return;
     }
     let sandbox_cli = sandbox_cli_binary_for_tests().expect("sandbox CLI not found");
-    let _guard = EnvGuard::set(
-        "CTX_HARNESS_SANDBOX_CLI_PATH",
-        &sandbox_cli.to_string_lossy(),
-    );
+    let _guard = common::TestEnvGuard::set("CTX_HARNESS_SANDBOX_CLI_PATH", sandbox_cli.as_os_str());
 
     let git_repo = setup_git_repo().await;
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
 
     let script_path = write_fake_crp_script(data_dir.path());
     configure_fake_provider(data_dir.path(), &script_path).await;
-    configure_container_settings(
+    let _execution_settings = configure_container_settings(
         data_dir.path(),
         ContainerMountMode::DiskIsolated,
         "python:3.11",
     )
     .await;
 
-    let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
-        HashMap::new();
-    providers.insert(
-        "codex".into(),
-        Arc::new(Tier1CrpAdapter::from_raw(
-            "codex",
-            "python3".to_string(),
-            vec![script_path.to_string_lossy().to_string()],
-        )),
-    );
-
-    let daemon = TestDaemon::new(
-        data_dir.path().to_path_buf(),
-        stores,
+    let providers = fake_crp_providers(&script_path);
+    let fixture = common::fake_daemon_fixture_in_data_dir_with_providers(
+        data_dir,
         providers,
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    );
-    let mut app = common::router_for_daemon(&daemon);
-    let session = create_session_with_provider(&mut app, git_repo.path(), "codex").await;
+        "http://127.0.0.1:4399",
+    )
+    .await;
+    let app = fixture.router();
+    let session = create_session_with_provider(&app, git_repo.path(), "codex").await;
 
     let session_id = session.id.0.to_string();
-    post_message(&mut app, &session_id, PROMPT).await;
-    wait_for_done(&daemon, session.id).await;
+    post_message(&app, &session_id, PROMPT).await;
+    wait_for_done(&fixture.daemon, session.id).await;
 }
 
 #[tokio::test]
 #[ignore]
 async fn harness_container_sandbox_egress_allowlist() {
     let _ = tracing_subscriber::fmt::try_init();
+    let _sandbox_env_lock = ctx_daemon::test_support::sandbox_cli_env_test_lock()
+        .lock()
+        .await;
     if std::env::var("CTX_E2E_SANDBOX").ok().as_deref() != Some("1") {
         eprintln!("skipping: CTX_E2E_SANDBOX not set");
         return;
@@ -413,10 +326,7 @@ async fn harness_container_sandbox_egress_allowlist() {
         return;
     }
     let sandbox_cli = sandbox_cli_binary_for_tests().expect("sandbox CLI not found");
-    let _guard = EnvGuard::set(
-        "CTX_HARNESS_SANDBOX_CLI_PATH",
-        &sandbox_cli.to_string_lossy(),
-    );
+    let _guard = common::TestEnvGuard::set("CTX_HARNESS_SANDBOX_CLI_PATH", sandbox_cli.as_os_str());
 
     let image =
         std::env::var("CTX_E2E_SANDBOX_IMAGE").unwrap_or_else(|_| "python:3.11".to_string());
@@ -424,11 +334,10 @@ async fn harness_container_sandbox_egress_allowlist() {
 
     let git_repo = setup_git_repo().await;
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
 
     let script_path = write_fake_crp_script(data_dir.path());
     configure_fake_provider(data_dir.path(), &script_path).await;
-    configure_container_network_settings(
+    let execution_settings = configure_container_network_settings(
         data_dir.path(),
         ContainerMountMode::DiskIsolated,
         &image,
@@ -436,65 +345,26 @@ async fn harness_container_sandbox_egress_allowlist() {
         vec![allow_host.to_string()],
     )
     .await;
-    let settings = load_settings_from_data_root(data_dir.path()).await;
-    let execution_settings = settings.execution.clone().unwrap_or_default();
     assert_eq!(
-        settings
-            .execution
-            .as_ref()
-            .expect("execution settings")
-            .container
-            .network_mode,
+        execution_settings.container.network_mode,
         ContainerNetworkMode::Allowlist
     );
 
-    let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
-        HashMap::new();
-    providers.insert(
-        "codex".into(),
-        Arc::new(Tier1CrpAdapter::from_raw(
-            "codex",
-            "python3".to_string(),
-            vec![script_path.to_string_lossy().to_string()],
-        )),
-    );
-
-    let daemon = TestDaemon::new(
-        data_dir.path().to_path_buf(),
-        stores,
+    let providers = fake_crp_providers(&script_path);
+    let fixture = common::fake_daemon_fixture_in_data_dir_with_providers(
+        data_dir,
         providers,
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    );
-    let mut app = common::router_for_daemon(&daemon);
-    let session = create_session_with_provider(&mut app, git_repo.path(), "codex").await;
-    let workspace = daemon
-        .global_store()
-        .get_workspace(session.workspace_id)
-        .await
-        .unwrap()
-        .expect("workspace");
-    let workspace_store = daemon
-        .store_for_workspace(session.workspace_id)
-        .await
-        .unwrap();
-    let worktree = workspace_store
-        .get_worktree(session.worktree_id)
-        .await
-        .unwrap()
-        .expect("worktree");
-    daemon
-        .prepare_workspace_harness_for_test(&workspace, &worktree, &execution_settings)
-        .await
-        .expect("failed to prepare container runtime");
+        "http://127.0.0.1:4399",
+    )
+    .await;
+    let app = fixture.router();
+    let session = create_session_with_provider(&app, git_repo.path(), "codex").await;
+    ensure_workspace_harness_container(&app, session.workspace_id).await;
 
     let session_id = session.id.0.to_string();
-    post_message(&mut app, &session_id, PROMPT).await;
-    wait_for_done(&daemon, session.id).await;
-    let egress_guard = daemon
-        .workspace_harness_egress_guard_for_test(session.workspace_id)
-        .await
-        .unwrap();
+    post_message(&app, &session_id, PROMPT).await;
+    wait_for_done(&fixture.daemon, session.id).await;
+    let egress_guard = workspace_harness_egress_guard(&app, session.workspace_id).await;
     assert!(
         egress_guard.unwrap_or(false),
         "egress guard was not configured"
@@ -540,6 +410,9 @@ except Exception:
 #[ignore]
 async fn harness_container_sandbox_egress_allow_all() {
     let _ = tracing_subscriber::fmt::try_init();
+    let _sandbox_env_lock = ctx_daemon::test_support::sandbox_cli_env_test_lock()
+        .lock()
+        .await;
     if std::env::var("CTX_E2E_SANDBOX").ok().as_deref() != Some("1") {
         eprintln!("skipping: CTX_E2E_SANDBOX not set");
         return;
@@ -553,21 +426,17 @@ async fn harness_container_sandbox_egress_allow_all() {
         return;
     }
     let sandbox_cli = sandbox_cli_binary_for_tests().expect("sandbox CLI not found");
-    let _guard = EnvGuard::set(
-        "CTX_HARNESS_SANDBOX_CLI_PATH",
-        &sandbox_cli.to_string_lossy(),
-    );
+    let _guard = common::TestEnvGuard::set("CTX_HARNESS_SANDBOX_CLI_PATH", sandbox_cli.as_os_str());
 
     let image =
         std::env::var("CTX_E2E_SANDBOX_IMAGE").unwrap_or_else(|_| "python:3.11".to_string());
 
     let git_repo = setup_git_repo().await;
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
 
     let script_path = write_fake_crp_script(data_dir.path());
     configure_fake_provider(data_dir.path(), &script_path).await;
-    configure_container_network_settings(
+    let _execution_settings = configure_container_network_settings(
         data_dir.path(),
         ContainerMountMode::DiskIsolated,
         &image,
@@ -575,56 +444,22 @@ async fn harness_container_sandbox_egress_allow_all() {
         Vec::new(),
     )
     .await;
-    let settings = load_settings_from_data_root(data_dir.path()).await;
-    let execution_settings = settings.execution.clone().unwrap_or_default();
 
-    let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
-        HashMap::new();
-    providers.insert(
-        "codex".into(),
-        Arc::new(Tier1CrpAdapter::from_raw(
-            "codex",
-            "python3".to_string(),
-            vec![script_path.to_string_lossy().to_string()],
-        )),
-    );
-
-    let daemon = TestDaemon::new(
-        data_dir.path().to_path_buf(),
-        stores,
+    let providers = fake_crp_providers(&script_path);
+    let fixture = common::fake_daemon_fixture_in_data_dir_with_providers(
+        data_dir,
         providers,
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    );
-    let mut app = common::router_for_daemon(&daemon);
-    let session = create_session_with_provider(&mut app, git_repo.path(), "codex").await;
-    let workspace = daemon
-        .global_store()
-        .get_workspace(session.workspace_id)
-        .await
-        .unwrap()
-        .expect("workspace");
-    let workspace_store = daemon
-        .store_for_workspace(session.workspace_id)
-        .await
-        .unwrap();
-    let worktree = workspace_store
-        .get_worktree(session.worktree_id)
-        .await
-        .unwrap()
-        .expect("worktree");
-    daemon
-        .prepare_workspace_harness_for_test(&workspace, &worktree, &execution_settings)
-        .await
-        .expect("failed to prepare container runtime");
+        "http://127.0.0.1:4399",
+    )
+    .await;
+    let app = fixture.router();
+    let session = create_session_with_provider(&app, git_repo.path(), "codex").await;
+    ensure_workspace_harness_container(&app, session.workspace_id).await;
 
     let session_id = session.id.0.to_string();
-    post_message(&mut app, &session_id, PROMPT).await;
-    wait_for_done(&daemon, session.id).await;
-    let egress_guard = daemon
-        .workspace_harness_egress_guard_for_test(session.workspace_id)
-        .await
-        .unwrap();
+    post_message(&app, &session_id, PROMPT).await;
+    wait_for_done(&fixture.daemon, session.id).await;
+    let egress_guard = workspace_harness_egress_guard(&app, session.workspace_id).await;
     assert_eq!(
         egress_guard,
         Some(false),
@@ -658,6 +493,9 @@ sock.recv(4)
 #[ignore]
 async fn harness_container_sandbox_egress_deny_all() {
     let _ = tracing_subscriber::fmt::try_init();
+    let _sandbox_env_lock = ctx_daemon::test_support::sandbox_cli_env_test_lock()
+        .lock()
+        .await;
     if std::env::var("CTX_E2E_SANDBOX").ok().as_deref() != Some("1") {
         eprintln!("skipping: CTX_E2E_SANDBOX not set");
         return;
@@ -671,21 +509,17 @@ async fn harness_container_sandbox_egress_deny_all() {
         return;
     }
     let sandbox_cli = sandbox_cli_binary_for_tests().expect("sandbox CLI not found");
-    let _guard = EnvGuard::set(
-        "CTX_HARNESS_SANDBOX_CLI_PATH",
-        &sandbox_cli.to_string_lossy(),
-    );
+    let _guard = common::TestEnvGuard::set("CTX_HARNESS_SANDBOX_CLI_PATH", sandbox_cli.as_os_str());
 
     let image =
         std::env::var("CTX_E2E_SANDBOX_IMAGE").unwrap_or_else(|_| "python:3.11".to_string());
 
     let git_repo = setup_git_repo().await;
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
 
     let script_path = write_fake_crp_script(data_dir.path());
     configure_fake_provider(data_dir.path(), &script_path).await;
-    configure_container_network_settings(
+    let _execution_settings = configure_container_network_settings(
         data_dir.path(),
         ContainerMountMode::DiskIsolated,
         &image,
@@ -693,56 +527,22 @@ async fn harness_container_sandbox_egress_deny_all() {
         Vec::new(),
     )
     .await;
-    let settings = load_settings_from_data_root(data_dir.path()).await;
-    let execution_settings = settings.execution.clone().unwrap_or_default();
 
-    let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
-        HashMap::new();
-    providers.insert(
-        "codex".into(),
-        Arc::new(Tier1CrpAdapter::from_raw(
-            "codex",
-            "python3".to_string(),
-            vec![script_path.to_string_lossy().to_string()],
-        )),
-    );
-
-    let daemon = TestDaemon::new(
-        data_dir.path().to_path_buf(),
-        stores,
+    let providers = fake_crp_providers(&script_path);
+    let fixture = common::fake_daemon_fixture_in_data_dir_with_providers(
+        data_dir,
         providers,
-        "http://127.0.0.1:4399".to_string(),
-        None,
-    );
-    let mut app = common::router_for_daemon(&daemon);
-    let session = create_session_with_provider(&mut app, git_repo.path(), "codex").await;
-    let workspace = daemon
-        .global_store()
-        .get_workspace(session.workspace_id)
-        .await
-        .unwrap()
-        .expect("workspace");
-    let workspace_store = daemon
-        .store_for_workspace(session.workspace_id)
-        .await
-        .unwrap();
-    let worktree = workspace_store
-        .get_worktree(session.worktree_id)
-        .await
-        .unwrap()
-        .expect("worktree");
-    daemon
-        .prepare_workspace_harness_for_test(&workspace, &worktree, &execution_settings)
-        .await
-        .expect("failed to prepare container runtime");
+        "http://127.0.0.1:4399",
+    )
+    .await;
+    let app = fixture.router();
+    let session = create_session_with_provider(&app, git_repo.path(), "codex").await;
+    ensure_workspace_harness_container(&app, session.workspace_id).await;
 
     let session_id = session.id.0.to_string();
-    post_message(&mut app, &session_id, PROMPT).await;
-    wait_for_done(&daemon, session.id).await;
-    let egress_guard = daemon
-        .workspace_harness_egress_guard_for_test(session.workspace_id)
-        .await
-        .unwrap();
+    post_message(&app, &session_id, PROMPT).await;
+    wait_for_done(&fixture.daemon, session.id).await;
+    let egress_guard = workspace_harness_egress_guard(&app, session.workspace_id).await;
     assert!(
         egress_guard.unwrap_or(false),
         "egress guard was not configured"

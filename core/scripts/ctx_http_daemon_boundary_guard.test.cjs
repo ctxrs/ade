@@ -13,6 +13,7 @@ const {
   FAKE_DAEMON_EXTERNAL_TEST_STORE_ACCESS_PATTERNS,
   FAULT_INJECTION_TEST_STORE_ACCESS_PATTERNS,
   GLOBAL_ID_ROUTING_TEST_STORE_ACCESS_PATTERNS,
+  HARNESS_CONTAINER_SANDBOX_TEST_STORE_ACCESS_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
   IMAGE_ATTACHMENTS_TEST_STORE_ACCESS_PATTERNS,
   JJ_MERGE_QUEUE_BASICS_TEST_STORE_ACCESS_PATTERNS,
@@ -61,6 +62,7 @@ const {
   fakeDaemonExternalStorePatternsForPath,
   faultInjectionStorePatternsForPath,
   globalIdRoutingStorePatternsForPath,
+  harnessContainerSandboxStorePatternsForPath,
   imageAttachmentsStorePatternsForPath,
   isTestRustPath,
   jjMergeQueueBasicsStorePatternsForPath,
@@ -3240,6 +3242,79 @@ test("daemon boundary guard scopes provider-scenarios offline store facade root"
   assert.deepEqual(
     providerScenariosOfflineStorePatternsForPath(
       "core/crates/ctx-http/tests/provider_worker_reaping_offline.rs",
+    ),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects direct harness-container sandbox store access", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/harness_container_sandbox_e2e.rs",
+    contents: `
+      use ctx_settings_service::{load_settings, save_settings};
+      use ctx_store::{Store, StoreManager};
+      async fn fixture(daemon: TestDaemon, stores: StoreManager) {
+        let settings = load_settings(&store).await?;
+        save_settings(&store, &settings).await?;
+        let store = Store::open_sqlite(&db_path, None).await?;
+        let stores = common::setup_store(data_dir.path()).await;
+        let daemon = common::build_daemon(data_dir.path(), stores, providers, "http://127.0.0.1:0");
+        let app = common::router_for_daemon(&daemon);
+        let daemon = TestDaemon::new(data_root, stores, providers, base_url, None);
+        daemon.global_store().get_workspace(workspace_id).await?;
+        daemon.store_for_session(session_id).await?;
+        daemon.store_for_workspace(workspace_id).await?;
+        daemon.stores().global().await?;
+        store.list_session_events(session_id).await?;
+        workspace_store.get_worktree(worktree_id).await?;
+        daemon.prepare_workspace_harness_for_test(&workspace, &worktree, &execution).await?;
+        daemon.workspace_harness_egress_guard_for_test(workspace_id).await?;
+        let _event = SessionEventType::Done;
+        let _raw: Store;
+      }
+    `,
+    patterns: HARNESS_CONTAINER_SANDBOX_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct harness-container sandbox StoreManager access",
+      "direct harness-container sandbox StoreManager access",
+      "raw harness-container sandbox ctx_store Store",
+      "raw harness-container sandbox ctx_store Store",
+      "direct harness-container sandbox settings service",
+      "direct harness-container sandbox settings service",
+      "direct harness-container sandbox settings service",
+      "direct harness-container sandbox common setup helper",
+      "direct harness-container sandbox common setup helper",
+      "direct harness-container sandbox common setup helper",
+      "direct harness-container sandbox common setup helper",
+      "direct harness-container sandbox TestDaemon construction",
+      "direct harness-container sandbox daemon store access",
+      "direct harness-container sandbox daemon store access",
+      "direct harness-container sandbox daemon store access",
+      "direct harness-container sandbox daemon store access",
+      "direct harness-container sandbox raw session event query",
+      "direct harness-container sandbox raw session event query",
+      "direct harness-container sandbox raw workspace/worktree query",
+      "direct harness-container sandbox raw workspace/worktree query",
+      "direct harness-container sandbox daemon harness prep",
+      "direct harness-container sandbox daemon harness prep",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes harness-container sandbox store facade root", () => {
+  assert.deepEqual(
+    harnessContainerSandboxStorePatternsForPath(
+      "core/crates/ctx-http/tests/harness_container_sandbox_e2e.rs",
+    ),
+    HARNESS_CONTAINER_SANDBOX_TEST_STORE_ACCESS_PATTERNS,
+  );
+  assert.deepEqual(
+    harnessContainerSandboxStorePatternsForPath(
+      "core/crates/ctx-http/tests/provider_scenarios_offline.rs",
     ),
     [],
   );

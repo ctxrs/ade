@@ -342,6 +342,10 @@ const providerScenariosOfflineStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/provider_scenarios_offline.rs",
 ];
 
+const harnessContainerSandboxStoreFacadeTestRoots = [
+  "core/crates/ctx-http/tests/harness_container_sandbox_e2e.rs",
+];
+
 const worktreeArchiveStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/worktree_archive_http.rs",
 ];
@@ -1871,6 +1875,48 @@ const PROVIDER_SCENARIOS_OFFLINE_TEST_STORE_ACCESS_PATTERNS = [
   },
 ];
 
+const HARNESS_CONTAINER_SANDBOX_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct harness-container sandbox StoreManager access",
+    regex: /\bStoreManager\b/,
+  },
+  {
+    name: "raw harness-container sandbox ctx_store Store",
+    regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore::open_sqlite\s*\(/,
+    contentRegex: /\buse\s+ctx_store::\{(?=[^}]*\n)[\s\S]*?\bStore\b[\s\S]*?\}/gm,
+  },
+  {
+    name: "direct harness-container sandbox settings service",
+    regex: /\bctx_settings_service::(?:load_settings|save_settings)\s*\(|\buse\s+ctx_settings_service::[^;]*(?:load_settings|save_settings)\b|\b(?:load_settings|save_settings)\s*\(/,
+    contentRegex: /\buse\s+ctx_settings_service::\{(?=[^}]*\n)[\s\S]*?\b(?:load_settings|save_settings)\b[\s\S]*?\}/gm,
+  },
+  {
+    name: "direct harness-container sandbox common setup helper",
+    regex: /\b(?:crate::)?common::(?:setup_store|build_daemon|router_for_daemon)\s*\(|\buse\s+[^;]*\b(?:setup_store|build_daemon|router_for_daemon)\b/,
+    contentRegex: /\buse\s+[\s\S]*?\b(?:setup_store|build_daemon|router_for_daemon)\b[\s\S]*?;/gm,
+  },
+  {
+    name: "direct harness-container sandbox TestDaemon construction",
+    regex: /\bTestDaemon::new[A-Za-z0-9_]*\s*\(/,
+  },
+  {
+    name: "direct harness-container sandbox daemon store access",
+    regex: /\.(?:stores|global_store|store_for_session|store_for_workspace|uncached_store_for_workspace|store_for_task|store_for_worktree)\s*\(/,
+  },
+  {
+    name: "direct harness-container sandbox raw session event query",
+    regex: /\.list_session_events\s*\(|\bSessionEventType\b/,
+  },
+  {
+    name: "direct harness-container sandbox raw workspace/worktree query",
+    regex: /\.(?:get_workspace|get_worktree)\s*\(/,
+  },
+  {
+    name: "direct harness-container sandbox daemon harness prep",
+    regex: /\.(?:prepare_workspace_harness_for_test|workspace_harness_egress_guard_for_test)\s*\(/,
+  },
+];
+
 const WORKTREE_ARCHIVE_TEST_STORE_ACCESS_PATTERNS = [
   {
     name: "direct worktree-archive global store access",
@@ -2680,6 +2726,13 @@ function providerScenariosOfflineStorePatternsForPath(relativePath) {
   return [];
 }
 
+function harnessContainerSandboxStorePatternsForPath(relativePath) {
+  if (harnessContainerSandboxStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return HARNESS_CONTAINER_SANDBOX_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
 function worktreeArchiveStorePatternsForPath(relativePath) {
   if (worktreeArchiveStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return WORKTREE_ARCHIVE_TEST_STORE_ACCESS_PATTERNS;
@@ -3174,6 +3227,13 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
+        patterns: harnessContainerSandboxStorePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
         patterns: worktreeArchiveStorePatternsForPath(relativePath),
       }),
     );
@@ -3262,6 +3322,7 @@ module.exports = {
   FAKE_DAEMON_EXTERNAL_TEST_STORE_ACCESS_PATTERNS,
   FAULT_INJECTION_TEST_STORE_ACCESS_PATTERNS,
   GLOBAL_ID_ROUTING_TEST_STORE_ACCESS_PATTERNS,
+  HARNESS_CONTAINER_SANDBOX_TEST_STORE_ACCESS_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
   IMAGE_ATTACHMENTS_TEST_STORE_ACCESS_PATTERNS,
   JJ_MERGE_QUEUE_BASICS_TEST_STORE_ACCESS_PATTERNS,
@@ -3310,6 +3371,7 @@ module.exports = {
   fakeDaemonExternalStorePatternsForPath,
   faultInjectionStorePatternsForPath,
   globalIdRoutingStorePatternsForPath,
+  harnessContainerSandboxStorePatternsForPath,
   imageAttachmentsStorePatternsForPath,
   isTestRustPath,
   jjMergeQueueBasicsStorePatternsForPath,
