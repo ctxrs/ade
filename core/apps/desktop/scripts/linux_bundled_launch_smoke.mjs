@@ -19,6 +19,11 @@ const {
   resolveLinuxAppDirFromPath,
 } = require("../automation/helpers/linux_appdir_launch_env.cjs");
 
+const SESSION_START_ATTEMPTS = 2;
+const SESSION_START_TIMEOUT_MS = 60_000;
+const RETRYABLE_STARTUP_SESSION_FAILURE =
+  /(UND_ERR_HEADERS_TIMEOUT|Failed to create a session|WebDriver session creation timed out|IncompleteMessage|socket hang up|ECONNRESET|ECONNREFUSED)/i;
+
 const DESKTOP_APP_LAUNCH_ENV_KEYS = [
   "APPDIR",
   "APPIMAGE",
@@ -153,6 +158,35 @@ function sleep(ms) {
 function normalizeText(value, limit = 2_000) {
   const text = typeof value === "string" ? value : String(value || "");
   return text.length > limit ? `${text.slice(0, limit)}...` : text;
+}
+
+function errorText(error) {
+  return String(error?.stack || error?.message || error || "");
+}
+
+function isRetryableStartupSessionFailure(error) {
+  return RETRYABLE_STARTUP_SESSION_FAILURE.test(errorText(error));
+}
+
+async function withTimeout(promise, timeoutMs, label) {
+  let timer = null;
+  let timedOut = false;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+    if (timedOut && promise && typeof promise.catch === "function") {
+      promise.catch(() => {});
+    }
+  }
 }
 
 function pickEnv(env, keys) {
@@ -349,6 +383,14 @@ async function connectBrowser({ driverPort, appPath }) {
   });
 }
 
+async function connectBrowserWithTimeout({ driverPort, appPath }) {
+  return withTimeout(
+    connectBrowser({ driverPort, appPath }),
+    SESSION_START_TIMEOUT_MS,
+    "WebDriver session creation",
+  );
+}
+
 async function readLaunchState(browser) {
   return browser.execute(() => ({
     href: window.location.href,
@@ -407,20 +449,7 @@ async function terminateDriverProcess(proc) {
   sendSignal("SIGKILL");
 }
 
-async function main() {
-  if (process.platform !== "linux") {
-    fail(`linux bundled launch smoke only supports Linux, got ${process.platform}`);
-  }
-
-  const options = parseArgs();
-  if (!fs.existsSync(options.appPath)) {
-    fail(`bundled app not found: ${options.appPath}`);
-  }
-  const artifactDir = options.artifactDir || fs.mkdtempSync(path.join(os.tmpdir(), "ctx-linux-launch-smoke-"));
-  const { appLaunchEnv, appLaunchLog } = buildDesktopAppLaunchEnv({
-    appPath: options.appPath,
-    artifactDir,
-  });
+async function runLaunchAttempt({ options, artifactDir, appLaunchEnv, attempt, totalAttempts }) {
   // Linux WebKitWebDriver needs to launch the shipped AppRun directly. The exact
   // AppDir/AppImage environment is already on the tauri-driver process and is
   // inherited by the native WebDriver/app child.
@@ -439,6 +468,7 @@ async function main() {
     artifactDir,
     appLaunchEnv,
   });
+  fs.writeSync(driverLogFd, `\n--- linux bundled launch smoke attempt ${attempt}/${totalAttempts} ---\n`);
   writeLaunchDiagnostics({
     artifactDir,
     requestedAppPath: options.appPath,
@@ -460,7 +490,7 @@ async function main() {
     });
 
     await waitForTcpPort("127.0.0.1", driverPort, 30_000, "tauri-driver");
-    browser = await connectBrowser({ driverPort, appPath: applicationPath });
+    browser = await connectBrowserWithTimeout({ driverPort, appPath: applicationPath });
 
     const deadline = Date.now() + options.timeoutMs;
     let state = await readLaunchState(browser);
@@ -498,19 +528,12 @@ async function main() {
         }, null, 2)}`,
       );
     }
-
-    process.stdout.write(`${JSON.stringify({
-      ok: true,
-      app_path: options.appPath,
-      href: state.href,
-      pathname: state.pathname,
-      readyState: state.readyState,
-      hasRoot: state.hasRoot,
-      newWorkspaceVisible: state.newWorkspaceVisible,
-      artifactDir,
-      driverLogPath,
-      appLaunchLog,
-    }, null, 2)}\n`);
+    return { state, driverLogPath };
+  } catch (error) {
+    if (!browser && isRetryableStartupSessionFailure(error)) {
+      error.retryableStartupSessionFailure = true;
+    }
+    throw error;
   } finally {
     writeProcessSnapshot(path.join(artifactDir, "processes-after-session.log"));
     if (browser) {
@@ -524,6 +547,62 @@ async function main() {
     writeProcessSnapshot(path.join(artifactDir, "processes-after-cleanup.log"));
     fs.closeSync(driverLogFd);
   }
+}
+
+async function main() {
+  if (process.platform !== "linux") {
+    fail(`linux bundled launch smoke only supports Linux, got ${process.platform}`);
+  }
+
+  const options = parseArgs();
+  if (!fs.existsSync(options.appPath)) {
+    fail(`bundled app not found: ${options.appPath}`);
+  }
+  const artifactDir = options.artifactDir || fs.mkdtempSync(path.join(os.tmpdir(), "ctx-linux-launch-smoke-"));
+  const { appLaunchEnv, appLaunchLog } = buildDesktopAppLaunchEnv({
+    appPath: options.appPath,
+    artifactDir,
+  });
+
+  let lastError = null;
+  for (let attempt = 1; attempt <= SESSION_START_ATTEMPTS; attempt += 1) {
+    try {
+      const { state, driverLogPath } = await runLaunchAttempt({
+        options,
+        artifactDir,
+        appLaunchEnv,
+        attempt,
+        totalAttempts: SESSION_START_ATTEMPTS,
+      });
+
+      process.stdout.write(`${JSON.stringify({
+        ok: true,
+        app_path: options.appPath,
+        href: state.href,
+        pathname: state.pathname,
+        readyState: state.readyState,
+        hasRoot: state.hasRoot,
+        newWorkspaceVisible: state.newWorkspaceVisible,
+        artifactDir,
+        driverLogPath,
+        appLaunchLog,
+      }, null, 2)}\n`);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (
+        attempt < SESSION_START_ATTEMPTS
+        && error?.retryableStartupSessionFailure === true
+      ) {
+        process.stderr.write(
+          `linux bundled launch smoke retrying startup-only WebDriver session failure after attempt ${attempt}/${SESSION_START_ATTEMPTS}: ${normalizeText(errorText(error), 1_000)}\n`,
+        );
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw lastError || new Error("linux bundled launch smoke exhausted startup attempts");
 }
 
 main().catch((error) => {

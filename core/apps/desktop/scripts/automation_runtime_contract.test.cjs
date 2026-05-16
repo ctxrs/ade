@@ -247,6 +247,13 @@ test("linux bundled launch smoke passes explicit tauri-driver native port", () =
   assert.match(script, /TAURI_DRIVER_NATIVE_PORT: String\(nativePort\)/);
   assert.match(script, /failed to allocate distinct tauri-driver native port/);
   assert.match(script, /requireWorkspacePackage\("webdriverio"\)/);
+  assert.match(script, /const SESSION_START_ATTEMPTS = 2/);
+  assert.match(script, /const SESSION_START_TIMEOUT_MS = 60_000/);
+  assert.match(script, /RETRYABLE_STARTUP_SESSION_FAILURE/);
+  assert.match(script, /UND_ERR_HEADERS_TIMEOUT/);
+  assert.match(script, /WebDriver session creation timed out/);
+  assert.match(script, /connectBrowserWithTimeout/);
+  assert.match(script, /retrying startup-only WebDriver session failure/);
   assert.match(script, /buildLinuxAppDirLaunchEnv/);
   assert.match(script, /resolveLinuxAppDirFromPath/);
   assert.match(script, /launch-env\.json/);
@@ -268,7 +275,7 @@ test("linux bundled launch smoke passes explicit tauri-driver native port", () =
   assert.match(script, /for \(const key of DESKTOP_APP_LAUNCH_ENV_KEYS\)[\s\S]*process\.env\[key\]/);
   assert.match(script, /process\.env\.CTX_AUTOMATION_SHIPPED_APP_BUNDLES_DIR/);
   assert.match(script, /process\.env\.CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR/);
-  assert.match(script, /connectBrowser\(\{ driverPort, appPath: applicationPath \}\)/);
+  assert.match(script, /connectBrowserWithTimeout\(\{ driverPort, appPath: applicationPath \}\)/);
   assert.match(script, /const applicationPath = options\.appPath;/);
   assert.doesNotMatch(script, /createLinuxAppDirLaunchWrapper/);
   assert.match(remoteWorkspace, /prepare_smoke_corepack\(\)/);
