@@ -11,6 +11,7 @@ async fn delete_task_removes_unused_worktree_rows_and_indexes() {
         managed_root,
         ..
     } = create_managed_task_fixture(temp.path()).await;
+    let state = state.daemon();
 
     let tasks = task_api_task_state(&state);
     let status = delete_task(tasks, Path(task.id.0.to_string()))

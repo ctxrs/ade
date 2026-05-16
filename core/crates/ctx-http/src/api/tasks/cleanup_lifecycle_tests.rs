@@ -1,4 +1,7 @@
 use super::*;
+use std::collections::HashMap;
+
+use crate::test_support::DataRootTestDaemonFixture;
 use ctx_core::models::VcsKind;
 use ctx_daemon::test_support::{TaskLifecycleWorktreeSeed, TestDaemon};
 use ctx_workspace_services::worktree_vcs::{managed_worktree_path, standaloneize_worktree_git_dir};
@@ -33,10 +36,9 @@ fn init_git_workspace(root: &StdPath) -> String {
     git_output(&["rev-parse", "HEAD"], root)
 }
 
-async fn test_state(data_root: &StdPath) -> TestDaemon {
-    TestDaemon::new_for_test(data_root.to_path_buf(), "http://127.0.0.1:4310".to_string())
+async fn test_state(data_root: &StdPath) -> DataRootTestDaemonFixture {
+    DataRootTestDaemonFixture::with_providers(data_root, HashMap::new(), "http://127.0.0.1:4310")
         .await
-        .expect("create test daemon")
 }
 
 async fn insert_managed_worktree(
@@ -82,7 +84,8 @@ async fn delete_task_prunes_and_deletes_branch_for_standalone_managed_worktree()
     let repo_root = temp.path().join("repo");
     std::fs::create_dir_all(&repo_root).expect("create repo root");
     let base_commit = init_git_workspace(&repo_root);
-    let state = test_state(temp.path()).await;
+    let fixture = test_state(temp.path()).await;
+    let state = fixture.daemon();
     let workspace = state
         .seed_task_lifecycle_workspace_for_test("ws", &repo_root, VcsKind::Git)
         .await

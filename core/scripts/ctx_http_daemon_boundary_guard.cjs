@@ -1949,7 +1949,7 @@ const TASK_LIFECYCLE_TEST_STORE_ACCESS_PATTERNS = [
   },
   {
     name: "direct task-lifecycle raw TestDaemon construction",
-    regex: /\bTestDaemon::(?:new|new_with_public_base_url|new_with_runtime_flags)\s*\(/,
+    regex: /\bTestDaemon::new[A-Za-z0-9_]*\s*\(/,
   },
   {
     name: "direct task-lifecycle settings persistence",

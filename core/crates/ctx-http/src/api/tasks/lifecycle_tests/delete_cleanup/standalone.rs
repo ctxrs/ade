@@ -11,6 +11,7 @@ async fn delete_task_removes_standalone_managed_worktree_when_workspace_root_is_
         worktree,
         managed_root,
     } = create_managed_task_fixture(temp.path()).await;
+    let state = state.daemon();
     standaloneize_worktree_git_dir(&managed_root)
         .await
         .expect("standaloneize managed worktree");

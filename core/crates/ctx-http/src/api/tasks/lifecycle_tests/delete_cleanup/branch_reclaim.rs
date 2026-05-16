@@ -11,6 +11,7 @@ async fn delete_task_removes_worktree_metadata_even_when_branch_reclaim_fails() 
         worktree,
         managed_root,
     } = create_managed_task_fixture(temp.path()).await;
+    let state = state.daemon();
 
     let _branch_lock = create_branch_lock(
         &repo_root,

@@ -14,6 +14,7 @@ async fn unarchive_task_fails_closed_for_corrupt_binding_snapshot() {
         managed_root,
         ..
     } = create_managed_task_fixture(temp.path()).await;
+    let state = state.daemon();
     state
         .seed_task_lifecycle_sandbox_binding_for_test(TaskLifecycleSandboxBindingSeed {
             worktree_id: worktree.id,

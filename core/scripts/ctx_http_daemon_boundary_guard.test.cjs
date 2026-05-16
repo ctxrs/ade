@@ -3216,6 +3216,7 @@ test("daemon boundary guard rejects direct task-lifecycle store access", () => {
         save_settings(daemon.global_store(), &settings).await?;
         persist_settings(daemon.global_store(), &settings).await?;
         let daemon = TestDaemon::new(data_dir, stores, providers, "http://127.0.0.1:0".into(), None);
+        let daemon = TestDaemon::new_for_test(data_dir, "http://127.0.0.1:0".into()).await?;
         daemon
           .handle()
           .workspaces();
@@ -3244,6 +3245,7 @@ test("daemon boundary guard rejects direct task-lifecycle store access", () => {
       "raw task-lifecycle ctx_store Store",
       "raw task-lifecycle StoreManager",
       "raw task-lifecycle StoreManager",
+      "direct task-lifecycle raw TestDaemon construction",
       "direct task-lifecycle raw TestDaemon construction",
       "direct task-lifecycle settings persistence",
       "direct task-lifecycle settings persistence",
@@ -3277,6 +3279,25 @@ test("daemon boundary guard rejects storage-admission raw daemon/router helpers"
       "direct storage-admission router composition",
     ],
   );
+});
+
+test("daemon boundary guard allows task-lifecycle data-root daemon fixture", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/tasks/lifecycle_tests/fixtures.rs",
+    contents: `
+      async fn helper(data_root: &StdPath) {
+        let fixture = crate::test_support::DataRootTestDaemonFixture::with_providers(
+          data_root,
+          HashMap::new(),
+          "http://127.0.0.1:4310",
+        ).await;
+        fixture.daemon().seed_task_lifecycle_task_for_test(workspace, "task").await?;
+      }
+    `,
+    patterns: TASK_LIFECYCLE_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(violations, []);
 });
 
 test("daemon boundary guard allows storage-admission data-root daemon fixture", () => {

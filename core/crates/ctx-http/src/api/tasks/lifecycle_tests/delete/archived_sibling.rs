@@ -11,6 +11,7 @@ async fn delete_task_preserves_worktree_for_archived_sibling_session_reference()
         worktree,
         managed_root,
     } = create_managed_task_fixture(temp.path()).await;
+    let state = state.daemon();
     let archived_task = state
         .seed_task_lifecycle_task_for_test(workspace.id, "archived")
         .await

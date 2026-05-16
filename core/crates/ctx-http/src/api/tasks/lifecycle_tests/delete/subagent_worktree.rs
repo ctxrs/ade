@@ -11,6 +11,7 @@ async fn delete_task_cleans_up_archived_subagent_worktree() {
         worktree: parent_worktree,
         managed_root: parent_root,
     } = create_managed_task_fixture(temp.path()).await;
+    let state = state.daemon();
     let base_commit = parent_worktree.base_commit_sha.clone();
     let (child_worktree, child_root) = insert_managed_worktree(
         &state,

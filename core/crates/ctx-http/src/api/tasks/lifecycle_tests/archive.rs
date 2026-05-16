@@ -14,6 +14,7 @@ async fn archive_task_reclaims_managed_worktree_but_preserves_rematerialization_
         worktree,
         managed_root,
     } = create_managed_task_fixture(temp.path()).await;
+    let state = state.daemon();
 
     let host_materialization_root = temp.path().join("host-shadow");
     std::fs::create_dir_all(&host_materialization_root).expect("create host shadow root");
@@ -97,6 +98,7 @@ async fn archive_task_reports_cleanup_failure_when_branch_reclaim_fails() {
         managed_root,
         ..
     } = create_managed_task_fixture(temp.path()).await;
+    let state = state.daemon();
     let branch = worktree
         .git_branch
         .as_deref()

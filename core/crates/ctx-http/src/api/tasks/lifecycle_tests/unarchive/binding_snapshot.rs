@@ -14,6 +14,7 @@ async fn unarchive_task_recreates_managed_root_and_keeps_binding_snapshot_runtim
         worktree,
         managed_root,
     } = create_managed_task_fixture(temp.path()).await;
+    let state = state.daemon();
 
     let persisted_snapshot = ctx_settings_model::ExecutionSettings {
         mode: ctx_settings_model::ExecutionMode::Sandbox,

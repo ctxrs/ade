@@ -1,4 +1,7 @@
 use super::*;
+use std::collections::HashMap;
+
+use crate::test_support::DataRootTestDaemonFixture;
 use ctx_core::models::{Task, VcsKind, Workspace, Worktree};
 use ctx_daemon::test_support::{TaskLifecycleSnapshot, TaskLifecycleWorktreeSeed, TestDaemon};
 
@@ -9,7 +12,7 @@ pub(super) use git::{create_branch_lock, git, init_git_workspace};
 
 pub(super) struct ManagedTaskFixture {
     pub(super) repo_root: PathBuf,
-    pub(super) state: TestDaemon,
+    pub(super) state: DataRootTestDaemonFixture,
     pub(super) workspace: Workspace,
     pub(super) task: Task,
     pub(super) worktree: Worktree,
@@ -21,16 +24,17 @@ pub(super) async fn create_managed_task_fixture(data_root: &StdPath) -> ManagedT
     std::fs::create_dir_all(&repo_root).expect("create repo root");
     let base_commit = init_git_workspace(&repo_root);
     let state = test_state(data_root).await;
-    let workspace = state
+    let daemon = state.daemon();
+    let workspace = daemon
         .seed_task_lifecycle_workspace_for_test("ws", &repo_root, VcsKind::Git)
         .await
         .expect("create workspace");
-    let task = state
+    let task = daemon
         .seed_task_lifecycle_task_for_test(workspace.id, "task")
         .await
         .expect("create task");
     let (worktree, managed_root) = insert_managed_worktree(
-        &state,
+        daemon,
         data_root,
         &workspace,
         task.id,
@@ -50,10 +54,9 @@ pub(super) async fn create_managed_task_fixture(data_root: &StdPath) -> ManagedT
     }
 }
 
-pub(super) async fn test_state(data_root: &StdPath) -> TestDaemon {
-    TestDaemon::new_for_test(data_root.to_path_buf(), "http://127.0.0.1:4310".to_string())
+pub(super) async fn test_state(data_root: &StdPath) -> DataRootTestDaemonFixture {
+    DataRootTestDaemonFixture::with_providers(data_root, HashMap::new(), "http://127.0.0.1:4310")
         .await
-        .expect("create test daemon")
 }
 
 pub(super) async fn save_test_execution_settings(

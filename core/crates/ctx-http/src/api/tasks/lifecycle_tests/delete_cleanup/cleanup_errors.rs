@@ -6,7 +6,8 @@ async fn delete_task_cleanup_errors_preserve_worktree_row_and_index() {
     let repo_root = temp.path().join("repo");
     std::fs::create_dir_all(&repo_root).expect("create repo root");
     let base_commit = init_git_workspace(&repo_root);
-    let state = test_state(temp.path()).await;
+    let fixture = test_state(temp.path()).await;
+    let state = fixture.daemon();
     let workspace = state
         .seed_task_lifecycle_workspace_for_test("ws", &repo_root, VcsKind::Git)
         .await

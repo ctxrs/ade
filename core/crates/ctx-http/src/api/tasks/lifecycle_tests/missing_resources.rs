@@ -3,22 +3,24 @@ use super::*;
 #[tokio::test]
 async fn task_mutations_return_not_found_for_unknown_task() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let state = test_state(temp.path()).await;
+    let fixture = test_state(temp.path()).await;
+    let state = fixture.daemon();
     let missing_task_id = TaskId::new();
-    assert_task_mutations_return_not_found(&state, missing_task_id).await;
+    assert_task_mutations_return_not_found(state, missing_task_id).await;
 }
 
 #[tokio::test]
 async fn task_mutations_return_not_found_for_stale_task_index() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let state = test_state(temp.path()).await;
+    let fixture = test_state(temp.path()).await;
+    let state = fixture.daemon();
     let stale_task_id = TaskId::new();
     state
         .seed_task_lifecycle_stale_task_index_for_test(stale_task_id, WorkspaceId::new())
         .await
         .expect("seed stale task index");
 
-    assert_task_mutations_return_not_found(&state, stale_task_id).await;
+    assert_task_mutations_return_not_found(state, stale_task_id).await;
 }
 
 async fn assert_task_mutations_return_not_found(state: &TestDaemon, missing_task_id: TaskId) {
