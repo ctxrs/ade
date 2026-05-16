@@ -223,6 +223,10 @@ const imageAttachmentsStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/image_attachments_http_e2e.rs",
 ];
 
+const workspaceAttachmentsDemoStoreFacadeTestRoots = [
+  "core/crates/ctx-http/tests/attachments_demo_react.rs",
+];
+
 const worktreeVcsSnapshotStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/worktree_vcs_snapshot.rs",
 ];
@@ -841,6 +845,49 @@ const IMAGE_ATTACHMENTS_TEST_STORE_ACCESS_PATTERNS = [
   {
     name: "direct image attachments session message query",
     regex: /\.(?:count_user_messages_for_session|list_messages_for_session|get_message)\s*\(/,
+  },
+];
+
+const WORKSPACE_ATTACHMENTS_DEMO_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct workspace attachments demo StoreManager access",
+    regex: /\bStoreManager\b/,
+  },
+  {
+    name: "raw workspace attachments demo ctx_store Store",
+    regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore::/,
+    contentRegex: /\buse\s+ctx_store::\{(?=[^}]*\n)[\s\S]*?\bStore\b[\s\S]*?\}/gm,
+  },
+  {
+    name: "direct workspace attachments demo raw TestDaemon construction",
+    regex: /\bTestDaemon::new[A-Za-z0-9_]*\s*\(/,
+  },
+  {
+    name: "direct workspace attachments demo store setup helper",
+    regex: /\b(?:crate::)?common::setup_store\s*\(|\buse\s+[^;]*\bsetup_store\b|\bsetup_store\s*\(/,
+    contentRegex: /\buse\s+[\s\S]*?\bsetup_store\b[\s\S]*?;/gm,
+  },
+  {
+    name: "direct workspace attachments demo daemon construction helper",
+    regex: /\b(?:crate::)?common::build_daemon\s*\(|\buse\s+[^;]*\bbuild_daemon\b|\bbuild_daemon\s*\(/,
+    contentRegex: /\buse\s+[\s\S]*?\bbuild_daemon\b[\s\S]*?;/gm,
+  },
+  {
+    name: "direct workspace attachments demo daemon router composition",
+    regex: /\b(?:crate::)?common::router_for_daemon\s*\(|\buse\s+[^;]*\brouter_for_daemon\b|\brouter_for_daemon\s*\(/,
+    contentRegex: /\buse\s+[\s\S]*?\brouter_for_daemon\b[\s\S]*?;/gm,
+  },
+  {
+    name: "direct workspace attachments demo generic store access",
+    regex: /\.(?:stores|global_store|store_for_session|store_for_workspace|uncached_store_for_workspace|store_for_task|store_for_worktree)\s*\(/,
+  },
+  {
+    name: "direct workspace attachments demo manual worktree setup",
+    regex: /\bWorktree\s*\{|\binsert_worktree\s*\(|\bcreate_worktree\s*\(/,
+  },
+  {
+    name: "direct workspace attachments demo generic seed helper",
+    regex: /\bseed_(?:workspace|task_lifecycle_workspace|task_lifecycle_task)_for_test\s*\(/,
   },
 ];
 
@@ -2292,6 +2339,13 @@ function imageAttachmentsStorePatternsForPath(relativePath) {
   return [];
 }
 
+function workspaceAttachmentsDemoStorePatternsForPath(relativePath) {
+  if (workspaceAttachmentsDemoStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return WORKSPACE_ATTACHMENTS_DEMO_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
 function worktreeVcsSnapshotStorePatternsForPath(relativePath) {
   if (worktreeVcsSnapshotStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return WORKTREE_VCS_SNAPSHOT_TEST_STORE_ACCESS_PATTERNS;
@@ -2755,6 +2809,13 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
+        patterns: workspaceAttachmentsDemoStorePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
         patterns: worktreeVcsSnapshotStorePatternsForPath(relativePath),
       }),
     );
@@ -3000,6 +3061,7 @@ module.exports = {
   UPDATE_ROUTE_FIXTURE_PATTERNS,
   WORKSPACE_MERGE_QUEUE_CONFIG_TEST_STORE_ACCESS_PATTERNS,
   WORKSPACE_RUNTIME_SETTINGS_TEST_STORE_ACCESS_PATTERNS,
+  WORKSPACE_ATTACHMENTS_DEMO_TEST_STORE_ACCESS_PATTERNS,
   WORKSPACE_VCS_SETUP_FIXTURE_PATTERNS,
   WORKTREE_ARCHIVE_TEST_STORE_ACCESS_PATTERNS,
   WORKTREE_VCS_SNAPSHOT_TEST_STORE_ACCESS_PATTERNS,
@@ -3044,6 +3106,7 @@ module.exports = {
   updateRouteFixturePatternsForPath,
   worktreeArchiveStorePatternsForPath,
   workspaceMergeQueueConfigStorePatternsForPath,
+  workspaceAttachmentsDemoStorePatternsForPath,
   workspaceRuntimeSettingsStorePatternsForPath,
   workspaceVcsSetupFixturePatternsForPath,
   worktreeVcsSnapshotStorePatternsForPath,

@@ -44,6 +44,7 @@ const {
   UPDATE_ROUTE_FIXTURE_PATTERNS,
   WORKSPACE_MERGE_QUEUE_CONFIG_TEST_STORE_ACCESS_PATTERNS,
   WORKSPACE_RUNTIME_SETTINGS_TEST_STORE_ACCESS_PATTERNS,
+  WORKSPACE_ATTACHMENTS_DEMO_TEST_STORE_ACCESS_PATTERNS,
   WORKSPACE_VCS_SETUP_FIXTURE_PATTERNS,
   WORKTREE_ARCHIVE_TEST_STORE_ACCESS_PATTERNS,
   WORKTREE_VCS_SNAPSHOT_TEST_STORE_ACCESS_PATTERNS,
@@ -88,6 +89,7 @@ const {
   updateRouteFixturePatternsForPath,
   worktreeArchiveStorePatternsForPath,
   workspaceMergeQueueConfigStorePatternsForPath,
+  workspaceAttachmentsDemoStorePatternsForPath,
   workspaceRuntimeSettingsStorePatternsForPath,
   workspaceVcsSetupFixturePatternsForPath,
   worktreeVcsSnapshotStorePatternsForPath,
@@ -1407,6 +1409,98 @@ test("daemon boundary guard scopes image attachments store facade root", () => {
   );
   assert.deepEqual(
     imageAttachmentsStorePatternsForPath("core/crates/ctx-http/tests/common/mod.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects workspace attachments demo raw setup", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/attachments_demo_react.rs",
+    contents: `
+      use ctx_store::{Store, StoreManager};
+      use common::{setup_store, build_daemon, router_for_daemon};
+      async fn helper(daemon: TestDaemon) {
+        let stores = StoreManager::open(data_root).await?;
+        let _stores = common::setup_store(data_root).await;
+        let _stores = setup_store(data_root).await;
+        let _daemon = TestDaemon::new(data_root, stores, providers, base_url, None);
+        let _daemon = common::build_daemon(data_root, stores, providers, base_url);
+        let _daemon = build_daemon(data_root, stores, providers, base_url);
+        let _app = common::router_for_daemon(&daemon);
+        let _app = router_for_daemon(&daemon);
+        daemon.global_store().create_workspace("demo".into(), root.into(), VcsKind::Git).await?;
+        daemon.store_for_workspace(workspace_id).await?;
+        let worktree = Worktree { id, workspace_id, root_path, base_commit_sha, git_branch: None };
+        store.insert_worktree(worktree).await?;
+        store.create_worktree(workspace_id, root_path, base_commit_sha, None).await?;
+        daemon.seed_workspace_for_test("demo", root, VcsKind::Git).await?;
+        daemon.seed_task_lifecycle_workspace_for_test("demo", root, VcsKind::Git).await?;
+        daemon.seed_task_lifecycle_task_for_test(workspace_id, "demo").await?;
+        let _raw = ctx_store::Store::open_sqlite(path, None).await?;
+        Store::open_sqlite(path, None).await?;
+      }
+    `,
+    patterns: WORKSPACE_ATTACHMENTS_DEMO_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct workspace attachments demo StoreManager access",
+      "direct workspace attachments demo StoreManager access",
+      "raw workspace attachments demo ctx_store Store",
+      "raw workspace attachments demo ctx_store Store",
+      "raw workspace attachments demo ctx_store Store",
+      "direct workspace attachments demo raw TestDaemon construction",
+      "direct workspace attachments demo store setup helper",
+      "direct workspace attachments demo store setup helper",
+      "direct workspace attachments demo store setup helper",
+      "direct workspace attachments demo store setup helper",
+      "direct workspace attachments demo daemon construction helper",
+      "direct workspace attachments demo daemon construction helper",
+      "direct workspace attachments demo daemon construction helper",
+      "direct workspace attachments demo daemon construction helper",
+      "direct workspace attachments demo daemon router composition",
+      "direct workspace attachments demo daemon router composition",
+      "direct workspace attachments demo daemon router composition",
+      "direct workspace attachments demo daemon router composition",
+      "direct workspace attachments demo generic store access",
+      "direct workspace attachments demo generic store access",
+      "direct workspace attachments demo manual worktree setup",
+      "direct workspace attachments demo manual worktree setup",
+      "direct workspace attachments demo manual worktree setup",
+      "direct workspace attachments demo generic seed helper",
+      "direct workspace attachments demo generic seed helper",
+      "direct workspace attachments demo generic seed helper",
+    ],
+  );
+});
+
+test("daemon boundary guard allows workspace attachments demo fixture path", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/attachments_demo_react.rs",
+    contents: `
+      async fn helper(data_root: &Path, ws_root: &Path) {
+        let fixture = common::fake_daemon_fixture_for_data_root(data_root, "http://127.0.0.1:0").await;
+        let seeded = fixture.daemon.seed_workspace_attachments_demo_fixture_for_test("demo", ws_root, base_commit).await?;
+        fixture.daemon.materialize_workspace_attachments_for_test(&seeded.workspace, &seeded.worktree, configs).await?;
+      }
+    `,
+    patterns: WORKSPACE_ATTACHMENTS_DEMO_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(violations, []);
+});
+
+test("daemon boundary guard scopes workspace attachments demo root", () => {
+  assert.deepEqual(
+    workspaceAttachmentsDemoStorePatternsForPath(
+      "core/crates/ctx-http/tests/attachments_demo_react.rs",
+    ),
+    WORKSPACE_ATTACHMENTS_DEMO_TEST_STORE_ACCESS_PATTERNS,
+  );
+  assert.deepEqual(
+    workspaceAttachmentsDemoStorePatternsForPath("core/crates/ctx-http/tests/common/mod.rs"),
     [],
   );
 });

@@ -89,6 +89,12 @@ pub struct TaskArchiveManagedWorktreesSnapshot {
     pub managed_branches: Vec<String>,
 }
 
+pub struct WorkspaceAttachmentsDemoFixture {
+    pub workspace: Workspace,
+    pub worktree: Worktree,
+    pub task: Task,
+}
+
 pub enum HotEndpointManualHeadProbe {
     UnexpectedlySucceeded,
     FailedClosed,
@@ -705,6 +711,56 @@ impl TestDaemon {
             .await?;
         let _ = self.state.store_for_workspace(workspace.id).await?;
         Ok(workspace)
+    }
+
+    pub async fn seed_workspace_attachments_demo_fixture_for_test(
+        &self,
+        name: &str,
+        root_path: &Path,
+        base_commit_sha: String,
+    ) -> anyhow::Result<WorkspaceAttachmentsDemoFixture> {
+        let workspace = self
+            .state
+            .global_store()
+            .create_workspace(
+                name.to_string(),
+                root_path.to_string_lossy().to_string(),
+                VcsKind::Git,
+            )
+            .await?;
+        let store = self.state.store_for_workspace(workspace.id).await?;
+        let worktree = store
+            .create_worktree(
+                workspace.id,
+                root_path.to_string_lossy().to_string(),
+                base_commit_sha,
+                Some("main".to_string()),
+            )
+            .await?;
+        let task = store
+            .create_task(workspace.id, name.to_string(), None)
+            .await?;
+        store
+            .set_task_primary_worktree(task.id, worktree.id)
+            .await?;
+        let task = store
+            .get_task(task.id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("seeded attachment demo task missing"))?;
+        self.state
+            .global_store()
+            .upsert_workspace_worktree_index(worktree.id, workspace.id)
+            .await?;
+        self.state
+            .global_store()
+            .upsert_workspace_task_index(task.id, workspace.id)
+            .await?;
+
+        Ok(WorkspaceAttachmentsDemoFixture {
+            workspace,
+            worktree,
+            task,
+        })
     }
 
     pub async fn save_execution_settings_for_test(

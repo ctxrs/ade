@@ -1,154 +1,152 @@
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+mod common;
 
-use tempfile::TempDir;
-use tokio::process::Command;
+#[cfg(unix)]
+mod unix_smoke {
+    use super::common;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::{Path, PathBuf};
 
-use ctx_core::ids::WorktreeId;
-use ctx_core::models::{VcsKind, WorkspaceAttachmentKind, Worktree};
-use ctx_daemon::test_support::TestDaemon;
-use ctx_fs::git::rev_parse_head;
-use ctx_store::StoreManager;
-use ctx_workspace_attachments::AttachmentConfig;
+    use tempfile::TempDir;
+    use tokio::process::Command;
 
-async fn run_git(root: &Path, args: &[&str]) {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(args)
-        .output()
-        .await
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "git {:?} failed: {}",
-        args,
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
+    use ctx_core::models::WorkspaceAttachmentKind;
+    use ctx_fs::git::rev_parse_head;
+    use ctx_workspace_attachments::AttachmentConfig;
 
-fn copy_dir_recursive(src: &Path, dest: &Path) {
-    std::fs::create_dir_all(dest).unwrap();
-    for entry in std::fs::read_dir(src).unwrap() {
-        let entry = entry.unwrap();
-        let ty = entry.file_type().unwrap();
-        let target = dest.join(entry.file_name());
-        if ty.is_dir() {
-            copy_dir_recursive(&entry.path(), &target);
-        } else if ty.is_file() {
-            std::fs::copy(entry.path(), target).unwrap();
+    async fn run_git(root: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn copy_dir_recursive(src: &Path, dest: &Path) {
+        std::fs::create_dir_all(dest).unwrap();
+        for entry in std::fs::read_dir(src).unwrap() {
+            let entry = entry.unwrap();
+            let ty = entry.file_type().unwrap();
+            let target = dest.join(entry.file_name());
+            if ty.is_dir() {
+                copy_dir_recursive(&entry.path(), &target);
+            } else if ty.is_file() {
+                std::fs::copy(entry.path(), target).unwrap();
+            }
         }
     }
-}
 
-fn fixture_root() -> PathBuf {
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("core/fixtures/workspace-attachments-demo");
-    repo_root
-}
+    fn fixture_root() -> PathBuf {
+        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("core/fixtures/workspace-attachments-demo");
+        repo_root
+    }
 
-#[tokio::test]
-#[ignore]
-async fn attachments_demo_react_smoketest() {
-    let temp = TempDir::new().unwrap();
-    let ws_root = temp.path().join("workspace");
-    copy_dir_recursive(&fixture_root(), &ws_root);
-
-    run_git(&ws_root, &["init"]).await;
-    run_git(&ws_root, &["config", "user.email", "test@example.com"]).await;
-    run_git(&ws_root, &["config", "user.name", "Test"]).await;
-    std::fs::write(ws_root.join("README.md"), "demo\n").unwrap();
-    run_git(&ws_root, &["add", "."]).await;
-    run_git(&ws_root, &["commit", "-m", "init"]).await;
-
-    let data_dir = TempDir::new().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
-
-    let ws = stores
-        .global()
-        .create_workspace(
-            "demo".to_string(),
-            ws_root.to_string_lossy().to_string(),
-            VcsKind::Git,
+    fn write_fake_docs_mirror_bin(bin_dir: &Path) -> PathBuf {
+        let bin = bin_dir.join("ctx-docs-mirror");
+        std::fs::write(
+            &bin,
+            r#"#!/bin/sh
+set -eu
+out=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--out" ]; then
+    shift
+    out="$1"
+  fi
+  shift
+done
+if [ -z "$out" ]; then
+  echo "missing --out" >&2
+  exit 2
+fi
+mkdir -p "$out"
+printf '<!doctype html>\n<title>React docs</title>\n' > "$out/index.html"
+"#,
         )
-        .await
         .unwrap();
-    let store = stores.workspace(ws.id).await.unwrap();
-    let base_commit_sha = rev_parse_head(&ws_root).await.unwrap();
-    let worktree = Worktree {
-        id: WorktreeId::new(),
-        workspace_id: ws.id,
-        root_path: ws_root.to_string_lossy().to_string(),
-        base_commit_sha,
-        vcs_kind: Some(VcsKind::Git),
-        base_revision: None,
-        vcs_ref: None,
-        git_branch: None,
-        created_at: chrono::Utc::now(),
-        bootstrap_status: None,
-        bootstrap_started_at: None,
-        bootstrap_finished_at: None,
-        bootstrap_exit_code: None,
-        bootstrap_timeout_sec: None,
-        bootstrap_error: None,
-        bootstrap_log_path: None,
-        bootstrap_log_truncated: None,
-        bootstrap_command: None,
-        bootstrap_script_path: None,
-    };
-    store.insert_worktree(worktree.clone()).await.unwrap();
-    let _task = store
-        .create_task(ws.id, "demo".to_string(), None)
-        .await
-        .unwrap();
+        let mut permissions = std::fs::metadata(&bin).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&bin, permissions).unwrap();
+        bin
+    }
 
-    let providers: std::collections::HashMap<
-        String,
-        std::sync::Arc<dyn ctx_providers::adapters::ProviderAdapter>,
-    > = std::collections::HashMap::new();
-    let daemon = TestDaemon::new(
-        data_dir.path().to_path_buf(),
-        stores,
-        providers,
-        "http://127.0.0.1:0".to_string(),
-        None,
-    );
+    #[tokio::test]
+    #[ignore]
+    async fn attachments_demo_react_smoketest() {
+        let temp = TempDir::new().unwrap();
+        let ws_root = temp.path().join("workspace");
+        copy_dir_recursive(&fixture_root(), &ws_root);
 
-    let mounts = daemon
-        .materialize_workspace_attachments_for_test(
-            &ws,
-            &worktree,
-            [
-                AttachmentConfig {
-                    kind: WorkspaceAttachmentKind::ReferenceRepo,
-                    name: "react".to_string(),
-                    source: ws_root.to_string_lossy().to_string(),
-                    revision: Some("main".to_string()),
-                    subpath: None,
-                    mount_relpath: None,
-                    mode: None,
-                    update_policy: None,
-                },
-                AttachmentConfig {
-                    kind: WorkspaceAttachmentKind::DocMirror,
-                    name: "react-docs".to_string(),
-                    source: ".ctx/scripts/fetch-react-docs.sh".to_string(),
-                    revision: None,
-                    subpath: None,
-                    mount_relpath: None,
-                    mode: None,
-                    update_policy: None,
-                },
-            ],
-        )
-        .await
-        .unwrap();
-    assert!(!mounts.is_empty());
-    assert!(ws_root.join(".ctx/attachments/refs/react").exists());
-    assert!(ws_root.join(".ctx/attachments/docs/react-docs").exists());
+        run_git(&ws_root, &["init"]).await;
+        run_git(&ws_root, &["config", "user.email", "test@example.com"]).await;
+        run_git(&ws_root, &["config", "user.name", "Test"]).await;
+        std::fs::write(ws_root.join("README.md"), "demo\n").unwrap();
+        run_git(&ws_root, &["add", "."]).await;
+        run_git(&ws_root, &["commit", "-m", "init"]).await;
+
+        let data_dir = TempDir::new().unwrap();
+        let bin_dir = TempDir::new().unwrap();
+        let docs_mirror_bin = write_fake_docs_mirror_bin(bin_dir.path());
+        let _env_lock = common::process_env_test_lock().lock().await;
+        let _docs_mirror_bin =
+            common::TestEnvGuard::set("CTX_DOCS_MIRROR_BIN", docs_mirror_bin.as_os_str());
+        let base_commit_sha = rev_parse_head(&ws_root).await.unwrap();
+        let fixture =
+            common::fake_daemon_fixture_for_data_root(data_dir.path(), "http://127.0.0.1:0").await;
+        let seeded = fixture
+            .daemon
+            .seed_workspace_attachments_demo_fixture_for_test("demo", &ws_root, base_commit_sha)
+            .await
+            .unwrap();
+        assert_eq!(seeded.task.primary_worktree_id, Some(seeded.worktree.id));
+
+        let mounts = fixture
+            .daemon
+            .materialize_workspace_attachments_for_test(
+                &seeded.workspace,
+                &seeded.worktree,
+                [
+                    AttachmentConfig {
+                        kind: WorkspaceAttachmentKind::ReferenceRepo,
+                        name: "react".to_string(),
+                        source: ws_root.to_string_lossy().to_string(),
+                        revision: Some("main".to_string()),
+                        subpath: None,
+                        mount_relpath: None,
+                        mode: None,
+                        update_policy: None,
+                    },
+                    AttachmentConfig {
+                        kind: WorkspaceAttachmentKind::DocMirror,
+                        name: "react-docs".to_string(),
+                        source: "https://react.dev/reference/react".to_string(),
+                        revision: None,
+                        subpath: None,
+                        mount_relpath: None,
+                        mode: None,
+                        update_policy: None,
+                    },
+                ],
+            )
+            .await
+            .unwrap();
+        assert!(!mounts.is_empty());
+        assert!(ws_root.join(".ctx/attachments/refs/react").exists());
+        assert!(ws_root.join(".ctx/attachments/docs/react-docs").exists());
+    }
 }

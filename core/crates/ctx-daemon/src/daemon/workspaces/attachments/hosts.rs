@@ -101,7 +101,8 @@ impl ctx_workspace_attachments::WorkspaceAttachmentMountHost for DaemonState {
         &self,
         worktree_id: ctx_core::ids::WorktreeId,
     ) -> Result<Option<Worktree>> {
-        self.global_store().get_worktree(worktree_id).await
+        let store = self.store_for_worktree(worktree_id).await?;
+        store.get_worktree(worktree_id).await
     }
 
     async fn workspace_store(&self, workspace_id: WorkspaceId) -> Result<ctx_store::Store> {
