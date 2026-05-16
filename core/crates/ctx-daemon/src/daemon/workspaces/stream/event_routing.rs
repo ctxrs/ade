@@ -67,6 +67,18 @@ pub fn event_snapshot_rev(event: &WorkspaceActiveSnapshotEvent) -> Option<i64> {
 pub fn event_blocks_pending_replay(
     event: &WorkspaceActiveSnapshotEvent,
     pending_replay_sessions: &HashSet<SessionId>,
+    subscription_state: &WorkspaceActiveSubscriptionState,
+) -> bool {
+    event_blocks_pending_replay_with_active_task_sessions(
+        event,
+        pending_replay_sessions,
+        &subscription_state.active_task_sessions,
+    )
+}
+
+pub fn event_blocks_pending_replay_with_active_task_sessions(
+    event: &WorkspaceActiveSnapshotEvent,
+    pending_replay_sessions: &HashSet<SessionId>,
     active_task_sessions: &HashMap<TaskId, SessionId>,
 ) -> bool {
     workspace_stream_event_blocks_pending_replay(

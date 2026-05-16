@@ -370,7 +370,11 @@ fn event_routing_pending_replay_blockers_cover_full_event_surface() {
     ];
     for event in blocking {
         assert!(
-            event_blocks_pending_replay(&event, &pending, &active_task_sessions),
+            event_blocks_pending_replay_with_active_task_sessions(
+                &event,
+                &pending,
+                &active_task_sessions,
+            ),
             "event should block pending replay: {event:?}",
         );
     }
@@ -417,10 +421,50 @@ fn event_routing_pending_replay_blockers_cover_full_event_surface() {
     ];
     for event in nonblocking {
         assert!(
-            !event_blocks_pending_replay(&event, &pending, &active_task_sessions),
+            !event_blocks_pending_replay_with_active_task_sessions(
+                &event,
+                &pending,
+                &active_task_sessions,
+            ),
             "event should not block pending replay: {event:?}",
         );
     }
+}
+
+#[test]
+fn event_routing_pending_replay_uses_subscription_state_for_active_task_delete() {
+    let workspace_id = WorkspaceId::new();
+    let session_id = SessionId::new();
+    let task_id = TaskId::new();
+    let pending = HashSet::from([session_id]);
+    let event = WorkspaceActiveSnapshotEvent::ActiveTaskDelete {
+        workspace_id,
+        snapshot_rev: 1,
+        task_id,
+    };
+
+    assert!(
+        event_blocks_pending_replay(
+            &event,
+            &pending,
+            &WorkspaceActiveSubscriptionState {
+                active_task_sessions: HashMap::from([(task_id, session_id)]),
+                ..WorkspaceActiveSubscriptionState::default()
+            },
+        ),
+        "delete for an active task whose primary session is pending must block replay",
+    );
+    assert!(
+        !event_blocks_pending_replay(
+            &event,
+            &pending,
+            &WorkspaceActiveSubscriptionState {
+                active_task_sessions: HashMap::from([(task_id, SessionId::new())]),
+                ..WorkspaceActiveSubscriptionState::default()
+            },
+        ),
+        "delete for an unrelated active task session must not block pending replay",
+    );
 }
 
 #[test]

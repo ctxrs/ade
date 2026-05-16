@@ -547,6 +547,7 @@ test("daemon boundary guard rejects raw workspace stream replay planning in HTTP
           .collect::<HashSet<_>>();
         let _ = state.plan_resume_replay_cursor(workspace_id, session_id).await;
         let _ = WorkspaceStreamHandle::head_only_snapshot_cursor(&state, workspace_id, session_id).await;
+        let _ = runtime.subscription_state.active_task_sessions.clone();
       }
     `,
     patterns: WORKSPACE_STREAM_REPLAY_PROGRAM_API_PATTERNS,
@@ -566,6 +567,7 @@ test("daemon boundary guard rejects raw workspace stream replay planning in HTTP
       "workspace stream API calls replay cursor planner directly",
       "workspace stream API calls replay cursor planner directly",
       "workspace stream API rebuilds pending replay blockers",
+      "workspace stream API reads active-task subscription map for replay deferral",
     ],
   );
 });

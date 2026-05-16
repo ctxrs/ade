@@ -1019,6 +1019,10 @@ const WORKSPACE_STREAM_REPLAY_PROGRAM_API_PATTERNS = [
     contentRegex:
       /\bpending_replay_sessions\b[\s\S]{0,240}\bresolved_sessions\s*\.\s*iter\s*\(/gm,
   },
+  {
+    name: "workspace stream API reads active-task subscription map for replay deferral",
+    regex: /\.active_task_sessions\b/,
+  },
 ];
 
 const WORKSPACE_STREAM_EVENT_ROUTING_API_PATTERNS = [

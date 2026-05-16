@@ -17,7 +17,8 @@ pub(in crate::daemon) use event_routing::{
 };
 #[cfg(test)]
 pub(in crate::daemon) use event_routing::{
-    filter_partial_delta_for_active_tasks, is_priority_control_event, should_stream_head_delta,
+    event_blocks_pending_replay_with_active_task_sessions, filter_partial_delta_for_active_tasks,
+    is_priority_control_event, should_stream_head_delta,
 };
 pub use event_routing::{
     WorkspaceStreamControlLane, WorkspaceStreamEventRoutePlan, WorkspaceStreamHeadLane,

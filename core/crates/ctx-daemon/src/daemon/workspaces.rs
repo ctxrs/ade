@@ -1145,9 +1145,9 @@ impl WorkspaceStreamHandle {
         &self,
         event: &WorkspaceActiveSnapshotEvent,
         pending_replay_sessions: &HashSet<SessionId>,
-        active_task_sessions: &HashMap<TaskId, SessionId>,
+        subscription_state: &WorkspaceActiveSubscriptionState,
     ) -> bool {
-        stream::event_blocks_pending_replay(event, pending_replay_sessions, active_task_sessions)
+        stream::event_blocks_pending_replay(event, pending_replay_sessions, subscription_state)
     }
 
     pub fn plan_workspace_stream_event_route(
