@@ -11,7 +11,6 @@ use axum::{
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{DiffUnavailableReason, WorktreeVcsFreshness};
 use ctx_daemon::daemon::AppRuntimeFlags;
-use ctx_daemon::test_support::TestDaemon;
 use serde_json::Value;
 use tokio::process::Command;
 
@@ -89,20 +88,6 @@ fn worktree_vcs_snapshot_test_lock() -> &'static tokio::sync::Mutex<()> {
     LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
-fn build_vcs_disabled_daemon(data_dir: &Path, stores: ctx_store::StoreManager) -> TestDaemon {
-    TestDaemon::new_with_runtime_flags(
-        data_dir.to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0".to_string(),
-        None,
-        None,
-        AppRuntimeFlags {
-            worktree_vcs_enabled: false,
-        },
-    )
-}
-
 async fn set_primary_branch(app: &Router, workspace_id: WorkspaceId, primary_branch: &str) {
     let (status, _resp): (StatusCode, Value) = common::json_request(
         app,
@@ -118,10 +103,15 @@ async fn set_primary_branch(app: &Router, workspace_id: WorkspaceId, primary_bra
 async fn worktree_vcs_disabled_mode_suppresses_projection_work() {
     let _guard = worktree_vcs_snapshot_test_lock().lock().await;
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = build_vcs_disabled_daemon(data_dir.path(), stores);
-    let app = common::router_for_daemon(&daemon);
+    let fixture = common::fake_daemon_fixture_with_runtime_flags(
+        "http://127.0.0.1:0",
+        AppRuntimeFlags {
+            worktree_vcs_enabled: false,
+        },
+    )
+    .await;
+    let app = fixture.router();
+    let daemon = &fixture.daemon;
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (_task, session) =
@@ -157,15 +147,9 @@ async fn worktree_vcs_disabled_mode_suppresses_projection_work() {
 async fn worktree_vcs_snapshot_clears_stale_counts_when_repo_becomes_unavailable() {
     let _guard = worktree_vcs_snapshot_test_lock().lock().await;
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&daemon);
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let app = fixture.router();
+    let daemon = &fixture.daemon;
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (_task, session) =
@@ -238,15 +222,9 @@ async fn worktree_vcs_snapshot_populates_jj_head_commit_metadata() {
 
     let _guard = worktree_vcs_snapshot_test_lock().lock().await;
     let repo = common::init_jj_repo(&[("file.txt", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&daemon);
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let app = fixture.router();
+    let daemon = &fixture.daemon;
 
     let ws = common::create_workspace(&app, repo.path(), "jj-ws").await;
     let (_task, session) =
@@ -281,15 +259,9 @@ async fn worktree_vcs_snapshot_populates_jj_head_commit_metadata() {
 async fn worktree_vcs_snapshot_recovers_when_repo_is_reinitialized() {
     let _guard = worktree_vcs_snapshot_test_lock().lock().await;
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&daemon);
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let app = fixture.router();
+    let daemon = &fixture.daemon;
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let primary_branch = daemon
@@ -368,15 +340,9 @@ async fn worktree_vcs_snapshot_recovers_when_repo_is_reinitialized() {
 async fn worktree_vcs_snapshot_noop_emit_preserves_freshness() {
     let _guard = worktree_vcs_snapshot_test_lock().lock().await;
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&daemon);
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let app = fixture.router();
+    let daemon = &fixture.daemon;
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (_task, session) =
@@ -419,15 +385,9 @@ async fn worktree_vcs_snapshot_noop_emit_preserves_freshness() {
 async fn worktree_vcs_snapshot_does_not_repopulate_cache_after_activity_eviction() {
     let _guard = worktree_vcs_snapshot_test_lock().lock().await;
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&daemon);
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let app = fixture.router();
+    let daemon = &fixture.daemon;
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (_task, session) =
@@ -468,25 +428,19 @@ async fn worktree_vcs_snapshot_does_not_repopulate_cache_after_activity_eviction
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn worktree_vcs_snapshot_watcher_recomputes_when_target_branch_ref_moves() {
+async fn worktree_vcs_dirty_invalidation_recomputes_when_target_branch_ref_moves() {
     let _guard = worktree_vcs_snapshot_test_lock().lock().await;
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     run_git(repo.path(), &["branch", "merge-target"]).await;
 
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&daemon);
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let app = fixture.router();
+    let daemon = &fixture.daemon;
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     set_primary_branch(&app, ws.id, "merge-target").await;
 
     let (_task, session) =
-        common::create_task_with_session(&app, ws.id.0, "watcher-ref-move", "fake", "fake-model")
+        common::create_task_with_session(&app, ws.id.0, "dirty-ref-move", "fake", "fake-model")
             .await;
     let worktree = daemon
         .load_worktree_for_test(session.worktree_id)
@@ -495,34 +449,23 @@ async fn worktree_vcs_snapshot_watcher_recomputes_when_target_branch_ref_moves()
 
     daemon.mark_worktree_vcs_active_for_test(worktree.id).await;
 
-    let watcher_daemon = daemon.clone();
-    let watcher_worktree = worktree.clone();
-    let watcher = tokio::spawn(async move {
-        watcher_daemon
-            .run_git_status_watcher_for_test(watcher_worktree)
-            .await
-    });
-
     let worktree_root = Path::new(&worktree.root_path);
     tokio::fs::write(worktree_root.join("file.txt"), "hello\nphase1\n")
         .await
         .expect("write changed file");
     daemon
-        .emit_worktree_vcs_snapshot_for_worktree(&worktree, true)
+        .mark_worktree_vcs_filesystem_dirty_for_test(&worktree, "file.txt")
         .await
-        .expect("initial vcs snapshot emission should succeed");
+        .expect("initial vcs dirty invalidation should succeed");
 
     let start = Instant::now();
     loop {
-        let snapshot = daemon
-            .worktree_vcs_snapshot(worktree.id)
-            .await
-            .expect("expected worktree vcs snapshot");
-        if snapshot.summary.file_count.unwrap_or(0) > 0 {
-            break;
+        if let Some(snapshot) = daemon.worktree_vcs_snapshot(worktree.id).await {
+            if snapshot.summary.file_count.unwrap_or(0) > 0 {
+                break;
+            }
         }
         if start.elapsed() > Duration::from_secs(30) {
-            watcher.abort();
             panic!("timed out waiting for non-zero vcs summary");
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -540,6 +483,10 @@ async fn worktree_vcs_snapshot_watcher_recomputes_when_target_branch_ref_moves()
     assert!(output.status.success(), "rev-parse HEAD should succeed");
     let phase1_sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
     run_git(repo.path(), &["branch", "-f", "merge-target", &phase1_sha]).await;
+    daemon
+        .mark_worktree_vcs_metadata_dirty_for_test(&worktree, ".git/refs/heads/merge-target")
+        .await
+        .expect("target-branch metadata invalidation should succeed");
 
     let start = Instant::now();
     loop {
@@ -548,11 +495,9 @@ async fn worktree_vcs_snapshot_watcher_recomputes_when_target_branch_ref_moves()
             .await
             .expect("expected refreshed worktree vcs snapshot");
         if snapshot.summary.file_count.unwrap_or(-1) == 0 {
-            watcher.abort();
             return;
         }
         if start.elapsed() > Duration::from_secs(30) {
-            watcher.abort();
             panic!("timed out waiting for merge-target ref move to clear vcs summary");
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -565,15 +510,9 @@ async fn worktree_vcs_snapshot_preserves_head_when_configured_target_branch_disa
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     run_git(repo.path(), &["branch", "merge-target"]).await;
 
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_dir.path()).await;
-    let daemon = common::build_daemon(
-        data_dir.path(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&daemon);
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let app = fixture.router();
+    let daemon = &fixture.daemon;
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     set_primary_branch(&app, ws.id, "merge-target").await;
 

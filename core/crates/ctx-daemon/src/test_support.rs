@@ -553,6 +553,26 @@ impl TestDaemon {
         ))
     }
 
+    pub async fn new_with_runtime_flags_for_test(
+        data_root: PathBuf,
+        providers: HashMap<String, Arc<dyn ProviderAdapter>>,
+        daemon_url: String,
+        public_base_url: Option<String>,
+        auth_token: Option<String>,
+        runtime_flags: AppRuntimeFlags,
+    ) -> anyhow::Result<Self> {
+        let stores = StoreManager::open(&data_root).await?;
+        Ok(Self::new_with_runtime_flags(
+            data_root,
+            stores,
+            providers,
+            daemon_url,
+            public_base_url,
+            auth_token,
+            runtime_flags,
+        ))
+    }
+
     pub fn new_with_public_base_url(
         data_root: PathBuf,
         stores: StoreManager,
@@ -3355,6 +3375,40 @@ impl TestDaemon {
             worktree,
             summary,
             touched_files,
+        )
+        .await
+    }
+
+    pub async fn mark_worktree_vcs_filesystem_dirty_for_test(
+        &self,
+        worktree: &Worktree,
+        candidate_path: impl Into<String>,
+    ) -> anyhow::Result<()> {
+        daemon::git_status::mark_worktree_vcs_dirty(
+            &self.state,
+            worktree,
+            ctx_workspace_services::worktree_vcs::WorktreeVcsDirtyBits {
+                worktree_fs: true,
+                vcs_meta: false,
+            },
+            vec![candidate_path.into()],
+        )
+        .await
+    }
+
+    pub async fn mark_worktree_vcs_metadata_dirty_for_test(
+        &self,
+        worktree: &Worktree,
+        candidate_path: impl Into<String>,
+    ) -> anyhow::Result<()> {
+        daemon::git_status::mark_worktree_vcs_dirty(
+            &self.state,
+            worktree,
+            ctx_workspace_services::worktree_vcs::WorktreeVcsDirtyBits {
+                worktree_fs: false,
+                vcs_meta: true,
+            },
+            vec![candidate_path.into()],
         )
         .await
     }

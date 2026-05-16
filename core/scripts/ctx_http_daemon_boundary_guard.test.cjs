@@ -38,6 +38,7 @@ const {
   WORKSPACE_MERGE_QUEUE_CONFIG_TEST_STORE_ACCESS_PATTERNS,
   WORKSPACE_RUNTIME_SETTINGS_TEST_STORE_ACCESS_PATTERNS,
   WORKTREE_ARCHIVE_TEST_STORE_ACCESS_PATTERNS,
+  WORKTREE_VCS_SNAPSHOT_TEST_STORE_ACCESS_PATTERNS,
   apiPatternsForPath,
   authBoundaryStorePatternsForPath,
   cacheRehydrationStorePatternsForPath,
@@ -73,6 +74,7 @@ const {
   worktreeArchiveStorePatternsForPath,
   workspaceMergeQueueConfigStorePatternsForPath,
   workspaceRuntimeSettingsStorePatternsForPath,
+  worktreeVcsSnapshotStorePatternsForPath,
   stripCfgTestItems,
 } = require("./ctx_http_daemon_boundary_guard.cjs");
 
@@ -1250,6 +1252,7 @@ test("daemon boundary guard scopes fake-daemon external roots without blocking c
     "core/crates/ctx-http/tests/workspace_stream_no_gaps_under_activity.rs",
     "core/crates/ctx-http/tests/workspace_stream_stress_active_heads_lag.rs",
     "core/crates/ctx-http/tests/worktree_archive_http.rs",
+    "core/crates/ctx-http/tests/worktree_vcs_snapshot.rs",
   ]) {
     assert.deepEqual(
       fakeDaemonExternalStorePatternsForPath(filePath),
@@ -1299,6 +1302,57 @@ test("daemon boundary guard scopes image attachments store facade root", () => {
   );
   assert.deepEqual(
     imageAttachmentsStorePatternsForPath("core/crates/ctx-http/tests/common/mod.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects worktree-vcs daemon router composition", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/worktree_vcs_snapshot.rs",
+    contents: `
+      async fn helper(daemon: TestDaemon) {
+        let app = common::router_for_daemon(&daemon);
+      }
+    `,
+    patterns: WORKTREE_VCS_SNAPSHOT_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    ["direct worktree-vcs-snapshot daemon router composition"],
+  );
+});
+
+test("daemon boundary guard allows worktree-vcs daemon facades", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/worktree_vcs_snapshot.rs",
+    contents: `
+      async fn helper(daemon: TestDaemon, worktree: Worktree) {
+        daemon.load_worktree_for_test(session.worktree_id).await?;
+        daemon.mark_worktree_vcs_active_for_test(worktree.id).await;
+        daemon.emit_worktree_vcs_snapshot_for_worktree(&worktree, true).await?;
+        daemon.request_worktree_vcs_refresh_for_test(&worktree, true, true).await?;
+        daemon.mark_worktree_vcs_filesystem_dirty_for_test(&worktree, "file.txt").await?;
+        daemon.mark_worktree_vcs_metadata_dirty_for_test(&worktree, ".git/HEAD").await?;
+        daemon.run_git_status_watcher_for_test(worktree.clone()).await?;
+        daemon.worktree_vcs_snapshot(worktree.id).await;
+      }
+    `,
+    patterns: WORKTREE_VCS_SNAPSHOT_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(violations, []);
+});
+
+test("daemon boundary guard scopes worktree-vcs store facade root", () => {
+  assert.deepEqual(
+    worktreeVcsSnapshotStorePatternsForPath(
+      "core/crates/ctx-http/tests/worktree_vcs_snapshot.rs",
+    ),
+    WORKTREE_VCS_SNAPSHOT_TEST_STORE_ACCESS_PATTERNS,
+  );
+  assert.deepEqual(
+    worktreeVcsSnapshotStorePatternsForPath("core/crates/ctx-http/tests/common/mod.rs"),
     [],
   );
 });

@@ -12,6 +12,7 @@ use std::time::Duration;
 use axum::body::{to_bytes, Body};
 use axum::http::{Method, Request, StatusCode};
 use ctx_core::models::{Session, Task, Workspace};
+use ctx_daemon::daemon::AppRuntimeFlags;
 use ctx_daemon::test_support::TestDaemon;
 use ctx_http::api;
 use ctx_managed_installs::{
@@ -444,6 +445,21 @@ pub async fn fake_daemon_fixture_with_providers(
     fake_daemon_fixture_in_data_dir_with_providers(data_dir, providers, base_url).await
 }
 
+pub async fn fake_daemon_fixture_with_providers_and_runtime_flags(
+    providers: HashMap<String, Arc<dyn ProviderAdapter>>,
+    base_url: impl Into<String>,
+    runtime_flags: AppRuntimeFlags,
+) -> FakeDaemonFixture {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    fake_daemon_fixture_in_data_dir_with_providers_and_runtime_flags(
+        data_dir,
+        providers,
+        base_url,
+        runtime_flags,
+    )
+    .await
+}
+
 pub async fn fake_daemon_fixture_in_data_dir_with_providers(
     data_dir: tempfile::TempDir,
     providers: HashMap<String, Arc<dyn ProviderAdapter>>,
@@ -460,8 +476,35 @@ pub async fn fake_daemon_fixture_in_data_dir_with_providers(
     FakeDaemonFixture { daemon, data_dir }
 }
 
+pub async fn fake_daemon_fixture_in_data_dir_with_providers_and_runtime_flags(
+    data_dir: tempfile::TempDir,
+    providers: HashMap<String, Arc<dyn ProviderAdapter>>,
+    base_url: impl Into<String>,
+    runtime_flags: AppRuntimeFlags,
+) -> FakeDaemonFixture {
+    let daemon = TestDaemon::new_with_runtime_flags_for_test(
+        data_dir.path().to_path_buf(),
+        providers,
+        base_url.into(),
+        None,
+        None,
+        runtime_flags,
+    )
+    .await
+    .expect("create runtime-flags fake-provider daemon");
+    FakeDaemonFixture { daemon, data_dir }
+}
+
 pub async fn fake_daemon_fixture(base_url: impl Into<String>) -> FakeDaemonFixture {
     fake_daemon_fixture_with_providers(fake_providers(), base_url).await
+}
+
+pub async fn fake_daemon_fixture_with_runtime_flags(
+    base_url: impl Into<String>,
+    runtime_flags: AppRuntimeFlags,
+) -> FakeDaemonFixture {
+    fake_daemon_fixture_with_providers_and_runtime_flags(fake_providers(), base_url, runtime_flags)
+        .await
 }
 
 pub async fn provider_route_fake_daemon(data_root: &Path) -> TestDaemon {

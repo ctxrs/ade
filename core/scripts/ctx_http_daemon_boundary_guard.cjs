@@ -195,6 +195,7 @@ const fakeDaemonExternalStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/workspace_stream_no_gaps_under_activity.rs",
   "core/crates/ctx-http/tests/workspace_stream_stress_active_heads_lag.rs",
   "core/crates/ctx-http/tests/worktree_archive_http.rs",
+  "core/crates/ctx-http/tests/worktree_vcs_snapshot.rs",
 ];
 
 const cacheRehydrationStoreFacadeTestRoots = [
@@ -211,6 +212,10 @@ const sessionModelApiStoreFacadeTestRoots = [
 
 const imageAttachmentsStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/image_attachments_http_e2e.rs",
+];
+
+const worktreeVcsSnapshotStoreFacadeTestRoots = [
+  "core/crates/ctx-http/tests/worktree_vcs_snapshot.rs",
 ];
 
 const mcpDaemonFacadeTestRoots = [
@@ -725,6 +730,14 @@ const IMAGE_ATTACHMENTS_TEST_STORE_ACCESS_PATTERNS = [
   {
     name: "direct image attachments session message query",
     regex: /\.(?:count_user_messages_for_session|list_messages_for_session|get_message)\s*\(/,
+  },
+];
+
+const WORKTREE_VCS_SNAPSHOT_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct worktree-vcs-snapshot daemon router composition",
+    regex: /\b(?:crate::)?common::router_for_daemon\s*\(|\buse\s+[^;]*\brouter_for_daemon\b|\brouter_for_daemon\s*\(/,
+    contentRegex: /\buse\s+[\s\S]*?\brouter_for_daemon\b[\s\S]*?;/gm,
   },
 ];
 
@@ -1941,6 +1954,13 @@ function imageAttachmentsStorePatternsForPath(relativePath) {
   return [];
 }
 
+function worktreeVcsSnapshotStorePatternsForPath(relativePath) {
+  if (worktreeVcsSnapshotStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return WORKTREE_VCS_SNAPSHOT_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
 function mcpDaemonPatternsForPath(relativePath) {
   if (mcpDaemonFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS;
@@ -2348,6 +2368,13 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
+        patterns: worktreeVcsSnapshotStorePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
         patterns: mcpDaemonPatternsForPath(relativePath),
       }),
     );
@@ -2524,6 +2551,7 @@ module.exports = {
   WORKSPACE_MERGE_QUEUE_CONFIG_TEST_STORE_ACCESS_PATTERNS,
   WORKSPACE_RUNTIME_SETTINGS_TEST_STORE_ACCESS_PATTERNS,
   WORKTREE_ARCHIVE_TEST_STORE_ACCESS_PATTERNS,
+  WORKTREE_VCS_SNAPSHOT_TEST_STORE_ACCESS_PATTERNS,
   apiPatternsForPath,
   authBoundaryStorePatternsForPath,
   cacheRehydrationStorePatternsForPath,
@@ -2559,5 +2587,6 @@ module.exports = {
   worktreeArchiveStorePatternsForPath,
   workspaceMergeQueueConfigStorePatternsForPath,
   workspaceRuntimeSettingsStorePatternsForPath,
+  worktreeVcsSnapshotStorePatternsForPath,
   stripCfgTestItems,
 };
