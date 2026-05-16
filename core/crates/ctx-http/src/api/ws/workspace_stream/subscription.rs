@@ -1,12 +1,18 @@
 use super::lifecycle::{clear_runtime_queues, queue_workspace_stream_reset};
 use super::*;
-use ctx_daemon::daemon::workspaces::stream::WorkspaceStreamSubscriptionResolutionError;
+use ctx_daemon::daemon::workspaces::stream::{
+    WorkspaceStreamReplayStepHook, WorkspaceStreamSubscriptionResolutionError,
+};
+use std::collections::HashSet;
 
 mod replay;
 #[cfg(test)]
 mod tests;
 
-use replay::{replay_workspace_stream_subscriptions, WorkspaceStreamReplayRequest};
+use replay::{
+    drain_live_events_blocking_pending_replay, replay_should_stop,
+    replay_workspace_stream_subscriptions, WorkspaceStreamReplayRequest,
+};
 
 fn merge_replayed_and_live_subscriptions(
     state: &WorkspaceStreamHandle,
@@ -26,6 +32,43 @@ fn merge_replayed_and_live_subscriptions(
         .into_iter()
         .map(|(session_id, last_sent)| (session_id, SessionCursor { last_sent }))
         .collect()
+}
+
+struct ReplayPlanningDrainHook<'a> {
+    state: &'a WorkspaceStreamHandle,
+    workspace_id: WorkspaceId,
+    live_rx: &'a mut tokio::sync::broadcast::Receiver<WorkspaceActiveSnapshotEvent>,
+    runtime: &'a mut WorkspaceStreamRuntime,
+    labels: &'a WorkspaceStreamLabels,
+    deferred_live_events: &'a mut Vec<WorkspaceActiveSnapshotEvent>,
+}
+
+#[async_trait::async_trait]
+impl WorkspaceStreamReplayStepHook for ReplayPlanningDrainHook<'_> {
+    type Error = ();
+
+    async fn before_workspace_stream_replay_step(
+        &mut self,
+        pending_replay_sessions: &HashSet<SessionId>,
+    ) -> Result<(), Self::Error> {
+        drain_live_events_blocking_pending_replay(
+            self.state,
+            self.workspace_id,
+            self.live_rx,
+            self.runtime,
+            self.labels,
+            self.deferred_live_events,
+            pending_replay_sessions,
+        )
+        .await
+    }
+
+    fn live_subscription_cursor(&self, session_id: SessionId) -> Option<SessionReplayCursor> {
+        self.runtime
+            .subscriptions
+            .get(&session_id)
+            .map(|cursor| cursor.last_sent)
+    }
 }
 
 pub(crate) async fn handle_workspace_stream_subscription(
@@ -111,16 +154,43 @@ pub(crate) async fn handle_workspace_stream_subscription(
     } else {
         HashMap::new()
     };
+    let replay_live_cursors = runtime
+        .subscriptions
+        .iter()
+        .map(|(session_id, cursor)| (*session_id, cursor.last_sent))
+        .collect::<HashMap<_, _>>();
+    let mut initial_deferred_live_events = Vec::new();
+    let mut replay_planning_drain_hook = ReplayPlanningDrainHook {
+        state,
+        workspace_id,
+        live_rx,
+        runtime,
+        labels,
+        deferred_live_events: &mut initial_deferred_live_events,
+    };
+    let replay_program = state
+        .plan_workspace_stream_replay_program_with_step_hook(
+            workspace_id,
+            &resolved.sessions,
+            &replay_live_cursors,
+            &active_head_cursors,
+            include_initial_snapshot,
+            &mut replay_planning_drain_hook,
+        )
+        .await?;
+    drop(replay_planning_drain_hook);
+    if replay_should_stop(runtime) {
+        return Ok(());
+    }
 
     let Some(next_map) = replay_workspace_stream_subscriptions(WorkspaceStreamReplayRequest {
         state,
         workspace_id,
         runtime,
         labels,
-        resolved_sessions: &resolved.sessions,
         live_rx,
-        include_initial_snapshot,
-        active_head_cursors: &active_head_cursors,
+        replay_program,
+        initial_deferred_live_events,
     })
     .await?
     else {

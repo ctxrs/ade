@@ -1,11 +1,13 @@
 use super::*;
 use std::collections::HashSet;
 
-pub(super) fn replay_should_stop(runtime: &WorkspaceStreamRuntime) -> bool {
+pub(in crate::api::ws::workspace_stream::subscription) fn replay_should_stop(
+    runtime: &WorkspaceStreamRuntime,
+) -> bool {
     runtime.reset_queued || runtime.send_control.should_disconnect_after_flush()
 }
 
-pub(super) async fn drain_live_events_blocking_pending_replay(
+pub(in crate::api::ws::workspace_stream::subscription) async fn drain_live_events_blocking_pending_replay(
     state: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
     live_rx: &mut tokio::sync::broadcast::Receiver<WorkspaceActiveSnapshotEvent>,

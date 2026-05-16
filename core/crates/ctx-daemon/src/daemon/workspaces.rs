@@ -932,13 +932,47 @@ impl WorkspaceStreamHandle {
         stream::active_head_cursors_from_snapshot_read_model(read_model)
     }
 
-    pub fn plan_resume_replay_cursor(
+    pub async fn plan_workspace_stream_replay_program(
         &self,
-        live_cursor: Option<SessionReplayCursor>,
-        after_seq: i64,
-        after_projection_rev: i64,
-    ) -> stream::WorkspaceStreamResumeReplayCursorPlan {
-        stream::plan_resume_replay_cursor(live_cursor, after_seq, after_projection_rev)
+        workspace_id: WorkspaceId,
+        resolved_sessions: &[stream::WorkspaceStreamResolvedSession],
+        live_subscriptions: &HashMap<SessionId, SessionReplayCursor>,
+        active_head_cursors: &HashMap<SessionId, SessionReplayCursor>,
+        include_initial_snapshot: bool,
+    ) -> stream::WorkspaceStreamReplayProgram {
+        stream::plan_workspace_stream_replay_program(
+            &self.state,
+            workspace_id,
+            resolved_sessions,
+            live_subscriptions,
+            active_head_cursors,
+            include_initial_snapshot,
+        )
+        .await
+    }
+
+    pub async fn plan_workspace_stream_replay_program_with_step_hook<H>(
+        &self,
+        workspace_id: WorkspaceId,
+        resolved_sessions: &[stream::WorkspaceStreamResolvedSession],
+        live_subscriptions: &HashMap<SessionId, SessionReplayCursor>,
+        active_head_cursors: &HashMap<SessionId, SessionReplayCursor>,
+        include_initial_snapshot: bool,
+        step_hook: &mut H,
+    ) -> Result<stream::WorkspaceStreamReplayProgram, H::Error>
+    where
+        H: stream::WorkspaceStreamReplayStepHook,
+    {
+        stream::plan_workspace_stream_replay_program_with_step_hook(
+            &self.state,
+            workspace_id,
+            resolved_sessions,
+            live_subscriptions,
+            active_head_cursors,
+            include_initial_snapshot,
+            step_hook,
+        )
+        .await
     }
 
     pub fn accept_session_delta_cursor(
@@ -982,25 +1016,6 @@ impl WorkspaceStreamHandle {
             live_subscriptions,
             replayed_subscriptions,
         )
-    }
-
-    pub async fn head_only_snapshot_cursor(
-        &self,
-        workspace_id: WorkspaceId,
-        session_id: SessionId,
-        live_cursor: Option<SessionReplayCursor>,
-        snapshot_cursor: Option<SessionReplayCursor>,
-        include_initial_snapshot: bool,
-    ) -> SessionReplayCursor {
-        stream::head_only_snapshot_cursor(
-            &self.state,
-            workspace_id,
-            session_id,
-            live_cursor,
-            snapshot_cursor,
-            include_initial_snapshot,
-        )
-        .await
     }
 
     pub async fn active_task_subscription_cursor(

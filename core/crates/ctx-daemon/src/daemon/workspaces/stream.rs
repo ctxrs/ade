@@ -26,9 +26,15 @@ pub use read_model::{
     initial_stream_state, load_initial_snapshot_read_model, prepare_subscription_read_model,
     WorkspaceStreamInitialState, WorkspaceStreamSnapshotReadModel,
 };
-pub use replay::{replay_session_events, ReplayOutcome};
-pub use replay_cursor::{
-    active_head_cursors_from_snapshot_read_model, active_task_subscription_cursor,
+pub use replay::{
+    plan_workspace_stream_replay_program, plan_workspace_stream_replay_program_with_step_hook,
+    replay_session_events, ReplayOutcome, WorkspaceStreamReplayProgram, WorkspaceStreamReplayStep,
+    WorkspaceStreamReplayStepHook,
+};
+pub use replay_cursor::active_head_cursors_from_snapshot_read_model;
+pub(in crate::daemon) use replay_cursor::active_task_subscription_cursor;
+#[cfg(test)]
+pub(in crate::daemon) use replay_cursor::{
     head_only_snapshot_cursor, plan_resume_replay_cursor, WorkspaceStreamResumeReplayCursorPlan,
 };
 pub use subscriptions::{

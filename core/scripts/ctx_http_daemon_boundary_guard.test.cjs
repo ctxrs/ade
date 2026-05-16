@@ -31,6 +31,7 @@ const {
   WORKSPACE_STREAM_READ_MODEL_API_PATTERNS,
   WORKSPACE_STREAM_SUBSCRIPTION_PLAN_API_PATTERNS,
   WORKSPACE_STREAM_REPLAY_CURSOR_API_PATTERNS,
+  WORKSPACE_STREAM_REPLAY_PROGRAM_API_PATTERNS,
   WORKSPACE_STREAM_EVENT_ROUTING_API_PATTERNS,
   WORKSPACE_STREAM_EVENT_ROUTE_PLAN_API_PATTERNS,
   WORKSPACE_STREAM_SUBSCRIPTION_EVENT_API_PATTERNS,
@@ -438,6 +439,94 @@ test("daemon boundary guard scopes workspace stream replay cursor ban", () => {
   assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/ws/workspace_stream/events/receiver.rs").includes(
       WORKSPACE_STREAM_REPLAY_CURSOR_API_PATTERNS[0],
+    ),
+    false,
+  );
+});
+
+test("daemon boundary guard rejects raw workspace stream replay planning in HTTP", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/ws/workspace_stream/subscription/replay.rs",
+    contents: `
+      fn handler(
+        state: WorkspaceStreamHandle,
+        subscription: WorkspaceStreamResolvedSession,
+        resolved_sessions: &[WorkspaceStreamResolvedSession],
+      ) {
+        let _ = matches!(subscription.intent, WorkspaceActiveSnapshotSessionIntent::Replay);
+        let _ = matches!(subscription.replay, WorkspaceStreamSessionReplay::Resume { .. });
+        let _ = matches!(subscription.replay, Resume { .. });
+        let pending_replay_sessions = resolved_sessions
+          .iter()
+          .map(|subscription| subscription.session_id)
+          .collect::<HashSet<_>>();
+        let _ = state.plan_resume_replay_cursor(workspace_id, session_id).await;
+        let _ = WorkspaceStreamHandle::head_only_snapshot_cursor(&state, workspace_id, session_id).await;
+      }
+    `,
+    patterns: WORKSPACE_STREAM_REPLAY_PROGRAM_API_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "workspace stream API references raw replay intent policy",
+      "workspace stream API references raw replay mode policy",
+      "workspace stream API matches raw replay policy variant",
+      "workspace stream API matches raw replay policy variant",
+      "workspace stream API matches raw replay policy variant",
+      "workspace stream API interprets resolved replay subscription fields",
+      "workspace stream API interprets resolved replay subscription fields",
+      "workspace stream API interprets resolved replay subscription fields",
+      "workspace stream API calls replay cursor planner directly",
+      "workspace stream API calls replay cursor planner directly",
+      "workspace stream API rebuilds pending replay blockers",
+    ],
+  );
+});
+
+test("daemon boundary guard allows daemon workspace stream replay program DTOs", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/ws/workspace_stream/subscription/replay.rs",
+    contents: `
+      fn handler(program: WorkspaceStreamReplayProgram, step: WorkspaceStreamReplayStep) {
+        let _ = state.plan_workspace_stream_replay_program(workspace_id).await;
+        match step {
+          WorkspaceStreamReplayStep::HeadOnly { session_id, cursor } => {}
+          WorkspaceStreamReplayStep::Replay { session_id, replay_cursor, .. } => {}
+          WorkspaceStreamReplayStep::NoReplayRequired { session_id } => {}
+        }
+        let _ = program.pending_replay_sessions;
+      }
+    `,
+    patterns: WORKSPACE_STREAM_REPLAY_PROGRAM_API_PATTERNS,
+  });
+
+  assert.deepEqual(violations, []);
+});
+
+test("daemon boundary guard scopes workspace stream replay-program planning ban", () => {
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/ws/workspace_stream/subscription.rs",
+    ).includes(WORKSPACE_STREAM_REPLAY_PROGRAM_API_PATTERNS[0]),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/ws/workspace_stream/subscription/replay.rs",
+    ).includes(WORKSPACE_STREAM_REPLAY_PROGRAM_API_PATTERNS[0]),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/ws/workspace_stream/subscription/replay/session.rs",
+    ).includes(WORKSPACE_STREAM_REPLAY_PROGRAM_API_PATTERNS[0]),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/ws/workspace_stream/events.rs").includes(
+      WORKSPACE_STREAM_REPLAY_PROGRAM_API_PATTERNS[0],
     ),
     false,
   );

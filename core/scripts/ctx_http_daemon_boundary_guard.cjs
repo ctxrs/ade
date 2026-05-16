@@ -187,6 +187,12 @@ const workspaceStreamReplayCursorApiRoots = [
   "core/crates/ctx-http/src/api/ws/workspace_stream/events/subscriptions.rs",
 ];
 
+const workspaceStreamReplayProgramApiRoots = [
+  "core/crates/ctx-http/src/api/ws/workspace_stream/subscription.rs",
+  "core/crates/ctx-http/src/api/ws/workspace_stream/subscription/replay.rs",
+  "core/crates/ctx-http/src/api/ws/workspace_stream/subscription/replay/",
+];
+
 const workspaceStreamEventRoutingApiRoots = [
   "core/crates/ctx-http/src/api/ws/workspace_stream.rs",
   "core/crates/ctx-http/src/api/ws/workspace_stream/events.rs",
@@ -931,6 +937,37 @@ const WORKSPACE_STREAM_REPLAY_CURSOR_API_PATTERNS = [
   {
     name: "workspace stream API reads raw session replay cursor",
     regex: /(?:\.\s*|\bWorkspaceStreamHandle\s*::\s*)session_replay_cursor\s*\(/,
+  },
+];
+
+const WORKSPACE_STREAM_REPLAY_PROGRAM_API_PATTERNS = [
+  {
+    name: "workspace stream API references raw replay intent policy",
+    regex: /\bWorkspaceActiveSnapshotSessionIntent\b/,
+  },
+  {
+    name: "workspace stream API references raw replay mode policy",
+    regex: /\bWorkspaceStreamSessionReplay\b/,
+  },
+  {
+    name: "workspace stream API matches raw replay policy variant",
+    regex:
+      /(?:\b(?:WorkspaceActiveSnapshotSessionIntent|WorkspaceStreamSessionReplay)::(?:Head|Replay|Resume|Reset)\b|(?<!::)\b(?:Head|Replay|Resume|Reset)\s*\{)/,
+  },
+  {
+    name: "workspace stream API interprets resolved replay subscription fields",
+    regex: /\b(?:sub|subscription)\s*\.\s*(?:intent|replay)\b/,
+  },
+  {
+    name: "workspace stream API calls replay cursor planner directly",
+    regex:
+      /(?:\.\s*|\bWorkspaceStreamHandle\s*::\s*|(?<!\.))\b(?:plan_resume_replay_cursor|head_only_snapshot_cursor)\s*\(/,
+  },
+  {
+    name: "workspace stream API rebuilds pending replay blockers",
+    regex: /a^/,
+    contentRegex:
+      /\bpending_replay_sessions\b[\s\S]{0,240}\bresolved_sessions\s*\.\s*iter\s*\(/gm,
   },
 ];
 
@@ -2778,6 +2815,9 @@ function apiPatternsForPath(relativePath) {
   if (workspaceStreamReplayCursorApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...WORKSPACE_STREAM_REPLAY_CURSOR_API_PATTERNS);
   }
+  if (workspaceStreamReplayProgramApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...WORKSPACE_STREAM_REPLAY_PROGRAM_API_PATTERNS);
+  }
   if (workspaceStreamEventRoutingApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...WORKSPACE_STREAM_EVENT_ROUTING_API_PATTERNS);
   }
@@ -3720,6 +3760,7 @@ module.exports = {
   WORKSPACE_STREAM_READ_MODEL_API_PATTERNS,
   WORKSPACE_STREAM_SUBSCRIPTION_PLAN_API_PATTERNS,
   WORKSPACE_STREAM_REPLAY_CURSOR_API_PATTERNS,
+  WORKSPACE_STREAM_REPLAY_PROGRAM_API_PATTERNS,
   WORKSPACE_STREAM_EVENT_ROUTING_API_PATTERNS,
   WORKSPACE_STREAM_EVENT_ROUTE_PLAN_API_PATTERNS,
   WORKSPACE_STREAM_SUBSCRIPTION_EVENT_API_PATTERNS,
