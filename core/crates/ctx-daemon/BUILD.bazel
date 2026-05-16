@@ -7,7 +7,7 @@ exports_files(["Cargo.toml"])
 
 CTX_DAEMON_RUSTC_ENV = {
     "CARGO_MANIFEST_DIR": "core/crates/ctx-daemon",
-    "CARGO_PKG_VERSION": "0.65.31",
+    "CARGO_PKG_VERSION": "0.65.32",
 }
 
 filegroup(
