@@ -207,6 +207,10 @@ const fakeDaemonExternalStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/worktree_vcs_snapshot.rs",
 ];
 
+const acpCrpBridgeTokenStoreFacadeTestRoots = [
+  "core/crates/ctx-http/tests/acp_crp_bridge_tokens_e2e.rs",
+];
+
 const cacheRehydrationStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/cache_rehydration.rs",
 ];
@@ -849,6 +853,35 @@ const FAKE_DAEMON_EXTERNAL_TEST_STORE_ACCESS_PATTERNS = [
   {
     name: "direct fake-daemon external TestDaemon store access",
     regex: /\.(?:stores|global_store|store_for_session|store_for_workspace|uncached_store_for_workspace|store_for_task|store_for_worktree)\s*\(/,
+  },
+];
+
+const ACP_CRP_BRIDGE_TOKEN_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct ACP CRP bridge token StoreManager access",
+    regex: /\bStoreManager\b/,
+  },
+  {
+    name: "raw ACP CRP bridge token ctx_store Store",
+    regex: /\bctx_store\s*::\s*Store\b|\buse\s+ctx_store\s*::[^;]*\bStore\b|\b[A-Za-z_][A-Za-z0-9_]*\s*::\s*open_sqlite\s*\(/,
+    contentRegex: /\buse\s+ctx_store\s*::\s*\{(?=[^}]*\n)[\s\S]*?\bStore\b[\s\S]*?\}/gm,
+  },
+  {
+    name: "direct ACP CRP bridge token TestDaemon store access",
+    regex: /\.(?:stores|global_store|store_for_session|store_for_workspace|uncached_store_for_workspace|store_for_task|store_for_worktree)\s*\(/,
+  },
+  {
+    name: "direct ACP CRP bridge token settings store load",
+    regex: /\bctx_settings_service\s*::\s*load_settings\s*\(|(?<![\w.])\bload_settings\s*\(/,
+    contentRegex: /\buse\s+ctx_settings_service\s*::\s*\{(?=[^}]*\n)[\s\S]*?\bload_settings\b[\s\S]*?\}|^\s*use\s+ctx_settings_service\s*::[^;\n]*\bload_settings\b[^;\n]*;/gm,
+  },
+  {
+    name: "direct ACP CRP bridge token settings DB path",
+    regex: /\bdb\.sqlite\b|\.join\s*\(\s*["']db["']\s*\)/,
+  },
+  {
+    name: "direct ACP CRP bridge token settings store close",
+    regex: /\b(?:store|settings_store|global_store|raw_store)\s*\.close\s*\(\s*\)\s*\.await\b/,
   },
 ];
 
@@ -2566,6 +2599,13 @@ function fakeDaemonExternalStorePatternsForPath(relativePath) {
   return [];
 }
 
+function acpCrpBridgeTokenStorePatternsForPath(relativePath) {
+  if (acpCrpBridgeTokenStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return ACP_CRP_BRIDGE_TOKEN_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
 function cacheRehydrationStorePatternsForPath(relativePath) {
   if (cacheRehydrationStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return CACHE_REHYDRATION_TEST_STORE_ACCESS_PATTERNS;
@@ -3082,6 +3122,13 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
+        patterns: acpCrpBridgeTokenStorePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
         patterns: cacheRehydrationStorePatternsForPath(relativePath),
       }),
     );
@@ -3362,6 +3409,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  ACP_CRP_BRIDGE_TOKEN_TEST_STORE_ACCESS_PATTERNS,
   AUTH_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
   CACHE_REHYDRATION_TEST_STORE_ACCESS_PATTERNS,
   DAEMON_EXTRACTION_BLOCKER_PATTERNS,
@@ -3415,6 +3463,7 @@ module.exports = {
   WORKTREE_ARCHIVE_TEST_STORE_ACCESS_PATTERNS,
   WORKTREE_VCS_SNAPSHOT_TEST_STORE_ACCESS_PATTERNS,
   apiPatternsForPath,
+  acpCrpBridgeTokenStorePatternsForPath,
   authBoundaryStorePatternsForPath,
   cacheRehydrationStorePatternsForPath,
   defaultSessionAndDiffFakeDaemonFixturePatternsForPath,

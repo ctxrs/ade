@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const {
+  ACP_CRP_BRIDGE_TOKEN_TEST_STORE_ACCESS_PATTERNS,
   AUTH_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
   CACHE_REHYDRATION_TEST_STORE_ACCESS_PATTERNS,
   DAEMON_EXTRACTION_BLOCKER_PATTERNS,
@@ -55,6 +56,7 @@ const {
   WORKTREE_ARCHIVE_TEST_STORE_ACCESS_PATTERNS,
   WORKTREE_VCS_SNAPSHOT_TEST_STORE_ACCESS_PATTERNS,
   apiPatternsForPath,
+  acpCrpBridgeTokenStorePatternsForPath,
   authBoundaryStorePatternsForPath,
   cacheRehydrationStorePatternsForPath,
   defaultSessionAndDiffFakeDaemonFixturePatternsForPath,
@@ -1380,6 +1382,77 @@ test("daemon boundary guard scopes fake-daemon external roots without blocking c
   }
   assert.deepEqual(
     fakeDaemonExternalStorePatternsForPath("core/crates/ctx-http/tests/common/mod.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects ACP CRP bridge token raw settings store access", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/acp_crp_bridge_tokens_e2e.rs",
+    contents: `
+      use ctx_store::{Store, StoreManager};
+      use ctx_store :: Store as SpacedStore;
+      use ctx_settings_service::{load_settings, load_settings_from_data_root};
+      use ctx_settings_service :: load_settings as spaced_load_settings;
+      async fn helper(daemon: TestDaemon, stores: StoreManager) {
+        let _stores = StoreManager::open(data_root).await?;
+        let _raw = ctx_store::Store::open_sqlite(path, None).await?;
+        let store = Store::open_sqlite(path, Some(1)).await?;
+        let _spaced = ctx_store :: Store :: open_sqlite(path, None).await?;
+        let _aliased = SpacedStore :: open_sqlite(path, None).await?;
+        let settings = ctx_settings_service::load_settings(&store).await?;
+        let settings = ctx_settings_service :: load_settings(&store).await?;
+        let settings = load_settings(&store).await?;
+        let settings = spaced_load_settings(&store).await?;
+        let settings = load_settings_from_data_root(data_root).await?;
+        let db_path = data_root.join("db").join("db.sqlite");
+        daemon.stores().global().await?;
+        daemon.global_store().get_workspace(workspace_id).await?;
+        daemon.store_for_session(session_id).await?;
+        client.close().await;
+        store.close().await;
+      }
+    `,
+    patterns: ACP_CRP_BRIDGE_TOKEN_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct ACP CRP bridge token StoreManager access",
+      "direct ACP CRP bridge token StoreManager access",
+      "direct ACP CRP bridge token StoreManager access",
+      "raw ACP CRP bridge token ctx_store Store",
+      "raw ACP CRP bridge token ctx_store Store",
+      "raw ACP CRP bridge token ctx_store Store",
+      "raw ACP CRP bridge token ctx_store Store",
+      "raw ACP CRP bridge token ctx_store Store",
+      "raw ACP CRP bridge token ctx_store Store",
+      "direct ACP CRP bridge token TestDaemon store access",
+      "direct ACP CRP bridge token TestDaemon store access",
+      "direct ACP CRP bridge token TestDaemon store access",
+      "direct ACP CRP bridge token settings store load",
+      "direct ACP CRP bridge token settings store load",
+      "direct ACP CRP bridge token settings store load",
+      "direct ACP CRP bridge token settings store load",
+      "direct ACP CRP bridge token settings store load",
+      "direct ACP CRP bridge token settings DB path",
+      "direct ACP CRP bridge token settings store close",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes ACP CRP bridge token store facade root", () => {
+  assert.deepEqual(
+    acpCrpBridgeTokenStorePatternsForPath(
+      "core/crates/ctx-http/tests/acp_crp_bridge_tokens_e2e.rs",
+    ),
+    ACP_CRP_BRIDGE_TOKEN_TEST_STORE_ACCESS_PATTERNS,
+  );
+  assert.deepEqual(
+    acpCrpBridgeTokenStorePatternsForPath(
+      "core/crates/ctx-http/tests/provider_scenarios_offline.rs",
+    ),
     [],
   );
 });

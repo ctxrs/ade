@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use anyhow::Context;
 pub use ctx_settings_model::*;
 use ctx_store::Store;
@@ -234,6 +236,21 @@ pub async fn load_settings(store: &Store) -> anyhow::Result<Settings> {
     }
 
     Ok(settings)
+}
+
+/// Loads runtime settings from the canonical global database under a data root.
+///
+/// This opens the store and runs normal settings migrations/defaulting. Callers
+/// should treat it as the settings-service entrypoint for data-root scoped
+/// bootstrap reads, not as a generic read-only SQLite probe.
+pub async fn load_settings_from_data_root(data_root: &Path) -> anyhow::Result<Settings> {
+    let db_path = data_root.join("db").join("db.sqlite");
+    let store = Store::open_sqlite(&db_path, Some(1))
+        .await
+        .with_context(|| format!("opening runtime settings store at {}", db_path.display()))?;
+    let result = load_settings(&store).await;
+    store.close().await;
+    result
 }
 
 pub async fn save_settings(store: &Store, settings: &Settings) -> anyhow::Result<()> {
