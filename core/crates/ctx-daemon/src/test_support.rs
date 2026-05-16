@@ -38,6 +38,7 @@ mod cache_rehydration;
 pub use cache_rehydration::{
     CacheRehydrationSessionFixture, CacheRehydrationSubagentFixture, CacheRehydrationTurnFixture,
 };
+pub mod provider_scenarios;
 pub mod replay_projection;
 pub mod subagent_mcp;
 

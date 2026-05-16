@@ -338,6 +338,10 @@ const providerWorkerReapingStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/provider_worker_reaping_offline.rs",
 ];
 
+const providerScenariosOfflineStoreFacadeTestRoots = [
+  "core/crates/ctx-http/tests/provider_scenarios_offline.rs",
+];
+
 const worktreeArchiveStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/worktree_archive_http.rs",
 ];
@@ -1816,6 +1820,57 @@ const PROVIDER_WORKER_REAPING_TEST_STORE_ACCESS_PATTERNS = [
   },
 ];
 
+const PROVIDER_SCENARIOS_OFFLINE_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct provider-scenarios offline StoreManager access",
+    regex: /\bStoreManager\b/,
+  },
+  {
+    name: "raw provider-scenarios offline ctx_store Store",
+    regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore::/,
+    contentRegex: /\buse\s+ctx_store::\{(?=[^}]*\n)[\s\S]*?\bStore\b[\s\S]*?\}/gm,
+  },
+  {
+    name: "direct provider-scenarios offline store manager helper",
+    regex: /\b(?:crate::)?common::setup_store\s*\(|\buse\s+[^;]*\bsetup_store\b|\bsetup_store\s*\(/,
+    contentRegex: /\buse\s+[\s\S]*?\bsetup_store\b[\s\S]*?;/gm,
+  },
+  {
+    name: "direct provider-scenarios offline daemon construction helper",
+    regex: /\b(?:crate::)?common::build_daemon\s*\(|\buse\s+[^;]*\bbuild_daemon\b|\bbuild_daemon\s*\(/,
+    contentRegex: /\buse\s+[\s\S]*?\bbuild_daemon\b[\s\S]*?;/gm,
+  },
+  {
+    name: "direct provider-scenarios offline router composition",
+    regex: /\b(?:crate::)?common::router_for_daemon\s*\(|\buse\s+[^;]*\brouter_for_daemon\b|\brouter_for_daemon\s*\(/,
+    contentRegex: /\buse\s+[\s\S]*?\brouter_for_daemon\b[\s\S]*?;/gm,
+  },
+  {
+    name: "direct provider-scenarios offline TestDaemon construction",
+    regex: /\bTestDaemon::new[A-Za-z0-9_]*\s*\(/,
+  },
+  {
+    name: "direct provider-scenarios offline daemon store access",
+    regex: /\.(?:stores|global_store|store_for_session|store_for_workspace|uncached_store_for_workspace|store_for_task|store_for_worktree)\s*\(/,
+  },
+  {
+    name: "direct provider-scenarios offline session event query",
+    regex: /\.list_session_events\s*\(/,
+  },
+  {
+    name: "direct provider-scenarios offline session turn query",
+    regex: /\.list_session_turns_page_by_seq\s*\(/,
+  },
+  {
+    name: "direct provider-scenarios offline session message query",
+    regex: /\.list_messages_for_session\s*\(/,
+  },
+  {
+    name: "direct provider-scenarios offline turn-status polling",
+    regex: /\bSessionTurnStatus\b/,
+  },
+];
+
 const WORKTREE_ARCHIVE_TEST_STORE_ACCESS_PATTERNS = [
   {
     name: "direct worktree-archive global store access",
@@ -2618,6 +2673,13 @@ function providerWorkerReapingStorePatternsForPath(relativePath) {
   return [];
 }
 
+function providerScenariosOfflineStorePatternsForPath(relativePath) {
+  if (providerScenariosOfflineStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return PROVIDER_SCENARIOS_OFFLINE_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
 function worktreeArchiveStorePatternsForPath(relativePath) {
   if (worktreeArchiveStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return WORKTREE_ARCHIVE_TEST_STORE_ACCESS_PATTERNS;
@@ -3105,6 +3167,13 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
+        patterns: providerScenariosOfflineStorePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
         patterns: worktreeArchiveStorePatternsForPath(relativePath),
       }),
     );
@@ -3205,6 +3274,7 @@ module.exports = {
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_ROUTE_SETUP_TEST_STORE_ACCESS_PATTERNS,
+  PROVIDER_SCENARIOS_OFFLINE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_TARGET_SCOPED_INSTALLS_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_WORKER_REAPING_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_TEST_CACHE_ACCESS_PATTERNS,
@@ -3249,6 +3319,7 @@ module.exports = {
   migratedTestPatternsForPath,
   mobileStorePatternsForPath,
   providerAuthGlobalIdFixturePatternsForPath,
+  providerScenariosOfflineStorePatternsForPath,
   providerWorkerReapingStorePatternsForPath,
   providerCachePatternsForPath,
   providerProbeRuntimeEnvStorePatternsForPath,

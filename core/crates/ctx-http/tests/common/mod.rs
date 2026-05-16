@@ -626,6 +626,38 @@ pub async fn replay_projection_daemon_fixture(
     }
 }
 
+pub struct ProviderScenariosOfflineDaemonFixture {
+    pub data_dir: tempfile::TempDir,
+    pub daemon: TestDaemon,
+    pub app: axum::Router,
+}
+
+pub async fn provider_scenarios_offline_daemon_fixture(
+    data_dir: tempfile::TempDir,
+    python: &Path,
+    provider_ids: &[&str],
+    base_url: impl Into<String>,
+) -> ProviderScenariosOfflineDaemonFixture {
+    let script_path = crp_fixture_runtime::write_crp_fixture_runtime(data_dir.path());
+    seed_managed_codex_cli_host_runtime_with_args(
+        data_dir.path(),
+        python,
+        vec![script_path.to_string_lossy().to_string()],
+    )
+    .await;
+    let providers =
+        crp_fixture_runtime::build_crp_fixture_providers(provider_ids, python, &script_path);
+    let fixture =
+        fake_daemon_fixture_in_data_dir_with_providers(data_dir, providers, base_url).await;
+    let app = fixture.router();
+
+    ProviderScenariosOfflineDaemonFixture {
+        data_dir: fixture.data_dir,
+        daemon: fixture.daemon,
+        app,
+    }
+}
+
 pub async fn fake_daemon_fixture_with_providers(
     providers: HashMap<String, Arc<dyn ProviderAdapter>>,
     base_url: impl Into<String>,

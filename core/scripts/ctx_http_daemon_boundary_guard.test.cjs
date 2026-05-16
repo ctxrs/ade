@@ -25,6 +25,7 @@ const {
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_ROUTE_SETUP_TEST_STORE_ACCESS_PATTERNS,
+  PROVIDER_SCENARIOS_OFFLINE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_TARGET_SCOPED_INSTALLS_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_WORKER_REAPING_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_TEST_CACHE_ACCESS_PATTERNS,
@@ -69,6 +70,7 @@ const {
   migratedTestPatternsForPath,
   mobileStorePatternsForPath,
   providerAuthGlobalIdFixturePatternsForPath,
+  providerScenariosOfflineStorePatternsForPath,
   providerWorkerReapingStorePatternsForPath,
   providerCachePatternsForPath,
   providerProbeRuntimeEnvStorePatternsForPath,
@@ -3178,6 +3180,66 @@ test("daemon boundary guard scopes provider-worker-reaping store facade root", (
   assert.deepEqual(
     providerWorkerReapingStorePatternsForPath(
       "core/crates/ctx-http/tests/provider_scenarios_offline.rs",
+    ),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects direct provider-scenarios offline store access", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/provider_scenarios_offline.rs",
+    contents: `
+      use ctx_store::{Store, StoreManager};
+      async fn fixture(daemon: TestDaemon, stores: StoreManager) {
+        let stores = common::setup_store(data_dir.path()).await;
+        let daemon = common::build_daemon(data_dir.path(), stores, providers, "http://127.0.0.1:0");
+        let app = common::router_for_daemon(&daemon);
+        let daemon = TestDaemon::new(data_root, stores, providers, base_url, None);
+        daemon.store_for_session(session_id).await?;
+        daemon.stores().global().await?;
+        store.list_session_events(session_id).await?;
+        store.list_session_turns_page_by_seq(session_id, None, Some(10)).await?;
+        store.list_messages_for_session(session_id).await?;
+        let status = SessionTurnStatus::Completed;
+        let _raw: Store;
+      }
+    `,
+    patterns: PROVIDER_SCENARIOS_OFFLINE_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct provider-scenarios offline StoreManager access",
+      "direct provider-scenarios offline StoreManager access",
+      "raw provider-scenarios offline ctx_store Store",
+      "direct provider-scenarios offline store manager helper",
+      "direct provider-scenarios offline store manager helper",
+      "direct provider-scenarios offline daemon construction helper",
+      "direct provider-scenarios offline daemon construction helper",
+      "direct provider-scenarios offline router composition",
+      "direct provider-scenarios offline router composition",
+      "direct provider-scenarios offline TestDaemon construction",
+      "direct provider-scenarios offline daemon store access",
+      "direct provider-scenarios offline daemon store access",
+      "direct provider-scenarios offline session event query",
+      "direct provider-scenarios offline session turn query",
+      "direct provider-scenarios offline session message query",
+      "direct provider-scenarios offline turn-status polling",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes provider-scenarios offline store facade root", () => {
+  assert.deepEqual(
+    providerScenariosOfflineStorePatternsForPath(
+      "core/crates/ctx-http/tests/provider_scenarios_offline.rs",
+    ),
+    PROVIDER_SCENARIOS_OFFLINE_TEST_STORE_ACCESS_PATTERNS,
+  );
+  assert.deepEqual(
+    providerScenariosOfflineStorePatternsForPath(
+      "core/crates/ctx-http/tests/provider_worker_reaping_offline.rs",
     ),
     [],
   );
