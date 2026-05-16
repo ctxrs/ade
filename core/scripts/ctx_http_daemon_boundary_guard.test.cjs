@@ -1009,6 +1009,11 @@ test("daemon boundary guard rejects small API unit direct store setup", () => {
   const violations = scanText({
     filePath: "core/crates/ctx-http/src/api/providers/login/codex/tests.rs",
     contents: `
+      use ctx_settings_service::save_settings;
+      use ctx_settings_service::{
+        load_settings,
+        save_settings as persist_settings,
+      };
       use ctx_store::{Store, StoreManager};
       use ctx_store::{
         Store as RawStore,
@@ -1016,6 +1021,11 @@ test("daemon boundary guard rejects small API unit direct store setup", () => {
       async fn helper(daemon: TestDaemon) {
         let stores = StoreManager::open(data_dir.path()).await?;
         daemon.stores().global().await?;
+        daemon.global_store();
+        let daemon = TestDaemon::new(data_dir, stores, providers, "http://127.0.0.1:0".into(), None);
+        ctx_settings_service::save_settings(daemon.global_store(), &settings).await?;
+        save_settings(daemon.global_store(), &settings).await?;
+        persist_settings(daemon.global_store(), &settings).await?;
         let _raw = ctx_store::Store::open_sqlite(path, None).await?;
         Store::open_sqlite(path, None).await?;
         RawStore::open_sqlite(path, None).await?;
@@ -1065,12 +1075,38 @@ test("daemon boundary guard rejects small API unit direct store setup", () => {
       "direct small API unit provider handle reach-through",
       "direct small API unit provider handle reach-through",
       "direct small API unit provider handle reach-through",
+      "direct small API unit raw TestDaemon construction",
+      "direct small API unit global store access",
+      "direct small API unit global store access",
+      "direct small API unit global store access",
+      "direct small API unit global store access",
+      "direct small API unit settings persistence",
+      "direct small API unit settings persistence",
+      "direct small API unit settings persistence",
+      "direct small API unit settings persistence",
     ],
   );
 });
 
+test("daemon boundary guard allows small API unit test daemon facades and handler state", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/settings.rs",
+    contents: `
+      async fn helper() {
+        let daemon = TestDaemon::new_for_test(data_root, "http://127.0.0.1:4310".to_string()).await?;
+        let daemon = TestDaemon::new_with_providers_for_test(data_root, providers, "http://127.0.0.1:4310".to_string(), None).await?;
+        update_settings(State(daemon.handle().core()), Json(req)).await?;
+      }
+    `,
+    patterns: SMALL_API_UNIT_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(violations, []);
+});
+
 test("daemon boundary guard scopes small API unit store facade roots", () => {
   for (const filePath of [
+    "core/crates/ctx-http/src/api/settings.rs",
     "core/crates/ctx-http/src/api/providers/login/codex/tests.rs",
     "core/crates/ctx-http/src/api/providers/tests/mod.rs",
     "core/crates/ctx-http/src/api/providers/tests/install_statuses.rs",
@@ -2821,6 +2857,11 @@ test("daemon boundary guard rejects direct task-lifecycle store access", () => {
   const violations = scanText({
     filePath: "core/crates/ctx-http/src/api/tasks/lifecycle_tests/fixtures.rs",
     contents: `
+      use ctx_settings_service::save_settings;
+      use ctx_settings_service::{
+        load_settings,
+        save_settings as persist_settings,
+      };
       use ctx_store::{Store, StoreManager};
       async fn fixture(daemon: TestDaemon, stores: StoreManager) {
         daemon.global_store();
@@ -2832,6 +2873,9 @@ test("daemon boundary guard rejects direct task-lifecycle store access", () => {
         stores.global().await?;
         stores.workspace(workspace_id).await?;
         ctx_settings_service::save_settings(daemon.global_store(), &settings).await?;
+        save_settings(daemon.global_store(), &settings).await?;
+        persist_settings(daemon.global_store(), &settings).await?;
+        let daemon = TestDaemon::new(data_dir, stores, providers, "http://127.0.0.1:0".into(), None);
         daemon
           .handle()
           .workspaces();
@@ -2846,6 +2890,8 @@ test("daemon boundary guard rejects direct task-lifecycle store access", () => {
     [
       "direct task-lifecycle global store access",
       "direct task-lifecycle global store access",
+      "direct task-lifecycle global store access",
+      "direct task-lifecycle global store access",
       "direct task-lifecycle session store access",
       "direct task-lifecycle workspace store access",
       "direct task-lifecycle uncached workspace store access",
@@ -2853,14 +2899,35 @@ test("daemon boundary guard rejects direct task-lifecycle store access", () => {
       "direct task-lifecycle StoreManager access",
       "direct task-lifecycle StoreManager global access",
       "direct task-lifecycle StoreManager workspace access",
-      "direct task-lifecycle settings persistence",
       "direct task-lifecycle workspaces handle access",
       "raw task-lifecycle ctx_store Store",
       "raw task-lifecycle ctx_store Store",
       "raw task-lifecycle StoreManager",
       "raw task-lifecycle StoreManager",
+      "direct task-lifecycle raw TestDaemon construction",
+      "direct task-lifecycle settings persistence",
+      "direct task-lifecycle settings persistence",
+      "direct task-lifecycle settings persistence",
+      "direct task-lifecycle settings persistence",
     ],
   );
+});
+
+test("daemon boundary guard allows task storage-admission test daemon facades and router helper", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/tasks/storage_admission_http_tests/fixtures.rs",
+    contents: `
+      async fn helper(state: &TestDaemon) {
+        let daemon = TestDaemon::new_for_test(data_root, "http://127.0.0.1:4311".to_string()).await?;
+        let daemon = TestDaemon::new_with_providers_for_test(data_root, providers, "http://127.0.0.1:4311".to_string(), None).await?;
+        state.save_execution_settings_for_test(execution).await?;
+        crate::api::router(crate::api::RouteHandles::from_daemon_handle(state.handle()))
+      }
+    `,
+    patterns: TASK_LIFECYCLE_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(violations, []);
 });
 
 test("daemon boundary guard scopes task-lifecycle store facade roots", () => {
@@ -2869,18 +2936,15 @@ test("daemon boundary guard scopes task-lifecycle store facade roots", () => {
     "core/crates/ctx-http/src/api/tasks/lifecycle_tests.rs",
     "core/crates/ctx-http/src/api/tasks/lifecycle_tests/fixtures.rs",
     "core/crates/ctx-http/src/api/tasks/lifecycle_tests/delete/subagent_worktree.rs",
+    "core/crates/ctx-http/src/api/tasks/storage_admission_http_tests.rs",
+    "core/crates/ctx-http/src/api/tasks/storage_admission_http_tests/fixtures.rs",
   ]) {
     assert.deepEqual(
       taskLifecycleStorePatternsForPath(filePath),
       TASK_LIFECYCLE_TEST_STORE_ACCESS_PATTERNS,
     );
   }
-  assert.deepEqual(
-    taskLifecycleStorePatternsForPath(
-      "core/crates/ctx-http/src/api/tasks/storage_admission_http_tests/fixtures.rs",
-    ),
-    [],
-  );
+  assert.deepEqual(taskLifecycleStorePatternsForPath("core/crates/ctx-http/src/api/settings.rs"), []);
 });
 
 test("daemon boundary guard scopes test router composition to sanctioned helpers", () => {

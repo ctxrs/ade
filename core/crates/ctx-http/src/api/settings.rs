@@ -48,10 +48,7 @@ pub(super) async fn update_settings(
 mod tests {
     use super::*;
 
-    use std::collections::HashMap;
-
     use ctx_daemon::test_support::TestDaemon;
-    use ctx_store::StoreManager;
     use serde_json::json;
 
     use ctx_settings_service::EXECUTION_POLICY_TEST_ENV_LOCK;
@@ -91,13 +88,12 @@ mod tests {
         let _policy = EnvVarGuard::set("CTX_HOST_EXECUTION_POLICY", "sandbox_only");
         let _mode = EnvVarGuard::remove("CTX_EXECUTION_MODE");
         let temp = tempfile::tempdir().expect("tempdir");
-        let daemon = TestDaemon::new(
+        let daemon = TestDaemon::new_for_test(
             temp.path().to_path_buf(),
-            StoreManager::open(temp.path()).await.expect("open stores"),
-            HashMap::new(),
             "http://127.0.0.1:4310".to_string(),
-            None,
-        );
+        )
+        .await
+        .expect("create test daemon");
         let req = serde_json::from_value::<user_settings::UpdateSettingsReq>(json!({
             "execution": {
                 "mode": "host"

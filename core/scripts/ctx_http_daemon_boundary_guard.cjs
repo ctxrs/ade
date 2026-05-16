@@ -145,6 +145,7 @@ const externalProviderRouteStoreFacadeTestRoots = [
 ];
 
 const smallApiUnitStoreFacadeTestRoots = [
+  "core/crates/ctx-http/src/api/settings.rs",
   "core/crates/ctx-http/src/api/providers/login/codex/tests.rs",
   "core/crates/ctx-http/src/api/providers/tests/mod.rs",
   "core/crates/ctx-http/src/api/providers/tests/install_statuses.rs",
@@ -335,6 +336,8 @@ const taskLifecycleStoreFacadeTestRoots = [
   "core/crates/ctx-http/src/api/tasks/cleanup_lifecycle_tests.rs",
   "core/crates/ctx-http/src/api/tasks/lifecycle_tests.rs",
   "core/crates/ctx-http/src/api/tasks/lifecycle_tests/",
+  "core/crates/ctx-http/src/api/tasks/storage_admission_http_tests.rs",
+  "core/crates/ctx-http/src/api/tasks/storage_admission_http_tests/",
 ];
 
 const API_RAW_DAEMON_PATTERNS = [
@@ -664,6 +667,19 @@ const SMALL_API_UNIT_TEST_STORE_ACCESS_PATTERNS = [
     regex: /a^/,
     contentRegex: /(?:\b[a-zA-Z_][a-zA-Z0-9_]*\s*\.\s*handle\s*\(\s*\)\s*\.\s*providers\s*\(|\blet\s+[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*[^;]*?\.handle\s*\(\s*\)\s*;|\b[a-zA-Z_][a-zA-Z0-9_]*\s*\.\s*providers\s*\()/gm,
     allowSmallApiUnitProviderHandlerState: true,
+  },
+  {
+    name: "direct small API unit raw TestDaemon construction",
+    regex: /\bTestDaemon::(?:new|new_with_public_base_url|new_with_runtime_flags)\s*\(/,
+  },
+  {
+    name: "direct small API unit global store access",
+    regex: /\.global_store\s*\(/,
+  },
+  {
+    name: "direct small API unit settings persistence",
+    regex: /\bctx_settings_service::save_settings\s*\(|(?<![\w.])\bsave_settings\s*\(/,
+    contentRegex: /^\s*use\s+ctx_settings_service::(?:[^;\n]*\bsave_settings\b[^;\n]*|\{(?=[^}]*\bsave_settings\b)[^}]*\})\s*;/gm,
   },
 ];
 
@@ -1714,10 +1730,6 @@ const TASK_LIFECYCLE_TEST_STORE_ACCESS_PATTERNS = [
     regex: /\bstores\.workspace\s*\(/,
   },
   {
-    name: "direct task-lifecycle settings persistence",
-    regex: /\bctx_settings_service::save_settings\s*\(/,
-  },
-  {
     name: "direct task-lifecycle workspaces handle access",
     regex: /a^/,
     contentRegex: /\.handle\s*\(\s*\)\s*\.\s*workspaces\s*\(/gm,
@@ -1729,6 +1741,15 @@ const TASK_LIFECYCLE_TEST_STORE_ACCESS_PATTERNS = [
   {
     name: "raw task-lifecycle StoreManager",
     regex: /\bStoreManager\b/,
+  },
+  {
+    name: "direct task-lifecycle raw TestDaemon construction",
+    regex: /\bTestDaemon::(?:new|new_with_public_base_url|new_with_runtime_flags)\s*\(/,
+  },
+  {
+    name: "direct task-lifecycle settings persistence",
+    regex: /\bctx_settings_service::save_settings\s*\(|(?<![\w.])\bsave_settings\s*\(/,
+    contentRegex: /^\s*use\s+ctx_settings_service::(?:[^;\n]*\bsave_settings\b[^;\n]*|\{(?=[^}]*\bsave_settings\b)[^}]*\})\s*;/gm,
   },
 ];
 

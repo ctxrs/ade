@@ -11,11 +11,10 @@ use ctx_core::ids::WorkspaceId;
 use ctx_daemon::test_support::TestDaemon;
 use ctx_providers::fake::FakeProviderAdapter;
 use ctx_sandbox_materialization::set_test_preflight_storage_samples_override;
-use ctx_settings_model::{ExecutionSettings, Settings};
+use ctx_settings_model::ExecutionSettings;
 use ctx_storage_admission::{
     StorageAdmissionOperation, StorageAdmissionSample, StorageGuardStatus,
 };
-use ctx_store::StoreManager;
 
 pub(super) fn init_git_workspace(root: &Path) {
     git(&["init"], root);
@@ -40,25 +39,21 @@ pub(super) async fn test_state(data_root: &Path) -> TestDaemon {
     let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
         HashMap::new();
     providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-    TestDaemon::new(
+    TestDaemon::new_with_providers_for_test(
         data_root.to_path_buf(),
-        StoreManager::open(data_root).await.expect("open stores"),
         providers,
         "http://127.0.0.1:4311".to_string(),
         None,
     )
+    .await
+    .expect("create test daemon")
 }
 
 pub(super) async fn save_test_execution_settings(state: &TestDaemon, execution: ExecutionSettings) {
-    ctx_settings_service::save_settings(
-        state.global_store(),
-        &Settings {
-            execution: Some(execution),
-            ..Default::default()
-        },
-    )
-    .await
-    .expect("save test execution settings");
+    state
+        .save_execution_settings_for_test(execution)
+        .await
+        .expect("save test execution settings");
 }
 
 pub(super) fn test_router(state: &TestDaemon) -> axum::Router {

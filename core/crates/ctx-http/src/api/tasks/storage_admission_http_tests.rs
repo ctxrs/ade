@@ -31,12 +31,7 @@ async fn create_task_rejects_before_disk_isolated_copy_when_host_reserve_is_unre
 
     let state = test_state(&data_root).await;
     let workspace = state
-        .global_store()
-        .create_workspace(
-            "ws".to_string(),
-            repo_root.to_string_lossy().to_string(),
-            VcsKind::Git,
-        )
+        .seed_workspace_for_test("ws", &repo_root, VcsKind::Git)
         .await
         .expect("create workspace");
 

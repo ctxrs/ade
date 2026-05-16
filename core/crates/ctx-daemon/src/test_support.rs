@@ -684,6 +684,16 @@ impl TestDaemon {
         root_path: &Path,
         vcs_kind: VcsKind,
     ) -> anyhow::Result<Workspace> {
+        self.seed_workspace_for_test(name, root_path, vcs_kind)
+            .await
+    }
+
+    pub async fn seed_workspace_for_test(
+        &self,
+        name: &str,
+        root_path: &Path,
+        vcs_kind: VcsKind,
+    ) -> anyhow::Result<Workspace> {
         let workspace = self
             .state
             .global_store()
@@ -695,6 +705,18 @@ impl TestDaemon {
             .await?;
         let _ = self.state.store_for_workspace(workspace.id).await?;
         Ok(workspace)
+    }
+
+    pub async fn save_execution_settings_for_test(
+        &self,
+        execution: ExecutionSettings,
+    ) -> anyhow::Result<()> {
+        let settings = Settings {
+            execution: Some(execution),
+            ..Default::default()
+        };
+        ctx_settings_service::save_settings(self.state.global_store(), &settings).await?;
+        Ok(())
     }
 
     pub async fn task_default_session_snapshot_for_test(
@@ -977,12 +999,7 @@ impl TestDaemon {
         &self,
         execution: ExecutionSettings,
     ) -> anyhow::Result<()> {
-        let settings = Settings {
-            execution: Some(execution),
-            ..Default::default()
-        };
-        ctx_settings_service::save_settings(self.state.global_store(), &settings).await?;
-        Ok(())
+        self.save_execution_settings_for_test(execution).await
     }
 
     pub async fn task_lifecycle_effective_execution_settings_for_test(
