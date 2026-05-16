@@ -595,6 +595,18 @@ const PROVIDER_ROUTE_SETUP_TEST_STORE_ACCESS_PATTERNS = [
     contentRegex: /(?:\.handle\s*\(\s*\)\s*\.\s*(?:providers|sessions|workspaces|tasks)\s*\(|\blet\s+[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*[^;\n]*\.handle\s*\(\s*\)\s*;|[a-zA-Z_][a-zA-Z0-9_]*\.(?:providers|sessions|workspaces|tasks)\s*\()/gm,
   },
   {
+    name: "direct provider-route TestDaemon construction",
+    regex: /\bTestDaemon::new[A-Za-z0-9_]*\s*\(/,
+  },
+  {
+    name: "direct provider-route lib-test daemon helper",
+    regex: /\btest_daemon_(?:with_fake_provider_)?for_test\s*\(/,
+  },
+  {
+    name: "direct provider-route router composition",
+    regex: /\btest_router\s*\(|\b(?:crate::)?api::router\s*\(|\bRouteHandles::from_daemon_handle\s*\(/,
+  },
+  {
     name: "raw provider-route ctx_store Store",
     regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore\b/,
   },
@@ -643,6 +655,18 @@ const AUTH_BOUNDARY_TEST_STORE_ACCESS_PATTERNS = [
     name: "direct auth-boundary handle access",
     regex: /a^/,
     contentRegex: /(?:\.handle\s*\(\s*\)\s*\.\s*(?:providers|sessions|workspaces|tasks)\s*\(|\blet\s+[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*[^;\n]*\.handle\s*\(\s*\)\s*;|[a-zA-Z_][a-zA-Z0-9_]*\.(?:providers|sessions|workspaces|tasks)\s*\()/gm,
+  },
+  {
+    name: "direct auth-boundary TestDaemon construction",
+    regex: /\bTestDaemon::new[A-Za-z0-9_]*\s*\(/,
+  },
+  {
+    name: "direct auth-boundary lib-test daemon helper",
+    regex: /\btest_daemon_(?:with_fake_provider_)?for_test\s*\(/,
+  },
+  {
+    name: "direct auth-boundary router composition",
+    regex: /\btest_router\s*\(|\b(?:crate::)?api::router\s*\(|\bRouteHandles::from_daemon_handle\s*\(/,
   },
   {
     name: "raw auth-boundary ctx_store Store",

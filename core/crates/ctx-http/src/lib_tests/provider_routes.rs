@@ -7,12 +7,11 @@ mod harness_config;
 
 struct ProviderRouteFixture {
     app: axum::Router,
-    daemon: TestDaemon,
+    fixture: crate::test_support::TestDaemonFixture,
     _home_guard: EnvVarGuard,
     _codex_home_guard: EnvVarGuard,
     _home_dir: tempfile::TempDir,
     _codex_home_dir: Option<tempfile::TempDir>,
-    data_dir: tempfile::TempDir,
     _serial: tokio::sync::MutexGuard<'static, ()>,
 }
 
@@ -39,24 +38,20 @@ impl ProviderRouteFixture {
         } else {
             EnvVarGuard::unset("CTX_CODEX_HOME")
         };
-        let data_dir = tempfile::tempdir().unwrap();
-        let daemon = TestDaemon::new_with_providers_for_test(
-            data_dir.path().to_path_buf(),
+        let fixture = crate::test_support::TestDaemonFixture::with_providers_and_auth_token(
             HashMap::new(),
-            "http://127.0.0.1:4399".to_string(),
+            "http://127.0.0.1:4399",
             auth_token,
         )
-        .await
-        .unwrap();
-        let app = test_router(&daemon);
+        .await;
+        let app = fixture.router();
         Self {
             app,
-            daemon,
+            fixture,
             _home_guard: home_guard,
             _codex_home_guard: codex_home_guard,
             _home_dir: home_dir,
             _codex_home_dir: codex_home_dir,
-            data_dir,
             _serial: serial,
         }
     }
@@ -66,11 +61,11 @@ impl ProviderRouteFixture {
     }
 
     fn daemon(&self) -> &TestDaemon {
-        &self.daemon
+        self.fixture.daemon()
     }
 
     fn data_root(&self) -> &std::path::Path {
-        self.data_dir.path()
+        self.fixture.data_root()
     }
 }
 

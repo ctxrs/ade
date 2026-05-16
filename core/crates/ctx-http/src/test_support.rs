@@ -40,12 +40,20 @@ impl TestDaemonFixture {
         providers: HashMap<String, Arc<dyn ProviderAdapter>>,
         base_url: impl Into<String>,
     ) -> Self {
+        Self::with_providers_and_auth_token(providers, base_url, None).await
+    }
+
+    pub(crate) async fn with_providers_and_auth_token(
+        providers: HashMap<String, Arc<dyn ProviderAdapter>>,
+        base_url: impl Into<String>,
+        auth_token: Option<String>,
+    ) -> Self {
         let data_dir = tempfile::tempdir().expect("tempdir");
         let daemon = TestDaemon::new_with_providers_for_test(
             data_dir.path().to_path_buf(),
             providers,
             base_url.into(),
-            None,
+            auth_token,
         )
         .await
         .expect("create test daemon");

@@ -823,6 +823,12 @@ test("daemon boundary guard rejects provider-route direct store setup", () => {
         handle.sessions();
         handle.workspaces();
         handle.tasks();
+        let daemon = TestDaemon::new_with_providers_for_test(data_root, HashMap::new(), "http://127.0.0.1:0".to_string(), None).await?;
+        let daemon = test_daemon_for_test(data_root, None).await;
+        let daemon = test_daemon_with_fake_provider_for_test(data_root, None).await;
+        let app = test_router(&daemon);
+        let app = crate::api::router(RouteHandles::from_daemon_handle(daemon.handle()));
+        let app = fixture.router();
         let _raw: Store;
       }
     `,
@@ -851,6 +857,11 @@ test("daemon boundary guard rejects provider-route direct store setup", () => {
       "direct provider-route handle access",
       "direct provider-route handle access",
       "direct provider-route handle access",
+      "direct provider-route TestDaemon construction",
+      "direct provider-route lib-test daemon helper",
+      "direct provider-route lib-test daemon helper",
+      "direct provider-route router composition",
+      "direct provider-route router composition",
       "raw provider-route ctx_store Store",
       "raw provider-route ctx_store Store",
     ],
@@ -901,6 +912,12 @@ test("daemon boundary guard rejects auth-boundary direct store setup", () => {
         handle.providers();
         handle.workspaces();
         handle.tasks();
+        let daemon = TestDaemon::new_with_providers_for_test(data_root, HashMap::new(), "http://127.0.0.1:0".to_string(), None).await?;
+        let daemon = test_daemon_for_test(data_root, None).await;
+        let daemon = test_daemon_with_fake_provider_for_test(data_root, None).await;
+        let app = test_router(&daemon);
+        let app = crate::api::router(RouteHandles::from_daemon_handle(daemon.handle()));
+        let app = fixture.router();
         let _raw: Store;
       }
     `,
@@ -929,6 +946,11 @@ test("daemon boundary guard rejects auth-boundary direct store setup", () => {
       "direct auth-boundary handle access",
       "direct auth-boundary handle access",
       "direct auth-boundary handle access",
+      "direct auth-boundary TestDaemon construction",
+      "direct auth-boundary lib-test daemon helper",
+      "direct auth-boundary lib-test daemon helper",
+      "direct auth-boundary router composition",
+      "direct auth-boundary router composition",
       "raw auth-boundary ctx_store Store",
       "raw auth-boundary ctx_store Store",
     ],
