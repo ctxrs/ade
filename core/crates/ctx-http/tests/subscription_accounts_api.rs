@@ -706,6 +706,14 @@ async fn assert_managed_subscription_crud(provider_id: &str, upsert_body: serde_
         Some(activated_body.accounts[0].id.as_str())
     );
 
+    let missing_delete = server
+        .client
+        .delete(format!("{accounts_url}/missing-account"))
+        .send()
+        .await
+        .expect("delete missing account request");
+    assert_eq!(missing_delete.status(), StatusCode::NOT_FOUND);
+
     let deleted = server
         .client
         .delete(format!("{accounts_url}/{}", activated_body.accounts[0].id))

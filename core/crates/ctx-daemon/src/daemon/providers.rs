@@ -57,6 +57,11 @@ pub use accounts::{
     PreparedMistralLoginPaths, PreparedQwenLoginPaths, ProviderAccountLoginMutation,
     ProviderAccountMutationError,
 };
+pub use accounts::{
+    AmpAccountsResponse, ClaudeAccountsResponse, CodexAccountsResponse, CopilotAccountsResponse,
+    CursorAccountsResponse, GeminiAccountsResponse, KimiAccountsResponse, MistralAccountsResponse,
+    ProviderAccountRouteError, ProviderAccountRouteErrorKind, QwenAccountsResponse,
+};
 pub use auth::{authenticate_provider_for_workspace_runtime, ProviderWorkspaceAuthenticationError};
 pub use auth_check::{
     authenticate_provider_for_workspace, verify_provider_for_workspace, ProviderAuthCheckError,
@@ -216,6 +221,12 @@ impl ProvidersHandle {
         load_codex_accounts_snapshot(&self.state).await
     }
 
+    pub async fn codex_accounts_response(
+        &self,
+    ) -> Result<CodexAccountsResponse, ProviderAccountRouteError> {
+        accounts::codex_accounts_response(&self.state).await
+    }
+
     pub async fn load_codex_account_registry(
         &self,
     ) -> anyhow::Result<provider_accounts::CodexAccountRegistry> {
@@ -229,11 +240,25 @@ impl ProvidersHandle {
         import_host_codex_auth(&self.state, label).await
     }
 
+    pub async fn import_host_codex_auth_response(
+        &self,
+        label: Option<String>,
+    ) -> Result<CodexAccountsResponse, ProviderAccountRouteError> {
+        accounts::import_host_codex_auth_response(&self.state, label).await
+    }
+
     pub async fn set_active_codex_account(
         &self,
         account_id: Option<String>,
     ) -> Result<CodexAccountsSnapshot, ProviderAccountMutationError> {
         set_active_codex_account(&self.state, account_id).await
+    }
+
+    pub async fn set_active_codex_account_response(
+        &self,
+        account_id: Option<String>,
+    ) -> Result<CodexAccountsResponse, ProviderAccountRouteError> {
+        accounts::set_active_codex_account_response(&self.state, account_id).await
     }
 
     pub async fn remove_codex_account(
@@ -243,10 +268,23 @@ impl ProvidersHandle {
         remove_codex_account(&self.state, account_id).await
     }
 
+    pub async fn delete_codex_account_response(
+        &self,
+        account_id: &str,
+    ) -> Result<CodexAccountsResponse, ProviderAccountRouteError> {
+        accounts::delete_codex_account_response(&self.state, account_id).await
+    }
+
     pub async fn ensure_amp_account_registry_from_runtime_auth(
         &self,
     ) -> anyhow::Result<provider_accounts::AmpAccountRegistry> {
         ensure_amp_account_registry_from_runtime_auth(&self.state).await
+    }
+
+    pub async fn amp_accounts_response(
+        &self,
+    ) -> Result<AmpAccountsResponse, ProviderAccountRouteError> {
+        accounts::amp_accounts_response(&self.state).await
     }
 
     pub async fn load_amp_account_registry(
@@ -263,6 +301,14 @@ impl ProvidersHandle {
         upsert_amp_account(&self.state, label, email).await
     }
 
+    pub async fn upsert_amp_account_response(
+        &self,
+        label: Option<String>,
+        email: Option<String>,
+    ) -> Result<AmpAccountsResponse, ProviderAccountRouteError> {
+        accounts::upsert_amp_account_response(&self.state, label, email).await
+    }
+
     pub async fn set_active_amp_account(
         &self,
         account_id: Option<String>,
@@ -270,11 +316,31 @@ impl ProvidersHandle {
         set_active_amp_account(&self.state, account_id).await
     }
 
+    pub async fn set_active_amp_account_response(
+        &self,
+        account_id: Option<String>,
+    ) -> Result<AmpAccountsResponse, ProviderAccountRouteError> {
+        accounts::set_active_amp_account_response(&self.state, account_id).await
+    }
+
     pub async fn remove_amp_account(
         &self,
         account_id: &str,
     ) -> Result<(), ProviderAccountMutationError> {
         remove_amp_account(&self.state, account_id).await
+    }
+
+    pub async fn delete_amp_account_response(
+        &self,
+        account_id: &str,
+    ) -> Result<AmpAccountsResponse, ProviderAccountRouteError> {
+        accounts::delete_amp_account_response(&self.state, account_id).await
+    }
+
+    pub async fn claude_accounts_response(
+        &self,
+    ) -> Result<ClaudeAccountsResponse, ProviderAccountRouteError> {
+        accounts::claude_accounts_response(&self.state).await
     }
 
     pub async fn load_claude_account_registry(
@@ -291,6 +357,14 @@ impl ProvidersHandle {
         add_claude_account(&self.state, label, setup_token).await
     }
 
+    pub async fn add_claude_account_response(
+        &self,
+        label: Option<String>,
+        setup_token: String,
+    ) -> Result<ClaudeAccountsResponse, ProviderAccountRouteError> {
+        accounts::add_claude_account_response(&self.state, label, setup_token).await
+    }
+
     pub async fn set_active_claude_account(
         &self,
         account_id: Option<String>,
@@ -298,11 +372,31 @@ impl ProvidersHandle {
         set_active_claude_account(&self.state, account_id).await
     }
 
+    pub async fn set_active_claude_account_response(
+        &self,
+        account_id: Option<String>,
+    ) -> Result<ClaudeAccountsResponse, ProviderAccountRouteError> {
+        accounts::set_active_claude_account_response(&self.state, account_id).await
+    }
+
     pub async fn remove_claude_account(
         &self,
         account_id: &str,
     ) -> Result<(), ProviderAccountMutationError> {
         remove_claude_account(&self.state, account_id).await
+    }
+
+    pub async fn delete_claude_account_response(
+        &self,
+        account_id: &str,
+    ) -> Result<ClaudeAccountsResponse, ProviderAccountRouteError> {
+        accounts::delete_claude_account_response(&self.state, account_id).await
+    }
+
+    pub async fn copilot_accounts_response(
+        &self,
+    ) -> Result<CopilotAccountsResponse, ProviderAccountRouteError> {
+        accounts::copilot_accounts_response(&self.state).await
     }
 
     pub async fn load_copilot_account_registry(
@@ -320,6 +414,15 @@ impl ProvidersHandle {
         add_copilot_account(&self.state, label, token, email).await
     }
 
+    pub async fn add_copilot_account_response(
+        &self,
+        label: Option<String>,
+        token: String,
+        email: Option<String>,
+    ) -> Result<CopilotAccountsResponse, ProviderAccountRouteError> {
+        accounts::add_copilot_account_response(&self.state, label, token, email).await
+    }
+
     pub async fn set_active_copilot_account(
         &self,
         account_id: Option<String>,
@@ -327,11 +430,31 @@ impl ProvidersHandle {
         set_active_copilot_account(&self.state, account_id).await
     }
 
+    pub async fn set_active_copilot_account_response(
+        &self,
+        account_id: Option<String>,
+    ) -> Result<CopilotAccountsResponse, ProviderAccountRouteError> {
+        accounts::set_active_copilot_account_response(&self.state, account_id).await
+    }
+
     pub async fn remove_copilot_account(
         &self,
         account_id: &str,
     ) -> Result<(), ProviderAccountMutationError> {
         remove_copilot_account(&self.state, account_id).await
+    }
+
+    pub async fn delete_copilot_account_response(
+        &self,
+        account_id: &str,
+    ) -> Result<CopilotAccountsResponse, ProviderAccountRouteError> {
+        accounts::delete_copilot_account_response(&self.state, account_id).await
+    }
+
+    pub async fn cursor_accounts_response(
+        &self,
+    ) -> Result<CursorAccountsResponse, ProviderAccountRouteError> {
+        accounts::cursor_accounts_response(&self.state).await
     }
 
     pub async fn load_cursor_account_registry(
@@ -349,6 +472,15 @@ impl ProvidersHandle {
         add_cursor_account(&self.state, label, token, email).await
     }
 
+    pub async fn add_cursor_account_response(
+        &self,
+        label: Option<String>,
+        token: String,
+        email: Option<String>,
+    ) -> Result<CursorAccountsResponse, ProviderAccountRouteError> {
+        accounts::add_cursor_account_response(&self.state, label, token, email).await
+    }
+
     pub async fn set_active_cursor_account(
         &self,
         account_id: Option<String>,
@@ -356,11 +488,31 @@ impl ProvidersHandle {
         set_active_cursor_account(&self.state, account_id).await
     }
 
+    pub async fn set_active_cursor_account_response(
+        &self,
+        account_id: Option<String>,
+    ) -> Result<CursorAccountsResponse, ProviderAccountRouteError> {
+        accounts::set_active_cursor_account_response(&self.state, account_id).await
+    }
+
     pub async fn remove_cursor_account(
         &self,
         account_id: &str,
     ) -> Result<(), ProviderAccountMutationError> {
         remove_cursor_account(&self.state, account_id).await
+    }
+
+    pub async fn delete_cursor_account_response(
+        &self,
+        account_id: &str,
+    ) -> Result<CursorAccountsResponse, ProviderAccountRouteError> {
+        accounts::delete_cursor_account_response(&self.state, account_id).await
+    }
+
+    pub async fn gemini_accounts_response(
+        &self,
+    ) -> Result<GeminiAccountsResponse, ProviderAccountRouteError> {
+        accounts::gemini_accounts_response(&self.state).await
     }
 
     pub async fn load_gemini_account_registry(
@@ -386,6 +538,23 @@ impl ProvidersHandle {
         .await
     }
 
+    pub async fn add_gemini_account_response(
+        &self,
+        label: Option<String>,
+        oauth_creds_json: String,
+        google_accounts_json: Option<String>,
+        email: Option<String>,
+    ) -> Result<GeminiAccountsResponse, ProviderAccountRouteError> {
+        accounts::add_gemini_account_response(
+            &self.state,
+            label,
+            oauth_creds_json,
+            google_accounts_json,
+            email,
+        )
+        .await
+    }
+
     pub async fn set_active_gemini_account(
         &self,
         account_id: Option<String>,
@@ -393,11 +562,31 @@ impl ProvidersHandle {
         set_active_gemini_account(&self.state, account_id).await
     }
 
+    pub async fn set_active_gemini_account_response(
+        &self,
+        account_id: Option<String>,
+    ) -> Result<GeminiAccountsResponse, ProviderAccountRouteError> {
+        accounts::set_active_gemini_account_response(&self.state, account_id).await
+    }
+
     pub async fn remove_gemini_account(
         &self,
         account_id: &str,
     ) -> Result<(), ProviderAccountMutationError> {
         remove_gemini_account(&self.state, account_id).await
+    }
+
+    pub async fn delete_gemini_account_response(
+        &self,
+        account_id: &str,
+    ) -> Result<GeminiAccountsResponse, ProviderAccountRouteError> {
+        accounts::delete_gemini_account_response(&self.state, account_id).await
+    }
+
+    pub async fn kimi_accounts_response(
+        &self,
+    ) -> Result<KimiAccountsResponse, ProviderAccountRouteError> {
+        accounts::kimi_accounts_response(&self.state).await
     }
 
     pub async fn load_kimi_account_registry(
@@ -425,6 +614,25 @@ impl ProvidersHandle {
         .await
     }
 
+    pub async fn add_kimi_account_response(
+        &self,
+        label: Option<String>,
+        provider: Option<String>,
+        credentials_json: String,
+        config_toml: Option<String>,
+        email: Option<String>,
+    ) -> Result<KimiAccountsResponse, ProviderAccountRouteError> {
+        accounts::add_kimi_account_response(
+            &self.state,
+            label,
+            provider,
+            credentials_json,
+            config_toml,
+            email,
+        )
+        .await
+    }
+
     pub async fn set_active_kimi_account(
         &self,
         account_id: Option<String>,
@@ -432,11 +640,31 @@ impl ProvidersHandle {
         set_active_kimi_account(&self.state, account_id).await
     }
 
+    pub async fn set_active_kimi_account_response(
+        &self,
+        account_id: Option<String>,
+    ) -> Result<KimiAccountsResponse, ProviderAccountRouteError> {
+        accounts::set_active_kimi_account_response(&self.state, account_id).await
+    }
+
     pub async fn remove_kimi_account(
         &self,
         account_id: &str,
     ) -> Result<(), ProviderAccountMutationError> {
         remove_kimi_account(&self.state, account_id).await
+    }
+
+    pub async fn delete_kimi_account_response(
+        &self,
+        account_id: &str,
+    ) -> Result<KimiAccountsResponse, ProviderAccountRouteError> {
+        accounts::delete_kimi_account_response(&self.state, account_id).await
+    }
+
+    pub async fn mistral_accounts_response(
+        &self,
+    ) -> Result<MistralAccountsResponse, ProviderAccountRouteError> {
+        accounts::mistral_accounts_response(&self.state).await
     }
 
     pub async fn load_mistral_account_registry(
@@ -453,6 +681,14 @@ impl ProvidersHandle {
         upsert_mistral_account(&self.state, label, email).await
     }
 
+    pub async fn upsert_mistral_account_response(
+        &self,
+        label: Option<String>,
+        email: Option<String>,
+    ) -> Result<MistralAccountsResponse, ProviderAccountRouteError> {
+        accounts::upsert_mistral_account_response(&self.state, label, email).await
+    }
+
     pub async fn set_active_mistral_account(
         &self,
         account_id: Option<String>,
@@ -460,11 +696,31 @@ impl ProvidersHandle {
         set_active_mistral_account(&self.state, account_id).await
     }
 
+    pub async fn set_active_mistral_account_response(
+        &self,
+        account_id: Option<String>,
+    ) -> Result<MistralAccountsResponse, ProviderAccountRouteError> {
+        accounts::set_active_mistral_account_response(&self.state, account_id).await
+    }
+
     pub async fn remove_mistral_account(
         &self,
         account_id: &str,
     ) -> Result<(), ProviderAccountMutationError> {
         remove_mistral_account(&self.state, account_id).await
+    }
+
+    pub async fn delete_mistral_account_response(
+        &self,
+        account_id: &str,
+    ) -> Result<MistralAccountsResponse, ProviderAccountRouteError> {
+        accounts::delete_mistral_account_response(&self.state, account_id).await
+    }
+
+    pub async fn qwen_accounts_response(
+        &self,
+    ) -> Result<QwenAccountsResponse, ProviderAccountRouteError> {
+        accounts::qwen_accounts_response(&self.state).await
     }
 
     pub async fn load_qwen_account_registry(
@@ -482,6 +738,15 @@ impl ProvidersHandle {
         add_qwen_account(&self.state, label, oauth_creds_json, email).await
     }
 
+    pub async fn add_qwen_account_response(
+        &self,
+        label: Option<String>,
+        oauth_creds_json: String,
+        email: Option<String>,
+    ) -> Result<QwenAccountsResponse, ProviderAccountRouteError> {
+        accounts::add_qwen_account_response(&self.state, label, oauth_creds_json, email).await
+    }
+
     pub async fn set_active_qwen_account(
         &self,
         account_id: Option<String>,
@@ -489,11 +754,25 @@ impl ProvidersHandle {
         set_active_qwen_account(&self.state, account_id).await
     }
 
+    pub async fn set_active_qwen_account_response(
+        &self,
+        account_id: Option<String>,
+    ) -> Result<QwenAccountsResponse, ProviderAccountRouteError> {
+        accounts::set_active_qwen_account_response(&self.state, account_id).await
+    }
+
     pub async fn remove_qwen_account(
         &self,
         account_id: &str,
     ) -> Result<(), ProviderAccountMutationError> {
         remove_qwen_account(&self.state, account_id).await
+    }
+
+    pub async fn delete_qwen_account_response(
+        &self,
+        account_id: &str,
+    ) -> Result<QwenAccountsResponse, ProviderAccountRouteError> {
+        accounts::delete_qwen_account_response(&self.state, account_id).await
     }
 
     pub async fn workspace_providers_bootstrap(

@@ -26,6 +26,7 @@ const {
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   MOBILE_ACCESS_STORE_DTO_API_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
+  PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS,
   PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS,
   SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS,
   SESSION_VCS_API_ORCHESTRATION_PATTERNS,
@@ -2598,6 +2599,67 @@ test("daemon boundary guard scopes provider bootstrap orchestration patterns", (
   assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/providers/status/routes.rs").includes(
       PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    false,
+  );
+});
+
+test("daemon boundary guard rejects provider account orchestration in HTTP", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/providers/accounts/codex.rs",
+    contents: `
+      async fn handler(providers: ProvidersHandle) {
+        let _ = providers.load_codex_account_registry().await?;
+        let _ = providers.load_codex_accounts_snapshot().await?;
+        let _ = providers.ensure_amp_account_registry_from_runtime_auth().await?;
+        providers.set_active_codex_account(account_id).await?;
+        providers.remove_codex_account("acct").await?;
+        providers.import_host_codex_auth(label).await?;
+        let _ = ProviderAccountMutationError::Internal(err);
+        codex_accounts_response_from_snapshot(snapshot);
+        unknown_account();
+        provider_account_mutation_error(err);
+      }
+
+      pub(crate) async fn amp_accounts_response(providers: &ProvidersHandle) {}
+    `,
+    patterns: PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "provider account API loads account registries directly",
+      "provider account API loads account registries directly",
+      "provider account API loads account registries directly",
+      "provider account API mutates accounts directly",
+      "provider account API mutates accounts directly",
+      "provider account API mutates accounts directly",
+      "provider account API matches account mutation errors directly",
+      "provider account API defines local account response builders",
+      "provider account API defines local account response builders",
+      "provider account API owns unknown-account or mutation error mapping",
+      "provider account API owns unknown-account or mutation error mapping",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes provider account orchestration patterns", () => {
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers/accounts.rs").includes(
+      PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers/accounts/amp.rs").includes(
+      PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers/bootstrap.rs").includes(
+      PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS[0],
     ),
     false,
   );

@@ -4,7 +4,6 @@ use std::sync::Arc;
 use ctx_core::ids::WorkspaceId;
 use ctx_harness_sources::HarnessProviderSourceConfig;
 use ctx_observability::logs;
-use ctx_provider_accounts as provider_accounts;
 use ctx_provider_runtime::model_preferences::preferred_model_id_from_available_models;
 use ctx_provider_runtime::provider_auth::{
     provider_auth_mode, provider_has_active_auth_config_with_runtime_root,
@@ -29,70 +28,15 @@ pub struct ProvidersBootstrapResponse {
     providers: Vec<ProviderStatus>,
     provider_options: HashMap<String, serde_json::Value>,
     provider_harness_config: HashMap<String, HarnessProviderSourceConfig>,
-    codex_accounts: BootstrapCodexAccountsResponse,
-    claude_accounts: BootstrapClaudeAccountsResponse,
-    gemini_accounts: BootstrapGeminiAccountsResponse,
-    qwen_accounts: BootstrapQwenAccountsResponse,
-    kimi_accounts: BootstrapKimiAccountsResponse,
-    mistral_accounts: BootstrapMistralAccountsResponse,
-    copilot_accounts: BootstrapCopilotAccountsResponse,
-    cursor_accounts: BootstrapCursorAccountsResponse,
-    amp_accounts: BootstrapAmpAccountsResponse,
-}
-
-#[derive(Debug, Serialize)]
-struct BootstrapCodexAccountsResponse {
-    active_account_id: Option<String>,
-    accounts: Vec<provider_accounts::CodexAccountEntry>,
-    logins: Vec<provider_accounts::CodexLoginStatus>,
-}
-
-#[derive(Debug, Serialize)]
-struct BootstrapClaudeAccountsResponse {
-    active_account_id: Option<String>,
-    accounts: Vec<provider_accounts::ClaudeAccountEntry>,
-}
-
-#[derive(Debug, Serialize)]
-struct BootstrapGeminiAccountsResponse {
-    active_account_id: Option<String>,
-    accounts: Vec<provider_accounts::GeminiAccountEntry>,
-}
-
-#[derive(Debug, Serialize)]
-struct BootstrapQwenAccountsResponse {
-    active_account_id: Option<String>,
-    accounts: Vec<provider_accounts::QwenAccountEntry>,
-}
-
-#[derive(Debug, Serialize)]
-struct BootstrapKimiAccountsResponse {
-    active_account_id: Option<String>,
-    accounts: Vec<provider_accounts::KimiAccountEntry>,
-}
-
-#[derive(Debug, Serialize)]
-struct BootstrapMistralAccountsResponse {
-    active_account_id: Option<String>,
-    accounts: Vec<provider_accounts::MistralAccountEntry>,
-}
-
-#[derive(Debug, Serialize)]
-struct BootstrapCopilotAccountsResponse {
-    active_account_id: Option<String>,
-    accounts: Vec<provider_accounts::CopilotAccountEntry>,
-}
-
-#[derive(Debug, Serialize)]
-struct BootstrapCursorAccountsResponse {
-    active_account_id: Option<String>,
-    accounts: Vec<provider_accounts::CursorAccountEntry>,
-}
-
-#[derive(Debug, Serialize)]
-struct BootstrapAmpAccountsResponse {
-    active_account_id: Option<String>,
-    accounts: Vec<provider_accounts::AmpAccountEntry>,
+    codex_accounts: accounts::CodexAccountsResponse,
+    claude_accounts: accounts::ClaudeAccountsResponse,
+    gemini_accounts: accounts::GeminiAccountsResponse,
+    qwen_accounts: accounts::QwenAccountsResponse,
+    kimi_accounts: accounts::KimiAccountsResponse,
+    mistral_accounts: accounts::MistralAccountsResponse,
+    copilot_accounts: accounts::CopilotAccountsResponse,
+    cursor_accounts: accounts::CursorAccountsResponse,
+    amp_accounts: accounts::AmpAccountsResponse,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -233,15 +177,15 @@ async fn load_preferred_model_by_provider(
 }
 
 struct BootstrapAccounts {
-    codex_accounts: BootstrapCodexAccountsResponse,
-    claude_accounts: BootstrapClaudeAccountsResponse,
-    gemini_accounts: BootstrapGeminiAccountsResponse,
-    qwen_accounts: BootstrapQwenAccountsResponse,
-    kimi_accounts: BootstrapKimiAccountsResponse,
-    mistral_accounts: BootstrapMistralAccountsResponse,
-    copilot_accounts: BootstrapCopilotAccountsResponse,
-    cursor_accounts: BootstrapCursorAccountsResponse,
-    amp_accounts: BootstrapAmpAccountsResponse,
+    codex_accounts: accounts::CodexAccountsResponse,
+    claude_accounts: accounts::ClaudeAccountsResponse,
+    gemini_accounts: accounts::GeminiAccountsResponse,
+    qwen_accounts: accounts::QwenAccountsResponse,
+    kimi_accounts: accounts::KimiAccountsResponse,
+    mistral_accounts: accounts::MistralAccountsResponse,
+    copilot_accounts: accounts::CopilotAccountsResponse,
+    cursor_accounts: accounts::CursorAccountsResponse,
+    amp_accounts: accounts::AmpAccountsResponse,
 }
 
 fn bootstrap_accounts_error(provider_id: &str, err: anyhow::Error) -> ProvidersBootstrapError {
@@ -283,43 +227,15 @@ async fn load_bootstrap_accounts(
         .map_err(|err| bootstrap_accounts_error("amp", err))?;
 
     Ok(BootstrapAccounts {
-        codex_accounts: BootstrapCodexAccountsResponse {
-            active_account_id: codex_snapshot.active_account_id,
-            accounts: codex_snapshot.accounts,
-            logins: codex_snapshot.logins,
-        },
-        claude_accounts: BootstrapClaudeAccountsResponse {
-            active_account_id: claude_registry.active_account_id,
-            accounts: claude_registry.accounts,
-        },
-        gemini_accounts: BootstrapGeminiAccountsResponse {
-            active_account_id: gemini_registry.active_account_id,
-            accounts: gemini_registry.accounts,
-        },
-        qwen_accounts: BootstrapQwenAccountsResponse {
-            active_account_id: qwen_registry.active_account_id,
-            accounts: qwen_registry.accounts,
-        },
-        kimi_accounts: BootstrapKimiAccountsResponse {
-            active_account_id: kimi_registry.active_account_id,
-            accounts: kimi_registry.accounts,
-        },
-        mistral_accounts: BootstrapMistralAccountsResponse {
-            active_account_id: mistral_registry.active_account_id,
-            accounts: mistral_registry.accounts,
-        },
-        copilot_accounts: BootstrapCopilotAccountsResponse {
-            active_account_id: copilot_registry.active_account_id,
-            accounts: copilot_registry.accounts,
-        },
-        cursor_accounts: BootstrapCursorAccountsResponse {
-            active_account_id: cursor_registry.active_account_id,
-            accounts: cursor_registry.accounts,
-        },
-        amp_accounts: BootstrapAmpAccountsResponse {
-            active_account_id: amp_registry.active_account_id,
-            accounts: amp_registry.accounts,
-        },
+        codex_accounts: accounts::CodexAccountsResponse::from_snapshot(codex_snapshot),
+        claude_accounts: accounts::ClaudeAccountsResponse::from_registry(claude_registry),
+        gemini_accounts: accounts::GeminiAccountsResponse::from_registry(gemini_registry),
+        qwen_accounts: accounts::QwenAccountsResponse::from_registry(qwen_registry),
+        kimi_accounts: accounts::KimiAccountsResponse::from_registry(kimi_registry),
+        mistral_accounts: accounts::MistralAccountsResponse::from_registry(mistral_registry),
+        copilot_accounts: accounts::CopilotAccountsResponse::from_registry(copilot_registry),
+        cursor_accounts: accounts::CursorAccountsResponse::from_registry(cursor_registry),
+        amp_accounts: accounts::AmpAccountsResponse::from_registry(amp_registry),
     })
 }
 

@@ -170,6 +170,11 @@ const providerBootstrapApiRoots = [
   "core/crates/ctx-http/src/api/providers/bootstrap/",
 ];
 
+const providerAccountsApiRoots = [
+  "core/crates/ctx-http/src/api/providers/accounts.rs",
+  "core/crates/ctx-http/src/api/providers/accounts/",
+];
+
 const taskSessionCreationApiRoots = [
   "core/crates/ctx-http/src/api/tasks/creation_session.rs",
   "core/crates/ctx-http/src/api/tasks/creation_session/",
@@ -1008,6 +1013,33 @@ const PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS = [
   {
     name: "provider bootstrap API loads bootstrap accounts directly",
     regex: /\bload_bootstrap_accounts\s*\(|\baccounts::(?:codex|claude|gemini|qwen|kimi|mistral|copilot|cursor|amp)_accounts_response\s*\(/,
+  },
+];
+
+const PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS = [
+  {
+    name: "provider account API loads account registries directly",
+    regex:
+      /(?:\.|\bProvidersHandle::)(?:load_(?:codex|amp|claude|copilot|cursor|gemini|kimi|mistral|qwen)_account_registry|load_codex_accounts_snapshot|ensure_amp_account_registry_from_runtime_auth)\s*\(/,
+  },
+  {
+    name: "provider account API mutates accounts directly",
+    regex:
+      /(?:\.|\bProvidersHandle::)(?:import_host_codex_auth|set_active_(?:codex|amp|claude|copilot|cursor|gemini|kimi|mistral|qwen)_account|remove_(?:codex|amp|claude|copilot|cursor|gemini|kimi|mistral|qwen)_account|add_(?:claude|copilot|cursor|gemini|kimi|qwen)_account|upsert_(?:amp|mistral)_account)(?!_response)\s*\(/,
+  },
+  {
+    name: "provider account API matches account mutation errors directly",
+    regex: /\bProviderAccountMutationError\b/,
+  },
+  {
+    name: "provider account API defines local account response builders",
+    regex:
+      /\b(?:codex|amp|claude|copilot|cursor|gemini|kimi|mistral|qwen)_accounts_response_from_snapshot\s*\(|\b(?:pub\(crate\)\s+)?async\s+fn\s+(?:codex|amp|claude|copilot|cursor|gemini|kimi|mistral|qwen)_accounts_response\s*\(/,
+  },
+  {
+    name: "provider account API owns unknown-account or mutation error mapping",
+    regex:
+      /\b(?:unknown_account|provider_account_mutation_error|provider_account_delete_error|codex_account_set_active_error)\s*\(/,
   },
 ];
 
@@ -3179,6 +3211,9 @@ function apiPatternsForPath(relativePath) {
   if (providerBootstrapApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS);
   }
+  if (providerAccountsApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS);
+  }
   if (taskSessionCreationApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...TASK_SESSION_CREATION_API_ADMISSION_PATTERNS);
   }
@@ -4159,6 +4194,7 @@ module.exports = {
   MOBILE_ACCESS_STORE_DTO_API_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS,
+  PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS,
   SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS,
   SESSION_VCS_API_ORCHESTRATION_PATTERNS,
   TASK_SESSION_CREATION_API_ADMISSION_PATTERNS,

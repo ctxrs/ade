@@ -3,6 +3,7 @@ use std::fmt;
 mod codex;
 mod login_paths;
 mod mutations;
+mod routes;
 
 pub use codex::{
     import_host_codex_auth, load_codex_account_registry, load_codex_accounts_snapshot,
@@ -30,6 +31,24 @@ pub use mutations::{
     set_active_gemini_account, set_active_kimi_account, set_active_mistral_account,
     set_active_qwen_account, upsert_amp_account, upsert_amp_account_for_login,
     upsert_mistral_account, upsert_mistral_account_for_login,
+};
+pub use routes::{
+    add_claude_account_response, add_copilot_account_response, add_cursor_account_response,
+    add_gemini_account_response, add_kimi_account_response, add_qwen_account_response,
+    amp_accounts_response, claude_accounts_response, codex_accounts_response,
+    copilot_accounts_response, cursor_accounts_response, delete_amp_account_response,
+    delete_claude_account_response, delete_codex_account_response, delete_copilot_account_response,
+    delete_cursor_account_response, delete_gemini_account_response, delete_kimi_account_response,
+    delete_mistral_account_response, delete_qwen_account_response, gemini_accounts_response,
+    import_host_codex_auth_response, kimi_accounts_response, mistral_accounts_response,
+    qwen_accounts_response, set_active_amp_account_response, set_active_claude_account_response,
+    set_active_codex_account_response, set_active_copilot_account_response,
+    set_active_cursor_account_response, set_active_gemini_account_response,
+    set_active_kimi_account_response, set_active_mistral_account_response,
+    set_active_qwen_account_response, upsert_amp_account_response, upsert_mistral_account_response,
+    AmpAccountsResponse, ClaudeAccountsResponse, CodexAccountsResponse, CopilotAccountsResponse,
+    CursorAccountsResponse, GeminiAccountsResponse, KimiAccountsResponse, MistralAccountsResponse,
+    ProviderAccountRouteError, ProviderAccountRouteErrorKind, QwenAccountsResponse,
 };
 
 #[derive(Debug)]
