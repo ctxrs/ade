@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::path::Path as StdPath;
 
 use ctx_core::ids::WorkspaceId;
@@ -19,6 +18,7 @@ mod auth;
 mod auth_check;
 mod auth_import;
 mod bootstrap;
+mod browser_logins;
 mod diagnostics;
 mod harness_config;
 mod installs;
@@ -37,25 +37,20 @@ pub use accounts::{
     add_claude_account, add_claude_account_for_login, add_copilot_account, add_cursor_account,
     add_cursor_oauth_account_for_login, add_gemini_account, add_gemini_account_for_login,
     add_kimi_account, add_kimi_oauth_account_for_login, add_qwen_account,
-    add_qwen_account_for_login, amp_login_provider_env,
-    ensure_amp_account_registry_from_runtime_auth, gemini_login_auth_method_id,
-    gemini_login_provider_env, import_host_codex_auth, load_amp_account_registry,
-    load_claude_account_registry, load_codex_account_registry, load_codex_accounts_snapshot,
-    load_copilot_account_registry, load_cursor_account_registry, load_gemini_account_registry,
-    load_kimi_account_registry, load_mistral_account_registry, load_qwen_account_registry,
-    mistral_login_provider_env, persist_successful_codex_login, prepare_amp_login_paths,
-    prepare_codex_login_start, prepare_gemini_login_paths, prepare_mistral_login_paths,
-    prepare_qwen_login_paths, probe_host_codex_auth_candidate, qwen_login_provider_env,
-    remove_amp_account, remove_claude_account, remove_codex_account, remove_copilot_account,
-    remove_cursor_account, remove_gemini_account, remove_kimi_account, remove_mistral_account,
-    remove_qwen_account, set_active_amp_account, set_active_claude_account,
-    set_active_codex_account, set_active_copilot_account, set_active_cursor_account,
-    set_active_gemini_account, set_active_kimi_account, set_active_mistral_account,
-    set_active_qwen_account, upsert_amp_account, upsert_amp_account_for_login,
-    upsert_mistral_account, upsert_mistral_account_for_login, CodexAccountsSnapshot,
-    PreparedAmpLoginPaths, PreparedCodexLoginStart, PreparedGeminiLoginPaths,
-    PreparedMistralLoginPaths, PreparedQwenLoginPaths, ProviderAccountLoginMutation,
-    ProviderAccountMutationError,
+    add_qwen_account_for_login, ensure_amp_account_registry_from_runtime_auth,
+    import_host_codex_auth, load_amp_account_registry, load_claude_account_registry,
+    load_codex_account_registry, load_codex_accounts_snapshot, load_copilot_account_registry,
+    load_cursor_account_registry, load_gemini_account_registry, load_kimi_account_registry,
+    load_mistral_account_registry, load_qwen_account_registry, persist_successful_codex_login,
+    prepare_codex_login_start, probe_host_codex_auth_candidate, remove_amp_account,
+    remove_claude_account, remove_codex_account, remove_copilot_account, remove_cursor_account,
+    remove_gemini_account, remove_kimi_account, remove_mistral_account, remove_qwen_account,
+    set_active_amp_account, set_active_claude_account, set_active_codex_account,
+    set_active_copilot_account, set_active_cursor_account, set_active_gemini_account,
+    set_active_kimi_account, set_active_mistral_account, set_active_qwen_account,
+    upsert_amp_account, upsert_amp_account_for_login, upsert_mistral_account,
+    upsert_mistral_account_for_login, CodexAccountsSnapshot, PreparedCodexLoginStart,
+    ProviderAccountLoginMutation, ProviderAccountMutationError,
 };
 pub use accounts::{
     AmpAccountsResponse, ClaudeAccountsResponse, CodexAccountsResponse, CopilotAccountsResponse,
@@ -75,6 +70,10 @@ pub use auth_import::{
 pub use bootstrap::{
     workspace_providers_bootstrap, ProvidersBootstrapError, ProvidersBootstrapErrorKind,
     ProvidersBootstrapResponse,
+};
+pub use browser_logins::{
+    start_amp_browser_login, start_gemini_browser_login, start_mistral_browser_login,
+    start_qwen_browser_login,
 };
 pub use diagnostics::provider_diagnostics_snapshot;
 pub use harness_config::{
@@ -917,108 +916,6 @@ impl ProvidersHandle {
         &self.state.core.data_root
     }
 
-    pub async fn authenticate_provider_session(
-        &self,
-        provider_id: &str,
-        request: ctx_provider_runtime::provider_session_auth::ProviderSessionAuthenticationRequest,
-    ) -> Result<(), ctx_provider_runtime::provider_session_auth::ProviderSessionAuthenticationError>
-    {
-        self.state
-            .providers
-            .authenticate_provider_session(provider_id, request)
-            .await
-    }
-
-    pub async fn prepare_amp_login_paths(
-        &self,
-        login_id: &str,
-    ) -> Result<PreparedAmpLoginPaths, String> {
-        prepare_amp_login_paths(&self.state, login_id).await
-    }
-
-    pub fn amp_login_provider_env(&self, amp_home: &StdPath) -> HashMap<String, String> {
-        amp_login_provider_env(&self.state, amp_home)
-    }
-
-    pub async fn upsert_amp_account_for_login(
-        &self,
-        label: Option<String>,
-        email: Option<String>,
-    ) -> Result<ProviderAccountLoginMutation, ProviderAccountMutationError> {
-        upsert_amp_account_for_login(&self.state, label, email).await
-    }
-
-    pub async fn prepare_gemini_login_paths(
-        &self,
-        login_id: &str,
-    ) -> Result<PreparedGeminiLoginPaths, String> {
-        prepare_gemini_login_paths(&self.state, login_id).await
-    }
-
-    pub fn gemini_login_auth_method_id(&self) -> String {
-        gemini_login_auth_method_id()
-    }
-
-    pub fn gemini_login_provider_env(&self, login_home: &StdPath) -> HashMap<String, String> {
-        gemini_login_provider_env(&self.state, login_home)
-    }
-
-    pub async fn add_gemini_account_for_login(
-        &self,
-        label: Option<String>,
-        oauth_creds_json: String,
-        google_accounts_json: Option<String>,
-        email: Option<String>,
-    ) -> Result<ProviderAccountLoginMutation, ProviderAccountMutationError> {
-        add_gemini_account_for_login(
-            &self.state,
-            label,
-            oauth_creds_json,
-            google_accounts_json,
-            email,
-        )
-        .await
-    }
-
-    pub async fn prepare_qwen_login_paths(
-        &self,
-        login_id: &str,
-    ) -> Result<PreparedQwenLoginPaths, String> {
-        prepare_qwen_login_paths(&self.state, login_id).await
-    }
-
-    pub fn qwen_login_provider_env(&self, login_home: &StdPath) -> HashMap<String, String> {
-        qwen_login_provider_env(&self.state, login_home)
-    }
-
-    pub async fn add_qwen_account_for_login(
-        &self,
-        label: Option<String>,
-        oauth_creds_json: String,
-        email: Option<String>,
-    ) -> Result<ProviderAccountLoginMutation, ProviderAccountMutationError> {
-        add_qwen_account_for_login(&self.state, label, oauth_creds_json, email).await
-    }
-
-    pub async fn prepare_mistral_login_paths(
-        &self,
-        login_id: &str,
-    ) -> Result<PreparedMistralLoginPaths, String> {
-        prepare_mistral_login_paths(&self.state, login_id).await
-    }
-
-    pub fn mistral_login_provider_env(&self, mistral_home: &StdPath) -> HashMap<String, String> {
-        mistral_login_provider_env(&self.state, mistral_home)
-    }
-
-    pub async fn upsert_mistral_account_for_login(
-        &self,
-        label: Option<String>,
-        email: Option<String>,
-    ) -> Result<ProviderAccountLoginMutation, ProviderAccountMutationError> {
-        upsert_mistral_account_for_login(&self.state, label, email).await
-    }
-
     pub async fn add_kimi_oauth_account_for_login(
         &self,
         label: Option<String>,
@@ -1028,8 +925,8 @@ impl ProvidersHandle {
         add_kimi_oauth_account_for_login(&self.state, label, credentials_json, email).await
     }
 
-    pub async fn start_amp_login_session(&self) -> StartedLoginSession {
-        start_amp_login_session(&self.state).await
+    pub async fn start_amp_browser_login(&self, label: Option<String>) -> StartedLoginSession {
+        start_amp_browser_login(&self.state, label).await
     }
 
     pub async fn amp_login_status(
@@ -1039,32 +936,8 @@ impl ProvidersHandle {
         amp_login_status(&self.state, login_id).await
     }
 
-    pub async fn set_amp_login_failed(&self, login_id: &str, error: String) {
-        set_amp_login_failed(&self.state, login_id, error).await;
-    }
-
-    pub async fn set_amp_login_failed_if_no_error(&self, login_id: &str, error: String) {
-        set_amp_login_failed_if_no_error(&self.state, login_id, error).await;
-    }
-
-    pub async fn set_amp_login_timeout_if_no_error(&self, login_id: &str, error: String) {
-        set_amp_login_timeout_if_no_error(&self.state, login_id, error).await;
-    }
-
-    pub async fn set_amp_login_auth_url(&self, login_id: &str, auth_url: String) {
-        set_amp_login_auth_url(&self.state, login_id, auth_url).await;
-    }
-
-    pub async fn finish_amp_login_session(
-        &self,
-        login_id: &str,
-        restart_result: anyhow::Result<()>,
-    ) {
-        finish_amp_login_session(&self.state, login_id, restart_result).await;
-    }
-
-    pub async fn start_gemini_login_session(&self) -> StartedLoginSession {
-        start_gemini_login_session(&self.state).await
+    pub async fn start_gemini_browser_login(&self, label: Option<String>) -> StartedLoginSession {
+        start_gemini_browser_login(&self.state, label).await
     }
 
     pub async fn gemini_login_status(
@@ -1074,33 +947,8 @@ impl ProvidersHandle {
         gemini_login_status(&self.state, login_id).await
     }
 
-    pub async fn set_gemini_login_failed(&self, login_id: &str, error: String) {
-        set_gemini_login_failed(&self.state, login_id, error).await;
-    }
-
-    pub async fn set_gemini_login_failed_if_no_error(&self, login_id: &str, error: String) {
-        set_gemini_login_failed_if_no_error(&self.state, login_id, error).await;
-    }
-
-    pub async fn set_gemini_login_timeout_if_no_error(&self, login_id: &str, error: String) {
-        set_gemini_login_timeout_if_no_error(&self.state, login_id, error).await;
-    }
-
-    pub async fn set_gemini_login_auth_url(&self, login_id: &str, auth_url: String) {
-        set_gemini_login_auth_url(&self.state, login_id, auth_url).await;
-    }
-
-    pub async fn finish_gemini_login_session(
-        &self,
-        login_id: &str,
-        account_id: Option<String>,
-        restart_error: Option<String>,
-    ) {
-        finish_gemini_login_session(&self.state, login_id, account_id, restart_error).await;
-    }
-
-    pub async fn start_qwen_login_session(&self) -> StartedLoginSession {
-        start_qwen_login_session(&self.state).await
+    pub async fn start_qwen_browser_login(&self, label: Option<String>) -> StartedLoginSession {
+        start_qwen_browser_login(&self.state, label).await
     }
 
     pub async fn qwen_login_status(
@@ -1110,33 +958,8 @@ impl ProvidersHandle {
         qwen_login_status(&self.state, login_id).await
     }
 
-    pub async fn set_qwen_login_failed(&self, login_id: &str, error: String) {
-        set_qwen_login_failed(&self.state, login_id, error).await;
-    }
-
-    pub async fn set_qwen_login_failed_if_no_error(&self, login_id: &str, error: String) {
-        set_qwen_login_failed_if_no_error(&self.state, login_id, error).await;
-    }
-
-    pub async fn set_qwen_login_timeout_if_no_error(&self, login_id: &str, error: String) {
-        set_qwen_login_timeout_if_no_error(&self.state, login_id, error).await;
-    }
-
-    pub async fn set_qwen_login_auth_url(&self, login_id: &str, auth_url: String) {
-        set_qwen_login_auth_url(&self.state, login_id, auth_url).await;
-    }
-
-    pub async fn finish_qwen_login_session(
-        &self,
-        login_id: &str,
-        account_id: Option<String>,
-        restart_result: anyhow::Result<()>,
-    ) {
-        finish_qwen_login_session(&self.state, login_id, account_id, restart_result).await;
-    }
-
-    pub async fn start_mistral_login_session(&self) -> StartedLoginSession {
-        start_mistral_login_session(&self.state).await
+    pub async fn start_mistral_browser_login(&self, label: Option<String>) -> StartedLoginSession {
+        start_mistral_browser_login(&self.state, label).await
     }
 
     pub async fn mistral_login_status(
@@ -1144,30 +967,6 @@ impl ProvidersHandle {
         login_id: &str,
     ) -> Option<provider_accounts::MistralLoginStatus> {
         mistral_login_status(&self.state, login_id).await
-    }
-
-    pub async fn set_mistral_login_failed(&self, login_id: &str, error: String) {
-        set_mistral_login_failed(&self.state, login_id, error).await;
-    }
-
-    pub async fn set_mistral_login_failed_if_no_error(&self, login_id: &str, error: String) {
-        set_mistral_login_failed_if_no_error(&self.state, login_id, error).await;
-    }
-
-    pub async fn set_mistral_login_timeout_if_no_error(&self, login_id: &str, error: String) {
-        set_mistral_login_timeout_if_no_error(&self.state, login_id, error).await;
-    }
-
-    pub async fn set_mistral_login_auth_url(&self, login_id: &str, auth_url: String) {
-        set_mistral_login_auth_url(&self.state, login_id, auth_url).await;
-    }
-
-    pub async fn finish_mistral_login_session(
-        &self,
-        login_id: &str,
-        restart_result: anyhow::Result<()>,
-    ) {
-        finish_mistral_login_session(&self.state, login_id, restart_result).await;
     }
 
     pub async fn start_kimi_login_session(

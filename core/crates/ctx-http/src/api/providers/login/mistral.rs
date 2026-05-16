@@ -1,8 +1,5 @@
 use super::*;
 
-#[path = "mistral/monitor.rs"]
-mod monitor;
-
 #[derive(Debug, Deserialize)]
 pub(crate) struct MistralLoginStartReq {
     label: Option<String>,
@@ -21,14 +18,7 @@ pub(crate) async fn start_mistral_login(
     Json(req): Json<MistralLoginStartReq>,
 ) -> Result<Json<MistralLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let label = req.label;
-    let login_session = providers.start_mistral_login_session().await;
-
-    let providers_clone = providers.clone();
-    let login_id_for_task = login_session.login_id.clone();
-    tokio::spawn(async move {
-        monitor::monitor_mistral_login(providers_clone, login_id_for_task, label).await;
-    });
+    let login_session = providers.start_mistral_browser_login(req.label).await;
 
     Ok(Json(MistralLoginStartResp {
         login_id: login_session.login_id,

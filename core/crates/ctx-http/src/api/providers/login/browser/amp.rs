@@ -1,9 +1,5 @@
 use super::*;
 
-mod monitor;
-
-use monitor::monitor_amp_login;
-
 #[derive(Debug, Deserialize)]
 pub(crate) struct AmpLoginStartReq {
     label: Option<String>,
@@ -22,14 +18,7 @@ pub(crate) async fn start_amp_login(
     Json(req): Json<AmpLoginStartReq>,
 ) -> Result<Json<AmpLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let label = req.label;
-    let login_session = providers.start_amp_login_session().await;
-
-    let providers_clone = providers.clone();
-    let login_id_for_task = login_session.login_id.clone();
-    tokio::spawn(async move {
-        monitor_amp_login(providers_clone, login_id_for_task, label).await;
-    });
+    let login_session = providers.start_amp_browser_login(req.label).await;
 
     Ok(Json(AmpLoginStartResp {
         login_id: login_session.login_id,

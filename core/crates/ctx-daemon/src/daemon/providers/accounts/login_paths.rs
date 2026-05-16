@@ -168,10 +168,6 @@ pub fn gemini_login_provider_env(
     provider_env
 }
 
-pub fn gemini_login_auth_method_id() -> String {
-    provider_accounts::GEMINI_CREDENTIAL_KIND_OAUTH_PERSONAL.to_string()
-}
-
 pub async fn prepare_qwen_login_paths(
     state: &Arc<DaemonState>,
     login_id: &str,

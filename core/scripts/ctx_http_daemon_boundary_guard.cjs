@@ -175,6 +175,19 @@ const providerAccountsApiRoots = [
   "core/crates/ctx-http/src/api/providers/accounts/",
 ];
 
+const managedBrowserLoginApiRoots = [
+  "core/crates/ctx-http/src/api/providers/login.rs",
+  "core/crates/ctx-http/src/api/providers/login/browser.rs",
+  "core/crates/ctx-http/src/api/providers/login/browser/gemini.rs",
+  "core/crates/ctx-http/src/api/providers/login/browser/gemini/",
+  "core/crates/ctx-http/src/api/providers/login/browser/qwen.rs",
+  "core/crates/ctx-http/src/api/providers/login/browser/qwen/",
+  "core/crates/ctx-http/src/api/providers/login/browser/amp.rs",
+  "core/crates/ctx-http/src/api/providers/login/browser/amp/",
+  "core/crates/ctx-http/src/api/providers/login/mistral.rs",
+  "core/crates/ctx-http/src/api/providers/login/mistral/",
+];
+
 const taskSessionCreationApiRoots = [
   "core/crates/ctx-http/src/api/tasks/creation_session.rs",
   "core/crates/ctx-http/src/api/tasks/creation_session/",
@@ -1040,6 +1053,45 @@ const PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS = [
     name: "provider account API owns unknown-account or mutation error mapping",
     regex:
       /\b(?:unknown_account|provider_account_mutation_error|provider_account_delete_error|codex_account_set_active_error)\s*\(/,
+  },
+];
+
+const MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS = [
+  {
+    name: "managed browser login API owns monitor task spawning",
+    regex: /\btokio::spawn\s*\(/,
+  },
+  {
+    name: "managed browser login API declares monitor module",
+    regex: /(?:#\s*\[\s*path\s*=\s*"[^"]*monitor\.rs"\s*\]\s*)?mod\s+monitor\s*;/,
+  },
+  {
+    name: "managed browser login API constructs provider auth request",
+    regex:
+      /\bProviderSessionAuthenticationRequest\b|\bauthenticate_provider_session\s*\(/,
+  },
+  {
+    name: "managed browser login API owns login path or env preparation",
+    regex:
+      /\b(?:prepare_(?:gemini|qwen|amp|mistral)_login_paths|(?:gemini|qwen|amp|mistral)_login_provider_env)\s*\(/,
+  },
+  {
+    name: "managed browser login API mutates login status directly",
+    regex:
+      /\b(?:set_(?:gemini|qwen|amp|mistral)_login_[a-z0-9_]+|finish_(?:gemini|qwen|amp|mistral)_login_session)\s*\(/,
+  },
+  {
+    name: "managed browser login API finalizes provider accounts directly",
+    regex:
+      /\b(?:add_(?:gemini|qwen)_account_for_login|upsert_(?:amp|mistral)_account_for_login)\s*\(/,
+  },
+  {
+    name: "managed browser login API owns login cleanup",
+    regex: /\bremove_dir_all\s*\(/,
+  },
+  {
+    name: "managed browser login API owns provider auth method constants",
+    regex: /\b(?:QWEN_OAUTH_AUTH_METHOD_ID|AMP_BROWSER_AUTH_METHOD_ID)\b/,
   },
 ];
 
@@ -3214,6 +3266,9 @@ function apiPatternsForPath(relativePath) {
   if (providerAccountsApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS);
   }
+  if (managedBrowserLoginApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS);
+  }
   if (taskSessionCreationApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...TASK_SESSION_CREATION_API_ADMISSION_PATTERNS);
   }
@@ -4193,6 +4248,7 @@ module.exports = {
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MOBILE_ACCESS_STORE_DTO_API_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
+  MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS,
   PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS,
   PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS,
   SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS,

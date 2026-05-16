@@ -11,10 +11,9 @@ pub use codex::{
     remove_codex_account, set_active_codex_account, CodexAccountsSnapshot, PreparedCodexLoginStart,
 };
 pub use login_paths::{
-    amp_login_provider_env, gemini_login_auth_method_id, gemini_login_provider_env,
-    mistral_login_provider_env, prepare_amp_login_paths, prepare_gemini_login_paths,
-    prepare_mistral_login_paths, prepare_qwen_login_paths, qwen_login_provider_env,
-    PreparedAmpLoginPaths, PreparedGeminiLoginPaths, PreparedMistralLoginPaths,
+    amp_login_provider_env, gemini_login_provider_env, mistral_login_provider_env,
+    prepare_amp_login_paths, prepare_gemini_login_paths, prepare_mistral_login_paths,
+    prepare_qwen_login_paths, qwen_login_provider_env, PreparedGeminiLoginPaths,
     PreparedQwenLoginPaths,
 };
 pub use mutations::{

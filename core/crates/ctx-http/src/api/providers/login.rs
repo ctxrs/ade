@@ -10,11 +10,8 @@ mod browser;
 mod callback;
 mod claude;
 mod codex;
-mod email;
 mod kimi;
 mod mistral;
-mod notices;
-mod timeouts;
 
 pub(super) use auth_url::{
     auth_url_looks_complete, extract_auth_url, normalize_claude_login_line,
@@ -31,24 +28,11 @@ pub(super) use callback::{
 pub(super) use claude::resolve_claude_login_runtime_from_config;
 pub(crate) use claude::{get_claude_login, start_claude_login};
 pub(crate) use codex::{complete_codex_login, get_codex_login, start_codex_login};
-pub(super) use email::{first_email_from_google_accounts, first_email_from_value};
 pub(crate) use kimi::{get_kimi_login, start_kimi_login};
 pub(crate) use mistral::{get_mistral_login, start_mistral_login};
-pub(super) use notices::{
-    auth_notice_code, is_auth_failure_notice_code, is_auth_success_notice_code,
-};
-pub(super) use timeouts::{
-    amp_login_timeout, gemini_login_timeout, mistral_login_timeout, qwen_login_timeout,
-};
 
 const CODEX_LOGIN_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 const CLAUDE_LOGIN_URL_WAIT: Duration = Duration::from_secs(20);
-const GEMINI_LOGIN_POLL_INTERVAL: Duration = Duration::from_millis(700);
-const QWEN_LOGIN_POLL_INTERVAL: Duration = Duration::from_millis(700);
-const AMP_LOGIN_POLL_INTERVAL: Duration = Duration::from_millis(700);
-const MISTRAL_LOGIN_POLL_INTERVAL: Duration = Duration::from_millis(700);
-const QWEN_OAUTH_AUTH_METHOD_ID: &str = "qwen-oauth";
-const AMP_BROWSER_AUTH_METHOD_ID: &str = "amp_browser_login";
 
 pub(super) fn reject_mobile_auth(
     mobile_auth: Option<Extension<MobileAuthContext>>,
@@ -64,6 +48,7 @@ pub(super) fn reject_mobile_auth(
     Ok(())
 }
 
+#[cfg(test)]
 pub(super) fn extract_auth_url_from_value(value: &serde_json::Value) -> Option<String> {
     match value {
         serde_json::Value::String(raw) => {

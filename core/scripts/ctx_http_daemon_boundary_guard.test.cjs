@@ -21,6 +21,7 @@ const {
   JJ_MERGE_QUEUE_BASICS_TEST_STORE_ACCESS_PATTERNS,
   LIB_TEST_DATA_ROOT_FIXTURE_PATTERNS,
   LIVE_PROVIDER_CANARY_TEST_STORE_ACCESS_PATTERNS,
+  MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS,
   MERGE_QUEUE_ISOLATION_TEST_STORE_ACCESS_PATTERNS,
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
@@ -2660,6 +2661,92 @@ test("daemon boundary guard scopes provider account orchestration patterns", () 
   assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/providers/bootstrap.rs").includes(
       PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    false,
+  );
+});
+
+test("daemon boundary guard rejects managed browser login orchestration in HTTP", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/providers/login/browser/gemini.rs",
+    contents: `
+      #[path = "gemini/monitor.rs"]
+      mod monitor;
+
+      async fn handler(providers: ProvidersHandle) {
+        tokio::spawn(async move {});
+        let _request = ProviderSessionAuthenticationRequest {};
+        providers.authenticate_provider_session("gemini", request).await?;
+        providers.prepare_gemini_login_paths(login_id).await?;
+        providers.gemini_login_provider_env(login_home);
+        providers.set_gemini_login_failed(login_id, error).await;
+        providers.finish_gemini_login_session(login_id, account_id, None).await;
+        providers.add_gemini_account_for_login(label, oauth, accounts, email).await?;
+        tokio::fs::remove_dir_all(login_home).await?;
+        let _ = QWEN_OAUTH_AUTH_METHOD_ID;
+      }
+    `,
+    patterns: MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "managed browser login API owns monitor task spawning",
+      "managed browser login API declares monitor module",
+      "managed browser login API constructs provider auth request",
+      "managed browser login API constructs provider auth request",
+      "managed browser login API owns login path or env preparation",
+      "managed browser login API owns login path or env preparation",
+      "managed browser login API mutates login status directly",
+      "managed browser login API mutates login status directly",
+      "managed browser login API finalizes provider accounts directly",
+      "managed browser login API owns login cleanup",
+      "managed browser login API owns provider auth method constants",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes managed browser login orchestration patterns", () => {
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers/login/browser/gemini.rs").includes(
+      MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/providers/login/browser/qwen/monitor/events.rs",
+    ).includes(MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS[0]),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers/login/mistral/monitor.rs").includes(
+      MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers/login/browser.rs").includes(
+      MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers/login.rs").includes(
+      MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers/login/kimi.rs").includes(
+      MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    false,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers/login/claude/session.rs").includes(
+      MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS[0],
     ),
     false,
   );

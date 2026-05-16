@@ -1,9 +1,5 @@
 use super::*;
 
-mod monitor;
-
-use monitor::monitor_qwen_login;
-
 #[derive(Debug, Deserialize)]
 pub(crate) struct QwenLoginStartReq {
     label: Option<String>,
@@ -22,13 +18,7 @@ pub(crate) async fn start_qwen_login(
     Json(req): Json<QwenLoginStartReq>,
 ) -> Result<Json<QwenLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let login_session = providers.start_qwen_login_session().await;
-
-    let providers_clone = providers.clone();
-    let login_id_for_task = login_session.login_id.clone();
-    tokio::spawn(async move {
-        monitor_qwen_login(providers_clone, login_id_for_task, req.label).await;
-    });
+    let login_session = providers.start_qwen_browser_login(req.label).await;
 
     Ok(Json(QwenLoginStartResp {
         login_id: login_session.login_id,

@@ -1,9 +1,5 @@
 use super::*;
 
-mod monitor;
-
-use monitor::monitor_gemini_login;
-
 #[derive(Debug, Deserialize)]
 pub(crate) struct GeminiLoginStartReq {
     label: Option<String>,
@@ -22,13 +18,7 @@ pub(crate) async fn start_gemini_login(
     Json(req): Json<GeminiLoginStartReq>,
 ) -> Result<Json<GeminiLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let login_session = providers.start_gemini_login_session().await;
-
-    let providers_clone = providers.clone();
-    let login_id_for_task = login_session.login_id.clone();
-    tokio::spawn(async move {
-        monitor_gemini_login(providers_clone, login_id_for_task, req.label).await;
-    });
+    let login_session = providers.start_gemini_browser_login(req.label).await;
 
     Ok(Json(GeminiLoginStartResp {
         login_id: login_session.login_id,
