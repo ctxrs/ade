@@ -73,7 +73,8 @@ async fn download_update_rejects_missing_artifact_and_api_stays_healthy() {
         .unwrap();
     let target_path_string = target_path.to_string_lossy().to_string();
     let _appimage = EnvGuard::set("CTX_APPIMAGE_PATH", &target_path_string);
-    let app = test_app_router(data_dir.path()).await;
+    let app_harness = test_app_router(data_dir.path()).await;
+    let app = app_harness.app();
 
     let (status, body): (StatusCode, Value) = common::json_request(
         &app,

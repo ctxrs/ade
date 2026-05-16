@@ -29,7 +29,8 @@ async fn updates_check_rejects_unsigned_manifest_metadata() {
     let _download_base = EnvGuard::set("CTX_DOWNLOAD_BASE_URL", &unsigned_manifest_server.base_url);
 
     let data_dir = tempfile::tempdir().unwrap();
-    let app = test_app_router(data_dir.path()).await;
+    let app_harness = test_app_router(data_dir.path()).await;
+    let app = app_harness.app();
     let (status, body): (StatusCode, Value) = common::json_request(
         &app,
         axum::http::Method::GET,
@@ -99,7 +100,8 @@ async fn updates_check_rejects_tampered_manifest_metadata() {
     let _manifest_pubkey = EnvGuard::set("CTX_RELEASE_MANIFEST_PUBKEY", &pubkey_b64);
 
     let data_dir = tempfile::tempdir().unwrap();
-    let app = test_app_router(data_dir.path()).await;
+    let app_harness = test_app_router(data_dir.path()).await;
+    let app = app_harness.app();
     let (status, body): (StatusCode, Value) = common::json_request(
         &app,
         axum::http::Method::GET,
@@ -168,7 +170,8 @@ async fn updates_check_rejects_third_party_artifact_url_refs() {
     let _manifest_pubkey = EnvGuard::set("CTX_RELEASE_MANIFEST_PUBKEY", &pubkey_b64);
 
     let data_dir = tempfile::tempdir().unwrap();
-    let app = test_app_router(data_dir.path()).await;
+    let app_harness = test_app_router(data_dir.path()).await;
+    let app = app_harness.app();
     let (status, body): (StatusCode, Value) = common::json_request(
         &app,
         axum::http::Method::GET,

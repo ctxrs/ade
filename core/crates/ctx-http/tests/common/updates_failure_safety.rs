@@ -133,13 +133,22 @@ pub fn release_manifest_for(
     }
 }
 
-pub async fn test_app_router(data_root: &std::path::Path) -> axum::Router {
-    let stores = common::setup_store(data_root).await;
-    let daemon = common::build_daemon(
-        data_root.to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    common::router_for_daemon(&daemon)
+pub struct UpdateTestApp {
+    app: axum::Router,
+    _fixture: common::DataRootFakeDaemonFixture,
+}
+
+impl UpdateTestApp {
+    pub fn app(&self) -> axum::Router {
+        self.app.clone()
+    }
+}
+
+pub async fn test_app_router(data_root: &std::path::Path) -> UpdateTestApp {
+    let fixture = common::fake_daemon_fixture_for_data_root(data_root, "http://127.0.0.1:0").await;
+    let app = fixture.router();
+    UpdateTestApp {
+        app,
+        _fixture: fixture,
+    }
 }

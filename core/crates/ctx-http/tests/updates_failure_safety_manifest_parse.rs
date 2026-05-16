@@ -41,7 +41,8 @@ async fn updates_check_rejects_malformed_manifest_metadata() {
     let _manifest_pubkey = EnvGuard::set("CTX_RELEASE_MANIFEST_PUBKEY", &pubkey_b64);
 
     let data_dir = tempfile::tempdir().unwrap();
-    let app = test_app_router(data_dir.path()).await;
+    let app_harness = test_app_router(data_dir.path()).await;
+    let app = app_harness.app();
     let (status, body): (StatusCode, Value) = common::json_request(
         &app,
         axum::http::Method::GET,

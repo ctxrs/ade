@@ -437,6 +437,39 @@ impl FakeDaemonFixture {
     }
 }
 
+pub struct DataRootFakeDaemonFixture {
+    pub daemon: TestDaemon,
+}
+
+impl DataRootFakeDaemonFixture {
+    pub fn router(&self) -> axum::Router {
+        router_for_daemon(&self.daemon)
+    }
+}
+
+pub async fn fake_daemon_fixture_for_data_root_with_providers(
+    data_root: &Path,
+    providers: HashMap<String, Arc<dyn ProviderAdapter>>,
+    base_url: impl Into<String>,
+) -> DataRootFakeDaemonFixture {
+    let daemon = TestDaemon::new_with_providers_for_test(
+        data_root.to_path_buf(),
+        providers,
+        base_url.into(),
+        None,
+    )
+    .await
+    .expect("create data-root fake-provider daemon");
+    DataRootFakeDaemonFixture { daemon }
+}
+
+pub async fn fake_daemon_fixture_for_data_root(
+    data_root: &Path,
+    base_url: impl Into<String>,
+) -> DataRootFakeDaemonFixture {
+    fake_daemon_fixture_for_data_root_with_providers(data_root, fake_providers(), base_url).await
+}
+
 pub async fn fake_daemon_fixture_with_providers(
     providers: HashMap<String, Arc<dyn ProviderAdapter>>,
     base_url: impl Into<String>,

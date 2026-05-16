@@ -355,6 +355,16 @@ const providerAuthGlobalIdFixtureTestRoots = [
   "core/crates/ctx-http/tests/global_id_routing_http.rs",
 ];
 
+const updateRouteFixtureTestRoots = [
+  "core/crates/ctx-http/tests/common/updates_failure_safety.rs",
+  "core/crates/ctx-http/tests/updates_appimage_apply_safety.rs",
+  "core/crates/ctx-http/tests/updates_failure_safety_checksum_mismatch.rs",
+  "core/crates/ctx-http/tests/updates_failure_safety_interrupted_transfer.rs",
+  "core/crates/ctx-http/tests/updates_failure_safety_manifest_parse.rs",
+  "core/crates/ctx-http/tests/updates_failure_safety_manifest_signature.rs",
+  "core/crates/ctx-http/tests/updates_failure_safety_missing_artifact.rs",
+];
+
 const taskLifecycleStoreFacadeTestRoots = [
   "core/crates/ctx-http/src/api/tasks/cleanup_lifecycle_tests.rs",
   "core/crates/ctx-http/src/api/tasks/lifecycle_tests.rs",
@@ -923,6 +933,41 @@ const PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS = [
   },
   {
     name: "raw provider-auth/global-id ctx_store Store",
+    regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore::/,
+    contentRegex: /\buse\s+ctx_store::\{(?=[^}]*\n)[\s\S]*?\bStore\b[\s\S]*?\}/gm,
+  },
+];
+
+const UPDATE_ROUTE_FIXTURE_PATTERNS = [
+  {
+    name: "direct update-route setup store manager helper",
+    regex: /\b(?:crate::)?common::setup_store\s*\(|\buse\s+[^;]*\bsetup_store\b|\bsetup_store\s*\(/,
+    contentRegex: /\buse\s+[\s\S]*?\bsetup_store\b[\s\S]*?;/gm,
+  },
+  {
+    name: "direct update-route setup daemon construction helper",
+    regex: /\b(?:crate::)?common::build_daemon\s*\(|\buse\s+[^;]*\bbuild_daemon\b|\bbuild_daemon\s*\(/,
+    contentRegex: /\buse\s+[\s\S]*?\bbuild_daemon\b[\s\S]*?;/gm,
+  },
+  {
+    name: "direct update-route daemon router composition",
+    regex: /\b(?:crate::)?common::router_for_daemon\s*\(|\buse\s+[^;]*\brouter_for_daemon\b|\brouter_for_daemon\s*\(/,
+    contentRegex: /\buse\s+[\s\S]*?\brouter_for_daemon\b[\s\S]*?;/gm,
+  },
+  {
+    name: "direct update-route TestDaemon construction",
+    regex: /\bTestDaemon::new[A-Za-z0-9_]*\s*\(/,
+  },
+  {
+    name: "direct update-route TestDaemon store access",
+    regex: /\.(?:stores|global_store|store_for_session|store_for_workspace|uncached_store_for_workspace|store_for_task|store_for_worktree)\s*\(/,
+  },
+  {
+    name: "raw update-route StoreManager",
+    regex: /\bStoreManager\b/,
+  },
+  {
+    name: "raw update-route ctx_store Store",
     regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore::/,
     contentRegex: /\buse\s+ctx_store::\{(?=[^}]*\n)[\s\S]*?\bStore\b[\s\S]*?\}/gm,
   },
@@ -2188,6 +2233,13 @@ function providerAuthGlobalIdFixturePatternsForPath(relativePath) {
   return [];
 }
 
+function updateRouteFixturePatternsForPath(relativePath) {
+  if (updateRouteFixtureTestRoots.some((root) => relativePath.startsWith(root))) {
+    return UPDATE_ROUTE_FIXTURE_PATTERNS;
+  }
+  return [];
+}
+
 function mcpDaemonPatternsForPath(relativePath) {
   if (mcpDaemonFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS;
@@ -2637,6 +2689,13 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
+        patterns: updateRouteFixturePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
         patterns: mcpDaemonPatternsForPath(relativePath),
       }),
     );
@@ -2814,6 +2873,7 @@ module.exports = {
   TERMINAL_WORKSPACE_STREAM_TEST_STORE_ACCESS_PATTERNS,
   TEST_ROUTER_COMPOSITION_PATTERNS,
   TEST_RAW_DAEMON_BUCKET_PATTERNS,
+  UPDATE_ROUTE_FIXTURE_PATTERNS,
   WORKSPACE_MERGE_QUEUE_CONFIG_TEST_STORE_ACCESS_PATTERNS,
   WORKSPACE_RUNTIME_SETTINGS_TEST_STORE_ACCESS_PATTERNS,
   WORKSPACE_VCS_SETUP_FIXTURE_PATTERNS,
@@ -2855,6 +2915,7 @@ module.exports = {
   subscriptionAccountsApiStorePatternsForPath,
   taskLifecycleStorePatternsForPath,
   terminalWorkspaceStreamStorePatternsForPath,
+  updateRouteFixturePatternsForPath,
   worktreeArchiveStorePatternsForPath,
   workspaceMergeQueueConfigStorePatternsForPath,
   workspaceRuntimeSettingsStorePatternsForPath,

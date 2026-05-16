@@ -39,6 +39,7 @@ const {
   TERMINAL_WORKSPACE_STREAM_TEST_STORE_ACCESS_PATTERNS,
   TEST_ROUTER_COMPOSITION_PATTERNS,
   TEST_RAW_DAEMON_BUCKET_PATTERNS,
+  UPDATE_ROUTE_FIXTURE_PATTERNS,
   WORKSPACE_MERGE_QUEUE_CONFIG_TEST_STORE_ACCESS_PATTERNS,
   WORKSPACE_RUNTIME_SETTINGS_TEST_STORE_ACCESS_PATTERNS,
   WORKSPACE_VCS_SETUP_FIXTURE_PATTERNS,
@@ -80,6 +81,7 @@ const {
   subscriptionAccountsApiStorePatternsForPath,
   taskLifecycleStorePatternsForPath,
   terminalWorkspaceStreamStorePatternsForPath,
+  updateRouteFixturePatternsForPath,
   worktreeArchiveStorePatternsForPath,
   workspaceMergeQueueConfigStorePatternsForPath,
   workspaceRuntimeSettingsStorePatternsForPath,
@@ -1718,6 +1720,78 @@ test("daemon boundary guard scopes provider-auth/global-id fixture roots", () =>
   }
   assert.deepEqual(
     providerAuthGlobalIdFixturePatternsForPath("core/crates/ctx-http/tests/common/mod.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects update-route raw daemon fixture setup", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/common/updates_failure_safety.rs",
+    contents: `
+      use crate::common::{build_daemon as make_daemon, router_for_daemon as route_for};
+      use crate::common::{
+        setup_store as open_stores,
+      };
+
+      async fn helper(data_root: &std::path::Path) {
+        let stores = open_stores(data_root).await;
+        let daemon = make_daemon(data_root.to_path_buf(), stores, common::fake_providers(), "http://127.0.0.1:0");
+        let _router = route_for(&daemon);
+      }
+    `,
+    patterns: UPDATE_ROUTE_FIXTURE_PATTERNS,
+  });
+
+  const names = new Set(violations.map((violation) => violation.name));
+  assert(names.has("direct update-route setup store manager helper"));
+  assert(names.has("direct update-route setup daemon construction helper"));
+  assert(names.has("direct update-route daemon router composition"));
+});
+
+test("daemon boundary guard allows update-route bound harness setup", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/common/updates_failure_safety.rs",
+    contents: `
+      pub struct UpdateTestApp {
+        app: axum::Router,
+        _fixture: common::DataRootFakeDaemonFixture,
+      }
+
+      impl UpdateTestApp {
+        pub fn app(&self) -> axum::Router {
+          self.app.clone()
+        }
+      }
+
+      pub async fn test_app_router(data_root: &std::path::Path) -> UpdateTestApp {
+        let fixture = common::fake_daemon_fixture_for_data_root(data_root, "http://127.0.0.1:0").await;
+        let app = fixture.router();
+        UpdateTestApp { app, _fixture: fixture }
+      }
+    `,
+    patterns: UPDATE_ROUTE_FIXTURE_PATTERNS,
+  });
+
+  assert.deepEqual(violations, []);
+});
+
+test("daemon boundary guard scopes update-route fixture roots", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/tests/common/updates_failure_safety.rs",
+    "core/crates/ctx-http/tests/updates_appimage_apply_safety.rs",
+    "core/crates/ctx-http/tests/updates_failure_safety_checksum_mismatch.rs",
+    "core/crates/ctx-http/tests/updates_failure_safety_interrupted_transfer.rs",
+    "core/crates/ctx-http/tests/updates_failure_safety_manifest_parse.rs",
+    "core/crates/ctx-http/tests/updates_failure_safety_manifest_signature.rs",
+    "core/crates/ctx-http/tests/updates_failure_safety_missing_artifact.rs",
+  ]) {
+    assert.deepEqual(
+      updateRouteFixturePatternsForPath(filePath),
+      UPDATE_ROUTE_FIXTURE_PATTERNS,
+    );
+  }
+  assert.deepEqual(
+    updateRouteFixturePatternsForPath("core/crates/ctx-http/tests/common/mod.rs"),
     [],
   );
 });

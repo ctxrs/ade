@@ -69,7 +69,8 @@ async fn appimage_apply_requires_verified_candidate_metadata() {
         .await
         .unwrap();
 
-    let app = test_app_router(data_dir.path()).await;
+    let app_harness = test_app_router(data_dir.path()).await;
+    let app = app_harness.app();
     let (status, body): (StatusCode, Value) = common::json_request(
         &app,
         axum::http::Method::POST,
@@ -111,7 +112,8 @@ async fn appimage_apply_rejects_candidate_path_outside_updates_dir() {
     write_verified_candidate_meta(data_dir.path(), &target_path, &candidate, "9.9.9", payload)
         .await;
 
-    let app = test_app_router(data_dir.path()).await;
+    let app_harness = test_app_router(data_dir.path()).await;
+    let app = app_harness.app();
     let (status, body): (StatusCode, Value) = common::json_request(
         &app,
         axum::http::Method::POST,
@@ -158,7 +160,8 @@ async fn appimage_apply_rejects_symlink_candidate_inside_updates_dir() {
     write_verified_candidate_meta(data_dir.path(), &target_path, &candidate, "9.9.9", payload)
         .await;
 
-    let app = test_app_router(data_dir.path()).await;
+    let app_harness = test_app_router(data_dir.path()).await;
+    let app = app_harness.app();
     let (status, body): (StatusCode, Value) = common::json_request(
         &app,
         axum::http::Method::POST,
@@ -202,7 +205,8 @@ async fn appimage_apply_rejects_stale_or_downgrade_candidate() {
     write_verified_candidate_meta(data_dir.path(), &target_path, &candidate, "0.0.1", payload)
         .await;
 
-    let app = test_app_router(data_dir.path()).await;
+    let app_harness = test_app_router(data_dir.path()).await;
+    let app = app_harness.app();
     let (status, body): (StatusCode, Value) = common::json_request(
         &app,
         axum::http::Method::POST,
@@ -252,7 +256,8 @@ async fn appimage_apply_rejects_malformed_candidate_version() {
     )
     .await;
 
-    let app = test_app_router(data_dir.path()).await;
+    let app_harness = test_app_router(data_dir.path()).await;
+    let app = app_harness.app();
     let (status, body): (StatusCode, Value) = common::json_request(
         &app,
         axum::http::Method::POST,
@@ -345,7 +350,8 @@ async fn appimage_apply_rejects_tampered_verified_candidate() {
         .unwrap();
     let target_path_string = target_path.to_string_lossy().to_string();
     let _appimage = EnvGuard::set("CTX_APPIMAGE_PATH", &target_path_string);
-    let app = test_app_router(data_dir.path()).await;
+    let app_harness = test_app_router(data_dir.path()).await;
+    let app = app_harness.app();
 
     let (download_status, _download_body): (StatusCode, Value) = common::json_request(
         &app,
@@ -466,7 +472,8 @@ async fn appimage_failed_redownload_invalidates_existing_verified_candidate() {
         stale_payload,
     )
     .await;
-    let app = test_app_router(data_dir.path()).await;
+    let app_harness = test_app_router(data_dir.path()).await;
+    let app = app_harness.app();
 
     let (download_status, _download_body): (StatusCode, Value) = common::json_request(
         &app,
@@ -569,7 +576,8 @@ async fn appimage_apply_replaces_target_and_clears_candidate() {
         .unwrap();
     let target_path_string = target_path.to_string_lossy().to_string();
     let _appimage = EnvGuard::set("CTX_APPIMAGE_PATH", &target_path_string);
-    let app = test_app_router(data_dir.path()).await;
+    let app_harness = test_app_router(data_dir.path()).await;
+    let app = app_harness.app();
 
     let (download_status, _download_body): (StatusCode, Value) = common::json_request(
         &app,
