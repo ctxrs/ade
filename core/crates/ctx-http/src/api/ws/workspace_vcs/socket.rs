@@ -6,6 +6,7 @@ use super::send_loop::spawn_workspace_vcs_send_loop;
 use super::subscription::{
     handle_workspace_vcs_client_message, release_workspace_vcs_demand, WorkspaceVcsRuntime,
 };
+use ctx_daemon::daemon::workspaces::stream::WorkspaceVcsSnapshotRoute;
 
 fn spawn_workspace_vcs_metrics_loop(
     state: WorkspacesHandle,
@@ -85,8 +86,8 @@ pub(super) async fn handle_workspace_vcs_ws(
                 }
                 event = rx.recv() => {
                     match event {
-                        Ok(snapshot) => {
-                            if runtime.detail_worktree_ids.contains(&snapshot.worktree_id) {
+                        Ok(snapshot) => match state.route_workspace_vcs_snapshot(&runtime, snapshot.worktree_id) {
+                            WorkspaceVcsSnapshotRoute::Details => {
                                 super::subscription::queue_vcs_snapshot(
                                     &pending,
                                     &metrics,
@@ -96,7 +97,8 @@ pub(super) async fn handle_workspace_vcs_ws(
                                     snapshot,
                                 )
                                 .await;
-                            } else if runtime.summary_worktree_ids.contains(&snapshot.worktree_id) {
+                            }
+                            WorkspaceVcsSnapshotRoute::Summary => {
                                 super::subscription::queue_vcs_snapshot(
                                     &pending,
                                     &metrics,
@@ -107,7 +109,8 @@ pub(super) async fn handle_workspace_vcs_ws(
                                 )
                                 .await;
                             }
-                        }
+                            WorkspaceVcsSnapshotRoute::Drop => {}
+                        },
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
                             tracing::warn!(
                                 target: "ctx_http.ws_vcs",
@@ -115,14 +118,14 @@ pub(super) async fn handle_workspace_vcs_ws(
                                 skipped,
                                 "workspace vcs stream lagged; latest subscribed snapshots will be reseeded",
                             );
+                            let plan = state.plan_workspace_vcs_lag_reseed(&runtime);
                             super::subscription::seed_current_vcs_snapshots(
                                 &state,
                                 workspace_id,
                                 &pending,
                                 &metrics,
                                 runtime.demand_generation,
-                                &runtime.summary_worktree_ids,
-                                &runtime.detail_worktree_ids,
+                                &plan,
                             )
                             .await;
                         }

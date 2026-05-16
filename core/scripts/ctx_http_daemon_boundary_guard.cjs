@@ -228,6 +228,11 @@ const workspaceVcsDemandApiRoots = [
   "core/crates/ctx-http/src/api/ws/workspace_vcs/subscription/runtime.rs",
 ];
 
+const workspaceVcsLiveRoutingApiRoots = [
+  "core/crates/ctx-http/src/api/ws/workspace_vcs/socket.rs",
+  "core/crates/ctx-http/src/api/ws/workspace_vcs/subscription/snapshots.rs",
+];
+
 const smallApiUnitStoreFacadeTestRoots = [
   "core/crates/ctx-http/src/api/settings.rs",
   "core/crates/ctx-http/src/api/providers/login/codex/tests.rs",
@@ -1096,6 +1101,19 @@ const WORKSPACE_VCS_DEMAND_API_PATTERNS = [
   {
     name: "workspace VCS API owns active demand helper",
     regex: /\bfn\s+active_worktree_ids\s*\(/,
+  },
+];
+
+const WORKSPACE_VCS_LIVE_ROUTING_API_PATTERNS = [
+  {
+    name: "workspace VCS API routes snapshots from raw demand sets",
+    regex:
+      /\b(?:runtime|demand)\s*\.\s*(?:detail_worktree_ids|summary_worktree_ids)\s*\.\s*contains\s*\(/,
+  },
+  {
+    name: "workspace VCS API plans snapshot seeds from raw demand sets",
+    regex:
+      /(?:^|[^.\w])(?:summary_worktree_ids|detail_worktree_ids)\s*\.\s*(?:union|contains)\s*\(/,
   },
 ];
 
@@ -2915,6 +2933,9 @@ function apiPatternsForPath(relativePath) {
   if (workspaceVcsDemandApiRoots.some((root) => relativePath === root)) {
     patterns.push(...WORKSPACE_VCS_DEMAND_API_PATTERNS);
   }
+  if (workspaceVcsLiveRoutingApiRoots.some((root) => relativePath === root)) {
+    patterns.push(...WORKSPACE_VCS_LIVE_ROUTING_API_PATTERNS);
+  }
   return patterns;
 }
 
@@ -3855,6 +3876,7 @@ module.exports = {
   WORKSPACE_STREAM_LIVE_EVENT_APPLICATION_API_PATTERNS,
   WORKSPACE_STREAM_SUBSCRIPTION_EVENT_API_PATTERNS,
   WORKSPACE_VCS_DEMAND_API_PATTERNS,
+  WORKSPACE_VCS_LIVE_ROUTING_API_PATTERNS,
   PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,

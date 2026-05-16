@@ -851,6 +851,21 @@ impl WorkspacesHandle {
         stream::release_workspace_vcs_demand(&self.state, demand).await;
     }
 
+    pub fn route_workspace_vcs_snapshot(
+        &self,
+        demand: &stream::WorkspaceVcsDemandState,
+        worktree_id: WorktreeId,
+    ) -> stream::WorkspaceVcsSnapshotRoute {
+        stream::route_workspace_vcs_snapshot(demand, worktree_id)
+    }
+
+    pub fn plan_workspace_vcs_lag_reseed(
+        &self,
+        demand: &stream::WorkspaceVcsDemandState,
+    ) -> stream::WorkspaceVcsLagReseedPlan {
+        stream::plan_workspace_vcs_lag_reseed(demand)
+    }
+
     pub async fn record_workspace_vcs_stream_metric(&self, name: &str, value: u64) {
         let mut labels = HashMap::new();
         labels.insert("source".to_string(), "daemon".to_string());

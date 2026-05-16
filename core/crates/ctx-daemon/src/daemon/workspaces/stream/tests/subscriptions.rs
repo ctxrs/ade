@@ -214,6 +214,13 @@ fn active_task(workspace_id: WorkspaceId, session_id: SessionId) -> WorkspaceAct
     }
 }
 
+fn vcs_seed_pairs(plan: &WorkspaceVcsLagReseedPlan) -> Vec<(WorktreeId, WorktreeVcsStreamTier)> {
+    plan.seeds
+        .iter()
+        .map(|seed| (seed.worktree_id, seed.tier))
+        .collect()
+}
+
 #[test]
 fn event_routing_head_delta_applicability_preserves_subscription_rules() {
     let session_id = SessionId::new();
@@ -1557,6 +1564,12 @@ async fn workspace_vcs_subscription_plan_filters_dedupes_and_updates_demand() {
         plan.detail_seed_worktree_ids,
         HashSet::from([worktree_a2.id])
     );
+    let mut expected_seed_pairs = vec![
+        (worktree_a1.id, WorktreeVcsStreamTier::Summary),
+        (worktree_a2.id, WorktreeVcsStreamTier::Details),
+    ];
+    expected_seed_pairs.sort_by_key(|(worktree_id, _)| worktree_id.0);
+    assert_eq!(vcs_seed_pairs(&plan.seed_plan), expected_seed_pairs);
     assert_eq!(plan.summary_refresh_worktree_ids, expected_summary);
     assert_eq!(plan.detail_refresh_worktree_ids, vec![worktree_a2.id]);
     assert!(
@@ -1605,6 +1618,7 @@ async fn workspace_vcs_subscription_plan_preserves_repeat_and_tier_transition_se
     assert_eq!(repeat.state.demand_generation, 2);
     assert!(repeat.summary_seed_worktree_ids.is_empty());
     assert!(repeat.detail_seed_worktree_ids.is_empty());
+    assert!(repeat.seed_plan.seeds.is_empty());
     assert!(repeat.summary_refresh_worktree_ids.is_empty());
     assert!(repeat.detail_refresh_worktree_ids.is_empty());
 
@@ -1622,6 +1636,10 @@ async fn workspace_vcs_subscription_plan_preserves_repeat_and_tier_transition_se
         upgrade.detail_seed_worktree_ids,
         HashSet::from([worktree.id])
     );
+    assert_eq!(
+        vcs_seed_pairs(&upgrade.seed_plan),
+        vec![(worktree.id, WorktreeVcsStreamTier::Details)]
+    );
     assert!(upgrade.summary_refresh_worktree_ids.is_empty());
     assert_eq!(upgrade.detail_refresh_worktree_ids, vec![worktree.id]);
 
@@ -1636,8 +1654,61 @@ async fn workspace_vcs_subscription_plan_preserves_repeat_and_tier_transition_se
     assert_eq!(demotion.state.demand_generation, 4);
     assert!(demotion.summary_seed_worktree_ids.is_empty());
     assert!(demotion.detail_seed_worktree_ids.is_empty());
+    assert!(demotion.seed_plan.seeds.is_empty());
     assert!(demotion.summary_refresh_worktree_ids.is_empty());
     assert!(demotion.detail_refresh_worktree_ids.is_empty());
+}
+
+#[test]
+fn workspace_vcs_snapshot_route_prefers_detail_over_summary_and_drops_unsubscribed() {
+    let summary = WorktreeId::new();
+    let detail = WorktreeId::new();
+    let both = WorktreeId::new();
+    let demand = WorkspaceVcsDemandState {
+        demand_generation: 7,
+        summary_worktree_ids: HashSet::from([summary, both]),
+        detail_worktree_ids: HashSet::from([detail, both]),
+    };
+
+    assert_eq!(
+        route_workspace_vcs_snapshot(&demand, summary),
+        WorkspaceVcsSnapshotRoute::Summary,
+    );
+    assert_eq!(
+        route_workspace_vcs_snapshot(&demand, detail),
+        WorkspaceVcsSnapshotRoute::Details,
+    );
+    assert_eq!(
+        route_workspace_vcs_snapshot(&demand, both),
+        WorkspaceVcsSnapshotRoute::Details,
+    );
+    assert_eq!(
+        route_workspace_vcs_snapshot(&demand, WorktreeId::new()),
+        WorkspaceVcsSnapshotRoute::Drop,
+    );
+}
+
+#[test]
+fn workspace_vcs_lag_reseed_sorts_and_prefers_detail_tier() {
+    let summary = WorktreeId::new();
+    let detail = WorktreeId::new();
+    let both = WorktreeId::new();
+    let demand = WorkspaceVcsDemandState {
+        demand_generation: 9,
+        summary_worktree_ids: HashSet::from([summary, both]),
+        detail_worktree_ids: HashSet::from([detail, both]),
+    };
+    let mut expected = vec![
+        (summary, WorktreeVcsStreamTier::Summary),
+        (detail, WorktreeVcsStreamTier::Details),
+        (both, WorktreeVcsStreamTier::Details),
+    ];
+    expected.sort_by_key(|(worktree_id, _)| worktree_id.0);
+
+    assert_eq!(
+        vcs_seed_pairs(&plan_workspace_vcs_lag_reseed(&demand)),
+        expected
+    );
 }
 
 #[tokio::test]

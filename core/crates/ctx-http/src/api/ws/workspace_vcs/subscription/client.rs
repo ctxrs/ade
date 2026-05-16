@@ -78,8 +78,7 @@ async fn replace_workspace_vcs_subscription(
         pending,
         metrics,
         runtime.demand_generation,
-        &plan.summary_seed_worktree_ids,
-        &plan.detail_seed_worktree_ids,
+        &plan.seed_plan,
     )
     .await;
     state

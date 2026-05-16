@@ -27,6 +27,7 @@ pub struct WorkspaceVcsSubscriptionPlan {
     pub state: WorkspaceVcsDemandState,
     pub summary_seed_worktree_ids: HashSet<WorktreeId>,
     pub detail_seed_worktree_ids: HashSet<WorktreeId>,
+    pub seed_plan: WorkspaceVcsLagReseedPlan,
     pub summary_refresh_worktree_ids: Vec<WorktreeId>,
     pub detail_refresh_worktree_ids: Vec<WorktreeId>,
     pub summary_subscribed_worktree_ids: Vec<WorktreeId>,
@@ -37,6 +38,24 @@ pub struct WorkspaceVcsSubscriptionPlan {
 pub struct WorkspaceVcsRefreshPlan {
     pub summary_refresh_worktree_ids: Vec<WorktreeId>,
     pub detail_refresh_worktree_ids: Vec<WorktreeId>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorkspaceVcsSnapshotRoute {
+    Drop,
+    Summary,
+    Details,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WorkspaceVcsSnapshotSeed {
+    pub worktree_id: WorktreeId,
+    pub tier: WorktreeVcsStreamTier,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WorkspaceVcsLagReseedPlan {
+    pub seeds: Vec<WorkspaceVcsSnapshotSeed>,
 }
 
 pub async fn filter_workspace_worktree_ids(
@@ -103,6 +122,7 @@ pub async fn plan_workspace_vcs_subscription_update(
             .difference(&previous_details)
             .copied(),
     );
+    let seed_plan = workspace_vcs_seed_plan(&summary_seed_worktree_ids, &detail_seed_worktree_ids);
 
     state
         .update_worktree_vcs_activity(&previous_active, &next_active)
@@ -115,6 +135,7 @@ pub async fn plan_workspace_vcs_subscription_update(
         state: next,
         summary_seed_worktree_ids,
         detail_seed_worktree_ids,
+        seed_plan,
         summary_refresh_worktree_ids,
         detail_refresh_worktree_ids,
         summary_subscribed_worktree_ids: summary_worktree_ids,
@@ -155,6 +176,48 @@ pub async fn release_workspace_vcs_demand(
     state
         .update_worktree_vcs_open_panes(&demand.detail_worktree_ids, &HashSet::new())
         .await;
+}
+
+pub fn route_workspace_vcs_snapshot(
+    demand: &WorkspaceVcsDemandState,
+    worktree_id: WorktreeId,
+) -> WorkspaceVcsSnapshotRoute {
+    if demand.detail_worktree_ids.contains(&worktree_id) {
+        WorkspaceVcsSnapshotRoute::Details
+    } else if demand.summary_worktree_ids.contains(&worktree_id) {
+        WorkspaceVcsSnapshotRoute::Summary
+    } else {
+        WorkspaceVcsSnapshotRoute::Drop
+    }
+}
+
+pub fn plan_workspace_vcs_lag_reseed(
+    demand: &WorkspaceVcsDemandState,
+) -> WorkspaceVcsLagReseedPlan {
+    workspace_vcs_seed_plan(&demand.summary_worktree_ids, &demand.detail_worktree_ids)
+}
+
+fn workspace_vcs_seed_plan(
+    summary_worktree_ids: &HashSet<WorktreeId>,
+    detail_worktree_ids: &HashSet<WorktreeId>,
+) -> WorkspaceVcsLagReseedPlan {
+    let mut worktree_ids = summary_worktree_ids
+        .union(detail_worktree_ids)
+        .copied()
+        .collect::<Vec<_>>();
+    worktree_ids.sort_by_key(|worktree_id| worktree_id.0);
+    let seeds = worktree_ids
+        .into_iter()
+        .map(|worktree_id| {
+            let tier = if detail_worktree_ids.contains(&worktree_id) {
+                WorktreeVcsStreamTier::Details
+            } else {
+                WorktreeVcsStreamTier::Summary
+            };
+            WorkspaceVcsSnapshotSeed { worktree_id, tier }
+        })
+        .collect();
+    WorkspaceVcsLagReseedPlan { seeds }
 }
 
 pub async fn refresh_worktree_vcs_for_worktrees(

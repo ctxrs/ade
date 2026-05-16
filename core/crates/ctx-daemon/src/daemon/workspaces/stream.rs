@@ -48,10 +48,11 @@ pub use subscriptions::{
     WorkspaceStreamSubscriptionResolutionError, WorkspaceStreamSubscriptionTransactionPlan,
 };
 pub use vcs::{
-    filter_workspace_worktree_ids, plan_workspace_vcs_refresh,
+    filter_workspace_worktree_ids, plan_workspace_vcs_lag_reseed, plan_workspace_vcs_refresh,
     plan_workspace_vcs_subscription_update, refresh_worktree_vcs_for_worktrees,
-    release_workspace_vcs_demand, WorkspaceVcsDemandState, WorkspaceVcsRefreshPlan,
-    WorkspaceVcsSubscriptionPlan,
+    release_workspace_vcs_demand, route_workspace_vcs_snapshot, WorkspaceVcsDemandState,
+    WorkspaceVcsLagReseedPlan, WorkspaceVcsRefreshPlan, WorkspaceVcsSnapshotRoute,
+    WorkspaceVcsSnapshotSeed, WorkspaceVcsSubscriptionPlan,
 };
 
 #[cfg(test)]

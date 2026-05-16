@@ -38,6 +38,7 @@ const {
   WORKSPACE_STREAM_LIVE_EVENT_APPLICATION_API_PATTERNS,
   WORKSPACE_STREAM_SUBSCRIPTION_EVENT_API_PATTERNS,
   WORKSPACE_VCS_DEMAND_API_PATTERNS,
+  WORKSPACE_VCS_LIVE_ROUTING_API_PATTERNS,
   PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,
@@ -910,6 +911,55 @@ test("daemon boundary guard scopes workspace VCS demand planning ban", () => {
     apiPatternsForPath("core/crates/ctx-http/src/api/ws/workspace_vcs/socket.rs").includes(
       WORKSPACE_VCS_DEMAND_API_PATTERNS[0],
     ),
+    false,
+  );
+});
+
+test("daemon boundary guard rejects workspace VCS live routing in HTTP", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/ws/workspace_vcs/socket.rs",
+    contents: `
+      async fn handler(runtime: WorkspaceVcsRuntime, snapshot: WorktreeVcsSnapshot) {
+        if runtime.detail_worktree_ids.contains(&snapshot.worktree_id) {}
+        if runtime.summary_worktree_ids.contains(&snapshot.worktree_id) {}
+      }
+
+      fn seeds(summary_worktree_ids: HashSet<WorktreeId>, detail_worktree_ids: HashSet<WorktreeId>) {
+        let _ = summary_worktree_ids.union(&detail_worktree_ids).collect::<Vec<_>>();
+        let _ = detail_worktree_ids.contains(&WorktreeId::new());
+      }
+    `,
+    patterns: WORKSPACE_VCS_LIVE_ROUTING_API_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "workspace VCS API routes snapshots from raw demand sets",
+      "workspace VCS API routes snapshots from raw demand sets",
+      "workspace VCS API plans snapshot seeds from raw demand sets",
+      "workspace VCS API plans snapshot seeds from raw demand sets",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes workspace VCS live routing ban", () => {
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/ws/workspace_vcs/socket.rs").includes(
+      WORKSPACE_VCS_LIVE_ROUTING_API_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/ws/workspace_vcs/subscription/snapshots.rs",
+    ).includes(WORKSPACE_VCS_LIVE_ROUTING_API_PATTERNS[0]),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/ws/workspace_vcs/subscription/client.rs",
+    ).includes(WORKSPACE_VCS_LIVE_ROUTING_API_PATTERNS[0]),
     false,
   );
 });
