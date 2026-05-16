@@ -55,6 +55,8 @@ pub(super) fn strip_ansi_sequences(input: &str) -> String {
     out
 }
 
-pub(in crate::api::providers) fn normalize_claude_login_line(line: &str) -> String {
+pub(in crate::daemon::providers::claude_setup_token_login) fn normalize_claude_login_line(
+    line: &str,
+) -> String {
     strip_ansi_sequences(line.trim_end_matches('\r'))
 }

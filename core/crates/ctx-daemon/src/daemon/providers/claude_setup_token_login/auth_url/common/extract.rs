@@ -63,7 +63,9 @@ fn find_auth_url_start(chars: &[char], from_idx: usize) -> Option<usize> {
     None
 }
 
-pub(in crate::api::providers) fn extract_auth_url(text: &str) -> Option<String> {
+pub(in crate::daemon::providers::claude_setup_token_login) fn extract_auth_url(
+    text: &str,
+) -> Option<String> {
     let normalized = strip_ansi_sequences(text);
     let chars: Vec<char> = normalized.chars().collect();
     let mut idx = 0usize;

@@ -1,9 +1,5 @@
 use super::*;
 
-mod process;
-
-use process::{monitor_claude_login, start_claude_login_process};
-
 #[derive(Debug, Deserialize)]
 pub(crate) struct ClaudeLoginStartReq {
     label: Option<String>,
@@ -22,23 +18,10 @@ pub(crate) async fn start_claude_login(
     Json(req): Json<ClaudeLoginStartReq>,
 ) -> Result<Json<ClaudeLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let label = req.label;
-    let login = start_claude_login_process(&providers).await.map_err(|e| {
-        let msg = format!("{e:#}");
-        let status = if msg.contains("runtime_command_") {
-            StatusCode::BAD_REQUEST
-        } else {
-            StatusCode::INTERNAL_SERVER_ERROR
-        };
-        (status, Json(ApiErrorResp { error: msg }))
-    })?;
-    let auth_url = login.auth_url.clone();
-    let login_session = providers.start_claude_login_session(auth_url).await;
-    let providers_clone = providers.clone();
-    let login_id_for_task = login_session.login_id.clone();
-    tokio::spawn(async move {
-        monitor_claude_login(providers_clone, login_id_for_task, label, login).await;
-    });
+    let login_session = providers
+        .start_claude_setup_token_login(req.label)
+        .await
+        .map_err(claude_setup_token_login_start_error)?;
 
     Ok(Json(ClaudeLoginStartResp {
         login_id: login_session.login_id,
@@ -61,4 +44,21 @@ pub(crate) async fn get_claude_login(
         )
     })?;
     Ok(Json(status))
+}
+
+fn claude_setup_token_login_start_error(
+    err: ctx_daemon::daemon::providers::ClaudeSetupTokenLoginStartError,
+) -> (StatusCode, Json<ApiErrorResp>) {
+    use ctx_daemon::daemon::providers::ClaudeSetupTokenLoginStartErrorKind;
+
+    let status = match err.kind() {
+        ClaudeSetupTokenLoginStartErrorKind::BadRequest => StatusCode::BAD_REQUEST,
+        ClaudeSetupTokenLoginStartErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    (
+        status,
+        Json(ApiErrorResp {
+            error: err.route_safe_message().to_string(),
+        }),
+    )
 }

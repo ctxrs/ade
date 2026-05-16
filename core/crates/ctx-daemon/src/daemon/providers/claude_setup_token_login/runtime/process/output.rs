@@ -1,6 +1,6 @@
 use tokio::sync::mpsc;
 
-use crate::api::providers::login::normalize_claude_login_line;
+use super::super::super::auth_url::normalize_claude_login_line;
 
 pub(super) fn pump_claude_login_output<R>(mut reader: R, tx: mpsc::UnboundedSender<String>)
 where

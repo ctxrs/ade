@@ -2,23 +2,18 @@ use super::*;
 use crate::api::MobileAuthContext;
 use axum::Extension;
 
-mod auth_url;
 mod browser;
+#[cfg(test)]
 mod callback;
 mod claude;
 mod codex;
 mod kimi;
 mod mistral;
 
-pub(super) use auth_url::{
-    auth_url_looks_complete, extract_auth_url, normalize_claude_login_line,
-    read_trailing_claude_login_lines,
-};
 pub(crate) use browser::{
     get_amp_login, get_gemini_login, get_qwen_login, start_amp_login, start_gemini_login,
     start_qwen_login,
 };
-pub(super) use callback::is_loopback_host;
 #[cfg(test)]
 pub(super) use callback::{expected_callback_from_auth_url, validate_callback_url};
 #[cfg(test)]
@@ -27,8 +22,6 @@ pub(crate) use claude::{get_claude_login, start_claude_login};
 pub(crate) use codex::{complete_codex_login, get_codex_login, start_codex_login};
 pub(crate) use kimi::{get_kimi_login, start_kimi_login};
 pub(crate) use mistral::{get_mistral_login, start_mistral_login};
-
-const CLAUDE_LOGIN_URL_WAIT: Duration = Duration::from_secs(20);
 
 pub(super) fn reject_mobile_auth(
     mobile_auth: Option<Extension<MobileAuthContext>>,
@@ -42,33 +35,4 @@ pub(super) fn reject_mobile_auth(
         ));
     }
     Ok(())
-}
-
-#[cfg(test)]
-pub(super) fn extract_auth_url_from_value(value: &serde_json::Value) -> Option<String> {
-    match value {
-        serde_json::Value::String(raw) => {
-            let trimmed = raw.trim();
-            if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-                return Some(trimmed.to_string());
-            }
-            extract_auth_url(trimmed)
-        }
-        serde_json::Value::Object(map) => {
-            let direct = [
-                "auth_url",
-                "authUrl",
-                "url",
-                "login_url",
-                "loginUrl",
-                "authorize_url",
-            ]
-            .into_iter()
-            .find_map(|key| map.get(key))
-            .and_then(extract_auth_url_from_value);
-            direct.or_else(|| map.values().find_map(extract_auth_url_from_value))
-        }
-        serde_json::Value::Array(values) => values.iter().find_map(extract_auth_url_from_value),
-        _ => None,
-    }
 }

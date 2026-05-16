@@ -10,18 +10,20 @@ mod termination;
 mod wait_loop;
 
 use finalization::finalize_claude_login;
-pub(in crate::api::providers::login::claude::session) use termination::kill_claude_login_process;
+pub(in crate::daemon::providers::claude_setup_token_login) use termination::kill_claude_login_process;
 use termination::terminate_claude_login_after_error;
 use wait_loop::wait_for_claude_login_observation;
 
-pub(in crate::api::providers::login::claude::session) async fn monitor_claude_login(
-    providers: ProvidersHandle,
+use crate::daemon::DaemonState;
+use std::sync::Arc;
+
+pub(in crate::daemon::providers::claude_setup_token_login) async fn monitor_claude_login(
+    state: Arc<DaemonState>,
     login_id: String,
     label: Option<String>,
     mut login: ClaudeLoginProcess,
 ) {
-    let mut observation =
-        wait_for_claude_login_observation(&providers, &login_id, &mut login).await;
+    let mut observation = wait_for_claude_login_observation(&state, &login_id, &mut login).await;
 
     if observation.terminal_error.is_some() {
         terminate_claude_login_after_error(
@@ -34,7 +36,7 @@ pub(in crate::api::providers::login::claude::session) async fn monitor_claude_lo
     }
 
     finalize_claude_login(
-        &providers,
+        &state,
         &login_id,
         label,
         observation.observed_auth_url,

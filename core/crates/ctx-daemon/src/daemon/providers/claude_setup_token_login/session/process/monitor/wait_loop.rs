@@ -6,8 +6,8 @@ use super::super::{
 use super::output::{
     drain_claude_login_output, observe_claude_login_line, ClaudeLoginOutputDrainMode,
 };
-use crate::api::providers::login::claude::auth_url::refresh_claude_auth_url_from_capture_path;
-use ctx_daemon::daemon::ProvidersHandle;
+use crate::daemon::providers::claude_setup_token_login::auth_url::refresh_claude_auth_url_from_capture_path;
+use crate::daemon::DaemonState;
 
 pub(super) struct ClaudeLoginObservation {
     pub(super) observed_auth_url: Option<String>,
@@ -17,7 +17,7 @@ pub(super) struct ClaudeLoginObservation {
 }
 
 pub(super) async fn wait_for_claude_login_observation(
-    providers: &ProvidersHandle,
+    state: &DaemonState,
     login_id: &str,
     login: &mut ClaudeLoginProcess,
 ) -> ClaudeLoginObservation {
@@ -33,7 +33,7 @@ pub(super) async fn wait_for_claude_login_observation(
 
     for line in std::mem::take(&mut login.buffered_lines) {
         let outcome = observe_claude_login_line(
-            providers,
+            state,
             login_id,
             &mut observed_auth_url,
             &mut transcript,
@@ -69,7 +69,7 @@ pub(super) async fn wait_for_claude_login_observation(
                 match maybe_line {
                     Some(line) => {
                         let outcome = observe_claude_login_line(
-                            providers,
+                            state,
                             login_id,
                             &mut observed_auth_url,
                             &mut transcript,
@@ -110,7 +110,7 @@ pub(super) async fn wait_for_claude_login_observation(
         ClaudeLoginOutputDrainMode::PendingOnly
     };
     drain_claude_login_output(
-        providers,
+        state,
         login_id,
         &mut observed_auth_url,
         &mut transcript,

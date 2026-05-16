@@ -7,20 +7,22 @@ use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use tokio::sync::{mpsc, oneshot};
 
 use super::shim::create_claude_browser_open_shim;
-use ctx_daemon::daemon::providers::ProviderLoginRuntimeCommand;
+use crate::daemon::providers::ProviderLoginRuntimeCommand;
 use output::pump_claude_login_output;
 
 #[path = "process/output.rs"]
 mod output;
 
-pub(in crate::api::providers::login::claude) struct ClaudeLoginSpawn {
-    pub(in crate::api::providers::login::claude) line_rx: mpsc::UnboundedReceiver<String>,
-    pub(in crate::api::providers::login::claude) exit_rx:
+pub(in crate::daemon::providers::claude_setup_token_login) struct ClaudeLoginSpawn {
+    pub(in crate::daemon::providers::claude_setup_token_login) line_rx:
+        mpsc::UnboundedReceiver<String>,
+    pub(in crate::daemon::providers::claude_setup_token_login) exit_rx:
         oneshot::Receiver<anyhow::Result<portable_pty::ExitStatus>>,
-    pub(in crate::api::providers::login::claude) killer:
+    pub(in crate::daemon::providers::claude_setup_token_login) killer:
         Arc<StdMutex<Box<dyn portable_pty::ChildKiller + Send + Sync>>>,
-    pub(in crate::api::providers::login::claude) browser_open_capture_path: PathBuf,
-    pub(in crate::api::providers::login::claude) browser_open_shim_dir: tempfile::TempDir,
+    pub(in crate::daemon::providers::claude_setup_token_login) browser_open_capture_path: PathBuf,
+    pub(in crate::daemon::providers::claude_setup_token_login) browser_open_shim_dir:
+        tempfile::TempDir,
 }
 
 fn scrub_daemon_auth_env(cmd: &mut CommandBuilder) {
@@ -29,7 +31,7 @@ fn scrub_daemon_auth_env(cmd: &mut CommandBuilder) {
     }
 }
 
-pub(in crate::api::providers::login::claude) fn spawn_claude_setup_token_command(
+pub(in crate::daemon::providers::claude_setup_token_login) fn spawn_claude_setup_token_command(
     runtime: &ProviderLoginRuntimeCommand,
 ) -> anyhow::Result<ClaudeLoginSpawn> {
     let pty = NativePtySystem::default();

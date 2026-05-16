@@ -1,16 +1,17 @@
 use super::*;
 
-pub(in crate::api::providers::login::claude::session) async fn start_claude_login_process(
-    providers: &ProvidersHandle,
+use crate::daemon::providers::ProviderLoginRuntimeCommand;
+
+pub(in crate::daemon::providers::claude_setup_token_login) async fn start_claude_login_process(
+    runtime: &ProviderLoginRuntimeCommand,
 ) -> anyhow::Result<ClaudeLoginProcess> {
-    let runtime = providers.resolve_claude_login_runtime().await?;
     let ClaudeLoginSpawn {
         line_rx: mut rx,
         mut exit_rx,
         killer,
         browser_open_capture_path,
         browser_open_shim_dir,
-    } = spawn_claude_setup_token_command(&runtime)?;
+    } = spawn_claude_setup_token_command(runtime)?;
 
     let mut buffered_lines = Vec::new();
     let mut auth_url = None;

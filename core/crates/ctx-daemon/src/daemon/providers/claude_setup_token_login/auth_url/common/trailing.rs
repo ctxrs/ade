@@ -1,6 +1,6 @@
 use super::*;
 
-pub(in crate::api::providers) async fn read_trailing_claude_login_lines(
+pub(in crate::daemon::providers::claude_setup_token_login) async fn read_trailing_claude_login_lines(
     line_rx: &mut mpsc::UnboundedReceiver<String>,
     grace: Duration,
 ) -> Vec<String> {

@@ -1,4 +1,8 @@
 use super::*;
+use crate::daemon::providers::{accounts, login_sessions};
+use crate::daemon::DaemonState;
+use ctx_observability::logs;
+use std::sync::Arc;
 
 fn format_claude_exit_status(status: &portable_pty::ExitStatus) -> String {
     if let Some(signal) = status.signal() {
@@ -8,7 +12,7 @@ fn format_claude_exit_status(status: &portable_pty::ExitStatus) -> String {
 }
 
 pub(super) async fn finalize_claude_login(
-    providers: &ProvidersHandle,
+    state: &Arc<DaemonState>,
     login_id: &str,
     label: Option<String>,
     observed_auth_url: Option<String>,
@@ -24,10 +28,7 @@ pub(super) async fn finalize_claude_login(
         match exit_result {
             Some(Ok(exit)) if exit.success() => match extract_claude_setup_token(transcript) {
                 Some(setup_token) => {
-                    match providers
-                        .add_claude_account_for_login(label, setup_token)
-                        .await
-                    {
+                    match accounts::add_claude_account_for_login(state, label, setup_token).await {
                         Ok(outcome) => {
                             let restart_error = outcome.restart_error_message();
                             final_account_id = outcome.active_account_id;
@@ -66,13 +67,13 @@ pub(super) async fn finalize_claude_login(
         }
     }
 
-    providers
-        .finish_claude_login_session(
-            login_id,
-            final_status,
-            final_account_id,
-            final_error,
-            observed_auth_url,
-        )
-        .await;
+    login_sessions::finish_claude_login_session(
+        state,
+        login_id,
+        final_status,
+        final_account_id,
+        final_error,
+        observed_auth_url,
+    )
+    .await;
 }

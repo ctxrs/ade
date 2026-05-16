@@ -1,6 +1,8 @@
 use super::*;
 
-pub(in crate::api::providers) fn auth_url_looks_complete(auth_url: &str) -> bool {
+pub(in crate::daemon::providers::claude_setup_token_login) fn auth_url_looks_complete(
+    auth_url: &str,
+) -> bool {
     let parsed = match Url::parse(auth_url) {
         Ok(value) => value,
         Err(_) => return false,

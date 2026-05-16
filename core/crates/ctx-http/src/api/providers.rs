@@ -2,7 +2,6 @@
 use std::collections::HashMap;
 #[cfg(test)]
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 #[cfg(test)]
 use anyhow::Context;
@@ -10,7 +9,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
+#[cfg(test)]
 use url::Url;
 
 use super::errors::ApiErrorResp;
@@ -86,9 +85,8 @@ use ctx_provider_runtime::provider_auth::{
 };
 #[cfg(test)]
 use login::{
-    auth_url_looks_complete, expected_callback_from_auth_url, extract_auth_url,
-    extract_auth_url_from_value, normalize_claude_login_line, read_trailing_claude_login_lines,
-    resolve_claude_login_runtime_from_config, validate_callback_url,
+    expected_callback_from_auth_url, resolve_claude_login_runtime_from_config,
+    validate_callback_url,
 };
 #[cfg(test)]
 mod tests;

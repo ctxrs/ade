@@ -1,9 +1,15 @@
-use super::*;
+use url::Url;
+
+mod common;
 
 #[path = "auth_url/setup_token.rs"]
 mod setup_token;
 
-pub(super) use setup_token::extract_claude_setup_token;
+pub(in crate::daemon::providers::claude_setup_token_login) use common::{
+    auth_url_looks_complete, extract_auth_url, normalize_claude_login_line,
+    read_trailing_claude_login_lines,
+};
+pub(in crate::daemon::providers::claude_setup_token_login) use setup_token::extract_claude_setup_token;
 
 pub(super) const CLAUDE_BROWSER_OPEN_MARKER: &str = "CTX_CLAUDE_AUTH_URL:";
 pub(super) const CLAUDE_UNSUPPORTED_MANUAL_FALLBACK_ERROR: &str =

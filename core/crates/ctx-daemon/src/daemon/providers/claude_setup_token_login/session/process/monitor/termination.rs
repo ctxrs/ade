@@ -1,6 +1,6 @@
 use super::super::*;
 
-pub(in crate::api::providers::login::claude::session) async fn kill_claude_login_process(
+pub(in crate::daemon::providers::claude_setup_token_login) async fn kill_claude_login_process(
     killer: Arc<StdMutex<Box<dyn portable_pty::ChildKiller + Send + Sync>>>,
 ) -> anyhow::Result<()> {
     tokio::task::spawn_blocking(move || {

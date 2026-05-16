@@ -201,6 +201,14 @@ const codexAppServerLoginApiRoots = [
   "core/crates/ctx-http/src/api/providers/login/codex/",
 ];
 
+const claudeSetupTokenLoginApiRoots = [
+  "core/crates/ctx-http/src/api/providers/login.rs",
+  "core/crates/ctx-http/src/api/providers/login/auth_url.rs",
+  "core/crates/ctx-http/src/api/providers/login/auth_url/",
+  "core/crates/ctx-http/src/api/providers/login/claude.rs",
+  "core/crates/ctx-http/src/api/providers/login/claude/",
+];
+
 const taskSessionCreationApiRoots = [
   "core/crates/ctx-http/src/api/tasks/creation_session.rs",
   "core/crates/ctx-http/src/api/tasks/creation_session/",
@@ -1203,6 +1211,55 @@ const CODEX_APP_SERVER_LOGIN_API_ORCHESTRATION_PATTERNS = [
   {
     name: "Codex app-server login API owns login cleanup",
     regex: /\bremove_dir_all\s*\(/,
+  },
+];
+
+const CLAUDE_SETUP_TOKEN_LOGIN_API_ORCHESTRATION_PATTERNS = [
+  {
+    name: "Claude setup-token login API owns monitor task spawning",
+    regex: /\btokio::spawn\s*\(/,
+  },
+  {
+    name: "Claude setup-token login API declares setup-token implementation modules",
+    regex:
+      /(?:#\s*\[\s*path\s*=\s*"[^"]*"\s*\]\s*)?mod\s+(?:auth_url|process|setup_token|tests)\s*;/,
+  },
+  {
+    name: "Claude setup-token login API owns process spawning",
+    regex:
+      /\b(?:portable_pty|NativePtySystem|PtySystem|PtySize|ChildKiller|CommandBuilder|tokio::process::Command|std::process::Command|Command::new|Stdio::)\b/,
+  },
+  {
+    name: "Claude setup-token login API resolves runtime directly",
+    regex: /\bresolve_claude_login_runtime\s*\(/,
+  },
+  {
+    name: "Claude setup-token login API owns process lifecycle",
+    regex:
+      /\b(?:spawn_claude_setup_token_command|start_claude_login_process|monitor_claude_login|kill_claude_login_process|terminate_claude_login_after_error|wait_for_claude_login_observation|finalize_claude_login)\b/,
+  },
+  {
+    name: "Claude setup-token login API owns auth-url parsing",
+    regex:
+      /\b(?:extract_claude_setup_token|claude_login_hit_unsupported_manual_fallback|claude_manual_fallback_is_terminal|refresh_claude_auth_url_from_capture_path|read_claude_browser_open_capture_url|ClaudeAuthUrlSource|CLAUDE_BROWSER_OPEN_MARKER|CLAUDE_UNSUPPORTED_MANUAL_FALLBACK_ERROR|normalize_claude_login_line|read_trailing_claude_login_lines|auth_url_looks_complete|extract_auth_url)\b/,
+  },
+  {
+    name: "Claude setup-token login API owns browser-open shim",
+    regex:
+      /\b(?:claude_browser_open_shim_script|create_claude_browser_open_shim|claude_login_should_skip_browser_open|CLAUDE_BROWSER_AUTH_TIER|CTX_CLAUDE_AUTH_URL_CAPTURE_PATH)\b/,
+  },
+  {
+    name: "Claude setup-token login API owns auth runtime env",
+    regex: /\b(?:CLAUDE_LOGIN_[A-Z0-9_]*|DAEMON_AUTH_ENV_VARS)\b/,
+  },
+  {
+    name: "Claude setup-token login API mutates login sessions directly",
+    regex:
+      /\b(?:start_claude_login_session|set_claude_login_auth_url|finish_claude_login_session)\s*\(/,
+  },
+  {
+    name: "Claude setup-token login API finalizes Claude accounts directly",
+    regex: /\badd_claude_account_for_login\s*\(/,
   },
 ];
 
@@ -3386,6 +3443,9 @@ function apiPatternsForPath(relativePath) {
   if (codexAppServerLoginApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...CODEX_APP_SERVER_LOGIN_API_ORCHESTRATION_PATTERNS);
   }
+  if (claudeSetupTokenLoginApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...CLAUDE_SETUP_TOKEN_LOGIN_API_ORCHESTRATION_PATTERNS);
+  }
   if (taskSessionCreationApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...TASK_SESSION_CREATION_API_ADMISSION_PATTERNS);
   }
@@ -4368,6 +4428,7 @@ module.exports = {
   MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS,
   CURSOR_PROCESS_LOGIN_API_ORCHESTRATION_PATTERNS,
   CODEX_APP_SERVER_LOGIN_API_ORCHESTRATION_PATTERNS,
+  CLAUDE_SETUP_TOKEN_LOGIN_API_ORCHESTRATION_PATTERNS,
   PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS,
   PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS,
   SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS,

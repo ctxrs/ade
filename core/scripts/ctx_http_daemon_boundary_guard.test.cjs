@@ -24,6 +24,7 @@ const {
   MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS,
   CURSOR_PROCESS_LOGIN_API_ORCHESTRATION_PATTERNS,
   CODEX_APP_SERVER_LOGIN_API_ORCHESTRATION_PATTERNS,
+  CLAUDE_SETUP_TOKEN_LOGIN_API_ORCHESTRATION_PATTERNS,
   MERGE_QUEUE_ISOLATION_TEST_STORE_ACCESS_PATTERNS,
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
@@ -2957,6 +2958,105 @@ test("daemon boundary guard scopes Codex app-server login orchestration patterns
   assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/providers/cursor_login.rs").includes(
       CODEX_APP_SERVER_LOGIN_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    false,
+  );
+});
+
+test("daemon boundary guard rejects Claude setup-token login orchestration in HTTP", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/providers/login/claude/session/process.rs",
+    contents: `
+      mod auth_url;
+      mod process;
+      mod setup_token;
+
+      async fn handler(providers: ProvidersHandle) {
+        tokio::spawn(async move {});
+        let mut cmd = tokio::process::Command::new("claude");
+        let _pty = NativePtySystem::default();
+        let _ = CommandBuilder::new("claude");
+        let _ = providers.resolve_claude_login_runtime().await?;
+        spawn_claude_setup_token_command(runtime)?;
+        start_claude_login_process(runtime).await?;
+        monitor_claude_login(providers.clone(), login_id, label, login).await;
+        wait_for_claude_login_observation(child, deadline).await?;
+        finalize_claude_login(providers, login_id, label, setup_token).await;
+        let _ = extract_claude_setup_token("ok");
+        let _ = CLAUDE_BROWSER_OPEN_MARKER;
+        let _ = ClaudeAuthUrlSource::Transcript;
+        let _ = normalize_claude_login_line(line);
+        read_trailing_claude_login_lines(&mut rx, wait).await;
+        let _ = claude_browser_open_shim_script(true);
+        let _ = CLAUDE_BROWSER_AUTH_TIER;
+        let _ = CTX_CLAUDE_AUTH_URL_CAPTURE_PATH;
+        let _ = CLAUDE_LOGIN_URL_WAIT;
+        for key in DAEMON_AUTH_ENV_VARS {}
+        providers.start_claude_login_session(auth_url).await;
+        providers.set_claude_login_auth_url(login_id, auth_url).await;
+        providers.finish_claude_login_session(login_id, status, account_id, error, auth_url).await;
+        providers.add_claude_account_for_login(label, setup_token).await?;
+      }
+    `,
+    patterns: CLAUDE_SETUP_TOKEN_LOGIN_API_ORCHESTRATION_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "Claude setup-token login API owns monitor task spawning",
+      "Claude setup-token login API declares setup-token implementation modules",
+      "Claude setup-token login API declares setup-token implementation modules",
+      "Claude setup-token login API declares setup-token implementation modules",
+      "Claude setup-token login API owns process spawning",
+      "Claude setup-token login API owns process spawning",
+      "Claude setup-token login API owns process spawning",
+      "Claude setup-token login API resolves runtime directly",
+      "Claude setup-token login API owns process lifecycle",
+      "Claude setup-token login API owns process lifecycle",
+      "Claude setup-token login API owns process lifecycle",
+      "Claude setup-token login API owns process lifecycle",
+      "Claude setup-token login API owns process lifecycle",
+      "Claude setup-token login API owns auth-url parsing",
+      "Claude setup-token login API owns auth-url parsing",
+      "Claude setup-token login API owns auth-url parsing",
+      "Claude setup-token login API owns auth-url parsing",
+      "Claude setup-token login API owns auth-url parsing",
+      "Claude setup-token login API owns browser-open shim",
+      "Claude setup-token login API owns browser-open shim",
+      "Claude setup-token login API owns browser-open shim",
+      "Claude setup-token login API owns auth runtime env",
+      "Claude setup-token login API owns auth runtime env",
+      "Claude setup-token login API mutates login sessions directly",
+      "Claude setup-token login API mutates login sessions directly",
+      "Claude setup-token login API mutates login sessions directly",
+      "Claude setup-token login API finalizes Claude accounts directly",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes Claude setup-token login orchestration patterns", () => {
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers/login.rs").includes(
+      CLAUDE_SETUP_TOKEN_LOGIN_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers/login/auth_url/extract.rs").includes(
+      CLAUDE_SETUP_TOKEN_LOGIN_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers/login/claude/session.rs").includes(
+      CLAUDE_SETUP_TOKEN_LOGIN_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers/login/codex.rs").includes(
+      CLAUDE_SETUP_TOKEN_LOGIN_API_ORCHESTRATION_PATTERNS[0],
     ),
     false,
   );

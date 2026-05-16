@@ -51,7 +51,7 @@ fn trim_known_setup_token_prose_suffix(token: &str) -> String {
     out
 }
 
-pub(in crate::api::providers::login::claude) fn extract_claude_setup_token(
+pub(in crate::daemon::providers::claude_setup_token_login) fn extract_claude_setup_token(
     output: &str,
 ) -> Option<String> {
     let lines: Vec<&str> = output.lines().collect();

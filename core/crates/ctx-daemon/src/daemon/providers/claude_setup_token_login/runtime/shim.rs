@@ -2,10 +2,10 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 
-pub(in crate::api::providers::login::claude) const CLAUDE_BROWSER_AUTH_TIER: &str =
+pub(in crate::daemon::providers::claude_setup_token_login) const CLAUDE_BROWSER_AUTH_TIER: &str =
     "provider-browser-auth";
 
-pub(in crate::api::providers::login::claude) fn claude_login_should_skip_browser_open(
+pub(in crate::daemon::providers::claude_setup_token_login) fn claude_login_should_skip_browser_open(
     raw_tier: Option<&str>,
 ) -> bool {
     matches!(
@@ -14,7 +14,7 @@ pub(in crate::api::providers::login::claude) fn claude_login_should_skip_browser
     )
 }
 
-pub(in crate::api::providers::login::claude) fn claude_browser_open_shim_script(
+pub(in crate::daemon::providers::claude_setup_token_login) fn claude_browser_open_shim_script(
     skip_browser_open: bool,
 ) -> &'static str {
     if skip_browser_open {
