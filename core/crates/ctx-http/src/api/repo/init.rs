@@ -1,5 +1,5 @@
 use super::*;
-use ctx_workspace_services::repo_onboarding::RepoInitRequest;
+use ctx_daemon::daemon::repo_onboarding::DaemonRepoInitRequest;
 
 #[derive(Debug, Deserialize)]
 pub(in crate::api) struct RepoInitReq {
@@ -17,16 +17,18 @@ pub(in crate::api) struct RepoInitResp {
 
 pub(in crate::api) async fn repo_init(
     mobile_auth: Option<Extension<MobileAuthContext>>,
+    State(workspaces): State<WorkspacesHandle>,
     Json(req): Json<RepoInitReq>,
 ) -> Result<Json<RepoInitResp>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let path = ctx_workspace_services::repo_onboarding::initialize_repo(RepoInitRequest {
-        path: &req.path,
-        allow_existing: req.allow_existing,
-        allow_non_empty: req.allow_non_empty,
-    })
-    .await
-    .map_err(repo_onboarding_workflow_error_response)?;
+    let path = workspaces
+        .initialize_repo(DaemonRepoInitRequest {
+            path: req.path,
+            allow_existing: req.allow_existing,
+            allow_non_empty: req.allow_non_empty,
+        })
+        .await
+        .map_err(repo_onboarding_error_response)?;
 
     Ok(Json(RepoInitResp {
         path: path.to_string_lossy().to_string(),

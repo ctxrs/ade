@@ -35,6 +35,7 @@ mod provider_launch_host;
 pub mod provider_restart;
 mod provider_runtime;
 pub mod providers;
+pub mod repo_onboarding;
 pub mod resource_governance;
 pub mod resource_telemetry;
 pub mod resource_utilization;

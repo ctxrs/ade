@@ -43,6 +43,7 @@ const {
   DICTATION_WS_CONFIG_API_PATTERNS,
   WORKSPACE_WS_ADMISSION_API_PATTERNS,
   ORG_POLICY_API_ORCHESTRATION_PATTERNS,
+  REPO_ONBOARDING_API_ORCHESTRATION_PATTERNS,
   PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,
@@ -1355,6 +1356,108 @@ test("daemon boundary guard scopes org policy orchestration bans", () => {
   assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/settings.rs").includes(
       ORG_POLICY_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    false,
+  );
+});
+
+test("daemon boundary guard rejects repo onboarding orchestration in HTTP routes", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/repo/init.rs",
+    contents: `
+      use ctx_workspace_services::repo_onboarding::{
+        RepoInitRequest,
+        RepoCloneRequest,
+        RepoValidateDestinationRequest,
+      };
+      use ctx_workspace_services as cws;
+      async fn handler(state: CoreHandle, error: RepoGitCommandError, path_error: RepoOnboardingPathError) {
+        let path = ctx_workspace_services::repo_onboarding::initialize_repo(RepoInitRequest {
+          path: &req.path,
+          allow_existing: false,
+          allow_non_empty: false,
+        }).await?;
+        let path = repo_onboarding::clone_repo(RepoCloneRequest {
+          repo_url: &req.repo_url,
+          dest_parent: &req.dest_parent,
+          branch: None,
+          dest_name: None,
+        }).await?;
+        let path = service::validate_repo_destination(RepoValidateDestinationRequest {
+          path: &req.path,
+          must_not_exist: false,
+          require_empty_if_exists: false,
+        }).await?;
+        let status = cws::repo_onboarding::inspect_repo_status(&req.path).await?;
+        let staging = ctx_workspace_services::repo_onboarding::create_repo_staging_path(state.data_root()).await?;
+        let error = logs::redact_sensitive(&error.failed_message().unwrap());
+        let message = path_error.message().to_string();
+      }
+    `,
+    patterns: apiPatternsForPath("core/crates/ctx-http/src/api/repo/init.rs"),
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "repo onboarding API calls workspace-service onboarding directly",
+      "repo onboarding API calls workspace-service onboarding directly",
+      "repo onboarding API calls workspace-service onboarding directly",
+      "repo onboarding API calls workspace-service onboarding directly",
+      "repo onboarding API calls workspace-service onboarding directly",
+      "repo onboarding API calls workspace-service onboarding directly",
+      "repo onboarding API uses workspace-service onboarding DTOs directly",
+      "repo onboarding API uses workspace-service onboarding DTOs directly",
+      "repo onboarding API uses workspace-service onboarding DTOs directly",
+      "repo onboarding API uses workspace-service onboarding DTOs directly",
+      "repo onboarding API uses workspace-service onboarding DTOs directly",
+      "repo onboarding API uses workspace-service onboarding DTOs directly",
+      "repo onboarding API reads daemon data root directly",
+      "repo onboarding API redacts workflow errors directly",
+      "repo onboarding API inspects workspace-service git errors directly",
+      "repo onboarding API inspects workspace-service path errors directly",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes repo onboarding orchestration bans", () => {
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/repo/init.rs").includes(
+      REPO_ONBOARDING_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/repo.rs").includes(
+      REPO_ONBOARDING_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    true,
+  );
+
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/repo/init.rs",
+    contents: `
+      use ctx_daemon::daemon::repo_onboarding::DaemonRepoInitRequest;
+      async fn handler(workspaces: WorkspacesHandle, error: RepoOnboardingError) {
+        let path = workspaces.initialize_repo(DaemonRepoInitRequest {
+          path: req.path,
+          allow_existing: false,
+          allow_non_empty: false,
+        }).await?;
+        let status = match error.kind() {
+          RepoOnboardingErrorKind::BadRequest => StatusCode::BAD_REQUEST,
+          RepoOnboardingErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        let body = ApiErrorResp { error: error.message().to_string() };
+      }
+    `,
+    patterns: apiPatternsForPath("core/crates/ctx-http/src/api/repo/init.rs"),
+  });
+  assert.deepEqual(violations, []);
+
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/settings.rs").includes(
+      REPO_ONBOARDING_API_ORCHESTRATION_PATTERNS[0],
     ),
     false,
   );

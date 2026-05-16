@@ -5,10 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use super::errors::ApiErrorResp;
 use crate::api::MobileAuthContext;
-use ctx_observability::logs;
-use ctx_workspace_services::repo_onboarding::{
-    RepoGitCommandError, RepoOnboardingPathError, RepoOnboardingWorkflowError,
-};
+use ctx_daemon::daemon::repo_onboarding::{RepoOnboardingError, RepoOnboardingErrorKind};
+use ctx_daemon::daemon::WorkspacesHandle;
 
 mod auth;
 mod clone;
@@ -24,58 +22,15 @@ pub(super) use destination::{
 pub(super) use init::repo_init;
 pub(super) use status::repo_status;
 
-fn repo_git_command_error_response(error: RepoGitCommandError) -> (StatusCode, Json<ApiErrorResp>) {
-    if let Some(message) = error.spawn_message() {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: format!("failed to spawn git: {message}"),
-            }),
-        );
-    }
-
+fn repo_onboarding_error_response(error: RepoOnboardingError) -> (StatusCode, Json<ApiErrorResp>) {
+    let status = match error.kind() {
+        RepoOnboardingErrorKind::BadRequest => StatusCode::BAD_REQUEST,
+        RepoOnboardingErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+    };
     (
-        StatusCode::BAD_REQUEST,
-        Json(ApiErrorResp {
-            error: logs::redact_sensitive(
-                &error
-                    .failed_message()
-                    .unwrap_or_else(|| "git command failed".to_string()),
-            ),
-        }),
-    )
-}
-
-fn repo_onboarding_path_error_response(
-    error: RepoOnboardingPathError,
-) -> (StatusCode, Json<ApiErrorResp>) {
-    (
-        StatusCode::BAD_REQUEST,
+        status,
         Json(ApiErrorResp {
             error: error.message().to_string(),
         }),
     )
-}
-
-fn repo_staging_path_error_response(
-    error: RepoOnboardingPathError,
-) -> (StatusCode, Json<ApiErrorResp>) {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(ApiErrorResp {
-            error: error.message().to_string(),
-        }),
-    )
-}
-
-fn repo_onboarding_workflow_error_response(
-    error: RepoOnboardingWorkflowError,
-) -> (StatusCode, Json<ApiErrorResp>) {
-    match error {
-        RepoOnboardingWorkflowError::GitPreflight(error) => {
-            (StatusCode::BAD_REQUEST, Json(ApiErrorResp { error }))
-        }
-        RepoOnboardingWorkflowError::GitCommand(error) => repo_git_command_error_response(error),
-        RepoOnboardingWorkflowError::Path(error) => repo_onboarding_path_error_response(error),
-    }
 }

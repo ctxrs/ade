@@ -89,6 +89,7 @@ const migratedRawDaemonTestRoots = [
   "core/crates/ctx-http/tests/replay_properties.rs",
   "core/crates/ctx-http/tests/repo_clone_branch_and_safety.rs",
   "core/crates/ctx-http/tests/repo_init_initial_commit.rs",
+  "core/crates/ctx-http/tests/repo_status_and_staging.rs",
   "core/crates/ctx-http/tests/repo_validate_destination.rs",
   "core/crates/ctx-http/tests/session_diff_unavailable.rs",
   "core/crates/ctx-http/tests/session_model_api.rs",
@@ -254,6 +255,11 @@ const orgPolicyApiRoots = [
   "core/crates/ctx-http/src/api/org_policy/",
 ];
 
+const repoOnboardingApiRoots = [
+  "core/crates/ctx-http/src/api/repo.rs",
+  "core/crates/ctx-http/src/api/repo/",
+];
+
 const smallApiUnitStoreFacadeTestRoots = [
   "core/crates/ctx-http/src/api/settings.rs",
   "core/crates/ctx-http/src/api/providers/login/codex/tests.rs",
@@ -271,6 +277,7 @@ const smallExternalStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/assistant_chunk_stream_only.rs",
   "core/crates/ctx-http/tests/repo_clone_branch_and_safety.rs",
   "core/crates/ctx-http/tests/repo_init_initial_commit.rs",
+  "core/crates/ctx-http/tests/repo_status_and_staging.rs",
   "core/crates/ctx-http/tests/repo_validate_destination.rs",
   "core/crates/ctx-http/tests/system_prompt_append_http.rs",
   "core/crates/ctx-http/tests/title_generation_local_e2e.rs",
@@ -491,6 +498,7 @@ const smallRouteFixtureTestRoots = [
   "core/crates/ctx-http/tests/assistant_chunk_stream_only.rs",
   "core/crates/ctx-http/tests/repo_clone_branch_and_safety.rs",
   "core/crates/ctx-http/tests/repo_init_initial_commit.rs",
+  "core/crates/ctx-http/tests/repo_status_and_staging.rs",
   "core/crates/ctx-http/tests/repo_validate_destination.rs",
   "core/crates/ctx-http/tests/system_prompt_append_http.rs",
   "core/crates/ctx-http/tests/turn_terminal_reconciliation.rs",
@@ -1264,6 +1272,36 @@ const ORG_POLICY_API_ORCHESTRATION_PATTERNS = [
     name: "org policy enrollment API persists enrollment without checked daemon validation",
     regex: /(?:\.|\bCoreHandle::)upsert_daemon_enrollment\s*\(/,
     paths: ["core/crates/ctx-http/src/api/org_policy/enrollments.rs"],
+  },
+];
+
+const REPO_ONBOARDING_API_ORCHESTRATION_PATTERNS = [
+  {
+    name: "repo onboarding API calls workspace-service onboarding directly",
+    regex:
+      /\bctx_workspace_services::repo_onboarding\b|\b[A-Za-z_][A-Za-z0-9_]*::repo_onboarding::(?:initialize_repo|clone_repo|validate_repo_destination|create_repo_staging_path|inspect_repo_status)\b|\brepo_onboarding::(?:initialize_repo|clone_repo|validate_repo_destination|create_repo_staging_path|inspect_repo_status)\b|\bservice::(?:initialize_repo|clone_repo|validate_repo_destination|create_repo_staging_path|inspect_repo_status)\b/,
+  },
+  {
+    name: "repo onboarding API uses workspace-service onboarding DTOs directly",
+    regex: /\b(?:RepoInitRequest|RepoCloneRequest|RepoValidateDestinationRequest)\b/,
+  },
+  {
+    name: "repo onboarding API reads daemon data root directly",
+    regex: /(?:\.|\bCoreHandle::)data_root\s*\(/,
+  },
+  {
+    name: "repo onboarding API redacts workflow errors directly",
+    regex: /\blogs::redact_sensitive\s*\(/,
+  },
+  {
+    name: "repo onboarding API inspects workspace-service git errors directly",
+    regex: /\.(?:spawn_message|failed_message)\s*\(/,
+  },
+  {
+    name: "repo onboarding API inspects workspace-service path errors directly",
+    regex: /a^/,
+    contentRegex:
+      /\bRepoOnboardingPathError\b[\s\S]{0,1200}\.message\s*\(\s*\)\s*\.to_string\s*\(/gm,
   },
 ];
 
@@ -3101,6 +3139,9 @@ function apiPatternsForPath(relativePath) {
   if (orgPolicyApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...ORG_POLICY_API_ORCHESTRATION_PATTERNS);
   }
+  if (repoOnboardingApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...REPO_ONBOARDING_API_ORCHESTRATION_PATTERNS);
+  }
   return patterns;
 }
 
@@ -4046,6 +4087,7 @@ module.exports = {
   DICTATION_WS_CONFIG_API_PATTERNS,
   WORKSPACE_WS_ADMISSION_API_PATTERNS,
   ORG_POLICY_API_ORCHESTRATION_PATTERNS,
+  REPO_ONBOARDING_API_ORCHESTRATION_PATTERNS,
   PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,

@@ -1,5 +1,5 @@
 use super::*;
-use ctx_workspace_services::repo_onboarding::RepoCloneRequest;
+use ctx_daemon::daemon::repo_onboarding::DaemonRepoCloneRequest;
 
 #[derive(Debug, Deserialize)]
 pub(in crate::api) struct RepoCloneReq {
@@ -18,17 +18,19 @@ pub(in crate::api) struct RepoCloneResp {
 
 pub(in crate::api) async fn repo_clone(
     mobile_auth: Option<Extension<MobileAuthContext>>,
+    State(workspaces): State<WorkspacesHandle>,
     Json(req): Json<RepoCloneReq>,
 ) -> Result<Json<RepoCloneResp>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let path = ctx_workspace_services::repo_onboarding::clone_repo(RepoCloneRequest {
-        repo_url: &req.repo_url,
-        dest_parent: &req.dest_parent,
-        branch: req.branch.as_deref(),
-        dest_name: req.dest_name.as_deref(),
-    })
-    .await
-    .map_err(repo_onboarding_workflow_error_response)?;
+    let path = workspaces
+        .clone_repo(DaemonRepoCloneRequest {
+            repo_url: req.repo_url,
+            dest_parent: req.dest_parent,
+            branch: req.branch,
+            dest_name: req.dest_name,
+        })
+        .await
+        .map_err(repo_onboarding_error_response)?;
 
     Ok(Json(RepoCloneResp {
         path: path.to_string_lossy().to_string(),
