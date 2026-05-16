@@ -88,11 +88,14 @@ impl SummaryBatchBuffer {
         state.total_len = 0;
     }
 
-    pub(crate) async fn drop_session_events_at_or_before(
+    pub(crate) async fn drop_session_events_at_or_before<F>(
         &self,
         session_id: SessionId,
         cursor: SessionReplayCursor,
-    ) {
+        is_delta_after_cursor: F,
+    ) where
+        F: Fn(&SessionSummaryDelta, SessionReplayCursor) -> bool,
+    {
         let mut state = self.state.lock().await;
         let Some(queued) = state.session_events.get(&session_id) else {
             return;
@@ -100,14 +103,7 @@ impl SummaryBatchBuffer {
         let WorkspaceActiveSnapshotEvent::SessionSummaryDelta { delta, .. } = &queued.event else {
             return;
         };
-        let Some(delta_last_event_seq) = delta.last_event_seq else {
-            return;
-        };
-        let event_cursor = SessionReplayCursor {
-            last_event_seq: delta_last_event_seq.max(0),
-            projection_rev: delta.projection_rev.unwrap_or_default().max(0),
-        };
-        if event_cursor > cursor {
+        if is_delta_after_cursor(delta, cursor) {
             return;
         }
         state.session_events.remove(&session_id);

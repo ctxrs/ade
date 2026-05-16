@@ -34,6 +34,7 @@ async fn head_buffer_drops_session_deltas_at_or_before_resume_cursor() {
                 last_event_seq: 3,
                 projection_rev: 7,
             },
+            head_delta_after_cursor,
         )
         .await;
 
@@ -49,11 +50,13 @@ async fn head_buffer_drops_session_deltas_at_or_before_resume_cursor() {
         .iter()
         .any(|delta| delta.session_id == other_session_id));
     assert!(!deltas.iter().any(|delta| delta.session_id == session_id
-        && SessionReplayCursor::from_delta(delta)
-            <= SessionReplayCursor {
+        && !head_delta_after_cursor(
+            delta,
+            SessionReplayCursor {
                 last_event_seq: 3,
                 projection_rev: 7,
-            }));
+            },
+        )));
 }
 
 #[tokio::test]
@@ -177,6 +180,7 @@ async fn summary_buffer_drops_session_events_at_or_before_resume_cursor() {
                 last_event_seq: 3,
                 projection_rev: 7,
             },
+            summary_delta_after_cursor,
         )
         .await;
 
@@ -238,6 +242,7 @@ async fn summary_buffer_removes_session_event_at_resume_cursor() {
                 last_event_seq: 3,
                 projection_rev: 7,
             },
+            summary_delta_after_cursor,
         )
         .await;
 

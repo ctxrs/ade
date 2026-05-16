@@ -6,9 +6,10 @@ use tokio::sync::broadcast;
 use ctx_core::ids::{MergeQueueEntryId, RunId, SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
     MergeQueueEntry, MergeQueueRun, RunArchiveIngestBatch, RunArchiveIngestCursor, SandboxBinding,
-    SessionHeadDelta, VcsKind, Workspace, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot,
-    WorkspaceActiveSnapshotClientMessage, WorkspaceActiveSnapshotEvent,
-    WorkspaceActiveSnapshotStreamMessage, WorkspaceAttachment, Worktree,
+    SessionHeadDelta, SessionHeadSnapshot, SessionSummaryDelta, VcsKind, Workspace,
+    WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot, WorkspaceActiveSnapshotClientMessage,
+    WorkspaceActiveSnapshotEvent, WorkspaceActiveSnapshotStreamMessage, WorkspaceAttachment,
+    Worktree,
 };
 use ctx_observability::telemetry::TelemetryEvent;
 use ctx_settings_model::ExecutionSettings;
@@ -938,6 +939,49 @@ impl WorkspaceStreamHandle {
         after_projection_rev: i64,
     ) -> stream::WorkspaceStreamResumeReplayCursorPlan {
         stream::plan_resume_replay_cursor(live_cursor, after_seq, after_projection_rev)
+    }
+
+    pub fn accept_session_delta_cursor(
+        &self,
+        current: SessionReplayCursor,
+        delta: &SessionHeadDelta,
+    ) -> stream::WorkspaceStreamCursorAcceptance {
+        stream::accept_session_delta_cursor(current, delta)
+    }
+
+    pub fn accept_session_head_cursor(
+        &self,
+        current: SessionReplayCursor,
+        head: &SessionHeadSnapshot,
+    ) -> stream::WorkspaceStreamCursorAcceptance {
+        stream::accept_session_head_cursor(current, head)
+    }
+
+    pub fn is_session_head_delta_after_cursor(
+        &self,
+        delta: &SessionHeadDelta,
+        cursor: SessionReplayCursor,
+    ) -> bool {
+        stream::is_session_head_delta_after_cursor(delta, cursor)
+    }
+
+    pub fn is_session_summary_delta_after_cursor(
+        &self,
+        delta: &SessionSummaryDelta,
+        cursor: SessionReplayCursor,
+    ) -> bool {
+        stream::is_session_summary_delta_after_cursor(delta, cursor)
+    }
+
+    pub fn merge_replayed_and_live_subscription_cursors(
+        &self,
+        live_subscriptions: &HashMap<SessionId, SessionReplayCursor>,
+        replayed_subscriptions: HashMap<SessionId, SessionReplayCursor>,
+    ) -> HashMap<SessionId, SessionReplayCursor> {
+        stream::merge_replayed_and_live_subscription_cursors(
+            live_subscriptions,
+            replayed_subscriptions,
+        )
     }
 
     pub async fn head_only_snapshot_cursor(

@@ -122,6 +122,26 @@ fn partial_delta(session_id: SessionId) -> SessionHeadDelta {
     }
 }
 
+fn durable_delta(
+    session_id: SessionId,
+    last_event_seq: i64,
+    projection_rev: i64,
+) -> SessionHeadDelta {
+    SessionHeadDelta {
+        session_id,
+        last_event_seq,
+        projection_rev,
+        state_rev: projection_rev,
+        emitted_at_ms: None,
+        session: None,
+        activity: None,
+        event: None,
+        turn: None,
+        message: None,
+        tool_summaries: Vec::new(),
+    }
+}
+
 fn session_summary(workspace_id: WorkspaceId, session_id: SessionId) -> SessionSnapshotSummary {
     SessionSnapshotSummary {
         session: test_session_metadata(workspace_id, session_id),
@@ -518,6 +538,142 @@ fn resume_replay_cursor_planning_preserves_live_coverage_semantics() {
         plan_resume_replay_cursor(None, 10, 12),
         WorkspaceStreamResumeReplayCursorPlan::NoReplayRequired,
         "the existing no-live-cursor path skips replay work",
+    );
+}
+
+#[test]
+fn cursor_acceptance_preserves_transient_delta_without_advancing() {
+    let current = cursor(5, 7);
+    let accepted = accept_session_delta_cursor(current, &partial_delta(SessionId::new()));
+
+    assert_eq!(
+        accepted,
+        WorkspaceStreamCursorAcceptance {
+            accepted: true,
+            next_cursor: current,
+        },
+    );
+}
+
+#[test]
+fn cursor_acceptance_rejects_stale_durable_delta_and_advances_newer_delta() {
+    let session_id = SessionId::new();
+    let current = cursor(5, 7);
+
+    assert_eq!(
+        accept_session_delta_cursor(current, &durable_delta(session_id, 5, 7)),
+        WorkspaceStreamCursorAcceptance {
+            accepted: false,
+            next_cursor: current,
+        },
+    );
+    assert_eq!(
+        accept_session_delta_cursor(current, &durable_delta(session_id, 5, 8)),
+        WorkspaceStreamCursorAcceptance {
+            accepted: true,
+            next_cursor: cursor(5, 8),
+        },
+    );
+}
+
+#[test]
+fn cursor_acceptance_rejects_stale_head_and_advances_newer_head() {
+    let workspace_id = WorkspaceId::new();
+    let session_id = SessionId::new();
+    let current = cursor(5, 7);
+
+    assert_eq!(
+        accept_session_head_cursor(current, &test_head(workspace_id, session_id, 5, 7)),
+        WorkspaceStreamCursorAcceptance {
+            accepted: false,
+            next_cursor: current,
+        },
+    );
+    assert_eq!(
+        accept_session_head_cursor(current, &test_head(workspace_id, session_id, 6, 7)),
+        WorkspaceStreamCursorAcceptance {
+            accepted: true,
+            next_cursor: cursor(6, 7),
+        },
+    );
+}
+
+#[test]
+fn queue_stale_drop_predicates_match_replay_cursor_ordering() {
+    let session_id = SessionId::new();
+    let cursor = cursor(3, 7);
+    assert!(!is_session_head_delta_after_cursor(
+        &durable_delta(session_id, 3, 7),
+        cursor,
+    ));
+    assert!(is_session_head_delta_after_cursor(
+        &durable_delta(session_id, 3, 8),
+        cursor,
+    ));
+
+    let stale_summary = SessionSummaryDelta {
+        session_id,
+        task_id: TaskId::new(),
+        activity: None,
+        last_message_at: None,
+        last_message_preview: None,
+        last_event_seq: Some(3),
+        projection_rev: Some(7),
+        state_rev: None,
+        emitted_at_ms: None,
+    };
+    let newer_summary = SessionSummaryDelta {
+        projection_rev: Some(8),
+        ..stale_summary.clone()
+    };
+    let uncursored_summary = SessionSummaryDelta {
+        last_event_seq: None,
+        ..stale_summary.clone()
+    };
+
+    assert!(!is_session_summary_delta_after_cursor(
+        &stale_summary,
+        cursor,
+    ));
+    assert!(is_session_summary_delta_after_cursor(
+        &newer_summary,
+        cursor,
+    ));
+    assert!(is_session_summary_delta_after_cursor(
+        &uncursored_summary,
+        cursor,
+    ));
+}
+
+#[test]
+fn replay_live_cursor_merge_keeps_live_authoritative() {
+    let replayed_session_id = SessionId::new();
+    let live_only_session_id = SessionId::new();
+    let removed_session_id = SessionId::new();
+    let live_subscriptions = HashMap::from([
+        (replayed_session_id, cursor(15, 15)),
+        (live_only_session_id, cursor(7, 7)),
+    ]);
+    let replayed_subscriptions = HashMap::from([
+        (replayed_session_id, cursor(12, 12)),
+        (removed_session_id, cursor(20, 20)),
+    ]);
+
+    let merged =
+        merge_replayed_and_live_subscription_cursors(&live_subscriptions, replayed_subscriptions);
+
+    assert_eq!(merged.len(), 2);
+    assert_eq!(
+        merged.get(&replayed_session_id).copied(),
+        Some(cursor(15, 15))
+    );
+    assert_eq!(
+        merged.get(&live_only_session_id).copied(),
+        Some(cursor(7, 7))
+    );
+    assert!(
+        !merged.contains_key(&removed_session_id),
+        "live subscription state must remain authoritative for removed sessions",
     );
 }
 

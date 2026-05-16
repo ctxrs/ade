@@ -85,6 +85,20 @@ fn session_summary_delta_event_with_projection(
     }
 }
 
+fn head_delta_after_cursor(delta: &SessionHeadDelta, cursor: SessionReplayCursor) -> bool {
+    SessionReplayCursor::from_delta(delta) > cursor
+}
+
+fn summary_delta_after_cursor(delta: &SessionSummaryDelta, cursor: SessionReplayCursor) -> bool {
+    let Some(last_event_seq) = delta.last_event_seq else {
+        return true;
+    };
+    SessionReplayCursor {
+        last_event_seq: last_event_seq.max(0),
+        projection_rev: delta.projection_rev.unwrap_or_default().max(0),
+    } > cursor
+}
+
 mod buffers;
 mod control_events;
 mod priority_ordering;

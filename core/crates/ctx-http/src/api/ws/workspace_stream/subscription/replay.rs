@@ -114,7 +114,7 @@ pub(super) async fn replay_workspace_stream_subscriptions(
                     continue;
                 }
             };
-        drop_buffered_session_events_at_or_before(runtime, session_id, replay_cursor).await;
+        drop_buffered_session_events_at_or_before(state, runtime, session_id, replay_cursor).await;
         let replay = replay_workspace_session(
             state,
             workspace_id,

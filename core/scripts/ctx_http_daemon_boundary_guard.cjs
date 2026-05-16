@@ -177,6 +177,10 @@ const workspaceStreamSubscriptionPlanApiRoots = [
 ];
 
 const workspaceStreamReplayCursorApiRoots = [
+  "core/crates/ctx-http/src/api/ws/common/cursor.rs",
+  "core/crates/ctx-http/src/api/ws/queue/buffers/head/state.rs",
+  "core/crates/ctx-http/src/api/ws/queue/buffers/summary.rs",
+  "core/crates/ctx-http/src/api/ws/workspace_stream/events.rs",
   "core/crates/ctx-http/src/api/ws/workspace_stream/subscription.rs",
   "core/crates/ctx-http/src/api/ws/workspace_stream/subscription/replay.rs",
   "core/crates/ctx-http/src/api/ws/workspace_stream/subscription/replay/",
@@ -891,6 +895,11 @@ const WORKSPACE_STREAM_SUBSCRIPTION_PLAN_API_PATTERNS = [
 
 const WORKSPACE_STREAM_REPLAY_CURSOR_API_PATTERNS = [
   {
+    name: "workspace stream API owns cursor acceptance helper",
+    regex:
+      /(?<!\.)\b(?:accept_session_delta|accept_session_head|accept_session_cursor)\s*\(/,
+  },
+  {
     name: "workspace stream API calls active-snapshot replay cursor planner",
     regex: /\breplay_cursor_after_live_progress\b/,
   },
@@ -901,6 +910,14 @@ const WORKSPACE_STREAM_REPLAY_CURSOR_API_PATTERNS = [
   {
     name: "workspace stream API builds replay cursor from snapshot head",
     regex: /\bSessionReplayCursor\s*::\s*from_head\s*\(/,
+  },
+  {
+    name: "workspace stream API builds replay cursor from session delta",
+    regex: /\bSessionReplayCursor\s*::\s*from_delta\s*\(/,
+  },
+  {
+    name: "workspace stream API merges replay cursors directly",
+    regex: /\.cover\s*\(/,
   },
   {
     name: "workspace stream API reads raw session replay cursor",

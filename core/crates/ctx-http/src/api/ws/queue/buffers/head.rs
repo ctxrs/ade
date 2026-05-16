@@ -78,13 +78,16 @@ impl HeadBatchBuffer {
         state.clear();
     }
 
-    pub(crate) async fn drop_session_deltas_at_or_before(
+    pub(crate) async fn drop_session_deltas_at_or_before<F>(
         &self,
         session_id: SessionId,
         cursor: SessionReplayCursor,
-    ) {
+        is_delta_after_cursor: F,
+    ) where
+        F: Fn(&SessionHeadDelta, SessionReplayCursor) -> bool,
+    {
         let mut state = self.state.lock().await;
-        state.drop_session_deltas_at_or_before(session_id, cursor);
+        state.drop_session_deltas_at_or_before(session_id, cursor, is_delta_after_cursor);
     }
 
     pub(crate) async fn is_empty(&self) -> bool {

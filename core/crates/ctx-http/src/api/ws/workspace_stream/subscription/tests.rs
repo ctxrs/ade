@@ -1,4 +1,5 @@
 use super::*;
+use ctx_daemon::test_support::TestDaemon;
 
 fn cursor(last_event_seq: i64, projection_rev: i64) -> SessionCursor {
     SessionCursor {
@@ -9,8 +10,14 @@ fn cursor(last_event_seq: i64, projection_rev: i64) -> SessionCursor {
     }
 }
 
-#[test]
-fn merge_replayed_and_live_subscriptions_keeps_live_only_sessions_and_drops_removed_sessions() {
+#[tokio::test]
+async fn merge_replayed_and_live_subscriptions_keeps_live_cursor_authoritative_after_replay() {
+    let root = tempfile::tempdir().unwrap();
+    let daemon =
+        TestDaemon::new_for_test(root.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+            .await
+            .expect("test daemon should start");
+    let state = daemon.handle().workspace_stream();
     let replayed_session_id = SessionId::new();
     let live_only_session_id = SessionId::new();
     let removed_session_id = SessionId::new();
@@ -23,7 +30,8 @@ fn merge_replayed_and_live_subscriptions_keeps_live_only_sessions_and_drops_remo
         (removed_session_id, cursor(20, 20)),
     ]);
 
-    let merged = merge_replayed_and_live_subscriptions(&live_subscriptions, replayed_subscriptions);
+    let merged =
+        merge_replayed_and_live_subscriptions(&state, &live_subscriptions, replayed_subscriptions);
 
     assert_eq!(merged.len(), 2);
     assert_eq!(

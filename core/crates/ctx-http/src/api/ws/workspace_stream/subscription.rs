@@ -9,18 +9,22 @@ mod tests;
 use replay::{replay_workspace_stream_subscriptions, WorkspaceStreamReplayRequest};
 
 fn merge_replayed_and_live_subscriptions(
+    state: &WorkspaceStreamHandle,
     live_subscriptions: &HashMap<SessionId, SessionCursor>,
     replayed_subscriptions: HashMap<SessionId, SessionCursor>,
 ) -> HashMap<SessionId, SessionCursor> {
-    live_subscriptions
+    let live_cursors = live_subscriptions
         .iter()
-        .map(|(session_id, live_cursor)| {
-            let last_sent = replayed_subscriptions
-                .get(session_id)
-                .map(|replayed_cursor| replayed_cursor.last_sent.cover(live_cursor.last_sent))
-                .unwrap_or(live_cursor.last_sent);
-            (*session_id, SessionCursor { last_sent })
-        })
+        .map(|(session_id, cursor)| (*session_id, cursor.last_sent))
+        .collect::<HashMap<_, _>>();
+    let replayed_cursors = replayed_subscriptions
+        .into_iter()
+        .map(|(session_id, cursor)| (session_id, cursor.last_sent))
+        .collect::<HashMap<_, _>>();
+    state
+        .merge_replayed_and_live_subscription_cursors(&live_cursors, replayed_cursors)
+        .into_iter()
+        .map(|(session_id, last_sent)| (session_id, SessionCursor { last_sent }))
         .collect()
 }
 
@@ -123,7 +127,7 @@ pub(crate) async fn handle_workspace_stream_subscription(
         return Ok(());
     };
 
-    let final_map = merge_replayed_and_live_subscriptions(&runtime.subscriptions, next_map);
+    let final_map = merge_replayed_and_live_subscriptions(state, &runtime.subscriptions, next_map);
 
     sync_workspace_stream_session_pins(
         state,

@@ -69,17 +69,21 @@ pub(crate) async fn handle_workspace_stream_event(
             let Some(cursor) = runtime.subscriptions.get_mut(&delta.session_id) else {
                 return Ok(());
             };
-            if !accept_session_delta(cursor, delta) {
+            let accepted = state.accept_session_delta_cursor(cursor.last_sent, delta);
+            if !accepted.accepted {
                 return Ok(());
             }
+            cursor.last_sent = accepted.next_cursor;
         }
         WorkspaceActiveSnapshotEvent::SessionHeadSeed { head, .. } => {
             let Some(cursor) = runtime.subscriptions.get_mut(&head.session.id) else {
                 return Ok(());
             };
-            if !accept_session_head(cursor, head) {
+            let accepted = state.accept_session_head_cursor(cursor.last_sent, head);
+            if !accepted.accepted {
                 return Ok(());
             }
+            cursor.last_sent = accepted.next_cursor;
         }
         _ => {}
     }

@@ -366,7 +366,55 @@ test("daemon boundary guard rejects workspace stream replay cursor planning in H
   );
 });
 
+test("daemon boundary guard rejects workspace stream cursor acceptance in HTTP", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/ws/common/cursor.rs",
+    contents: `
+      fn accept_session_delta(cursor: &mut SessionCursor, delta: &SessionHeadDelta) -> bool {
+        let incoming = SessionReplayCursor::from_delta(delta);
+        accept_session_cursor(cursor, incoming)
+      }
+
+      fn accept_session_head(cursor: &mut SessionCursor, head: &SessionHeadSnapshot) -> bool {
+        accept_session_cursor(cursor, SessionReplayCursor::from_head(head))
+      }
+
+      fn accept_session_cursor(cursor: &mut SessionCursor, incoming: SessionReplayCursor) -> bool {
+        cursor.last_sent = cursor.last_sent.cover(incoming);
+        true
+      }
+    `,
+    patterns: WORKSPACE_STREAM_REPLAY_CURSOR_API_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "workspace stream API owns cursor acceptance helper",
+      "workspace stream API owns cursor acceptance helper",
+      "workspace stream API owns cursor acceptance helper",
+      "workspace stream API owns cursor acceptance helper",
+      "workspace stream API owns cursor acceptance helper",
+      "workspace stream API builds replay cursor from snapshot head",
+      "workspace stream API builds replay cursor from session delta",
+      "workspace stream API merges replay cursors directly",
+    ],
+  );
+});
+
 test("daemon boundary guard scopes workspace stream replay cursor ban", () => {
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/ws/common/cursor.rs").includes(
+      WORKSPACE_STREAM_REPLAY_CURSOR_API_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/ws/queue/buffers/head/state.rs").includes(
+      WORKSPACE_STREAM_REPLAY_CURSOR_API_PATTERNS[0],
+    ),
+    true,
+  );
   assert.equal(
     apiPatternsForPath(
       "core/crates/ctx-http/src/api/ws/workspace_stream/subscription.rs",

@@ -145,15 +145,18 @@ impl HeadBatchState {
         self.snapshot_rev = 0;
     }
 
-    pub(super) fn drop_session_deltas_at_or_before(
+    pub(super) fn drop_session_deltas_at_or_before<F>(
         &mut self,
         session_id: SessionId,
         cursor: SessionReplayCursor,
-    ) {
+        is_delta_after_cursor: F,
+    ) where
+        F: Fn(&SessionHeadDelta, SessionReplayCursor) -> bool,
+    {
         let mut remove_entry = false;
         let removed = if let Some(entry) = self.deltas.get_mut(&session_id) {
             let before = entry.len();
-            entry.retain(|queued| SessionReplayCursor::from_delta(&queued.delta) > cursor);
+            entry.retain(|queued| is_delta_after_cursor(&queued.delta, cursor));
             remove_entry = entry.is_empty();
             before.saturating_sub(entry.len())
         } else {
