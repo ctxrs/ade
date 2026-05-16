@@ -34,7 +34,7 @@ use sha2::Digest;
 use tokio::sync::{mpsc, Mutex};
 
 use super::{
-    ask_user, auth, command_dispatch, model_catalog, subagents, title_generation,
+    ask_user, auth, command_dispatch, model_catalog, model_switch, subagents, title_generation,
     title_generation::{schedule_session_title_generation, TitleGenerationOutcome},
 };
 use crate::daemon::git_status::{
@@ -1035,7 +1035,15 @@ impl SessionsHandle {
             .ok_or(GenerateSessionTitleError::NotFound)
     }
 
-    pub async fn load_session_model_target_parts(
+    pub async fn set_session_model_for_request(
+        &self,
+        session_id: SessionId,
+        request: model_switch::SetSessionModelRequest,
+    ) -> Result<Session, model_switch::SetSessionModelError> {
+        model_switch::set_session_model_for_request(self, session_id, request).await
+    }
+
+    pub(crate) async fn load_session_model_target_parts(
         &self,
         session_id: SessionId,
     ) -> Result<
@@ -1088,7 +1096,7 @@ impl SessionsHandle {
         Ok((session, workspace, execution_environment, install_target))
     }
 
-    pub async fn persist_session_model_update_for_request(
+    pub(crate) async fn persist_session_model_update_for_request(
         &self,
         session_id: SessionId,
         model_id: String,
@@ -1661,7 +1669,7 @@ impl SessionsHandle {
         .await
     }
 
-    pub async fn ensure_provider_adapter_for_target(
+    pub(crate) async fn ensure_provider_adapter_for_target(
         &self,
         provider_id: &str,
         install_target: InstallTarget,
@@ -1674,7 +1682,7 @@ impl SessionsHandle {
         .await
     }
 
-    pub async fn load_provider_model_catalog_for_execution_environment(
+    pub(crate) async fn load_provider_model_catalog_for_execution_environment(
         &self,
         workspace: &Workspace,
         provider_id: &str,

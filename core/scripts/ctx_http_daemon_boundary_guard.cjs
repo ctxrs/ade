@@ -160,6 +160,11 @@ const sessionVcsApiRoots = [
   "core/crates/ctx-http/src/api/sessions/snapshot/vcs/",
 ];
 
+const sessionModelSwitchApiRoots = [
+  "core/crates/ctx-http/src/api/sessions/titles_and_modes.rs",
+  "core/crates/ctx-http/src/api/sessions/titles_and_modes/",
+];
+
 const taskSessionCreationApiRoots = [
   "core/crates/ctx-http/src/api/tasks/creation_session.rs",
   "core/crates/ctx-http/src/api/tasks/creation_session/",
@@ -926,6 +931,43 @@ const SESSION_VCS_API_ORCHESTRATION_PATTERNS = [
   {
     name: "session VCS API references workspace VCS service type",
     regex: /\b(?:WorktreeDiffBaseResolution|WorktreeVcsDiffBaseQuery|WorktreeVcsSessionDiffOutcome|WorktreeVcsSessionDiffSummaryOutcome|WorktreeVcsDiffSummaryCounts|GitStatusSnapshot|GitStatusEntry)\b/,
+  },
+];
+
+const SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS = [
+  {
+    name: "session model API imports model-resolution helpers directly",
+    regex:
+      /\bctx_session_tools::model_resolution\b|\b(?:compose_model_id|normalize_effort_id|resolve_model_id)\b/,
+  },
+  {
+    name: "session model API imports provider install target directly",
+    regex: /\bctx_provider_install::install_state::InstallTarget\b|\bInstallTarget\b/,
+  },
+  {
+    name: "session model API imports provider adapter directly",
+    regex: /\bctx_providers::adapters::ProviderAdapter\b|\bProviderAdapter\b/,
+  },
+  {
+    name: "session model API loads target parts directly",
+    regex: /(?:\.|\bSessionsHandle::)load_session_model_target_parts\s*\(/,
+  },
+  {
+    name: "session model API ensures provider adapter directly",
+    regex: /(?:\.|\bSessionsHandle::)ensure_provider_adapter_for_target\s*\(/,
+  },
+  {
+    name: "session model API loads provider model catalog directly",
+    regex: /(?:\.|\bSessionsHandle::)load_provider_model_catalog_for_execution_environment\s*\(/,
+  },
+  {
+    name: "session model API persists model update directly",
+    regex: /(?:\.|\bSessionsHandle::)persist_session_model_update_for_request\s*\(/,
+  },
+  {
+    name: "session model API defines old orchestration helpers",
+    regex:
+      /\b(?:load_session_model_target|resolve_session_model_update|switch_live_session_model|persist_session_model_update)\s*\(/,
   },
 ];
 
@@ -3091,6 +3133,9 @@ function apiPatternsForPath(relativePath) {
   if (sessionVcsApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...SESSION_VCS_API_ORCHESTRATION_PATTERNS);
   }
+  if (sessionModelSwitchApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS);
+  }
   if (taskSessionCreationApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...TASK_SESSION_CREATION_API_ADMISSION_PATTERNS);
   }
@@ -4070,6 +4115,7 @@ module.exports = {
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MOBILE_ACCESS_STORE_DTO_API_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
+  SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS,
   SESSION_VCS_API_ORCHESTRATION_PATTERNS,
   TASK_SESSION_CREATION_API_ADMISSION_PATTERNS,
   WORKSPACE_STREAM_READ_MODEL_API_PATTERNS,

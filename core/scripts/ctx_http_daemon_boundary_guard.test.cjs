@@ -26,6 +26,7 @@ const {
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   MOBILE_ACCESS_STORE_DTO_API_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
+  SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS,
   SESSION_VCS_API_ORCHESTRATION_PATTERNS,
   TASK_SESSION_CREATION_API_ADMISSION_PATTERNS,
   WORKSPACE_STREAM_READ_MODEL_API_PATTERNS,
@@ -2468,6 +2469,74 @@ test("daemon boundary guard scopes session VCS orchestration patterns to API VCS
   assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/sessions/snapshot/head.rs").includes(
       SESSION_VCS_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    false,
+  );
+});
+
+test("daemon boundary guard rejects session model switch orchestration in HTTP", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/sessions/titles_and_modes/model.rs",
+    contents: `
+      use ctx_provider_install::install_state::InstallTarget;
+      use ctx_providers::adapters::ProviderAdapter;
+      use ctx_session_tools::model_resolution::{compose_model_id, normalize_effort_id, resolve_model_id};
+
+      async fn handler(sessions: SessionsHandle) {
+        let _ = sessions.load_session_model_target_parts(session_id).await;
+        let _ = sessions.ensure_provider_adapter_for_target("codex", InstallTarget::Host).await;
+        let _ = sessions.load_provider_model_catalog_for_execution_environment(&workspace, "codex", env).await;
+        let _ = sessions.persist_session_model_update_for_request(session_id, model, None, full).await;
+        resolve_session_model_update(&sessions, &workspace, &session, env, req).await?;
+        switch_live_session_model(adapter.as_ref(), &session, "model").await?;
+        persist_session_model_update(&sessions, session_id, &resolved).await?;
+        load_session_model_target(&sessions, session_id).await?;
+      }
+    `,
+    patterns: SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "session model API imports model-resolution helpers directly",
+      "session model API imports provider install target directly",
+      "session model API imports provider install target directly",
+      "session model API imports provider adapter directly",
+      "session model API loads target parts directly",
+      "session model API ensures provider adapter directly",
+      "session model API loads provider model catalog directly",
+      "session model API persists model update directly",
+      "session model API defines old orchestration helpers",
+      "session model API defines old orchestration helpers",
+      "session model API defines old orchestration helpers",
+      "session model API defines old orchestration helpers",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes session model switch patterns to model route roots", () => {
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/sessions/titles_and_modes.rs").includes(
+      SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/sessions/titles_and_modes/model.rs").includes(
+      SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/sessions/titles_and_modes/model_switch.rs",
+    ).includes(SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS[0]),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/sessions/snapshot/head.rs").includes(
+      SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS[0],
     ),
     false,
   );

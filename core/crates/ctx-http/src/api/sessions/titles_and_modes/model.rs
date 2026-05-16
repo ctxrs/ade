@@ -1,15 +1,7 @@
 use super::*;
 
-mod error;
-mod load;
-mod persist;
-mod resolve;
-
-use error::session_model_error;
-use load::load_session_model_target;
-use persist::persist_session_model_update;
-use resolve::{
-    ensure_session_model_adapter, resolve_session_model_update, switch_live_session_model,
+use ctx_daemon::daemon::sessions::{
+    SetSessionModelError, SetSessionModelErrorKind, SetSessionModelRequest,
 };
 
 #[derive(Debug, Deserialize)]
@@ -26,28 +18,43 @@ pub(crate) async fn set_session_model(
 ) -> Result<Json<Session>, (StatusCode, Json<ApiErrorResp>)> {
     let session_id = SessionId(
         uuid::Uuid::parse_str(&id)
-            .map_err(|_| session_model_error(StatusCode::BAD_REQUEST, "invalid session id"))?,
+            .map_err(|_| model_error(StatusCode::BAD_REQUEST, "invalid session id"))?,
     );
 
-    let target = load_session_model_target(&state, session_id).await?;
-    let adapter =
-        ensure_session_model_adapter(&state, &target.session, target.install_target).await?;
-    let resolved_model = resolve_session_model_update(
-        &state,
-        &target.workspace,
-        &target.session,
-        target.execution_environment,
-        req,
-    )
-    .await?;
-    switch_live_session_model(
-        adapter.as_ref(),
-        &target.session,
-        &resolved_model.full_model_id,
-    )
-    .await?;
-
-    let updated = persist_session_model_update(&state, session_id, &resolved_model).await?;
+    let updated = state
+        .set_session_model_for_request(
+            session_id,
+            SetSessionModelRequest {
+                model_id: req.model_id,
+                reasoning_effort: req.reasoning_effort,
+            },
+        )
+        .await
+        .map_err(map_set_session_model_error)?;
 
     Ok(Json(updated))
+}
+
+fn map_set_session_model_error(error: SetSessionModelError) -> (StatusCode, Json<ApiErrorResp>) {
+    let status = match error.kind() {
+        SetSessionModelErrorKind::BadRequest | SetSessionModelErrorKind::LiveSwitchRejected => {
+            StatusCode::BAD_REQUEST
+        }
+        SetSessionModelErrorKind::NotFound => StatusCode::NOT_FOUND,
+        SetSessionModelErrorKind::Forbidden => StatusCode::FORBIDDEN,
+        SetSessionModelErrorKind::InsufficientStorage => StatusCode::INSUFFICIENT_STORAGE,
+        SetSessionModelErrorKind::ProviderUnavailable | SetSessionModelErrorKind::Internal => {
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    };
+    model_error(status, error.message())
+}
+
+fn model_error(status: StatusCode, error: impl Into<String>) -> (StatusCode, Json<ApiErrorResp>) {
+    (
+        status,
+        Json(ApiErrorResp {
+            error: error.into(),
+        }),
+    )
 }
