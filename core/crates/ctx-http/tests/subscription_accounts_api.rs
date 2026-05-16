@@ -3,6 +3,7 @@ mod common;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
@@ -643,6 +644,14 @@ fn providers_with_amp_adapter(
     providers
 }
 
+fn providers_with_kimi_adapter(
+    adapter: Arc<dyn ProviderAdapter>,
+) -> HashMap<String, Arc<dyn ProviderAdapter>> {
+    let mut providers = common::fake_providers();
+    providers.insert("kimi".to_string(), adapter);
+    providers
+}
+
 async fn assert_managed_subscription_crud(provider_id: &str, upsert_body: serde_json::Value) {
     let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
     let server = fixture.spawn_server().await;
@@ -810,23 +819,138 @@ struct KimiTokenPollRequest {
     grant_type: String,
 }
 
+#[derive(Debug, Clone)]
+enum KimiOAuthScenario {
+    Success,
+    DeviceAuthorizationFailure,
+    PendingUntilTimeout,
+    ExpiredToken,
+    AccessDenied,
+    UnknownClientError,
+    TokenServerError,
+    MalformedTokenSuccess,
+}
+
+impl KimiOAuthScenario {
+    fn device_authorization_response(&self) -> Response {
+        if matches!(self, Self::DeviceAuthorizationFailure) {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "device authorization failed access_token=startup-secret",
+            )
+                .into_response();
+        }
+
+        let expires_in = if matches!(self, Self::PendingUntilTimeout) {
+            1
+        } else {
+            30
+        };
+        axum::Json(json!({
+            "user_code": "ABCD-1234",
+            "device_code": "device-code-1",
+            "verification_uri": "http://127.0.0.1/verify",
+            "verification_uri_complete": "http://127.0.0.1/verify?user_code=ABCD-1234",
+            "expires_in": expires_in,
+            "interval": 1,
+        }))
+        .into_response()
+    }
+
+    fn token_response(&self, attempt: usize) -> Response {
+        match self {
+            Self::Success => {
+                if attempt == 1 {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        axum::Json(json!({
+                            "error": "authorization_pending",
+                            "error_description": "Waiting for Kimi sign-in",
+                        })),
+                    )
+                        .into_response();
+                }
+                axum::Json(json!({
+                    "access_token": "kimi-access",
+                    "refresh_token": "kimi-refresh",
+                    "expires_in": 3600,
+                    "scope": "openid profile email",
+                    "token_type": "Bearer",
+                }))
+                .into_response()
+            }
+            Self::DeviceAuthorizationFailure => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "token endpoint should not be reached",
+            )
+                .into_response(),
+            Self::PendingUntilTimeout => (
+                StatusCode::BAD_REQUEST,
+                axum::Json(json!({
+                    "error": "authorization_pending",
+                    "error_description": "Waiting for Kimi sign-in",
+                })),
+            )
+                .into_response(),
+            Self::ExpiredToken => (
+                StatusCode::BAD_REQUEST,
+                axum::Json(json!({
+                    "error": "expired_token",
+                    "error_description": "Device code expired",
+                })),
+            )
+                .into_response(),
+            Self::AccessDenied => (
+                StatusCode::BAD_REQUEST,
+                axum::Json(json!({
+                    "error": "access_denied",
+                    "error_description": "User denied Kimi sign-in.",
+                })),
+            )
+                .into_response(),
+            Self::UnknownClientError => (
+                StatusCode::BAD_REQUEST,
+                axum::Json(json!({
+                    "error": "strange_oauth_error",
+                    "error_description": "Kimi OAuth returned an unknown error",
+                })),
+            )
+                .into_response(),
+            Self::TokenServerError => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "token endpoint failed access_token=token-secret",
+            )
+                .into_response(),
+            Self::MalformedTokenSuccess => (
+                StatusCode::OK,
+                r#"{"access_token":"kimi-access","refresh_token":"kimi-refresh"}"#,
+            )
+                .into_response(),
+        }
+    }
+}
+
 async fn start_kimi_oauth_server() -> (common::TestServer, Arc<Mutex<Vec<KimiTokenPollRequest>>>) {
+    start_kimi_oauth_server_with_scenario(KimiOAuthScenario::Success).await
+}
+
+async fn start_kimi_oauth_server_with_scenario(
+    scenario: KimiOAuthScenario,
+) -> (common::TestServer, Arc<Mutex<Vec<KimiTokenPollRequest>>>) {
     let polls = Arc::new(Mutex::new(Vec::<KimiTokenPollRequest>::new()));
     let polls_for_token = Arc::clone(&polls);
+    let scenario_for_auth = scenario.clone();
+    let scenario_for_token = scenario;
     let app = axum::Router::new()
         .route(
             "/api/oauth/device_authorization",
             axum::routing::post(
-                |axum::Form(payload): axum::Form<KimiDeviceAuthorizationRequest>| async move {
-                    assert_eq!(payload.client_id, "17e5f671-d194-4dfb-9706-5516cb48c098");
-                    axum::Json(json!({
-                        "user_code": "ABCD-1234",
-                        "device_code": "device-code-1",
-                        "verification_uri": "http://127.0.0.1/verify",
-                        "verification_uri_complete": "http://127.0.0.1/verify?user_code=ABCD-1234",
-                        "expires_in": 30,
-                        "interval": 1,
-                    }))
+                move |axum::Form(payload): axum::Form<KimiDeviceAuthorizationRequest>| {
+                    let scenario = scenario_for_auth.clone();
+                    async move {
+                        assert_eq!(payload.client_id, "17e5f671-d194-4dfb-9706-5516cb48c098");
+                        scenario.device_authorization_response()
+                    }
                 },
             ),
         )
@@ -835,6 +959,7 @@ async fn start_kimi_oauth_server() -> (common::TestServer, Arc<Mutex<Vec<KimiTok
             axum::routing::post(
                 move |axum::Form(payload): axum::Form<KimiTokenPollRequest>| {
                     let polls = Arc::clone(&polls_for_token);
+                    let scenario = scenario_for_token.clone();
                     async move {
                         assert_eq!(payload.client_id, "17e5f671-d194-4dfb-9706-5516cb48c098");
                         assert_eq!(
@@ -846,31 +971,56 @@ async fn start_kimi_oauth_server() -> (common::TestServer, Arc<Mutex<Vec<KimiTok
                         recorded.push(payload);
                         let attempt = recorded.len();
                         drop(recorded);
-                        if attempt == 1 {
-                            return (
-                                StatusCode::BAD_REQUEST,
-                                axum::Json(json!({
-                                    "error": "authorization_pending",
-                                    "error_description": "Waiting for Google sign-in",
-                                })),
-                            );
-                        }
-                        (
-                            StatusCode::OK,
-                            axum::Json(json!({
-                                "access_token": "kimi-access",
-                                "refresh_token": "kimi-refresh",
-                                "expires_in": 3600,
-                                "scope": "openid profile email",
-                                "token_type": "Bearer",
-                            })),
-                        )
+                        scenario.token_response(attempt)
                     }
                 },
             ),
         );
     let server = common::spawn_http_server(app).await;
     (server, polls)
+}
+
+#[derive(Debug)]
+struct KimiRestartFailureAdapter;
+
+#[async_trait]
+impl ProviderAdapter for KimiRestartFailureAdapter {
+    async fn inspect(&self) -> Result<ProviderStatus> {
+        Ok(ProviderStatus {
+            provider_id: "kimi".to_string(),
+            installed: true,
+            detected_path: None,
+            version: Some("test".to_string()),
+            capabilities: None,
+            health: ProviderHealth::Ok,
+            diagnostics: Vec::new(),
+            details: HashMap::new(),
+            usability: ctx_providers::adapters::ProviderUsability::default(),
+        })
+    }
+
+    async fn run(
+        &self,
+        _input: TurnInput,
+        _workdir: PathBuf,
+        _env: HashMap<String, String>,
+        _event_sink: mpsc::Sender<NormalizedEvent>,
+        _hooks: ctx_providers::adapters::ProviderRunHooks,
+    ) -> Result<RunHandle> {
+        Err(anyhow!("run is not used in this test adapter"))
+    }
+
+    async fn cancel(&self, _handle: &mut RunHandle) -> Result<()> {
+        Ok(())
+    }
+
+    async fn restart(&self, _reason: &str, _mode: ProviderRestartMode) -> Result<()> {
+        Err(anyhow!("forced kimi restart failure"))
+    }
+
+    fn supports_restart_mode(&self, mode: ProviderRestartMode) -> bool {
+        matches!(mode, ProviderRestartMode::Drain)
+    }
 }
 
 fn parse_claude_auth_url(start_body: &ClaudeLoginStartResponse) -> Url {
@@ -1015,6 +1165,40 @@ async fn poll_kimi_login_status(
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+}
+
+async fn run_kimi_login_scenario(
+    scenario: KimiOAuthScenario,
+    providers: HashMap<String, Arc<dyn ProviderAdapter>>,
+) -> (
+    KimiLoginStartResponse,
+    KimiLoginStatusResponse,
+    Arc<Mutex<Vec<KimiTokenPollRequest>>>,
+) {
+    let _env_lock = KIMI_TOKEN_ENV_LOCK.lock().await;
+    let oauth_server = start_kimi_oauth_server_with_scenario(scenario).await;
+    let _oauth_host = TestEnvVar::set("KIMI_CODE_OAUTH_HOST", oauth_server.0.base_url.as_str());
+    let _timeout = TestEnvVar::set("CTX_KIMI_LOGIN_TIMEOUT_SECS", "5");
+
+    let fixture = common::fake_daemon_fixture_with_providers(providers, "http://127.0.0.1:0").await;
+    let server = fixture.spawn_server().await;
+
+    let start_url = format!(
+        "{}/api/providers/kimi/accounts/login/start",
+        server.base_url
+    );
+    let start_resp = server
+        .client
+        .post(start_url)
+        .json(&json!({ "label": "Kimi Google" }))
+        .send()
+        .await
+        .expect("start kimi login request");
+    assert_eq!(start_resp.status(), StatusCode::OK);
+    let start_body: KimiLoginStartResponse = start_resp.json().await.expect("start body");
+    let status = poll_kimi_login_status(&server, &start_body.login_id).await;
+
+    (start_body, status, oauth_server.1)
 }
 
 async fn poll_mistral_login_status(
@@ -2021,6 +2205,140 @@ async fn kimi_login_start_and_status_success_persists_oauth_account() {
 
     let polls = oauth_server.1.lock().expect("poll mutex");
     assert!(polls.len() >= 2);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn kimi_login_start_device_authorization_failure_returns_bad_gateway() {
+    let _env_lock = KIMI_TOKEN_ENV_LOCK.lock().await;
+    let oauth_server =
+        start_kimi_oauth_server_with_scenario(KimiOAuthScenario::DeviceAuthorizationFailure).await;
+    let _oauth_host = TestEnvVar::set("KIMI_CODE_OAUTH_HOST", oauth_server.0.base_url.as_str());
+
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let server = fixture.spawn_server().await;
+
+    let start_url = format!(
+        "{}/api/providers/kimi/accounts/login/start",
+        server.base_url
+    );
+    let start_resp = server
+        .client
+        .post(start_url)
+        .json(&json!({}))
+        .send()
+        .await
+        .expect("start kimi login request");
+    assert_eq!(start_resp.status(), StatusCode::BAD_GATEWAY);
+    let body: ErrorResp = start_resp.json().await.expect("start error body");
+    assert!(body.error.contains("Kimi device authorization failed"));
+    assert!(body.error.contains("[REDACTED]"));
+    assert!(!body.error.contains("startup-secret"));
+
+    let polls = oauth_server.1.lock().expect("poll mutex");
+    assert!(polls.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn kimi_login_pending_until_timeout_reports_timeout() {
+    let (_start, status, polls) = run_kimi_login_scenario(
+        KimiOAuthScenario::PendingUntilTimeout,
+        common::fake_providers(),
+    )
+    .await;
+
+    assert_eq!(status.status, "timeout");
+    assert_eq!(
+        status.error.as_deref(),
+        Some("timed out waiting for Kimi sign-in completion")
+    );
+    assert!(status.account_id.is_none());
+    assert!(!polls.lock().expect("poll mutex").is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn kimi_login_expired_token_reports_timeout() {
+    let (_start, status, _polls) =
+        run_kimi_login_scenario(KimiOAuthScenario::ExpiredToken, common::fake_providers()).await;
+
+    assert_eq!(status.status, "timeout");
+    assert_eq!(status.error.as_deref(), Some("Device code expired"));
+    assert!(status.account_id.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn kimi_login_access_denied_reports_failed() {
+    let (_start, status, _polls) =
+        run_kimi_login_scenario(KimiOAuthScenario::AccessDenied, common::fake_providers()).await;
+
+    assert_eq!(status.status, "failed");
+    assert_eq!(status.error.as_deref(), Some("User denied Kimi sign-in."));
+    assert!(status.account_id.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn kimi_login_unknown_oauth_error_reports_failed() {
+    let (_start, status, _polls) = run_kimi_login_scenario(
+        KimiOAuthScenario::UnknownClientError,
+        common::fake_providers(),
+    )
+    .await;
+
+    assert_eq!(status.status, "failed");
+    assert_eq!(
+        status.error.as_deref(),
+        Some("Kimi OAuth returned an unknown error")
+    );
+    assert!(status.account_id.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn kimi_login_token_server_error_reports_failed_with_redaction() {
+    let (_start, status, _polls) = run_kimi_login_scenario(
+        KimiOAuthScenario::TokenServerError,
+        common::fake_providers(),
+    )
+    .await;
+
+    assert_eq!(status.status, "failed");
+    let error = status.error.expect("token server error");
+    assert!(error.contains("Kimi token polling failed"));
+    assert!(error.contains("[REDACTED]"));
+    assert!(!error.contains("token-secret"));
+    assert!(status.account_id.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn kimi_login_malformed_token_success_reports_failed() {
+    let (_start, status, _polls) = run_kimi_login_scenario(
+        KimiOAuthScenario::MalformedTokenSuccess,
+        common::fake_providers(),
+    )
+    .await;
+
+    assert_eq!(status.status, "failed");
+    assert!(status
+        .error
+        .as_deref()
+        .is_some_and(|error| error.contains("parsing Kimi token success response")));
+    assert!(status.account_id.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn kimi_login_success_with_restart_failure_reports_failed() {
+    let providers = providers_with_kimi_adapter(Arc::new(KimiRestartFailureAdapter));
+    let (_start, status, _polls) =
+        run_kimi_login_scenario(KimiOAuthScenario::Success, providers).await;
+
+    assert_eq!(status.status, "failed");
+    assert!(status.account_id.is_some());
+    assert!(
+        status.error.as_deref().is_some_and(|error| {
+            error.contains("auth saved but provider restart failed")
+                && error.contains("forced kimi restart failure")
+        }),
+        "unexpected error: {:?}",
+        status.error
+    );
 }
 
 #[tokio::test]

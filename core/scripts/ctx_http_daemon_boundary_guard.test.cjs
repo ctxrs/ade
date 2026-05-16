@@ -2676,12 +2676,19 @@ test("daemon boundary guard rejects managed browser login orchestration in HTTP"
       async fn handler(providers: ProvidersHandle) {
         tokio::spawn(async move {});
         let _request = ProviderSessionAuthenticationRequest {};
+        let _device = KimiDeviceAuthorizationResp {};
         providers.authenticate_provider_session("gemini", request).await?;
         providers.prepare_gemini_login_paths(login_id).await?;
         providers.gemini_login_provider_env(login_home);
         providers.set_gemini_login_failed(login_id, error).await;
+        providers.set_kimi_login_failed(login_id, error).await;
         providers.finish_gemini_login_session(login_id, account_id, None).await;
+        providers.finish_kimi_login_session(login_id, account_id, None).await;
         providers.add_gemini_account_for_login(label, oauth, accounts, email).await?;
+        providers.add_kimi_oauth_account_for_login(label, token, email).await?;
+        providers.start_kimi_login_session(auth_url, device_code).await?;
+        poll_kimi_token(device_code).await?;
+        let _ = "authorization_pending";
         tokio::fs::remove_dir_all(login_home).await?;
         let _ = QWEN_OAUTH_AUTH_METHOD_ID;
       }
@@ -2700,9 +2707,16 @@ test("daemon boundary guard rejects managed browser login orchestration in HTTP"
       "managed browser login API owns login path or env preparation",
       "managed browser login API mutates login status directly",
       "managed browser login API mutates login status directly",
+      "managed browser login API mutates login status directly",
+      "managed browser login API mutates login status directly",
+      "managed browser login API finalizes provider accounts directly",
       "managed browser login API finalizes provider accounts directly",
       "managed browser login API owns login cleanup",
       "managed browser login API owns provider auth method constants",
+      "managed browser login API owns Kimi OAuth client policy",
+      "managed browser login API owns Kimi OAuth client policy",
+      "managed browser login API owns Kimi OAuth protocol details",
+      "managed browser login API starts Kimi sessions directly",
     ],
   );
 });
@@ -2742,7 +2756,13 @@ test("daemon boundary guard scopes managed browser login orchestration patterns"
     apiPatternsForPath("core/crates/ctx-http/src/api/providers/login/kimi.rs").includes(
       MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS[0],
     ),
-    false,
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers/login/kimi/oauth/client.rs").includes(
+      MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    true,
   );
   assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/providers/login/claude/session.rs").includes(

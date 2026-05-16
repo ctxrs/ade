@@ -23,6 +23,7 @@ mod diagnostics;
 mod harness_config;
 mod installs;
 mod inventory;
+mod kimi_oauth_login;
 mod launch_config;
 mod login_runtime;
 mod login_sessions;
@@ -88,6 +89,7 @@ pub use installs::{
     start_provider_install, StartProviderInstallError,
 };
 pub use inventory::refresh_provider_inventory;
+pub use kimi_oauth_login::{start_kimi_oauth_login, KimiOAuthLoginStartError};
 pub use launch_config::{
     load_provider_launch_config_snapshot, ProviderLaunchConfigError, ProviderLaunchConfigSnapshot,
 };
@@ -916,15 +918,6 @@ impl ProvidersHandle {
         &self.state.core.data_root
     }
 
-    pub async fn add_kimi_oauth_account_for_login(
-        &self,
-        label: Option<String>,
-        credentials_json: String,
-        email: Option<String>,
-    ) -> Result<ProviderAccountLoginMutation, ProviderAccountMutationError> {
-        add_kimi_oauth_account_for_login(&self.state, label, credentials_json, email).await
-    }
-
     pub async fn start_amp_browser_login(&self, label: Option<String>) -> StartedLoginSession {
         start_amp_browser_login(&self.state, label).await
     }
@@ -969,12 +962,11 @@ impl ProvidersHandle {
         mistral_login_status(&self.state, login_id).await
     }
 
-    pub async fn start_kimi_login_session(
+    pub async fn start_kimi_oauth_login(
         &self,
-        auth_url: Option<String>,
-        device_code: Option<String>,
-    ) -> StartedLoginSession {
-        start_kimi_login_session(&self.state, auth_url, device_code).await
+        label: Option<String>,
+    ) -> Result<StartedLoginSession, KimiOAuthLoginStartError> {
+        start_kimi_oauth_login(&self.state, label).await
     }
 
     pub async fn kimi_login_status(
@@ -982,32 +974,6 @@ impl ProvidersHandle {
         login_id: &str,
     ) -> Option<provider_accounts::KimiLoginStatus> {
         kimi_login_status(&self.state, login_id).await
-    }
-
-    pub async fn set_kimi_login_failed(&self, login_id: &str, error: String) {
-        set_kimi_login_failed(&self.state, login_id, error).await;
-    }
-
-    pub async fn set_kimi_login_timeout_if_no_error(&self, login_id: &str, error: String) {
-        set_kimi_login_timeout_if_no_error(&self.state, login_id, error).await;
-    }
-
-    pub async fn set_kimi_login_terminal_status(
-        &self,
-        login_id: &str,
-        status: &'static str,
-        error: String,
-    ) {
-        set_kimi_login_terminal_status(&self.state, login_id, status, error).await;
-    }
-
-    pub async fn finish_kimi_login_session(
-        &self,
-        login_id: &str,
-        account_id: Option<String>,
-        restart_error: Option<String>,
-    ) {
-        finish_kimi_login_session(&self.state, login_id, account_id, restart_error).await;
     }
 
     pub async fn prepare_codex_login_start(

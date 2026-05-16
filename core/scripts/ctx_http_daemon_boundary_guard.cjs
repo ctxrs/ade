@@ -186,6 +186,8 @@ const managedBrowserLoginApiRoots = [
   "core/crates/ctx-http/src/api/providers/login/browser/amp/",
   "core/crates/ctx-http/src/api/providers/login/mistral.rs",
   "core/crates/ctx-http/src/api/providers/login/mistral/",
+  "core/crates/ctx-http/src/api/providers/login/kimi.rs",
+  "core/crates/ctx-http/src/api/providers/login/kimi/",
 ];
 
 const taskSessionCreationApiRoots = [
@@ -1078,12 +1080,12 @@ const MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS = [
   {
     name: "managed browser login API mutates login status directly",
     regex:
-      /\b(?:set_(?:gemini|qwen|amp|mistral)_login_[a-z0-9_]+|finish_(?:gemini|qwen|amp|mistral)_login_session)\s*\(/,
+      /\b(?:set_(?:gemini|qwen|amp|mistral|kimi)_login_[a-z0-9_]+|finish_(?:gemini|qwen|amp|mistral|kimi)_login_session)\s*\(/,
   },
   {
     name: "managed browser login API finalizes provider accounts directly",
     regex:
-      /\b(?:add_(?:gemini|qwen)_account_for_login|upsert_(?:amp|mistral)_account_for_login)\s*\(/,
+      /\b(?:add_(?:gemini|qwen)_account_for_login|add_kimi_oauth_account_for_login|upsert_(?:amp|mistral)_account_for_login)\s*\(/,
   },
   {
     name: "managed browser login API owns login cleanup",
@@ -1092,6 +1094,20 @@ const MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS = [
   {
     name: "managed browser login API owns provider auth method constants",
     regex: /\b(?:QWEN_OAUTH_AUTH_METHOD_ID|AMP_BROWSER_AUTH_METHOD_ID)\b/,
+  },
+  {
+    name: "managed browser login API owns Kimi OAuth client policy",
+    regex:
+      /\b(?:KIMI_CODE_CLIENT_ID|KIMI_CODE_OAUTH_HOST|KIMI_OAUTH_HOST|CTX_KIMI_LOGIN_TIMEOUT_SECS|KimiDeviceAuthorizationResp|KimiToken(?:Success|Error)Resp|request_kimi_device_authorization|poll_kimi_token|kimi_token_json|kimi_login_timeout|poll_interval_for_authorization|timeout_for_authorization)\b/,
+  },
+  {
+    name: "managed browser login API owns Kimi OAuth protocol details",
+    regex:
+      /\b(?:device_authorization|authorization_pending|slow_down|expired_token|access_denied|urn:ietf:params:oauth:grant-type:device_code)\b/,
+  },
+  {
+    name: "managed browser login API starts Kimi sessions directly",
+    regex: /\bstart_kimi_login_session\s*\(/,
   },
 ];
 
