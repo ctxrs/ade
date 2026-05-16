@@ -63,6 +63,7 @@ CTX_HTTP_SUITE_TESTS = {
         "merge_queue_isolation",
         "repo_clone_branch_and_safety",
         "repo_init_initial_commit",
+        "repo_status_and_staging",
         "repo_validate_destination",
         "session_diff_unavailable",
         "workspace_execution_config_http",
