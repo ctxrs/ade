@@ -119,6 +119,10 @@ test("wdio app builds route through desktop_tauri_entry so resources are prepare
         CTX_AUTOMATION_CN_BACKEND_STATE_DIR: stateDir,
         CTX_AUTOMATION_TAURI_BUNDLES: "app",
         CTX_DESKTOP_APP_PATH: process.platform === "darwin" ? "/tmp/ctx.app" : "/tmp/ctx",
+        RUSTC_WRAPPER: "/usr/bin/sccache",
+        SCCACHE_DIR: "/tmp/deep/sccache-dir",
+        SCCACHE_PATH: "/usr/bin/sccache",
+        SCCACHE_SERVER_UDS: "/tmp/deep/sccache/socket/path/that/must/not/leak.sock",
       },
       (mod) => {
         const invocation = mod.__desktopAutomationConfigTestHooks.createAppBuildInvocation();
@@ -129,6 +133,10 @@ test("wdio app builds route through desktop_tauri_entry so resources are prepare
         assert.equal(invocation.args[2], "--debug");
         assert.equal(invocation.env.CARGO_INCREMENTAL, "0");
         assert.equal(invocation.env.CTX_DESKTOP_SYNC_BUNDLES, "0");
+        assert.equal(invocation.env.RUSTC_WRAPPER, undefined);
+        assert.equal(invocation.env.SCCACHE_DIR, undefined);
+        assert.equal(invocation.env.SCCACHE_PATH, undefined);
+        assert.equal(invocation.env.SCCACHE_SERVER_UDS, undefined);
         if (process.platform === "darwin") {
           assert.deepEqual(invocation.args.slice(3, 5), ["--bundles", "app"]);
         } else {

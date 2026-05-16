@@ -1342,6 +1342,22 @@ const createAppBuildInvocation = () => {
     CARGO_INCREMENTAL: String(process.env.CARGO_INCREMENTAL || "0").trim() || "0",
     CTX_DESKTOP_SYNC_BUNDLES: String(process.env.CTX_DESKTOP_SYNC_BUNDLES || "0").trim() || "0",
   };
+  // EXCEPTION: WDIO source app builds run after cache-managed prep steps and
+  // must not inherit host sccache socket state. Deep Buildkite workspaces can
+  // make inherited Unix socket paths exceed sockaddr_un.sun_path before the
+  // app is even launched, which hides the real desktop acceptance signal.
+  for (const key of [
+    "RUSTC_WRAPPER",
+    "SCCACHE_CONF",
+    "SCCACHE_DIR",
+    "SCCACHE_ERROR_LOG",
+    "SCCACHE_LOG",
+    "SCCACHE_PATH",
+    "SCCACHE_SERVER_UDS",
+    "SCCACHE_START_SERVER",
+  ]) {
+    delete env[key];
+  }
   return {
     command: process.execPath,
     args,
