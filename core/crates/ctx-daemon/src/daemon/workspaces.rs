@@ -1058,6 +1058,23 @@ impl WorkspaceStreamHandle {
         .await
     }
 
+    pub async fn apply_workspace_stream_live_event(
+        &self,
+        workspace_id: WorkspaceId,
+        subscription_state: WorkspaceActiveSubscriptionState,
+        subscriptions: HashMap<SessionId, SessionReplayCursor>,
+        event: WorkspaceActiveSnapshotEvent,
+    ) -> stream::WorkspaceStreamLiveEventApplication {
+        stream::apply_workspace_stream_live_event(
+            &self.state,
+            workspace_id,
+            subscription_state,
+            subscriptions,
+            event,
+        )
+        .await
+    }
+
     pub fn primary_session_id_for_active_task_event(
         &self,
         task: &ctx_core::models::WorkspaceActiveTaskSummary,

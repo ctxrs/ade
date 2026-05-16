@@ -38,10 +38,11 @@ pub(in crate::daemon) use replay_cursor::{
     head_only_snapshot_cursor, plan_resume_replay_cursor, WorkspaceStreamResumeReplayCursorPlan,
 };
 pub use subscriptions::{
-    apply_workspace_stream_subscription_event, finalize_workspace_stream_subscription_replay,
-    plan_workspace_stream_subscription, plan_workspace_stream_subscription_transaction,
-    resolve_workspace_active_snapshot_subscriptions, WorkspaceStreamResolvedSession,
-    WorkspaceStreamSessionPinChanges, WorkspaceStreamSessionReplay,
+    apply_workspace_stream_live_event, apply_workspace_stream_subscription_event,
+    finalize_workspace_stream_subscription_replay, plan_workspace_stream_subscription,
+    plan_workspace_stream_subscription_transaction,
+    resolve_workspace_active_snapshot_subscriptions, WorkspaceStreamLiveEventApplication,
+    WorkspaceStreamResolvedSession, WorkspaceStreamSessionPinChanges, WorkspaceStreamSessionReplay,
     WorkspaceStreamSubscriptionApplyPlan, WorkspaceStreamSubscriptionEventApplication,
     WorkspaceStreamSubscriptionPlan, WorkspaceStreamSubscriptionReplayFinalization,
     WorkspaceStreamSubscriptionResolutionError, WorkspaceStreamSubscriptionTransactionPlan,

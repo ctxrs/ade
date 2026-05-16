@@ -17,7 +17,11 @@ use ctx_workspace_active_snapshot::{
 use crate::daemon::workspaces::WorkspaceHydrationError;
 use crate::daemon::DaemonState;
 
-use super::event_routing::primary_session_id_for_active_task_event;
+use super::cursor_acceptance::{accept_session_delta_cursor, accept_session_head_cursor};
+use super::event_routing::{
+    plan_workspace_stream_event_route, primary_session_id_for_active_task_event,
+    WorkspaceStreamEventRoutePlan,
+};
 use super::replay_cursor::active_task_subscription_cursor;
 
 #[derive(Debug)]
@@ -69,6 +73,14 @@ pub struct WorkspaceStreamSubscriptionEventApplication {
     pub subscriptions: HashMap<SessionId, SessionReplayCursor>,
     pub pin_changes: WorkspaceStreamSessionPinChanges,
     pub should_route: bool,
+}
+
+#[derive(Debug)]
+pub struct WorkspaceStreamLiveEventApplication {
+    pub state: WorkspaceActiveSubscriptionState,
+    pub subscriptions: HashMap<SessionId, SessionReplayCursor>,
+    pub pin_changes: WorkspaceStreamSessionPinChanges,
+    pub route_plan: WorkspaceStreamEventRoutePlan,
 }
 
 #[derive(Clone, Debug)]
@@ -263,6 +275,87 @@ pub async fn apply_workspace_stream_subscription_event(
         previous_subscriptions,
         true,
     )
+}
+
+pub async fn apply_workspace_stream_live_event(
+    state: &Arc<DaemonState>,
+    workspace_id: WorkspaceId,
+    subscription_state: WorkspaceActiveSubscriptionState,
+    subscriptions: HashMap<SessionId, SessionReplayCursor>,
+    event: WorkspaceActiveSnapshotEvent,
+) -> WorkspaceStreamLiveEventApplication {
+    let application = apply_workspace_stream_subscription_event(
+        state,
+        workspace_id,
+        subscription_state,
+        subscriptions,
+        &event,
+    )
+    .await;
+    let WorkspaceStreamSubscriptionEventApplication {
+        state,
+        mut subscriptions,
+        pin_changes,
+        should_route,
+    } = application;
+    if !should_route {
+        return WorkspaceStreamLiveEventApplication {
+            state,
+            subscriptions,
+            pin_changes,
+            route_plan: WorkspaceStreamEventRoutePlan::Drop,
+        };
+    }
+
+    let accepted = match &event {
+        WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } => {
+            let Some(cursor) = subscriptions.get_mut(&delta.session_id) else {
+                return WorkspaceStreamLiveEventApplication {
+                    state,
+                    subscriptions,
+                    pin_changes,
+                    route_plan: WorkspaceStreamEventRoutePlan::Drop,
+                };
+            };
+            let accepted = accept_session_delta_cursor(*cursor, delta);
+            if !accepted.accepted {
+                false
+            } else {
+                *cursor = accepted.next_cursor;
+                true
+            }
+        }
+        WorkspaceActiveSnapshotEvent::SessionHeadSeed { head, .. } => {
+            let Some(cursor) = subscriptions.get_mut(&head.session.id) else {
+                return WorkspaceStreamLiveEventApplication {
+                    state,
+                    subscriptions,
+                    pin_changes,
+                    route_plan: WorkspaceStreamEventRoutePlan::Drop,
+                };
+            };
+            let accepted = accept_session_head_cursor(*cursor, head);
+            if !accepted.accepted {
+                false
+            } else {
+                *cursor = accepted.next_cursor;
+                true
+            }
+        }
+        _ => true,
+    };
+    let route_plan = if accepted {
+        plan_workspace_stream_event_route(&state, event)
+    } else {
+        WorkspaceStreamEventRoutePlan::Drop
+    };
+
+    WorkspaceStreamLiveEventApplication {
+        state,
+        subscriptions,
+        pin_changes,
+        route_plan,
+    }
 }
 
 fn workspace_stream_session_pin_changes<I, J>(

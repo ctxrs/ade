@@ -35,6 +35,7 @@ const {
   WORKSPACE_STREAM_REPLAY_PROGRAM_API_PATTERNS,
   WORKSPACE_STREAM_EVENT_ROUTING_API_PATTERNS,
   WORKSPACE_STREAM_EVENT_ROUTE_PLAN_API_PATTERNS,
+  WORKSPACE_STREAM_LIVE_EVENT_APPLICATION_API_PATTERNS,
   WORKSPACE_STREAM_SUBSCRIPTION_EVENT_API_PATTERNS,
   PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
@@ -328,7 +329,7 @@ test("daemon boundary guard scopes workspace stream subscription-plan ban", () =
 
 test("daemon boundary guard rejects workspace stream subscription transaction policy in HTTP", () => {
   const violations = scanText({
-    filePath: "core/crates/ctx-http/src/api/ws/workspace_stream/events/subscriptions.rs",
+    filePath: "core/crates/ctx-http/src/api/ws/workspace_stream/events.rs",
     contents: `
       async fn handler(state: WorkspaceStreamHandle) {
         let resolved = state.resolve_workspace_active_snapshot_subscriptions(workspace_id, message, existing).await?;
@@ -395,12 +396,12 @@ test("daemon boundary guard scopes workspace stream subscription transaction ban
   );
   assert.equal(
     apiPatternsForPath(
-      "core/crates/ctx-http/src/api/ws/workspace_stream/events/subscriptions.rs",
+      "core/crates/ctx-http/src/api/ws/workspace_stream/events.rs",
     ).includes(WORKSPACE_STREAM_SUBSCRIPTION_TRANSACTION_API_PATTERNS[0]),
     true,
   );
   assert.equal(
-    apiPatternsForPath("core/crates/ctx-http/src/api/ws/workspace_stream/events.rs").includes(
+    apiPatternsForPath("core/crates/ctx-http/src/api/ws/workspace_stream/events/route.rs").includes(
       WORKSPACE_STREAM_SUBSCRIPTION_TRANSACTION_API_PATTERNS[0],
     ),
     false,
@@ -514,7 +515,7 @@ test("daemon boundary guard scopes workspace stream replay cursor ban", () => {
   );
   assert.equal(
     apiPatternsForPath(
-      "core/crates/ctx-http/src/api/ws/workspace_stream/events/subscriptions.rs",
+      "core/crates/ctx-http/src/api/ws/workspace_stream/events.rs",
     ).includes(WORKSPACE_STREAM_REPLAY_CURSOR_API_PATTERNS[0]),
     true,
   );
@@ -690,14 +691,18 @@ test("daemon boundary guard scopes workspace stream event-routing predicate ban"
 
 test("daemon boundary guard rejects direct workspace stream event routing in HTTP route files", () => {
   const violations = scanText({
-    filePath: "core/crates/ctx-http/src/api/ws/workspace_stream/events/route.rs",
+    filePath: "core/crates/ctx-http/src/api/ws/workspace_stream/events.rs",
     contents: `
       use WorkspaceActiveSnapshotEvent::*;
       fn route_head_delta() {}
       fn route_summary_delta() {}
       fn route_control_event() {}
 
-      fn handler(event: WorkspaceActiveSnapshotEvent) {
+      async fn handler(state: WorkspaceStreamHandle, event: WorkspaceActiveSnapshotEvent) {
+        let _ = state.plan_workspace_stream_event_route(&subscription_state, event);
+        let _ = state.accept_session_delta_cursor(cursor, delta);
+        let _ = state.accept_session_head_cursor(cursor, head);
+        let _ = state.apply_workspace_stream_subscription_event(workspace_id, state, cursors, event).await;
         match event {
           WorkspaceActiveSnapshotEvent::SessionHeadDelta { .. } => {}
           WorkspaceActiveSnapshotEvent::SessionSummaryDelta { .. } => {}
@@ -713,12 +718,19 @@ test("daemon boundary guard rejects direct workspace stream event routing in HTT
         }
       }
     `,
-    patterns: WORKSPACE_STREAM_EVENT_ROUTE_PLAN_API_PATTERNS,
+    patterns: [
+      ...WORKSPACE_STREAM_LIVE_EVENT_APPLICATION_API_PATTERNS,
+      ...WORKSPACE_STREAM_EVENT_ROUTE_PLAN_API_PATTERNS,
+    ],
   });
 
   assert.deepEqual(
     violations.map((violation) => violation.name),
     [
+      "workspace stream API calls live event route planning directly",
+      "workspace stream API calls live event cursor acceptance directly",
+      "workspace stream API calls live event cursor acceptance directly",
+      "workspace stream API calls subscription event application directly",
       "workspace stream API matches event-routing domain event directly",
       "workspace stream API matches event-routing domain event directly",
       "workspace stream API matches event-routing domain event directly",
@@ -737,6 +749,12 @@ test("daemon boundary guard rejects direct workspace stream event routing in HTT
 });
 
 test("daemon boundary guard scopes direct workspace stream event routing ban", () => {
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/ws/workspace_stream/events.rs").includes(
+      WORKSPACE_STREAM_EVENT_ROUTE_PLAN_API_PATTERNS[0],
+    ),
+    true,
+  );
   assert.equal(
     apiPatternsForPath(
       "core/crates/ctx-http/src/api/ws/workspace_stream/events/route.rs",
@@ -757,13 +775,28 @@ test("daemon boundary guard scopes direct workspace stream event routing ban", (
   );
 });
 
-test("daemon boundary guard allows daemon route-plan methods", () => {
+test("daemon boundary guard scopes live event application ban", () => {
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/ws/workspace_stream/events.rs").includes(
+      WORKSPACE_STREAM_LIVE_EVENT_APPLICATION_API_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/ws/workspace_stream/subscription/replay/session.rs",
+    ).includes(WORKSPACE_STREAM_LIVE_EVENT_APPLICATION_API_PATTERNS[0]),
+    false,
+  );
+});
+
+test("daemon boundary guard allows daemon live event application method", () => {
   const violations = scanText({
-    filePath: "core/crates/ctx-http/src/api/ws/workspace_stream/events/route.rs",
+    filePath: "core/crates/ctx-http/src/api/ws/workspace_stream/events.rs",
     contents: `
       fn handler(state: WorkspaceStreamHandle, event: WorkspaceActiveSnapshotEvent) {
         let _ = state.event_snapshot_rev(&event);
-        let _ = state.plan_workspace_stream_event_route(&subscription_state, event);
+        let _ = state.apply_workspace_stream_live_event(workspace_id, subscription_state, cursors, event);
       }
     `,
     patterns: [
@@ -777,7 +810,7 @@ test("daemon boundary guard allows daemon route-plan methods", () => {
 
 test("daemon boundary guard rejects workspace stream subscription event mutation in HTTP", () => {
   const violations = scanText({
-    filePath: "core/crates/ctx-http/src/api/ws/workspace_stream/events/subscriptions.rs",
+    filePath: "core/crates/ctx-http/src/api/ws/workspace_stream/events.rs",
     contents: `
       fn update(runtime: &mut WorkspaceStreamRuntime, event: WorkspaceActiveSnapshotEvent) {
         runtime.subscription_state.active_task_sessions.insert(task_id, session_id);
@@ -817,7 +850,7 @@ test("daemon boundary guard rejects workspace stream subscription event mutation
 test("daemon boundary guard scopes workspace stream subscription event mutation ban", () => {
   assert.equal(
     apiPatternsForPath(
-      "core/crates/ctx-http/src/api/ws/workspace_stream/events/subscriptions.rs",
+      "core/crates/ctx-http/src/api/ws/workspace_stream/events.rs",
     ).includes(WORKSPACE_STREAM_SUBSCRIPTION_EVENT_API_PATTERNS[0]),
     true,
   );

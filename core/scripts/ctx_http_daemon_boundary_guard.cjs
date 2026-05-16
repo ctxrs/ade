@@ -178,7 +178,7 @@ const workspaceStreamSubscriptionPlanApiRoots = [
 
 const workspaceStreamSubscriptionTransactionApiRoots = [
   "core/crates/ctx-http/src/api/ws/workspace_stream/subscription.rs",
-  "core/crates/ctx-http/src/api/ws/workspace_stream/events/subscriptions.rs",
+  "core/crates/ctx-http/src/api/ws/workspace_stream/events.rs",
   "core/crates/ctx-http/src/api/ws/common/pins.rs",
 ];
 
@@ -190,7 +190,6 @@ const workspaceStreamReplayCursorApiRoots = [
   "core/crates/ctx-http/src/api/ws/workspace_stream/subscription.rs",
   "core/crates/ctx-http/src/api/ws/workspace_stream/subscription/replay.rs",
   "core/crates/ctx-http/src/api/ws/workspace_stream/subscription/replay/",
-  "core/crates/ctx-http/src/api/ws/workspace_stream/events/subscriptions.rs",
 ];
 
 const workspaceStreamReplayProgramApiRoots = [
@@ -210,12 +209,18 @@ const workspaceStreamEventRoutingApiRoots = [
 ];
 
 const workspaceStreamEventRoutePlanApiRoots = [
+  "core/crates/ctx-http/src/api/ws/workspace_stream/events.rs",
   "core/crates/ctx-http/src/api/ws/workspace_stream/events/route.rs",
   "core/crates/ctx-http/src/api/ws/workspace_stream/subscription/replay/session.rs",
 ];
 
+const workspaceStreamLiveEventApplicationApiRoots = [
+  "core/crates/ctx-http/src/api/ws/workspace_stream/events.rs",
+  "core/crates/ctx-http/src/api/ws/workspace_stream/events/route.rs",
+];
+
 const workspaceStreamSubscriptionEventApiRoots = [
-  "core/crates/ctx-http/src/api/ws/workspace_stream/events/subscriptions.rs",
+  "core/crates/ctx-http/src/api/ws/workspace_stream/events.rs",
 ];
 
 const smallApiUnitStoreFacadeTestRoots = [
@@ -1022,6 +1027,21 @@ const WORKSPACE_STREAM_EVENT_ROUTING_API_PATTERNS = [
     name: "workspace stream API defines event-routing predicate",
     regex:
       /\bfn\s+(?:should_stream_head_delta|filter_partial_delta_for_active_tasks|is_priority_control_event|is_foreground_session|event_snapshot_rev)\s*\(/,
+  },
+];
+
+const WORKSPACE_STREAM_LIVE_EVENT_APPLICATION_API_PATTERNS = [
+  {
+    name: "workspace stream API calls live event route planning directly",
+    regex: /\.\s*plan_workspace_stream_event_route\s*\(/,
+  },
+  {
+    name: "workspace stream API calls live event cursor acceptance directly",
+    regex: /\.\s*(?:accept_session_delta_cursor|accept_session_head_cursor)\s*\(/,
+  },
+  {
+    name: "workspace stream API calls subscription event application directly",
+    regex: /\.\s*apply_workspace_stream_subscription_event\s*\(/,
   },
 ];
 
@@ -2862,6 +2882,9 @@ function apiPatternsForPath(relativePath) {
   if (workspaceStreamEventRoutePlanApiRoots.some((root) => relativePath === root)) {
     patterns.push(...WORKSPACE_STREAM_EVENT_ROUTE_PLAN_API_PATTERNS);
   }
+  if (workspaceStreamLiveEventApplicationApiRoots.some((root) => relativePath === root)) {
+    patterns.push(...WORKSPACE_STREAM_LIVE_EVENT_APPLICATION_API_PATTERNS);
+  }
   if (workspaceStreamSubscriptionEventApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...WORKSPACE_STREAM_SUBSCRIPTION_EVENT_API_PATTERNS);
   }
@@ -3802,6 +3825,7 @@ module.exports = {
   WORKSPACE_STREAM_REPLAY_PROGRAM_API_PATTERNS,
   WORKSPACE_STREAM_EVENT_ROUTING_API_PATTERNS,
   WORKSPACE_STREAM_EVENT_ROUTE_PLAN_API_PATTERNS,
+  WORKSPACE_STREAM_LIVE_EVENT_APPLICATION_API_PATTERNS,
   WORKSPACE_STREAM_SUBSCRIPTION_EVENT_API_PATTERNS,
   PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,

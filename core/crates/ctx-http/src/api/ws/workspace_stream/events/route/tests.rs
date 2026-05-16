@@ -91,13 +91,13 @@ async fn live_route_tags_head_batches_as_live() {
     let session_id = SessionId::new();
     let mut runtime = test_runtime(foreground_state(session_id), WORKSPACE_STREAM_QUEUE_LIMIT);
 
-    let result = route_workspace_stream_event(
+    let result = push_workspace_stream_event_route_plan(
         &state,
         workspace_id,
-        WorkspaceActiveSnapshotEvent::SessionHeadDelta {
-            workspace_id,
+        WorkspaceStreamEventRoutePlan::HeadDelta {
             snapshot_rev: 11,
-            delta: Box::new(partial_delta(session_id)),
+            delta: partial_delta(session_id),
+            lane: WorkspaceStreamHeadLane::Foreground,
         },
         &mut runtime,
         &labels(),
@@ -122,16 +122,20 @@ async fn live_route_leaves_control_events_without_replay_source() {
     let session_id = SessionId::new();
     let mut runtime = test_runtime(foreground_state(session_id), WORKSPACE_STREAM_QUEUE_LIMIT);
 
-    let result = route_workspace_stream_event(
+    let result = push_workspace_stream_event_route_plan(
         &state,
         workspace_id,
-        WorkspaceActiveSnapshotEvent::SessionGap {
-            workspace_id,
-            snapshot_rev: 12,
-            session_id,
-            after_seq: 8,
-            reason: Some("gap".to_string()),
-            seed_follows: false,
+        WorkspaceStreamEventRoutePlan::Control {
+            event: WorkspaceActiveSnapshotEvent::SessionGap {
+                workspace_id,
+                snapshot_rev: 12,
+                session_id,
+                after_seq: 8,
+                reason: Some("gap".to_string()),
+                seed_follows: false,
+            },
+            session_id: Some(session_id),
+            lane: WorkspaceStreamControlLane::Priority,
         },
         &mut runtime,
         &labels(),
@@ -165,13 +169,17 @@ async fn live_route_queues_reset_when_control_queue_is_full() {
     let workspace_id = WorkspaceId::new();
     let mut runtime = test_runtime(WorkspaceActiveSubscriptionState::default(), 0);
 
-    let result = route_workspace_stream_event(
+    let result = push_workspace_stream_event_route_plan(
         &state,
         workspace_id,
-        WorkspaceActiveSnapshotEvent::Ready {
-            workspace_id,
-            snapshot_rev: 13,
-            archived_rev: 0,
+        WorkspaceStreamEventRoutePlan::Control {
+            event: WorkspaceActiveSnapshotEvent::Ready {
+                workspace_id,
+                snapshot_rev: 13,
+                archived_rev: 0,
+            },
+            session_id: None,
+            lane: WorkspaceStreamControlLane::Normal,
         },
         &mut runtime,
         &labels(),

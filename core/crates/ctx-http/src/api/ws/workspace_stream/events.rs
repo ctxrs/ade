@@ -4,15 +4,13 @@ use serde_json::json;
 
 mod receiver;
 mod route;
-mod subscriptions;
 
 pub(crate) use receiver::{
     drain_pending_workspace_stream_receiver_burst_deferring,
     flush_deferred_workspace_stream_receiver_events, handle_workspace_stream_receiver_burst,
     take_workspace_stream_receiver_burst,
 };
-use route::route_workspace_stream_event;
-use subscriptions::update_workspace_stream_subscriptions_for_event;
+use route::push_workspace_stream_event_route_plan;
 
 pub(crate) async fn handle_workspace_stream_lagged(
     state: &WorkspaceStreamHandle,
@@ -59,34 +57,35 @@ pub(crate) async fn handle_workspace_stream_event(
         return Ok(());
     }
 
-    if !update_workspace_stream_subscriptions_for_event(state, workspace_id, runtime, &event).await
-    {
-        return Ok(());
-    }
+    let current_subscriptions = runtime
+        .subscriptions
+        .iter()
+        .map(|(session_id, cursor)| (*session_id, cursor.last_sent))
+        .collect::<HashMap<_, _>>();
+    let application = state
+        .apply_workspace_stream_live_event(
+            workspace_id,
+            runtime.subscription_state.clone(),
+            current_subscriptions,
+            event,
+        )
+        .await;
+    runtime.subscription_state = application.state;
+    runtime.subscriptions = application
+        .subscriptions
+        .into_iter()
+        .map(|(session_id, last_sent)| (session_id, SessionCursor { last_sent }))
+        .collect();
+    state
+        .apply_workspace_stream_session_pin_changes(&application.pin_changes)
+        .await;
 
-    match &event {
-        WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } => {
-            let Some(cursor) = runtime.subscriptions.get_mut(&delta.session_id) else {
-                return Ok(());
-            };
-            let accepted = state.accept_session_delta_cursor(cursor.last_sent, delta);
-            if !accepted.accepted {
-                return Ok(());
-            }
-            cursor.last_sent = accepted.next_cursor;
-        }
-        WorkspaceActiveSnapshotEvent::SessionHeadSeed { head, .. } => {
-            let Some(cursor) = runtime.subscriptions.get_mut(&head.session.id) else {
-                return Ok(());
-            };
-            let accepted = state.accept_session_head_cursor(cursor.last_sent, head);
-            if !accepted.accepted {
-                return Ok(());
-            }
-            cursor.last_sent = accepted.next_cursor;
-        }
-        _ => {}
-    }
-
-    route_workspace_stream_event(state, workspace_id, event, runtime, labels).await
+    push_workspace_stream_event_route_plan(
+        state,
+        workspace_id,
+        application.route_plan,
+        runtime,
+        labels,
+    )
+    .await
 }

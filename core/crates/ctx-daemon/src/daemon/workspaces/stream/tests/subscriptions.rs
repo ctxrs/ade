@@ -154,6 +154,27 @@ fn durable_delta(
     }
 }
 
+fn summary_delta_event(
+    workspace_id: WorkspaceId,
+    session_id: SessionId,
+) -> WorkspaceActiveSnapshotEvent {
+    WorkspaceActiveSnapshotEvent::SessionSummaryDelta {
+        workspace_id,
+        snapshot_rev: 3,
+        delta: Box::new(SessionSummaryDelta {
+            session_id,
+            task_id: TaskId::new(),
+            activity: None,
+            last_message_at: None,
+            last_message_preview: Some("summary".to_string()),
+            last_event_seq: Some(5),
+            projection_rev: Some(7),
+            state_rev: Some(7),
+            emitted_at_ms: None,
+        }),
+    }
+}
+
 fn active_task_summary(
     workspace_id: WorkspaceId,
     task_id: TaskId,
@@ -1125,6 +1146,274 @@ async fn subscription_event_active_task_changes_noop_without_active_scope() {
     assert!(applied.state.active_task_sessions.is_empty());
     assert!(applied.subscriptions.is_empty());
     assert!(applied.pin_changes.attach.is_empty());
+}
+
+#[tokio::test]
+async fn live_event_accepts_head_delta_and_advances_cursor() {
+    let root = tempfile::tempdir().unwrap();
+    let state = test_state(root.path()).await;
+    let workspace_id = WorkspaceId::new();
+    let session_id = SessionId::new();
+    let mut subscription_state = WorkspaceActiveSubscriptionState::default();
+    subscription_state.explicit_sessions.insert(session_id);
+
+    let applied = apply_workspace_stream_live_event(
+        &state,
+        workspace_id,
+        subscription_state,
+        HashMap::from([(session_id, cursor(4, 6))]),
+        WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+            workspace_id,
+            snapshot_rev: 9,
+            delta: Box::new(durable_delta(session_id, 5, 7)),
+        },
+    )
+    .await;
+
+    assert_eq!(
+        applied.subscriptions.get(&session_id).copied(),
+        Some(cursor(5, 7))
+    );
+    let WorkspaceStreamEventRoutePlan::HeadDelta {
+        snapshot_rev,
+        delta,
+        lane,
+    } = applied.route_plan
+    else {
+        panic!("expected accepted head delta route");
+    };
+    assert_eq!(snapshot_rev, 9);
+    assert_eq!(delta.session_id, session_id);
+    assert_eq!(lane, WorkspaceStreamHeadLane::Background);
+}
+
+#[tokio::test]
+async fn live_event_routes_transient_head_delta_without_advancing_cursor() {
+    let root = tempfile::tempdir().unwrap();
+    let state = test_state(root.path()).await;
+    let workspace_id = WorkspaceId::new();
+    let session_id = SessionId::new();
+    let mut subscription_state = WorkspaceActiveSubscriptionState::default();
+    subscription_state.foreground_session_ids = Some(HashSet::from([session_id]));
+    let current = cursor(4, 6);
+
+    let applied = apply_workspace_stream_live_event(
+        &state,
+        workspace_id,
+        subscription_state,
+        HashMap::from([(session_id, current)]),
+        WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+            workspace_id,
+            snapshot_rev: 10,
+            delta: Box::new(partial_delta(session_id)),
+        },
+    )
+    .await;
+
+    assert_eq!(
+        applied.subscriptions.get(&session_id).copied(),
+        Some(current)
+    );
+    let WorkspaceStreamEventRoutePlan::HeadDelta { lane, delta, .. } = applied.route_plan else {
+        panic!("expected transient head delta route");
+    };
+    assert_eq!(lane, WorkspaceStreamHeadLane::Foreground);
+    assert!(delta.event.is_some());
+}
+
+#[tokio::test]
+async fn live_event_drops_head_delta_without_cursor_even_when_state_allows_route() {
+    let root = tempfile::tempdir().unwrap();
+    let state = test_state(root.path()).await;
+    let workspace_id = WorkspaceId::new();
+    let session_id = SessionId::new();
+    let mut subscription_state = WorkspaceActiveSubscriptionState::default();
+    subscription_state.explicit_sessions.insert(session_id);
+
+    let applied = apply_workspace_stream_live_event(
+        &state,
+        workspace_id,
+        subscription_state,
+        HashMap::new(),
+        WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+            workspace_id,
+            snapshot_rev: 11,
+            delta: Box::new(durable_delta(session_id, 6, 8)),
+        },
+    )
+    .await;
+
+    assert!(applied.subscriptions.is_empty());
+    assert!(matches!(
+        applied.route_plan,
+        WorkspaceStreamEventRoutePlan::Drop
+    ));
+}
+
+#[tokio::test]
+async fn live_event_drops_stale_head_delta_and_head_seed_without_advancing_cursor() {
+    let root = tempfile::tempdir().unwrap();
+    let state = test_state(root.path()).await;
+    let workspace_id = WorkspaceId::new();
+    let session_id = SessionId::new();
+    let mut subscription_state = WorkspaceActiveSubscriptionState::default();
+    subscription_state.foreground_session_ids = Some(HashSet::from([session_id]));
+    let current = cursor(5, 7);
+
+    let stale_delta = apply_workspace_stream_live_event(
+        &state,
+        workspace_id,
+        subscription_state.clone(),
+        HashMap::from([(session_id, current)]),
+        WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+            workspace_id,
+            snapshot_rev: 12,
+            delta: Box::new(durable_delta(session_id, 5, 7)),
+        },
+    )
+    .await;
+    assert_eq!(
+        stale_delta.subscriptions.get(&session_id).copied(),
+        Some(current)
+    );
+    assert!(matches!(
+        stale_delta.route_plan,
+        WorkspaceStreamEventRoutePlan::Drop
+    ));
+
+    let stale_seed = apply_workspace_stream_live_event(
+        &state,
+        workspace_id,
+        subscription_state,
+        HashMap::from([(session_id, current)]),
+        WorkspaceActiveSnapshotEvent::SessionHeadSeed {
+            workspace_id,
+            snapshot_rev: 13,
+            head: Box::new(test_head(workspace_id, session_id, 5, 7)),
+        },
+    )
+    .await;
+    assert_eq!(
+        stale_seed.subscriptions.get(&session_id).copied(),
+        Some(current)
+    );
+    assert!(matches!(
+        stale_seed.route_plan,
+        WorkspaceStreamEventRoutePlan::Drop
+    ));
+}
+
+#[tokio::test]
+async fn live_event_active_task_upsert_seeds_subscription_and_pin_delta() {
+    let root = tempfile::tempdir().unwrap();
+    let state = test_state(root.path()).await;
+    let workspace_id = WorkspaceId::new();
+    let task_id = TaskId::new();
+    let session_id = SessionId::new();
+    let mut subscription_state = WorkspaceActiveSubscriptionState::default();
+    subscription_state.active_scope = true;
+
+    let applied = apply_workspace_stream_live_event(
+        &state,
+        workspace_id,
+        subscription_state,
+        HashMap::new(),
+        WorkspaceActiveSnapshotEvent::ActiveTaskUpsert {
+            workspace_id,
+            snapshot_rev: 14,
+            task: Box::new(active_task_summary(workspace_id, task_id, session_id)),
+        },
+    )
+    .await;
+
+    assert_eq!(
+        applied.state.active_task_sessions.get(&task_id).copied(),
+        Some(session_id)
+    );
+    assert!(applied.subscriptions.contains_key(&session_id));
+    assert_eq!(applied.pin_changes.attach, vec![session_id]);
+    assert!(matches!(
+        applied.route_plan,
+        WorkspaceStreamEventRoutePlan::Control { .. }
+    ));
+}
+
+#[tokio::test]
+async fn live_event_session_removed_detaches_and_later_head_event_drops() {
+    let root = tempfile::tempdir().unwrap();
+    let state = test_state(root.path()).await;
+    let workspace_id = WorkspaceId::new();
+    let session_id = SessionId::new();
+    let mut subscription_state = WorkspaceActiveSubscriptionState::default();
+    subscription_state.explicit_sessions.insert(session_id);
+
+    let removed = apply_workspace_stream_live_event(
+        &state,
+        workspace_id,
+        subscription_state,
+        HashMap::from([(session_id, cursor(5, 7))]),
+        WorkspaceActiveSnapshotEvent::SessionRemoved {
+            workspace_id,
+            snapshot_rev: 15,
+            session_id,
+        },
+    )
+    .await;
+
+    assert!(removed.state.explicit_sessions.is_empty());
+    assert!(removed.subscriptions.is_empty());
+    assert_eq!(removed.pin_changes.detach, vec![session_id]);
+    assert!(matches!(
+        removed.route_plan,
+        WorkspaceStreamEventRoutePlan::Control {
+            session_id: Some(routed),
+            ..
+        } if routed == session_id
+    ));
+
+    let head_after_removal = apply_workspace_stream_live_event(
+        &state,
+        workspace_id,
+        removed.state,
+        removed.subscriptions,
+        WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+            workspace_id,
+            snapshot_rev: 16,
+            delta: Box::new(durable_delta(session_id, 6, 8)),
+        },
+    )
+    .await;
+    assert!(matches!(
+        head_after_removal.route_plan,
+        WorkspaceStreamEventRoutePlan::Drop
+    ));
+}
+
+#[tokio::test]
+async fn live_event_summary_delta_routes_without_cursor_mutation() {
+    let root = tempfile::tempdir().unwrap();
+    let state = test_state(root.path()).await;
+    let workspace_id = WorkspaceId::new();
+    let session_id = SessionId::new();
+    let current = cursor(5, 7);
+
+    let applied = apply_workspace_stream_live_event(
+        &state,
+        workspace_id,
+        WorkspaceActiveSubscriptionState::default(),
+        HashMap::from([(session_id, current)]),
+        summary_delta_event(workspace_id, session_id),
+    )
+    .await;
+
+    assert_eq!(
+        applied.subscriptions.get(&session_id).copied(),
+        Some(current)
+    );
+    assert!(matches!(
+        applied.route_plan,
+        WorkspaceStreamEventRoutePlan::Summary { .. }
+    ));
 }
 
 #[tokio::test]

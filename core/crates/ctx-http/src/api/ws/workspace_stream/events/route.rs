@@ -7,14 +7,14 @@ use ctx_daemon::daemon::workspaces::stream::{
 #[cfg(test)]
 mod tests;
 
-pub(super) async fn route_workspace_stream_event(
+pub(super) async fn push_workspace_stream_event_route_plan(
     state: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
-    event: WorkspaceActiveSnapshotEvent,
+    route_plan: WorkspaceStreamEventRoutePlan,
     runtime: &mut WorkspaceStreamRuntime,
     labels: &WorkspaceStreamLabels,
 ) -> Result<(), ()> {
-    match state.plan_workspace_stream_event_route(&runtime.subscription_state, event) {
+    match route_plan {
         WorkspaceStreamEventRoutePlan::Drop => Ok(()),
         WorkspaceStreamEventRoutePlan::HeadDelta {
             snapshot_rev,
