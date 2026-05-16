@@ -164,6 +164,12 @@ const taskSessionCreationApiRoots = [
   "core/crates/ctx-http/src/api/tasks/creation_session/",
 ];
 
+const workspaceStreamReadModelApiRoots = [
+  "core/crates/ctx-http/src/api/ws/replay.rs",
+  "core/crates/ctx-http/src/api/ws/workspace_stream/lifecycle.rs",
+  "core/crates/ctx-http/src/api/ws/workspace_stream/subscription.rs",
+];
+
 const smallApiUnitStoreFacadeTestRoots = [
   "core/crates/ctx-http/src/api/settings.rs",
   "core/crates/ctx-http/src/api/providers/login/codex/tests.rs",
@@ -843,6 +849,13 @@ const TASK_SESSION_CREATION_API_ADMISSION_PATTERNS = [
   {
     name: "task session API bypasses locked create-session entrypoint",
     regex: /\bcreate_session_for_loaded_task\s*\(/,
+  },
+];
+
+const WORKSPACE_STREAM_READ_MODEL_API_PATTERNS = [
+  {
+    name: "workspace stream API owns read-model preparation",
+    regex: /\b(?:ensure_workspace_active_snapshot_hydrated|activate_workspace_merge_queue|workspace_active_snapshot|workspace_active_heads|load_workspace_active_snapshot_state)\s*\(/,
   },
 ];
 
@@ -2632,6 +2645,9 @@ function apiPatternsForPath(relativePath) {
   if (taskSessionCreationApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...TASK_SESSION_CREATION_API_ADMISSION_PATTERNS);
   }
+  if (workspaceStreamReadModelApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...WORKSPACE_STREAM_READ_MODEL_API_PATTERNS);
+  }
   return patterns;
 }
 
@@ -3562,6 +3578,7 @@ module.exports = {
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
   SESSION_VCS_API_ORCHESTRATION_PATTERNS,
   TASK_SESSION_CREATION_API_ADMISSION_PATTERNS,
+  WORKSPACE_STREAM_READ_MODEL_API_PATTERNS,
   PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,

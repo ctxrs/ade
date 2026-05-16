@@ -28,6 +28,7 @@ const {
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
   SESSION_VCS_API_ORCHESTRATION_PATTERNS,
   TASK_SESSION_CREATION_API_ADMISSION_PATTERNS,
+  WORKSPACE_STREAM_READ_MODEL_API_PATTERNS,
   PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,
@@ -218,6 +219,54 @@ test("daemon boundary guard scopes raw Store ban to migrated API families", () =
       API_DOMAIN_RAW_STORE_PATTERNS[0],
     ),
     true,
+  );
+});
+
+test("daemon boundary guard rejects workspace stream read-model orchestration in HTTP", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/ws/workspace_stream/subscription.rs",
+    contents: `
+      async fn handler(state: WorkspaceStreamHandle, workspace_id: WorkspaceId) {
+        state.ensure_workspace_active_snapshot_hydrated(workspace_id).await?;
+        state.activate_workspace_merge_queue(workspace_id).await;
+        let _ = state.workspace_active_snapshot(workspace_id).await;
+        let _ = state.workspace_active_heads(workspace_id).await;
+        let _ = state.load_workspace_active_snapshot_state(workspace_id).await;
+      }
+    `,
+    patterns: WORKSPACE_STREAM_READ_MODEL_API_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "workspace stream API owns read-model preparation",
+      "workspace stream API owns read-model preparation",
+      "workspace stream API owns read-model preparation",
+      "workspace stream API owns read-model preparation",
+      "workspace stream API owns read-model preparation",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes workspace stream read-model ban to stream transport files", () => {
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/ws/replay.rs").includes(
+      WORKSPACE_STREAM_READ_MODEL_API_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/ws/workspace_stream/subscription.rs",
+    ).includes(WORKSPACE_STREAM_READ_MODEL_API_PATTERNS[0]),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/active.rs").includes(
+      WORKSPACE_STREAM_READ_MODEL_API_PATTERNS[0],
+    ),
+    false,
   );
 });
 

@@ -876,6 +876,20 @@ impl WorkspaceStreamHandle {
         load_workspace_active_snapshot_state(&self.state, workspace_id).await
     }
 
+    pub async fn initial_stream_state(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> stream::WorkspaceStreamInitialState {
+        stream::initial_stream_state(&self.state, workspace_id).await
+    }
+
+    pub async fn load_initial_snapshot_read_model(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<stream::WorkspaceStreamSnapshotReadModel, WorkspaceHydrationError> {
+        stream::load_initial_snapshot_read_model(&self.state, workspace_id).await
+    }
+
     pub async fn workspace_active_snapshot(
         &self,
         workspace_id: WorkspaceId,
@@ -915,7 +929,13 @@ impl WorkspaceStreamHandle {
         workspace_id: WorkspaceId,
         message: WorkspaceActiveSnapshotClientMessage,
         existing: &HashMap<SessionId, SessionReplayCursor>,
-    ) -> Result<ResolvedWorkspaceActiveSubscriptions, ()> {
+    ) -> Result<
+        ResolvedWorkspaceActiveSubscriptions,
+        stream::WorkspaceStreamSubscriptionResolutionError,
+    > {
+        stream::prepare_subscription_read_model(&self.state, workspace_id)
+            .await
+            .map_err(stream::WorkspaceStreamSubscriptionResolutionError::Hydration)?;
         stream::resolve_workspace_active_snapshot_subscriptions(
             &self.state,
             workspace_id,
@@ -923,6 +943,7 @@ impl WorkspaceStreamHandle {
             existing,
         )
         .await
+        .map_err(|_| stream::WorkspaceStreamSubscriptionResolutionError::Resolution)
     }
 
     pub async fn replay_session_events<F, Fut>(

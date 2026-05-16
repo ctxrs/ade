@@ -24,13 +24,11 @@ pub(crate) async fn initialize_workspace_stream(
     let background_head_buffer = Arc::new(HeadBatchBuffer::new());
     let summary_buffer = Arc::new(SummaryBatchBuffer::new(HEAD_BATCH_TOTAL_LIMIT));
     let send_control = Arc::new(StreamSendControl::new());
-    let (snapshot_rev, archived_rev) = state
-        .load_workspace_active_snapshot_state(workspace_id)
-        .await;
+    let stream_state = state.initial_stream_state(workspace_id).await;
     let ready = WorkspaceActiveSnapshotEvent::Ready {
         workspace_id,
-        snapshot_rev,
-        archived_rev,
+        snapshot_rev: stream_state.snapshot_rev,
+        archived_rev: stream_state.archived_rev,
     };
     if push_stream_message(
         &control,
@@ -61,7 +59,7 @@ pub(crate) async fn initialize_workspace_stream(
             last_subscription_fingerprint: None,
             subscription_state: WorkspaceActiveSubscriptionState::default(),
             reset_queued: false,
-            latest_snapshot_rev: Arc::new(AtomicI64::new(snapshot_rev)),
+            latest_snapshot_rev: Arc::new(AtomicI64::new(stream_state.snapshot_rev)),
         },
         rx,
     ))

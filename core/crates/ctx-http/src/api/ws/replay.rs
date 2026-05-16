@@ -1,4 +1,5 @@
 use super::*;
+use ctx_daemon::daemon::workspaces::stream::WorkspaceStreamSnapshotReadModel;
 
 pub(super) fn with_stream_rev(
     message: WorkspaceActiveSnapshotStreamMessage,
@@ -45,9 +46,7 @@ pub(super) async fn queue_reset_required(
     state: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
 ) -> Result<(), ()> {
-    let (snapshot_rev, _) = state
-        .load_workspace_active_snapshot_state(workspace_id)
-        .await;
+    let stream_state = state.initial_stream_state(workspace_id).await;
     if crate::fault_injection::maybe_fail("ctx_http.send_workspace_active_reset").is_err() {
         return Err(());
     }
@@ -57,7 +56,7 @@ pub(super) async fn queue_reset_required(
         None,
         "reset_required",
         WorkspaceActiveSnapshotStreamMessage::ResetRequired {
-            latest_rev: snapshot_rev,
+            latest_rev: stream_state.snapshot_rev,
         },
     )
     .await
@@ -67,10 +66,10 @@ pub(super) async fn queue_snapshot_payload(
     pending: &StreamQueue<WorkspaceActiveSnapshotStreamMessage>,
     state: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
-) -> Result<(), ()> {
+) -> Result<WorkspaceStreamSnapshotReadModel, ()> {
     let build_start = Instant::now();
-    state
-        .ensure_workspace_active_snapshot_hydrated(workspace_id)
+    let read_model = state
+        .load_initial_snapshot_read_model(workspace_id)
         .await
         .map_err(|err| {
             tracing::error!(
@@ -79,12 +78,9 @@ pub(super) async fn queue_snapshot_payload(
                 "workspace snapshot hydration failed before snapshot payload: {err:?}"
             );
         })?;
-    state.activate_workspace_merge_queue(workspace_id).await;
-    let active_snapshot = state.workspace_active_snapshot(workspace_id).await;
-    let active_heads = state.workspace_active_heads(workspace_id).await;
-    let snapshot_rev = active_snapshot.snapshot_rev;
-    let task_count = active_snapshot.active.tasks.len();
-    let head_count = active_heads.heads.len();
+    let snapshot_rev = read_model.active_snapshot.snapshot_rev;
+    let task_count = read_model.active_snapshot.active.tasks.len();
+    let head_count = read_model.active_heads.heads.len();
     let build_ms = build_start.elapsed().as_millis();
     if crate::fault_injection::maybe_fail("ctx_http.send_workspace_active_snapshot").is_err() {
         return Err(());
@@ -96,8 +92,8 @@ pub(super) async fn queue_snapshot_payload(
         "snapshot",
         WorkspaceActiveSnapshotStreamMessage::Snapshot {
             rev: 0,
-            active_snapshot,
-            active_heads: Some(active_heads),
+            active_snapshot: read_model.active_snapshot.clone(),
+            active_heads: Some(read_model.active_heads.clone()),
         },
     )
     .await?;
@@ -110,5 +106,5 @@ pub(super) async fn queue_snapshot_payload(
         snapshot_build_ms = build_ms,
         "workspace snapshot queued",
     );
-    Ok(())
+    Ok(read_model)
 }

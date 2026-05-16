@@ -1,5 +1,8 @@
 use super::lifecycle::{clear_runtime_queues, queue_workspace_stream_reset};
 use super::*;
+use ctx_daemon::daemon::workspaces::stream::{
+    WorkspaceStreamSnapshotReadModel, WorkspaceStreamSubscriptionResolutionError,
+};
 use ctx_workspace_active_snapshot::ResolvedWorkspaceActiveSessionSubscription;
 
 mod replay;
@@ -61,6 +64,17 @@ fn merge_replayed_and_live_subscriptions(
         .collect()
 }
 
+fn active_head_cursors_from_snapshot_read_model(
+    read_model: &WorkspaceStreamSnapshotReadModel,
+) -> HashMap<SessionId, SessionReplayCursor> {
+    read_model
+        .active_heads
+        .heads
+        .iter()
+        .map(|head| (head.session.id, SessionReplayCursor::from_head(head)))
+        .collect()
+}
+
 pub(crate) async fn handle_workspace_stream_subscription(
     state: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
@@ -76,17 +90,6 @@ pub(crate) async fn handle_workspace_stream_subscription(
             ..
         }
     );
-    state
-        .ensure_workspace_active_snapshot_hydrated(workspace_id)
-        .await
-        .map_err(|error| {
-            tracing::error!(
-                target: "ctx_http.ws_active_snapshot",
-                workspace_id = %workspace_id.0,
-                "workspace stream hydration failed: {error:?}"
-            );
-        })?;
-    state.activate_workspace_merge_queue(workspace_id).await;
     let existing_replay_cursors = runtime
         .subscriptions
         .iter()
@@ -101,7 +104,15 @@ pub(crate) async fn handle_workspace_stream_subscription(
         .await
     {
         Ok(next) => next,
-        Err(_) => {
+        Err(WorkspaceStreamSubscriptionResolutionError::Hydration(error)) => {
+            tracing::error!(
+                target: "ctx_http.ws_active_snapshot",
+                workspace_id = %workspace_id.0,
+                "workspace stream hydration failed: {error:?}"
+            );
+            return Err(());
+        }
+        Err(WorkspaceStreamSubscriptionResolutionError::Resolution) => {
             tracing::error!(
                 target: "ctx_http.ws_active_snapshot",
                 workspace_id = %workspace_id.0,
@@ -159,19 +170,14 @@ pub(crate) async fn handle_workspace_stream_subscription(
     .await;
     let active_head_cursors = if include_initial_snapshot {
         runtime.send_control.set_hydrating();
-        if queue_snapshot_payload(&runtime.control, state, workspace_id)
-            .await
-            .is_err()
+        let read_model = if let Ok(read_model) =
+            queue_snapshot_payload(&runtime.control, state, workspace_id).await
         {
+            read_model
+        } else {
             return Err(());
-        }
-        state
-            .workspace_active_heads(workspace_id)
-            .await
-            .heads
-            .into_iter()
-            .map(|head| (head.session.id, SessionReplayCursor::from_head(&head)))
-            .collect::<HashMap<_, _>>()
+        };
+        active_head_cursors_from_snapshot_read_model(&read_model)
     } else {
         HashMap::new()
     };
