@@ -19,7 +19,7 @@ use ctx_workspace_config as workspace_config;
 use ctx_workspace_container::WorkspaceContainerStatus;
 
 use super::handle::WorkspacesHandle;
-use crate::daemon::{settings, WorkspaceStoreAccessError, WorkspaceStreamHandle};
+use crate::daemon::{settings, DaemonState, WorkspaceStoreAccessError, WorkspaceStreamHandle};
 use ctx_workspace_active_snapshot::{SessionReplayCursor, WorkspaceActiveSubscriptionState};
 
 mod active_snapshot_state;
@@ -82,6 +82,28 @@ pub enum RunArchiveIngestError {
     Internal(anyhow::Error),
 }
 
+#[derive(Debug)]
+pub enum WorkspaceStreamAccessError {
+    NotFound,
+    Internal(anyhow::Error),
+}
+
+async fn require_existing_workspace_for_stream(
+    state: &DaemonState,
+    workspace_id: WorkspaceId,
+) -> Result<(), WorkspaceStreamAccessError> {
+    let exists = state
+        .global_store()
+        .get_workspace(workspace_id)
+        .await
+        .map_err(WorkspaceStreamAccessError::Internal)?
+        .is_some();
+    if !exists {
+        return Err(WorkspaceStreamAccessError::NotFound);
+    }
+    Ok(())
+}
+
 impl WorkspacesHandle {
     pub async fn list_workspaces(&self) -> anyhow::Result<Vec<Workspace>> {
         self.state.global_store().list_workspaces().await
@@ -100,6 +122,13 @@ impl WorkspacesHandle {
             .get_workspace(workspace_id)
             .await
             .map(|workspace| workspace.is_some())
+    }
+
+    pub async fn require_workspace_vcs_stream_access(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<(), WorkspaceStreamAccessError> {
+        require_existing_workspace_for_stream(&self.state, workspace_id).await
     }
 
     pub async fn create_workspace(
@@ -901,6 +930,13 @@ impl WorkspaceStreamHandle {
             .map(|workspace| workspace.is_some())
     }
 
+    pub async fn require_workspace_active_stream_access(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<(), WorkspaceStreamAccessError> {
+        require_existing_workspace_for_stream(&self.state, workspace_id).await
+    }
+
     pub async fn subscribe_workspace_active_snapshot(
         &self,
         workspace_id: WorkspaceId,
@@ -1309,5 +1345,78 @@ impl WorkspaceStreamHandle {
                 None,
             )
             .await;
+    }
+}
+
+#[cfg(test)]
+mod workspace_stream_access_tests {
+    use super::*;
+    use crate::test_support::TestDaemon;
+    use ctx_core::models::VcsKind;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn workspace_stream_access_rejects_missing_workspace() {
+        let temp = tempdir().expect("tempdir");
+        let daemon = TestDaemon::new_for_test(
+            temp.path().to_path_buf(),
+            "http://127.0.0.1:4567".to_string(),
+        )
+        .await
+        .expect("test daemon");
+        let workspace_id = WorkspaceId(uuid::Uuid::new_v4());
+
+        let active_error = daemon
+            .handle()
+            .workspace_stream()
+            .require_workspace_active_stream_access(workspace_id)
+            .await
+            .expect_err("missing workspace should reject active stream access");
+        assert!(matches!(active_error, WorkspaceStreamAccessError::NotFound));
+
+        let vcs_error = daemon
+            .handle()
+            .workspaces()
+            .require_workspace_vcs_stream_access(workspace_id)
+            .await
+            .expect_err("missing workspace should reject VCS stream access");
+        assert!(matches!(vcs_error, WorkspaceStreamAccessError::NotFound));
+    }
+
+    #[tokio::test]
+    async fn workspace_stream_access_allows_existing_workspace() {
+        let temp = tempdir().expect("tempdir");
+        let daemon = TestDaemon::new_for_test(
+            temp.path().to_path_buf(),
+            "http://127.0.0.1:4567".to_string(),
+        )
+        .await
+        .expect("test daemon");
+        let workspace = daemon
+            .global_store()
+            .create_workspace(
+                "workspace".to_string(),
+                daemon
+                    .data_root()
+                    .join("workspace")
+                    .to_string_lossy()
+                    .to_string(),
+                VcsKind::Git,
+            )
+            .await
+            .expect("create workspace");
+
+        daemon
+            .handle()
+            .workspace_stream()
+            .require_workspace_active_stream_access(workspace.id)
+            .await
+            .expect("existing workspace should allow active stream access");
+        daemon
+            .handle()
+            .workspaces()
+            .require_workspace_vcs_stream_access(workspace.id)
+            .await
+            .expect("existing workspace should allow VCS stream access");
     }
 }

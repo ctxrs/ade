@@ -1,11 +1,8 @@
 use axum::extract::ws::{Message as WsMessage, WebSocket};
-use ctx_settings_model::DictationProvider;
-use ctx_transport_runtime::dictation_livekit::{
-    normalize_livekit_dictation_config, LiveKitDictationConfig, LiveKitDictationConfigInput,
-};
+use ctx_transport_runtime::dictation_livekit::LiveKitDictationConfig;
 use serde::Serialize;
 
-use ctx_daemon::daemon::CoreHandle;
+use ctx_daemon::daemon::{CoreHandle, DictationConfigError};
 
 #[derive(Debug)]
 pub(super) struct DictationStreamError {
@@ -43,44 +40,87 @@ pub(super) async fn send_dictation_error(socket: &mut WebSocket, error: Dictatio
 pub(super) async fn load_livekit_dictation_config(
     state: &CoreHandle,
 ) -> Result<LiveKitDictationConfig, DictationStreamError> {
-    let settings = state.load_settings().await.map_err(|err| {
-        DictationStreamError::new(
-            format!("Failed to load dictation settings: {err}"),
+    state
+        .resolve_livekit_dictation_config()
+        .await
+        .map_err(dictation_stream_error_for_config_error)
+}
+
+fn dictation_stream_error_for_config_error(error: DictationConfigError) -> DictationStreamError {
+    match error {
+        DictationConfigError::Unavailable { message } => DictationStreamError::new(
+            format!("Failed to load dictation settings: {message}"),
             "{\"type\":\"error\",\"message\":\"dictation unavailable\"}",
-        )
-    })?;
-    let Some(dictation) = settings.dictation else {
-        return Err(DictationStreamError::new(
+        ),
+        DictationConfigError::NotConfigured => DictationStreamError::new(
             "Dictation settings not configured.",
             "{\"type\":\"error\",\"message\":\"dictation unavailable\"}",
-        ));
-    };
-
-    if !dictation.enabled || !matches!(dictation.provider, DictationProvider::LiveKitInference) {
-        return Err(DictationStreamError::new(
+        ),
+        DictationConfigError::Disabled => DictationStreamError::new(
             "Dictation is disabled.",
             "{\"type\":\"error\",\"message\":\"dictation disabled\"}",
-        ));
-    }
-
-    let Some(cfg) = dictation.livekit else {
-        return Err(DictationStreamError::new(
+        ),
+        DictationConfigError::MissingLiveKitConfig => DictationStreamError::new(
             "LiveKit dictation settings not configured.",
             "{\"type\":\"error\",\"message\":\"missing livekit config\"}",
-        ));
-    };
-
-    normalize_livekit_dictation_config(LiveKitDictationConfigInput {
-        api_key: cfg.api_key,
-        api_secret: cfg.api_secret,
-        base_url: cfg.base_url,
-        model: cfg.model,
-        language: cfg.language,
-    })
-    .map_err(|err| {
-        DictationStreamError::new(
-            err.to_string(),
+        ),
+        DictationConfigError::InvalidLiveKitConfig { message } => DictationStreamError::new(
+            message,
             "{\"type\":\"error\",\"message\":\"missing credentials\"}",
-        )
-    })
+        ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mapped_error(error: DictationConfigError) -> DictationStreamError {
+        dictation_stream_error_for_config_error(error)
+    }
+
+    #[test]
+    fn dictation_config_error_mapping_preserves_current_messages() {
+        let error = mapped_error(DictationConfigError::Unavailable {
+            message: "database offline".to_string(),
+        });
+        assert_eq!(
+            error.message,
+            "Failed to load dictation settings: database offline"
+        );
+        assert_eq!(
+            error.fallback_json,
+            "{\"type\":\"error\",\"message\":\"dictation unavailable\"}"
+        );
+
+        let error = mapped_error(DictationConfigError::NotConfigured);
+        assert_eq!(error.message, "Dictation settings not configured.");
+        assert_eq!(
+            error.fallback_json,
+            "{\"type\":\"error\",\"message\":\"dictation unavailable\"}"
+        );
+
+        let error = mapped_error(DictationConfigError::Disabled);
+        assert_eq!(error.message, "Dictation is disabled.");
+        assert_eq!(
+            error.fallback_json,
+            "{\"type\":\"error\",\"message\":\"dictation disabled\"}"
+        );
+
+        let error = mapped_error(DictationConfigError::MissingLiveKitConfig);
+        assert_eq!(error.message, "LiveKit dictation settings not configured.");
+        assert_eq!(
+            error.fallback_json,
+            "{\"type\":\"error\",\"message\":\"missing livekit config\"}"
+        );
+
+        let error = mapped_error(DictationConfigError::InvalidLiveKitConfig {
+            message: "missing credentials".to_string(),
+        });
+        assert_eq!(error.message, "missing credentials");
+        assert_eq!(
+            error.fallback_json,
+            "{\"type\":\"error\",\"message\":\"missing credentials\"}"
+        );
+    }
 }

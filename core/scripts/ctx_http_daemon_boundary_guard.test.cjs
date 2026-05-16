@@ -40,6 +40,8 @@ const {
   WORKSPACE_VCS_DEMAND_API_PATTERNS,
   WORKSPACE_VCS_LIVE_ROUTING_API_PATTERNS,
   TERMINAL_STREAM_RUNTIME_API_PATTERNS,
+  DICTATION_WS_CONFIG_API_PATTERNS,
+  WORKSPACE_WS_ADMISSION_API_PATTERNS,
   PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,
@@ -1034,6 +1036,115 @@ test("daemon boundary guard scopes terminal stream runtime ban to terminal webso
   assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/ws/workspace_stream.rs").includes(
       TERMINAL_STREAM_RUNTIME_API_PATTERNS[0],
+    ),
+    false,
+  );
+});
+
+test("daemon boundary guard rejects dictation websocket config policy in HTTP", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/ws/dictation_livekit/settings.rs",
+    contents: `
+      use ctx_settings_model::DictationProvider;
+      use ctx_transport_runtime::dictation_livekit::{
+        normalize_livekit_dictation_config, LiveKitDictationConfigInput,
+      };
+
+      async fn handler(state: CoreHandle) {
+        let settings = state.load_settings().await?;
+        let settings = load_settings(&store).await?;
+        let settings = settings::load_settings(&store).await?;
+        let provider = DictationProvider::LiveKitInference;
+        let input = LiveKitDictationConfigInput {
+          api_key: String::new(),
+          api_secret: None,
+          base_url: String::new(),
+          model: String::new(),
+          language: String::new(),
+        };
+        let _ = normalize_livekit_dictation_config(input);
+      }
+    `,
+    patterns: DICTATION_WS_CONFIG_API_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "dictation WS API loads settings directly",
+      "dictation WS API loads settings directly",
+      "dictation WS API loads settings directly",
+      "dictation WS API interprets dictation provider policy",
+      "dictation WS API interprets dictation provider policy",
+      "dictation WS API normalizes LiveKit config directly",
+      "dictation WS API imports LiveKit config input",
+      "dictation WS API imports LiveKit config input",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes dictation websocket config policy ban", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/src/api/ws/dictation_livekit.rs",
+    "core/crates/ctx-http/src/api/ws/dictation_livekit/settings.rs",
+    "core/crates/ctx-http/src/api/ws/dictation_livekit/bridge/livekit.rs",
+  ]) {
+    assert.equal(
+      apiPatternsForPath(filePath).includes(DICTATION_WS_CONFIG_API_PATTERNS[0]),
+      true,
+    );
+  }
+
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/settings.rs").includes(
+      DICTATION_WS_CONFIG_API_PATTERNS[0],
+    ),
+    false,
+  );
+});
+
+test("daemon boundary guard rejects workspace websocket admission policy in HTTP", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/ws/workspace_active.rs",
+    contents: `
+      async fn require_workspace_active_stream_access(
+        state: &WorkspaceStreamHandle,
+        workspace_id: WorkspaceId,
+      ) -> Result<(), StatusCode> {
+        let exists = state.workspace_exists(workspace_id).await?;
+        let exists = WorkspaceStreamHandle::workspace_exists(state, workspace_id).await?;
+        let exists = WorkspacesHandle::workspace_exists(workspaces, workspace_id).await?;
+        Ok(())
+      }
+    `,
+    patterns: WORKSPACE_WS_ADMISSION_API_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "workspace WS API performs direct workspace existence admission",
+      "workspace WS API performs direct workspace existence admission",
+      "workspace WS API performs direct workspace existence admission",
+      "workspace WS API defines local stream access helper",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes workspace websocket admission ban", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/src/api/ws/workspace_active.rs",
+    "core/crates/ctx-http/src/api/ws/workspace_vcs.rs",
+  ]) {
+    assert.equal(
+      apiPatternsForPath(filePath).includes(WORKSPACE_WS_ADMISSION_API_PATTERNS[0]),
+      true,
+    );
+  }
+
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/ws/workspace_vcs/socket.rs").includes(
+      WORKSPACE_WS_ADMISSION_API_PATTERNS[0],
     ),
     false,
   );

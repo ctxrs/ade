@@ -239,6 +239,16 @@ const terminalStreamRuntimeApiRoots = [
   "core/crates/ctx-http/src/api/ws/tests/ws_queue_tests.rs",
 ];
 
+const dictationWsConfigApiRoots = [
+  "core/crates/ctx-http/src/api/ws/dictation_livekit.rs",
+  "core/crates/ctx-http/src/api/ws/dictation_livekit/",
+];
+
+const workspaceWsAdmissionApiRoots = [
+  "core/crates/ctx-http/src/api/ws/workspace_active.rs",
+  "core/crates/ctx-http/src/api/ws/workspace_vcs.rs",
+];
+
 const smallApiUnitStoreFacadeTestRoots = [
   "core/crates/ctx-http/src/api/settings.rs",
   "core/crates/ctx-http/src/api/providers/login/codex/tests.rs",
@@ -1153,6 +1163,36 @@ const TERMINAL_STREAM_RUNTIME_API_PATTERNS = [
   {
     name: "terminal WS API reads raw terminal snapshots",
     regex: /\.(?:output_snapshot(?:_tail)?|snapshot)\s*\(/,
+  },
+];
+
+const DICTATION_WS_CONFIG_API_PATTERNS = [
+  {
+    name: "dictation WS API loads settings directly",
+    regex: /\b(?:[A-Za-z_][\w]*\s*(?:\.|::)\s*)?load_settings\s*\(/,
+  },
+  {
+    name: "dictation WS API interprets dictation provider policy",
+    regex: /\bDictationProvider\b/,
+  },
+  {
+    name: "dictation WS API normalizes LiveKit config directly",
+    regex: /\bnormalize_livekit_dictation_config\s*\(/,
+  },
+  {
+    name: "dictation WS API imports LiveKit config input",
+    regex: /\bLiveKitDictationConfigInput\b/,
+  },
+];
+
+const WORKSPACE_WS_ADMISSION_API_PATTERNS = [
+  {
+    name: "workspace WS API performs direct workspace existence admission",
+    regex: /(?:\.|\b(?:WorkspaceStreamHandle|WorkspacesHandle)::)workspace_exists\s*\(/,
+  },
+  {
+    name: "workspace WS API defines local stream access helper",
+    regex: /\bfn\s+require_workspace_(?:active|vcs)_stream_access\s*\(/,
   },
 ];
 
@@ -2978,6 +3018,12 @@ function apiPatternsForPath(relativePath) {
   if (terminalStreamRuntimeApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...TERMINAL_STREAM_RUNTIME_API_PATTERNS);
   }
+  if (dictationWsConfigApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...DICTATION_WS_CONFIG_API_PATTERNS);
+  }
+  if (workspaceWsAdmissionApiRoots.some((root) => relativePath === root)) {
+    patterns.push(...WORKSPACE_WS_ADMISSION_API_PATTERNS);
+  }
   return patterns;
 }
 
@@ -3920,6 +3966,8 @@ module.exports = {
   WORKSPACE_VCS_DEMAND_API_PATTERNS,
   WORKSPACE_VCS_LIVE_ROUTING_API_PATTERNS,
   TERMINAL_STREAM_RUNTIME_API_PATTERNS,
+  DICTATION_WS_CONFIG_API_PATTERNS,
+  WORKSPACE_WS_ADMISSION_API_PATTERNS,
   PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,

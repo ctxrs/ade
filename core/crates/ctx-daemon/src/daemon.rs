@@ -13,6 +13,7 @@ use crate::daemon::scheduler::reconcile_turn_terminal_state;
 use ctx_provider_runtime::provider_usage;
 
 mod activity;
+pub mod dictation;
 pub mod execution_effective;
 pub mod execution_setup;
 pub mod git_status;
@@ -63,6 +64,7 @@ pub use activity::{
     daemon_sandbox_work_activity_summary, daemon_turn_activity_summary, ActiveTurnRecord,
     DaemonSandboxWorkActivitySummary, DaemonTurnActivitySummary,
 };
+pub use dictation::DictationConfigError;
 pub use handle::{
     CoreHandle, DaemonHandle, ExecutionHandle, ProvidersHandle, SessionsHandle, TasksHandle,
     TelemetryHandle, TransportHandle, WorkspaceStreamHandle, WorkspacesHandle,
@@ -85,6 +87,7 @@ pub use state::{
     TimedEntry, WorkspaceStoreAccessError,
 };
 pub use workspace_init::init_workspace;
+pub use workspaces::WorkspaceStreamAccessError;
 
 #[cfg(test)]
 mod tests;
