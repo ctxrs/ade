@@ -1,7 +1,6 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use axum::extract::ws::Message as WsMessage;
-use ctx_transport_runtime::terminals::TerminalSessionHandle;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::api::ws) enum TerminalWsQueueOutcome {
@@ -23,10 +22,8 @@ pub(in crate::api::ws) fn queue_terminal_ws_message(
 
 pub(super) fn queue_terminal_ws_tail_snapshot(
     event_tx: &tokio::sync::mpsc::Sender<WsMessage>,
-    session: &TerminalSessionHandle,
-    snapshot_tail: usize,
+    snapshot: Vec<u8>,
 ) -> TerminalWsQueueOutcome {
-    let snapshot = session.output_snapshot_tail(snapshot_tail);
     if snapshot.is_empty() {
         return TerminalWsQueueOutcome::Enqueued;
     }
@@ -39,14 +36,13 @@ pub(super) fn request_terminal_ws_tail_resync(needs_tail_resync: &AtomicBool) {
 
 pub(in crate::api::ws) fn queue_terminal_ws_tail_resync_if_requested(
     event_tx: &tokio::sync::mpsc::Sender<WsMessage>,
-    session: &TerminalSessionHandle,
-    snapshot_tail: usize,
+    tail_snapshot: impl FnOnce() -> Vec<u8>,
     needs_tail_resync: &AtomicBool,
 ) -> Option<TerminalWsQueueOutcome> {
     if !needs_tail_resync.swap(false, Ordering::AcqRel) {
         return None;
     }
-    let outcome = queue_terminal_ws_tail_snapshot(event_tx, session, snapshot_tail);
+    let outcome = queue_terminal_ws_tail_snapshot(event_tx, tail_snapshot());
     if matches!(outcome, TerminalWsQueueOutcome::Dropped) {
         request_terminal_ws_tail_resync(needs_tail_resync);
     }

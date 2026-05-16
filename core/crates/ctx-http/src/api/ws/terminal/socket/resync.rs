@@ -2,14 +2,14 @@ use std::sync::{atomic::AtomicBool, Arc};
 use std::time::Duration;
 
 use axum::extract::ws::Message as WsMessage;
-use ctx_transport_runtime::terminals::TerminalSessionHandle;
+use ctx_daemon::daemon::terminals::TerminalStreamSession;
 use tokio::sync::mpsc;
 
 use super::super::queue::{queue_terminal_ws_tail_resync_if_requested, TerminalWsQueueOutcome};
 
 pub(super) async fn resync_terminal_tail_when_requested(
     event_tx: mpsc::Sender<WsMessage>,
-    session: Arc<TerminalSessionHandle>,
+    session: Arc<TerminalStreamSession>,
     snapshot_tail: usize,
     needs_tail_resync: Arc<AtomicBool>,
     interval: Duration,
@@ -20,8 +20,7 @@ pub(super) async fn resync_terminal_tail_when_requested(
         interval.tick().await;
         match queue_terminal_ws_tail_resync_if_requested(
             &event_tx,
-            &session,
-            snapshot_tail,
+            || session.output_tail(snapshot_tail),
             needs_tail_resync.as_ref(),
         ) {
             Some(TerminalWsQueueOutcome::Dropped) => {

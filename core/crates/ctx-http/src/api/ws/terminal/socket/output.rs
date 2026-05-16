@@ -1,8 +1,10 @@
 use std::sync::{atomic::AtomicBool, Arc};
 
 use axum::extract::ws::Message as WsMessage;
-use ctx_transport_runtime::terminals::TerminalSessionHandle;
-use tokio::sync::{broadcast, mpsc};
+use ctx_daemon::daemon::terminals::{
+    TerminalStreamOutputReceiver, TerminalStreamOutputRecv, TerminalStreamSession,
+};
+use tokio::sync::mpsc;
 
 use super::super::queue::{
     queue_terminal_ws_message, queue_terminal_ws_tail_resync_if_requested,
@@ -10,19 +12,18 @@ use super::super::queue::{
 };
 
 pub(super) async fn forward_terminal_output(
-    mut output_rx: broadcast::Receiver<Vec<u8>>,
+    mut output_rx: TerminalStreamOutputReceiver,
     event_tx: mpsc::Sender<WsMessage>,
-    session: Arc<TerminalSessionHandle>,
+    session: Arc<TerminalStreamSession>,
     snapshot_tail: usize,
     needs_tail_resync: Arc<AtomicBool>,
 ) {
     loop {
         match output_rx.recv().await {
-            Ok(bytes) => {
+            TerminalStreamOutputRecv::Bytes(bytes) => {
                 if let Some(outcome) = queue_terminal_ws_tail_resync_if_requested(
                     &event_tx,
-                    &session,
-                    snapshot_tail,
+                    || session.output_tail(snapshot_tail),
                     needs_tail_resync.as_ref(),
                 ) {
                     match outcome {
@@ -45,8 +46,9 @@ pub(super) async fn forward_terminal_output(
                     TerminalWsQueueOutcome::Closed => break,
                 }
             }
-            Err(broadcast::error::RecvError::Lagged(_)) => {
-                match queue_terminal_ws_tail_snapshot(&event_tx, &session, snapshot_tail) {
+            TerminalStreamOutputRecv::Lagged => {
+                match queue_terminal_ws_tail_snapshot(&event_tx, session.output_tail(snapshot_tail))
+                {
                     TerminalWsQueueOutcome::Enqueued => {}
                     TerminalWsQueueOutcome::Dropped => {
                         request_terminal_ws_tail_resync(needs_tail_resync.as_ref());
@@ -58,7 +60,7 @@ pub(super) async fn forward_terminal_output(
                 }
                 continue;
             }
-            Err(broadcast::error::RecvError::Closed) => break,
+            TerminalStreamOutputRecv::Closed => break,
         }
     }
 }

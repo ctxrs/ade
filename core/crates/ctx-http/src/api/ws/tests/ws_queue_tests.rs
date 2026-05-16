@@ -45,12 +45,12 @@ fn terminal_ws_tail_resync_waits_until_capacity_returns() {
         TerminalWsQueueOutcome::Enqueued
     );
 
-    let session = ctx_transport_runtime::terminals::TerminalSessionHandle::test_handle_with_output(
-        b"tail-marker",
-    );
-
     assert!(matches!(
-        queue_terminal_ws_tail_resync_if_requested(&tx, &session, 4096, &needs_tail_resync),
+        queue_terminal_ws_tail_resync_if_requested(
+            &tx,
+            || b"tail-marker".to_vec(),
+            &needs_tail_resync
+        ),
         Some(TerminalWsQueueOutcome::Dropped)
     ));
     assert!(needs_tail_resync.load(std::sync::atomic::Ordering::Acquire));
@@ -58,7 +58,11 @@ fn terminal_ws_tail_resync_waits_until_capacity_returns() {
     assert!(matches!(rx.try_recv(), Ok(WsMessage::Text(text)) if text == "occupied"));
 
     assert!(matches!(
-        queue_terminal_ws_tail_resync_if_requested(&tx, &session, 4096, &needs_tail_resync),
+        queue_terminal_ws_tail_resync_if_requested(
+            &tx,
+            || b"tail-marker".to_vec(),
+            &needs_tail_resync
+        ),
         Some(TerminalWsQueueOutcome::Enqueued)
     ));
     assert!(!needs_tail_resync.load(std::sync::atomic::Ordering::Acquire));

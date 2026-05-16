@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
 use axum::extract::ws::{Message as WsMessage, WebSocket};
-use ctx_transport_runtime::terminals::{
-    TerminalClientMessage, TerminalServerMessage, TerminalSessionHandle,
-};
+use ctx_daemon::daemon::terminals::TerminalStreamSession;
+use ctx_transport_runtime::terminals::{TerminalClientMessage, TerminalServerMessage};
 use futures::stream::SplitStream;
 use futures::StreamExt;
 use tokio::sync::mpsc;
@@ -12,22 +11,22 @@ use super::super::queue::{queue_terminal_ws_message, TerminalWsQueueOutcome};
 
 pub(super) async fn handle_terminal_client_messages(
     mut ws_rx: SplitStream<WebSocket>,
-    session: Arc<TerminalSessionHandle>,
+    session: Arc<TerminalStreamSession>,
     event_tx: mpsc::Sender<WsMessage>,
 ) {
     while let Some(Ok(msg)) = ws_rx.next().await {
         match msg {
             WsMessage::Binary(data) => {
-                session.send_input(data);
+                session.write_input(data);
             }
             WsMessage::Text(text) => {
                 if let Ok(parsed) = serde_json::from_str::<TerminalClientMessage>(&text) {
                     match parsed {
                         TerminalClientMessage::Resize { cols, rows } => {
-                            let _ = session.resize(cols, rows);
+                            let _ = session.resize_terminal(cols, rows);
                         }
                         TerminalClientMessage::Input { data } => {
-                            session.send_input(data.into_bytes());
+                            session.write_input(data.into_bytes());
                         }
                         TerminalClientMessage::Ping => {
                             let payload = serde_json::to_string(&TerminalServerMessage::Pong)
@@ -41,7 +40,7 @@ pub(super) async fn handle_terminal_client_messages(
                         }
                     }
                 } else {
-                    session.send_input(text.into_bytes());
+                    session.write_input(text.into_bytes());
                 }
             }
             WsMessage::Close(_) => break,

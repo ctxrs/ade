@@ -39,6 +39,7 @@ const {
   WORKSPACE_STREAM_SUBSCRIPTION_EVENT_API_PATTERNS,
   WORKSPACE_VCS_DEMAND_API_PATTERNS,
   WORKSPACE_VCS_LIVE_ROUTING_API_PATTERNS,
+  TERMINAL_STREAM_RUNTIME_API_PATTERNS,
   PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,
@@ -962,6 +963,78 @@ test("daemon boundary guard scopes workspace VCS live routing ban", () => {
     apiPatternsForPath(
       "core/crates/ctx-http/src/api/ws/workspace_vcs/subscription/client.rs",
     ).includes(WORKSPACE_VCS_LIVE_ROUTING_API_PATTERNS[0]),
+    false,
+  );
+});
+
+test("daemon boundary guard rejects raw terminal stream runtime access in HTTP", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/ws/terminal/socket.rs",
+    contents: `
+      use ctx_transport_runtime::terminals::{TerminalSessionHandle, TerminalStatusEvent};
+      use tokio::sync::broadcast;
+      use tokio::sync::broadcast::Receiver;
+
+      async fn handler(
+        session: TerminalSessionHandle,
+        mut output_rx: broadcast::Receiver<Vec<u8>>,
+        mut status_rx: broadcast::Receiver<TerminalStatusEvent>,
+        mut imported_rx: Receiver<Vec<u8>>,
+      ) {
+        session.mark_client_connected();
+        session.send_input(vec![]);
+        session.resize(80, 24);
+        let _ = session.output_receiver();
+        let _ = session.status_receiver();
+        let _ = session.snapshot();
+        let _ = session.output_snapshot();
+        let _ = session.output_snapshot_tail(4096);
+        session.mark_client_disconnected();
+      }
+    `,
+    patterns: TERMINAL_STREAM_RUNTIME_API_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "terminal WS API imports raw terminal session handle",
+      "terminal WS API imports raw terminal session handle",
+      "terminal WS API imports raw terminal status event",
+      "terminal WS API imports raw terminal status event",
+      "terminal WS API uses raw terminal broadcast receiver",
+      "terminal WS API uses raw terminal broadcast receiver",
+      "terminal WS API uses raw terminal broadcast receiver",
+      "terminal WS API calls raw terminal lifecycle or command methods",
+      "terminal WS API calls raw terminal lifecycle or command methods",
+      "terminal WS API calls raw terminal lifecycle or command methods",
+      "terminal WS API calls raw terminal lifecycle or command methods",
+      "terminal WS API opens raw terminal receivers",
+      "terminal WS API opens raw terminal receivers",
+      "terminal WS API reads raw terminal snapshots",
+      "terminal WS API reads raw terminal snapshots",
+      "terminal WS API reads raw terminal snapshots",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes terminal stream runtime ban to terminal websocket API", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/src/api/ws/terminal.rs",
+    "core/crates/ctx-http/src/api/ws/terminal/socket.rs",
+    "core/crates/ctx-http/src/api/ws/terminal/socket/output.rs",
+    "core/crates/ctx-http/src/api/ws/tests/ws_queue_tests.rs",
+  ]) {
+    assert.equal(
+      apiPatternsForPath(filePath).includes(TERMINAL_STREAM_RUNTIME_API_PATTERNS[0]),
+      true,
+    );
+  }
+
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/ws/workspace_stream.rs").includes(
+      TERMINAL_STREAM_RUNTIME_API_PATTERNS[0],
+    ),
     false,
   );
 });

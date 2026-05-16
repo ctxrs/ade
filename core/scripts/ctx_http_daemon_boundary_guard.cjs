@@ -233,6 +233,12 @@ const workspaceVcsLiveRoutingApiRoots = [
   "core/crates/ctx-http/src/api/ws/workspace_vcs/subscription/snapshots.rs",
 ];
 
+const terminalStreamRuntimeApiRoots = [
+  "core/crates/ctx-http/src/api/ws/terminal.rs",
+  "core/crates/ctx-http/src/api/ws/terminal/",
+  "core/crates/ctx-http/src/api/ws/tests/ws_queue_tests.rs",
+];
+
 const smallApiUnitStoreFacadeTestRoots = [
   "core/crates/ctx-http/src/api/settings.rs",
   "core/crates/ctx-http/src/api/providers/login/codex/tests.rs",
@@ -1118,6 +1124,35 @@ const WORKSPACE_VCS_LIVE_ROUTING_API_PATTERNS = [
     name: "workspace VCS API plans snapshot seeds from raw demand sets",
     regex:
       /(?:^|[^.\w])(?:summary_worktree_ids|detail_worktree_ids)\s*\.\s*(?:union|contains)\s*\(/,
+  },
+];
+
+const TERMINAL_STREAM_RUNTIME_API_PATTERNS = [
+  {
+    name: "terminal WS API imports raw terminal session handle",
+    regex: /\bTerminalSessionHandle\b/,
+  },
+  {
+    name: "terminal WS API imports raw terminal status event",
+    regex: /\bTerminalStatusEvent\b/,
+  },
+  {
+    name: "terminal WS API uses raw terminal broadcast receiver",
+    regex:
+      /\b(?:broadcast\s*::\s*)?Receiver\s*<\s*(?:Vec\s*<\s*u8\s*>|TerminalStatusEvent)\s*>/,
+  },
+  {
+    name: "terminal WS API calls raw terminal lifecycle or command methods",
+    regex:
+      /\.(?:mark_client_connected|mark_client_disconnected|send_input|resize)\s*\(/,
+  },
+  {
+    name: "terminal WS API opens raw terminal receivers",
+    regex: /\.(?:output_receiver|status_receiver)\s*\(/,
+  },
+  {
+    name: "terminal WS API reads raw terminal snapshots",
+    regex: /\.(?:output_snapshot(?:_tail)?|snapshot)\s*\(/,
   },
 ];
 
@@ -2940,6 +2975,9 @@ function apiPatternsForPath(relativePath) {
   if (workspaceVcsLiveRoutingApiRoots.some((root) => relativePath === root)) {
     patterns.push(...WORKSPACE_VCS_LIVE_ROUTING_API_PATTERNS);
   }
+  if (terminalStreamRuntimeApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...TERMINAL_STREAM_RUNTIME_API_PATTERNS);
+  }
   return patterns;
 }
 
@@ -3881,6 +3919,7 @@ module.exports = {
   WORKSPACE_STREAM_SUBSCRIPTION_EVENT_API_PATTERNS,
   WORKSPACE_VCS_DEMAND_API_PATTERNS,
   WORKSPACE_VCS_LIVE_ROUTING_API_PATTERNS,
+  TERMINAL_STREAM_RUNTIME_API_PATTERNS,
   PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,

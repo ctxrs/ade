@@ -2,7 +2,7 @@ use std::sync::{atomic::AtomicBool, Arc};
 use std::time::Duration;
 
 use axum::extract::ws::{Message as WsMessage, WebSocket};
-use ctx_transport_runtime::terminals::TerminalSessionHandle;
+use ctx_daemon::daemon::terminals::TerminalStreamSession;
 use futures::StreamExt;
 use tokio::task::JoinSet;
 
@@ -21,17 +21,13 @@ const TERMINAL_TAIL_RESYNC_INTERVAL: Duration = Duration::from_millis(25);
 
 pub(super) async fn handle_terminal_socket(
     mut socket: WebSocket,
-    session: Arc<TerminalSessionHandle>,
+    session: TerminalStreamSession,
     snapshot_tail: usize,
 ) {
-    session.mark_client_connected();
-    // Subscribe before capturing the snapshot tail so reconnecting clients do not
-    // miss bytes emitted during the status/tail handshake window. This may replay
-    // a small overlap from the tail, but it preserves contiguous output delivery.
-    let output_rx = session.output_receiver();
-    let status_rx = session.status_receiver();
+    let connection = session.connect(snapshot_tail);
+    let session = Arc::new(connection.session.clone());
 
-    handshake::send_initial_terminal_snapshot(&mut socket, &session, snapshot_tail).await;
+    handshake::send_initial_terminal_snapshot(&mut socket, &connection.initial_snapshot).await;
 
     let (ws_tx, ws_rx) = socket.split();
     let (event_tx, event_rx) =
@@ -45,21 +41,21 @@ pub(super) async fn handle_terminal_socket(
     let needs_tail_resync_output = needs_tail_resync.clone();
     let needs_tail_resync_status = needs_tail_resync.clone();
     let needs_tail_resync_resync = needs_tail_resync.clone();
-    let session_output = session.clone();
-    let session_input = session.clone();
-    let session_resync = session.clone();
+    let session_output = Arc::clone(&session);
+    let session_input = Arc::clone(&session);
+    let session_resync = Arc::clone(&session);
 
     let mut tasks = JoinSet::new();
     tasks.spawn(writer::forward_terminal_ws_messages(ws_tx, event_rx));
     tasks.spawn(output::forward_terminal_output(
-        output_rx,
+        connection.output_rx,
         event_tx_output,
         session_output,
         snapshot_tail,
         needs_tail_resync_output,
     ));
     tasks.spawn(status::forward_terminal_status(
-        status_rx,
+        connection.status_rx,
         event_tx_status,
         needs_tail_resync_status,
     ));
@@ -83,5 +79,4 @@ pub(super) async fn handle_terminal_socket(
     let _ = tasks.join_next().await;
     tasks.abort_all();
     while tasks.join_next().await.is_some() {}
-    session.mark_client_disconnected();
 }
