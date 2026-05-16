@@ -136,6 +136,7 @@ RUST_BAZEL_DEPS = {
             "@crates//:blake2",
             "@crates//:ed25519-dalek",
             "@crates//:fs2",
+            "@crates//:jsonwebtoken",
         ],
         dev_proc_macro_deps = [],
         proc_macro_deps = [
