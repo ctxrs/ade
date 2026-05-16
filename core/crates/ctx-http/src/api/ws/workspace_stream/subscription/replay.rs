@@ -1,18 +1,17 @@
 use super::*;
 use ctx_core::models::WorkspaceActiveSnapshotSessionIntent;
-use ctx_daemon::daemon::workspaces::stream::{ReplayOutcome, WorkspaceStreamSessionReplay};
-use ctx_workspace_active_snapshot::replay_cursor_after_live_progress;
+use ctx_daemon::daemon::workspaces::stream::{
+    ReplayOutcome, WorkspaceStreamResumeReplayCursorPlan, WorkspaceStreamSessionReplay,
+};
 use std::collections::HashSet;
 
 mod buffers;
-mod cursor;
 mod live_events;
 mod request;
 mod reset;
 mod session;
 
 use buffers::drop_buffered_session_events_at_or_before;
-use cursor::{head_only_snapshot_cursor, resume_replay_cursor};
 use live_events::{
     drain_live_events_blocking_pending_replay, flush_replay_ready_deferred_live_events,
     replay_should_stop,
@@ -67,18 +66,20 @@ pub(super) async fn replay_workspace_stream_subscriptions(
         if sub.intent == WorkspaceActiveSnapshotSessionIntent::Head {
             next_map.insert(
                 session_id,
-                head_only_snapshot_cursor(
-                    state,
-                    workspace_id,
-                    session_id,
-                    runtime
-                        .subscriptions
-                        .get(&session_id)
-                        .map(|cursor| cursor.last_sent),
-                    active_head_cursors.get(&session_id).copied(),
-                    include_initial_snapshot,
-                )
-                .await,
+                SessionCursor {
+                    last_sent: state
+                        .head_only_snapshot_cursor(
+                            workspace_id,
+                            session_id,
+                            runtime
+                                .subscriptions
+                                .get(&session_id)
+                                .map(|cursor| cursor.last_sent),
+                            active_head_cursors.get(&session_id).copied(),
+                            include_initial_snapshot,
+                        )
+                        .await,
+                },
             );
             continue;
         }
@@ -89,29 +90,30 @@ pub(super) async fn replay_workspace_stream_subscriptions(
         else {
             continue;
         };
-        let requested_replay_cursor = resume_replay_cursor(after_seq, after_projection_rev);
         let live_cursor = runtime
             .subscriptions
             .get(&session_id)
             .map(|cursor| cursor.last_sent);
-        let Some(replay_cursor) =
-            replay_cursor_after_live_progress(live_cursor, requested_replay_cursor)
-        else {
-            pending_replay_sessions.remove(&session_id);
-            flush_replay_ready_deferred_live_events(
-                state,
-                workspace_id,
-                runtime,
-                labels,
-                &mut deferred_live_events,
-                &pending_replay_sessions,
-            )
-            .await?;
-            if replay_should_stop(runtime) {
-                return Ok(None);
-            }
-            continue;
-        };
+        let replay_cursor =
+            match state.plan_resume_replay_cursor(live_cursor, after_seq, after_projection_rev) {
+                WorkspaceStreamResumeReplayCursorPlan::Replay { cursor } => cursor,
+                WorkspaceStreamResumeReplayCursorPlan::NoReplayRequired => {
+                    pending_replay_sessions.remove(&session_id);
+                    flush_replay_ready_deferred_live_events(
+                        state,
+                        workspace_id,
+                        runtime,
+                        labels,
+                        &mut deferred_live_events,
+                        &pending_replay_sessions,
+                    )
+                    .await?;
+                    if replay_should_stop(runtime) {
+                        return Ok(None);
+                    }
+                    continue;
+                }
+            };
         drop_buffered_session_events_at_or_before(runtime, session_id, replay_cursor).await;
         let replay = replay_workspace_session(
             state,

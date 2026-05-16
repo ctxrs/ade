@@ -176,6 +176,13 @@ const workspaceStreamSubscriptionPlanApiRoots = [
   "core/crates/ctx-http/src/api/ws/workspace_stream/subscription/replay/",
 ];
 
+const workspaceStreamReplayCursorApiRoots = [
+  "core/crates/ctx-http/src/api/ws/workspace_stream/subscription.rs",
+  "core/crates/ctx-http/src/api/ws/workspace_stream/subscription/replay.rs",
+  "core/crates/ctx-http/src/api/ws/workspace_stream/subscription/replay/",
+  "core/crates/ctx-http/src/api/ws/workspace_stream/events/subscriptions.rs",
+];
+
 const smallApiUnitStoreFacadeTestRoots = [
   "core/crates/ctx-http/src/api/settings.rs",
   "core/crates/ctx-http/src/api/providers/login/codex/tests.rs",
@@ -869,6 +876,25 @@ const WORKSPACE_STREAM_SUBSCRIPTION_PLAN_API_PATTERNS = [
   {
     name: "workspace stream API references raw subscription-resolution type",
     regex: /\b(?:ResolvedWorkspaceActiveSessionSubscription|ResolvedWorkspaceActiveSubscriptions|ResolvedWorkspaceActiveSessionReplay)\b/,
+  },
+];
+
+const WORKSPACE_STREAM_REPLAY_CURSOR_API_PATTERNS = [
+  {
+    name: "workspace stream API calls active-snapshot replay cursor planner",
+    regex: /\breplay_cursor_after_live_progress\b/,
+  },
+  {
+    name: "workspace stream API owns replay cursor helper",
+    regex: /(?<!\.)\b(?:resume_replay_cursor|head_only_snapshot_cursor)\b/,
+  },
+  {
+    name: "workspace stream API builds replay cursor from snapshot head",
+    regex: /\bSessionReplayCursor\s*::\s*from_head\s*\(/,
+  },
+  {
+    name: "workspace stream API reads raw session replay cursor",
+    regex: /(?:\.\s*|\bWorkspaceStreamHandle\s*::\s*)session_replay_cursor\s*\(/,
   },
 ];
 
@@ -2664,6 +2690,9 @@ function apiPatternsForPath(relativePath) {
   if (workspaceStreamSubscriptionPlanApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...WORKSPACE_STREAM_SUBSCRIPTION_PLAN_API_PATTERNS);
   }
+  if (workspaceStreamReplayCursorApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...WORKSPACE_STREAM_REPLAY_CURSOR_API_PATTERNS);
+  }
   return patterns;
 }
 
@@ -3596,6 +3625,7 @@ module.exports = {
   TASK_SESSION_CREATION_API_ADMISSION_PATTERNS,
   WORKSPACE_STREAM_READ_MODEL_API_PATTERNS,
   WORKSPACE_STREAM_SUBSCRIPTION_PLAN_API_PATTERNS,
+  WORKSPACE_STREAM_REPLAY_CURSOR_API_PATTERNS,
   PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,

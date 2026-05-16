@@ -47,7 +47,9 @@ pub(super) async fn update_workspace_stream_subscriptions_for_event(
             if let std::collections::hash_map::Entry::Vacant(entry) =
                 runtime.subscriptions.entry(session_id)
             {
-                let last_sent = state.session_replay_cursor(workspace_id, session_id).await;
+                let last_sent = state
+                    .active_task_subscription_cursor(workspace_id, session_id)
+                    .await;
                 entry.insert(SessionCursor { last_sent });
             }
         }

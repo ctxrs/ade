@@ -30,6 +30,7 @@ const {
   TASK_SESSION_CREATION_API_ADMISSION_PATTERNS,
   WORKSPACE_STREAM_READ_MODEL_API_PATTERNS,
   WORKSPACE_STREAM_SUBSCRIPTION_PLAN_API_PATTERNS,
+  WORKSPACE_STREAM_REPLAY_CURSOR_API_PATTERNS,
   PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,
@@ -315,6 +316,77 @@ test("daemon boundary guard scopes workspace stream subscription-plan ban", () =
   assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/ws/workspace_stream/events.rs").includes(
       WORKSPACE_STREAM_SUBSCRIPTION_PLAN_API_PATTERNS[0],
+    ),
+    false,
+  );
+});
+
+test("daemon boundary guard rejects workspace stream replay cursor planning in HTTP", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/ws/workspace_stream/subscription/replay.rs",
+    contents: `
+      use ctx_workspace_active_snapshot::replay_cursor_after_live_progress;
+      use cursor::{head_only_snapshot_cursor, resume_replay_cursor};
+
+      fn snapshot_cursor(head: WorkspaceActiveSessionHead) {
+        let _ = SessionReplayCursor::from_head(head);
+      }
+
+      async fn handler(state: WorkspaceStreamHandle) {
+        let _ = resume_replay_cursor(after_seq, after_projection_rev);
+        let _ = head_only_snapshot_cursor(
+          state,
+          workspace_id,
+          session_id,
+          snapshot_cursor,
+          include_initial_snapshot,
+          live_cursor,
+        ).await;
+        let _ = replay_cursor_after_live_progress(live_cursor, requested_replay_cursor);
+        let _ = state.session_replay_cursor(workspace_id, session_id).await;
+        let _ = WorkspaceStreamHandle::session_replay_cursor(&state, workspace_id, session_id).await;
+      }
+    `,
+    patterns: WORKSPACE_STREAM_REPLAY_CURSOR_API_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "workspace stream API calls active-snapshot replay cursor planner",
+      "workspace stream API calls active-snapshot replay cursor planner",
+      "workspace stream API owns replay cursor helper",
+      "workspace stream API owns replay cursor helper",
+      "workspace stream API owns replay cursor helper",
+      "workspace stream API builds replay cursor from snapshot head",
+      "workspace stream API reads raw session replay cursor",
+      "workspace stream API reads raw session replay cursor",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes workspace stream replay cursor ban", () => {
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/ws/workspace_stream/subscription.rs",
+    ).includes(WORKSPACE_STREAM_REPLAY_CURSOR_API_PATTERNS[0]),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/ws/workspace_stream/subscription/replay/session.rs",
+    ).includes(WORKSPACE_STREAM_REPLAY_CURSOR_API_PATTERNS[0]),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/ws/workspace_stream/events/subscriptions.rs",
+    ).includes(WORKSPACE_STREAM_REPLAY_CURSOR_API_PATTERNS[0]),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/ws/workspace_stream/events/receiver.rs").includes(
+      WORKSPACE_STREAM_REPLAY_CURSOR_API_PATTERNS[0],
     ),
     false,
   );

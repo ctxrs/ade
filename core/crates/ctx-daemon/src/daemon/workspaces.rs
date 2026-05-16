@@ -924,6 +924,49 @@ impl WorkspaceStreamHandle {
             .await
     }
 
+    pub fn active_head_cursors_from_snapshot_read_model(
+        &self,
+        read_model: &stream::WorkspaceStreamSnapshotReadModel,
+    ) -> HashMap<SessionId, SessionReplayCursor> {
+        stream::active_head_cursors_from_snapshot_read_model(read_model)
+    }
+
+    pub fn plan_resume_replay_cursor(
+        &self,
+        live_cursor: Option<SessionReplayCursor>,
+        after_seq: i64,
+        after_projection_rev: i64,
+    ) -> stream::WorkspaceStreamResumeReplayCursorPlan {
+        stream::plan_resume_replay_cursor(live_cursor, after_seq, after_projection_rev)
+    }
+
+    pub async fn head_only_snapshot_cursor(
+        &self,
+        workspace_id: WorkspaceId,
+        session_id: SessionId,
+        live_cursor: Option<SessionReplayCursor>,
+        snapshot_cursor: Option<SessionReplayCursor>,
+        include_initial_snapshot: bool,
+    ) -> SessionReplayCursor {
+        stream::head_only_snapshot_cursor(
+            &self.state,
+            workspace_id,
+            session_id,
+            live_cursor,
+            snapshot_cursor,
+            include_initial_snapshot,
+        )
+        .await
+    }
+
+    pub async fn active_task_subscription_cursor(
+        &self,
+        workspace_id: WorkspaceId,
+        session_id: SessionId,
+    ) -> SessionReplayCursor {
+        stream::active_task_subscription_cursor(&self.state, workspace_id, session_id).await
+    }
+
     pub async fn resolve_workspace_active_snapshot_subscriptions(
         &self,
         workspace_id: WorkspaceId,

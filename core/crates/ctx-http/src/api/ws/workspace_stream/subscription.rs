@@ -1,8 +1,6 @@
 use super::lifecycle::{clear_runtime_queues, queue_workspace_stream_reset};
 use super::*;
-use ctx_daemon::daemon::workspaces::stream::{
-    WorkspaceStreamSnapshotReadModel, WorkspaceStreamSubscriptionResolutionError,
-};
+use ctx_daemon::daemon::workspaces::stream::WorkspaceStreamSubscriptionResolutionError;
 
 mod replay;
 #[cfg(test)]
@@ -23,17 +21,6 @@ fn merge_replayed_and_live_subscriptions(
                 .unwrap_or(live_cursor.last_sent);
             (*session_id, SessionCursor { last_sent })
         })
-        .collect()
-}
-
-fn active_head_cursors_from_snapshot_read_model(
-    read_model: &WorkspaceStreamSnapshotReadModel,
-) -> HashMap<SessionId, SessionReplayCursor> {
-    read_model
-        .active_heads
-        .heads
-        .iter()
-        .map(|head| (head.session.id, SessionReplayCursor::from_head(head)))
         .collect()
 }
 
@@ -116,7 +103,7 @@ pub(crate) async fn handle_workspace_stream_subscription(
         } else {
             return Err(());
         };
-        active_head_cursors_from_snapshot_read_model(&read_model)
+        state.active_head_cursors_from_snapshot_read_model(&read_model)
     } else {
         HashMap::new()
     };

@@ -6,16 +6,68 @@ use super::*;
 use std::collections::{HashMap, HashSet};
 
 use crate::daemon::DaemonHandle;
+use chrono::Utc;
 use ctx_core::ids::{TaskId, WorktreeId};
 use ctx_core::models::{
-    WorkspaceActiveSnapshotClientMessage, WorkspaceActiveSnapshotSessionIntent,
-    WorkspaceActiveSnapshotSessionReplay, WorkspaceActiveSnapshotSessionSubscription,
+    ExecutionEnvironment, SessionActivityState, SessionHeadSnapshot, SessionHeadWindow,
+    SessionMetadata, SessionStatus, WorkspaceActiveHeadBatch, WorkspaceActivePage,
+    WorkspaceActiveSnapshot, WorkspaceActiveSnapshotClientMessage,
+    WorkspaceActiveSnapshotSessionIntent, WorkspaceActiveSnapshotSessionReplay,
+    WorkspaceActiveSnapshotSessionSubscription,
 };
 use ctx_workspace_active_snapshot::{
     ResolvedWorkspaceActiveSessionReplay, ResolvedWorkspaceActiveSessionSubscription,
     ResolvedWorkspaceActiveSubscriptions, SessionReplayCursor, WorkspaceActiveSubscriptionState,
 };
 use std::sync::Arc;
+
+fn cursor(last_event_seq: i64, projection_rev: i64) -> SessionReplayCursor {
+    SessionReplayCursor {
+        last_event_seq,
+        projection_rev,
+    }
+}
+
+fn test_head(
+    workspace_id: ctx_core::ids::WorkspaceId,
+    session_id: ctx_core::ids::SessionId,
+    last_event_seq: i64,
+    projection_rev: i64,
+) -> SessionHeadSnapshot {
+    SessionHeadSnapshot {
+        session: SessionMetadata {
+            id: session_id,
+            task_id: TaskId::new(),
+            workspace_id,
+            worktree_id: WorktreeId::new(),
+            execution_environment: ExecutionEnvironment::Host,
+            parent_session_id: None,
+            relationship: None,
+            provider_id: "fake".to_string(),
+            model_id: "fake-model".to_string(),
+            reasoning_effort: None,
+            title: "test".to_string(),
+            agent_role: "assistant".to_string(),
+            status: SessionStatus::Active,
+            provider_session_ref: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        },
+        turns: Vec::new(),
+        tool_summaries: Vec::new(),
+        events: Vec::new(),
+        messages: Vec::new(),
+        last_event_seq,
+        projection_rev,
+        state_rev: projection_rev,
+        activity: SessionActivityState::default(),
+        has_more_turns: false,
+        history_cursor: None,
+        has_more_history: false,
+        summary_checkpoint: None,
+        head_window: SessionHeadWindow::default(),
+    }
+}
 
 #[tokio::test]
 async fn subscription_resolution_filters_cross_workspace_session_references() {
@@ -116,6 +168,102 @@ fn subscription_plan_derives_initial_snapshot_fingerprint_and_provisional_cursor
             after_projection_rev: 12,
         }
     ));
+}
+
+#[test]
+fn snapshot_read_model_active_head_cursors_use_delivered_heads() {
+    let workspace_id = ctx_core::ids::WorkspaceId::new();
+    let session_id = ctx_core::ids::SessionId::new();
+    let read_model = WorkspaceStreamSnapshotReadModel {
+        active_snapshot: WorkspaceActiveSnapshot {
+            workspace_id,
+            snapshot_rev: 500,
+            archived_rev: 0,
+            active: WorkspaceActivePage {
+                tasks: Vec::new(),
+                total_count: 0,
+            },
+        },
+        active_heads: WorkspaceActiveHeadBatch {
+            workspace_id,
+            snapshot_rev: 400,
+            heads: vec![test_head(workspace_id, session_id, 17, 23)],
+        },
+    };
+
+    let cursors = active_head_cursors_from_snapshot_read_model(&read_model);
+
+    assert_eq!(
+        cursors.get(&session_id).copied(),
+        Some(cursor(17, 23)),
+        "replay cursor seeding must use the delivered active-head batch, not a later read",
+    );
+}
+
+#[test]
+fn resume_replay_cursor_planning_preserves_live_coverage_semantics() {
+    assert_eq!(
+        plan_resume_replay_cursor(Some(cursor(15, 16)), 10, 12),
+        WorkspaceStreamResumeReplayCursorPlan::Replay {
+            cursor: cursor(15, 16),
+        },
+    );
+    assert_eq!(
+        plan_resume_replay_cursor(Some(cursor(15, 16)), 20, 0),
+        WorkspaceStreamResumeReplayCursorPlan::Replay {
+            cursor: cursor(20, i64::MAX),
+        },
+        "zero projection revision requests must preserve the prior i64::MAX fallback",
+    );
+    assert_eq!(
+        plan_resume_replay_cursor(None, 10, 12),
+        WorkspaceStreamResumeReplayCursorPlan::NoReplayRequired,
+        "the existing no-live-cursor path skips replay work",
+    );
+}
+
+#[tokio::test]
+async fn head_only_cursor_uses_snapshot_cursor_or_current_tail_fallback() {
+    let root = tempfile::tempdir().unwrap();
+    let state = test_state(root.path()).await;
+    let (workspace_id, session_id) = create_workspace_session(&state, root.path()).await;
+
+    let from_snapshot = head_only_snapshot_cursor(
+        &state,
+        workspace_id,
+        session_id,
+        Some(cursor(4, 5)),
+        Some(cursor(10, 3)),
+        true,
+    )
+    .await;
+    assert_eq!(from_snapshot, cursor(10, 5));
+
+    let from_current_tail = head_only_snapshot_cursor(
+        &state,
+        workspace_id,
+        session_id,
+        Some(cursor(4, 5)),
+        Some(cursor(10, 3)),
+        false,
+    )
+    .await;
+    assert_eq!(
+        from_current_tail,
+        cursor(4, 5),
+        "when no initial snapshot was queued, the daemon tail cursor is covered by the live cursor",
+    );
+}
+
+#[tokio::test]
+async fn active_task_subscription_cursor_reads_daemon_tail() {
+    let root = tempfile::tempdir().unwrap();
+    let state = test_state(root.path()).await;
+    let (workspace_id, session_id) = create_workspace_session(&state, root.path()).await;
+
+    let cursor = active_task_subscription_cursor(&state, workspace_id, session_id).await;
+
+    assert_eq!(cursor, SessionReplayCursor::default());
 }
 
 #[tokio::test]

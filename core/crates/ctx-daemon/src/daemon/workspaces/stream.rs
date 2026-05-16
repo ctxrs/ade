@@ -1,5 +1,6 @@
 mod read_model;
 mod replay;
+mod replay_cursor;
 mod subscriptions;
 mod vcs;
 
@@ -8,6 +9,10 @@ pub use read_model::{
     WorkspaceStreamInitialState, WorkspaceStreamSnapshotReadModel,
 };
 pub use replay::{replay_session_events, ReplayOutcome};
+pub use replay_cursor::{
+    active_head_cursors_from_snapshot_read_model, active_task_subscription_cursor,
+    head_only_snapshot_cursor, plan_resume_replay_cursor, WorkspaceStreamResumeReplayCursorPlan,
+};
 pub use subscriptions::{
     plan_workspace_stream_subscription, resolve_workspace_active_snapshot_subscriptions,
     WorkspaceStreamResolvedSession, WorkspaceStreamSessionReplay, WorkspaceStreamSubscriptionPlan,
