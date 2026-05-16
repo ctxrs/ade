@@ -10,15 +10,8 @@ use serde_json::Value;
 #[tokio::test]
 async fn session_diff_endpoints_return_no_repo_unavailable() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_daemon(
-        data_dir.path(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&state);
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let app = fixture.router();
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (_task, session) =
@@ -89,15 +82,9 @@ async fn session_diff_endpoints_return_no_repo_unavailable() {
 #[tokio::test]
 async fn session_diff_endpoints_return_no_target_branch_unavailable() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_daemon(
-        data_dir.path(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&state);
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let state = &fixture.daemon;
+    let app = fixture.router();
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     state
@@ -164,15 +151,9 @@ async fn workspace_primary_branch_endpoint_updates_branch() {
         "git branch merge-target should succeed"
     );
 
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_daemon(
-        data_dir.path(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&state);
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let state = &fixture.daemon;
+    let app = fixture.router();
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
 
     let (get_status, before): (StatusCode, Value) = common::json_request(
@@ -278,15 +259,8 @@ async fn workspace_primary_branch_endpoint_updates_branch() {
 #[tokio::test]
 async fn workspace_merge_queue_config_endpoint_supports_get_and_post() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let stores = common::setup_store(data_dir.path()).await;
-    let state = common::build_daemon(
-        data_dir.path(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
-    let app = common::router_for_daemon(&state);
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let app = fixture.router();
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
 
     let (get_status_before, before): (StatusCode, Value) = common::json_request(

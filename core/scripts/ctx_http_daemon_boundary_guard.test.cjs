@@ -7,6 +7,7 @@ const {
   DAEMON_EXTRACTION_BLOCKER_PATTERNS,
   API_DOMAIN_RAW_STORE_PATTERNS,
   API_RAW_DAEMON_PATTERNS,
+  DEFAULT_SESSION_AND_DIFF_FAKE_DAEMON_FIXTURE_PATTERNS,
   EXECUTION_LAUNCH_TEST_STORE_ACCESS_PATTERNS,
   EXTERNAL_PROVIDER_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   FAKE_DAEMON_EXTERNAL_TEST_STORE_ACCESS_PATTERNS,
@@ -43,6 +44,7 @@ const {
   apiPatternsForPath,
   authBoundaryStorePatternsForPath,
   cacheRehydrationStorePatternsForPath,
+  defaultSessionAndDiffFakeDaemonFixturePatternsForPath,
   externalProviderRouteStorePatternsForPath,
   executionLaunchStorePatternsForPath,
   fakeDaemonExternalStorePatternsForPath,
@@ -1386,6 +1388,71 @@ test("daemon boundary guard scopes provider-probe runtime env root", () => {
   );
   assert.deepEqual(
     providerProbeRuntimeEnvStorePatternsForPath("core/crates/ctx-http/tests/common/mod.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects default-session/diff raw daemon fixture setup", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/task_default_session_http.rs",
+    contents: `
+      use ctx_store::{Store, StoreManager};
+      async fn helper(daemon: &TestDaemon) {
+        let stores = common::setup_store(data_dir.path()).await;
+        let daemon = common::build_daemon(data_dir.path(), stores, common::fake_providers(), "http://127.0.0.1:0");
+        let app = common::router_for_daemon(&daemon);
+        let daemon = TestDaemon::new(data_dir, stores, providers, "http://127.0.0.1:0".into(), None);
+        daemon.store_for_workspace(workspace_id).await?;
+      }
+    `,
+    patterns: DEFAULT_SESSION_AND_DIFF_FAKE_DAEMON_FIXTURE_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct default-session/diff store manager helper",
+      "direct default-session/diff daemon construction helper",
+      "direct default-session/diff daemon router composition",
+      "direct default-session/diff TestDaemon construction",
+      "direct default-session/diff TestDaemon store access",
+      "raw default-session/diff StoreManager",
+      "raw default-session/diff ctx_store Store",
+    ],
+  );
+});
+
+test("daemon boundary guard allows default-session/diff fake-daemon fixture router", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/session_diff_unavailable.rs",
+    contents: `
+      async fn helper() {
+        let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+        let state = &fixture.daemon;
+        let app = fixture.router();
+        state.seed_workspace_runtime_settings_without_target_branch_for_test(workspace_id).await?;
+      }
+    `,
+    patterns: DEFAULT_SESSION_AND_DIFF_FAKE_DAEMON_FIXTURE_PATTERNS,
+  });
+
+  assert.deepEqual(violations, []);
+});
+
+test("daemon boundary guard scopes default-session/diff fake-daemon fixture roots", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/tests/session_diff_unavailable.rs",
+    "core/crates/ctx-http/tests/task_default_session_http.rs",
+  ]) {
+    assert.deepEqual(
+      defaultSessionAndDiffFakeDaemonFixturePatternsForPath(filePath),
+      DEFAULT_SESSION_AND_DIFF_FAKE_DAEMON_FIXTURE_PATTERNS,
+    );
+  }
+  assert.deepEqual(
+    defaultSessionAndDiffFakeDaemonFixturePatternsForPath(
+      "core/crates/ctx-http/tests/provider_probe_runtime_env.rs",
+    ),
     [],
   );
 });

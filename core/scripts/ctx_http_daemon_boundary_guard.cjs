@@ -223,6 +223,11 @@ const providerProbeRuntimeEnvStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/provider_probe_runtime_env.rs",
 ];
 
+const defaultSessionAndDiffFakeDaemonFixtureTestRoots = [
+  "core/crates/ctx-http/tests/session_diff_unavailable.rs",
+  "core/crates/ctx-http/tests/task_default_session_http.rs",
+];
+
 const mcpDaemonFacadeTestRoots = [
   "core/crates/ctx-http-test-support/src/mcp_daemon.rs",
   "core/crates/ctx-http-test-support/src/mcp_daemon/",
@@ -751,6 +756,41 @@ const PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS = [
     name: "direct provider-probe daemon router composition",
     regex: /\b(?:crate::)?common::router_for_daemon\s*\(|\buse\s+[^;]*\brouter_for_daemon\b|\brouter_for_daemon\s*\(/,
     contentRegex: /\buse\s+[\s\S]*?\brouter_for_daemon\b[\s\S]*?;/gm,
+  },
+];
+
+const DEFAULT_SESSION_AND_DIFF_FAKE_DAEMON_FIXTURE_PATTERNS = [
+  {
+    name: "direct default-session/diff store manager helper",
+    regex: /\b(?:crate::)?common::setup_store\s*\(|\buse\s+[^;]*\bsetup_store\b|\bsetup_store\s*\(/,
+    contentRegex: /^\s*use\s+[^\n;]*\bsetup_store\b[^\n;]*;/gm,
+  },
+  {
+    name: "direct default-session/diff daemon construction helper",
+    regex: /\b(?:crate::)?common::build_daemon\s*\(|\buse\s+[^;]*\bbuild_daemon\b|\bbuild_daemon\s*\(/,
+    contentRegex: /^\s*use\s+[^\n;]*\bbuild_daemon\b[^\n;]*;/gm,
+  },
+  {
+    name: "direct default-session/diff daemon router composition",
+    regex: /\b(?:crate::)?common::router_for_daemon\s*\(|\buse\s+[^;]*\brouter_for_daemon\b|\brouter_for_daemon\s*\(/,
+    contentRegex: /^\s*use\s+[^\n;]*\brouter_for_daemon\b[^\n;]*;/gm,
+  },
+  {
+    name: "direct default-session/diff TestDaemon construction",
+    regex: /\bTestDaemon::new[A-Za-z0-9_]*\s*\(/,
+  },
+  {
+    name: "direct default-session/diff TestDaemon store access",
+    regex: /\.(?:stores|global_store|store_for_session|store_for_workspace|uncached_store_for_workspace|store_for_task|store_for_worktree)\s*\(/,
+  },
+  {
+    name: "raw default-session/diff StoreManager",
+    regex: /\bStoreManager\b/,
+  },
+  {
+    name: "raw default-session/diff ctx_store Store",
+    regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore::/,
+    contentRegex: /\buse\s+ctx_store::\{(?=[^}]*\n)[\s\S]*?\bStore\b[\s\S]*?\}/gm,
   },
 ];
 
@@ -1981,6 +2021,13 @@ function providerProbeRuntimeEnvStorePatternsForPath(relativePath) {
   return [];
 }
 
+function defaultSessionAndDiffFakeDaemonFixturePatternsForPath(relativePath) {
+  if (defaultSessionAndDiffFakeDaemonFixtureTestRoots.some((root) => relativePath.startsWith(root))) {
+    return DEFAULT_SESSION_AND_DIFF_FAKE_DAEMON_FIXTURE_PATTERNS;
+  }
+  return [];
+}
+
 function mcpDaemonPatternsForPath(relativePath) {
   if (mcpDaemonFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS;
@@ -2402,6 +2449,13 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
+        patterns: defaultSessionAndDiffFakeDaemonFixturePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
         patterns: mcpDaemonPatternsForPath(relativePath),
       }),
     );
@@ -2547,6 +2601,7 @@ module.exports = {
   DAEMON_EXTRACTION_BLOCKER_PATTERNS,
   API_RAW_DAEMON_PATTERNS,
   API_DOMAIN_RAW_STORE_PATTERNS,
+  DEFAULT_SESSION_AND_DIFF_FAKE_DAEMON_FIXTURE_PATTERNS,
   EXECUTION_LAUNCH_TEST_STORE_ACCESS_PATTERNS,
   EXTERNAL_PROVIDER_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   FAKE_DAEMON_EXTERNAL_TEST_STORE_ACCESS_PATTERNS,
@@ -2583,6 +2638,7 @@ module.exports = {
   apiPatternsForPath,
   authBoundaryStorePatternsForPath,
   cacheRehydrationStorePatternsForPath,
+  defaultSessionAndDiffFakeDaemonFixturePatternsForPath,
   externalProviderRouteStorePatternsForPath,
   executionLaunchStorePatternsForPath,
   fakeDaemonExternalStorePatternsForPath,

@@ -42,16 +42,10 @@ impl Drop for EnvVarGuard {
     }
 }
 
-async fn setup_state(data_root: &std::path::Path, prewarm_statuses: bool) -> TestDaemon {
-    let stores = common::setup_store(data_root).await;
-    let state = common::build_daemon(
-        data_root.to_path_buf(),
-        stores,
-        common::fake_providers(),
-        "http://127.0.0.1:0",
-    );
+async fn setup_fixture(prewarm_statuses: bool) -> common::FakeDaemonFixture {
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
     if !prewarm_statuses {
-        return state;
+        return fixture;
     }
     let mut status = FakeProviderAdapter::new().inspect().await.unwrap();
     status.usability = ProviderUsability {
@@ -62,8 +56,11 @@ async fn setup_state(data_root: &std::path::Path, prewarm_statuses: bool) -> Tes
         blocking_provider_ids: Vec::new(),
         recommended_action: ProviderRecommendedAction::None,
     };
-    state.upsert_provider_status("fake".into(), status).await;
-    state
+    fixture
+        .daemon
+        .upsert_provider_status("fake".into(), status)
+        .await;
+    fixture
 }
 
 async fn seed_workspace(
@@ -81,10 +78,10 @@ async fn create_task_creates_default_session_when_requested() {
     let _test_lock = lock_test().await;
     let _show_fake = EnvVarGuard::set("CTX_SHOW_FAKE_PROVIDER", "1");
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let state = setup_state(data_dir.path(), true).await;
-    let app = common::router_for_daemon(&state);
-    let workspace = seed_workspace(&state, repo.path()).await;
+    let fixture = setup_fixture(true).await;
+    let state = &fixture.daemon;
+    let app = fixture.router();
+    let workspace = seed_workspace(state, repo.path()).await;
 
     let (status, task): (StatusCode, Task) = common::json_request(
         &app,
@@ -123,10 +120,10 @@ async fn create_task_creates_default_session_without_prewarmed_provider_statuses
     let _test_lock = lock_test().await;
     let _show_fake = EnvVarGuard::set("CTX_SHOW_FAKE_PROVIDER", "1");
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let state = setup_state(data_dir.path(), false).await;
-    let app = common::router_for_daemon(&state);
-    let workspace = seed_workspace(&state, repo.path()).await;
+    let fixture = setup_fixture(false).await;
+    let state = &fixture.daemon;
+    let app = fixture.router();
+    let workspace = seed_workspace(state, repo.path()).await;
 
     let (status, task): (StatusCode, Task) = common::json_request(
         &app,
@@ -154,10 +151,10 @@ async fn create_task_rejects_legacy_create_default_session_flag() {
     let _test_lock = lock_test().await;
     let _show_fake = EnvVarGuard::set("CTX_SHOW_FAKE_PROVIDER", "1");
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let state = setup_state(data_dir.path(), true).await;
-    let app = common::router_for_daemon(&state);
-    let workspace = seed_workspace(&state, repo.path()).await;
+    let fixture = setup_fixture(true).await;
+    let state = &fixture.daemon;
+    let app = fixture.router();
+    let workspace = seed_workspace(state, repo.path()).await;
 
     let req = Request::builder()
         .method(Method::POST)
@@ -192,10 +189,10 @@ async fn create_session_rejects_second_top_level_session_for_task() {
     let _test_lock = lock_test().await;
     let _show_fake = EnvVarGuard::set("CTX_SHOW_FAKE_PROVIDER", "1");
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let state = setup_state(data_dir.path(), true).await;
-    let app = common::router_for_daemon(&state);
-    let workspace = seed_workspace(&state, repo.path()).await;
+    let fixture = setup_fixture(true).await;
+    let state = &fixture.daemon;
+    let app = fixture.router();
+    let workspace = seed_workspace(state, repo.path()).await;
 
     let (task_status, task): (StatusCode, Task) = common::json_request(
         &app,
@@ -243,10 +240,10 @@ async fn create_task_replay_with_same_id_does_not_create_extra_default_sessions(
     let _test_lock = lock_test().await;
     let _show_fake = EnvVarGuard::set("CTX_SHOW_FAKE_PROVIDER", "1");
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let state = setup_state(data_dir.path(), true).await;
-    let app = common::router_for_daemon(&state);
-    let workspace = seed_workspace(&state, repo.path()).await;
+    let fixture = setup_fixture(true).await;
+    let state = &fixture.daemon;
+    let app = fixture.router();
+    let workspace = seed_workspace(state, repo.path()).await;
 
     let task_id = uuid::Uuid::new_v4().to_string();
     let uri = format!("/api/workspaces/{}/tasks", workspace.id.0);
@@ -291,10 +288,10 @@ async fn create_task_replay_validates_requested_default_session() {
     let _test_lock = lock_test().await;
     let _show_fake = EnvVarGuard::set("CTX_SHOW_FAKE_PROVIDER", "1");
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let state = setup_state(data_dir.path(), true).await;
-    let app = common::router_for_daemon(&state);
-    let workspace = seed_workspace(&state, repo.path()).await;
+    let fixture = setup_fixture(true).await;
+    let state = &fixture.daemon;
+    let app = fixture.router();
+    let workspace = seed_workspace(state, repo.path()).await;
 
     let task_id = uuid::Uuid::new_v4().to_string();
     let session_id = uuid::Uuid::new_v4().to_string();
@@ -364,10 +361,10 @@ async fn create_task_replay_allows_server_generated_default_session_id() {
     let _test_lock = lock_test().await;
     let _show_fake = EnvVarGuard::set("CTX_SHOW_FAKE_PROVIDER", "1");
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let state = setup_state(data_dir.path(), true).await;
-    let app = common::router_for_daemon(&state);
-    let workspace = seed_workspace(&state, repo.path()).await;
+    let fixture = setup_fixture(true).await;
+    let state = &fixture.daemon;
+    let app = fixture.router();
+    let workspace = seed_workspace(state, repo.path()).await;
 
     let task_id = uuid::Uuid::new_v4().to_string();
     let uri = format!("/api/workspaces/{}/tasks", workspace.id.0);
@@ -412,10 +409,10 @@ async fn create_task_in_non_repo_workspace_returns_bad_request() {
     let _show_fake = EnvVarGuard::set("CTX_SHOW_FAKE_PROVIDER", "1");
     let workspace_root = tempfile::tempdir().unwrap();
     std::fs::write(workspace_root.path().join("README.md"), "hello\n").unwrap();
-    let data_dir = tempfile::tempdir().unwrap();
-    let state = setup_state(data_dir.path(), true).await;
-    let app = common::router_for_daemon(&state);
-    let workspace = seed_workspace(&state, workspace_root.path()).await;
+    let fixture = setup_fixture(true).await;
+    let state = &fixture.daemon;
+    let app = fixture.router();
+    let workspace = seed_workspace(state, workspace_root.path()).await;
 
     let (status, body): (StatusCode, Value) = common::json_request(
         &app,
@@ -446,10 +443,10 @@ async fn create_task_rolls_back_if_default_session_preflight_fails_after_task_pe
     let _test_lock = lock_test().await;
     let _show_fake = EnvVarGuard::set("CTX_SHOW_FAKE_PROVIDER", "1");
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let state = setup_state(data_dir.path(), true).await;
-    let app = common::router_for_daemon(&state);
-    let workspace = seed_workspace(&state, repo.path()).await;
+    let fixture = setup_fixture(true).await;
+    let state = &fixture.daemon;
+    let app = fixture.router();
+    let workspace = seed_workspace(state, repo.path()).await;
 
     let task_uuid = common::fixed_uuid(0xfeed);
     let task_id = TaskId(task_uuid);
@@ -509,10 +506,10 @@ async fn create_session_waits_for_task_session_creation_lock() {
     let _test_lock = lock_test().await;
     let _show_fake = EnvVarGuard::set("CTX_SHOW_FAKE_PROVIDER", "1");
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let state = setup_state(data_dir.path(), true).await;
-    let app = common::router_for_daemon(&state);
-    let workspace = seed_workspace(&state, repo.path()).await;
+    let fixture = setup_fixture(true).await;
+    let state = &fixture.daemon;
+    let app = fixture.router();
+    let workspace = seed_workspace(state, repo.path()).await;
     let task = state
         .seed_task_default_session_task_for_test(workspace.id, "locked session")
         .await
@@ -567,10 +564,10 @@ async fn concurrent_replayed_create_task_failures_return_validation_error_not_no
     let _test_lock = lock_test().await;
     let _show_fake = EnvVarGuard::set("CTX_SHOW_FAKE_PROVIDER", "1");
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let state = setup_state(data_dir.path(), true).await;
-    let app = common::router_for_daemon(&state);
-    let workspace = seed_workspace(&state, repo.path()).await;
+    let fixture = setup_fixture(true).await;
+    let state = &fixture.daemon;
+    let app = fixture.router();
+    let workspace = seed_workspace(state, repo.path()).await;
 
     let task_uuid = common::fixed_uuid(0xbeef);
     let task_id = TaskId(task_uuid);
@@ -639,10 +636,10 @@ async fn concurrent_replayed_create_task_with_different_payload_conflicts() {
     let _test_lock = lock_test().await;
     let _show_fake = EnvVarGuard::set("CTX_SHOW_FAKE_PROVIDER", "1");
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let state = setup_state(data_dir.path(), true).await;
-    let app = common::router_for_daemon(&state);
-    let workspace = seed_workspace(&state, repo.path()).await;
+    let fixture = setup_fixture(true).await;
+    let state = &fixture.daemon;
+    let app = fixture.router();
+    let workspace = seed_workspace(state, repo.path()).await;
 
     let task_uuid = common::fixed_uuid(0xc0de);
     let task_id = TaskId(task_uuid);
@@ -720,10 +717,10 @@ async fn conflicting_session_id_does_not_leak_new_worktree() {
     let _test_lock = lock_test().await;
     let _show_fake = EnvVarGuard::set("CTX_SHOW_FAKE_PROVIDER", "1");
     let repo = common::init_git_repo(&[("README.md", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let state = setup_state(data_dir.path(), true).await;
-    let app = common::router_for_daemon(&state);
-    let workspace = seed_workspace(&state, repo.path()).await;
+    let fixture = setup_fixture(true).await;
+    let state = &fixture.daemon;
+    let app = fixture.router();
+    let workspace = seed_workspace(state, repo.path()).await;
 
     let (existing_status, existing_task): (StatusCode, Task) = common::json_request(
         &app,
