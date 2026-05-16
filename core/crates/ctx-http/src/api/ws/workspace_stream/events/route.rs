@@ -1,5 +1,11 @@
 use super::super::lifecycle::queue_workspace_stream_reset;
 use super::super::*;
+use ctx_daemon::daemon::workspaces::stream::{
+    WorkspaceStreamControlLane, WorkspaceStreamEventRoutePlan, WorkspaceStreamHeadLane,
+};
+
+#[cfg(test)]
+mod tests;
 
 pub(super) async fn route_workspace_stream_event(
     state: &WorkspaceStreamHandle,
@@ -8,57 +14,58 @@ pub(super) async fn route_workspace_stream_event(
     runtime: &mut WorkspaceStreamRuntime,
     labels: &WorkspaceStreamLabels,
 ) -> Result<(), ()> {
-    let session_id = match &event {
-        WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } => Some(delta.session_id),
-        WorkspaceActiveSnapshotEvent::SessionHeadSeed { head, .. } => Some(head.session.id),
-        WorkspaceActiveSnapshotEvent::SessionGap { session_id, .. } => Some(*session_id),
-        WorkspaceActiveSnapshotEvent::SessionSummaryDelta { delta, .. } => Some(delta.session_id),
-        WorkspaceActiveSnapshotEvent::SessionRemoved { session_id, .. } => Some(*session_id),
-        _ => None,
-    };
-
-    match event {
-        WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+    match state.plan_workspace_stream_event_route(&runtime.subscription_state, event) {
+        WorkspaceStreamEventRoutePlan::Drop => Ok(()),
+        WorkspaceStreamEventRoutePlan::HeadDelta {
             snapshot_rev,
             delta,
-            ..
-        } => route_head_delta(state, workspace_id, snapshot_rev, *delta, runtime, labels).await,
-        other @ WorkspaceActiveSnapshotEvent::SessionSummaryDelta { .. } => {
-            route_summary_delta(state, workspace_id, other, runtime, labels).await
+            lane,
+        } => {
+            push_planned_head_delta(
+                state,
+                workspace_id,
+                snapshot_rev,
+                delta,
+                lane,
+                runtime,
+                labels,
+            )
+            .await
         }
-        other => route_control_event(state, workspace_id, session_id, other, runtime, labels).await,
+        WorkspaceStreamEventRoutePlan::Summary { event } => {
+            push_planned_summary_delta(state, workspace_id, event, runtime, labels).await
+        }
+        WorkspaceStreamEventRoutePlan::Control {
+            event,
+            session_id,
+            lane,
+        } => {
+            push_planned_control_event(
+                state,
+                workspace_id,
+                session_id,
+                event,
+                lane,
+                runtime,
+                labels,
+            )
+            .await
+        }
     }
 }
 
-async fn route_head_delta(
+async fn push_planned_head_delta(
     state: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
     snapshot_rev: i64,
     delta: SessionHeadDelta,
+    lane: WorkspaceStreamHeadLane,
     runtime: &mut WorkspaceStreamRuntime,
     labels: &WorkspaceStreamLabels,
 ) -> Result<(), ()> {
-    if !state.should_stream_head_delta(
-        &runtime.subscription_state.active_task_sessions,
-        &runtime.subscription_state.explicit_sessions,
-        runtime.subscription_state.foreground_session_ids.as_ref(),
-        delta.session_id,
-    ) {
-        return Ok(());
-    }
-    let Some(delta) = state.filter_partial_delta_for_active_tasks(
-        delta,
-        runtime.subscription_state.foreground_session_ids.as_ref(),
-    ) else {
-        return Ok(());
-    };
-    let head_buffer = if state.is_foreground_session(
-        runtime.subscription_state.foreground_session_ids.as_ref(),
-        delta.session_id,
-    ) {
-        &runtime.foreground_head_buffer
-    } else {
-        &runtime.background_head_buffer
+    let head_buffer = match lane {
+        WorkspaceStreamHeadLane::Foreground => &runtime.foreground_head_buffer,
+        WorkspaceStreamHeadLane::Background => &runtime.background_head_buffer,
     };
     if let Err(error) = head_buffer.push(snapshot_rev, delta).await {
         log_head_batch_push_error(labels.event_queue_label, workspace_id, &error);
@@ -70,7 +77,7 @@ async fn route_head_delta(
     Ok(())
 }
 
-async fn route_summary_delta(
+async fn push_planned_summary_delta(
     state: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
     event: WorkspaceActiveSnapshotEvent,
@@ -87,21 +94,18 @@ async fn route_summary_delta(
     Ok(())
 }
 
-async fn route_control_event(
+async fn push_planned_control_event(
     state: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
     session_id: Option<SessionId>,
     event: WorkspaceActiveSnapshotEvent,
+    lane: WorkspaceStreamControlLane,
     runtime: &mut WorkspaceStreamRuntime,
     labels: &WorkspaceStreamLabels,
 ) -> Result<(), ()> {
-    let target = if state.is_priority_control_event(
-        &event,
-        runtime.subscription_state.foreground_session_ids.as_ref(),
-    ) {
-        &runtime.priority_control
-    } else {
-        &runtime.control
+    let target = match lane {
+        WorkspaceStreamControlLane::Priority => &runtime.priority_control,
+        WorkspaceStreamControlLane::Normal => &runtime.control,
     };
     if push_stream_message(
         target,

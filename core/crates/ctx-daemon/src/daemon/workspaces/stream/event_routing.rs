@@ -7,7 +7,38 @@ use ctx_core::models::{
 };
 use ctx_workspace_active_snapshot::{
     primary_session_id_for_active_task, workspace_stream_event_blocks_pending_replay,
+    WorkspaceActiveSubscriptionState,
 };
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorkspaceStreamHeadLane {
+    Foreground,
+    Background,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorkspaceStreamControlLane {
+    Priority,
+    Normal,
+}
+
+#[derive(Debug)]
+pub enum WorkspaceStreamEventRoutePlan {
+    Drop,
+    HeadDelta {
+        snapshot_rev: i64,
+        delta: SessionHeadDelta,
+        lane: WorkspaceStreamHeadLane,
+    },
+    Summary {
+        event: WorkspaceActiveSnapshotEvent,
+    },
+    Control {
+        event: WorkspaceActiveSnapshotEvent,
+        session_id: Option<SessionId>,
+        lane: WorkspaceStreamControlLane,
+    },
+}
 
 pub fn primary_session_id_for_active_task_event(task: &WorkspaceActiveTaskSummary) -> SessionId {
     primary_session_id_for_active_task(task)
@@ -43,6 +74,77 @@ pub fn event_blocks_pending_replay(
         pending_replay_sessions,
         active_task_sessions,
     )
+}
+
+pub fn plan_workspace_stream_event_route(
+    subscription_state: &WorkspaceActiveSubscriptionState,
+    event: WorkspaceActiveSnapshotEvent,
+) -> WorkspaceStreamEventRoutePlan {
+    let session_id = event_session_id(&event);
+    match event {
+        WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+            snapshot_rev,
+            delta,
+            ..
+        } => {
+            if !should_stream_head_delta(
+                &subscription_state.active_task_sessions,
+                &subscription_state.explicit_sessions,
+                subscription_state.foreground_session_ids.as_ref(),
+                delta.session_id,
+            ) {
+                return WorkspaceStreamEventRoutePlan::Drop;
+            }
+            let Some(delta) = filter_partial_delta_for_active_tasks(
+                *delta,
+                subscription_state.foreground_session_ids.as_ref(),
+            ) else {
+                return WorkspaceStreamEventRoutePlan::Drop;
+            };
+            let lane = if is_foreground_session(
+                subscription_state.foreground_session_ids.as_ref(),
+                delta.session_id,
+            ) {
+                WorkspaceStreamHeadLane::Foreground
+            } else {
+                WorkspaceStreamHeadLane::Background
+            };
+            WorkspaceStreamEventRoutePlan::HeadDelta {
+                snapshot_rev,
+                delta,
+                lane,
+            }
+        }
+        event @ WorkspaceActiveSnapshotEvent::SessionSummaryDelta { .. } => {
+            WorkspaceStreamEventRoutePlan::Summary { event }
+        }
+        event => {
+            let lane = if is_priority_control_event(
+                &event,
+                subscription_state.foreground_session_ids.as_ref(),
+            ) {
+                WorkspaceStreamControlLane::Priority
+            } else {
+                WorkspaceStreamControlLane::Normal
+            };
+            WorkspaceStreamEventRoutePlan::Control {
+                event,
+                session_id,
+                lane,
+            }
+        }
+    }
+}
+
+fn event_session_id(event: &WorkspaceActiveSnapshotEvent) -> Option<SessionId> {
+    match event {
+        WorkspaceActiveSnapshotEvent::SessionHeadDelta { delta, .. } => Some(delta.session_id),
+        WorkspaceActiveSnapshotEvent::SessionHeadSeed { head, .. } => Some(head.session.id),
+        WorkspaceActiveSnapshotEvent::SessionGap { session_id, .. } => Some(*session_id),
+        WorkspaceActiveSnapshotEvent::SessionSummaryDelta { delta, .. } => Some(delta.session_id),
+        WorkspaceActiveSnapshotEvent::SessionRemoved { session_id, .. } => Some(*session_id),
+        _ => None,
+    }
 }
 
 pub fn is_foreground_session(

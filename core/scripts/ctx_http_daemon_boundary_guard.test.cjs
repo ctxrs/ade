@@ -32,6 +32,7 @@ const {
   WORKSPACE_STREAM_SUBSCRIPTION_PLAN_API_PATTERNS,
   WORKSPACE_STREAM_REPLAY_CURSOR_API_PATTERNS,
   WORKSPACE_STREAM_EVENT_ROUTING_API_PATTERNS,
+  WORKSPACE_STREAM_EVENT_ROUTE_PLAN_API_PATTERNS,
   WORKSPACE_STREAM_SUBSCRIPTION_EVENT_API_PATTERNS,
   PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
@@ -516,19 +517,88 @@ test("daemon boundary guard scopes workspace stream event-routing predicate ban"
   );
 });
 
-test("daemon boundary guard allows daemon handle event-routing methods", () => {
+test("daemon boundary guard rejects direct workspace stream event routing in HTTP route files", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/ws/workspace_stream/events/route.rs",
+    contents: `
+      use WorkspaceActiveSnapshotEvent::*;
+      fn route_head_delta() {}
+      fn route_summary_delta() {}
+      fn route_control_event() {}
+
+      fn handler(event: WorkspaceActiveSnapshotEvent) {
+        match event {
+          WorkspaceActiveSnapshotEvent::SessionHeadDelta { .. } => {}
+          WorkspaceActiveSnapshotEvent::SessionSummaryDelta { .. } => {}
+          WorkspaceActiveSnapshotEvent::SessionGap { .. } => {}
+          WorkspaceActiveSnapshotEvent::SessionHeadSeed { .. } => {}
+          WorkspaceActiveSnapshotEvent::SessionRemoved { .. } => {}
+          SessionHeadDelta { .. } => {}
+          SessionSummaryDelta { .. } => {}
+          SessionGap { .. } => {}
+          SessionHeadSeed { .. } => {}
+          SessionRemoved { .. } => {}
+          _ => {}
+        }
+      }
+    `,
+    patterns: WORKSPACE_STREAM_EVENT_ROUTE_PLAN_API_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "workspace stream API matches event-routing domain event directly",
+      "workspace stream API matches event-routing domain event directly",
+      "workspace stream API matches event-routing domain event directly",
+      "workspace stream API matches event-routing domain event directly",
+      "workspace stream API matches event-routing domain event directly",
+      "workspace stream API matches event-routing domain event directly",
+      "workspace stream API matches event-routing domain event directly",
+      "workspace stream API matches event-routing domain event directly",
+      "workspace stream API matches event-routing domain event directly",
+      "workspace stream API matches event-routing domain event directly",
+      "workspace stream API owns event route helper",
+      "workspace stream API owns event route helper",
+      "workspace stream API owns event route helper",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes direct workspace stream event routing ban", () => {
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/ws/workspace_stream/events/route.rs",
+    ).includes(WORKSPACE_STREAM_EVENT_ROUTE_PLAN_API_PATTERNS[0]),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/ws/workspace_stream/subscription/replay/session.rs",
+    ).includes(WORKSPACE_STREAM_EVENT_ROUTE_PLAN_API_PATTERNS[0]),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/ws/workspace_stream/events/route/tests.rs",
+    ).includes(WORKSPACE_STREAM_EVENT_ROUTE_PLAN_API_PATTERNS[0]),
+    false,
+  );
+});
+
+test("daemon boundary guard allows daemon route-plan methods", () => {
   const violations = scanText({
     filePath: "core/crates/ctx-http/src/api/ws/workspace_stream/events/route.rs",
     contents: `
       fn handler(state: WorkspaceStreamHandle, event: WorkspaceActiveSnapshotEvent) {
         let _ = state.event_snapshot_rev(&event);
-        let _ = state.should_stream_head_delta(active, explicit, foreground, session_id);
-        let _ = state.filter_partial_delta_for_active_tasks(delta, foreground);
-        let _ = state.is_priority_control_event(&event, foreground);
-        let _ = state.is_foreground_session(foreground, session_id);
+        let _ = state.plan_workspace_stream_event_route(&subscription_state, event);
       }
     `,
-    patterns: WORKSPACE_STREAM_EVENT_ROUTING_API_PATTERNS,
+    patterns: [
+      ...WORKSPACE_STREAM_EVENT_ROUTING_API_PATTERNS,
+      ...WORKSPACE_STREAM_EVENT_ROUTE_PLAN_API_PATTERNS,
+    ],
   });
 
   assert.deepEqual(violations, []);

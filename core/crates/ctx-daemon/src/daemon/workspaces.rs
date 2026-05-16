@@ -1048,43 +1048,12 @@ impl WorkspaceStreamHandle {
         stream::event_blocks_pending_replay(event, pending_replay_sessions, active_task_sessions)
     }
 
-    pub fn should_stream_head_delta(
+    pub fn plan_workspace_stream_event_route(
         &self,
-        active_task_sessions: &HashMap<TaskId, SessionId>,
-        explicit_sessions: &HashSet<SessionId>,
-        foreground_session_ids: Option<&HashSet<SessionId>>,
-        session_id: SessionId,
-    ) -> bool {
-        stream::should_stream_head_delta(
-            active_task_sessions,
-            explicit_sessions,
-            foreground_session_ids,
-            session_id,
-        )
-    }
-
-    pub fn filter_partial_delta_for_active_tasks(
-        &self,
-        delta: SessionHeadDelta,
-        foreground_session_ids: Option<&HashSet<SessionId>>,
-    ) -> Option<SessionHeadDelta> {
-        stream::filter_partial_delta_for_active_tasks(delta, foreground_session_ids)
-    }
-
-    pub fn is_foreground_session(
-        &self,
-        foreground_session_ids: Option<&HashSet<SessionId>>,
-        session_id: SessionId,
-    ) -> bool {
-        stream::is_foreground_session(foreground_session_ids, session_id)
-    }
-
-    pub fn is_priority_control_event(
-        &self,
-        event: &WorkspaceActiveSnapshotEvent,
-        foreground_session_ids: Option<&HashSet<SessionId>>,
-    ) -> bool {
-        stream::is_priority_control_event(event, foreground_session_ids)
+        subscription_state: &WorkspaceActiveSubscriptionState,
+        event: WorkspaceActiveSnapshotEvent,
+    ) -> stream::WorkspaceStreamEventRoutePlan {
+        stream::plan_workspace_stream_event_route(subscription_state, event)
     }
 
     pub async fn resolve_workspace_active_snapshot_subscriptions(

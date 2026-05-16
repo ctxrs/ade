@@ -197,6 +197,11 @@ const workspaceStreamEventRoutingApiRoots = [
   "core/crates/ctx-http/src/api/ws/common/rev.rs",
 ];
 
+const workspaceStreamEventRoutePlanApiRoots = [
+  "core/crates/ctx-http/src/api/ws/workspace_stream/events/route.rs",
+  "core/crates/ctx-http/src/api/ws/workspace_stream/subscription/replay/session.rs",
+];
+
 const workspaceStreamSubscriptionEventApiRoots = [
   "core/crates/ctx-http/src/api/ws/workspace_stream/events/subscriptions.rs",
 ];
@@ -945,6 +950,18 @@ const WORKSPACE_STREAM_EVENT_ROUTING_API_PATTERNS = [
     name: "workspace stream API defines event-routing predicate",
     regex:
       /\bfn\s+(?:should_stream_head_delta|filter_partial_delta_for_active_tasks|is_priority_control_event|is_foreground_session|event_snapshot_rev)\s*\(/,
+  },
+];
+
+const WORKSPACE_STREAM_EVENT_ROUTE_PLAN_API_PATTERNS = [
+  {
+    name: "workspace stream API matches event-routing domain event directly",
+    regex:
+      /\b(?:WorkspaceActiveSnapshotEvent::)?(?:SessionHeadDelta|SessionSummaryDelta|SessionGap|SessionHeadSeed|SessionRemoved)\s*\{/,
+  },
+  {
+    name: "workspace stream API owns event route helper",
+    regex: /\bfn\s+(?:route_head_delta|route_summary_delta|route_control_event)\s*\(/,
   },
 ];
 
@@ -2764,6 +2781,9 @@ function apiPatternsForPath(relativePath) {
   if (workspaceStreamEventRoutingApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...WORKSPACE_STREAM_EVENT_ROUTING_API_PATTERNS);
   }
+  if (workspaceStreamEventRoutePlanApiRoots.some((root) => relativePath === root)) {
+    patterns.push(...WORKSPACE_STREAM_EVENT_ROUTE_PLAN_API_PATTERNS);
+  }
   if (workspaceStreamSubscriptionEventApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...WORKSPACE_STREAM_SUBSCRIPTION_EVENT_API_PATTERNS);
   }
@@ -3701,6 +3721,7 @@ module.exports = {
   WORKSPACE_STREAM_SUBSCRIPTION_PLAN_API_PATTERNS,
   WORKSPACE_STREAM_REPLAY_CURSOR_API_PATTERNS,
   WORKSPACE_STREAM_EVENT_ROUTING_API_PATTERNS,
+  WORKSPACE_STREAM_EVENT_ROUTE_PLAN_API_PATTERNS,
   WORKSPACE_STREAM_SUBSCRIPTION_EVENT_API_PATTERNS,
   PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
