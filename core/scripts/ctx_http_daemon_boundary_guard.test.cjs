@@ -26,6 +26,7 @@ const {
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   MOBILE_ACCESS_STORE_DTO_API_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
+  SESSION_VCS_API_ORCHESTRATION_PATTERNS,
   PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,
@@ -1168,6 +1169,64 @@ test("daemon boundary guard scopes mobile access storage DTO roots", () => {
   assert.deepEqual(
     mobileAccessStoreDtoApiPatternsForPath("core/crates/ctx-http/src/api/providers/status.rs"),
     [],
+  );
+});
+
+test("daemon boundary guard rejects session VCS API workspace-service orchestration", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/sessions/snapshot/vcs/diff.rs",
+    contents: `
+      use ctx_workspace_services::worktree_vcs::{
+        apply_worktree_vcs_session_patch as apply_patch,
+        WorktreeVcsDiffBaseQuery,
+      };
+      use ctx_workspace_services::worktree_vcs as vcs;
+
+      async fn handler() {
+        let _ = ctx_workspace_services::worktree_vcs::worktree_vcs_session_diff_available("x".to_string());
+        let _ = session_git_status_summary_from_snapshot(&snapshot);
+        let _ = WorktreeDiffBaseResolution;
+        let _ = GitStatusEntry;
+      }
+    `,
+    patterns: SESSION_VCS_API_ORCHESTRATION_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "session VCS API imports workspace VCS service",
+      "session VCS API imports workspace VCS service",
+      "session VCS API imports workspace VCS service",
+      "session VCS API imports workspace VCS service",
+      "session VCS API aliases workspace VCS service",
+      "session VCS API calls workspace VCS service helper",
+      "session VCS API calls workspace VCS service helper",
+      "session VCS API references workspace VCS service type",
+      "session VCS API references workspace VCS service type",
+      "session VCS API references workspace VCS service type",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes session VCS orchestration patterns to API VCS roots", () => {
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/sessions/snapshot/vcs.rs").includes(
+      SESSION_VCS_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/sessions/snapshot/vcs/apply.rs").includes(
+      SESSION_VCS_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/sessions/snapshot/head.rs").includes(
+      SESSION_VCS_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    false,
   );
 });
 

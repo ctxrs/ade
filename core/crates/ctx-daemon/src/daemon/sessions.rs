@@ -8,6 +8,7 @@ mod pinning;
 mod runtime;
 pub mod subagents;
 pub mod title_generation;
+pub mod vcs;
 
 pub use handle::{
     DemoSeedTranscript, DemoSeedTranscriptError, DemoSeedTranscriptTurn, GenerateSessionTitleError,

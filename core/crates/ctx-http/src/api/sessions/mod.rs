@@ -15,7 +15,6 @@ use ctx_daemon::daemon::SessionsHandle;
 use ctx_observability::logs;
 #[cfg(test)]
 use ctx_settings_model as user_settings;
-use ctx_workspace_services::worktree_vcs::GitStatusEntry;
 
 mod subagents;
 pub(super) use subagents::{

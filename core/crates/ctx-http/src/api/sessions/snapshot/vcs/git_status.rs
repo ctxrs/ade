@@ -1,52 +1,14 @@
-use super::context::load_session_vcs_context;
 use super::*;
-use ctx_workspace_services::worktree_vcs::session_git_status_summary_from_snapshot;
 
 pub(crate) async fn get_session_git_status(
     State(state): State<SessionsHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<SessionGitStatusResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid session id".to_string(),
-            }),
-        )
-    })?);
-    let ctx = load_session_vcs_context(&state, session_id).await?;
-    let snapshot = state
-        .load_git_status_snapshot(&ctx.worktree, true, true)
+    let session_id = parse_session_id(&id)?;
+    state
+        .get_session_vcs_git_status_for_request(session_id)
         .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
-    let summary = session_git_status_summary_from_snapshot(&snapshot);
-    let resp = SessionGitStatusResponse {
-        raw: snapshot.raw,
-        summary_line: snapshot.summary_line,
-        branch: snapshot.branch,
-        upstream: snapshot.upstream,
-        ahead: snapshot.ahead,
-        behind: snapshot.behind,
-        detached: snapshot.detached,
-        staged: snapshot.staged,
-        unstaged: snapshot.unstaged,
-        untracked: snapshot.untracked,
-        entries: snapshot.entries,
-        entries_truncated: snapshot.entries_truncated,
-        entries_total_count: snapshot.entries_total_count,
-    };
-    if let Err(err) = state
-        .persist_session_git_status_summary(ctx.session.id, ctx.worktree.id, &summary)
-        .await
-    {
-        tracing::warn!(session_id = %ctx.session.id.0, "git status summary persist failed: {err:?}");
-    }
-    Ok(Json(resp))
+        .map(session_git_status_response)
+        .map(Json)
+        .map_err(map_session_vcs_error)
 }

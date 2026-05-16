@@ -154,6 +154,11 @@ const mobileAccessStoreDtoApiRoots = [
   "core/crates/ctx-http/src/api/mobile_access/",
 ];
 
+const sessionVcsApiRoots = [
+  "core/crates/ctx-http/src/api/sessions/snapshot/vcs.rs",
+  "core/crates/ctx-http/src/api/sessions/snapshot/vcs/",
+];
+
 const smallApiUnitStoreFacadeTestRoots = [
   "core/crates/ctx-http/src/api/settings.rs",
   "core/crates/ctx-http/src/api/providers/login/codex/tests.rs",
@@ -798,6 +803,26 @@ const MOBILE_ACCESS_STORE_DTO_API_PATTERNS = [
   {
     name: "mobile access API references storage DTO type",
     regex: /\b(?:MobileAccessConfig|MobileDeviceUpsert|MobileDeviceSeqAdvance)\b/,
+  },
+];
+
+const SESSION_VCS_API_ORCHESTRATION_PATTERNS = [
+  {
+    name: "session VCS API imports workspace VCS service",
+    regex: /\buse\s+ctx_workspace_services\s*::\s*worktree_vcs\b|\bctx_workspace_services\s*::\s*worktree_vcs\s*::/,
+    contentRegex: /\buse\s+ctx_workspace_services\s*::\s*worktree_vcs\s*::\s*\{(?=[^}]*\n)[\s\S]*?\}/gm,
+  },
+  {
+    name: "session VCS API aliases workspace VCS service",
+    regex: /\buse\s+ctx_workspace_services\s*::\s*worktree_vcs\s+as\s+\w+\b/,
+  },
+  {
+    name: "session VCS API calls workspace VCS service helper",
+    regex: /\b(?:apply_worktree_vcs_session_patch|is_no_vcs_repo_error|session_git_status_summary_from_snapshot|worktree_vcs_diff_summary_mismatch|worktree_vcs_session_diff_available|worktree_vcs_session_diff_unavailable|worktree_vcs_session_diff_summary_available|worktree_vcs_session_diff_summary_no_repo|worktree_vcs_session_diff_summary_unavailable|resolve_worktree_diff_base_from_source)\s*\(/,
+  },
+  {
+    name: "session VCS API references workspace VCS service type",
+    regex: /\b(?:WorktreeDiffBaseResolution|WorktreeVcsDiffBaseQuery|WorktreeVcsSessionDiffOutcome|WorktreeVcsSessionDiffSummaryOutcome|WorktreeVcsDiffSummaryCounts|GitStatusSnapshot|GitStatusEntry)\b/,
   },
 ];
 
@@ -2581,6 +2606,9 @@ function apiPatternsForPath(relativePath) {
   if (rawStoreBlindApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...API_DOMAIN_RAW_STORE_PATTERNS);
   }
+  if (sessionVcsApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...SESSION_VCS_API_ORCHESTRATION_PATTERNS);
+  }
   return patterns;
 }
 
@@ -3509,6 +3537,7 @@ module.exports = {
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MOBILE_ACCESS_STORE_DTO_API_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
+  SESSION_VCS_API_ORCHESTRATION_PATTERNS,
   PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,
