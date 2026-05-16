@@ -4,75 +4,130 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::body::Body;
-use axum::http::{Method, Request, StatusCode};
+use axum::http::{Method, StatusCode};
 use serde_json::Value;
-use tower::ServiceExt;
 
-use ctx_core::models::SessionEventType;
 use ctx_daemon::test_support::TestDaemon;
 use ctx_managed_installs::{save_agent_server_config, AgentServerCommand, AgentServerConfigFile};
 use ctx_providers::adapters::{ProviderAdapter, ProviderHealth, ProviderStatus};
 use ctx_providers::crp::Tier1CrpAdapter;
-use ctx_store::StoreManager;
 
 mod common;
 
-async fn post_message(app: &axum::Router, session_id: uuid::Uuid, content: &str) {
-    let req = Request::builder()
-        .method(Method::POST)
-        .uri(format!("/api/sessions/{session_id}/messages"))
-        .header("content-type", "application/json")
-        .body(Body::from(
-            serde_json::json!({ "content": content }).to_string(),
-        ))
-        .unwrap();
-    let res = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
+struct LiveCanaryHeadSnapshot {
+    body: Value,
+    events: Vec<Value>,
+    assistant_messages: Vec<String>,
 }
 
-async fn wait_for_terminal(daemon: &TestDaemon, session_id: ctx_core::ids::SessionId) {
-    let store = daemon.store_for_session(session_id).await.unwrap();
+async fn post_message(app: &axum::Router, session_id: uuid::Uuid, content: &str) {
+    let (status, body): (StatusCode, Value) = common::json_request(
+        app,
+        Method::POST,
+        format!("/api/sessions/{session_id}/messages"),
+        Some(serde_json::json!({ "content": content })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "failed to post live canary message: {body:#?}"
+    );
+}
+
+async fn wait_for_terminal_head(
+    app: &axum::Router,
+    session_id: uuid::Uuid,
+) -> LiveCanaryHeadSnapshot {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(240);
     loop {
-        let events = store.list_session_events(session_id).await.unwrap();
-        if events
-            .iter()
-            .any(|e| matches!(e.event_type, SessionEventType::Done))
-        {
-            return;
+        let (status, body): (StatusCode, Value) = common::json_request(
+            app,
+            Method::GET,
+            format!("/api/sessions/{session_id}/head?include_events=true&limit=120"),
+            None,
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "failed to load live canary session head: {body:#?}"
+        );
+        let events = head_events(&body);
+        if events.iter().any(|event| event_type(event) == Some("done")) {
+            return LiveCanaryHeadSnapshot {
+                assistant_messages: assistant_messages_from_head(&body),
+                body,
+                events,
+            };
         }
-        if events
-            .iter()
-            .any(|e| matches!(e.event_type, SessionEventType::AuthRequired))
-            || events.iter().any(|e| {
-                matches!(e.event_type, SessionEventType::TurnFinished)
-                    && e.payload_json
-                        .get("status")
-                        .and_then(|value| value.as_str())
-                        == Some("failed")
-            })
-        {
-            panic!("live canary saw terminal failure/auth-required events: {events:#?}");
+        if events.iter().any(is_terminal_failure_event) {
+            panic!(
+                "live canary saw terminal failure/auth-required events: {events:#?}; head={body:#?}"
+            );
         }
         if tokio::time::Instant::now() >= deadline {
-            panic!("timed out waiting for Done event: {events:#?}");
+            panic!("timed out waiting for Done event: {events:#?}; head={body:#?}");
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
 }
 
-fn assistant_messages_from_events(events: &[ctx_core::models::SessionEvent]) -> Vec<String> {
-    events
-        .iter()
-        .filter(|e| matches!(e.event_type, SessionEventType::AssistantMessageInserted))
-        .filter_map(|e| {
-            e.payload_json
+fn head_events(body: &Value) -> Vec<Value> {
+    body.get("events")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn event_type(event: &Value) -> Option<&str> {
+    event.get("event_type").and_then(Value::as_str)
+}
+
+fn event_payload(event: &Value) -> Option<&Value> {
+    event.get("payload_json").or_else(|| event.get("payload"))
+}
+
+fn is_terminal_failure_event(event: &Value) -> bool {
+    match event_type(event) {
+        Some("auth_required" | "error") => true,
+        Some("turn_finished") => matches!(
+            event_payload(event)
+                .and_then(|payload| payload.get("status"))
+                .and_then(Value::as_str),
+            Some("failed" | "interrupted")
+        ),
+        _ => false,
+    }
+}
+
+fn assistant_messages_from_head(body: &Value) -> Vec<String> {
+    body.get("messages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|message| message.get("role").and_then(Value::as_str) == Some("assistant"))
+        .filter_map(|message| {
+            message
                 .get("content")
                 .and_then(Value::as_str)
-                .map(|s| s.to_string())
+                .map(ToString::to_string)
         })
         .collect()
+}
+
+fn assistant_message_text_from_head(body: &Value) -> String {
+    body.get("messages")
+        .and_then(Value::as_array)
+        .and_then(|rows| {
+            rows.iter()
+                .rev()
+                .find(|row| row.get("role").and_then(Value::as_str) == Some("assistant"))
+        })
+        .and_then(|row| row.get("content"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
 }
 
 fn resolve_live_claude_crp_command() -> Option<String> {
@@ -182,19 +237,17 @@ async fn live_provider_canary_turn_invariants() {
 
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
 
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert(provider_id.clone(), adapter);
 
-    let daemon = TestDaemon::new(
-        data_dir.path().to_path_buf(),
-        stores,
+    let fixture = common::fake_daemon_fixture_in_data_dir_with_providers(
+        data_dir,
         providers,
-        "http://127.0.0.1:0".to_string(),
-        None,
-    );
-    let app = common::router_for_daemon(&daemon);
+        "http://127.0.0.1:0",
+    )
+    .await;
+    let app = fixture.router();
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (_task, session) =
         common::create_task_with_session(&app, ws.id.0, "t1", &provider_id, &model_id).await;
@@ -206,17 +259,16 @@ async fn live_provider_canary_turn_invariants() {
         &format!("Reply with exactly this token: {expected_token}"),
     )
     .await;
-    wait_for_terminal(&daemon, session.id).await;
+    let snapshot = wait_for_terminal_head(&app, session.id.0).await;
 
-    let store = daemon.store_for_session(session.id).await.unwrap();
-    let events = store.list_session_events(session.id).await.unwrap();
-
-    let assistant_messages = assistant_messages_from_events(&events);
+    let assistant_messages = snapshot.assistant_messages;
     assert!(
         assistant_messages
             .iter()
             .any(|message| message.contains(&expected_token)),
-        "expected assistant message containing {expected_token}; saw {assistant_messages:#?} in events {events:#?}"
+        "expected assistant message containing {expected_token}; saw {assistant_messages:#?} in head {:#?} and events {:#?}",
+        snapshot.body,
+        snapshot.events
     );
 }
 
@@ -236,19 +288,17 @@ async fn live_codex_canary_can_edit_workspace_file() {
 
     let repo = common::init_git_repo(&[("note.txt", "hello\n")]).await;
     let data_dir = tempfile::tempdir().unwrap();
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
 
     let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
     providers.insert(provider_id.clone(), Arc::new(Tier1CrpAdapter::codex()));
 
-    let daemon = TestDaemon::new(
-        data_dir.path().to_path_buf(),
-        stores,
+    let fixture = common::fake_daemon_fixture_in_data_dir_with_providers(
+        data_dir,
         providers,
-        "http://127.0.0.1:0".to_string(),
-        None,
-    );
-    let app = common::router_for_daemon(&daemon);
+        "http://127.0.0.1:0",
+    )
+    .await;
+    let app = fixture.router();
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (_task, session) =
         common::create_task_with_session(&app, ws.id.0, "codex-write", &provider_id, &model_id)
@@ -260,7 +310,7 @@ async fn live_codex_canary_can_edit_workspace_file() {
         "Create or overwrite the workspace file {relative_path}. Write exactly this content and nothing else: {expected_token}. The file must contain exactly those characters with no trailing newline or extra whitespace. If you use a shell command to write the file, use printf rather than echo -n, because echo -n is not portable and may write the literal text -n. After writing the file, reply with exactly this token: {expected_token}"
     );
     post_message(&app, session.id.0, &prompt).await;
-    wait_for_terminal(&daemon, session.id).await;
+    let snapshot = wait_for_terminal_head(&app, session.id.0).await;
 
     let actual = tokio::fs::read_to_string(repo.path().join(relative_path))
         .await
@@ -271,14 +321,14 @@ async fn live_codex_canary_can_edit_workspace_file() {
         "live Codex canary wrote unexpected file contents"
     );
 
-    let store = daemon.store_for_session(session.id).await.unwrap();
-    let events = store.list_session_events(session.id).await.unwrap();
-    let assistant_messages = assistant_messages_from_events(&events);
+    let assistant_messages = snapshot.assistant_messages;
     assert!(
         assistant_messages
             .iter()
             .any(|message| message.contains(&expected_token)),
-        "expected assistant message containing {expected_token}; saw {assistant_messages:#?} in events {events:#?}"
+        "expected assistant message containing {expected_token}; saw {assistant_messages:#?} in head {:#?} and events {:#?}",
+        snapshot.body,
+        snapshot.events
     );
 }
 
@@ -318,7 +368,6 @@ async fn live_claude_endpoint_profile_api_key_round_trip() {
     let data_dir = tempfile::tempdir().unwrap();
     seed_claude_runtime_config(data_dir.path(), &claude_crp_command).await;
 
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let claude_adapter: Arc<dyn ProviderAdapter> = Arc::new(Tier1CrpAdapter::from_raw(
         "claude-crp",
         claude_crp_command.clone(),
@@ -328,16 +377,15 @@ async fn live_claude_endpoint_profile_api_key_round_trip() {
     providers.insert("claude-crp".to_string(), Arc::clone(&claude_adapter));
     providers.insert("claude".to_string(), claude_adapter);
 
-    let daemon = TestDaemon::new(
-        data_dir.path().to_path_buf(),
-        stores,
+    let fixture = common::fake_daemon_fixture_in_data_dir_with_providers(
+        data_dir,
         providers,
-        "http://127.0.0.1:0".to_string(),
-        None,
-    );
-    let app = common::router_for_daemon(&daemon);
+        "http://127.0.0.1:0",
+    )
+    .await;
+    let app = fixture.router();
     let provider_id = "claude-crp".to_string();
-    seed_provider_status_ok(&daemon, &provider_id).await;
+    seed_provider_status_ok(&fixture.daemon, &provider_id).await;
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let endpoint_name = format!("live-claude-endpoint-{}", uuid::Uuid::new_v4());
@@ -464,25 +512,15 @@ async fn live_claude_endpoint_profile_api_key_round_trip() {
         "Reply with exactly this token: CLAUDE_ENDPOINT_E2E_OK",
     )
     .await;
-    wait_for_terminal(&daemon, session.id).await;
-
-    let store = daemon.store_for_session(session.id).await.unwrap();
-    let events = store.list_session_events(session.id).await.unwrap();
-    let assistant_messages: Vec<String> = events
-        .iter()
-        .filter(|e| matches!(e.event_type, SessionEventType::AssistantMessageInserted))
-        .filter_map(|e| {
-            e.payload_json
-                .get("content")
-                .and_then(Value::as_str)
-                .map(|s| s.to_string())
-        })
-        .collect();
+    let snapshot = wait_for_terminal_head(&app, session.id.0).await;
+    let assistant_messages = snapshot.assistant_messages;
     assert!(
         assistant_messages
             .iter()
             .any(|message| message.contains("CLAUDE_ENDPOINT_E2E_OK")),
-        "expected assistant message containing CLAUDE_ENDPOINT_E2E_OK; saw {assistant_messages:#?} in events {events:#?}"
+        "expected assistant message containing CLAUDE_ENDPOINT_E2E_OK; saw {assistant_messages:#?} in head {:#?} and events {:#?}",
+        snapshot.body,
+        snapshot.events
     );
 }
 
@@ -532,7 +570,6 @@ async fn live_claude_openrouter_opus_v1_base_url_normalization_round_trip() {
     let data_dir = tempfile::tempdir().unwrap();
     seed_claude_runtime_config(data_dir.path(), &claude_crp_command).await;
 
-    let stores = StoreManager::open(data_dir.path()).await.unwrap();
     let claude_adapter: Arc<dyn ProviderAdapter> = Arc::new(Tier1CrpAdapter::from_raw(
         "claude-crp",
         claude_crp_command.clone(),
@@ -542,16 +579,15 @@ async fn live_claude_openrouter_opus_v1_base_url_normalization_round_trip() {
     providers.insert("claude-crp".to_string(), Arc::clone(&claude_adapter));
     providers.insert("claude".to_string(), claude_adapter);
 
-    let daemon = TestDaemon::new(
-        data_dir.path().to_path_buf(),
-        stores,
+    let fixture = common::fake_daemon_fixture_in_data_dir_with_providers(
+        data_dir,
         providers,
-        "http://127.0.0.1:0".to_string(),
-        None,
-    );
-    let app = common::router_for_daemon(&daemon);
+        "http://127.0.0.1:0",
+    )
+    .await;
+    let app = fixture.router();
     let provider_id = "claude-crp".to_string();
-    seed_provider_status_ok(&daemon, &provider_id).await;
+    seed_provider_status_ok(&fixture.daemon, &provider_id).await;
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let endpoint_name = format!("live-claude-openrouter-{}", uuid::Uuid::new_v4());
@@ -648,34 +684,12 @@ async fn live_claude_openrouter_opus_v1_base_url_normalization_round_trip() {
         "Reply with exactly this token: OPENROUTER_CLAUDE_OPUS_46_OK",
     )
     .await;
-    wait_for_terminal(&daemon, session.id).await;
+    let snapshot = wait_for_terminal_head(&app, session.id.0).await;
 
-    let (head_status, head_body): (StatusCode, Value) = common::json_request(
-        &app,
-        Method::GET,
-        format!("/api/sessions/{}/head?limit=120", session.id.0),
-        None,
-    )
-    .await;
-    assert_eq!(
-        head_status,
-        StatusCode::OK,
-        "failed to load session head: {head_body:#?}"
-    );
-    let assistant_text = head_body
-        .get("messages")
-        .and_then(Value::as_array)
-        .and_then(|rows| {
-            rows.iter()
-                .rev()
-                .find(|row| row.get("role").and_then(Value::as_str) == Some("assistant"))
-        })
-        .and_then(|row| row.get("content"))
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
+    let assistant_text = assistant_message_text_from_head(&snapshot.body);
     assert!(
         assistant_text.contains("OPENROUTER_CLAUDE_OPUS_46_OK"),
-        "assistant response did not include expected marker: {assistant_text}"
+        "assistant response did not include expected marker: {assistant_text}; events={:#?}",
+        snapshot.events
     );
 }

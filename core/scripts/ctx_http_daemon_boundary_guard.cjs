@@ -346,6 +346,10 @@ const harnessContainerSandboxStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/harness_container_sandbox_e2e.rs",
 ];
 
+const liveProviderCanaryStoreFacadeTestRoots = [
+  "core/crates/ctx-http/tests/live_provider_canary.rs",
+];
+
 const worktreeArchiveStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/worktree_archive_http.rs",
 ];
@@ -1917,6 +1921,39 @@ const HARNESS_CONTAINER_SANDBOX_TEST_STORE_ACCESS_PATTERNS = [
   },
 ];
 
+const LIVE_PROVIDER_CANARY_TEST_STORE_ACCESS_PATTERNS = [
+  {
+    name: "direct live-provider canary StoreManager access",
+    regex: /\bStoreManager\b/,
+  },
+  {
+    name: "raw live-provider canary ctx_store Store",
+    regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore::open_sqlite\s*\(/,
+    contentRegex: /\buse\s+ctx_store::\{(?=[^}]*\n)[\s\S]*?\bStore\b[\s\S]*?\}/gm,
+  },
+  {
+    name: "direct live-provider canary common setup helper",
+    regex: /\b(?:crate::)?common::(?:setup_store|build_daemon|router_for_daemon)\s*\(|\buse\s+[^;]*\b(?:setup_store|build_daemon|router_for_daemon)\b/,
+    contentRegex: /\buse\s+[\s\S]*?\b(?:setup_store|build_daemon|router_for_daemon)\b[\s\S]*?;/gm,
+  },
+  {
+    name: "direct live-provider canary TestDaemon construction",
+    regex: /\bTestDaemon::new[A-Za-z0-9_]*\s*\(/,
+  },
+  {
+    name: "direct live-provider canary daemon store access",
+    regex: /\.(?:stores|global_store|store_for_session|store_for_workspace|uncached_store_for_workspace|store_for_task|store_for_worktree)\s*\(/,
+  },
+  {
+    name: "direct live-provider canary raw session event query",
+    regex: /\.list_session_events\s*\(|\bSessionEventType\b/,
+  },
+  {
+    name: "direct live-provider canary event-message extraction helper",
+    regex: /\bassistant_messages_from_events\b/,
+  },
+];
+
 const WORKTREE_ARCHIVE_TEST_STORE_ACCESS_PATTERNS = [
   {
     name: "direct worktree-archive global store access",
@@ -2733,6 +2770,13 @@ function harnessContainerSandboxStorePatternsForPath(relativePath) {
   return [];
 }
 
+function liveProviderCanaryStorePatternsForPath(relativePath) {
+  if (liveProviderCanaryStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
+    return LIVE_PROVIDER_CANARY_TEST_STORE_ACCESS_PATTERNS;
+  }
+  return [];
+}
+
 function worktreeArchiveStorePatternsForPath(relativePath) {
   if (worktreeArchiveStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return WORKTREE_ARCHIVE_TEST_STORE_ACCESS_PATTERNS;
@@ -3234,6 +3278,13 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
+        patterns: liveProviderCanaryStorePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
         patterns: worktreeArchiveStorePatternsForPath(relativePath),
       }),
     );
@@ -3327,6 +3378,7 @@ module.exports = {
   IMAGE_ATTACHMENTS_TEST_STORE_ACCESS_PATTERNS,
   JJ_MERGE_QUEUE_BASICS_TEST_STORE_ACCESS_PATTERNS,
   LIB_TEST_DATA_ROOT_FIXTURE_PATTERNS,
+  LIVE_PROVIDER_CANARY_TEST_STORE_ACCESS_PATTERNS,
   MERGE_QUEUE_ISOLATION_TEST_STORE_ACCESS_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
@@ -3375,6 +3427,7 @@ module.exports = {
   imageAttachmentsStorePatternsForPath,
   isTestRustPath,
   jjMergeQueueBasicsStorePatternsForPath,
+  liveProviderCanaryStorePatternsForPath,
   libTestDataRootFixturePatternsForPath,
   mergeQueueIsolationStorePatternsForPath,
   mcpDaemonPatternsForPath,

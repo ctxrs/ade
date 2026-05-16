@@ -18,6 +18,7 @@ const {
   IMAGE_ATTACHMENTS_TEST_STORE_ACCESS_PATTERNS,
   JJ_MERGE_QUEUE_BASICS_TEST_STORE_ACCESS_PATTERNS,
   LIB_TEST_DATA_ROOT_FIXTURE_PATTERNS,
+  LIVE_PROVIDER_CANARY_TEST_STORE_ACCESS_PATTERNS,
   MERGE_QUEUE_ISOLATION_TEST_STORE_ACCESS_PATTERNS,
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
@@ -66,6 +67,7 @@ const {
   imageAttachmentsStorePatternsForPath,
   isTestRustPath,
   jjMergeQueueBasicsStorePatternsForPath,
+  liveProviderCanaryStorePatternsForPath,
   libTestDataRootFixturePatternsForPath,
   mergeQueueIsolationStorePatternsForPath,
   mcpDaemonPatternsForPath,
@@ -3315,6 +3317,68 @@ test("daemon boundary guard scopes harness-container sandbox store facade root",
   assert.deepEqual(
     harnessContainerSandboxStorePatternsForPath(
       "core/crates/ctx-http/tests/provider_scenarios_offline.rs",
+    ),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects direct live-provider canary store access", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/live_provider_canary.rs",
+    contents: `
+      use ctx_store::{Store, StoreManager};
+      async fn fixture(daemon: TestDaemon, stores: StoreManager) {
+        let stores = StoreManager::open(data_dir.path()).await?;
+        let store = Store::open_sqlite(&db_path, None).await?;
+        let stores = common::setup_store(data_dir.path()).await;
+        let daemon = common::build_daemon(data_dir.path(), stores, providers, "http://127.0.0.1:0");
+        let app = common::router_for_daemon(&daemon);
+        let daemon = TestDaemon::new(data_root, stores, providers, base_url, None);
+        daemon.global_store().get_workspace(workspace_id).await?;
+        daemon.store_for_session(session_id).await?;
+        daemon.stores().global().await?;
+        store.list_session_events(session_id).await?;
+        let _event = SessionEventType::Done;
+        let _messages = assistant_messages_from_events(&events);
+        let _raw: Store;
+      }
+    `,
+    patterns: LIVE_PROVIDER_CANARY_TEST_STORE_ACCESS_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct live-provider canary StoreManager access",
+      "direct live-provider canary StoreManager access",
+      "direct live-provider canary StoreManager access",
+      "raw live-provider canary ctx_store Store",
+      "raw live-provider canary ctx_store Store",
+      "direct live-provider canary common setup helper",
+      "direct live-provider canary common setup helper",
+      "direct live-provider canary common setup helper",
+      "direct live-provider canary common setup helper",
+      "direct live-provider canary TestDaemon construction",
+      "direct live-provider canary daemon store access",
+      "direct live-provider canary daemon store access",
+      "direct live-provider canary daemon store access",
+      "direct live-provider canary raw session event query",
+      "direct live-provider canary raw session event query",
+      "direct live-provider canary event-message extraction helper",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes live-provider canary store facade root", () => {
+  assert.deepEqual(
+    liveProviderCanaryStorePatternsForPath(
+      "core/crates/ctx-http/tests/live_provider_canary.rs",
+    ),
+    LIVE_PROVIDER_CANARY_TEST_STORE_ACCESS_PATTERNS,
+  );
+  assert.deepEqual(
+    liveProviderCanaryStorePatternsForPath(
+      "core/crates/ctx-http/tests/harness_container_sandbox_e2e.rs",
     ),
     [],
   );
