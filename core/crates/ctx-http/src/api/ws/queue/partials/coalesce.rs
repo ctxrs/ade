@@ -1,6 +1,11 @@
 use super::super::super::*;
 
-use super::is_partial_event;
+fn is_partial_event(event: &SessionEvent) -> bool {
+    matches!(
+        event.event_type,
+        SessionEventType::AssistantChunk | SessionEventType::ThoughtChunk
+    )
+}
 
 fn is_same_partial_type(prev: &SessionEvent, next: &SessionEvent) -> bool {
     matches!(

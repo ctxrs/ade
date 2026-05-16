@@ -1,0 +1,116 @@
+use std::collections::{HashMap, HashSet};
+
+use ctx_core::ids::{SessionId, TaskId};
+use ctx_core::models::{
+    SessionEvent, SessionEventType, SessionHeadDelta, WorkspaceActiveSnapshotEvent,
+    WorkspaceActiveTaskSummary,
+};
+use ctx_workspace_active_snapshot::{
+    primary_session_id_for_active_task, workspace_stream_event_blocks_pending_replay,
+};
+
+pub fn primary_session_id_for_active_task_event(task: &WorkspaceActiveTaskSummary) -> SessionId {
+    primary_session_id_for_active_task(task)
+}
+
+pub fn event_snapshot_rev(event: &WorkspaceActiveSnapshotEvent) -> Option<i64> {
+    match event {
+        WorkspaceActiveSnapshotEvent::Ready { snapshot_rev, .. }
+        | WorkspaceActiveSnapshotEvent::ActiveTaskUpsert { snapshot_rev, .. }
+        | WorkspaceActiveSnapshotEvent::ActiveTaskDelete { snapshot_rev, .. }
+        | WorkspaceActiveSnapshotEvent::TaskDelta { snapshot_rev, .. }
+        | WorkspaceActiveSnapshotEvent::SessionSummary { snapshot_rev, .. }
+        | WorkspaceActiveSnapshotEvent::SessionSummaryDelta { snapshot_rev, .. }
+        | WorkspaceActiveSnapshotEvent::SessionRemoved { snapshot_rev, .. }
+        | WorkspaceActiveSnapshotEvent::SessionHeadDelta { snapshot_rev, .. }
+        | WorkspaceActiveSnapshotEvent::SessionHeadSeed { snapshot_rev, .. }
+        | WorkspaceActiveSnapshotEvent::SessionGap { snapshot_rev, .. }
+        | WorkspaceActiveSnapshotEvent::WorktreeBootstrap { snapshot_rev, .. } => {
+            Some(*snapshot_rev)
+        }
+        WorkspaceActiveSnapshotEvent::ArchivedTaskUpsert { .. }
+        | WorkspaceActiveSnapshotEvent::ArchivedTaskDelete { .. } => None,
+    }
+}
+
+pub fn event_blocks_pending_replay(
+    event: &WorkspaceActiveSnapshotEvent,
+    pending_replay_sessions: &HashSet<SessionId>,
+    active_task_sessions: &HashMap<TaskId, SessionId>,
+) -> bool {
+    workspace_stream_event_blocks_pending_replay(
+        event,
+        pending_replay_sessions,
+        active_task_sessions,
+    )
+}
+
+pub fn is_foreground_session(
+    foreground_session_ids: Option<&HashSet<SessionId>>,
+    session_id: SessionId,
+) -> bool {
+    allows_partial_for_foreground_session(foreground_session_ids, session_id)
+}
+
+pub fn should_stream_head_delta(
+    active_task_sessions: &HashMap<TaskId, SessionId>,
+    explicit_sessions: &HashSet<SessionId>,
+    foreground_session_ids: Option<&HashSet<SessionId>>,
+    session_id: SessionId,
+) -> bool {
+    active_task_sessions
+        .values()
+        .any(|active_session_id| *active_session_id == session_id)
+        || explicit_sessions.contains(&session_id)
+        || allows_partial_for_foreground_session(foreground_session_ids, session_id)
+}
+
+pub fn is_priority_control_event(
+    event: &WorkspaceActiveSnapshotEvent,
+    foreground_session_ids: Option<&HashSet<SessionId>>,
+) -> bool {
+    match event {
+        WorkspaceActiveSnapshotEvent::SessionGap { session_id, .. } => {
+            is_foreground_session(foreground_session_ids, *session_id)
+        }
+        WorkspaceActiveSnapshotEvent::SessionHeadSeed { head, .. } => {
+            is_foreground_session(foreground_session_ids, head.session.id)
+        }
+        _ => false,
+    }
+}
+
+pub fn filter_partial_delta_for_active_tasks(
+    mut delta: SessionHeadDelta,
+    foreground_session_ids: Option<&HashSet<SessionId>>,
+) -> Option<SessionHeadDelta> {
+    if let Some(event) = delta.event.as_ref() {
+        if is_partial_event(event)
+            && !allows_partial_for_foreground_session(foreground_session_ids, delta.session_id)
+        {
+            delta.event = None;
+            if delta.turn.is_none() && delta.message.is_none() && delta.tool_summaries.is_empty() {
+                return None;
+            }
+        }
+    }
+    Some(delta)
+}
+
+pub fn is_partial_event(event: &SessionEvent) -> bool {
+    matches!(
+        event.event_type,
+        SessionEventType::AssistantChunk
+            | SessionEventType::ThoughtChunk
+            | SessionEventType::ContextWindowUpdate
+    )
+}
+
+fn allows_partial_for_foreground_session(
+    foreground_session_ids: Option<&HashSet<SessionId>>,
+    session_id: SessionId,
+) -> bool {
+    foreground_session_ids
+        .map(|session_ids| session_ids.contains(&session_id))
+        .unwrap_or(false)
+}

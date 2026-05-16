@@ -1,5 +1,4 @@
 use super::*;
-use ctx_workspace_active_snapshot::workspace_stream_event_blocks_pending_replay;
 use std::collections::HashSet;
 
 pub(super) fn replay_should_stop(runtime: &WorkspaceStreamRuntime) -> bool {
@@ -24,11 +23,7 @@ pub(super) async fn drain_live_events_blocking_pending_replay(
         labels,
         deferred_live_events,
         |event| {
-            workspace_stream_event_blocks_pending_replay(
-                event,
-                pending_replay_sessions,
-                &active_task_sessions,
-            )
+            state.event_blocks_pending_replay(event, pending_replay_sessions, &active_task_sessions)
         },
     )
     .await
@@ -50,11 +45,7 @@ pub(super) async fn flush_replay_ready_deferred_live_events(
         labels,
         deferred_live_events,
         |event| {
-            workspace_stream_event_blocks_pending_replay(
-                event,
-                pending_replay_sessions,
-                &active_task_sessions,
-            )
+            state.event_blocks_pending_replay(event, pending_replay_sessions, &active_task_sessions)
         },
     )
     .await

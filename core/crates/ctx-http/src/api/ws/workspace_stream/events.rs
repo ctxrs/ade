@@ -51,7 +51,7 @@ pub(crate) async fn handle_workspace_stream_event(
     runtime: &mut WorkspaceStreamRuntime,
     labels: &WorkspaceStreamLabels,
 ) -> Result<(), ()> {
-    if let Some(rev) = event_snapshot_rev(&event) {
+    if let Some(rev) = state.event_snapshot_rev(&event) {
         bump_latest_snapshot_rev(&runtime.latest_snapshot_rev, rev);
     }
 

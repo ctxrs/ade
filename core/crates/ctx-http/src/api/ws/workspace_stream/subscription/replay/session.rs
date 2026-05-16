@@ -43,7 +43,7 @@ pub(super) async fn replay_workspace_session(
                                 delta,
                                 ..
                             } => {
-                                if !should_stream_head_delta(
+                                if !state.should_stream_head_delta(
                                     &active_task_sessions,
                                     &explicit_sessions,
                                     foreground_session_ids.as_ref(),
@@ -51,14 +51,13 @@ pub(super) async fn replay_workspace_session(
                                 ) {
                                     return Ok(());
                                 }
-                                let Some(delta) = filter_partial_delta_for_active_tasks(
+                                let Some(delta) = state.filter_partial_delta_for_active_tasks(
                                     *delta,
-                                    &active_task_sessions,
                                     foreground_session_ids.as_ref(),
                                 ) else {
                                     return Ok(());
                                 };
-                                let head_buffer = if is_foreground_session(
+                                let head_buffer = if state.is_foreground_session(
                                     foreground_session_ids.as_ref(),
                                     delta.session_id,
                                 ) {
@@ -100,7 +99,7 @@ pub(super) async fn replay_workspace_session(
                                 Ok(())
                             }
                             other => {
-                                let target = if is_priority_control_event(
+                                let target = if state.is_priority_control_event(
                                     &other,
                                     foreground_session_ids.as_ref(),
                                 ) {

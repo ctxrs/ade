@@ -32,16 +32,14 @@ mod workspace_stream;
 mod workspace_vcs;
 
 use common::{
-    accept_session_delta, accept_session_head, bump_latest_snapshot_rev, event_snapshot_rev,
+    accept_session_delta, accept_session_head, bump_latest_snapshot_rev,
     release_workspace_stream_session_pins, sync_workspace_stream_session_pins, SessionCursor,
     StreamSendControl, HEAD_BATCH_SESSION_LIMIT, WORKSPACE_STREAM_QUEUE_LIMIT,
     WORKSPACE_STREAM_QUEUE_MAX_AGE,
 };
 use queue::{
-    filter_partial_delta_for_active_tasks, is_foreground_session, is_priority_control_event,
-    log_head_batch_push_error, log_summary_batch_push_error, push_stream_message,
-    should_stream_head_delta, HeadBatchBuffer, StreamQueue, SummaryBatchBuffer,
-    HEAD_BATCH_TOTAL_LIMIT,
+    log_head_batch_push_error, log_summary_batch_push_error, push_stream_message, HeadBatchBuffer,
+    StreamQueue, SummaryBatchBuffer, HEAD_BATCH_TOTAL_LIMIT,
 };
 use replay::{queue_reset_required, queue_snapshot_payload};
 

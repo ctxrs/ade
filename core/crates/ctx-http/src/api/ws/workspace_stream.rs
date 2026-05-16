@@ -1,5 +1,4 @@
 use super::*;
-use ctx_workspace_active_snapshot::primary_session_id_for_active_task;
 
 mod events;
 mod lifecycle;

@@ -38,7 +38,7 @@ async fn route_head_delta(
     runtime: &mut WorkspaceStreamRuntime,
     labels: &WorkspaceStreamLabels,
 ) -> Result<(), ()> {
-    if !should_stream_head_delta(
+    if !state.should_stream_head_delta(
         &runtime.subscription_state.active_task_sessions,
         &runtime.subscription_state.explicit_sessions,
         runtime.subscription_state.foreground_session_ids.as_ref(),
@@ -46,14 +46,13 @@ async fn route_head_delta(
     ) {
         return Ok(());
     }
-    let Some(delta) = filter_partial_delta_for_active_tasks(
+    let Some(delta) = state.filter_partial_delta_for_active_tasks(
         delta,
-        &runtime.subscription_state.active_task_sessions,
         runtime.subscription_state.foreground_session_ids.as_ref(),
     ) else {
         return Ok(());
     };
-    let head_buffer = if is_foreground_session(
+    let head_buffer = if state.is_foreground_session(
         runtime.subscription_state.foreground_session_ids.as_ref(),
         delta.session_id,
     ) {
@@ -96,7 +95,7 @@ async fn route_control_event(
     runtime: &mut WorkspaceStreamRuntime,
     labels: &WorkspaceStreamLabels,
 ) -> Result<(), ()> {
-    let target = if is_priority_control_event(
+    let target = if state.is_priority_control_event(
         &event,
         runtime.subscription_state.foreground_session_ids.as_ref(),
     ) {

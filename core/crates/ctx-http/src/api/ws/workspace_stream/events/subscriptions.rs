@@ -39,7 +39,7 @@ pub(super) async fn update_workspace_stream_subscriptions_for_event(
 
     match event {
         WorkspaceActiveSnapshotEvent::ActiveTaskUpsert { task, .. } => {
-            let session_id = primary_session_id_for_active_task(task);
+            let session_id = state.primary_session_id_for_active_task_event(task);
             runtime
                 .subscription_state
                 .active_task_sessions

@@ -31,6 +31,7 @@ const {
   WORKSPACE_STREAM_READ_MODEL_API_PATTERNS,
   WORKSPACE_STREAM_SUBSCRIPTION_PLAN_API_PATTERNS,
   WORKSPACE_STREAM_REPLAY_CURSOR_API_PATTERNS,
+  WORKSPACE_STREAM_EVENT_ROUTING_API_PATTERNS,
   PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,
@@ -390,6 +391,98 @@ test("daemon boundary guard scopes workspace stream replay cursor ban", () => {
     ),
     false,
   );
+});
+
+test("daemon boundary guard rejects workspace stream event-routing predicates in HTTP", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/ws/workspace_stream/events/route.rs",
+    contents: `
+      use ctx_workspace_active_snapshot::{
+        primary_session_id_for_active_task,
+        workspace_stream_event_blocks_pending_replay,
+      };
+      use ctx_daemon::daemon::workspaces::stream::{
+        should_stream_head_delta as route_head_delta,
+      };
+
+      fn event_snapshot_rev(event: &WorkspaceActiveSnapshotEvent) -> Option<i64> {
+        Some(1)
+      }
+
+      fn handler(event: WorkspaceActiveSnapshotEvent) {
+        let _ = primary_session_id_for_active_task(task);
+        let _ = workspace_stream_event_blocks_pending_replay(event, pending, active);
+        let _ = should_stream_head_delta(active, explicit, foreground, session_id);
+        let _ = filter_partial_delta_for_active_tasks(delta, active, foreground);
+        let _ = is_priority_control_event(event, foreground);
+        let _ = is_foreground_session(foreground, session_id);
+        let _ = event_snapshot_rev(event);
+      }
+    `,
+    patterns: WORKSPACE_STREAM_EVENT_ROUTING_API_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "workspace stream API imports active-snapshot event predicate helper",
+      "workspace stream API imports active-snapshot event predicate helper",
+      "workspace stream API owns event-routing predicate",
+      "workspace stream API owns event-routing predicate",
+      "workspace stream API owns event-routing predicate",
+      "workspace stream API owns event-routing predicate",
+      "workspace stream API owns event-routing predicate",
+      "workspace stream API owns event-routing predicate",
+      "workspace stream API owns event-routing predicate",
+      "workspace stream API owns event-routing predicate",
+      "workspace stream API defines event-routing predicate",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes workspace stream event-routing predicate ban", () => {
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/ws/workspace_stream/events/route.rs",
+    ).includes(WORKSPACE_STREAM_EVENT_ROUTING_API_PATTERNS[0]),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/ws/queue/partials.rs").includes(
+      WORKSPACE_STREAM_EVENT_ROUTING_API_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/ws/common/rev.rs").includes(
+      WORKSPACE_STREAM_EVENT_ROUTING_API_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/ws/queue/partials/coalesce.rs",
+    ).includes(WORKSPACE_STREAM_EVENT_ROUTING_API_PATTERNS[0]),
+    false,
+  );
+});
+
+test("daemon boundary guard allows daemon handle event-routing methods", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/ws/workspace_stream/events/route.rs",
+    contents: `
+      fn handler(state: WorkspaceStreamHandle, event: WorkspaceActiveSnapshotEvent) {
+        let _ = state.event_snapshot_rev(&event);
+        let _ = state.should_stream_head_delta(active, explicit, foreground, session_id);
+        let _ = state.filter_partial_delta_for_active_tasks(delta, foreground);
+        let _ = state.is_priority_control_event(&event, foreground);
+        let _ = state.is_foreground_session(foreground, session_id);
+      }
+    `,
+    patterns: WORKSPACE_STREAM_EVENT_ROUTING_API_PATTERNS,
+  });
+
+  assert.deepEqual(violations, []);
 });
 
 test("daemon boundary guard rejects broad daemon handle fields", () => {

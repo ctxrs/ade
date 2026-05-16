@@ -183,6 +183,16 @@ const workspaceStreamReplayCursorApiRoots = [
   "core/crates/ctx-http/src/api/ws/workspace_stream/events/subscriptions.rs",
 ];
 
+const workspaceStreamEventRoutingApiRoots = [
+  "core/crates/ctx-http/src/api/ws/workspace_stream.rs",
+  "core/crates/ctx-http/src/api/ws/workspace_stream/events.rs",
+  "core/crates/ctx-http/src/api/ws/workspace_stream/events/",
+  "core/crates/ctx-http/src/api/ws/workspace_stream/subscription/replay/live_events.rs",
+  "core/crates/ctx-http/src/api/ws/workspace_stream/subscription/replay/session.rs",
+  "core/crates/ctx-http/src/api/ws/queue/partials.rs",
+  "core/crates/ctx-http/src/api/ws/common/rev.rs",
+];
+
 const smallApiUnitStoreFacadeTestRoots = [
   "core/crates/ctx-http/src/api/settings.rs",
   "core/crates/ctx-http/src/api/providers/login/codex/tests.rs",
@@ -895,6 +905,25 @@ const WORKSPACE_STREAM_REPLAY_CURSOR_API_PATTERNS = [
   {
     name: "workspace stream API reads raw session replay cursor",
     regex: /(?:\.\s*|\bWorkspaceStreamHandle\s*::\s*)session_replay_cursor\s*\(/,
+  },
+];
+
+const WORKSPACE_STREAM_EVENT_ROUTING_API_PATTERNS = [
+  {
+    name: "workspace stream API imports active-snapshot event predicate helper",
+    regex: /\buse\s+(?:ctx_workspace_active_snapshot|ctx_daemon\s*::\s*daemon\s*::\s*workspaces\s*::\s*stream)\s*::\s*(?:\{[^}]*\b(?:primary_session_id_for_active_task|workspace_stream_event_blocks_pending_replay|should_stream_head_delta|filter_partial_delta_for_active_tasks|is_priority_control_event|is_foreground_session|event_snapshot_rev)\b[^}]*\}|(?:primary_session_id_for_active_task|workspace_stream_event_blocks_pending_replay|should_stream_head_delta|filter_partial_delta_for_active_tasks|is_priority_control_event|is_foreground_session|event_snapshot_rev)\b)/,
+    contentRegex:
+      /\buse\s+(?:ctx_workspace_active_snapshot|ctx_daemon\s*::\s*daemon\s*::\s*workspaces\s*::\s*stream)\s*::\s*\{(?=[^}]*\n)[\s\S]*?(?:\bprimary_session_id_for_active_task\b|\bworkspace_stream_event_blocks_pending_replay\b|\bshould_stream_head_delta\b|\bfilter_partial_delta_for_active_tasks\b|\bis_priority_control_event\b|\bis_foreground_session\b|\bevent_snapshot_rev\b)[\s\S]*?\}/gm,
+  },
+  {
+    name: "workspace stream API owns event-routing predicate",
+    regex:
+      /(?<!\.)\b(?:primary_session_id_for_active_task|workspace_stream_event_blocks_pending_replay|should_stream_head_delta|filter_partial_delta_for_active_tasks|is_priority_control_event|is_foreground_session|event_snapshot_rev)\s*\(/,
+  },
+  {
+    name: "workspace stream API defines event-routing predicate",
+    regex:
+      /\bfn\s+(?:should_stream_head_delta|filter_partial_delta_for_active_tasks|is_priority_control_event|is_foreground_session|event_snapshot_rev)\s*\(/,
   },
 ];
 
@@ -2693,6 +2722,9 @@ function apiPatternsForPath(relativePath) {
   if (workspaceStreamReplayCursorApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...WORKSPACE_STREAM_REPLAY_CURSOR_API_PATTERNS);
   }
+  if (workspaceStreamEventRoutingApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...WORKSPACE_STREAM_EVENT_ROUTING_API_PATTERNS);
+  }
   return patterns;
 }
 
@@ -3626,6 +3658,7 @@ module.exports = {
   WORKSPACE_STREAM_READ_MODEL_API_PATTERNS,
   WORKSPACE_STREAM_SUBSCRIPTION_PLAN_API_PATTERNS,
   WORKSPACE_STREAM_REPLAY_CURSOR_API_PATTERNS,
+  WORKSPACE_STREAM_EVENT_ROUTING_API_PATTERNS,
   PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,

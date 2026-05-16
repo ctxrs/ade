@@ -1,40 +1,6 @@
 use super::*;
 
 #[tokio::test]
-async fn priority_control_event_detection_only_matches_foreground_session() {
-    let workspace_id = WorkspaceId::new();
-    let foreground_session_id = SessionId::new();
-    let background_session_id = SessionId::new();
-    let mut foreground_session_ids = HashSet::new();
-    foreground_session_ids.insert(foreground_session_id);
-    let foreground_gap = WorkspaceActiveSnapshotEvent::SessionGap {
-        workspace_id,
-        snapshot_rev: 1,
-        session_id: foreground_session_id,
-        after_seq: 1,
-        reason: Some("foreground".to_string()),
-        seed_follows: false,
-    };
-    let background_gap = WorkspaceActiveSnapshotEvent::SessionGap {
-        workspace_id,
-        snapshot_rev: 1,
-        session_id: background_session_id,
-        after_seq: 1,
-        reason: Some("background".to_string()),
-        seed_follows: false,
-    };
-
-    assert!(is_priority_control_event(
-        &foreground_gap,
-        Some(&foreground_session_ids),
-    ));
-    assert!(!is_priority_control_event(
-        &background_gap,
-        Some(&foreground_session_ids),
-    ));
-}
-
-#[tokio::test]
 async fn hydrating_keeps_snapshot_control_ahead_of_priority_lane() {
     let priority_control = StreamQueue::new(8, Duration::from_secs(1));
     let control = StreamQueue::new(8, Duration::from_secs(1));

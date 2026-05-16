@@ -1,8 +1,6 @@
-use super::partials::merge_partial_fragment;
 use super::*;
 use chrono::Utc;
 use serde_json::json;
-use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use ctx_core::ids::*;
@@ -89,5 +87,4 @@ fn session_summary_delta_event_with_projection(
 
 mod buffers;
 mod control_events;
-mod partial_filtering;
 mod priority_ordering;
