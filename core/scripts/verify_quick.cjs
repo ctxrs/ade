@@ -62,6 +62,7 @@ function main() {
       "scripts/buildbuddy_workflow_contract.test.cjs",
       "scripts/buildkite_pipeline_contract.test.cjs",
       "scripts/release_preflight_proof_plan.test.cjs",
+      "scripts/release_preflight_proof_run.test.cjs",
       "scripts/trigger_buildkite_mac_nightly.test.cjs",
       "scripts/buildkite_hetzner_contract.test.cjs",
       "scripts/buildbuddy_run_job_contract.test.cjs",
