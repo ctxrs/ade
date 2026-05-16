@@ -142,6 +142,22 @@ fn durable_delta(
     }
 }
 
+fn active_task_summary(
+    workspace_id: WorkspaceId,
+    task_id: TaskId,
+    session_id: SessionId,
+) -> WorkspaceActiveTaskSummary {
+    let mut task = task(workspace_id, Some(session_id));
+    task.id = task_id;
+    WorkspaceActiveTaskSummary {
+        task,
+        primary_session: session_summary(workspace_id, session_id),
+        primary_session_head: None,
+        sessions: Vec::new(),
+        sort_at: Utc::now(),
+    }
+}
+
 fn session_summary(workspace_id: WorkspaceId, session_id: SessionId) -> SessionSnapshotSummary {
     SessionSnapshotSummary {
         session: test_session_metadata(workspace_id, session_id),
@@ -675,6 +691,235 @@ fn replay_live_cursor_merge_keeps_live_authoritative() {
         !merged.contains_key(&removed_session_id),
         "live subscription state must remain authoritative for removed sessions",
     );
+}
+
+#[tokio::test]
+async fn subscription_event_session_removed_updates_state_without_active_scope() {
+    let root = tempfile::tempdir().unwrap();
+    let state = test_state(root.path()).await;
+    let workspace_id = WorkspaceId::new();
+    let session_id = SessionId::new();
+    let mut subscription_state = WorkspaceActiveSubscriptionState::default();
+    subscription_state.explicit_sessions.insert(session_id);
+    subscription_state.replay_sessions.insert(session_id);
+    subscription_state.foreground_session_ids = Some(HashSet::from([session_id]));
+    let subscriptions = HashMap::from([(session_id, cursor(10, 11))]);
+
+    let applied = apply_workspace_stream_subscription_event(
+        &state,
+        workspace_id,
+        subscription_state,
+        subscriptions,
+        &WorkspaceActiveSnapshotEvent::SessionRemoved {
+            workspace_id,
+            snapshot_rev: 1,
+            session_id,
+        },
+    )
+    .await;
+
+    assert!(applied.should_route);
+    assert!(!applied.state.active_scope);
+    assert!(applied.state.explicit_sessions.is_empty());
+    assert!(applied.state.replay_sessions.is_empty());
+    assert!(applied.state.foreground_session_ids.is_none());
+    assert!(applied.subscriptions.is_empty());
+    assert_eq!(applied.removed_subscriptions, vec![session_id]);
+}
+
+#[tokio::test]
+async fn subscription_event_active_task_upsert_seeds_missing_and_preserves_existing_cursor() {
+    let root = tempfile::tempdir().unwrap();
+    let state = test_state(root.path()).await;
+    let workspace_id = WorkspaceId::new();
+    let seeded_task_id = TaskId::new();
+    let seeded_session_id = SessionId::new();
+    let existing_task_id = TaskId::new();
+    let existing_session_id = SessionId::new();
+    let mut subscription_state = WorkspaceActiveSubscriptionState::default();
+    subscription_state.active_scope = true;
+
+    let seeded = apply_workspace_stream_subscription_event(
+        &state,
+        workspace_id,
+        subscription_state.clone(),
+        HashMap::new(),
+        &WorkspaceActiveSnapshotEvent::ActiveTaskUpsert {
+            workspace_id,
+            snapshot_rev: 1,
+            task: Box::new(active_task_summary(
+                workspace_id,
+                seeded_task_id,
+                seeded_session_id,
+            )),
+        },
+    )
+    .await;
+    assert!(seeded.should_route);
+    assert_eq!(
+        seeded
+            .state
+            .active_task_sessions
+            .get(&seeded_task_id)
+            .copied(),
+        Some(seeded_session_id),
+    );
+    assert_eq!(
+        seeded.subscriptions.get(&seeded_session_id).copied(),
+        Some(SessionReplayCursor::default()),
+    );
+    assert_eq!(seeded.added_subscriptions, vec![seeded_session_id]);
+
+    let existing_cursor = cursor(12, 13);
+    let preserved = apply_workspace_stream_subscription_event(
+        &state,
+        workspace_id,
+        subscription_state,
+        HashMap::from([(existing_session_id, existing_cursor)]),
+        &WorkspaceActiveSnapshotEvent::ActiveTaskUpsert {
+            workspace_id,
+            snapshot_rev: 2,
+            task: Box::new(active_task_summary(
+                workspace_id,
+                existing_task_id,
+                existing_session_id,
+            )),
+        },
+    )
+    .await;
+    assert_eq!(
+        preserved.subscriptions.get(&existing_session_id).copied(),
+        Some(existing_cursor),
+        "active-task upsert must not overwrite an existing live cursor",
+    );
+    assert!(preserved.added_subscriptions.is_empty());
+}
+
+#[tokio::test]
+async fn subscription_event_active_task_delete_retains_shared_and_explicit_sessions() {
+    let root = tempfile::tempdir().unwrap();
+    let state = test_state(root.path()).await;
+    let workspace_id = WorkspaceId::new();
+    let session_id = SessionId::new();
+    let removed_task_id = TaskId::new();
+    let shared_task_id = TaskId::new();
+    let explicit_task_id = TaskId::new();
+    let explicit_session_id = SessionId::new();
+    let mut subscription_state = WorkspaceActiveSubscriptionState::default();
+    subscription_state.active_scope = true;
+    subscription_state
+        .active_task_sessions
+        .insert(removed_task_id, session_id);
+    subscription_state
+        .active_task_sessions
+        .insert(shared_task_id, session_id);
+    subscription_state
+        .active_task_sessions
+        .insert(explicit_task_id, explicit_session_id);
+    subscription_state
+        .explicit_sessions
+        .insert(explicit_session_id);
+    let subscriptions = HashMap::from([
+        (session_id, cursor(1, 1)),
+        (explicit_session_id, cursor(2, 2)),
+    ]);
+
+    let shared_retained = apply_workspace_stream_subscription_event(
+        &state,
+        workspace_id,
+        subscription_state.clone(),
+        subscriptions.clone(),
+        &WorkspaceActiveSnapshotEvent::ActiveTaskDelete {
+            workspace_id,
+            snapshot_rev: 1,
+            task_id: removed_task_id,
+        },
+    )
+    .await;
+    assert!(shared_retained.subscriptions.contains_key(&session_id));
+    assert!(shared_retained.removed_subscriptions.is_empty());
+
+    let explicit_retained = apply_workspace_stream_subscription_event(
+        &state,
+        workspace_id,
+        subscription_state,
+        subscriptions,
+        &WorkspaceActiveSnapshotEvent::ActiveTaskDelete {
+            workspace_id,
+            snapshot_rev: 2,
+            task_id: explicit_task_id,
+        },
+    )
+    .await;
+    assert!(explicit_retained
+        .subscriptions
+        .contains_key(&explicit_session_id));
+    assert!(explicit_retained.removed_subscriptions.is_empty());
+}
+
+#[tokio::test]
+async fn subscription_event_archive_removes_unused_active_session() {
+    let root = tempfile::tempdir().unwrap();
+    let state = test_state(root.path()).await;
+    let workspace_id = WorkspaceId::new();
+    let task_id = TaskId::new();
+    let session_id = SessionId::new();
+    let mut archived_task = task(workspace_id, Some(session_id));
+    archived_task.id = task_id;
+    let mut subscription_state = WorkspaceActiveSubscriptionState::default();
+    subscription_state.active_scope = true;
+    subscription_state
+        .active_task_sessions
+        .insert(task_id, session_id);
+
+    let applied = apply_workspace_stream_subscription_event(
+        &state,
+        workspace_id,
+        subscription_state,
+        HashMap::from([(session_id, cursor(4, 5))]),
+        &WorkspaceActiveSnapshotEvent::TaskDelta {
+            workspace_id,
+            snapshot_rev: 1,
+            delta: Box::new(TaskDelta {
+                task: archived_task,
+                kind: TaskDeltaKind::Archived,
+            }),
+        },
+    )
+    .await;
+
+    assert!(applied.should_route);
+    assert!(applied.state.active_task_sessions.is_empty());
+    assert!(applied.subscriptions.is_empty());
+    assert_eq!(applied.removed_subscriptions, vec![session_id]);
+}
+
+#[tokio::test]
+async fn subscription_event_active_task_changes_noop_without_active_scope() {
+    let root = tempfile::tempdir().unwrap();
+    let state = test_state(root.path()).await;
+    let workspace_id = WorkspaceId::new();
+    let task_id = TaskId::new();
+    let session_id = SessionId::new();
+    let subscription_state = WorkspaceActiveSubscriptionState::default();
+
+    let applied = apply_workspace_stream_subscription_event(
+        &state,
+        workspace_id,
+        subscription_state,
+        HashMap::new(),
+        &WorkspaceActiveSnapshotEvent::ActiveTaskUpsert {
+            workspace_id,
+            snapshot_rev: 1,
+            task: Box::new(active_task_summary(workspace_id, task_id, session_id)),
+        },
+    )
+    .await;
+
+    assert!(applied.should_route);
+    assert!(applied.state.active_task_sessions.is_empty());
+    assert!(applied.subscriptions.is_empty());
+    assert!(applied.added_subscriptions.is_empty());
 }
 
 #[tokio::test]

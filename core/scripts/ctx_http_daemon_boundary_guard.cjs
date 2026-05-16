@@ -197,6 +197,10 @@ const workspaceStreamEventRoutingApiRoots = [
   "core/crates/ctx-http/src/api/ws/common/rev.rs",
 ];
 
+const workspaceStreamSubscriptionEventApiRoots = [
+  "core/crates/ctx-http/src/api/ws/workspace_stream/events/subscriptions.rs",
+];
+
 const smallApiUnitStoreFacadeTestRoots = [
   "core/crates/ctx-http/src/api/settings.rs",
   "core/crates/ctx-http/src/api/providers/login/codex/tests.rs",
@@ -941,6 +945,24 @@ const WORKSPACE_STREAM_EVENT_ROUTING_API_PATTERNS = [
     name: "workspace stream API defines event-routing predicate",
     regex:
       /\bfn\s+(?:should_stream_head_delta|filter_partial_delta_for_active_tasks|is_priority_control_event|is_foreground_session|event_snapshot_rev)\s*\(/,
+  },
+];
+
+const WORKSPACE_STREAM_SUBSCRIPTION_EVENT_API_PATTERNS = [
+  {
+    name: "workspace stream API mutates subscription state domain set",
+    regex:
+      /\bsubscription_state\s*\.\s*(?:active_task_sessions|explicit_sessions|foreground_session_ids|replay_sessions)\s*(?:[.=]|\s*\()/,
+  },
+  {
+    name: "workspace stream API matches active subscription event domain",
+    regex:
+      /\bWorkspaceActiveSnapshotEvent::(?:ActiveTaskUpsert|ActiveTaskDelete|TaskDelta)\b/,
+  },
+  {
+    name: "workspace stream API owns active subscription mutation helper",
+    regex:
+      /\bfn\s+(?:remove_active_task_subscription_if_unused|remove_runtime_subscription)\s*\(/,
   },
 ];
 
@@ -2742,6 +2764,9 @@ function apiPatternsForPath(relativePath) {
   if (workspaceStreamEventRoutingApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...WORKSPACE_STREAM_EVENT_ROUTING_API_PATTERNS);
   }
+  if (workspaceStreamSubscriptionEventApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...WORKSPACE_STREAM_SUBSCRIPTION_EVENT_API_PATTERNS);
+  }
   return patterns;
 }
 
@@ -3676,6 +3701,7 @@ module.exports = {
   WORKSPACE_STREAM_SUBSCRIPTION_PLAN_API_PATTERNS,
   WORKSPACE_STREAM_REPLAY_CURSOR_API_PATTERNS,
   WORKSPACE_STREAM_EVENT_ROUTING_API_PATTERNS,
+  WORKSPACE_STREAM_SUBSCRIPTION_EVENT_API_PATTERNS,
   PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,

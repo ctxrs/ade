@@ -32,6 +32,7 @@ const {
   WORKSPACE_STREAM_SUBSCRIPTION_PLAN_API_PATTERNS,
   WORKSPACE_STREAM_REPLAY_CURSOR_API_PATTERNS,
   WORKSPACE_STREAM_EVENT_ROUTING_API_PATTERNS,
+  WORKSPACE_STREAM_SUBSCRIPTION_EVENT_API_PATTERNS,
   PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,
@@ -531,6 +532,60 @@ test("daemon boundary guard allows daemon handle event-routing methods", () => {
   });
 
   assert.deepEqual(violations, []);
+});
+
+test("daemon boundary guard rejects workspace stream subscription event mutation in HTTP", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/ws/workspace_stream/events/subscriptions.rs",
+    contents: `
+      fn update(runtime: &mut WorkspaceStreamRuntime, event: WorkspaceActiveSnapshotEvent) {
+        runtime.subscription_state.active_task_sessions.insert(task_id, session_id);
+        runtime.subscription_state.explicit_sessions.remove(&session_id);
+        runtime.subscription_state.foreground_session_ids = None;
+        runtime.subscription_state.replay_sessions.clear();
+        match event {
+          WorkspaceActiveSnapshotEvent::ActiveTaskUpsert { .. } => {}
+          WorkspaceActiveSnapshotEvent::ActiveTaskDelete { .. } => {}
+          WorkspaceActiveSnapshotEvent::TaskDelta { .. } => {}
+          _ => {}
+        }
+      }
+
+      fn remove_active_task_subscription_if_unused() {}
+      fn remove_runtime_subscription() {}
+    `,
+    patterns: WORKSPACE_STREAM_SUBSCRIPTION_EVENT_API_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "workspace stream API mutates subscription state domain set",
+      "workspace stream API mutates subscription state domain set",
+      "workspace stream API mutates subscription state domain set",
+      "workspace stream API mutates subscription state domain set",
+      "workspace stream API matches active subscription event domain",
+      "workspace stream API matches active subscription event domain",
+      "workspace stream API matches active subscription event domain",
+      "workspace stream API owns active subscription mutation helper",
+      "workspace stream API owns active subscription mutation helper",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes workspace stream subscription event mutation ban", () => {
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/ws/workspace_stream/events/subscriptions.rs",
+    ).includes(WORKSPACE_STREAM_SUBSCRIPTION_EVENT_API_PATTERNS[0]),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/ws/workspace_stream/events/route.rs").includes(
+      WORKSPACE_STREAM_SUBSCRIPTION_EVENT_API_PATTERNS[0],
+    ),
+    false,
+  );
 });
 
 test("daemon boundary guard rejects broad daemon handle fields", () => {

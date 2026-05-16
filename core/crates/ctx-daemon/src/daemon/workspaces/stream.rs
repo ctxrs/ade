@@ -26,9 +26,10 @@ pub use replay_cursor::{
     head_only_snapshot_cursor, plan_resume_replay_cursor, WorkspaceStreamResumeReplayCursorPlan,
 };
 pub use subscriptions::{
-    plan_workspace_stream_subscription, resolve_workspace_active_snapshot_subscriptions,
-    WorkspaceStreamResolvedSession, WorkspaceStreamSessionReplay, WorkspaceStreamSubscriptionPlan,
-    WorkspaceStreamSubscriptionResolutionError,
+    apply_workspace_stream_subscription_event, plan_workspace_stream_subscription,
+    resolve_workspace_active_snapshot_subscriptions, WorkspaceStreamResolvedSession,
+    WorkspaceStreamSessionReplay, WorkspaceStreamSubscriptionEventApplication,
+    WorkspaceStreamSubscriptionPlan, WorkspaceStreamSubscriptionResolutionError,
 };
 pub use vcs::{filter_workspace_worktree_ids, refresh_worktree_vcs_for_worktrees};
 

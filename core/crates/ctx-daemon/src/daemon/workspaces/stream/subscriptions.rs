@@ -1,9 +1,11 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use ctx_core::ids::{SessionId, WorkspaceId};
 use ctx_core::models::{
-    WorkspaceActiveSnapshotClientMessage, WorkspaceActiveSnapshotSessionIntent,
+    TaskDeltaKind, WorkspaceActiveSnapshotClientMessage, WorkspaceActiveSnapshotEvent,
+    WorkspaceActiveSnapshotSessionIntent,
 };
 use ctx_workspace_active_snapshot::{
     resolve_workspace_active_snapshot_subscriptions as resolve_workspace_active_snapshot_subscriptions_with_source,
@@ -14,6 +16,9 @@ use ctx_workspace_active_snapshot::{
 
 use crate::daemon::workspaces::WorkspaceHydrationError;
 use crate::daemon::DaemonState;
+
+use super::event_routing::primary_session_id_for_active_task_event;
+use super::replay_cursor::active_task_subscription_cursor;
 
 #[derive(Debug)]
 pub enum WorkspaceStreamSubscriptionResolutionError {
@@ -28,6 +33,15 @@ pub struct WorkspaceStreamSubscriptionPlan {
     pub sessions: Vec<WorkspaceStreamResolvedSession>,
     pub state: WorkspaceActiveSubscriptionState,
     pub provisional_subscriptions: HashMap<SessionId, SessionReplayCursor>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkspaceStreamSubscriptionEventApplication {
+    pub state: WorkspaceActiveSubscriptionState,
+    pub subscriptions: HashMap<SessionId, SessionReplayCursor>,
+    pub added_subscriptions: Vec<SessionId>,
+    pub removed_subscriptions: Vec<SessionId>,
+    pub should_route: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -73,6 +87,129 @@ pub fn plan_workspace_stream_subscription(
         sessions,
         state,
         provisional_subscriptions,
+    }
+}
+
+pub async fn apply_workspace_stream_subscription_event(
+    state: &Arc<DaemonState>,
+    workspace_id: WorkspaceId,
+    mut subscription_state: WorkspaceActiveSubscriptionState,
+    mut subscriptions: HashMap<SessionId, SessionReplayCursor>,
+    event: &WorkspaceActiveSnapshotEvent,
+) -> WorkspaceStreamSubscriptionEventApplication {
+    let previous_subscriptions = subscriptions.keys().copied().collect::<HashSet<_>>();
+    if let WorkspaceActiveSnapshotEvent::SessionRemoved { session_id, .. } = event {
+        let removed_explicit = subscription_state.explicit_sessions.remove(session_id);
+        let removed_foreground = subscription_state
+            .foreground_session_ids
+            .as_mut()
+            .map(|foreground| foreground.remove(session_id))
+            .unwrap_or(false);
+        if subscription_state
+            .foreground_session_ids
+            .as_ref()
+            .is_some_and(HashSet::is_empty)
+        {
+            subscription_state.foreground_session_ids = None;
+        }
+        subscription_state.replay_sessions.remove(session_id);
+        let removed_subscription = subscriptions.remove(session_id).is_some();
+        return subscription_event_application(
+            subscription_state,
+            subscriptions,
+            previous_subscriptions,
+            removed_explicit || removed_foreground || removed_subscription,
+        );
+    }
+
+    if !subscription_state.active_scope {
+        return subscription_event_application(
+            subscription_state,
+            subscriptions,
+            previous_subscriptions,
+            true,
+        );
+    }
+
+    match event {
+        WorkspaceActiveSnapshotEvent::ActiveTaskUpsert { task, .. } => {
+            let session_id = primary_session_id_for_active_task_event(task);
+            subscription_state
+                .active_task_sessions
+                .insert(task.task.id, session_id);
+            if let std::collections::hash_map::Entry::Vacant(entry) =
+                subscriptions.entry(session_id)
+            {
+                let last_sent =
+                    active_task_subscription_cursor(state, workspace_id, session_id).await;
+                entry.insert(last_sent);
+            }
+        }
+        WorkspaceActiveSnapshotEvent::ActiveTaskDelete { task_id, .. } => {
+            remove_active_task_subscription_if_unused(
+                &mut subscription_state,
+                &mut subscriptions,
+                *task_id,
+            );
+        }
+        WorkspaceActiveSnapshotEvent::TaskDelta { delta, .. }
+            if matches!(delta.kind, TaskDeltaKind::Archived) =>
+        {
+            remove_active_task_subscription_if_unused(
+                &mut subscription_state,
+                &mut subscriptions,
+                delta.task.id,
+            );
+        }
+        _ => {}
+    }
+    subscription_event_application(
+        subscription_state,
+        subscriptions,
+        previous_subscriptions,
+        true,
+    )
+}
+
+fn remove_active_task_subscription_if_unused(
+    subscription_state: &mut WorkspaceActiveSubscriptionState,
+    subscriptions: &mut HashMap<SessionId, SessionReplayCursor>,
+    task_id: ctx_core::ids::TaskId,
+) {
+    if let Some(session_id) = subscription_state.active_task_sessions.remove(&task_id) {
+        let still_active = subscription_state
+            .active_task_sessions
+            .values()
+            .any(|id| *id == session_id);
+        if !still_active && !subscription_state.explicit_sessions.contains(&session_id) {
+            subscriptions.remove(&session_id);
+        }
+    }
+}
+
+fn subscription_event_application(
+    state: WorkspaceActiveSubscriptionState,
+    subscriptions: HashMap<SessionId, SessionReplayCursor>,
+    previous_subscriptions: HashSet<SessionId>,
+    should_route: bool,
+) -> WorkspaceStreamSubscriptionEventApplication {
+    let next_subscriptions = subscriptions.keys().copied().collect::<HashSet<_>>();
+    let mut added_subscriptions = next_subscriptions
+        .difference(&previous_subscriptions)
+        .copied()
+        .collect::<Vec<_>>();
+    let mut removed_subscriptions = previous_subscriptions
+        .difference(&next_subscriptions)
+        .copied()
+        .collect::<Vec<_>>();
+    added_subscriptions.sort_by_key(|session_id| session_id.0);
+    removed_subscriptions.sort_by_key(|session_id| session_id.0);
+    WorkspaceStreamSubscriptionEventApplication {
+        state,
+        subscriptions,
+        added_subscriptions,
+        removed_subscriptions,
+        should_route,
     }
 }
 

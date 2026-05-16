@@ -1,105 +1,38 @@
 use super::super::*;
 
+#[cfg(test)]
+mod tests;
+
 pub(super) async fn update_workspace_stream_subscriptions_for_event(
     state: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
     runtime: &mut WorkspaceStreamRuntime,
     event: &WorkspaceActiveSnapshotEvent,
 ) -> bool {
-    if let WorkspaceActiveSnapshotEvent::SessionRemoved { session_id, .. } = event {
-        let removed_explicit = runtime
-            .subscription_state
-            .explicit_sessions
-            .remove(session_id);
-        let removed_foreground = runtime
-            .subscription_state
-            .foreground_session_ids
-            .as_mut()
-            .map(|foreground| foreground.remove(session_id))
-            .unwrap_or(false);
-        if runtime
-            .subscription_state
-            .foreground_session_ids
-            .as_ref()
-            .is_some_and(HashSet::is_empty)
-        {
-            runtime.subscription_state.foreground_session_ids = None;
-        }
-        runtime
-            .subscription_state
-            .replay_sessions
-            .remove(session_id);
-        let removed_subscription = remove_runtime_subscription(state, runtime, *session_id).await;
-        return removed_explicit || removed_foreground || removed_subscription;
+    let subscriptions = runtime
+        .subscriptions
+        .iter()
+        .map(|(session_id, cursor)| (*session_id, cursor.last_sent))
+        .collect::<HashMap<_, _>>();
+    let application = state
+        .apply_workspace_stream_subscription_event(
+            workspace_id,
+            runtime.subscription_state.clone(),
+            subscriptions,
+            event,
+        )
+        .await;
+    runtime.subscription_state = application.state;
+    runtime.subscriptions = application
+        .subscriptions
+        .into_iter()
+        .map(|(session_id, last_sent)| (session_id, SessionCursor { last_sent }))
+        .collect();
+    for session_id in application.added_subscriptions {
+        state.attach_session_pin(session_id).await;
     }
-
-    if !runtime.subscription_state.active_scope {
-        return true;
-    }
-
-    match event {
-        WorkspaceActiveSnapshotEvent::ActiveTaskUpsert { task, .. } => {
-            let session_id = state.primary_session_id_for_active_task_event(task);
-            runtime
-                .subscription_state
-                .active_task_sessions
-                .insert(task.task.id, session_id);
-            if let std::collections::hash_map::Entry::Vacant(entry) =
-                runtime.subscriptions.entry(session_id)
-            {
-                let last_sent = state
-                    .active_task_subscription_cursor(workspace_id, session_id)
-                    .await;
-                entry.insert(SessionCursor { last_sent });
-            }
-        }
-        WorkspaceActiveSnapshotEvent::ActiveTaskDelete { task_id, .. } => {
-            remove_active_task_subscription_if_unused(state, runtime, *task_id).await;
-        }
-        WorkspaceActiveSnapshotEvent::TaskDelta { delta, .. }
-            if matches!(delta.kind, TaskDeltaKind::Archived) =>
-        {
-            remove_active_task_subscription_if_unused(state, runtime, delta.task.id).await;
-        }
-        _ => {}
-    }
-    true
-}
-
-async fn remove_active_task_subscription_if_unused(
-    state: &WorkspaceStreamHandle,
-    runtime: &mut WorkspaceStreamRuntime,
-    task_id: TaskId,
-) {
-    if let Some(session_id) = runtime
-        .subscription_state
-        .active_task_sessions
-        .remove(&task_id)
-    {
-        let still_active = runtime
-            .subscription_state
-            .active_task_sessions
-            .values()
-            .any(|id| *id == session_id);
-        if !still_active
-            && !runtime
-                .subscription_state
-                .explicit_sessions
-                .contains(&session_id)
-        {
-            remove_runtime_subscription(state, runtime, session_id).await;
-        }
-    }
-}
-
-async fn remove_runtime_subscription(
-    state: &WorkspaceStreamHandle,
-    runtime: &mut WorkspaceStreamRuntime,
-    session_id: SessionId,
-) -> bool {
-    let removed = runtime.subscriptions.remove(&session_id).is_some();
-    if removed {
+    for session_id in application.removed_subscriptions {
         state.detach_session_pin(session_id).await;
     }
-    removed
+    application.should_route
 }

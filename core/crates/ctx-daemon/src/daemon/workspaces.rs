@@ -20,7 +20,7 @@ use ctx_workspace_container::WorkspaceContainerStatus;
 
 use super::handle::WorkspacesHandle;
 use crate::daemon::{settings, WorkspaceStoreAccessError, WorkspaceStreamHandle};
-use ctx_workspace_active_snapshot::SessionReplayCursor;
+use ctx_workspace_active_snapshot::{SessionReplayCursor, WorkspaceActiveSubscriptionState};
 
 mod active_snapshot_state;
 mod app_state;
@@ -1009,6 +1009,23 @@ impl WorkspaceStreamHandle {
         session_id: SessionId,
     ) -> SessionReplayCursor {
         stream::active_task_subscription_cursor(&self.state, workspace_id, session_id).await
+    }
+
+    pub async fn apply_workspace_stream_subscription_event(
+        &self,
+        workspace_id: WorkspaceId,
+        subscription_state: WorkspaceActiveSubscriptionState,
+        subscriptions: HashMap<SessionId, SessionReplayCursor>,
+        event: &WorkspaceActiveSnapshotEvent,
+    ) -> stream::WorkspaceStreamSubscriptionEventApplication {
+        stream::apply_workspace_stream_subscription_event(
+            &self.state,
+            workspace_id,
+            subscription_state,
+            subscriptions,
+            event,
+        )
+        .await
     }
 
     pub fn primary_session_id_for_active_task_event(
