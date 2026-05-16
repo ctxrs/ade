@@ -24,6 +24,7 @@ const {
   MERGE_QUEUE_ISOLATION_TEST_STORE_ACCESS_PATTERNS,
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
+  MOBILE_ACCESS_STORE_DTO_API_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
@@ -76,6 +77,7 @@ const {
   mergeQueueIsolationStorePatternsForPath,
   mcpDaemonPatternsForPath,
   migratedTestPatternsForPath,
+  mobileAccessStoreDtoApiPatternsForPath,
   mobileStorePatternsForPath,
   providerAuthGlobalIdFixturePatternsForPath,
   providerScenariosOfflineStorePatternsForPath,
@@ -1106,6 +1108,65 @@ test("daemon boundary guard scopes Gemini live catalog fixture root", () => {
     geminiLiveModelCatalogStorePatternsForPath(
       "core/crates/ctx-http/tests/live_provider_canary.rs",
     ),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects mobile access API storage DTO leaks", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/mobile_access/secure.rs",
+    contents: `
+      use ctx_store::store::MobileAccessConfig;
+      use ctx_store::store::{MobileDeviceUpsert, MobileDeviceSeqAdvance};
+      use ctx_store :: store :: MobileDeviceSeqAdvance as SeqAdvance;
+      async fn helper() {
+        let cfg = ctx_store::store::MobileAccessConfig { id: "default".to_string() };
+        let update = MobileDeviceUpsert { public_key: None };
+        match outcome {
+          ctx_store::store::MobileDeviceSeqAdvance::Advanced => {}
+          MobileDeviceSeqAdvance::Missing => {}
+          SeqAdvance::Stale { current } => {}
+        }
+      }
+    `,
+    patterns: MOBILE_ACCESS_STORE_DTO_API_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "mobile access API imports storage DTOs",
+      "mobile access API imports storage DTOs",
+      "mobile access API imports storage DTOs",
+      "mobile access API references storage DTO path",
+      "mobile access API references storage DTO path",
+      "mobile access API references storage DTO path",
+      "mobile access API references storage DTO path",
+      "mobile access API references storage DTO type",
+      "mobile access API references storage DTO type",
+      "mobile access API references storage DTO type",
+      "mobile access API references storage DTO type",
+      "mobile access API references storage DTO type",
+      "mobile access API references storage DTO type",
+      "mobile access API references storage DTO type",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes mobile access storage DTO roots", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/src/api/mod.rs",
+    "core/crates/ctx-http/src/api/mobile_access.rs",
+    "core/crates/ctx-http/src/api/mobile_access/secure.rs",
+    "core/crates/ctx-http/src/api/mobile_access/access_enable/profile_config.rs",
+  ]) {
+    assert.deepEqual(
+      mobileAccessStoreDtoApiPatternsForPath(filePath),
+      MOBILE_ACCESS_STORE_DTO_API_PATTERNS,
+    );
+  }
+  assert.deepEqual(
+    mobileAccessStoreDtoApiPatternsForPath("core/crates/ctx-http/src/api/providers/status.rs"),
     [],
   );
 });

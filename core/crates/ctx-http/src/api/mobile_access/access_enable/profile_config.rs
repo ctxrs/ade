@@ -45,8 +45,7 @@ pub(super) async fn persist_mobile_access_config(
     keys: &ManagedMobileAccessKeys,
     now: chrono::DateTime<chrono::Utc>,
 ) -> Result<(), (StatusCode, Json<ApiErrorResp>)> {
-    let config = ctx_store::store::MobileAccessConfig {
-        id: "default".to_string(),
+    let config = MobileAccessConfigUpsert {
         profile_id: keys.profile_id,
         tunnel_id: payload.tunnel_id.clone(),
         public_base_url: public_url.as_str().trim_end_matches('/').to_string(),

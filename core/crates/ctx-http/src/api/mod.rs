@@ -87,10 +87,9 @@ use ws::{
 };
 
 use ctx_core::{ids::*, models::*};
-use ctx_store::store::MobileDeviceUpsert;
-
 use ctx_daemon::daemon::mobile_access::{
-    default_mobile_profile_scopes, mobile_scope_set_from_strings, MobileAuthContext, MobileScope,
+    default_mobile_profile_scopes, mobile_scope_set_from_strings, MobileAccessConfigUpsert,
+    MobileAuthContext, MobileDeviceRegistrationUpdate, MobileDeviceSequenceAdvance, MobileScope,
 };
 use ctx_observability::logs;
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};

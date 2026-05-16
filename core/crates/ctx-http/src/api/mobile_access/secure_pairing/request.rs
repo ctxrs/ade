@@ -1,16 +1,15 @@
 use axum::http::StatusCode;
 use axum::Json;
-use ctx_store::store::MobileAccessConfig;
 use ctx_transport_runtime::mobile_e2ee::{self, E2eeKey};
 
 use super::super::{ApiErrorResp, MobileScope, PairMobileDevicePayload, PairMobileDeviceReq};
-use ctx_daemon::daemon::CoreHandle;
+use ctx_daemon::daemon::{mobile_access::MobileAccessConfigSnapshot, CoreHandle};
 
 pub(super) struct VerifiedMobilePairingRequest {
     pub(super) device_uuid: uuid::Uuid,
     pub(super) device_id: String,
     pub(super) device_public_key: String,
-    pub(super) config: MobileAccessConfig,
+    pub(super) config: MobileAccessConfigSnapshot,
     pub(super) key: E2eeKey,
     pub(super) payload: PairMobileDevicePayload,
 }

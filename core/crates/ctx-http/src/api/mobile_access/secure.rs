@@ -28,8 +28,8 @@ pub(in crate::api) async fn handle_mobile_secure(
                 }),
             )
         })? {
-        ctx_store::store::MobileDeviceSeqAdvance::Advanced => {}
-        ctx_store::store::MobileDeviceSeqAdvance::Stale { current } => {
+        MobileDeviceSequenceAdvance::Advanced => {}
+        MobileDeviceSequenceAdvance::Stale { current } => {
             tracing::warn!(device_id = %verified.device_uuid, seq = verified.seq, current, "rejected stale mobile secure request");
             return Err((
                 StatusCode::CONFLICT,
@@ -38,7 +38,7 @@ pub(in crate::api) async fn handle_mobile_secure(
                 }),
             ));
         }
-        ctx_store::store::MobileDeviceSeqAdvance::Missing => {
+        MobileDeviceSequenceAdvance::Missing => {
             return Err((
                 StatusCode::NOT_FOUND,
                 Json(ApiErrorResp {

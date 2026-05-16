@@ -53,7 +53,7 @@ pub(in crate::api) async fn register_mobile_device(
         .upsert_mobile_device(
             MobileDeviceId(device_uuid),
             mobile_auth.profile_id,
-            MobileDeviceUpsert {
+            MobileDeviceRegistrationUpdate {
                 device_label: sanitize_optional_mobile_field(req.device_label),
                 platform: sanitize_optional_mobile_field(req.platform),
                 push_token: sanitize_optional_mobile_field(req.push_token),

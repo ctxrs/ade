@@ -35,7 +35,7 @@ pub(in crate::api) async fn pair_mobile_device(
         .upsert_mobile_device(
             MobileDeviceId(verified.device_uuid),
             verified.config.profile_id,
-            MobileDeviceUpsert {
+            MobileDeviceRegistrationUpdate {
                 device_label: verified
                     .payload
                     .device_label

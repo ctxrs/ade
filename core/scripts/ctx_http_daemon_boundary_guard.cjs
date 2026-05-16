@@ -148,6 +148,12 @@ const geminiLiveModelCatalogStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/gemini_live_model_catalog.rs",
 ];
 
+const mobileAccessStoreDtoApiRoots = [
+  "core/crates/ctx-http/src/api/mod.rs",
+  "core/crates/ctx-http/src/api/mobile_access.rs",
+  "core/crates/ctx-http/src/api/mobile_access/",
+];
+
 const smallApiUnitStoreFacadeTestRoots = [
   "core/crates/ctx-http/src/api/settings.rs",
   "core/crates/ctx-http/src/api/providers/login/codex/tests.rs",
@@ -776,6 +782,22 @@ const GEMINI_LIVE_MODEL_CATALOG_TEST_STORE_ACCESS_PATTERNS = [
     name: "raw Gemini live catalog store setup",
     regex: /\bStoreManager\b|\bctx_store\s*::\s*Store\b|\b[A-Za-z_][A-Za-z0-9_]*\s*::\s*open_sqlite\s*\(/,
     contentRegex: /\buse\s+ctx_store\s*::\s*\{(?=[^}]*\n)[\s\S]*?\bStore\b[\s\S]*?\}/gm,
+  },
+];
+
+const MOBILE_ACCESS_STORE_DTO_API_PATTERNS = [
+  {
+    name: "mobile access API imports storage DTOs",
+    regex: /\buse\s+ctx_store\s*::\s*store\s*::[^;]*(?:\bMobileAccessConfig\b|\bMobileDeviceUpsert\b|\bMobileDeviceSeqAdvance\b)/,
+    contentRegex: /\buse\s+ctx_store\s*::\s*store\s*::\s*\{(?=[^}]*\n)[\s\S]*?(?:\bMobileAccessConfig\b|\bMobileDeviceUpsert\b|\bMobileDeviceSeqAdvance\b)[\s\S]*?\}/gm,
+  },
+  {
+    name: "mobile access API references storage DTO path",
+    regex: /\bctx_store\s*::\s*store\s*::\s*(?:MobileAccessConfig|MobileDeviceUpsert|MobileDeviceSeqAdvance)\b/,
+  },
+  {
+    name: "mobile access API references storage DTO type",
+    regex: /\b(?:MobileAccessConfig|MobileDeviceUpsert|MobileDeviceSeqAdvance)\b/,
   },
 ];
 
@@ -2611,6 +2633,13 @@ function geminiLiveModelCatalogStorePatternsForPath(relativePath) {
   return [];
 }
 
+function mobileAccessStoreDtoApiPatternsForPath(relativePath) {
+  if (mobileAccessStoreDtoApiRoots.some((root) => relativePath.startsWith(root))) {
+    return MOBILE_ACCESS_STORE_DTO_API_PATTERNS;
+  }
+  return [];
+}
+
 function smallApiUnitStorePatternsForPath(relativePath) {
   if (smallApiUnitStoreFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return SMALL_API_UNIT_TEST_STORE_ACCESS_PATTERNS;
@@ -3141,6 +3170,13 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
+        patterns: mobileAccessStoreDtoApiPatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
         patterns: smallApiUnitStorePatternsForPath(relativePath),
       }),
     );
@@ -3471,6 +3507,7 @@ module.exports = {
   MERGE_QUEUE_ISOLATION_TEST_STORE_ACCESS_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
+  MOBILE_ACCESS_STORE_DTO_API_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
@@ -3523,6 +3560,7 @@ module.exports = {
   mergeQueueIsolationStorePatternsForPath,
   mcpDaemonPatternsForPath,
   migratedTestPatternsForPath,
+  mobileAccessStoreDtoApiPatternsForPath,
   mobileStorePatternsForPath,
   providerAuthGlobalIdFixturePatternsForPath,
   providerScenariosOfflineStorePatternsForPath,
