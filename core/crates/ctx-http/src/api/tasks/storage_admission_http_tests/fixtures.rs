@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -8,8 +7,6 @@ use serde_json::Value;
 use tower::ServiceExt;
 
 use ctx_core::ids::WorkspaceId;
-use ctx_daemon::test_support::TestDaemon;
-use ctx_providers::fake::FakeProviderAdapter;
 use ctx_sandbox_materialization::set_test_preflight_storage_samples_override;
 use ctx_settings_model::ExecutionSettings;
 use ctx_storage_admission::{
@@ -35,29 +32,19 @@ fn git(args: &[&str], cwd: &Path) {
     assert!(status.success(), "git {args:?} failed");
 }
 
-pub(super) async fn test_state(data_root: &Path) -> TestDaemon {
-    let mut providers: HashMap<String, Arc<dyn ctx_providers::adapters::ProviderAdapter>> =
-        HashMap::new();
-    providers.insert("fake".into(), Arc::new(FakeProviderAdapter::new()));
-    TestDaemon::new_with_providers_for_test(
-        data_root.to_path_buf(),
-        providers,
-        "http://127.0.0.1:4311".to_string(),
-        None,
-    )
-    .await
-    .expect("create test daemon")
+pub(super) async fn test_state(data_root: &Path) -> crate::test_support::DataRootTestDaemonFixture {
+    crate::test_support::DataRootTestDaemonFixture::new(data_root, "http://127.0.0.1:4311").await
 }
 
-pub(super) async fn save_test_execution_settings(state: &TestDaemon, execution: ExecutionSettings) {
+pub(super) async fn save_test_execution_settings(
+    state: &crate::test_support::DataRootTestDaemonFixture,
+    execution: ExecutionSettings,
+) {
     state
+        .daemon()
         .save_execution_settings_for_test(execution)
         .await
         .expect("save test execution settings");
-}
-
-pub(super) fn test_router(state: &TestDaemon) -> axum::Router {
-    crate::api::router(crate::api::RouteHandles::from_daemon_handle(state.handle()))
 }
 
 pub(super) fn install_unreleased_host_reserve_storage_override(

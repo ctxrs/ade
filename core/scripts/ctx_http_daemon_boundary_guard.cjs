@@ -375,6 +375,11 @@ const taskLifecycleStoreFacadeTestRoots = [
   "core/crates/ctx-http/src/api/tasks/storage_admission_http_tests/",
 ];
 
+const storageAdmissionFixtureTestRoots = [
+  "core/crates/ctx-http/src/api/tasks/storage_admission_http_tests.rs",
+  "core/crates/ctx-http/src/api/tasks/storage_admission_http_tests/",
+];
+
 const API_RAW_DAEMON_PATTERNS = [
   {
     name: "raw DaemonState type",
@@ -1953,6 +1958,21 @@ const TASK_LIFECYCLE_TEST_STORE_ACCESS_PATTERNS = [
   },
 ];
 
+const STORAGE_ADMISSION_FIXTURE_PATTERNS = [
+  {
+    name: "direct storage-admission raw TestDaemon construction",
+    regex: /\bTestDaemon::new[A-Za-z0-9_]*\s*\(/,
+  },
+  {
+    name: "direct storage-admission router helper",
+    regex: /\btest_router\s*\(/,
+  },
+  {
+    name: "direct storage-admission router composition",
+    regex: /\b(?:crate::)?api::router\s*\(|\bRouteHandles::from_daemon_handle\s*\(/,
+  },
+];
+
 function isRustFile(filePath) {
   return filePath.endsWith(".rs");
 }
@@ -2393,6 +2413,13 @@ function taskLifecycleStorePatternsForPath(relativePath) {
   return [];
 }
 
+function storageAdmissionFixturePatternsForPath(relativePath) {
+  if (storageAdmissionFixtureTestRoots.some((root) => relativePath.startsWith(root))) {
+    return STORAGE_ADMISSION_FIXTURE_PATTERNS;
+  }
+  return [];
+}
+
 function routerCompositionPatternsForPath(relativePath) {
   const isLibTestsRoot = relativePath === "core/crates/ctx-http/src/lib_tests.rs";
   if (
@@ -2464,13 +2491,6 @@ function isAllowedRouterHelperComposition({ filePath, lines, index, line }) {
     filePath === "core/crates/ctx-http/src/lib_tests.rs"
     && /api::router\s*\(\s*api::RouteHandles::from_daemon_handle\s*\(\s*daemon\.handle\s*\(\s*\)\s*\)\s*\)/.test(line)
     && isInsideDeclaredFunction(lines, index, /\bfn\s+test_router\s*\(/)
-  ) {
-    return true;
-  }
-  if (
-    filePath === "core/crates/ctx-http/src/api/tasks/storage_admission_http_tests/fixtures.rs"
-    && /crate::api::router\s*\(\s*crate::api::RouteHandles::from_daemon_handle\s*\(\s*state\.handle\s*\(\s*\)\s*\)\s*\)/.test(line)
-    && isInsideDeclaredFunction(lines, index, /\bpub\s*\(\s*super\s*\)\s+fn\s+test_router\s*\(/)
   ) {
     return true;
   }
@@ -2849,6 +2869,13 @@ function scanRepo() {
       }),
     );
     violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
+        patterns: storageAdmissionFixturePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
       ...scanRouterComposition({
         filePath: relativePath,
         contents,
@@ -2911,6 +2938,7 @@ module.exports = {
   SMALL_EXTERNAL_TEST_STORE_ACCESS_PATTERNS,
   SMALL_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
   SMALL_ROUTE_FIXTURE_PATTERNS,
+  STORAGE_ADMISSION_FIXTURE_PATTERNS,
   STREAM_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
   SUBSCRIPTION_ACCOUNTS_API_TEST_STORE_ACCESS_PATTERNS,
   TASK_LIFECYCLE_TEST_STORE_ACCESS_PATTERNS,
@@ -2955,6 +2983,7 @@ module.exports = {
   smallExternalStorePatternsForPath,
   smallBoundaryStorePatternsForPath,
   smallRouteFixturePatternsForPath,
+  storageAdmissionFixturePatternsForPath,
   streamRuntimeStorePatternsForPath,
   subscriptionAccountsApiStorePatternsForPath,
   taskLifecycleStorePatternsForPath,

@@ -83,6 +83,42 @@ impl TestDaemonFixture {
     }
 }
 
+pub(crate) struct DataRootTestDaemonFixture {
+    daemon: TestDaemon,
+}
+
+impl DataRootTestDaemonFixture {
+    pub(crate) async fn new(data_root: &Path, base_url: impl Into<String>) -> Self {
+        Self::with_providers(data_root, fake_providers(), base_url).await
+    }
+
+    pub(crate) async fn with_providers(
+        data_root: &Path,
+        providers: HashMap<String, Arc<dyn ProviderAdapter>>,
+        base_url: impl Into<String>,
+    ) -> Self {
+        let daemon = TestDaemon::new_with_providers_for_test(
+            data_root.to_path_buf(),
+            providers,
+            base_url.into(),
+            None,
+        )
+        .await
+        .expect("create data-root test daemon");
+        Self { daemon }
+    }
+
+    pub(crate) fn daemon(&self) -> &TestDaemon {
+        &self.daemon
+    }
+
+    pub(crate) fn router(&self) -> axum::Router {
+        crate::api::router(crate::api::RouteHandles::from_daemon_handle(
+            self.daemon.handle(),
+        ))
+    }
+}
+
 fn fake_providers() -> HashMap<String, Arc<dyn ProviderAdapter>> {
     HashMap::from([(
         "fake".to_string(),

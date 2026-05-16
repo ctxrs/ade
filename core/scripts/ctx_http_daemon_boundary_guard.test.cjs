@@ -33,6 +33,7 @@ const {
   SMALL_EXTERNAL_TEST_STORE_ACCESS_PATTERNS,
   SMALL_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
   SMALL_ROUTE_FIXTURE_PATTERNS,
+  STORAGE_ADMISSION_FIXTURE_PATTERNS,
   STREAM_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
   SUBSCRIPTION_ACCOUNTS_API_TEST_STORE_ACCESS_PATTERNS,
   TASK_LIFECYCLE_TEST_STORE_ACCESS_PATTERNS,
@@ -77,6 +78,7 @@ const {
   smallExternalStorePatternsForPath,
   smallBoundaryStorePatternsForPath,
   smallRouteFixturePatternsForPath,
+  storageAdmissionFixturePatternsForPath,
   streamRuntimeStorePatternsForPath,
   subscriptionAccountsApiStorePatternsForPath,
   taskLifecycleStorePatternsForPath,
@@ -527,19 +529,6 @@ test("daemon boundary guard allows only sanctioned router helper bodies", () => 
       denied: `
         fn other_router(daemon: &TestDaemon) -> axum::Router {
           api::router(api::RouteHandles::from_daemon_handle(daemon.handle()))
-        }
-      `,
-    },
-    {
-      filePath: "core/crates/ctx-http/src/api/tasks/storage_admission_http_tests/fixtures.rs",
-      allowed: `
-        pub(super) fn test_router(state: &TestDaemon) -> axum::Router {
-          crate::api::router(crate::api::RouteHandles::from_daemon_handle(state.handle()))
-        }
-      `,
-      denied: `
-        pub(super) fn other_router(state: &TestDaemon) -> axum::Router {
-          crate::api::router(crate::api::RouteHandles::from_daemon_handle(state.handle()))
         }
       `,
     },
@@ -3264,7 +3253,7 @@ test("daemon boundary guard rejects direct task-lifecycle store access", () => {
   );
 });
 
-test("daemon boundary guard allows task storage-admission test daemon facades and router helper", () => {
+test("daemon boundary guard rejects storage-admission raw daemon/router helpers", () => {
   const violations = scanText({
     filePath: "core/crates/ctx-http/src/api/tasks/storage_admission_http_tests/fixtures.rs",
     contents: `
@@ -3272,10 +3261,35 @@ test("daemon boundary guard allows task storage-admission test daemon facades an
         let daemon = TestDaemon::new_for_test(data_root, "http://127.0.0.1:4311".to_string()).await?;
         let daemon = TestDaemon::new_with_providers_for_test(data_root, providers, "http://127.0.0.1:4311".to_string(), None).await?;
         state.save_execution_settings_for_test(execution).await?;
+        test_router(state);
         crate::api::router(crate::api::RouteHandles::from_daemon_handle(state.handle()))
       }
     `,
-    patterns: TASK_LIFECYCLE_TEST_STORE_ACCESS_PATTERNS,
+    patterns: STORAGE_ADMISSION_FIXTURE_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct storage-admission raw TestDaemon construction",
+      "direct storage-admission raw TestDaemon construction",
+      "direct storage-admission router helper",
+      "direct storage-admission router composition",
+    ],
+  );
+});
+
+test("daemon boundary guard allows storage-admission data-root daemon fixture", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/tasks/storage_admission_http_tests/fixtures.rs",
+    contents: `
+      async fn helper(data_root: &Path) {
+        let fixture = crate::test_support::DataRootTestDaemonFixture::new(data_root, "http://127.0.0.1:4311").await;
+        fixture.daemon().save_execution_settings_for_test(execution).await?;
+        let app = fixture.router();
+      }
+    `,
+    patterns: STORAGE_ADMISSION_FIXTURE_PATTERNS,
   });
 
   assert.deepEqual(violations, []);
@@ -3296,6 +3310,24 @@ test("daemon boundary guard scopes task-lifecycle store facade roots", () => {
     );
   }
   assert.deepEqual(taskLifecycleStorePatternsForPath("core/crates/ctx-http/src/api/settings.rs"), []);
+});
+
+test("daemon boundary guard scopes storage-admission fixture roots", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/src/api/tasks/storage_admission_http_tests.rs",
+    "core/crates/ctx-http/src/api/tasks/storage_admission_http_tests/fixtures.rs",
+  ]) {
+    assert.deepEqual(
+      storageAdmissionFixturePatternsForPath(filePath),
+      STORAGE_ADMISSION_FIXTURE_PATTERNS,
+    );
+  }
+  assert.deepEqual(
+    storageAdmissionFixturePatternsForPath(
+      "core/crates/ctx-http/src/api/tasks/lifecycle_tests/fixtures.rs",
+    ),
+    [],
+  );
 });
 
 test("daemon boundary guard scopes test router composition to sanctioned helpers", () => {
