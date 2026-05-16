@@ -14,8 +14,7 @@ use tokio::sync::{Mutex, Notify};
 use ctx_core::ids::*;
 use ctx_core::models::*;
 use ctx_workspace_active_snapshot::{
-    is_transient_session_delta, ResolvedWorkspaceActiveSessionReplay,
-    ResolvedWorkspaceActiveSubscriptions, SessionReplayCursor, WorkspaceActiveSubscriptionState,
+    is_transient_session_delta, SessionReplayCursor, WorkspaceActiveSubscriptionState,
 };
 
 use ctx_daemon::daemon::{CoreHandle, WorkspaceStreamHandle, WorkspacesHandle};

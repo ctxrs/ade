@@ -29,6 +29,7 @@ const {
   SESSION_VCS_API_ORCHESTRATION_PATTERNS,
   TASK_SESSION_CREATION_API_ADMISSION_PATTERNS,
   WORKSPACE_STREAM_READ_MODEL_API_PATTERNS,
+  WORKSPACE_STREAM_SUBSCRIPTION_PLAN_API_PATTERNS,
   PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,
@@ -265,6 +266,55 @@ test("daemon boundary guard scopes workspace stream read-model ban to stream tra
   assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/active.rs").includes(
       WORKSPACE_STREAM_READ_MODEL_API_PATTERNS[0],
+    ),
+    false,
+  );
+});
+
+test("daemon boundary guard rejects raw workspace stream subscription-resolution types in HTTP", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/ws/workspace_stream/subscription/replay.rs",
+    contents: `
+      use ctx_workspace_active_snapshot::{
+        ResolvedWorkspaceActiveSessionReplay,
+        ResolvedWorkspaceActiveSessionSubscription,
+        ResolvedWorkspaceActiveSubscriptions,
+      };
+      fn handler(value: ResolvedWorkspaceActiveSessionSubscription) {
+        let _ = ResolvedWorkspaceActiveSessionReplay::Reset;
+      }
+    `,
+    patterns: WORKSPACE_STREAM_SUBSCRIPTION_PLAN_API_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "workspace stream API references raw subscription-resolution type",
+      "workspace stream API references raw subscription-resolution type",
+      "workspace stream API references raw subscription-resolution type",
+      "workspace stream API references raw subscription-resolution type",
+      "workspace stream API references raw subscription-resolution type",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes workspace stream subscription-plan ban", () => {
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/ws/workspace_stream/subscription.rs",
+    ).includes(WORKSPACE_STREAM_SUBSCRIPTION_PLAN_API_PATTERNS[0]),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/ws/workspace_stream/subscription/replay/session.rs",
+    ).includes(WORKSPACE_STREAM_SUBSCRIPTION_PLAN_API_PATTERNS[0]),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/ws/workspace_stream/events.rs").includes(
+      WORKSPACE_STREAM_SUBSCRIPTION_PLAN_API_PATTERNS[0],
     ),
     false,
   );

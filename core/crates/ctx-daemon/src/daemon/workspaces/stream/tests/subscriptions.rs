@@ -1,13 +1,19 @@
 use super::fixtures::{
-    create_workspace_session, create_workspace_worktree, create_worktree_for_workspace, test_state,
+    create_workspace_session, create_workspace_worktree, create_worktree_for_workspace, session_id,
+    test_state,
 };
 use super::*;
 use std::collections::{HashMap, HashSet};
 
 use crate::daemon::DaemonHandle;
-use ctx_core::ids::WorktreeId;
+use ctx_core::ids::{TaskId, WorktreeId};
 use ctx_core::models::{
-    WorkspaceActiveSnapshotClientMessage, WorkspaceActiveSnapshotSessionReplay,
+    WorkspaceActiveSnapshotClientMessage, WorkspaceActiveSnapshotSessionIntent,
+    WorkspaceActiveSnapshotSessionReplay, WorkspaceActiveSnapshotSessionSubscription,
+};
+use ctx_workspace_active_snapshot::{
+    ResolvedWorkspaceActiveSessionReplay, ResolvedWorkspaceActiveSessionSubscription,
+    ResolvedWorkspaceActiveSubscriptions, SessionReplayCursor, WorkspaceActiveSubscriptionState,
 };
 use std::sync::Arc;
 
@@ -44,6 +50,72 @@ async fn subscription_resolution_filters_cross_workspace_session_references() {
     assert_eq!(resolved.sessions[0].session_id, session_a);
     assert!(resolved.state.foreground_session_ids.is_none());
     assert_eq!(resolved.state.explicit_sessions, HashSet::from([session_a]));
+}
+
+#[test]
+fn subscription_plan_derives_initial_snapshot_fingerprint_and_provisional_cursors() {
+    let session_id = session_id("00000000-0000-0000-0000-000000000001");
+    let task_id = TaskId::new();
+    let message = WorkspaceActiveSnapshotClientMessage::Subscribe {
+        session_ids: vec![session_id],
+        sessions: vec![WorkspaceActiveSnapshotSessionSubscription {
+            session_id,
+            intent: Some(WorkspaceActiveSnapshotSessionIntent::Replay),
+            replay: WorkspaceActiveSnapshotSessionReplay::Resume {
+                after_seq: 10,
+                after_projection_rev: 12,
+            },
+        }],
+        task_ids: vec![task_id],
+        foreground_session_id: Some(session_id),
+        scope: None,
+        include_active_heads: true,
+    };
+    let mut state = WorkspaceActiveSubscriptionState::default();
+    state.active_scope = true;
+    state.foreground_session_ids = Some(HashSet::from([session_id]));
+    let resolved = ResolvedWorkspaceActiveSubscriptions {
+        sessions: vec![ResolvedWorkspaceActiveSessionSubscription {
+            session_id,
+            intent: WorkspaceActiveSnapshotSessionIntent::Replay,
+            replay: ResolvedWorkspaceActiveSessionReplay::Resume {
+                after_seq: 10,
+                after_projection_rev: 12,
+            },
+        }],
+        state,
+    };
+    let existing = HashMap::from([(
+        session_id,
+        SessionReplayCursor {
+            last_event_seq: 15,
+            projection_rev: 16,
+        },
+    )]);
+
+    let plan = plan_workspace_stream_subscription(&message, resolved, &existing);
+
+    assert!(plan.include_initial_snapshot);
+    assert_eq!(
+        plan.provisional_subscriptions.get(&session_id).copied(),
+        Some(SessionReplayCursor {
+            last_event_seq: 15,
+            projection_rev: 16,
+        }),
+        "existing live cursor must cover older requested replay cursor",
+    );
+    assert!(
+        plan.fingerprint.starts_with("heads=true;active=true;"),
+        "fingerprint must use the daemon-derived include_initial_snapshot flag",
+    );
+    assert_eq!(plan.sessions.len(), 1);
+    assert!(matches!(
+        plan.sessions[0].replay,
+        WorkspaceStreamSessionReplay::Resume {
+            after_seq: 10,
+            after_projection_rev: 12,
+        }
+    ));
 }
 
 #[tokio::test]

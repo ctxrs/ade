@@ -1,6 +1,6 @@
 use super::*;
 use ctx_core::models::WorkspaceActiveSnapshotSessionIntent;
-use ctx_daemon::daemon::workspaces::stream::ReplayOutcome;
+use ctx_daemon::daemon::workspaces::stream::{ReplayOutcome, WorkspaceStreamSessionReplay};
 use ctx_workspace_active_snapshot::replay_cursor_after_live_progress;
 use std::collections::HashSet;
 
@@ -42,7 +42,7 @@ pub(super) async fn replay_workspace_stream_subscriptions(
             subscription.intent == WorkspaceActiveSnapshotSessionIntent::Replay
                 && matches!(
                     subscription.replay,
-                    ResolvedWorkspaceActiveSessionReplay::Resume { .. }
+                    WorkspaceStreamSessionReplay::Resume { .. }
                 )
         })
         .map(|subscription| subscription.session_id)
@@ -82,7 +82,7 @@ pub(super) async fn replay_workspace_stream_subscriptions(
             );
             continue;
         }
-        let ResolvedWorkspaceActiveSessionReplay::Resume {
+        let WorkspaceStreamSessionReplay::Resume {
             after_seq,
             after_projection_rev,
         } = sub.replay

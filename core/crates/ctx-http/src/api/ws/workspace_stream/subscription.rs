@@ -3,50 +3,12 @@ use super::*;
 use ctx_daemon::daemon::workspaces::stream::{
     WorkspaceStreamSnapshotReadModel, WorkspaceStreamSubscriptionResolutionError,
 };
-use ctx_workspace_active_snapshot::ResolvedWorkspaceActiveSessionSubscription;
 
 mod replay;
 #[cfg(test)]
 mod tests;
 
 use replay::{replay_workspace_stream_subscriptions, WorkspaceStreamReplayRequest};
-
-fn workspace_subscription_fingerprint(
-    include_initial_snapshot: bool,
-    resolved_sessions: &[ResolvedWorkspaceActiveSessionSubscription],
-    next_state: &WorkspaceActiveSubscriptionState,
-) -> String {
-    let mut sessions = resolved_sessions
-        .iter()
-        .map(|subscription| {
-            let replay = match subscription.replay {
-                ResolvedWorkspaceActiveSessionReplay::Reset => "reset".to_string(),
-                ResolvedWorkspaceActiveSessionReplay::Resume {
-                    after_seq,
-                    after_projection_rev,
-                } => format!("resume:{after_seq}:{after_projection_rev}"),
-            };
-            format!(
-                "{}:{:?}:{}",
-                subscription.session_id.0, subscription.intent, replay
-            )
-        })
-        .collect::<Vec<_>>();
-    sessions.sort();
-    let mut foreground = next_state
-        .foreground_session_ids
-        .as_ref()
-        .map(|ids| ids.iter().map(|id| id.0.to_string()).collect::<Vec<_>>())
-        .unwrap_or_default();
-    foreground.sort();
-    format!(
-        "heads={};active={};foreground={};sessions={}",
-        include_initial_snapshot,
-        next_state.active_scope,
-        foreground.join(","),
-        sessions.join("|")
-    )
-}
 
 fn merge_replayed_and_live_subscriptions(
     live_subscriptions: &HashMap<SessionId, SessionCursor>,
@@ -83,13 +45,6 @@ pub(crate) async fn handle_workspace_stream_subscription(
     runtime: &mut WorkspaceStreamRuntime,
     labels: &WorkspaceStreamLabels,
 ) -> Result<(), ()> {
-    let include_initial_snapshot = matches!(
-        &message,
-        WorkspaceActiveSnapshotClientMessage::Subscribe {
-            include_active_heads: true,
-            ..
-        }
-    );
     let existing_replay_cursors = runtime
         .subscriptions
         .iter()
@@ -123,45 +78,29 @@ pub(crate) async fn handle_workspace_stream_subscription(
             return Ok(());
         }
     };
-    let ResolvedWorkspaceActiveSubscriptions {
-        sessions: resolved_sessions,
-        state: next_state,
-    } = resolved;
-    let fingerprint = workspace_subscription_fingerprint(
-        include_initial_snapshot,
-        &resolved_sessions,
-        &next_state,
-    );
+    let include_initial_snapshot = resolved.include_initial_snapshot;
+    let fingerprint = resolved.fingerprint;
     if runtime.last_subscription_fingerprint.as_deref() == Some(fingerprint.as_str()) {
         return Ok(());
     }
     let previous_subscription_ids = runtime.subscriptions.keys().copied().collect::<Vec<_>>();
-    let mut provisional_subscriptions = HashMap::new();
-    for subscription in &resolved_sessions {
-        let ResolvedWorkspaceActiveSessionReplay::Resume {
-            after_seq,
-            after_projection_rev,
-        } = subscription.replay
-        else {
-            continue;
-        };
-        let requested = SessionReplayCursor {
-            last_event_seq: after_seq.max(0),
-            projection_rev: after_projection_rev.max(0),
-        };
-        let last_sent = existing_replay_cursors
-            .get(&subscription.session_id)
-            .copied()
-            .map(|existing| existing.cover(requested))
-            .unwrap_or(requested);
-        provisional_subscriptions.insert(subscription.session_id, SessionCursor { last_sent });
-    }
 
     clear_runtime_queues(runtime).await;
     runtime.reset_queued = false;
     runtime.send_control.clear_disconnect_after_flush();
-    runtime.subscriptions = provisional_subscriptions;
-    runtime.subscription_state = next_state.clone();
+    runtime.subscriptions = resolved
+        .provisional_subscriptions
+        .iter()
+        .map(|(session_id, last_sent)| {
+            (
+                *session_id,
+                SessionCursor {
+                    last_sent: *last_sent,
+                },
+            )
+        })
+        .collect();
+    runtime.subscription_state = resolved.state.clone();
     sync_workspace_stream_session_pins(
         state,
         previous_subscription_ids,
@@ -187,7 +126,7 @@ pub(crate) async fn handle_workspace_stream_subscription(
         workspace_id,
         runtime,
         labels,
-        resolved_sessions: &resolved_sessions,
+        resolved_sessions: &resolved.sessions,
         live_rx,
         include_initial_snapshot,
         active_head_cursors: &active_head_cursors,

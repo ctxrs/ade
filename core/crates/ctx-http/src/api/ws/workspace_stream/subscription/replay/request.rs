@@ -1,5 +1,5 @@
 use super::*;
-use ctx_workspace_active_snapshot::ResolvedWorkspaceActiveSessionSubscription;
+use ctx_daemon::daemon::workspaces::stream::WorkspaceStreamResolvedSession;
 
 pub(in crate::api::ws::workspace_stream::subscription) struct WorkspaceStreamReplayRequest<'a> {
     pub(in crate::api::ws::workspace_stream::subscription) state: &'a WorkspaceStreamHandle,
@@ -7,7 +7,7 @@ pub(in crate::api::ws::workspace_stream::subscription) struct WorkspaceStreamRep
     pub(in crate::api::ws::workspace_stream::subscription) runtime: &'a mut WorkspaceStreamRuntime,
     pub(in crate::api::ws::workspace_stream::subscription) labels: &'a WorkspaceStreamLabels,
     pub(in crate::api::ws::workspace_stream::subscription) resolved_sessions:
-        &'a [ResolvedWorkspaceActiveSessionSubscription],
+        &'a [WorkspaceStreamResolvedSession],
     pub(in crate::api::ws::workspace_stream::subscription) live_rx:
         &'a mut tokio::sync::broadcast::Receiver<WorkspaceActiveSnapshotEvent>,
     pub(in crate::api::ws::workspace_stream::subscription) include_initial_snapshot: bool,

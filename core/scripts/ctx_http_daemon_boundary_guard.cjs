@@ -170,6 +170,12 @@ const workspaceStreamReadModelApiRoots = [
   "core/crates/ctx-http/src/api/ws/workspace_stream/subscription.rs",
 ];
 
+const workspaceStreamSubscriptionPlanApiRoots = [
+  "core/crates/ctx-http/src/api/ws/workspace_stream/subscription.rs",
+  "core/crates/ctx-http/src/api/ws/workspace_stream/subscription/replay.rs",
+  "core/crates/ctx-http/src/api/ws/workspace_stream/subscription/replay/",
+];
+
 const smallApiUnitStoreFacadeTestRoots = [
   "core/crates/ctx-http/src/api/settings.rs",
   "core/crates/ctx-http/src/api/providers/login/codex/tests.rs",
@@ -856,6 +862,13 @@ const WORKSPACE_STREAM_READ_MODEL_API_PATTERNS = [
   {
     name: "workspace stream API owns read-model preparation",
     regex: /\b(?:ensure_workspace_active_snapshot_hydrated|activate_workspace_merge_queue|workspace_active_snapshot|workspace_active_heads|load_workspace_active_snapshot_state)\s*\(/,
+  },
+];
+
+const WORKSPACE_STREAM_SUBSCRIPTION_PLAN_API_PATTERNS = [
+  {
+    name: "workspace stream API references raw subscription-resolution type",
+    regex: /\b(?:ResolvedWorkspaceActiveSessionSubscription|ResolvedWorkspaceActiveSubscriptions|ResolvedWorkspaceActiveSessionReplay)\b/,
   },
 ];
 
@@ -2648,6 +2661,9 @@ function apiPatternsForPath(relativePath) {
   if (workspaceStreamReadModelApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...WORKSPACE_STREAM_READ_MODEL_API_PATTERNS);
   }
+  if (workspaceStreamSubscriptionPlanApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...WORKSPACE_STREAM_SUBSCRIPTION_PLAN_API_PATTERNS);
+  }
   return patterns;
 }
 
@@ -3579,6 +3595,7 @@ module.exports = {
   SESSION_VCS_API_ORCHESTRATION_PATTERNS,
   TASK_SESSION_CREATION_API_ADMISSION_PATTERNS,
   WORKSPACE_STREAM_READ_MODEL_API_PATTERNS,
+  WORKSPACE_STREAM_SUBSCRIPTION_PLAN_API_PATTERNS,
   PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,

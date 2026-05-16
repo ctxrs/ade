@@ -19,7 +19,7 @@ use ctx_workspace_container::WorkspaceContainerStatus;
 
 use super::handle::WorkspacesHandle;
 use crate::daemon::{settings, WorkspaceStoreAccessError, WorkspaceStreamHandle};
-use ctx_workspace_active_snapshot::{ResolvedWorkspaceActiveSubscriptions, SessionReplayCursor};
+use ctx_workspace_active_snapshot::SessionReplayCursor;
 
 mod active_snapshot_state;
 mod app_state;
@@ -930,20 +930,23 @@ impl WorkspaceStreamHandle {
         message: WorkspaceActiveSnapshotClientMessage,
         existing: &HashMap<SessionId, SessionReplayCursor>,
     ) -> Result<
-        ResolvedWorkspaceActiveSubscriptions,
+        stream::WorkspaceStreamSubscriptionPlan,
         stream::WorkspaceStreamSubscriptionResolutionError,
     > {
         stream::prepare_subscription_read_model(&self.state, workspace_id)
             .await
             .map_err(stream::WorkspaceStreamSubscriptionResolutionError::Hydration)?;
-        stream::resolve_workspace_active_snapshot_subscriptions(
+        let resolved = stream::resolve_workspace_active_snapshot_subscriptions(
             &self.state,
             workspace_id,
-            message,
+            message.clone(),
             existing,
         )
         .await
-        .map_err(|_| stream::WorkspaceStreamSubscriptionResolutionError::Resolution)
+        .map_err(|_| stream::WorkspaceStreamSubscriptionResolutionError::Resolution)?;
+        Ok(stream::plan_workspace_stream_subscription(
+            &message, resolved, existing,
+        ))
     }
 
     pub async fn replay_session_events<F, Fut>(

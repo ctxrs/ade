@@ -9,7 +9,9 @@ pub use read_model::{
 };
 pub use replay::{replay_session_events, ReplayOutcome};
 pub use subscriptions::{
-    resolve_workspace_active_snapshot_subscriptions, WorkspaceStreamSubscriptionResolutionError,
+    plan_workspace_stream_subscription, resolve_workspace_active_snapshot_subscriptions,
+    WorkspaceStreamResolvedSession, WorkspaceStreamSessionReplay, WorkspaceStreamSubscriptionPlan,
+    WorkspaceStreamSubscriptionResolutionError,
 };
 pub use vcs::{filter_workspace_worktree_ids, refresh_worktree_vcs_for_worktrees};
 
