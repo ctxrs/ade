@@ -853,7 +853,7 @@ dependencies = [
 
 [[package]]
 name = "ctx-daemon"
-version = "0.65.30"
+version = "0.65.31"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1088,7 +1088,7 @@ dependencies = [
 
 [[package]]
 name = "ctx-http"
-version = "0.65.30"
+version = "0.65.31"
 dependencies = [
  "anyhow",
  "async-trait",
