@@ -1,6 +1,7 @@
 use super::*;
 use ctx_daemon::daemon::org_policy::{
-    CacheOrgPolicySnapshotError, UpsertWorkspacePolicyOverlayError, WorkspacePolicyOverlayError,
+    CacheOrgPolicySnapshotError, UpsertDaemonEnrollmentError, UpsertWorkspacePolicyOverlayError,
+    WorkspacePolicyOverlayError,
 };
 use ctx_daemon::daemon::{CoreHandle, WorkspacesHandle};
 

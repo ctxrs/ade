@@ -1239,6 +1239,32 @@ const ORG_POLICY_API_ORCHESTRATION_PATTERNS = [
     regex: /\bupdated_at\s*=\s*(?:chrono\s*::\s*)?Utc\s*::\s*now\s*\(/,
     paths: ["core/crates/ctx-http/src/api/org_policy/snapshots.rs"],
   },
+  {
+    name: "org policy enrollment API validates plan eligibility directly",
+    regex: /a^/,
+    contentRegex:
+      /\b(?:matches!\s*\([^)]*\bPlanType::[A-Za-z0-9_]+\b[^)]*\)|(?:if|let\s+[A-Za-z_][A-Za-z0-9_]*\s*=)[\s\S]{0,240}(?:\.plan_type|PlanType::[A-Za-z0-9_]+)[\s\S]{0,240}(?:\.plan_type|PlanType::[A-Za-z0-9_]+)[\s\S]{0,80}(?:\{|;))/gm,
+    paths: ["core/crates/ctx-http/src/api/org_policy/enrollments.rs"],
+  },
+  {
+    name: "org policy enrollment API validates signing key directly",
+    regex: /a^/,
+    contentRegex:
+      /\b(?:if\s+|let\s+[A-Za-z_][A-Za-z0-9_]*\s*=)[^;\n]*policy_signing_key\s*\.\s*trim\s*\(\s*\)\s*\.\s*is_empty\s*\(/gm,
+    paths: ["core/crates/ctx-http/src/api/org_policy/enrollments.rs"],
+  },
+  {
+    name: "org policy enrollment API refreshes enrollment timestamp directly",
+    regex: /\bupdated_at\s*=\s*(?:chrono\s*::\s*)?Utc\s*::\s*now\s*\(/,
+    contentRegex:
+      /\blet\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:chrono\s*::\s*)?Utc\s*::\s*now\s*\(\s*\)\s*;[\s\S]{0,160}\bupdated_at\s*=\s*\1\b/gm,
+    paths: ["core/crates/ctx-http/src/api/org_policy/enrollments.rs"],
+  },
+  {
+    name: "org policy enrollment API persists enrollment without checked daemon validation",
+    regex: /(?:\.|\bCoreHandle::)upsert_daemon_enrollment\s*\(/,
+    paths: ["core/crates/ctx-http/src/api/org_policy/enrollments.rs"],
+  },
 ];
 
 const SMALL_API_UNIT_TEST_STORE_ACCESS_PATTERNS = [

@@ -126,7 +126,7 @@ async fn policy_snapshot_invalid_signature_returns_bad_request() {
         .daemon()
         .handle()
         .core()
-        .upsert_daemon_enrollment(daemon_enrollment(org_id, "policy-signing-secret"))
+        .upsert_daemon_enrollment_checked(daemon_enrollment(org_id, "policy-signing-secret"))
         .await
         .expect("seed enrollment");
 
@@ -201,7 +201,7 @@ async fn workspace_policy_overlay_missing_workspace_returns_not_found() {
         .daemon()
         .handle()
         .core()
-        .upsert_daemon_enrollment(daemon_enrollment(org_id, "policy-signing-secret"))
+        .upsert_daemon_enrollment_checked(daemon_enrollment(org_id, "policy-signing-secret"))
         .await
         .expect("seed enrollment");
     let workspace_id = WorkspaceId::new();
@@ -217,4 +217,73 @@ async fn workspace_policy_overlay_missing_workspace_returns_not_found() {
     let res = app.oneshot(req).await.unwrap();
 
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn daemon_enrollment_unsupported_plan_returns_bad_request() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let fixture = test_daemon_fixture_for_test(data_dir.path(), None).await;
+    let app = fixture.router();
+    let org_id = OrgId::new();
+    let mut enrollment = daemon_enrollment(org_id, "policy-signing-secret");
+    enrollment.plan_type = PlanType::Pro;
+
+    let req = Request::builder()
+        .method("PUT")
+        .uri(format!("/api/orgs/{}/daemon_enrollment", org_id.0))
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_string(&enrollment).unwrap()))
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body_text = String::from_utf8(body.to_vec()).unwrap();
+    assert!(body_text.contains("daemon enrollment requires a team or enterprise plan"));
+}
+
+#[tokio::test]
+async fn daemon_enrollment_blank_signing_key_returns_bad_request() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let fixture = test_daemon_fixture_for_test(data_dir.path(), None).await;
+    let app = fixture.router();
+    let org_id = OrgId::new();
+    let enrollment = daemon_enrollment(org_id, "   ");
+
+    let req = Request::builder()
+        .method("PUT")
+        .uri(format!("/api/orgs/{}/daemon_enrollment", org_id.0))
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_string(&enrollment).unwrap()))
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body_text = String::from_utf8(body.to_vec()).unwrap();
+    assert!(body_text.contains("daemon enrollment requires a policy signing key"));
+}
+
+#[tokio::test]
+async fn daemon_enrollment_org_mismatch_precedes_domain_validation() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let fixture = test_daemon_fixture_for_test(data_dir.path(), None).await;
+    let app = fixture.router();
+    let route_org_id = OrgId::new();
+    let mut enrollment = daemon_enrollment(OrgId::new(), "policy-signing-secret");
+    enrollment.plan_type = PlanType::FreeLocal;
+
+    let req = Request::builder()
+        .method("PUT")
+        .uri(format!("/api/orgs/{}/daemon_enrollment", route_org_id.0))
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_string(&enrollment).unwrap()))
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body_text = String::from_utf8(body.to_vec()).unwrap();
+    assert!(body_text.contains("enrollment org_id must match route org id"));
+    assert!(!body_text.contains("team or enterprise plan"));
 }

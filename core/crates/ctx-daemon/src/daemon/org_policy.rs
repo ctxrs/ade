@@ -1,6 +1,6 @@
 use chrono::Utc;
 use ctx_core::ids::{OrgId, WorkspaceId};
-use ctx_core::models::{DaemonEnrollment, OrgPolicySnapshot, WorkspacePolicyOverlay};
+use ctx_core::models::{DaemonEnrollment, OrgPolicySnapshot, PlanType, WorkspacePolicyOverlay};
 
 use crate::daemon::{CoreHandle, WorkspaceStoreAccessError, WorkspacesHandle};
 
@@ -24,6 +24,13 @@ pub enum UpsertWorkspacePolicyOverlayError {
     EnrollmentMissing,
     EnrollmentLoad(anyhow::Error),
     WorkspaceNotFound,
+    Store(anyhow::Error),
+}
+
+#[derive(Debug)]
+pub enum UpsertDaemonEnrollmentError {
+    UnsupportedPlan,
+    MissingSigningKey,
     Store(anyhow::Error),
 }
 
@@ -52,13 +59,29 @@ impl CoreHandle {
         self.global_store().list_daemon_enrollments().await
     }
 
-    pub async fn upsert_daemon_enrollment(
+    pub(in crate::daemon) async fn upsert_daemon_enrollment_unchecked(
         &self,
         enrollment: DaemonEnrollment,
     ) -> anyhow::Result<DaemonEnrollment> {
         self.global_store()
             .upsert_daemon_enrollment(enrollment)
             .await
+    }
+
+    pub async fn upsert_daemon_enrollment_checked(
+        &self,
+        mut enrollment: DaemonEnrollment,
+    ) -> Result<DaemonEnrollment, UpsertDaemonEnrollmentError> {
+        if !matches!(enrollment.plan_type, PlanType::Team | PlanType::Enterprise) {
+            return Err(UpsertDaemonEnrollmentError::UnsupportedPlan);
+        }
+        if enrollment.policy_signing_key.trim().is_empty() {
+            return Err(UpsertDaemonEnrollmentError::MissingSigningKey);
+        }
+        enrollment.updated_at = Utc::now();
+        self.upsert_daemon_enrollment_unchecked(enrollment)
+            .await
+            .map_err(UpsertDaemonEnrollmentError::Store)
     }
 
     pub async fn get_daemon_enrollment_by_org_id(
@@ -104,8 +127,7 @@ impl CoreHandle {
             .map_err(CacheOrgPolicySnapshotError::SnapshotStore)?;
         enrollment.active_policy_snapshot_id = Some(stored.id);
         enrollment.updated_at = Utc::now();
-        self.global_store()
-            .upsert_daemon_enrollment(enrollment)
+        self.upsert_daemon_enrollment_unchecked(enrollment)
             .await
             .map_err(CacheOrgPolicySnapshotError::EnrollmentActivation)?;
         Ok(stored)
@@ -268,7 +290,7 @@ mod tests {
         let org_id = OrgId::new();
         let enrollment = enrollment(org_id);
         let previous_updated_at = enrollment.updated_at;
-        core.upsert_daemon_enrollment(enrollment.clone())
+        core.upsert_daemon_enrollment_unchecked(enrollment.clone())
             .await
             .expect("seed enrollment");
         let mut snapshot = snapshot(org_id);
@@ -311,7 +333,7 @@ mod tests {
         let core = daemon.handle().core();
         let org_id = OrgId::new();
         let enrollment = enrollment(org_id);
-        core.upsert_daemon_enrollment(enrollment)
+        core.upsert_daemon_enrollment_unchecked(enrollment)
             .await
             .expect("seed enrollment");
         let mut snapshot = snapshot(org_id);
@@ -371,7 +393,7 @@ mod tests {
         daemon
             .handle()
             .core()
-            .upsert_daemon_enrollment(enrollment(org_id))
+            .upsert_daemon_enrollment_unchecked(enrollment(org_id))
             .await
             .expect("seed enrollment");
 
@@ -395,7 +417,7 @@ mod tests {
         daemon
             .handle()
             .core()
-            .upsert_daemon_enrollment(enrollment(org_id))
+            .upsert_daemon_enrollment_unchecked(enrollment(org_id))
             .await
             .expect("seed enrollment");
         let workspace = daemon
@@ -421,5 +443,97 @@ mod tests {
 
         assert_eq!(stored.workspace_id, workspace.id);
         assert_eq!(stored.org_id, org_id);
+    }
+
+    #[tokio::test]
+    async fn upsert_daemon_enrollment_checked_rejects_unsupported_plan_without_persisting() {
+        let (_temp, daemon) = test_daemon().await;
+        let core = daemon.handle().core();
+        let org_id = OrgId::new();
+        let mut enrollment = enrollment(org_id);
+        enrollment.plan_type = PlanType::Pro;
+
+        let error = core
+            .upsert_daemon_enrollment_checked(enrollment)
+            .await
+            .expect_err("unsupported plan should fail");
+
+        assert!(matches!(
+            error,
+            UpsertDaemonEnrollmentError::UnsupportedPlan
+        ));
+        assert!(
+            core.get_daemon_enrollment_by_org_id(org_id)
+                .await
+                .expect("load enrollment")
+                .is_none(),
+            "invalid enrollment should not persist"
+        );
+    }
+
+    #[tokio::test]
+    async fn upsert_daemon_enrollment_checked_rejects_blank_key_without_overwriting() {
+        let (_temp, daemon) = test_daemon().await;
+        let core = daemon.handle().core();
+        let org_id = OrgId::new();
+        let original = core
+            .upsert_daemon_enrollment_checked(enrollment(org_id))
+            .await
+            .expect("seed enrollment");
+        let mut replacement = original.clone();
+        replacement.policy_signing_key = "   ".to_string();
+        replacement.plan_type = PlanType::Enterprise;
+
+        let error = core
+            .upsert_daemon_enrollment_checked(replacement)
+            .await
+            .expect_err("blank signing key should fail");
+
+        assert!(matches!(
+            error,
+            UpsertDaemonEnrollmentError::MissingSigningKey
+        ));
+        let reloaded = core
+            .get_daemon_enrollment_by_org_id(org_id)
+            .await
+            .expect("load enrollment")
+            .expect("enrollment exists");
+        assert_eq!(reloaded.policy_signing_key, original.policy_signing_key);
+        assert_eq!(reloaded.plan_type, original.plan_type);
+        assert_eq!(reloaded.updated_at, original.updated_at);
+    }
+
+    #[tokio::test]
+    async fn upsert_daemon_enrollment_checked_refreshes_timestamp_and_preserves_fields() {
+        let (_temp, daemon) = test_daemon().await;
+        let core = daemon.handle().core();
+        let org_id = OrgId::new();
+        let mut enrollment = enrollment(org_id);
+        enrollment.plan_type = PlanType::Enterprise;
+        enrollment.updated_at = Utc::now() - Duration::minutes(5);
+        let previous_updated_at = enrollment.updated_at;
+        let enrollment_id = enrollment.id;
+        let membership_id = enrollment.org_membership_id;
+        let started_at = Utc::now();
+
+        let stored = core
+            .upsert_daemon_enrollment_checked(enrollment)
+            .await
+            .expect("checked enrollment upsert");
+
+        assert_eq!(stored.id, enrollment_id);
+        assert_eq!(stored.org_membership_id, membership_id);
+        assert_eq!(stored.plan_type, PlanType::Enterprise);
+        assert!(stored.updated_at >= started_at);
+        assert!(stored.updated_at >= previous_updated_at);
+        let reloaded = core
+            .get_daemon_enrollment_by_org_id(org_id)
+            .await
+            .expect("load enrollment")
+            .expect("enrollment exists");
+        assert_eq!(reloaded.id, enrollment_id);
+        assert_eq!(reloaded.org_membership_id, membership_id);
+        assert_eq!(reloaded.plan_type, PlanType::Enterprise);
+        assert_eq!(reloaded.updated_at, stored.updated_at);
     }
 }

@@ -63,7 +63,7 @@ pub(in crate::api) async fn list_daemon_enrollments(
 pub(in crate::api) async fn upsert_daemon_enrollment(
     State(state): State<CoreHandle>,
     Path(org_id): Path<String>,
-    Json(mut enrollment): Json<DaemonEnrollment>,
+    Json(enrollment): Json<DaemonEnrollment>,
 ) -> Result<Json<DaemonEnrollmentResponse>, (StatusCode, Json<ApiErrorResp>)> {
     let org_id = parse_org_id(&org_id)?;
     if enrollment.org_id != org_id {
@@ -72,27 +72,28 @@ pub(in crate::api) async fn upsert_daemon_enrollment(
             "enrollment org_id must match route org id",
         ));
     }
-    if !matches!(enrollment.plan_type, PlanType::Team | PlanType::Enterprise) {
-        return Err(policy_api_error(
-            StatusCode::BAD_REQUEST,
-            "daemon enrollment requires a team or enterprise plan",
-        ));
-    }
-    if enrollment.policy_signing_key.trim().is_empty() {
-        return Err(policy_api_error(
-            StatusCode::BAD_REQUEST,
-            "daemon enrollment requires a policy signing key",
-        ));
-    }
-    enrollment.updated_at = chrono::Utc::now();
     state
-        .upsert_daemon_enrollment(enrollment)
+        .upsert_daemon_enrollment_checked(enrollment)
         .await
         .map(|enrollment| Json(DaemonEnrollmentResponse::from(enrollment)))
-        .map_err(|err| {
-            policy_api_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to upsert daemon enrollment: {err:#}"),
-            )
-        })
+        .map_err(upsert_daemon_enrollment_error)
+}
+
+fn upsert_daemon_enrollment_error(
+    error: UpsertDaemonEnrollmentError,
+) -> (StatusCode, Json<ApiErrorResp>) {
+    match error {
+        UpsertDaemonEnrollmentError::UnsupportedPlan => policy_api_error(
+            StatusCode::BAD_REQUEST,
+            "daemon enrollment requires a team or enterprise plan",
+        ),
+        UpsertDaemonEnrollmentError::MissingSigningKey => policy_api_error(
+            StatusCode::BAD_REQUEST,
+            "daemon enrollment requires a policy signing key",
+        ),
+        UpsertDaemonEnrollmentError::Store(error) => policy_api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to upsert daemon enrollment: {error:#}"),
+        ),
+    }
 }

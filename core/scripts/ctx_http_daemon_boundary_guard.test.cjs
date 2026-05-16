@@ -1209,6 +1209,103 @@ test("daemon boundary guard rejects org policy orchestration in HTTP routes", ()
       "org policy workspace overlay API writes overlays without daemon admission",
     ],
   );
+
+  const enrollmentViolations = scanText({
+    filePath: "core/crates/ctx-http/src/api/org_policy/enrollments.rs",
+    contents: `
+      async fn handler(state: CoreHandle, mut enrollment: DaemonEnrollment) {
+        if !matches!(enrollment.plan_type, PlanType::Team | PlanType::Enterprise) {
+          return Err(());
+        }
+        if matches!(enrollment.plan_type, PlanType::Enterprise | PlanType::Team) {
+          return Ok(());
+        }
+        if enrollment.plan_type == PlanType::Team || enrollment.plan_type == PlanType::Enterprise {
+          return Ok(());
+        }
+        if enrollment.plan_type == PlanType::Team
+          || enrollment.plan_type == PlanType::Enterprise
+        {
+          return Ok(());
+        }
+        if enrollment.policy_signing_key.trim().is_empty() {
+          return Err(());
+        }
+        let missing_key = enrollment.policy_signing_key.trim().is_empty();
+        enrollment.updated_at = chrono::Utc::now();
+        let now = Utc::now();
+        enrollment.updated_at = now;
+        state.upsert_daemon_enrollment(enrollment).await?;
+        CoreHandle::upsert_daemon_enrollment(&state, enrollment).await?;
+      }
+    `,
+    patterns: apiPatternsForPath("core/crates/ctx-http/src/api/org_policy/enrollments.rs"),
+  });
+
+  assert.deepEqual(
+    enrollmentViolations.map((violation) => violation.name),
+    [
+      "org policy enrollment API validates plan eligibility directly",
+      "org policy enrollment API validates signing key directly",
+      "org policy enrollment API validates signing key directly",
+      "org policy enrollment API refreshes enrollment timestamp directly",
+      "org policy enrollment API refreshes enrollment timestamp directly",
+      "org policy enrollment API persists enrollment without checked daemon validation",
+      "org policy enrollment API persists enrollment without checked daemon validation",
+    ],
+  );
+
+  const planValidationVariants = [
+    `
+      async fn handler(enrollment: DaemonEnrollment) {
+        if matches!(enrollment.plan_type, PlanType::Enterprise | PlanType::Team) {
+          return Ok(());
+        }
+      }
+    `,
+    `
+      async fn handler(enrollment: DaemonEnrollment) {
+        if enrollment.plan_type == PlanType::Team || enrollment.plan_type == PlanType::Enterprise {
+          return Ok(());
+        }
+      }
+    `,
+    `
+      async fn handler(enrollment: DaemonEnrollment) {
+        if enrollment.plan_type == PlanType::Team
+          || enrollment.plan_type == PlanType::Enterprise
+        {
+          return Ok(());
+        }
+      }
+    `,
+    `
+      async fn handler(enrollment: DaemonEnrollment) {
+        if matches!(enrollment.plan_type, PlanType::FreeLocal | PlanType::Pro) {
+          return Err(());
+        }
+      }
+    `,
+    `
+      async fn handler(enrollment: DaemonEnrollment) {
+        if enrollment.plan_type == PlanType::Pro {
+          return Err(());
+        }
+      }
+    `,
+  ];
+  for (const contents of planValidationVariants) {
+    const violations = scanText({
+      filePath: "core/crates/ctx-http/src/api/org_policy/enrollments.rs",
+      contents,
+      patterns: apiPatternsForPath("core/crates/ctx-http/src/api/org_policy/enrollments.rs"),
+    });
+    assert(
+      violations
+        .map((violation) => violation.name)
+        .includes("org policy enrollment API validates plan eligibility directly"),
+    );
+  }
 });
 
 test("daemon boundary guard scopes org policy orchestration bans", () => {
@@ -1240,8 +1337,15 @@ test("daemon boundary guard scopes org policy orchestration bans", () => {
   const enrollmentViolations = scanText({
     filePath: "core/crates/ctx-http/src/api/org_policy/enrollments.rs",
     contents: `
+      impl From<DaemonEnrollment> for DaemonEnrollmentResponse {
+        fn from(enrollment: DaemonEnrollment) -> Self {
+          Self {
+            policy_signing_key_present: !enrollment.policy_signing_key.trim().is_empty(),
+          }
+        }
+      }
       async fn handler(state: CoreHandle, enrollment: DaemonEnrollment) {
-        state.upsert_daemon_enrollment(enrollment).await?;
+        state.upsert_daemon_enrollment_checked(enrollment).await?;
       }
     `,
     patterns: apiPatternsForPath("core/crates/ctx-http/src/api/org_policy/enrollments.rs"),
