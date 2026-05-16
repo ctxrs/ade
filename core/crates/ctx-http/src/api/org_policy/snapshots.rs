@@ -13,48 +13,35 @@ pub(in crate::api) async fn cache_org_policy_snapshot(
             "policy snapshot org_id must match route org id",
         ));
     }
-    let Some(mut enrollment) = state
-        .get_daemon_enrollment_by_org_id(org_id)
-        .await
-        .map_err(|err| {
-            policy_api_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to load daemon enrollment: {err:#}"),
-            )
-        })?
-    else {
-        return Err(policy_api_error(
-            StatusCode::CONFLICT,
-            "daemon is not enrolled for this org",
-        ));
-    };
-    ctx_org_policy::signature::verify_policy_snapshot_signature(&enrollment, &snapshot).map_err(
-        |err| {
-            policy_api_error(
-                StatusCode::BAD_REQUEST,
-                format!("invalid policy snapshot signature: {err:#}"),
-            )
-        },
-    )?;
-    let stored = state
-        .upsert_org_policy_snapshot(snapshot)
-        .await
-        .map_err(|err| {
-            policy_api_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to cache policy snapshot: {err:#}"),
-            )
-        })?;
-    enrollment.active_policy_snapshot_id = Some(stored.id);
-    enrollment.updated_at = chrono::Utc::now();
     state
-        .upsert_daemon_enrollment(enrollment)
+        .cache_and_activate_org_policy_snapshot(snapshot)
         .await
-        .map_err(|err| {
-            policy_api_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to activate policy snapshot: {err:#}"),
-            )
-        })?;
-    Ok(Json(stored))
+        .map(Json)
+        .map_err(cache_org_policy_snapshot_error)
+}
+
+fn cache_org_policy_snapshot_error(
+    error: CacheOrgPolicySnapshotError,
+) -> (StatusCode, Json<ApiErrorResp>) {
+    match error {
+        CacheOrgPolicySnapshotError::EnrollmentMissing => {
+            policy_api_error(StatusCode::CONFLICT, "daemon is not enrolled for this org")
+        }
+        CacheOrgPolicySnapshotError::EnrollmentLoad(error) => policy_api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to load daemon enrollment: {error:#}"),
+        ),
+        CacheOrgPolicySnapshotError::InvalidSignature { message } => policy_api_error(
+            StatusCode::BAD_REQUEST,
+            format!("invalid policy snapshot signature: {message}"),
+        ),
+        CacheOrgPolicySnapshotError::SnapshotStore(error) => policy_api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to cache policy snapshot: {error:#}"),
+        ),
+        CacheOrgPolicySnapshotError::EnrollmentActivation(error) => policy_api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to activate policy snapshot: {error:#}"),
+        ),
+    }
 }

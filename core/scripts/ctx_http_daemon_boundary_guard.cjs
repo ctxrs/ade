@@ -249,6 +249,10 @@ const workspaceWsAdmissionApiRoots = [
   "core/crates/ctx-http/src/api/ws/workspace_vcs.rs",
 ];
 
+const orgPolicyApiRoots = [
+  "core/crates/ctx-http/src/api/org_policy/",
+];
+
 const smallApiUnitStoreFacadeTestRoots = [
   "core/crates/ctx-http/src/api/settings.rs",
   "core/crates/ctx-http/src/api/providers/login/codex/tests.rs",
@@ -1193,6 +1197,46 @@ const WORKSPACE_WS_ADMISSION_API_PATTERNS = [
   {
     name: "workspace WS API defines local stream access helper",
     regex: /\bfn\s+require_workspace_(?:active|vcs)_stream_access\s*\(/,
+  },
+];
+
+const ORG_POLICY_API_ORCHESTRATION_PATTERNS = [
+  {
+    name: "org policy API verifies policy snapshot signatures directly",
+    regex: /\bverify_policy_snapshot_signature\s*\(/,
+  },
+  {
+    name: "org policy API loads daemon enrollment directly for snapshot or overlay orchestration",
+    regex: /(?:\.|\bCoreHandle::)get_daemon_enrollment_by_org_id\s*\(/,
+    paths: [
+      "core/crates/ctx-http/src/api/org_policy/snapshots.rs",
+      "core/crates/ctx-http/src/api/org_policy/workspace_overlay.rs",
+    ],
+  },
+  {
+    name: "org policy snapshot API stores snapshots directly",
+    regex: /(?:\.|\bCoreHandle::)upsert_org_policy_snapshot\s*\(/,
+    paths: ["core/crates/ctx-http/src/api/org_policy/snapshots.rs"],
+  },
+  {
+    name: "org policy snapshot API mutates daemon enrollment directly",
+    regex: /(?:\.|\bCoreHandle::)upsert_daemon_enrollment\s*\(/,
+    paths: ["core/crates/ctx-http/src/api/org_policy/snapshots.rs"],
+  },
+  {
+    name: "org policy workspace overlay API writes overlays without daemon admission",
+    regex: /(?:\.|\bWorkspacesHandle::)upsert_workspace_policy_overlay\s*\(/,
+    paths: ["core/crates/ctx-http/src/api/org_policy/workspace_overlay.rs"],
+  },
+  {
+    name: "org policy snapshot API mutates active snapshot id directly",
+    regex: /\bactive_policy_snapshot_id\s*=/,
+    paths: ["core/crates/ctx-http/src/api/org_policy/snapshots.rs"],
+  },
+  {
+    name: "org policy snapshot API refreshes enrollment timestamp directly",
+    regex: /\bupdated_at\s*=\s*(?:chrono\s*::\s*)?Utc\s*::\s*now\s*\(/,
+    paths: ["core/crates/ctx-http/src/api/org_policy/snapshots.rs"],
   },
 ];
 
@@ -2916,6 +2960,9 @@ function scanText({ filePath, contents, patterns }) {
     return lineIndex;
   };
   for (const pattern of patterns) {
+    if (pattern.paths && !pattern.paths.includes(filePath)) {
+      continue;
+    }
     for (let index = 0; index < lines.length; index += 1) {
       if (pattern.regex.test(lines[index])) {
         violations.push({
@@ -3023,6 +3070,9 @@ function apiPatternsForPath(relativePath) {
   }
   if (workspaceWsAdmissionApiRoots.some((root) => relativePath === root)) {
     patterns.push(...WORKSPACE_WS_ADMISSION_API_PATTERNS);
+  }
+  if (orgPolicyApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...ORG_POLICY_API_ORCHESTRATION_PATTERNS);
   }
   return patterns;
 }
@@ -3968,6 +4018,7 @@ module.exports = {
   TERMINAL_STREAM_RUNTIME_API_PATTERNS,
   DICTATION_WS_CONFIG_API_PATTERNS,
   WORKSPACE_WS_ADMISSION_API_PATTERNS,
+  ORG_POLICY_API_ORCHESTRATION_PATTERNS,
   PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,

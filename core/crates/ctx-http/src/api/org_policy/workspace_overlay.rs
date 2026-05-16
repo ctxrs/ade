@@ -14,7 +14,6 @@ pub(in crate::api) async fn get_workspace_org_policy(
 }
 
 pub(in crate::api) async fn upsert_workspace_org_policy(
-    State(core): State<CoreHandle>,
     State(state): State<WorkspacesHandle>,
     Path(id): Path<String>,
     Json(overlay): Json<WorkspacePolicyOverlay>,
@@ -26,26 +25,32 @@ pub(in crate::api) async fn upsert_workspace_org_policy(
             "workspace policy overlay workspace_id must match route workspace id",
         ));
     }
-    let enrollment = core
-        .get_daemon_enrollment_by_org_id(overlay.org_id)
-        .await
-        .map_err(|err| {
-            policy_api_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to load daemon enrollment: {err:#}"),
-            )
-        })?;
-    if enrollment.is_none() {
-        return Err(policy_api_error(
-            StatusCode::CONFLICT,
-            "daemon is not enrolled for this org",
-        ));
-    }
     state
-        .upsert_workspace_policy_overlay(overlay)
+        .upsert_workspace_policy_overlay_checked(overlay)
         .await
         .map(Json)
-        .map_err(|err| workspace_policy_error(err, "failed to upsert workspace org policy"))
+        .map_err(upsert_workspace_policy_error)
+}
+
+fn upsert_workspace_policy_error(
+    error: UpsertWorkspacePolicyOverlayError,
+) -> (StatusCode, Json<ApiErrorResp>) {
+    match error {
+        UpsertWorkspacePolicyOverlayError::EnrollmentMissing => {
+            policy_api_error(StatusCode::CONFLICT, "daemon is not enrolled for this org")
+        }
+        UpsertWorkspacePolicyOverlayError::EnrollmentLoad(error) => policy_api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to load daemon enrollment: {error:#}"),
+        ),
+        UpsertWorkspacePolicyOverlayError::WorkspaceNotFound => {
+            policy_api_error(StatusCode::NOT_FOUND, "workspace not found for org policy")
+        }
+        UpsertWorkspacePolicyOverlayError::Store(error) => policy_api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to upsert workspace org policy: {error:#}"),
+        ),
+    }
 }
 
 fn workspace_policy_error(

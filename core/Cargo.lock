@@ -914,6 +914,7 @@ dependencies = [
  "hex",
  "hkdf",
  "http 1.4.0",
+ "jsonwebtoken",
  "libc",
  "mime_guess",
  "notify",

@@ -1,8 +1,12 @@
 use super::*;
-use chrono::Utc;
+use chrono::{Duration, Utc};
+use ctx_core::ids::{OrgId, OrgPolicySnapshotId, WorkspaceId};
 use ctx_core::models::{
-    DaemonEnrollment, DaemonEnrollmentStatus, OrgMembershipRole, PlanType, PolicySignatureAlgorithm,
+    ArchiveMode, ArchivePolicy, DaemonEnrollment, DaemonEnrollmentStatus, NetworkProfile,
+    OrgMembershipRole, OrgPolicySnapshot, PlanType, PolicyFeatureState, PolicySignatureAlgorithm,
+    RoutePolicy, RouteType, VcsKind, WorkspacePolicyOverlay,
 };
+use std::collections::BTreeMap;
 
 #[tokio::test]
 async fn daemon_enrollment_routes_do_not_return_policy_signing_keys() {
@@ -54,4 +58,163 @@ async fn daemon_enrollment_routes_do_not_return_policy_signing_keys() {
     assert!(!body_text.contains(secret));
     assert!(!body_text.contains("\"policy_signing_key\":"));
     assert!(body_text.contains("policy_signing_key_present"));
+}
+
+fn daemon_enrollment(org_id: OrgId, secret: &str) -> DaemonEnrollment {
+    let now = Utc::now();
+    DaemonEnrollment {
+        id: ctx_core::ids::DaemonEnrollmentId::new(),
+        account_id: ctx_core::ids::AccountId::new(),
+        org_id,
+        org_membership_id: ctx_core::ids::OrgMembershipId::new(),
+        membership_role: OrgMembershipRole::Owner,
+        plan_type: PlanType::Team,
+        status: DaemonEnrollmentStatus::Active,
+        policy_signature_algorithm: PolicySignatureAlgorithm::Hs256,
+        policy_signing_key: secret.to_string(),
+        active_policy_snapshot_id: None,
+        enrolled_at: now,
+        updated_at: now,
+        revoked_at: None,
+    }
+}
+
+fn policy_snapshot(org_id: OrgId) -> OrgPolicySnapshot {
+    let now = Utc::now();
+    OrgPolicySnapshot {
+        id: OrgPolicySnapshotId::new(),
+        org_id,
+        policy_version: "2026-05-16.1".to_string(),
+        issued_at: now,
+        expires_at: now + Duration::minutes(30),
+        grace_expires_at: now + Duration::minutes(60),
+        allowed_providers: Some(vec!["fake".to_string()]),
+        allowed_models: BTreeMap::new(),
+        required_execution_environment: None,
+        allowed_network_profiles: vec![NetworkProfile::LlmOnly],
+        route_policy: RoutePolicy {
+            allowed_route_types: vec![RouteType::UserProviderAccount],
+        },
+        archive_policy: ArchivePolicy {
+            mode: ArchiveMode::OrgSummary,
+        },
+        features: BTreeMap::from([("org_policy".to_string(), PolicyFeatureState::Enabled)]),
+        signature: "invalid".to_string(),
+    }
+}
+
+fn workspace_overlay(workspace_id: WorkspaceId, org_id: OrgId) -> WorkspacePolicyOverlay {
+    WorkspacePolicyOverlay {
+        workspace_id,
+        org_id,
+        allowed_providers: Some(vec!["fake".to_string()]),
+        allowed_models: BTreeMap::new(),
+        required_execution_environment: None,
+        allowed_network_profiles: None,
+        allowed_route_types: None,
+        features: BTreeMap::new(),
+    }
+}
+
+#[tokio::test]
+async fn policy_snapshot_invalid_signature_returns_bad_request() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let fixture = test_daemon_fixture_for_test(data_dir.path(), None).await;
+    let app = fixture.router();
+    let org_id = OrgId::new();
+    fixture
+        .daemon()
+        .handle()
+        .core()
+        .upsert_daemon_enrollment(daemon_enrollment(org_id, "policy-signing-secret"))
+        .await
+        .expect("seed enrollment");
+
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/orgs/{}/policy_snapshots", org_id.0))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_string(&policy_snapshot(org_id)).unwrap(),
+        ))
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn policy_snapshot_missing_enrollment_returns_conflict() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let fixture = test_daemon_fixture_for_test(data_dir.path(), None).await;
+    let app = fixture.router();
+    let org_id = OrgId::new();
+
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/orgs/{}/policy_snapshots", org_id.0))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_string(&policy_snapshot(org_id)).unwrap(),
+        ))
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn workspace_policy_overlay_missing_enrollment_returns_conflict() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let fixture = test_daemon_fixture_for_test(data_dir.path(), None).await;
+    let app = fixture.router();
+    let workspace = fixture
+        .daemon()
+        .seed_workspace_for_test(
+            "workspace",
+            &data_dir.path().join("workspace"),
+            VcsKind::Git,
+        )
+        .await
+        .expect("create workspace");
+
+    let req = Request::builder()
+        .method("PUT")
+        .uri(format!("/api/workspaces/{}/org_policy", workspace.id.0))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_string(&workspace_overlay(workspace.id, OrgId::new())).unwrap(),
+        ))
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn workspace_policy_overlay_missing_workspace_returns_not_found() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let fixture = test_daemon_fixture_for_test(data_dir.path(), None).await;
+    let app = fixture.router();
+    let org_id = OrgId::new();
+    fixture
+        .daemon()
+        .handle()
+        .core()
+        .upsert_daemon_enrollment(daemon_enrollment(org_id, "policy-signing-secret"))
+        .await
+        .expect("seed enrollment");
+    let workspace_id = WorkspaceId::new();
+
+    let req = Request::builder()
+        .method("PUT")
+        .uri(format!("/api/workspaces/{}/org_policy", workspace_id.0))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_string(&workspace_overlay(workspace_id, org_id)).unwrap(),
+        ))
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }

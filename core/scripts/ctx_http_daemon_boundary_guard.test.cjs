@@ -42,6 +42,7 @@ const {
   TERMINAL_STREAM_RUNTIME_API_PATTERNS,
   DICTATION_WS_CONFIG_API_PATTERNS,
   WORKSPACE_WS_ADMISSION_API_PATTERNS,
+  ORG_POLICY_API_ORCHESTRATION_PATTERNS,
   PROVIDER_AUTH_GLOBAL_ID_FIXTURE_PATTERNS,
   PROVIDERLESS_LIB_ROUTE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_PROBE_RUNTIME_ENV_TEST_STORE_ACCESS_PATTERNS,
@@ -1145,6 +1146,105 @@ test("daemon boundary guard scopes workspace websocket admission ban", () => {
   assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/ws/workspace_vcs/socket.rs").includes(
       WORKSPACE_WS_ADMISSION_API_PATTERNS[0],
+    ),
+    false,
+  );
+});
+
+test("daemon boundary guard rejects org policy orchestration in HTTP routes", () => {
+  const snapshotViolations = scanText({
+    filePath: "core/crates/ctx-http/src/api/org_policy/snapshots.rs",
+    contents: `
+      async fn handler(state: CoreHandle, mut enrollment: DaemonEnrollment) {
+        let enrollment = state.get_daemon_enrollment_by_org_id(org_id).await?;
+        let enrollment = CoreHandle::get_daemon_enrollment_by_org_id(&state, org_id).await?;
+        ctx_org_policy::signature::verify_policy_snapshot_signature(&enrollment, &snapshot)?;
+        let stored = state.upsert_org_policy_snapshot(snapshot).await?;
+        let stored = CoreHandle::upsert_org_policy_snapshot(&state, snapshot).await?;
+        enrollment.active_policy_snapshot_id = Some(stored.id);
+        enrollment.updated_at = chrono::Utc::now();
+        enrollment.updated_at = Utc::now();
+        state.upsert_daemon_enrollment(enrollment).await?;
+        CoreHandle::upsert_daemon_enrollment(&state, enrollment).await?;
+      }
+    `,
+    patterns: apiPatternsForPath("core/crates/ctx-http/src/api/org_policy/snapshots.rs"),
+  });
+
+  assert.deepEqual(
+    snapshotViolations.map((violation) => violation.name),
+    [
+      "org policy API verifies policy snapshot signatures directly",
+      "org policy API loads daemon enrollment directly for snapshot or overlay orchestration",
+      "org policy API loads daemon enrollment directly for snapshot or overlay orchestration",
+      "org policy snapshot API stores snapshots directly",
+      "org policy snapshot API stores snapshots directly",
+      "org policy snapshot API mutates daemon enrollment directly",
+      "org policy snapshot API mutates daemon enrollment directly",
+      "org policy snapshot API mutates active snapshot id directly",
+      "org policy snapshot API refreshes enrollment timestamp directly",
+      "org policy snapshot API refreshes enrollment timestamp directly",
+    ],
+  );
+
+  const overlayViolations = scanText({
+    filePath: "core/crates/ctx-http/src/api/org_policy/workspace_overlay.rs",
+    contents: `
+      async fn handler(core: CoreHandle, workspaces: WorkspacesHandle) {
+        let enrollment = core.get_daemon_enrollment_by_org_id(org_id).await?;
+        let enrollment = CoreHandle::get_daemon_enrollment_by_org_id(&core, org_id).await?;
+        let overlay = workspaces.upsert_workspace_policy_overlay(overlay).await?;
+        let overlay = WorkspacesHandle::upsert_workspace_policy_overlay(&workspaces, overlay).await?;
+      }
+    `,
+    patterns: apiPatternsForPath("core/crates/ctx-http/src/api/org_policy/workspace_overlay.rs"),
+  });
+
+  assert.deepEqual(
+    overlayViolations.map((violation) => violation.name),
+    [
+      "org policy API loads daemon enrollment directly for snapshot or overlay orchestration",
+      "org policy API loads daemon enrollment directly for snapshot or overlay orchestration",
+      "org policy workspace overlay API writes overlays without daemon admission",
+      "org policy workspace overlay API writes overlays without daemon admission",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes org policy orchestration bans", () => {
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/org_policy/snapshots.rs").includes(
+      ORG_POLICY_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/org_policy/workspace_overlay.rs").includes(
+      ORG_POLICY_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/org_policy/enrollments.rs").includes(
+      ORG_POLICY_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    true,
+  );
+
+  const enrollmentViolations = scanText({
+    filePath: "core/crates/ctx-http/src/api/org_policy/enrollments.rs",
+    contents: `
+      async fn handler(state: CoreHandle, enrollment: DaemonEnrollment) {
+        state.upsert_daemon_enrollment(enrollment).await?;
+      }
+    `,
+    patterns: apiPatternsForPath("core/crates/ctx-http/src/api/org_policy/enrollments.rs"),
+  });
+  assert.deepEqual(enrollmentViolations, []);
+
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/settings.rs").includes(
+      ORG_POLICY_API_ORCHESTRATION_PATTERNS[0],
     ),
     false,
   );
