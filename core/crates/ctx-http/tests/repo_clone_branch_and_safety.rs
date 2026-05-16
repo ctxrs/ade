@@ -6,9 +6,8 @@ use serde_json::json;
 
 #[tokio::test]
 async fn repo_clone_accepts_branch_option() {
-    let data_root = tempfile::tempdir().unwrap();
-    let daemon = common::provider_route_fake_daemon(data_root.path()).await;
-    let app = common::router_for_daemon(&daemon);
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let app = fixture.router();
 
     let src = common::init_git_repo(&[("README.md", "hi")]).await;
     let src_root = src.path();
@@ -53,9 +52,8 @@ async fn repo_clone_accepts_branch_option() {
 
 #[tokio::test]
 async fn repo_clone_rejects_dest_name_traversal() {
-    let data_root = tempfile::tempdir().unwrap();
-    let daemon = common::provider_route_fake_daemon(data_root.path()).await;
-    let app = common::router_for_daemon(&daemon);
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let app = fixture.router();
 
     let src = common::init_git_repo(&[("README.md", "hi")]).await;
     let src_root = src.path();

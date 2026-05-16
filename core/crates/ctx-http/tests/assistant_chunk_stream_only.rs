@@ -10,9 +10,9 @@ mod common;
 #[tokio::test]
 async fn assistant_chunks_are_stream_only() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let daemon = common::provider_route_fake_daemon(data_dir.path()).await;
-    let app = common::router_for_daemon(&daemon);
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let daemon = &fixture.daemon;
+    let app = fixture.router();
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (_task, session) =

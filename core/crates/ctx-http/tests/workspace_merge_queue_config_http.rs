@@ -9,9 +9,9 @@ use serde_json::Value;
 #[tokio::test]
 async fn enabling_merge_queue_on_open_workspace_reschedules_queued_rows() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let daemon = common::provider_route_fake_daemon(data_dir.path()).await;
-    let app = common::router_for_daemon(&daemon);
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let daemon = &fixture.daemon;
+    let app = fixture.router();
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;
 
     daemon.spawn_merge_queue_runner();
@@ -60,9 +60,9 @@ async fn enabling_merge_queue_on_open_workspace_reschedules_queued_rows() {
 #[tokio::test]
 async fn disabling_merge_queue_cancels_existing_queued_rows() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
-    let data_dir = tempfile::tempdir().unwrap();
-    let daemon = common::provider_route_fake_daemon(data_dir.path()).await;
-    let app = common::router_for_daemon(&daemon);
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let daemon = &fixture.daemon;
+    let app = fixture.router();
     let workspace = common::create_workspace(&app, repo.path(), "ws").await;
 
     daemon.spawn_merge_queue_runner();

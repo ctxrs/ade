@@ -6,9 +6,8 @@ use serde_json::json;
 
 #[tokio::test]
 async fn repo_validate_destination_rejects_non_empty_dir_when_required() {
-    let data_root = tempfile::tempdir().unwrap();
-    let daemon = common::provider_route_fake_daemon(data_root.path()).await;
-    let app = common::router_for_daemon(&daemon);
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let app = fixture.router();
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("existing");
@@ -45,9 +44,8 @@ async fn repo_validate_destination_rejects_non_empty_dir_when_required() {
 
 #[tokio::test]
 async fn repo_validate_destination_rejects_existing_dir_when_must_not_exist() {
-    let data_root = tempfile::tempdir().unwrap();
-    let daemon = common::provider_route_fake_daemon(data_root.path()).await;
-    let app = common::router_for_daemon(&daemon);
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let app = fixture.router();
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("existing");
@@ -81,9 +79,8 @@ async fn repo_validate_destination_rejects_existing_dir_when_must_not_exist() {
 
 #[tokio::test]
 async fn repo_validate_destination_allows_missing_path() {
-    let data_root = tempfile::tempdir().unwrap();
-    let daemon = common::provider_route_fake_daemon(data_root.path()).await;
-    let app = common::router_for_daemon(&daemon);
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let app = fixture.router();
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("missing");
@@ -116,9 +113,8 @@ async fn repo_validate_destination_allows_missing_path() {
 
 #[tokio::test]
 async fn repo_validate_destination_accepts_get_query() {
-    let data_root = tempfile::tempdir().unwrap();
-    let daemon = common::provider_route_fake_daemon(data_root.path()).await;
-    let app = common::router_for_daemon(&daemon);
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let app = fixture.router();
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("missing");

@@ -6,9 +6,8 @@ use serde_json::json;
 
 #[tokio::test]
 async fn repo_init_creates_initial_commit() {
-    let data_root = tempfile::tempdir().unwrap();
-    let daemon = common::provider_route_fake_daemon(data_root.path()).await;
-    let app = common::router_for_daemon(&daemon);
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let app = fixture.router();
 
     let dir = tempfile::tempdir().unwrap();
     let repo_path = dir.path().join("repo");
@@ -49,9 +48,8 @@ async fn repo_init_creates_initial_commit() {
 
 #[tokio::test]
 async fn repo_init_rejects_non_empty_dir_by_default() {
-    let data_root = tempfile::tempdir().unwrap();
-    let daemon = common::provider_route_fake_daemon(data_root.path()).await;
-    let app = common::router_for_daemon(&daemon);
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let app = fixture.router();
 
     let dir = tempfile::tempdir().unwrap();
     let repo_path = dir.path().join("repo");
@@ -88,9 +86,8 @@ async fn repo_init_rejects_non_empty_dir_by_default() {
 
 #[tokio::test]
 async fn repo_init_allows_non_empty_with_explicit_flag_without_staging_files() {
-    let data_root = tempfile::tempdir().unwrap();
-    let daemon = common::provider_route_fake_daemon(data_root.path()).await;
-    let app = common::router_for_daemon(&daemon);
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let app = fixture.router();
 
     let dir = tempfile::tempdir().unwrap();
     let repo_path = dir.path().join("repo");

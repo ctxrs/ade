@@ -338,6 +338,17 @@ const schedulerRuntimeStoreFacadeTestRoots = [
   "core/crates/ctx-http/tests/turn_terminal_reconciliation.rs",
 ];
 
+const smallRouteFixtureTestRoots = [
+  "core/crates/ctx-http/tests/assistant_chunk_stream_only.rs",
+  "core/crates/ctx-http/tests/repo_clone_branch_and_safety.rs",
+  "core/crates/ctx-http/tests/repo_init_initial_commit.rs",
+  "core/crates/ctx-http/tests/repo_validate_destination.rs",
+  "core/crates/ctx-http/tests/system_prompt_append_http.rs",
+  "core/crates/ctx-http/tests/turn_terminal_reconciliation.rs",
+  "core/crates/ctx-http/tests/workspace_execution_config_http.rs",
+  "core/crates/ctx-http/tests/workspace_merge_queue_config_http.rs",
+];
+
 const taskLifecycleStoreFacadeTestRoots = [
   "core/crates/ctx-http/src/api/tasks/cleanup_lifecycle_tests.rs",
   "core/crates/ctx-http/src/api/tasks/lifecycle_tests.rs",
@@ -846,6 +857,36 @@ const WORKSPACE_VCS_SETUP_FIXTURE_PATTERNS = [
   },
   {
     name: "raw workspace/VCS setup ctx_store Store",
+    regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore::/,
+    contentRegex: /\buse\s+ctx_store::\{(?=[^}]*\n)[\s\S]*?\bStore\b[\s\S]*?\}/gm,
+  },
+];
+
+const SMALL_ROUTE_FIXTURE_PATTERNS = [
+  {
+    name: "direct small-route provider daemon fixture helper",
+    regex: /\b(?:crate::)?common::provider_route_fake_daemon\s*\(|\buse\s+[^;]*\bprovider_route_fake_daemon\b|\bprovider_route_fake_daemon\s*\(/,
+    contentRegex: /\buse\s+[\s\S]*?\bprovider_route_fake_daemon\b[\s\S]*?;/gm,
+  },
+  {
+    name: "direct small-route daemon router composition",
+    regex: /\b(?:crate::)?common::router_for_daemon\s*\(|\buse\s+[^;]*\brouter_for_daemon\b|\brouter_for_daemon\s*\(/,
+    contentRegex: /\buse\s+[\s\S]*?\brouter_for_daemon\b[\s\S]*?;/gm,
+  },
+  {
+    name: "direct small-route TestDaemon construction",
+    regex: /\bTestDaemon::new[A-Za-z0-9_]*\s*\(/,
+  },
+  {
+    name: "direct small-route TestDaemon store access",
+    regex: /\.(?:stores|global_store|store_for_session|store_for_workspace|uncached_store_for_workspace|store_for_task|store_for_worktree)\s*\(/,
+  },
+  {
+    name: "raw small-route StoreManager",
+    regex: /\bStoreManager\b/,
+  },
+  {
+    name: "raw small-route ctx_store Store",
     regex: /\bctx_store::Store\b|\buse\s+ctx_store::[^;]*\bStore\b|\bStore::/,
     contentRegex: /\buse\s+ctx_store::\{(?=[^}]*\n)[\s\S]*?\bStore\b[\s\S]*?\}/gm,
   },
@@ -2097,6 +2138,13 @@ function workspaceVcsSetupFixturePatternsForPath(relativePath) {
   return [];
 }
 
+function smallRouteFixturePatternsForPath(relativePath) {
+  if (smallRouteFixtureTestRoots.some((root) => relativePath.startsWith(root))) {
+    return SMALL_ROUTE_FIXTURE_PATTERNS;
+  }
+  return [];
+}
+
 function mcpDaemonPatternsForPath(relativePath) {
   if (mcpDaemonFacadeTestRoots.some((root) => relativePath.startsWith(root))) {
     return MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS;
@@ -2532,6 +2580,13 @@ function scanRepo() {
       ...scanText({
         filePath: relativePath,
         contents,
+        patterns: smallRouteFixturePatternsForPath(relativePath),
+      }),
+    );
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents,
         patterns: mcpDaemonPatternsForPath(relativePath),
       }),
     );
@@ -2701,6 +2756,7 @@ module.exports = {
   SMALL_API_UNIT_TEST_STORE_ACCESS_PATTERNS,
   SMALL_EXTERNAL_TEST_STORE_ACCESS_PATTERNS,
   SMALL_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
+  SMALL_ROUTE_FIXTURE_PATTERNS,
   STREAM_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
   SUBSCRIPTION_ACCOUNTS_API_TEST_STORE_ACCESS_PATTERNS,
   TASK_LIFECYCLE_TEST_STORE_ACCESS_PATTERNS,
@@ -2742,6 +2798,7 @@ module.exports = {
   smallApiUnitStorePatternsForPath,
   smallExternalStorePatternsForPath,
   smallBoundaryStorePatternsForPath,
+  smallRouteFixturePatternsForPath,
   streamRuntimeStorePatternsForPath,
   subscriptionAccountsApiStorePatternsForPath,
   taskLifecycleStorePatternsForPath,

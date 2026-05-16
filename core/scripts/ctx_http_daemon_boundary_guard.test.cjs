@@ -31,6 +31,7 @@ const {
   SMALL_API_UNIT_TEST_STORE_ACCESS_PATTERNS,
   SMALL_EXTERNAL_TEST_STORE_ACCESS_PATTERNS,
   SMALL_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
+  SMALL_ROUTE_FIXTURE_PATTERNS,
   STREAM_RUNTIME_TEST_STORE_ACCESS_PATTERNS,
   SUBSCRIPTION_ACCOUNTS_API_TEST_STORE_ACCESS_PATTERNS,
   TASK_LIFECYCLE_TEST_STORE_ACCESS_PATTERNS,
@@ -72,6 +73,7 @@ const {
   smallApiUnitStorePatternsForPath,
   smallExternalStorePatternsForPath,
   smallBoundaryStorePatternsForPath,
+  smallRouteFixturePatternsForPath,
   streamRuntimeStorePatternsForPath,
   subscriptionAccountsApiStorePatternsForPath,
   taskLifecycleStorePatternsForPath,
@@ -1558,6 +1560,85 @@ test("daemon boundary guard scopes workspace/VCS fixture roots", () => {
   }
   assert.deepEqual(
     workspaceVcsSetupFixturePatternsForPath("core/crates/ctx-http/tests/common/mod.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects small-route raw daemon fixture setup", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/repo_validate_destination.rs",
+    contents: `
+      use ctx_store::{Store, StoreManager};
+      use common::{
+        provider_route_fake_daemon as fake_daemon,
+        router_for_daemon as router,
+      };
+      async fn helper(daemon: &TestDaemon) {
+        let daemon = common::provider_route_fake_daemon(data_dir.path()).await;
+        let app = common::router_for_daemon(&daemon);
+        let daemon = provider_route_fake_daemon(data_dir.path()).await;
+        let app = router_for_daemon(&daemon);
+        let app = router(&daemon);
+        let daemon = fake_daemon(data_dir.path()).await;
+        let daemon = TestDaemon::new(data_dir, stores, providers, "http://127.0.0.1:0".into(), None);
+        daemon.store_for_workspace(workspace_id).await?;
+      }
+    `,
+    patterns: SMALL_ROUTE_FIXTURE_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "direct small-route provider daemon fixture helper",
+      "direct small-route provider daemon fixture helper",
+      "direct small-route provider daemon fixture helper",
+      "direct small-route daemon router composition",
+      "direct small-route daemon router composition",
+      "direct small-route daemon router composition",
+      "direct small-route TestDaemon construction",
+      "direct small-route TestDaemon store access",
+      "raw small-route StoreManager",
+      "raw small-route ctx_store Store",
+    ],
+  );
+});
+
+test("daemon boundary guard allows small-route fake-daemon fixture router", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/tests/workspace_merge_queue_config_http.rs",
+    contents: `
+      async fn helper() {
+        let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+        let daemon = &fixture.daemon;
+        let app = fixture.router();
+        daemon.seed_workspace_merge_queue_queued_entry_for_test(workspace_id, "entry").await?;
+      }
+    `,
+    patterns: SMALL_ROUTE_FIXTURE_PATTERNS,
+  });
+
+  assert.deepEqual(violations, []);
+});
+
+test("daemon boundary guard scopes small-route fixture roots", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/tests/assistant_chunk_stream_only.rs",
+    "core/crates/ctx-http/tests/repo_clone_branch_and_safety.rs",
+    "core/crates/ctx-http/tests/repo_init_initial_commit.rs",
+    "core/crates/ctx-http/tests/repo_validate_destination.rs",
+    "core/crates/ctx-http/tests/system_prompt_append_http.rs",
+    "core/crates/ctx-http/tests/turn_terminal_reconciliation.rs",
+    "core/crates/ctx-http/tests/workspace_execution_config_http.rs",
+    "core/crates/ctx-http/tests/workspace_merge_queue_config_http.rs",
+  ]) {
+    assert.deepEqual(
+      smallRouteFixturePatternsForPath(filePath),
+      SMALL_ROUTE_FIXTURE_PATTERNS,
+    );
+  }
+  assert.deepEqual(
+    smallRouteFixturePatternsForPath("core/crates/ctx-http/tests/common/mod.rs"),
     [],
   );
 });

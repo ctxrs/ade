@@ -52,9 +52,18 @@ impl ProviderAdapter for StartFailProvider {
 
 struct TestHarness {
     _repo: tempfile::TempDir,
-    daemon: ctx_daemon::test_support::TestDaemon,
-    _data_dir: tempfile::TempDir,
+    fixture: common::FakeDaemonFixture,
     session: ctx_core::models::Session,
+}
+
+impl TestHarness {
+    fn daemon(&self) -> &ctx_daemon::test_support::TestDaemon {
+        &self.fixture.daemon
+    }
+
+    fn app_router(&self) -> axum::Router {
+        self.fixture.router()
+    }
 }
 
 async fn setup_state() -> TestHarness {
@@ -72,8 +81,7 @@ async fn setup_state_with_providers(
         common::create_task_with_session(&app, ws.id.0, "t1", "fake", "fake-model").await;
     TestHarness {
         _repo: repo,
-        daemon: fixture.daemon,
-        _data_dir: fixture.data_dir,
+        fixture,
         session,
     }
 }
@@ -84,13 +92,13 @@ async fn reconcile_terminal_state_respects_turn_finished_status() {
     let run_id = RunId::new();
     let turn_id = TurnId::new();
     harness
-        .daemon
+        .daemon()
         .seed_running_turn_for_reconciliation_test(harness.session.id, run_id, turn_id)
         .await
         .unwrap();
 
     let finished = harness
-        .daemon
+        .daemon()
         .append_turn_finished_event_for_test(
             harness.session.id,
             Some(run_id),
@@ -101,7 +109,7 @@ async fn reconcile_terminal_state_respects_turn_finished_status() {
         .unwrap();
 
     harness
-        .daemon
+        .daemon()
         .reconcile_turn_terminal_state_for_test(
             harness.session.id,
             Some(run_id),
@@ -112,7 +120,7 @@ async fn reconcile_terminal_state_respects_turn_finished_status() {
         .unwrap();
 
     let snapshot = harness
-        .daemon
+        .daemon()
         .turn_reconciliation_snapshot_for_test(harness.session.id, turn_id)
         .await
         .unwrap();
@@ -131,13 +139,13 @@ async fn reconcile_terminal_state_emits_interrupt_when_terminal_event_missing() 
     let run_id = RunId::new();
     let turn_id = TurnId::new();
     harness
-        .daemon
+        .daemon()
         .seed_running_turn_for_reconciliation_test(harness.session.id, run_id, turn_id)
         .await
         .unwrap();
 
     harness
-        .daemon
+        .daemon()
         .reconcile_turn_terminal_state_for_test(
             harness.session.id,
             Some(run_id),
@@ -148,7 +156,7 @@ async fn reconcile_terminal_state_emits_interrupt_when_terminal_event_missing() 
         .unwrap();
 
     let snapshot = harness
-        .daemon
+        .daemon()
         .turn_reconciliation_snapshot_for_test(harness.session.id, turn_id)
         .await
         .unwrap();
@@ -178,13 +186,13 @@ async fn reconcile_provider_exit_emits_failed_terminal_events_when_missing() {
     let run_id = RunId::new();
     let turn_id = TurnId::new();
     harness
-        .daemon
+        .daemon()
         .seed_running_turn_for_reconciliation_test(harness.session.id, run_id, turn_id)
         .await
         .unwrap();
 
     harness
-        .daemon
+        .daemon()
         .reconcile_turn_failed_on_provider_exit_for_test(
             harness.session.id,
             Some(run_id),
@@ -195,7 +203,7 @@ async fn reconcile_provider_exit_emits_failed_terminal_events_when_missing() {
         .unwrap();
 
     let snapshot = harness
-        .daemon
+        .daemon()
         .turn_reconciliation_snapshot_for_test(harness.session.id, turn_id)
         .await
         .unwrap();
@@ -241,7 +249,7 @@ async fn start_failure_marks_turn_failed_and_finishes() {
     let mut providers = common::fake_providers();
     providers.insert("fake".into(), Arc::new(StartFailProvider));
     let harness = setup_state_with_providers(providers).await;
-    let app = common::router_for_daemon(&harness.daemon);
+    let app = harness.app_router();
 
     let (status, message): (axum::http::StatusCode, ctx_core::models::Message) =
         common::json_request(
@@ -255,7 +263,7 @@ async fn start_failure_marks_turn_failed_and_finishes() {
 
     let turn_id = message.turn_id.expect("turn id");
     harness
-        .daemon
+        .daemon()
         .wait_for_scheduler_runtime_events_for_test(
             harness.session.id,
             std::time::Duration::from_secs(5),
@@ -271,7 +279,7 @@ async fn start_failure_marks_turn_failed_and_finishes() {
         .unwrap();
 
     let snapshot = harness
-        .daemon
+        .daemon()
         .turn_reconciliation_snapshot_for_test(harness.session.id, turn_id)
         .await
         .unwrap();
