@@ -161,6 +161,11 @@ const routeFileDownloadApiRoots = [
   "core/crates/ctx-http/src/api/workspaces/worktrees.rs",
 ];
 
+const runArchiveApiRoots = [
+  "core/crates/ctx-http/src/api/run_archive.rs",
+  "core/crates/ctx-http/src/api/run_archive/",
+];
+
 const sessionVcsApiRoots = [
   "core/crates/ctx-http/src/api/sessions/snapshot/vcs.rs",
   "core/crates/ctx-http/src/api/sessions/snapshot/vcs/",
@@ -1091,6 +1096,32 @@ const ROUTE_FILE_DOWNLOAD_API_PATTERNS = [
   {
     name: "route file API owns session artifact metadata derivation",
     regex: /\b(?:normalize_session_artifact_name|infer_session_artifact_mime_type|build_session_artifact_etag|build_session_artifact_last_modified)\b/,
+  },
+];
+
+const RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS = [
+  {
+    name: "run archive API references low-level ingest errors",
+    regex: /\bRunArchiveIngestError\b/,
+  },
+  {
+    name: "run archive API validates acknowledgement batch fields",
+    regex:
+      /\bbatch\s*\.\s*run\s*\.\s*(?:workspace_id|id|org_id)\b|\bbatch\s*\.\s*scope\s*\.\s*is_cloud_visible\s*\(/,
+  },
+  {
+    name: "run archive API owns batch item limit policy",
+    regex:
+      /\b(?:DEFAULT_RUN_ARCHIVE_BATCH_ITEMS|MAX_RUN_ARCHIVE_BATCH_ITEMS|requested_batch_item_limit)\b/,
+  },
+  {
+    name: "run archive API calls low-level archive ingest methods",
+    regex:
+      /\.(?:build_run_archive_ingest_batch|acknowledge_run_archive_ingest_batch)\s*\(/,
+  },
+  {
+    name: "run archive API owns ingest error mapping",
+    regex: /\brun_archive_ingest_api_error\s*\(/,
   },
 ];
 
@@ -3918,6 +3949,9 @@ function apiPatternsForPath(relativePath) {
   if (routeFileDownloadApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...ROUTE_FILE_DOWNLOAD_API_PATTERNS);
   }
+  if (runArchiveApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS);
+  }
   if (workspaceRegistrationConfigApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...WORKSPACE_REGISTRATION_CONFIG_API_PATTERNS);
   }
@@ -4043,6 +4077,13 @@ function mobileAccessStoreDtoApiPatternsForPath(relativePath) {
 function routeFileDownloadApiPatternsForPath(relativePath) {
   if (routeFileDownloadApiRoots.some((root) => relativePath.startsWith(root))) {
     return ROUTE_FILE_DOWNLOAD_API_PATTERNS;
+  }
+  return [];
+}
+
+function runArchiveApiPatternsForPath(relativePath) {
+  if (runArchiveApiRoots.some((root) => relativePath.startsWith(root))) {
+    return RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS;
   }
   return [];
 }
@@ -4943,6 +4984,7 @@ module.exports = {
   UPDATE_API_ORCHESTRATION_PATTERNS,
   UPDATE_DRAIN_API_ORCHESTRATION_PATTERNS,
   ROUTE_FILE_DOWNLOAD_API_PATTERNS,
+  RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS,
   WORKSPACE_CONFIG_ROUTE_CONTEXT_PATTERNS,
   WORKSPACE_EXECUTION_CONFIG_API_PATTERNS,
   WORKSPACE_REGISTRATION_CONFIG_API_PATTERNS,
@@ -5043,6 +5085,7 @@ module.exports = {
   providerTargetScopedInstallsStorePatternsForPath,
   replayPropertiesStorePatternsForPath,
   routeFileDownloadApiPatternsForPath,
+  runArchiveApiPatternsForPath,
   routerCompositionPatternsForPath,
   scanRepo,
   scanRouterComposition,

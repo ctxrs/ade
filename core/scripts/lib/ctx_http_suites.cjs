@@ -40,6 +40,7 @@ const CTX_HTTP_CHECKIN_FANOUT_TARGETS_BY_SUITE = Object.freeze({
   "unit-tests-lib": [
     "unit_tests_lib",
     "unit_tests_lib_mobile_secure_routes",
+    "unit_tests_lib_run_archive_routes",
     "unit_tests_lib_session_artifacts",
     "unit_tests_lib_telemetry_export",
     "unit_tests_lib_update_boundaries",
@@ -114,6 +115,7 @@ const CTX_HTTP_CHECKIN_FANOUT_TARGET_BATCHES_BY_SUITE = Object.freeze({
   ],
   "unit-tests-lib": [
     [
+      "unit_tests_lib_run_archive_routes",
       "unit_tests_lib_session_artifacts",
       "unit_tests_lib_telemetry_export",
     ],

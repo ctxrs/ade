@@ -27,6 +27,7 @@ const {
   UPDATE_API_ORCHESTRATION_PATTERNS,
   UPDATE_DRAIN_API_ORCHESTRATION_PATTERNS,
   ROUTE_FILE_DOWNLOAD_API_PATTERNS,
+  RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS,
   WORKSPACE_CONFIG_ROUTE_CONTEXT_PATTERNS,
   WORKSPACE_EXECUTION_CONFIG_API_PATTERNS,
   WORKSPACE_REGISTRATION_CONFIG_API_PATTERNS,
@@ -127,6 +128,7 @@ const {
   providerTargetScopedInstallsStorePatternsForPath,
   replayPropertiesStorePatternsForPath,
   routeFileDownloadApiPatternsForPath,
+  runArchiveApiPatternsForPath,
   routerCompositionPatternsForPath,
   scanRepo,
   scanRouterComposition,
@@ -2556,6 +2558,64 @@ test("daemon boundary guard scopes route file download roots", () => {
   }
   assert.deepEqual(
     routeFileDownloadApiPatternsForPath("core/crates/ctx-http/src/api/mobile_access.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects run archive API orchestration", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/run_archive.rs",
+    contents: `
+      use ctx_daemon::daemon::workspaces::RunArchiveIngestError;
+      async fn helper(state: WorkspacesHandle, batch: RunArchiveIngestBatch) {
+        let _ = DEFAULT_RUN_ARCHIVE_BATCH_ITEMS;
+        let _ = MAX_RUN_ARCHIVE_BATCH_ITEMS;
+        let max_items = requested_batch_item_limit(query)?;
+        if batch.run.workspace_id != workspace_id {}
+        if batch.run.id != run_id {}
+        if batch.run.org_id.is_none() || !batch.scope.is_cloud_visible() {}
+        let _ = state.build_run_archive_ingest_batch(workspace_id, run_id, max_items).await?;
+        let _ = state.acknowledge_run_archive_ingest_batch(workspace_id, run_id, max_items, batch).await?;
+        let _ = run_archive_ingest_api_error("build", RunArchiveIngestError::WorkspaceNotFound);
+      }
+    `,
+    patterns: RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "run archive API references low-level ingest errors",
+      "run archive API references low-level ingest errors",
+      "run archive API validates acknowledgement batch fields",
+      "run archive API validates acknowledgement batch fields",
+      "run archive API validates acknowledgement batch fields",
+      "run archive API owns batch item limit policy",
+      "run archive API owns batch item limit policy",
+      "run archive API owns batch item limit policy",
+      "run archive API calls low-level archive ingest methods",
+      "run archive API calls low-level archive ingest methods",
+      "run archive API owns ingest error mapping",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes run archive API orchestration roots", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/src/api/run_archive.rs",
+    "core/crates/ctx-http/src/api/run_archive/validation.rs",
+  ]) {
+    assert.deepEqual(
+      runArchiveApiPatternsForPath(filePath),
+      RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS,
+    );
+    assert.equal(
+      apiPatternsForPath(filePath).includes(RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS[0]),
+      true,
+    );
+  }
+  assert.deepEqual(
+    runArchiveApiPatternsForPath("core/crates/ctx-http/src/api/updates/check.rs"),
     [],
   );
 });

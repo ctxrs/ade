@@ -194,6 +194,7 @@ test("ctx-http long suites expand to direct Bazel test targets", () => {
     `${CTX_HTTP_BAZEL_PACKAGE}:merge_queue_isolation`,
     `${CTX_HTTP_BAZEL_PACKAGE}:repo_clone_branch_and_safety`,
     `${CTX_HTTP_BAZEL_PACKAGE}:repo_init_initial_commit`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:repo_status_and_staging`,
     `${CTX_HTTP_BAZEL_PACKAGE}:repo_validate_destination`,
     `${CTX_HTTP_BAZEL_PACKAGE}:session_diff_unavailable`,
     `${CTX_HTTP_BAZEL_PACKAGE}:workspace_merge_queue_config_http`,
@@ -257,7 +258,7 @@ test("ctx-http checkin fanout exposes split unit suite targets without changing 
     ],
   ]);
   assert.equal(getCtxHttpSuiteCheckinFanoutTargetBatches("base").length, 24);
-  assert.equal(getCtxHttpSuiteCheckinFanoutTargets("base").length, 47);
+  assert.equal(getCtxHttpSuiteCheckinFanoutTargets("base").length, 48);
   assert.equal(
     getCtxHttpSuiteCheckinFanoutTargets("base").includes("//core/crates/ctx-managed-installs:unit_tests"),
     true,

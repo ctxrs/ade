@@ -36,6 +36,7 @@ mod hydration;
 mod model_preferences;
 mod retry;
 mod route_config;
+mod run_archive;
 mod runtime;
 mod sandbox_binding;
 pub mod stream;
@@ -73,6 +74,10 @@ pub use route_config::{
     UpdateWorkspacePrimaryBranchRequest, WorkspaceConfigUpdateResult,
     WorkspaceExecutionConfigSnapshot, WorkspacePrimaryBranchSnapshot, WorkspaceRouteError,
     WorkspaceRouteErrorKind,
+};
+pub use run_archive::{
+    AcknowledgeRunArchiveIngestBatchRouteRequest, BuildRunArchiveIngestBatchRouteRequest,
+    RunArchiveRouteError, RunArchiveRouteErrorKind,
 };
 pub use sandbox_binding::rematerialize_sandbox_binding_for_worktree;
 pub use vcs_hooks::{cleanup_workspace_hooks, cleanup_worktree_hooks, ensure_task_commit_hook};
