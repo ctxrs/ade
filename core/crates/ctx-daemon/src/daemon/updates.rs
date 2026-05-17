@@ -1,0 +1,317 @@
+use std::path::PathBuf;
+
+use serde::{Deserialize, Serialize};
+
+use ctx_observability::logs;
+
+use crate::daemon::{CoreHandle, DaemonTurnActivitySummary};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdateRouteErrorKind {
+    BadRequest,
+    BadGateway,
+    Internal,
+}
+
+#[derive(Debug, Clone)]
+pub struct UpdateRouteError {
+    kind: UpdateRouteErrorKind,
+    message: String,
+}
+
+impl UpdateRouteError {
+    fn bad_request(error: impl std::fmt::Display) -> Self {
+        Self::new(UpdateRouteErrorKind::BadRequest, error)
+    }
+
+    fn bad_gateway(error: impl std::fmt::Display) -> Self {
+        Self::new(UpdateRouteErrorKind::BadGateway, error)
+    }
+
+    fn internal(error: impl std::fmt::Display) -> Self {
+        Self::new(UpdateRouteErrorKind::Internal, error)
+    }
+
+    fn new(kind: UpdateRouteErrorKind, error: impl std::fmt::Display) -> Self {
+        Self {
+            kind,
+            message: logs::redact_sensitive(&error.to_string()),
+        }
+    }
+
+    pub fn kind(&self) -> UpdateRouteErrorKind {
+        self.kind
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct UpdateCheckSnapshot {
+    pub channel: String,
+    pub base_url: String,
+    pub platform: Option<String>,
+    pub current_version: String,
+    pub latest_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_supported_version: Option<String>,
+    pub platform_supported: bool,
+    pub in_place_update_supported: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub in_place_update_reason: Option<String>,
+    pub update_available: bool,
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    pub manifest: serde_json::Value,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UpdateActivitySnapshot {
+    pub activity: DaemonTurnActivitySummary,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub managed_daemon_auto_update: Option<ctx_update_service::ManagedDaemonAutoUpdateStatus>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DownloadAppImageUpdateRequest {
+    #[serde(default)]
+    pub channel: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DownloadAppImageUpdateResult {
+    pub downloaded_path: String,
+    pub can_apply_in_place: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ApplyAppImageUpdateRequest {
+    pub confirm: bool,
+    #[serde(default)]
+    pub channel: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ApplyAppImageUpdateResult {
+    pub applied: bool,
+    pub target_path: Option<String>,
+    pub message: String,
+}
+
+fn normalize_channel(raw: Option<&str>) -> Result<String, UpdateRouteError> {
+    ctx_update_service::normalize_release_channel(raw.unwrap_or("stable"))
+        .map_err(UpdateRouteError::bad_request)
+}
+
+fn current_version(package_version: &'static str) -> Result<String, UpdateRouteError> {
+    ctx_update_service::current_build_identity(package_version)
+        .map(|identity| identity.exact_version.clone())
+        .map_err(UpdateRouteError::internal)
+}
+
+fn required_platform() -> Result<&'static str, UpdateRouteError> {
+    ctx_update_service::platform_key()
+        .ok_or_else(|| UpdateRouteError::bad_request("unsupported platform"))
+}
+
+fn appimage_target_path() -> Result<PathBuf, UpdateRouteError> {
+    ctx_update_service::appimage_path_env().ok_or_else(|| {
+        UpdateRouteError::bad_request("CTX_APPIMAGE_PATH not set; cannot apply in place")
+    })
+}
+
+impl CoreHandle {
+    pub async fn check_updates(
+        &self,
+        package_version: &'static str,
+        channel: Option<String>,
+    ) -> Result<UpdateCheckSnapshot, UpdateRouteError> {
+        let channel = normalize_channel(channel.as_deref())?;
+        let base_url = ctx_update_service::default_download_base_url();
+        let platform = ctx_update_service::platform_key().map(|s| s.to_string());
+        let current_version = current_version(package_version)?;
+
+        let query = platform.as_ref().map(|p| {
+            vec![
+                ("current_version", current_version.clone()),
+                ("platform", p.clone()),
+            ]
+        });
+
+        let manifest = ctx_update_service::fetch_latest_manifest_with_params(
+            &base_url,
+            &channel,
+            query.as_deref(),
+        )
+        .await
+        .map_err(UpdateRouteError::bad_gateway)?;
+
+        let latest_version = manifest.latest_version.clone();
+        let min_supported_version = manifest.min_supported_version.clone();
+        let platform_supported =
+            ctx_update_service::platform_supported(&manifest, platform.as_deref());
+        let (in_place_update_supported, in_place_update_reason) =
+            ctx_update_service::in_place_update_capability(
+                &manifest,
+                platform.as_deref(),
+                platform_supported,
+            );
+        let update_available = ctx_update_service::is_update_available(
+            &current_version,
+            &latest_version,
+            platform_supported,
+        );
+
+        Ok(UpdateCheckSnapshot {
+            channel,
+            base_url,
+            platform,
+            current_version,
+            latest_version: Some(latest_version),
+            min_supported_version,
+            platform_supported,
+            in_place_update_supported,
+            in_place_update_reason,
+            update_available,
+            manifest: serde_json::to_value(manifest).unwrap_or(serde_json::Value::Null),
+        })
+    }
+
+    pub async fn update_activity_snapshot(
+        &self,
+    ) -> Result<UpdateActivitySnapshot, UpdateRouteError> {
+        let activity = crate::daemon::daemon_turn_activity_summary(&self.state)
+            .await
+            .map_err(UpdateRouteError::internal)?;
+        let managed_daemon_auto_update =
+            ctx_update_service::managed_daemon_auto_update_status_snapshot(
+                &self.state.core.data_root,
+            )
+            .await;
+        Ok(UpdateActivitySnapshot {
+            activity,
+            managed_daemon_auto_update,
+        })
+    }
+
+    pub async fn download_appimage_update(
+        &self,
+        package_version: &'static str,
+        request: DownloadAppImageUpdateRequest,
+    ) -> Result<DownloadAppImageUpdateResult, UpdateRouteError> {
+        let channel = normalize_channel(request.channel.as_deref())?;
+        let base_url = ctx_update_service::default_download_base_url();
+        let platform = required_platform()?;
+
+        let manifest = ctx_update_service::fetch_latest_manifest(&base_url, &channel)
+            .await
+            .map_err(UpdateRouteError::bad_gateway)?;
+        let platform_entry = manifest.platforms.get(platform).ok_or_else(|| {
+            UpdateRouteError::bad_gateway(format!("manifest missing platform {platform}"))
+        })?;
+        let appimage = platform_entry
+            .appimage
+            .as_ref()
+            .ok_or_else(|| UpdateRouteError::bad_gateway("manifest missing appimage artifact"))?;
+
+        let target_path = appimage_target_path()?;
+        let current_version = current_version(package_version)?;
+        let url = ctx_update_service::resolve_release_artifact_url(&base_url, &appimage.url_path)
+            .map_err(UpdateRouteError::bad_gateway)?;
+        let manifest_url = ctx_update_service::release_manifest_url(&base_url, &channel);
+        let meta = ctx_update_service::download_verified_appimage_candidate(
+            ctx_update_service::AppImageCandidateRequest {
+                data_root: &self.state.core.data_root,
+                target_path: &target_path,
+                channel: &channel,
+                platform,
+                target_version: &manifest.latest_version,
+                current_version: &current_version,
+                artifact_url: &url,
+                artifact_url_path: &appimage.url_path,
+                manifest_url: &manifest_url,
+                base_url: &base_url,
+                sha256: &appimage.sha256,
+            },
+        )
+        .await
+        .map_err(UpdateRouteError::bad_gateway)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(md) = tokio::fs::metadata(&meta.candidate_path).await {
+                let mut p = md.permissions();
+                p.set_mode(0o755);
+                let _ = tokio::fs::set_permissions(&meta.candidate_path, p).await;
+            }
+        }
+
+        Ok(DownloadAppImageUpdateResult {
+            downloaded_path: meta.candidate_path.to_string_lossy().to_string(),
+            can_apply_in_place: ctx_update_service::appimage_path_env().is_some(),
+        })
+    }
+
+    pub async fn apply_appimage_update(
+        &self,
+        package_version: &'static str,
+        request: ApplyAppImageUpdateRequest,
+    ) -> Result<ApplyAppImageUpdateResult, UpdateRouteError> {
+        if !request.confirm {
+            return Err(UpdateRouteError::bad_request("confirm required"));
+        }
+
+        let channel = normalize_channel(request.channel.as_deref())?;
+        let base_url = ctx_update_service::default_download_base_url();
+        let platform = required_platform()?;
+        let target = appimage_target_path()?;
+        let current_version = current_version(package_version)?;
+        let (downloaded, _meta) = ctx_update_service::validate_verified_appimage_candidate(
+            &self.state.core.data_root,
+            &target,
+            &channel,
+            platform,
+            &base_url,
+            &current_version,
+        )
+        .await
+        .map_err(UpdateRouteError::bad_request)?;
+
+        ctx_update_service::atomic_replace_file(&target, &downloaded)
+            .await
+            .map_err(UpdateRouteError::internal)?;
+        ctx_update_service::clear_appimage_candidate(&self.state.core.data_root).await;
+
+        Ok(ApplyAppImageUpdateResult {
+            applied: true,
+            target_path: Some(target.to_string_lossy().to_string()),
+            message:
+                "Update applied in place. Quit and relaunch the desktop app to run the new version."
+                    .to_string(),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_update_channel_is_bad_request() {
+        let error = normalize_channel(Some("x/../../../secret")).unwrap_err();
+        assert_eq!(error.kind(), UpdateRouteErrorKind::BadRequest);
+    }
+
+    #[test]
+    fn missing_appimage_path_is_bad_request() {
+        let previous = std::env::var("CTX_APPIMAGE_PATH").ok();
+        std::env::remove_var("CTX_APPIMAGE_PATH");
+        let error = appimage_target_path().unwrap_err();
+        assert_eq!(error.kind(), UpdateRouteErrorKind::BadRequest);
+        if let Some(value) = previous {
+            std::env::set_var("CTX_APPIMAGE_PATH", value);
+        }
+    }
+}

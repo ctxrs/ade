@@ -22,6 +22,7 @@ mod handle;
 pub mod health;
 mod lifecycle;
 mod listener;
+pub mod logs;
 pub mod maintenance;
 mod managed_auto_update;
 mod managed_installs_host;
@@ -53,6 +54,7 @@ pub mod terminals;
 #[cfg(any(test, feature = "test-support"))]
 mod test_support_access;
 pub mod tool_cgroup;
+pub mod updates;
 pub mod web_sessions;
 mod workspace_init;
 #[cfg(test)]
@@ -95,6 +97,11 @@ pub use state::{AppRuntimeFlags, DaemonState};
 pub use state::{
     AttachmentMaterializationTask, CacheSweepConfig, SessionStoreAccessError, StoreLookup,
     TimedEntry, WorkspaceStoreAccessError,
+};
+pub use updates::{
+    ApplyAppImageUpdateRequest, ApplyAppImageUpdateResult, DownloadAppImageUpdateRequest,
+    DownloadAppImageUpdateResult, UpdateActivitySnapshot, UpdateCheckSnapshot, UpdateRouteError,
+    UpdateRouteErrorKind,
 };
 pub use workspace_init::init_workspace;
 pub use workspaces::WorkspaceStreamAccessError;

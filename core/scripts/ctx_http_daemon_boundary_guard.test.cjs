@@ -18,7 +18,10 @@ const {
   HARNESS_CONTAINER_SANDBOX_TEST_STORE_ACCESS_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
   DAEMON_HEALTH_VERSION_PATTERNS,
+  DAEMON_UPDATES_VERSION_PATTERNS,
   HEALTH_DIAGNOSTICS_API_ORCHESTRATION_PATTERNS,
+  LOGS_API_ORCHESTRATION_PATTERNS,
+  UPDATE_API_ORCHESTRATION_PATTERNS,
   IMAGE_ATTACHMENTS_TEST_STORE_ACCESS_PATTERNS,
   JJ_MERGE_QUEUE_BASICS_TEST_STORE_ACCESS_PATTERNS,
   LIB_TEST_DATA_ROOT_FIXTURE_PATTERNS,
@@ -4758,6 +4761,78 @@ test("daemon boundary guard rejects daemon health package-version fallback", () 
   assert.deepEqual(
     violations.map((violation) => violation.name),
     ["daemon health uses daemon crate package version directly"],
+  );
+});
+
+test("daemon boundary guard rejects logs API orchestration", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/logs_api.rs",
+    contents: `
+      use ctx_observability::logs;
+      async fn route(core: CoreHandle) {
+        let line = format!("{} [{}] {}", chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true), "info", "message");
+        logs::append_desktop_log_line(core.data_root(), &line).await?;
+        logs::open_logs_folder(core.data_root()).await?;
+      }
+    `,
+    patterns: apiPatternsForPath("core/crates/ctx-http/src/api/logs_api.rs"),
+  });
+
+  const names = new Set(violations.map((violation) => violation.name));
+  for (const expected of [
+    "logs API imports observability logs directly",
+    "logs API calls log filesystem helpers directly",
+    "logs API assembles desktop log line locally",
+    "logs API accesses daemon data root directly",
+  ]) {
+    assert(names.has(expected), `expected ${expected}; saw ${[...names].join(", ")}`);
+  }
+});
+
+test("daemon boundary guard rejects update API orchestration", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/updates/appimage/download.rs",
+    contents: `
+      async fn route(core: CoreHandle) {
+        let _status: ctx_update_service::ManagedDaemonAutoUpdateStatus = todo!();
+        let _response: DownloadAppImageResp = todo!();
+        let _ = ctx_update_service::current_build_identity(env!("CARGO_PKG_VERSION"));
+        let _ = ctx_update_service::download_verified_appimage_candidate(req).await;
+        let _ = logs::redact_sensitive("secret");
+        let _ = core.data_root();
+      }
+    `,
+    patterns: apiPatternsForPath(
+      "core/crates/ctx-http/src/api/updates/appimage/download.rs",
+    ),
+  });
+
+  const names = new Set(violations.map((violation) => violation.name));
+  for (const expected of [
+    "update API calls update service directly",
+    "update API redacts errors locally",
+    "update API accesses daemon data root directly",
+    "update API owns managed auto-update DTO",
+    "update API owns update response DTO assembly",
+  ]) {
+    assert(names.has(expected), `expected ${expected}; saw ${[...names].join(", ")}`);
+  }
+});
+
+test("daemon boundary guard rejects daemon updates package-version fallback", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-daemon/src/daemon/updates.rs",
+    contents: `
+      fn check_updates() {
+        let _ = ctx_update_service::current_build_identity(env!("CARGO_PKG_VERSION"));
+      }
+    `,
+    patterns: DAEMON_UPDATES_VERSION_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    ["daemon updates uses daemon crate package version directly"],
   );
 });
 

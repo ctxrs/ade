@@ -587,6 +587,14 @@ async fn appimage_apply_replaces_target_and_clears_candidate() {
     )
     .await;
     assert_eq!(download_status, StatusCode::OK);
+    let meta = ctx_update_service::read_verified_appimage_candidate_meta(data_dir.path())
+        .await
+        .unwrap();
+    assert_eq!(
+        meta.current_version,
+        env!("CARGO_PKG_VERSION"),
+        "downloaded AppImage metadata must use the ctx-http package version"
+    );
 
     let (apply_status, _body): (StatusCode, Value) = common::json_request(
         &app,

@@ -219,6 +219,17 @@ const healthDiagnosticsApiRoots = [
   "core/crates/ctx-http/src/api/diagnostics.rs",
 ];
 
+const logsApiRoots = [
+  "core/crates/ctx-http/src/api/logs_api.rs",
+];
+
+const updateApiRoots = [
+  "core/crates/ctx-http/src/api/updates/check.rs",
+  "core/crates/ctx-http/src/api/updates/activity.rs",
+  "core/crates/ctx-http/src/api/updates/appimage.rs",
+  "core/crates/ctx-http/src/api/updates/appimage/",
+];
+
 const taskSessionCreationApiRoots = [
   "core/crates/ctx-http/src/api/tasks/creation_session.rs",
   "core/crates/ctx-http/src/api/tasks/creation_session/",
@@ -1357,6 +1368,56 @@ const HEALTH_DIAGNOSTICS_API_ORCHESTRATION_PATTERNS = [
 const DAEMON_HEALTH_VERSION_PATTERNS = [
   {
     name: "daemon health uses daemon crate package version directly",
+    regex: /env!\s*\(\s*"CARGO_PKG_VERSION"\s*\)/,
+  },
+];
+
+const LOGS_API_ORCHESTRATION_PATTERNS = [
+  {
+    name: "logs API imports observability logs directly",
+    regex: /\bctx_observability::logs\b/,
+  },
+  {
+    name: "logs API calls log filesystem helpers directly",
+    regex: /\blogs::(?:open_logs_folder|append_desktop_log_line)\s*\(/,
+  },
+  {
+    name: "logs API assembles desktop log line locally",
+    regex: /\bchrono::Utc::now\s*\(|\bSecondsFormat::Secs\b/,
+  },
+  {
+    name: "logs API accesses daemon data root directly",
+    regex: /\.data_root\s*\(/,
+  },
+];
+
+const UPDATE_API_ORCHESTRATION_PATTERNS = [
+  {
+    name: "update API calls update service directly",
+    regex: /\bctx_update_service\b/,
+  },
+  {
+    name: "update API redacts errors locally",
+    regex: /\blogs::redact_sensitive\s*\(/,
+  },
+  {
+    name: "update API accesses daemon data root directly",
+    regex: /\.data_root\s*\(/,
+  },
+  {
+    name: "update API owns managed auto-update DTO",
+    regex: /\bManagedDaemonAutoUpdateStatus\b/,
+  },
+  {
+    name: "update API owns update response DTO assembly",
+    regex:
+      /\b(?:UpdateCheckResp|UpdateActivityResp|DownloadAppImageReq|DownloadAppImageResp|ApplyAppImageReq|ApplyAppImageResp)\b/,
+  },
+];
+
+const DAEMON_UPDATES_VERSION_PATTERNS = [
+  {
+    name: "daemon updates uses daemon crate package version directly",
     regex: /env!\s*\(\s*"CARGO_PKG_VERSION"\s*\)/,
   },
 ];
@@ -3550,6 +3611,12 @@ function apiPatternsForPath(relativePath) {
   if (healthDiagnosticsApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...HEALTH_DIAGNOSTICS_API_ORCHESTRATION_PATTERNS);
   }
+  if (logsApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...LOGS_API_ORCHESTRATION_PATTERNS);
+  }
+  if (updateApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...UPDATE_API_ORCHESTRATION_PATTERNS);
+  }
   if (taskSessionCreationApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...TASK_SESSION_CREATION_API_ADMISSION_PATTERNS);
   }
@@ -4135,6 +4202,15 @@ function scanRepo() {
         }),
       );
     }
+    if (relativePath === "core/crates/ctx-daemon/src/daemon/updates.rs") {
+      violations.push(
+        ...scanText({
+          filePath: relativePath,
+          contents,
+          patterns: DAEMON_UPDATES_VERSION_PATTERNS,
+        }),
+      );
+    }
   }
 
   for (const filePath of testSurfaceRustFiles()) {
@@ -4531,7 +4607,10 @@ module.exports = {
   HARNESS_CONTAINER_SANDBOX_TEST_STORE_ACCESS_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
   DAEMON_HEALTH_VERSION_PATTERNS,
+  DAEMON_UPDATES_VERSION_PATTERNS,
   HEALTH_DIAGNOSTICS_API_ORCHESTRATION_PATTERNS,
+  LOGS_API_ORCHESTRATION_PATTERNS,
+  UPDATE_API_ORCHESTRATION_PATTERNS,
   IMAGE_ATTACHMENTS_TEST_STORE_ACCESS_PATTERNS,
   JJ_MERGE_QUEUE_BASICS_TEST_STORE_ACCESS_PATTERNS,
   LIB_TEST_DATA_ROOT_FIXTURE_PATTERNS,
