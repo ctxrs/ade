@@ -205,6 +205,12 @@ const providerInstallApiRoots = [
   "core/crates/ctx-http/src/api/provider_launch/handlers/installs/",
 ];
 
+const providerAdminApiRoots = [
+  "core/crates/ctx-http/src/api/providers/install.rs",
+  "core/crates/ctx-http/src/api/providers/types/dev.rs",
+  "core/crates/ctx-http/src/api/providers/types/harness.rs",
+];
+
 const providerLaunchAuthApiRoots = [
   "core/crates/ctx-http/src/api/provider_launch/handlers/auth.rs",
   "core/crates/ctx-http/src/api/provider_launch/handlers/auth/",
@@ -1448,6 +1454,37 @@ const PROVIDER_INSTALL_API_ORCHESTRATION_PATTERNS = [
   {
     name: "provider install API parses install ids directly",
     regex: /\buuid::Uuid::parse_str\s*\(/,
+  },
+];
+
+const PROVIDER_ADMIN_API_ORCHESTRATION_PATTERNS = [
+  {
+    name: "provider admin API owns matrix refresh DTOs",
+    regex: /\bMatrixRefreshResponse\b/,
+  },
+  {
+    name: "provider admin API owns dev restart DTOs",
+    regex: /\bDevRestartProviders(?:Req|Resp|Result)\b/,
+  },
+  {
+    name: "provider admin API reads dev-mode env directly",
+    regex: /\bCTX_DEV_MODE\b|\bdev_tools_enabled\b|\bparse_boolish\b|\bstd::env::var\s*\(/,
+  },
+  {
+    name: "provider admin API parses restart modes directly",
+    regex: /\bProviderRestartMode\b|\bparse_restart_mode\b/,
+  },
+  {
+    name: "provider admin API calls low-level admin facades",
+    regex: /\.(?:refresh_provider_inventory|restart_all_provider_adapters)\s*\(/,
+  },
+  {
+    name: "provider admin API owns matrix refresh error mapping",
+    regex: /failed to refresh provider statuses/,
+  },
+  {
+    name: "provider admin API maps restart results locally",
+    regex: /\bresult\.(?:provider_id|status|message)\b/,
   },
 ];
 
@@ -4372,6 +4409,9 @@ function apiPatternsForPath(relativePath) {
   if (providerInstallApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...PROVIDER_INSTALL_API_ORCHESTRATION_PATTERNS);
   }
+  if (providerAdminApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...PROVIDER_ADMIN_API_ORCHESTRATION_PATTERNS);
+  }
   if (providerLaunchAuthApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...PROVIDER_LAUNCH_AUTH_API_PATTERNS);
   }
@@ -4598,6 +4638,13 @@ function providerHarnessConfigApiPatternsForPath(relativePath) {
 function providerInstallApiPatternsForPath(relativePath) {
   if (providerInstallApiRoots.some((root) => relativePath.startsWith(root))) {
     return PROVIDER_INSTALL_API_ORCHESTRATION_PATTERNS;
+  }
+  return [];
+}
+
+function providerAdminApiPatternsForPath(relativePath) {
+  if (providerAdminApiRoots.some((root) => relativePath.startsWith(root))) {
+    return PROVIDER_ADMIN_API_ORCHESTRATION_PATTERNS;
   }
   return [];
 }
@@ -5564,6 +5611,7 @@ module.exports = {
   PROVIDER_HARNESS_CONFIG_API_PATTERNS,
   PROVIDER_HARNESS_ENDPOINT_API_PATTERNS,
   PROVIDER_INSTALL_API_ORCHESTRATION_PATTERNS,
+  PROVIDER_ADMIN_API_ORCHESTRATION_PATTERNS,
   PROVIDER_LAUNCH_AUTH_API_PATTERNS,
   PROVIDER_LAUNCH_OPTIONS_API_PATTERNS,
   PROVIDER_AUTH_IMPORT_API_ORCHESTRATION_PATTERNS,
@@ -5648,6 +5696,7 @@ module.exports = {
   providerHarnessConfigApiPatternsForPath,
   providerHarnessEndpointApiPatternsForPath,
   providerInstallApiPatternsForPath,
+  providerAdminApiPatternsForPath,
   providerLaunchAuthApiPatternsForPath,
   providerLaunchOptionsApiPatternsForPath,
   providerStatusApiPatternsForPath,

@@ -70,3 +70,61 @@ async fn refresh_provider_matrix_surfaces_agent_server_config_errors() {
         .as_str()
         .is_some_and(|value| value.contains("parsing agent server config")));
 }
+
+#[tokio::test]
+async fn dev_restart_providers_returns_not_found_when_dev_mode_disabled() {
+    let fixture = ProviderRouteFixture::new().await;
+    let _dev_mode = EnvVarGuard::unset("CTX_DEV_MODE");
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/dev/providers/restart")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"mode":"immediate"}"#))
+        .unwrap();
+    let res = fixture.app().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["error"].as_str(), Some("dev tools are disabled"));
+}
+
+#[tokio::test]
+async fn dev_restart_providers_rejects_unknown_mode() {
+    let fixture = ProviderRouteFixture::new().await;
+    let _dev_mode = EnvVarGuard::set("CTX_DEV_MODE", "1");
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/dev/providers/restart")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"mode":"later"}"#))
+        .unwrap();
+    let res = fixture.app().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        payload["error"].as_str(),
+        Some("mode must be 'immediate' or 'drain'")
+    );
+}
+
+#[tokio::test]
+async fn dev_restart_providers_returns_success_shape_when_enabled() {
+    let fixture = ProviderRouteFixture::new().await;
+    let _dev_mode = EnvVarGuard::set("CTX_DEV_MODE", "1");
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/dev/providers/restart")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"mode":"drain"}"#))
+        .unwrap();
+    let res = fixture.app().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["mode"].as_str(), Some("drain"));
+    assert_eq!(payload["results"].as_array().map(Vec::len), Some(0));
+}

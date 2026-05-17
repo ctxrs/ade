@@ -52,6 +52,7 @@ const {
   PROVIDER_HARNESS_CONFIG_API_PATTERNS,
   PROVIDER_HARNESS_ENDPOINT_API_PATTERNS,
   PROVIDER_INSTALL_API_ORCHESTRATION_PATTERNS,
+  PROVIDER_ADMIN_API_ORCHESTRATION_PATTERNS,
   PROVIDER_LAUNCH_AUTH_API_PATTERNS,
   PROVIDER_LAUNCH_OPTIONS_API_PATTERNS,
   SESSION_HEAD_API_ORCHESTRATION_PATTERNS,
@@ -135,6 +136,7 @@ const {
   providerHarnessConfigApiPatternsForPath,
   providerHarnessEndpointApiPatternsForPath,
   providerInstallApiPatternsForPath,
+  providerAdminApiPatternsForPath,
   providerLaunchAuthApiPatternsForPath,
   providerLaunchOptionsApiPatternsForPath,
   providerStatusApiPatternsForPath,
@@ -3213,6 +3215,96 @@ test("daemon boundary guard scopes provider install API roots", () => {
   );
   assert.deepEqual(
     providerInstallApiPatternsForPath("core/crates/ctx-http/src/api/providers/status/routes.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects provider admin API orchestration", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/providers/install.rs",
+    contents: `
+      struct MatrixRefreshResponse;
+      struct DevRestartProvidersReq;
+      struct DevRestartProvidersResp;
+      struct DevRestartProvidersResult;
+
+      fn dev_tools_enabled() -> bool {
+        std::env::var("CTX_DEV_MODE")
+          .ok()
+          .and_then(ctx_core::boolish::parse_boolish)
+          .unwrap_or(false)
+      }
+
+      fn parse_restart_mode(value: &str) -> Option<ProviderRestartMode> {
+        None
+      }
+
+      async fn handler(providers: ProvidersHandle, result: RestartResult) {
+        let summary = providers.refresh_provider_inventory().await?;
+        let results = providers.restart_all_provider_adapters("dev", mode).await;
+        let message = format!("failed to refresh provider statuses: {err:#}");
+        let _mapped = (result.provider_id, result.status, result.message);
+      }
+    `,
+    patterns: PROVIDER_ADMIN_API_ORCHESTRATION_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "provider admin API owns matrix refresh DTOs",
+      "provider admin API owns dev restart DTOs",
+      "provider admin API owns dev restart DTOs",
+      "provider admin API owns dev restart DTOs",
+      "provider admin API reads dev-mode env directly",
+      "provider admin API reads dev-mode env directly",
+      "provider admin API reads dev-mode env directly",
+      "provider admin API parses restart modes directly",
+      "provider admin API calls low-level admin facades",
+      "provider admin API calls low-level admin facades",
+      "provider admin API owns matrix refresh error mapping",
+      "provider admin API maps restart results locally",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes provider admin API roots", () => {
+  assert.deepEqual(
+    providerAdminApiPatternsForPath("core/crates/ctx-http/src/api/providers/install.rs"),
+    PROVIDER_ADMIN_API_ORCHESTRATION_PATTERNS,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers/install.rs").includes(
+      PROVIDER_ADMIN_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers/types/dev.rs").includes(
+      PROVIDER_ADMIN_API_ORCHESTRATION_PATTERNS[1],
+    ),
+    true,
+  );
+  assert.deepEqual(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/providers/install.rs",
+      contents: `
+        providers.refresh_provider_matrix_for_route().await?;
+        providers.dev_restart_providers_for_route(req).await?;
+        let _err: Option<ProviderAdminRouteError> = None;
+        let _kind = ProviderAdminRouteErrorKind::BadRequest;
+        let _req: Option<ProviderDevRestartRouteRequest> = None;
+        let _resp: Option<ProviderDevRestartRouteResponse> = None;
+        let _matrix: Option<ProviderMatrixRefreshRouteResponse> = None;
+      `,
+      patterns: PROVIDER_ADMIN_API_ORCHESTRATION_PATTERNS,
+    }),
+    [],
+  );
+  assert.deepEqual(
+    providerAdminApiPatternsForPath(
+      "core/crates/ctx-http/src/api/provider_launch/handlers/installs/start.rs",
+    ),
     [],
   );
 });

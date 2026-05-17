@@ -18,10 +18,12 @@ use ctx_daemon::daemon::providers::{
     CodexLoginCompleteRouteResponse, CodexLoginRouteError, CodexLoginRouteErrorKind,
     CodexLoginStartRouteRequest, CodexLoginStartRouteResponse, CursorLoginRouteError,
     CursorLoginRouteErrorKind, CursorLoginStartRouteRequest, CursorLoginStartRouteResponse,
+    ProviderAdminRouteError, ProviderAdminRouteErrorKind,
     ProviderAuthImportCandidatesRouteResponse, ProviderAuthImportProfilesRouteResponse,
     ProviderAuthImportRouteError, ProviderAuthImportRouteRequest, ProviderAuthImportRouteResponse,
-    ProviderLoginRouteError, ProviderLoginRouteErrorKind, ProviderLoginStartRouteRequest,
-    ProviderLoginStartRouteResponse, ProviderStatusRouteQuery, ProviderUsageRouteError,
+    ProviderDevRestartRouteRequest, ProviderDevRestartRouteResponse, ProviderLoginRouteError,
+    ProviderLoginRouteErrorKind, ProviderLoginStartRouteRequest, ProviderLoginStartRouteResponse,
+    ProviderMatrixRefreshRouteResponse, ProviderStatusRouteQuery, ProviderUsageRouteError,
     ProviderUsageRouteQuery, ProviderUsageRouteSnapshot, SelectProviderHarnessSourceRouteRequest,
 };
 use ctx_daemon::daemon::ProvidersHandle;
@@ -40,7 +42,7 @@ use ctx_provider_auth_import as provider_auth_import;
 use ctx_provider_install::install_state::InstallId;
 #[cfg(test)]
 use ctx_provider_install::install_state::InstallTarget;
-use ctx_providers::adapters::{ProviderRestartMode, ProviderStatus};
+use ctx_providers::adapters::ProviderStatus;
 
 mod accounts;
 mod bootstrap;

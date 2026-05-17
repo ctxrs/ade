@@ -6,13 +6,13 @@ use ctx_provider_accounts as provider_accounts;
 use ctx_provider_install::install_state::{
     InstallId, InstallInfo, InstallProgressEvent, InstallTarget,
 };
-use ctx_provider_runtime::provider_workers::ProviderAdapterRestartResult;
-use ctx_providers::adapters::{ProviderRestartMode, ProviderStatus};
+use ctx_providers::adapters::ProviderStatus;
 use serde_json::Value;
 use tokio::sync::broadcast;
 
 use super::handle::ProvidersHandle;
 mod accounts;
+mod admin_routes;
 mod auth;
 mod auth_check;
 mod auth_import;
@@ -59,6 +59,10 @@ pub use accounts::{
     AmpAccountsResponse, ClaudeAccountsResponse, CodexAccountsResponse, CopilotAccountsResponse,
     CursorAccountsResponse, GeminiAccountsResponse, KimiAccountsResponse, MistralAccountsResponse,
     ProviderAccountRouteError, ProviderAccountRouteErrorKind, QwenAccountsResponse,
+};
+pub use admin_routes::{
+    ProviderAdminRouteError, ProviderAdminRouteErrorKind, ProviderDevRestartRouteRequest,
+    ProviderDevRestartRouteResponse, ProviderMatrixRefreshRouteResponse,
 };
 pub use auth::{authenticate_provider_for_workspace_runtime, ProviderWorkspaceAuthenticationError};
 pub use auth_check::{
@@ -111,7 +115,6 @@ pub use installs::{
     ProviderInstallStatusOnlyRouteError, ProviderInstallStatusesRouteRequest,
     ProviderInstallStatusesRouteResponse, StartProviderInstallError,
 };
-pub use inventory::refresh_provider_inventory;
 pub use launch_config::{
     load_provider_launch_config_snapshot, ProviderLaunchConfigError, ProviderLaunchConfigSnapshot,
 };
@@ -165,23 +168,6 @@ impl ProvidersHandle {
 
     pub async fn refresh_provider_statuses(&self) -> anyhow::Result<()> {
         refresh_provider_statuses(self.state.as_ref()).await
-    }
-
-    pub async fn refresh_provider_inventory(
-        &self,
-    ) -> anyhow::Result<inventory::ProviderMatrixRefreshSummary> {
-        refresh_provider_inventory(self.state.as_ref()).await
-    }
-
-    pub async fn restart_all_provider_adapters(
-        &self,
-        reason: &str,
-        mode: ProviderRestartMode,
-    ) -> Vec<ProviderAdapterRestartResult> {
-        self.state
-            .providers
-            .restart_all_provider_adapters(reason, mode)
-            .await
     }
 
     pub async fn restart_provider_for_auth_change(
