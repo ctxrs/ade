@@ -17,7 +17,7 @@ pub(crate) async fn get_kimi_login(
     State(providers): State<ProvidersHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Path(id): Path<String>,
-) -> Result<Json<provider_accounts::KimiLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
+) -> Result<Json<KimiLoginStatusRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
     providers
         .kimi_login_status_for_route(&id)

@@ -1,4 +1,5 @@
 use super::*;
+use ctx_provider_accounts as provider_accounts;
 
 #[tokio::test]
 async fn cursor_subscription_selection_requires_managed_account() {

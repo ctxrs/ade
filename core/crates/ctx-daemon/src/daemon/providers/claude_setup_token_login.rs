@@ -81,6 +81,30 @@ impl From<StartedLoginSession> for ClaudeLoginStartRouteResponse {
     }
 }
 
+#[derive(Debug, Serialize)]
+pub struct ClaudeLoginStatusRouteResponse {
+    login_id: String,
+    #[serde(default)]
+    auth_url: Option<String>,
+    status: String,
+    #[serde(default)]
+    account_id: Option<String>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+impl From<provider_accounts::ClaudeLoginStatus> for ClaudeLoginStatusRouteResponse {
+    fn from(status: provider_accounts::ClaudeLoginStatus) -> Self {
+        Self {
+            login_id: status.login_id,
+            auth_url: status.auth_url,
+            status: status.status,
+            account_id: status.account_id,
+            error: status.error,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum ClaudeLoginRouteErrorKind {
     BadRequest,
@@ -125,9 +149,10 @@ impl ProvidersHandle {
     pub async fn claude_login_status_for_route(
         &self,
         login_id: &str,
-    ) -> Result<provider_accounts::ClaudeLoginStatus, ClaudeLoginRouteError> {
+    ) -> Result<ClaudeLoginStatusRouteResponse, ClaudeLoginRouteError> {
         login_sessions::claude_login_status(&self.state, login_id)
             .await
+            .map(Into::into)
             .ok_or_else(claude_login_not_found_route_error)
     }
 }
@@ -227,6 +252,22 @@ mod route_tests {
         assert_eq!(
             payload["auth_url"].as_str(),
             Some("https://claude.ai/oauth/authorize")
+        );
+    }
+
+    #[test]
+    fn claude_login_status_route_response_matches_provider_account_wire_shape() {
+        let status = provider_accounts::ClaudeLoginStatus {
+            login_id: "claude-login".to_string(),
+            auth_url: None,
+            status: "pending".to_string(),
+            account_id: None,
+            error: None,
+        };
+
+        assert_eq!(
+            serde_json::to_value(ClaudeLoginStatusRouteResponse::from(status.clone())).unwrap(),
+            serde_json::to_value(status).unwrap()
         );
     }
 }

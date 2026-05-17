@@ -124,6 +124,32 @@ impl From<CodexLoginCompleteResponse> for CodexLoginCompleteRouteResponse {
     }
 }
 
+#[derive(Debug, Serialize)]
+pub struct CodexLoginStatusRouteResponse {
+    account_id: String,
+    auth_url: String,
+    #[serde(default)]
+    expected_callback_url: Option<String>,
+    #[serde(default)]
+    completion_token: Option<String>,
+    status: String,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+impl From<provider_accounts::CodexLoginStatus> for CodexLoginStatusRouteResponse {
+    fn from(status: provider_accounts::CodexLoginStatus) -> Self {
+        Self {
+            account_id: status.account_id,
+            auth_url: status.auth_url,
+            expected_callback_url: status.expected_callback_url,
+            completion_token: status.completion_token,
+            status: status.status,
+            error: status.error,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum CodexLoginRouteErrorKind {
     BadRequest,
@@ -171,9 +197,10 @@ impl ProvidersHandle {
     pub async fn codex_login_status_for_route(
         &self,
         account_id: &str,
-    ) -> Result<provider_accounts::CodexLoginStatus, CodexLoginRouteError> {
+    ) -> Result<CodexLoginStatusRouteResponse, CodexLoginRouteError> {
         login_sessions::codex_login_status(&self.state, account_id)
             .await
+            .map(Into::into)
             .ok_or_else(codex_login_not_found_route_error)
     }
 
@@ -446,5 +473,22 @@ mod route_tests {
 
         assert_eq!(payload["accepted"].as_bool(), Some(true));
         assert_eq!(payload["status_code"].as_u64(), Some(200));
+    }
+
+    #[test]
+    fn codex_login_status_route_response_matches_provider_account_wire_shape() {
+        let status = provider_accounts::CodexLoginStatus {
+            account_id: "codex-account".to_string(),
+            auth_url: "https://chat.openai.com/oauth/authorize".to_string(),
+            expected_callback_url: None,
+            completion_token: None,
+            status: "pending".to_string(),
+            error: None,
+        };
+
+        assert_eq!(
+            serde_json::to_value(CodexLoginStatusRouteResponse::from(status.clone())).unwrap(),
+            serde_json::to_value(status).unwrap()
+        );
     }
 }

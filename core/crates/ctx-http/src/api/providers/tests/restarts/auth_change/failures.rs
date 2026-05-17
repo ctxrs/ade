@@ -1,5 +1,6 @@
 use super::fixtures::{fixture_with_adapter, seed_options_probe_cache};
 use super::*;
+use ctx_provider_accounts as provider_accounts;
 
 #[tokio::test]
 async fn restart_provider_for_auth_change_returns_error_when_adapter_restart_fails() {

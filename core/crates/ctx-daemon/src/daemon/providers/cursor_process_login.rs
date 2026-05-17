@@ -73,6 +73,30 @@ impl From<StartedLoginSession> for CursorLoginStartRouteResponse {
     }
 }
 
+#[derive(Debug, Serialize)]
+pub struct CursorLoginStatusRouteResponse {
+    login_id: String,
+    #[serde(default)]
+    auth_url: Option<String>,
+    status: String,
+    #[serde(default)]
+    account_id: Option<String>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+impl From<provider_accounts::CursorLoginStatus> for CursorLoginStatusRouteResponse {
+    fn from(status: provider_accounts::CursorLoginStatus) -> Self {
+        Self {
+            login_id: status.login_id,
+            auth_url: status.auth_url,
+            status: status.status,
+            account_id: status.account_id,
+            error: status.error,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CursorLoginRouteErrorKind {
     BadRequest,
@@ -117,9 +141,10 @@ impl ProvidersHandle {
     pub async fn cursor_login_status_for_route(
         &self,
         login_id: &str,
-    ) -> Result<provider_accounts::CursorLoginStatus, CursorLoginRouteError> {
+    ) -> Result<CursorLoginStatusRouteResponse, CursorLoginRouteError> {
         login_sessions::cursor_login_status(&self.state, login_id)
             .await
+            .map(Into::into)
             .ok_or_else(cursor_login_not_found_route_error)
     }
 }
@@ -218,6 +243,22 @@ mod route_tests {
         assert_eq!(
             payload["auth_url"].as_str(),
             Some("https://cursor.com/login/device?code=test")
+        );
+    }
+
+    #[test]
+    fn cursor_login_status_route_response_matches_provider_account_wire_shape() {
+        let status = provider_accounts::CursorLoginStatus {
+            login_id: "cursor-login".to_string(),
+            auth_url: None,
+            status: "pending".to_string(),
+            account_id: None,
+            error: None,
+        };
+
+        assert_eq!(
+            serde_json::to_value(CursorLoginStatusRouteResponse::from(status.clone())).unwrap(),
+            serde_json::to_value(status).unwrap()
         );
     }
 }

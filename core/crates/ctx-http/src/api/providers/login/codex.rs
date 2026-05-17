@@ -17,7 +17,7 @@ pub(crate) async fn get_codex_login(
     State(providers): State<ProvidersHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Path(id): Path<String>,
-) -> Result<Json<provider_accounts::CodexLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
+) -> Result<Json<CodexLoginStatusRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
     providers
         .codex_login_status_for_route(&id)

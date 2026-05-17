@@ -13,7 +13,7 @@ pub(crate) async fn get_gemini_login(
     State(providers): State<ProvidersHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Path(id): Path<String>,
-) -> Result<Json<provider_accounts::GeminiLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
+) -> Result<Json<GeminiLoginStatusRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
     providers
         .gemini_login_status_for_route(&id)

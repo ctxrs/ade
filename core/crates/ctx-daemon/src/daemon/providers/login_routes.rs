@@ -30,6 +30,123 @@ impl From<StartedLoginSession> for ProviderLoginStartRouteResponse {
     }
 }
 
+#[derive(Debug, Serialize)]
+pub struct AmpLoginStatusRouteResponse {
+    login_id: String,
+    #[serde(default)]
+    auth_url: Option<String>,
+    status: String,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+impl From<provider_accounts::AmpLoginStatus> for AmpLoginStatusRouteResponse {
+    fn from(status: provider_accounts::AmpLoginStatus) -> Self {
+        Self {
+            login_id: status.login_id,
+            auth_url: status.auth_url,
+            status: status.status,
+            error: status.error,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct GeminiLoginStatusRouteResponse {
+    login_id: String,
+    #[serde(default)]
+    auth_url: Option<String>,
+    status: String,
+    #[serde(default)]
+    account_id: Option<String>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+impl From<provider_accounts::GeminiLoginStatus> for GeminiLoginStatusRouteResponse {
+    fn from(status: provider_accounts::GeminiLoginStatus) -> Self {
+        Self {
+            login_id: status.login_id,
+            auth_url: status.auth_url,
+            status: status.status,
+            account_id: status.account_id,
+            error: status.error,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct QwenLoginStatusRouteResponse {
+    login_id: String,
+    #[serde(default)]
+    auth_url: Option<String>,
+    status: String,
+    #[serde(default)]
+    account_id: Option<String>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+impl From<provider_accounts::QwenLoginStatus> for QwenLoginStatusRouteResponse {
+    fn from(status: provider_accounts::QwenLoginStatus) -> Self {
+        Self {
+            login_id: status.login_id,
+            auth_url: status.auth_url,
+            status: status.status,
+            account_id: status.account_id,
+            error: status.error,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct MistralLoginStatusRouteResponse {
+    login_id: String,
+    #[serde(default)]
+    auth_url: Option<String>,
+    status: String,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+impl From<provider_accounts::MistralLoginStatus> for MistralLoginStatusRouteResponse {
+    fn from(status: provider_accounts::MistralLoginStatus) -> Self {
+        Self {
+            login_id: status.login_id,
+            auth_url: status.auth_url,
+            status: status.status,
+            error: status.error,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct KimiLoginStatusRouteResponse {
+    login_id: String,
+    status: String,
+    #[serde(default)]
+    account_id: Option<String>,
+    #[serde(default)]
+    auth_url: Option<String>,
+    #[serde(default)]
+    device_code: Option<String>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+impl From<provider_accounts::KimiLoginStatus> for KimiLoginStatusRouteResponse {
+    fn from(status: provider_accounts::KimiLoginStatus) -> Self {
+        Self {
+            login_id: status.login_id,
+            status: status.status,
+            account_id: status.account_id,
+            auth_url: status.auth_url,
+            device_code: status.device_code,
+            error: status.error,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderLoginRouteErrorKind {
     NotFound,
@@ -116,45 +233,50 @@ impl ProvidersHandle {
     pub async fn amp_login_status_for_route(
         &self,
         login_id: &str,
-    ) -> Result<provider_accounts::AmpLoginStatus, ProviderLoginRouteError> {
+    ) -> Result<AmpLoginStatusRouteResponse, ProviderLoginRouteError> {
         login_sessions::amp_login_status(&self.state, login_id)
             .await
+            .map(Into::into)
             .ok_or_else(login_not_found_route_error)
     }
 
     pub async fn gemini_login_status_for_route(
         &self,
         login_id: &str,
-    ) -> Result<provider_accounts::GeminiLoginStatus, ProviderLoginRouteError> {
+    ) -> Result<GeminiLoginStatusRouteResponse, ProviderLoginRouteError> {
         login_sessions::gemini_login_status(&self.state, login_id)
             .await
+            .map(Into::into)
             .ok_or_else(login_not_found_route_error)
     }
 
     pub async fn qwen_login_status_for_route(
         &self,
         login_id: &str,
-    ) -> Result<provider_accounts::QwenLoginStatus, ProviderLoginRouteError> {
+    ) -> Result<QwenLoginStatusRouteResponse, ProviderLoginRouteError> {
         login_sessions::qwen_login_status(&self.state, login_id)
             .await
+            .map(Into::into)
             .ok_or_else(login_not_found_route_error)
     }
 
     pub async fn mistral_login_status_for_route(
         &self,
         login_id: &str,
-    ) -> Result<provider_accounts::MistralLoginStatus, ProviderLoginRouteError> {
+    ) -> Result<MistralLoginStatusRouteResponse, ProviderLoginRouteError> {
         login_sessions::mistral_login_status(&self.state, login_id)
             .await
+            .map(Into::into)
             .ok_or_else(login_not_found_route_error)
     }
 
     pub async fn kimi_login_status_for_route(
         &self,
         login_id: &str,
-    ) -> Result<provider_accounts::KimiLoginStatus, ProviderLoginRouteError> {
+    ) -> Result<KimiLoginStatusRouteResponse, ProviderLoginRouteError> {
         login_sessions::kimi_login_status(&self.state, login_id)
             .await
+            .map(Into::into)
             .ok_or_else(login_not_found_route_error)
     }
 }
@@ -224,5 +346,67 @@ mod tests {
             Some("https://example.test/auth")
         );
         assert_eq!(payload["device_code"].as_str(), Some("CODE-123"));
+    }
+
+    #[test]
+    fn provider_login_status_route_responses_match_provider_account_wire_shape() {
+        let amp = provider_accounts::AmpLoginStatus {
+            login_id: "amp-login".to_string(),
+            auth_url: None,
+            status: "pending".to_string(),
+            error: None,
+        };
+        assert_eq!(
+            serde_json::to_value(AmpLoginStatusRouteResponse::from(amp.clone())).unwrap(),
+            serde_json::to_value(amp).unwrap()
+        );
+
+        let gemini = provider_accounts::GeminiLoginStatus {
+            login_id: "gemini-login".to_string(),
+            auth_url: None,
+            status: "complete".to_string(),
+            account_id: None,
+            error: None,
+        };
+        assert_eq!(
+            serde_json::to_value(GeminiLoginStatusRouteResponse::from(gemini.clone())).unwrap(),
+            serde_json::to_value(gemini).unwrap()
+        );
+
+        let qwen = provider_accounts::QwenLoginStatus {
+            login_id: "qwen-login".to_string(),
+            auth_url: None,
+            status: "error".to_string(),
+            account_id: None,
+            error: Some("failed".to_string()),
+        };
+        assert_eq!(
+            serde_json::to_value(QwenLoginStatusRouteResponse::from(qwen.clone())).unwrap(),
+            serde_json::to_value(qwen).unwrap()
+        );
+
+        let mistral = provider_accounts::MistralLoginStatus {
+            login_id: "mistral-login".to_string(),
+            auth_url: None,
+            status: "pending".to_string(),
+            error: None,
+        };
+        assert_eq!(
+            serde_json::to_value(MistralLoginStatusRouteResponse::from(mistral.clone())).unwrap(),
+            serde_json::to_value(mistral).unwrap()
+        );
+
+        let kimi = provider_accounts::KimiLoginStatus {
+            login_id: "kimi-login".to_string(),
+            status: "pending".to_string(),
+            account_id: None,
+            auth_url: None,
+            device_code: None,
+            error: None,
+        };
+        assert_eq!(
+            serde_json::to_value(KimiLoginStatusRouteResponse::from(kimi.clone())).unwrap(),
+            serde_json::to_value(kimi).unwrap()
+        );
     }
 }

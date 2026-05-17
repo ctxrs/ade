@@ -17,7 +17,7 @@ pub(crate) async fn get_claude_login(
     State(providers): State<ProvidersHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Path(id): Path<String>,
-) -> Result<Json<provider_accounts::ClaudeLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
+) -> Result<Json<ClaudeLoginStatusRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
     providers
         .claude_login_status_for_route(&id)

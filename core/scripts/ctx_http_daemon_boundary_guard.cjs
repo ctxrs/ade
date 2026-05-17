@@ -274,6 +274,13 @@ const claudeSetupTokenLoginApiRoots = [
   "core/crates/ctx-http/src/api/providers/login/claude/",
 ];
 
+const providerLoginStatusApiRoots = [
+  ...managedBrowserLoginApiRoots,
+  ...cursorProcessLoginApiRoots,
+  ...codexAppServerLoginApiRoots,
+  ...claudeSetupTokenLoginApiRoots,
+];
+
 const executionApiRoots = [
   "core/crates/ctx-http/src/api/execution.rs",
   "core/crates/ctx-http/src/api/execution/",
@@ -1937,6 +1944,21 @@ const CLAUDE_SETUP_TOKEN_LOGIN_API_ORCHESTRATION_PATTERNS = [
   {
     name: "Claude setup-token login API finalizes Claude accounts directly",
     regex: /\badd_claude_account_for_login\s*\(/,
+  },
+];
+
+const PROVIDER_LOGIN_STATUS_ROUTE_DTO_PATTERNS = [
+  {
+    name: "provider login API exposes provider-account login status DTOs",
+    regex:
+      /\b(?:provider_accounts|ctx_provider_accounts)::(?:Codex|Claude|Cursor|Amp|Gemini|Qwen|Mistral|Kimi)LoginStatus\b|\buse\s+ctx_provider_accounts(?:::|\s*::\s*\{)[^;]*(?:Codex|Claude|Cursor|Amp|Gemini|Qwen|Mistral|Kimi)LoginStatus\b|\b(?:Json\s*<\s*)?(?:Codex|Claude|Cursor|Amp|Gemini|Qwen|Mistral|Kimi)LoginStatus\b/,
+  },
+];
+
+const PROVIDER_PRELUDE_ROUTE_DTO_PATTERNS = [
+  {
+    name: "provider API prelude exposes provider-account module",
+    regex: /\buse\s+ctx_provider_accounts\s+as\s+provider_accounts\s*;/,
   },
 ];
 
@@ -4459,6 +4481,12 @@ function apiPatternsForPath(relativePath) {
   if (claudeSetupTokenLoginApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...CLAUDE_SETUP_TOKEN_LOGIN_API_ORCHESTRATION_PATTERNS);
   }
+  if (providerLoginStatusApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...PROVIDER_LOGIN_STATUS_ROUTE_DTO_PATTERNS);
+  }
+  if (relativePath === "core/crates/ctx-http/src/api/providers.rs") {
+    patterns.push(...PROVIDER_PRELUDE_ROUTE_DTO_PATTERNS);
+  }
   if (executionApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...EXECUTION_API_ORCHESTRATION_PATTERNS);
   }
@@ -5624,6 +5652,8 @@ module.exports = {
   CURSOR_PROCESS_LOGIN_API_ORCHESTRATION_PATTERNS,
   CODEX_APP_SERVER_LOGIN_API_ORCHESTRATION_PATTERNS,
   CLAUDE_SETUP_TOKEN_LOGIN_API_ORCHESTRATION_PATTERNS,
+  PROVIDER_LOGIN_STATUS_ROUTE_DTO_PATTERNS,
+  PROVIDER_PRELUDE_ROUTE_DTO_PATTERNS,
   PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS,
   PROVIDER_HARNESS_CONFIG_API_PATTERNS,
   PROVIDER_HARNESS_ENDPOINT_API_PATTERNS,

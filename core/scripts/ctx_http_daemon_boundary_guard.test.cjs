@@ -39,6 +39,8 @@ const {
   CURSOR_PROCESS_LOGIN_API_ORCHESTRATION_PATTERNS,
   CODEX_APP_SERVER_LOGIN_API_ORCHESTRATION_PATTERNS,
   CLAUDE_SETUP_TOKEN_LOGIN_API_ORCHESTRATION_PATTERNS,
+  PROVIDER_LOGIN_STATUS_ROUTE_DTO_PATTERNS,
+  PROVIDER_PRELUDE_ROUTE_DTO_PATTERNS,
   MERGE_QUEUE_ISOLATION_TEST_STORE_ACCESS_PATTERNS,
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
@@ -3876,6 +3878,92 @@ test("daemon boundary guard scopes managed browser login orchestration patterns"
       patterns: MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS,
     }),
     [],
+  );
+});
+
+test("daemon boundary guard rejects provider-account login status DTOs in HTTP login routes", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/providers/login/browser/gemini.rs",
+    contents: `
+      use ctx_provider_accounts::GeminiLoginStatus;
+      use ctx_provider_accounts::{AmpLoginStatus, QwenLoginStatus};
+      type GeminiStatus = provider_accounts::GeminiLoginStatus;
+      async fn get_status() -> Result<Json<GeminiLoginStatus>, StatusCode> {}
+      let _cursor: Option<ctx_provider_accounts::CursorLoginStatus> = None;
+      let _codex: Option<provider_accounts::CodexLoginStatus> = None;
+    `,
+    patterns: PROVIDER_LOGIN_STATUS_ROUTE_DTO_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "provider login API exposes provider-account login status DTOs",
+      "provider login API exposes provider-account login status DTOs",
+      "provider login API exposes provider-account login status DTOs",
+      "provider login API exposes provider-account login status DTOs",
+      "provider login API exposes provider-account login status DTOs",
+      "provider login API exposes provider-account login status DTOs",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes provider login status DTO bans", () => {
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers/login/browser/gemini.rs").includes(
+      PROVIDER_LOGIN_STATUS_ROUTE_DTO_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers/login/claude/session.rs").includes(
+      PROVIDER_LOGIN_STATUS_ROUTE_DTO_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers/cursor_login.rs").includes(
+      PROVIDER_LOGIN_STATUS_ROUTE_DTO_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers/accounts/codex.rs").includes(
+      PROVIDER_LOGIN_STATUS_ROUTE_DTO_PATTERNS[0],
+    ),
+    false,
+  );
+  assert.deepEqual(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/providers/login/browser/gemini.rs",
+      contents: `
+        let _status: Option<GeminiLoginStatusRouteResponse> = None;
+        providers.gemini_login_status_for_route(&id).await?;
+      `,
+      patterns: PROVIDER_LOGIN_STATUS_ROUTE_DTO_PATTERNS,
+    }),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects provider-account prelude leaks", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/providers.rs",
+    contents: `
+      use ctx_provider_accounts as provider_accounts;
+    `,
+    patterns: PROVIDER_PRELUDE_ROUTE_DTO_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    ["provider API prelude exposes provider-account module"],
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers.rs").includes(
+      PROVIDER_PRELUDE_ROUTE_DTO_PATTERNS[0],
+    ),
+    true,
   );
 });
 
