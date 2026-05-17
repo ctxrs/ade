@@ -200,6 +200,11 @@ const providerInstallApiRoots = [
   "core/crates/ctx-http/src/api/provider_launch/handlers/installs/",
 ];
 
+const providerAuthImportApiRoots = [
+  "core/crates/ctx-http/src/api/providers/imports.rs",
+  "core/crates/ctx-http/src/api/providers/types/auth_import.rs",
+];
+
 const providerAccountsApiRoots = [
   "core/crates/ctx-http/src/api/providers/accounts.rs",
   "core/crates/ctx-http/src/api/providers/accounts/",
@@ -1378,6 +1383,36 @@ const PROVIDER_INSTALL_API_ORCHESTRATION_PATTERNS = [
   {
     name: "provider install API parses install ids directly",
     regex: /\buuid::Uuid::parse_str\s*\(/,
+  },
+];
+
+const PROVIDER_AUTH_IMPORT_API_ORCHESTRATION_PATTERNS = [
+  {
+    name: "provider auth import API imports auth-import domain directly",
+    regex: /\bctx_provider_auth_import\b/,
+  },
+  {
+    name: "provider auth import API owns old route DTOs",
+    regex:
+      /\b(?:ProviderAuthImportCandidatesResponse|ProviderAuthImportProfilesResponse|ProviderAuthImportReq|ProviderAuthImportResponse)\b/,
+  },
+  {
+    name: "provider auth import API calls candidates free function directly",
+    regex:
+      /\bctx_daemon::daemon::providers::list_provider_auth_import_candidates\s*\(/,
+  },
+  {
+    name: "provider auth import API calls broad auth-import facades",
+    regex:
+      /\.(?:list_provider_auth_import_profiles|import_provider_auth_candidates)\s*\(/,
+  },
+  {
+    name: "provider auth import API redacts errors locally",
+    regex: /\blogs\s*::\s*redact_sensitive\s*\(/,
+  },
+  {
+    name: "provider auth import API stringifies lower-level errors locally",
+    regex: /\b(?:e|err)\s*\.to_string\s*\(/,
   },
 ];
 
@@ -4077,6 +4112,9 @@ function apiPatternsForPath(relativePath) {
   if (providerInstallApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...PROVIDER_INSTALL_API_ORCHESTRATION_PATTERNS);
   }
+  if (providerAuthImportApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...PROVIDER_AUTH_IMPORT_API_ORCHESTRATION_PATTERNS);
+  }
   if (providerAccountsApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS);
   }
@@ -4281,6 +4319,13 @@ function providerHarnessEndpointApiPatternsForPath(relativePath) {
 function providerInstallApiPatternsForPath(relativePath) {
   if (providerInstallApiRoots.some((root) => relativePath.startsWith(root))) {
     return PROVIDER_INSTALL_API_ORCHESTRATION_PATTERNS;
+  }
+  return [];
+}
+
+function providerAuthImportApiPatternsForPath(relativePath) {
+  if (providerAuthImportApiRoots.some((root) => relativePath.startsWith(root))) {
+    return PROVIDER_AUTH_IMPORT_API_ORCHESTRATION_PATTERNS;
   }
   return [];
 }
@@ -5211,6 +5256,7 @@ module.exports = {
   PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS,
   PROVIDER_HARNESS_ENDPOINT_API_PATTERNS,
   PROVIDER_INSTALL_API_ORCHESTRATION_PATTERNS,
+  PROVIDER_AUTH_IMPORT_API_ORCHESTRATION_PATTERNS,
   PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS,
   SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS,
   SESSION_VCS_API_ORCHESTRATION_PATTERNS,
@@ -5285,6 +5331,7 @@ module.exports = {
   migratedTestPatternsForPath,
   mobileAccessStoreDtoApiPatternsForPath,
   mobileStorePatternsForPath,
+  providerAuthImportApiPatternsForPath,
   providerAuthGlobalIdFixturePatternsForPath,
   providerHarnessEndpointApiPatternsForPath,
   providerInstallApiPatternsForPath,

@@ -1,9 +1,54 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use ctx_observability::logs;
 use ctx_provider_auth_import as provider_auth_import;
+use serde::{Deserialize, Serialize};
 
-use crate::daemon::DaemonState;
+use crate::daemon::{DaemonState, ProvidersHandle};
+
+#[derive(Debug, Serialize)]
+pub struct ProviderAuthImportCandidatesRouteResponse {
+    pub candidates: Vec<provider_auth_import::ProviderAuthImportCandidate>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProviderAuthImportProfilesRouteResponse {
+    pub profiles: Vec<provider_auth_import::ProviderImportedAuthProfile>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ProviderAuthImportRouteRequest {
+    pub candidate_ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProviderAuthImportRouteResponse {
+    pub results: Vec<provider_auth_import::ProviderAuthImportResult>,
+}
+
+#[derive(Debug)]
+pub struct ProviderAuthImportRouteError {
+    message: String,
+}
+
+impl ProviderAuthImportRouteError {
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    fn redacted(error: anyhow::Error) -> Self {
+        Self {
+            message: logs::redact_sensitive(&error.to_string()),
+        }
+    }
+
+    fn raw(error: anyhow::Error) -> Self {
+        Self {
+            message: error.to_string(),
+        }
+    }
+}
 
 pub async fn list_provider_auth_import_candidates(
 ) -> anyhow::Result<Vec<provider_auth_import::ProviderAuthImportCandidate>> {
@@ -66,4 +111,34 @@ pub fn provider_auth_import_result_requires_restart(
         result.status.as_str(),
         "imported" | "updated" | "already_imported"
     )
+}
+
+impl ProvidersHandle {
+    pub async fn list_provider_auth_import_candidates_for_route(
+        &self,
+    ) -> Result<ProviderAuthImportCandidatesRouteResponse, ProviderAuthImportRouteError> {
+        let candidates = list_provider_auth_import_candidates()
+            .await
+            .map_err(ProviderAuthImportRouteError::redacted)?;
+        Ok(ProviderAuthImportCandidatesRouteResponse { candidates })
+    }
+
+    pub async fn list_provider_auth_import_profiles_for_route(
+        &self,
+    ) -> Result<ProviderAuthImportProfilesRouteResponse, ProviderAuthImportRouteError> {
+        let profiles = list_provider_auth_import_profiles(&self.state)
+            .await
+            .map_err(ProviderAuthImportRouteError::raw)?;
+        Ok(ProviderAuthImportProfilesRouteResponse { profiles })
+    }
+
+    pub async fn import_provider_auth_candidates_for_route(
+        &self,
+        request: ProviderAuthImportRouteRequest,
+    ) -> Result<ProviderAuthImportRouteResponse, ProviderAuthImportRouteError> {
+        let results = import_provider_auth_candidates(&self.state, request.candidate_ids)
+            .await
+            .map_err(ProviderAuthImportRouteError::raw)?;
+        Ok(ProviderAuthImportRouteResponse { results })
+    }
 }

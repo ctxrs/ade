@@ -14,6 +14,10 @@ use url::Url;
 
 use super::errors::ApiErrorResp;
 use ctx_core::ids::WorkspaceId;
+use ctx_daemon::daemon::providers::{
+    ProviderAuthImportCandidatesRouteResponse, ProviderAuthImportProfilesRouteResponse,
+    ProviderAuthImportRouteError, ProviderAuthImportRouteRequest, ProviderAuthImportRouteResponse,
+};
 use ctx_daemon::daemon::ProvidersHandle;
 #[cfg(test)]
 use ctx_daemon::test_support::TestDaemon;
