@@ -1,82 +1,50 @@
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
-use ctx_observability::logs;
 
-use super::types::{
-    BeginUpdateDrainReq, BeginUpdateDrainResp, ReleaseUpdateDrainReq, ReleaseUpdateDrainResp,
-};
 use crate::api::errors::ApiErrorResp;
-use ctx_daemon::daemon::{maintenance as daemon_maintenance, ExecutionHandle};
+use ctx_daemon::daemon::{
+    BeginUpdateDrainRouteRequest, ExecutionHandle, MaintenanceRouteError,
+    MaintenanceRouteErrorKind, ReleaseUpdateDrainRouteRequest,
+};
 
 pub(in crate::api) async fn begin_update_drain(
     State(execution): State<ExecutionHandle>,
-    Json(req): Json<BeginUpdateDrainReq>,
-) -> Result<Json<BeginUpdateDrainResp>, (StatusCode, Json<ApiErrorResp>)> {
-    if !req.confirm {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "confirm required".to_string(),
-            }),
-        ));
-    }
-    let reason = req
-        .reason
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "daemon_update".to_string());
-    let owner = req
-        .owner
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "unknown".to_string());
-    let activity = execution
-        .begin_update_drain(reason, owner)
+    Json(req): Json<BeginUpdateDrainRouteRequest>,
+) -> Result<Json<ctx_daemon::daemon::BeginUpdateDrainRouteResult>, (StatusCode, Json<ApiErrorResp>)>
+{
+    let result = execution
+        .begin_update_drain_for_route(req)
         .await
-        .map_err(begin_update_drain_error)?;
-    Ok(Json(BeginUpdateDrainResp {
-        acquired: true,
-        activity,
-    }))
+        .map_err(maintenance_route_error)?;
+    Ok(Json(result))
 }
 
 pub(in crate::api) async fn release_update_drain(
     State(execution): State<ExecutionHandle>,
-    Json(req): Json<ReleaseUpdateDrainReq>,
-) -> Result<Json<ReleaseUpdateDrainResp>, (StatusCode, Json<ApiErrorResp>)> {
-    if !req.confirm {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "confirm required".to_string(),
-            }),
-        ));
-    }
-    let released = execution.release_update_drain().await;
-    Ok(Json(ReleaseUpdateDrainResp { released }))
+    Json(req): Json<ReleaseUpdateDrainRouteRequest>,
+) -> Result<Json<ctx_daemon::daemon::ReleaseUpdateDrainRouteResult>, (StatusCode, Json<ApiErrorResp>)>
+{
+    let result = execution
+        .release_update_drain_for_route(req)
+        .await
+        .map_err(maintenance_route_error)?;
+    Ok(Json(result))
 }
 
-fn begin_update_drain_error(
-    error: daemon_maintenance::BeginUpdateDrainError,
+pub(super) fn maintenance_route_error(
+    error: MaintenanceRouteError,
 ) -> (StatusCode, Json<ApiErrorResp>) {
-    match error {
-        daemon_maintenance::BeginUpdateDrainError::AlreadyActive => (
-            StatusCode::CONFLICT,
-            Json(ApiErrorResp {
-                error: "daemon update drain already active".to_string(),
-            }),
-        ),
-        daemon_maintenance::BeginUpdateDrainError::ActivityUnavailable(error) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&error.to_string()),
-            }),
-        ),
-        daemon_maintenance::BeginUpdateDrainError::Busy => (
-            StatusCode::CONFLICT,
-            Json(ApiErrorResp {
-                error: "daemon has queued or running turns; update drain was not acquired"
-                    .to_string(),
-            }),
-        ),
-    }
+    let status = match error.kind() {
+        MaintenanceRouteErrorKind::BadRequest => StatusCode::BAD_REQUEST,
+        MaintenanceRouteErrorKind::Conflict => StatusCode::CONFLICT,
+        MaintenanceRouteErrorKind::Forbidden => StatusCode::FORBIDDEN,
+        MaintenanceRouteErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    (
+        status,
+        Json(ApiErrorResp {
+            error: error.message().to_string(),
+        }),
+    )
 }

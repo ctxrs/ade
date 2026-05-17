@@ -25,6 +25,7 @@ const {
   TELEMETRY_API_ORCHESTRATION_PATTERNS,
   LOGS_API_ORCHESTRATION_PATTERNS,
   UPDATE_API_ORCHESTRATION_PATTERNS,
+  UPDATE_DRAIN_API_ORCHESTRATION_PATTERNS,
   ROUTE_FILE_DOWNLOAD_API_PATTERNS,
   WORKSPACE_CONFIG_ROUTE_CONTEXT_PATTERNS,
   WORKSPACE_EXECUTION_CONFIG_API_PATTERNS,
@@ -143,6 +144,7 @@ const {
   subscriptionAccountsApiStorePatternsForPath,
   taskLifecycleStorePatternsForPath,
   terminalWorkspaceStreamStorePatternsForPath,
+  updateDrainApiPatternsForPath,
   updateRouteFixturePatternsForPath,
   worktreeArchiveStorePatternsForPath,
   workspaceMergeQueueConfigStorePatternsForPath,
@@ -3318,6 +3320,68 @@ test("daemon boundary guard scopes settings and telemetry API orchestration root
       SETTINGS_API_ORCHESTRATION_PATTERNS[0],
     ),
     false,
+  );
+});
+
+test("daemon boundary guard rejects update-drain API maintenance orchestration", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/updates/drain/lease.rs",
+    contents: `
+      use ctx_daemon::daemon::maintenance;
+      async fn helper(execution: ExecutionHandle, state: CoreHandle, error: anyhow::Error) {
+        let _ = execution.begin_update_drain("daemon_update".to_string(), "unknown".to_string()).await;
+        let _ = execution.release_update_drain().await;
+        let _ = execution.request_daemon_shutdown("desktop_quit".to_string()).await;
+        let _ = state.local_shutdown_token();
+        let _ = local_shutdown_token_authorized(&headers);
+        let _ = logs::redact_sensitive(&error.to_string());
+        let _ = begin_update_drain_error(BeginUpdateDrainError::Busy);
+        let _ = daemon_shutdown_error(DaemonShutdownError::Reconcile(error));
+        let _ = internal_error_response(error);
+      }
+    `,
+    patterns: UPDATE_DRAIN_API_ORCHESTRATION_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "update drain API imports daemon maintenance internals",
+      "update drain API references low-level maintenance errors",
+      "update drain API references low-level maintenance errors",
+      "update drain API calls low-level daemon maintenance methods",
+      "update drain API calls low-level daemon maintenance methods",
+      "update drain API calls low-level daemon maintenance methods",
+      "update drain API authorizes shutdown token locally",
+      "update drain API authorizes shutdown token locally",
+      "update drain API redacts maintenance errors locally",
+      "update drain API owns maintenance default values",
+      "update drain API owns maintenance default values",
+      "update drain API owns maintenance error mapping helpers",
+      "update drain API owns maintenance error mapping helpers",
+      "update drain API owns maintenance error mapping helpers",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes update-drain API orchestration roots", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/src/api/updates/drain.rs",
+    "core/crates/ctx-http/src/api/updates/drain/lease.rs",
+    "core/crates/ctx-http/src/api/updates/drain/shutdown.rs",
+  ]) {
+    assert.deepEqual(
+      updateDrainApiPatternsForPath(filePath),
+      UPDATE_DRAIN_API_ORCHESTRATION_PATTERNS,
+    );
+    assert.equal(
+      apiPatternsForPath(filePath).includes(UPDATE_DRAIN_API_ORCHESTRATION_PATTERNS[0]),
+      true,
+    );
+  }
+  assert.deepEqual(
+    updateDrainApiPatternsForPath("core/crates/ctx-http/src/api/updates/check.rs"),
+    [],
   );
 });
 

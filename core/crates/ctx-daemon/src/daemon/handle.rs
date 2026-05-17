@@ -116,10 +116,6 @@ impl CoreHandle {
         self.auth_token().is_some()
     }
 
-    pub fn local_shutdown_token(&self) -> Option<&str> {
-        self.state.core.local_shutdown_token.as_deref()
-    }
-
     pub fn subscribe_shutdown(&self) -> tokio::sync::broadcast::Receiver<()> {
         self.state.core.shutdown_tx.subscribe()
     }

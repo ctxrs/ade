@@ -88,6 +88,11 @@ pub use health::{DaemonHealthSnapshot, HealthCompatibility, HealthSnapshotError}
 pub use lifecycle::spawn_deferred_daemon_shutdown;
 #[cfg(test)]
 pub use listener::daemon_public_base_url_from_env;
+pub use maintenance::{
+    BeginUpdateDrainRouteRequest, BeginUpdateDrainRouteResult, MaintenanceRouteError,
+    MaintenanceRouteErrorKind, ReleaseUpdateDrainRouteRequest, ReleaseUpdateDrainRouteResult,
+    ShutdownDaemonRouteRequest, ShutdownDaemonRouteResult,
+};
 pub use mcp_auth::issue_provider_session_mcp_token;
 pub use mcp_auth::{
     emit_mcp_token_denied, issue_provider_session_mcp_token_with_capabilities,

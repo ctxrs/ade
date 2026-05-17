@@ -249,6 +249,11 @@ const updateApiRoots = [
   "core/crates/ctx-http/src/api/updates/appimage/",
 ];
 
+const updateDrainApiRoots = [
+  "core/crates/ctx-http/src/api/updates/drain.rs",
+  "core/crates/ctx-http/src/api/updates/drain/",
+];
+
 const workspaceRegistrationConfigApiRoots = [
   "core/crates/ctx-http/src/api/workspaces/registry/create.rs",
   "core/crates/ctx-http/src/api/workspaces/management.rs",
@@ -1576,6 +1581,37 @@ const UPDATE_API_ORCHESTRATION_PATTERNS = [
     name: "update API owns update response DTO assembly",
     regex:
       /\b(?:UpdateCheckResp|UpdateActivityResp|DownloadAppImageReq|DownloadAppImageResp|ApplyAppImageReq|ApplyAppImageResp)\b/,
+  },
+];
+
+const UPDATE_DRAIN_API_ORCHESTRATION_PATTERNS = [
+  {
+    name: "update drain API imports daemon maintenance internals",
+    regex: /\bctx_daemon\s*::\s*daemon\s*::\s*maintenance\b/,
+  },
+  {
+    name: "update drain API references low-level maintenance errors",
+    regex: /\b(?:BeginUpdateDrainError|DaemonShutdownError|MaintenanceDrainError)\b/,
+  },
+  {
+    name: "update drain API calls low-level daemon maintenance methods",
+    regex: /\.(?:begin_update_drain|release_update_drain|request_daemon_shutdown)\s*\(/,
+  },
+  {
+    name: "update drain API authorizes shutdown token locally",
+    regex: /\blocal_shutdown_token_authorized\s*\(|\.local_shutdown_token\b|\bCTX_LOCAL_DAEMON_SHUTDOWN_TOKEN\b/,
+  },
+  {
+    name: "update drain API redacts maintenance errors locally",
+    regex: /\blogs::redact_sensitive\s*\(/,
+  },
+  {
+    name: "update drain API owns maintenance default values",
+    regex: /\b(?:daemon_update|desktop_quit|unknown)\b/,
+  },
+  {
+    name: "update drain API owns maintenance error mapping helpers",
+    regex: /\b(?:begin_update_drain_error|daemon_shutdown_error|internal_error_response)\b/,
   },
 ];
 
@@ -3876,6 +3912,9 @@ function apiPatternsForPath(relativePath) {
   if (updateApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...UPDATE_API_ORCHESTRATION_PATTERNS);
   }
+  if (updateDrainApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...UPDATE_DRAIN_API_ORCHESTRATION_PATTERNS);
+  }
   if (routeFileDownloadApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...ROUTE_FILE_DOWNLOAD_API_PATTERNS);
   }
@@ -4004,6 +4043,13 @@ function mobileAccessStoreDtoApiPatternsForPath(relativePath) {
 function routeFileDownloadApiPatternsForPath(relativePath) {
   if (routeFileDownloadApiRoots.some((root) => relativePath.startsWith(root))) {
     return ROUTE_FILE_DOWNLOAD_API_PATTERNS;
+  }
+  return [];
+}
+
+function updateDrainApiPatternsForPath(relativePath) {
+  if (updateDrainApiRoots.some((root) => relativePath.startsWith(root))) {
+    return UPDATE_DRAIN_API_ORCHESTRATION_PATTERNS;
   }
   return [];
 }
@@ -4895,6 +4941,7 @@ module.exports = {
   TELEMETRY_API_ORCHESTRATION_PATTERNS,
   LOGS_API_ORCHESTRATION_PATTERNS,
   UPDATE_API_ORCHESTRATION_PATTERNS,
+  UPDATE_DRAIN_API_ORCHESTRATION_PATTERNS,
   ROUTE_FILE_DOWNLOAD_API_PATTERNS,
   WORKSPACE_CONFIG_ROUTE_CONTEXT_PATTERNS,
   WORKSPACE_EXECUTION_CONFIG_API_PATTERNS,
@@ -5013,6 +5060,7 @@ module.exports = {
   subscriptionAccountsApiStorePatternsForPath,
   taskLifecycleStorePatternsForPath,
   terminalWorkspaceStreamStorePatternsForPath,
+  updateDrainApiPatternsForPath,
   updateRouteFixturePatternsForPath,
   worktreeArchiveStorePatternsForPath,
   workspaceMergeQueueConfigStorePatternsForPath,
