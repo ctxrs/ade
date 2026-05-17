@@ -96,7 +96,7 @@ async fn live_route_tags_head_batches_as_live() {
         workspace_id,
         WorkspaceStreamEventRoutePlan::HeadDelta {
             snapshot_rev: 11,
-            delta: partial_delta(session_id),
+            delta: Box::new(partial_delta(session_id)),
             lane: WorkspaceStreamHeadLane::Foreground,
         },
         &mut runtime,

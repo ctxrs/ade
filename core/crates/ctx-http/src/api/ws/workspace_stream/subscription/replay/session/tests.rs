@@ -90,7 +90,7 @@ async fn replay_route_plan_tags_head_batches_as_replay() {
         &sinks,
         WorkspaceStreamEventRoutePlan::HeadDelta {
             snapshot_rev: 21,
-            delta: head_delta(session_id),
+            delta: Box::new(head_delta(session_id)),
             lane: WorkspaceStreamHeadLane::Foreground,
         },
     )
