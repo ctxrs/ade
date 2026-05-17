@@ -72,9 +72,11 @@ pub use model_preferences::{
 pub use retry::retry_global_index_write;
 pub use route_config::{
     CreateWorkspaceRequest, UpdateWorkspaceExecutionConfigRequest,
-    UpdateWorkspacePrimaryBranchRequest, WorkspaceConfigUpdateResult,
-    WorkspaceExecutionConfigSnapshot, WorkspacePrimaryBranchSnapshot, WorkspaceRouteError,
-    WorkspaceRouteErrorKind,
+    UpdateWorkspaceMergeQueueConfigRequest, UpdateWorkspacePrimaryBranchRequest,
+    UpdateWorktreeBootstrapConfigRequest, WorkspaceConfigUpdateResult,
+    WorkspaceExecutionConfigSnapshot, WorkspaceMergeQueueConfigRouteResponse,
+    WorkspacePrimaryBranchSnapshot, WorkspaceRouteError, WorkspaceRouteErrorKind,
+    WorkspaceWorktreeBootstrapConfigRouteResponse,
 };
 pub use route_contract::{
     CreateWorkspaceAttachmentRouteRequest, DeleteWorkspaceAttachmentRouteRequest,
@@ -213,39 +215,6 @@ impl WorkspacesHandle {
         Ok(())
     }
 
-    pub async fn load_workspace_merge_queue_config(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> Result<workspace_config::MergeQueueConfig, WorkspaceStoreAccessError> {
-        let store = self.existing_workspace_store(workspace_id).await?;
-        workspace_config::load_merge_queue_config(&store)
-            .await
-            .map_err(WorkspaceStoreAccessError::Unavailable)
-    }
-
-    pub async fn update_workspace_merge_queue_config(
-        &self,
-        workspace_id: WorkspaceId,
-        update: workspace_config::MergeQueueConfigUpdate,
-    ) -> anyhow::Result<()> {
-        let store = self.store_for_workspace(workspace_id).await?;
-        let was_enabled = workspace_config::load_merge_queue_config(&store)
-            .await?
-            .enabled;
-        workspace_config::update_merge_queue_config(&store, update).await?;
-        let now_enabled = workspace_config::load_merge_queue_config(&store)
-            .await?
-            .enabled;
-        if !was_enabled && now_enabled {
-            self.schedule_workspace_merge_queue_if_enabled_and_queued(workspace_id)
-                .await?;
-        } else if was_enabled && !now_enabled {
-            self.cancel_queued_entries_for_disabled_workspace(&store, workspace_id)
-                .await?;
-        }
-        Ok(())
-    }
-
     pub async fn list_merge_queue_entries_for_route(
         &self,
         workspace_id: WorkspaceId,
@@ -327,25 +296,6 @@ impl WorkspacesHandle {
     ) -> anyhow::Result<()> {
         let store = self.store_for_workspace(workspace_id).await?;
         workspace_config::update_execution_config(&store, update).await
-    }
-
-    pub async fn load_worktree_bootstrap_config(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> Result<Option<workspace_config::WorktreeBootstrapConfig>, WorkspaceStoreAccessError> {
-        let store = self.existing_workspace_store(workspace_id).await?;
-        workspace_config::load_worktree_bootstrap_config(&store)
-            .await
-            .map_err(WorkspaceStoreAccessError::Unavailable)
-    }
-
-    pub async fn update_worktree_bootstrap_config(
-        &self,
-        workspace_id: WorkspaceId,
-        update: workspace_config::WorktreeBootstrapConfigUpdate,
-    ) -> anyhow::Result<()> {
-        let store = self.store_for_workspace(workspace_id).await?;
-        workspace_config::update_worktree_bootstrap_config(&store, update).await
     }
 
     pub async fn load_agent_system_prompt_append(

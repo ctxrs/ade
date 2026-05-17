@@ -30,6 +30,7 @@ const {
   RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS,
   WORKSPACE_CONFIG_ROUTE_CONTEXT_PATTERNS,
   WORKSPACE_EXECUTION_CONFIG_API_PATTERNS,
+  WORKSPACE_MANAGEMENT_CONFIG_API_PATTERNS,
   WORKSPACE_ROUTE_CONTRACT_API_PATTERNS,
   WORKSPACE_REGISTRATION_CONFIG_API_PATTERNS,
   IMAGE_ATTACHMENTS_TEST_STORE_ACCESS_PATTERNS,
@@ -6509,14 +6510,14 @@ test("daemon boundary guard rejects workspace config route context backdoors", (
     patterns: apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/management.rs"),
   });
 
-  assert.deepEqual(
-    violations.map((violation) => violation.name),
-    [
-      "workspace config API requires workspace context in HTTP",
-      "workspace config API loads workspace in HTTP",
-      "workspace config API fetches workspace directly in HTTP",
-    ],
-  );
+  const names = violations.map((violation) => violation.name);
+  for (const expected of [
+    "workspace config API requires workspace context in HTTP",
+    "workspace config API loads workspace in HTTP",
+    "workspace config API fetches workspace directly in HTTP",
+  ]) {
+    assert(names.includes(expected), `expected ${expected}; saw ${names.join(", ")}`);
+  }
 });
 
 test("daemon boundary guard scopes workspace registration/config API roots", () => {
@@ -6553,6 +6554,91 @@ test("daemon boundary guard scopes workspace registration/config API roots", () 
   assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/management/config_ops/merge_queue.rs").includes(
       WORKSPACE_EXECUTION_CONFIG_API_PATTERNS[0],
+    ),
+    false,
+  );
+});
+
+test("daemon boundary guard rejects workspace management config backdoors", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/workspaces/management/worktree_bootstrap.rs",
+    contents: `
+      use ctx_core::models::Workspace;
+      use ctx_workspace_config as workspace_config;
+
+      pub(super) struct WorkspaceRequestContext;
+      pub(super) struct UpdateWorkspaceConfigResp;
+      pub(super) struct UpdateMergeQueueConfigReq;
+      pub(super) struct WorkspaceMergeQueueConfigResp;
+      pub(super) struct UpdateWorktreeBootstrapReq;
+      pub(super) struct WorkspaceWorktreeBootstrapConfigResp;
+
+      async fn update(workspaces: WorkspacesHandle, id: String) {
+        let ctx = require_workspace_ctx(&workspaces, &id).await?;
+        let _workspace = require_workspace(&workspaces, ctx.workspace_id).await?;
+        workspaces.update_workspace_merge_queue_config(
+          ctx.workspace_id,
+          workspace_config::MergeQueueConfigUpdate {
+            enabled: true,
+            target_branch: None,
+            verify_commands: Vec::new(),
+            push_on_success: None,
+            push_remote: None,
+            push_branch: None,
+            canonical_sync: None,
+          },
+        ).await?;
+        workspaces.load_worktree_bootstrap_config(ctx.workspace_id).await?;
+        workspaces.update_worktree_bootstrap_config(
+          ctx.workspace_id,
+          workspace_config::WorktreeBootstrapConfigUpdate::default(),
+        ).await?;
+      }
+    `,
+    patterns: apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/management/worktree_bootstrap.rs"),
+  });
+
+  const names = new Set(violations.map((violation) => violation.name));
+  for (const expected of [
+    "workspace management config API owns workspace context lookup",
+    "workspace management config API exposes raw Workspace",
+    "workspace management config API owns local route DTOs",
+    "workspace management config API builds raw workspace config updates",
+    "workspace management config API calls raw config facade methods",
+    "workspace management config API imports workspace config directly",
+  ]) {
+    assert(names.has(expected), `expected ${expected}; saw ${[...names].join(", ")}`);
+  }
+});
+
+test("daemon boundary guard scopes workspace management config roots", () => {
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/workspaces.rs").includes(
+      WORKSPACE_MANAGEMENT_CONFIG_API_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/context.rs").includes(
+      WORKSPACE_MANAGEMENT_CONFIG_API_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/management/config_ops/merge_queue.rs").includes(
+      WORKSPACE_MANAGEMENT_CONFIG_API_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/management/worktree_bootstrap.rs").includes(
+      WORKSPACE_MANAGEMENT_CONFIG_API_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/management/prompt_config.rs").includes(
+      WORKSPACE_MANAGEMENT_CONFIG_API_PATTERNS[0],
     ),
     false,
   );

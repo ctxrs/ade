@@ -13,6 +13,13 @@ use crate::daemon::{settings, WorkspaceStoreAccessError, WorkspacesHandle};
 
 use super::WorkspaceRouteResponse;
 
+mod management_config;
+
+pub use management_config::{
+    UpdateWorkspaceMergeQueueConfigRequest, UpdateWorktreeBootstrapConfigRequest,
+    WorkspaceMergeQueueConfigRouteResponse, WorkspaceWorktreeBootstrapConfigRouteResponse,
+};
+
 #[derive(Debug, Deserialize)]
 pub struct CreateWorkspaceRequest {
     pub root_path: String,

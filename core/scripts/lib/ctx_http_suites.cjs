@@ -237,7 +237,10 @@ const CTX_HTTP_CHECKIN_FANOUT_TARGET_BATCHES_BY_SUITE = Object.freeze({
     ],
     [
       "session_diff_unavailable",
+      "worktree_bootstrap_config_http",
       "workspace_merge_queue_config_http",
+    ],
+    [
       "worktree_archive_http",
       "worktree_vcs_snapshot",
     ],
@@ -659,6 +662,7 @@ const CTX_HTTP_SUITES = [
       "repo_status_and_staging",
       "repo_validate_destination",
       "session_diff_unavailable",
+      "worktree_bootstrap_config_http",
       "workspace_merge_queue_config_http",
       "worktree_archive_http",
       "worktree_vcs_snapshot",
@@ -687,6 +691,7 @@ const CTX_HTTP_SUITES = [
       "repo_status_and_staging",
       "repo_validate_destination",
       "session_diff_unavailable",
+      "worktree_bootstrap_config_http",
       "workspace_merge_queue_config_http",
       "workspace_execution_config_http",
       "worktree_archive_http",

@@ -120,12 +120,14 @@ pub use workspace_init::init_workspace;
 pub use workspaces::{
     CreateWorkspaceAttachmentRouteRequest, CreateWorkspaceRequest,
     DeleteWorkspaceAttachmentRouteRequest, SyncWorkspaceAttachmentsRouteRequest,
-    UpdateWorkspaceExecutionConfigRequest, UpdateWorkspacePrimaryBranchRequest,
+    UpdateWorkspaceExecutionConfigRequest, UpdateWorkspaceMergeQueueConfigRequest,
+    UpdateWorkspacePrimaryBranchRequest, UpdateWorktreeBootstrapConfigRequest,
     WorkspaceActiveHeadBatchRouteResponse, WorkspaceActiveSnapshotRouteResponse,
     WorkspaceAttachmentRouteResponse, WorkspaceConfigUpdateResult,
     WorkspaceExecutionConfigSnapshot, WorkspaceHarnessContainerStatusRouteResponse,
-    WorkspacePrimaryBranchSnapshot, WorkspaceRouteError, WorkspaceRouteErrorKind,
-    WorkspaceRouteResponse, WorkspaceStreamAccessError, WorktreeRouteResponse,
+    WorkspaceMergeQueueConfigRouteResponse, WorkspacePrimaryBranchSnapshot, WorkspaceRouteError,
+    WorkspaceRouteErrorKind, WorkspaceRouteResponse, WorkspaceStreamAccessError,
+    WorkspaceWorktreeBootstrapConfigRouteResponse, WorktreeRouteResponse,
 };
 
 #[cfg(test)]

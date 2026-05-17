@@ -332,6 +332,15 @@ const workspaceExecutionConfigApiRoots = [
   "core/crates/ctx-http/src/api/workspaces/management/config_ops/execution/",
 ];
 
+const workspaceManagementConfigApiRoots = [
+  "core/crates/ctx-http/src/api/workspaces.rs",
+  "core/crates/ctx-http/src/api/workspaces/context.rs",
+  "core/crates/ctx-http/src/api/workspaces/management.rs",
+  "core/crates/ctx-http/src/api/workspaces/management/config_ops.rs",
+  "core/crates/ctx-http/src/api/workspaces/management/config_ops/",
+  "core/crates/ctx-http/src/api/workspaces/management/worktree_bootstrap.rs",
+];
+
 const workspaceRouteContractApiRoots = [
   "core/crates/ctx-http/src/api/workspaces.rs",
   "core/crates/ctx-http/src/api/workspaces/active.rs",
@@ -2273,6 +2282,41 @@ const WORKSPACE_EXECUTION_CONFIG_API_PATTERNS = [
   {
     name: "workspace execution config API persists execution config directly",
     regex: /\.update_workspace_execution_config\s*\(/,
+  },
+];
+
+const WORKSPACE_MANAGEMENT_CONFIG_API_PATTERNS = [
+  {
+    name: "workspace management config API owns workspace context lookup",
+    regex: /\brequire_workspace(?:_ctx)?\s*\(/,
+  },
+  {
+    name: "workspace management config API defines workspace context lookup",
+    regex: /\b(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+require_workspace(?:_ctx)?\s*\(/,
+  },
+  {
+    name: "workspace management config API exposes raw Workspace",
+    regex:
+      /\bctx_core::models::Workspace\b|\buse\s+ctx_core::models(?:::|\s*::\s*\{)[^;]*\bWorkspace\b|\bWorkspaceRequestContext\b/,
+  },
+  {
+    name: "workspace management config API owns local route DTOs",
+    regex:
+      /\b(?:UpdateWorkspaceConfigResp|UpdateMergeQueueConfigReq|WorkspaceMergeQueueConfigResp|UpdateWorktreeBootstrapReq|WorkspaceWorktreeBootstrapConfigResp)\b/,
+  },
+  {
+    name: "workspace management config API builds raw workspace config updates",
+    regex:
+      /\bworkspace_config::(?:MergeQueueConfigUpdate|WorktreeBootstrapConfigUpdate)\b|\b(?:MergeQueueConfigUpdate|WorktreeBootstrapConfigUpdate)\s*\{/,
+  },
+  {
+    name: "workspace management config API calls raw config facade methods",
+    regex:
+      /\.(?:load_workspace_merge_queue_config|update_workspace_merge_queue_config|load_worktree_bootstrap_config|update_worktree_bootstrap_config)\s*\(/,
+  },
+  {
+    name: "workspace management config API imports workspace config directly",
+    regex: /\bctx_workspace_config\b/,
   },
 ];
 
@@ -4567,6 +4611,9 @@ function apiPatternsForPath(relativePath) {
   if (workspaceExecutionConfigApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...WORKSPACE_EXECUTION_CONFIG_API_PATTERNS);
   }
+  if (workspaceManagementConfigApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...WORKSPACE_MANAGEMENT_CONFIG_API_PATTERNS);
+  }
   if (
     workspaceRouteContractApiRoots.some((root) =>
       root.endsWith("/") ? relativePath.startsWith(root) : relativePath === root
@@ -5678,6 +5725,7 @@ module.exports = {
   SESSION_HEAD_API_ORCHESTRATION_PATTERNS,
   WORKSPACE_CONFIG_ROUTE_CONTEXT_PATTERNS,
   WORKSPACE_EXECUTION_CONFIG_API_PATTERNS,
+  WORKSPACE_MANAGEMENT_CONFIG_API_PATTERNS,
   WORKSPACE_ROUTE_CONTRACT_API_PATTERNS,
   WORKSPACE_REGISTRATION_CONFIG_API_PATTERNS,
   IMAGE_ATTACHMENTS_TEST_STORE_ACCESS_PATTERNS,

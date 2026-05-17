@@ -197,6 +197,7 @@ test("ctx-http long suites expand to direct Bazel test targets", () => {
     `${CTX_HTTP_BAZEL_PACKAGE}:repo_status_and_staging`,
     `${CTX_HTTP_BAZEL_PACKAGE}:repo_validate_destination`,
     `${CTX_HTTP_BAZEL_PACKAGE}:session_diff_unavailable`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:worktree_bootstrap_config_http`,
     `${CTX_HTTP_BAZEL_PACKAGE}:workspace_merge_queue_config_http`,
     `${CTX_HTTP_BAZEL_PACKAGE}:worktree_archive_http`,
     `${CTX_HTTP_BAZEL_PACKAGE}:worktree_vcs_snapshot`,

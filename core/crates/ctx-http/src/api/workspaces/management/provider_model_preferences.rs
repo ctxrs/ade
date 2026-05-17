@@ -1,4 +1,5 @@
 use super::*;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
 pub(in crate::api) struct UpdateWorkspaceProviderModelPreferenceReq {

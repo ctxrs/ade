@@ -3,7 +3,6 @@ use axum::extract::{Path, State};
 use axum::http::{header, StatusCode};
 use axum::response::Response;
 use axum::Json;
-use serde::{Deserialize, Serialize};
 
 mod active;
 mod attachments;
@@ -30,45 +29,16 @@ use ctx_daemon::daemon::workspaces::{WorkspaceHydrationError, WorkspaceHydration
 use ctx_daemon::daemon::{
     CreateWorkspaceAttachmentRouteRequest, DeleteWorkspaceAttachmentRouteRequest,
     SyncWorkspaceAttachmentsRouteRequest, UpdateWorkspaceExecutionConfigRequest,
-    UpdateWorkspacePrimaryBranchRequest, WorkspaceActiveHeadBatchRouteResponse,
+    UpdateWorkspaceMergeQueueConfigRequest, UpdateWorkspacePrimaryBranchRequest,
+    UpdateWorktreeBootstrapConfigRequest, WorkspaceActiveHeadBatchRouteResponse,
     WorkspaceActiveSnapshotRouteResponse, WorkspaceAttachmentRouteResponse,
     WorkspaceConfigUpdateResult, WorkspaceExecutionConfigSnapshot,
-    WorkspaceHarnessContainerStatusRouteResponse, WorkspacePrimaryBranchSnapshot,
-    WorkspaceRouteError, WorkspaceRouteErrorKind, WorkspaceRouteResponse, WorkspacesHandle,
+    WorkspaceHarnessContainerStatusRouteResponse, WorkspaceMergeQueueConfigRouteResponse,
+    WorkspacePrimaryBranchSnapshot, WorkspaceRouteError, WorkspaceRouteErrorKind,
+    WorkspaceRouteResponse, WorkspaceWorktreeBootstrapConfigRouteResponse, WorkspacesHandle,
     WorktreeRouteResponse,
 };
 use ctx_observability::logs;
-
-#[derive(Debug, Deserialize)]
-pub(super) struct UpdateMergeQueueConfigReq {
-    enabled: bool,
-    #[serde(default)]
-    target_branch: Option<String>,
-    #[serde(default)]
-    verify_command: Option<String>,
-    #[serde(default)]
-    push_on_success: Option<bool>,
-    #[serde(default)]
-    push_remote: Option<String>,
-    #[serde(default)]
-    push_branch: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct UpdateWorkspaceConfigResp {
-    ok: bool,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct WorkspaceMergeQueueConfigResp {
-    enabled: bool,
-    target_branch: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    verify_command: Option<String>,
-    push_on_success: bool,
-    push_remote: String,
-    push_branch: String,
-}
 
 #[cfg(test)]
 mod tests;

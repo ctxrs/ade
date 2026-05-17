@@ -1,13 +1,7 @@
 use super::*;
 use ctx_core::ids::WorkspaceId;
-use ctx_core::models::Workspace;
 
 pub(super) type WorkspaceApiResult<T> = Result<T, (StatusCode, Json<ApiErrorResp>)>;
-
-#[derive(Clone)]
-pub(super) struct WorkspaceRequestContext {
-    pub(super) workspace_id: WorkspaceId,
-}
 
 pub(super) fn parse_workspace_id(id: &str) -> WorkspaceApiResult<WorkspaceId> {
     Ok(WorkspaceId(uuid::Uuid::parse_str(id).map_err(|_| {
@@ -18,55 +12,4 @@ pub(super) fn parse_workspace_id(id: &str) -> WorkspaceApiResult<WorkspaceId> {
             }),
         )
     })?))
-}
-
-pub(super) async fn require_workspace(
-    workspaces: &WorkspacesHandle,
-    workspace_id: WorkspaceId,
-) -> WorkspaceApiResult<Workspace> {
-    workspaces
-        .get_workspace(workspace_id)
-        .await
-        .map_err(|error| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&error.to_string()),
-                }),
-            )
-        })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "workspace not found".to_string(),
-            }),
-        ))
-}
-
-pub(super) fn workspace_store_api_error(
-    error: ctx_daemon::daemon::WorkspaceStoreAccessError,
-) -> (StatusCode, Json<ApiErrorResp>) {
-    match error {
-        ctx_daemon::daemon::WorkspaceStoreAccessError::NotFound => (
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "workspace not found".to_string(),
-            }),
-        ),
-        ctx_daemon::daemon::WorkspaceStoreAccessError::Unavailable(error) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&error.to_string()),
-            }),
-        ),
-    }
-}
-
-pub(super) async fn require_workspace_ctx(
-    workspaces: &WorkspacesHandle,
-    id: &str,
-) -> WorkspaceApiResult<WorkspaceRequestContext> {
-    let workspace_id = parse_workspace_id(id)?;
-    require_workspace(workspaces, workspace_id).await?;
-    Ok(WorkspaceRequestContext { workspace_id })
 }
