@@ -2449,6 +2449,23 @@ test("daemon boundary guard rejects mobile access API orchestration leaks", () =
         state.load_mobile_auth_context_for_profile(profile_id).await?;
         let _scopes = mobile_scope_set_from_strings(&raw)?;
         let update = MobileDeviceRegistrationUpdate::default();
+        let _router = SecureProxyRouterState;
+        dispatch_scoped_secure_proxy_request(&state, method, uri, headers, mobile_auth).await;
+        mobile_secure_proxy_allows_request(&method, &path);
+        secure_proxy_path_is_unnormalized(&path);
+        mobile_auth.allows(MobileScope::WorkspaceRead);
+        desktop_auth_required_secure_response()?;
+        mobile_scope_required_secure_response(MobileScope::WorkspaceRead)?;
+        if path == "/api/health" {}
+        if path == "/api/workspaces" {}
+        let _workspace = path.strip_prefix("/api/workspaces/");
+        health(State(core), headers).await?;
+        list_workspaces(State(workspaces)).await?;
+        get_workspace(State(workspaces), Path(id)).await?;
+        let mut headers = HeaderMap::new();
+        HeaderName::from_bytes(name.as_bytes())?;
+        HeaderValue::from_str(value)?;
+        let _bytes = to_bytes(resp.into_body(), 16).await?;
       }
     `,
     patterns: MOBILE_ACCESS_ORCHESTRATION_API_PATTERNS,
@@ -2475,6 +2492,24 @@ test("daemon boundary guard rejects mobile access API orchestration leaks", () =
       "mobile access API calls raw mobile auth context facade",
       "mobile access API owns mobile scope parsing or defaults",
       "mobile access API references raw mobile route DTOs",
+      "mobile access API owns secure proxy router state",
+      "mobile access API owns secure proxy router state",
+      "mobile access API owns secure proxy transport admission",
+      "mobile access API owns secure proxy transport admission",
+      "mobile access API owns mobile secure proxy scope checks",
+      "mobile access API owns mobile secure proxy scope checks",
+      "mobile access API builds secure proxy denial responses",
+      "mobile access API builds secure proxy denial responses",
+      "mobile access API owns secure proxy path dispatch",
+      "mobile access API owns secure proxy path dispatch",
+      "mobile access API owns secure proxy path dispatch",
+      "mobile access API re-enters proxied route handlers",
+      "mobile access API re-enters proxied route handlers",
+      "mobile access API re-enters proxied route handlers",
+      "mobile access API owns secure proxy response reassembly",
+      "mobile access API owns secure proxy request header filtering",
+      "mobile access API owns secure proxy request header filtering",
+      "mobile access API owns secure proxy request header filtering",
     ],
   );
 });

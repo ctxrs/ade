@@ -17,6 +17,7 @@ mod lifecycle;
 mod pairing;
 mod profiles;
 mod secure_envelope;
+mod secure_proxy;
 mod tokens;
 
 pub use lifecycle::{

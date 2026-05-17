@@ -8,7 +8,6 @@ use axum::http::{HeaderMap, Request, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use base64::Engine;
 use opentelemetry::trace::SpanKind;
 use opentelemetry::KeyValue;
 use serde::{Deserialize, Serialize};
@@ -82,7 +81,7 @@ use ws::{
 };
 
 use ctx_core::{ids::*, models::*};
-use ctx_daemon::daemon::mobile_access::{MobileAuthContext, MobileScope};
+use ctx_daemon::daemon::mobile_access::MobileAuthContext;
 use ctx_observability::logs;
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
 use ctx_provider_install::install_state::InstallId;

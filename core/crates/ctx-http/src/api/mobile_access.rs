@@ -3,8 +3,7 @@ use ctx_daemon::daemon::{
     mobile_access::{
         CreateMobileConnectionProfileForRouteRequest, EnableMobileAccessRequest,
         MobileAccessRouteError, MobileAccessRouteErrorKind, MobileAccessStatusSnapshot,
-        MobileSecureEnvelopeForRoute, MobileSecureProxyPayload, MobileSecureProxyResponsePayload,
-        PairMobileDeviceRequest, RegisterMobileDeviceForRouteRequest,
+        MobileSecureEnvelopeForRoute, PairMobileDeviceRequest, RegisterMobileDeviceForRouteRequest,
     },
     CoreHandle,
 };
@@ -17,12 +16,11 @@ mod payloads;
 mod profiles;
 mod secure;
 mod secure_pairing;
-mod secure_proxy;
 
 pub(in crate::api) use access_disable::disable_mobile_access;
 pub(in crate::api) use access_enable::enable_mobile_access;
 pub(in crate::api) use access_status::get_mobile_access_status;
-use body::{decode_body_b64, parse_json_body};
+use body::parse_json_body;
 pub(in crate::api) use payloads::*;
 pub(in crate::api) use profiles::{
     create_mobile_connection_profile, delete_mobile_connection_profile,

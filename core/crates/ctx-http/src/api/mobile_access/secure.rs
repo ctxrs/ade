@@ -1,12 +1,7 @@
-use super::secure_proxy::{
-    mobile_scope_required_secure_response, proxy_secure_request, SecureProxyError,
-    SecureProxyRouterState,
-};
 use super::*;
 
 pub(in crate::api) async fn handle_mobile_secure(
     State(state): State<CoreHandle>,
-    State(router_state): State<SecureProxyRouterState>,
     body: Bytes,
 ) -> Result<Json<SecureEnvelope>, (StatusCode, Json<ApiErrorResp>)> {
     let req: MobileSecureEnvelope = parse_json_body(body)?;
@@ -20,15 +15,14 @@ pub(in crate::api) async fn handle_mobile_secure(
         .await
         .map_err(mobile_access_api_error)?;
 
-    let response_payload = match verified.mobile_auth {
-        Some(mobile_auth) if mobile_auth.allows(MobileScope::WorkspaceRead) => {
-            proxy_secure_request(&router_state, mobile_auth, verified.payload)
-                .await
-                .map_err(SecureProxyError::into_api_error)?
-        }
-        _ => mobile_scope_required_secure_response(MobileScope::WorkspaceRead)
-            .map_err(SecureProxyError::into_api_error)?,
-    };
+    let response_payload = state
+        .proxy_mobile_secure_request_for_route(
+            verified.mobile_auth,
+            verified.payload,
+            env!("CARGO_PKG_VERSION"),
+        )
+        .await
+        .map_err(mobile_access_api_error)?;
 
     let envelope = state
         .encrypt_mobile_secure_response_for_route(verified.response_encryption, response_payload)

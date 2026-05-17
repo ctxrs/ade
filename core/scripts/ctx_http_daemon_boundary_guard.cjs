@@ -1070,6 +1070,40 @@ const MOBILE_ACCESS_ORCHESTRATION_API_PATTERNS = [
     name: "mobile access API references raw mobile route DTOs",
     regex: /\b(?:MobileAccessConfigUpsert|MobileDeviceRegistrationUpdate|MobileDeviceSequenceAdvance)\b/,
   },
+  {
+    name: "mobile access API owns secure proxy router state",
+    regex: /\bSecureProxyRouterState\b|\bdispatch_scoped_secure_proxy_request\s*\(/,
+  },
+  {
+    name: "mobile access API owns secure proxy transport admission",
+    regex: /\b(?:mobile_secure_proxy_allows_request|secure_proxy_path_is_unnormalized)\s*\(/,
+  },
+  {
+    name: "mobile access API owns mobile secure proxy scope checks",
+    regex: /\bMobileScope\s*::\s*WorkspaceRead\b|\.allows\s*\(\s*MobileScope\s*::\s*WorkspaceRead\s*\)/,
+  },
+  {
+    name: "mobile access API builds secure proxy denial responses",
+    regex: /\b(?:desktop_auth_required_secure_response|mobile_scope_required_secure_response)\s*\(/,
+  },
+  {
+    name: "mobile access API owns secure proxy path dispatch",
+    regex:
+      /\bpath\s*==\s*"\/api\/(?:health|workspaces)"|\.strip_prefix\s*\(\s*"\/api\/workspaces\/"\s*\)/,
+  },
+  {
+    name: "mobile access API re-enters proxied route handlers",
+    regex: /\b(?:health|list_workspaces|get_workspace)\s*\(\s*State\s*\(/,
+  },
+  {
+    name: "mobile access API owns secure proxy response reassembly",
+    regex: /\bto_bytes\s*\(\s*resp\s*\.\s*into_body|\.into_body\s*\(/,
+  },
+  {
+    name: "mobile access API owns secure proxy request header filtering",
+    regex:
+      /\bHeaderMap\s*::\s*new\s*\(|\bHeaderName\s*::\s*from_bytes\s*\(|\bHeaderValue\s*::\s*from_str\s*\(/,
+  },
 ];
 
 const ROUTE_FILE_DOWNLOAD_API_PATTERNS = [
