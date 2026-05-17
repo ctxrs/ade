@@ -85,8 +85,8 @@ pub use claude_setup_token_login::{
     ClaudeSetupTokenLoginStartErrorKind,
 };
 pub use codex_app_login::{
-    complete_codex_app_server_login, start_codex_app_server_login, CodexLoginCompleteError,
-    CodexLoginCompleteErrorKind, CodexLoginCompleteResponse, CodexLoginStartError,
+    CodexLoginCompleteRouteRequest, CodexLoginCompleteRouteResponse, CodexLoginRouteError,
+    CodexLoginRouteErrorKind, CodexLoginStartRouteRequest, CodexLoginStartRouteResponse,
 };
 pub use cursor_process_login::{
     start_cursor_process_login, CursorProcessLoginStartError, CursorProcessLoginStartErrorKind,
@@ -885,35 +885,6 @@ impl ProvidersHandle {
         label: Option<String>,
     ) -> Result<StartedLoginSession, ClaudeSetupTokenLoginStartError> {
         start_claude_setup_token_login(&self.state, label).await
-    }
-
-    pub async fn start_codex_app_server_login(
-        &self,
-        label: Option<String>,
-    ) -> Result<StartedCodexLoginSession, CodexLoginStartError> {
-        start_codex_app_server_login(&self.state, label).await
-    }
-
-    pub async fn codex_login_status(
-        &self,
-        account_id: &str,
-    ) -> Option<provider_accounts::CodexLoginStatus> {
-        codex_login_status(&self.state, account_id).await
-    }
-
-    pub async fn complete_codex_app_server_login(
-        &self,
-        account_id: &str,
-        callback_url: String,
-        completion_token: &str,
-    ) -> Result<CodexLoginCompleteResponse, CodexLoginCompleteError> {
-        complete_codex_app_server_login(
-            &self.state,
-            account_id,
-            callback_url,
-            completion_token.to_string(),
-        )
-        .await
     }
 
     pub async fn claude_login_status(

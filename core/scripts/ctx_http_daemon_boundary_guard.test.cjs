@@ -3778,6 +3778,19 @@ test("daemon boundary guard rejects Codex app-server login orchestration in HTTP
       mod process;
 
       async fn handler(providers: ProvidersHandle) {
+        let _start = CodexLoginStartReq { label };
+        let _complete = CodexLoginCompleteResp { accepted: true, status_code: 200 };
+        providers.start_codex_app_server_login(label).await?;
+        providers.codex_login_status(account_id).await;
+        providers.complete_codex_app_server_login(account_id, callback_url, token).await?;
+        start_codex_app_server_login(&state, label).await?;
+        codex_login_status(&state, account_id).await;
+        complete_codex_app_server_login(&state, account_id, callback_url, token).await?;
+        let _ = CodexLoginCompleteErrorKind::BadRequest;
+        let _ = CodexLoginCompleteError::new(kind, message);
+        let _ = CodexLoginStartError::from_error(err);
+        err.route_safe_message();
+        let _ = "login not found";
         tokio::spawn(async move {});
         let mut cmd = tokio::process::Command::new("codex");
         cmd.stdin(Stdio::null());
@@ -3810,6 +3823,19 @@ test("daemon boundary guard rejects Codex app-server login orchestration in HTTP
   assert.deepEqual(
     violations.map((violation) => violation.name),
     [
+      "Codex app-server login API owns route DTOs",
+      "Codex app-server login API owns route DTOs",
+      "Codex app-server login API calls low-level route facades",
+      "Codex app-server login API calls low-level route facades",
+      "Codex app-server login API calls low-level route facades",
+      "Codex app-server login API calls low-level route facades",
+      "Codex app-server login API calls low-level route facades",
+      "Codex app-server login API calls low-level route facades",
+      "Codex app-server login API matches route errors directly",
+      "Codex app-server login API matches route errors directly",
+      "Codex app-server login API matches route errors directly",
+      "Codex app-server login API matches route errors directly",
+      "Codex app-server login API owns login not-found mapping",
       "Codex app-server login API owns monitor task spawning",
       "Codex app-server login API declares app-server modules",
       "Codex app-server login API declares app-server modules",
@@ -3846,7 +3872,7 @@ test("daemon boundary guard scopes Codex app-server login orchestration patterns
     apiPatternsForPath("core/crates/ctx-http/src/api/providers/login.rs").includes(
       CODEX_APP_SERVER_LOGIN_API_ORCHESTRATION_PATTERNS[0],
     ),
-    true,
+    false,
   );
   assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/providers/login/codex.rs").includes(
@@ -3865,6 +3891,20 @@ test("daemon boundary guard scopes Codex app-server login orchestration patterns
       CODEX_APP_SERVER_LOGIN_API_ORCHESTRATION_PATTERNS[0],
     ),
     false,
+  );
+  assert.deepEqual(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/providers/login/codex.rs",
+      contents: `
+        let req = CodexLoginStartRouteRequest::default();
+        providers.start_codex_login_for_route(req).await?;
+        providers.codex_login_status_for_route(&id).await?;
+        providers.complete_codex_login_for_route(&id, complete).await?;
+        let _ = CodexLoginRouteErrorKind::BadRequest;
+      `,
+      patterns: CODEX_APP_SERVER_LOGIN_API_ORCHESTRATION_PATTERNS,
+    }),
+    [],
   );
 });
 

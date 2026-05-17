@@ -265,6 +265,43 @@ async fn provider_usage_cache_hit_preserves_canonical_provider_id_for_codex() {
 }
 
 #[tokio::test]
+async fn codex_login_status_preserves_missing_login_error() {
+    let fixture = ProviderRouteFixture::new().await;
+    let app = fixture.app();
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/providers/codex/accounts/login/missing-login")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["error"].as_str(), Some("login not found"));
+}
+
+#[tokio::test]
+async fn codex_login_complete_preserves_missing_login_error() {
+    let fixture = ProviderRouteFixture::new().await;
+    let app = fixture.app();
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/providers/codex/accounts/login/missing-login")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            r#"{"callback_url":"http://localhost:43210/auth/callback?code=abc","completion_token":"token"}"#,
+        ))
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["error"].as_str(), Some("login not found"));
+}
+
+#[tokio::test]
 async fn codex_login_start_surfaces_agent_server_config_errors() {
     let fixture = ProviderRouteFixture::new().await;
     write_invalid_agent_server_config(fixture.data_root());

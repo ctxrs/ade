@@ -250,7 +250,6 @@ const cursorProcessLoginApiRoots = [
 ];
 
 const codexAppServerLoginApiRoots = [
-  "core/crates/ctx-http/src/api/providers/login.rs",
   "core/crates/ctx-http/src/api/providers/login/codex.rs",
   "core/crates/ctx-http/src/api/providers/login/codex/",
 ];
@@ -1711,6 +1710,24 @@ const CURSOR_PROCESS_LOGIN_API_ORCHESTRATION_PATTERNS = [
 ];
 
 const CODEX_APP_SERVER_LOGIN_API_ORCHESTRATION_PATTERNS = [
+  {
+    name: "Codex app-server login API owns route DTOs",
+    regex: /\bCodexLogin(?:Start|Complete)(?:Req|Resp)\b/,
+  },
+  {
+    name: "Codex app-server login API calls low-level route facades",
+    regex:
+      /(?:\.|\bProvidersHandle::|\b)(?:start_codex_app_server_login|codex_login_status|complete_codex_app_server_login)\s*\(/,
+  },
+  {
+    name: "Codex app-server login API matches route errors directly",
+    regex:
+      /\bCodexLogin(?:StartError|CompleteError|CompleteErrorKind)\b|\.route_safe_message\s*\(/,
+  },
+  {
+    name: "Codex app-server login API owns login not-found mapping",
+    regex: /"login not found"/,
+  },
   {
     name: "Codex app-server login API owns monitor task spawning",
     regex: /\btokio::spawn\s*\(/,
