@@ -13,7 +13,6 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use super::errors::ApiErrorResp;
-use ctx_core::ids::WorkspaceId;
 use ctx_daemon::daemon::providers::{
     ProviderAuthImportCandidatesRouteResponse, ProviderAuthImportProfilesRouteResponse,
     ProviderAuthImportRouteError, ProviderAuthImportRouteRequest, ProviderAuthImportRouteResponse,

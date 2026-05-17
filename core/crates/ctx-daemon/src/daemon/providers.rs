@@ -76,8 +76,8 @@ pub use auth_import::{
     ProviderAuthImportRouteRequest, ProviderAuthImportRouteResponse,
 };
 pub use bootstrap::{
-    workspace_providers_bootstrap, ProvidersBootstrapError, ProvidersBootstrapErrorKind,
-    ProvidersBootstrapResponse,
+    ProvidersBootstrapResponse, ProvidersBootstrapRouteError, ProvidersBootstrapRouteErrorKind,
+    ProvidersBootstrapRouteRequest,
 };
 pub use browser_logins::{
     start_amp_browser_login, start_gemini_browser_login, start_mistral_browser_login,
@@ -795,13 +795,6 @@ impl ProvidersHandle {
         account_id: &str,
     ) -> Result<QwenAccountsResponse, ProviderAccountRouteError> {
         accounts::delete_qwen_account_response(&self.state, account_id).await
-    }
-
-    pub async fn workspace_providers_bootstrap(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> Result<ProvidersBootstrapResponse, ProvidersBootstrapError> {
-        workspace_providers_bootstrap(&self.state, workspace_id).await
     }
 
     pub async fn get_provider_options_response(

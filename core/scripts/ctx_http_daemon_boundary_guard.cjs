@@ -1321,6 +1321,22 @@ const SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS = [
 
 const PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS = [
   {
+    name: "provider bootstrap API parses workspace ids directly",
+    regex: /\bWorkspaceId\b|\buuid::Uuid::parse_str\s*\(/,
+  },
+  {
+    name: "provider bootstrap API matches bootstrap errors directly",
+    regex: /\bProvidersBootstrapError(?:Kind)?\b/,
+  },
+  {
+    name: "provider bootstrap API owns bootstrap error JSON",
+    regex: /\bserde_json::json!\s*\(/,
+  },
+  {
+    name: "provider bootstrap API calls broad bootstrap facade",
+    regex: /(?:\.|\bProvidersHandle::|\b)workspace_providers_bootstrap\s*\(/,
+  },
+  {
     name: "provider bootstrap API checks workspace existence directly",
     regex: /(?:\.|\bProvidersHandle::)workspace_exists\s*\(/,
   },

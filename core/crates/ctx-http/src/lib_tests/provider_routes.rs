@@ -1,6 +1,7 @@
 use super::*;
 
 mod agent_server_config;
+mod bootstrap;
 mod codex_routes;
 mod delete_paths;
 mod harness_config;

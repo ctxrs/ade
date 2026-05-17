@@ -2936,6 +2936,12 @@ test("daemon boundary guard rejects provider bootstrap orchestration in HTTP", (
     filePath: "core/crates/ctx-http/src/api/providers/bootstrap.rs",
     contents: `
       async fn handler(providers: ProvidersHandle) {
+        let workspace_id = WorkspaceId(uuid::Uuid::parse_str(&id)?);
+        let _ = ProvidersBootstrapErrorKind::NotFound;
+        let _ = ProvidersBootstrapError::internal("boom");
+        let body = serde_json::json!({ "error": "boom" });
+        workspace_providers_bootstrap(&state, workspace_id).await?;
+        providers.workspace_providers_bootstrap(workspace_id).await?;
         providers.workspace_exists(ws_id).await?;
         providers.install_target_for_workspace(ws_id).await?;
         providers.load_preferred_new_session_models(ws_id).await?;
@@ -2955,6 +2961,12 @@ test("daemon boundary guard rejects provider bootstrap orchestration in HTTP", (
   assert.deepEqual(
     violations.map((violation) => violation.name),
     [
+      "provider bootstrap API parses workspace ids directly",
+      "provider bootstrap API matches bootstrap errors directly",
+      "provider bootstrap API matches bootstrap errors directly",
+      "provider bootstrap API owns bootstrap error JSON",
+      "provider bootstrap API calls broad bootstrap facade",
+      "provider bootstrap API calls broad bootstrap facade",
       "provider bootstrap API checks workspace existence directly",
       "provider bootstrap API resolves install target directly",
       "provider bootstrap API loads preferred models directly",
@@ -2988,6 +3000,18 @@ test("daemon boundary guard scopes provider bootstrap orchestration patterns", (
       PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS[0],
     ),
     false,
+  );
+  assert.deepEqual(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/providers/bootstrap.rs",
+      contents: `
+        providers.workspace_providers_bootstrap_for_route(request).await?;
+        let request = ProvidersBootstrapRouteRequest { workspace_id };
+        let _ = ProvidersBootstrapRouteErrorKind::BadRequest;
+      `,
+      patterns: PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS,
+    }),
+    [],
   );
 });
 

@@ -18,8 +18,9 @@ use ctx_provider_runtime::provider_usability::{
 use ctx_providers::adapters::ProviderStatus;
 use futures::StreamExt;
 use serde::Serialize;
+use serde_json::Value;
 
-use crate::daemon::DaemonState;
+use crate::daemon::{DaemonState, ProvidersHandle};
 
 use super::{accounts, status};
 
@@ -39,14 +40,19 @@ pub struct ProvidersBootstrapResponse {
     amp_accounts: accounts::AmpAccountsResponse,
 }
 
+#[derive(Debug)]
+pub struct ProvidersBootstrapRouteRequest {
+    pub workspace_id: String,
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum ProvidersBootstrapErrorKind {
+enum ProvidersBootstrapErrorKind {
     NotFound,
     Internal,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct ProvidersBootstrapError {
+struct ProvidersBootstrapError {
     kind: ProvidersBootstrapErrorKind,
     message: String,
 }
@@ -66,16 +72,81 @@ impl ProvidersBootstrapError {
         }
     }
 
-    pub fn kind(&self) -> ProvidersBootstrapErrorKind {
+    fn kind(&self) -> ProvidersBootstrapErrorKind {
         self.kind
     }
 
-    pub fn message(&self) -> &str {
+    fn message(&self) -> &str {
         &self.message
     }
 }
 
-pub async fn workspace_providers_bootstrap(
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum ProvidersBootstrapRouteErrorKind {
+    BadRequest,
+    NotFound,
+    Internal,
+}
+
+#[derive(Debug)]
+pub struct ProvidersBootstrapRouteError {
+    kind: ProvidersBootstrapRouteErrorKind,
+    body: Value,
+}
+
+impl ProvidersBootstrapRouteError {
+    pub fn kind(&self) -> ProvidersBootstrapRouteErrorKind {
+        self.kind
+    }
+
+    pub fn body(&self) -> &Value {
+        &self.body
+    }
+
+    fn bad_request(message: impl Into<String>) -> Self {
+        Self {
+            kind: ProvidersBootstrapRouteErrorKind::BadRequest,
+            body: serde_json::json!({
+                "error": message.into(),
+            }),
+        }
+    }
+
+    fn from_bootstrap_error(error: ProvidersBootstrapError) -> Self {
+        let kind = match error.kind() {
+            ProvidersBootstrapErrorKind::NotFound => ProvidersBootstrapRouteErrorKind::NotFound,
+            ProvidersBootstrapErrorKind::Internal => ProvidersBootstrapRouteErrorKind::Internal,
+        };
+        Self {
+            kind,
+            body: serde_json::json!({
+                "error": error.message(),
+            }),
+        }
+    }
+}
+
+impl ProvidersHandle {
+    pub async fn workspace_providers_bootstrap_for_route(
+        &self,
+        request: ProvidersBootstrapRouteRequest,
+    ) -> Result<ProvidersBootstrapResponse, ProvidersBootstrapRouteError> {
+        let workspace_id = parse_bootstrap_workspace_id(&request.workspace_id)?;
+        workspace_providers_bootstrap(&self.state, workspace_id)
+            .await
+            .map_err(ProvidersBootstrapRouteError::from_bootstrap_error)
+    }
+}
+
+fn parse_bootstrap_workspace_id(
+    workspace_id: &str,
+) -> Result<WorkspaceId, ProvidersBootstrapRouteError> {
+    uuid::Uuid::parse_str(workspace_id)
+        .map(WorkspaceId)
+        .map_err(|_| ProvidersBootstrapRouteError::bad_request("invalid workspace id"))
+}
+
+async fn workspace_providers_bootstrap(
     state: &Arc<DaemonState>,
     ws_id: WorkspaceId,
 ) -> Result<ProvidersBootstrapResponse, ProvidersBootstrapError> {
@@ -137,6 +208,42 @@ pub async fn workspace_providers_bootstrap(
         cursor_accounts: accounts.cursor_accounts,
         amp_accounts: accounts.amp_accounts,
     })
+}
+
+#[cfg(test)]
+mod route_tests {
+    use super::*;
+
+    #[test]
+    fn bootstrap_route_parse_failure_preserves_invalid_workspace_body() {
+        let error = parse_bootstrap_workspace_id("not-a-uuid").unwrap_err();
+
+        assert_eq!(error.kind(), ProvidersBootstrapRouteErrorKind::BadRequest);
+        assert_eq!(error.body()["error"].as_str(), Some("invalid workspace id"));
+    }
+
+    #[test]
+    fn bootstrap_route_error_preserves_not_found_body() {
+        let error = ProvidersBootstrapRouteError::from_bootstrap_error(
+            ProvidersBootstrapError::not_found("workspace not found"),
+        );
+
+        assert_eq!(error.kind(), ProvidersBootstrapRouteErrorKind::NotFound);
+        assert_eq!(error.body()["error"].as_str(), Some("workspace not found"));
+    }
+
+    #[test]
+    fn bootstrap_route_error_preserves_internal_body() {
+        let error = ProvidersBootstrapRouteError::from_bootstrap_error(
+            ProvidersBootstrapError::internal("failed to load workspace execution settings: boom"),
+        );
+
+        assert_eq!(error.kind(), ProvidersBootstrapRouteErrorKind::Internal);
+        assert_eq!(
+            error.body()["error"].as_str(),
+            Some("failed to load workspace execution settings: boom")
+        );
+    }
 }
 
 async fn load_bootstrap_workspace(
