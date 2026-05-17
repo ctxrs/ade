@@ -136,25 +136,26 @@ pub(crate) async fn handle_workspace_stream_subscription(
         .map(|(session_id, cursor)| (*session_id, cursor.last_sent))
         .collect::<HashMap<_, _>>();
     let mut initial_deferred_live_events = Vec::new();
-    let mut replay_planning_drain_hook = ReplayPlanningDrainHook {
-        state,
-        workspace_id,
-        live_rx,
-        runtime,
-        labels,
-        deferred_live_events: &mut initial_deferred_live_events,
-    };
-    let replay_program = state
-        .plan_workspace_stream_replay_program_with_step_hook(
+    let replay_program = {
+        let mut replay_planning_drain_hook = ReplayPlanningDrainHook {
+            state,
             workspace_id,
-            &apply_plan.sessions,
-            &replay_live_cursors,
-            &active_head_cursors,
-            include_initial_snapshot,
-            &mut replay_planning_drain_hook,
-        )
-        .await?;
-    drop(replay_planning_drain_hook);
+            live_rx,
+            runtime,
+            labels,
+            deferred_live_events: &mut initial_deferred_live_events,
+        };
+        state
+            .plan_workspace_stream_replay_program_with_step_hook(
+                workspace_id,
+                &apply_plan.sessions,
+                &replay_live_cursors,
+                &active_head_cursors,
+                include_initial_snapshot,
+                &mut replay_planning_drain_hook,
+            )
+            .await?
+    };
     if replay_should_stop(runtime) {
         return Ok(());
     }

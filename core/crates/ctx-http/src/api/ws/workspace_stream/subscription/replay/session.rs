@@ -40,14 +40,17 @@ pub(super) async fn replay_workspace_session(
                 async move {
                     match event {
                         WorkspaceActiveSnapshotStreamMessage::Event { event, .. } => {
+                            let sinks = ReplayRouteSinks {
+                                background_head_buffer: &background_head_buffer,
+                                control: &control,
+                                foreground_head_buffer: &foreground_head_buffer,
+                                priority_control: &priority_control,
+                                summary_buffer: &summary_buffer,
+                            };
                             push_replay_event_route_plan(
                                 workspace_id,
                                 labels,
-                                &control,
-                                &priority_control,
-                                &foreground_head_buffer,
-                                &background_head_buffer,
-                                &summary_buffer,
+                                &sinks,
                                 state.plan_workspace_stream_event_route(&next_state, *event),
                             )
                             .await
@@ -69,14 +72,18 @@ pub(super) async fn replay_workspace_session(
         .await
 }
 
+struct ReplayRouteSinks<'a> {
+    background_head_buffer: &'a HeadBatchBuffer,
+    control: &'a StreamQueue<WorkspaceActiveSnapshotStreamMessage>,
+    foreground_head_buffer: &'a HeadBatchBuffer,
+    priority_control: &'a StreamQueue<WorkspaceActiveSnapshotStreamMessage>,
+    summary_buffer: &'a SummaryBatchBuffer,
+}
+
 async fn push_replay_event_route_plan(
     workspace_id: WorkspaceId,
     labels: &WorkspaceStreamLabels,
-    control: &StreamQueue<WorkspaceActiveSnapshotStreamMessage>,
-    priority_control: &StreamQueue<WorkspaceActiveSnapshotStreamMessage>,
-    foreground_head_buffer: &HeadBatchBuffer,
-    background_head_buffer: &HeadBatchBuffer,
-    summary_buffer: &SummaryBatchBuffer,
+    sinks: &ReplayRouteSinks<'_>,
     plan: WorkspaceStreamEventRoutePlan,
 ) -> Result<(), ()> {
     match plan {
@@ -87,8 +94,8 @@ async fn push_replay_event_route_plan(
             lane,
         } => {
             let head_buffer = match lane {
-                WorkspaceStreamHeadLane::Foreground => foreground_head_buffer,
-                WorkspaceStreamHeadLane::Background => background_head_buffer,
+                WorkspaceStreamHeadLane::Foreground => sinks.foreground_head_buffer,
+                WorkspaceStreamHeadLane::Background => sinks.background_head_buffer,
             };
             if let Err(error) = head_buffer
                 .push_with_source(
@@ -104,7 +111,8 @@ async fn push_replay_event_route_plan(
             Ok(())
         }
         WorkspaceStreamEventRoutePlan::Summary { event } => {
-            summary_buffer
+            sinks
+                .summary_buffer
                 .push_with_source(event, WorkspaceActiveSnapshotStreamSource::Replay)
                 .await
                 .map_err(|error| {
@@ -118,8 +126,8 @@ async fn push_replay_event_route_plan(
             lane,
         } => {
             let target = match lane {
-                WorkspaceStreamControlLane::Priority => priority_control,
-                WorkspaceStreamControlLane::Normal => control,
+                WorkspaceStreamControlLane::Priority => sinks.priority_control,
+                WorkspaceStreamControlLane::Normal => sinks.control,
             };
             push_stream_message(
                 target,
