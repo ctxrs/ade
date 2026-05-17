@@ -34,6 +34,7 @@ mod harness_container;
 mod hydration;
 mod model_preferences;
 mod retry;
+mod route_config;
 mod runtime;
 mod sandbox_binding;
 pub mod stream;
@@ -66,6 +67,12 @@ pub use model_preferences::{
     WorkspaceProviderModelPreferenceError,
 };
 pub use retry::retry_global_index_write;
+pub use route_config::{
+    CreateWorkspaceRequest, UpdateWorkspaceExecutionConfigRequest,
+    UpdateWorkspacePrimaryBranchRequest, WorkspaceConfigUpdateResult,
+    WorkspaceExecutionConfigSnapshot, WorkspacePrimaryBranchSnapshot, WorkspaceRouteError,
+    WorkspaceRouteErrorKind,
+};
 pub use sandbox_binding::rematerialize_sandbox_binding_for_worktree;
 pub use vcs_hooks::{cleanup_workspace_hooks, cleanup_worktree_hooks, ensure_task_commit_hook};
 pub use worktree_bootstrap::spawn_worktree_bootstrap;

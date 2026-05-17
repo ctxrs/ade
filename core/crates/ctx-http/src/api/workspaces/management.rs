@@ -22,27 +22,6 @@ pub(in crate::api) use worktree_bootstrap::{
     get_worktree_bootstrap_config, update_worktree_bootstrap_config,
 };
 
-pub(in crate::api) async fn get_workspace_primary_branch(
-    State(workspaces): State<WorkspacesHandle>,
-    Path(id): Path<String>,
-) -> Result<Json<WorkspacePrimaryBranchResp>, (StatusCode, Json<ApiErrorResp>)> {
-    let ctx = require_workspace_ctx(&workspaces, &id).await?;
-    load_workspace_primary_branch(&workspaces, &ctx)
-        .await
-        .map(Json)
-}
-
-pub(in crate::api) async fn update_workspace_primary_branch(
-    State(workspaces): State<WorkspacesHandle>,
-    Path(id): Path<String>,
-    Json(req): Json<UpdateWorkspacePrimaryBranchReq>,
-) -> Result<Json<WorkspacePrimaryBranchResp>, (StatusCode, Json<ApiErrorResp>)> {
-    let ctx = require_workspace_ctx(&workspaces, &id).await?;
-    update_workspace_primary_branch_config(&workspaces, &ctx, req)
-        .await
-        .map(Json)
-}
-
 pub(in crate::api) async fn update_merge_queue_config(
     State(workspaces): State<WorkspacesHandle>,
     Path(id): Path<String>,
@@ -64,40 +43,52 @@ pub(in crate::api) async fn get_merge_queue_config(
         .map(Json)
 }
 
-#[derive(Debug, Deserialize)]
-pub(in crate::api) struct UpdateExecutionConfigReq {
-    environment: String,
-    #[serde(default)]
-    network_mode: Option<String>,
-    #[serde(default)]
-    allowlist: Option<Vec<String>>,
+pub(in crate::api) async fn get_workspace_primary_branch(
+    State(workspaces): State<WorkspacesHandle>,
+    Path(id): Path<String>,
+) -> Result<Json<WorkspacePrimaryBranchSnapshot>, (StatusCode, Json<ApiErrorResp>)> {
+    let workspace_id = parse_workspace_id(&id)?;
+    workspaces
+        .workspace_primary_branch_for_request(workspace_id)
+        .await
+        .map_err(workspace_route_api_error)
+        .map(Json)
 }
 
-#[derive(Debug, Serialize)]
-pub(in crate::api) struct WorkspaceExecutionConfigResp {
-    source: String,               // "workspace" | "daemon_default"
-    environment: String,          // "host" | "sandbox"
-    network_mode: Option<String>, // "llm_only" | "allowlist" | "all"
-    allowlist: Option<Vec<String>>,
+pub(in crate::api) async fn update_workspace_primary_branch(
+    State(workspaces): State<WorkspacesHandle>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateWorkspacePrimaryBranchRequest>,
+) -> Result<Json<WorkspacePrimaryBranchSnapshot>, (StatusCode, Json<ApiErrorResp>)> {
+    let workspace_id = parse_workspace_id(&id)?;
+    workspaces
+        .update_workspace_primary_branch_for_request(workspace_id, req)
+        .await
+        .map_err(workspace_route_api_error)
+        .map(Json)
 }
 
 pub(in crate::api) async fn get_execution_config(
     State(workspaces): State<WorkspacesHandle>,
     Path(id): Path<String>,
-) -> Result<Json<WorkspaceExecutionConfigResp>, (StatusCode, Json<ApiErrorResp>)> {
-    let ctx = require_workspace_ctx(&workspaces, &id).await?;
-    load_workspace_execution_config(&workspaces, &ctx)
+) -> Result<Json<WorkspaceExecutionConfigSnapshot>, (StatusCode, Json<ApiErrorResp>)> {
+    let workspace_id = parse_workspace_id(&id)?;
+    workspaces
+        .workspace_execution_config_for_request(workspace_id)
         .await
+        .map_err(workspace_route_api_error)
         .map(Json)
 }
 
 pub(in crate::api) async fn update_execution_config(
     State(workspaces): State<WorkspacesHandle>,
     Path(id): Path<String>,
-    Json(req): Json<UpdateExecutionConfigReq>,
-) -> Result<Json<UpdateWorkspaceConfigResp>, (StatusCode, Json<ApiErrorResp>)> {
-    let ctx = require_workspace_ctx(&workspaces, &id).await?;
-    update_workspace_execution_config(&workspaces, &ctx, req)
+    Json(req): Json<UpdateWorkspaceExecutionConfigRequest>,
+) -> Result<Json<WorkspaceConfigUpdateResult>, (StatusCode, Json<ApiErrorResp>)> {
+    let workspace_id = parse_workspace_id(&id)?;
+    workspaces
+        .update_workspace_execution_config_for_request(workspace_id, req)
         .await
+        .map_err(workspace_route_api_error)
         .map(Json)
 }

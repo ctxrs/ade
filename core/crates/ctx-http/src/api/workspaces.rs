@@ -34,7 +34,11 @@ use ctx_core::models::{
     WorkspaceActiveSnapshot, WorkspaceAttachment, WorkspaceAttachmentKind, Worktree,
 };
 use ctx_daemon::daemon::workspaces::{WorkspaceHydrationError, WorkspaceHydrationErrorKind};
-use ctx_daemon::daemon::WorkspacesHandle;
+use ctx_daemon::daemon::{
+    UpdateWorkspaceExecutionConfigRequest, UpdateWorkspacePrimaryBranchRequest,
+    WorkspaceConfigUpdateResult, WorkspaceExecutionConfigSnapshot, WorkspacePrimaryBranchSnapshot,
+    WorkspaceRouteError, WorkspaceRouteErrorKind, WorkspacesHandle,
+};
 use ctx_observability::logs;
 use ctx_workspace_attachments::AttachmentConfig;
 
@@ -69,15 +73,20 @@ pub(super) struct WorkspaceMergeQueueConfigResp {
     push_branch: String,
 }
 
-#[derive(Debug, Deserialize)]
-pub(super) struct UpdateWorkspacePrimaryBranchReq {
-    primary_branch: String,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct WorkspacePrimaryBranchResp {
-    primary_branch: String,
-}
-
 #[cfg(test)]
 mod tests;
+
+fn workspace_route_api_error(error: WorkspaceRouteError) -> (StatusCode, Json<ApiErrorResp>) {
+    let status = match error.kind() {
+        WorkspaceRouteErrorKind::NotFound => StatusCode::NOT_FOUND,
+        WorkspaceRouteErrorKind::BadRequest => StatusCode::BAD_REQUEST,
+        WorkspaceRouteErrorKind::Forbidden => StatusCode::FORBIDDEN,
+        WorkspaceRouteErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    (
+        status,
+        Json(ApiErrorResp {
+            error: logs::redact_sensitive(error.message()),
+        }),
+    )
+}

@@ -109,7 +109,12 @@ pub use updates::{
     UpdateRouteErrorKind,
 };
 pub use workspace_init::init_workspace;
-pub use workspaces::WorkspaceStreamAccessError;
+pub use workspaces::{
+    CreateWorkspaceRequest, UpdateWorkspaceExecutionConfigRequest,
+    UpdateWorkspacePrimaryBranchRequest, WorkspaceConfigUpdateResult,
+    WorkspaceExecutionConfigSnapshot, WorkspacePrimaryBranchSnapshot, WorkspaceRouteError,
+    WorkspaceRouteErrorKind, WorkspaceStreamAccessError,
+};
 
 #[cfg(test)]
 mod tests;

@@ -25,6 +25,9 @@ const {
   TELEMETRY_API_ORCHESTRATION_PATTERNS,
   LOGS_API_ORCHESTRATION_PATTERNS,
   UPDATE_API_ORCHESTRATION_PATTERNS,
+  WORKSPACE_CONFIG_ROUTE_CONTEXT_PATTERNS,
+  WORKSPACE_EXECUTION_CONFIG_API_PATTERNS,
+  WORKSPACE_REGISTRATION_CONFIG_API_PATTERNS,
   IMAGE_ATTACHMENTS_TEST_STORE_ACCESS_PATTERNS,
   JJ_MERGE_QUEUE_BASICS_TEST_STORE_ACCESS_PATTERNS,
   LIB_TEST_DATA_ROOT_FIXTURE_PATTERNS,
@@ -4960,6 +4963,164 @@ test("daemon boundary guard rejects update API orchestration", () => {
   ]) {
     assert(names.has(expected), `expected ${expected}; saw ${[...names].join(", ")}`);
   }
+});
+
+test("daemon boundary guard rejects workspace registration/config orchestration", () => {
+  const registrationViolations = scanText({
+    filePath: "core/crates/ctx-http/src/api/workspaces/registry/create.rs",
+    contents: `
+      use ctx_workspace_services::workspace_registration::{
+        prepare_workspace_registration, WorkspaceRegistrationError,
+      };
+      async fn create(workspaces: WorkspacesHandle) {
+        let _ = prepare_workspace_registration(root).await;
+        workspaces.record_workspace_registered().await;
+      }
+    `,
+    patterns: apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/registry/create.rs"),
+  });
+  assert.deepEqual(
+    registrationViolations.map((violation) => violation.name),
+    [
+      "workspace registration API imports registration service directly",
+      "workspace registration API owns registration preparation",
+      "workspace registration API owns registration error type",
+      "workspace registration API owns registration telemetry sequencing",
+    ],
+  );
+
+  const primaryBranchViolations = scanText({
+    filePath: "core/crates/ctx-http/src/api/workspaces/management/config_ops/primary_branch.rs",
+    contents: `
+      async fn update() {
+        ctx_workspace_services::workspace_registration::validate_workspace_primary_branch(root, branch).await?;
+      }
+    `,
+    patterns: apiPatternsForPath(
+      "core/crates/ctx-http/src/api/workspaces/management/config_ops/primary_branch.rs",
+    ),
+  });
+  assert.deepEqual(
+    primaryBranchViolations.map((violation) => violation.name),
+    [
+      "workspace registration API imports registration service directly",
+      "workspace primary branch API owns branch validation",
+    ],
+  );
+});
+
+test("daemon boundary guard rejects workspace execution-config orchestration", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/workspaces/management/config_ops/execution.rs",
+    contents: `
+      use ctx_settings_service::{
+        apply_workspace_execution_settings_override,
+        validate_workspace_execution_settings_override,
+      };
+      async fn route(workspaces: WorkspacesHandle) {
+        let settings = workspaces.load_settings().await?;
+        let override_config = workspaces.load_workspace_execution_override(workspace_id).await?;
+        apply_workspace_execution_settings_override(&mut effective, &override_config)?;
+        validate_workspace_execution_settings_override(&effective, &requested)?;
+        let _ = workspaces.shared_vm_container_runtime_available();
+        let requested = build_workspace_execution_config_override(environment, network, allowlist);
+        let response = project_workspace_execution_config(source, &effective);
+        workspaces.update_workspace_execution_config(workspace_id, update).await?;
+      }
+    `,
+    patterns: apiPatternsForPath(
+      "core/crates/ctx-http/src/api/workspaces/management/config_ops/execution.rs",
+    ),
+  });
+
+  const names = new Set(violations.map((violation) => violation.name));
+  for (const expected of [
+    "workspace execution config API imports settings service directly",
+    "workspace execution config API applies overrides directly",
+    "workspace execution config API validates overrides directly",
+    "workspace execution config API loads daemon settings directly",
+    "workspace execution config API loads workspace execution override directly",
+    "workspace execution config API checks sandbox runtime directly",
+    "workspace execution config API builds execution override directly",
+    "workspace execution config API projects execution config directly",
+    "workspace execution config API persists execution config directly",
+  ]) {
+    assert(names.has(expected), `expected ${expected}; saw ${[...names].join(", ")}`);
+  }
+});
+
+test("daemon boundary guard rejects workspace config route context backdoors", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/workspaces/management.rs",
+    contents: `
+      pub(in crate::api) async fn get_execution_config(
+          State(workspaces): State<WorkspacesHandle>,
+          Path(id): Path<String>,
+      ) -> Result<Json<WorkspaceExecutionConfigSnapshot>, (StatusCode, Json<ApiErrorResp>)> {
+          let ctx = require_workspace_ctx(&workspaces, &id).await?;
+          let workspace = require_workspace(&workspaces, ctx.workspace_id).await?;
+          let again = workspaces.get_workspace(ctx.workspace_id).await?;
+          todo!()
+      }
+
+      pub(in crate::api) async fn update_merge_queue_config(
+          State(workspaces): State<WorkspacesHandle>,
+          Path(id): Path<String>,
+      ) -> Result<Json<UpdateWorkspaceConfigResp>, (StatusCode, Json<ApiErrorResp>)> {
+          let ctx = require_workspace_ctx(&workspaces, &id).await?;
+          todo!()
+      }
+    `,
+    patterns: apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/management.rs"),
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "workspace config API requires workspace context in HTTP",
+      "workspace config API loads workspace in HTTP",
+      "workspace config API fetches workspace directly in HTTP",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes workspace registration/config API roots", () => {
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/registry/create.rs").includes(
+      WORKSPACE_REGISTRATION_CONFIG_API_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/management/config_ops/execution.rs").includes(
+      WORKSPACE_EXECUTION_CONFIG_API_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/management.rs").includes(
+      WORKSPACE_REGISTRATION_CONFIG_API_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/management.rs").includes(
+      WORKSPACE_EXECUTION_CONFIG_API_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/management.rs").includes(
+      WORKSPACE_CONFIG_ROUTE_CONTEXT_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/management/config_ops/merge_queue.rs").includes(
+      WORKSPACE_EXECUTION_CONFIG_API_PATTERNS[0],
+    ),
+    false,
+  );
 });
 
 test("daemon boundary guard rejects daemon updates package-version fallback", () => {

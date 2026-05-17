@@ -243,6 +243,18 @@ const updateApiRoots = [
   "core/crates/ctx-http/src/api/updates/appimage/",
 ];
 
+const workspaceRegistrationConfigApiRoots = [
+  "core/crates/ctx-http/src/api/workspaces/registry/create.rs",
+  "core/crates/ctx-http/src/api/workspaces/management.rs",
+  "core/crates/ctx-http/src/api/workspaces/management/config_ops/primary_branch.rs",
+];
+
+const workspaceExecutionConfigApiRoots = [
+  "core/crates/ctx-http/src/api/workspaces/management.rs",
+  "core/crates/ctx-http/src/api/workspaces/management/config_ops/execution.rs",
+  "core/crates/ctx-http/src/api/workspaces/management/config_ops/execution/",
+];
+
 const taskSessionCreationApiRoots = [
   "core/crates/ctx-http/src/api/tasks/creation_session.rs",
   "core/crates/ctx-http/src/api/tasks/creation_session/",
@@ -1479,6 +1491,92 @@ const UPDATE_API_ORCHESTRATION_PATTERNS = [
     name: "update API owns update response DTO assembly",
     regex:
       /\b(?:UpdateCheckResp|UpdateActivityResp|DownloadAppImageReq|DownloadAppImageResp|ApplyAppImageReq|ApplyAppImageResp)\b/,
+  },
+];
+
+const WORKSPACE_REGISTRATION_CONFIG_API_PATTERNS = [
+  {
+    name: "workspace registration API imports registration service directly",
+    regex: /\bctx_workspace_services::workspace_registration\b/,
+  },
+  {
+    name: "workspace registration API owns registration preparation",
+    regex: /\bprepare_workspace_registration\s*\(/,
+  },
+  {
+    name: "workspace primary branch API owns branch validation",
+    regex: /\bvalidate_workspace_primary_branch\s*\(/,
+  },
+  {
+    name: "workspace registration API owns registration error type",
+    regex: /\bWorkspaceRegistrationError\b/,
+  },
+  {
+    name: "workspace registration API owns registration telemetry sequencing",
+    regex: /\brecord_workspace_registered\s*\(/,
+  },
+];
+
+const WORKSPACE_CONFIG_ROUTE_CONTEXT_PATTERNS = [
+  {
+    name: "workspace config API requires workspace context in HTTP",
+    regex: /\b\B/,
+    paths: ["core/crates/ctx-http/src/api/workspaces/management.rs"],
+    contentRegex:
+      /\b(?:get_workspace_primary_branch|update_workspace_primary_branch|get_execution_config|update_execution_config)\s*\([\s\S]*?\)\s*->[\s\S]*?\{[\s\S]{0,300}?\brequire_workspace_ctx\s*\(/g,
+  },
+  {
+    name: "workspace config API loads workspace in HTTP",
+    regex: /\b\B/,
+    paths: ["core/crates/ctx-http/src/api/workspaces/management.rs"],
+    contentRegex:
+      /\b(?:get_workspace_primary_branch|update_workspace_primary_branch|get_execution_config|update_execution_config)\s*\([\s\S]*?\)\s*->[\s\S]*?\{[\s\S]{0,300}?\brequire_workspace\s*\(/g,
+  },
+  {
+    name: "workspace config API fetches workspace directly in HTTP",
+    regex: /\b\B/,
+    paths: ["core/crates/ctx-http/src/api/workspaces/management.rs"],
+    contentRegex:
+      /\b(?:get_workspace_primary_branch|update_workspace_primary_branch|get_execution_config|update_execution_config)\s*\([\s\S]*?\)\s*->[\s\S]*?\{[\s\S]{0,300}?\.get_workspace\s*\(/g,
+  },
+];
+
+const WORKSPACE_EXECUTION_CONFIG_API_PATTERNS = [
+  {
+    name: "workspace execution config API imports settings service directly",
+    regex: /\bctx_settings_service\b/,
+  },
+  {
+    name: "workspace execution config API applies overrides directly",
+    regex: /\bapply_workspace_execution_settings_override\s*\(/,
+  },
+  {
+    name: "workspace execution config API validates overrides directly",
+    regex: /\bvalidate_workspace_execution_settings_override\s*\(/,
+  },
+  {
+    name: "workspace execution config API loads daemon settings directly",
+    regex: /\.load_settings\s*\(/,
+  },
+  {
+    name: "workspace execution config API loads workspace execution override directly",
+    regex: /\.load_workspace_execution_override\s*\(/,
+  },
+  {
+    name: "workspace execution config API checks sandbox runtime directly",
+    regex: /\.shared_vm_container_runtime_available\s*\(/,
+  },
+  {
+    name: "workspace execution config API builds execution override directly",
+    regex: /\bbuild_workspace_execution_config_override\s*\(/,
+  },
+  {
+    name: "workspace execution config API projects execution config directly",
+    regex: /\bproject_workspace_execution_config\s*\(/,
+  },
+  {
+    name: "workspace execution config API persists execution config directly",
+    regex: /\.update_workspace_execution_config\s*\(/,
   },
 ];
 
@@ -3693,6 +3791,15 @@ function apiPatternsForPath(relativePath) {
   if (updateApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...UPDATE_API_ORCHESTRATION_PATTERNS);
   }
+  if (workspaceRegistrationConfigApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...WORKSPACE_REGISTRATION_CONFIG_API_PATTERNS);
+  }
+  if (relativePath === "core/crates/ctx-http/src/api/workspaces/management.rs") {
+    patterns.push(...WORKSPACE_CONFIG_ROUTE_CONTEXT_PATTERNS);
+  }
+  if (workspaceExecutionConfigApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...WORKSPACE_EXECUTION_CONFIG_API_PATTERNS);
+  }
   if (taskSessionCreationApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...TASK_SESSION_CREATION_API_ADMISSION_PATTERNS);
   }
@@ -4690,6 +4797,9 @@ module.exports = {
   TELEMETRY_API_ORCHESTRATION_PATTERNS,
   LOGS_API_ORCHESTRATION_PATTERNS,
   UPDATE_API_ORCHESTRATION_PATTERNS,
+  WORKSPACE_CONFIG_ROUTE_CONTEXT_PATTERNS,
+  WORKSPACE_EXECUTION_CONFIG_API_PATTERNS,
+  WORKSPACE_REGISTRATION_CONFIG_API_PATTERNS,
   IMAGE_ATTACHMENTS_TEST_STORE_ACCESS_PATTERNS,
   JJ_MERGE_QUEUE_BASICS_TEST_STORE_ACCESS_PATTERNS,
   LIB_TEST_DATA_ROOT_FIXTURE_PATTERNS,
