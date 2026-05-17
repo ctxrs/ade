@@ -25,14 +25,6 @@ pub(in crate::api) struct EnableMobileAccessResp {
 }
 
 #[derive(Debug, Deserialize)]
-pub(in crate::api) struct ControlPlaneEnableResp {
-    pub(in crate::api) tunnel_id: String,
-    pub(in crate::api) public_base_url: String,
-    pub(in crate::api) relay_base_url: String,
-    pub(in crate::api) tunnel_secret: String,
-}
-
-#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(in crate::api) struct PairMobileDeviceReq {
     pub(in crate::api) device_id: String,
@@ -42,40 +34,12 @@ pub(in crate::api) struct PairMobileDeviceReq {
     pub(in crate::api) ciphertext: String,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(in crate::api) struct PairMobileDevicePayload {
-    pub(in crate::api) pairing_token: String,
-    pub(in crate::api) device_label: Option<String>,
-    pub(in crate::api) platform: Option<String>,
-    pub(in crate::api) app_version: Option<String>,
-}
-
 #[derive(Debug, Serialize)]
 pub(in crate::api) struct SecureEnvelope {
     pub(in crate::api) device_id: String,
     pub(in crate::api) seq: i64,
     pub(in crate::api) nonce: String,
     pub(in crate::api) ciphertext: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub(in crate::api) struct SecureRequestPayload {
-    pub(in crate::api) method: String,
-    pub(in crate::api) path: String,
-    #[serde(default)]
-    pub(in crate::api) query: Option<String>,
-    #[serde(default)]
-    pub(in crate::api) headers: Vec<(String, String)>,
-    #[serde(default)]
-    pub(in crate::api) body_b64: String,
-}
-
-#[derive(Debug, Serialize)]
-pub(in crate::api) struct SecureResponsePayload {
-    pub(in crate::api) status: u16,
-    pub(in crate::api) headers: Vec<(String, String)>,
-    pub(in crate::api) body_b64: String,
 }
 
 #[derive(Debug, Deserialize)]

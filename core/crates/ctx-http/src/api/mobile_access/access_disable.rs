@@ -15,20 +15,8 @@ pub(in crate::api) async fn disable_mobile_access(
         ));
     }
 
-    let control_plane_url = resolve_control_plane_url();
-    if !control_plane_url.trim().is_empty() {
-        let _ = reqwest::Client::new()
-            .post(format!(
-                "{}/v1/mobile/revoke",
-                control_plane_url.trim_end_matches('/')
-            ))
-            .bearer_auth(req.supabase_token.trim())
-            .send()
-            .await;
-    }
-
     state
-        .disable_mobile_access_runtime()
+        .disable_mobile_access_for_route(req.supabase_token)
         .await
         .map_err(disable_mobile_access_error)?;
     Ok(StatusCode::NO_CONTENT)

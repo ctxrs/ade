@@ -3,10 +3,6 @@ use super::secure_proxy::{
     SecureProxyRouterState,
 };
 use super::*;
-use ctx_transport_runtime::mobile_e2ee;
-use request::verify_mobile_secure_request;
-
-mod request;
 
 pub(in crate::api) async fn handle_mobile_secure(
     State(state): State<CoreHandle>,
@@ -14,51 +10,17 @@ pub(in crate::api) async fn handle_mobile_secure(
     body: Bytes,
 ) -> Result<Json<SecureEnvelope>, (StatusCode, Json<ApiErrorResp>)> {
     let req: MobileSecureEnvelope = parse_json_body(body)?;
-    let verified = verify_mobile_secure_request(&state, req).await?;
-
-    match state
-        .advance_mobile_device_seq(MobileDeviceId(verified.device_uuid), verified.seq)
+    let verified = state
+        .open_mobile_secure_request_for_route(MobileSecureEnvelopeForRoute {
+            device_id: req.device_id,
+            seq: req.seq,
+            nonce: req.nonce,
+            ciphertext: req.ciphertext,
+        })
         .await
-        .map_err(|e| {
-            tracing::error!("failed to update device seq: {e:?}");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to update device".into(),
-                }),
-            )
-        })? {
-        MobileDeviceSequenceAdvance::Advanced => {}
-        MobileDeviceSequenceAdvance::Stale { current } => {
-            tracing::warn!(device_id = %verified.device_uuid, seq = verified.seq, current, "rejected stale mobile secure request");
-            return Err((
-                StatusCode::CONFLICT,
-                Json(ApiErrorResp {
-                    error: "stale request sequence".into(),
-                }),
-            ));
-        }
-        MobileDeviceSequenceAdvance::Missing => {
-            return Err((
-                StatusCode::NOT_FOUND,
-                Json(ApiErrorResp {
-                    error: "device not registered".into(),
-                }),
-            ));
-        }
-    }
+        .map_err(mobile_access_api_error)?;
 
-    let response_payload = match state
-        .load_mobile_auth_context_for_profile(verified.profile_id)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to read mobile access profile".into(),
-                }),
-            )
-        })? {
+    let response_payload = match verified.mobile_auth {
         Some(mobile_auth) if mobile_auth.allows(MobileScope::WorkspaceRead) => {
             proxy_secure_request(&router_state, mobile_auth, verified.payload)
                 .await
@@ -68,33 +30,15 @@ pub(in crate::api) async fn handle_mobile_secure(
             .map_err(SecureProxyError::into_api_error)?,
     };
 
-    let response_bytes = serde_json::to_vec(&response_payload).map_err(|_| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: "failed to encode secure response".into(),
-            }),
-        )
-    })?;
-    let envelope = mobile_e2ee::encrypt(
-        &verified.key,
-        &verified.device_id,
-        verified.seq,
-        &response_bytes,
-    )
-    .map_err(|_| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: "failed to encrypt response".into(),
-            }),
-        )
-    })?;
+    let envelope = state
+        .encrypt_mobile_secure_response_for_route(verified.response_encryption, response_payload)
+        .await
+        .map_err(mobile_access_api_error)?;
 
     Ok(Json(SecureEnvelope {
         device_id: envelope.device_id,
         seq: envelope.seq,
-        nonce: envelope.nonce_b64,
-        ciphertext: envelope.ciphertext_b64,
+        nonce: envelope.nonce,
+        ciphertext: envelope.ciphertext,
     }))
 }

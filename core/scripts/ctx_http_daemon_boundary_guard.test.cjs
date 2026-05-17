@@ -40,6 +40,7 @@ const {
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   MOBILE_ACCESS_STORE_DTO_API_PATTERNS,
+  MOBILE_ACCESS_ORCHESTRATION_API_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
   PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS,
   PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS,
@@ -2415,7 +2416,64 @@ test("daemon boundary guard rejects mobile access API storage DTO leaks", () => 
   );
 });
 
+test("daemon boundary guard rejects mobile access API orchestration leaks", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/mobile_access/secure.rs",
+    contents: `
+      use ctx_transport_runtime::mobile_e2ee;
+      async fn helper(state: CoreHandle) {
+        let client = reqwest::Client::new();
+        let url = std::env::var("CTX_TUNNEL_CONTROL_PLANE_URL")?;
+        let _token = generate_mobile_api_token();
+        let _pairing_hash = hash_pairing_token("secret");
+        let _key = mobile_e2ee::derive_key("device", "pub", "priv")?;
+        let _cfg = state.get_mobile_access_config().await?;
+        state.upsert_mobile_access_config(config).await?;
+        state.create_mobile_connection_profile(label, base, hash, prefix, scopes).await?;
+        state.update_mobile_connection_profile_scopes(profile_id, scopes).await?;
+        state.insert_mobile_pairing_token(id, hash, expires_at).await?;
+        state.consume_mobile_pairing_token(hash).await?;
+        state.get_mobile_device(device_id).await?;
+        state.upsert_mobile_device(device_id, profile_id, update).await?;
+        state.advance_mobile_device_seq(device_id, seq).await?;
+        state.load_mobile_auth_context_for_profile(profile_id).await?;
+        let _scopes = mobile_scope_set_from_strings(&raw)?;
+        let update = MobileDeviceRegistrationUpdate::default();
+      }
+    `,
+    patterns: MOBILE_ACCESS_ORCHESTRATION_API_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "mobile access API calls control plane directly",
+      "mobile access API calls control plane directly",
+      "mobile access API owns mobile token helpers",
+      "mobile access API owns mobile token helpers",
+      "mobile access API owns mobile E2EE orchestration",
+      "mobile access API owns mobile E2EE orchestration",
+      "mobile access API calls raw mobile access config facade",
+      "mobile access API calls raw mobile access config facade",
+      "mobile access API calls raw mobile profile facade",
+      "mobile access API calls raw mobile profile facade",
+      "mobile access API calls raw mobile pairing facade",
+      "mobile access API calls raw mobile pairing facade",
+      "mobile access API calls raw mobile device facade",
+      "mobile access API calls raw mobile device facade",
+      "mobile access API calls raw mobile device facade",
+      "mobile access API calls raw mobile auth context facade",
+      "mobile access API owns mobile scope parsing or defaults",
+      "mobile access API references raw mobile route DTOs",
+    ],
+  );
+});
+
 test("daemon boundary guard scopes mobile access storage DTO roots", () => {
+  const mobileAccessPatterns = [
+    ...MOBILE_ACCESS_STORE_DTO_API_PATTERNS,
+    ...MOBILE_ACCESS_ORCHESTRATION_API_PATTERNS,
+  ];
   for (const filePath of [
     "core/crates/ctx-http/src/api/mod.rs",
     "core/crates/ctx-http/src/api/mobile_access.rs",
@@ -2424,7 +2482,7 @@ test("daemon boundary guard scopes mobile access storage DTO roots", () => {
   ]) {
     assert.deepEqual(
       mobileAccessStoreDtoApiPatternsForPath(filePath),
-      MOBILE_ACCESS_STORE_DTO_API_PATTERNS,
+      mobileAccessPatterns,
     );
   }
   assert.deepEqual(

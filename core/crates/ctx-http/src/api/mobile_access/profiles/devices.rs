@@ -11,12 +11,9 @@ pub(in crate::api) async fn list_mobile_devices_for_profile(
     }
     let uuid = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
     let devices = state
-        .list_mobile_devices(ConnectionProfileId(uuid))
+        .list_mobile_devices_for_profile_for_route(ConnectionProfileId(uuid))
         .await
-        .map_err(|e| {
-            tracing::error!("failed to list mobile devices: {e:?}");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(devices))
 }
 
@@ -33,50 +30,20 @@ pub(in crate::api) async fn register_mobile_device(
             }),
         ));
     };
-    if !mobile_auth.allows(MobileScope::DeviceRegistration) {
-        return Err((
-            StatusCode::UNAUTHORIZED,
-            Json(ApiErrorResp {
-                error: MobileScope::DeviceRegistration.missing_error().into(),
-            }),
-        ));
-    }
-    let device_uuid = uuid::Uuid::parse_str(req.device_id.trim()).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "device_id must be a UUID".into(),
-            }),
-        )
-    })?;
     let device = state
-        .upsert_mobile_device(
-            MobileDeviceId(device_uuid),
-            mobile_auth.profile_id,
-            MobileDeviceRegistrationUpdate {
-                device_label: sanitize_optional_mobile_field(req.device_label),
-                platform: sanitize_optional_mobile_field(req.platform),
-                push_token: sanitize_optional_mobile_field(req.push_token),
-                push_provider: sanitize_optional_mobile_field(req.push_provider),
-                public_key: sanitize_optional_mobile_field(req.public_key),
-                app_version: sanitize_optional_mobile_field(req.app_version),
+        .register_mobile_device_for_route(
+            mobile_auth,
+            RegisterMobileDeviceForRouteRequest {
+                device_id: req.device_id,
+                device_label: req.device_label,
+                platform: req.platform,
+                push_token: req.push_token,
+                push_provider: req.push_provider,
+                public_key: req.public_key,
+                app_version: req.app_version,
             },
         )
         .await
-        .map_err(|e| {
-            tracing::error!("failed to register mobile device: {e:?}");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: "failed to register device".into(),
-                }),
-            )
-        })?;
+        .map_err(mobile_access_api_error)?;
     Ok(Json(device))
-}
-
-fn sanitize_optional_mobile_field(input: Option<String>) -> Option<String> {
-    input
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
 }

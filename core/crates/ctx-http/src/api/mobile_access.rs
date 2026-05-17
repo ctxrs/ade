@@ -1,12 +1,18 @@
 use super::*;
-use ctx_daemon::daemon::CoreHandle;
+use ctx_daemon::daemon::{
+    mobile_access::{
+        CreateMobileConnectionProfileForRouteRequest, EnableMobileAccessRequest,
+        MobileAccessRouteError, MobileAccessRouteErrorKind, MobileAccessStatusSnapshot,
+        MobileSecureEnvelopeForRoute, MobileSecureProxyPayload, MobileSecureProxyResponsePayload,
+        PairMobileDeviceRequest, RegisterMobileDeviceForRouteRequest,
+    },
+    CoreHandle,
+};
 
-mod access;
 mod access_disable;
 mod access_enable;
 mod access_status;
 mod body;
-mod control_plane;
 mod payloads;
 mod profiles;
 mod secure;
@@ -17,7 +23,6 @@ pub(in crate::api) use access_disable::disable_mobile_access;
 pub(in crate::api) use access_enable::enable_mobile_access;
 pub(in crate::api) use access_status::get_mobile_access_status;
 use body::{decode_body_b64, parse_json_body};
-use control_plane::{resolve_control_plane_url, PAIRING_TOKEN_TTL_SECS};
 pub(in crate::api) use payloads::*;
 pub(in crate::api) use profiles::{
     create_mobile_connection_profile, delete_mobile_connection_profile,
@@ -25,3 +30,33 @@ pub(in crate::api) use profiles::{
 };
 pub(super) use secure::*;
 pub(in crate::api) use secure_pairing::pair_mobile_device;
+
+fn mobile_access_api_error(error: MobileAccessRouteError) -> (StatusCode, Json<ApiErrorResp>) {
+    let status = match error.kind() {
+        MobileAccessRouteErrorKind::BadRequest => StatusCode::BAD_REQUEST,
+        MobileAccessRouteErrorKind::Unauthorized => StatusCode::UNAUTHORIZED,
+        MobileAccessRouteErrorKind::Forbidden => StatusCode::FORBIDDEN,
+        MobileAccessRouteErrorKind::Conflict => StatusCode::CONFLICT,
+        MobileAccessRouteErrorKind::NotFound => StatusCode::NOT_FOUND,
+        MobileAccessRouteErrorKind::BadGateway => StatusCode::BAD_GATEWAY,
+        MobileAccessRouteErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    (
+        status,
+        Json(ApiErrorResp {
+            error: error.message().to_string(),
+        }),
+    )
+}
+
+fn mobile_access_status_from_snapshot(snapshot: MobileAccessStatusSnapshot) -> MobileAccessStatus {
+    MobileAccessStatus {
+        enabled: snapshot.enabled,
+        tunnel_id: snapshot.tunnel_id,
+        public_base_url: snapshot.public_base_url,
+        relay_base_url: snapshot.relay_base_url,
+        daemon_public_key: snapshot.daemon_public_key,
+        tunnel_state: snapshot.tunnel_state,
+        last_error: snapshot.last_error,
+    }
+}

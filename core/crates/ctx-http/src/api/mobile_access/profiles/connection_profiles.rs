@@ -12,10 +12,10 @@ pub(in crate::api) async fn list_mobile_connection_profiles(
     if mobile_auth.is_some() {
         return Err(StatusCode::UNAUTHORIZED);
     }
-    let profiles = state.list_mobile_connection_profiles().await.map_err(|e| {
-        tracing::error!("failed to list mobile profiles: {e:?}");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let profiles = state
+        .list_mobile_connection_profiles_for_route()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(profiles))
 }
 
@@ -28,23 +28,17 @@ pub(in crate::api) async fn delete_mobile_connection_profile(
         return Err(StatusCode::UNAUTHORIZED);
     }
     let uuid = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
-    if state
-        .get_mobile_connection_profile(ConnectionProfileId(uuid))
-        .await
-        .map_err(|e| {
-            tracing::error!("failed to load mobile profile before delete: {e:?}");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?
-        .is_none()
-    {
-        return Err(StatusCode::NOT_FOUND);
-    }
     state
-        .delete_mobile_connection_profile(ConnectionProfileId(uuid))
+        .delete_mobile_connection_profile_for_route(ConnectionProfileId(uuid))
         .await
-        .map_err(|e| {
-            tracing::error!("failed to delete mobile profile: {e:?}");
-            StatusCode::INTERNAL_SERVER_ERROR
+        .map_err(|error| match error.kind() {
+            MobileAccessRouteErrorKind::NotFound => StatusCode::NOT_FOUND,
+            MobileAccessRouteErrorKind::BadRequest => StatusCode::BAD_REQUEST,
+            MobileAccessRouteErrorKind::Unauthorized => StatusCode::UNAUTHORIZED,
+            MobileAccessRouteErrorKind::Forbidden => StatusCode::FORBIDDEN,
+            MobileAccessRouteErrorKind::Conflict => StatusCode::CONFLICT,
+            MobileAccessRouteErrorKind::BadGateway => StatusCode::BAD_GATEWAY,
+            MobileAccessRouteErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
         })?;
     Ok(StatusCode::NO_CONTENT)
 }

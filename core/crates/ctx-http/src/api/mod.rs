@@ -12,7 +12,6 @@ use base64::Engine;
 use opentelemetry::trace::SpanKind;
 use opentelemetry::KeyValue;
 use serde::{Deserialize, Serialize};
-use url::Url;
 
 pub(crate) mod artifacts;
 mod auth;
@@ -78,7 +77,6 @@ use workspaces::*;
 use request_base::{public_route_url, public_websocket_url, resolve_request_base_url};
 pub use router::{router, RouteHandles};
 
-use auth::{generate_mobile_api_token, generate_pairing_token, hash_api_token, hash_pairing_token};
 use demo::*;
 use errors::ApiErrorResp;
 use ws::{
@@ -87,10 +85,7 @@ use ws::{
 };
 
 use ctx_core::{ids::*, models::*};
-use ctx_daemon::daemon::mobile_access::{
-    default_mobile_profile_scopes, mobile_scope_set_from_strings, MobileAccessConfigUpsert,
-    MobileAuthContext, MobileDeviceRegistrationUpdate, MobileDeviceSequenceAdvance, MobileScope,
-};
+use ctx_daemon::daemon::mobile_access::{MobileAuthContext, MobileScope};
 use ctx_observability::logs;
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
 use ctx_provider_install::install_state::InstallId;

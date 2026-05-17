@@ -29,8 +29,8 @@ impl axum::extract::FromRef<RouteState> for SecureProxyRouterState {
 pub(super) async fn proxy_secure_request(
     router_state: &SecureProxyRouterState,
     mobile_auth: MobileAuthContext,
-    mut payload: SecureRequestPayload,
-) -> Result<SecureResponsePayload, SecureProxyError> {
+    mut payload: MobileSecureProxyPayload,
+) -> Result<MobileSecureProxyResponsePayload, SecureProxyError> {
     if let Some((path, query)) = payload.path.split_once('?') {
         let path = path.to_string();
         let query = query.to_string();
@@ -98,7 +98,7 @@ pub(super) async fn proxy_secure_request(
         .await
         .map_err(|_| SecureProxyError::bad_gateway("failed to read proxied response"))?;
     let body_b64 = base64::engine::general_purpose::STANDARD.encode(body_bytes);
-    Ok(SecureResponsePayload {
+    Ok(MobileSecureProxyResponsePayload {
         status,
         headers,
         body_b64,

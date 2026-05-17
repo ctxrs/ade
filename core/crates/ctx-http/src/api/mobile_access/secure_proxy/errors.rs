@@ -38,22 +38,24 @@ impl SecureProxyError {
 }
 
 pub(super) fn desktop_auth_required_secure_response(
-) -> Result<SecureResponsePayload, SecureProxyError> {
+) -> Result<MobileSecureProxyResponsePayload, SecureProxyError> {
     secure_error_response("desktop auth required")
 }
 
 pub(in crate::api::mobile_access) fn mobile_scope_required_secure_response(
     scope: MobileScope,
-) -> Result<SecureResponsePayload, SecureProxyError> {
+) -> Result<MobileSecureProxyResponsePayload, SecureProxyError> {
     secure_error_response(scope.missing_error())
 }
 
-fn secure_error_response(message: &str) -> Result<SecureResponsePayload, SecureProxyError> {
+fn secure_error_response(
+    message: &str,
+) -> Result<MobileSecureProxyResponsePayload, SecureProxyError> {
     let body = serde_json::to_vec(&ApiErrorResp {
         error: message.to_string(),
     })
     .map_err(|_| SecureProxyError::bad_gateway("failed to encode secure response"))?;
-    Ok(SecureResponsePayload {
+    Ok(MobileSecureProxyResponsePayload {
         status: StatusCode::UNAUTHORIZED.as_u16(),
         headers: vec![(
             header::CONTENT_TYPE.as_str().to_string(),

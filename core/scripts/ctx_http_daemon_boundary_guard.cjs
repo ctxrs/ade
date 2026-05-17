@@ -1004,6 +1004,49 @@ const MOBILE_ACCESS_STORE_DTO_API_PATTERNS = [
   },
 ];
 
+const MOBILE_ACCESS_ORCHESTRATION_API_PATTERNS = [
+  {
+    name: "mobile access API calls control plane directly",
+    regex: /\breqwest\s*::\s*Client\b|\buse\s+reqwest\b|\bCTX_TUNNEL_CONTROL_PLANE_URL\b|\bresolve_control_plane_url\b/,
+  },
+  {
+    name: "mobile access API owns mobile token helpers",
+    regex: /\b(?:generate_mobile_api_token|generate_pairing_token|hash_api_token|hash_pairing_token)\s*\(/,
+  },
+  {
+    name: "mobile access API owns mobile E2EE orchestration",
+    regex: /\bctx_transport_runtime\s*::\s*mobile_e2ee\b|\bmobile_e2ee\s*::\s*(?:derive_key|decrypt|decrypt_pairing_request|encrypt|generate_keypair)\s*\(/,
+  },
+  {
+    name: "mobile access API calls raw mobile access config facade",
+    regex: /\.(?:get_mobile_access_config|upsert_mobile_access_config)\s*\(/,
+  },
+  {
+    name: "mobile access API calls raw mobile profile facade",
+    regex: /\.(?:create_mobile_connection_profile|list_mobile_connection_profiles|get_mobile_connection_profile|update_mobile_connection_profile_scopes|delete_mobile_connection_profile)\s*\(/,
+  },
+  {
+    name: "mobile access API calls raw mobile pairing facade",
+    regex: /\.(?:insert_mobile_pairing_token|consume_mobile_pairing_token)\s*\(/,
+  },
+  {
+    name: "mobile access API calls raw mobile device facade",
+    regex: /\.(?:list_mobile_devices|get_mobile_device|upsert_mobile_device|advance_mobile_device_seq)\s*\(/,
+  },
+  {
+    name: "mobile access API calls raw mobile auth context facade",
+    regex: /\.load_mobile_auth_context_for_profile\s*\(/,
+  },
+  {
+    name: "mobile access API owns mobile scope parsing or defaults",
+    regex: /\b(?:default_mobile_profile_scopes|mobile_scope_set_from_strings)\s*\(/,
+  },
+  {
+    name: "mobile access API references raw mobile route DTOs",
+    regex: /\b(?:MobileAccessConfigUpsert|MobileDeviceRegistrationUpdate|MobileDeviceSequenceAdvance)\b/,
+  },
+];
+
 const SESSION_VCS_API_ORCHESTRATION_PATTERNS = [
   {
     name: "session VCS API imports workspace VCS service",
@@ -3905,7 +3948,10 @@ function geminiLiveModelCatalogStorePatternsForPath(relativePath) {
 
 function mobileAccessStoreDtoApiPatternsForPath(relativePath) {
   if (mobileAccessStoreDtoApiRoots.some((root) => relativePath.startsWith(root))) {
-    return MOBILE_ACCESS_STORE_DTO_API_PATTERNS;
+    return [
+      ...MOBILE_ACCESS_STORE_DTO_API_PATTERNS,
+      ...MOBILE_ACCESS_ORCHESTRATION_API_PATTERNS,
+    ];
   }
   return [];
 }
@@ -4808,6 +4854,7 @@ module.exports = {
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MOBILE_ACCESS_STORE_DTO_API_PATTERNS,
+  MOBILE_ACCESS_ORCHESTRATION_API_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
   MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS,
   CURSOR_PROCESS_LOGIN_API_ORCHESTRATION_PATTERNS,

@@ -8,8 +8,29 @@ use ctx_transport_runtime::{
     mobile_e2ee::{self, E2eeKey},
     mobile_tunnel::{MobileTunnelState, StartMobileTunnelConfig},
 };
+use serde::{Deserialize, Serialize};
 
 use crate::daemon::{CoreHandle, DaemonState};
+
+mod control_plane;
+mod lifecycle;
+mod pairing;
+mod profiles;
+mod secure_envelope;
+mod tokens;
+
+pub use lifecycle::{
+    mobile_public_url_is_allowed, EnableMobileAccessResult, MobileAccessRouteError,
+    MobileAccessRouteErrorKind,
+};
+pub use profiles::{
+    CreateMobileConnectionProfileForRouteRequest, CreateMobileConnectionProfileForRouteResult,
+    RegisterMobileDeviceForRouteRequest,
+};
+pub use secure_envelope::{
+    MobileSecureEnvelopeForRoute, MobileSecureProxyPayload, MobileSecureProxyResponsePayload,
+    MobileSecureResponseEncryption, OpenMobileSecureRequestResult,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MobileScope {
@@ -85,7 +106,7 @@ impl MobileScopeSet {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct MobileAuthContext {
     pub profile_id: ConnectionProfileId,
     scopes: MobileScopeSet,
@@ -94,6 +115,49 @@ pub struct MobileAuthContext {
 impl MobileAuthContext {
     pub fn allows(self, scope: MobileScope) -> bool {
         self.scopes.allows(scope)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct EnableMobileAccessRequest {
+    pub supabase_token: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PairMobileDeviceRequest {
+    pub device_id: String,
+    pub public_key: String,
+    pub seq: i64,
+    pub nonce: String,
+    pub ciphertext: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PairMobileDevicePayload {
+    pub pairing_token: String,
+    pub device_label: Option<String>,
+    pub platform: Option<String>,
+    pub app_version: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MobileSecureEnvelope {
+    pub device_id: String,
+    pub seq: i64,
+    pub nonce: String,
+    pub ciphertext: String,
+}
+
+impl From<mobile_e2ee::Envelope> for MobileSecureEnvelope {
+    fn from(envelope: mobile_e2ee::Envelope) -> Self {
+        Self {
+            device_id: envelope.device_id,
+            seq: envelope.seq,
+            nonce: envelope.nonce_b64,
+            ciphertext: envelope.ciphertext_b64,
+        }
     }
 }
 
@@ -427,6 +491,77 @@ pub async fn require_mobile_secure_stream_access(
 }
 
 impl CoreHandle {
+    pub async fn enable_mobile_access_for_route(
+        &self,
+        request: EnableMobileAccessRequest,
+    ) -> Result<EnableMobileAccessResult, MobileAccessRouteError> {
+        lifecycle::enable_mobile_access_for_route(&self.state, request).await
+    }
+
+    pub async fn disable_mobile_access_for_route(
+        &self,
+        supabase_token: String,
+    ) -> Result<(), DisableMobileAccessError> {
+        lifecycle::disable_mobile_access_for_route(&self.state, supabase_token).await
+    }
+
+    pub async fn create_mobile_connection_profile_for_route(
+        &self,
+        request: CreateMobileConnectionProfileForRouteRequest,
+    ) -> Result<CreateMobileConnectionProfileForRouteResult, MobileAccessRouteError> {
+        profiles::create_mobile_connection_profile_for_route(&self.state, request).await
+    }
+
+    pub async fn list_mobile_connection_profiles_for_route(
+        &self,
+    ) -> Result<Vec<MobileConnectionProfile>, MobileAccessRouteError> {
+        profiles::list_mobile_connection_profiles_for_route(&self.state).await
+    }
+
+    pub async fn delete_mobile_connection_profile_for_route(
+        &self,
+        profile_id: ConnectionProfileId,
+    ) -> Result<(), MobileAccessRouteError> {
+        profiles::delete_mobile_connection_profile_for_route(&self.state, profile_id).await
+    }
+
+    pub async fn list_mobile_devices_for_profile_for_route(
+        &self,
+        profile_id: ConnectionProfileId,
+    ) -> Result<Vec<MobileDeviceRegistration>, MobileAccessRouteError> {
+        profiles::list_mobile_devices_for_profile_for_route(&self.state, profile_id).await
+    }
+
+    pub async fn register_mobile_device_for_route(
+        &self,
+        auth: MobileAuthContext,
+        request: RegisterMobileDeviceForRouteRequest,
+    ) -> Result<MobileDeviceRegistration, MobileAccessRouteError> {
+        profiles::register_mobile_device_for_route(&self.state, auth, request).await
+    }
+
+    pub async fn pair_mobile_device_for_route(
+        &self,
+        request: PairMobileDeviceRequest,
+    ) -> Result<MobileSecureEnvelope, MobileAccessRouteError> {
+        pairing::pair_mobile_device_for_route(&self.state, request).await
+    }
+
+    pub async fn open_mobile_secure_request_for_route(
+        &self,
+        request: MobileSecureEnvelopeForRoute,
+    ) -> Result<OpenMobileSecureRequestResult, MobileAccessRouteError> {
+        secure_envelope::open_mobile_secure_request_for_route(&self.state, request).await
+    }
+
+    pub async fn encrypt_mobile_secure_response_for_route(
+        &self,
+        context: MobileSecureResponseEncryption,
+        response: MobileSecureProxyResponsePayload,
+    ) -> Result<MobileSecureEnvelope, MobileAccessRouteError> {
+        secure_envelope::encrypt_mobile_secure_response_for_route(context, response).await
+    }
+
     pub async fn create_mobile_connection_profile(
         &self,
         label: String,
