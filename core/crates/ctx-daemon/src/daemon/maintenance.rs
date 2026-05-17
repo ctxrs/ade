@@ -13,11 +13,40 @@ use crate::daemon::{
 
 pub struct MaintenanceDrainPermit {
     state: Arc<DaemonState>,
+    released: bool,
 }
 
 impl MaintenanceDrainPermit {
-    pub async fn release(self) -> bool {
-        self.state.core.update_drain.release().await
+    pub async fn release(mut self) -> bool {
+        if self.released {
+            return false;
+        }
+        let released = self.state.core.update_drain.release().await;
+        self.released = true;
+        released
+    }
+}
+
+impl Drop for MaintenanceDrainPermit {
+    fn drop(&mut self) {
+        if self.released {
+            return;
+        }
+        self.released = true;
+        let state = Arc::clone(&self.state);
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => {
+                handle.spawn(async move {
+                    let _ = state.core.update_drain.release().await;
+                });
+            }
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "maintenance drain permit dropped without a tokio runtime; drain may remain active"
+                );
+            }
+        }
     }
 }
 
@@ -99,22 +128,24 @@ pub async fn acquire_linux_sandbox_prepare_drain(
     {
         return Err(MaintenanceDrainError::AlreadyActive);
     }
+    let permit = MaintenanceDrainPermit {
+        state: Arc::clone(state),
+        released: false,
+    };
 
     let activity = match daemon_sandbox_work_activity_summary(state).await {
         Ok(activity) => activity,
         Err(error) => {
-            let _ = state.core.update_drain.release().await;
+            let _ = permit.release().await;
             return Err(MaintenanceDrainError::ActivityUnavailable(error));
         }
     };
     if sandbox_work_is_active(&activity) {
-        let _ = state.core.update_drain.release().await;
+        let _ = permit.release().await;
         return Err(MaintenanceDrainError::SandboxWorkActive);
     }
 
-    Ok(MaintenanceDrainPermit {
-        state: Arc::clone(state),
-    })
+    Ok(permit)
 }
 
 pub async fn request_daemon_shutdown(

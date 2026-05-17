@@ -209,6 +209,11 @@ const claudeSetupTokenLoginApiRoots = [
   "core/crates/ctx-http/src/api/providers/login/claude/",
 ];
 
+const executionApiRoots = [
+  "core/crates/ctx-http/src/api/execution.rs",
+  "core/crates/ctx-http/src/api/execution/",
+];
+
 const taskSessionCreationApiRoots = [
   "core/crates/ctx-http/src/api/tasks/creation_session.rs",
   "core/crates/ctx-http/src/api/tasks/creation_session/",
@@ -1260,6 +1265,44 @@ const CLAUDE_SETUP_TOKEN_LOGIN_API_ORCHESTRATION_PATTERNS = [
   {
     name: "Claude setup-token login API finalizes Claude accounts directly",
     regex: /\badd_claude_account_for_login\s*\(/,
+  },
+];
+
+const EXECUTION_API_ORCHESTRATION_PATTERNS = [
+  {
+    name: "execution API imports Linux sandbox runtime directly",
+    regex: /\bctx_linux_sandbox_runtime\b/,
+  },
+  {
+    name: "execution API accesses daemon data root directly",
+    regex: /\.data_root\s*\(/,
+  },
+  {
+    name: "execution API owns workspace lookup",
+    regex: /\bWorkspacesHandle\b|\.get_workspace\s*\(/,
+  },
+  {
+    name: "execution API owns effective execution settings",
+    regex:
+      /\b(?:ExecutionMode|ExecutionSettings|effective_execution_settings_classified|map_effective_execution_settings_error)\b/,
+  },
+  {
+    name: "execution API owns maintenance drain",
+    regex:
+      /\b(?:daemon_maintenance|MaintenanceDrainError|reject_new_execution_during_maintenance|acquire_linux_sandbox_prepare_drain)\b/,
+  },
+  {
+    name: "execution API owns workspace launch input resolution",
+    regex: /\bresolve_workspace_launch_inputs\b/,
+  },
+  {
+    name: "execution API owns Linux sandbox user messages",
+    regex: /\blinux_sandbox_user_message\b/,
+  },
+  {
+    name: "execution API calls Linux sandbox runtime by fully-qualified path",
+    regex:
+      /\bctx_linux_sandbox_runtime::(?:linux_sandbox_runtime_status|stage_linux_sandbox_runtime_downloads|prepare_linux_sandbox_runtime)\b/,
   },
 ];
 
@@ -3445,6 +3488,9 @@ function apiPatternsForPath(relativePath) {
   }
   if (claudeSetupTokenLoginApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...CLAUDE_SETUP_TOKEN_LOGIN_API_ORCHESTRATION_PATTERNS);
+  }
+  if (executionApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...EXECUTION_API_ORCHESTRATION_PATTERNS);
   }
   if (taskSessionCreationApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...TASK_SESSION_CREATION_API_ADMISSION_PATTERNS);

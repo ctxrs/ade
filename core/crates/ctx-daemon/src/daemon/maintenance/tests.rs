@@ -68,3 +68,25 @@ async fn linux_sandbox_prepare_drain_conflicts_with_existing_drain() {
     };
     assert!(matches!(error, MaintenanceDrainError::AlreadyActive));
 }
+
+#[tokio::test]
+async fn linux_sandbox_prepare_drain_drop_releases_drain() {
+    let (_data_dir, state) = test_state().await;
+    let permit = acquire_linux_sandbox_prepare_drain(&state)
+        .await
+        .expect("idle daemon should acquire sandbox prepare drain");
+    assert_eq!(
+        post_message_update_drain_reason(&state).await.as_deref(),
+        Some("linux_sandbox_runtime_prepare")
+    );
+
+    drop(permit);
+
+    for _ in 0..20 {
+        if post_message_update_drain_reason(&state).await.is_none() {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("dropping maintenance drain permit should release the drain");
+}

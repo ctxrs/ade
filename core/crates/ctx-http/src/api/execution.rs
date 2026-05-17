@@ -1,77 +1,125 @@
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
-use serde::Deserialize;
 
-use ctx_execution_runtime::{ExecutionLaunchSnapshot, ExecutionSetupJobKind, RuntimePrewarmScope};
+use ctx_execution_runtime::ExecutionLaunchSnapshot;
 
-use ctx_daemon::daemon::{CoreHandle, ExecutionHandle, WorkspacesHandle};
-use ctx_observability::logs;
-use ctx_settings_model::ExecutionMode;
+use ctx_daemon::daemon::{ExecutionHandle, StartExecutionLaunchError, StartExecutionLaunchRequest};
 
 use super::errors::ApiErrorResp;
 
 mod launch_stream;
 mod linux_sandbox;
-mod workspace_launch;
 
 pub(super) use launch_stream::{launch_status, launch_stream_ws};
 pub(super) use linux_sandbox::{
     linux_sandbox_runtime_prepare, linux_sandbox_runtime_stage, linux_sandbox_runtime_status_api,
 };
-use workspace_launch::resolve_workspace_launch_inputs;
-
-#[derive(Debug, Deserialize)]
-pub(super) struct ExecutionLaunchStartReq {
-    #[serde(default)]
-    kind: Option<ExecutionSetupJobKind>,
-    #[serde(default)]
-    workspace_id: Option<String>,
-    #[serde(default)]
-    prewarm_scope: RuntimePrewarmScope,
-}
 
 pub(super) async fn launch_start(
-    State(core): State<CoreHandle>,
     State(execution): State<ExecutionHandle>,
-    State(workspaces): State<WorkspacesHandle>,
-    Json(req): Json<ExecutionLaunchStartReq>,
+    Json(req): Json<StartExecutionLaunchRequest>,
 ) -> Result<Json<ExecutionLaunchSnapshot>, (StatusCode, Json<ApiErrorResp>)> {
-    execution
-        .reject_new_execution_during_maintenance()
+    let snapshot = execution
+        .start_execution_launch_for_request(req)
         .await
-        .map_err(|err| {
-            (
-                StatusCode::CONFLICT,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&err.to_string()),
-                }),
-            )
-        })?;
-    let kind = req.kind.unwrap_or(ExecutionSetupJobKind::WorkspaceLaunch);
-    let snapshot = match kind {
-        ExecutionSetupJobKind::WorkspaceLaunch => {
-            let (workspace, execution_settings) =
-                resolve_workspace_launch_inputs(&workspaces, req.workspace_id.as_deref()).await?;
-            execution
-                .start_workspace_launch(workspace, execution_settings)
-                .await
+        .map_err(map_start_execution_launch_error)?;
+    Ok(Json(snapshot))
+}
+
+fn map_start_execution_launch_error(
+    error: StartExecutionLaunchError,
+) -> (StatusCode, Json<ApiErrorResp>) {
+    let (status, message) = match error {
+        StartExecutionLaunchError::MissingWorkspaceId => (
+            StatusCode::BAD_REQUEST,
+            "workspace_id is required for workspace_launch".to_string(),
+        ),
+        StartExecutionLaunchError::InvalidWorkspaceId => {
+            (StatusCode::BAD_REQUEST, "invalid workspace id".to_string())
         }
-        ExecutionSetupJobKind::StartupPrewarm => {
-            let settings = core.load_settings().await.map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiErrorResp {
-                        error: logs::redact_sensitive(&e.to_string()),
-                    }),
-                )
-            })?;
-            let mut execution_settings = settings.execution.unwrap_or_default();
-            execution_settings.mode = ExecutionMode::Sandbox;
-            execution
-                .start_runtime_prewarm(execution_settings, req.prewarm_scope)
-                .await
+        StartExecutionLaunchError::WorkspaceNotFound => {
+            (StatusCode::NOT_FOUND, "workspace not found".to_string())
+        }
+        StartExecutionLaunchError::MaintenanceActive { message } => (StatusCode::CONFLICT, message),
+        StartExecutionLaunchError::InvalidWorkspaceExecutionSettings {
+            message,
+            policy_denial,
+        } => (
+            if policy_denial {
+                StatusCode::FORBIDDEN
+            } else {
+                StatusCode::BAD_REQUEST
+            },
+            message,
+        ),
+        StartExecutionLaunchError::Internal { message } => {
+            (StatusCode::INTERNAL_SERVER_ERROR, message)
         }
     };
-    Ok(Json(snapshot))
+    (status, Json(ApiErrorResp { error: message }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_workspace_launch_contract_errors() {
+        let (status, body) =
+            map_start_execution_launch_error(StartExecutionLaunchError::MissingWorkspaceId);
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            body.0.error,
+            "workspace_id is required for workspace_launch"
+        );
+
+        let (status, body) =
+            map_start_execution_launch_error(StartExecutionLaunchError::InvalidWorkspaceId);
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body.0.error, "invalid workspace id");
+
+        let (status, body) =
+            map_start_execution_launch_error(StartExecutionLaunchError::WorkspaceNotFound);
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body.0.error, "workspace not found");
+    }
+
+    #[test]
+    fn maps_execution_settings_contract_errors() {
+        let (status, body) = map_start_execution_launch_error(
+            StartExecutionLaunchError::InvalidWorkspaceExecutionSettings {
+                message: "bad settings".to_string(),
+                policy_denial: false,
+            },
+        );
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body.0.error, "bad settings");
+
+        let (status, body) = map_start_execution_launch_error(
+            StartExecutionLaunchError::InvalidWorkspaceExecutionSettings {
+                message: "policy".to_string(),
+                policy_denial: true,
+            },
+        );
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body.0.error, "policy");
+    }
+
+    #[test]
+    fn maps_maintenance_and_internal_contract_errors() {
+        let (status, body) =
+            map_start_execution_launch_error(StartExecutionLaunchError::MaintenanceActive {
+                message: "maintenance".to_string(),
+            });
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body.0.error, "maintenance");
+
+        let (status, body) =
+            map_start_execution_launch_error(StartExecutionLaunchError::Internal {
+                message: "internal".to_string(),
+            });
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(body.0.error, "internal");
+    }
 }

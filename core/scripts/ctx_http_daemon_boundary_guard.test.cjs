@@ -4669,6 +4669,42 @@ test("daemon boundary guard rejects execution-launch direct store setup", () => 
   );
 });
 
+test("daemon boundary guard rejects execution API orchestration", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/execution/linux_sandbox.rs",
+    contents: `
+      use ctx_linux_sandbox_runtime::{linux_sandbox_runtime_status, LinuxSandboxRuntimeStatus};
+      use ctx_daemon::daemon::{maintenance as daemon_maintenance, WorkspacesHandle};
+      use ctx_settings_model::{ExecutionMode, ExecutionSettings};
+      async fn route(core: CoreHandle, workspaces: WorkspacesHandle, execution: ExecutionHandle) {
+        let _ = core.data_root();
+        let _ = workspaces.get_workspace(workspace_id).await;
+        let _ = workspaces.effective_execution_settings_classified(workspace_id).await;
+        let _ = execution.reject_new_execution_during_maintenance().await;
+        let _ = execution.acquire_linux_sandbox_prepare_drain().await;
+        let _ = resolve_workspace_launch_inputs(&workspaces, None).await;
+        let _ = linux_sandbox_user_message("status");
+        let _ = ctx_linux_sandbox_runtime::linux_sandbox_runtime_status(root).await;
+      }
+    `,
+    patterns: apiPatternsForPath("core/crates/ctx-http/src/api/execution/linux_sandbox.rs"),
+  });
+
+  const names = new Set(violations.map((violation) => violation.name));
+  for (const expected of [
+    "execution API imports Linux sandbox runtime directly",
+    "execution API accesses daemon data root directly",
+    "execution API owns workspace lookup",
+    "execution API owns effective execution settings",
+    "execution API owns maintenance drain",
+    "execution API owns workspace launch input resolution",
+    "execution API owns Linux sandbox user messages",
+    "execution API calls Linux sandbox runtime by fully-qualified path",
+  ]) {
+    assert(names.has(expected), `expected ${expected}; saw ${[...names].join(", ")}`);
+  }
+});
+
 test("daemon boundary guard scopes small-boundary store facade roots", () => {
   for (const filePath of [
     "core/crates/ctx-http/src/lib_tests/cors.rs",

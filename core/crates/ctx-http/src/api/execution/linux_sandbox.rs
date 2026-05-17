@@ -3,24 +3,12 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde::Deserialize;
 
-use ctx_linux_sandbox_runtime::{
-    linux_sandbox_runtime_status, prepare_linux_sandbox_runtime,
-    stage_linux_sandbox_runtime_downloads, LinuxSandboxActivationMode,
+use ctx_daemon::daemon::{
+    ExecutionHandle, LinuxSandboxActivationMode, LinuxSandboxRuntimeError,
     LinuxSandboxRuntimePrepareResult, LinuxSandboxRuntimeStatus,
 };
-use ctx_observability::logs;
 
 use crate::api::errors::ApiErrorResp;
-use ctx_daemon::daemon::{maintenance as daemon_maintenance, CoreHandle, ExecutionHandle};
-
-fn linux_sandbox_user_message(kind: &str) -> String {
-    match kind {
-        "status" => "Linux sandbox runtime status check failed".to_string(),
-        "stage" => "Linux sandbox runtime downloads failed to stage".to_string(),
-        "prepare" => "Preparing Linux sandbox runtime failed".to_string(),
-        _ => "Linux sandbox operation failed".to_string(),
-    }
-}
 
 #[derive(Debug, Deserialize)]
 pub(in crate::api) struct LinuxSandboxRuntimePrepareReq {
@@ -31,93 +19,83 @@ pub(in crate::api) struct LinuxSandboxRuntimePrepareReq {
 }
 
 pub(in crate::api) async fn linux_sandbox_runtime_status_api(
-    State(core): State<CoreHandle>,
+    State(execution): State<ExecutionHandle>,
 ) -> Result<Json<LinuxSandboxRuntimeStatus>, (StatusCode, Json<ApiErrorResp>)> {
-    let status = linux_sandbox_runtime_status(core.data_root())
+    let status = execution
+        .linux_sandbox_runtime_status()
         .await
-        .map_err(|err| {
-            tracing::warn!(target: "linux_sandbox", error = %logs::redact_sensitive(&err.to_string()), "linux_sandbox_runtime_status_api error");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp { error: linux_sandbox_user_message("status") }),
-            )
-        })?;
+        .map_err(map_linux_sandbox_runtime_error)?;
     Ok(Json(status))
 }
 
 pub(in crate::api) async fn linux_sandbox_runtime_stage(
-    State(core): State<CoreHandle>,
+    State(execution): State<ExecutionHandle>,
 ) -> Result<Json<LinuxSandboxRuntimeStatus>, (StatusCode, Json<ApiErrorResp>)> {
-    let status = stage_linux_sandbox_runtime_downloads(core.data_root(), None)
+    let status = execution
+        .stage_linux_sandbox_runtime()
         .await
-        .map_err(|err| {
-            tracing::warn!(target: "linux_sandbox", error = %logs::redact_sensitive(&err.to_string()), "linux_sandbox_runtime_stage error");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp { error: linux_sandbox_user_message("stage") }),
-            )
-        })?;
+        .map_err(map_linux_sandbox_runtime_error)?;
     Ok(Json(status))
 }
 
 pub(in crate::api) async fn linux_sandbox_runtime_prepare(
-    State(core): State<CoreHandle>,
     State(execution): State<ExecutionHandle>,
     Json(req): Json<LinuxSandboxRuntimePrepareReq>,
 ) -> Result<Json<LinuxSandboxRuntimePrepareResult>, (StatusCode, Json<ApiErrorResp>)> {
-    let drain_permit = execution
-        .acquire_linux_sandbox_prepare_drain()
+    let result = execution
+        .prepare_linux_sandbox_runtime(req.activation_mode, req.sudo_password.as_deref())
         .await
-        .map_err(linux_sandbox_prepare_drain_error)?;
-    let result = match prepare_linux_sandbox_runtime(
-        core.data_root(),
-        req.activation_mode
-            .unwrap_or(LinuxSandboxActivationMode::Local),
-        req.sudo_password.as_deref(),
-        None,
-    )
-    .await
-    {
-        Ok(result) => result,
-        Err(err) => {
-            let _ = drain_permit.release().await;
-            tracing::warn!(target: "linux_sandbox", error = %logs::redact_sensitive(&err.to_string()), "linux_sandbox_runtime_prepare error");
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: linux_sandbox_user_message("prepare"),
-                }),
-            ));
-        }
-    };
-    let _ = drain_permit.release().await;
+        .map_err(map_linux_sandbox_runtime_error)?;
     Ok(Json(result))
 }
 
-fn linux_sandbox_prepare_drain_error(
-    error: daemon_maintenance::MaintenanceDrainError,
+fn map_linux_sandbox_runtime_error(
+    error: LinuxSandboxRuntimeError,
 ) -> (StatusCode, Json<ApiErrorResp>) {
-    match error {
-        daemon_maintenance::MaintenanceDrainError::AlreadyActive => (
-            StatusCode::CONFLICT,
-            Json(ApiErrorResp {
-                error: "Linux sandbox runtime prepare is already in progress. Retry when current maintenance completes.".to_string(),
-            }),
-        ),
-        daemon_maintenance::MaintenanceDrainError::ActivityUnavailable(error) => {
-            tracing::warn!(target: "linux_sandbox", error = %logs::redact_sensitive(&error.to_string()), "linux_sandbox_runtime_prepare activity gate error");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: linux_sandbox_user_message("prepare"),
-                }),
-            )
+    let status = match &error {
+        LinuxSandboxRuntimeError::PrepareAlreadyActive
+        | LinuxSandboxRuntimeError::PrepareSandboxWorkActive => StatusCode::CONFLICT,
+        LinuxSandboxRuntimeError::Runtime { .. }
+        | LinuxSandboxRuntimeError::PrepareActivityUnavailable { .. } => {
+            StatusCode::INTERNAL_SERVER_ERROR
         }
-        daemon_maintenance::MaintenanceDrainError::SandboxWorkActive => (
-            StatusCode::CONFLICT,
-            Json(ApiErrorResp {
-                error: "Preparing Linux sandbox runtime is blocked while sandbox work is active. Retry when sandbox turns, terminals, containers, and runtime operations are idle.".to_string(),
-            }),
-        ),
+    };
+    let message = error.message().to_string();
+    (status, Json(ApiErrorResp { error: message }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ctx_daemon::daemon::LinuxSandboxRuntimeOperation;
+
+    #[test]
+    fn maps_linux_sandbox_prepare_conflicts() {
+        let (status, body) =
+            map_linux_sandbox_runtime_error(LinuxSandboxRuntimeError::PrepareAlreadyActive);
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(body.0.error.contains("already in progress"));
+
+        let (status, body) =
+            map_linux_sandbox_runtime_error(LinuxSandboxRuntimeError::PrepareSandboxWorkActive);
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(body.0.error.contains("sandbox work is active"));
+    }
+
+    #[test]
+    fn maps_linux_sandbox_runtime_errors() {
+        let (status, body) =
+            map_linux_sandbox_runtime_error(LinuxSandboxRuntimeError::PrepareActivityUnavailable {
+                message: "Preparing Linux sandbox runtime failed".to_string(),
+            });
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(body.0.error, "Preparing Linux sandbox runtime failed");
+
+        let (status, body) = map_linux_sandbox_runtime_error(LinuxSandboxRuntimeError::Runtime {
+            operation: LinuxSandboxRuntimeOperation::Status,
+            message: "Linux sandbox runtime status check failed".to_string(),
+        });
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(body.0.error, "Linux sandbox runtime status check failed");
     }
 }

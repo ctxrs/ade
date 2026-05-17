@@ -66,6 +66,11 @@ pub use activity::{
     DaemonSandboxWorkActivitySummary, DaemonTurnActivitySummary,
 };
 pub use dictation::DictationConfigError;
+pub use execution_setup::{
+    LinuxSandboxActivationMode, LinuxSandboxRuntimeError, LinuxSandboxRuntimeOperation,
+    LinuxSandboxRuntimePrepareResult, LinuxSandboxRuntimeStatus, StartExecutionLaunchError,
+    StartExecutionLaunchRequest,
+};
 pub use handle::{
     CoreHandle, DaemonHandle, ExecutionHandle, ProvidersHandle, SessionsHandle, TasksHandle,
     TelemetryHandle, TransportHandle, WorkspaceStreamHandle, WorkspacesHandle,
