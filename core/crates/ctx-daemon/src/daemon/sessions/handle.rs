@@ -58,6 +58,18 @@ pub enum SessionImageBlobStoreError {
     Internal,
 }
 
+impl From<crate::daemon::blobs::ImageBlobStoreError> for SessionImageBlobStoreError {
+    fn from(error: crate::daemon::blobs::ImageBlobStoreError) -> Self {
+        match error {
+            crate::daemon::blobs::ImageBlobStoreError::PayloadTooLarge => Self::PayloadTooLarge,
+            crate::daemon::blobs::ImageBlobStoreError::UnsupportedMediaType => {
+                Self::UnsupportedMediaType
+            }
+            crate::daemon::blobs::ImageBlobStoreError::Internal => Self::Internal,
+        }
+    }
+}
+
 pub struct WorkspaceStoreContext {
     pub workspace: Workspace,
     pub store: Store,
@@ -2018,48 +2030,15 @@ impl SessionsHandle {
         mime_type: &str,
         name: Option<&str>,
     ) -> Result<String, SessionImageBlobStoreError> {
-        const MAX_BLOB_BYTES: usize = 25 * 1024 * 1024;
-
-        if bytes.len() > MAX_BLOB_BYTES {
-            return Err(SessionImageBlobStoreError::PayloadTooLarge);
-        }
-        if !mime_type.starts_with("image/") {
-            return Err(SessionImageBlobStoreError::UnsupportedMediaType);
-        }
-
-        let mut hasher = sha2::Sha256::new();
-        hasher.update(bytes);
-        let sha256 = hex::encode(hasher.finalize());
-        let blob_id = uuid::Uuid::new_v4().to_string();
-
-        let dir = self.state.core.data_root.join("blobs");
-        tokio::fs::create_dir_all(&dir)
-            .await
-            .map_err(|_| SessionImageBlobStoreError::Internal)?;
-        let path = dir.join(&blob_id);
-        let tmp = dir.join(format!("{blob_id}.tmp"));
-
-        tokio::fs::write(&tmp, bytes)
-            .await
-            .map_err(|_| SessionImageBlobStoreError::Internal)?;
-        tokio::fs::rename(&tmp, &path)
-            .await
-            .map_err(|_| SessionImageBlobStoreError::Internal)?;
-
-        self.state
-            .global_store()
-            .insert_blob(
-                &blob_id,
-                &sha256,
-                bytes.len() as i64,
-                mime_type,
-                name,
-                Utc::now(),
-            )
-            .await
-            .map_err(|_| SessionImageBlobStoreError::Internal)?;
-
-        Ok(blob_id)
+        crate::daemon::blobs::store_image_blob_for_state(
+            self.state.as_ref(),
+            bytes,
+            mime_type,
+            name,
+        )
+        .await
+        .map(|stored| stored.blob_id)
+        .map_err(SessionImageBlobStoreError::from)
     }
 
     pub async fn session_artifact_path_is_accessible(

@@ -227,6 +227,11 @@ const telemetryApiRoots = [
   "core/crates/ctx-http/src/api/telemetry.rs",
 ];
 
+const blobApiRoots = [
+  "core/crates/ctx-http/src/api/artifacts/blob.rs",
+  "core/crates/ctx-http/src/api/artifacts/blob/",
+];
+
 const logsApiRoots = [
   "core/crates/ctx-http/src/api/logs_api.rs",
 ];
@@ -1407,6 +1412,30 @@ const TELEMETRY_API_ORCHESTRATION_PATTERNS = [
   {
     name: "telemetry API accesses daemon data root directly",
     regex: /\.data_root\s*\(/,
+  },
+];
+
+const BLOB_API_ORCHESTRATION_PATTERNS = [
+  {
+    name: "blob API accesses daemon data root directly",
+    regex: /\.data_root\s*\(/,
+  },
+  {
+    name: "blob API owns blob filesystem operations",
+    regex:
+      /\btokio::fs::(?:create_dir_all|write|rename|copy|read|read_to_string|metadata|symlink_metadata|remove_file|remove_dir|remove_dir_all|canonicalize)\s*\(|\btokio::fs::(?:File::open|OpenOptions)\b|\bstd::fs::|\buse\s+std::fs\b|\buse\s+tokio::fs\s+as\s+\w+\b|\buse\s+tokio::fs::\s*\{[^}]*\bself\b[^}]*\}|\bfs::(?:create_dir_all|write|rename|copy|read|read_to_string|metadata|symlink_metadata|remove_file|remove_dir|remove_dir_all|canonicalize)\s*\(|\bFile::open\s*\(|\bOpenOptions::/,
+  },
+  {
+    name: "blob API owns blob checksum generation",
+    regex: /\bsha2::(?:Digest|Sha256)\b|\bSha256::new\s*\(|\bDigest\b/,
+  },
+  {
+    name: "blob API owns blob id generation",
+    regex: /\buuid::Uuid::new_v4\s*\(|\bUuid::new_v4\s*\(/,
+  },
+  {
+    name: "blob API accesses blob store metadata directly",
+    regex: /\.(?:insert_blob|get_blob)\s*\(/,
   },
 ];
 
@@ -3655,6 +3684,9 @@ function apiPatternsForPath(relativePath) {
   if (telemetryApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...TELEMETRY_API_ORCHESTRATION_PATTERNS);
   }
+  if (blobApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...BLOB_API_ORCHESTRATION_PATTERNS);
+  }
   if (logsApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...LOGS_API_ORCHESTRATION_PATTERNS);
   }
@@ -4652,6 +4684,7 @@ module.exports = {
   HANDLE_BACKDOOR_PATTERNS,
   DAEMON_HEALTH_VERSION_PATTERNS,
   DAEMON_UPDATES_VERSION_PATTERNS,
+  BLOB_API_ORCHESTRATION_PATTERNS,
   HEALTH_DIAGNOSTICS_API_ORCHESTRATION_PATTERNS,
   SETTINGS_API_ORCHESTRATION_PATTERNS,
   TELEMETRY_API_ORCHESTRATION_PATTERNS,

@@ -13,6 +13,7 @@ use crate::daemon::scheduler::reconcile_turn_terminal_state;
 use ctx_provider_runtime::provider_usage;
 
 mod activity;
+pub mod blobs;
 pub mod diagnostics;
 pub mod dictation;
 pub mod execution_effective;
@@ -70,6 +71,7 @@ pub use activity::{
     daemon_sandbox_work_activity_summary, daemon_turn_activity_summary, ActiveTurnRecord,
     DaemonSandboxWorkActivitySummary, DaemonTurnActivitySummary,
 };
+pub use blobs::{BlobReadError, ImageBlobStoreError, OpenedBlob, StoredImageBlob};
 pub use diagnostics::{DaemonDiagnosticsSnapshot, DiagnosticsSnapshotError};
 pub use dictation::DictationConfigError;
 pub use execution_setup::{

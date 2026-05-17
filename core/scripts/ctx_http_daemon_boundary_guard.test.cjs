@@ -19,6 +19,7 @@ const {
   HANDLE_BACKDOOR_PATTERNS,
   DAEMON_HEALTH_VERSION_PATTERNS,
   DAEMON_UPDATES_VERSION_PATTERNS,
+  BLOB_API_ORCHESTRATION_PATTERNS,
   HEALTH_DIAGNOSTICS_API_ORCHESTRATION_PATTERNS,
   SETTINGS_API_ORCHESTRATION_PATTERNS,
   TELEMETRY_API_ORCHESTRATION_PATTERNS,
@@ -3187,6 +3188,70 @@ test("daemon boundary guard scopes settings and telemetry API orchestration root
   assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/updates/check.rs").includes(
       SETTINGS_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    false,
+  );
+});
+
+test("daemon boundary guard rejects blob API storage orchestration", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/artifacts/blob.rs",
+    contents: `
+      use sha2::Digest;
+      use tokio::fs as async_fs;
+      async fn helper(state: CoreHandle) {
+        let dir = state.data_root().join("blobs");
+        tokio::fs::write(path, bytes).await?;
+        tokio::fs::rename(tmp, path).await?;
+        tokio::fs::read(path).await?;
+        tokio::fs::metadata(path).await?;
+        tokio::fs::remove_file(path).await?;
+        tokio::fs::File::open(path).await?;
+        let _ = tokio::fs::OpenOptions::new();
+        fs::read(path).await?;
+        fs::remove_file(path).await?;
+        std::fs::read(path)?;
+        let mut hasher = sha2::Sha256::new();
+        let id = uuid::Uuid::new_v4();
+        state.insert_blob(&id, sha, 1, "image/png", None, now).await?;
+        state.get_blob(&id).await?;
+      }
+    `,
+    patterns: BLOB_API_ORCHESTRATION_PATTERNS,
+  });
+
+  const names = violations.map((violation) => violation.name);
+  for (const expected of [
+    "blob API accesses daemon data root directly",
+    "blob API owns blob filesystem operations",
+    "blob API owns blob checksum generation",
+    "blob API owns blob id generation",
+    "blob API accesses blob store metadata directly",
+  ]) {
+    assert(names.includes(expected), `expected violation: ${expected}`);
+  }
+  assert.equal(
+    names.filter((name) => name === "blob API accesses blob store metadata directly").length,
+    2,
+  );
+});
+
+test("daemon boundary guard scopes blob API orchestration roots", () => {
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/artifacts/blob.rs").includes(
+      BLOB_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/artifacts/blob/upload.rs").includes(
+      BLOB_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/artifacts/session.rs").includes(
+      BLOB_API_ORCHESTRATION_PATTERNS[0],
     ),
     false,
   );

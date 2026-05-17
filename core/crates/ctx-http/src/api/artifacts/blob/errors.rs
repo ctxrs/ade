@@ -1,4 +1,5 @@
 use super::*;
+use ctx_daemon::daemon::{BlobReadError, ImageBlobStoreError};
 
 pub(super) fn blob_upload_api_error(
     status: StatusCode,
@@ -12,18 +13,29 @@ pub(super) fn blob_upload_api_error(
     )
 }
 
-pub(super) fn blob_upload_status_error(status: StatusCode) -> (StatusCode, Json<ApiErrorResp>) {
-    match status {
-        StatusCode::PAYLOAD_TOO_LARGE => {
-            blob_upload_api_error(status, SESSION_IMAGE_BLOB_TOO_LARGE_MESSAGE)
-        }
-        StatusCode::UNSUPPORTED_MEDIA_TYPE => {
-            blob_upload_api_error(status, "Only image attachments are supported.")
-        }
-        StatusCode::INTERNAL_SERVER_ERROR => {
-            blob_upload_api_error(status, "Failed to store image attachment.")
-        }
-        _ => blob_upload_api_error(status, "Image attachment upload failed."),
+pub(super) fn blob_upload_store_error(
+    error: ImageBlobStoreError,
+) -> (StatusCode, Json<ApiErrorResp>) {
+    match error {
+        ImageBlobStoreError::PayloadTooLarge => blob_upload_api_error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            SESSION_IMAGE_BLOB_TOO_LARGE_MESSAGE,
+        ),
+        ImageBlobStoreError::UnsupportedMediaType => blob_upload_api_error(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "Only image attachments are supported.",
+        ),
+        ImageBlobStoreError::Internal => blob_upload_api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to store image attachment.",
+        ),
+    }
+}
+
+pub(super) fn blob_read_status(error: BlobReadError) -> StatusCode {
+    match error {
+        BlobReadError::NotFound => StatusCode::NOT_FOUND,
+        BlobReadError::Internal => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
 
