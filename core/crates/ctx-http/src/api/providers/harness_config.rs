@@ -1,4 +1,7 @@
 use super::*;
+use ctx_daemon::daemon::providers::{
+    ProviderHarnessEndpointRouteError, ProviderHarnessEndpointRouteErrorKind,
+};
 
 mod endpoints;
 
@@ -12,6 +15,21 @@ fn provider_harness_bad_request_error(err: anyhow::Error) -> (StatusCode, Json<s
         StatusCode::BAD_REQUEST,
         Json(serde_json::json!({
             "error": logs::redact_sensitive(&err.to_string()),
+        })),
+    )
+}
+
+fn provider_harness_endpoint_error(
+    error: ProviderHarnessEndpointRouteError,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let status = match error.kind() {
+        ProviderHarnessEndpointRouteErrorKind::BadRequest => StatusCode::BAD_REQUEST,
+        ProviderHarnessEndpointRouteErrorKind::NotFound => StatusCode::NOT_FOUND,
+    };
+    (
+        status,
+        Json(serde_json::json!({
+            "error": error.message(),
         })),
     )
 }

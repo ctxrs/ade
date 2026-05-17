@@ -40,4 +40,9 @@ async fn missing_provider_harness_endpoint_delete_returns_not_found() {
         .unwrap();
     let res = app.oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(payload["error"]
+        .as_str()
+        .is_some_and(|error| error.contains("unknown endpoint")));
 }

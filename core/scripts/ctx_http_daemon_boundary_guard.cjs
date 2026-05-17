@@ -190,6 +190,10 @@ const providerBootstrapApiRoots = [
   "core/crates/ctx-http/src/api/providers/bootstrap/",
 ];
 
+const providerHarnessEndpointApiRoots = [
+  "core/crates/ctx-http/src/api/providers/harness_config/endpoints.rs",
+];
+
 const providerAccountsApiRoots = [
   "core/crates/ctx-http/src/api/providers/accounts.rs",
   "core/crates/ctx-http/src/api/providers/accounts/",
@@ -1315,6 +1319,30 @@ const PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS = [
   {
     name: "provider bootstrap API loads bootstrap accounts directly",
     regex: /\bload_bootstrap_accounts\s*\(|\baccounts::(?:codex|claude|gemini|qwen|kimi|mistral|copilot|cursor|amp)_accounts_response\s*\(/,
+  },
+];
+
+const PROVIDER_HARNESS_ENDPOINT_API_PATTERNS = [
+  {
+    name: "provider harness endpoint API imports harness source domain",
+    regex: /\bctx_harness_sources\b|\bharness_sources\b/,
+  },
+  {
+    name: "provider harness endpoint API constructs low-level endpoint upsert",
+    regex: /\bHarnessEndpointUpsert\b/,
+  },
+  {
+    name: "provider harness endpoint API owns delete error taxonomy",
+    regex: /\bprovider_harness_delete_error\b|\bunknown endpoint\b/,
+  },
+  {
+    name: "provider harness endpoint API redacts lower-level errors",
+    regex: /\blogs\s*::\s*redact_sensitive\s*\(/,
+  },
+  {
+    name: "provider harness endpoint API calls low-level endpoint facades",
+    regex:
+      /\.(?:upsert_provider_harness_endpoint|refresh_provider_harness_endpoint_models|set_provider_harness_endpoint_manual_models|delete_provider_harness_endpoint)\s*\(/,
   },
 ];
 
@@ -4008,6 +4036,9 @@ function apiPatternsForPath(relativePath) {
   if (providerBootstrapApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS);
   }
+  if (providerHarnessEndpointApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...PROVIDER_HARNESS_ENDPOINT_API_PATTERNS);
+  }
   if (providerAccountsApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS);
   }
@@ -4198,6 +4229,13 @@ function mergeQueueSubmitApiPatternsForPath(relativePath) {
 function runArchiveApiPatternsForPath(relativePath) {
   if (runArchiveApiRoots.some((root) => relativePath.startsWith(root))) {
     return RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS;
+  }
+  return [];
+}
+
+function providerHarnessEndpointApiPatternsForPath(relativePath) {
+  if (providerHarnessEndpointApiRoots.some((root) => relativePath.startsWith(root))) {
+    return PROVIDER_HARNESS_ENDPOINT_API_PATTERNS;
   }
   return [];
 }
@@ -5126,6 +5164,7 @@ module.exports = {
   CODEX_APP_SERVER_LOGIN_API_ORCHESTRATION_PATTERNS,
   CLAUDE_SETUP_TOKEN_LOGIN_API_ORCHESTRATION_PATTERNS,
   PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS,
+  PROVIDER_HARNESS_ENDPOINT_API_PATTERNS,
   PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS,
   SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS,
   SESSION_VCS_API_ORCHESTRATION_PATTERNS,
@@ -5201,6 +5240,7 @@ module.exports = {
   mobileAccessStoreDtoApiPatternsForPath,
   mobileStorePatternsForPath,
   providerAuthGlobalIdFixturePatternsForPath,
+  providerHarnessEndpointApiPatternsForPath,
   providerScenariosOfflineStorePatternsForPath,
   providerWorkerReapingStorePatternsForPath,
   providerCachePatternsForPath,

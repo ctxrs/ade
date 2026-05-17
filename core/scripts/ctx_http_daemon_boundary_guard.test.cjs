@@ -48,6 +48,7 @@ const {
   MERGE_QUEUE_SUBMIT_API_ORCHESTRATION_PATTERNS,
   PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS,
   PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS,
+  PROVIDER_HARNESS_ENDPOINT_API_PATTERNS,
   SESSION_HEAD_API_ORCHESTRATION_PATTERNS,
   SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS,
   SESSION_VCS_API_ORCHESTRATION_PATTERNS,
@@ -123,6 +124,7 @@ const {
   mobileAccessStoreDtoApiPatternsForPath,
   mobileStorePatternsForPath,
   providerAuthGlobalIdFixturePatternsForPath,
+  providerHarnessEndpointApiPatternsForPath,
   providerScenariosOfflineStorePatternsForPath,
   providerWorkerReapingStorePatternsForPath,
   providerCachePatternsForPath,
@@ -2974,6 +2976,70 @@ test("daemon boundary guard scopes provider bootstrap orchestration patterns", (
       PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS[0],
     ),
     false,
+  );
+});
+
+test("daemon boundary guard rejects provider harness endpoint API orchestration", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/providers/harness_config/endpoints.rs",
+    contents: `
+      use ctx_harness_sources as harness_sources;
+      async fn handler(providers: ProvidersHandle) {
+        let endpoint = HarnessEndpointUpsert { name, endpoint_id };
+        let config = providers.upsert_provider_harness_endpoint(&id, endpoint, manual_model_ids).await?;
+        providers.refresh_provider_harness_endpoint_models(&id, &endpoint_id).await?;
+        providers.set_provider_harness_endpoint_manual_models(&id, &endpoint_id, model_ids).await?;
+        providers.delete_provider_harness_endpoint(&id, &endpoint_id).await?;
+        let status = if error.contains("unknown endpoint") { StatusCode::NOT_FOUND } else { StatusCode::BAD_REQUEST };
+        let error = logs::redact_sensitive(&err.to_string());
+        provider_harness_delete_error(err);
+      }
+    `,
+    patterns: PROVIDER_HARNESS_ENDPOINT_API_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "provider harness endpoint API imports harness source domain",
+      "provider harness endpoint API constructs low-level endpoint upsert",
+      "provider harness endpoint API owns delete error taxonomy",
+      "provider harness endpoint API owns delete error taxonomy",
+      "provider harness endpoint API redacts lower-level errors",
+      "provider harness endpoint API calls low-level endpoint facades",
+      "provider harness endpoint API calls low-level endpoint facades",
+      "provider harness endpoint API calls low-level endpoint facades",
+      "provider harness endpoint API calls low-level endpoint facades",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes provider harness endpoint API roots", () => {
+  assert.deepEqual(
+    providerHarnessEndpointApiPatternsForPath(
+      "core/crates/ctx-http/src/api/providers/harness_config/endpoints.rs",
+    ),
+    PROVIDER_HARNESS_ENDPOINT_API_PATTERNS,
+  );
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/providers/harness_config/endpoints.rs",
+    ).includes(PROVIDER_HARNESS_ENDPOINT_API_PATTERNS[0]),
+    true,
+  );
+  assert.deepEqual(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/providers/harness_config/endpoints.rs",
+      contents: "providers.upsert_provider_harness_endpoint_for_route(&id, req).await?;",
+      patterns: PROVIDER_HARNESS_ENDPOINT_API_PATTERNS,
+    }),
+    [],
+  );
+  assert.deepEqual(
+    providerHarnessEndpointApiPatternsForPath(
+      "core/crates/ctx-http/src/api/providers/harness_config.rs",
+    ),
+    [],
   );
 });
 

@@ -95,6 +95,9 @@ pub use harness_config::{
     mark_provider_endpoint_verification, refresh_provider_endpoint_model_catalog,
     refresh_provider_harness_endpoint_models, select_provider_harness_source,
     set_provider_harness_endpoint_manual_models, upsert_provider_harness_endpoint,
+    ProviderHarnessEndpointRouteError, ProviderHarnessEndpointRouteErrorKind,
+    ProviderHarnessSourceConfig, SetProviderHarnessEndpointManualModelsRouteRequest,
+    UpsertProviderHarnessEndpointRouteRequest,
 };
 pub use installs::{
     cancel_provider_install, get_provider_install_info, list_provider_install_events,
@@ -865,46 +868,6 @@ impl ProvidersHandle {
         endpoint_id: Option<String>,
     ) -> anyhow::Result<harness_sources::HarnessProviderSourceConfig> {
         select_provider_harness_source(&self.state, provider_id, source_kind, endpoint_id).await
-    }
-
-    pub async fn upsert_provider_harness_endpoint(
-        &self,
-        provider_id: &str,
-        endpoint: harness_sources::HarnessEndpointUpsert,
-        manual_model_ids: Option<Vec<String>>,
-    ) -> anyhow::Result<harness_sources::HarnessProviderSourceConfig> {
-        upsert_provider_harness_endpoint(&self.state, provider_id, endpoint, manual_model_ids).await
-    }
-
-    pub async fn refresh_provider_harness_endpoint_models(
-        &self,
-        provider_id: &str,
-        endpoint_id: &str,
-    ) -> anyhow::Result<harness_sources::HarnessProviderSourceConfig> {
-        refresh_provider_harness_endpoint_models(&self.state, provider_id, endpoint_id).await
-    }
-
-    pub async fn set_provider_harness_endpoint_manual_models(
-        &self,
-        provider_id: &str,
-        endpoint_id: &str,
-        model_ids: Vec<String>,
-    ) -> anyhow::Result<harness_sources::HarnessProviderSourceConfig> {
-        set_provider_harness_endpoint_manual_models(
-            &self.state,
-            provider_id,
-            endpoint_id,
-            model_ids,
-        )
-        .await
-    }
-
-    pub async fn delete_provider_harness_endpoint(
-        &self,
-        provider_id: &str,
-        endpoint_id: &str,
-    ) -> anyhow::Result<harness_sources::HarnessProviderSourceConfig> {
-        delete_provider_harness_endpoint(&self.state, provider_id, endpoint_id).await
     }
 
     pub async fn list_provider_auth_import_profiles(
