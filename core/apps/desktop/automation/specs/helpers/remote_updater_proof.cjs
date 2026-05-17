@@ -468,7 +468,7 @@ const remoteProviderInstallAndConfigure = ({
     ? "google/gemini-2.5-flash"
     : providerId === "pi"
       ? "google/gemini-3-flash-preview"
-      : "google/gemini-2.5-flash");
+      : "openai/gpt-4o-mini");
 
   const startInstall = remoteHttpJson("POST", `/api/providers/${providerId}/install?target=${installTarget}`, {}, { token });
   if (startInstall.status !== 200) {

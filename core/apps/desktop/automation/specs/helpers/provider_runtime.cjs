@@ -20,7 +20,7 @@ const PROVIDER_MATRIX_PATH = path.resolve(
   "../../../../../crates/ctx-provider-accounts/src/provider_matrix.json",
 );
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
-const DEFAULT_OPENAI_OPENROUTER_MODEL_OVERRIDE = "google/gemini-2.5-flash";
+const DEFAULT_OPENAI_OPENROUTER_MODEL_OVERRIDE = "openai/gpt-4o-mini";
 const DEFAULT_CLAUDE_OPENROUTER_MODEL_OVERRIDE = "anthropic/claude-3.5-haiku";
 const DEFAULT_QWEN_OPENROUTER_MODEL_OVERRIDE = "google/gemini-2.5-flash";
 const DEFAULT_GEMINI_OPENROUTER_MODEL_OVERRIDE = "google/gemini-3-flash-preview";

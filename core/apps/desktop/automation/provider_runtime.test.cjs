@@ -37,7 +37,7 @@ test("readOpenRouterEnv uses provider-specific cheap defaults for write smoke", 
   const qwenEnv = readOpenRouterEnv("qwen");
   const piEnv = readOpenRouterEnv("pi");
 
-  assert.equal(codexEnv.modelOverride, "google/gemini-2.5-flash");
+  assert.equal(codexEnv.modelOverride, "openai/gpt-4o-mini");
   assert.equal(qwenEnv.modelOverride, "google/gemini-2.5-flash");
   assert.equal(piEnv.modelOverride, "google/gemini-3-flash-preview");
 });
