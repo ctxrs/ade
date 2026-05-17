@@ -1,6 +1,23 @@
 use super::*;
 
 #[tokio::test]
+async fn provider_authenticate_without_body_preserves_invalid_workspace_error() {
+    let fixture = ProviderRouteFixture::new().await;
+    let app = fixture.app();
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/workspaces/not-a-uuid/providers/qwen/authenticate")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["error"].as_str(), Some("invalid workspace id"));
+}
+
+#[tokio::test]
 async fn provider_verify_surfaces_agent_server_config_errors() {
     let git_repo = setup_git_repo().await;
     let fixture = ProviderRouteFixture::new().await;

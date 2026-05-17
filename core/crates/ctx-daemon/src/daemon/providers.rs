@@ -62,8 +62,11 @@ pub use accounts::{
 };
 pub use auth::{authenticate_provider_for_workspace_runtime, ProviderWorkspaceAuthenticationError};
 pub use auth_check::{
-    authenticate_provider_for_workspace, verify_provider_for_workspace, ProviderAuthCheckError,
-    ProviderAuthCheckSnapshot,
+    authenticate_provider_for_workspace, verify_provider_for_workspace,
+    AuthenticateProviderForWorkspaceRouteBody, AuthenticateProviderForWorkspaceRouteRequest,
+    ProviderAuthCheckError, ProviderAuthCheckRouteError, ProviderAuthCheckRouteErrorStatus,
+    ProviderAuthCheckRouteResponse, ProviderAuthCheckSnapshot,
+    VerifyProviderForWorkspaceRouteRequest,
 };
 pub use auth_import::provider_auth_import_result_requires_restart;
 pub use auth_import::{

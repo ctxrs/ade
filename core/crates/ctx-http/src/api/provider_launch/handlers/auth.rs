@@ -7,45 +7,29 @@ pub(in crate::api) use verify::verify_provider_for_workspace;
 pub(in crate::api) async fn authenticate_provider_for_workspace(
     State(providers): State<ProvidersHandle>,
     Path((ws_id, provider_id)): Path<(String, String)>,
-    req: Option<Json<AuthenticateProviderReq>>,
-) -> Result<Json<ProviderAuthCheckResp>, (StatusCode, Json<serde_json::Value>)> {
-    let ws_id = parse_workspace_id(&ws_id)?;
+    req: Option<Json<AuthenticateProviderForWorkspaceRouteBody>>,
+) -> Result<Json<ProviderAuthCheckRouteResponse>, (StatusCode, Json<serde_json::Value>)> {
     let method_id = req.and_then(|value| value.0.method_id);
     providers
-        .authenticate_provider_for_workspace(ws_id, &provider_id, method_id)
+        .authenticate_provider_for_workspace_for_route(
+            AuthenticateProviderForWorkspaceRouteRequest {
+                workspace_id: ws_id,
+                provider_id,
+                method_id,
+            },
+        )
         .await
-        .map(ProviderAuthCheckResp::from)
         .map(Json)
-        .map_err(provider_auth_check_error_json)
+        .map_err(provider_auth_check_route_error)
 }
 
-fn provider_auth_check_error_json(
-    error: ctx_daemon::daemon::providers::ProviderAuthCheckError,
+pub(super) fn provider_auth_check_route_error(
+    error: ProviderAuthCheckRouteError,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    match error {
-        ctx_daemon::daemon::providers::ProviderAuthCheckError::WorkspaceLoad => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({
-                "error": "failed to load workspace",
-            })),
-        ),
-        ctx_daemon::daemon::providers::ProviderAuthCheckError::WorkspaceNotFound => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({
-                "error": "workspace not found",
-            })),
-        ),
-        ctx_daemon::daemon::providers::ProviderAuthCheckError::ExecutionSettings(error) => {
-            workspace_execution_settings_error_json(&error)
-        }
-        ctx_daemon::daemon::providers::ProviderAuthCheckError::ProviderLaunchConfig(error) => {
-            provider_launch_config_error_response(error)
-        }
-        ctx_daemon::daemon::providers::ProviderAuthCheckError::Verify(error) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "error": error,
-            })),
-        ),
-    }
+    let status = match error.status() {
+        ProviderAuthCheckRouteErrorStatus::BadRequest => StatusCode::BAD_REQUEST,
+        ProviderAuthCheckRouteErrorStatus::NotFound => StatusCode::NOT_FOUND,
+        ProviderAuthCheckRouteErrorStatus::InternalServerError => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    (status, Json(error.body().clone()))
 }

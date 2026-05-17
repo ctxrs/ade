@@ -52,6 +52,7 @@ const {
   PROVIDER_HARNESS_CONFIG_API_PATTERNS,
   PROVIDER_HARNESS_ENDPOINT_API_PATTERNS,
   PROVIDER_INSTALL_API_ORCHESTRATION_PATTERNS,
+  PROVIDER_LAUNCH_AUTH_API_PATTERNS,
   SESSION_HEAD_API_ORCHESTRATION_PATTERNS,
   SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS,
   SESSION_VCS_API_ORCHESTRATION_PATTERNS,
@@ -131,6 +132,7 @@ const {
   providerHarnessConfigApiPatternsForPath,
   providerHarnessEndpointApiPatternsForPath,
   providerInstallApiPatternsForPath,
+  providerLaunchAuthApiPatternsForPath,
   providerScenariosOfflineStorePatternsForPath,
   providerWorkerReapingStorePatternsForPath,
   providerCachePatternsForPath,
@@ -3181,6 +3183,75 @@ test("daemon boundary guard scopes provider install API roots", () => {
   );
   assert.deepEqual(
     providerInstallApiPatternsForPath("core/crates/ctx-http/src/api/providers/status/routes.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects provider launch auth API orchestration", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/provider_launch/handlers/auth.rs",
+    contents: `
+      async fn handler(providers: ProvidersHandle) {
+        let req = AuthenticateProviderReq { method_id: None };
+        let response = ProviderAuthCheckResp::from(snapshot);
+        let _snapshot: ProviderAuthCheckSnapshot = snapshot;
+        let _ = ProviderAuthCheckError::WorkspaceNotFound;
+        let workspace_id = parse_workspace_id(&ws_id)?;
+        providers.authenticate_provider_for_workspace(workspace_id, &provider_id, req.method_id).await?;
+        providers.verify_provider_for_workspace(workspace_id, &provider_id).await?;
+        provider_auth_check_error_json(err);
+        workspace_execution_settings_error_json(&err);
+        provider_launch_config_error_response(err);
+      }
+    `,
+    patterns: PROVIDER_LAUNCH_AUTH_API_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "provider launch auth API owns auth response DTO",
+      "provider launch auth API references auth check snapshot directly",
+      "provider launch auth API matches auth check errors directly",
+      "provider launch auth API owns auth request DTO",
+      "provider launch auth API calls broad auth/verify facades",
+      "provider launch auth API calls broad auth/verify facades",
+      "provider launch auth API owns auth error mapping",
+      "provider launch auth API parses workspace id directly",
+      "provider launch auth API uses shared route error helpers directly",
+      "provider launch auth API uses shared route error helpers directly",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes provider launch auth API roots", () => {
+  assert.deepEqual(
+    providerLaunchAuthApiPatternsForPath(
+      "core/crates/ctx-http/src/api/provider_launch/handlers/auth.rs",
+    ),
+    PROVIDER_LAUNCH_AUTH_API_PATTERNS,
+  );
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/provider_launch/handlers/auth/verify.rs",
+    ).includes(PROVIDER_LAUNCH_AUTH_API_PATTERNS[0]),
+    true,
+  );
+  assert.deepEqual(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/provider_launch/handlers/auth.rs",
+      contents: `
+        providers.authenticate_provider_for_workspace_for_route(req).await?;
+        providers.verify_provider_for_workspace_for_route(req).await?;
+      `,
+      patterns: PROVIDER_LAUNCH_AUTH_API_PATTERNS,
+    }),
+    [],
+  );
+  assert.deepEqual(
+    providerLaunchAuthApiPatternsForPath(
+      "core/crates/ctx-http/src/api/provider_launch/handlers/options.rs",
+    ),
     [],
   );
 });
