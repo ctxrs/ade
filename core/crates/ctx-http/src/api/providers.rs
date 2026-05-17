@@ -8,7 +8,6 @@ use anyhow::Context;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
-use serde::{Deserialize, Serialize};
 #[cfg(test)]
 use url::Url;
 
@@ -17,11 +16,13 @@ use ctx_daemon::daemon::providers::{
     ClaudeLoginRouteError, ClaudeLoginRouteErrorKind, ClaudeLoginStartRouteRequest,
     ClaudeLoginStartRouteResponse, CodexLoginCompleteRouteRequest, CodexLoginCompleteRouteResponse,
     CodexLoginRouteError, CodexLoginRouteErrorKind, CodexLoginStartRouteRequest,
-    CodexLoginStartRouteResponse, ProviderAuthImportCandidatesRouteResponse,
-    ProviderAuthImportProfilesRouteResponse, ProviderAuthImportRouteError,
-    ProviderAuthImportRouteRequest, ProviderAuthImportRouteResponse, ProviderLoginRouteError,
-    ProviderLoginRouteErrorKind, ProviderLoginStartRouteRequest, ProviderLoginStartRouteResponse,
-    ProviderStatusRouteQuery, SelectProviderHarnessSourceRouteRequest,
+    CodexLoginStartRouteResponse, CursorLoginRouteError, CursorLoginRouteErrorKind,
+    CursorLoginStartRouteRequest, CursorLoginStartRouteResponse,
+    ProviderAuthImportCandidatesRouteResponse, ProviderAuthImportProfilesRouteResponse,
+    ProviderAuthImportRouteError, ProviderAuthImportRouteRequest, ProviderAuthImportRouteResponse,
+    ProviderLoginRouteError, ProviderLoginRouteErrorKind, ProviderLoginStartRouteRequest,
+    ProviderLoginStartRouteResponse, ProviderStatusRouteQuery,
+    SelectProviderHarnessSourceRouteRequest,
 };
 use ctx_daemon::daemon::ProvidersHandle;
 #[cfg(test)]

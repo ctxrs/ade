@@ -89,7 +89,8 @@ pub use codex_app_login::{
     CodexLoginRouteErrorKind, CodexLoginStartRouteRequest, CodexLoginStartRouteResponse,
 };
 pub use cursor_process_login::{
-    start_cursor_process_login, CursorProcessLoginStartError, CursorProcessLoginStartErrorKind,
+    CursorLoginRouteError, CursorLoginRouteErrorKind, CursorLoginStartRouteRequest,
+    CursorLoginStartRouteResponse,
 };
 pub use diagnostics::provider_diagnostics_snapshot;
 pub use harness_config::{
@@ -878,19 +879,5 @@ impl ProvidersHandle {
 
     pub fn data_root(&self) -> &StdPath {
         &self.state.core.data_root
-    }
-
-    pub async fn start_cursor_process_login(
-        &self,
-        label: Option<String>,
-    ) -> Result<StartedLoginSession, CursorProcessLoginStartError> {
-        start_cursor_process_login(&self.state, label).await
-    }
-
-    pub async fn cursor_login_status(
-        &self,
-        login_id: &str,
-    ) -> Option<provider_accounts::CursorLoginStatus> {
-        cursor_login_status(&self.state, login_id).await
     }
 }

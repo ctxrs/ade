@@ -105,16 +105,13 @@ async fn cursor_login_start_rejects_missing_runtime_without_session() {
     let err = daemon
         .handle()
         .providers()
-        .start_cursor_process_login(None)
+        .start_cursor_login_for_route(CursorLoginStartRouteRequest::default())
         .await
         .expect_err("missing runtime should fail before session creation");
 
-    assert_eq!(
-        err.kind(),
-        CursorProcessLoginStartErrorKind::RuntimeCommandBadRequest
-    );
+    assert_eq!(err.kind(), CursorLoginRouteErrorKind::BadRequest);
     assert!(err
-        .route_safe_message()
+        .message()
         .contains("runtime_command_missing: provider=cursor-login"));
     assert!(daemon.provider_login_session_caches_empty().await);
 }
@@ -137,14 +134,11 @@ async fn cursor_login_start_rejects_config_parse_error_without_session() {
     let err = daemon
         .handle()
         .providers()
-        .start_cursor_process_login(None)
+        .start_cursor_login_for_route(CursorLoginStartRouteRequest::default())
         .await
         .expect_err("config parse failure should fail before session creation");
 
-    assert_eq!(
-        err.kind(),
-        CursorProcessLoginStartErrorKind::InternalStartup
-    );
-    assert!(err.route_safe_message().contains("agent server config"));
+    assert_eq!(err.kind(), CursorLoginRouteErrorKind::Internal);
+    assert!(err.message().contains("agent server config"));
     assert!(daemon.provider_login_session_caches_empty().await);
 }

@@ -3684,9 +3684,20 @@ test("daemon boundary guard rejects Cursor process login orchestration in HTTP",
   const violations = scanText({
     filePath: "core/crates/ctx-http/src/api/providers/cursor_login/session.rs",
     contents: `
+      struct CursorLoginStartReq;
+      struct CursorLoginStartResp;
+
       mod session;
 
       async fn handler(providers: ProvidersHandle) {
+        providers.start_cursor_process_login(label).await?;
+        start_cursor_process_login(state, label).await?;
+        providers.cursor_login_status(login_id).await;
+        cursor_login_status(state, login_id).await;
+        let _kind = CursorProcessLoginStartErrorKind::RuntimeCommandBadRequest;
+        let _err: CursorProcessLoginStartError = err;
+        let _ = err.route_safe_message();
+        let _ = "login not found";
         tokio::spawn(async move {});
         let mut cmd = tokio::process::Command::new("cursor-agent");
         cmd.stdin(Stdio::null());
@@ -3719,6 +3730,16 @@ test("daemon boundary guard rejects Cursor process login orchestration in HTTP",
   assert.deepEqual(
     violations.map((violation) => violation.name),
     [
+      "Cursor process login API owns route DTOs",
+      "Cursor process login API owns route DTOs",
+      "Cursor process login API calls low-level route facades",
+      "Cursor process login API calls low-level route facades",
+      "Cursor process login API calls low-level route facades",
+      "Cursor process login API calls low-level route facades",
+      "Cursor process login API matches route errors directly",
+      "Cursor process login API matches route errors directly",
+      "Cursor process login API matches route errors directly",
+      "Cursor process login API owns login not-found mapping",
       "Cursor process login API owns monitor task spawning",
       "Cursor process login API owns process spawning",
       "Cursor process login API owns process spawning",
@@ -3766,6 +3787,24 @@ test("daemon boundary guard scopes Cursor process login orchestration patterns",
       CURSOR_PROCESS_LOGIN_API_ORCHESTRATION_PATTERNS[0],
     ),
     false,
+  );
+
+  assert.deepEqual(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/providers/cursor_login.rs",
+      contents: `
+        async fn handler(providers: ProvidersHandle, req: CursorLoginStartRouteRequest) {
+          let _ = providers.start_cursor_login_for_route(req).await;
+          let _ = providers.cursor_login_status_for_route("login-id").await;
+          let _kind = CursorLoginRouteErrorKind::NotFound;
+          let _err: Option<CursorLoginRouteError> = None;
+          let _resp: Option<CursorLoginStartRouteResponse> = None;
+          let _status: Option<provider_accounts::CursorLoginStatus> = None;
+        }
+      `,
+      patterns: CURSOR_PROCESS_LOGIN_API_ORCHESTRATION_PATTERNS,
+    }),
+    [],
   );
 });
 

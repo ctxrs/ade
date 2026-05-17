@@ -1666,6 +1666,23 @@ const MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS = [
 
 const CURSOR_PROCESS_LOGIN_API_ORCHESTRATION_PATTERNS = [
   {
+    name: "Cursor process login API owns route DTOs",
+    regex: /\bCursorLoginStart(?:Req|Resp)\b/,
+  },
+  {
+    name: "Cursor process login API calls low-level route facades",
+    regex: /\b(?:start_cursor_process_login|cursor_login_status)\s*\(/,
+  },
+  {
+    name: "Cursor process login API matches route errors directly",
+    regex:
+      /\b(?:CursorProcessLoginStartError|CursorProcessLoginStartErrorKind)\b|\.route_safe_message\s*\(/,
+  },
+  {
+    name: "Cursor process login API owns login not-found mapping",
+    regex: /"login not found"/,
+  },
+  {
     name: "Cursor process login API owns monitor task spawning",
     regex: /\btokio::spawn\s*\(/,
   },
