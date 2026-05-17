@@ -13,11 +13,13 @@ use crate::daemon::scheduler::reconcile_turn_terminal_state;
 use ctx_provider_runtime::provider_usage;
 
 mod activity;
+pub mod diagnostics;
 pub mod dictation;
 pub mod execution_effective;
 pub mod execution_setup;
 pub mod git_status;
 mod handle;
+pub mod health;
 mod lifecycle;
 mod listener;
 pub mod maintenance;
@@ -65,6 +67,7 @@ pub use activity::{
     daemon_sandbox_work_activity_summary, daemon_turn_activity_summary, ActiveTurnRecord,
     DaemonSandboxWorkActivitySummary, DaemonTurnActivitySummary,
 };
+pub use diagnostics::{DaemonDiagnosticsSnapshot, DiagnosticsSnapshotError};
 pub use dictation::DictationConfigError;
 pub use execution_setup::{
     LinuxSandboxActivationMode, LinuxSandboxRuntimeError, LinuxSandboxRuntimeOperation,
@@ -75,6 +78,7 @@ pub use handle::{
     CoreHandle, DaemonHandle, ExecutionHandle, ProvidersHandle, SessionsHandle, TasksHandle,
     TelemetryHandle, TransportHandle, WorkspaceStreamHandle, WorkspacesHandle,
 };
+pub use health::{DaemonHealthSnapshot, HealthCompatibility, HealthSnapshotError};
 pub use lifecycle::spawn_deferred_daemon_shutdown;
 #[cfg(test)]
 pub use listener::daemon_public_base_url_from_env;

@@ -214,6 +214,11 @@ const executionApiRoots = [
   "core/crates/ctx-http/src/api/execution/",
 ];
 
+const healthDiagnosticsApiRoots = [
+  "core/crates/ctx-http/src/api/health.rs",
+  "core/crates/ctx-http/src/api/diagnostics.rs",
+];
+
 const taskSessionCreationApiRoots = [
   "core/crates/ctx-http/src/api/tasks/creation_session.rs",
   "core/crates/ctx-http/src/api/tasks/creation_session/",
@@ -1303,6 +1308,56 @@ const EXECUTION_API_ORCHESTRATION_PATTERNS = [
     name: "execution API calls Linux sandbox runtime by fully-qualified path",
     regex:
       /\bctx_linux_sandbox_runtime::(?:linux_sandbox_runtime_status|stage_linux_sandbox_runtime_downloads|prepare_linux_sandbox_runtime)\b/,
+  },
+];
+
+const HEALTH_DIAGNOSTICS_API_ORCHESTRATION_PATTERNS = [
+  {
+    name: "health/diagnostics API calls update service directly",
+    regex: /\bctx_update_service\b/,
+  },
+  {
+    name: "health/diagnostics API imports Linux sandbox runtime directly",
+    regex: /\bctx_linux_sandbox_runtime\b/,
+  },
+  {
+    name: "health/diagnostics API reads process limits directly",
+    regex: /\bctx_resource_utilization::process_limits\b|\bcurrent_open_file_limit\s*\(/,
+  },
+  {
+    name: "health/diagnostics API reads observability logs directly",
+    regex: /\blogs::(?:logs_dir|list_log_files)\s*\(/,
+  },
+  {
+    name: "health/diagnostics API accesses daemon data root directly",
+    regex: /\.data_root\s*\(/,
+  },
+  {
+    name: "health/diagnostics API reads storage guard directly",
+    regex: /\bstorage_guard_snapshot\s*\(/,
+  },
+  {
+    name: "health/diagnostics API reads execution startup status directly",
+    regex: /\bstartup_status\s*\(/,
+  },
+  {
+    name: "health/diagnostics API reads provider diagnostics directly",
+    regex: /\bprovider_diagnostics_snapshot\s*\(/,
+  },
+  {
+    name: "health/diagnostics API owns health response assembly",
+    regex: /\b(?:build_health_response|HealthResp|DiagnosticsResp|HealthCompatibility)\b/,
+  },
+  {
+    name: "diagnostics API imports health route internals",
+    regex: /\bsuper::health\b/,
+  },
+];
+
+const DAEMON_HEALTH_VERSION_PATTERNS = [
+  {
+    name: "daemon health uses daemon crate package version directly",
+    regex: /env!\s*\(\s*"CARGO_PKG_VERSION"\s*\)/,
   },
 ];
 
@@ -3492,6 +3547,9 @@ function apiPatternsForPath(relativePath) {
   if (executionApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...EXECUTION_API_ORCHESTRATION_PATTERNS);
   }
+  if (healthDiagnosticsApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...HEALTH_DIAGNOSTICS_API_ORCHESTRATION_PATTERNS);
+  }
   if (taskSessionCreationApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...TASK_SESSION_CREATION_API_ADMISSION_PATTERNS);
   }
@@ -4059,14 +4117,24 @@ function scanRepo() {
     if (isTestRustPath(filePath)) {
       continue;
     }
+    const relativePath = repoRelative(filePath);
     const contents = stripCfgTestItems(fs.readFileSync(filePath, "utf8"));
     violations.push(
       ...scanText({
-        filePath: repoRelative(filePath),
+        filePath: relativePath,
         contents,
         patterns: DAEMON_EXTRACTION_BLOCKER_PATTERNS,
       }),
     );
+    if (relativePath === "core/crates/ctx-daemon/src/daemon/health.rs") {
+      violations.push(
+        ...scanText({
+          filePath: relativePath,
+          contents,
+          patterns: DAEMON_HEALTH_VERSION_PATTERNS,
+        }),
+      );
+    }
   }
 
   for (const filePath of testSurfaceRustFiles()) {
@@ -4462,6 +4530,8 @@ module.exports = {
   GLOBAL_ID_ROUTING_TEST_STORE_ACCESS_PATTERNS,
   HARNESS_CONTAINER_SANDBOX_TEST_STORE_ACCESS_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
+  DAEMON_HEALTH_VERSION_PATTERNS,
+  HEALTH_DIAGNOSTICS_API_ORCHESTRATION_PATTERNS,
   IMAGE_ATTACHMENTS_TEST_STORE_ACCESS_PATTERNS,
   JJ_MERGE_QUEUE_BASICS_TEST_STORE_ACCESS_PATTERNS,
   LIB_TEST_DATA_ROOT_FIXTURE_PATTERNS,

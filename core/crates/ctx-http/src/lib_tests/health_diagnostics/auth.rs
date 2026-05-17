@@ -21,6 +21,11 @@ async fn unauthenticated_health_omits_sensitive_fields_when_daemon_auth_is_enabl
         health.get("auth_required").and_then(|v| v.as_bool()),
         Some(true)
     );
+    assert_eq!(
+        health.get("version").and_then(|v| v.as_str()),
+        Some(env!("CARGO_PKG_VERSION")),
+        "health must report the ctx-http package version, not the ctx-daemon package version"
+    );
     assert!(health.get("compatibility").is_some());
     assert_eq!(
         health
@@ -52,6 +57,10 @@ async fn unauthenticated_health_omits_sensitive_fields_when_daemon_auth_is_enabl
         health.get("storage").is_none(),
         "health leaked storage state: {health:#?}"
     );
+    assert!(
+        health.get("open_file_limit").is_none(),
+        "health leaked open_file_limit: {health:#?}"
+    );
 }
 
 #[tokio::test]
@@ -73,6 +82,10 @@ async fn authorized_health_keeps_sensitive_fields_when_daemon_auth_is_enabled() 
     let health: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
     assert!(health.get("pid").is_some(), "authorized health missing pid");
+    assert!(
+        health.get("open_file_limit").is_some(),
+        "authorized health missing open_file_limit"
+    );
     assert!(
         health.get("data_root").and_then(|v| v.as_str()).is_some(),
         "authorized health missing data_root"

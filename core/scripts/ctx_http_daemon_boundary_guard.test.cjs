@@ -17,6 +17,8 @@ const {
   GLOBAL_ID_ROUTING_TEST_STORE_ACCESS_PATTERNS,
   HARNESS_CONTAINER_SANDBOX_TEST_STORE_ACCESS_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
+  DAEMON_HEALTH_VERSION_PATTERNS,
+  HEALTH_DIAGNOSTICS_API_ORCHESTRATION_PATTERNS,
   IMAGE_ATTACHMENTS_TEST_STORE_ACCESS_PATTERNS,
   JJ_MERGE_QUEUE_BASICS_TEST_STORE_ACCESS_PATTERNS,
   LIB_TEST_DATA_ROOT_FIXTURE_PATTERNS,
@@ -4703,6 +4705,60 @@ test("daemon boundary guard rejects execution API orchestration", () => {
   ]) {
     assert(names.has(expected), `expected ${expected}; saw ${[...names].join(", ")}`);
   }
+});
+
+test("daemon boundary guard rejects health and diagnostics API orchestration", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/diagnostics.rs",
+    contents: `
+      use super::health::{build_health_response, HealthResp};
+      use ctx_linux_sandbox_runtime::linux_sandbox_runtime_status;
+      async fn route(core: CoreHandle, execution: ExecutionHandle, providers: ProvidersHandle) {
+        let _ = ctx_update_service::current_build_identity(env!("CARGO_PKG_VERSION"));
+        let _ = linux_sandbox_runtime_status(core.data_root()).await;
+        let _ = logs::list_log_files(core.data_root()).await;
+        let _ = logs::logs_dir(core.data_root());
+        let _ = ctx_resource_utilization::process_limits::current_open_file_limit();
+        let _ = core.storage_guard_snapshot();
+        let _ = execution.startup_status().await;
+        let _ = providers.provider_diagnostics_snapshot().await;
+        let _response: DiagnosticsResp = todo!();
+      }
+    `,
+    patterns: apiPatternsForPath("core/crates/ctx-http/src/api/diagnostics.rs"),
+  });
+
+  const names = new Set(violations.map((violation) => violation.name));
+  for (const expected of [
+    "health/diagnostics API calls update service directly",
+    "health/diagnostics API imports Linux sandbox runtime directly",
+    "health/diagnostics API reads process limits directly",
+    "health/diagnostics API reads observability logs directly",
+    "health/diagnostics API accesses daemon data root directly",
+    "health/diagnostics API reads storage guard directly",
+    "health/diagnostics API reads execution startup status directly",
+    "health/diagnostics API reads provider diagnostics directly",
+    "health/diagnostics API owns health response assembly",
+  ]) {
+    assert(names.has(expected), `expected ${expected}; saw ${[...names].join(", ")}`);
+  }
+});
+
+test("daemon boundary guard rejects daemon health package-version fallback", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-daemon/src/daemon/health.rs",
+    contents: `
+      fn health_snapshot() {
+        let _ = ctx_update_service::current_build_identity(env!("CARGO_PKG_VERSION"));
+      }
+    `,
+    patterns: DAEMON_HEALTH_VERSION_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    ["daemon health uses daemon crate package version directly"],
+  );
 });
 
 test("daemon boundary guard scopes small-boundary store facade roots", () => {

@@ -1,5 +1,6 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
@@ -82,9 +83,18 @@ fn load_build_identity(package_version: &'static str) -> Result<BuildIdentity> {
 }
 
 pub fn current_build_identity(package_version: &'static str) -> Result<&'static BuildIdentity> {
-    static BUILD_IDENTITY: OnceLock<Result<BuildIdentity, String>> = OnceLock::new();
-    let entry = BUILD_IDENTITY
-        .get_or_init(|| load_build_identity(package_version).map_err(|err| err.to_string()));
+    static BUILD_IDENTITIES: OnceLock<
+        Mutex<HashMap<&'static str, &'static Result<BuildIdentity, String>>>,
+    > = OnceLock::new();
+    let identities = BUILD_IDENTITIES.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut identities = identities
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let entry = *identities.entry(package_version).or_insert_with(|| {
+        Box::leak(Box::new(
+            load_build_identity(package_version).map_err(|err| err.to_string()),
+        ))
+    });
     match entry {
         Ok(identity) => Ok(identity),
         Err(err) => Err(anyhow!(err.clone())),
@@ -93,7 +103,9 @@ pub fn current_build_identity(package_version: &'static str) -> Result<&'static 
 
 #[cfg(test)]
 mod tests {
-    use super::{configured_identity_path, load_build_identity, parse_build_identity};
+    use super::{
+        configured_identity_path, current_build_identity, load_build_identity, parse_build_identity,
+    };
     use std::fs;
     use std::path::PathBuf;
     use std::sync::{Mutex, MutexGuard};
@@ -229,6 +241,18 @@ mod tests {
 
         assert_eq!(identity.exact_version, "9.9.9-test");
         assert_eq!(identity.build_id, "9.9.9-test");
+    }
+
+    #[test]
+    fn current_build_identity_is_cached_per_package_version() {
+        let _env = EnvGuard::new();
+
+        let http_identity = current_build_identity("9.9.9-http-test").expect("load http identity");
+        let daemon_identity =
+            current_build_identity("8.8.8-daemon-test").expect("load daemon identity");
+
+        assert_eq!(http_identity.exact_version, "9.9.9-http-test");
+        assert_eq!(daemon_identity.exact_version, "8.8.8-daemon-test");
     }
 
     #[test]
