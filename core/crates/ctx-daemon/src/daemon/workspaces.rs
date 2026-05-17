@@ -19,6 +19,7 @@ use ctx_workspace_config as workspace_config;
 use ctx_workspace_container::WorkspaceContainerStatus;
 
 use super::handle::WorkspacesHandle;
+use crate::daemon::route_files::{read_text_route_file, RouteFileDownloadError, TextRouteDownload};
 use crate::daemon::{settings, DaemonState, WorkspaceStoreAccessError, WorkspaceStreamHandle};
 use ctx_workspace_active_snapshot::{SessionReplayCursor, WorkspaceActiveSubscriptionState};
 
@@ -265,6 +266,37 @@ impl WorkspacesHandle {
         Ok(run.map(|run| (workspace, run)))
     }
 
+    pub async fn download_merge_queue_entry_logs_for_route(
+        &self,
+        workspace_id: WorkspaceId,
+        entry_id: MergeQueueEntryId,
+    ) -> Result<TextRouteDownload, RouteFileDownloadError> {
+        self.get_workspace_merge_queue_entry(workspace_id, entry_id)
+            .await
+            .map_err(|_| RouteFileDownloadError::NotFound)?;
+        let (workspace, run) = self
+            .latest_merge_queue_run_for_route(workspace_id, entry_id)
+            .await
+            .map_err(|_| RouteFileDownloadError::Internal)?
+            .ok_or(RouteFileDownloadError::NotFound)?;
+        let Some(path) = run.log_path.as_deref() else {
+            return Err(RouteFileDownloadError::NotFound);
+        };
+        if path.trim().is_empty() {
+            return Err(RouteFileDownloadError::NotFound);
+        }
+        let log_root = PathBuf::from(&workspace.root_path)
+            .join(".ctx")
+            .join("merge-queue")
+            .join("logs");
+        read_text_route_file(
+            std::path::Path::new(path),
+            &log_root,
+            format!("merge-queue-{}.log", entry_id.0),
+        )
+        .await
+    }
+
     pub async fn load_workspace_execution_override(
         &self,
         workspace_id: WorkspaceId,
@@ -381,6 +413,27 @@ impl WorkspacesHandle {
             return Ok(None);
         };
         Ok(worktree.bootstrap_log_path)
+    }
+
+    pub async fn download_worktree_bootstrap_logs_for_route(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> Result<TextRouteDownload, RouteFileDownloadError> {
+        let path = self
+            .get_worktree_bootstrap_log_path(worktree_id)
+            .await
+            .map_err(|_| RouteFileDownloadError::Internal)?
+            .ok_or(RouteFileDownloadError::NotFound)?;
+        if path.trim().is_empty() {
+            return Err(RouteFileDownloadError::NotFound);
+        }
+        let log_root = self.worktree_bootstrap_logs_root();
+        read_text_route_file(
+            std::path::Path::new(&path),
+            &log_root,
+            format!("worktree-bootstrap-{}.log", worktree_id.0),
+        )
+        .await
     }
 
     pub async fn build_run_archive_ingest_batch(

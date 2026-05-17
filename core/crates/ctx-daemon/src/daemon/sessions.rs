@@ -1,4 +1,5 @@
 mod app_state;
+mod artifacts;
 pub mod ask_user;
 pub mod auth;
 pub mod command_dispatch;
@@ -11,6 +12,7 @@ pub mod subagents;
 pub mod title_generation;
 pub mod vcs;
 
+pub use artifacts::{SessionArtifactDownload, SessionArtifactInput, SessionArtifactRouteError};
 pub use handle::{
     DemoSeedTranscript, DemoSeedTranscriptError, DemoSeedTranscriptTurn, GenerateSessionTitleError,
     PostUserMessageError, PostUserMessageInput, SessionImageBlobStoreError, SetSessionModeError,

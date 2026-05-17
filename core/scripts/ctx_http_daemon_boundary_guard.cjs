@@ -155,6 +155,12 @@ const mobileAccessStoreDtoApiRoots = [
   "core/crates/ctx-http/src/api/mobile_access/",
 ];
 
+const routeFileDownloadApiRoots = [
+  "core/crates/ctx-http/src/api/artifacts/",
+  "core/crates/ctx-http/src/api/merge_queue_api/logs.rs",
+  "core/crates/ctx-http/src/api/workspaces/worktrees.rs",
+];
+
 const sessionVcsApiRoots = [
   "core/crates/ctx-http/src/api/sessions/snapshot/vcs.rs",
   "core/crates/ctx-http/src/api/sessions/snapshot/vcs/",
@@ -1044,6 +1050,42 @@ const MOBILE_ACCESS_ORCHESTRATION_API_PATTERNS = [
   {
     name: "mobile access API references raw mobile route DTOs",
     regex: /\b(?:MobileAccessConfigUpsert|MobileDeviceRegistrationUpdate|MobileDeviceSequenceAdvance)\b/,
+  },
+];
+
+const ROUTE_FILE_DOWNLOAD_API_PATTERNS = [
+  {
+    name: "route file API reads or canonicalizes files directly",
+    regex: /\btokio\s*::\s*fs\s*::\s*(?:read|metadata|canonicalize)\s*\(|\btokio\s*::\s*fs\s*::\s*File\s*::\s*open\s*\(/,
+    contentRegex: /\buse\s+tokio\s*::\s*fs\s*::\s*\{(?=[^}]*\n)[\s\S]*?\b(?:read|metadata|canonicalize)\b[\s\S]*?\}/gm,
+  },
+  {
+    name: "route file API owns symlink-safe open policy",
+    regex: /\bstd\s*::\s*fs\s*::\s*OpenOptions\b|\bOpenOptionsExt\b|\bO_NOFOLLOW\b|\bspawn_blocking\s*\(/,
+  },
+  {
+    name: "route file API calls local path root guard",
+    regex: /\bpath_resolves_within_root\b/,
+  },
+  {
+    name: "route file API reconstructs merge queue log root",
+    regex: /\.join\s*\(\s*"merge-queue"\s*\)|\.join\s*\(\s*"logs"\s*\)/,
+  },
+  {
+    name: "route file API calls worktree bootstrap log root facade",
+    regex: /\.worktree_bootstrap_logs_root\s*\(/,
+  },
+  {
+    name: "route file API calls session artifact path facades directly",
+    regex: /\.(?:get_session_worktree|session_tool_output_spool_dir)\s*\(/,
+  },
+  {
+    name: "route file API owns session artifact path authorization helpers",
+    regex: /\b(?:resolve_session_artifact_accessible_path|validate_session_artifact_write_path|open_canonical_session_artifact_file|session_artifact_path_is_accessible|canonicalize_existing_or_raw)\b/,
+  },
+  {
+    name: "route file API owns session artifact metadata derivation",
+    regex: /\b(?:normalize_session_artifact_name|infer_session_artifact_mime_type|build_session_artifact_etag|build_session_artifact_last_modified)\b/,
   },
 ];
 
@@ -3834,6 +3876,9 @@ function apiPatternsForPath(relativePath) {
   if (updateApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...UPDATE_API_ORCHESTRATION_PATTERNS);
   }
+  if (routeFileDownloadApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...ROUTE_FILE_DOWNLOAD_API_PATTERNS);
+  }
   if (workspaceRegistrationConfigApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...WORKSPACE_REGISTRATION_CONFIG_API_PATTERNS);
   }
@@ -3952,6 +3997,13 @@ function mobileAccessStoreDtoApiPatternsForPath(relativePath) {
       ...MOBILE_ACCESS_STORE_DTO_API_PATTERNS,
       ...MOBILE_ACCESS_ORCHESTRATION_API_PATTERNS,
     ];
+  }
+  return [];
+}
+
+function routeFileDownloadApiPatternsForPath(relativePath) {
+  if (routeFileDownloadApiRoots.some((root) => relativePath.startsWith(root))) {
+    return ROUTE_FILE_DOWNLOAD_API_PATTERNS;
   }
   return [];
 }
@@ -4843,6 +4895,7 @@ module.exports = {
   TELEMETRY_API_ORCHESTRATION_PATTERNS,
   LOGS_API_ORCHESTRATION_PATTERNS,
   UPDATE_API_ORCHESTRATION_PATTERNS,
+  ROUTE_FILE_DOWNLOAD_API_PATTERNS,
   WORKSPACE_CONFIG_ROUTE_CONTEXT_PATTERNS,
   WORKSPACE_EXECUTION_CONFIG_API_PATTERNS,
   WORKSPACE_REGISTRATION_CONFIG_API_PATTERNS,
@@ -4942,6 +4995,7 @@ module.exports = {
   providerRouteSetupStorePatternsForPath,
   providerTargetScopedInstallsStorePatternsForPath,
   replayPropertiesStorePatternsForPath,
+  routeFileDownloadApiPatternsForPath,
   routerCompositionPatternsForPath,
   scanRepo,
   scanRouterComposition,

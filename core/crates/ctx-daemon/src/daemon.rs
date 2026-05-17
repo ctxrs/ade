@@ -44,6 +44,7 @@ pub mod resource_governance;
 pub mod resource_telemetry;
 pub mod resource_utilization;
 mod retention;
+mod route_files;
 mod runtime;
 pub mod scheduler;
 pub mod sessions;
@@ -95,6 +96,7 @@ pub use mcp_auth::{
 };
 #[cfg(test)]
 pub use retention::prune_archived_session_data_for_all_workspaces;
+pub use route_files::{RouteFileDownloadError, TextRouteDownload};
 pub use runtime::{bootstrap_daemon_runtime, DaemonRuntime};
 pub use settings::{SettingsRouteError, SettingsRouteErrorKind};
 pub use state::{AppRuntimeFlags, DaemonState};

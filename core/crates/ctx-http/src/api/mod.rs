@@ -47,9 +47,6 @@ mod web_sessions;
 mod workspaces;
 mod ws;
 
-#[cfg(test)]
-pub(crate) use artifacts::open_canonical_session_artifact_file;
-
 use artifacts::*;
 use diagnostics::*;
 use execution::*;

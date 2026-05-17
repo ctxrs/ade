@@ -1,11 +1,6 @@
 use super::*;
 use ctx_daemon::daemon::SessionsHandle;
 
-use self::records::build_session_artifacts;
-
-#[path = "set/records.rs"]
-mod records;
-
 #[derive(Debug, Deserialize)]
 struct ArtifactInput {
     absolute_file_path: String,
@@ -40,37 +35,20 @@ pub(in crate::api) async fn set_session_artifacts(
         validate_scoped_mcp_session_context(&state, mcp_auth, session_id).await?;
     }
 
-    let session = state
-        .get_session_for_artifacts(session_id)
+    let artifacts = state
+        .set_session_artifacts_for_route(
+            session_id,
+            req.artifacts
+                .into_iter()
+                .map(|artifact| SessionArtifactInput {
+                    absolute_file_path: artifact.absolute_file_path,
+                    name: artifact.name,
+                    mime_type: artifact.mime_type,
+                })
+                .collect(),
+        )
         .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "session not found".to_string(),
-            }),
-        ))?;
-
-    let artifacts = build_session_artifacts(&state, &session, req.artifacts).await?;
-
-    state
-        .replace_session_artifacts_and_publish(&session, &artifacts)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiErrorResp {
-                    error: logs::redact_sensitive(&e.to_string()),
-                }),
-            )
-        })?;
+        .map_err(session_artifact_api_error)?;
 
     Ok(Json(artifacts))
 }

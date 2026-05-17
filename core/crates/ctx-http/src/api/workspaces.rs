@@ -1,5 +1,3 @@
-use std::path::Path as StdPath;
-
 use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{header, StatusCode};
@@ -27,7 +25,7 @@ pub(super) use registry::{create_workspace, delete_workspace, get_workspace, lis
 pub(super) use worktrees::{get_worktree, get_worktree_bootstrap_logs};
 
 use super::errors::ApiErrorResp;
-use super::shared::{map_effective_execution_settings_error, path_resolves_within_root};
+use super::shared::map_effective_execution_settings_error;
 use ctx_core::ids::{WorkspaceId, WorktreeId};
 use ctx_core::models::{
     AttachmentMode, AttachmentUpdatePolicy, Workspace, WorkspaceActiveHeadBatch,

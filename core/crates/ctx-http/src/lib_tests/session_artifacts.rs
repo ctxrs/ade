@@ -4,8 +4,6 @@ mod download_http;
 mod missing_files;
 mod root_paths;
 mod spool_isolation;
-#[cfg(unix)]
-mod symlink_swap;
 
 struct SessionArtifactFixture {
     app: axum::Router,

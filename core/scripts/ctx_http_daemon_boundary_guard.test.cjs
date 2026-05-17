@@ -25,6 +25,7 @@ const {
   TELEMETRY_API_ORCHESTRATION_PATTERNS,
   LOGS_API_ORCHESTRATION_PATTERNS,
   UPDATE_API_ORCHESTRATION_PATTERNS,
+  ROUTE_FILE_DOWNLOAD_API_PATTERNS,
   WORKSPACE_CONFIG_ROUTE_CONTEXT_PATTERNS,
   WORKSPACE_EXECUTION_CONFIG_API_PATTERNS,
   WORKSPACE_REGISTRATION_CONFIG_API_PATTERNS,
@@ -124,6 +125,7 @@ const {
   providerRouteSetupStorePatternsForPath,
   providerTargetScopedInstallsStorePatternsForPath,
   replayPropertiesStorePatternsForPath,
+  routeFileDownloadApiPatternsForPath,
   routerCompositionPatternsForPath,
   scanRepo,
   scanRouterComposition,
@@ -2487,6 +2489,71 @@ test("daemon boundary guard scopes mobile access storage DTO roots", () => {
   }
   assert.deepEqual(
     mobileAccessStoreDtoApiPatternsForPath("core/crates/ctx-http/src/api/providers/status.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects route file download API orchestration", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/artifacts/session/set.rs",
+    contents: `
+      async fn helper(state: SessionsHandle, path: PathBuf, root: PathBuf) {
+        let _bytes = tokio::fs::read(&path).await?;
+        let _meta = tokio::fs::metadata(&path).await?;
+        let _canonical = tokio::fs::canonicalize(&path).await?;
+        let _file = tokio::fs::File::open(&path).await?;
+        let _open = std::fs::OpenOptions::new();
+        let _safe = path_resolves_within_root(&path, &root).await;
+        let _log_root = root.join("merge-queue");
+        let _bootstrap_root = state.worktree_bootstrap_logs_root();
+        let _worktree = state.get_session_worktree(&session).await?;
+        let _spool = state.session_tool_output_spool_dir(session.id);
+        let _path = resolve_session_artifact_accessible_path(&state, &session, &path).await?;
+        let _write = validate_session_artifact_write_path(&state, &session, &path).await?;
+        let _file = open_canonical_session_artifact_file(&path).await?;
+        let _name = normalize_session_artifact_name(None, &path);
+        let _etag = build_session_artifact_etag(42, modified);
+      }
+    `,
+    patterns: ROUTE_FILE_DOWNLOAD_API_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "route file API reads or canonicalizes files directly",
+      "route file API reads or canonicalizes files directly",
+      "route file API reads or canonicalizes files directly",
+      "route file API reads or canonicalizes files directly",
+      "route file API owns symlink-safe open policy",
+      "route file API calls local path root guard",
+      "route file API reconstructs merge queue log root",
+      "route file API calls worktree bootstrap log root facade",
+      "route file API calls session artifact path facades directly",
+      "route file API calls session artifact path facades directly",
+      "route file API owns session artifact path authorization helpers",
+      "route file API owns session artifact path authorization helpers",
+      "route file API owns session artifact path authorization helpers",
+      "route file API owns session artifact metadata derivation",
+      "route file API owns session artifact metadata derivation",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes route file download roots", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/src/api/artifacts/session/set.rs",
+    "core/crates/ctx-http/src/api/artifacts/download/response.rs",
+    "core/crates/ctx-http/src/api/merge_queue_api/logs.rs",
+    "core/crates/ctx-http/src/api/workspaces/worktrees.rs",
+  ]) {
+    assert.deepEqual(
+      routeFileDownloadApiPatternsForPath(filePath),
+      ROUTE_FILE_DOWNLOAD_API_PATTERNS,
+    );
+  }
+  assert.deepEqual(
+    routeFileDownloadApiPatternsForPath("core/crates/ctx-http/src/api/mobile_access.rs"),
     [],
   );
 });
