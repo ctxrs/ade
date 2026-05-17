@@ -5,8 +5,6 @@ mod status;
 mod stream;
 
 pub(in crate::api) use start::{install_all_providers, install_provider};
-#[cfg(test)]
-pub(in crate::api) use status::GetInstallStatusesReq;
 pub(in crate::api) use status::{
     cancel_install, get_install, get_install_statuses, list_install_events,
 };

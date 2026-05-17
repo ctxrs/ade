@@ -10,6 +10,3 @@ pub(in crate::api) use installs::{
     install_stream_sse, list_install_events,
 };
 pub(in crate::api) use options::get_provider_options;
-
-#[cfg(test)]
-pub(in crate::api) type GetInstallStatusesReq = installs::GetInstallStatusesReq;

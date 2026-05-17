@@ -18,24 +18,17 @@ use axum::Json;
 use futures::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 
-use super::errors::ApiErrorResp;
-use ctx_daemon::daemon::providers::parse_provider_install_target;
+use ctx_daemon::daemon::providers::{
+    ProviderInstallInfo, ProviderInstallProgressEvent, ProviderInstallStartRouteResponse,
+    ProviderInstallStatusOnlyRouteError, ProviderInstallStatusesRouteRequest,
+    ProviderInstallStatusesRouteResponse,
+};
 use ctx_daemon::daemon::ProvidersHandle;
 use ctx_observability::logs;
-use ctx_provider_install::install_state::{
-    InstallId, InstallInfo, InstallProgressEvent, InstallTarget,
-};
 
 #[derive(Debug, Deserialize)]
-pub(super) struct InstallTargetQuery {
+pub(super) struct RawInstallTargetQuery {
     target: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct InstallStartResponse {
-    provider_id: String,
-    install_id: InstallId,
-    target: InstallTarget,
 }
 
 #[derive(Debug, Deserialize)]

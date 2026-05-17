@@ -1,8 +1,9 @@
 use axum::http::StatusCode;
 use axum::Json;
-use ctx_observability::logs;
 
-use ctx_daemon::daemon::providers::{ProviderLaunchConfigError, StartProviderInstallError};
+use ctx_daemon::daemon::providers::{
+    ProviderInstallJsonRouteError, ProviderInstallJsonRouteErrorStatus, ProviderLaunchConfigError,
+};
 
 pub(in crate::api::provider_launch) fn workspace_execution_settings_error_json(
     error: &anyhow::Error,
@@ -16,20 +17,13 @@ pub(in crate::api::provider_launch) fn workspace_execution_settings_error_json(
 }
 
 pub(in crate::api::provider_launch) fn provider_install_error_response(
-    error: StartProviderInstallError,
+    error: ProviderInstallJsonRouteError,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let status = if error.code.as_deref() == Some("install_target_disabled") {
-        StatusCode::FORBIDDEN
-    } else {
-        StatusCode::BAD_REQUEST
+    let status = match error.status() {
+        ProviderInstallJsonRouteErrorStatus::BadRequest => StatusCode::BAD_REQUEST,
+        ProviderInstallJsonRouteErrorStatus::Forbidden => StatusCode::FORBIDDEN,
     };
-    (
-        status,
-        Json(serde_json::json!({
-            "error": logs::redact_sensitive(&error.message),
-            "code": error.code,
-        })),
-    )
+    (status, Json(error.body().clone()))
 }
 
 pub(in crate::api::provider_launch) fn provider_launch_config_error_response(
@@ -49,14 +43,19 @@ pub(in crate::api::provider_launch) fn provider_launch_config_error_response(
 mod tests {
     use super::provider_install_error_response;
     use axum::http::StatusCode;
-    use ctx_daemon::daemon::providers::StartProviderInstallError;
+    use ctx_daemon::daemon::providers::{
+        ProviderInstallJsonRouteError, ProviderInstallJsonRouteErrorStatus,
+    };
 
     #[test]
     fn provider_install_error_response_maps_disabled_install_targets_to_forbidden() {
-        let (status, body) = provider_install_error_response(StartProviderInstallError {
-            message: "host provider installs are disabled by daemon policy".to_string(),
-            code: Some("install_target_disabled".to_string()),
-        });
+        let (status, body) = provider_install_error_response(ProviderInstallJsonRouteError::new(
+            ProviderInstallJsonRouteErrorStatus::Forbidden,
+            serde_json::json!({
+                "error": "host provider installs are disabled by daemon policy",
+                "code": "install_target_disabled",
+            }),
+        ));
 
         assert_eq!(status, StatusCode::FORBIDDEN);
         assert_eq!(body.0["code"], "install_target_disabled");

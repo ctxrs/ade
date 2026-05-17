@@ -49,6 +49,7 @@ const {
   PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS,
   PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS,
   PROVIDER_HARNESS_ENDPOINT_API_PATTERNS,
+  PROVIDER_INSTALL_API_ORCHESTRATION_PATTERNS,
   SESSION_HEAD_API_ORCHESTRATION_PATTERNS,
   SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS,
   SESSION_VCS_API_ORCHESTRATION_PATTERNS,
@@ -125,6 +126,7 @@ const {
   mobileStorePatternsForPath,
   providerAuthGlobalIdFixturePatternsForPath,
   providerHarnessEndpointApiPatternsForPath,
+  providerInstallApiPatternsForPath,
   providerScenariosOfflineStorePatternsForPath,
   providerWorkerReapingStorePatternsForPath,
   providerCachePatternsForPath,
@@ -3039,6 +3041,79 @@ test("daemon boundary guard scopes provider harness endpoint API roots", () => {
     providerHarnessEndpointApiPatternsForPath(
       "core/crates/ctx-http/src/api/providers/harness_config.rs",
     ),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects provider install API orchestration", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/provider_launch/handlers/installs/status.rs",
+    contents: `
+      use ctx_provider_install::install_state::{InstallId, InstallInfo, InstallProgressEvent, InstallTarget};
+      async fn handler(providers: ProvidersHandle) {
+        let target = parse_provider_install_target(raw)?;
+        let _query = InstallTargetQuery { target: None };
+        let _response = InstallStartResponse { provider_id, install_id, target };
+        let _req = GetInstallStatusesReq { install_ids };
+        let _item = InstallStatusBatchItem { install_id, info };
+        let _resp = GetInstallStatusesResp { installs };
+        let install_id = uuid::Uuid::parse_str(raw)?;
+        providers.start_provider_install(&provider_id, target).await?;
+        providers.start_all_provider_installs(target).await?;
+        providers.get_provider_install_info(install_id).await;
+        providers.cancel_provider_install(install_id).await;
+        providers.list_provider_install_events(install_id).await;
+        providers.provider_install_event_sender(install_id).await;
+      }
+    `,
+    patterns: PROVIDER_INSTALL_API_ORCHESTRATION_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "provider install API imports install domain directly",
+      "provider install API parses install target directly",
+      "provider install API owns old install route DTOs",
+      "provider install API owns old install route DTOs",
+      "provider install API owns old install route DTOs",
+      "provider install API owns old install route DTOs",
+      "provider install API owns old install route DTOs",
+      "provider install API references low-level install domain types",
+      "provider install API calls low-level install facades",
+      "provider install API calls low-level install facades",
+      "provider install API calls low-level install facades",
+      "provider install API calls low-level install facades",
+      "provider install API calls low-level install facades",
+      "provider install API calls low-level install facades",
+      "provider install API parses install ids directly",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes provider install API roots", () => {
+  assert.deepEqual(
+    providerInstallApiPatternsForPath(
+      "core/crates/ctx-http/src/api/provider_launch/handlers/installs/status.rs",
+    ),
+    PROVIDER_INSTALL_API_ORCHESTRATION_PATTERNS,
+  );
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/provider_launch/handlers/installs/start.rs",
+    ).includes(PROVIDER_INSTALL_API_ORCHESTRATION_PATTERNS[0]),
+    true,
+  );
+  assert.deepEqual(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/provider_launch/handlers/installs/start.rs",
+      contents: "providers.start_provider_install_for_route(&id, target).await?;",
+      patterns: PROVIDER_INSTALL_API_ORCHESTRATION_PATTERNS,
+    }),
+    [],
+  );
+  assert.deepEqual(
+    providerInstallApiPatternsForPath("core/crates/ctx-http/src/api/providers/status/routes.rs"),
     [],
   );
 });

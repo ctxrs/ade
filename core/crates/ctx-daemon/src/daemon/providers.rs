@@ -102,7 +102,11 @@ pub use harness_config::{
 pub use installs::{
     cancel_provider_install, get_provider_install_info, list_provider_install_events,
     parse_provider_install_target, provider_install_event_sender, start_all_provider_installs,
-    start_provider_install, StartProviderInstallError,
+    start_provider_install, ProviderInstallEventStreamRoute, ProviderInstallInfo,
+    ProviderInstallJsonRouteError, ProviderInstallJsonRouteErrorStatus,
+    ProviderInstallProgressEvent, ProviderInstallStartRouteResponse,
+    ProviderInstallStatusOnlyRouteError, ProviderInstallStatusesRouteRequest,
+    ProviderInstallStatusesRouteResponse, StartProviderInstallError,
 };
 pub use inventory::refresh_provider_inventory;
 pub use kimi_oauth_login::{start_kimi_oauth_login, KimiOAuthLoginStartError};

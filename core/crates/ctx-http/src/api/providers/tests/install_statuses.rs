@@ -31,7 +31,7 @@ async fn get_install_statuses_returns_known_and_missing_installs_in_request_orde
 
     let Json(resp) = get_install_statuses(
         State(fixture.providers()),
-        Json(GetInstallStatusesReq {
+        Json(ProviderInstallStatusesRouteRequest {
             install_ids: vec![install_id.to_string(), missing_install_id.to_string()],
         }),
     )
@@ -64,7 +64,7 @@ async fn get_install_statuses_rejects_invalid_install_ids() {
 
     let err = get_install_statuses(
         State(fixture.providers()),
-        Json(GetInstallStatusesReq {
+        Json(ProviderInstallStatusesRouteRequest {
             install_ids: vec!["not-a-uuid".to_string()],
         }),
     )
@@ -73,5 +73,5 @@ async fn get_install_statuses_rejects_invalid_install_ids() {
     let (status, Json(body)) = err;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body.error, "invalid install id: not-a-uuid");
+    assert_eq!(body["error"], "invalid install id: not-a-uuid");
 }

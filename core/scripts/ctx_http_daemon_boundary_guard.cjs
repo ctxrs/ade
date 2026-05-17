@@ -194,6 +194,12 @@ const providerHarnessEndpointApiRoots = [
   "core/crates/ctx-http/src/api/providers/harness_config/endpoints.rs",
 ];
 
+const providerInstallApiRoots = [
+  "core/crates/ctx-http/src/api/provider_launch.rs",
+  "core/crates/ctx-http/src/api/provider_launch/handlers/installs.rs",
+  "core/crates/ctx-http/src/api/provider_launch/handlers/installs/",
+];
+
 const providerAccountsApiRoots = [
   "core/crates/ctx-http/src/api/providers/accounts.rs",
   "core/crates/ctx-http/src/api/providers/accounts/",
@@ -1343,6 +1349,35 @@ const PROVIDER_HARNESS_ENDPOINT_API_PATTERNS = [
     name: "provider harness endpoint API calls low-level endpoint facades",
     regex:
       /\.(?:upsert_provider_harness_endpoint|refresh_provider_harness_endpoint_models|set_provider_harness_endpoint_manual_models|delete_provider_harness_endpoint)\s*\(/,
+  },
+];
+
+const PROVIDER_INSTALL_API_ORCHESTRATION_PATTERNS = [
+  {
+    name: "provider install API imports install domain directly",
+    regex: /\bctx_provider_install::install_state\b/,
+  },
+  {
+    name: "provider install API parses install target directly",
+    regex: /\bparse_provider_install_target\b/,
+  },
+  {
+    name: "provider install API owns old install route DTOs",
+    regex:
+      /\b(?:InstallTargetQuery|InstallStartResponse|GetInstallStatusesReq|InstallStatusBatchItem|GetInstallStatusesResp)\b/,
+  },
+  {
+    name: "provider install API references low-level install domain types",
+    regex: /\b(?:InstallId|InstallInfo|InstallProgressEvent|InstallTarget)\b/,
+  },
+  {
+    name: "provider install API calls low-level install facades",
+    regex:
+      /\.(?:start_provider_install|start_all_provider_installs|get_provider_install_info|cancel_provider_install|list_provider_install_events|provider_install_event_sender)\s*\(/,
+  },
+  {
+    name: "provider install API parses install ids directly",
+    regex: /\buuid::Uuid::parse_str\s*\(/,
   },
 ];
 
@@ -4039,6 +4074,9 @@ function apiPatternsForPath(relativePath) {
   if (providerHarnessEndpointApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...PROVIDER_HARNESS_ENDPOINT_API_PATTERNS);
   }
+  if (providerInstallApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...PROVIDER_INSTALL_API_ORCHESTRATION_PATTERNS);
+  }
   if (providerAccountsApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS);
   }
@@ -4236,6 +4274,13 @@ function runArchiveApiPatternsForPath(relativePath) {
 function providerHarnessEndpointApiPatternsForPath(relativePath) {
   if (providerHarnessEndpointApiRoots.some((root) => relativePath.startsWith(root))) {
     return PROVIDER_HARNESS_ENDPOINT_API_PATTERNS;
+  }
+  return [];
+}
+
+function providerInstallApiPatternsForPath(relativePath) {
+  if (providerInstallApiRoots.some((root) => relativePath.startsWith(root))) {
+    return PROVIDER_INSTALL_API_ORCHESTRATION_PATTERNS;
   }
   return [];
 }
@@ -5165,6 +5210,7 @@ module.exports = {
   CLAUDE_SETUP_TOKEN_LOGIN_API_ORCHESTRATION_PATTERNS,
   PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS,
   PROVIDER_HARNESS_ENDPOINT_API_PATTERNS,
+  PROVIDER_INSTALL_API_ORCHESTRATION_PATTERNS,
   PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS,
   SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS,
   SESSION_VCS_API_ORCHESTRATION_PATTERNS,
@@ -5241,6 +5287,7 @@ module.exports = {
   mobileStorePatternsForPath,
   providerAuthGlobalIdFixturePatternsForPath,
   providerHarnessEndpointApiPatternsForPath,
+  providerInstallApiPatternsForPath,
   providerScenariosOfflineStorePatternsForPath,
   providerWorkerReapingStorePatternsForPath,
   providerCachePatternsForPath,

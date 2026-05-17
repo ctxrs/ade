@@ -4,22 +4,16 @@ pub(in crate::api) async fn install_stream_sse(
     State(providers): State<ProvidersHandle>,
     Path(install_id): Path<String>,
 ) -> Result<Sse<impl Stream<Item = Result<SseEvent, axum::Error>>>, StatusCode> {
-    let install_id: InstallId =
-        uuid::Uuid::parse_str(&install_id).map_err(|_| StatusCode::BAD_REQUEST)?;
-    let Some(sender) = providers.provider_install_event_sender(install_id).await else {
-        return Err(StatusCode::NOT_FOUND);
-    };
-
-    let history = providers
-        .list_provider_install_events(install_id)
+    let route = providers
+        .open_provider_install_event_stream_for_route(&install_id)
         .await
-        .unwrap_or_default();
-    let initial = futures::stream::iter(history.into_iter().map(|ev| {
+        .map_err(super::status::provider_install_status_only_error)?;
+    let initial = futures::stream::iter(route.history.into_iter().map(|ev| {
         let payload = serde_json::to_string(&ev).unwrap_or_else(|_| "{}".into());
         Ok::<_, axum::Error>(SseEvent::default().event("progress").data(payload))
     }));
 
-    let live = futures::stream::unfold(sender.subscribe(), move |mut rx| async move {
+    let live = futures::stream::unfold(route.receiver, move |mut rx| async move {
         loop {
             match rx.recv().await {
                 Ok(ev) => {
