@@ -49,6 +49,7 @@ const {
   MOBILE_ACCESS_STORE_DTO_API_PATTERNS,
   MOBILE_ACCESS_ORCHESTRATION_API_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
+  MERGE_QUEUE_ENTRY_API_ROUTE_CONTRACT_PATTERNS,
   MERGE_QUEUE_SUBMIT_API_ORCHESTRATION_PATTERNS,
   PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS,
   PROVIDER_AUTH_IMPORT_API_ORCHESTRATION_PATTERNS,
@@ -130,6 +131,7 @@ const {
   liveProviderCanaryStorePatternsForPath,
   libTestDataRootFixturePatternsForPath,
   mergeQueueIsolationStorePatternsForPath,
+  mergeQueueEntryApiPatternsForPath,
   mergeQueueSubmitApiPatternsForPath,
   mcpDaemonPatternsForPath,
   migratedTestPatternsForPath,
@@ -2682,6 +2684,62 @@ test("daemon boundary guard scopes merge queue submit API orchestration roots", 
   );
   assert.deepEqual(
     mergeQueueSubmitApiPatternsForPath("core/crates/ctx-http/src/api/merge_queue_api/logs.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects merge queue entry raw route contracts", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/merge_queue_api/actions.rs",
+    contents: `
+      use ctx_core::models::{MergeQueueEntry as Entry};
+      use ctx_merge_queue::MergeQueueSubmitParams;
+      struct MergeQueueListParams;
+      async fn helper(state: WorkspacesHandle) -> Json<Vec<ctx_core::models::MergeQueueEntry>> {
+        state.list_merge_queue_entries_for_route(workspace_id, Some(10)).await?;
+        state.cancel_merge_queue_entry(workspace_id, entry_id).await?;
+        state.retry_merge_queue_entry(workspace_id, entry_id).await?;
+        Json(Vec::<Entry>::new())
+      }
+    `,
+    patterns: MERGE_QUEUE_ENTRY_API_ROUTE_CONTRACT_PATTERNS,
+  });
+
+  assert.deepEqual(new Set(violations.map((violation) => violation.name)), new Set([
+    "merge queue entry API returns raw entry DTOs",
+    "merge queue entry API calls raw action facades",
+    "merge queue entry API owns local list request DTOs",
+    "merge queue entry API imports low-level merge queue crate",
+  ]));
+});
+
+test("daemon boundary guard scopes merge queue entry API route contracts", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/src/api/merge_queue_api/actions.rs",
+    "core/crates/ctx-http/src/api/merge_queue_api/submit.rs",
+    "core/crates/ctx-http/src/api/merge_queue_api/request.rs",
+  ]) {
+    assert.deepEqual(
+      mergeQueueEntryApiPatternsForPath(filePath),
+      MERGE_QUEUE_ENTRY_API_ROUTE_CONTRACT_PATTERNS,
+    );
+    assert.equal(
+      apiPatternsForPath(filePath).includes(MERGE_QUEUE_ENTRY_API_ROUTE_CONTRACT_PATTERNS[0]),
+      true,
+    );
+  }
+
+  assert.deepEqual(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/merge_queue_api/actions.rs",
+      contents:
+        "state.cancel_merge_queue_entry_for_route(params).await?; Json::<MergeQueueEntryRouteResponse>(entry)",
+      patterns: MERGE_QUEUE_ENTRY_API_ROUTE_CONTRACT_PATTERNS,
+    }),
+    [],
+  );
+  assert.deepEqual(
+    mergeQueueEntryApiPatternsForPath("core/crates/ctx-http/src/api/merge_queue_api/logs.rs"),
     [],
   );
 });

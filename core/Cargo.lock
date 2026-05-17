@@ -1116,7 +1116,6 @@ dependencies = [
  "ctx-managed-installs",
  "ctx-mcp-auth",
  "ctx-mcp-command",
- "ctx-merge-queue",
  "ctx-observability",
  "ctx-org-policy",
  "ctx-provider-accounts",

@@ -1,5 +1,4 @@
 use ctx_core::ids::{SessionId, WorktreeId};
-use ctx_core::models::MergeQueueEntry;
 use ctx_mcp_auth::McpAuthContext;
 use ctx_merge_queue::MergeQueueSubmitParams;
 use ctx_observability::logs;
@@ -8,6 +7,8 @@ use serde::Deserialize;
 use crate::daemon::{
     require_scoped_mcp_session_context, ScopedMcpSessionAccessError, WorkspacesHandle,
 };
+
+use super::MergeQueueEntryRouteResponse;
 
 #[derive(Debug, Deserialize)]
 pub struct SubmitMergeQueueEntryRouteRequest {
@@ -75,7 +76,7 @@ impl WorkspacesHandle {
         &self,
         req: SubmitMergeQueueEntryRouteRequest,
         mcp_auth: Option<McpAuthContext>,
-    ) -> Result<MergeQueueEntry, MergeQueueSubmitRouteError> {
+    ) -> Result<MergeQueueEntryRouteResponse, MergeQueueSubmitRouteError> {
         let mut session_id = parse_optional_session_id(req.session_id.as_deref())?;
         let mut worktree_id = parse_optional_worktree_id(req.worktree_id.as_deref())?;
         let worktree_root = normalized_worktree_root(req.worktree_root);
@@ -108,6 +109,7 @@ impl WorkspacesHandle {
             message: req.message,
         })
         .await
+        .map(Into::into)
         .map_err(|error| MergeQueueSubmitRouteError::bad_request(error.to_string()))
     }
 }

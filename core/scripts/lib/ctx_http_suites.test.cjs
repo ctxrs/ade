@@ -191,6 +191,7 @@ test("ctx-http long suites expand to direct Bazel test targets", () => {
   ]);
   assert.deepEqual(getCtxHttpSuiteTargets("repo-vcs"), [
     `${CTX_HTTP_BAZEL_PACKAGE}:jj_merge_queue_basics`,
+    `${CTX_HTTP_BAZEL_PACKAGE}:merge_queue_entry_routes_http`,
     `${CTX_HTTP_BAZEL_PACKAGE}:merge_queue_isolation`,
     `${CTX_HTTP_BAZEL_PACKAGE}:repo_clone_branch_and_safety`,
     `${CTX_HTTP_BAZEL_PACKAGE}:repo_init_initial_commit`,

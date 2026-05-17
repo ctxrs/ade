@@ -165,6 +165,12 @@ const mergeQueueSubmitApiRoots = [
   "core/crates/ctx-http/src/api/merge_queue_api/submit.rs",
 ];
 
+const mergeQueueEntryApiRoots = [
+  "core/crates/ctx-http/src/api/merge_queue_api/actions.rs",
+  "core/crates/ctx-http/src/api/merge_queue_api/submit.rs",
+  "core/crates/ctx-http/src/api/merge_queue_api/request.rs",
+];
+
 const runArchiveApiRoots = [
   "core/crates/ctx-http/src/api/run_archive.rs",
   "core/crates/ctx-http/src/api/run_archive/",
@@ -1243,6 +1249,27 @@ const MERGE_QUEUE_SUBMIT_API_ORCHESTRATION_PATTERNS = [
   {
     name: "merge queue submit API calls low-level submit facade",
     regex: /\.submit_merge_queue_entry\s*\(/,
+  },
+];
+
+const MERGE_QUEUE_ENTRY_API_ROUTE_CONTRACT_PATTERNS = [
+  {
+    name: "merge queue entry API returns raw entry DTOs",
+    regex:
+      /\bctx_core::models::MergeQueueEntry\b|\bmodels::MergeQueueEntry\b|\bMergeQueueEntry\b/,
+  },
+  {
+    name: "merge queue entry API calls raw action facades",
+    regex:
+      /\.(?:list_merge_queue_entries_for_route|cancel_merge_queue_entry|retry_merge_queue_entry)\s*\(/,
+  },
+  {
+    name: "merge queue entry API owns local list request DTOs",
+    regex: /\bMergeQueueListParams\b/,
+  },
+  {
+    name: "merge queue entry API imports low-level merge queue crate",
+    regex: /\bctx_merge_queue\b/,
   },
 ];
 
@@ -4596,6 +4623,9 @@ function apiPatternsForPath(relativePath) {
   if (mergeQueueSubmitApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...MERGE_QUEUE_SUBMIT_API_ORCHESTRATION_PATTERNS);
   }
+  if (mergeQueueEntryApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...MERGE_QUEUE_ENTRY_API_ROUTE_CONTRACT_PATTERNS);
+  }
   if (runArchiveApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS);
   }
@@ -4744,6 +4774,13 @@ function routeFileDownloadApiPatternsForPath(relativePath) {
 function mergeQueueSubmitApiPatternsForPath(relativePath) {
   if (mergeQueueSubmitApiRoots.some((root) => relativePath.startsWith(root))) {
     return MERGE_QUEUE_SUBMIT_API_ORCHESTRATION_PATTERNS;
+  }
+  return [];
+}
+
+function mergeQueueEntryApiPatternsForPath(relativePath) {
+  if (mergeQueueEntryApiRoots.some((root) => relativePath.startsWith(root))) {
+    return MERGE_QUEUE_ENTRY_API_ROUTE_CONTRACT_PATTERNS;
   }
   return [];
 }
@@ -5738,6 +5775,7 @@ module.exports = {
   MOBILE_ACCESS_STORE_DTO_API_PATTERNS,
   MOBILE_ACCESS_ORCHESTRATION_API_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
+  MERGE_QUEUE_ENTRY_API_ROUTE_CONTRACT_PATTERNS,
   MERGE_QUEUE_SUBMIT_API_ORCHESTRATION_PATTERNS,
   MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS,
   CURSOR_PROCESS_LOGIN_API_ORCHESTRATION_PATTERNS,
@@ -5824,6 +5862,7 @@ module.exports = {
   liveProviderCanaryStorePatternsForPath,
   libTestDataRootFixturePatternsForPath,
   mergeQueueIsolationStorePatternsForPath,
+  mergeQueueEntryApiPatternsForPath,
   mergeQueueSubmitApiPatternsForPath,
   mcpDaemonPatternsForPath,
   migratedTestPatternsForPath,

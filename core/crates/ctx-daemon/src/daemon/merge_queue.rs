@@ -12,8 +12,13 @@ use ctx_merge_queue::WorkspaceDrainStop;
 use crate::daemon::{DaemonState, WorkspacesHandle};
 
 mod host;
+mod route_contract;
 mod submit_route;
 
+pub use route_contract::{
+    ListMergeQueueEntriesRouteRequest, MergeQueueEntryRouteError, MergeQueueEntryRouteErrorKind,
+    MergeQueueEntryRouteParams, MergeQueueEntryRouteResponse,
+};
 pub use submit_route::{
     MergeQueueSubmitRouteError, MergeQueueSubmitRouteErrorKind, SubmitMergeQueueEntryRouteRequest,
 };
@@ -67,14 +72,14 @@ pub async fn activate_workspace_merge_queue(state: &Arc<DaemonState>, workspace_
 }
 
 impl WorkspacesHandle {
-    pub async fn submit_merge_queue_entry(
+    pub(in crate::daemon) async fn submit_merge_queue_entry(
         &self,
         params: MergeQueueSubmitParams,
     ) -> Result<MergeQueueEntry> {
         submit_merge_queue_entry(&self.state, params).await
     }
 
-    pub async fn cancel_merge_queue_entry(
+    pub(in crate::daemon) async fn cancel_merge_queue_entry(
         &self,
         workspace_id: WorkspaceId,
         entry_id: MergeQueueEntryId,
@@ -82,7 +87,7 @@ impl WorkspacesHandle {
         cancel_merge_queue_entry(&self.state, workspace_id, entry_id).await
     }
 
-    pub async fn retry_merge_queue_entry(
+    pub(in crate::daemon) async fn retry_merge_queue_entry(
         &self,
         workspace_id: WorkspaceId,
         entry_id: MergeQueueEntryId,
@@ -90,7 +95,7 @@ impl WorkspacesHandle {
         retry_merge_queue_entry(&self.state, workspace_id, entry_id).await
     }
 
-    pub async fn get_workspace_merge_queue_entry(
+    pub(in crate::daemon) async fn get_workspace_merge_queue_entry(
         &self,
         workspace_id: WorkspaceId,
         entry_id: MergeQueueEntryId,

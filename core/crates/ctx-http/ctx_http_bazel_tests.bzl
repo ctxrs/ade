@@ -60,6 +60,7 @@ CTX_HTTP_SUITE_TESTS = {
     ],
     "repo-vcs": [
         "jj_merge_queue_basics",
+        "merge_queue_entry_routes_http",
         "merge_queue_isolation",
         "repo_clone_branch_and_safety",
         "repo_init_initial_commit",

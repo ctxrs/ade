@@ -5,11 +5,10 @@ use tokio::sync::broadcast;
 
 use ctx_core::ids::{MergeQueueEntryId, RunId, SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
-    MergeQueueEntry, MergeQueueRun, RunArchiveIngestBatch, RunArchiveIngestCursor, SandboxBinding,
-    SessionHeadDelta, SessionHeadSnapshot, SessionSummaryDelta, VcsKind, Workspace,
-    WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot, WorkspaceActiveSnapshotClientMessage,
-    WorkspaceActiveSnapshotEvent, WorkspaceActiveSnapshotStreamMessage, WorkspaceAttachment,
-    Worktree,
+    MergeQueueRun, RunArchiveIngestBatch, RunArchiveIngestCursor, SandboxBinding, SessionHeadDelta,
+    SessionHeadSnapshot, SessionSummaryDelta, VcsKind, Workspace, WorkspaceActiveHeadBatch,
+    WorkspaceActiveSnapshot, WorkspaceActiveSnapshotClientMessage, WorkspaceActiveSnapshotEvent,
+    WorkspaceActiveSnapshotStreamMessage, WorkspaceAttachment, Worktree,
 };
 use ctx_observability::telemetry::TelemetryEvent;
 use ctx_settings_model::ExecutionSettings;
@@ -213,18 +212,6 @@ impl WorkspacesHandle {
             }
         }
         Ok(())
-    }
-
-    pub async fn list_merge_queue_entries_for_route(
-        &self,
-        workspace_id: WorkspaceId,
-        limit: Option<i64>,
-    ) -> Result<Vec<MergeQueueEntry>, WorkspaceStoreAccessError> {
-        let store = self.existing_workspace_store(workspace_id).await?;
-        store
-            .list_merge_queue_entries(workspace_id, limit)
-            .await
-            .map_err(WorkspaceStoreAccessError::Unavailable)
     }
 
     pub async fn latest_merge_queue_run_for_route(

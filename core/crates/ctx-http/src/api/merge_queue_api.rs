@@ -1,6 +1,5 @@
 mod actions;
 mod logs;
-mod request;
 mod submit;
 
 pub(super) use actions::{

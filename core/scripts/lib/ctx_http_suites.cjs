@@ -227,6 +227,7 @@ const CTX_HTTP_CHECKIN_FANOUT_TARGET_BATCHES_BY_SUITE = Object.freeze({
   "repo-vcs": [
     [
       "jj_merge_queue_basics",
+      "merge_queue_entry_routes_http",
       "merge_queue_isolation",
     ],
     [
@@ -388,7 +389,9 @@ const CTX_HTTP_UNIT_SUITES = [
     description: "ctx-http merge queue unit family",
     sourceGlobs: [
       "crates/ctx-http/src/api/merge_queue_api.rs",
+      "crates/ctx-http/src/api/merge_queue_api/**",
       "crates/ctx-daemon/src/daemon/merge_queue.rs",
+      "crates/ctx-daemon/src/daemon/merge_queue/**",
     ],
   },
 ].map((suite) => ({
@@ -656,6 +659,7 @@ const CTX_HTTP_SUITES = [
     expandTestFilesToTargets: true,
     directTargets: [
       "jj_merge_queue_basics",
+      "merge_queue_entry_routes_http",
       "merge_queue_isolation",
       "repo_clone_branch_and_safety",
       "repo_init_initial_commit",
@@ -669,6 +673,7 @@ const CTX_HTTP_SUITES = [
     ],
     sourceGlobs: [
       "crates/ctx-http/src/api/merge_queue_api.rs",
+      "crates/ctx-http/src/api/merge_queue_api/**",
       "crates/ctx-http/src/api/repo.rs",
       "crates/ctx-http/src/api/repo/**",
       "crates/ctx-http/src/api/sessions/diff_exec.rs",
@@ -685,6 +690,7 @@ const CTX_HTTP_SUITES = [
     ],
     testFiles: [
       "jj_merge_queue_basics",
+      "merge_queue_entry_routes_http",
       "merge_queue_isolation",
       "repo_clone_branch_and_safety",
       "repo_init_initial_commit",
