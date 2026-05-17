@@ -81,8 +81,8 @@ pub use bootstrap::{
     ProvidersBootstrapRouteRequest,
 };
 pub use claude_setup_token_login::{
-    start_claude_setup_token_login, ClaudeSetupTokenLoginStartError,
-    ClaudeSetupTokenLoginStartErrorKind,
+    ClaudeLoginRouteError, ClaudeLoginRouteErrorKind, ClaudeLoginStartRouteRequest,
+    ClaudeLoginStartRouteResponse,
 };
 pub use codex_app_login::{
     CodexLoginCompleteRouteRequest, CodexLoginCompleteRouteResponse, CodexLoginRouteError,
@@ -878,20 +878,6 @@ impl ProvidersHandle {
 
     pub fn data_root(&self) -> &StdPath {
         &self.state.core.data_root
-    }
-
-    pub async fn start_claude_setup_token_login(
-        &self,
-        label: Option<String>,
-    ) -> Result<StartedLoginSession, ClaudeSetupTokenLoginStartError> {
-        start_claude_setup_token_login(&self.state, label).await
-    }
-
-    pub async fn claude_login_status(
-        &self,
-        login_id: &str,
-    ) -> Option<provider_accounts::ClaudeLoginStatus> {
-        claude_login_status(&self.state, login_id).await
     }
 
     pub async fn start_cursor_process_login(

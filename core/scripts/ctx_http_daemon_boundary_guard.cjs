@@ -255,9 +255,6 @@ const codexAppServerLoginApiRoots = [
 ];
 
 const claudeSetupTokenLoginApiRoots = [
-  "core/crates/ctx-http/src/api/providers/login.rs",
-  "core/crates/ctx-http/src/api/providers/login/auth_url.rs",
-  "core/crates/ctx-http/src/api/providers/login/auth_url/",
   "core/crates/ctx-http/src/api/providers/login/claude.rs",
   "core/crates/ctx-http/src/api/providers/login/claude/",
 ];
@@ -1770,6 +1767,23 @@ const CODEX_APP_SERVER_LOGIN_API_ORCHESTRATION_PATTERNS = [
 ];
 
 const CLAUDE_SETUP_TOKEN_LOGIN_API_ORCHESTRATION_PATTERNS = [
+  {
+    name: "Claude setup-token login API owns route DTOs",
+    regex: /\bClaudeLoginStart(?:Req|Resp)\b/,
+  },
+  {
+    name: "Claude setup-token login API calls low-level route facades",
+    regex: /\b(?:start_claude_setup_token_login|claude_login_status)\s*\(/,
+  },
+  {
+    name: "Claude setup-token login API matches route errors directly",
+    regex:
+      /\b(?:ClaudeSetupTokenLoginStartError|ClaudeSetupTokenLoginStartErrorKind)\b|\.route_safe_message\s*\(/,
+  },
+  {
+    name: "Claude setup-token login API owns login not-found mapping",
+    regex: /"login not found"/,
+  },
   {
     name: "Claude setup-token login API owns monitor task spawning",
     regex: /\btokio::spawn\s*\(/,

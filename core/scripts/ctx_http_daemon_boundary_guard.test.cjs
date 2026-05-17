@@ -3912,11 +3912,22 @@ test("daemon boundary guard rejects Claude setup-token login orchestration in HT
   const violations = scanText({
     filePath: "core/crates/ctx-http/src/api/providers/login/claude/session/process.rs",
     contents: `
+      struct ClaudeLoginStartReq;
+      struct ClaudeLoginStartResp;
+
       mod auth_url;
       mod process;
       mod setup_token;
 
       async fn handler(providers: ProvidersHandle) {
+        providers.start_claude_setup_token_login(label).await?;
+        start_claude_setup_token_login(state, label).await?;
+        providers.claude_login_status(login_id).await;
+        claude_login_status(state, login_id).await;
+        let _kind = ClaudeSetupTokenLoginStartErrorKind::BadRequest;
+        let _err: ClaudeSetupTokenLoginStartError = err;
+        let _ = err.route_safe_message();
+        let _ = "login not found";
         tokio::spawn(async move {});
         let mut cmd = tokio::process::Command::new("claude");
         let _pty = NativePtySystem::default();
@@ -3949,6 +3960,16 @@ test("daemon boundary guard rejects Claude setup-token login orchestration in HT
   assert.deepEqual(
     violations.map((violation) => violation.name),
     [
+      "Claude setup-token login API owns route DTOs",
+      "Claude setup-token login API owns route DTOs",
+      "Claude setup-token login API calls low-level route facades",
+      "Claude setup-token login API calls low-level route facades",
+      "Claude setup-token login API calls low-level route facades",
+      "Claude setup-token login API calls low-level route facades",
+      "Claude setup-token login API matches route errors directly",
+      "Claude setup-token login API matches route errors directly",
+      "Claude setup-token login API matches route errors directly",
+      "Claude setup-token login API owns login not-found mapping",
       "Claude setup-token login API owns monitor task spawning",
       "Claude setup-token login API declares setup-token implementation modules",
       "Claude setup-token login API declares setup-token implementation modules",
@@ -3985,13 +4006,13 @@ test("daemon boundary guard scopes Claude setup-token login orchestration patter
     apiPatternsForPath("core/crates/ctx-http/src/api/providers/login.rs").includes(
       CLAUDE_SETUP_TOKEN_LOGIN_API_ORCHESTRATION_PATTERNS[0],
     ),
-    true,
+    false,
   );
   assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/providers/login/auth_url/extract.rs").includes(
       CLAUDE_SETUP_TOKEN_LOGIN_API_ORCHESTRATION_PATTERNS[0],
     ),
-    true,
+    false,
   );
   assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/providers/login/claude/session.rs").includes(
@@ -4004,6 +4025,24 @@ test("daemon boundary guard scopes Claude setup-token login orchestration patter
       CLAUDE_SETUP_TOKEN_LOGIN_API_ORCHESTRATION_PATTERNS[0],
     ),
     false,
+  );
+
+  assert.deepEqual(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/providers/login/claude/session.rs",
+      contents: `
+        async fn handler(providers: ProvidersHandle, req: ClaudeLoginStartRouteRequest) {
+          let _ = providers.start_claude_login_for_route(req).await;
+          let _ = providers.claude_login_status_for_route("login-id").await;
+          let _kind = ClaudeLoginRouteErrorKind::NotFound;
+          let _err: Option<ClaudeLoginRouteError> = None;
+          let _resp: Option<ClaudeLoginStartRouteResponse> = None;
+          let _status: Option<provider_accounts::ClaudeLoginStatus> = None;
+        }
+      `,
+      patterns: CLAUDE_SETUP_TOKEN_LOGIN_API_ORCHESTRATION_PATTERNS,
+    }),
+    [],
   );
 });
 

@@ -1,32 +1,16 @@
 use super::*;
 
-#[derive(Debug, Deserialize)]
-pub(crate) struct ClaudeLoginStartReq {
-    label: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub(crate) struct ClaudeLoginStartResp {
-    login_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    auth_url: Option<String>,
-}
-
 pub(crate) async fn start_claude_login(
     State(providers): State<ProvidersHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
-    Json(req): Json<ClaudeLoginStartReq>,
-) -> Result<Json<ClaudeLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
+    Json(req): Json<ClaudeLoginStartRouteRequest>,
+) -> Result<Json<ClaudeLoginStartRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let login_session = providers
-        .start_claude_setup_token_login(req.label)
+    providers
+        .start_claude_login_for_route(req)
         .await
-        .map_err(claude_setup_token_login_start_error)?;
-
-    Ok(Json(ClaudeLoginStartResp {
-        login_id: login_session.login_id,
-        auth_url: login_session.auth_url,
-    }))
+        .map(Json)
+        .map_err(claude_login_route_error)
 }
 
 pub(crate) async fn get_claude_login(
@@ -35,30 +19,23 @@ pub(crate) async fn get_claude_login(
     Path(id): Path<String>,
 ) -> Result<Json<provider_accounts::ClaudeLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let status = providers.claude_login_status(&id).await.ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "login not found".to_string(),
-            }),
-        )
-    })?;
-    Ok(Json(status))
+    providers
+        .claude_login_status_for_route(&id)
+        .await
+        .map(Json)
+        .map_err(claude_login_route_error)
 }
 
-fn claude_setup_token_login_start_error(
-    err: ctx_daemon::daemon::providers::ClaudeSetupTokenLoginStartError,
-) -> (StatusCode, Json<ApiErrorResp>) {
-    use ctx_daemon::daemon::providers::ClaudeSetupTokenLoginStartErrorKind;
-
-    let status = match err.kind() {
-        ClaudeSetupTokenLoginStartErrorKind::BadRequest => StatusCode::BAD_REQUEST,
-        ClaudeSetupTokenLoginStartErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+fn claude_login_route_error(error: ClaudeLoginRouteError) -> (StatusCode, Json<ApiErrorResp>) {
+    let status = match error.kind() {
+        ClaudeLoginRouteErrorKind::BadRequest => StatusCode::BAD_REQUEST,
+        ClaudeLoginRouteErrorKind::NotFound => StatusCode::NOT_FOUND,
+        ClaudeLoginRouteErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
     };
     (
         status,
         Json(ApiErrorResp {
-            error: err.route_safe_message().to_string(),
+            error: error.message().to_string(),
         }),
     )
 }

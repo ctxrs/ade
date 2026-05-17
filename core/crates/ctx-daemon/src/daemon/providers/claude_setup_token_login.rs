@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
+use ctx_provider_accounts as provider_accounts;
+use serde::{Deserialize, Serialize};
+
 use crate::daemon::providers::{login_sessions, StartedLoginSession};
-use crate::daemon::DaemonState;
+use crate::daemon::{DaemonState, ProvidersHandle};
 
 mod auth_url;
 mod runtime;
@@ -11,13 +14,13 @@ mod session;
 mod tests;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum ClaudeSetupTokenLoginStartErrorKind {
+enum ClaudeSetupTokenLoginStartErrorKind {
     BadRequest,
     Internal,
 }
 
 #[derive(Debug)]
-pub struct ClaudeSetupTokenLoginStartError {
+struct ClaudeSetupTokenLoginStartError {
     kind: ClaudeSetupTokenLoginStartErrorKind,
     message: String,
 }
@@ -48,16 +51,100 @@ impl ClaudeSetupTokenLoginStartError {
         }
     }
 
-    pub fn kind(&self) -> ClaudeSetupTokenLoginStartErrorKind {
+    fn kind(&self) -> ClaudeSetupTokenLoginStartErrorKind {
         self.kind
     }
 
-    pub fn route_safe_message(&self) -> &str {
+    fn route_safe_message(&self) -> &str {
         &self.message
     }
 }
 
-pub async fn start_claude_setup_token_login(
+#[derive(Debug, Default, Deserialize)]
+pub struct ClaudeLoginStartRouteRequest {
+    label: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ClaudeLoginStartRouteResponse {
+    login_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auth_url: Option<String>,
+}
+
+impl From<StartedLoginSession> for ClaudeLoginStartRouteResponse {
+    fn from(session: StartedLoginSession) -> Self {
+        Self {
+            login_id: session.login_id,
+            auth_url: session.auth_url,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum ClaudeLoginRouteErrorKind {
+    BadRequest,
+    NotFound,
+    Internal,
+}
+
+#[derive(Debug)]
+pub struct ClaudeLoginRouteError {
+    kind: ClaudeLoginRouteErrorKind,
+    message: String,
+}
+
+impl ClaudeLoginRouteError {
+    pub fn kind(&self) -> ClaudeLoginRouteErrorKind {
+        self.kind
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    fn new(kind: ClaudeLoginRouteErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+}
+
+impl ProvidersHandle {
+    pub async fn start_claude_login_for_route(
+        &self,
+        request: ClaudeLoginStartRouteRequest,
+    ) -> Result<ClaudeLoginStartRouteResponse, ClaudeLoginRouteError> {
+        start_claude_setup_token_login(&self.state, request.label)
+            .await
+            .map(ClaudeLoginStartRouteResponse::from)
+            .map_err(claude_login_start_route_error)
+    }
+
+    pub async fn claude_login_status_for_route(
+        &self,
+        login_id: &str,
+    ) -> Result<provider_accounts::ClaudeLoginStatus, ClaudeLoginRouteError> {
+        login_sessions::claude_login_status(&self.state, login_id)
+            .await
+            .ok_or_else(claude_login_not_found_route_error)
+    }
+}
+
+fn claude_login_not_found_route_error() -> ClaudeLoginRouteError {
+    ClaudeLoginRouteError::new(ClaudeLoginRouteErrorKind::NotFound, "login not found")
+}
+
+fn claude_login_start_route_error(error: ClaudeSetupTokenLoginStartError) -> ClaudeLoginRouteError {
+    let kind = match error.kind() {
+        ClaudeSetupTokenLoginStartErrorKind::BadRequest => ClaudeLoginRouteErrorKind::BadRequest,
+        ClaudeSetupTokenLoginStartErrorKind::Internal => ClaudeLoginRouteErrorKind::Internal,
+    };
+    ClaudeLoginRouteError::new(kind, error.route_safe_message().to_string())
+}
+
+async fn start_claude_setup_token_login(
     state: &Arc<DaemonState>,
     label: Option<String>,
 ) -> Result<StartedLoginSession, ClaudeSetupTokenLoginStartError> {
@@ -77,4 +164,69 @@ pub async fn start_claude_setup_token_login(
     });
 
     Ok(login_session)
+}
+
+#[cfg(test)]
+mod route_tests {
+    use super::*;
+
+    #[test]
+    fn claude_login_route_missing_status_preserves_not_found_message() {
+        let error = claude_login_not_found_route_error();
+
+        assert_eq!(error.kind(), ClaudeLoginRouteErrorKind::NotFound);
+        assert_eq!(error.message(), "login not found");
+    }
+
+    #[test]
+    fn claude_login_route_start_error_maps_status_classes() {
+        let cases = [
+            (
+                ClaudeSetupTokenLoginStartErrorKind::BadRequest,
+                ClaudeLoginRouteErrorKind::BadRequest,
+            ),
+            (
+                ClaudeSetupTokenLoginStartErrorKind::Internal,
+                ClaudeLoginRouteErrorKind::Internal,
+            ),
+        ];
+
+        for (source, expected) in cases {
+            let error = claude_login_start_route_error(
+                ClaudeSetupTokenLoginStartError::from_message(source, "boom".to_string()),
+            );
+            assert_eq!(error.kind(), expected);
+            assert_eq!(error.message(), "boom");
+        }
+    }
+
+    #[test]
+    fn claude_login_route_start_response_omits_absent_auth_url() {
+        let payload =
+            serde_json::to_value(ClaudeLoginStartRouteResponse::from(StartedLoginSession {
+                login_id: "login-1".to_string(),
+                auth_url: None,
+                device_code: None,
+            }))
+            .unwrap();
+
+        assert_eq!(payload["login_id"].as_str(), Some("login-1"));
+        assert!(payload.get("auth_url").is_none());
+    }
+
+    #[test]
+    fn claude_login_route_start_response_preserves_auth_url() {
+        let payload =
+            serde_json::to_value(ClaudeLoginStartRouteResponse::from(StartedLoginSession {
+                login_id: "login-2".to_string(),
+                auth_url: Some("https://claude.ai/oauth/authorize".to_string()),
+                device_code: None,
+            }))
+            .unwrap();
+
+        assert_eq!(
+            payload["auth_url"].as_str(),
+            Some("https://claude.ai/oauth/authorize")
+        );
+    }
 }

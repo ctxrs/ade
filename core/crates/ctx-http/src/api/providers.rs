@@ -14,13 +14,14 @@ use url::Url;
 
 use super::errors::ApiErrorResp;
 use ctx_daemon::daemon::providers::{
-    CodexLoginCompleteRouteRequest, CodexLoginCompleteRouteResponse, CodexLoginRouteError,
-    CodexLoginRouteErrorKind, CodexLoginStartRouteRequest, CodexLoginStartRouteResponse,
-    ProviderAuthImportCandidatesRouteResponse, ProviderAuthImportProfilesRouteResponse,
-    ProviderAuthImportRouteError, ProviderAuthImportRouteRequest, ProviderAuthImportRouteResponse,
-    ProviderLoginRouteError, ProviderLoginRouteErrorKind, ProviderLoginStartRouteRequest,
-    ProviderLoginStartRouteResponse, ProviderStatusRouteQuery,
-    SelectProviderHarnessSourceRouteRequest,
+    ClaudeLoginRouteError, ClaudeLoginRouteErrorKind, ClaudeLoginStartRouteRequest,
+    ClaudeLoginStartRouteResponse, CodexLoginCompleteRouteRequest, CodexLoginCompleteRouteResponse,
+    CodexLoginRouteError, CodexLoginRouteErrorKind, CodexLoginStartRouteRequest,
+    CodexLoginStartRouteResponse, ProviderAuthImportCandidatesRouteResponse,
+    ProviderAuthImportProfilesRouteResponse, ProviderAuthImportRouteError,
+    ProviderAuthImportRouteRequest, ProviderAuthImportRouteResponse, ProviderLoginRouteError,
+    ProviderLoginRouteErrorKind, ProviderLoginStartRouteRequest, ProviderLoginStartRouteResponse,
+    ProviderStatusRouteQuery, SelectProviderHarnessSourceRouteRequest,
 };
 use ctx_daemon::daemon::ProvidersHandle;
 #[cfg(test)]
