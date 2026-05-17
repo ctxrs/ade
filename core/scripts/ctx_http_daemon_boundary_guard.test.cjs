@@ -45,6 +45,7 @@ const {
   MOBILE_ACCESS_STORE_DTO_API_PATTERNS,
   MOBILE_ACCESS_ORCHESTRATION_API_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
+  MERGE_QUEUE_SUBMIT_API_ORCHESTRATION_PATTERNS,
   PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS,
   PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS,
   SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS,
@@ -115,6 +116,7 @@ const {
   liveProviderCanaryStorePatternsForPath,
   libTestDataRootFixturePatternsForPath,
   mergeQueueIsolationStorePatternsForPath,
+  mergeQueueSubmitApiPatternsForPath,
   mcpDaemonPatternsForPath,
   migratedTestPatternsForPath,
   mobileAccessStoreDtoApiPatternsForPath,
@@ -2558,6 +2560,69 @@ test("daemon boundary guard scopes route file download roots", () => {
   }
   assert.deepEqual(
     routeFileDownloadApiPatternsForPath("core/crates/ctx-http/src/api/mobile_access.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects merge queue submit API scoped-admission leaks", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/merge_queue_api/submit.rs",
+    contents: `
+      use ctx_daemon::daemon::{SessionsHandle, WorkspacesHandle};
+      use ctx_core::ids::{SessionId, WorktreeId};
+      use ctx_merge_queue::MergeQueueSubmitParams;
+      async fn helper(sessions: SessionsHandle, workspaces: WorkspacesHandle, mcp_auth: McpAuthContext) {
+        let session_id = SessionId(uuid::Uuid::parse_str(raw_session)?);
+        let worktree_id = WorktreeId(uuid::Uuid::parse_str(raw_worktree)?);
+        if !mcp_auth.allows_merge_queue_submit(session_id, worktree_id) {}
+        let _scoped = (mcp_auth.session_id, mcp_auth.worktree_id);
+        validate_scoped_mcp_session_context(&sessions, mcp_auth, session_id).await?;
+        let params = MergeQueueSubmitParams { session_id: Some(session_id), worktree_id: Some(worktree_id), worktree_root: None, target_branch: None, message: None };
+        workspaces.submit_merge_queue_entry(params).await?;
+      }
+    `,
+    patterns: MERGE_QUEUE_SUBMIT_API_ORCHESTRATION_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "merge queue submit API imports sessions handle",
+      "merge queue submit API imports sessions handle",
+      "merge queue submit API parses session or worktree ids locally",
+      "merge queue submit API parses session or worktree ids locally",
+      "merge queue submit API parses session or worktree ids locally",
+      "merge queue submit API constructs low-level submit params",
+      "merge queue submit API constructs low-level submit params",
+      "merge queue submit API validates scoped MCP session context",
+      "merge queue submit API checks scoped MCP submit capability",
+      "merge queue submit API reads scoped MCP ids directly",
+      "merge queue submit API calls low-level submit facade",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes merge queue submit API orchestration roots", () => {
+  assert.deepEqual(
+    mergeQueueSubmitApiPatternsForPath("core/crates/ctx-http/src/api/merge_queue_api/submit.rs"),
+    MERGE_QUEUE_SUBMIT_API_ORCHESTRATION_PATTERNS,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/merge_queue_api/submit.rs").includes(
+      MERGE_QUEUE_SUBMIT_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.deepEqual(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/merge_queue_api/submit.rs",
+      contents: "workspaces.submit_merge_queue_entry_for_route(req, mcp_auth).await?;",
+      patterns: MERGE_QUEUE_SUBMIT_API_ORCHESTRATION_PATTERNS,
+    }),
+    [],
+  );
+  assert.deepEqual(
+    mergeQueueSubmitApiPatternsForPath("core/crates/ctx-http/src/api/merge_queue_api/logs.rs"),
     [],
   );
 });

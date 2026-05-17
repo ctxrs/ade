@@ -12,6 +12,11 @@ use ctx_merge_queue::WorkspaceDrainStop;
 use crate::daemon::{DaemonState, WorkspacesHandle};
 
 mod host;
+mod submit_route;
+
+pub use submit_route::{
+    MergeQueueSubmitRouteError, MergeQueueSubmitRouteErrorKind, SubmitMergeQueueEntryRouteRequest,
+};
 
 pub async fn get_workspace_merge_queue_entry(
     state: &DaemonState,

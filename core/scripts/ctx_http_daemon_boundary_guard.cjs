@@ -161,6 +161,10 @@ const routeFileDownloadApiRoots = [
   "core/crates/ctx-http/src/api/workspaces/worktrees.rs",
 ];
 
+const mergeQueueSubmitApiRoots = [
+  "core/crates/ctx-http/src/api/merge_queue_api/submit.rs",
+];
+
 const runArchiveApiRoots = [
   "core/crates/ctx-http/src/api/run_archive.rs",
   "core/crates/ctx-http/src/api/run_archive/",
@@ -1096,6 +1100,37 @@ const ROUTE_FILE_DOWNLOAD_API_PATTERNS = [
   {
     name: "route file API owns session artifact metadata derivation",
     regex: /\b(?:normalize_session_artifact_name|infer_session_artifact_mime_type|build_session_artifact_etag|build_session_artifact_last_modified)\b/,
+  },
+];
+
+const MERGE_QUEUE_SUBMIT_API_ORCHESTRATION_PATTERNS = [
+  {
+    name: "merge queue submit API imports sessions handle",
+    regex: /\bSessionsHandle\b/,
+  },
+  {
+    name: "merge queue submit API parses session or worktree ids locally",
+    regex: /\b(?:SessionId|WorktreeId)\b|\buuid\s*::\s*Uuid\s*::\s*parse_str\s*\(/,
+  },
+  {
+    name: "merge queue submit API constructs low-level submit params",
+    regex: /\bMergeQueueSubmitParams\b/,
+  },
+  {
+    name: "merge queue submit API validates scoped MCP session context",
+    regex: /\bvalidate_scoped_mcp_session_context\s*\(/,
+  },
+  {
+    name: "merge queue submit API checks scoped MCP submit capability",
+    regex: /\.allows_merge_queue_submit\s*\(/,
+  },
+  {
+    name: "merge queue submit API reads scoped MCP ids directly",
+    regex: /\bmcp_auth\s*\.\s*(?:session_id|worktree_id)\b/,
+  },
+  {
+    name: "merge queue submit API calls low-level submit facade",
+    regex: /\.submit_merge_queue_entry\s*\(/,
   },
 ];
 
@@ -3949,6 +3984,9 @@ function apiPatternsForPath(relativePath) {
   if (routeFileDownloadApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...ROUTE_FILE_DOWNLOAD_API_PATTERNS);
   }
+  if (mergeQueueSubmitApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...MERGE_QUEUE_SUBMIT_API_ORCHESTRATION_PATTERNS);
+  }
   if (runArchiveApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS);
   }
@@ -4077,6 +4115,13 @@ function mobileAccessStoreDtoApiPatternsForPath(relativePath) {
 function routeFileDownloadApiPatternsForPath(relativePath) {
   if (routeFileDownloadApiRoots.some((root) => relativePath.startsWith(root))) {
     return ROUTE_FILE_DOWNLOAD_API_PATTERNS;
+  }
+  return [];
+}
+
+function mergeQueueSubmitApiPatternsForPath(relativePath) {
+  if (mergeQueueSubmitApiRoots.some((root) => relativePath.startsWith(root))) {
+    return MERGE_QUEUE_SUBMIT_API_ORCHESTRATION_PATTERNS;
   }
   return [];
 }
@@ -4998,6 +5043,7 @@ module.exports = {
   MOBILE_ACCESS_STORE_DTO_API_PATTERNS,
   MOBILE_ACCESS_ORCHESTRATION_API_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
+  MERGE_QUEUE_SUBMIT_API_ORCHESTRATION_PATTERNS,
   MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS,
   CURSOR_PROCESS_LOGIN_API_ORCHESTRATION_PATTERNS,
   CODEX_APP_SERVER_LOGIN_API_ORCHESTRATION_PATTERNS,
@@ -5072,6 +5118,7 @@ module.exports = {
   liveProviderCanaryStorePatternsForPath,
   libTestDataRootFixturePatternsForPath,
   mergeQueueIsolationStorePatternsForPath,
+  mergeQueueSubmitApiPatternsForPath,
   mcpDaemonPatternsForPath,
   migratedTestPatternsForPath,
   mobileAccessStoreDtoApiPatternsForPath,
