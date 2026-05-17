@@ -1,11 +1,12 @@
 use super::*;
+use ctx_core::ids::WorkspaceId;
+use ctx_core::models::Workspace;
 
 pub(super) type WorkspaceApiResult<T> = Result<T, (StatusCode, Json<ApiErrorResp>)>;
 
 #[derive(Clone)]
 pub(super) struct WorkspaceRequestContext {
     pub(super) workspace_id: WorkspaceId,
-    pub(super) workspace: Workspace,
 }
 
 pub(super) fn parse_workspace_id(id: &str) -> WorkspaceApiResult<WorkspaceId> {
@@ -66,9 +67,6 @@ pub(super) async fn require_workspace_ctx(
     id: &str,
 ) -> WorkspaceApiResult<WorkspaceRequestContext> {
     let workspace_id = parse_workspace_id(id)?;
-    let workspace = require_workspace(workspaces, workspace_id).await?;
-    Ok(WorkspaceRequestContext {
-        workspace_id,
-        workspace,
-    })
+    require_workspace(workspaces, workspace_id).await?;
+    Ok(WorkspaceRequestContext { workspace_id })
 }

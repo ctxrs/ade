@@ -26,19 +26,18 @@ pub(super) use worktrees::{get_worktree, get_worktree_bootstrap_logs};
 
 use super::errors::ApiErrorResp;
 use super::shared::map_effective_execution_settings_error;
-use ctx_core::ids::{WorkspaceId, WorktreeId};
-use ctx_core::models::{
-    AttachmentMode, AttachmentUpdatePolicy, Workspace, WorkspaceActiveHeadBatch,
-    WorkspaceActiveSnapshot, WorkspaceAttachment, WorkspaceAttachmentKind, Worktree,
-};
 use ctx_daemon::daemon::workspaces::{WorkspaceHydrationError, WorkspaceHydrationErrorKind};
 use ctx_daemon::daemon::{
-    UpdateWorkspaceExecutionConfigRequest, UpdateWorkspacePrimaryBranchRequest,
-    WorkspaceConfigUpdateResult, WorkspaceExecutionConfigSnapshot, WorkspacePrimaryBranchSnapshot,
-    WorkspaceRouteError, WorkspaceRouteErrorKind, WorkspacesHandle,
+    CreateWorkspaceAttachmentRouteRequest, DeleteWorkspaceAttachmentRouteRequest,
+    SyncWorkspaceAttachmentsRouteRequest, UpdateWorkspaceExecutionConfigRequest,
+    UpdateWorkspacePrimaryBranchRequest, WorkspaceActiveHeadBatchRouteResponse,
+    WorkspaceActiveSnapshotRouteResponse, WorkspaceAttachmentRouteResponse,
+    WorkspaceConfigUpdateResult, WorkspaceExecutionConfigSnapshot,
+    WorkspaceHarnessContainerStatusRouteResponse, WorkspacePrimaryBranchSnapshot,
+    WorkspaceRouteError, WorkspaceRouteErrorKind, WorkspaceRouteResponse, WorkspacesHandle,
+    WorktreeRouteResponse,
 };
 use ctx_observability::logs;
-use ctx_workspace_attachments::AttachmentConfig;
 
 #[derive(Debug, Deserialize)]
 pub(super) struct UpdateMergeQueueConfigReq {
@@ -75,16 +74,20 @@ pub(super) struct WorkspaceMergeQueueConfigResp {
 mod tests;
 
 fn workspace_route_api_error(error: WorkspaceRouteError) -> (StatusCode, Json<ApiErrorResp>) {
-    let status = match error.kind() {
-        WorkspaceRouteErrorKind::NotFound => StatusCode::NOT_FOUND,
-        WorkspaceRouteErrorKind::BadRequest => StatusCode::BAD_REQUEST,
-        WorkspaceRouteErrorKind::Forbidden => StatusCode::FORBIDDEN,
-        WorkspaceRouteErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
-    };
+    let status = workspace_route_status(&error);
     (
         status,
         Json(ApiErrorResp {
             error: logs::redact_sensitive(error.message()),
         }),
     )
+}
+
+fn workspace_route_status(error: &WorkspaceRouteError) -> StatusCode {
+    match error.kind() {
+        WorkspaceRouteErrorKind::NotFound => StatusCode::NOT_FOUND,
+        WorkspaceRouteErrorKind::BadRequest => StatusCode::BAD_REQUEST,
+        WorkspaceRouteErrorKind::Forbidden => StatusCode::FORBIDDEN,
+        WorkspaceRouteErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+    }
 }

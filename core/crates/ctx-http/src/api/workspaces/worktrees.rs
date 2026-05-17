@@ -1,17 +1,15 @@
 use super::*;
+use ctx_core::ids::WorktreeId;
 
 pub(in crate::api) async fn get_worktree(
     State(workspaces): State<WorkspacesHandle>,
     Path(id): Path<String>,
-) -> Result<Json<Worktree>, StatusCode> {
+) -> Result<Json<WorktreeRouteResponse>, StatusCode> {
     let worktree_id = WorktreeId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    match workspaces
-        .get_worktree_with_live_root(worktree_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    {
-        Some(wt) => Ok(Json(wt)),
-        None => Err(StatusCode::NOT_FOUND),
+    match workspaces.get_worktree_for_route(worktree_id).await {
+        Ok(Some(wt)) => Ok(Json(wt)),
+        Ok(None) => Err(StatusCode::NOT_FOUND),
+        Err(error) => Err(workspace_route_status(&error)),
     }
 }
 

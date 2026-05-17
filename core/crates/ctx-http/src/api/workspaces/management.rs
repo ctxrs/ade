@@ -1,7 +1,6 @@
 use super::*;
 use ctx_workspace_config as workspace_config;
 
-mod attachment_ops;
 mod attachment_routes;
 mod config_ops;
 mod file_completions;
@@ -9,11 +8,9 @@ mod prompt_config;
 mod provider_model_preferences;
 mod worktree_bootstrap;
 
-use attachment_ops::*;
 pub(in crate::api) use attachment_routes::{
     create_workspace_attachment, delete_workspace_attachment,
 };
-pub(super) use attachment_routes::{CreateWorkspaceAttachmentReq, DeleteWorkspaceAttachmentReq};
 use config_ops::*;
 pub(in crate::api) use file_completions::workspace_file_completions;
 pub(in crate::api) use prompt_config::*;

@@ -36,6 +36,7 @@ mod hydration;
 mod model_preferences;
 mod retry;
 mod route_config;
+mod route_contract;
 mod run_archive;
 mod runtime;
 mod sandbox_binding;
@@ -74,6 +75,12 @@ pub use route_config::{
     UpdateWorkspacePrimaryBranchRequest, WorkspaceConfigUpdateResult,
     WorkspaceExecutionConfigSnapshot, WorkspacePrimaryBranchSnapshot, WorkspaceRouteError,
     WorkspaceRouteErrorKind,
+};
+pub use route_contract::{
+    CreateWorkspaceAttachmentRouteRequest, DeleteWorkspaceAttachmentRouteRequest,
+    SyncWorkspaceAttachmentsRouteRequest, WorkspaceActiveHeadBatchRouteResponse,
+    WorkspaceActiveSnapshotRouteResponse, WorkspaceAttachmentRouteResponse,
+    WorkspaceHarnessContainerStatusRouteResponse, WorkspaceRouteResponse, WorktreeRouteResponse,
 };
 pub use run_archive::{
     AcknowledgeRunArchiveIngestBatchRouteRequest, BuildRunArchiveIngestBatchRouteRequest,

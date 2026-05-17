@@ -1,7 +1,6 @@
 use std::path::Path;
 
 use ctx_core::ids::WorkspaceId;
-use ctx_core::models::Workspace;
 use ctx_observability::telemetry::TelemetryEvent;
 use ctx_settings_model::{ContainerNetworkMode, ExecutionMode, ExecutionSettings};
 use ctx_workspace_config as workspace_config;
@@ -11,6 +10,8 @@ use ctx_workspace_services::workspace_registration::{
 use serde::{Deserialize, Serialize};
 
 use crate::daemon::{settings, WorkspaceStoreAccessError, WorkspacesHandle};
+
+use super::WorkspaceRouteResponse;
 
 #[derive(Debug, Deserialize)]
 pub struct CreateWorkspaceRequest {
@@ -65,30 +66,35 @@ pub struct WorkspaceRouteError {
 }
 
 impl WorkspaceRouteError {
-    fn new(kind: WorkspaceRouteErrorKind, message: impl Into<String>) -> Self {
+    pub(in crate::daemon::workspaces) fn new(
+        kind: WorkspaceRouteErrorKind,
+        message: impl Into<String>,
+    ) -> Self {
         Self {
             kind,
             message: message.into(),
         }
     }
 
-    fn not_found(message: impl Into<String>) -> Self {
+    pub(in crate::daemon::workspaces) fn not_found(message: impl Into<String>) -> Self {
         Self::new(WorkspaceRouteErrorKind::NotFound, message)
     }
 
-    fn bad_request(error: impl std::fmt::Display) -> Self {
+    pub(in crate::daemon::workspaces) fn bad_request(error: impl std::fmt::Display) -> Self {
         Self::new(WorkspaceRouteErrorKind::BadRequest, error.to_string())
     }
 
-    fn forbidden(error: impl std::fmt::Display) -> Self {
+    pub(in crate::daemon::workspaces) fn forbidden(error: impl std::fmt::Display) -> Self {
         Self::new(WorkspaceRouteErrorKind::Forbidden, error.to_string())
     }
 
-    fn internal(error: impl std::fmt::Display) -> Self {
+    pub(in crate::daemon::workspaces) fn internal(error: impl std::fmt::Display) -> Self {
         Self::new(WorkspaceRouteErrorKind::Internal, error.to_string())
     }
 
-    fn from_request_or_policy_error(error: anyhow::Error) -> Self {
+    pub(in crate::daemon::workspaces) fn from_request_or_policy_error(
+        error: anyhow::Error,
+    ) -> Self {
         if ctx_settings_service::is_execution_policy_denial(&error) {
             Self::forbidden(error)
         } else {
@@ -96,7 +102,9 @@ impl WorkspaceRouteError {
         }
     }
 
-    fn from_workspace_store(error: WorkspaceStoreAccessError) -> Self {
+    pub(in crate::daemon::workspaces) fn from_workspace_store(
+        error: WorkspaceStoreAccessError,
+    ) -> Self {
         match error {
             WorkspaceStoreAccessError::NotFound => Self::not_found("workspace not found"),
             WorkspaceStoreAccessError::Unavailable(error) => Self::internal(error),
@@ -116,7 +124,7 @@ impl WorkspacesHandle {
     pub async fn create_workspace_for_request(
         &self,
         req: CreateWorkspaceRequest,
-    ) -> Result<Workspace, WorkspaceRouteError> {
+    ) -> Result<WorkspaceRouteResponse, WorkspaceRouteError> {
         let candidate = prepare_workspace_registration(&req.root_path)
             .await
             .map_err(|error| WorkspaceRouteError::bad_request(error.message()))?;
@@ -140,7 +148,7 @@ impl WorkspacesHandle {
             .telemetry
             .emit(TelemetryEvent::workspace_registered())
             .await;
-        Ok(workspace)
+        Ok(workspace.into())
     }
 
     pub async fn workspace_primary_branch_for_request(

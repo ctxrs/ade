@@ -332,6 +332,18 @@ const workspaceExecutionConfigApiRoots = [
   "core/crates/ctx-http/src/api/workspaces/management/config_ops/execution/",
 ];
 
+const workspaceRouteContractApiRoots = [
+  "core/crates/ctx-http/src/api/workspaces.rs",
+  "core/crates/ctx-http/src/api/workspaces/active.rs",
+  "core/crates/ctx-http/src/api/workspaces/attachments.rs",
+  "core/crates/ctx-http/src/api/workspaces/harness_container.rs",
+  "core/crates/ctx-http/src/api/workspaces/registry.rs",
+  "core/crates/ctx-http/src/api/workspaces/registry/",
+  "core/crates/ctx-http/src/api/workspaces/worktrees.rs",
+  "core/crates/ctx-http/src/api/workspaces/management/attachment_routes.rs",
+  "core/crates/ctx-http/src/api/workspaces/management/attachment_ops.rs",
+];
+
 const taskSessionCreationApiRoots = [
   "core/crates/ctx-http/src/api/tasks/creation_session.rs",
   "core/crates/ctx-http/src/api/tasks/creation_session/",
@@ -2261,6 +2273,29 @@ const WORKSPACE_EXECUTION_CONFIG_API_PATTERNS = [
   {
     name: "workspace execution config API persists execution config directly",
     regex: /\.update_workspace_execution_config\s*\(/,
+  },
+];
+
+const WORKSPACE_ROUTE_CONTRACT_API_PATTERNS = [
+  {
+    name: "workspace route API exposes raw workspace route DTOs",
+    regex:
+      /\b(?:ctx_core::models::|ctx_workspace_container::)?(?:Workspace|Worktree|WorkspaceAttachment|WorkspaceActiveSnapshot|WorkspaceActiveHeadBatch|WorkspaceContainerStatus)\b|\buse\s+ctx_core::models(?:::|\s*::\s*\{)[^;]*\b(?:Workspace|Worktree|WorkspaceAttachment|WorkspaceActiveSnapshot|WorkspaceActiveHeadBatch)\b|\buse\s+ctx_workspace_container(?:::|\s*::\s*\{)[^;]*\bWorkspaceContainerStatus\b/,
+    contentRegex:
+      /\buse\s+ctx_core::models\s*::\s*\{(?=[^}]*\n)[\s\S]*?\b(?:Workspace|Worktree|WorkspaceAttachment|WorkspaceActiveSnapshot|WorkspaceActiveHeadBatch)\b[\s\S]*?\}\s*;/gm,
+  },
+  {
+    name: "workspace attachment API owns attachment config construction",
+    regex: /\bAttachmentConfig\b|\bctx_workspace_attachments::AttachmentConfig\b/,
+  },
+  {
+    name: "workspace attachment API loads workspace context in HTTP",
+    regex: /\brequire_workspace_ctx\s*\(/,
+  },
+  {
+    name: "workspace attachment API calls raw attachment facade methods",
+    regex:
+      /\.(?:get_workspace|upsert_workspace_attachment|delete_workspace_attachment|sync_workspace_attachments)\s*\(/,
   },
 ];
 
@@ -4532,6 +4567,13 @@ function apiPatternsForPath(relativePath) {
   if (workspaceExecutionConfigApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...WORKSPACE_EXECUTION_CONFIG_API_PATTERNS);
   }
+  if (
+    workspaceRouteContractApiRoots.some((root) =>
+      root.endsWith("/") ? relativePath.startsWith(root) : relativePath === root
+    )
+  ) {
+    patterns.push(...WORKSPACE_ROUTE_CONTRACT_API_PATTERNS);
+  }
   if (taskSessionCreationApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...TASK_SESSION_CREATION_API_ADMISSION_PATTERNS);
   }
@@ -5636,6 +5678,7 @@ module.exports = {
   SESSION_HEAD_API_ORCHESTRATION_PATTERNS,
   WORKSPACE_CONFIG_ROUTE_CONTEXT_PATTERNS,
   WORKSPACE_EXECUTION_CONFIG_API_PATTERNS,
+  WORKSPACE_ROUTE_CONTRACT_API_PATTERNS,
   WORKSPACE_REGISTRATION_CONFIG_API_PATTERNS,
   IMAGE_ATTACHMENTS_TEST_STORE_ACCESS_PATTERNS,
   JJ_MERGE_QUEUE_BASICS_TEST_STORE_ACCESS_PATTERNS,

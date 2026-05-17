@@ -1,14 +1,15 @@
 use super::*;
+use ctx_core::ids::WorkspaceId;
 use ctx_daemon::daemon::workspaces::WorkspaceHarnessContainerError;
 
 pub(in crate::api) async fn get_workspace_harness_container(
     State(workspaces): State<WorkspacesHandle>,
     Path(id): Path<String>,
-) -> Result<Json<Option<ctx_workspace_container::WorkspaceContainerStatus>>, StatusCode> {
+) -> Result<Json<Option<WorkspaceHarnessContainerStatusRouteResponse>>, StatusCode> {
     let workspace_id =
         WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let status = workspaces
-        .workspace_harness_container_status(workspace_id)
+        .workspace_harness_container_status_for_route(workspace_id)
         .await
         .map_err(workspace_harness_container_status)?;
     Ok(Json(status))

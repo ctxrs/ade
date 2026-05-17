@@ -1,4 +1,5 @@
 use super::*;
+use ctx_core::ids::WorkspaceId;
 use ctx_daemon::daemon::workspaces::WorkspaceDeleteError;
 
 pub(in crate::api) async fn delete_workspace(

@@ -30,6 +30,7 @@ const {
   RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS,
   WORKSPACE_CONFIG_ROUTE_CONTEXT_PATTERNS,
   WORKSPACE_EXECUTION_CONFIG_API_PATTERNS,
+  WORKSPACE_ROUTE_CONTRACT_API_PATTERNS,
   WORKSPACE_REGISTRATION_CONFIG_API_PATTERNS,
   IMAGE_ATTACHMENTS_TEST_STORE_ACCESS_PATTERNS,
   JJ_MERGE_QUEUE_BASICS_TEST_STORE_ACCESS_PATTERNS,
@@ -3964,6 +3965,79 @@ test("daemon boundary guard rejects provider-account prelude leaks", () => {
       PROVIDER_PRELUDE_ROUTE_DTO_PATTERNS[0],
     ),
     true,
+  );
+});
+
+test("daemon boundary guard rejects raw workspace route DTOs and attachment orchestration", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/workspaces/management/attachment_routes.rs",
+    contents: `
+      use ctx_core::models::{
+        Workspace,
+        Worktree,
+        WorkspaceAttachment,
+        WorkspaceActiveSnapshot,
+        WorkspaceActiveHeadBatch,
+      };
+      use ctx_workspace_container::WorkspaceContainerStatus;
+      type Container = Option<WorkspaceContainerStatus>;
+      async fn handler() -> Result<Json<Vec<WorkspaceAttachment>>, StatusCode> {
+        let _snapshot: Option<ctx_core::models::WorkspaceActiveSnapshot> = None;
+        let _cfg: Option<AttachmentConfig> = None;
+        require_workspace_ctx(&workspaces, &id).await?;
+        workspaces.get_workspace(workspace_id).await?;
+        workspaces.upsert_workspace_attachment(workspace_id, cfg).await?;
+        workspaces.delete_workspace_attachment(workspace_id, kind, name).await?;
+        workspaces.sync_workspace_attachments(&workspace, true).await?;
+      }
+    `,
+    patterns: WORKSPACE_ROUTE_CONTRACT_API_PATTERNS,
+  });
+
+  const names = violations.map((violation) => violation.name);
+  assert(names.includes("workspace route API exposes raw workspace route DTOs"));
+  assert(names.includes("workspace attachment API owns attachment config construction"));
+  assert(names.includes("workspace attachment API loads workspace context in HTTP"));
+  assert(names.includes("workspace attachment API calls raw attachment facade methods"));
+});
+
+test("daemon boundary guard scopes workspace route contract bans", () => {
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/attachments.rs").includes(
+      WORKSPACE_ROUTE_CONTRACT_API_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/registry/delete.rs").includes(
+      WORKSPACE_ROUTE_CONTRACT_API_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/registry/future/nested.rs").includes(
+      WORKSPACE_ROUTE_CONTRACT_API_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/context.rs").includes(
+      WORKSPACE_ROUTE_CONTRACT_API_PATTERNS[0],
+    ),
+    false,
+  );
+  assert.deepEqual(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/workspaces/attachments.rs",
+      contents: `
+        async fn list() -> Result<Json<Vec<WorkspaceAttachmentRouteResponse>>, StatusCode> {
+          workspaces.list_workspace_attachments_for_route(workspace_id).await?;
+          workspaces.sync_workspace_attachments_for_route(workspace_id, request).await?;
+        }
+      `,
+      patterns: WORKSPACE_ROUTE_CONTRACT_API_PATTERNS,
+    }),
+    [],
   );
 });
 

@@ -4,7 +4,7 @@ use ctx_daemon::daemon::CreateWorkspaceRequest;
 pub(in crate::api) async fn create_workspace(
     State(workspaces): State<WorkspacesHandle>,
     Json(req): Json<CreateWorkspaceRequest>,
-) -> Result<Json<Workspace>, (StatusCode, Json<ApiErrorResp>)> {
+) -> Result<Json<WorkspaceRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
     workspaces
         .create_workspace_for_request(req)
         .await

@@ -1,6 +1,7 @@
 mod common;
 
 use axum::http::{Method, StatusCode};
+use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{
     AttachmentMode, AttachmentUpdatePolicy, WorkspaceAttachment, WorkspaceAttachmentKind,
     WorkspaceAttachmentStatus,
@@ -227,4 +228,46 @@ async fn workspace_attachments_reject_doc_mirror_rw_mode() {
     assert_eq!(create_status, StatusCode::BAD_REQUEST);
     let error = body["error"].as_str().unwrap_or_default();
     assert!(error.contains("read-only"), "unexpected error: {error}");
+}
+
+#[tokio::test]
+async fn workspace_attachments_validate_payload_before_workspace_lookup() {
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let app = fixture.router();
+    let missing_workspace_id = WorkspaceId::new();
+
+    let (create_status, create_body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        Method::POST,
+        format!("/api/workspaces/{}/attachments", missing_workspace_id.0),
+        Some(json!({
+            "kind": "reference_repo",
+            "name": "",
+            "source": ""
+        })),
+    )
+    .await;
+    assert_eq!(create_status, StatusCode::BAD_REQUEST);
+    let create_error = create_body["error"].as_str().unwrap_or_default();
+    assert!(
+        create_error.contains("name and source are required"),
+        "unexpected error: {create_error}"
+    );
+
+    let (delete_status, delete_body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        Method::DELETE,
+        format!("/api/workspaces/{}/attachments", missing_workspace_id.0),
+        Some(json!({
+            "kind": "reference_repo",
+            "name": ""
+        })),
+    )
+    .await;
+    assert_eq!(delete_status, StatusCode::BAD_REQUEST);
+    let delete_error = delete_body["error"].as_str().unwrap_or_default();
+    assert!(
+        delete_error.contains("name is required"),
+        "unexpected error: {delete_error}"
+    );
 }
