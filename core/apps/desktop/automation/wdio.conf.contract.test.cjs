@@ -109,7 +109,7 @@ test("wdio macOS shipped-app launches through a wrapper with exact app env", () 
   }
 });
 
-test("wdio Linux shipped-app passes raw AppRun while tauri-driver carries AppDir env", () => {
+test("wdio Linux shipped-app uses AppDir launcher wrapper for WebDriver application path", () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-wdio-linux-launch-env-"));
   try {
     const bundlesDir = path.join(tmp, "bundles");
@@ -150,13 +150,17 @@ test("wdio Linux shipped-app passes raw AppRun while tauri-driver carries AppDir
         XDG_RUNTIME_DIR: runtimeDir,
       },
     });
-    assert.equal(resolvedPath, appPath);
-    assert.ok(!fs.existsSync(path.join(tmp, "desktop-app-launchers")));
+    assert.notEqual(resolvedPath, appPath);
+    assert.equal(path.dirname(resolvedPath), path.join(tmp, "desktop-app-launchers"));
+    const wrapper = fs.readFileSync(resolvedPath, "utf8");
+    assert.match(wrapper, new RegExp(`export APPDIR='${escapeRegExp(appDir)}'`));
+    assert.match(wrapper, new RegExp(`exec '${escapeRegExp(appPath)}' "\\$@"`));
+    assert.ok(fs.existsSync(path.join(tmp, "desktop-app-launchers")));
 
     const script = fs.readFileSync(configPath, "utf8");
     assert.match(script, /buildLinuxAppDirLaunchEnv/);
     assert.match(script, /createLinuxAppDirLaunchWrapper/);
-    assert.match(script, /if \(process\.platform === "linux"\) \{[\s\S]*return appExecutablePath;[\s\S]*\}/);
+    assert.match(script, /return createDesktopAppLaunchWrapper\(appExecutablePath, DESKTOP_APP_LAUNCH_ENV\);/);
     assert.match(script, /const driverEnv = \{\s*\.\.\.process\.env,/);
     assert.match(script, /\.\.\.DESKTOP_APP_LAUNCH_ENV,/);
     assert.match(script, /console\.error\(`\[wdio\] WebDriver application path=\$\{WDIO_APPLICATION_PATH\}`\)/);

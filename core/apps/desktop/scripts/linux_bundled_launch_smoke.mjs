@@ -16,11 +16,15 @@ const REPO_ROOT = path.resolve(CORE_ROOT, "..");
 const require = createRequire(import.meta.url);
 const {
   buildLinuxAppDirLaunchEnv,
+  createLinuxAppDirLaunchWrapper,
   resolveLinuxAppDirFromPath,
 } = require("../automation/helpers/linux_appdir_launch_env.cjs");
 
 const SESSION_START_ATTEMPTS = 2;
-const SESSION_START_TIMEOUT_MS = 60_000;
+const SESSION_START_TIMEOUT_MS = positiveIntegerEnv(
+  "CTX_LINUX_BUNDLED_LAUNCH_SESSION_TIMEOUT_MS",
+  120_000,
+);
 const RETRYABLE_STARTUP_SESSION_FAILURE =
   /(UND_ERR_HEADERS_TIMEOUT|Failed to create a session|WebDriver session creation timed out|IncompleteMessage|socket hang up|ECONNRESET|ECONNREFUSED)/i;
 
@@ -49,6 +53,16 @@ function fail(message) {
   throw new Error(message);
 }
 
+function positiveIntegerEnv(name, fallback) {
+  const rawValue = String(process.env[name] || "").trim();
+  if (!rawValue) return fallback;
+  const parsed = Number.parseInt(rawValue, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive integer, got ${rawValue}`);
+  }
+  return parsed;
+}
+
 function resolveConfiguredPath(rawValue) {
   const configured = String(rawValue || "").trim();
   if (!configured) return "";
@@ -62,6 +76,7 @@ function isTruthyEnv(value) {
 function parseArgs(argv = process.argv.slice(2)) {
   const options = {
     appPath: "",
+    sessionTimeoutMs: SESSION_START_TIMEOUT_MS,
     timeoutMs: 60_000,
     pollMs: 1_000,
     artifactDir: "",
@@ -81,6 +96,10 @@ function parseArgs(argv = process.argv.slice(2)) {
         options.pollMs = Number.parseInt(String(argv[index + 1] || ""), 10);
         index += 1;
         break;
+      case "--session-timeout-ms":
+        options.sessionTimeoutMs = Number.parseInt(String(argv[index + 1] || ""), 10);
+        index += 1;
+        break;
       case "--artifact-dir":
         options.artifactDir = path.resolve(String(argv[index + 1] || ""));
         index += 1;
@@ -97,6 +116,9 @@ function parseArgs(argv = process.argv.slice(2)) {
   }
   if (!Number.isFinite(options.pollMs) || options.pollMs <= 0) {
     fail(`invalid --poll-ms: ${String(options.pollMs)}`);
+  }
+  if (!Number.isFinite(options.sessionTimeoutMs) || options.sessionTimeoutMs <= 0) {
+    fail(`invalid --session-timeout-ms: ${String(options.sessionTimeoutMs)}`);
   }
   return options;
 }
@@ -227,6 +249,44 @@ function writeProcessSnapshot(filePath) {
     result.status === 0
       ? String(result.stdout || "")
       : `ps failed status=${String(result.status)} stderr=${String(result.stderr || "")}\n`,
+  );
+}
+
+function readOptionalFileTail(filePath, limit = 4_000) {
+  try {
+    if (!filePath || !fs.existsSync(filePath)) {
+      return "";
+    }
+    return normalizeText(fs.readFileSync(filePath, "utf8"), limit);
+  } catch (error) {
+    return `failed to read ${filePath}: ${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
+function writeStartupFailureDiagnostics({
+  appLaunchEnv,
+  applicationPath,
+  artifactDir,
+  driverPort,
+  error,
+  nativeDriverPort,
+  requestedAppPath,
+}) {
+  fs.mkdirSync(artifactDir, { recursive: true });
+  const appLaunchLog = String(appLaunchEnv.CTX_AUTOMATION_APP_LAUNCH_LOG || "");
+  const payload = {
+    app_launch_log: appLaunchLog,
+    app_launch_log_exists: Boolean(appLaunchLog && fs.existsSync(appLaunchLog)),
+    app_launch_log_tail: readOptionalFileTail(appLaunchLog),
+    application_path: applicationPath,
+    driver_port: driverPort,
+    error: normalizeText(errorText(error), 4_000),
+    native_driver_port: nativeDriverPort,
+    requested_app_path: requestedAppPath,
+  };
+  fs.writeFileSync(
+    path.join(artifactDir, "startup-failure-diagnostics.json"),
+    `${JSON.stringify(payload, null, 2)}\n`,
   );
 }
 
@@ -362,12 +422,14 @@ function requireWorkspacePackage(specifier) {
   }
 }
 
-async function connectBrowser({ driverPort, appPath }) {
+async function connectBrowser({ driverPort, appPath, sessionTimeoutMs }) {
   const { remote } = requireWorkspacePackage("webdriverio");
   return remote({
     hostname: "127.0.0.1",
     port: driverPort,
     path: "/",
+    connectionRetryCount: 0,
+    connectionRetryTimeout: sessionTimeoutMs,
     capabilities: {
       "tauri:options": {
         application: appPath,
@@ -383,10 +445,10 @@ async function connectBrowser({ driverPort, appPath }) {
   });
 }
 
-async function connectBrowserWithTimeout({ driverPort, appPath }) {
+async function connectBrowserWithTimeout({ driverPort, appPath, sessionTimeoutMs }) {
   return withTimeout(
-    connectBrowser({ driverPort, appPath }),
-    SESSION_START_TIMEOUT_MS,
+    connectBrowser({ driverPort, appPath, sessionTimeoutMs }),
+    sessionTimeoutMs,
     "WebDriver session creation",
   );
 }
@@ -450,10 +512,15 @@ async function terminateDriverProcess(proc) {
 }
 
 async function runLaunchAttempt({ options, artifactDir, appLaunchEnv, attempt, totalAttempts }) {
-  // Linux WebKitWebDriver needs to launch the shipped AppRun directly. The exact
-  // AppDir/AppImage environment is already on the tauri-driver process and is
-  // inherited by the native WebDriver/app child.
-  const applicationPath = options.appPath;
+  // Linux WebKitWebDriver starts the application from the requested executable
+  // path. Use the same AppDir launcher wrapper contract as release automation so
+  // the child process gets the exact AppDir/AppImage env even when WebKit does
+  // not preserve the full tauri-driver environment.
+  const applicationPath = createLinuxAppDirLaunchWrapper({
+    appPath: options.appPath,
+    env: appLaunchEnv,
+    wrapperDir: path.join(artifactDir, "desktop-app-launchers"),
+  });
   const driverPort = await pickUnusedPort();
   let nativeDriverPort = await pickUnusedPort();
   for (let attempt = 0; nativeDriverPort === driverPort && attempt < 5; attempt += 1) {
@@ -490,7 +557,11 @@ async function runLaunchAttempt({ options, artifactDir, appLaunchEnv, attempt, t
     });
 
     await waitForTcpPort("127.0.0.1", driverPort, 30_000, "tauri-driver");
-    browser = await connectBrowserWithTimeout({ driverPort, appPath: applicationPath });
+    browser = await connectBrowserWithTimeout({
+      driverPort,
+      appPath: applicationPath,
+      sessionTimeoutMs: options.sessionTimeoutMs,
+    });
 
     const deadline = Date.now() + options.timeoutMs;
     let state = await readLaunchState(browser);
@@ -532,6 +603,20 @@ async function runLaunchAttempt({ options, artifactDir, appLaunchEnv, attempt, t
   } catch (error) {
     if (!browser && isRetryableStartupSessionFailure(error)) {
       error.retryableStartupSessionFailure = true;
+    }
+    if (!browser) {
+      writeStartupFailureDiagnostics({
+        appLaunchEnv,
+        applicationPath,
+        artifactDir,
+        driverPort,
+        error,
+        nativeDriverPort,
+        requestedAppPath: options.appPath,
+      });
+      process.stderr.write(
+        `linux bundled launch smoke startup diagnostics written: ${path.join(artifactDir, "startup-failure-diagnostics.json")}\n`,
+      );
     }
     throw error;
   } finally {

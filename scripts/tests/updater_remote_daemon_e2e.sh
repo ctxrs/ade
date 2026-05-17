@@ -581,6 +581,7 @@ run_controller_launch_smoke_if_enabled() {
     node "${ROOT}/core/apps/desktop/scripts/linux_bundled_launch_smoke.mjs" \
       --app "${RESOLVED_CONTROLLER_AUTOMATION_APP_PATH}" \
       --artifact-dir "${smoke_dir}" \
+      --session-timeout-ms "${CTX_UPDATER_REMOTE_E2E_CONTROLLER_LAUNCH_SMOKE_SESSION_TIMEOUT_MS:-120000}" \
       --timeout-ms "${CTX_UPDATER_REMOTE_E2E_CONTROLLER_LAUNCH_SMOKE_TIMEOUT_MS:-60000}" \
     >"${smoke_dir}/controller-launch-smoke.log" 2>&1 || smoke_status=$?
   write_host_resource_snapshot "${smoke_dir}" "after"
