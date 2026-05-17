@@ -28,6 +28,7 @@ mod installs;
 mod inventory;
 mod kimi_oauth_login;
 mod launch_config;
+mod login_routes;
 mod login_runtime;
 mod login_sessions;
 mod options;
@@ -79,10 +80,6 @@ pub use bootstrap::{
     ProvidersBootstrapResponse, ProvidersBootstrapRouteError, ProvidersBootstrapRouteErrorKind,
     ProvidersBootstrapRouteRequest,
 };
-pub use browser_logins::{
-    start_amp_browser_login, start_gemini_browser_login, start_mistral_browser_login,
-    start_qwen_browser_login,
-};
 pub use claude_setup_token_login::{
     start_claude_setup_token_login, ClaudeSetupTokenLoginStartError,
     ClaudeSetupTokenLoginStartErrorKind,
@@ -115,28 +112,19 @@ pub use installs::{
     ProviderInstallStatusesRouteResponse, StartProviderInstallError,
 };
 pub use inventory::refresh_provider_inventory;
-pub use kimi_oauth_login::{start_kimi_oauth_login, KimiOAuthLoginStartError};
 pub use launch_config::{
     load_provider_launch_config_snapshot, ProviderLaunchConfigError, ProviderLaunchConfigSnapshot,
 };
+pub use login_routes::{
+    ProviderLoginRouteError, ProviderLoginRouteErrorKind, ProviderLoginStartRouteRequest,
+    ProviderLoginStartRouteResponse,
+};
 pub use login_runtime::{resolve_claude_login_runtime_from_config, ProviderLoginRuntimeCommand};
 pub use login_sessions::{
-    amp_login_status, claim_codex_login_callback, claude_login_status, codex_login_status,
-    codex_login_statuses, cursor_login_status, finish_amp_login_session,
-    finish_codex_login_session, finish_gemini_login_session, finish_kimi_login_session,
-    finish_mistral_login_session, finish_qwen_login_session, gemini_login_status,
-    kimi_login_status, mistral_login_status, qwen_login_status, remove_codex_login_session,
-    restore_codex_login_completion_token, set_amp_login_auth_url, set_amp_login_failed,
-    set_amp_login_failed_if_no_error, set_amp_login_timeout_if_no_error, set_gemini_login_auth_url,
-    set_gemini_login_failed, set_gemini_login_failed_if_no_error,
-    set_gemini_login_timeout_if_no_error, set_kimi_login_failed, set_kimi_login_terminal_status,
-    set_kimi_login_timeout_if_no_error, set_mistral_login_auth_url, set_mistral_login_failed,
-    set_mistral_login_failed_if_no_error, set_mistral_login_timeout_if_no_error,
-    set_qwen_login_auth_url, set_qwen_login_failed, set_qwen_login_failed_if_no_error,
-    set_qwen_login_timeout_if_no_error, start_amp_login_session, start_codex_login_session,
-    start_gemini_login_session, start_kimi_login_session, start_mistral_login_session,
-    start_qwen_login_session, CodexLoginCallbackClaimError, StartedCodexLoginSession,
-    StartedLoginSession,
+    claim_codex_login_callback, claude_login_status, codex_login_status, codex_login_statuses,
+    cursor_login_status, finish_codex_login_session, remove_codex_login_session,
+    restore_codex_login_completion_token, start_codex_login_session, CodexLoginCallbackClaimError,
+    StartedCodexLoginSession, StartedLoginSession,
 };
 pub use options::{
     effective_preferred_model_id_for_workspace, get_provider_options_response,
@@ -890,64 +878,6 @@ impl ProvidersHandle {
 
     pub fn data_root(&self) -> &StdPath {
         &self.state.core.data_root
-    }
-
-    pub async fn start_amp_browser_login(&self, label: Option<String>) -> StartedLoginSession {
-        start_amp_browser_login(&self.state, label).await
-    }
-
-    pub async fn amp_login_status(
-        &self,
-        login_id: &str,
-    ) -> Option<provider_accounts::AmpLoginStatus> {
-        amp_login_status(&self.state, login_id).await
-    }
-
-    pub async fn start_gemini_browser_login(&self, label: Option<String>) -> StartedLoginSession {
-        start_gemini_browser_login(&self.state, label).await
-    }
-
-    pub async fn gemini_login_status(
-        &self,
-        login_id: &str,
-    ) -> Option<provider_accounts::GeminiLoginStatus> {
-        gemini_login_status(&self.state, login_id).await
-    }
-
-    pub async fn start_qwen_browser_login(&self, label: Option<String>) -> StartedLoginSession {
-        start_qwen_browser_login(&self.state, label).await
-    }
-
-    pub async fn qwen_login_status(
-        &self,
-        login_id: &str,
-    ) -> Option<provider_accounts::QwenLoginStatus> {
-        qwen_login_status(&self.state, login_id).await
-    }
-
-    pub async fn start_mistral_browser_login(&self, label: Option<String>) -> StartedLoginSession {
-        start_mistral_browser_login(&self.state, label).await
-    }
-
-    pub async fn mistral_login_status(
-        &self,
-        login_id: &str,
-    ) -> Option<provider_accounts::MistralLoginStatus> {
-        mistral_login_status(&self.state, login_id).await
-    }
-
-    pub async fn start_kimi_oauth_login(
-        &self,
-        label: Option<String>,
-    ) -> Result<StartedLoginSession, KimiOAuthLoginStartError> {
-        start_kimi_oauth_login(&self.state, label).await
-    }
-
-    pub async fn kimi_login_status(
-        &self,
-        login_id: &str,
-    ) -> Option<provider_accounts::KimiLoginStatus> {
-        kimi_login_status(&self.state, login_id).await
     }
 
     pub async fn start_claude_setup_token_login(

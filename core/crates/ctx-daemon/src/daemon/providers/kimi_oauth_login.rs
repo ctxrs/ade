@@ -26,6 +26,13 @@ impl KimiOAuthLoginStartError {
         }
     }
 
+    #[cfg(test)]
+    pub(super) fn for_route_test(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+
     pub fn route_safe_message(&self) -> &str {
         &self.message
     }

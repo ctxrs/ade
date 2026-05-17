@@ -36,3 +36,18 @@ pub(super) fn reject_mobile_auth(
     }
     Ok(())
 }
+
+pub(super) fn provider_login_route_error(
+    error: ProviderLoginRouteError,
+) -> (StatusCode, Json<ApiErrorResp>) {
+    let status = match error.kind() {
+        ProviderLoginRouteErrorKind::NotFound => StatusCode::NOT_FOUND,
+        ProviderLoginRouteErrorKind::BadGateway => StatusCode::BAD_GATEWAY,
+    };
+    (
+        status,
+        Json(ApiErrorResp {
+            error: error.message().to_string(),
+        }),
+    )
+}

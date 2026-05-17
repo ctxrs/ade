@@ -5,6 +5,7 @@ mod bootstrap;
 mod codex_routes;
 mod delete_paths;
 mod harness_config;
+mod login_routes;
 
 struct ProviderRouteFixture {
     app: axum::Router,

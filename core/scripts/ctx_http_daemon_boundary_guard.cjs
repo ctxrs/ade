@@ -232,8 +232,6 @@ const providerAccountsApiRoots = [
 ];
 
 const managedBrowserLoginApiRoots = [
-  "core/crates/ctx-http/src/api/providers/login.rs",
-  "core/crates/ctx-http/src/api/providers/login/browser.rs",
   "core/crates/ctx-http/src/api/providers/login/browser/gemini.rs",
   "core/crates/ctx-http/src/api/providers/login/browser/gemini/",
   "core/crates/ctx-http/src/api/providers/login/browser/qwen.rs",
@@ -1650,6 +1648,23 @@ const MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS = [
   {
     name: "managed browser login API starts Kimi sessions directly",
     regex: /\bstart_kimi_login_session\s*\(/,
+  },
+  {
+    name: "managed browser login API calls low-level start/status facades",
+    regex:
+      /\.(?:start_(?:amp|gemini|qwen|mistral)_browser_login|start_kimi_oauth_login|(?:amp|gemini|qwen|mistral|kimi)_login_status)\s*\(/,
+  },
+  {
+    name: "managed browser login API owns login start DTOs",
+    regex: /\b(?:Amp|Gemini|Qwen|Mistral|Kimi)LoginStart(?:Req|Resp)\b/,
+  },
+  {
+    name: "managed browser login API owns login not-found mapping",
+    regex: /"login not found"/,
+  },
+  {
+    name: "managed browser login API maps Kimi start errors directly",
+    regex: /\bKimiOAuthLoginStartError\b|\.route_safe_message\s*\(/,
   },
 ];
 

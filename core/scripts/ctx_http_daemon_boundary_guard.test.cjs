@@ -3561,6 +3561,13 @@ test("daemon boundary guard rejects managed browser login orchestration in HTTP"
         let _ = "authorization_pending";
         tokio::fs::remove_dir_all(login_home).await?;
         let _ = QWEN_OAUTH_AUTH_METHOD_ID;
+        providers.start_gemini_browser_login(label).await;
+        providers.gemini_login_status(login_id).await;
+        providers.start_kimi_oauth_login(label).await?;
+        let _req = GeminiLoginStartReq { label };
+        let _resp = KimiLoginStartResp { login_id, auth_url, device_code };
+        let _ = "login not found";
+        err.route_safe_message();
       }
     `,
     patterns: MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS,
@@ -3587,6 +3594,13 @@ test("daemon boundary guard rejects managed browser login orchestration in HTTP"
       "managed browser login API owns Kimi OAuth client policy",
       "managed browser login API owns Kimi OAuth protocol details",
       "managed browser login API starts Kimi sessions directly",
+      "managed browser login API calls low-level start/status facades",
+      "managed browser login API calls low-level start/status facades",
+      "managed browser login API calls low-level start/status facades",
+      "managed browser login API owns login start DTOs",
+      "managed browser login API owns login start DTOs",
+      "managed browser login API owns login not-found mapping",
+      "managed browser login API maps Kimi start errors directly",
     ],
   );
 });
@@ -3614,13 +3628,13 @@ test("daemon boundary guard scopes managed browser login orchestration patterns"
     apiPatternsForPath("core/crates/ctx-http/src/api/providers/login/browser.rs").includes(
       MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS[0],
     ),
-    true,
+    false,
   );
   assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/providers/login.rs").includes(
       MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS[0],
     ),
-    true,
+    false,
   );
   assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/providers/login/kimi.rs").includes(
@@ -3639,6 +3653,30 @@ test("daemon boundary guard scopes managed browser login orchestration patterns"
       MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS[0],
     ),
     false,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers/login/codex.rs").includes(
+      MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    false,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers/cursor_login.rs").includes(
+      MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    false,
+  );
+  assert.deepEqual(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/providers/login/browser/gemini.rs",
+      contents: `
+        let req = ProviderLoginStartRouteRequest::default();
+        providers.start_gemini_login_for_route(req).await;
+        providers.gemini_login_status_for_route(&id).await?;
+      `,
+      patterns: MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS,
+    }),
+    [],
   );
 });
 

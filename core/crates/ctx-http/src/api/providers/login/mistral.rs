@@ -1,29 +1,12 @@
 use super::*;
 
-#[derive(Debug, Deserialize)]
-pub(crate) struct MistralLoginStartReq {
-    label: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub(crate) struct MistralLoginStartResp {
-    login_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    auth_url: Option<String>,
-}
-
 pub(crate) async fn start_mistral_login(
     State(providers): State<ProvidersHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
-    Json(req): Json<MistralLoginStartReq>,
-) -> Result<Json<MistralLoginStartResp>, (StatusCode, Json<ApiErrorResp>)> {
+    Json(req): Json<ProviderLoginStartRouteRequest>,
+) -> Result<Json<ProviderLoginStartRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let login_session = providers.start_mistral_browser_login(req.label).await;
-
-    Ok(Json(MistralLoginStartResp {
-        login_id: login_session.login_id,
-        auth_url: login_session.auth_url,
-    }))
+    Ok(Json(providers.start_mistral_login_for_route(req).await))
 }
 
 pub(crate) async fn get_mistral_login(
@@ -32,13 +15,9 @@ pub(crate) async fn get_mistral_login(
     Path(id): Path<String>,
 ) -> Result<Json<provider_accounts::MistralLoginStatus>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let status = providers.mistral_login_status(&id).await.ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "login not found".to_string(),
-            }),
-        )
-    })?;
-    Ok(Json(status))
+    providers
+        .mistral_login_status_for_route(&id)
+        .await
+        .map(Json)
+        .map_err(provider_login_route_error)
 }
