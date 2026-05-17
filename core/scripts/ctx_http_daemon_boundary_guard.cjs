@@ -231,6 +231,13 @@ const providerAccountsApiRoots = [
   "core/crates/ctx-http/src/api/providers/accounts/",
 ];
 
+const providerUsageApiRoots = [
+  "core/crates/ctx-http/src/api/providers/status/usage.rs",
+  "core/crates/ctx-http/src/api/providers/accounts/codex/usage.rs",
+  "core/crates/ctx-http/src/api/providers/types/queries.rs",
+  "core/crates/ctx-http/src/api/providers/types/accounts/responses.rs",
+];
+
 const managedBrowserLoginApiRoots = [
   "core/crates/ctx-http/src/api/providers/login/browser/gemini.rs",
   "core/crates/ctx-http/src/api/providers/login/browser/gemini/",
@@ -1564,6 +1571,36 @@ const PROVIDER_STATUS_API_ORCHESTRATION_PATTERNS = [
   {
     name: "provider status API owns provider status error mapping",
     regex: /\bprovider_status_response_error\b/,
+  },
+];
+
+const PROVIDER_USAGE_API_ORCHESTRATION_PATTERNS = [
+  {
+    name: "provider usage API imports provider-runtime usage DTOs",
+    regex:
+      /\bctx_provider_runtime::provider_usage\b|\bprovider_usage::ProviderUsageSnapshot\b/,
+  },
+  {
+    name: "provider usage API owns route query DTO",
+    regex: /\bProviderUsageQuery\b/,
+  },
+  {
+    name: "provider usage API owns Codex account usage DTOs",
+    regex: /\b(?:CodexAccountsUsageResponse|CodexAccountUsageEntry)\b/,
+  },
+  {
+    name: "provider usage API calls low-level usage facades",
+    regex:
+      /(?:\.|\bProvidersHandle::|\b)(?:load_provider_usage|load_codex_accounts_usage)\s*\(/,
+  },
+  {
+    name: "provider usage API owns usage internal-error mapping",
+    regex: /\bprovider_usage_internal_error\b/,
+  },
+  {
+    name: "provider usage API maps account usage records locally",
+    regex:
+      /\bCodexAccountUsageRecord\b|\baccount_id\s*:\s*entry\.account_id\b|\busage\s*:\s*entry\.usage\b/,
   },
 ];
 
@@ -4347,6 +4384,9 @@ function apiPatternsForPath(relativePath) {
   if (providerStatusApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...PROVIDER_STATUS_API_ORCHESTRATION_PATTERNS);
   }
+  if (providerUsageApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...PROVIDER_USAGE_API_ORCHESTRATION_PATTERNS);
+  }
   if (providerAccountsApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS);
   }
@@ -4586,6 +4626,13 @@ function providerAuthImportApiPatternsForPath(relativePath) {
 function providerStatusApiPatternsForPath(relativePath) {
   if (providerStatusApiRoots.some((root) => relativePath.startsWith(root))) {
     return PROVIDER_STATUS_API_ORCHESTRATION_PATTERNS;
+  }
+  return [];
+}
+
+function providerUsageApiPatternsForPath(relativePath) {
+  if (providerUsageApiRoots.some((root) => relativePath.startsWith(root))) {
+    return PROVIDER_USAGE_API_ORCHESTRATION_PATTERNS;
   }
   return [];
 }
@@ -5521,6 +5568,7 @@ module.exports = {
   PROVIDER_LAUNCH_OPTIONS_API_PATTERNS,
   PROVIDER_AUTH_IMPORT_API_ORCHESTRATION_PATTERNS,
   PROVIDER_STATUS_API_ORCHESTRATION_PATTERNS,
+  PROVIDER_USAGE_API_ORCHESTRATION_PATTERNS,
   PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS,
   SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS,
   SESSION_VCS_API_ORCHESTRATION_PATTERNS,
@@ -5603,6 +5651,7 @@ module.exports = {
   providerLaunchAuthApiPatternsForPath,
   providerLaunchOptionsApiPatternsForPath,
   providerStatusApiPatternsForPath,
+  providerUsageApiPatternsForPath,
   providerScenariosOfflineStorePatternsForPath,
   providerWorkerReapingStorePatternsForPath,
   providerCachePatternsForPath,

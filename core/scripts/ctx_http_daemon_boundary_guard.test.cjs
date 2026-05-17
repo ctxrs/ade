@@ -56,6 +56,7 @@ const {
   PROVIDER_LAUNCH_OPTIONS_API_PATTERNS,
   SESSION_HEAD_API_ORCHESTRATION_PATTERNS,
   PROVIDER_STATUS_API_ORCHESTRATION_PATTERNS,
+  PROVIDER_USAGE_API_ORCHESTRATION_PATTERNS,
   SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS,
   SESSION_VCS_API_ORCHESTRATION_PATTERNS,
   TASK_SESSION_CREATION_API_ADMISSION_PATTERNS,
@@ -137,6 +138,7 @@ const {
   providerLaunchAuthApiPatternsForPath,
   providerLaunchOptionsApiPatternsForPath,
   providerStatusApiPatternsForPath,
+  providerUsageApiPatternsForPath,
   providerScenariosOfflineStorePatternsForPath,
   providerWorkerReapingStorePatternsForPath,
   providerCachePatternsForPath,
@@ -3470,6 +3472,93 @@ test("daemon boundary guard scopes provider status API roots", () => {
         providers.provider_status_for_route(&id, query).await?;
       `,
       patterns: PROVIDER_STATUS_API_ORCHESTRATION_PATTERNS,
+    }),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects provider usage API orchestration", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/providers/accounts/codex/usage.rs",
+    contents: `
+      use ctx_provider_runtime::provider_usage;
+
+      struct ProviderUsageQuery;
+      struct CodexAccountsUsageResponse;
+      struct CodexAccountUsageEntry;
+
+      async fn handler(providers: ProvidersHandle, entry: CodexAccountUsageRecord) {
+        let _snapshot: provider_usage::ProviderUsageSnapshot = providers
+          .load_provider_usage("codex", true)
+          .await?;
+        let _records = providers.load_codex_accounts_usage(false).await?;
+        let _entry = CodexAccountUsageEntry {
+          account_id: entry.account_id,
+          usage: entry.usage,
+        };
+        provider_usage_internal_error(err);
+      }
+    `,
+    patterns: PROVIDER_USAGE_API_ORCHESTRATION_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "provider usage API imports provider-runtime usage DTOs",
+      "provider usage API imports provider-runtime usage DTOs",
+      "provider usage API owns route query DTO",
+      "provider usage API owns Codex account usage DTOs",
+      "provider usage API owns Codex account usage DTOs",
+      "provider usage API owns Codex account usage DTOs",
+      "provider usage API calls low-level usage facades",
+      "provider usage API calls low-level usage facades",
+      "provider usage API owns usage internal-error mapping",
+      "provider usage API maps account usage records locally",
+      "provider usage API maps account usage records locally",
+      "provider usage API maps account usage records locally",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes provider usage API roots", () => {
+  assert.deepEqual(
+    providerUsageApiPatternsForPath(
+      "core/crates/ctx-http/src/api/providers/status/usage.rs",
+    ),
+    PROVIDER_USAGE_API_ORCHESTRATION_PATTERNS,
+  );
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/providers/accounts/codex/usage.rs",
+    ).includes(PROVIDER_USAGE_API_ORCHESTRATION_PATTERNS[0]),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/providers/types/accounts/responses.rs",
+    ).includes(PROVIDER_USAGE_API_ORCHESTRATION_PATTERNS[2]),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers/accounts/codex.rs").includes(
+      PROVIDER_USAGE_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    false,
+  );
+  assert.deepEqual(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/providers/status/usage.rs",
+      contents: `
+        async fn handler(providers: ProvidersHandle, query: ProviderUsageRouteQuery) {
+          let _snapshot: Option<ProviderUsageRouteSnapshot> = None;
+          let _accounts: Option<CodexAccountsUsageRouteResponse> = None;
+          let _error: Option<ProviderUsageRouteError> = None;
+          providers.provider_usage_for_route("codex", query).await?;
+          providers.codex_accounts_usage_for_route(ProviderUsageRouteQuery::default()).await?;
+        }
+      `,
+      patterns: PROVIDER_USAGE_API_ORCHESTRATION_PATTERNS,
     }),
     [],
   );

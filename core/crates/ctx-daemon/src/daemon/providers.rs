@@ -6,7 +6,6 @@ use ctx_provider_accounts as provider_accounts;
 use ctx_provider_install::install_state::{
     InstallId, InstallInfo, InstallProgressEvent, InstallTarget,
 };
-use ctx_provider_runtime::provider_usage;
 use ctx_provider_runtime::provider_workers::ProviderAdapterRestartResult;
 use ctx_providers::adapters::{ProviderRestartMode, ProviderStatus};
 use serde_json::Value;
@@ -147,7 +146,10 @@ pub use status::{
     refresh_provider_statuses, ProviderStatusListRouteError, ProviderStatusResponseError,
     ProviderStatusRouteError, ProviderStatusRouteErrorKind, ProviderStatusRouteQuery,
 };
-pub use usage::{load_codex_accounts_usage, load_provider_usage, CodexAccountUsageRecord};
+pub use usage::{
+    CodexAccountsUsageRouteResponse, ProviderUsageRouteError, ProviderUsageRouteQuery,
+    ProviderUsageRouteSnapshot,
+};
 
 impl ProvidersHandle {
     pub async fn provider_diagnostics_snapshot(&self) -> diagnostics::ProviderDiagnosticsSnapshot {
@@ -211,21 +213,6 @@ impl ProvidersHandle {
         target: InstallTarget,
     ) -> Result<ProviderStatus, ProviderStatusResponseError> {
         provider_status_response(&self.state, provider_id, target).await
-    }
-
-    pub async fn load_provider_usage(
-        &self,
-        provider_id: &str,
-        refresh: bool,
-    ) -> anyhow::Result<provider_usage::ProviderUsageSnapshot> {
-        load_provider_usage(&self.state, provider_id, refresh).await
-    }
-
-    pub async fn load_codex_accounts_usage(
-        &self,
-        refresh: bool,
-    ) -> anyhow::Result<Vec<CodexAccountUsageRecord>> {
-        load_codex_accounts_usage(&self.state, refresh).await
     }
 
     pub async fn load_codex_accounts_snapshot(&self) -> anyhow::Result<CodexAccountsSnapshot> {
