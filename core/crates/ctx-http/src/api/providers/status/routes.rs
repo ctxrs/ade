@@ -1,45 +1,41 @@
 use super::*;
-use ctx_daemon::daemon::providers::{parse_provider_install_target, ProviderStatusResponseError};
+use ctx_daemon::daemon::providers::{
+    ProviderStatusListRouteError, ProviderStatusRouteError, ProviderStatusRouteErrorKind,
+};
 
 pub(crate) async fn list_providers(
     State(providers): State<ProvidersHandle>,
-    Query(query): Query<InstallTargetQuery>,
+    Query(query): Query<ProviderStatusRouteQuery>,
 ) -> Result<Json<Vec<ProviderStatus>>, StatusCode> {
-    let target = parse_provider_install_target(query.target.as_deref())
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
-    Ok(Json(
-        providers.providers_statuses_response(target, false).await,
-    ))
+    providers
+        .providers_statuses_for_route(query)
+        .await
+        .map(Json)
+        .map_err(provider_status_list_error)
 }
 
 pub(crate) async fn get_provider(
     State(providers): State<ProvidersHandle>,
     Path(id): Path<String>,
-    Query(query): Query<InstallTargetQuery>,
+    Query(query): Query<ProviderStatusRouteQuery>,
 ) -> Result<Json<ProviderStatus>, (StatusCode, Json<serde_json::Value>)> {
-    let target = parse_provider_install_target(query.target.as_deref()).map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": e })),
-        )
-    })?;
-
-    let status = providers
-        .provider_status_response(&id, target)
+    providers
+        .provider_status_for_route(&id, query)
         .await
-        .map_err(provider_status_response_error)?;
-    Ok(Json(status))
+        .map(Json)
+        .map_err(provider_status_route_error)
 }
 
-fn provider_status_response_error(
-    error: ProviderStatusResponseError,
+fn provider_status_list_error(_error: ProviderStatusListRouteError) -> StatusCode {
+    StatusCode::BAD_REQUEST
+}
+
+fn provider_status_route_error(
+    error: ProviderStatusRouteError,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    match error {
-        ProviderStatusResponseError::NotFound { provider_id } => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({
-                "error": format!("provider not found: {provider_id}")
-            })),
-        ),
-    }
+    let status = match error.kind() {
+        ProviderStatusRouteErrorKind::BadRequest => StatusCode::BAD_REQUEST,
+        ProviderStatusRouteErrorKind::NotFound => StatusCode::NOT_FOUND,
+    };
+    (status, Json(error.body().clone()))
 }

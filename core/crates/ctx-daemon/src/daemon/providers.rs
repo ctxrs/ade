@@ -155,7 +155,8 @@ pub use runtime_probe::{
 };
 pub use status::{
     install_target_for_workspace, provider_status_response, providers_statuses_response,
-    refresh_provider_statuses, ProviderStatusResponseError,
+    refresh_provider_statuses, ProviderStatusListRouteError, ProviderStatusResponseError,
+    ProviderStatusRouteError, ProviderStatusRouteErrorKind, ProviderStatusRouteQuery,
 };
 pub use usage::{load_codex_accounts_usage, load_provider_usage, CodexAccountUsageRecord};
 

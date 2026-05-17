@@ -4,8 +4,11 @@ use anyhow::Context;
 use ctx_provider_install::install_state::InstallTarget;
 use ctx_provider_runtime::provider_launch::status::provider_status_for_target;
 use ctx_providers::adapters::ProviderStatus;
+use serde::Deserialize;
+use serde_json::Value;
 
-use crate::daemon::{execution_effective, DaemonState};
+use crate::daemon::providers::parse_provider_install_target;
+use crate::daemon::{execution_effective, DaemonState, ProvidersHandle};
 
 mod details;
 
@@ -15,6 +18,54 @@ pub(super) use details::provider_status_without_target_bootstrap;
 #[derive(Debug)]
 pub enum ProviderStatusResponseError {
     NotFound { provider_id: String },
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct ProviderStatusRouteQuery {
+    pub target: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct ProviderStatusListRouteError;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderStatusRouteErrorKind {
+    BadRequest,
+    NotFound,
+}
+
+#[derive(Debug)]
+pub struct ProviderStatusRouteError {
+    kind: ProviderStatusRouteErrorKind,
+    body: Value,
+}
+
+impl ProviderStatusRouteError {
+    pub fn kind(&self) -> ProviderStatusRouteErrorKind {
+        self.kind
+    }
+
+    pub fn body(&self) -> &Value {
+        &self.body
+    }
+
+    fn bad_request(message: impl Into<String>) -> Self {
+        Self {
+            kind: ProviderStatusRouteErrorKind::BadRequest,
+            body: serde_json::json!({
+                "error": message.into(),
+            }),
+        }
+    }
+
+    fn not_found(message: impl Into<String>) -> Self {
+        Self {
+            kind: ProviderStatusRouteErrorKind::NotFound,
+            body: serde_json::json!({
+                "error": message.into(),
+            }),
+        }
+    }
 }
 
 pub async fn install_target_for_workspace(
@@ -94,6 +145,55 @@ pub async fn provider_status_response(
     )
     .await;
     Ok(status)
+}
+
+impl ProvidersHandle {
+    pub async fn providers_statuses_for_route(
+        &self,
+        query: ProviderStatusRouteQuery,
+    ) -> Result<Vec<ProviderStatus>, ProviderStatusListRouteError> {
+        let target = parse_provider_install_target(query.target.as_deref())
+            .map_err(|_| ProviderStatusListRouteError)?;
+        Ok(providers_statuses_response(&self.state, target, false).await)
+    }
+
+    pub async fn provider_status_for_route(
+        &self,
+        provider_id: &str,
+        query: ProviderStatusRouteQuery,
+    ) -> Result<ProviderStatus, ProviderStatusRouteError> {
+        let target = parse_provider_install_target(query.target.as_deref())
+            .map_err(ProviderStatusRouteError::bad_request)?;
+        provider_status_response(&self.state, provider_id, target)
+            .await
+            .map_err(provider_status_route_error)
+    }
+}
+
+fn provider_status_route_error(error: ProviderStatusResponseError) -> ProviderStatusRouteError {
+    match error {
+        ProviderStatusResponseError::NotFound { provider_id } => {
+            ProviderStatusRouteError::not_found(format!("provider not found: {provider_id}"))
+        }
+    }
+}
+
+#[cfg(test)]
+mod route_tests {
+    use super::*;
+
+    #[test]
+    fn provider_status_route_error_preserves_not_found_body() {
+        let error = provider_status_route_error(ProviderStatusResponseError::NotFound {
+            provider_id: "missing-provider".to_string(),
+        });
+
+        assert_eq!(error.kind(), ProviderStatusRouteErrorKind::NotFound);
+        assert_eq!(
+            error.body()["error"].as_str(),
+            Some("provider not found: missing-provider")
+        );
+    }
 }
 
 async fn provider_status_ids(

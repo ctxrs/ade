@@ -17,7 +17,7 @@ use ctx_core::ids::WorkspaceId;
 use ctx_daemon::daemon::providers::{
     ProviderAuthImportCandidatesRouteResponse, ProviderAuthImportProfilesRouteResponse,
     ProviderAuthImportRouteError, ProviderAuthImportRouteRequest, ProviderAuthImportRouteResponse,
-    SelectProviderHarnessSourceRouteRequest,
+    ProviderStatusRouteQuery, SelectProviderHarnessSourceRouteRequest,
 };
 use ctx_daemon::daemon::ProvidersHandle;
 #[cfg(test)]

@@ -55,6 +55,7 @@ const {
   PROVIDER_LAUNCH_AUTH_API_PATTERNS,
   PROVIDER_LAUNCH_OPTIONS_API_PATTERNS,
   SESSION_HEAD_API_ORCHESTRATION_PATTERNS,
+  PROVIDER_STATUS_API_ORCHESTRATION_PATTERNS,
   SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS,
   SESSION_VCS_API_ORCHESTRATION_PATTERNS,
   TASK_SESSION_CREATION_API_ADMISSION_PATTERNS,
@@ -135,6 +136,7 @@ const {
   providerInstallApiPatternsForPath,
   providerLaunchAuthApiPatternsForPath,
   providerLaunchOptionsApiPatternsForPath,
+  providerStatusApiPatternsForPath,
   providerScenariosOfflineStorePatternsForPath,
   providerWorkerReapingStorePatternsForPath,
   providerCachePatternsForPath,
@@ -3385,6 +3387,66 @@ test("daemon boundary guard scopes provider auth-import API roots", () => {
   );
   assert.deepEqual(
     providerAuthImportApiPatternsForPath("core/crates/ctx-http/src/api/providers/accounts.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects provider status API orchestration", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/providers/status/routes.rs",
+    contents: `
+      async fn handler(providers: ProvidersHandle, query: InstallTargetQuery) {
+        let target = parse_provider_install_target(query.target.as_deref())?;
+        let _ = ProviderStatusResponseError::NotFound { provider_id };
+        providers.providers_statuses_response(target, false).await;
+        providers.provider_status_response(&id, target).await?;
+        provider_status_response_error(err);
+      }
+    `,
+    patterns: PROVIDER_STATUS_API_ORCHESTRATION_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "provider status API parses install target directly",
+      "provider status API owns install target query DTO",
+      "provider status API matches provider status errors directly",
+      "provider status API calls broad status facades",
+      "provider status API calls broad status facades",
+      "provider status API owns provider status error mapping",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes provider status API roots", () => {
+  assert.deepEqual(
+    providerStatusApiPatternsForPath(
+      "core/crates/ctx-http/src/api/providers/status/routes.rs",
+    ),
+    PROVIDER_STATUS_API_ORCHESTRATION_PATTERNS,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers/status/usage.rs").includes(
+      PROVIDER_STATUS_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/providers/types/queries.rs",
+    ).includes(PROVIDER_STATUS_API_ORCHESTRATION_PATTERNS[1]),
+    true,
+  );
+  assert.deepEqual(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/providers/status/routes.rs",
+      contents: `
+        providers.providers_statuses_for_route(query).await?;
+        providers.provider_status_for_route(&id, query).await?;
+      `,
+      patterns: PROVIDER_STATUS_API_ORCHESTRATION_PATTERNS,
+    }),
     [],
   );
 });

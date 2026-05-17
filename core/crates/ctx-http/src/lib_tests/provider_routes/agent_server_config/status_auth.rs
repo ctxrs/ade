@@ -1,6 +1,89 @@
 use super::*;
 
 #[tokio::test]
+async fn provider_list_invalid_target_preserves_bare_bad_request() {
+    let fixture = ProviderRouteFixture::new().await;
+    let app = fixture.app();
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/providers?target=definitely-invalid")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    assert!(
+        body.is_empty(),
+        "list providers invalid target should preserve bare 400 body"
+    );
+}
+
+#[tokio::test]
+async fn provider_get_invalid_target_preserves_json_error() {
+    let fixture = ProviderRouteFixture::new().await;
+    let app = fixture.app();
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/providers/qwen?target=definitely-invalid")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        payload["error"].as_str(),
+        Some(
+            "invalid install target 'definitely-invalid'; expected host, container, linux-aarch64, or linux-x86_64"
+        )
+    );
+}
+
+#[tokio::test]
+async fn provider_get_missing_provider_preserves_json_error() {
+    let fixture = ProviderRouteFixture::new().await;
+    let app = fixture.app();
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/providers/missing-provider")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        payload["error"].as_str(),
+        Some("provider not found: missing-provider")
+    );
+}
+
+#[tokio::test]
+async fn provider_status_empty_target_query_still_uses_default_target() {
+    let fixture = ProviderRouteFixture::new().await;
+    let app = fixture.app();
+
+    let list_req = Request::builder()
+        .method("GET")
+        .uri("/api/providers?target=")
+        .body(Body::empty())
+        .unwrap();
+    let list_res = app.clone().oneshot(list_req).await.unwrap();
+    assert_eq!(list_res.status(), StatusCode::OK);
+
+    let get_req = Request::builder()
+        .method("GET")
+        .uri("/api/providers/qwen?target=")
+        .body(Body::empty())
+        .unwrap();
+    let get_res = app.clone().oneshot(get_req).await.unwrap();
+    assert_eq!(get_res.status(), StatusCode::OK);
+}
+
+#[tokio::test]
 async fn provider_authenticate_without_body_preserves_invalid_workspace_error() {
     let fixture = ProviderRouteFixture::new().await;
     let app = fixture.app();

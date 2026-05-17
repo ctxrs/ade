@@ -220,6 +220,12 @@ const providerAuthImportApiRoots = [
   "core/crates/ctx-http/src/api/providers/types/auth_import.rs",
 ];
 
+const providerStatusApiRoots = [
+  "core/crates/ctx-http/src/api/providers/status.rs",
+  "core/crates/ctx-http/src/api/providers/status/",
+  "core/crates/ctx-http/src/api/providers/types/queries.rs",
+];
+
 const providerAccountsApiRoots = [
   "core/crates/ctx-http/src/api/providers/accounts.rs",
   "core/crates/ctx-http/src/api/providers/accounts/",
@@ -1525,6 +1531,29 @@ const PROVIDER_AUTH_IMPORT_API_ORCHESTRATION_PATTERNS = [
   {
     name: "provider auth import API stringifies lower-level errors locally",
     regex: /\b(?:e|err)\s*\.to_string\s*\(/,
+  },
+];
+
+const PROVIDER_STATUS_API_ORCHESTRATION_PATTERNS = [
+  {
+    name: "provider status API parses install target directly",
+    regex: /\bparse_provider_install_target\b/,
+  },
+  {
+    name: "provider status API owns install target query DTO",
+    regex: /\bInstallTargetQuery\b/,
+  },
+  {
+    name: "provider status API matches provider status errors directly",
+    regex: /\bProviderStatusResponseError\b/,
+  },
+  {
+    name: "provider status API calls broad status facades",
+    regex: /\.(?:providers_statuses_response|provider_status_response)\s*\(/,
+  },
+  {
+    name: "provider status API owns provider status error mapping",
+    regex: /\bprovider_status_response_error\b/,
   },
 ];
 
@@ -4236,6 +4265,9 @@ function apiPatternsForPath(relativePath) {
   if (providerAuthImportApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...PROVIDER_AUTH_IMPORT_API_ORCHESTRATION_PATTERNS);
   }
+  if (providerStatusApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...PROVIDER_STATUS_API_ORCHESTRATION_PATTERNS);
+  }
   if (providerAccountsApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS);
   }
@@ -4468,6 +4500,13 @@ function providerLaunchOptionsApiPatternsForPath(relativePath) {
 function providerAuthImportApiPatternsForPath(relativePath) {
   if (providerAuthImportApiRoots.some((root) => relativePath.startsWith(root))) {
     return PROVIDER_AUTH_IMPORT_API_ORCHESTRATION_PATTERNS;
+  }
+  return [];
+}
+
+function providerStatusApiPatternsForPath(relativePath) {
+  if (providerStatusApiRoots.some((root) => relativePath.startsWith(root))) {
+    return PROVIDER_STATUS_API_ORCHESTRATION_PATTERNS;
   }
   return [];
 }
@@ -5402,6 +5441,7 @@ module.exports = {
   PROVIDER_LAUNCH_AUTH_API_PATTERNS,
   PROVIDER_LAUNCH_OPTIONS_API_PATTERNS,
   PROVIDER_AUTH_IMPORT_API_ORCHESTRATION_PATTERNS,
+  PROVIDER_STATUS_API_ORCHESTRATION_PATTERNS,
   PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS,
   SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS,
   SESSION_VCS_API_ORCHESTRATION_PATTERNS,
@@ -5483,6 +5523,7 @@ module.exports = {
   providerInstallApiPatternsForPath,
   providerLaunchAuthApiPatternsForPath,
   providerLaunchOptionsApiPatternsForPath,
+  providerStatusApiPatternsForPath,
   providerScenariosOfflineStorePatternsForPath,
   providerWorkerReapingStorePatternsForPath,
   providerCachePatternsForPath,
