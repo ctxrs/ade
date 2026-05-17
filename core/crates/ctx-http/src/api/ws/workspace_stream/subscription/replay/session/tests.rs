@@ -38,6 +38,22 @@ fn queues() -> (
     )
 }
 
+fn replay_route_sinks<'a>(
+    control: &'a Arc<StreamQueue<WorkspaceActiveSnapshotStreamMessage>>,
+    priority_control: &'a Arc<StreamQueue<WorkspaceActiveSnapshotStreamMessage>>,
+    foreground_head_buffer: &'a Arc<HeadBatchBuffer>,
+    background_head_buffer: &'a Arc<HeadBatchBuffer>,
+    summary_buffer: &'a Arc<SummaryBatchBuffer>,
+) -> ReplayRouteSinks<'a> {
+    ReplayRouteSinks {
+        background_head_buffer: background_head_buffer.as_ref(),
+        control: control.as_ref(),
+        foreground_head_buffer: foreground_head_buffer.as_ref(),
+        priority_control: priority_control.as_ref(),
+        summary_buffer: summary_buffer.as_ref(),
+    }
+}
+
 fn head_delta(session_id: SessionId) -> SessionHeadDelta {
     SessionHeadDelta {
         session_id,
@@ -60,15 +76,18 @@ async fn replay_route_plan_tags_head_batches_as_replay() {
     let session_id = SessionId::new();
     let (control, priority_control, foreground_head_buffer, background_head_buffer, summary_buffer) =
         queues();
-
-    let result = push_replay_event_route_plan(
-        workspace_id,
-        &labels(),
+    let sinks = replay_route_sinks(
         &control,
         &priority_control,
         &foreground_head_buffer,
         &background_head_buffer,
         &summary_buffer,
+    );
+
+    let result = push_replay_event_route_plan(
+        workspace_id,
+        &labels(),
+        &sinks,
         WorkspaceStreamEventRoutePlan::HeadDelta {
             snapshot_rev: 21,
             delta: head_delta(session_id),
@@ -94,15 +113,18 @@ async fn replay_route_plan_tags_summary_batches_as_replay() {
     let session_id = SessionId::new();
     let (control, priority_control, foreground_head_buffer, background_head_buffer, summary_buffer) =
         queues();
-
-    let result = push_replay_event_route_plan(
-        workspace_id,
-        &labels(),
+    let sinks = replay_route_sinks(
         &control,
         &priority_control,
         &foreground_head_buffer,
         &background_head_buffer,
         &summary_buffer,
+    );
+
+    let result = push_replay_event_route_plan(
+        workspace_id,
+        &labels(),
+        &sinks,
         WorkspaceStreamEventRoutePlan::Summary {
             event: WorkspaceActiveSnapshotEvent::SessionSummaryDelta {
                 workspace_id,
@@ -138,15 +160,18 @@ async fn replay_route_plan_tags_control_events_as_replay_on_planned_lane() {
     let session_id = SessionId::new();
     let (control, priority_control, foreground_head_buffer, background_head_buffer, summary_buffer) =
         queues();
-
-    let result = push_replay_event_route_plan(
-        workspace_id,
-        &labels(),
+    let sinks = replay_route_sinks(
         &control,
         &priority_control,
         &foreground_head_buffer,
         &background_head_buffer,
         &summary_buffer,
+    );
+
+    let result = push_replay_event_route_plan(
+        workspace_id,
+        &labels(),
+        &sinks,
         WorkspaceStreamEventRoutePlan::Control {
             event: WorkspaceActiveSnapshotEvent::SessionGap {
                 workspace_id,
