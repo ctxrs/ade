@@ -4,6 +4,7 @@ pub mod ask_user;
 pub mod auth;
 pub mod command_dispatch;
 mod handle;
+mod head_route;
 pub mod model_catalog;
 mod model_switch;
 mod pinning;
@@ -17,4 +18,5 @@ pub use handle::{
     DemoSeedTranscript, DemoSeedTranscriptError, DemoSeedTranscriptTurn, GenerateSessionTitleError,
     PostUserMessageError, PostUserMessageInput, SessionImageBlobStoreError, SetSessionModeError,
 };
+pub use head_route::{SessionHeadRouteError, SessionHeadRouteRequest};
 pub use model_switch::{SetSessionModelError, SetSessionModelErrorKind, SetSessionModelRequest};

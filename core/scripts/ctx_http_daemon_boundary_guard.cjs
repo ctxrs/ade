@@ -170,6 +170,11 @@ const runArchiveApiRoots = [
   "core/crates/ctx-http/src/api/run_archive/",
 ];
 
+const sessionHeadApiRoots = [
+  "core/crates/ctx-http/src/api/sessions/snapshot/head.rs",
+  "core/crates/ctx-http/src/api/sessions/snapshot/head_metrics.rs",
+];
+
 const sessionVcsApiRoots = [
   "core/crates/ctx-http/src/api/sessions/snapshot/vcs.rs",
   "core/crates/ctx-http/src/api/sessions/snapshot/vcs/",
@@ -1157,6 +1162,33 @@ const RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS = [
   {
     name: "run archive API owns ingest error mapping",
     regex: /\brun_archive_ingest_api_error\s*\(/,
+  },
+];
+
+const SESSION_HEAD_API_ORCHESTRATION_PATTERNS = [
+  {
+    name: "session head API owns recovery timing",
+    regex: /\bInstant\s*::\s*now\s*\(/,
+  },
+  {
+    name: "session head API owns workspace lookup policy",
+    regex: /\.(?:workspace_id_for_session|is_workspace_deleting)\s*\(/,
+  },
+  {
+    name: "session head API owns read-model cache policy",
+    regex: /\.(?:cached_session_head_for_request|update_session_head_cache)\s*\(/,
+  },
+  {
+    name: "session head API owns store rebuild policy",
+    regex: /\.load_session_head_snapshot_from_store\s*\(/,
+  },
+  {
+    name: "session head API owns cache recovery telemetry",
+    regex: /\.(?:emit_cache_miss|emit_cache_rehydrate|record_session_head_recovery_metrics)\s*\(|\brecord_session_head_recovery_metrics\s*\(/,
+  },
+  {
+    name: "session head API owns stale min_event_seq policy",
+    regex: /\blast_event_seq\s*<\s*min_event_seq\b/,
   },
 ];
 
@@ -3990,6 +4022,9 @@ function apiPatternsForPath(relativePath) {
   if (runArchiveApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS);
   }
+  if (sessionHeadApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...SESSION_HEAD_API_ORCHESTRATION_PATTERNS);
+  }
   if (workspaceRegistrationConfigApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...WORKSPACE_REGISTRATION_CONFIG_API_PATTERNS);
   }
@@ -4129,6 +4164,13 @@ function mergeQueueSubmitApiPatternsForPath(relativePath) {
 function runArchiveApiPatternsForPath(relativePath) {
   if (runArchiveApiRoots.some((root) => relativePath.startsWith(root))) {
     return RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS;
+  }
+  return [];
+}
+
+function sessionHeadApiPatternsForPath(relativePath) {
+  if (sessionHeadApiRoots.some((root) => relativePath.startsWith(root))) {
+    return SESSION_HEAD_API_ORCHESTRATION_PATTERNS;
   }
   return [];
 }
@@ -5030,6 +5072,7 @@ module.exports = {
   UPDATE_DRAIN_API_ORCHESTRATION_PATTERNS,
   ROUTE_FILE_DOWNLOAD_API_PATTERNS,
   RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS,
+  SESSION_HEAD_API_ORCHESTRATION_PATTERNS,
   WORKSPACE_CONFIG_ROUTE_CONTEXT_PATTERNS,
   WORKSPACE_EXECUTION_CONFIG_API_PATTERNS,
   WORKSPACE_REGISTRATION_CONFIG_API_PATTERNS,
@@ -5133,6 +5176,7 @@ module.exports = {
   replayPropertiesStorePatternsForPath,
   routeFileDownloadApiPatternsForPath,
   runArchiveApiPatternsForPath,
+  sessionHeadApiPatternsForPath,
   routerCompositionPatternsForPath,
   scanRepo,
   scanRouterComposition,

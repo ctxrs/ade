@@ -482,7 +482,7 @@ impl SessionsHandle {
         Ok(Some(session_state))
     }
 
-    pub async fn load_session_head_snapshot_from_store(
+    pub(in crate::daemon) async fn load_session_head_snapshot_from_store(
         &self,
         session_id: SessionId,
         limit: u32,
@@ -1754,7 +1754,7 @@ impl SessionsHandle {
         self.state.telemetry.ops_events.emit(ops_event);
     }
 
-    pub async fn workspace_id_for_session(
+    pub(in crate::daemon) async fn workspace_id_for_session(
         &self,
         session_id: SessionId,
     ) -> anyhow::Result<Option<WorkspaceId>> {
@@ -1764,7 +1764,7 @@ impl SessionsHandle {
             .await
     }
 
-    pub async fn is_workspace_deleting(&self, workspace_id: WorkspaceId) -> bool {
+    pub(in crate::daemon) async fn is_workspace_deleting(&self, workspace_id: WorkspaceId) -> bool {
         self.state
             .core
             .stores
@@ -1772,7 +1772,7 @@ impl SessionsHandle {
             .await
     }
 
-    pub async fn cached_session_head_for_request(
+    pub(in crate::daemon) async fn cached_session_head_for_request(
         &self,
         session_id: SessionId,
         include_events: bool,
@@ -1786,7 +1786,11 @@ impl SessionsHandle {
             .await
     }
 
-    pub async fn update_session_head_cache(&self, head: SessionHeadSnapshot, include_events: bool) {
+    pub(in crate::daemon) async fn update_session_head_cache(
+        &self,
+        head: SessionHeadSnapshot,
+        include_events: bool,
+    ) {
         if include_events {
             self.state
                 .workspaces
@@ -1802,11 +1806,11 @@ impl SessionsHandle {
         }
     }
 
-    pub async fn emit_cache_miss(&self, cache: &str) {
+    pub(in crate::daemon) async fn emit_cache_miss(&self, cache: &str) {
         self.state.emit_cache_miss(cache).await;
     }
 
-    pub async fn emit_cache_rehydrate(&self, cache: &str, ok: bool) {
+    pub(in crate::daemon) async fn emit_cache_rehydrate(&self, cache: &str, ok: bool) {
         self.state.emit_cache_rehydrate(cache, ok).await;
     }
 
@@ -1821,7 +1825,7 @@ impl SessionsHandle {
             .await;
     }
 
-    pub fn record_session_head_recovery_metrics(
+    pub(in crate::daemon) fn record_session_head_recovery_metrics(
         &self,
         source: &'static str,
         result: &'static str,

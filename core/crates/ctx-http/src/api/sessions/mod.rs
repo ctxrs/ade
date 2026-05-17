@@ -1,5 +1,3 @@
-use std::time::Instant;
-
 use base64::Engine;
 
 use axum::extract::{Path, Query, State};

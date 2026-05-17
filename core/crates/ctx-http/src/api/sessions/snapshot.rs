@@ -3,8 +3,6 @@ use super::*;
 mod events;
 #[path = "snapshot/head.rs"]
 mod head;
-#[path = "snapshot/head_metrics.rs"]
-mod head_metrics;
 #[path = "snapshot/history.rs"]
 mod history;
 #[path = "snapshot/state.rs"]

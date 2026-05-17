@@ -48,6 +48,7 @@ const {
   MERGE_QUEUE_SUBMIT_API_ORCHESTRATION_PATTERNS,
   PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS,
   PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS,
+  SESSION_HEAD_API_ORCHESTRATION_PATTERNS,
   SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS,
   SESSION_VCS_API_ORCHESTRATION_PATTERNS,
   TASK_SESSION_CREATION_API_ADMISSION_PATTERNS,
@@ -136,6 +137,7 @@ const {
   scanRouterComposition,
   scanText,
   schedulerRuntimeStorePatternsForPath,
+  sessionHeadApiPatternsForPath,
   sessionModelApiStorePatternsForPath,
   sessionFixtureStorePatternsForPath,
   smallApiUnitStorePatternsForPath,
@@ -2681,6 +2683,75 @@ test("daemon boundary guard scopes run archive API orchestration roots", () => {
   }
   assert.deepEqual(
     runArchiveApiPatternsForPath("core/crates/ctx-http/src/api/updates/check.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects session head recovery orchestration in HTTP", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/sessions/snapshot/head.rs",
+    contents: `
+      async fn handler(state: SessionsHandle, min_event_seq: i64) {
+        let started_at = Instant::now();
+        let workspace_id = state.workspace_id_for_session(session_id).await?;
+        if state.is_workspace_deleting(workspace_id).await {}
+        if let Some(head) = state.cached_session_head_for_request(session_id, include_events, limit, Some(min_event_seq)).await {
+          record_session_head_recovery_metrics(&state, "active_snapshot_cache", "ok", started_at.elapsed(), limit, include_events, Some(&head));
+        }
+        state.emit_cache_miss("session_head").await;
+        let head = state.load_session_head_snapshot_from_store(session_id, limit, include_events).await?;
+        if head.last_event_seq < min_event_seq {
+          state.emit_cache_rehydrate("session_head", false).await;
+        }
+        state.update_session_head_cache(head, include_events).await;
+      }
+    `,
+    patterns: SESSION_HEAD_API_ORCHESTRATION_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "session head API owns recovery timing",
+      "session head API owns workspace lookup policy",
+      "session head API owns workspace lookup policy",
+      "session head API owns read-model cache policy",
+      "session head API owns read-model cache policy",
+      "session head API owns store rebuild policy",
+      "session head API owns cache recovery telemetry",
+      "session head API owns cache recovery telemetry",
+      "session head API owns cache recovery telemetry",
+      "session head API owns stale min_event_seq policy",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes session head recovery roots", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/src/api/sessions/snapshot/head.rs",
+    "core/crates/ctx-http/src/api/sessions/snapshot/head_metrics.rs",
+  ]) {
+    assert.deepEqual(
+      sessionHeadApiPatternsForPath(filePath),
+      SESSION_HEAD_API_ORCHESTRATION_PATTERNS,
+    );
+  }
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/sessions/snapshot/head.rs").includes(
+      SESSION_HEAD_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.deepEqual(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/sessions/snapshot/head.rs",
+      contents: "state.session_head_for_route(req).await?;",
+      patterns: SESSION_HEAD_API_ORCHESTRATION_PATTERNS,
+    }),
+    [],
+  );
+  assert.deepEqual(
+    sessionHeadApiPatternsForPath("core/crates/ctx-http/src/api/sessions/snapshot/history.rs"),
     [],
   );
 });
