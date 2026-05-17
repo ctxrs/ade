@@ -50,6 +50,7 @@ pub mod settings;
 mod state;
 pub mod storage_guard;
 pub mod tasks;
+pub mod telemetry_export;
 pub mod terminals;
 #[cfg(any(test, feature = "test-support"))]
 mod test_support_access;
@@ -93,11 +94,13 @@ pub use mcp_auth::{
 #[cfg(test)]
 pub use retention::prune_archived_session_data_for_all_workspaces;
 pub use runtime::{bootstrap_daemon_runtime, DaemonRuntime};
+pub use settings::{SettingsRouteError, SettingsRouteErrorKind};
 pub use state::{AppRuntimeFlags, DaemonState};
 pub use state::{
     AttachmentMaterializationTask, CacheSweepConfig, SessionStoreAccessError, StoreLookup,
     TimedEntry, WorkspaceStoreAccessError,
 };
+pub use telemetry_export::{TelemetryExportError, TelemetryExportErrorKind};
 pub use updates::{
     ApplyAppImageUpdateRequest, ApplyAppImageUpdateResult, DownloadAppImageUpdateRequest,
     DownloadAppImageUpdateResult, UpdateActivitySnapshot, UpdateCheckSnapshot, UpdateRouteError,

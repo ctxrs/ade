@@ -1,6 +1,8 @@
 use super::*;
 use chrono::{NaiveDate, Utc};
-use ctx_daemon::daemon::{CoreHandle, TelemetryHandle};
+use ctx_daemon::daemon::{
+    CoreHandle, TelemetryExportError, TelemetryExportErrorKind, TelemetryHandle,
+};
 use serde::Deserialize;
 
 mod semantic;
@@ -42,15 +44,21 @@ fn normalize_export_date(raw: Option<String>) -> Result<String, StatusCode> {
     Ok(date.format("%Y-%m-%d").to_string())
 }
 
+fn telemetry_export_status(error: TelemetryExportError) -> StatusCode {
+    match error.kind() {
+        TelemetryExportErrorKind::NotFound => StatusCode::NOT_FOUND,
+    }
+}
+
 pub(super) async fn export_telemetry(
     State(core): State<CoreHandle>,
     Query(q): Query<TelemetryExportQuery>,
 ) -> Result<Response, StatusCode> {
     let date = normalize_export_date(q.date)?;
-    let path = ctx_observability::perf_telemetry::perf_log_path_for_date(core.data_root(), &date);
-    let bytes = tokio::fs::read(&path)
+    let bytes = core
+        .read_perf_telemetry_export_for_date(&date)
         .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+        .map_err(telemetry_export_status)?;
     let mut resp = Response::new(Body::from(bytes));
     resp.headers_mut().insert(
         header::CONTENT_TYPE,

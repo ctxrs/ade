@@ -219,6 +219,14 @@ const healthDiagnosticsApiRoots = [
   "core/crates/ctx-http/src/api/diagnostics.rs",
 ];
 
+const settingsApiRoots = [
+  "core/crates/ctx-http/src/api/settings.rs",
+];
+
+const telemetryApiRoots = [
+  "core/crates/ctx-http/src/api/telemetry.rs",
+];
+
 const logsApiRoots = [
   "core/crates/ctx-http/src/api/logs_api.rs",
 ];
@@ -1369,6 +1377,36 @@ const DAEMON_HEALTH_VERSION_PATTERNS = [
   {
     name: "daemon health uses daemon crate package version directly",
     regex: /env!\s*\(\s*"CARGO_PKG_VERSION"\s*\)/,
+  },
+];
+
+const SETTINGS_API_ORCHESTRATION_PATTERNS = [
+  {
+    name: "settings API imports settings service directly",
+    regex: /\bctx_settings_service\b/,
+  },
+  {
+    name: "settings API owns host execution policy checks",
+    regex: /\bHostExecutionPolicy\b|\bvalidate_execution_environment\s*\(/,
+  },
+  {
+    name: "settings API applies settings updates directly",
+    regex: /\bapply_update\s*\(/,
+  },
+  {
+    name: "settings API owns settings persistence sequencing",
+    regex: /\.(?:load_settings|save_settings|apply_settings_side_effects|public_settings_for_response)\s*\(/,
+  },
+];
+
+const TELEMETRY_API_ORCHESTRATION_PATTERNS = [
+  {
+    name: "telemetry API derives perf log path directly",
+    regex: /\bperf_log_path_for_date\s*\(/,
+  },
+  {
+    name: "telemetry API accesses daemon data root directly",
+    regex: /\.data_root\s*\(/,
   },
 ];
 
@@ -3611,6 +3649,12 @@ function apiPatternsForPath(relativePath) {
   if (healthDiagnosticsApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...HEALTH_DIAGNOSTICS_API_ORCHESTRATION_PATTERNS);
   }
+  if (settingsApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...SETTINGS_API_ORCHESTRATION_PATTERNS);
+  }
+  if (telemetryApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...TELEMETRY_API_ORCHESTRATION_PATTERNS);
+  }
   if (logsApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...LOGS_API_ORCHESTRATION_PATTERNS);
   }
@@ -4609,6 +4653,8 @@ module.exports = {
   DAEMON_HEALTH_VERSION_PATTERNS,
   DAEMON_UPDATES_VERSION_PATTERNS,
   HEALTH_DIAGNOSTICS_API_ORCHESTRATION_PATTERNS,
+  SETTINGS_API_ORCHESTRATION_PATTERNS,
+  TELEMETRY_API_ORCHESTRATION_PATTERNS,
   LOGS_API_ORCHESTRATION_PATTERNS,
   UPDATE_API_ORCHESTRATION_PATTERNS,
   IMAGE_ATTACHMENTS_TEST_STORE_ACCESS_PATTERNS,

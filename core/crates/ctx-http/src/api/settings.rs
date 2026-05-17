@@ -2,46 +2,35 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
 
-use ctx_daemon::daemon::CoreHandle;
+use ctx_daemon::daemon::{CoreHandle, SettingsRouteError, SettingsRouteErrorKind};
 use ctx_settings_model as user_settings;
-use ctx_settings_service::HostExecutionPolicy;
+
+fn settings_route_status(error: SettingsRouteError) -> StatusCode {
+    match error.kind() {
+        SettingsRouteErrorKind::Forbidden => StatusCode::FORBIDDEN,
+        SettingsRouteErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
 
 pub(super) async fn get_settings(
     State(state): State<CoreHandle>,
 ) -> Result<Json<user_settings::PublicSettings>, StatusCode> {
-    let settings = state
-        .load_settings()
+    state
+        .settings_snapshot_for_response()
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(state.public_settings_for_response(&settings).await))
+        .map(Json)
+        .map_err(settings_route_status)
 }
 
 pub(super) async fn update_settings(
     State(state): State<CoreHandle>,
     Json(req): Json<user_settings::UpdateSettingsReq>,
 ) -> Result<Json<user_settings::PublicSettings>, StatusCode> {
-    let current = state
-        .load_settings()
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let host_execution_policy =
-        HostExecutionPolicy::current().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    if req
-        .execution
-        .as_ref()
-        .is_some_and(|execution| matches!(execution.mode, user_settings::ExecutionMode::Host))
-    {
-        host_execution_policy
-            .validate_execution_environment(ctx_core::models::ExecutionEnvironment::Host)
-            .map_err(|error| crate::api::shared::status_code_for_request_or_policy_error(&error))?;
-    }
-    let next = ctx_settings_service::apply_update(current, req);
     state
-        .save_settings(&next)
+        .update_settings_for_request(req)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    state.apply_settings_side_effects(&next).await;
-    Ok(Json(state.public_settings_for_response(&next).await))
+        .map(Json)
+        .map_err(settings_route_status)
 }
 
 #[cfg(test)]
@@ -99,5 +88,56 @@ mod tests {
             .expect_err("sandbox-only policy should reject host execution settings update");
 
         assert_eq!(err, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn update_settings_persists_and_returns_public_settings() {
+        let _env_guard = EXECUTION_POLICY_TEST_ENV_LOCK.lock().await;
+        let _policy = EnvVarGuard::remove("CTX_HOST_EXECUTION_POLICY");
+        let fixture = crate::test_support::TestDaemonFixture::new("http://127.0.0.1:4310").await;
+        let endpoint = "https://telemetry.example/functions/v1/telemetry";
+        let req = serde_json::from_value::<user_settings::UpdateSettingsReq>(json!({
+            "telemetry": {
+                "enabled": false,
+                "endpoint": endpoint
+            }
+        }))
+        .expect("settings update request");
+
+        let Json(public) = update_settings(State(fixture.core()), Json(req))
+            .await
+            .expect("settings update should succeed");
+
+        let telemetry = public.telemetry.expect("public telemetry settings");
+        assert!(!telemetry.enabled);
+        assert_eq!(telemetry.endpoint, endpoint);
+        let persisted = fixture
+            .core()
+            .load_settings()
+            .await
+            .expect("persisted settings");
+        let persisted_telemetry = persisted.telemetry.expect("persisted telemetry settings");
+        assert!(!persisted_telemetry.enabled);
+        assert_eq!(persisted_telemetry.endpoint, endpoint);
+    }
+
+    #[tokio::test]
+    async fn update_settings_returns_internal_server_error_for_invalid_host_execution_policy() {
+        let _env_guard = EXECUTION_POLICY_TEST_ENV_LOCK.lock().await;
+        let _policy = EnvVarGuard::set("CTX_HOST_EXECUTION_POLICY", "invalid");
+        let fixture = crate::test_support::TestDaemonFixture::new("http://127.0.0.1:4310").await;
+        let req = serde_json::from_value::<user_settings::UpdateSettingsReq>(json!({
+            "telemetry": {
+                "enabled": true,
+                "endpoint": "https://telemetry.example/functions/v1/telemetry"
+            }
+        }))
+        .expect("settings update request");
+
+        let err = update_settings(State(fixture.core()), Json(req))
+            .await
+            .expect_err("invalid host execution policy should fail settings update");
+
+        assert_eq!(err, StatusCode::INTERNAL_SERVER_ERROR);
     }
 }

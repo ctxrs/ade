@@ -5,6 +5,35 @@ use crate::daemon::{
     provider_guard, provider_restart, resource_governance, tool_cgroup, CoreHandle, DaemonState,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsRouteErrorKind {
+    Forbidden,
+    Internal,
+}
+
+#[derive(Debug, Clone)]
+pub struct SettingsRouteError {
+    kind: SettingsRouteErrorKind,
+}
+
+impl SettingsRouteError {
+    fn forbidden(_error: impl std::fmt::Display) -> Self {
+        Self {
+            kind: SettingsRouteErrorKind::Forbidden,
+        }
+    }
+
+    fn internal(_error: impl std::fmt::Display) -> Self {
+        Self {
+            kind: SettingsRouteErrorKind::Internal,
+        }
+    }
+
+    pub fn kind(&self) -> SettingsRouteErrorKind {
+        self.kind
+    }
+}
+
 pub async fn load_settings(state: &DaemonState) -> anyhow::Result<Settings> {
     ctx_settings_service::load_settings(state.global_store()).await
 }
@@ -57,6 +86,41 @@ pub async fn apply_settings_side_effects(state: &DaemonState, settings: &Setting
 }
 
 impl CoreHandle {
+    pub async fn settings_snapshot_for_response(
+        &self,
+    ) -> Result<PublicSettings, SettingsRouteError> {
+        let settings = self
+            .load_settings()
+            .await
+            .map_err(SettingsRouteError::internal)?;
+        Ok(self.public_settings_for_response(&settings).await)
+    }
+
+    pub async fn update_settings_for_request(
+        &self,
+        req: ctx_settings_model::UpdateSettingsReq,
+    ) -> Result<PublicSettings, SettingsRouteError> {
+        let current = self
+            .load_settings()
+            .await
+            .map_err(SettingsRouteError::internal)?;
+        let host_execution_policy = ctx_settings_service::HostExecutionPolicy::current()
+            .map_err(SettingsRouteError::internal)?;
+        if req.execution.as_ref().is_some_and(|execution| {
+            matches!(execution.mode, ctx_settings_model::ExecutionMode::Host)
+        }) {
+            host_execution_policy
+                .validate_execution_environment(ctx_core::models::ExecutionEnvironment::Host)
+                .map_err(SettingsRouteError::forbidden)?;
+        }
+        let next = ctx_settings_service::apply_update(current, req);
+        self.save_settings(&next)
+            .await
+            .map_err(SettingsRouteError::internal)?;
+        self.apply_settings_side_effects(&next).await;
+        Ok(self.public_settings_for_response(&next).await)
+    }
+
     pub async fn load_settings(&self) -> anyhow::Result<Settings> {
         load_settings(self.state.as_ref()).await
     }

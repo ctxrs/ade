@@ -20,6 +20,8 @@ const {
   DAEMON_HEALTH_VERSION_PATTERNS,
   DAEMON_UPDATES_VERSION_PATTERNS,
   HEALTH_DIAGNOSTICS_API_ORCHESTRATION_PATTERNS,
+  SETTINGS_API_ORCHESTRATION_PATTERNS,
+  TELEMETRY_API_ORCHESTRATION_PATTERNS,
   LOGS_API_ORCHESTRATION_PATTERNS,
   UPDATE_API_ORCHESTRATION_PATTERNS,
   IMAGE_ATTACHMENTS_TEST_STORE_ACCESS_PATTERNS,
@@ -3109,6 +3111,82 @@ test("daemon boundary guard scopes task-session admission patterns to creation-s
   assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/tasks/task_deletion.rs").includes(
       TASK_SESSION_CREATION_API_ADMISSION_PATTERNS[0],
+    ),
+    false,
+  );
+});
+
+test("daemon boundary guard rejects settings API orchestration", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/settings.rs",
+    contents: `
+      use ctx_settings_service::HostExecutionPolicy;
+      async fn update_settings(State(state): State<CoreHandle>, Json(req): Json<UpdateSettingsReq>) {
+        let current = state.load_settings().await?;
+        let policy = HostExecutionPolicy::current()?;
+        policy.validate_execution_environment(ctx_core::models::ExecutionEnvironment::Host)?;
+        let next = ctx_settings_service::apply_update(current, req);
+        state.save_settings(&next).await?;
+        state.apply_settings_side_effects(&next).await;
+        state.public_settings_for_response(&next).await;
+      }
+    `,
+    patterns: SETTINGS_API_ORCHESTRATION_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "settings API imports settings service directly",
+      "settings API imports settings service directly",
+      "settings API owns host execution policy checks",
+      "settings API owns host execution policy checks",
+      "settings API owns host execution policy checks",
+      "settings API applies settings updates directly",
+      "settings API owns settings persistence sequencing",
+      "settings API owns settings persistence sequencing",
+      "settings API owns settings persistence sequencing",
+      "settings API owns settings persistence sequencing",
+    ],
+  );
+});
+
+test("daemon boundary guard rejects telemetry export filesystem pathing", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/telemetry.rs",
+    contents: `
+      async fn export_telemetry(State(core): State<CoreHandle>) {
+        let path = ctx_observability::perf_telemetry::perf_log_path_for_date(core.data_root(), &date);
+      }
+    `,
+    patterns: TELEMETRY_API_ORCHESTRATION_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "telemetry API derives perf log path directly",
+      "telemetry API accesses daemon data root directly",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes settings and telemetry API orchestration roots", () => {
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/settings.rs").includes(
+      SETTINGS_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/telemetry.rs").includes(
+      TELEMETRY_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/updates/check.rs").includes(
+      SETTINGS_API_ORCHESTRATION_PATTERNS[0],
     ),
     false,
   );

@@ -47,3 +47,20 @@ async fn telemetry_export_rejects_path_traversal_dates() {
     let res = app.oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
 }
+
+#[tokio::test]
+async fn telemetry_export_returns_not_found_for_missing_daily_log() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let fixture =
+        test_daemon_fixture_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
+    let app = fixture.router();
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/telemetry/export?date=2026-04-25")
+        .header(header::AUTHORIZATION, "Bearer daemon-secret")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}
