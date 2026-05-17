@@ -84,6 +84,7 @@ CTX_HTTP_SUITE_TESTS = {
         "demo_seed_transcript_http",
         "message_idempotency_post_message_idempotent_same_payload",
         "message_idempotency_post_message_idempotent_conflict_on_change",
+        "terminal_rest_route_contracts",
         "terminal_workspace_stream_separation",
         "terminal_ws_reconnect",
     ],

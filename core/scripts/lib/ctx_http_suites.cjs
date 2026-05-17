@@ -264,6 +264,7 @@ const CTX_HTTP_CHECKIN_FANOUT_TARGET_BATCHES_BY_SUITE = Object.freeze({
       "message_idempotency_post_message_idempotent_conflict_on_change",
     ],
     [
+      "terminal_rest_route_contracts",
       "terminal_workspace_stream_separation",
       "terminal_ws_reconnect",
     ],
@@ -760,6 +761,7 @@ const CTX_HTTP_SUITES = [
       "demo_seed_transcript_http",
       "message_idempotency_post_message_idempotent_same_payload",
       "message_idempotency_post_message_idempotent_conflict_on_change",
+      "terminal_rest_route_contracts",
       "terminal_workspace_stream_separation",
       "terminal_ws_reconnect",
     ],
@@ -787,6 +789,7 @@ const CTX_HTTP_SUITES = [
     testFiles: [
       "demo_seed_transcript_http",
       "message_idempotency",
+      "terminal_rest_route_contracts",
       "terminal_workspace_stream_separation",
       "terminal_ws_reconnect",
     ],

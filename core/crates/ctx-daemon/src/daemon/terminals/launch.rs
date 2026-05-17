@@ -20,6 +20,7 @@ use self::paths::resolve_terminal_paths;
 pub use self::worktree::infer_terminal_worktree;
 use self::worktree::resolve_terminal_worktree;
 
+#[derive(Debug)]
 pub struct CreateTerminalLaunchRequest {
     pub workspace_id: WorkspaceId,
     pub task_id: Option<TaskId>,

@@ -51,6 +51,7 @@ const {
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
   MERGE_QUEUE_ENTRY_API_ROUTE_CONTRACT_PATTERNS,
   MERGE_QUEUE_SUBMIT_API_ORCHESTRATION_PATTERNS,
+  TERMINAL_REST_ROUTE_API_CONTRACT_PATTERNS,
   PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS,
   PROVIDER_AUTH_IMPORT_API_ORCHESTRATION_PATTERNS,
   PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS,
@@ -133,6 +134,7 @@ const {
   mergeQueueIsolationStorePatternsForPath,
   mergeQueueEntryApiPatternsForPath,
   mergeQueueSubmitApiPatternsForPath,
+  terminalRestRouteApiPatternsForPath,
   mcpDaemonPatternsForPath,
   migratedTestPatternsForPath,
   mobileAccessStoreDtoApiPatternsForPath,
@@ -2740,6 +2742,74 @@ test("daemon boundary guard scopes merge queue entry API route contracts", () =>
   );
   assert.deepEqual(
     mergeQueueEntryApiPatternsForPath("core/crates/ctx-http/src/api/merge_queue_api/logs.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects terminal REST raw route contracts", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/terminals.rs",
+    contents: `
+      use ctx_core::ids::{SessionId, TaskId, TerminalId, WorkspaceId, WorktreeId};
+      use ctx_core::models::{TerminalSession, TerminalStatus};
+      use ctx_daemon::daemon::terminals::CreateTerminalLaunchRequest;
+      #[derive(Deserialize)]
+      struct CreateTerminalReq;
+      #[derive(Serialize)]
+      struct TerminalStreamConnectInfo;
+      async fn helper(state: TransportHandle) -> Json<Vec<ctx_core::models::TerminalSession>> {
+        let _id = TerminalId(uuid::Uuid::parse_str("bad").unwrap());
+        state.list_workspace_terminals(workspace_id).await;
+        state.create_workspace_terminal(req).await?;
+        state.delete_terminal(terminal_id).await;
+        state.mint_terminal_stream_token(terminal_id).await;
+        Json(Vec::<TerminalSession>::new())
+      }
+    `,
+    patterns: TERMINAL_REST_ROUTE_API_CONTRACT_PATTERNS,
+  });
+
+  assert.deepEqual(new Set(violations.map((violation) => violation.name)), new Set([
+    "terminal REST API exposes raw terminal route DTOs",
+    "terminal REST API owns terminal ids or local id parsing",
+    "terminal REST API owns local create or stream DTOs",
+    "terminal REST API imports low-level launch types",
+    "terminal REST API calls raw terminal facades",
+  ]));
+});
+
+test("daemon boundary guard scopes terminal REST route contracts", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/src/api/terminals.rs",
+    "core/crates/ctx-http/src/api/terminals/request.rs",
+  ]) {
+    assert.deepEqual(
+      terminalRestRouteApiPatternsForPath(filePath),
+      TERMINAL_REST_ROUTE_API_CONTRACT_PATTERNS,
+    );
+    assert.equal(
+      apiPatternsForPath(filePath).includes(TERMINAL_REST_ROUTE_API_CONTRACT_PATTERNS[0]),
+      true,
+    );
+  }
+
+  assert.deepEqual(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/terminals.rs",
+      contents: `
+        async fn handler(state: TransportHandle) -> Json<TerminalSessionRouteResponse> {
+          state.create_workspace_terminal_for_route(&id, req).await?;
+          state.delete_terminal_for_route(DeleteTerminalRouteParams::new(id)).await?;
+          state.mint_terminal_stream_token_for_route(MintTerminalStreamTokenRouteParams::new(id)).await?;
+          Json(TerminalSessionRouteResponse::fake())
+        }
+      `,
+      patterns: TERMINAL_REST_ROUTE_API_CONTRACT_PATTERNS,
+    }),
+    [],
+  );
+  assert.deepEqual(
+    terminalRestRouteApiPatternsForPath("core/crates/ctx-http/src/api/ws/terminal.rs"),
     [],
   );
 });

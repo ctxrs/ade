@@ -9,24 +9,31 @@ use ctx_transport_runtime::terminals::{TerminalSessionHandle, TerminalStatusEven
 use crate::daemon::{DaemonState, TransportHandle};
 
 mod launch;
+mod route_contract;
 
-pub use launch::CreateTerminalLaunchRequest;
+use self::launch::CreateTerminalLaunchRequest;
 
-pub async fn list_workspace_terminals(
+pub use route_contract::{
+    CreateTerminalRouteRequest, DeleteTerminalRouteParams, ListWorkspaceTerminalsRouteParams,
+    MintTerminalStreamTokenRouteParams, TerminalRouteError, TerminalRouteErrorKind,
+    TerminalSessionRouteResponse, TerminalStatusRouteResponse, TerminalStreamConnectRouteResponse,
+};
+
+async fn list_workspace_terminals(
     state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
 ) -> Vec<TerminalSession> {
     state.transport.terminals.list(workspace_id).await
 }
 
-pub async fn create_workspace_terminal(
+async fn create_workspace_terminal(
     state: &Arc<DaemonState>,
     req: CreateTerminalLaunchRequest,
 ) -> Result<TerminalSession, TerminalLaunchError> {
     launch::create_workspace_terminal(state, req).await
 }
 
-pub async fn delete_terminal(state: &Arc<DaemonState>, terminal_id: TerminalId) -> bool {
+async fn delete_terminal(state: &Arc<DaemonState>, terminal_id: TerminalId) -> bool {
     let session = state.transport.terminals.remove(terminal_id).await;
     if let Some(session) = session {
         let _ = session.kill();
@@ -41,7 +48,7 @@ pub struct TerminalStreamConnectPath {
     pub expires_at: DateTime<Utc>,
 }
 
-pub async fn mint_terminal_stream_token(
+async fn mint_terminal_stream_token(
     state: &Arc<DaemonState>,
     terminal_id: TerminalId,
 ) -> Option<TerminalStreamConnectPath> {
@@ -212,31 +219,6 @@ pub async fn require_terminal_stream_access(
 }
 
 impl TransportHandle {
-    pub async fn list_workspace_terminals(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> Vec<TerminalSession> {
-        list_workspace_terminals(&self.state, workspace_id).await
-    }
-
-    pub async fn create_workspace_terminal(
-        &self,
-        req: CreateTerminalLaunchRequest,
-    ) -> Result<TerminalSession, TerminalLaunchError> {
-        create_workspace_terminal(&self.state, req).await
-    }
-
-    pub async fn delete_terminal(&self, terminal_id: TerminalId) -> bool {
-        delete_terminal(&self.state, terminal_id).await
-    }
-
-    pub async fn mint_terminal_stream_token(
-        &self,
-        terminal_id: TerminalId,
-    ) -> Option<TerminalStreamConnectPath> {
-        mint_terminal_stream_token(&self.state, terminal_id).await
-    }
-
     pub async fn require_terminal_stream_access(
         &self,
         terminal_id: TerminalId,

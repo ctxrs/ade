@@ -97,6 +97,7 @@ const migratedRawDaemonTestRoots = [
   "core/crates/ctx-http/tests/subscription_accounts_api.rs",
   "core/crates/ctx-http/tests/system_prompt_append_http.rs",
   "core/crates/ctx-http/tests/task_default_session_http.rs",
+  "core/crates/ctx-http/tests/terminal_rest_route_contracts.rs",
   "core/crates/ctx-http/tests/terminal_workspace_stream_separation.rs",
   "core/crates/ctx-http/tests/terminal_ws_reconnect.rs",
   "core/crates/ctx-http/tests/title_generation_local_e2e.rs",
@@ -169,6 +170,11 @@ const mergeQueueEntryApiRoots = [
   "core/crates/ctx-http/src/api/merge_queue_api/actions.rs",
   "core/crates/ctx-http/src/api/merge_queue_api/submit.rs",
   "core/crates/ctx-http/src/api/merge_queue_api/request.rs",
+];
+
+const terminalRestRouteApiRoots = [
+  "core/crates/ctx-http/src/api/terminals.rs",
+  "core/crates/ctx-http/src/api/terminals/",
 ];
 
 const runArchiveApiRoots = [
@@ -1270,6 +1276,32 @@ const MERGE_QUEUE_ENTRY_API_ROUTE_CONTRACT_PATTERNS = [
   {
     name: "merge queue entry API imports low-level merge queue crate",
     regex: /\bctx_merge_queue\b/,
+  },
+];
+
+const TERMINAL_REST_ROUTE_API_CONTRACT_PATTERNS = [
+  {
+    name: "terminal REST API exposes raw terminal route DTOs",
+    regex:
+      /\bctx_core::models::TerminalSession\b|\bmodels::TerminalSession\b|\bTerminalSession\b|\bctx_core::models::TerminalStatus\b|\bmodels::TerminalStatus\b|\bTerminalStatus\b/,
+  },
+  {
+    name: "terminal REST API owns terminal ids or local id parsing",
+    regex:
+      /\b(?:WorkspaceId|TerminalId|TaskId|SessionId|WorktreeId)\b|\buuid\s*::\s*Uuid\s*::\s*parse_str\s*\(/,
+  },
+  {
+    name: "terminal REST API owns local create or stream DTOs",
+    regex: /\b(?:CreateTerminalReq|TerminalStreamConnectInfo)\b/,
+  },
+  {
+    name: "terminal REST API imports low-level launch types",
+    regex: /\b(?:CreateTerminalLaunchRequest|TerminalLaunchError|TerminalLaunchErrorKind)\b/,
+  },
+  {
+    name: "terminal REST API calls raw terminal facades",
+    regex:
+      /\.(?:list_workspace_terminals|create_workspace_terminal|delete_terminal|mint_terminal_stream_token)\s*\(/,
   },
 ];
 
@@ -4626,6 +4658,9 @@ function apiPatternsForPath(relativePath) {
   if (mergeQueueEntryApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...MERGE_QUEUE_ENTRY_API_ROUTE_CONTRACT_PATTERNS);
   }
+  if (terminalRestRouteApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...TERMINAL_REST_ROUTE_API_CONTRACT_PATTERNS);
+  }
   if (runArchiveApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS);
   }
@@ -4781,6 +4816,13 @@ function mergeQueueSubmitApiPatternsForPath(relativePath) {
 function mergeQueueEntryApiPatternsForPath(relativePath) {
   if (mergeQueueEntryApiRoots.some((root) => relativePath.startsWith(root))) {
     return MERGE_QUEUE_ENTRY_API_ROUTE_CONTRACT_PATTERNS;
+  }
+  return [];
+}
+
+function terminalRestRouteApiPatternsForPath(relativePath) {
+  if (terminalRestRouteApiRoots.some((root) => relativePath.startsWith(root))) {
+    return TERMINAL_REST_ROUTE_API_CONTRACT_PATTERNS;
   }
   return [];
 }
@@ -5777,6 +5819,7 @@ module.exports = {
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
   MERGE_QUEUE_ENTRY_API_ROUTE_CONTRACT_PATTERNS,
   MERGE_QUEUE_SUBMIT_API_ORCHESTRATION_PATTERNS,
+  TERMINAL_REST_ROUTE_API_CONTRACT_PATTERNS,
   MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS,
   CURSOR_PROCESS_LOGIN_API_ORCHESTRATION_PATTERNS,
   CODEX_APP_SERVER_LOGIN_API_ORCHESTRATION_PATTERNS,
@@ -5864,6 +5907,7 @@ module.exports = {
   mergeQueueIsolationStorePatternsForPath,
   mergeQueueEntryApiPatternsForPath,
   mergeQueueSubmitApiPatternsForPath,
+  terminalRestRouteApiPatternsForPath,
   mcpDaemonPatternsForPath,
   migratedTestPatternsForPath,
   mobileAccessStoreDtoApiPatternsForPath,
