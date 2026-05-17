@@ -27,7 +27,7 @@ pub enum WorkspaceStreamEventRoutePlan {
     Drop,
     HeadDelta {
         snapshot_rev: i64,
-        delta: SessionHeadDelta,
+        delta: Box<SessionHeadDelta>,
         lane: WorkspaceStreamHeadLane,
     },
     Summary {
@@ -123,7 +123,7 @@ pub fn plan_workspace_stream_event_route(
             };
             WorkspaceStreamEventRoutePlan::HeadDelta {
                 snapshot_rev,
-                delta,
+                delta: Box::new(delta),
                 lane,
             }
         }

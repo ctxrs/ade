@@ -272,7 +272,7 @@ impl ProvidersHandle {
 fn parse_install_id_for_status_route(
     raw_install_id: &str,
 ) -> Result<InstallId, ProviderInstallStatusOnlyRouteError> {
-    uuid::Uuid::parse_str(raw_install_id)
-        .map(InstallId::from)
+    raw_install_id
+        .parse::<InstallId>()
         .map_err(|_| ProviderInstallStatusOnlyRouteError::BadRequest)
 }

@@ -48,7 +48,7 @@ pub struct WorkspaceStreamSessionPinChanges {
 #[derive(Clone, Debug)]
 pub enum WorkspaceStreamSubscriptionTransactionPlan {
     NoChange,
-    Apply(WorkspaceStreamSubscriptionApplyPlan),
+    Apply(Box<WorkspaceStreamSubscriptionApplyPlan>),
 }
 
 #[derive(Clone, Debug)]
@@ -143,14 +143,14 @@ pub fn plan_workspace_stream_subscription_transaction(
         current_subscriptions.keys().copied(),
         plan.provisional_subscriptions.keys().copied(),
     );
-    WorkspaceStreamSubscriptionTransactionPlan::Apply(WorkspaceStreamSubscriptionApplyPlan {
+    WorkspaceStreamSubscriptionTransactionPlan::Apply(Box::new(WorkspaceStreamSubscriptionApplyPlan {
         include_initial_snapshot: plan.include_initial_snapshot,
         fingerprint: plan.fingerprint,
         sessions: plan.sessions,
         state: plan.state,
         provisional_subscriptions: plan.provisional_subscriptions,
         pin_changes,
-    })
+    }))
 }
 
 pub fn finalize_workspace_stream_subscription_replay(
@@ -415,8 +415,8 @@ fn subscription_event_application(
 ) -> WorkspaceStreamSubscriptionEventApplication {
     let next_subscriptions = subscriptions.keys().copied().collect::<HashSet<_>>();
     let pin_changes = workspace_stream_session_pin_changes(
-        previous_subscriptions.into_iter(),
-        next_subscriptions.into_iter(),
+        previous_subscriptions,
+        next_subscriptions,
     );
     WorkspaceStreamSubscriptionEventApplication {
         state,
