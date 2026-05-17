@@ -100,7 +100,7 @@ async fn push_replay_event_route_plan(
             if let Err(error) = head_buffer
                 .push_with_source(
                     snapshot_rev,
-                    delta,
+                    *delta,
                     WorkspaceActiveSnapshotStreamSource::Replay,
                 )
                 .await

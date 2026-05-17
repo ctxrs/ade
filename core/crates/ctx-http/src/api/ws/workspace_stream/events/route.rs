@@ -25,7 +25,7 @@ pub(super) async fn push_workspace_stream_event_route_plan(
                 state,
                 workspace_id,
                 snapshot_rev,
-                delta,
+                *delta,
                 lane,
                 runtime,
                 labels,
