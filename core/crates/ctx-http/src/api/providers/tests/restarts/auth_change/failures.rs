@@ -50,9 +50,10 @@ async fn set_codex_active_account_returns_error_when_restart_fails() {
 
     let err = set_codex_active_account(
         State(fixture.providers()),
-        Json(CodexActiveAccountReq {
-            account_id: Some("acct".to_string()),
-        }),
+        Json(
+            serde_json::from_value(serde_json::json!({ "account_id": "acct" }))
+                .expect("deserialize active-account request"),
+        ),
     )
     .await
     .expect_err("restart failure should surface");
@@ -99,7 +100,7 @@ async fn delete_codex_account_keeps_account_when_restart_fails() {
 
     let err = match fixture
         .providers()
-        .remove_codex_account("acct-delete")
+        .remove_codex_account_for_test("acct-delete")
         .await
     {
         Ok(_) => panic!("restart failure should surface before deletion"),
@@ -161,7 +162,7 @@ async fn delete_codex_account_stops_provider_immediately_before_broker_cleanup()
 
     fixture
         .providers()
-        .remove_codex_account("acct-delete")
+        .remove_codex_account_for_test("acct-delete")
         .await
         .expect("remove account");
 
@@ -189,7 +190,11 @@ async fn delete_unknown_codex_account_does_not_stop_provider() {
     let adapter = Arc::new(RestartTrackingAdapter::default());
     let fixture = fixture_with_adapter(adapter.clone() as Arc<dyn ProviderAdapter>).await;
 
-    let err = match fixture.providers().remove_codex_account("missing").await {
+    let err = match fixture
+        .providers()
+        .remove_codex_account_for_test("missing")
+        .await
+    {
         Ok(_) => panic!("missing account should not be deleted"),
         Err(err) => err,
     };
@@ -230,7 +235,7 @@ async fn delete_codex_account_keeps_account_when_broker_cleanup_fails() {
 
     let err = match fixture
         .providers()
-        .remove_codex_account("acct-delete")
+        .remove_codex_account_for_test("acct-delete")
         .await
     {
         Ok(_) => panic!("broker cleanup failure should surface before deletion"),

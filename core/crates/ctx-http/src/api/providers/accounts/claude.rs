@@ -5,7 +5,7 @@ pub(crate) async fn list_claude_accounts(
     State(providers): State<ProvidersHandle>,
 ) -> Result<Json<ClaudeAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     let response = providers
-        .claude_accounts_response()
+        .claude_accounts_for_route()
         .await
         .map_err(provider_account_route_error)?;
     Ok(Json(response))
@@ -13,10 +13,10 @@ pub(crate) async fn list_claude_accounts(
 
 pub(crate) async fn upsert_claude_account(
     State(providers): State<ProvidersHandle>,
-    Json(req): Json<ClaudeAccountUpsertReq>,
+    Json(req): Json<ClaudeAccountUpsertRouteRequest>,
 ) -> Result<Json<ClaudeAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     let response = providers
-        .add_claude_account_response(req.label, req.setup_token)
+        .upsert_claude_account_for_route(req)
         .await
         .map_err(provider_account_route_error)?;
     Ok(Json(response))
@@ -24,10 +24,10 @@ pub(crate) async fn upsert_claude_account(
 
 pub(crate) async fn set_claude_active_account(
     State(providers): State<ProvidersHandle>,
-    Json(req): Json<ClaudeActiveAccountReq>,
+    Json(req): Json<ProviderActiveAccountRouteRequest>,
 ) -> Result<Json<ClaudeAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     let response = providers
-        .set_active_claude_account_response(req.account_id)
+        .set_active_claude_account_for_route(req)
         .await
         .map_err(provider_account_route_error)?;
     Ok(Json(response))
@@ -38,7 +38,7 @@ pub(crate) async fn delete_claude_account(
     Path(id): Path<String>,
 ) -> Result<Json<ClaudeAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     let response = providers
-        .delete_claude_account_response(&id)
+        .delete_claude_account_for_route(&id)
         .await
         .map_err(provider_account_route_error)?;
     Ok(Json(response))

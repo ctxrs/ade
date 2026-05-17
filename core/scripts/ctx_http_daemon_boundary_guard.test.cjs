@@ -3671,9 +3671,15 @@ test("daemon boundary guard rejects provider account orchestration in HTTP", () 
         codex_accounts_response_from_snapshot(snapshot);
         unknown_account();
         provider_account_mutation_error(err);
+        let _request: Option<CodexActiveAccountReq> = None;
+        providers.codex_accounts_response().await?;
+        providers.import_host_codex_auth_response(label).await?;
+        let _probe: Option<provider_accounts::CodexHostImportProbe> = None;
+        ctx_daemon::daemon::providers::probe_host_codex_auth_candidate().await;
       }
 
       pub(crate) async fn amp_accounts_response(providers: &ProvidersHandle) {}
+      pub(crate) struct GeminiAccountUpsertReq { oauth_creds_json: String }
     `,
     patterns: PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS,
   });
@@ -3692,6 +3698,12 @@ test("daemon boundary guard rejects provider account orchestration in HTTP", () 
       "provider account API defines local account response builders",
       "provider account API owns unknown-account or mutation error mapping",
       "provider account API owns unknown-account or mutation error mapping",
+      "provider account API owns account request DTOs",
+      "provider account API owns account request DTOs",
+      "provider account API calls broad account response facades",
+      "provider account API calls broad account response facades",
+      "provider account API calls low-level Codex host import probe",
+      "provider account API calls low-level Codex host import probe",
     ],
   );
 });
@@ -3707,6 +3719,12 @@ test("daemon boundary guard scopes provider account orchestration patterns", () 
     apiPatternsForPath("core/crates/ctx-http/src/api/providers/accounts/amp.rs").includes(
       PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS[0],
     ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/providers/types/accounts/requests.rs",
+    ).includes(PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS[5]),
     true,
   );
   assert.equal(

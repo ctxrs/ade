@@ -54,7 +54,6 @@ mod imports;
 mod install;
 mod login;
 mod status;
-mod types;
 
 pub(super) use accounts::{
     delete_amp_account, delete_claude_account, delete_codex_account, delete_copilot_account,
@@ -87,7 +86,6 @@ pub(super) use login::{
     start_codex_login, start_gemini_login, start_kimi_login, start_mistral_login, start_qwen_login,
 };
 pub(super) use status::{get_provider, get_provider_usage, list_providers};
-use types::*;
 
 #[cfg(test)]
 use ctx_daemon::daemon::providers::provider_auth_import_result_requires_restart as import_result_requires_provider_restart;

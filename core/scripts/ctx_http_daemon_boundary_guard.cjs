@@ -235,6 +235,8 @@ const providerStatusApiRoots = [
 const providerAccountsApiRoots = [
   "core/crates/ctx-http/src/api/providers/accounts.rs",
   "core/crates/ctx-http/src/api/providers/accounts/",
+  "core/crates/ctx-http/src/api/providers/types/accounts.rs",
+  "core/crates/ctx-http/src/api/providers/types/accounts/",
 ];
 
 const providerUsageApiRoots = [
@@ -1665,6 +1667,21 @@ const PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS = [
     name: "provider account API owns unknown-account or mutation error mapping",
     regex:
       /\b(?:unknown_account|provider_account_mutation_error|provider_account_delete_error|codex_account_set_active_error)\s*\(/,
+  },
+  {
+    name: "provider account API owns account request DTOs",
+    regex:
+      /\b(?:CodexActiveAccountReq|CodexHostImportReq|ClaudeAccountUpsertReq|ClaudeActiveAccountReq|GeminiAccountUpsertReq|GeminiActiveAccountReq|QwenAccountUpsertReq|QwenActiveAccountReq|KimiAccountUpsertReq|KimiActiveAccountReq|MistralAccountUpsertReq|MistralActiveAccountReq|CopilotAccountUpsertReq|CopilotActiveAccountReq|CursorAccountUpsertReq|CursorActiveAccountReq|AmpAccountUpsertReq|AmpActiveAccountReq)\b/,
+  },
+  {
+    name: "provider account API calls broad account response facades",
+    regex:
+      /(?:\.|\bProvidersHandle::)(?:(?:codex|amp|claude|copilot|cursor|gemini|kimi|mistral|qwen)_accounts_response|import_host_codex_auth_response|set_active_(?:codex|amp|claude|copilot|cursor|gemini|kimi|mistral|qwen)_account_response|delete_(?:codex|amp|claude|copilot|cursor|gemini|kimi|mistral|qwen)_account_response|add_(?:claude|copilot|cursor|gemini|kimi|qwen)_account_response|upsert_(?:amp|mistral)_account_response)\s*\(/,
+  },
+  {
+    name: "provider account API calls low-level Codex host import probe",
+    regex:
+      /\bprobe_host_codex_auth_candidate\s*\(|\bprovider_accounts::CodexHostImportProbe\b/,
   },
 ];
 

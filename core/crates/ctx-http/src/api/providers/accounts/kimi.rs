@@ -5,7 +5,7 @@ pub(crate) async fn list_kimi_accounts(
     State(providers): State<ProvidersHandle>,
 ) -> Result<Json<KimiAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     let response = providers
-        .kimi_accounts_response()
+        .kimi_accounts_for_route()
         .await
         .map_err(provider_account_route_error)?;
     Ok(Json(response))
@@ -13,16 +13,10 @@ pub(crate) async fn list_kimi_accounts(
 
 pub(crate) async fn upsert_kimi_account(
     State(providers): State<ProvidersHandle>,
-    Json(req): Json<KimiAccountUpsertReq>,
+    Json(req): Json<KimiAccountUpsertRouteRequest>,
 ) -> Result<Json<KimiAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     let response = providers
-        .add_kimi_account_response(
-            req.label,
-            req.provider,
-            req.credentials_json,
-            req.config_toml,
-            req.email,
-        )
+        .upsert_kimi_account_for_route(req)
         .await
         .map_err(provider_account_route_error)?;
     Ok(Json(response))
@@ -30,10 +24,10 @@ pub(crate) async fn upsert_kimi_account(
 
 pub(crate) async fn set_kimi_active_account(
     State(providers): State<ProvidersHandle>,
-    Json(req): Json<KimiActiveAccountReq>,
+    Json(req): Json<ProviderActiveAccountRouteRequest>,
 ) -> Result<Json<KimiAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     let response = providers
-        .set_active_kimi_account_response(req.account_id)
+        .set_active_kimi_account_for_route(req)
         .await
         .map_err(provider_account_route_error)?;
     Ok(Json(response))
@@ -44,7 +38,7 @@ pub(crate) async fn delete_kimi_account(
     Path(id): Path<String>,
 ) -> Result<Json<KimiAccountsResponse>, (StatusCode, Json<ApiErrorResp>)> {
     let response = providers
-        .delete_kimi_account_response(&id)
+        .delete_kimi_account_for_route(&id)
         .await
         .map_err(provider_account_route_error)?;
     Ok(Json(response))
