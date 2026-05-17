@@ -97,8 +97,9 @@ pub use harness_config::{
     mark_provider_endpoint_verification, refresh_provider_endpoint_model_catalog,
     refresh_provider_harness_endpoint_models, select_provider_harness_source,
     set_provider_harness_endpoint_manual_models, upsert_provider_harness_endpoint,
-    ProviderHarnessEndpointRouteError, ProviderHarnessEndpointRouteErrorKind,
-    ProviderHarnessSourceConfig, SetProviderHarnessEndpointManualModelsRouteRequest,
+    ProviderHarnessConfigRouteError, ProviderHarnessEndpointRouteError,
+    ProviderHarnessEndpointRouteErrorKind, ProviderHarnessSourceConfig,
+    SelectProviderHarnessSourceRouteRequest, SetProviderHarnessEndpointManualModelsRouteRequest,
     UpsertProviderHarnessEndpointRouteRequest,
 };
 pub use installs::{

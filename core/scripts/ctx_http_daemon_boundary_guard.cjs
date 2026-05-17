@@ -194,6 +194,11 @@ const providerHarnessEndpointApiRoots = [
   "core/crates/ctx-http/src/api/providers/harness_config/endpoints.rs",
 ];
 
+const providerHarnessConfigApiRoots = [
+  "core/crates/ctx-http/src/api/providers/harness_config.rs",
+  "core/crates/ctx-http/src/api/providers/types/harness.rs",
+];
+
 const providerInstallApiRoots = [
   "core/crates/ctx-http/src/api/provider_launch.rs",
   "core/crates/ctx-http/src/api/provider_launch/handlers/installs.rs",
@@ -1354,6 +1359,33 @@ const PROVIDER_HARNESS_ENDPOINT_API_PATTERNS = [
     name: "provider harness endpoint API calls low-level endpoint facades",
     regex:
       /\.(?:upsert_provider_harness_endpoint|refresh_provider_harness_endpoint_models|set_provider_harness_endpoint_manual_models|delete_provider_harness_endpoint)\s*\(/,
+  },
+];
+
+const PROVIDER_HARNESS_CONFIG_API_PATTERNS = [
+  {
+    name: "provider harness config API imports harness source domain",
+    regex: /\bctx_harness_sources\b|\bharness_sources\b/,
+  },
+  {
+    name: "provider harness config API owns select request DTO",
+    regex: /\bSelectHarnessSourceReq\b/,
+  },
+  {
+    name: "provider harness config API references source kind directly",
+    regex: /\bHarnessSourceKind\b/,
+  },
+  {
+    name: "provider harness config API calls broad get/select facades",
+    regex: /\.(?:get_provider_harness_config|select_provider_harness_source)\s*\(/,
+  },
+  {
+    name: "provider harness config API owns bad-request mapping",
+    regex: /\bprovider_harness_bad_request_error\b/,
+  },
+  {
+    name: "provider harness config API redacts lower-level errors",
+    regex: /\blogs\s*::\s*redact_sensitive\s*\(/,
   },
 ];
 
@@ -4109,6 +4141,9 @@ function apiPatternsForPath(relativePath) {
   if (providerHarnessEndpointApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...PROVIDER_HARNESS_ENDPOINT_API_PATTERNS);
   }
+  if (providerHarnessConfigApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...PROVIDER_HARNESS_CONFIG_API_PATTERNS);
+  }
   if (providerInstallApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...PROVIDER_INSTALL_API_ORCHESTRATION_PATTERNS);
   }
@@ -4312,6 +4347,13 @@ function runArchiveApiPatternsForPath(relativePath) {
 function providerHarnessEndpointApiPatternsForPath(relativePath) {
   if (providerHarnessEndpointApiRoots.some((root) => relativePath.startsWith(root))) {
     return PROVIDER_HARNESS_ENDPOINT_API_PATTERNS;
+  }
+  return [];
+}
+
+function providerHarnessConfigApiPatternsForPath(relativePath) {
+  if (providerHarnessConfigApiRoots.some((root) => relativePath.startsWith(root))) {
+    return PROVIDER_HARNESS_CONFIG_API_PATTERNS;
   }
   return [];
 }
@@ -5254,6 +5296,7 @@ module.exports = {
   CODEX_APP_SERVER_LOGIN_API_ORCHESTRATION_PATTERNS,
   CLAUDE_SETUP_TOKEN_LOGIN_API_ORCHESTRATION_PATTERNS,
   PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS,
+  PROVIDER_HARNESS_CONFIG_API_PATTERNS,
   PROVIDER_HARNESS_ENDPOINT_API_PATTERNS,
   PROVIDER_INSTALL_API_ORCHESTRATION_PATTERNS,
   PROVIDER_AUTH_IMPORT_API_ORCHESTRATION_PATTERNS,
@@ -5333,6 +5376,7 @@ module.exports = {
   mobileStorePatternsForPath,
   providerAuthImportApiPatternsForPath,
   providerAuthGlobalIdFixturePatternsForPath,
+  providerHarnessConfigApiPatternsForPath,
   providerHarnessEndpointApiPatternsForPath,
   providerInstallApiPatternsForPath,
   providerScenariosOfflineStorePatternsForPath,

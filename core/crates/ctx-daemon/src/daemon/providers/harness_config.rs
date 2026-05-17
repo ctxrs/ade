@@ -39,6 +39,30 @@ pub struct SetProviderHarnessEndpointManualModelsRouteRequest {
     pub model_ids: Vec<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct SelectProviderHarnessSourceRouteRequest {
+    pub source_kind: harness_sources::HarnessSourceKind,
+    #[serde(default)]
+    pub endpoint_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderHarnessConfigRouteError {
+    message: String,
+}
+
+impl ProviderHarnessConfigRouteError {
+    fn bad_request(error: anyhow::Error) -> Self {
+        Self {
+            message: logs::redact_sensitive(&error.to_string()),
+        }
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderHarnessEndpointRouteErrorKind {
     BadRequest,
@@ -128,6 +152,30 @@ pub async fn upsert_provider_harness_endpoint(
 }
 
 impl ProvidersHandle {
+    pub async fn get_provider_harness_config_for_route(
+        &self,
+        provider_id: &str,
+    ) -> Result<ProviderHarnessSourceConfig, ProviderHarnessConfigRouteError> {
+        get_provider_harness_config(&self.state, provider_id)
+            .await
+            .map_err(ProviderHarnessConfigRouteError::bad_request)
+    }
+
+    pub async fn select_provider_harness_source_for_route(
+        &self,
+        provider_id: &str,
+        request: SelectProviderHarnessSourceRouteRequest,
+    ) -> Result<ProviderHarnessSourceConfig, ProviderHarnessConfigRouteError> {
+        select_provider_harness_source(
+            &self.state,
+            provider_id,
+            request.source_kind,
+            request.endpoint_id,
+        )
+        .await
+        .map_err(ProviderHarnessConfigRouteError::bad_request)
+    }
+
     pub async fn upsert_provider_harness_endpoint_for_route(
         &self,
         provider_id: &str,

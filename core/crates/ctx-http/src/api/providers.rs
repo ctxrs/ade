@@ -17,16 +17,17 @@ use ctx_core::ids::WorkspaceId;
 use ctx_daemon::daemon::providers::{
     ProviderAuthImportCandidatesRouteResponse, ProviderAuthImportProfilesRouteResponse,
     ProviderAuthImportRouteError, ProviderAuthImportRouteRequest, ProviderAuthImportRouteResponse,
+    SelectProviderHarnessSourceRouteRequest,
 };
 use ctx_daemon::daemon::ProvidersHandle;
 #[cfg(test)]
 use ctx_daemon::test_support::TestDaemon;
+#[cfg(test)]
 use ctx_harness_sources as harness_sources;
 #[cfg(test)]
 use ctx_harness_sources::{HarnessApiShape, HarnessSourceKind};
 #[cfg(test)]
 use ctx_managed_installs as installer;
-use ctx_observability::logs;
 use ctx_provider_accounts as provider_accounts;
 #[cfg(test)]
 use ctx_provider_auth_import as provider_auth_import;

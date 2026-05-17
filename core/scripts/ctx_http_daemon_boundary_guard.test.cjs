@@ -49,6 +49,7 @@ const {
   PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS,
   PROVIDER_AUTH_IMPORT_API_ORCHESTRATION_PATTERNS,
   PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS,
+  PROVIDER_HARNESS_CONFIG_API_PATTERNS,
   PROVIDER_HARNESS_ENDPOINT_API_PATTERNS,
   PROVIDER_INSTALL_API_ORCHESTRATION_PATTERNS,
   SESSION_HEAD_API_ORCHESTRATION_PATTERNS,
@@ -127,6 +128,7 @@ const {
   mobileStorePatternsForPath,
   providerAuthImportApiPatternsForPath,
   providerAuthGlobalIdFixturePatternsForPath,
+  providerHarnessConfigApiPatternsForPath,
   providerHarnessEndpointApiPatternsForPath,
   providerInstallApiPatternsForPath,
   providerScenariosOfflineStorePatternsForPath,
@@ -2980,6 +2982,69 @@ test("daemon boundary guard scopes provider bootstrap orchestration patterns", (
       PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS[0],
     ),
     false,
+  );
+});
+
+test("daemon boundary guard rejects provider harness config API orchestration", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/providers/harness_config.rs",
+    contents: `
+      use ctx_harness_sources as harness_sources;
+      async fn handler(providers: ProvidersHandle) {
+        let req = SelectHarnessSourceReq { source_kind: HarnessSourceKind::Endpoint, endpoint_id: None };
+        providers.get_provider_harness_config(&id).await?;
+        providers.select_provider_harness_source(&id, req.source_kind, req.endpoint_id).await?;
+        provider_harness_bad_request_error(err);
+        let _ = logs::redact_sensitive(&err.to_string());
+      }
+    `,
+    patterns: PROVIDER_HARNESS_CONFIG_API_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "provider harness config API imports harness source domain",
+      "provider harness config API owns select request DTO",
+      "provider harness config API references source kind directly",
+      "provider harness config API calls broad get/select facades",
+      "provider harness config API calls broad get/select facades",
+      "provider harness config API owns bad-request mapping",
+      "provider harness config API redacts lower-level errors",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes provider harness config API roots", () => {
+  assert.deepEqual(
+    providerHarnessConfigApiPatternsForPath(
+      "core/crates/ctx-http/src/api/providers/harness_config.rs",
+    ),
+    PROVIDER_HARNESS_CONFIG_API_PATTERNS,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers/harness_config.rs").includes(
+      PROVIDER_HARNESS_CONFIG_API_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.deepEqual(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/providers/harness_config.rs",
+      contents: `
+        providers.get_provider_harness_config_for_route(&id).await?;
+        providers.select_provider_harness_source_for_route(&id, req).await?;
+        providers.upsert_provider_harness_endpoint_for_route(&id, req).await?;
+      `,
+      patterns: PROVIDER_HARNESS_CONFIG_API_PATTERNS,
+    }),
+    [],
+  );
+  assert.deepEqual(
+    providerHarnessConfigApiPatternsForPath(
+      "core/crates/ctx-http/src/api/providers/harness_config/endpoints.rs",
+    ),
+    [],
   );
 });
 

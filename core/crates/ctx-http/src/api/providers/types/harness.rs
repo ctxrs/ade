@@ -1,13 +1,4 @@
-use serde::{Deserialize, Serialize};
-
-use ctx_harness_sources::HarnessSourceKind;
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct SelectHarnessSourceReq {
-    pub(in crate::api::providers) source_kind: HarnessSourceKind,
-    #[serde(default)]
-    pub(in crate::api::providers) endpoint_id: Option<String>,
-}
+use serde::Serialize;
 
 #[derive(Debug, Serialize)]
 pub(crate) struct MatrixRefreshResponse {
