@@ -53,6 +53,7 @@ const {
   PROVIDER_HARNESS_ENDPOINT_API_PATTERNS,
   PROVIDER_INSTALL_API_ORCHESTRATION_PATTERNS,
   PROVIDER_LAUNCH_AUTH_API_PATTERNS,
+  PROVIDER_LAUNCH_OPTIONS_API_PATTERNS,
   SESSION_HEAD_API_ORCHESTRATION_PATTERNS,
   SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS,
   SESSION_VCS_API_ORCHESTRATION_PATTERNS,
@@ -133,6 +134,7 @@ const {
   providerHarnessEndpointApiPatternsForPath,
   providerInstallApiPatternsForPath,
   providerLaunchAuthApiPatternsForPath,
+  providerLaunchOptionsApiPatternsForPath,
   providerScenariosOfflineStorePatternsForPath,
   providerWorkerReapingStorePatternsForPath,
   providerCachePatternsForPath,
@@ -3251,6 +3253,74 @@ test("daemon boundary guard scopes provider launch auth API roots", () => {
   assert.deepEqual(
     providerLaunchAuthApiPatternsForPath(
       "core/crates/ctx-http/src/api/provider_launch/handlers/options.rs",
+    ),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects provider launch options API orchestration", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/provider_launch/handlers/options.rs",
+    contents: `
+      async fn handler(providers: ProvidersHandle) {
+        let _ = ProviderOptionsResponseError::WorkspaceNotFound;
+        providers.get_provider_options_response(workspace_id, &provider_id).await?;
+        get_provider_options_response(&state, workspace_id, &provider_id).await?;
+        ctx_daemon::daemon::providers::get_provider_options_response(&state, workspace_id, &provider_id).await?;
+        let workspace_id = parse_workspace_id(&ws_id)?;
+        let parsed = uuid::Uuid::parse_str(&ws_id)?;
+        provider_options_response_error_json(err);
+        workspace_execution_settings_error_json(&err);
+        provider_launch_config_error_response(err);
+        logs::redact_sensitive(&err.to_string());
+      }
+    `,
+    patterns: PROVIDER_LAUNCH_OPTIONS_API_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "provider launch options API matches options errors directly",
+      "provider launch options API calls broad options method facade",
+      "provider launch options API calls options free function directly",
+      "provider launch options API calls options free function directly",
+      "provider launch options API parses workspace id directly",
+      "provider launch options API parses UUIDs directly",
+      "provider launch options API owns options error mapping",
+      "provider launch options API uses shared route error helpers directly",
+      "provider launch options API uses shared route error helpers directly",
+      "provider launch options API redacts errors directly",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes provider launch options API roots", () => {
+  assert.deepEqual(
+    providerLaunchOptionsApiPatternsForPath(
+      "core/crates/ctx-http/src/api/provider_launch/handlers/options.rs",
+    ),
+    PROVIDER_LAUNCH_OPTIONS_API_PATTERNS,
+  );
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/provider_launch/handlers/options/extra.rs",
+    ).includes(PROVIDER_LAUNCH_OPTIONS_API_PATTERNS[0]),
+    true,
+  );
+  assert.deepEqual(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/provider_launch/handlers/options.rs",
+      contents: `
+        providers.get_provider_options_for_route(req).await?;
+      `,
+      patterns: PROVIDER_LAUNCH_OPTIONS_API_PATTERNS,
+    }),
+    [],
+  );
+  assert.deepEqual(
+    providerLaunchOptionsApiPatternsForPath(
+      "core/crates/ctx-http/src/api/provider_launch/handlers/auth.rs",
     ),
     [],
   );

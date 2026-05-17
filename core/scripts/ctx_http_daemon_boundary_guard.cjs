@@ -210,6 +210,11 @@ const providerLaunchAuthApiRoots = [
   "core/crates/ctx-http/src/api/provider_launch/handlers/auth/",
 ];
 
+const providerLaunchOptionsApiRoots = [
+  "core/crates/ctx-http/src/api/provider_launch/handlers/options.rs",
+  "core/crates/ctx-http/src/api/provider_launch/handlers/options/",
+];
+
 const providerAuthImportApiRoots = [
   "core/crates/ctx-http/src/api/providers/imports.rs",
   "core/crates/ctx-http/src/api/providers/types/auth_import.rs",
@@ -1455,6 +1460,41 @@ const PROVIDER_LAUNCH_AUTH_API_PATTERNS = [
   {
     name: "provider launch auth API uses shared route error helpers directly",
     regex: /\b(?:workspace_execution_settings_error_json|provider_launch_config_error_response)\s*\(/,
+  },
+];
+
+const PROVIDER_LAUNCH_OPTIONS_API_PATTERNS = [
+  {
+    name: "provider launch options API matches options errors directly",
+    regex: /\bProviderOptionsResponseError\b/,
+  },
+  {
+    name: "provider launch options API calls broad options method facade",
+    regex: /\.get_provider_options_response\s*\(/,
+  },
+  {
+    name: "provider launch options API calls options free function directly",
+    regex: /(?:^|[^.\w])get_provider_options_response\s*\(/,
+  },
+  {
+    name: "provider launch options API parses workspace id directly",
+    regex: /\bparse_workspace_id\s*\(/,
+  },
+  {
+    name: "provider launch options API parses UUIDs directly",
+    regex: /\buuid::Uuid::parse_str\s*\(/,
+  },
+  {
+    name: "provider launch options API owns options error mapping",
+    regex: /\bprovider_options_response_error_json\b/,
+  },
+  {
+    name: "provider launch options API uses shared route error helpers directly",
+    regex: /\b(?:workspace_execution_settings_error_json|provider_launch_config_error_response)\s*\(/,
+  },
+  {
+    name: "provider launch options API redacts errors directly",
+    regex: /\blogs::redact_sensitive\s*\(/,
   },
 ];
 
@@ -4190,6 +4230,9 @@ function apiPatternsForPath(relativePath) {
   if (providerLaunchAuthApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...PROVIDER_LAUNCH_AUTH_API_PATTERNS);
   }
+  if (providerLaunchOptionsApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...PROVIDER_LAUNCH_OPTIONS_API_PATTERNS);
+  }
   if (providerAuthImportApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...PROVIDER_AUTH_IMPORT_API_ORCHESTRATION_PATTERNS);
   }
@@ -4411,6 +4454,13 @@ function providerInstallApiPatternsForPath(relativePath) {
 function providerLaunchAuthApiPatternsForPath(relativePath) {
   if (providerLaunchAuthApiRoots.some((root) => relativePath.startsWith(root))) {
     return PROVIDER_LAUNCH_AUTH_API_PATTERNS;
+  }
+  return [];
+}
+
+function providerLaunchOptionsApiPatternsForPath(relativePath) {
+  if (providerLaunchOptionsApiRoots.some((root) => relativePath.startsWith(root))) {
+    return PROVIDER_LAUNCH_OPTIONS_API_PATTERNS;
   }
   return [];
 }
@@ -5350,6 +5400,7 @@ module.exports = {
   PROVIDER_HARNESS_ENDPOINT_API_PATTERNS,
   PROVIDER_INSTALL_API_ORCHESTRATION_PATTERNS,
   PROVIDER_LAUNCH_AUTH_API_PATTERNS,
+  PROVIDER_LAUNCH_OPTIONS_API_PATTERNS,
   PROVIDER_AUTH_IMPORT_API_ORCHESTRATION_PATTERNS,
   PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS,
   SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS,
@@ -5431,6 +5482,7 @@ module.exports = {
   providerHarnessEndpointApiPatternsForPath,
   providerInstallApiPatternsForPath,
   providerLaunchAuthApiPatternsForPath,
+  providerLaunchOptionsApiPatternsForPath,
   providerScenariosOfflineStorePatternsForPath,
   providerWorkerReapingStorePatternsForPath,
   providerCachePatternsForPath,

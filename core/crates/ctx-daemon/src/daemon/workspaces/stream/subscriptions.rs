@@ -143,14 +143,16 @@ pub fn plan_workspace_stream_subscription_transaction(
         current_subscriptions.keys().copied(),
         plan.provisional_subscriptions.keys().copied(),
     );
-    WorkspaceStreamSubscriptionTransactionPlan::Apply(Box::new(WorkspaceStreamSubscriptionApplyPlan {
-        include_initial_snapshot: plan.include_initial_snapshot,
-        fingerprint: plan.fingerprint,
-        sessions: plan.sessions,
-        state: plan.state,
-        provisional_subscriptions: plan.provisional_subscriptions,
-        pin_changes,
-    }))
+    WorkspaceStreamSubscriptionTransactionPlan::Apply(Box::new(
+        WorkspaceStreamSubscriptionApplyPlan {
+            include_initial_snapshot: plan.include_initial_snapshot,
+            fingerprint: plan.fingerprint,
+            sessions: plan.sessions,
+            state: plan.state,
+            provisional_subscriptions: plan.provisional_subscriptions,
+            pin_changes,
+        },
+    ))
 }
 
 pub fn finalize_workspace_stream_subscription_replay(
@@ -414,10 +416,8 @@ fn subscription_event_application(
     should_route: bool,
 ) -> WorkspaceStreamSubscriptionEventApplication {
     let next_subscriptions = subscriptions.keys().copied().collect::<HashSet<_>>();
-    let pin_changes = workspace_stream_session_pin_changes(
-        previous_subscriptions,
-        next_subscriptions,
-    );
+    let pin_changes =
+        workspace_stream_session_pin_changes(previous_subscriptions, next_subscriptions);
     WorkspaceStreamSubscriptionEventApplication {
         state,
         subscriptions,

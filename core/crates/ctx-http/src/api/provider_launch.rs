@@ -1,14 +1,9 @@
 use std::time::Duration;
 
-mod common;
 mod errors;
 mod handlers;
 
-use common::parse_workspace_id;
-use errors::{
-    provider_install_error_response, provider_launch_config_error_response,
-    workspace_execution_settings_error_json,
-};
+use errors::provider_install_error_response;
 pub(in crate::api) use handlers::*;
 
 use axum::extract::{Path, Query, State};
@@ -23,10 +18,11 @@ use ctx_daemon::daemon::providers::{
     ProviderAuthCheckRouteError, ProviderAuthCheckRouteErrorStatus, ProviderAuthCheckRouteResponse,
     ProviderInstallInfo, ProviderInstallProgressEvent, ProviderInstallStartRouteResponse,
     ProviderInstallStatusOnlyRouteError, ProviderInstallStatusesRouteRequest,
-    ProviderInstallStatusesRouteResponse, VerifyProviderForWorkspaceRouteRequest,
+    ProviderInstallStatusesRouteResponse, ProviderOptionsRouteError,
+    ProviderOptionsRouteErrorStatus, ProviderOptionsRouteRequest,
+    VerifyProviderForWorkspaceRouteRequest,
 };
 use ctx_daemon::daemon::ProvidersHandle;
-use ctx_observability::logs;
 
 #[derive(Debug, Deserialize)]
 pub(super) struct RawInstallTargetQuery {

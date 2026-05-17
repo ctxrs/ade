@@ -140,7 +140,8 @@ pub use login_sessions::{
 };
 pub use options::{
     effective_preferred_model_id_for_workspace, get_provider_options_response,
-    EffectivePreferredModelError, ProviderOptionsResponseError,
+    EffectivePreferredModelError, ProviderOptionsResponseError, ProviderOptionsRouteError,
+    ProviderOptionsRouteErrorStatus, ProviderOptionsRouteRequest,
 };
 pub use options_cache::{store_provider_verify_cache_value, ProviderOptionsCacheSnapshot};
 pub use restarts::{

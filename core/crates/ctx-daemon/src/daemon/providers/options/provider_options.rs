@@ -14,7 +14,7 @@ use crate::daemon::providers::{
     provider_has_active_auth_for_workspace_runtime, ProviderLaunchConfigError,
     ProviderLaunchConfigSnapshot, ProviderOptionsCacheSnapshot,
 };
-use crate::daemon::DaemonState;
+use crate::daemon::{DaemonState, ProvidersHandle};
 
 use super::response::{
     config_error_provider_options_response, env_probe_provider_options_response,
@@ -50,6 +50,61 @@ pub enum ProviderOptionsResponseError {
     WorkspaceStoreLoad(anyhow::Error),
     WorkspacePreferenceLoad(anyhow::Error),
     SelectedEndpointMissing,
+}
+
+pub struct ProviderOptionsRouteRequest {
+    pub workspace_id: String,
+    pub provider_id: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderOptionsRouteErrorStatus {
+    BadRequest,
+    NotFound,
+    InternalServerError,
+}
+
+#[derive(Debug)]
+pub struct ProviderOptionsRouteError {
+    status: ProviderOptionsRouteErrorStatus,
+    body: Value,
+}
+
+impl ProviderOptionsRouteError {
+    pub fn status(&self) -> ProviderOptionsRouteErrorStatus {
+        self.status
+    }
+
+    pub fn body(&self) -> &Value {
+        &self.body
+    }
+
+    fn bad_request(message: impl Into<String>) -> Self {
+        Self {
+            status: ProviderOptionsRouteErrorStatus::BadRequest,
+            body: serde_json::json!({
+                "error": message.into(),
+            }),
+        }
+    }
+
+    fn not_found(message: impl Into<String>) -> Self {
+        Self {
+            status: ProviderOptionsRouteErrorStatus::NotFound,
+            body: serde_json::json!({
+                "error": message.into(),
+            }),
+        }
+    }
+
+    fn internal_server_error(message: impl Into<String>) -> Self {
+        Self {
+            status: ProviderOptionsRouteErrorStatus::InternalServerError,
+            body: serde_json::json!({
+                "error": message.into(),
+            }),
+        }
+    }
 }
 
 pub async fn get_provider_options_response(
@@ -183,4 +238,140 @@ pub async fn get_provider_options_response(
     };
 
     dispatch_provider_options_probe(use_crp_probe, selected_endpoint.as_ref(), probe_context).await
+}
+
+impl ProvidersHandle {
+    pub async fn get_provider_options_for_route(
+        &self,
+        request: ProviderOptionsRouteRequest,
+    ) -> Result<Value, ProviderOptionsRouteError> {
+        let workspace_id = parse_workspace_id_for_options_route(&request.workspace_id)?;
+        get_provider_options_response(&self.state, workspace_id, &request.provider_id)
+            .await
+            .map_err(provider_options_route_error)
+    }
+}
+
+fn parse_workspace_id_for_options_route(
+    raw: &str,
+) -> Result<WorkspaceId, ProviderOptionsRouteError> {
+    uuid::Uuid::parse_str(raw)
+        .map(WorkspaceId)
+        .map_err(|_| ProviderOptionsRouteError::bad_request("invalid workspace id"))
+}
+
+fn provider_options_route_error(error: ProviderOptionsResponseError) -> ProviderOptionsRouteError {
+    match error {
+        ProviderOptionsResponseError::ExecutionSettings(error) => {
+            ProviderOptionsRouteError::internal_server_error(format!(
+                "failed to load workspace execution settings: {error:#}"
+            ))
+        }
+        ProviderOptionsResponseError::ProviderLaunchConfig(error) => {
+            provider_launch_config_options_route_error(error)
+        }
+        ProviderOptionsResponseError::WorkspaceLoad => {
+            ProviderOptionsRouteError::internal_server_error("failed to load workspace")
+        }
+        ProviderOptionsResponseError::WorkspaceNotFound => {
+            ProviderOptionsRouteError::not_found("workspace not found")
+        }
+        ProviderOptionsResponseError::WorkspaceStoreLoad(error) => {
+            ProviderOptionsRouteError::internal_server_error(format!(
+                "failed to load workspace store: {}",
+                logs::redact_sensitive(&error.to_string())
+            ))
+        }
+        ProviderOptionsResponseError::WorkspacePreferenceLoad(error) => {
+            ProviderOptionsRouteError::internal_server_error(format!(
+                "failed to load workspace provider model preference: {}",
+                logs::redact_sensitive(&error.to_string())
+            ))
+        }
+        ProviderOptionsResponseError::SelectedEndpointMissing => {
+            ProviderOptionsRouteError::internal_server_error(
+                "selected endpoint missing from provider configuration",
+            )
+        }
+    }
+}
+
+fn provider_launch_config_options_route_error(
+    error: ProviderLaunchConfigError,
+) -> ProviderOptionsRouteError {
+    match error {
+        ProviderLaunchConfigError::UnsupportedProvider { provider_id } => {
+            ProviderOptionsRouteError::bad_request(format!(
+                "unsupported provider id: {provider_id}"
+            ))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_options_route_error_preserves_basic_status_bodies() {
+        let unsupported =
+            provider_options_route_error(ProviderOptionsResponseError::ProviderLaunchConfig(
+                ProviderLaunchConfigError::UnsupportedProvider {
+                    provider_id: "missing-provider".to_string(),
+                },
+            ));
+        assert_eq!(
+            unsupported.status(),
+            ProviderOptionsRouteErrorStatus::BadRequest
+        );
+        assert_eq!(
+            unsupported.body()["error"].as_str(),
+            Some("unsupported provider id: missing-provider")
+        );
+
+        let missing_workspace =
+            provider_options_route_error(ProviderOptionsResponseError::WorkspaceNotFound);
+        assert_eq!(
+            missing_workspace.status(),
+            ProviderOptionsRouteErrorStatus::NotFound
+        );
+        assert_eq!(
+            missing_workspace.body()["error"].as_str(),
+            Some("workspace not found")
+        );
+    }
+
+    #[test]
+    fn provider_options_route_error_redacts_store_and_preference_failures() {
+        let store = provider_options_route_error(ProviderOptionsResponseError::WorkspaceStoreLoad(
+            anyhow::anyhow!("store failed with Authorization: Bearer store-secret"),
+        ));
+        assert_eq!(
+            store.status(),
+            ProviderOptionsRouteErrorStatus::InternalServerError
+        );
+        let store_message = store.body()["error"].as_str().unwrap();
+        assert!(store_message.starts_with("failed to load workspace store: "));
+        assert!(
+            !store_message.contains("store-secret"),
+            "store secret leaked in {store_message}"
+        );
+
+        let preference =
+            provider_options_route_error(ProviderOptionsResponseError::WorkspacePreferenceLoad(
+                anyhow::anyhow!("preference failed with OPENAI_API_KEY=preference-secret"),
+            ));
+        assert_eq!(
+            preference.status(),
+            ProviderOptionsRouteErrorStatus::InternalServerError
+        );
+        let preference_message = preference.body()["error"].as_str().unwrap();
+        assert!(
+            preference_message.starts_with("failed to load workspace provider model preference: ")
+        );
+        assert!(
+            !preference_message.contains("preference-secret"),
+            "preference secret leaked in {preference_message}"
+        );
+    }
 }

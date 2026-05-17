@@ -4,61 +4,23 @@ pub(in crate::api) async fn get_provider_options(
     State(providers): State<ProvidersHandle>,
     Path((ws_id, provider_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let workspace_id = parse_workspace_id(&ws_id)?;
     providers
-        .get_provider_options_response(workspace_id, &provider_id)
+        .get_provider_options_for_route(ProviderOptionsRouteRequest {
+            workspace_id: ws_id,
+            provider_id,
+        })
         .await
         .map(Json)
-        .map_err(provider_options_response_error_json)
+        .map_err(provider_options_route_error)
 }
 
-fn provider_options_response_error_json(
-    error: ctx_daemon::daemon::providers::ProviderOptionsResponseError,
+fn provider_options_route_error(
+    error: ProviderOptionsRouteError,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    match error {
-        ctx_daemon::daemon::providers::ProviderOptionsResponseError::ExecutionSettings(error) => {
-            workspace_execution_settings_error_json(&error)
-        }
-        ctx_daemon::daemon::providers::ProviderOptionsResponseError::ProviderLaunchConfig(
-            error,
-        ) => provider_launch_config_error_response(error),
-        ctx_daemon::daemon::providers::ProviderOptionsResponseError::WorkspaceLoad => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({
-                "error": "failed to load workspace",
-            })),
-        ),
-        ctx_daemon::daemon::providers::ProviderOptionsResponseError::WorkspaceNotFound => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({
-                "error": "workspace not found",
-            })),
-        ),
-        ctx_daemon::daemon::providers::ProviderOptionsResponseError::WorkspaceStoreLoad(error) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({
-                "error": format!(
-                    "failed to load workspace store: {}",
-                    logs::redact_sensitive(&error.to_string())
-                ),
-            })),
-        ),
-        ctx_daemon::daemon::providers::ProviderOptionsResponseError::WorkspacePreferenceLoad(
-            error,
-        ) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({
-                "error": format!(
-                    "failed to load workspace provider model preference: {}",
-                    logs::redact_sensitive(&error.to_string())
-                ),
-            })),
-        ),
-        ctx_daemon::daemon::providers::ProviderOptionsResponseError::SelectedEndpointMissing => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({
-                "error": "selected endpoint missing from provider configuration",
-            })),
-        ),
-    }
+    let status = match error.status() {
+        ProviderOptionsRouteErrorStatus::BadRequest => StatusCode::BAD_REQUEST,
+        ProviderOptionsRouteErrorStatus::NotFound => StatusCode::NOT_FOUND,
+        ProviderOptionsRouteErrorStatus::InternalServerError => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    (status, Json(error.body().clone()))
 }
