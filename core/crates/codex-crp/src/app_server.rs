@@ -18,7 +18,7 @@ mod auth_lock;
 #[path = "app_server/types.rs"]
 mod types;
 
-use self::auth_lock::{acquire_codex_oauth_authority_lock, CodexRuntimeLocks};
+use self::auth_lock::{acquire_codex_runtime_locks, CodexRuntimeLocks};
 pub use self::types::*;
 
 const CODEX_APP_SERVER_BASE_ARGS: [&str; 4] = ["-s", "danger-full-access", "-a", "never"];
@@ -50,7 +50,7 @@ pub struct AppServerClient {
     inbound_rx: mpsc::UnboundedReceiver<AppServerInbound>,
     child: Option<Child>,
     next_id: i64,
-    _auth_lock: Option<CodexRuntimeLocks>,
+    _runtime_locks: Option<CodexRuntimeLocks>,
 }
 
 fn maybe_dump_app_server_message(direction: &str, value: &Value) {
@@ -127,7 +127,7 @@ impl AppServerClient {
         if !Path::new(&codex_bin).is_absolute() {
             anyhow::bail!("CTX_CODEX_BIN_PATH must be absolute, got `{codex_bin}`");
         }
-        let auth_lock = acquire_codex_oauth_authority_lock()?;
+        let runtime_locks = acquire_codex_runtime_locks()?;
 
         let mut command = Command::new(&codex_bin);
         command
@@ -172,7 +172,7 @@ impl AppServerClient {
             inbound_rx,
             child: Some(child),
             next_id: 1,
-            _auth_lock: auth_lock,
+            _runtime_locks: runtime_locks,
         };
 
         client
@@ -258,7 +258,7 @@ impl AppServerClient {
             let _ = child.kill().await;
             let _ = child.wait().await;
         }
-        self._auth_lock.take();
+        self._runtime_locks.take();
     }
 
     async fn send_json(&mut self, value: &Value) -> Result<()> {
@@ -277,17 +277,17 @@ impl Drop for AppServerClient {
         let Some(mut child) = self.child.take() else {
             return;
         };
-        let auth_lock = self._auth_lock.take();
+        let runtime_locks = self._runtime_locks.take();
         let _ = child.start_kill();
         match tokio::runtime::Handle::try_current() {
             Ok(handle) => {
                 handle.spawn(async move {
-                    let _auth_lock = auth_lock;
+                    let _runtime_locks = runtime_locks;
                     let _ = child.wait().await;
                 });
             }
             Err(_) => {
-                std::mem::forget(auth_lock);
+                std::mem::forget(runtime_locks);
             }
         }
     }
@@ -431,7 +431,7 @@ impl AppServerClient {
             },
             child: Some(child),
             next_id: 1,
-            _auth_lock: None,
+            _runtime_locks: None,
         }
     }
 }

@@ -1,4 +1,5 @@
 use super::host::host_codex_auth_path;
+use super::runtime_oauth::{clear_codex_oauth_reauth_required, codex_oauth_reauth_required};
 use super::*;
 use fs2::FileExt;
 use std::fs::{File, OpenOptions};
@@ -25,6 +26,23 @@ pub(super) fn codex_auth_has_supported_shape(value: &serde_json::Value) -> bool 
             access && refresh
         });
     has_api_key || has_token_bundle
+}
+
+pub(super) fn codex_auth_has_runtime_supported_shape(value: &serde_json::Value) -> bool {
+    let has_api_key = value
+        .get("OPENAI_API_KEY")
+        .and_then(|v| v.as_str())
+        .is_some_and(|v| !v.trim().is_empty());
+    has_api_key || codex_auth_has_access_token(value)
+}
+
+pub(super) fn codex_auth_has_access_token(value: &serde_json::Value) -> bool {
+    value
+        .get("tokens")
+        .and_then(|v| v.as_object())
+        .and_then(|tokens| tokens.get("access_token"))
+        .and_then(|v| v.as_str())
+        .is_some_and(|v| !v.trim().is_empty())
 }
 
 pub(super) fn codex_auth_has_refresh_token(value: &serde_json::Value) -> bool {
@@ -115,6 +133,24 @@ async fn update_account_secret_ref(
     Ok(())
 }
 
+pub(super) async fn ensure_private_dir_allowing_concurrent_create(path: &Path) -> Result<()> {
+    match ctx_fs::permissions::ensure_private_dir(path).await {
+        Ok(()) => Ok(()),
+        Err(err) if error_chain_has_kind(&err, std::io::ErrorKind::AlreadyExists) => {
+            ctx_fs::permissions::ensure_private_dir(path).await
+        }
+        Err(err) => Err(err),
+    }
+}
+
+fn error_chain_has_kind(error: &anyhow::Error, kind: std::io::ErrorKind) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == kind)
+    })
+}
+
 fn validated_codex_broker_home(data_root: &Path, account_id: &str) -> Result<PathBuf> {
     let broker_home = codex_broker_home(data_root, account_id);
     crate::provider_accounts::paths::validate_codex_broker_home_before_broker_access(
@@ -124,7 +160,7 @@ fn validated_codex_broker_home(data_root: &Path, account_id: &str) -> Result<Pat
     Ok(broker_home)
 }
 
-pub(super) fn try_acquire_broker_oauth_authority_lock(home: &Path) -> Result<Option<File>> {
+pub(super) fn acquire_broker_oauth_authority_lock(home: &Path) -> Result<File> {
     std::fs::create_dir_all(home)
         .with_context(|| format!("creating Codex broker home at {}", home.display()))?;
     let lock_path = home.join(CODEX_OAUTH_AUTHORITY_LOCK_FILE);
@@ -135,26 +171,12 @@ pub(super) fn try_acquire_broker_oauth_authority_lock(home: &Path) -> Result<Opt
         .write(true)
         .open(&lock_path)
         .with_context(|| format!("opening Codex OAuth authority lock {}", lock_path.display()))?;
-    match file.try_lock_exclusive() {
-        Ok(()) => Ok(Some(file)),
-        Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
-        Err(err) => Err(err)
-            .with_context(|| format!("locking Codex OAuth authority {}", lock_path.display())),
-    }
+    file.lock_exclusive()
+        .with_context(|| format!("locking Codex OAuth authority {}", lock_path.display()))?;
+    Ok(file)
 }
 
-pub(super) fn acquire_broker_oauth_authority_lock(home: &Path) -> Result<File> {
-    match try_acquire_broker_oauth_authority_lock(home)? {
-        Some(file) => Ok(file),
-        None => {
-            anyhow::bail!(
-                "Codex account is currently active in another session. Wait for that session to finish before replacing its OAuth credentials."
-            )
-        }
-    }
-}
-
-fn acquire_broker_oauth_authority_lock_for_auth(
+async fn acquire_broker_oauth_authority_lock_for_auth_async(
     data_root: &Path,
     account_id: &str,
     auth: &serde_json::Value,
@@ -164,7 +186,10 @@ fn acquire_broker_oauth_authority_lock_for_auth(
     }
     crate::provider_accounts::paths::validate_codex_provider_root_before_broker_access(data_root)?;
     let broker_home = validated_codex_broker_home(data_root, account_id)?;
-    Ok(Some(acquire_broker_oauth_authority_lock(&broker_home)?))
+    tokio::task::spawn_blocking(move || acquire_broker_oauth_authority_lock(&broker_home))
+        .await
+        .context("joining Codex OAuth broker lock task")?
+        .map(Some)
 }
 
 async fn project_oauth_auth_to_broker_home(
@@ -186,8 +211,18 @@ pub(super) async fn project_oauth_auth_to_broker_home_with_lock(
     auth: &serde_json::Value,
 ) -> Result<bool> {
     crate::provider_accounts::paths::validate_codex_provider_root_before_broker_access(data_root)?;
-    let _broker_lock = acquire_broker_oauth_authority_lock_for_auth(data_root, account_id, auth)?;
-    project_oauth_auth_to_broker_home(data_root, account_id, auth).await
+    if !codex_auth_has_refresh_token(auth) {
+        return Ok(false);
+    }
+    let broker_home = validated_codex_broker_home(data_root, account_id)?;
+    let _broker_lock =
+        acquire_broker_oauth_authority_lock_for_auth_async(data_root, account_id, auth).await?;
+    if let Some(existing) = read_codex_auth_value_from_home(&broker_home).await? {
+        if codex_auth_has_refresh_token(&existing) {
+            return Ok(false);
+        }
+    }
+    project_auth_value_to_home(&broker_home, auth).await
 }
 
 pub(super) async fn ingest_auth_value_for_account(
@@ -297,11 +332,14 @@ pub async fn import_codex_auth_value_to_secret_store(
     if let Some(existing) = find_matching_codex_account(data_root, auth).await? {
         if existing.entry.secret_ref.is_none() || existing.provider_identity_matches {
             let broker_home = validated_codex_broker_home(data_root, &existing.entry.id)?;
-            let existing_broker_auth = if codex_auth_has_refresh_token(auth) {
-                read_codex_auth_value_from_home(&broker_home).await?
-            } else {
-                None
-            };
+            let replace_broker_for_reauth = codex_auth_has_refresh_token(auth)
+                && codex_oauth_reauth_required(data_root, &existing.entry.id).await?;
+            let existing_broker_auth =
+                if codex_auth_has_refresh_token(auth) && !replace_broker_for_reauth {
+                    read_codex_auth_value_from_home(&broker_home).await?
+                } else {
+                    None
+                };
             if let Some(broker_auth) = existing_broker_auth {
                 if !codex_auth_has_supported_shape(&broker_auth) {
                     anyhow::bail!(
@@ -317,14 +355,16 @@ pub async fn import_codex_auth_value_to_secret_store(
                 }
                 ingest_auth_value_for_account(data_root, &existing.entry.id, &broker_auth).await?;
             } else {
-                let _broker_lock = acquire_broker_oauth_authority_lock_for_auth(
+                let _broker_lock = acquire_broker_oauth_authority_lock_for_auth_async(
                     data_root,
                     &existing.entry.id,
                     auth,
-                )?;
+                )
+                .await?;
                 ingest_auth_value_for_account(data_root, &existing.entry.id, auth).await?;
                 project_oauth_auth_to_broker_home(data_root, &existing.entry.id, auth).await?;
             }
+            clear_codex_oauth_reauth_required(data_root, &existing.entry.id).await?;
             remove_codex_account_home_auth_if_present(data_root, &existing.entry.id).await?;
         }
         let registry = set_active_codex_account(data_root, Some(existing.entry.id.clone())).await?;
@@ -336,7 +376,8 @@ pub async fn import_codex_auth_value_to_secret_store(
     }
 
     let account_id = uuid::Uuid::new_v4().to_string();
-    let _broker_lock = acquire_broker_oauth_authority_lock_for_auth(data_root, &account_id, auth)?;
+    let _broker_lock =
+        acquire_broker_oauth_authority_lock_for_auth_async(data_root, &account_id, auth).await?;
     let secret_ref = write_codex_secret_for_account(data_root, &account_id, auth).await?;
     project_oauth_auth_to_broker_home(data_root, &account_id, auth).await?;
     let entry = CodexAccountEntry {
@@ -391,7 +432,7 @@ pub(super) async fn project_auth_value_to_home(
     auth: &serde_json::Value,
 ) -> Result<bool> {
     let payload = serde_json::to_vec_pretty(auth)?;
-    ctx_fs::permissions::ensure_private_dir(home).await?;
+    ensure_private_dir_allowing_concurrent_create(home).await?;
     let dest = home.join("auth.json");
     let write = match tokio::fs::read(&dest).await {
         Ok(existing) => existing != payload,
@@ -455,7 +496,8 @@ pub(super) async fn hydrate_legacy_account_auth_to_broker_home(
         return Ok(Some(broker_home));
     }
 
-    let _broker_lock = acquire_broker_oauth_authority_lock_for_auth(data_root, account_id, &auth)?;
+    let _broker_lock =
+        acquire_broker_oauth_authority_lock_for_auth_async(data_root, account_id, &auth).await?;
     ingest_auth_value_for_account(data_root, account_id, &auth).await?;
     if codex_auth_has_refresh_token(&auth) {
         project_oauth_auth_to_broker_home(data_root, account_id, &auth).await?;
@@ -524,7 +566,8 @@ pub async fn hydrate_codex_account_home_from_secret(
     if codex_auth_has_refresh_token(&auth) && home.join("auth.json").exists() {
         return Ok(false);
     }
-    let _broker_lock = acquire_broker_oauth_authority_lock_for_auth(data_root, account_id, &auth)?;
+    let _broker_lock =
+        acquire_broker_oauth_authority_lock_for_auth_async(data_root, account_id, &auth).await?;
     project_auth_value_to_home(&home, &auth).await
 }
 
@@ -540,7 +583,8 @@ pub async fn ingest_codex_account_auth_to_secret_store(
     };
     let auth: serde_json::Value = serde_json::from_str(&payload)
         .with_context(|| format!("invalid codex auth JSON at {}", auth_path.display()))?;
-    let _broker_lock = acquire_broker_oauth_authority_lock_for_auth(data_root, account_id, &auth)?;
+    let _broker_lock =
+        acquire_broker_oauth_authority_lock_for_auth_async(data_root, account_id, &auth).await?;
     let ingested = ingest_auth_value_for_account(data_root, account_id, &auth).await?;
     project_oauth_auth_to_broker_home(data_root, account_id, &auth).await?;
     Ok(ingested)

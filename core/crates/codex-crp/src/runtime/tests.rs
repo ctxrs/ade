@@ -601,6 +601,54 @@ async fn send_open_and_prompt(
 }
 
 #[tokio::test]
+async fn concurrent_access_only_oauth_sessions_do_not_create_refresh_token_lock() {
+    let _env_lock = codex_bin_env_lock().lock().await;
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let root = tempdir.path();
+    let script_path = write_fake_codex_app_server(root, &root.join("app-server.log"));
+    let codex_home = root.join("codex-home");
+    fs::create_dir_all(&codex_home).expect("codex home");
+    fs::write(
+        codex_home.join("auth.json"),
+        r#"{"tokens":{"access_token":"access-token","account_id":"acct-1"}}"#,
+    )
+    .expect("write access-only auth");
+    let _codex_bin = EnvGuard::set("CTX_CODEX_BIN_PATH", &script_path.to_string_lossy());
+    let _codex_home = EnvGuard::set("CODEX_HOME", &codex_home.to_string_lossy());
+    let workdir_a = root.join("work-a");
+    let workdir_b = root.join("work-b");
+    fs::create_dir_all(&workdir_a).expect("workdir a");
+    fs::create_dir_all(&workdir_b).expect("workdir b");
+    let (control_tx_a, _control_rx_a) = mpsc::unbounded_channel();
+    let (data_tx_a, _data_rx_a) = mpsc::channel(1);
+    let router_a = CrpEventRouter::new(control_tx_a, data_tx_a);
+    let (control_tx_b, _control_rx_b) = mpsc::unbounded_channel();
+    let (data_tx_b, _data_rx_b) = mpsc::channel(1);
+    let router_b = CrpEventRouter::new(control_tx_b, data_tx_b);
+    let mut session_a = None;
+    let mut session_b = None;
+    let options = RuntimeOptions::default();
+
+    tokio::join!(
+        send_open_and_prompt(&mut session_a, &router_a, &options, &workdir_a, None),
+        send_open_and_prompt(&mut session_b, &router_b, &options, &workdir_b, None)
+    );
+
+    assert!(codex_home.join(".ctx-continuity-runtime.lock").exists());
+    assert!(
+        !codex_home.join(".ctx-refresh-token.lock").exists(),
+        "access-only OAuth sessions must not create a refresh-token authority lock"
+    );
+
+    if let Some(state) = session_a.as_mut() {
+        state.client.shutdown().await;
+    }
+    if let Some(state) = session_b.as_mut() {
+        state.client.shutdown().await;
+    }
+}
+
+#[tokio::test]
 async fn open_session_bootstraps_mcp_on_thread_start_not_turn_start() {
     let _env_lock = codex_bin_env_lock().lock().await;
     let tempdir = tempfile::tempdir().expect("tempdir");

@@ -88,7 +88,8 @@ where
     H: ProviderUsageHost,
 {
     let result: Result<()> = async {
-        let mut env = provider_accounts::codex_env_for_active_account(state.data_root()).await?;
+        let mut env =
+            provider_accounts::codex_usage_env_for_active_account(state.data_root()).await?;
         let cfg = installer::load_agent_server_config(state.data_root())
             .await
             .context("loading agent server config")?;

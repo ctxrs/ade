@@ -20,6 +20,8 @@ use super::{AuthSessionOpenMode, CrpSession, CrpSessionPool};
 
 const CRP_FIRST_EVENT_TIMEOUT_HOST: std::time::Duration = std::time::Duration::from_secs(15);
 const CRP_FIRST_EVENT_TIMEOUT_CONTAINER: std::time::Duration = std::time::Duration::from_secs(120);
+const CRP_FIRST_EVENT_TIMEOUT_EXACT_RESUME: std::time::Duration =
+    std::time::Duration::from_secs(120);
 const CRP_FIRST_EVENT_TIMEOUT_ENV: &str = "CTX_CRP_FIRST_EVENT_TIMEOUT_MS";
 
 pub(super) fn apply_session_opened_state(session: &CrpSession, event: &CrpEvent) {
@@ -86,6 +88,11 @@ pub(super) async fn validate_provider_session_open(
 pub(super) fn crp_first_event_timeout(env: &HashMap<String, String>) -> std::time::Duration {
     let default = if container_exec_spec(env).is_some() {
         CRP_FIRST_EVENT_TIMEOUT_CONTAINER
+    } else if env
+        .get("CTX_PROVIDER_SESSION_REF")
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        CRP_FIRST_EVENT_TIMEOUT_EXACT_RESUME
     } else {
         CRP_FIRST_EVENT_TIMEOUT_HOST
     };
@@ -291,6 +298,22 @@ mod tests {
         );
         assert_eq!(
             CRP_FIRST_EVENT_TIMEOUT_CONTAINER,
+            std::time::Duration::from_secs(120)
+        );
+    }
+
+    #[test]
+    fn crp_first_event_timeout_uses_longer_host_budget_for_exact_resume() {
+        let env = HashMap::from([(
+            "CTX_PROVIDER_SESSION_REF".to_string(),
+            "provider-thread-1".to_string(),
+        )]);
+        assert_eq!(
+            crp_first_event_timeout(&env),
+            CRP_FIRST_EVENT_TIMEOUT_EXACT_RESUME
+        );
+        assert_eq!(
+            CRP_FIRST_EVENT_TIMEOUT_EXACT_RESUME,
             std::time::Duration::from_secs(120)
         );
     }

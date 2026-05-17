@@ -27,8 +27,8 @@ use self::claude::claude_env_for_active_account_with_runtime_root;
 #[cfg(test)]
 use self::codex_auth::write_runtime_owner_marker;
 use self::codex_auth::{
-    clear_runtime_auth_projection, clear_runtime_auth_projection_for_runtime_roots,
-    normalize_endpoint_profile,
+    clear_legacy_runtime_auth_projection_for_runtime_roots, clear_runtime_auth_projection,
+    clear_runtime_auth_projection_for_runtime_roots, normalize_endpoint_profile,
 };
 use self::copilot::copilot_env_for_active_account_with_runtime_root;
 use self::cursor::cursor_env_for_active_account_with_runtime_root;
@@ -61,7 +61,8 @@ pub use self::claude::{
 pub use self::codex_auth::{
     acquire_codex_runtime_continuity_lock_from_env, codex_env_for_active_account,
     codex_env_for_active_account_with_runtime_root, codex_env_for_runtime_home,
-    codex_has_active_auth, codex_has_active_auth_with_runtime_root, ensure_codex_auth_ready,
+    codex_has_active_auth, codex_has_active_auth_with_runtime_root, codex_usage_env_for_account,
+    codex_usage_env_for_active_account, ensure_codex_auth_ready,
     ensure_codex_endpoint_profile_compatible, host_codex_auth_path,
     hydrate_codex_account_home_from_secret, import_codex_auth_value_to_secret_store,
     import_host_codex_auth_to_secret_store, ingest_codex_account_auth_to_secret_store,
@@ -457,7 +458,8 @@ pub async fn set_active_codex_account(
     save_codex_registry(data_root, &registry).await?;
     if previous_active.as_deref() != registry.active_account_id.as_deref() {
         if let Some(previous_active) = previous_active.as_deref() {
-            clear_runtime_auth_projection_for_runtime_roots(data_root, previous_active).await?;
+            clear_legacy_runtime_auth_projection_for_runtime_roots(data_root, previous_active)
+                .await?;
         }
     }
     if registry.active_account_id.is_none() {

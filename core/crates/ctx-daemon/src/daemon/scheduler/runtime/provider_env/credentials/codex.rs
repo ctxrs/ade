@@ -74,7 +74,6 @@ pub(super) async fn prepare_codex_runtime_credentials(
                 )
             }
         })?;
-
     if is_linux_sandbox && credential_mode.is_user_managed_endpoint() {
         let openai_api_key_present = provider_env
             .get("OPENAI_API_KEY")

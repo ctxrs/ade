@@ -10,9 +10,9 @@ use super::{
     codex_account_deletion_in_progress, codex_account_dir, codex_broker_home, codex_runtime_home,
     codex_runtime_owner_path, codex_secret_path, default_codex_api_shape, default_codex_auth_type,
     default_codex_credential_kind, ensure_safe_account_id, legacy_codex_runtime_home,
-    load_codex_registry, normalize_label, save_codex_registry, set_active_codex_account,
-    upsert_codex_account, CodexAccountEntry, CodexAccountRegistry, CodexAuthImportOutcome,
-    CodexEndpointProfile, CodexHostImportProbe, CODEX_AUTH_TYPE_BEARER,
+    load_codex_registry, normalize_label, require_codex_account_exists, save_codex_registry,
+    set_active_codex_account, upsert_codex_account, CodexAccountEntry, CodexAccountRegistry,
+    CodexAuthImportOutcome, CodexEndpointProfile, CodexHostImportProbe, CODEX_AUTH_TYPE_BEARER,
     CODEX_CREDENTIAL_KIND_API_KEY, CODEX_CREDENTIAL_KIND_OAUTH, CODEX_SECRET_VERSION,
     CTX_CODEX_HOST_AUTH_PATH_ENV, CTX_SEED_CODEX_AUTH_FROM_HOST_ENV,
 };
@@ -20,6 +20,9 @@ use super::{
 mod continuity;
 mod host;
 mod runtime;
+mod runtime_cleanup;
+mod runtime_oauth;
+mod runtime_usage;
 mod secret_store;
 
 pub use self::continuity::acquire_codex_runtime_continuity_lock_from_env;
@@ -27,14 +30,16 @@ pub use self::host::{
     host_codex_auth_path, probe_host_codex_auth_candidate, seed_codex_auth_from_host,
     seeding_codex_auth_from_host_enabled,
 };
-pub(crate) use self::runtime::{
-    clear_runtime_auth_projection, clear_runtime_auth_projection_for_runtime_roots,
-};
 pub use self::runtime::{
     codex_env_for_active_account, codex_env_for_active_account_with_runtime_root,
     codex_env_for_runtime_home, codex_has_active_auth, codex_has_active_auth_with_runtime_root,
     ensure_codex_auth_ready,
 };
+pub(crate) use self::runtime_cleanup::{
+    clear_legacy_runtime_auth_projection_for_runtime_roots, clear_runtime_auth_projection,
+    clear_runtime_auth_projection_for_runtime_roots,
+};
+pub use self::runtime_usage::{codex_usage_env_for_account, codex_usage_env_for_active_account};
 pub use self::secret_store::{
     hydrate_codex_account_home_from_secret, import_codex_auth_value_to_secret_store,
     import_host_codex_auth_to_secret_store, ingest_codex_account_auth_to_secret_store,
@@ -43,9 +48,9 @@ pub use self::secret_store::{
 #[cfg(test)]
 pub(crate) use self::{
     continuity::{expose_legacy_codex_state_from_home, expose_legacy_codex_state_to_broker_home},
-    runtime::{
-        migrate_owned_runtime_oauth_projection_to_broker_if_needed, write_runtime_owner_marker,
-    },
+    runtime::migrate_owned_runtime_oauth_projection_to_broker_if_needed,
+    runtime_cleanup::write_runtime_owner_marker,
+    runtime_oauth::codex_oauth_runtime_home,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

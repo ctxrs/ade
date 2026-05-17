@@ -300,6 +300,14 @@ pub(super) fn extract_auth_error_from_stderr_line(line: &str) -> Option<String> 
                 .to_string(),
         );
     }
+    if lowered.contains("another codex session is already using this signed-in account")
+        || lowered.contains("ctx serializes codex oauth sessions")
+    {
+        return Some(
+            "Codex signed-in account is already in use by another active session. Wait for that session to finish or switch to a separate Codex account."
+                .to_string(),
+        );
+    }
     if lowered.contains("auggie does not currently support authenticating over acp")
         || lowered.contains("please run `auggie login` from your terminal then try again")
     {
@@ -377,6 +385,17 @@ mod tests {
             extract_auth_error_from_stderr_line(line).as_deref(),
             Some(
                 "Provider sign-in needs renewal. Please sign in again in ctx; the previous refresh token was rejected by the upstream OAuth server."
+            )
+        );
+    }
+
+    #[test]
+    fn extract_auth_error_from_stderr_line_detects_codex_oauth_lock_contention() {
+        let line = "Error: Another Codex session is already using this signed-in account. ctx serializes Codex OAuth sessions to protect rotating refresh tokens.";
+        assert_eq!(
+            extract_auth_error_from_stderr_line(line).as_deref(),
+            Some(
+                "Codex signed-in account is already in use by another active session. Wait for that session to finish or switch to a separate Codex account."
             )
         );
     }

@@ -36,11 +36,15 @@ pub(super) async fn codex_usage_auth_kind(
     let auth_path = resolve_codex_auth_path(env)?;
     let auth = load_codex_auth(&auth_path).await?;
     if let Some(tokens) = auth.tokens.as_ref() {
+        let has_access = tokens
+            .access_token
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty());
         let has_refresh = tokens
             .refresh_token
             .as_deref()
             .is_some_and(|value| !value.trim().is_empty());
-        if has_refresh {
+        if has_access || has_refresh {
             return Ok(CodexUsageAuthKind::OAuth);
         }
     }
@@ -176,6 +180,33 @@ mod tests {
                 "tokens": {
                     "access_token": "access-token",
                     "refresh_token": "refresh-token",
+                    "account_id": "acct-1"
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .expect("write auth.json");
+        let env = HashMap::from([(
+            "CODEX_HOME".to_string(),
+            temp.path().to_string_lossy().to_string(),
+        )]);
+
+        assert_eq!(
+            codex_usage_auth_kind(&env).await.expect("auth kind"),
+            CodexUsageAuthKind::OAuth
+        );
+    }
+
+    #[tokio::test]
+    async fn codex_usage_auth_kind_classifies_access_token_only_as_oauth() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let auth_path = temp.path().join("auth.json");
+        tokio::fs::write(
+            &auth_path,
+            serde_json::json!({
+                "tokens": {
+                    "access_token": "access-token",
                     "account_id": "acct-1"
                 }
             })

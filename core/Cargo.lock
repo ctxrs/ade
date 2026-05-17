@@ -1089,7 +1089,7 @@ dependencies = [
 
 [[package]]
 name = "ctx-http"
-version = "0.65.39"
+version = "0.65.40"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1446,11 +1446,13 @@ name = "ctx-provider-accounts"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "chrono",
  "ctx-core",
  "ctx-fs",
  "directories",
  "fs2",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "tempfile",
