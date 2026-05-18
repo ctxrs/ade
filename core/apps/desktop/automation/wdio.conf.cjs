@@ -172,6 +172,11 @@ const SKIP_APP_BUILD = resolveBoolishFlag(
   false,
   "CTX_AUTOMATION_SKIP_APP_BUILD",
 );
+const FORCE_XVFB = resolveBoolishFlag(
+  process.env.CTX_AUTOMATION_FORCE_XVFB,
+  false,
+  "CTX_AUTOMATION_FORCE_XVFB",
+);
 const REMOTE_CTX_BIN = String(process.env.CTX_AUTOMATION_REMOTE_CTX_BIN || "").trim();
 const REMOTE_SSH_KEY_PATH = String(
   process.env.CTX_AUTOMATION_REMOTE_SSH_KEY_PATH || process.env.CTX_UPDATER_E2E_SSH_KEY_PATH || "",
@@ -240,8 +245,14 @@ const resolveConnectionRetryTimeoutMs = () => parsePositiveInt(
   process.env.CTX_AUTOMATION_CONNECTION_RETRY_TIMEOUT_MS || "120000",
   120000,
 );
+const resolveTauriDriverStartAttempts = () => parsePositiveInt(
+  process.env.CTX_AUTOMATION_TAURI_DRIVER_START_ATTEMPTS
+    || (process.platform === "linux" ? "2" : "1"),
+  process.platform === "linux" ? 2 : 1,
+);
 const CONNECTION_RETRY_COUNT = resolveConnectionRetryCount();
 const CONNECTION_RETRY_TIMEOUT_MS = resolveConnectionRetryTimeoutMs();
+const TAURI_DRIVER_START_ATTEMPTS = resolveTauriDriverStartAttempts();
 const CN_PORT_WAIT_MS = parsePositiveInt(process.env.CTX_AUTOMATION_CN_PORT_WAIT_MS || "120000", 120000);
 const CN_BACKEND_LOCK_TIMEOUT_MS = parsePositiveInt(
   process.env.CTX_AUTOMATION_CN_BACKEND_LOCK_TIMEOUT_MS || "30000",
@@ -1458,6 +1469,17 @@ const createCliAlias = (targetCliPath, aliasName) => {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const readLogTail = (logPath, maxLines = 120) => {
+  const resolvedPath = String(logPath || "").trim();
+  if (!resolvedPath || !fs.existsSync(resolvedPath)) return "";
+  try {
+    const content = fs.readFileSync(resolvedPath, "utf8");
+    return content.split(/\r?\n/).slice(-maxLines).join("\n").trim();
+  } catch {
+    return "";
+  }
+};
+
 const parsePid = (raw) => {
   const n = Number.parseInt(String(raw ?? ""), 10);
   if (!Number.isFinite(n) || n <= 0) return null;
@@ -2227,6 +2249,7 @@ exports.config = {
       const nonDarwinLaunch = buildNonDarwinTauriDriverLaunch({
         platform: process.platform,
         hasDisplay: Boolean(process.env.DISPLAY),
+        forceXvfb: FORCE_XVFB,
         port: activeTauriDriverPort,
         nativePort: activeTauriDriverNativePort,
       });
@@ -2265,18 +2288,61 @@ exports.config = {
       }
     }
     if (!driverAlreadyRunning) {
-      driverProcess = spawn(driverCmd, driverArgs, {
-        stdio: driverStdio,
-        cwd: ROOT,
-        env: driverEnv,
-      });
-      attachProcessDiagnostics("tauri-driver", driverProcess);
-      await waitForProcessReady({
-        proc: driverProcess,
-        name: "tauri-driver",
-        readyPromise: waitTauriDriverReady(driverHost, activeTauriDriverPort),
-        detail: `Requested TAURI_DRIVER_PORT=${String(TAURI_DRIVER_PORT)} effective=${String(activeTauriDriverPort)} native=${String(activeTauriDriverNativePort)}.`,
-      });
+      let lastDriverStartError = null;
+      for (let attempt = 1; attempt <= TAURI_DRIVER_START_ATTEMPTS; attempt += 1) {
+        if (attempt > 1) {
+          console.error(
+            `[wdio] retrying tauri-driver startup after pre-session failure ` +
+              `(attempt ${attempt}/${TAURI_DRIVER_START_ATTEMPTS})`,
+          );
+          await sleep(500);
+        }
+        driverProcess = spawn(driverCmd, driverArgs, {
+          stdio: driverStdio,
+          cwd: ROOT,
+          env: driverEnv,
+        });
+        attachProcessDiagnostics(
+          TAURI_DRIVER_START_ATTEMPTS > 1 ? `tauri-driver attempt ${attempt}` : "tauri-driver",
+          driverProcess,
+        );
+        try {
+          await waitForProcessReady({
+            proc: driverProcess,
+            name: "tauri-driver",
+            readyPromise: waitTauriDriverReady(driverHost, activeTauriDriverPort),
+            detail:
+              `Requested TAURI_DRIVER_PORT=${String(TAURI_DRIVER_PORT)} ` +
+              `effective=${String(activeTauriDriverPort)} native=${String(activeTauriDriverNativePort)} ` +
+              `attempt=${attempt}/${TAURI_DRIVER_START_ATTEMPTS}.`,
+          });
+          lastDriverStartError = null;
+          break;
+        } catch (err) {
+          lastDriverStartError = err;
+          const driverLogTail = readLogTail(driverLogPath);
+          if (driverLogTail) {
+            console.error(
+              `[wdio] tauri-driver log tail after startup failure ` +
+                `(attempt ${attempt}/${TAURI_DRIVER_START_ATTEMPTS}):\n${driverLogTail}`,
+            );
+          }
+          if (driverProcess) {
+            try {
+              driverProcess.kill();
+            } catch {
+              // ignore
+            }
+            driverProcess = null;
+          }
+          if (attempt === TAURI_DRIVER_START_ATTEMPTS) {
+            throw err;
+          }
+        }
+      }
+      if (lastDriverStartError) {
+        throw lastDriverStartError;
+      }
     }
   },
   onComplete: async (exitCode) => {
@@ -2382,6 +2448,8 @@ exports.__desktopAutomationConfigTestHooks = {
   resolveMochaTimeoutMs,
   resolveConnectionRetryCount,
   resolveConnectionRetryTimeoutMs,
+  resolveTauriDriverStartAttempts,
+  readLogTail,
   commandMatchesScopedAppProcess,
   collectAutomationAppProcessSweepPaths,
   commandMatchesAutomationAppProcess,

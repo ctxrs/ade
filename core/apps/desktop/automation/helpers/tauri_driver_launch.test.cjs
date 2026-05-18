@@ -40,3 +40,24 @@ test("linux display tauri-driver launch passes explicit port", () => {
     "4446",
   ]);
 });
+
+test("linux forced xvfb tauri-driver launch ignores inherited display", () => {
+  const launch = buildNonDarwinTauriDriverLaunch({
+    platform: "linux",
+    hasDisplay: true,
+    forceXvfb: true,
+    port: 4444,
+    nativePort: 4446,
+  });
+  assert.equal(launch.command, "xvfb-run");
+  assert.deepEqual(launch.args, [
+    "-a",
+    "pnpm",
+    "exec",
+    "tauri-driver",
+    "--port",
+    "4444",
+    "--native-port",
+    "4446",
+  ]);
+});

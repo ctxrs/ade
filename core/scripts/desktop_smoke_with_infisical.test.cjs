@@ -26,6 +26,11 @@ fi
 
 if [[ "$#" -ge 4 && "$1" == "-C" && "$2" == "apps/desktop" && "$3" == "exec" && "$4" == "wdio" ]]; then
   printf '%s\\n%s\\n%s\\n%s' "\${TMPDIR:-}" "\${TMP:-}" "\${TEMP:-}" "\${CARGO_TARGET_DIR:-}" > "${capturePath}"
+  if [[ "\${CTX_FAKE_WDIO_FAIL:-0}" == "1" ]]; then
+    printf 'fake backend failure\\n' > "\${CTX_AUTOMATION_CN_BACKEND_LOG:-/dev/null}"
+    printf 'fake driver failure\\n' > "\${CTX_AUTOMATION_CN_DRIVER_LOG:-/dev/null}"
+    exit 7
+  fi
   exit 0
 fi
 
@@ -149,6 +154,21 @@ test("desktop smoke preserves auto-created tmp dirs when explicitly requested", 
     true,
     "CTX_AUTOMATION_KEEP_TMPDIR=1 should preserve the auto-created tmpdir",
   );
+});
+
+test("desktop smoke prints automation log tails on failure", () => {
+  const { result } = runDesktopSmoke({
+    CTX_FAKE_WDIO_FAIL: "1",
+    CTX_DESKTOP_SMOKE_LOG_TAIL_LINES: "5",
+  });
+
+  assert.equal(result.status, 7, "fake wdio failure should propagate");
+  assert.match(result.stderr, /CrabNebula backend log:/);
+  assert.match(result.stderr, /CrabNebula driver log:/);
+  assert.match(result.stderr, /CrabNebula backend log tail/);
+  assert.match(result.stderr, /fake backend failure/);
+  assert.match(result.stderr, /CrabNebula driver log tail/);
+  assert.match(result.stderr, /fake driver failure/);
 });
 
 test("desktop smoke defaults automation tmp and cargo target under CTX_VOLATILE_ROOT", () => {

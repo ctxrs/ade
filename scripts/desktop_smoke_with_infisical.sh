@@ -84,6 +84,35 @@ cleanup_automation_tmpdir() {
 
 trap cleanup_automation_tmpdir EXIT
 
+emit_log_tail() {
+  local label="$1"
+  local log_path="$2"
+  local tail_lines="${CTX_DESKTOP_SMOKE_LOG_TAIL_LINES:-200}"
+  if [[ -s "${log_path}" ]]; then
+    echo "[desktop-smoke] ${label} log tail (${log_path}):" >&2
+    tail -n "${tail_lines}" "${log_path}" >&2 || true
+    return
+  fi
+  echo "[desktop-smoke] ${label} log missing or empty: ${log_path}" >&2
+}
+
+copy_automation_artifacts() {
+  local artifact_name="desktop-smoke-automation-$(basename "${AUTOMATION_TMPDIR}")"
+  local copied_to=""
+  for artifacts_dir in "${CI_ARTIFACTS_DIRECTORY:-}" "${BUILDBUDDY_ARTIFACTS_DIRECTORY:-}"; do
+    if [[ -z "${artifacts_dir}" ]]; then
+      continue
+    fi
+    if [[ "${copied_to}" == *"|${artifacts_dir}|"* ]]; then
+      continue
+    fi
+    copied_to="${copied_to}|${artifacts_dir}|"
+    mkdir -p "${artifacts_dir}/${artifact_name}"
+    cp -R "${AUTOMATION_TMPDIR}/." "${artifacts_dir}/${artifact_name}/" || true
+    echo "[desktop-smoke] copied automation artifacts to ${artifacts_dir}/${artifact_name}" >&2
+  done
+}
+
 run_wdio() {
   local status=0
   "$@" || status=$?
@@ -91,6 +120,9 @@ run_wdio() {
     AUTOMATION_FAILED=1
     echo "[desktop-smoke] CrabNebula backend log: ${CTX_AUTOMATION_CN_BACKEND_LOG}" >&2
     echo "[desktop-smoke] CrabNebula driver log: ${CTX_AUTOMATION_CN_DRIVER_LOG}" >&2
+    emit_log_tail "CrabNebula backend" "${CTX_AUTOMATION_CN_BACKEND_LOG}"
+    emit_log_tail "CrabNebula driver" "${CTX_AUTOMATION_CN_DRIVER_LOG}"
+    copy_automation_artifacts
   fi
   return "${status}"
 }

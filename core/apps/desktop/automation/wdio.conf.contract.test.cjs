@@ -230,6 +230,19 @@ test("wdio connection retries are configurable for packaged mac app readiness", 
   assert.match(script, /connectionRetryTimeout: CONNECTION_RETRY_TIMEOUT_MS/);
 });
 
+test("wdio retries Linux tauri-driver pre-session startup flakes", () => {
+  const script = fs.readFileSync(configPath, "utf8");
+
+  assert.match(script, /const resolveTauriDriverStartAttempts = \(\) => parsePositiveInt\(/);
+  assert.match(script, /CTX_AUTOMATION_TAURI_DRIVER_START_ATTEMPTS/);
+  assert.match(script, /process\.platform === "linux" \? "2" : "1"/);
+  assert.match(script, /CTX_AUTOMATION_FORCE_XVFB/);
+  assert.match(script, /forceXvfb: FORCE_XVFB/);
+  assert.match(script, /retrying tauri-driver startup after pre-session failure/);
+  assert.match(script, /tauri-driver log tail after startup failure/);
+  assert.match(script, /attempt=\$\{attempt\}\/\$\{TAURI_DRIVER_START_ATTEMPTS\}/);
+});
+
 test("wdio chooses an unused tauri-driver port on every platform by default", () => {
   const script = fs.readFileSync(configPath, "utf8");
 
