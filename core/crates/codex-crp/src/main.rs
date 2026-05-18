@@ -8,8 +8,18 @@ mod runtime;
 use crate::builtins::parse_cli_config_overrides;
 use clap::Parser;
 use serde_json::Value;
+#[cfg(test)]
+use std::sync::OnceLock;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
+
+#[cfg(test)]
+static TEST_ENV_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+
+#[cfg(test)]
+pub(crate) fn test_env_lock() -> &'static tokio::sync::Mutex<()> {
+    TEST_ENV_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
 
 #[derive(Debug, Parser)]
 #[command(version)]

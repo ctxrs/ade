@@ -1705,7 +1705,7 @@ async fn spawn_codex_oauth_refresh_server_with_error_body(
 }
 
 #[tokio::test]
-async fn codex_broker_refresh_concurrent_launches_singleflight_and_project_access_only() {
+async fn codex_broker_refresh_concurrent_launches_singleflight_and_uses_broker_home() {
     let _env_lock = lock_env().await;
     let _guard = EnvGuard::without("CTX_CODEX_HOME");
     let fresh_access = codex_test_jwt(Utc::now().timestamp() + 3600);
@@ -1763,8 +1763,7 @@ async fn codex_broker_refresh_concurrent_launches_singleflight_and_project_acces
     let second = second.unwrap();
 
     assert_eq!(first.get("CODEX_HOME"), second.get("CODEX_HOME"));
-    let runtime_home = codex_oauth_runtime_home(root, account_id)
-        .unwrap()
+    let runtime_home = codex_broker_home(root, account_id)
         .to_string_lossy()
         .to_string();
     assert_eq!(
@@ -1772,15 +1771,12 @@ async fn codex_broker_refresh_concurrent_launches_singleflight_and_project_acces
         Some(runtime_home.as_str())
     );
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
-    let runtime_payload = tokio::fs::read_to_string(
-        codex_oauth_runtime_home(root, account_id)
-            .unwrap()
-            .join("auth.json"),
-    )
-    .await
-    .unwrap();
+    let runtime_payload =
+        tokio::fs::read_to_string(codex_broker_home(root, account_id).join("auth.json"))
+            .await
+            .unwrap();
     assert!(runtime_payload.contains(&fresh_access));
-    assert!(!runtime_payload.contains("refresh_token"));
+    assert!(runtime_payload.contains("fresh-refresh"));
     assert!(!runtime_payload.contains("OPENAI_API_KEY"));
     let broker_payload =
         tokio::fs::read_to_string(codex_broker_home(root, account_id).join("auth.json"))
@@ -1845,7 +1841,7 @@ async fn codex_broker_refreshes_access_token_without_readable_exp() {
     let env = codex_env_for_active_account(root).await.unwrap();
 
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
-    let runtime_home = codex_oauth_runtime_home(root, account_id).unwrap();
+    let runtime_home = codex_broker_home(root, account_id);
     let runtime_home_text = runtime_home.to_string_lossy().to_string();
     assert_eq!(
         env.get("CODEX_HOME").map(String::as_str),
@@ -1855,7 +1851,8 @@ async fn codex_broker_refreshes_access_token_without_readable_exp() {
         .await
         .unwrap();
     assert!(runtime_payload.contains(&fresh_access));
-    assert!(!runtime_payload.contains("refresh_token"));
+    assert!(runtime_payload.contains("fresh-refresh"));
+    assert!(!runtime_payload.contains("stale-refresh"));
     assert!(!runtime_payload.contains("access-without-readable-exp"));
 }
 
@@ -2113,7 +2110,7 @@ async fn invalid_codex_refresh_token_enters_terminal_reauth_state() {
             .await
             .unwrap();
     assert!(runtime_auth.contains(&repaired_access));
-    assert!(!runtime_auth.contains("refresh_token"));
+    assert!(runtime_auth.contains("fresh-refresh"));
 }
 
 #[tokio::test]
@@ -2161,7 +2158,7 @@ async fn ingested_secret_projects_even_without_account_dir_auth() {
 }
 
 #[tokio::test]
-async fn oauth_secret_projects_access_only_runtime_home_and_retains_broker_refresh() {
+async fn oauth_secret_uses_broker_home_and_retains_broker_refresh() {
     let _env_lock = lock_env().await;
     let _guard = EnvGuard::without("CTX_CODEX_HOME");
     let dir = tempfile::tempdir().unwrap();
@@ -2207,21 +2204,17 @@ async fn oauth_secret_projects_access_only_runtime_home_and_retains_broker_refre
 
     let env = codex_env_for_active_account(root).await.unwrap();
     let home = env.get("CODEX_HOME").unwrap();
-    let expected_home = codex_oauth_runtime_home(root, account_id)
-        .unwrap()
+    let expected_home = codex_broker_home(root, account_id)
         .to_string_lossy()
         .to_string();
     assert_eq!(home, &expected_home);
     ensure_codex_auth_ready(Path::new(home)).await.unwrap();
-    let runtime_payload = tokio::fs::read_to_string(
-        codex_oauth_runtime_home(root, account_id)
-            .unwrap()
-            .join("auth.json"),
-    )
-    .await
-    .unwrap();
+    let runtime_payload =
+        tokio::fs::read_to_string(codex_broker_home(root, account_id).join("auth.json"))
+            .await
+            .unwrap();
     assert!(runtime_payload.contains(&access));
-    assert!(!runtime_payload.contains("refresh_token"));
+    assert!(runtime_payload.contains("refresh"));
     assert!(!runtime_payload.contains("OPENAI_API_KEY"));
     let broker_payload =
         tokio::fs::read_to_string(codex_broker_home(root, account_id).join("auth.json"))
@@ -2231,7 +2224,85 @@ async fn oauth_secret_projects_access_only_runtime_home_and_retains_broker_refre
 }
 
 #[tokio::test]
-async fn oauth_runtime_projection_is_account_scoped_when_active_account_changes() {
+async fn existing_oauth_broker_home_strips_api_key_before_launch() {
+    let _env_lock = lock_env().await;
+    let _guard = EnvGuard::without("CTX_CODEX_HOME");
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let account_id = "acct-oauth";
+    let secret_ref = format!("{account_id}.json");
+    let registry = CodexAccountRegistry {
+        active_account_id: Some(account_id.to_string()),
+        accounts: vec![CodexAccountEntry {
+            id: account_id.to_string(),
+            label: "acct".to_string(),
+            kind: CODEX_CREDENTIAL_KIND_OAUTH.to_string(),
+            email: None,
+            provider_account_id: Some("upstream-acct".to_string()),
+            plan_type: None,
+            created_at: Utc::now(),
+            last_used_at: None,
+            secret_ref: Some(secret_ref.clone()),
+            endpoint_profile: CodexEndpointProfile::default(),
+        }],
+    };
+    save_codex_registry(root, &registry).await.unwrap();
+    let secret_access = codex_test_fresh_jwt();
+    let broker_access = codex_test_fresh_jwt();
+    tokio::fs::create_dir_all(codex_secrets_root(root))
+        .await
+        .unwrap();
+    tokio::fs::write(
+        codex_secret_path(root, &secret_ref).unwrap(),
+        serde_json::json!({
+            "version": 1,
+            "auth": {
+                "OPENAI_API_KEY": "secret-key-must-not-launch",
+                "tokens": {
+                    "access_token": secret_access,
+                    "refresh_token": "secret-refresh",
+                    "account_id": "upstream-acct"
+                }
+            }
+        })
+        .to_string(),
+    )
+    .await
+    .unwrap();
+    let broker_home = codex_broker_home(root, account_id);
+    tokio::fs::create_dir_all(&broker_home).await.unwrap();
+    tokio::fs::write(
+        broker_home.join("auth.json"),
+        serde_json::json!({
+            "OPENAI_API_KEY": "broker-key-must-not-launch",
+            "tokens": {
+                "access_token": broker_access,
+                "refresh_token": "broker-refresh",
+                "account_id": "upstream-acct"
+            }
+        })
+        .to_string(),
+    )
+    .await
+    .unwrap();
+
+    let env = codex_env_for_active_account(root).await.unwrap();
+
+    assert_eq!(
+        env.get("CODEX_HOME").map(String::as_str),
+        Some(broker_home.to_string_lossy().as_ref())
+    );
+    let broker_payload = tokio::fs::read_to_string(broker_home.join("auth.json"))
+        .await
+        .unwrap();
+    assert!(broker_payload.contains(&broker_access));
+    assert!(broker_payload.contains("broker-refresh"));
+    assert!(!broker_payload.contains("OPENAI_API_KEY"));
+    assert!(!broker_payload.contains("broker-key-must-not-launch"));
+}
+
+#[tokio::test]
+async fn oauth_broker_home_is_account_scoped_when_active_account_changes() {
     let _env_lock = lock_env().await;
     let _guard = EnvGuard::without("CTX_CODEX_HOME");
     let dir = tempfile::tempdir().unwrap();
@@ -2314,8 +2385,8 @@ async fn oauth_runtime_projection_is_account_scoped_when_active_account_changes(
         .unwrap();
     let second_env = codex_env_for_active_account(root).await.unwrap();
 
-    let first_home = codex_oauth_runtime_home(root, first_id).unwrap();
-    let second_home = codex_oauth_runtime_home(root, second_id).unwrap();
+    let first_home = codex_broker_home(root, first_id);
+    let second_home = codex_broker_home(root, second_id);
     let first_home_text = first_home.to_string_lossy().to_string();
     let second_home_text = second_home.to_string_lossy().to_string();
     assert_ne!(first_home, second_home);
@@ -2335,10 +2406,10 @@ async fn oauth_runtime_projection_is_account_scoped_when_active_account_changes(
         .unwrap();
     assert!(first_payload.contains(&first_access));
     assert!(!first_payload.contains(&second_access));
-    assert!(!first_payload.contains("refresh_token"));
+    assert!(first_payload.contains("refresh-a"));
     assert!(second_payload.contains(&second_access));
     assert!(!second_payload.contains(&first_access));
-    assert!(!second_payload.contains("refresh_token"));
+    assert!(second_payload.contains("refresh-b"));
 }
 
 #[tokio::test]
@@ -2417,8 +2488,7 @@ async fn oauth_broker_home_exposes_legacy_session_state_without_copying_auth() {
     let env = codex_env_for_active_account(root).await.unwrap();
     let home = env.get("CODEX_HOME").unwrap();
     let broker_home = codex_broker_home(root, account_id);
-    let expected_home = codex_oauth_runtime_home(root, account_id)
-        .unwrap()
+    let expected_home = codex_broker_home(root, account_id)
         .to_string_lossy()
         .to_string();
     assert_eq!(home, &expected_home);
@@ -2470,15 +2540,18 @@ async fn oauth_broker_home_exposes_legacy_session_state_without_copying_auth() {
 
     assert!(!codex_runtime_home(root).join("auth.json").exists());
     assert!(
-        !tokio::fs::read_to_string(
-            codex_oauth_runtime_home(root, account_id)
-                .unwrap()
-                .join("auth.json")
-        )
-        .await
-        .unwrap()
-        .contains("refresh_token"),
-        "OAuth refresh tokens must not be copied into the account runtime home"
+        !codex_oauth_runtime_home(root, account_id)
+            .unwrap()
+            .join("auth.json")
+            .exists(),
+        "normal host launches must use the broker OAuth home, not a copied account runtime home"
+    );
+    assert!(
+        tokio::fs::read_to_string(broker_home.join("auth.json"))
+            .await
+            .unwrap()
+            .contains("refresh_token"),
+        "the broker home remains the OAuth refresh-token authority"
     );
 }
 
@@ -2564,10 +2637,7 @@ async fn oauth_broker_home_repairs_preinitialized_continuity_dirs() {
     let env = codex_env_for_active_account(root).await.unwrap();
     let runtime_home = PathBuf::from(env.get("CODEX_HOME").unwrap());
     let broker_home = codex_broker_home(root, account_id);
-    assert_eq!(
-        runtime_home,
-        codex_oauth_runtime_home(root, account_id).unwrap()
-    );
+    assert_eq!(runtime_home, broker_home);
     assert_eq!(
         tokio::fs::read_to_string(&shared_rollout).await.unwrap(),
         "{\"thread\":\"legacy-shared\"}\n"
@@ -2631,11 +2701,18 @@ async fn oauth_broker_home_repairs_preinitialized_continuity_dirs() {
     );
     assert!(!codex_runtime_home(root).join("auth.json").exists());
     assert!(
-        !tokio::fs::read_to_string(runtime_home.join("auth.json"))
+        tokio::fs::read_to_string(runtime_home.join("auth.json"))
             .await
             .unwrap()
             .contains("refresh_token"),
-        "OAuth refresh tokens must not be copied into the account runtime home"
+        "the broker home remains the OAuth refresh-token authority"
+    );
+    assert!(
+        !codex_oauth_runtime_home(root, account_id)
+            .unwrap()
+            .join("auth.json")
+            .exists(),
+        "normal host launches must not create a copied account runtime home"
     );
 }
 
@@ -3100,8 +3177,7 @@ async fn oauth_broker_home_keeps_existing_shared_history_idempotent() {
     let first_env = codex_env_for_active_account(root).await.unwrap();
     let second_env = codex_env_for_active_account(root).await.unwrap();
     let broker_home = codex_broker_home(root, account_id);
-    let runtime_home = codex_oauth_runtime_home(root, account_id)
-        .unwrap()
+    let runtime_home = codex_broker_home(root, account_id)
         .to_string_lossy()
         .to_string();
     assert_eq!(first_env.get("CODEX_HOME"), second_env.get("CODEX_HOME"));
@@ -4206,8 +4282,7 @@ async fn oauth_broker_launch_clears_legacy_runtime_projection() {
     write_runtime_owner_marker(root, account_id).await.unwrap();
 
     let env = codex_env_for_active_account(root).await.unwrap();
-    let expected_home = codex_oauth_runtime_home(root, account_id)
-        .unwrap()
+    let expected_home = codex_broker_home(root, account_id)
         .to_string_lossy()
         .to_string();
     assert_eq!(
@@ -4215,17 +4290,13 @@ async fn oauth_broker_launch_clears_legacy_runtime_projection() {
         Some(expected_home.as_str())
     );
     assert!(!codex_runtime_home(root).join("auth.json").exists());
-    let runtime_payload = tokio::fs::read_to_string(
-        codex_oauth_runtime_home(root, account_id)
-            .unwrap()
-            .join("auth.json"),
-    )
-    .await
-    .unwrap();
-    assert!(
-        !runtime_payload.contains("refresh_token"),
-        "OAuth refresh tokens must not be copied into the account runtime home"
-    );
+    let runtime_payload =
+        tokio::fs::read_to_string(codex_broker_home(root, account_id).join("auth.json"))
+            .await
+            .unwrap();
+    assert!(runtime_payload.contains(&legacy_access));
+    assert!(runtime_payload.contains("legacy-refresh"));
+    assert!(!runtime_payload.contains("secret-refresh"));
     ensure_codex_auth_ready(&codex_broker_home(root, account_id))
         .await
         .unwrap();
@@ -4622,6 +4693,70 @@ async fn import_host_auth_dedupes_existing_account() {
     assert!(broker_payload.contains("access-1"));
     assert!(broker_payload.contains("refresh-1"));
     assert!(!broker_payload.contains("access-2"));
+}
+
+#[tokio::test]
+async fn import_host_auth_sanitizes_existing_oauth_broker_home() {
+    let _env_lock = lock_env().await;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let host_dir = tempfile::tempdir().unwrap();
+    let auth_path = host_dir.path().join("auth.json");
+    tokio::fs::write(
+        &auth_path,
+        br#"{"tokens":{"access_token":"access-1","refresh_token":"refresh-1","account_id":"upstream-1"}}"#,
+    )
+    .await
+    .unwrap();
+    let _path_guard = EnvGuard::set(
+        CTX_CODEX_HOST_AUTH_PATH_ENV,
+        auth_path.to_string_lossy().as_ref(),
+    );
+    let first = import_host_codex_auth_to_secret_store(root, Some("First".to_string()))
+        .await
+        .unwrap();
+    let account_id = first.active_account_id.clone().expect("active account");
+    let broker_home = codex_broker_home(root, &account_id);
+    tokio::fs::write(
+        broker_home.join("auth.json"),
+        br#"{"OPENAI_API_KEY":"must-not-survive","tokens":{"access_token":"broker-access","refresh_token":"broker-refresh","account_id":"upstream-1"}}"#,
+    )
+    .await
+    .unwrap();
+    tokio::fs::write(
+        &auth_path,
+        br#"{"tokens":{"access_token":"access-2","refresh_token":"refresh-2","account_id":"upstream-1"}}"#,
+    )
+    .await
+    .unwrap();
+
+    let second = import_host_codex_auth_to_secret_store(root, Some("Second".to_string()))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        second.active_account_id.as_deref(),
+        Some(account_id.as_str())
+    );
+    let secret_ref = second.accounts[0]
+        .secret_ref
+        .as_deref()
+        .expect("secret ref");
+    let secret_payload = tokio::fs::read_to_string(codex_secret_path(root, secret_ref).unwrap())
+        .await
+        .unwrap();
+    assert!(secret_payload.contains("broker-access"));
+    assert!(secret_payload.contains("broker-refresh"));
+    assert!(!secret_payload.contains("OPENAI_API_KEY"));
+    assert!(!secret_payload.contains("must-not-survive"));
+    assert!(!secret_payload.contains("access-2"));
+    let broker_payload = tokio::fs::read_to_string(broker_home.join("auth.json"))
+        .await
+        .unwrap();
+    assert!(broker_payload.contains("broker-access"));
+    assert!(broker_payload.contains("broker-refresh"));
+    assert!(!broker_payload.contains("OPENAI_API_KEY"));
+    assert!(!broker_payload.contains("must-not-survive"));
 }
 
 #[tokio::test]

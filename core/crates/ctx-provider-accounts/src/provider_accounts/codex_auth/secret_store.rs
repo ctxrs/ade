@@ -103,11 +103,12 @@ async fn write_codex_secret_for_account(
             "codex auth has no OPENAI_API_KEY or tokens.access_token/tokens.refresh_token"
         );
     }
+    let stored_auth = codex_oauth_broker_projection(auth)?;
     let secret_ref = format!("{account_id}.json");
     let secret_path = codex_secret_path(data_root, &secret_ref)?;
     let envelope = CodexSecretEnvelope {
         version: CODEX_SECRET_VERSION,
-        auth: auth.clone(),
+        auth: stored_auth,
     };
     let bytes = serde_json::to_vec_pretty(&envelope)?;
     write_secure_file_atomic(&secret_path, &bytes).await?;
@@ -134,12 +135,26 @@ async fn update_account_secret_ref(
 }
 
 pub(super) async fn ensure_private_dir_allowing_concurrent_create(path: &Path) -> Result<()> {
-    match ctx_fs::permissions::ensure_private_dir(path).await {
-        Ok(()) => Ok(()),
-        Err(err) if error_chain_has_kind(&err, std::io::ErrorKind::AlreadyExists) => {
-            ctx_fs::permissions::ensure_private_dir(path).await
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || ensure_private_dir_allowing_concurrent_create_sync(&path))
+        .await
+        .context("joining private directory creation task")?
+}
+
+fn ensure_private_dir_allowing_concurrent_create_sync(path: &Path) -> Result<()> {
+    let mut retries = 0;
+    loop {
+        match ctx_fs::permissions::ensure_private_dir_sync(path) {
+            Ok(()) => return Ok(()),
+            Err(err)
+                if error_chain_has_kind(&err, std::io::ErrorKind::AlreadyExists) && retries < 4 =>
+            {
+                retries += 1;
+                std::thread::yield_now();
+                continue;
+            }
+            Err(err) => return Err(err),
         }
-        Err(err) => Err(err),
     }
 }
 
@@ -161,7 +176,7 @@ fn validated_codex_broker_home(data_root: &Path, account_id: &str) -> Result<Pat
 }
 
 pub(super) fn acquire_broker_oauth_authority_lock(home: &Path) -> Result<File> {
-    std::fs::create_dir_all(home)
+    ensure_private_dir_allowing_concurrent_create_sync(home)
         .with_context(|| format!("creating Codex broker home at {}", home.display()))?;
     let lock_path = home.join(CODEX_OAUTH_AUTHORITY_LOCK_FILE);
     let file = OpenOptions::new()
@@ -202,7 +217,8 @@ async fn project_oauth_auth_to_broker_home(
     }
     crate::provider_accounts::paths::validate_codex_provider_root_before_broker_access(data_root)?;
     let broker_home = validated_codex_broker_home(data_root, account_id)?;
-    project_auth_value_to_home(&broker_home, auth).await
+    let projected = codex_oauth_broker_projection(auth)?;
+    project_auth_value_to_home(&broker_home, &projected).await
 }
 
 pub(super) async fn project_oauth_auth_to_broker_home_with_lock(
@@ -219,10 +235,27 @@ pub(super) async fn project_oauth_auth_to_broker_home_with_lock(
         acquire_broker_oauth_authority_lock_for_auth_async(data_root, account_id, auth).await?;
     if let Some(existing) = read_codex_auth_value_from_home(&broker_home).await? {
         if codex_auth_has_refresh_token(&existing) {
+            let projected = codex_oauth_broker_projection(&existing)?;
+            if projected != existing {
+                return project_auth_value_to_home(&broker_home, &projected).await;
+            }
             return Ok(false);
         }
     }
-    project_auth_value_to_home(&broker_home, auth).await
+    let projected = codex_oauth_broker_projection(auth)?;
+    project_auth_value_to_home(&broker_home, &projected).await
+}
+
+fn codex_oauth_broker_projection(auth: &serde_json::Value) -> Result<serde_json::Value> {
+    if !codex_auth_has_refresh_token(auth) {
+        return Ok(auth.clone());
+    }
+    let mut projected = auth.clone();
+    let Some(object) = projected.as_object_mut() else {
+        anyhow::bail!("codex OAuth auth must be a JSON object");
+    };
+    object.remove("OPENAI_API_KEY");
+    Ok(projected)
 }
 
 pub(super) async fn ingest_auth_value_for_account(
@@ -353,7 +386,16 @@ pub async fn import_codex_auth_value_to_secret_store(
                         broker_home.join("auth.json").display()
                     );
                 }
-                ingest_auth_value_for_account(data_root, &existing.entry.id, &broker_auth).await?;
+                let projected = codex_oauth_broker_projection(&broker_auth)?;
+                if projected != broker_auth {
+                    project_oauth_auth_to_broker_home_with_lock(
+                        data_root,
+                        &existing.entry.id,
+                        &broker_auth,
+                    )
+                    .await?;
+                }
+                ingest_auth_value_for_account(data_root, &existing.entry.id, &projected).await?;
             } else {
                 let _broker_lock = acquire_broker_oauth_authority_lock_for_auth_async(
                     data_root,
@@ -491,6 +533,16 @@ pub(super) async fn hydrate_legacy_account_auth_to_broker_home(
                 broker_home.join("auth.json").display()
             );
         }
+        let broker_auth = if codex_auth_has_refresh_token(&broker_auth) {
+            let projected = codex_oauth_broker_projection(&broker_auth)?;
+            if projected != broker_auth {
+                project_oauth_auth_to_broker_home_with_lock(data_root, account_id, &broker_auth)
+                    .await?;
+            }
+            projected
+        } else {
+            broker_auth
+        };
         ingest_auth_value_for_account(data_root, account_id, &broker_auth).await?;
         remove_codex_account_home_auth_if_present(data_root, account_id).await?;
         return Ok(Some(broker_home));

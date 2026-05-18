@@ -15,8 +15,8 @@ use super::runtime_oauth::{
     project_oauth_authority_to_runtime_home,
 };
 use super::secret_store::{
-    codex_auth_has_refresh_token, hydrate_codex_account_home_from_secret,
-    load_codex_auth_from_secret_store,
+    codex_auth_has_refresh_token, ensure_private_dir_allowing_concurrent_create,
+    hydrate_codex_account_home_from_secret, load_codex_auth_from_secret_store,
 };
 use super::*;
 
@@ -38,7 +38,7 @@ pub async fn codex_usage_env_for_active_account(
         CodexOAuthAccessPolicy::ProjectCurrentAccessOnly,
     )
     .await?;
-    ctx_fs::permissions::ensure_private_dir(&prepared.home).await?;
+    ensure_private_dir_allowing_concurrent_create(&prepared.home).await?;
     Ok(codex_env_for_home(&prepared.home))
 }
 

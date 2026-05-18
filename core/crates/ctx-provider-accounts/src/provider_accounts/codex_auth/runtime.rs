@@ -149,9 +149,14 @@ pub(super) async fn mirror_account_auth_to_runtime_home(
         ingest_auth_value_for_account(data_root, account_id, &auth).await?;
         project_oauth_auth_to_broker_home_with_lock(data_root, account_id, &auth).await?;
         let broker_home = codex_broker_home(data_root, account_id);
+        write_broker_owner_marker(data_root, account_id).await?;
+        expose_legacy_codex_state_to_broker_home(data_root, &broker_home).await?;
         let broker_auth =
             broker_oauth_auth_for_projection(data_root, account_id, &broker_home, oauth_policy)
                 .await?;
+        if oauth_policy == CodexOAuthAccessPolicy::RefreshBeforeProjection {
+            return Ok(Some(broker_home));
+        }
         project_oauth_authority_to_runtime_home(data_root, data_root, account_id, &broker_auth)
             .await?;
         return Ok(Some(codex_oauth_runtime_home(data_root, account_id)?));
@@ -189,6 +194,7 @@ pub(super) async fn prepare_broker_home_from_secret(
                 broker_home.join("auth.json").display()
             );
         }
+        project_oauth_auth_to_broker_home_with_lock(data_root, account_id, &auth).await?;
         write_broker_owner_marker(data_root, account_id).await?;
         expose_legacy_codex_state_to_broker_home(data_root, &broker_home).await?;
         return Ok(broker_home);
@@ -422,6 +428,12 @@ pub(super) async fn prepare_codex_runtime_auth_with_runtime_root_and_oauth_polic
                         oauth_policy,
                     )
                     .await?;
+                    if oauth_policy == CodexOAuthAccessPolicy::RefreshBeforeProjection {
+                        return Ok(PreparedCodexRuntimeAuth {
+                            home: broker_home.clone(),
+                            has_auth: ensure_codex_auth_ready(&broker_home).await.is_ok(),
+                        });
+                    }
                     let projected = project_oauth_authority_to_runtime_home(
                         data_root,
                         data_root,
@@ -470,6 +482,12 @@ pub(super) async fn prepare_codex_runtime_auth_with_runtime_root_and_oauth_polic
                 let broker_auth =
                     broker_oauth_auth_for_projection(data_root, active, &broker_home, oauth_policy)
                         .await?;
+                if oauth_policy == CodexOAuthAccessPolicy::RefreshBeforeProjection {
+                    return Ok(PreparedCodexRuntimeAuth {
+                        home: broker_home.clone(),
+                        has_auth: ensure_codex_auth_ready(&broker_home).await.is_ok(),
+                    });
+                }
                 let projected = project_oauth_authority_to_runtime_home(
                     data_root,
                     data_root,
@@ -556,7 +574,7 @@ pub async fn codex_env_for_active_account(data_root: &Path) -> Result<HashMap<St
     }
 
     let prepared = prepare_codex_runtime_auth_with_runtime_root(data_root, data_root).await?;
-    ctx_fs::permissions::ensure_private_dir(&prepared.home).await?;
+    ensure_private_dir_allowing_concurrent_create(&prepared.home).await?;
     Ok(codex_env_for_home(&prepared.home))
 }
 
@@ -568,6 +586,6 @@ pub async fn codex_env_for_active_account_with_runtime_root(
         return codex_env_for_active_account(data_root).await;
     }
     let prepared = prepare_codex_runtime_auth_with_runtime_root(data_root, runtime_root).await?;
-    ctx_fs::permissions::ensure_private_dir(&prepared.home).await?;
+    ensure_private_dir_allowing_concurrent_create(&prepared.home).await?;
     Ok(codex_env_for_home(&prepared.home))
 }

@@ -12,14 +12,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
-use tokio::sync::{mpsc, Mutex};
-
-static CODEX_BIN_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-fn codex_bin_env_lock() -> &'static Mutex<()> {
-    CODEX_BIN_ENV_LOCK.get_or_init(|| Mutex::new(()))
-}
+use tokio::sync::mpsc;
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -147,7 +140,7 @@ fn assert_snapshot(input: &str, expected: &str) {
 
 #[tokio::test]
 async fn open_session_fails_closed_on_resume_error_and_scrubs_ambient_session_env() {
-    let _env_lock = codex_bin_env_lock().lock().await;
+    let _env_lock = crate::test_env_lock().lock().await;
     let tempdir = tempfile::tempdir().expect("tempdir");
     let workdir = tempdir.path().to_path_buf();
     let script_path = workdir.join("fake-codex.sh");
@@ -601,8 +594,8 @@ async fn send_open_and_prompt(
 }
 
 #[tokio::test]
-async fn concurrent_access_only_oauth_sessions_do_not_create_refresh_token_lock() {
-    let _env_lock = codex_bin_env_lock().lock().await;
+async fn concurrent_refresh_capable_oauth_sessions_do_not_create_ctx_refresh_token_lock() {
+    let _env_lock = crate::test_env_lock().lock().await;
     let tempdir = tempfile::tempdir().expect("tempdir");
     let root = tempdir.path();
     let script_path = write_fake_codex_app_server(root, &root.join("app-server.log"));
@@ -610,9 +603,9 @@ async fn concurrent_access_only_oauth_sessions_do_not_create_refresh_token_lock(
     fs::create_dir_all(&codex_home).expect("codex home");
     fs::write(
         codex_home.join("auth.json"),
-        r#"{"tokens":{"access_token":"access-token","account_id":"acct-1"}}"#,
+        r#"{"tokens":{"access_token":"access-token","refresh_token":"refresh-token","account_id":"acct-1"}}"#,
     )
-    .expect("write access-only auth");
+    .expect("write refresh-capable auth");
     let _codex_bin = EnvGuard::set("CTX_CODEX_BIN_PATH", &script_path.to_string_lossy());
     let _codex_home = EnvGuard::set("CODEX_HOME", &codex_home.to_string_lossy());
     let workdir_a = root.join("work-a");
@@ -637,7 +630,7 @@ async fn concurrent_access_only_oauth_sessions_do_not_create_refresh_token_lock(
     assert!(codex_home.join(".ctx-continuity-runtime.lock").exists());
     assert!(
         !codex_home.join(".ctx-refresh-token.lock").exists(),
-        "access-only OAuth sessions must not create a refresh-token authority lock"
+        "parallel broker-home OAuth sessions must not create a ctx refresh-token authority lock"
     );
 
     if let Some(state) = session_a.as_mut() {
@@ -650,7 +643,7 @@ async fn concurrent_access_only_oauth_sessions_do_not_create_refresh_token_lock(
 
 #[tokio::test]
 async fn open_session_bootstraps_mcp_on_thread_start_not_turn_start() {
-    let _env_lock = codex_bin_env_lock().lock().await;
+    let _env_lock = crate::test_env_lock().lock().await;
     let tempdir = tempfile::tempdir().expect("tempdir");
     let workdir = tempdir.path().to_path_buf();
     let log_path = workdir.join("app-server.log");
@@ -678,7 +671,7 @@ async fn open_session_bootstraps_mcp_on_thread_start_not_turn_start() {
 
 #[tokio::test]
 async fn resume_session_bootstraps_mcp_on_thread_resume_not_turn_start() {
-    let _env_lock = codex_bin_env_lock().lock().await;
+    let _env_lock = crate::test_env_lock().lock().await;
     let tempdir = tempfile::tempdir().expect("tempdir");
     let workdir = tempdir.path().to_path_buf();
     let log_path = workdir.join("app-server.log");
