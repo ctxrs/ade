@@ -11,6 +11,7 @@ use crate::daemon::{DaemonState, TransportHandle};
 
 mod access;
 mod launch;
+mod route_contract;
 mod signal;
 
 pub use access::{
@@ -19,6 +20,10 @@ pub use access::{
 };
 pub use launch::{
     create_web_session, WebSessionLaunchError, WebSessionLaunchErrorKind, WebSessionLaunchRequest,
+};
+pub use route_contract::{
+    WebSessionActionRouteRequest, WebSessionCreateRouteRequest, WebSessionListRouteQuery,
+    WebSessionRouteError, WebSessionRouteErrorKind,
 };
 pub use signal::connect_web_session_signal_bridge;
 

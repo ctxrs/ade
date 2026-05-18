@@ -182,6 +182,11 @@ const runArchiveApiRoots = [
   "core/crates/ctx-http/src/api/run_archive/",
 ];
 
+const webSessionRestRouteApiRoots = [
+  "core/crates/ctx-http/src/api/web_sessions/creation.rs",
+  "core/crates/ctx-http/src/api/web_sessions/actions.rs",
+];
+
 const sessionHeadApiRoots = [
   "core/crates/ctx-http/src/api/sessions/snapshot/head.rs",
   "core/crates/ctx-http/src/api/sessions/snapshot/head_metrics.rs",
@@ -1393,6 +1398,32 @@ const RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS = [
   {
     name: "run archive API owns ingest error mapping",
     regex: /\brun_archive_ingest_api_error\s*\(/,
+  },
+];
+
+const WEB_SESSION_REST_ROUTE_API_CONTRACT_PATTERNS = [
+  {
+    name: "web-session REST API owns session/worktree ids or local id parsing",
+    regex: /\buuid::Uuid::parse_str\s*\(|\b(?:SessionId|WorktreeId)\s*\(/,
+  },
+  {
+    name: "web-session REST API exposes old local route DTOs",
+    regex: /\b(?:WebSessionCreatePayload|WebSessionListQuery)\b/,
+  },
+  {
+    name: "web-session REST API references low-level route errors",
+    regex:
+      /\b(?:WebSessionLaunchError|WebSessionLaunchErrorKind|WebSessionLaunchRequest|WebSessionActionError)\b/,
+  },
+  {
+    name: "web-session REST API owns run/eval request defaults",
+    regex:
+      /\bWebSessionRunRequest\b|\btimeout_ms\b|\b5\s*\*\s*60\s*\*\s*1000\b|\b300000\b/,
+  },
+  {
+    name: "web-session REST API calls low-level transport facades directly",
+    regex:
+      /\.(?:create_web_session|list_web_sessions|get_web_session|run_web_session|eval_web_session|close_web_session)\s*\(/,
   },
 ];
 
@@ -5038,6 +5069,9 @@ function apiPatternsForPath(relativePath) {
   if (runArchiveApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS);
   }
+  if (webSessionRestRouteApiRoots.some((root) => relativePath === root)) {
+    patterns.push(...WEB_SESSION_REST_ROUTE_API_CONTRACT_PATTERNS);
+  }
   if (sessionHeadApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...SESSION_HEAD_API_ORCHESTRATION_PATTERNS);
   }
@@ -5223,6 +5257,13 @@ function taskRouteApiPatternsForPath(relativePath) {
 function runArchiveApiPatternsForPath(relativePath) {
   if (runArchiveApiRoots.some((root) => relativePath.startsWith(root))) {
     return RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS;
+  }
+  return [];
+}
+
+function webSessionRestRouteApiPatternsForPath(relativePath) {
+  if (webSessionRestRouteApiRoots.some((root) => relativePath === root)) {
+    return WEB_SESSION_REST_ROUTE_API_CONTRACT_PATTERNS;
   }
   return [];
 }
@@ -6215,6 +6256,7 @@ module.exports = {
   UPDATE_DRAIN_API_ORCHESTRATION_PATTERNS,
   ROUTE_FILE_DOWNLOAD_API_PATTERNS,
   RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS,
+  WEB_SESSION_REST_ROUTE_API_CONTRACT_PATTERNS,
   SESSION_HEAD_API_ORCHESTRATION_PATTERNS,
   SESSION_CONTROL_ROUTE_API_CONTRACT_PATTERNS,
   SESSION_MESSAGE_COMMAND_ROUTE_API_CONTRACT_PATTERNS,
@@ -6327,6 +6369,7 @@ module.exports = {
   mergeQueueEntryApiPatternsForPath,
   mergeQueueSubmitApiPatternsForPath,
   terminalRestRouteApiPatternsForPath,
+  webSessionRestRouteApiPatternsForPath,
   taskRouteApiPatternsForPath,
   mcpDaemonPatternsForPath,
   migratedTestPatternsForPath,

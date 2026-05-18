@@ -27,6 +27,22 @@ async fn web_session_routes_are_registered() {
         .method("POST")
         .uri("/api/sessions/web")
         .header("content-type", "application/json")
+        .body(Body::from(
+            json!({"url": "", "session_id": "not-a-uuid"}).to_string(),
+        ))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+        json!({"error":"url is required"})
+    );
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/sessions/web")
+        .header("content-type", "application/json")
         .body(Body::from(json!({"url": "file:///etc/passwd"}).to_string()))
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
@@ -109,6 +125,17 @@ async fn missing_web_session_api_routes_return_not_found() {
     assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
 
     let req = Request::builder()
+        .method("GET")
+        .uri("/api/sessions/web/does-not-exist")
+        .header(header::AUTHORIZATION, "Bearer daemon-secret")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    assert!(body.is_empty());
+
+    let req = Request::builder()
         .method("POST")
         .uri("/api/sessions/web/does-not-exist/run")
         .header(header::AUTHORIZATION, "Bearer daemon-secret")
@@ -117,6 +144,8 @@ async fn missing_web_session_api_routes_return_not_found() {
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    assert!(body.is_empty());
 
     let req = Request::builder()
         .method("POST")
@@ -127,6 +156,8 @@ async fn missing_web_session_api_routes_return_not_found() {
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    assert!(body.is_empty());
 
     let req = Request::builder()
         .method("POST")
@@ -136,6 +167,8 @@ async fn missing_web_session_api_routes_return_not_found() {
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    assert!(body.is_empty());
 
     let req = Request::builder()
         .method("POST")
@@ -160,4 +193,6 @@ async fn web_session_list_rejects_invalid_session_filter() {
         .unwrap();
     let res = app.oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    assert!(body.is_empty());
 }

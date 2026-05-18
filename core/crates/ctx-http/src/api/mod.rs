@@ -85,6 +85,5 @@ use ctx_observability::logs;
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
 use ctx_provider_install::install_state::InstallId;
 use ctx_transport_runtime::web_sessions::{
-    render_web_session_view, WebSessionInfo, WebSessionRunRequest, WebSessionRunResponse,
-    WebSessionViewport,
+    render_web_session_view, WebSessionInfo, WebSessionRunResponse,
 };

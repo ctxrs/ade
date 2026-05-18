@@ -28,6 +28,7 @@ const {
   UPDATE_DRAIN_API_ORCHESTRATION_PATTERNS,
   ROUTE_FILE_DOWNLOAD_API_PATTERNS,
   RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS,
+  WEB_SESSION_REST_ROUTE_API_CONTRACT_PATTERNS,
   WORKSPACE_CONFIG_ROUTE_CONTEXT_PATTERNS,
   WORKSPACE_EXECUTION_CONFIG_API_PATTERNS,
   WORKSPACE_MANAGEMENT_CONFIG_API_PATTERNS,
@@ -140,6 +141,7 @@ const {
   mergeQueueEntryApiPatternsForPath,
   mergeQueueSubmitApiPatternsForPath,
   terminalRestRouteApiPatternsForPath,
+  webSessionRestRouteApiPatternsForPath,
   taskRouteApiPatternsForPath,
   mcpDaemonPatternsForPath,
   migratedTestPatternsForPath,
@@ -2975,6 +2977,96 @@ test("daemon boundary guard scopes run archive API orchestration roots", () => {
   }
   assert.deepEqual(
     runArchiveApiPatternsForPath("core/crates/ctx-http/src/api/updates/check.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects web-session REST route contract leaks", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/web_sessions/actions.rs",
+    contents: `
+      use ctx_daemon::daemon::web_sessions::{WebSessionActionError, WebSessionLaunchRequest};
+      struct WebSessionListQuery {
+        session_id: Option<String>,
+      }
+      async fn handler(state: TransportHandle, id: String, mut payload: WebSessionRunRequest) {
+        let session_id = SessionId(uuid::Uuid::parse_str(&id).unwrap());
+        let worktree_id = WorktreeId(uuid::Uuid::parse_str(&id).unwrap());
+        if payload.timeout_ms.is_none() {
+          payload.timeout_ms = Some(5 * 60 * 1000);
+        }
+        payload.timeout_ms = Some(300000);
+        let _ = state.list_web_sessions().await;
+        let _ = state.get_web_session(&id).await;
+        let _ = state.run_web_session(&id, payload).await;
+        let _ = state.eval_web_session(&id, WebSessionRunRequest::default()).await;
+        let _ = state.close_web_session(&id).await;
+      }
+    `,
+    patterns: WEB_SESSION_REST_ROUTE_API_CONTRACT_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "web-session REST API owns session/worktree ids or local id parsing",
+      "web-session REST API owns session/worktree ids or local id parsing",
+      "web-session REST API exposes old local route DTOs",
+      "web-session REST API references low-level route errors",
+      "web-session REST API owns run/eval request defaults",
+      "web-session REST API owns run/eval request defaults",
+      "web-session REST API owns run/eval request defaults",
+      "web-session REST API owns run/eval request defaults",
+      "web-session REST API owns run/eval request defaults",
+      "web-session REST API calls low-level transport facades directly",
+      "web-session REST API calls low-level transport facades directly",
+      "web-session REST API calls low-level transport facades directly",
+      "web-session REST API calls low-level transport facades directly",
+      "web-session REST API calls low-level transport facades directly",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes web-session REST route contract roots", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/src/api/web_sessions/creation.rs",
+    "core/crates/ctx-http/src/api/web_sessions/actions.rs",
+  ]) {
+    assert.deepEqual(
+      webSessionRestRouteApiPatternsForPath(filePath),
+      WEB_SESSION_REST_ROUTE_API_CONTRACT_PATTERNS,
+    );
+    assert.equal(
+      apiPatternsForPath(filePath).includes(WEB_SESSION_REST_ROUTE_API_CONTRACT_PATTERNS[0]),
+      true,
+    );
+  }
+
+  assert.deepEqual(
+    webSessionRestRouteApiPatternsForPath("core/crates/ctx-http/src/api/web_sessions/access.rs"),
+    [],
+  );
+  assert.deepEqual(
+    webSessionRestRouteApiPatternsForPath(
+      "core/crates/ctx-http/src/api/web_sessions/stream_view.rs",
+    ),
+    [],
+  );
+  assert.deepEqual(
+    webSessionRestRouteApiPatternsForPath("core/crates/ctx-http/src/api/ws/web_session.rs"),
+    [],
+  );
+  assert.deepEqual(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/web_sessions/actions.rs",
+      contents: `
+        async fn run_web_session(state: TransportHandle, id: String, payload: WebSessionActionRouteRequest) {
+          let _ = state.run_web_session_for_route(&id, payload).await?;
+          let _ = state.close_web_session_for_route(&id).await?;
+        }
+      `,
+      patterns: WEB_SESSION_REST_ROUTE_API_CONTRACT_PATTERNS,
+    }),
     [],
   );
 });
