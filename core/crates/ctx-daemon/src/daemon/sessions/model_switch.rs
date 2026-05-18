@@ -35,7 +35,10 @@ pub struct SetSessionModelError {
 }
 
 impl SetSessionModelError {
-    fn new(kind: SetSessionModelErrorKind, message: impl Into<String>) -> Self {
+    pub(in crate::daemon::sessions) fn new(
+        kind: SetSessionModelErrorKind,
+        message: impl Into<String>,
+    ) -> Self {
         Self {
             kind,
             message: message.into(),

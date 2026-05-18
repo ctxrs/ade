@@ -3276,8 +3276,26 @@ test("daemon boundary guard rejects session model switch orchestration in HTTP",
       use ctx_provider_install::install_state::InstallTarget;
       use ctx_providers::adapters::ProviderAdapter;
       use ctx_session_tools::model_resolution::{compose_model_id, normalize_effort_id, resolve_model_id};
+      use ctx_core::models::Session;
+      use ctx_daemon::daemon::sessions::{GenerateSessionTitleError, SetSessionModeError, SetSessionModelRequest, SetSessionModelError, SetSessionModelErrorKind};
+      #[derive(Deserialize)]
+      struct GenerateSessionTitleReq;
+      #[derive(Deserialize)]
+      struct SetSessionModelReq;
+      #[derive(Deserialize)]
+      struct SetSessionModeReq;
 
-      async fn handler(sessions: SessionsHandle) {
+      async fn handler(sessions: SessionsHandle) -> Json<Session> {
+        let session_id = SessionId(uuid::Uuid::parse_str(&id).unwrap());
+        let _ = logs::redact_sensitive("secret");
+        let _ = GenerateSessionTitleError::Skipped;
+        let _ = SetSessionModeError::BadRequest;
+        let _ = SetSessionModelRequest { model_id, reasoning_effort };
+        let _ = SetSessionModelErrorKind::Forbidden;
+        let _ = SetSessionModelError;
+        sessions.generate_session_title_for_request(session_id, None, None).await?;
+        sessions.set_session_model_for_request(session_id, request).await?;
+        sessions.set_session_mode_for_request(session_id, mode_id).await?;
         let _ = sessions.load_session_model_target_parts(session_id).await;
         let _ = sessions.ensure_provider_adapter_for_target("codex", InstallTarget::Host).await;
         let _ = sessions.load_provider_model_catalog_for_execution_environment(&workspace, "codex", env).await;
@@ -3292,12 +3310,28 @@ test("daemon boundary guard rejects session model switch orchestration in HTTP",
   });
 
   assert.deepEqual(
-    violations.map((violation) => violation.name),
+    violations.map((violation) => violation.name).sort(),
     [
+      "session title/model/mode API owns session id parsing",
+      "session title/model/mode API exposes raw Session success shape",
+      "session title/model/mode API exposes raw Session success shape",
+      "session title/model/mode API imports low-level route errors",
+      "session title/model/mode API imports low-level route errors",
+      "session title/model/mode API imports low-level route errors",
+      "session title/model/mode API imports low-level route errors",
+      "session title/model/mode API imports low-level route errors",
+      "session title/model/mode API imports low-level route errors",
+      "session title/model/mode API owns local route DTOs",
+      "session title/model/mode API owns local route DTOs",
+      "session title/model/mode API owns local route DTOs",
+      "session title/model/mode API redacts low-level route errors",
+      "session title/model/mode API calls raw title/model/mode facades",
+      "session title/model/mode API calls raw title/model/mode facades",
+      "session title/model/mode API calls raw title/model/mode facades",
       "session model API imports model-resolution helpers directly",
-      "session model API imports provider install target directly",
-      "session model API imports provider install target directly",
       "session model API imports provider adapter directly",
+      "session model API imports provider install target directly",
+      "session model API imports provider install target directly",
       "session model API loads target parts directly",
       "session model API ensures provider adapter directly",
       "session model API loads provider model catalog directly",
@@ -3306,7 +3340,7 @@ test("daemon boundary guard rejects session model switch orchestration in HTTP",
       "session model API defines old orchestration helpers",
       "session model API defines old orchestration helpers",
       "session model API defines old orchestration helpers",
-    ],
+    ].sort(),
   );
 });
 
@@ -3334,6 +3368,36 @@ test("daemon boundary guard scopes session model switch patterns to model route 
       SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS[0],
     ),
     false,
+  );
+  assert.deepEqual(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/sessions/titles_and_modes/model.rs",
+      contents: `
+        async fn handler(state: SessionsHandle) -> Json<SetSessionModelRouteResponse> {
+          let response = state
+            .set_session_model_for_route(SessionRouteParams::new(id), req)
+            .await?;
+          state
+            .generate_session_title_for_route(SessionRouteParams::new(id), title_req)
+            .await?;
+          state
+            .set_session_mode_for_route(SessionRouteParams::new(id), mode_req)
+            .await?;
+          type Allowed = (
+            GenerateSessionTitleRouteRequest,
+            GenerateSessionTitleRouteResponse,
+            SetSessionModelRouteRequest,
+            SetSessionModelRouteResponse,
+            SetSessionModeRouteRequest,
+            SessionTitleModelModeRouteError,
+            SessionTitleModelModeRouteErrorKind,
+          );
+          Json(response)
+        }
+      `,
+      patterns: SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS,
+    }),
+    [],
   );
 });
 

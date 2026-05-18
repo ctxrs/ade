@@ -1491,6 +1491,33 @@ const SESSION_VCS_API_ORCHESTRATION_PATTERNS = [
 
 const SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS = [
   {
+    name: "session title/model/mode API owns session id parsing",
+    regex: /\bSessionId\b|\buuid\s*::\s*Uuid\s*::\s*parse_str\s*\(/,
+  },
+  {
+    name: "session title/model/mode API exposes raw Session success shape",
+    regex:
+      /\bctx_core::models::Session\b|\buse\s+ctx_core::models::[^;]*\bSession\b|\bJson\s*<\s*Session\s*>/,
+  },
+  {
+    name: "session title/model/mode API owns local route DTOs",
+    regex: /\b(?:GenerateSessionTitleReq|SetSessionModelReq|SetSessionModeReq)\b/,
+  },
+  {
+    name: "session title/model/mode API imports low-level route errors",
+    regex:
+      /\b(?:GenerateSessionTitleError|SetSessionModeError|SetSessionModelRequest|SetSessionModelError|SetSessionModelErrorKind)\b/,
+  },
+  {
+    name: "session title/model/mode API redacts low-level route errors",
+    regex: /\blogs\s*::\s*redact_sensitive\s*\(|\bredact_sensitive\s*\(/,
+  },
+  {
+    name: "session title/model/mode API calls raw title/model/mode facades",
+    regex:
+      /\.(?:generate_session_title_for_request|set_session_model_for_request|set_session_mode_for_request)\s*\(/,
+  },
+  {
     name: "session model API imports model-resolution helpers directly",
     regex:
       /\bctx_session_tools::model_resolution\b|\b(?:compose_model_id|normalize_effort_id|resolve_model_id)\b/,

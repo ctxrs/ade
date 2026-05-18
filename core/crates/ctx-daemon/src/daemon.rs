@@ -105,6 +105,7 @@ pub use route_files::{RouteFileDownloadError, TextRouteDownload};
 pub use runtime::{bootstrap_daemon_runtime, DaemonRuntime};
 pub use sessions::{
     AuthenticateSessionRouteRequest, DeleteSessionMessageRouteParams,
+    GenerateSessionTitleRouteRequest, GenerateSessionTitleRouteResponse,
     PostSessionMessageRouteContext, PostSessionMessageRouteRequest,
     PostSessionMessageRouteResponse, SessionControlRouteError, SessionControlRouteErrorKind,
     SessionEventsRouteQuery, SessionEventsRouteResponse, SessionFileCompletionsRouteQuery,
@@ -112,8 +113,11 @@ pub use sessions::{
     SessionHistoryRouteQuery, SessionHistoryRouteResponse, SessionMessageRouteError,
     SessionMessageRouteErrorKind, SessionReadModelRouteError, SessionReadModelRouteErrorKind,
     SessionRouteParams, SessionSnapshotRouteQuery, SessionSnapshotRouteResponse,
-    SessionStateRouteResponse, SessionTurnToolsRouteParams, SessionTurnToolsRouteResponse,
-    SubmitAskUserQuestionRouteRequest, SubmitAskUserQuestionRouteResponse,
+    SessionStateRouteResponse, SessionTitleModelModeRouteError,
+    SessionTitleModelModeRouteErrorKind, SessionTurnToolsRouteParams,
+    SessionTurnToolsRouteResponse, SetSessionModeRouteRequest, SetSessionModelRouteRequest,
+    SetSessionModelRouteResponse, SubmitAskUserQuestionRouteRequest,
+    SubmitAskUserQuestionRouteResponse,
 };
 pub use settings::{SettingsRouteError, SettingsRouteErrorKind};
 pub use state::{AppRuntimeFlags, DaemonState};

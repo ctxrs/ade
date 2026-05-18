@@ -1,33 +1,14 @@
 use super::*;
 
-#[derive(Debug, Deserialize)]
-pub(crate) struct SetSessionModeReq {
-    pub(crate) mode_id: String,
-}
-
 pub(crate) async fn set_session_mode(
     State(state): State<SessionsHandle>,
     Path(id): Path<String>,
-    Json(req): Json<SetSessionModeReq>,
+    Json(req): Json<SetSessionModeRouteRequest>,
 ) -> Result<StatusCode, StatusCode> {
-    let session_id = SessionId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
-
     state
-        .set_session_mode_for_request(session_id, req.mode_id)
+        .set_session_mode_for_route(SessionRouteParams::new(id), req)
         .await
-        .map_err(map_set_session_mode_error)?;
+        .map_err(session_title_model_mode_bare_status)?;
 
     Ok(StatusCode::OK)
-}
-
-fn map_set_session_mode_error(
-    error: ctx_daemon::daemon::sessions::SetSessionModeError,
-) -> StatusCode {
-    match error {
-        ctx_daemon::daemon::sessions::SetSessionModeError::NotFound => StatusCode::NOT_FOUND,
-        ctx_daemon::daemon::sessions::SetSessionModeError::BadRequest => StatusCode::BAD_REQUEST,
-        ctx_daemon::daemon::sessions::SetSessionModeError::Internal => {
-            StatusCode::INTERNAL_SERVER_ERROR
-        }
-    }
 }

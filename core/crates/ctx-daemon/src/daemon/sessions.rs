@@ -13,6 +13,7 @@ mod route_contract;
 mod runtime;
 pub mod subagents;
 pub mod title_generation;
+mod title_model_mode_route;
 pub mod vcs;
 
 pub use artifacts::{SessionArtifactDownload, SessionArtifactInput, SessionArtifactRouteError};
@@ -37,4 +38,9 @@ pub use route_contract::{
     SessionReadModelRouteError, SessionReadModelRouteErrorKind, SessionRouteParams,
     SessionSnapshotRouteQuery, SessionSnapshotRouteResponse, SessionStateRouteResponse,
     SessionTurnToolsRouteParams, SessionTurnToolsRouteResponse,
+};
+pub use title_model_mode_route::{
+    GenerateSessionTitleRouteRequest, GenerateSessionTitleRouteResponse,
+    SessionTitleModelModeRouteError, SessionTitleModelModeRouteErrorKind,
+    SetSessionModeRouteRequest, SetSessionModelRouteRequest, SetSessionModelRouteResponse,
 };
