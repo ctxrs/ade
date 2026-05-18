@@ -17,7 +17,8 @@ mod submit_route;
 
 pub use route_contract::{
     ListMergeQueueEntriesRouteRequest, MergeQueueEntryRouteError, MergeQueueEntryRouteErrorKind,
-    MergeQueueEntryRouteParams, MergeQueueEntryRouteResponse,
+    MergeQueueEntryRouteParams, MergeQueueEntryRouteResponse, MergeQueueLogDownloadRouteError,
+    MergeQueueLogDownloadRouteErrorKind,
 };
 pub use submit_route::{
     MergeQueueSubmitRouteError, MergeQueueSubmitRouteErrorKind, SubmitMergeQueueEntryRouteRequest,

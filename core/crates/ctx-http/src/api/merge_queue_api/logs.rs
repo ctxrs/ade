@@ -2,21 +2,20 @@ use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{header, StatusCode};
 use axum::response::Response;
-use ctx_core::ids::{MergeQueueEntryId, WorkspaceId};
-use ctx_daemon::daemon::{RouteFileDownloadError, TextRouteDownload, WorkspacesHandle};
+use ctx_daemon::daemon::merge_queue::{
+    MergeQueueEntryRouteParams, MergeQueueLogDownloadRouteError,
+    MergeQueueLogDownloadRouteErrorKind,
+};
+use ctx_daemon::daemon::{TextRouteDownload, WorkspacesHandle};
 
 pub(in crate::api) async fn get_merge_queue_entry_logs(
     State(state): State<WorkspacesHandle>,
-    Path((workspace_id, id)): Path<(String, String)>,
+    Path(params): Path<MergeQueueEntryRouteParams>,
 ) -> Result<Response, StatusCode> {
-    let workspace_id =
-        WorkspaceId(uuid::Uuid::parse_str(&workspace_id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let entry_id =
-        MergeQueueEntryId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let download = state
-        .download_merge_queue_entry_logs_for_route(workspace_id, entry_id)
+        .download_merge_queue_entry_logs_for_route_params(params)
         .await
-        .map_err(map_route_file_error)?;
+        .map_err(merge_queue_log_download_status)?;
     Ok(text_download_response(download))
 }
 
@@ -36,11 +35,12 @@ pub(in crate::api::merge_queue_api) fn text_download_response(
     resp
 }
 
-pub(in crate::api::merge_queue_api) fn map_route_file_error(
-    error: RouteFileDownloadError,
+pub(in crate::api::merge_queue_api) fn merge_queue_log_download_status(
+    error: MergeQueueLogDownloadRouteError,
 ) -> StatusCode {
-    match error {
-        RouteFileDownloadError::NotFound => StatusCode::NOT_FOUND,
-        RouteFileDownloadError::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+    match error.kind() {
+        MergeQueueLogDownloadRouteErrorKind::BadRequest => StatusCode::BAD_REQUEST,
+        MergeQueueLogDownloadRouteErrorKind::NotFound => StatusCode::NOT_FOUND,
+        MergeQueueLogDownloadRouteErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }

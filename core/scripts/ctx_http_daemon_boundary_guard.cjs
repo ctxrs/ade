@@ -168,6 +168,7 @@ const mergeQueueSubmitApiRoots = [
 
 const mergeQueueEntryApiRoots = [
   "core/crates/ctx-http/src/api/merge_queue_api/actions.rs",
+  "core/crates/ctx-http/src/api/merge_queue_api/logs.rs",
   "core/crates/ctx-http/src/api/merge_queue_api/submit.rs",
   "core/crates/ctx-http/src/api/merge_queue_api/request.rs",
 ];
@@ -1358,6 +1359,19 @@ const MERGE_QUEUE_ENTRY_API_ROUTE_CONTRACT_PATTERNS = [
   {
     name: "merge queue entry API imports low-level merge queue crate",
     regex: /\bctx_merge_queue\b/,
+  },
+  {
+    name: "merge queue entry API owns local route id parsing",
+    regex:
+      /\b(?:WorkspaceId|MergeQueueEntryId)\b|\buuid\s*::\s*Uuid\s*::\s*parse_str\s*\(/,
+  },
+  {
+    name: "merge queue entry API calls raw log-download facade",
+    regex: /\.download_merge_queue_entry_logs_for_route\s*\(/,
+  },
+  {
+    name: "merge queue entry API maps low-level route-file errors",
+    regex: /\bRouteFileDownloadError\b|\bmap_route_file_error\b/,
   },
 ];
 

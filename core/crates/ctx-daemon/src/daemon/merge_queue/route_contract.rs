@@ -3,7 +3,9 @@ use ctx_core::ids::{MergeQueueEntryId, SessionId, WorkspaceId, WorktreeId};
 use ctx_core::models::{MergeQueueEntry, MergeQueueEntryStatus, MergeQueuePatchSource};
 use serde::{Deserialize, Serialize};
 
-use crate::daemon::{WorkspaceStoreAccessError, WorkspacesHandle};
+use crate::daemon::{
+    RouteFileDownloadError, TextRouteDownload, WorkspaceStoreAccessError, WorkspacesHandle,
+};
 
 #[derive(Debug, Deserialize)]
 pub struct ListMergeQueueEntriesRouteRequest {
@@ -145,6 +147,42 @@ impl MergeQueueEntryRouteError {
     }
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum MergeQueueLogDownloadRouteErrorKind {
+    BadRequest,
+    NotFound,
+    Internal,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct MergeQueueLogDownloadRouteError {
+    kind: MergeQueueLogDownloadRouteErrorKind,
+}
+
+impl MergeQueueLogDownloadRouteError {
+    fn bad_request() -> Self {
+        Self {
+            kind: MergeQueueLogDownloadRouteErrorKind::BadRequest,
+        }
+    }
+
+    fn not_found() -> Self {
+        Self {
+            kind: MergeQueueLogDownloadRouteErrorKind::NotFound,
+        }
+    }
+
+    fn internal() -> Self {
+        Self {
+            kind: MergeQueueLogDownloadRouteErrorKind::Internal,
+        }
+    }
+
+    pub fn kind(&self) -> MergeQueueLogDownloadRouteErrorKind {
+        self.kind
+    }
+}
+
 impl WorkspacesHandle {
     pub async fn list_merge_queue_entry_responses_for_route(
         &self,
@@ -183,6 +221,17 @@ impl WorkspacesHandle {
             .map(Into::into)
             .map_err(|error| MergeQueueEntryRouteError::bad_request(error.to_string()))
     }
+
+    pub async fn download_merge_queue_entry_logs_for_route_params(
+        &self,
+        params: MergeQueueEntryRouteParams,
+    ) -> Result<TextRouteDownload, MergeQueueLogDownloadRouteError> {
+        let (workspace_id, entry_id) = parse_entry_route_params(&params)
+            .map_err(merge_queue_log_download_route_params_error)?;
+        self.download_merge_queue_entry_logs_for_route(workspace_id, entry_id)
+            .await
+            .map_err(merge_queue_log_download_route_file_error)
+    }
 }
 
 fn parse_entry_route_params(
@@ -204,6 +253,24 @@ fn parse_entry_id(value: &str) -> Result<MergeQueueEntryId, MergeQueueEntryRoute
     uuid::Uuid::parse_str(value)
         .map(MergeQueueEntryId)
         .map_err(|_| MergeQueueEntryRouteError::bad_request("invalid entry id"))
+}
+
+fn merge_queue_log_download_route_params_error(
+    error: MergeQueueEntryRouteError,
+) -> MergeQueueLogDownloadRouteError {
+    match error.kind() {
+        MergeQueueEntryRouteErrorKind::BadRequest => MergeQueueLogDownloadRouteError::bad_request(),
+        MergeQueueEntryRouteErrorKind::Internal => MergeQueueLogDownloadRouteError::internal(),
+    }
+}
+
+fn merge_queue_log_download_route_file_error(
+    error: RouteFileDownloadError,
+) -> MergeQueueLogDownloadRouteError {
+    match error {
+        RouteFileDownloadError::NotFound => MergeQueueLogDownloadRouteError::not_found(),
+        RouteFileDownloadError::Internal => MergeQueueLogDownloadRouteError::internal(),
+    }
 }
 
 fn list_store_error(error: WorkspaceStoreAccessError) -> MergeQueueEntryRouteError {
@@ -284,5 +351,39 @@ mod tests {
         let error = parse_entry_id("not-an-entry").unwrap_err();
         assert_eq!(error.kind(), MergeQueueEntryRouteErrorKind::BadRequest);
         assert_eq!(error.message(), "invalid entry id");
+    }
+
+    #[test]
+    fn log_download_route_error_classification_is_transport_safe() {
+        let params_error = parse_entry_route_params(&MergeQueueEntryRouteParams {
+            workspace_id: "not-a-workspace".to_string(),
+            id: MergeQueueEntryId::new().0.to_string(),
+        })
+        .map_err(merge_queue_log_download_route_params_error)
+        .unwrap_err();
+        assert_eq!(
+            params_error.kind(),
+            MergeQueueLogDownloadRouteErrorKind::BadRequest
+        );
+
+        let params_error = parse_entry_route_params(&MergeQueueEntryRouteParams {
+            workspace_id: WorkspaceId::new().0.to_string(),
+            id: "not-an-entry".to_string(),
+        })
+        .map_err(merge_queue_log_download_route_params_error)
+        .unwrap_err();
+        assert_eq!(
+            params_error.kind(),
+            MergeQueueLogDownloadRouteErrorKind::BadRequest
+        );
+
+        assert_eq!(
+            merge_queue_log_download_route_file_error(RouteFileDownloadError::NotFound).kind(),
+            MergeQueueLogDownloadRouteErrorKind::NotFound
+        );
+        assert_eq!(
+            merge_queue_log_download_route_file_error(RouteFileDownloadError::Internal).kind(),
+            MergeQueueLogDownloadRouteErrorKind::Internal
+        );
     }
 }

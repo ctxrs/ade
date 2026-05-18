@@ -83,11 +83,18 @@ async fn merge_queue_logs_response(
     workspace_id: ctx_core::ids::WorkspaceId,
     entry_id: MergeQueueEntryId,
 ) -> axum::response::Response {
+    merge_queue_logs_response_raw(app, &workspace_id.0.to_string(), &entry_id.0.to_string()).await
+}
+
+async fn merge_queue_logs_response_raw(
+    app: &axum::Router,
+    workspace_id: &str,
+    entry_id: &str,
+) -> axum::response::Response {
     let req = Request::builder()
         .method("GET")
         .uri(format!(
-            "/api/workspaces/{}/merge_queue/entries/{}/logs",
-            workspace_id.0, entry_id.0
+            "/api/workspaces/{workspace_id}/merge_queue/entries/{entry_id}/logs"
         ))
         .body(Body::empty())
         .unwrap();

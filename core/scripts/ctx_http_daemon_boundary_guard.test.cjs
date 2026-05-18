@@ -2806,11 +2806,17 @@ test("daemon boundary guard rejects merge queue entry raw route contracts", () =
     contents: `
       use ctx_core::models::{MergeQueueEntry as Entry};
       use ctx_merge_queue::MergeQueueSubmitParams;
+      use ctx_daemon::daemon::RouteFileDownloadError;
+      use ctx_core::ids::{MergeQueueEntryId, WorkspaceId};
       struct MergeQueueListParams;
       async fn helper(state: WorkspacesHandle) -> Json<Vec<ctx_core::models::MergeQueueEntry>> {
+        let workspace_id = WorkspaceId(uuid::Uuid::parse_str("bad").unwrap());
+        let entry_id = MergeQueueEntryId(uuid::Uuid::parse_str("bad").unwrap());
         state.list_merge_queue_entries_for_route(workspace_id, Some(10)).await?;
         state.cancel_merge_queue_entry(workspace_id, entry_id).await?;
         state.retry_merge_queue_entry(workspace_id, entry_id).await?;
+        state.download_merge_queue_entry_logs_for_route(workspace_id, entry_id).await?;
+        let _ = map_route_file_error(RouteFileDownloadError::NotFound);
         Json(Vec::<Entry>::new())
       }
     `,
@@ -2822,12 +2828,16 @@ test("daemon boundary guard rejects merge queue entry raw route contracts", () =
     "merge queue entry API calls raw action facades",
     "merge queue entry API owns local list request DTOs",
     "merge queue entry API imports low-level merge queue crate",
+    "merge queue entry API owns local route id parsing",
+    "merge queue entry API calls raw log-download facade",
+    "merge queue entry API maps low-level route-file errors",
   ]));
 });
 
 test("daemon boundary guard scopes merge queue entry API route contracts", () => {
   for (const filePath of [
     "core/crates/ctx-http/src/api/merge_queue_api/actions.rs",
+    "core/crates/ctx-http/src/api/merge_queue_api/logs.rs",
     "core/crates/ctx-http/src/api/merge_queue_api/submit.rs",
     "core/crates/ctx-http/src/api/merge_queue_api/request.rs",
   ]) {
@@ -2851,7 +2861,12 @@ test("daemon boundary guard scopes merge queue entry API route contracts", () =>
     [],
   );
   assert.deepEqual(
-    mergeQueueEntryApiPatternsForPath("core/crates/ctx-http/src/api/merge_queue_api/logs.rs"),
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/merge_queue_api/logs.rs",
+      contents:
+        "state.download_merge_queue_entry_logs_for_route_params(params).await?; let _: MergeQueueEntryRouteParams = params; let _: MergeQueueLogDownloadRouteError = error;",
+      patterns: MERGE_QUEUE_ENTRY_API_ROUTE_CONTRACT_PATTERNS,
+    }),
     [],
   );
 });

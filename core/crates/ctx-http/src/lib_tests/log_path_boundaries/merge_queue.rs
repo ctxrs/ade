@@ -52,3 +52,24 @@ async fn merge_queue_entry_logs_fail_closed_for_legacy_outside_paths() {
     let res = merge_queue_logs_response(&fixture.app, fixture.workspace.id, entry_id).await;
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn merge_queue_entry_logs_reject_invalid_route_ids_before_store_lookup() {
+    let fixture = build_log_path_fixture().await;
+
+    let res = merge_queue_logs_response_raw(
+        &fixture.app,
+        "not-a-workspace",
+        &MergeQueueEntryId::new().0.to_string(),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    let res = merge_queue_logs_response_raw(
+        &fixture.app,
+        &fixture.workspace.id.0.to_string(),
+        "not-an-entry",
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
