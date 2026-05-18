@@ -7415,6 +7415,91 @@ test("daemon boundary guard rejects workspace management config backdoors", () =
   ]) {
     assert(names.has(expected), `expected ${expected}; saw ${[...names].join(", ")}`);
   }
+
+  const promptAndModelViolations = scanText({
+    filePath: "core/crates/ctx-http/src/api/workspaces/management/provider_model_preferences.rs",
+    contents: `
+      use ctx_core::ids::WorkspaceId;
+      use ctx_observability::logs;
+      use ctx_workspace_config::{
+        AgentSystemPromptAppendConfig,
+        AgentSystemPromptAppendSource,
+        SubagentSystemPromptAppendConfig,
+      };
+      struct UpdateWorkspaceProviderModelPreferenceReq;
+      struct WorkspaceProviderModelPreferenceResp;
+      struct UpdateAgentSystemPromptConfigReq;
+      struct AgentSystemPromptConfigResponse;
+      struct UpdateSubagentSystemPromptConfigReq;
+      struct SubagentSystemPromptConfigResponse;
+      async fn handler(workspaces: WorkspacesHandle, error: WorkspaceProviderModelPreferenceError) {
+        let workspace_id = uuid::Uuid::parse_str(id).map(WorkspaceId)?;
+        let raw = WorkspaceProviderModelPreference {
+          provider_id: provider_id.to_string(),
+          preferred_model_id: None,
+        };
+        let _ = workspaces.get_workspace_provider_model_preference(workspace_id, provider_id).await?;
+        let _ = WorkspacesHandle::set_workspace_provider_model_preference(
+          &workspaces,
+          workspace_id,
+          provider_id,
+          None,
+        ).await?;
+        let _ = workspaces.load_agent_system_prompt_append(workspace_id).await?;
+        let _ = WorkspacesHandle::update_subagent_system_prompt_append(
+          &workspaces,
+          workspace_id,
+          None,
+        ).await?;
+        let _ = source_label(AgentSystemPromptAppendSource::Config);
+        let _ = configured_append(&None);
+        let _ = logs::redact_sensitive(error.to_string());
+      }
+    `,
+    patterns: apiPatternsForPath(
+      "core/crates/ctx-http/src/api/workspaces/management/provider_model_preferences.rs",
+    ),
+  });
+
+  const promptAndModelNames = new Set(
+    promptAndModelViolations.map((violation) => violation.name),
+  );
+  for (const expected of [
+    "workspace management config API parses route ids directly",
+    "workspace management config API exposes raw provider preference contracts",
+    "workspace management config API exposes raw prompt config contracts",
+    "workspace management config API owns local route DTOs",
+    "workspace management config API calls raw prompt and model config facades",
+    "workspace management config API owns prompt response projection",
+    "workspace management config API redacts prompt/model errors locally",
+    "workspace management config API imports workspace config directly",
+  ]) {
+    assert(
+      promptAndModelNames.has(expected),
+      `expected ${expected}; saw ${[...promptAndModelNames].join(", ")}`,
+    );
+  }
+
+  const routeViolations = scanText({
+    filePath: "core/crates/ctx-http/src/api/workspaces/management/provider_model_preferences.rs",
+    contents: `
+      async fn get_workspace_provider_model_preference(
+          State(workspaces): State<WorkspacesHandle>,
+          Path((id, provider_id)): Path<(String, String)>,
+      ) -> Result<Json<WorkspaceProviderModelPreferenceRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
+          workspaces
+              .workspace_provider_model_preference_for_route(
+                  WorkspaceProviderModelPreferenceRouteParams::new(id, provider_id),
+              )
+              .await
+              .map(Json)
+      }
+    `,
+    patterns: apiPatternsForPath(
+      "core/crates/ctx-http/src/api/workspaces/management/provider_model_preferences.rs",
+    ),
+  });
+  assert.deepEqual(routeViolations, []);
 });
 
 test("daemon boundary guard scopes workspace management config roots", () => {
@@ -7446,7 +7531,19 @@ test("daemon boundary guard scopes workspace management config roots", () => {
     apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/management/prompt_config.rs").includes(
       WORKSPACE_MANAGEMENT_CONFIG_API_PATTERNS[0],
     ),
-    false,
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/management/prompt_config/agent.rs").includes(
+      WORKSPACE_MANAGEMENT_CONFIG_API_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/management/provider_model_preferences.rs").includes(
+      WORKSPACE_MANAGEMENT_CONFIG_API_PATTERNS[0],
+    ),
+    true,
   );
 });
 

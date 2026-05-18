@@ -1,96 +1,29 @@
 use super::*;
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Deserialize)]
-pub(in crate::api) struct UpdateWorkspaceProviderModelPreferenceReq {
-    #[serde(default)]
-    preferred_model_id: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub(in crate::api) struct WorkspaceProviderModelPreferenceResp {
-    provider_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    preferred_model_id: Option<String>,
-}
-
-impl From<ctx_daemon::daemon::workspaces::WorkspaceProviderModelPreference>
-    for WorkspaceProviderModelPreferenceResp
-{
-    fn from(value: ctx_daemon::daemon::workspaces::WorkspaceProviderModelPreference) -> Self {
-        Self {
-            provider_id: value.provider_id,
-            preferred_model_id: value.preferred_model_id,
-        }
-    }
-}
-
-fn provider_model_preference_error_response(
-    error: ctx_daemon::daemon::workspaces::WorkspaceProviderModelPreferenceError,
-) -> (StatusCode, Json<ApiErrorResp>) {
-    match error {
-        ctx_daemon::daemon::workspaces::WorkspaceProviderModelPreferenceError::ProviderIdRequired => (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "provider_id is required".to_string(),
-            }),
-        ),
-        ctx_daemon::daemon::workspaces::WorkspaceProviderModelPreferenceError::ProviderNotFound {
-            provider_id,
-        } => (
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: format!("provider not found: {provider_id}"),
-            }),
-        ),
-        ctx_daemon::daemon::workspaces::WorkspaceProviderModelPreferenceError::WorkspaceNotFound => (
-            StatusCode::NOT_FOUND,
-            Json(ApiErrorResp {
-                error: "workspace not found".to_string(),
-            }),
-        ),
-        ctx_daemon::daemon::workspaces::WorkspaceProviderModelPreferenceError::StoreUnavailable(
-            error,
-        ) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: logs::redact_sensitive(&error.to_string()),
-            }),
-        ),
-        ctx_daemon::daemon::workspaces::WorkspaceProviderModelPreferenceError::ExecutionSettings(
-            error,
-        ) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiErrorResp {
-                error: format!("failed to load workspace execution settings: {error:#}"),
-            }),
-        ),
-    }
-}
 
 pub(in crate::api) async fn get_workspace_provider_model_preference(
     State(workspaces): State<WorkspacesHandle>,
     Path((id, provider_id)): Path<(String, String)>,
-) -> Result<Json<WorkspaceProviderModelPreferenceResp>, (StatusCode, Json<ApiErrorResp>)> {
-    let workspace_id = parse_workspace_id(&id)?;
+) -> Result<Json<WorkspaceProviderModelPreferenceRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
     workspaces
-        .get_workspace_provider_model_preference(workspace_id, &provider_id)
+        .workspace_provider_model_preference_for_route(
+            WorkspaceProviderModelPreferenceRouteParams::new(id, provider_id),
+        )
         .await
-        .map(WorkspaceProviderModelPreferenceResp::from)
+        .map_err(workspace_route_api_error)
         .map(Json)
-        .map_err(provider_model_preference_error_response)
 }
 
 pub(in crate::api) async fn update_workspace_provider_model_preference(
     State(workspaces): State<WorkspacesHandle>,
     Path((id, provider_id)): Path<(String, String)>,
-    Json(req): Json<UpdateWorkspaceProviderModelPreferenceReq>,
-) -> Result<Json<WorkspaceProviderModelPreferenceResp>, (StatusCode, Json<ApiErrorResp>)> {
-    let workspace_id = parse_workspace_id(&id)?;
+    Json(req): Json<UpdateWorkspaceProviderModelPreferenceRouteRequest>,
+) -> Result<Json<WorkspaceProviderModelPreferenceRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
     workspaces
-        .set_workspace_provider_model_preference(workspace_id, &provider_id, req.preferred_model_id)
+        .update_workspace_provider_model_preference_for_route(
+            WorkspaceProviderModelPreferenceRouteParams::new(id, provider_id),
+            req,
+        )
         .await
-        .map(WorkspaceProviderModelPreferenceResp::from)
+        .map_err(workspace_route_api_error)
         .map(Json)
-        .map_err(provider_model_preference_error_response)
 }

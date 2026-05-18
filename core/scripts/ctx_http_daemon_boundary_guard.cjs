@@ -375,7 +375,16 @@ const workspaceManagementConfigApiRoots = [
   "core/crates/ctx-http/src/api/workspaces/management.rs",
   "core/crates/ctx-http/src/api/workspaces/management/config_ops.rs",
   "core/crates/ctx-http/src/api/workspaces/management/config_ops/",
+  "core/crates/ctx-http/src/api/workspaces/management/prompt_config.rs",
+  "core/crates/ctx-http/src/api/workspaces/management/prompt_config/",
+  "core/crates/ctx-http/src/api/workspaces/management/provider_model_preferences.rs",
   "core/crates/ctx-http/src/api/workspaces/management/worktree_bootstrap.rs",
+];
+
+const workspacePromptAndModelConfigApiPaths = [
+  "core/crates/ctx-http/src/api/workspaces/management/prompt_config/agent.rs",
+  "core/crates/ctx-http/src/api/workspaces/management/prompt_config/subagent.rs",
+  "core/crates/ctx-http/src/api/workspaces/management/provider_model_preferences.rs",
 ];
 
 const workspaceRouteContractApiRoots = [
@@ -2565,7 +2574,7 @@ const WORKSPACE_MANAGEMENT_CONFIG_API_PATTERNS = [
   {
     name: "workspace management config API owns local route DTOs",
     regex:
-      /\b(?:UpdateWorkspaceConfigResp|UpdateMergeQueueConfigReq|WorkspaceMergeQueueConfigResp|UpdateWorktreeBootstrapReq|WorkspaceWorktreeBootstrapConfigResp)\b/,
+      /\b(?:UpdateWorkspaceConfigResp|UpdateMergeQueueConfigReq|WorkspaceMergeQueueConfigResp|UpdateWorktreeBootstrapReq|WorkspaceWorktreeBootstrapConfigResp|UpdateWorkspaceProviderModelPreferenceReq|WorkspaceProviderModelPreferenceResp|AgentSystemPromptConfigResponse|UpdateAgentSystemPromptConfigReq|SubagentSystemPromptConfigResponse|UpdateSubagentSystemPromptConfigReq)\b/,
   },
   {
     name: "workspace management config API builds raw workspace config updates",
@@ -2576,6 +2585,35 @@ const WORKSPACE_MANAGEMENT_CONFIG_API_PATTERNS = [
     name: "workspace management config API calls raw config facade methods",
     regex:
       /\.(?:load_workspace_merge_queue_config|update_workspace_merge_queue_config|load_worktree_bootstrap_config|update_worktree_bootstrap_config)\s*\(/,
+  },
+  {
+    name: "workspace management config API parses route ids directly",
+    regex: /\buuid::Uuid::parse_str\s*\(|\bWorkspaceId\s*\(/,
+    paths: workspacePromptAndModelConfigApiPaths,
+  },
+  {
+    name: "workspace management config API exposes raw provider preference contracts",
+    regex: /\b(?:WorkspaceProviderModelPreference|WorkspaceProviderModelPreferenceError)\b/,
+  },
+  {
+    name: "workspace management config API exposes raw prompt config contracts",
+    regex:
+      /\b(?:AgentSystemPromptAppendConfig|SubagentSystemPromptAppendConfig|AgentSystemPromptAppendSource)\b/,
+  },
+  {
+    name: "workspace management config API calls raw prompt and model config facades",
+    regex:
+      /(?:\.\s*|WorkspacesHandle\s*::\s*)(?:get_workspace_provider_model_preference|set_workspace_provider_model_preference|load_agent_system_prompt_append|update_agent_system_prompt_append|load_subagent_system_prompt_append|update_subagent_system_prompt_append)\s*\(/,
+  },
+  {
+    name: "workspace management config API owns prompt response projection",
+    regex: /\b(?:source_label|configured_append)\s*\(/,
+    paths: workspacePromptAndModelConfigApiPaths,
+  },
+  {
+    name: "workspace management config API redacts prompt/model errors locally",
+    regex: /\blogs::redact_sensitive\s*\(/,
+    paths: workspacePromptAndModelConfigApiPaths,
   },
   {
     name: "workspace management config API imports workspace config directly",

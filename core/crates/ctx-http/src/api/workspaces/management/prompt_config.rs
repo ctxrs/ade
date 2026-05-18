@@ -1,7 +1,5 @@
 #[path = "prompt_config/agent.rs"]
 mod agent;
-#[path = "prompt_config/common.rs"]
-mod common;
 #[path = "prompt_config/subagent.rs"]
 mod subagent;
 

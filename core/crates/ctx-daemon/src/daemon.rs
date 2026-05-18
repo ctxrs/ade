@@ -155,16 +155,21 @@ pub use updates::{
 };
 pub use workspace_init::init_workspace;
 pub use workspaces::{
-    CreateWorkspaceAttachmentRouteRequest, CreateWorkspaceRequest,
-    DeleteWorkspaceAttachmentRouteRequest, SyncWorkspaceAttachmentsRouteRequest,
+    AgentSystemPromptConfigRouteResponse, CreateWorkspaceAttachmentRouteRequest,
+    CreateWorkspaceRequest, DeleteWorkspaceAttachmentRouteRequest,
+    SubagentSystemPromptConfigRouteResponse, SyncWorkspaceAttachmentsRouteRequest,
+    UpdateAgentSystemPromptConfigRouteRequest, UpdateSubagentSystemPromptConfigRouteRequest,
     UpdateWorkspaceExecutionConfigRequest, UpdateWorkspaceMergeQueueConfigRequest,
-    UpdateWorkspacePrimaryBranchRequest, UpdateWorktreeBootstrapConfigRequest,
-    WorkspaceActiveHeadBatchRouteResponse, WorkspaceActiveSnapshotRouteResponse,
-    WorkspaceAttachmentRouteResponse, WorkspaceConfigUpdateResult,
-    WorkspaceExecutionConfigSnapshot, WorkspaceHarnessContainerStatusRouteResponse,
-    WorkspaceMergeQueueConfigRouteResponse, WorkspacePrimaryBranchSnapshot, WorkspaceRouteError,
-    WorkspaceRouteErrorKind, WorkspaceRouteResponse, WorkspaceStreamAccessError,
-    WorkspaceWorktreeBootstrapConfigRouteResponse, WorktreeRouteResponse,
+    UpdateWorkspacePrimaryBranchRequest, UpdateWorkspaceProviderModelPreferenceRouteRequest,
+    UpdateWorktreeBootstrapConfigRequest, WorkspaceActiveHeadBatchRouteResponse,
+    WorkspaceActiveSnapshotRouteResponse, WorkspaceAttachmentRouteResponse,
+    WorkspaceConfigUpdateResult, WorkspaceExecutionConfigSnapshot,
+    WorkspaceHarnessContainerStatusRouteResponse, WorkspaceMergeQueueConfigRouteResponse,
+    WorkspacePrimaryBranchSnapshot, WorkspacePromptConfigRouteParams,
+    WorkspaceProviderModelPreferenceRouteParams, WorkspaceProviderModelPreferenceRouteResponse,
+    WorkspaceRouteError, WorkspaceRouteErrorKind, WorkspaceRouteResponse,
+    WorkspaceStreamAccessError, WorkspaceWorktreeBootstrapConfigRouteResponse,
+    WorktreeRouteResponse,
 };
 
 #[cfg(test)]

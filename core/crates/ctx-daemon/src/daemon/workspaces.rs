@@ -70,11 +70,15 @@ pub use model_preferences::{
 };
 pub use retry::retry_global_index_write;
 pub use route_config::{
-    CreateWorkspaceRequest, UpdateWorkspaceExecutionConfigRequest,
+    AgentSystemPromptConfigRouteResponse, CreateWorkspaceRequest,
+    SubagentSystemPromptConfigRouteResponse, UpdateAgentSystemPromptConfigRouteRequest,
+    UpdateSubagentSystemPromptConfigRouteRequest, UpdateWorkspaceExecutionConfigRequest,
     UpdateWorkspaceMergeQueueConfigRequest, UpdateWorkspacePrimaryBranchRequest,
-    UpdateWorktreeBootstrapConfigRequest, WorkspaceConfigUpdateResult,
-    WorkspaceExecutionConfigSnapshot, WorkspaceMergeQueueConfigRouteResponse,
-    WorkspacePrimaryBranchSnapshot, WorkspaceRouteError, WorkspaceRouteErrorKind,
+    UpdateWorkspaceProviderModelPreferenceRouteRequest, UpdateWorktreeBootstrapConfigRequest,
+    WorkspaceConfigUpdateResult, WorkspaceExecutionConfigSnapshot,
+    WorkspaceMergeQueueConfigRouteResponse, WorkspacePrimaryBranchSnapshot,
+    WorkspacePromptConfigRouteParams, WorkspaceProviderModelPreferenceRouteParams,
+    WorkspaceProviderModelPreferenceRouteResponse, WorkspaceRouteError, WorkspaceRouteErrorKind,
     WorkspaceWorktreeBootstrapConfigRouteResponse,
 };
 pub use route_contract::{

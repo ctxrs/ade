@@ -27,14 +27,18 @@ use super::errors::ApiErrorResp;
 use super::shared::map_effective_execution_settings_error;
 use ctx_daemon::daemon::workspaces::{WorkspaceHydrationError, WorkspaceHydrationErrorKind};
 use ctx_daemon::daemon::{
-    CreateWorkspaceAttachmentRouteRequest, DeleteWorkspaceAttachmentRouteRequest,
-    SyncWorkspaceAttachmentsRouteRequest, UpdateWorkspaceExecutionConfigRequest,
+    AgentSystemPromptConfigRouteResponse, CreateWorkspaceAttachmentRouteRequest,
+    DeleteWorkspaceAttachmentRouteRequest, SubagentSystemPromptConfigRouteResponse,
+    SyncWorkspaceAttachmentsRouteRequest, UpdateAgentSystemPromptConfigRouteRequest,
+    UpdateSubagentSystemPromptConfigRouteRequest, UpdateWorkspaceExecutionConfigRequest,
     UpdateWorkspaceMergeQueueConfigRequest, UpdateWorkspacePrimaryBranchRequest,
-    UpdateWorktreeBootstrapConfigRequest, WorkspaceActiveHeadBatchRouteResponse,
-    WorkspaceActiveSnapshotRouteResponse, WorkspaceAttachmentRouteResponse,
-    WorkspaceConfigUpdateResult, WorkspaceExecutionConfigSnapshot,
-    WorkspaceHarnessContainerStatusRouteResponse, WorkspaceMergeQueueConfigRouteResponse,
-    WorkspacePrimaryBranchSnapshot, WorkspaceRouteError, WorkspaceRouteErrorKind,
+    UpdateWorkspaceProviderModelPreferenceRouteRequest, UpdateWorktreeBootstrapConfigRequest,
+    WorkspaceActiveHeadBatchRouteResponse, WorkspaceActiveSnapshotRouteResponse,
+    WorkspaceAttachmentRouteResponse, WorkspaceConfigUpdateResult,
+    WorkspaceExecutionConfigSnapshot, WorkspaceHarnessContainerStatusRouteResponse,
+    WorkspaceMergeQueueConfigRouteResponse, WorkspacePrimaryBranchSnapshot,
+    WorkspacePromptConfigRouteParams, WorkspaceProviderModelPreferenceRouteParams,
+    WorkspaceProviderModelPreferenceRouteResponse, WorkspaceRouteError, WorkspaceRouteErrorKind,
     WorkspaceRouteResponse, WorkspaceWorktreeBootstrapConfigRouteResponse, WorkspacesHandle,
     WorktreeRouteResponse,
 };

@@ -14,10 +14,17 @@ use crate::daemon::{settings, WorkspaceStoreAccessError, WorkspacesHandle};
 use super::WorkspaceRouteResponse;
 
 mod management_config;
+mod prompt_and_model;
 
 pub use management_config::{
     UpdateWorkspaceMergeQueueConfigRequest, UpdateWorktreeBootstrapConfigRequest,
     WorkspaceMergeQueueConfigRouteResponse, WorkspaceWorktreeBootstrapConfigRouteResponse,
+};
+pub use prompt_and_model::{
+    AgentSystemPromptConfigRouteResponse, SubagentSystemPromptConfigRouteResponse,
+    UpdateAgentSystemPromptConfigRouteRequest, UpdateSubagentSystemPromptConfigRouteRequest,
+    UpdateWorkspaceProviderModelPreferenceRouteRequest, WorkspacePromptConfigRouteParams,
+    WorkspaceProviderModelPreferenceRouteParams, WorkspaceProviderModelPreferenceRouteResponse,
 };
 
 #[derive(Debug, Deserialize)]
