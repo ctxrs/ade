@@ -101,7 +101,7 @@ async fn worktree_bootstrap_config_preserves_id_error_statuses() {
     let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
     let app = fixture.router();
 
-    let (invalid_get_status, _invalid_get_body): (StatusCode, Value) = common::json_request(
+    let (invalid_get_status, invalid_get_body): (StatusCode, Value) = common::json_request(
         &app,
         Method::GET,
         "/api/workspaces/not-a-workspace/worktree_bootstrap_config",
@@ -109,8 +109,12 @@ async fn worktree_bootstrap_config_preserves_id_error_statuses() {
     )
     .await;
     assert_eq!(invalid_get_status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        invalid_get_body.get("error").and_then(Value::as_str),
+        Some("invalid workspace id")
+    );
 
-    let (invalid_post_status, _invalid_post_body): (StatusCode, Value) = common::json_request(
+    let (invalid_post_status, invalid_post_body): (StatusCode, Value) = common::json_request(
         &app,
         Method::POST,
         "/api/workspaces/not-a-workspace/worktree_bootstrap_config",
@@ -118,6 +122,10 @@ async fn worktree_bootstrap_config_preserves_id_error_statuses() {
     )
     .await;
     assert_eq!(invalid_post_status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        invalid_post_body.get("error").and_then(Value::as_str),
+        Some("invalid workspace id")
+    );
 
     let missing_workspace_id = WorkspaceId::new();
     let (missing_get_status, missing_get_body): (StatusCode, Value) = common::json_request(

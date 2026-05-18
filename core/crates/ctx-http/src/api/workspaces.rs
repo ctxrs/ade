@@ -6,7 +6,6 @@ use axum::Json;
 
 mod active;
 mod attachments;
-mod context;
 mod harness_container;
 mod management;
 mod registry;
@@ -14,7 +13,6 @@ mod worktrees;
 
 pub(super) use active::{get_workspace_active_heads, get_workspace_active_snapshot};
 pub(super) use attachments::{list_workspace_attachments, sync_workspace_attachments};
-use context::*;
 pub(super) use harness_container::{
     ensure_workspace_harness_container, get_workspace_harness_container,
     stop_workspace_harness_container,

@@ -4832,7 +4832,10 @@ test("daemon boundary guard rejects workspace REST route identity and error mapp
         WorkspaceHydrationError,
         WorkspaceHydrationErrorKind,
       };
+      mod context;
+      use context::*;
       async fn handler(workspaces: WorkspacesHandle) {
+        let _ = parse_workspace_id(&id)?;
         let workspace_id = WorkspaceId(uuid::Uuid::parse_str(&id)?);
         let worktree_id = WorktreeId(uuid::Uuid::parse_str(&id)?);
         workspaces.load_workspace_active_snapshot_for_route(workspace_id).await?;
@@ -4854,6 +4857,7 @@ test("daemon boundary guard rejects workspace REST route identity and error mapp
   const names = new Set(violations.map((violation) => violation.name));
   for (const expected of [
     "workspace REST route API parses route ids directly",
+    "workspace REST route API uses local workspace context helper",
     "workspace REST route API inspects low-level workspace errors",
     "workspace REST route API calls low-level workspace facades directly",
     "workspace harness-container API maps execution settings locally",
@@ -4890,6 +4894,46 @@ test("daemon boundary guard rejects workspace REST route identity and error mapp
     ),
   );
 
+  const managementViolations = scanText({
+    filePath: "core/crates/ctx-http/src/api/workspaces/management.rs",
+    contents: `
+      async fn handler(workspaces: WorkspacesHandle) {
+        workspaces.workspace_merge_queue_config_for_route(workspace_id).await?;
+        workspaces.update_workspace_merge_queue_config_for_route(workspace_id, request).await?;
+        workspaces.workspace_primary_branch_for_request(workspace_id).await?;
+        workspaces.update_workspace_primary_branch_for_request(workspace_id, request).await?;
+        workspaces.workspace_execution_config_for_request(workspace_id).await?;
+        workspaces.update_workspace_execution_config_for_request(workspace_id, request).await?;
+      }
+    `,
+    patterns: apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/management.rs"),
+  });
+  assert(
+    managementViolations
+      .map((violation) => violation.name)
+      .includes("workspace REST route API calls low-level workspace facades directly"),
+  );
+
+  const attachmentViolations = scanText({
+    filePath: "core/crates/ctx-http/src/api/workspaces/management/attachment_routes.rs",
+    contents: `
+      async fn handler(workspaces: WorkspacesHandle) {
+        workspaces.list_workspace_attachments_for_route(workspace_id).await?;
+        workspaces.sync_workspace_attachments_for_route(workspace_id, request).await?;
+        workspaces.create_and_sync_workspace_attachment_for_route(workspace_id, request).await?;
+        workspaces.delete_and_sync_workspace_attachment_for_route(workspace_id, request).await?;
+      }
+    `,
+    patterns: apiPatternsForPath(
+      "core/crates/ctx-http/src/api/workspaces/management/attachment_routes.rs",
+    ),
+  });
+  assert(
+    attachmentViolations
+      .map((violation) => violation.name)
+      .includes("workspace REST route API calls low-level workspace facades directly"),
+  );
+
   const routeViolations = scanText({
     filePath: "core/crates/ctx-http/src/api/workspaces/harness_container.rs",
     contents: `
@@ -4916,6 +4960,24 @@ test("daemon boundary guard scopes workspace route contract bans", () => {
     true,
   );
   assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/management.rs").includes(
+      WORKSPACE_ROUTE_CONTRACT_API_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/workspaces/management/attachment_routes.rs",
+    ).includes(WORKSPACE_ROUTE_CONTRACT_API_PATTERNS[0]),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/workspaces/management/worktree_bootstrap.rs",
+    ).includes(WORKSPACE_ROUTE_CONTRACT_API_PATTERNS[0]),
+    true,
+  );
+  assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/registry/delete.rs").includes(
       WORKSPACE_ROUTE_CONTRACT_API_PATTERNS[0],
     ),
@@ -4937,18 +4999,35 @@ test("daemon boundary guard scopes workspace route contract bans", () => {
     apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/context.rs").includes(
       WORKSPACE_ROUTE_CONTRACT_API_PATTERNS[0],
     ),
-    false,
+    true,
+  );
+  assert(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/workspaces/context.rs",
+      contents: `
+        fn parse_workspace_id(id: &str) -> Result<WorkspaceId, StatusCode> {
+          Ok(WorkspaceId(uuid::Uuid::parse_str(id)?))
+        }
+      `,
+      patterns: apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/context.rs"),
+    })
+      .map((violation) => violation.name)
+      .includes("workspace REST route API uses local workspace context helper"),
   );
   assert.deepEqual(
     scanText({
       filePath: "core/crates/ctx-http/src/api/workspaces/attachments.rs",
       contents: `
         async fn list() -> Result<Json<Vec<WorkspaceAttachmentRouteResponse>>, StatusCode> {
-          workspaces.list_workspace_attachments_for_route(workspace_id).await?;
-          workspaces.sync_workspace_attachments_for_route(workspace_id, request).await?;
+          workspaces
+            .list_workspace_attachments_for_route_params(WorkspaceRouteParams::new(id))
+            .await?;
+          workspaces
+            .sync_workspace_attachments_for_route_params(WorkspaceRouteParams::new(id), request)
+            .await?;
         }
       `,
-      patterns: WORKSPACE_ROUTE_CONTRACT_API_PATTERNS,
+      patterns: apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/attachments.rs"),
     }),
     [],
   );

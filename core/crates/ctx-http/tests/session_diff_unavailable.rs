@@ -257,6 +257,38 @@ async fn workspace_primary_branch_endpoint_updates_branch() {
 }
 
 #[tokio::test]
+async fn workspace_primary_branch_preserves_invalid_id_error_contract() {
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let app = fixture.router();
+
+    let (get_status, get_body): (StatusCode, Value) = common::json_request(
+        &app,
+        Method::GET,
+        "/api/workspaces/not-a-workspace/primary_branch",
+        None,
+    )
+    .await;
+    assert_eq!(get_status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        get_body.get("error").and_then(Value::as_str),
+        Some("invalid workspace id")
+    );
+
+    let (post_status, post_body): (StatusCode, Value) = common::json_request(
+        &app,
+        Method::POST,
+        "/api/workspaces/not-a-workspace/primary_branch",
+        Some(serde_json::json!({ "primary_branch": "main" })),
+    )
+    .await;
+    assert_eq!(post_status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        post_body.get("error").and_then(Value::as_str),
+        Some("invalid workspace id")
+    );
+}
+
+#[tokio::test]
 async fn workspace_merge_queue_config_endpoint_supports_get_and_post() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;

@@ -1,6 +1,7 @@
 mod common;
 
-use axum::http::{Method, StatusCode};
+use axum::body::Body;
+use axum::http::{Method, Request, StatusCode};
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{
     AttachmentMode, AttachmentUpdatePolicy, WorkspaceAttachment, WorkspaceAttachmentKind,
@@ -228,6 +229,71 @@ async fn workspace_attachments_reject_doc_mirror_rw_mode() {
     assert_eq!(create_status, StatusCode::BAD_REQUEST);
     let error = body["error"].as_str().unwrap_or_default();
     assert!(error.contains("read-only"), "unexpected error: {error}");
+}
+
+#[tokio::test]
+async fn workspace_attachments_preserve_invalid_id_response_contracts() {
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let app = fixture.router();
+
+    let list_req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/workspaces/not-a-workspace/attachments")
+        .body(Body::empty())
+        .unwrap();
+    let (list_status, list_body) = common::oneshot_bytes(&app, list_req).await;
+    assert_eq!(list_status, StatusCode::BAD_REQUEST);
+    assert!(
+        list_body.is_empty(),
+        "list invalid-id response should stay bodyless: {}",
+        String::from_utf8_lossy(&list_body)
+    );
+
+    let (sync_status, sync_body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        Method::POST,
+        "/api/workspaces/not-a-workspace/attachments/sync",
+        Some(json!({ "refresh": true })),
+    )
+    .await;
+    assert_eq!(sync_status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        sync_body.get("error").and_then(serde_json::Value::as_str),
+        Some("invalid workspace id")
+    );
+
+    let (create_status, create_body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        Method::POST,
+        "/api/workspaces/not-a-workspace/attachments",
+        Some(json!({
+            "kind": "reference_repo",
+            "name": "ref-fixture",
+            "source": "/tmp/ref-fixture"
+        })),
+    )
+    .await;
+    assert_eq!(create_status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        create_body.get("error").and_then(serde_json::Value::as_str),
+        Some("invalid workspace id")
+    );
+
+    let (delete_status, delete_body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        Method::DELETE,
+        "/api/workspaces/not-a-workspace/attachments",
+        Some(json!({
+            "kind": "reference_repo",
+            "name": "ref-fixture"
+        })),
+    )
+    .await;
+    assert_eq!(delete_status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        delete_body.get("error").and_then(serde_json::Value::as_str),
+        Some("invalid workspace id")
+    );
 }
 
 #[tokio::test]

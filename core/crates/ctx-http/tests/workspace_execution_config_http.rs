@@ -63,6 +63,40 @@ async fn workspace_execution_config_fails_closed_on_invalid_runtime_settings() {
 }
 
 #[tokio::test]
+async fn workspace_execution_config_preserves_invalid_id_error_contract() {
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let app = fixture.router();
+
+    let (get_status, get_body): (StatusCode, Value) = common::json_request(
+        &app,
+        Method::GET,
+        "/api/workspaces/not-a-workspace/execution_config",
+        None,
+    )
+    .await;
+    assert_eq!(get_status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        get_body.get("error").and_then(Value::as_str),
+        Some("invalid workspace id")
+    );
+
+    let (post_status, post_body): (StatusCode, Value) = common::json_request(
+        &app,
+        Method::POST,
+        "/api/workspaces/not-a-workspace/execution_config",
+        Some(serde_json::json!({
+            "environment": "host"
+        })),
+    )
+    .await;
+    assert_eq!(post_status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        post_body.get("error").and_then(Value::as_str),
+        Some("invalid workspace id")
+    );
+}
+
+#[tokio::test]
 async fn workspace_execution_config_rejects_invalid_request_values() {
     let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
     let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;

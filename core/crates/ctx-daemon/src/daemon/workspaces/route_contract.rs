@@ -19,6 +19,8 @@ use super::{
     WorkspaceHarnessContainerError, WorkspaceHydrationError, WorkspaceRouteError, WorkspacesHandle,
 };
 
+mod management_route_params;
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct WorkspaceRouteParams {
     workspace_id: String,
