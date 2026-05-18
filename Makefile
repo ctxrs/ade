@@ -33,7 +33,7 @@ help:
 	@echo "  sdlc-host-budget-benchmark  Run the checked-in host-budget benchmark"
 	@echo "  sdlc-agent-loop-benchmark   Run the checked-in real workload benchmark plan"
 	@echo "  sdlc-agent-loop-benchmark-agent-mix  Run the checked-in mixed agent-loop benchmark preset"
-	@echo "  sdlc-agent-loop-benchmark-main-band  Run the checked-in verify:quick/test:agent/runtime benchmark preset"
+	@echo "  sdlc-agent-loop-benchmark-main-band  Run the checked-in ctx-http/test:agent:minimal/runtime benchmark preset"
 	@echo "  sdlc-agent-loop-benchmark-release-prep  Run the checked-in mixed release-prep benchmark preset"
 	@echo "  desktop-profile-build   Build named desktop profile (PROFILE=<name>)"
 	@echo "  desktop-profile-launch  Build + launch named desktop profile (PROFILE=<name>)"

@@ -233,7 +233,9 @@ async fn load_codex_accounts_usage(
                     provider_usage::fetch_codex_usage_snapshot(env).await?
                 }
             }
-            Err(err) => codex_account_usage_error(err.to_string()),
+            Err(err) => {
+                codex_account_usage_error(format!("preparing codex account auth failed: {err:#}"))
+            }
         };
         entries.push(CodexAccountUsageRecord {
             account_id: Some(account.id),
