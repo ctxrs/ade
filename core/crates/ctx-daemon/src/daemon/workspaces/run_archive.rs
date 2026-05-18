@@ -1,5 +1,6 @@
 use ctx_core::ids::{RunId, WorkspaceId};
 use ctx_core::models::{RunArchiveIngestBatch, RunArchiveIngestCursor};
+use serde::{Deserialize, Serialize};
 
 use crate::daemon::WorkspacesHandle;
 
@@ -9,18 +10,85 @@ const DEFAULT_RUN_ARCHIVE_BATCH_ITEMS: u32 = 250;
 const MAX_RUN_ARCHIVE_BATCH_ITEMS: u32 = 1_000;
 
 #[derive(Debug)]
+pub struct RunArchiveRouteParams {
+    workspace_id: String,
+    run_id: String,
+}
+
+impl RunArchiveRouteParams {
+    pub fn new(workspace_id: impl Into<String>, run_id: impl Into<String>) -> Self {
+        Self {
+            workspace_id: workspace_id.into(),
+            run_id: run_id.into(),
+        }
+    }
+
+    fn parse(&self) -> Result<(WorkspaceId, RunId), RunArchiveRouteError> {
+        let workspace_id = uuid::Uuid::parse_str(&self.workspace_id)
+            .map(WorkspaceId)
+            .map_err(|_| RunArchiveRouteError::bad_request("invalid workspace id"))?;
+        let run_id = uuid::Uuid::parse_str(&self.run_id)
+            .map(RunId)
+            .map_err(|_| RunArchiveRouteError::bad_request("invalid run id"))?;
+        Ok((workspace_id, run_id))
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Default, Eq, PartialEq)]
+pub struct RunArchiveBatchRouteQuery {
+    #[serde(default)]
+    max_items: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(transparent)]
+pub struct AcknowledgeRunArchiveIngestBatchRouteBody(RunArchiveIngestBatch);
+
+impl AcknowledgeRunArchiveIngestBatchRouteBody {
+    fn into_inner(self) -> RunArchiveIngestBatch {
+        self.0
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(transparent)]
+pub struct BuildRunArchiveIngestBatchRouteResponse(Option<RunArchiveIngestBatch>);
+
+#[derive(Debug, Serialize)]
+#[serde(transparent)]
+pub struct AcknowledgeRunArchiveIngestBatchRouteResponse(RunArchiveIngestCursor);
+
+#[derive(Debug)]
 pub struct BuildRunArchiveIngestBatchRouteRequest {
-    pub workspace_id: WorkspaceId,
-    pub run_id: RunId,
-    pub max_items: Option<u32>,
+    params: RunArchiveRouteParams,
+    query: RunArchiveBatchRouteQuery,
+}
+
+impl BuildRunArchiveIngestBatchRouteRequest {
+    pub fn new(params: RunArchiveRouteParams, query: RunArchiveBatchRouteQuery) -> Self {
+        Self { params, query }
+    }
 }
 
 #[derive(Debug)]
 pub struct AcknowledgeRunArchiveIngestBatchRouteRequest {
-    pub workspace_id: WorkspaceId,
-    pub run_id: RunId,
-    pub max_items: Option<u32>,
-    pub batch: RunArchiveIngestBatch,
+    params: RunArchiveRouteParams,
+    query: RunArchiveBatchRouteQuery,
+    body: AcknowledgeRunArchiveIngestBatchRouteBody,
+}
+
+impl AcknowledgeRunArchiveIngestBatchRouteRequest {
+    pub fn new(
+        params: RunArchiveRouteParams,
+        query: RunArchiveBatchRouteQuery,
+        body: AcknowledgeRunArchiveIngestBatchRouteBody,
+    ) -> Self {
+        Self {
+            params,
+            query,
+            body,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -74,27 +142,27 @@ impl WorkspacesHandle {
     pub async fn build_run_archive_ingest_batch_for_route(
         &self,
         req: BuildRunArchiveIngestBatchRouteRequest,
-    ) -> Result<Option<RunArchiveIngestBatch>, RunArchiveRouteError> {
-        let max_items = requested_batch_item_limit(req.max_items)?;
-        self.build_run_archive_ingest_batch(req.workspace_id, req.run_id, max_items)
+    ) -> Result<BuildRunArchiveIngestBatchRouteResponse, RunArchiveRouteError> {
+        let (workspace_id, run_id) = req.params.parse()?;
+        let max_items = requested_batch_item_limit(req.query.max_items)?;
+        self.build_run_archive_ingest_batch(workspace_id, run_id, max_items)
             .await
+            .map(BuildRunArchiveIngestBatchRouteResponse)
             .map_err(|error| run_archive_route_error("build", error))
     }
 
     pub async fn acknowledge_run_archive_ingest_batch_for_route(
         &self,
         req: AcknowledgeRunArchiveIngestBatchRouteRequest,
-    ) -> Result<RunArchiveIngestCursor, RunArchiveRouteError> {
-        let max_items = requested_batch_item_limit(req.max_items)?;
-        validate_acknowledgement_batch(req.workspace_id, req.run_id, &req.batch)?;
-        self.acknowledge_run_archive_ingest_batch(
-            req.workspace_id,
-            req.run_id,
-            max_items,
-            req.batch,
-        )
-        .await
-        .map_err(|error| run_archive_route_error("acknowledge", error))
+    ) -> Result<AcknowledgeRunArchiveIngestBatchRouteResponse, RunArchiveRouteError> {
+        let (workspace_id, run_id) = req.params.parse()?;
+        let max_items = requested_batch_item_limit(req.query.max_items)?;
+        let batch = req.body.into_inner();
+        validate_acknowledgement_batch(workspace_id, run_id, &batch)?;
+        self.acknowledge_run_archive_ingest_batch(workspace_id, run_id, max_items, batch)
+            .await
+            .map(AcknowledgeRunArchiveIngestBatchRouteResponse)
+            .map_err(|error| run_archive_route_error("acknowledge", error))
     }
 }
 
@@ -166,5 +234,23 @@ mod tests {
             assert_eq!(error.kind(), RunArchiveRouteErrorKind::BadRequest);
             assert_eq!(error.message(), "max_items must be between 1 and 1000");
         }
+    }
+
+    #[test]
+    fn route_params_reject_invalid_workspace_id() {
+        let params = RunArchiveRouteParams::new("not-a-uuid", RunId::new().0.to_string());
+
+        let error = params.parse().unwrap_err();
+        assert_eq!(error.kind(), RunArchiveRouteErrorKind::BadRequest);
+        assert_eq!(error.message(), "invalid workspace id");
+    }
+
+    #[test]
+    fn route_params_reject_invalid_run_id() {
+        let params = RunArchiveRouteParams::new(WorkspaceId::new().0.to_string(), "not-a-uuid");
+
+        let error = params.parse().unwrap_err();
+        assert_eq!(error.kind(), RunArchiveRouteErrorKind::BadRequest);
+        assert_eq!(error.message(), "invalid run id");
     }
 }

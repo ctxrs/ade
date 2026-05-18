@@ -1,28 +1,22 @@
 use super::*;
 use ctx_daemon::daemon::workspaces::{
-    AcknowledgeRunArchiveIngestBatchRouteRequest, BuildRunArchiveIngestBatchRouteRequest,
-    RunArchiveRouteError, RunArchiveRouteErrorKind,
+    AcknowledgeRunArchiveIngestBatchRouteBody, AcknowledgeRunArchiveIngestBatchRouteRequest,
+    AcknowledgeRunArchiveIngestBatchRouteResponse, BuildRunArchiveIngestBatchRouteRequest,
+    BuildRunArchiveIngestBatchRouteResponse, RunArchiveBatchRouteQuery, RunArchiveRouteError,
+    RunArchiveRouteErrorKind, RunArchiveRouteParams,
 };
 use ctx_daemon::daemon::WorkspacesHandle;
-
-mod validation;
-use validation::{
-    parse_archive_run_id, parse_archive_workspace_id, run_archive_api_error, RunArchiveBatchQuery,
-};
 
 pub(super) async fn build_workspace_run_archive_ingest_batch(
     State(state): State<WorkspacesHandle>,
     Path((workspace_id, run_id)): Path<(String, String)>,
-    Query(query): Query<RunArchiveBatchQuery>,
-) -> Result<Json<Option<RunArchiveIngestBatch>>, (StatusCode, Json<ApiErrorResp>)> {
-    let workspace_id = parse_archive_workspace_id(&workspace_id)?;
-    let run_id = parse_archive_run_id(&run_id)?;
+    Query(query): Query<RunArchiveBatchRouteQuery>,
+) -> Result<Json<BuildRunArchiveIngestBatchRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    let params = RunArchiveRouteParams::new(workspace_id, run_id);
     let batch = state
-        .build_run_archive_ingest_batch_for_route(BuildRunArchiveIngestBatchRouteRequest {
-            workspace_id,
-            run_id,
-            max_items: query.max_items(),
-        })
+        .build_run_archive_ingest_batch_for_route(BuildRunArchiveIngestBatchRouteRequest::new(
+            params, query,
+        ))
         .await
         .map_err(run_archive_route_error)?;
 
@@ -32,20 +26,14 @@ pub(super) async fn build_workspace_run_archive_ingest_batch(
 pub(super) async fn acknowledge_workspace_run_archive_ingest_batch(
     State(state): State<WorkspacesHandle>,
     Path((workspace_id, run_id)): Path<(String, String)>,
-    Query(query): Query<RunArchiveBatchQuery>,
-    Json(batch): Json<RunArchiveIngestBatch>,
-) -> Result<Json<RunArchiveIngestCursor>, (StatusCode, Json<ApiErrorResp>)> {
-    let workspace_id = parse_archive_workspace_id(&workspace_id)?;
-    let run_id = parse_archive_run_id(&run_id)?;
+    Query(query): Query<RunArchiveBatchRouteQuery>,
+    Json(body): Json<AcknowledgeRunArchiveIngestBatchRouteBody>,
+) -> Result<Json<AcknowledgeRunArchiveIngestBatchRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
+    let params = RunArchiveRouteParams::new(workspace_id, run_id);
 
     state
         .acknowledge_run_archive_ingest_batch_for_route(
-            AcknowledgeRunArchiveIngestBatchRouteRequest {
-                workspace_id,
-                run_id,
-                max_items: query.max_items(),
-                batch,
-            },
+            AcknowledgeRunArchiveIngestBatchRouteRequest::new(params, query, body),
         )
         .await
         .map(Json)
@@ -60,4 +48,16 @@ fn run_archive_route_error(error: RunArchiveRouteError) -> (StatusCode, Json<Api
         RunArchiveRouteErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
     };
     run_archive_api_error(status, error.message())
+}
+
+fn run_archive_api_error(
+    status: StatusCode,
+    error: impl Into<String>,
+) -> (StatusCode, Json<ApiErrorResp>) {
+    (
+        status,
+        Json(ApiErrorResp {
+            error: error.into(),
+        }),
+    )
 }

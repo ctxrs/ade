@@ -22,6 +22,24 @@ async fn get_ingest_batch_json(
     (status, serde_json::from_slice(&body).unwrap())
 }
 
+async fn get_ingest_batch_json_raw(
+    app: &axum::Router,
+    workspace_id: &str,
+    run_id: &str,
+) -> (StatusCode, serde_json::Value) {
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!(
+            "/api/workspaces/{workspace_id}/runs/{run_id}/archive/ingest_batch"
+        ))
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    let status = res.status();
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    (status, serde_json::from_slice(&body).unwrap())
+}
+
 async fn post_ingest_ack_json(
     app: &axum::Router,
     workspace_id: WorkspaceId,
@@ -34,6 +52,26 @@ async fn post_ingest_ack_json(
         .uri(format!(
             "/api/workspaces/{}/runs/{}/archive/ingest_ack{}",
             workspace_id.0, run_id.0, query
+        ))
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_string(batch).unwrap()))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    let status = res.status();
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    (status, serde_json::from_slice(&body).unwrap())
+}
+
+async fn post_ingest_ack_json_raw(
+    app: &axum::Router,
+    workspace_id: &str,
+    run_id: &str,
+    batch: &RunArchiveIngestBatch,
+) -> (StatusCode, serde_json::Value) {
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/api/workspaces/{workspace_id}/runs/{run_id}/archive/ingest_ack"
         ))
         .header("content-type", "application/json")
         .body(Body::from(serde_json::to_string(batch).unwrap()))
@@ -130,6 +168,16 @@ async fn run_archive_routes_build_and_acknowledge_org_visible_batch() {
         json!({"error": "archive ingest acknowledgement requires an org-visible batch"})
     );
 
+    let (status, body) =
+        post_ingest_ack_json_raw(&app, "not-a-uuid", &run_id.0.to_string(), &batch).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body, json!({"error": "invalid workspace id"}));
+
+    let (status, body) =
+        post_ingest_ack_json_raw(&app, &workspace.id.0.to_string(), "not-a-uuid", &batch).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body, json!({"error": "invalid run id"}));
+
     let mut tampered_batch = batch.clone();
     tampered_batch.to.session_event_seq += 100;
     tampered_batch.to.audit_event_seq += 100;
@@ -220,4 +268,21 @@ async fn run_archive_routes_reject_invalid_max_items_before_store_lookup() {
             json!({"error": "max_items must be between 1 and 1000"})
         );
     }
+}
+
+#[tokio::test]
+async fn run_archive_routes_reject_invalid_route_ids_before_store_lookup() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let fixture = test_daemon_fixture_for_test(data_dir.path(), None).await;
+    let app = fixture.router();
+
+    let (status, body) =
+        get_ingest_batch_json_raw(&app, "not-a-uuid", &RunId::new().0.to_string()).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body, json!({"error": "invalid workspace id"}));
+
+    let (status, body) =
+        get_ingest_batch_json_raw(&app, &WorkspaceId::new().0.to_string(), "not-a-uuid").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body, json!({"error": "invalid run id"}));
 }

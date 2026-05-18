@@ -1389,6 +1389,19 @@ const TERMINAL_REST_ROUTE_API_CONTRACT_PATTERNS = [
 
 const RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS = [
   {
+    name: "run archive API owns route id parsing",
+    regex: /\buuid\s*::\s*Uuid\s*::\s*parse_str\s*\(|\b(?:WorkspaceId|RunId)\s*\(/,
+  },
+  {
+    name: "run archive API owns local validation/query helpers",
+    regex:
+      /\bstruct\s+RunArchiveBatchQuery\b|\bparse_archive_(?:workspace|run)_id\s*\(|\bmod\s+validation\s*;|\buse\s+validation\s*::/,
+  },
+  {
+    name: "run archive API exposes raw archive body or response models",
+    regex: /\bRunArchiveIngest(?:Batch|Cursor)\b/,
+  },
+  {
     name: "run archive API references low-level ingest errors",
     regex: /\bRunArchiveIngestError\b/,
   },

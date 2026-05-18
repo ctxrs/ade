@@ -2928,8 +2928,17 @@ test("daemon boundary guard rejects run archive API orchestration", () => {
   const violations = scanText({
     filePath: "core/crates/ctx-http/src/api/run_archive.rs",
     contents: `
+      mod validation;
+      use validation::{parse_archive_run_id, parse_archive_workspace_id, RunArchiveBatchQuery};
+      use ctx_core::ids::{RunId, WorkspaceId};
       use ctx_daemon::daemon::workspaces::RunArchiveIngestError;
+      struct RunArchiveBatchQuery;
       async fn helper(state: WorkspacesHandle, batch: RunArchiveIngestBatch) {
+        let query: RunArchiveBatchQuery = todo!();
+        let workspace_id = WorkspaceId(uuid::Uuid::parse_str("bad").unwrap());
+        let run_id = RunId(uuid::Uuid::parse_str("bad").unwrap());
+        let _ = parse_archive_workspace_id("bad")?;
+        let _ = parse_archive_run_id("bad")?;
         let _ = DEFAULT_RUN_ARCHIVE_BATCH_ITEMS;
         let _ = MAX_RUN_ARCHIVE_BATCH_ITEMS;
         let max_items = requested_batch_item_limit(query)?;
@@ -2947,6 +2956,14 @@ test("daemon boundary guard rejects run archive API orchestration", () => {
   assert.deepEqual(
     violations.map((violation) => violation.name),
     [
+      "run archive API owns route id parsing",
+      "run archive API owns route id parsing",
+      "run archive API owns local validation/query helpers",
+      "run archive API owns local validation/query helpers",
+      "run archive API owns local validation/query helpers",
+      "run archive API owns local validation/query helpers",
+      "run archive API owns local validation/query helpers",
+      "run archive API exposes raw archive body or response models",
       "run archive API references low-level ingest errors",
       "run archive API references low-level ingest errors",
       "run archive API validates acknowledgement batch fields",

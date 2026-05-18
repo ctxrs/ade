@@ -89,8 +89,10 @@ pub use route_contract::{
     WorkspaceRouteParams, WorkspaceRouteResponse, WorktreeRouteParams, WorktreeRouteResponse,
 };
 pub use run_archive::{
-    AcknowledgeRunArchiveIngestBatchRouteRequest, BuildRunArchiveIngestBatchRouteRequest,
-    RunArchiveRouteError, RunArchiveRouteErrorKind,
+    AcknowledgeRunArchiveIngestBatchRouteBody, AcknowledgeRunArchiveIngestBatchRouteRequest,
+    AcknowledgeRunArchiveIngestBatchRouteResponse, BuildRunArchiveIngestBatchRouteRequest,
+    BuildRunArchiveIngestBatchRouteResponse, RunArchiveBatchRouteQuery, RunArchiveRouteError,
+    RunArchiveRouteErrorKind, RunArchiveRouteParams,
 };
 pub use sandbox_binding::rematerialize_sandbox_binding_for_worktree;
 pub use vcs_hooks::{cleanup_workspace_hooks, cleanup_worktree_hooks, ensure_task_commit_hook};
