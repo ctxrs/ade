@@ -103,7 +103,13 @@ pub use mcp_auth::{
 pub use retention::prune_archived_session_data_for_all_workspaces;
 pub use route_files::{RouteFileDownloadError, TextRouteDownload};
 pub use runtime::{bootstrap_daemon_runtime, DaemonRuntime};
-pub use sessions::{SessionHeadRouteError, SessionHeadRouteRequest};
+pub use sessions::{
+    SessionEventsRouteQuery, SessionEventsRouteResponse, SessionHeadRouteQuery,
+    SessionHeadRouteResponse, SessionHistoryRouteQuery, SessionHistoryRouteResponse,
+    SessionReadModelRouteError, SessionReadModelRouteErrorKind, SessionRouteParams,
+    SessionSnapshotRouteQuery, SessionSnapshotRouteResponse, SessionStateRouteResponse,
+    SessionTurnToolsRouteParams, SessionTurnToolsRouteResponse,
+};
 pub use settings::{SettingsRouteError, SettingsRouteErrorKind};
 pub use state::{AppRuntimeFlags, DaemonState};
 pub use state::{

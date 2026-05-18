@@ -187,6 +187,14 @@ const sessionHeadApiRoots = [
   "core/crates/ctx-http/src/api/sessions/snapshot/head_metrics.rs",
 ];
 
+const sessionReadModelRouteApiRoots = [
+  "core/crates/ctx-http/src/api/sessions/snapshot.rs",
+  "core/crates/ctx-http/src/api/sessions/snapshot/events.rs",
+  "core/crates/ctx-http/src/api/sessions/snapshot/head.rs",
+  "core/crates/ctx-http/src/api/sessions/snapshot/history.rs",
+  "core/crates/ctx-http/src/api/sessions/snapshot/state.rs",
+];
+
 const sessionVcsApiRoots = [
   "core/crates/ctx-http/src/api/sessions/snapshot/vcs.rs",
   "core/crates/ctx-http/src/api/sessions/snapshot/vcs/",
@@ -1367,6 +1375,32 @@ const SESSION_HEAD_API_ORCHESTRATION_PATTERNS = [
   {
     name: "session head API owns stale min_event_seq policy",
     regex: /\blast_event_seq\s*<\s*min_event_seq\b/,
+  },
+];
+
+const SESSION_READ_MODEL_ROUTE_API_CONTRACT_PATTERNS = [
+  {
+    name: "session read-model API exposes raw read-model DTOs",
+    regex:
+      /\b(?:ctx_core::models::|models::)?(?:SessionSnapshot|SessionHeadSnapshot|SessionHistoryPage|SessionEventsPage|SessionState|SessionTurnTool)\b|\bJson\s*<\s*(?:Vec\s*<\s*)?(?:SessionSnapshot|SessionHeadSnapshot|SessionHistoryPage|SessionEventsPage|SessionState|SessionTurnTool)\b/,
+  },
+  {
+    name: "session read-model API owns local route query DTOs",
+    regex:
+      /\b(?:SessionSnapshotQuery|SessionHeadQuery|SessionHistoryQuery|SessionEventsQuery)\b/,
+  },
+  {
+    name: "session read-model API owns session or turn id parsing",
+    regex: /\b(?:SessionId|TurnId)\b|\buuid\s*::\s*Uuid\s*::\s*parse_str\s*\(/,
+  },
+  {
+    name: "session read-model API owns boolish flag parsing",
+    regex: /\bparse_boolish_flag\s*\(|\binclude_(?:events|transient)\s*\.\s*as_deref\s*\(/,
+  },
+  {
+    name: "session read-model API calls raw read-model facades",
+    regex:
+      /\.(?:load_session_snapshot|load_session_history_page|list_session_events_page|list_session_turn_tools_for_request|load_session_state)\s*\(/,
   },
 ];
 
@@ -4712,6 +4746,9 @@ function apiPatternsForPath(relativePath) {
   if (sessionHeadApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...SESSION_HEAD_API_ORCHESTRATION_PATTERNS);
   }
+  if (sessionReadModelRouteApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...SESSION_READ_MODEL_ROUTE_API_CONTRACT_PATTERNS);
+  }
   if (workspaceRegistrationConfigApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...WORKSPACE_REGISTRATION_CONFIG_API_PATTERNS);
   }
@@ -4955,6 +4992,13 @@ function providerUsageApiPatternsForPath(relativePath) {
 function sessionHeadApiPatternsForPath(relativePath) {
   if (sessionHeadApiRoots.some((root) => relativePath.startsWith(root))) {
     return SESSION_HEAD_API_ORCHESTRATION_PATTERNS;
+  }
+  return [];
+}
+
+function sessionReadModelRouteApiPatternsForPath(relativePath) {
+  if (sessionReadModelRouteApiRoots.some((root) => relativePath.startsWith(root))) {
+    return SESSION_READ_MODEL_ROUTE_API_CONTRACT_PATTERNS;
   }
   return [];
 }
@@ -5857,6 +5901,7 @@ module.exports = {
   ROUTE_FILE_DOWNLOAD_API_PATTERNS,
   RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS,
   SESSION_HEAD_API_ORCHESTRATION_PATTERNS,
+  SESSION_READ_MODEL_ROUTE_API_CONTRACT_PATTERNS,
   WORKSPACE_CONFIG_ROUTE_CONTEXT_PATTERNS,
   WORKSPACE_EXECUTION_CONFIG_API_PATTERNS,
   WORKSPACE_MANAGEMENT_CONFIG_API_PATTERNS,
@@ -5989,6 +6034,7 @@ module.exports = {
   routeFileDownloadApiPatternsForPath,
   runArchiveApiPatternsForPath,
   sessionHeadApiPatternsForPath,
+  sessionReadModelRouteApiPatternsForPath,
   routerCompositionPatternsForPath,
   scanRepo,
   scanRouterComposition,

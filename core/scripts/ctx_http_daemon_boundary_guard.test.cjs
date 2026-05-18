@@ -63,6 +63,7 @@ const {
   PROVIDER_LAUNCH_AUTH_API_PATTERNS,
   PROVIDER_LAUNCH_OPTIONS_API_PATTERNS,
   SESSION_HEAD_API_ORCHESTRATION_PATTERNS,
+  SESSION_READ_MODEL_ROUTE_API_CONTRACT_PATTERNS,
   PROVIDER_STATUS_API_ORCHESTRATION_PATTERNS,
   PROVIDER_USAGE_API_ORCHESTRATION_PATTERNS,
   SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS,
@@ -166,6 +167,7 @@ const {
   scanText,
   schedulerRuntimeStorePatternsForPath,
   sessionHeadApiPatternsForPath,
+  sessionReadModelRouteApiPatternsForPath,
   sessionModelApiStorePatternsForPath,
   sessionFixtureStorePatternsForPath,
   smallApiUnitStorePatternsForPath,
@@ -2939,6 +2941,84 @@ test("daemon boundary guard scopes session head recovery roots", () => {
   );
   assert.deepEqual(
     sessionHeadApiPatternsForPath("core/crates/ctx-http/src/api/sessions/snapshot/history.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects session read-model route contracts in HTTP", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/sessions/snapshot/history.rs",
+    contents: `
+      use ctx_core::models::{SessionSnapshot, SessionHeadSnapshot, SessionHistoryPage, SessionEventsPage, SessionState, SessionTurnTool};
+      #[derive(Deserialize)]
+      struct SessionHistoryQuery;
+      async fn handler(state: SessionsHandle, id: String, turn: String) -> Json<SessionSnapshot> {
+        let session_id = SessionId(uuid::Uuid::parse_str(&id).unwrap());
+        let turn_id = TurnId(uuid::Uuid::parse_str(&turn).unwrap());
+        let include_events = parse_boolish_flag(include_events.as_deref())?;
+        let include_transient = parse_boolish_flag(include_transient.as_deref())?;
+        state.load_session_snapshot(session_id, 60, include_events).await?;
+        state.load_session_history_page(session_id, None, 60).await?;
+        state.list_session_events_page(session_id, None, 250, None, include_transient).await?;
+        state.list_session_turn_tools_for_request(session_id, turn_id).await?;
+        state.load_session_state(session_id).await?;
+        Json(SessionSnapshot::default())
+      }
+    `,
+    patterns: SESSION_READ_MODEL_ROUTE_API_CONTRACT_PATTERNS,
+  });
+
+  assert.deepEqual(new Set(violations.map((violation) => violation.name)), new Set([
+    "session read-model API exposes raw read-model DTOs",
+    "session read-model API owns local route query DTOs",
+    "session read-model API owns session or turn id parsing",
+    "session read-model API owns boolish flag parsing",
+    "session read-model API calls raw read-model facades",
+  ]));
+});
+
+test("daemon boundary guard scopes session read-model route contracts and allows route DTOs", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/src/api/sessions/snapshot.rs",
+    "core/crates/ctx-http/src/api/sessions/snapshot/events.rs",
+    "core/crates/ctx-http/src/api/sessions/snapshot/head.rs",
+    "core/crates/ctx-http/src/api/sessions/snapshot/history.rs",
+    "core/crates/ctx-http/src/api/sessions/snapshot/state.rs",
+  ]) {
+    assert.deepEqual(
+      sessionReadModelRouteApiPatternsForPath(filePath),
+      SESSION_READ_MODEL_ROUTE_API_CONTRACT_PATTERNS,
+    );
+    assert.equal(
+      apiPatternsForPath(filePath).includes(SESSION_READ_MODEL_ROUTE_API_CONTRACT_PATTERNS[0]),
+      true,
+    );
+  }
+
+  assert.deepEqual(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/sessions/snapshot/history.rs",
+      contents: `
+        async fn handler(state: SessionsHandle) -> Json<SessionHistoryRouteResponse> {
+          let _ = state.load_session_history_page_for_route(SessionRouteParams::new(id), q).await?;
+          let _ = state.list_session_turn_tools_for_route(SessionTurnToolsRouteParams::new(id, turn_id)).await?;
+          type Allowed = (
+            SessionSnapshotRouteResponse,
+            SessionHeadRouteResponse,
+            SessionHistoryRouteResponse,
+            SessionEventsRouteResponse,
+            SessionStateRouteResponse,
+            SessionTurnToolsRouteResponse,
+          );
+          Json(response)
+        }
+      `,
+      patterns: SESSION_READ_MODEL_ROUTE_API_CONTRACT_PATTERNS,
+    }),
+    [],
+  );
+  assert.deepEqual(
+    sessionReadModelRouteApiPatternsForPath("core/crates/ctx-http/src/api/sessions/snapshot/vcs.rs"),
     [],
   );
 });

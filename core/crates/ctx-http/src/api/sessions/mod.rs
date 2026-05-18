@@ -9,7 +9,11 @@ use super::errors::ApiErrorResp;
 use super::shared::{map_file_completions_error, FileCompletionsQuery};
 use ctx_core::ids::*;
 use ctx_core::models::*;
-use ctx_daemon::daemon::SessionsHandle;
+use ctx_daemon::daemon::{
+    SessionEventsRouteQuery, SessionHeadRouteQuery, SessionHistoryRouteQuery,
+    SessionReadModelRouteError, SessionReadModelRouteErrorKind, SessionRouteParams,
+    SessionSnapshotRouteQuery, SessionTurnToolsRouteParams, SessionsHandle,
+};
 use ctx_observability::logs;
 #[cfg(test)]
 use ctx_settings_model as user_settings;
@@ -46,4 +50,13 @@ fn session_data_or_status<T>(result: anyhow::Result<Option<T>>) -> Result<T, Sta
     result
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)
+}
+
+fn session_read_model_status(error: SessionReadModelRouteError) -> StatusCode {
+    match error.kind() {
+        SessionReadModelRouteErrorKind::BadRequest => StatusCode::BAD_REQUEST,
+        SessionReadModelRouteErrorKind::NotFound => StatusCode::NOT_FOUND,
+        SessionReadModelRouteErrorKind::Conflict => StatusCode::CONFLICT,
+        SessionReadModelRouteErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+    }
 }
