@@ -1,27 +1,20 @@
 use serde_json::json;
 
-use ctx_core::models::ExecutionEnvironment;
-
-use super::{CreateSessionReq, CreateTaskReq};
+use ctx_daemon::daemon::tasks::{CreateTaskRouteRequest, CreateTaskSessionRouteRequest};
 
 #[test]
 fn create_session_req_accepts_execution_environment() {
-    let req: CreateSessionReq = serde_json::from_value(json!({
+    serde_json::from_value::<CreateTaskSessionRouteRequest>(json!({
         "provider_id": "fake",
         "model_id": "fake-model",
         "execution_environment": "sandbox",
     }))
     .unwrap();
-
-    assert_eq!(
-        req.execution_environment,
-        Some(ExecutionEnvironment::Sandbox)
-    );
 }
 
 #[test]
 fn create_session_req_rejects_legacy_env_target_alias() {
-    let err = serde_json::from_value::<CreateSessionReq>(json!({
+    let err = serde_json::from_value::<CreateTaskSessionRouteRequest>(json!({
         "provider_id": "fake",
         "model_id": "fake-model",
         "env_target": "local"
@@ -33,7 +26,7 @@ fn create_session_req_rejects_legacy_env_target_alias() {
 
 #[test]
 fn create_session_req_rejects_legacy_execution_environment_values() {
-    let err = serde_json::from_value::<CreateSessionReq>(json!({
+    let err = serde_json::from_value::<CreateTaskSessionRouteRequest>(json!({
         "provider_id": "fake",
         "model_id": "fake-model",
         "execution_environment": "worktree"
@@ -45,7 +38,7 @@ fn create_session_req_rejects_legacy_execution_environment_values() {
 
 #[test]
 fn create_session_req_rejects_empty_model_id() {
-    let err = serde_json::from_value::<CreateSessionReq>(json!({
+    let err = serde_json::from_value::<CreateTaskSessionRouteRequest>(json!({
         "provider_id": "fake",
         "model_id": "   "
     }))
@@ -56,7 +49,7 @@ fn create_session_req_rejects_empty_model_id() {
 
 #[test]
 fn create_session_req_rejects_default_placeholder_model_id() {
-    let err = serde_json::from_value::<CreateSessionReq>(json!({
+    let err = serde_json::from_value::<CreateTaskSessionRouteRequest>(json!({
         "provider_id": "fake",
         "model_id": "default"
     }))
@@ -69,7 +62,7 @@ fn create_session_req_rejects_default_placeholder_model_id() {
 
 #[test]
 fn create_session_req_rejects_empty_provider_id() {
-    let err = serde_json::from_value::<CreateSessionReq>(json!({
+    let err = serde_json::from_value::<CreateTaskSessionRouteRequest>(json!({
         "provider_id": "   ",
         "model_id": "fake-model"
     }))
@@ -80,7 +73,7 @@ fn create_session_req_rejects_empty_provider_id() {
 
 #[test]
 fn create_task_req_rejects_legacy_default_session_flag() {
-    let err = serde_json::from_value::<CreateTaskReq>(json!({
+    let err = serde_json::from_value::<CreateTaskRouteRequest>(json!({
         "title": "task",
         "create_default_session": false
     }))
@@ -91,7 +84,7 @@ fn create_task_req_rejects_legacy_default_session_flag() {
 
 #[test]
 fn create_task_req_accepts_default_session_options() {
-    serde_json::from_value::<CreateTaskReq>(json!({
+    serde_json::from_value::<CreateTaskRouteRequest>(json!({
         "title": "task",
         "default_session": {
             "provider_id": "fake",

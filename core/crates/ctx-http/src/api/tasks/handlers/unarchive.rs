@@ -3,11 +3,10 @@ use super::super::*;
 pub(in crate::api) async fn unarchive_task(
     State(tasks): State<TasksHandle>,
     Path(id): Path<String>,
-) -> Result<Json<Task>, StatusCode> {
-    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
+) -> Result<Json<TaskRouteResponse>, StatusCode> {
     let task = tasks
-        .unarchive_task(task_id)
+        .unarchive_task_for_route(TaskRouteParams::new(id))
         .await
-        .map_err(task_lifecycle_status)?;
+        .map_err(|error| task_route_status(&error))?;
     Ok(Json(task))
 }

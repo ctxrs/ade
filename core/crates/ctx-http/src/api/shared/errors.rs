@@ -2,22 +2,8 @@ use axum::http::StatusCode;
 use axum::Json;
 use ctx_observability::logs;
 use ctx_settings_service::EffectiveExecutionSettingsError;
-use ctx_storage_admission::is_storage_exhaustion_error;
 
 use crate::api::errors::ApiErrorResp;
-
-pub(crate) fn status_code_for_internal_error(err: &anyhow::Error) -> StatusCode {
-    if ctx_settings_service::is_execution_policy_denial(err) {
-        StatusCode::FORBIDDEN
-    } else if err
-        .chain()
-        .any(|cause| is_storage_exhaustion_error(&cause.to_string()))
-    {
-        StatusCode::INSUFFICIENT_STORAGE
-    } else {
-        StatusCode::INTERNAL_SERVER_ERROR
-    }
-}
 
 pub(crate) fn status_code_for_request_or_policy_error(err: &anyhow::Error) -> StatusCode {
     if ctx_settings_service::is_execution_policy_denial(err) {
@@ -49,33 +35,6 @@ mod tests {
     use axum::http::StatusCode;
 
     use super::*;
-
-    #[test]
-    fn status_code_for_internal_error_maps_storage_failures_to_insufficient_storage() {
-        let err =
-            anyhow::anyhow!("Insufficient storage capacity for creating an isolated task worktree");
-        assert_eq!(
-            status_code_for_internal_error(&err),
-            StatusCode::INSUFFICIENT_STORAGE
-        );
-    }
-
-    #[test]
-    fn status_code_for_internal_error_preserves_generic_internal_errors() {
-        let err = anyhow::anyhow!("plain internal failure");
-        assert_eq!(
-            status_code_for_internal_error(&err),
-            StatusCode::INTERNAL_SERVER_ERROR
-        );
-    }
-
-    #[test]
-    fn status_code_for_internal_error_maps_execution_policy_denials_to_forbidden() {
-        let err = ctx_settings_service::HostExecutionPolicy::SandboxOnly
-            .validate_execution_environment(ctx_core::models::ExecutionEnvironment::Host)
-            .expect_err("host execution should be denied");
-        assert_eq!(status_code_for_internal_error(&err), StatusCode::FORBIDDEN);
-    }
 
     #[test]
     fn status_code_for_request_or_policy_error_maps_policy_denials_to_forbidden() {

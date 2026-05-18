@@ -16,9 +16,20 @@ use crate::daemon::{workspaces, WorkspaceStoreAccessError};
 
 mod create_session;
 mod create_task;
+mod route_contract;
 
 pub use create_session::{CreateTaskSessionInput, DefaultSessionSeed, TaskSessionCreateError};
 pub use create_task::{CreateTaskInput, TaskCreateError};
+pub use route_contract::{
+    ArchiveTaskRouteResponse, CreateTaskDefaultSessionRouteRequest, CreateTaskRouteRequest,
+    CreateTaskSessionRouteRequest, ExecutionEnvironmentRouteValue,
+    ListWorkspaceArchivedTasksRouteParams, ListWorkspaceArchivedTasksRouteRequest,
+    ListWorkspaceTasksRouteParams, SessionRouteResponse, SessionStatusRouteResponse,
+    SessionSummaryRouteResponse, TaskRouteError, TaskRouteErrorKind, TaskRouteParams,
+    TaskRouteResponse, TaskStatusRouteResponse, UpdateTaskTitleRouteRequest,
+    WorkspaceArchivedPageRouteResponse, WorkspaceIndexCursorRouteResponse,
+    WorkspaceTaskSummaryRouteResponse,
+};
 
 pub struct ArchiveTaskOutcome {
     pub task: Task,

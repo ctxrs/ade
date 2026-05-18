@@ -9,19 +9,11 @@ pub(in crate::api) async fn create_task(
     State(_workspaces): State<WorkspacesHandle>,
     State(_transport): State<TransportHandle>,
     Path(id): Path<String>,
-    Json(req): Json<CreateTaskReq>,
-) -> Result<Json<Task>, CreateTaskApiError> {
-    let workspace_id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiErrorResp {
-                error: "invalid workspace id".to_string(),
-            }),
-        )
-    })?);
+    Json(req): Json<CreateTaskRouteRequest>,
+) -> Result<Json<TaskRouteResponse>, CreateTaskApiError> {
     let task = tasks
-        .create_task_for_workspace(workspace_id, req.into_create_task_input()?)
+        .create_task_for_route(&id, req)
         .await
-        .map_err(task_create_api_error)?;
+        .map_err(task_route_api_error)?;
     Ok(Json(task))
 }

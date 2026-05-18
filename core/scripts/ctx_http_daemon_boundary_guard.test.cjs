@@ -52,6 +52,7 @@ const {
   MERGE_QUEUE_ENTRY_API_ROUTE_CONTRACT_PATTERNS,
   MERGE_QUEUE_SUBMIT_API_ORCHESTRATION_PATTERNS,
   TERMINAL_REST_ROUTE_API_CONTRACT_PATTERNS,
+  TASK_ROUTE_API_CONTRACT_PATTERNS,
   PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS,
   PROVIDER_AUTH_IMPORT_API_ORCHESTRATION_PATTERNS,
   PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS,
@@ -135,6 +136,7 @@ const {
   mergeQueueEntryApiPatternsForPath,
   mergeQueueSubmitApiPatternsForPath,
   terminalRestRouteApiPatternsForPath,
+  taskRouteApiPatternsForPath,
   mcpDaemonPatternsForPath,
   migratedTestPatternsForPath,
   mobileAccessStoreDtoApiPatternsForPath,
@@ -4619,6 +4621,88 @@ test("daemon boundary guard scopes task-session admission patterns to creation-s
       TASK_SESSION_CREATION_API_ADMISSION_PATTERNS[0],
     ),
     false,
+  );
+});
+
+test("daemon boundary guard rejects task route raw contracts", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/tasks/handlers/listing.rs",
+    contents: `
+      use ctx_core::models::{Task, Session, WorkspaceArchivedPage, WorkspaceTaskSummary, WorkspaceIndexCursor};
+      use ctx_daemon::daemon::tasks::{CreateTaskInput, CreateTaskSessionInput, TaskCreateError, TaskSessionCreateError, TaskLifecycleError};
+      #[derive(Deserialize)]
+      struct WorkspaceArchivedQuery;
+      #[derive(Serialize)]
+      struct ArchiveTaskResponse;
+      async fn handler(tasks: TasksHandle) -> Json<Vec<Task>> {
+        let workspace_id = WorkspaceId(uuid::Uuid::parse_str(&id).unwrap());
+        let sort_at = DateTime::parse_from_rfc3339(raw).unwrap();
+        tasks.list_workspace_tasks(workspace_id).await?;
+        tasks.list_workspace_archived_page(workspace_id, cursor, 50).await?;
+        tasks.list_task_sessions(task_id).await?;
+        tasks.mark_task_read(task_id).await?;
+        tasks.mark_task_unread(task_id).await?;
+        tasks.update_task_title(task_id, title).await?;
+        tasks.archive_task(task_id).await?;
+        tasks.unarchive_task(task_id).await?;
+        tasks.delete_task(task_id).await?;
+        tasks.create_task_for_workspace(workspace_id, input).await?;
+        tasks.create_session_for_task(task_id, input).await?;
+        Json(Vec::<Task>::new())
+      }
+    `,
+    patterns: TASK_ROUTE_API_CONTRACT_PATTERNS,
+  });
+
+  assert.deepEqual(new Set(violations.map((violation) => violation.name)), new Set([
+    "task route API imports raw task/session/archive models",
+    "task route API returns raw task/session DTOs",
+    "task route API owns task/workspace id or cursor parsing",
+    "task route API owns local task route DTOs",
+    "task route API imports low-level task inputs or errors",
+    "task route API calls raw task handle facades",
+  ]));
+});
+
+test("daemon boundary guard scopes task route contracts and allows route DTO names", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/src/api/tasks.rs",
+    "core/crates/ctx-http/src/api/tasks/creation_task.rs",
+    "core/crates/ctx-http/src/api/tasks/creation_session/create.rs",
+    "core/crates/ctx-http/src/api/tasks/handlers/listing.rs",
+    "core/crates/ctx-http/src/api/tasks/task_title.rs",
+    "core/crates/ctx-http/src/api/tasks/task_deletion.rs",
+  ]) {
+    assert.deepEqual(
+      taskRouteApiPatternsForPath(filePath),
+      TASK_ROUTE_API_CONTRACT_PATTERNS,
+    );
+    assert.equal(
+      apiPatternsForPath(filePath).includes(TASK_ROUTE_API_CONTRACT_PATTERNS[0]),
+      true,
+    );
+  }
+
+  assert.deepEqual(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/tasks/handlers/read_state.rs",
+      contents: `
+        async fn handler(tasks: TasksHandle) -> Json<TaskRouteResponse> {
+          let task = tasks.mark_task_read_for_route(TaskRouteParams::new(id)).await?;
+          tasks.update_task_title_for_route(TaskRouteParams::new(id), req).await?;
+          tasks.archive_task_for_route(TaskRouteParams::new(id)).await?;
+          tasks.delete_task_for_route(TaskRouteParams::new(id)).await?;
+          Json(task)
+        }
+        type Allowed = (TaskRouteResponse, SessionRouteResponse, WorkspaceArchivedPageRouteResponse);
+      `,
+      patterns: TASK_ROUTE_API_CONTRACT_PATTERNS,
+    }),
+    [],
+  );
+  assert.deepEqual(
+    taskRouteApiPatternsForPath("core/crates/ctx-http/src/api/sessions/example.rs"),
+    [],
   );
 });
 

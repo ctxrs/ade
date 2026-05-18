@@ -4,10 +4,9 @@ pub(in crate::api) async fn delete_task(
     State(tasks): State<TasksHandle>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
-    let task_id = TaskId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
     tasks
-        .delete_task(task_id)
+        .delete_task_for_route(TaskRouteParams::new(id))
         .await
-        .map_err(task_lifecycle_status)?;
+        .map_err(|error| task_route_status(&error))?;
     Ok(StatusCode::NO_CONTENT)
 }

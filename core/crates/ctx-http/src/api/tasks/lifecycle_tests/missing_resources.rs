@@ -42,13 +42,17 @@ async fn assert_task_mutations_return_not_found(state: &TestDaemon, missing_task
         .expect_err("missing task unread should fail");
     assert_eq!(unread_status, StatusCode::NOT_FOUND);
 
-    let title_update = state
-        .handle()
-        .tasks()
-        .update_task_title(missing_task_id, "renamed".to_string())
-        .await
-        .expect("missing task title update should not be an internal error");
-    assert!(title_update.is_none());
+    let title_req: UpdateTaskTitleRouteRequest =
+        serde_json::from_value(serde_json::json!({"title": "renamed"})).expect("title request");
+    let (title_status, Json(title_body)) = update_task_title(
+        tasks.clone(),
+        Path(missing_task_id.0.to_string()),
+        Json(title_req),
+    )
+    .await
+    .expect_err("missing task title update should fail");
+    assert_eq!(title_status, StatusCode::NOT_FOUND);
+    assert_eq!(title_body.error, "task not found");
 
     let archive_status = archive_task(tasks.clone(), Path(missing_task_id.0.to_string()))
         .await

@@ -370,6 +370,18 @@ const taskSessionCreationApiRoots = [
   "core/crates/ctx-http/src/api/tasks/creation_session/",
 ];
 
+const taskRouteContractApiRoots = [
+  "core/crates/ctx-http/src/api/tasks.rs",
+  "core/crates/ctx-http/src/api/tasks/creation.rs",
+  "core/crates/ctx-http/src/api/tasks/creation_task.rs",
+  "core/crates/ctx-http/src/api/tasks/creation_session.rs",
+  "core/crates/ctx-http/src/api/tasks/creation_session/",
+  "core/crates/ctx-http/src/api/tasks/handlers.rs",
+  "core/crates/ctx-http/src/api/tasks/handlers/",
+  "core/crates/ctx-http/src/api/tasks/task_deletion.rs",
+  "core/crates/ctx-http/src/api/tasks/task_title.rs",
+];
+
 const workspaceStreamReadModelApiRoots = [
   "core/crates/ctx-http/src/api/ws/replay.rs",
   "core/crates/ctx-http/src/api/ws/workspace_stream/lifecycle.rs",
@@ -2421,6 +2433,39 @@ const TASK_SESSION_CREATION_API_ADMISSION_PATTERNS = [
   {
     name: "task session API bypasses locked create-session entrypoint",
     regex: /\bcreate_session_for_loaded_task\s*\(/,
+  },
+];
+
+const TASK_ROUTE_API_CONTRACT_PATTERNS = [
+  {
+    name: "task route API imports raw task/session/archive models",
+    regex:
+      /ctx_core::models::\{[^}]*\b(?:Task|Session|WorkspaceArchivedPage|WorkspaceTaskSummary|WorkspaceIndexCursor)\b|ctx_core::models::(?:Task|Session|WorkspaceArchivedPage|WorkspaceTaskSummary|WorkspaceIndexCursor)\b/,
+  },
+  {
+    name: "task route API returns raw task/session DTOs",
+    regex:
+      /\bJson\s*<\s*(?:Vec\s*<\s*)?(?:Task|Session|WorkspaceArchivedPage|WorkspaceTaskSummary|WorkspaceIndexCursor)\b/,
+  },
+  {
+    name: "task route API owns task/workspace id or cursor parsing",
+    regex:
+      /\buuid\s*::\s*Uuid\s*::\s*parse_str\s*\(|\bDateTime\s*::\s*parse_from_rfc3339\s*\(/,
+  },
+  {
+    name: "task route API owns local task route DTOs",
+    regex:
+      /\b(?:CreateTaskReq|CreateSessionReq|CreateTaskDefaultSessionReq|WorkspaceArchivedQuery|ArchiveTaskResponse|UpdateTaskTitleReq)\b/,
+  },
+  {
+    name: "task route API imports low-level task inputs or errors",
+    regex:
+      /\b(?:CreateTaskInput|CreateTaskSessionInput|TaskCreateError|TaskSessionCreateError|TaskLifecycleError)\b/,
+  },
+  {
+    name: "task route API calls raw task handle facades",
+    regex:
+      /\.(?:list_workspace_tasks|list_workspace_archived_page|list_task_sessions|mark_task_read|mark_task_unread|update_task_title|archive_task|unarchive_task|delete_task|create_task_for_workspace|create_session_for_task)\s*\(/,
   },
 ];
 
@@ -4689,6 +4734,9 @@ function apiPatternsForPath(relativePath) {
   if (taskSessionCreationApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...TASK_SESSION_CREATION_API_ADMISSION_PATTERNS);
   }
+  if (taskRouteContractApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...TASK_ROUTE_API_CONTRACT_PATTERNS);
+  }
   if (workspaceStreamReadModelApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...WORKSPACE_STREAM_READ_MODEL_API_PATTERNS);
   }
@@ -4823,6 +4871,13 @@ function mergeQueueEntryApiPatternsForPath(relativePath) {
 function terminalRestRouteApiPatternsForPath(relativePath) {
   if (terminalRestRouteApiRoots.some((root) => relativePath.startsWith(root))) {
     return TERMINAL_REST_ROUTE_API_CONTRACT_PATTERNS;
+  }
+  return [];
+}
+
+function taskRouteApiPatternsForPath(relativePath) {
+  if (taskRouteContractApiRoots.some((root) => relativePath.startsWith(root))) {
+    return TASK_ROUTE_API_CONTRACT_PATTERNS;
   }
   return [];
 }
@@ -5820,6 +5875,7 @@ module.exports = {
   MERGE_QUEUE_ENTRY_API_ROUTE_CONTRACT_PATTERNS,
   MERGE_QUEUE_SUBMIT_API_ORCHESTRATION_PATTERNS,
   TERMINAL_REST_ROUTE_API_CONTRACT_PATTERNS,
+  TASK_ROUTE_API_CONTRACT_PATTERNS,
   MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS,
   CURSOR_PROCESS_LOGIN_API_ORCHESTRATION_PATTERNS,
   CODEX_APP_SERVER_LOGIN_API_ORCHESTRATION_PATTERNS,
@@ -5908,6 +5964,7 @@ module.exports = {
   mergeQueueEntryApiPatternsForPath,
   mergeQueueSubmitApiPatternsForPath,
   terminalRestRouteApiPatternsForPath,
+  taskRouteApiPatternsForPath,
   mcpDaemonPatternsForPath,
   migratedTestPatternsForPath,
   mobileAccessStoreDtoApiPatternsForPath,
