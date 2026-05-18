@@ -1240,6 +1240,7 @@ test("daemon boundary guard rejects org policy orchestration in HTTP routes", ()
     snapshotViolations.map((violation) => violation.name),
     [
       "org policy API verifies policy snapshot signatures directly",
+      "org policy API uses raw policy model contracts directly",
       "org policy API loads daemon enrollment directly for snapshot or overlay orchestration",
       "org policy API loads daemon enrollment directly for snapshot or overlay orchestration",
       "org policy snapshot API stores snapshots directly",
@@ -1310,6 +1311,7 @@ test("daemon boundary guard rejects org policy orchestration in HTTP routes", ()
   assert.deepEqual(
     enrollmentViolations.map((violation) => violation.name),
     [
+      "org policy API uses raw policy model contracts directly",
       "org policy enrollment API validates plan eligibility directly",
       "org policy enrollment API validates signing key directly",
       "org policy enrollment API validates signing key directly",
@@ -1402,6 +1404,9 @@ test("daemon boundary guard scopes org policy orchestration bans", () => {
   const enrollmentViolations = scanText({
     filePath: "core/crates/ctx-http/src/api/org_policy/enrollments.rs",
     contents: `
+      use ctx_core::ids::OrgId;
+      use ctx_core::models::{DaemonEnrollment, OrgPolicySnapshot, WorkspacePolicyOverlay};
+      use ctx_daemon::daemon::org_policy::UpsertDaemonEnrollmentError;
       impl From<DaemonEnrollment> for DaemonEnrollmentResponse {
         fn from(enrollment: DaemonEnrollment) -> Self {
           Self {
@@ -1410,12 +1415,57 @@ test("daemon boundary guard scopes org policy orchestration bans", () => {
         }
       }
       async fn handler(state: CoreHandle, enrollment: DaemonEnrollment) {
+        let org_id = uuid::Uuid::parse_str(raw).map(OrgId)?;
         state.upsert_daemon_enrollment_checked(enrollment).await?;
       }
     `,
     patterns: apiPatternsForPath("core/crates/ctx-http/src/api/org_policy/enrollments.rs"),
   });
-  assert.deepEqual(enrollmentViolations, []);
+  assert.deepEqual(
+    enrollmentViolations.map((violation) => violation.name),
+    [
+      "org policy API parses route ids directly",
+      "org policy API parses route ids directly",
+      "org policy API uses raw policy model contracts directly",
+      "org policy API uses raw policy model contracts directly",
+      "org policy API uses raw policy model contracts directly",
+      "org policy API uses raw policy model contracts directly",
+      "org policy API defines local route DTOs",
+      "org policy API uses low-level policy errors directly",
+      "org policy API calls low-level policy facades directly",
+    ],
+  );
+
+  const routeViolations = scanText({
+    filePath: "core/crates/ctx-http/src/api/org_policy/enrollments.rs",
+    contents: `
+      use ctx_daemon::daemon::{
+        CoreHandle,
+        DaemonEnrollmentRouteResponse,
+        DaemonEnrollmentsRouteResponse,
+        OrgPolicyOrgRouteParams,
+        OrgPolicyRouteError,
+        OrgPolicyRouteErrorKind,
+        UpsertDaemonEnrollmentRouteRequest,
+      };
+      async fn handler(state: CoreHandle, error: OrgPolicyRouteError) {
+        let response: DaemonEnrollmentRouteResponse = state
+          .upsert_daemon_enrollment_for_route(
+            OrgPolicyOrgRouteParams::new(org_id),
+            UpsertDaemonEnrollmentRouteRequest {},
+          )
+          .await?;
+        let status = match error.kind() {
+          OrgPolicyRouteErrorKind::BadRequest => StatusCode::BAD_REQUEST,
+          OrgPolicyRouteErrorKind::Conflict => StatusCode::CONFLICT,
+          OrgPolicyRouteErrorKind::NotFound => StatusCode::NOT_FOUND,
+          OrgPolicyRouteErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+      }
+    `,
+    patterns: apiPatternsForPath("core/crates/ctx-http/src/api/org_policy/enrollments.rs"),
+  });
+  assert.deepEqual(routeViolations, []);
 
   assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/settings.rs").includes(

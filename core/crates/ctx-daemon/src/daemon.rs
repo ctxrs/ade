@@ -33,6 +33,7 @@ pub mod merge_queue;
 pub mod mobile_access;
 mod mobile_startup;
 pub mod org_policy;
+mod org_policy_route;
 mod provider_child_reclassifier;
 pub mod provider_guard;
 mod provider_launch_host;
@@ -98,6 +99,13 @@ pub use mcp_auth::{
     emit_mcp_token_denied, issue_provider_session_mcp_token_with_capabilities,
     require_scoped_mcp_session_context, revoke_provider_session_mcp_token, verify_mcp_auth_token,
     ScopedMcpSessionAccessError,
+};
+pub use org_policy_route::{
+    CacheOrgPolicySnapshotRouteRequest, DaemonEnrollmentRouteResponse,
+    DaemonEnrollmentsRouteResponse, OrgPolicyOrgRouteParams, OrgPolicyRouteError,
+    OrgPolicyRouteErrorKind, OrgPolicySnapshotRouteResponse, OrgPolicyWorkspaceRouteParams,
+    UpsertDaemonEnrollmentRouteRequest, UpsertWorkspacePolicyOverlayRouteRequest,
+    WorkspacePolicyOverlayOptionalRouteResponse, WorkspacePolicyOverlayRouteResponse,
 };
 pub use repo_onboarding::{
     RepoCloneRouteRequest, RepoInitRouteRequest, RepoOnboardingRouteError,

@@ -2932,6 +2932,28 @@ const ORG_POLICY_API_ORCHESTRATION_PATTERNS = [
     regex: /\bverify_policy_snapshot_signature\s*\(/,
   },
   {
+    name: "org policy API parses route ids directly",
+    regex: /\buuid\s*::\s*Uuid\s*::\s*parse_str\s*\(|\b(?:OrgId|WorkspaceId)\b/,
+  },
+  {
+    name: "org policy API uses raw policy model contracts directly",
+    regex: /\b(?:DaemonEnrollment|OrgPolicySnapshot|WorkspacePolicyOverlay)\b/,
+  },
+  {
+    name: "org policy API defines local route DTOs",
+    regex: /\bDaemonEnrollmentResponse\b|\bparse_org_id\s*\(|\bparse_workspace_id\s*\(/,
+  },
+  {
+    name: "org policy API uses low-level policy errors directly",
+    regex:
+      /\b(?:CacheOrgPolicySnapshotError|WorkspacePolicyOverlayError|UpsertWorkspacePolicyOverlayError|UpsertDaemonEnrollmentError)\b/,
+  },
+  {
+    name: "org policy API calls low-level policy facades directly",
+    regex:
+      /(?:\.\s*|\b(?:CoreHandle|WorkspacesHandle)\s*::\s*)(?:list_daemon_enrollments|upsert_daemon_enrollment_checked|cache_and_activate_org_policy_snapshot|get_workspace_policy_overlay|upsert_workspace_policy_overlay_checked)\s*\(/,
+  },
+  {
     name: "org policy API loads daemon enrollment directly for snapshot or overlay orchestration",
     regex: /(?:\.|\bCoreHandle::)get_daemon_enrollment_by_org_id\s*\(/,
     paths: [
