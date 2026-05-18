@@ -397,6 +397,25 @@ const workspaceRouteContractApiRoots = [
   "core/crates/ctx-http/src/api/workspaces/worktrees.rs",
   "core/crates/ctx-http/src/api/workspaces/management/attachment_routes.rs",
   "core/crates/ctx-http/src/api/workspaces/management/attachment_ops.rs",
+  "core/crates/ctx-http/src/api/workspaces/management/file_completions.rs",
+];
+
+const workspaceRestRouteContractApiPaths = [
+  "core/crates/ctx-http/src/api/workspaces.rs",
+  "core/crates/ctx-http/src/api/workspaces/active.rs",
+  "core/crates/ctx-http/src/api/workspaces/harness_container.rs",
+  "core/crates/ctx-http/src/api/workspaces/registry.rs",
+  "core/crates/ctx-http/src/api/workspaces/registry/delete.rs",
+  "core/crates/ctx-http/src/api/workspaces/worktrees.rs",
+  "core/crates/ctx-http/src/api/workspaces/management/file_completions.rs",
+];
+
+const workspaceHarnessContainerApiPaths = [
+  "core/crates/ctx-http/src/api/workspaces/harness_container.rs",
+];
+
+const workspaceFileCompletionApiPaths = [
+  "core/crates/ctx-http/src/api/workspaces/management/file_completions.rs",
 ];
 
 const taskSessionCreationApiRoots = [
@@ -2641,6 +2660,38 @@ const WORKSPACE_ROUTE_CONTRACT_API_PATTERNS = [
     name: "workspace attachment API calls raw attachment facade methods",
     regex:
       /\.(?:get_workspace|upsert_workspace_attachment|delete_workspace_attachment|sync_workspace_attachments)\s*\(/,
+  },
+  {
+    name: "workspace REST route API parses route ids directly",
+    regex: /\buuid::Uuid::parse_str\s*\(|\b(?:WorkspaceId|WorktreeId)\s*\(/,
+    paths: workspaceRestRouteContractApiPaths,
+  },
+  {
+    name: "workspace REST route API inspects low-level workspace errors",
+    regex:
+      /\b(?:WorkspaceHydrationError|WorkspaceHydrationErrorKind|WorkspaceDeleteError|WorkspaceHarnessContainerError|RouteFileDownloadError|FileCompletionsError|FileCompletionsErrorKind)\b/,
+    paths: workspaceRestRouteContractApiPaths,
+  },
+  {
+    name: "workspace REST route API calls low-level workspace facades directly",
+    regex:
+      /(?:\.\s*|WorkspacesHandle\s*::\s*)(?:delete_workspace|load_workspace_active_snapshot_for_route|load_workspace_active_heads_for_route|get_worktree_for_route|download_worktree_bootstrap_logs_for_route|workspace_harness_container_status_for_route|stop_workspace_harness_container|ensure_workspace_harness_container|complete_files_for_workspace)\s*\(/,
+    paths: workspaceRestRouteContractApiPaths,
+  },
+  {
+    name: "workspace file-completion API maps low-level completion errors locally",
+    regex: /\bmap_file_completions_error\b/,
+    paths: workspaceFileCompletionApiPaths,
+  },
+  {
+    name: "workspace harness-container API maps execution settings locally",
+    regex: /\bmap_effective_execution_settings_error\b/,
+    paths: workspaceHarnessContainerApiPaths,
+  },
+  {
+    name: "workspace harness-container API redacts low-level errors locally",
+    regex: /\blogs::redact_sensitive\s*\(/,
+    paths: workspaceHarnessContainerApiPaths,
   },
 ];
 

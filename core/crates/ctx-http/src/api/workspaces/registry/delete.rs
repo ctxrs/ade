@@ -1,22 +1,12 @@
 use super::*;
-use ctx_core::ids::WorkspaceId;
-use ctx_daemon::daemon::workspaces::WorkspaceDeleteError;
 
 pub(in crate::api) async fn delete_workspace(
     State(workspaces): State<WorkspacesHandle>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
-    let id = WorkspaceId(uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?);
     workspaces
-        .delete_workspace(id)
+        .delete_workspace_for_route(WorkspaceRouteParams::new(id))
         .await
-        .map_err(delete_workspace_error_status)?;
+        .map_err(|error| workspace_route_status(&error))?;
     Ok(StatusCode::NO_CONTENT)
-}
-
-fn delete_workspace_error_status(error: WorkspaceDeleteError) -> StatusCode {
-    match error {
-        WorkspaceDeleteError::NotFound => StatusCode::NOT_FOUND,
-        WorkspaceDeleteError::Internal => StatusCode::INTERNAL_SERVER_ERROR,
-    }
 }

@@ -4726,6 +4726,96 @@ test("daemon boundary guard rejects raw workspace route DTOs and attachment orch
   assert(names.includes("workspace attachment API calls raw attachment facade methods"));
 });
 
+test("daemon boundary guard rejects workspace REST route identity and error mapping leaks", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/workspaces/harness_container.rs",
+    contents: `
+      use ctx_core::ids::{WorkspaceId, WorktreeId};
+      use ctx_daemon::daemon::RouteFileDownloadError;
+      use ctx_daemon::daemon::workspaces::{
+        FileCompletionsError,
+        FileCompletionsErrorKind,
+        WorkspaceDeleteError,
+        WorkspaceHarnessContainerError,
+        WorkspaceHydrationError,
+        WorkspaceHydrationErrorKind,
+      };
+      async fn handler(workspaces: WorkspacesHandle) {
+        let workspace_id = WorkspaceId(uuid::Uuid::parse_str(&id)?);
+        let worktree_id = WorktreeId(uuid::Uuid::parse_str(&id)?);
+        workspaces.load_workspace_active_snapshot_for_route(workspace_id).await?;
+        workspaces.load_workspace_active_heads_for_route(workspace_id).await?;
+        workspaces.get_worktree_for_route(worktree_id).await?;
+        workspaces.download_worktree_bootstrap_logs_for_route(worktree_id).await?;
+        workspaces.workspace_harness_container_status_for_route(workspace_id).await?;
+        workspaces.stop_workspace_harness_container(workspace_id).await?;
+        WorkspacesHandle::ensure_workspace_harness_container(&workspaces, workspace_id).await?;
+        workspaces.delete_workspace(workspace_id).await?;
+        workspaces.complete_files_for_workspace(workspace_id, None, None).await?;
+        let _ = logs::redact_sensitive("secret");
+        let _ = map_effective_execution_settings_error(err);
+      }
+    `,
+    patterns: apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/harness_container.rs"),
+  });
+
+  const names = new Set(violations.map((violation) => violation.name));
+  for (const expected of [
+    "workspace REST route API parses route ids directly",
+    "workspace REST route API inspects low-level workspace errors",
+    "workspace REST route API calls low-level workspace facades directly",
+    "workspace harness-container API maps execution settings locally",
+    "workspace harness-container API redacts low-level errors locally",
+  ]) {
+    assert(names.has(expected), `expected ${expected}; saw ${[...names].join(", ")}`);
+  }
+
+  const fileCompletionViolations = scanText({
+    filePath: "core/crates/ctx-http/src/api/workspaces/management/file_completions.rs",
+    contents: `
+      use ctx_daemon::daemon::workspaces::{FileCompletionsError, FileCompletionsErrorKind};
+      async fn handler(workspaces: WorkspacesHandle) {
+        workspaces.complete_files_for_workspace(workspace_id, None, None).await?;
+        let _ = map_file_completions_error(error);
+      }
+    `,
+    patterns: apiPatternsForPath(
+      "core/crates/ctx-http/src/api/workspaces/management/file_completions.rs",
+    ),
+  });
+  const fileCompletionNames = new Set(
+    fileCompletionViolations.map((violation) => violation.name),
+  );
+  assert(
+    fileCompletionNames.has("workspace REST route API inspects low-level workspace errors"),
+  );
+  assert(
+    fileCompletionNames.has("workspace REST route API calls low-level workspace facades directly"),
+  );
+  assert(
+    fileCompletionNames.has(
+      "workspace file-completion API maps low-level completion errors locally",
+    ),
+  );
+
+  const routeViolations = scanText({
+    filePath: "core/crates/ctx-http/src/api/workspaces/harness_container.rs",
+    contents: `
+      async fn get_workspace_harness_container(
+          State(workspaces): State<WorkspacesHandle>,
+          Path(id): Path<String>,
+      ) -> Result<Json<Option<WorkspaceHarnessContainerStatusRouteResponse>>, StatusCode> {
+          workspaces
+              .workspace_harness_container_status_for_route_params(WorkspaceRouteParams::new(id))
+              .await?;
+          Ok(Json(None))
+      }
+    `,
+    patterns: apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/harness_container.rs"),
+  });
+  assert.deepEqual(routeViolations, []);
+});
+
 test("daemon boundary guard scopes workspace route contract bans", () => {
   assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/attachments.rs").includes(
@@ -4735,6 +4825,12 @@ test("daemon boundary guard scopes workspace route contract bans", () => {
   );
   assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/registry/delete.rs").includes(
+      WORKSPACE_ROUTE_CONTRACT_API_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/management/file_completions.rs").includes(
       WORKSPACE_ROUTE_CONTRACT_API_PATTERNS[0],
     ),
     true,

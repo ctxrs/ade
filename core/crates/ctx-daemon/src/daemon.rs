@@ -164,12 +164,12 @@ pub use workspaces::{
     UpdateWorktreeBootstrapConfigRequest, WorkspaceActiveHeadBatchRouteResponse,
     WorkspaceActiveSnapshotRouteResponse, WorkspaceAttachmentRouteResponse,
     WorkspaceConfigUpdateResult, WorkspaceExecutionConfigSnapshot,
-    WorkspaceHarnessContainerStatusRouteResponse, WorkspaceMergeQueueConfigRouteResponse,
-    WorkspacePrimaryBranchSnapshot, WorkspacePromptConfigRouteParams,
-    WorkspaceProviderModelPreferenceRouteParams, WorkspaceProviderModelPreferenceRouteResponse,
-    WorkspaceRouteError, WorkspaceRouteErrorKind, WorkspaceRouteResponse,
-    WorkspaceStreamAccessError, WorkspaceWorktreeBootstrapConfigRouteResponse,
-    WorktreeRouteResponse,
+    WorkspaceFileCompletionsRouteQuery, WorkspaceHarnessContainerStatusRouteResponse,
+    WorkspaceMergeQueueConfigRouteResponse, WorkspacePrimaryBranchSnapshot,
+    WorkspacePromptConfigRouteParams, WorkspaceProviderModelPreferenceRouteParams,
+    WorkspaceProviderModelPreferenceRouteResponse, WorkspaceRouteError, WorkspaceRouteErrorKind,
+    WorkspaceRouteParams, WorkspaceRouteResponse, WorkspaceStreamAccessError,
+    WorkspaceWorktreeBootstrapConfigRouteResponse, WorktreeRouteParams, WorktreeRouteResponse,
 };
 
 #[cfg(test)]

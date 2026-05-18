@@ -70,6 +70,7 @@ pub enum WorkspaceRouteErrorKind {
     NotFound,
     BadRequest,
     Forbidden,
+    InsufficientStorage,
     Internal,
 }
 
@@ -100,6 +101,15 @@ impl WorkspaceRouteError {
 
     pub(in crate::daemon::workspaces) fn forbidden(error: impl std::fmt::Display) -> Self {
         Self::new(WorkspaceRouteErrorKind::Forbidden, error.to_string())
+    }
+
+    pub(in crate::daemon::workspaces) fn insufficient_storage(
+        error: impl std::fmt::Display,
+    ) -> Self {
+        Self::new(
+            WorkspaceRouteErrorKind::InsufficientStorage,
+            error.to_string(),
+        )
     }
 
     pub(in crate::daemon::workspaces) fn internal(error: impl std::fmt::Display) -> Self {

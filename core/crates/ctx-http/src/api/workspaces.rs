@@ -24,8 +24,6 @@ pub(super) use registry::{create_workspace, delete_workspace, get_workspace, lis
 pub(super) use worktrees::{get_worktree, get_worktree_bootstrap_logs};
 
 use super::errors::ApiErrorResp;
-use super::shared::map_effective_execution_settings_error;
-use ctx_daemon::daemon::workspaces::{WorkspaceHydrationError, WorkspaceHydrationErrorKind};
 use ctx_daemon::daemon::{
     AgentSystemPromptConfigRouteResponse, CreateWorkspaceAttachmentRouteRequest,
     DeleteWorkspaceAttachmentRouteRequest, SubagentSystemPromptConfigRouteResponse,
@@ -39,8 +37,8 @@ use ctx_daemon::daemon::{
     WorkspaceMergeQueueConfigRouteResponse, WorkspacePrimaryBranchSnapshot,
     WorkspacePromptConfigRouteParams, WorkspaceProviderModelPreferenceRouteParams,
     WorkspaceProviderModelPreferenceRouteResponse, WorkspaceRouteError, WorkspaceRouteErrorKind,
-    WorkspaceRouteResponse, WorkspaceWorktreeBootstrapConfigRouteResponse, WorkspacesHandle,
-    WorktreeRouteResponse,
+    WorkspaceRouteParams, WorkspaceRouteResponse, WorkspaceWorktreeBootstrapConfigRouteResponse,
+    WorkspacesHandle, WorktreeRouteParams, WorktreeRouteResponse,
 };
 use ctx_observability::logs;
 
@@ -62,6 +60,7 @@ fn workspace_route_status(error: &WorkspaceRouteError) -> StatusCode {
         WorkspaceRouteErrorKind::NotFound => StatusCode::NOT_FOUND,
         WorkspaceRouteErrorKind::BadRequest => StatusCode::BAD_REQUEST,
         WorkspaceRouteErrorKind::Forbidden => StatusCode::FORBIDDEN,
+        WorkspaceRouteErrorKind::InsufficientStorage => StatusCode::INSUFFICIENT_STORAGE,
         WorkspaceRouteErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }

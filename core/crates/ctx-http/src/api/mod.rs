@@ -36,7 +36,6 @@ mod routes;
 mod run_archive;
 pub(crate) mod sessions;
 mod settings;
-pub(crate) mod shared;
 pub(crate) mod tasks;
 mod telemetry;
 mod terminals;

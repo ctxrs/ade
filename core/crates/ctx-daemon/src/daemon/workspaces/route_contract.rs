@@ -5,12 +5,65 @@ use ctx_core::models::{
     WorkspaceActiveSnapshot, WorkspaceAttachment, WorkspaceAttachmentKind,
     WorkspaceAttachmentStatus, Worktree, WorktreeBootstrapStatus,
 };
+use ctx_observability::logs;
 use ctx_sandbox_contract::{ContainerMountMode, ContainerNetworkMode};
+use ctx_settings_service::EffectiveExecutionSettingsError;
 use ctx_workspace_attachments::AttachmentConfig;
 use ctx_workspace_container::WorkspaceContainerStatus;
 use serde::{Deserialize, Serialize, Serializer};
 
-use super::{WorkspaceRouteError, WorkspacesHandle};
+use crate::daemon::{RouteFileDownloadError, TextRouteDownload};
+
+use super::{
+    FileCompletionsError, FileCompletionsErrorKind, WorkspaceDeleteError,
+    WorkspaceHarnessContainerError, WorkspaceHydrationError, WorkspaceRouteError, WorkspacesHandle,
+};
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct WorkspaceRouteParams {
+    workspace_id: String,
+}
+
+impl WorkspaceRouteParams {
+    pub fn new(workspace_id: impl Into<String>) -> Self {
+        Self {
+            workspace_id: workspace_id.into(),
+        }
+    }
+
+    fn parse_workspace_id(&self) -> Result<WorkspaceId, WorkspaceRouteError> {
+        uuid::Uuid::parse_str(&self.workspace_id)
+            .map(WorkspaceId)
+            .map_err(|_| WorkspaceRouteError::bad_request("invalid workspace id"))
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct WorktreeRouteParams {
+    worktree_id: String,
+}
+
+impl WorktreeRouteParams {
+    pub fn new(worktree_id: impl Into<String>) -> Self {
+        Self {
+            worktree_id: worktree_id.into(),
+        }
+    }
+
+    fn parse_worktree_id(&self) -> Result<WorktreeId, WorkspaceRouteError> {
+        uuid::Uuid::parse_str(&self.worktree_id)
+            .map(WorktreeId)
+            .map_err(|_| WorkspaceRouteError::bad_request("invalid worktree id"))
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Default, Eq, PartialEq)]
+pub struct WorkspaceFileCompletionsRouteQuery {
+    #[serde(default)]
+    query: Option<String>,
+    #[serde(default)]
+    limit: Option<u32>,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct WorkspaceRouteResponse {
@@ -270,6 +323,99 @@ impl DeleteWorkspaceAttachmentRouteRequest {
     }
 }
 
+fn workspace_hydration_route_error(error: WorkspaceHydrationError) -> WorkspaceRouteError {
+    match error {
+        WorkspaceHydrationError::NotFound => WorkspaceRouteError::not_found("workspace not found"),
+        WorkspaceHydrationError::Load(error) => {
+            WorkspaceRouteError::internal(logs::redact_sensitive(&error.to_string()))
+        }
+    }
+}
+
+fn workspace_delete_route_error(error: WorkspaceDeleteError) -> WorkspaceRouteError {
+    match error {
+        WorkspaceDeleteError::NotFound => WorkspaceRouteError::not_found("workspace not found"),
+        WorkspaceDeleteError::Internal => {
+            WorkspaceRouteError::internal("failed to delete workspace")
+        }
+    }
+}
+
+fn route_file_download_error(error: RouteFileDownloadError) -> WorkspaceRouteError {
+    match error {
+        RouteFileDownloadError::NotFound => WorkspaceRouteError::not_found("file not found"),
+        RouteFileDownloadError::Internal => {
+            WorkspaceRouteError::internal("failed to read route file")
+        }
+    }
+}
+
+fn workspace_harness_container_status_error(
+    error: WorkspaceHarnessContainerError,
+) -> WorkspaceRouteError {
+    match error {
+        WorkspaceHarnessContainerError::NotFound => {
+            WorkspaceRouteError::not_found("workspace not found")
+        }
+        WorkspaceHarnessContainerError::Internal(_)
+        | WorkspaceHarnessContainerError::ExecutionSettings(_)
+        | WorkspaceHarnessContainerError::Ensure(_) => {
+            WorkspaceRouteError::internal("workspace harness container request failed")
+        }
+    }
+}
+
+fn effective_execution_settings_route_error(
+    error: EffectiveExecutionSettingsError,
+) -> WorkspaceRouteError {
+    match error {
+        EffectiveExecutionSettingsError::InvalidWorkspaceOverride(error) => {
+            let message = logs::redact_sensitive(&error.to_string());
+            if ctx_settings_service::is_execution_policy_denial(&error) {
+                WorkspaceRouteError::forbidden(message)
+            } else {
+                WorkspaceRouteError::bad_request(message)
+            }
+        }
+        EffectiveExecutionSettingsError::Internal(error) => {
+            WorkspaceRouteError::internal(logs::redact_sensitive(&error.to_string()))
+        }
+    }
+}
+
+fn workspace_harness_container_ensure_error(
+    error: WorkspaceHarnessContainerError,
+) -> WorkspaceRouteError {
+    match error {
+        WorkspaceHarnessContainerError::NotFound => {
+            WorkspaceRouteError::not_found("workspace not found")
+        }
+        WorkspaceHarnessContainerError::Internal(error) => {
+            WorkspaceRouteError::internal(logs::redact_sensitive(&error.to_string()))
+        }
+        WorkspaceHarnessContainerError::ExecutionSettings(error) => {
+            effective_execution_settings_route_error(error)
+        }
+        WorkspaceHarnessContainerError::Ensure(error) => {
+            WorkspaceRouteError::bad_request(logs::redact_sensitive(&error.to_string()))
+        }
+    }
+}
+
+fn file_completions_route_error(error: FileCompletionsError) -> WorkspaceRouteError {
+    match error.kind() {
+        FileCompletionsErrorKind::NotFound => WorkspaceRouteError::not_found(error.message()),
+        FileCompletionsErrorKind::Forbidden => WorkspaceRouteError::forbidden(error.message()),
+        FileCompletionsErrorKind::InsufficientStorage => {
+            WorkspaceRouteError::insufficient_storage(error.message())
+        }
+        FileCompletionsErrorKind::Internal => {
+            tracing::warn!(error = error.message(), "file completions request failed");
+            WorkspaceRouteError::internal(error.message())
+        }
+    }
+}
+
 impl WorkspacesHandle {
     pub async fn list_workspaces_for_route(
         &self,
@@ -279,6 +425,16 @@ impl WorkspacesHandle {
             .await
             .map_err(WorkspaceRouteError::internal)?;
         Ok(workspaces.into_iter().map(Into::into).collect())
+    }
+
+    pub async fn get_workspace_for_route_params(
+        &self,
+        params: WorkspaceRouteParams,
+    ) -> Result<WorkspaceRouteResponse, WorkspaceRouteError> {
+        let workspace_id = params.parse_workspace_id()?;
+        self.get_workspace_for_route(workspace_id)
+            .await?
+            .ok_or_else(|| WorkspaceRouteError::not_found("workspace not found"))
     }
 
     pub async fn get_workspace_for_route(
@@ -295,6 +451,26 @@ impl WorkspacesHandle {
         Ok(workspace.map(Into::into))
     }
 
+    pub async fn delete_workspace_for_route(
+        &self,
+        params: WorkspaceRouteParams,
+    ) -> Result<(), WorkspaceRouteError> {
+        let workspace_id = params.parse_workspace_id()?;
+        self.delete_workspace(workspace_id)
+            .await
+            .map_err(workspace_delete_route_error)
+    }
+
+    pub async fn workspace_active_snapshot_for_route(
+        &self,
+        params: WorkspaceRouteParams,
+    ) -> Result<WorkspaceActiveSnapshotRouteResponse, WorkspaceRouteError> {
+        let workspace_id = params.parse_workspace_id()?;
+        self.load_workspace_active_snapshot_for_route(workspace_id)
+            .await
+            .map_err(workspace_hydration_route_error)
+    }
+
     pub async fn load_workspace_active_snapshot_for_route(
         &self,
         workspace_id: WorkspaceId,
@@ -302,6 +478,16 @@ impl WorkspacesHandle {
         self.load_workspace_active_snapshot(workspace_id)
             .await
             .map(Into::into)
+    }
+
+    pub async fn workspace_active_heads_for_route(
+        &self,
+        params: WorkspaceRouteParams,
+    ) -> Result<WorkspaceActiveHeadBatchRouteResponse, WorkspaceRouteError> {
+        let workspace_id = params.parse_workspace_id()?;
+        self.load_workspace_active_heads_for_route(workspace_id)
+            .await
+            .map_err(workspace_hydration_route_error)
     }
 
     pub async fn load_workspace_active_heads_for_route(
@@ -387,6 +573,46 @@ impl WorkspacesHandle {
             .map(|status| status.map(Into::into))
     }
 
+    pub async fn workspace_harness_container_status_for_route_params(
+        &self,
+        params: WorkspaceRouteParams,
+    ) -> Result<Option<WorkspaceHarnessContainerStatusRouteResponse>, WorkspaceRouteError> {
+        let workspace_id = params.parse_workspace_id()?;
+        self.workspace_harness_container_status_for_route(workspace_id)
+            .await
+            .map_err(workspace_harness_container_status_error)
+    }
+
+    pub async fn stop_workspace_harness_container_for_route(
+        &self,
+        params: WorkspaceRouteParams,
+    ) -> Result<(), WorkspaceRouteError> {
+        let workspace_id = params.parse_workspace_id()?;
+        self.stop_workspace_harness_container(workspace_id)
+            .await
+            .map_err(workspace_harness_container_status_error)
+    }
+
+    pub async fn ensure_workspace_harness_container_for_route(
+        &self,
+        params: WorkspaceRouteParams,
+    ) -> Result<(), WorkspaceRouteError> {
+        let workspace_id = params.parse_workspace_id()?;
+        self.ensure_workspace_harness_container(workspace_id)
+            .await
+            .map_err(workspace_harness_container_ensure_error)
+    }
+
+    pub async fn get_worktree_for_route_params(
+        &self,
+        params: WorktreeRouteParams,
+    ) -> Result<WorktreeRouteResponse, WorkspaceRouteError> {
+        let worktree_id = params.parse_worktree_id()?;
+        self.get_worktree_for_route(worktree_id)
+            .await?
+            .ok_or_else(|| WorkspaceRouteError::not_found("worktree not found"))
+    }
+
     pub async fn get_worktree_for_route(
         &self,
         worktree_id: WorktreeId,
@@ -395,6 +621,27 @@ impl WorkspacesHandle {
             .await
             .map(|worktree| worktree.map(Into::into))
             .map_err(WorkspaceRouteError::internal)
+    }
+
+    pub async fn download_worktree_bootstrap_logs_for_route_params(
+        &self,
+        params: WorktreeRouteParams,
+    ) -> Result<TextRouteDownload, WorkspaceRouteError> {
+        let worktree_id = params.parse_worktree_id()?;
+        self.download_worktree_bootstrap_logs_for_route(worktree_id)
+            .await
+            .map_err(route_file_download_error)
+    }
+
+    pub async fn workspace_file_completions_for_route(
+        &self,
+        params: WorkspaceRouteParams,
+        query: WorkspaceFileCompletionsRouteQuery,
+    ) -> Result<Vec<String>, WorkspaceRouteError> {
+        let workspace_id = params.parse_workspace_id()?;
+        self.complete_files_for_workspace(workspace_id, query.query, query.limit)
+            .await
+            .map_err(file_completions_route_error)
     }
 
     async fn require_workspace_for_route(
@@ -410,6 +657,7 @@ impl WorkspacesHandle {
 
 #[cfg(test)]
 mod tests {
+    use super::super::WorkspaceRouteErrorKind;
     use super::*;
 
     fn assert_same_json<T, U>(left: T, right: U)
@@ -534,6 +782,88 @@ mod tests {
         assert_same_json(
             Option::<WorkspaceHarnessContainerStatusRouteResponse>::None,
             Option::<WorkspaceContainerStatus>::None,
+        );
+    }
+
+    #[test]
+    fn workspace_route_params_parse_invalid_ids_to_route_errors() {
+        let workspace = WorkspaceRouteParams::new("not-a-workspace")
+            .parse_workspace_id()
+            .unwrap_err();
+        assert_eq!(workspace.kind(), WorkspaceRouteErrorKind::BadRequest);
+        assert_eq!(workspace.message(), "invalid workspace id");
+
+        let worktree = WorktreeRouteParams::new("not-a-worktree")
+            .parse_worktree_id()
+            .unwrap_err();
+        assert_eq!(worktree.kind(), WorkspaceRouteErrorKind::BadRequest);
+        assert_eq!(worktree.message(), "invalid worktree id");
+    }
+
+    #[test]
+    fn workspace_route_error_helpers_preserve_status_classes() {
+        let hydration = workspace_hydration_route_error(WorkspaceHydrationError::NotFound);
+        assert_eq!(hydration.kind(), WorkspaceRouteErrorKind::NotFound);
+        assert_eq!(hydration.message(), "workspace not found");
+
+        let deletion = workspace_delete_route_error(WorkspaceDeleteError::NotFound);
+        assert_eq!(deletion.kind(), WorkspaceRouteErrorKind::NotFound);
+        assert_eq!(deletion.message(), "workspace not found");
+
+        let download = route_file_download_error(RouteFileDownloadError::NotFound);
+        assert_eq!(download.kind(), WorkspaceRouteErrorKind::NotFound);
+
+        let harness_status = workspace_harness_container_status_error(
+            WorkspaceHarnessContainerError::ExecutionSettings(
+                EffectiveExecutionSettingsError::Internal(anyhow::anyhow!("settings failed")),
+            ),
+        );
+        assert_eq!(harness_status.kind(), WorkspaceRouteErrorKind::Internal);
+
+        let harness_ensure = workspace_harness_container_ensure_error(
+            WorkspaceHarnessContainerError::Ensure(anyhow::anyhow!("bad container request")),
+        );
+        assert_eq!(harness_ensure.kind(), WorkspaceRouteErrorKind::BadRequest);
+        assert_eq!(harness_ensure.message(), "bad container request");
+    }
+
+    #[test]
+    fn workspace_file_completions_query_preserves_http_query_shape() {
+        let empty: WorkspaceFileCompletionsRouteQuery =
+            serde_json::from_value(serde_json::json!({})).expect("empty query shape");
+        assert_eq!(
+            empty,
+            WorkspaceFileCompletionsRouteQuery {
+                query: None,
+                limit: None,
+            }
+        );
+
+        let populated: WorkspaceFileCompletionsRouteQuery =
+            serde_json::from_value(serde_json::json!({
+                "query": "src",
+                "limit": 25,
+            }))
+            .expect("populated query shape");
+        assert_eq!(
+            populated,
+            WorkspaceFileCompletionsRouteQuery {
+                query: Some("src".to_string()),
+                limit: Some(25),
+            }
+        );
+    }
+
+    #[test]
+    fn workspace_file_completion_storage_errors_map_to_507_class() {
+        let error = FileCompletionsError::from_internal_error(
+            "resolving data plane",
+            anyhow::anyhow!("No space left on device"),
+        );
+        let route_error = file_completions_route_error(error);
+        assert_eq!(
+            route_error.kind(),
+            WorkspaceRouteErrorKind::InsufficientStorage
         );
     }
 }

@@ -85,7 +85,8 @@ pub use route_contract::{
     CreateWorkspaceAttachmentRouteRequest, DeleteWorkspaceAttachmentRouteRequest,
     SyncWorkspaceAttachmentsRouteRequest, WorkspaceActiveHeadBatchRouteResponse,
     WorkspaceActiveSnapshotRouteResponse, WorkspaceAttachmentRouteResponse,
-    WorkspaceHarnessContainerStatusRouteResponse, WorkspaceRouteResponse, WorktreeRouteResponse,
+    WorkspaceFileCompletionsRouteQuery, WorkspaceHarnessContainerStatusRouteResponse,
+    WorkspaceRouteParams, WorkspaceRouteResponse, WorktreeRouteParams, WorktreeRouteResponse,
 };
 pub use run_archive::{
     AcknowledgeRunArchiveIngestBatchRouteRequest, BuildRunArchiveIngestBatchRouteRequest,
