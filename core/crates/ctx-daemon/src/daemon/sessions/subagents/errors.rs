@@ -30,6 +30,14 @@ impl SubagentError {
     pub fn message(&self) -> &str {
         &self.message
     }
+
+    #[cfg(test)]
+    pub(crate) fn new_for_test(kind: SubagentErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
 }
 
 pub(super) fn subagent_error(kind: SubagentErrorKind, error: impl Into<String>) -> SubagentError {

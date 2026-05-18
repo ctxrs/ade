@@ -207,6 +207,11 @@ const sessionMessageCommandRouteApiRoots = [
   "core/crates/ctx-http/src/api/sessions/messages/",
 ];
 
+const sessionSubagentRouteApiRoots = [
+  "core/crates/ctx-http/src/api/sessions/subagents.rs",
+  "core/crates/ctx-http/src/api/sessions/subagents/",
+];
+
 const sessionVcsApiRoots = [
   "core/crates/ctx-http/src/api/sessions/snapshot/vcs.rs",
   "core/crates/ctx-http/src/api/sessions/snapshot/vcs/",
@@ -1466,6 +1471,44 @@ const SESSION_MESSAGE_COMMAND_ROUTE_API_CONTRACT_PATTERNS = [
   {
     name: "session message command API calls raw message facades",
     regex: /\.(?:post_user_message_for_request|delete_queued_session_message)\s*\(/,
+  },
+];
+
+const SESSION_SUBAGENT_ROUTE_API_CONTRACT_PATTERNS = [
+  {
+    name: "session subagent API owns id parsing",
+    regex: /\b(?:SessionId|TurnId)\b|\buuid\s*::\s*Uuid\s*::\s*parse_str\s*\(/,
+  },
+  {
+    name: "session subagent API owns local route DTOs",
+    regex: /\bSessionSubagentInvocationsQuery\b/,
+  },
+  {
+    name: "session subagent API imports low-level subagent errors",
+    regex: /\b(?:SubagentError|SubagentErrorKind|ScopedMcpSessionAccessError)\b/,
+  },
+  {
+    name: "session subagent API imports raw subagent wire DTOs",
+    regex:
+      /\b(?:SpawnAgentReq|SendInputReq|ArchiveAgentReq|GetAgentReq|InterruptAgentReq|WaitAgentReq|SpawnAgentResp|SendInputResp|ArchiveAgentResp|GetAgentResp|InterruptAgentResp|WaitAgentResp)\b/,
+  },
+  {
+    name: "session subagent API exposes raw subagent models",
+    regex:
+      /\b(?:SessionSummary|SubagentInvocation|AgentSummary)\b|\bJson\s*<\s*(?:Vec\s*<\s*)?(?:SessionSummary|SubagentInvocation|AgentSummary)\b/,
+  },
+  {
+    name: "session subagent API redacts scoped errors",
+    regex: /\blogs\s*::\s*redact_sensitive\s*\(|\bredact_sensitive\s*\(/,
+  },
+  {
+    name: "session subagent API validates scoped MCP directly",
+    regex: /\b(?:require_scoped_mcp_session_context|resolve_scoped_parent_session_id)\s*\(/,
+  },
+  {
+    name: "session subagent API calls raw subagent facades",
+    regex:
+      /(?:\.|\bSessionsHandle::)(?:spawn_agent|send_input|archive_agent|list_agents|get_agent|interrupt_agent|wait_agent|list_session_subagents_for_request|list_session_subagent_invocations_for_request|get_session_subagent_invocation_for_request)\s*\(/,
   },
 ];
 
@@ -4762,6 +4805,9 @@ function apiPatternsForPath(relativePath) {
   if (rawStoreBlindApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...API_DOMAIN_RAW_STORE_PATTERNS);
   }
+  if (sessionSubagentRouteApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...SESSION_SUBAGENT_ROUTE_API_CONTRACT_PATTERNS);
+  }
   if (sessionVcsApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...SESSION_VCS_API_ORCHESTRATION_PATTERNS);
   }
@@ -6076,6 +6122,7 @@ module.exports = {
   PROVIDER_USAGE_API_ORCHESTRATION_PATTERNS,
   PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS,
   SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS,
+  SESSION_SUBAGENT_ROUTE_API_CONTRACT_PATTERNS,
   SESSION_VCS_API_ORCHESTRATION_PATTERNS,
   TASK_SESSION_CREATION_API_ADMISSION_PATTERNS,
   WORKSPACE_STREAM_READ_MODEL_API_PATTERNS,

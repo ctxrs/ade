@@ -12,6 +12,7 @@ mod pinning;
 mod route_contract;
 mod runtime;
 pub mod subagents;
+mod subagents_route;
 pub mod title_generation;
 mod title_model_mode_route;
 pub mod vcs;
@@ -39,6 +40,15 @@ pub use route_contract::{
     SessionReadModelRouteError, SessionReadModelRouteErrorKind, SessionRouteParams,
     SessionSnapshotRouteQuery, SessionSnapshotRouteResponse, SessionStateRouteResponse,
     SessionTurnToolsRouteParams, SessionTurnToolsRouteResponse,
+};
+pub use subagents_route::{
+    ArchiveAgentRouteRequest, ArchiveAgentRouteResponse, GetAgentRouteRequest,
+    GetAgentRouteResponse, InterruptAgentRouteRequest, InterruptAgentRouteResponse,
+    ListAgentsRouteResponse, McpSessionRouteContext, SendInputRouteRequest, SendInputRouteResponse,
+    SessionSubagentInvocationRouteResponse, SessionSubagentInvocationsRouteQuery,
+    SessionSubagentInvocationsRouteResponse, SessionSubagentRouteError,
+    SessionSubagentRouteErrorKind, SessionSubagentsRouteResponse, SpawnAgentRouteRequest,
+    SpawnAgentRouteResponse, WaitAgentRouteRequest, WaitAgentRouteResponse,
 };
 pub use title_model_mode_route::{
     GenerateSessionTitleRouteRequest, GenerateSessionTitleRouteResponse,

@@ -66,6 +66,7 @@ const {
   SESSION_CONTROL_ROUTE_API_CONTRACT_PATTERNS,
   SESSION_MESSAGE_COMMAND_ROUTE_API_CONTRACT_PATTERNS,
   SESSION_READ_MODEL_ROUTE_API_CONTRACT_PATTERNS,
+  SESSION_SUBAGENT_ROUTE_API_CONTRACT_PATTERNS,
   PROVIDER_STATUS_API_ORCHESTRATION_PATTERNS,
   PROVIDER_USAGE_API_ORCHESTRATION_PATTERNS,
   SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS,
@@ -3207,6 +3208,96 @@ test("daemon boundary guard scopes session message command route contracts and a
     sessionMessageCommandRouteApiPatternsForPath(
       "core/crates/ctx-http/src/api/sessions/snapshot/history.rs",
     ),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects session subagent route contract leaks", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/sessions/subagents/handlers.rs",
+    contents: `
+      use ctx_daemon::daemon::sessions::subagents::{
+        AgentSummary, ArchiveAgentReq, ArchiveAgentResp, GetAgentReq, GetAgentResp,
+        InterruptAgentReq, InterruptAgentResp, SendInputReq, SendInputResp,
+        SpawnAgentReq, SpawnAgentResp, SubagentError, SubagentErrorKind, WaitAgentReq,
+        WaitAgentResp,
+      };
+      use ctx_core::models::{SessionSummary, SubagentInvocation};
+      async fn handler(state: SessionsHandle) -> Json<Vec<AgentSummary>> {
+        let session_id = SessionId(uuid::Uuid::parse_str(&id).unwrap());
+        let turn_id = TurnId(uuid::Uuid::parse_str(&turn_id).unwrap());
+        let _query = SessionSubagentInvocationsQuery::default();
+        let _ = ScopedMcpSessionAccessError::SessionNotFound;
+        let _ = logs::redact_sensitive("secret");
+        let _ = state.require_scoped_mcp_session_context(mcp_auth, session_id).await;
+        let _ = resolve_scoped_parent_session_id(&state, None, id).await;
+        let _ = state.spawn_agent(session_id, spawn).await;
+        let _ = state.send_input(session_id, send).await;
+        let _ = state.archive_agent(session_id, archive).await;
+        let _ = state.list_agents(session_id).await;
+        let _ = state.get_agent(session_id, get).await;
+        let _ = state.interrupt_agent(session_id, interrupt).await;
+        let _ = state.wait_agent(session_id, wait).await;
+        let _ = state.list_session_subagents_for_request(session_id).await;
+        let _ = state.list_session_subagent_invocations_for_request(session_id, Some(turn_id)).await;
+        let _ = state.get_session_subagent_invocation_for_request(session_id, "id").await;
+        let _ = SessionsHandle::wait_agent(&state, session_id, wait).await;
+        let _ = SessionSummary;
+        let _ = SubagentInvocation;
+        let _ = SubagentErrorKind::BadRequest;
+        let _ = SubagentError;
+      }
+    `,
+    patterns: SESSION_SUBAGENT_ROUTE_API_CONTRACT_PATTERNS,
+  });
+
+  const names = new Set(violations.map((violation) => violation.name));
+  assert(names.has("session subagent API owns id parsing"));
+  assert(names.has("session subagent API owns local route DTOs"));
+  assert(names.has("session subagent API imports low-level subagent errors"));
+  assert(names.has("session subagent API imports raw subagent wire DTOs"));
+  assert(names.has("session subagent API exposes raw subagent models"));
+  assert(names.has("session subagent API redacts scoped errors"));
+  assert(names.has("session subagent API validates scoped MCP directly"));
+  assert(names.has("session subagent API calls raw subagent facades"));
+});
+
+test("daemon boundary guard scopes session subagent route contracts and allows route DTOs", () => {
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/sessions/subagents.rs").includes(
+      SESSION_SUBAGENT_ROUTE_API_CONTRACT_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/sessions/subagents/handlers.rs").includes(
+      SESSION_SUBAGENT_ROUTE_API_CONTRACT_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/sessions/snapshot/head.rs").includes(
+      SESSION_SUBAGENT_ROUTE_API_CONTRACT_PATTERNS[0],
+    ),
+    false,
+  );
+  assert.deepEqual(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/sessions/subagents/handlers.rs",
+      contents: `
+        async fn handler(state: SessionsHandle) -> Json<ListAgentsRouteResponse> {
+          state
+            .list_agents_for_mcp_route(SessionRouteParams::new(id), McpSessionRouteContext::new(None))
+            .await?;
+          state
+            .spawn_agent_for_mcp_route(SessionRouteParams::new(id), McpSessionRouteContext::new(None), req)
+            .await?;
+          let _ = SpawnAgentRouteRequest;
+          let _ = SessionSubagentRouteErrorKind::BadRequest;
+        }
+      `,
+      patterns: SESSION_SUBAGENT_ROUTE_API_CONTRACT_PATTERNS,
+    }),
     [],
   );
 });

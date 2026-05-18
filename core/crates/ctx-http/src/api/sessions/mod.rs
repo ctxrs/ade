@@ -1,11 +1,8 @@
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
-use serde::Deserialize;
 
 use super::errors::ApiErrorResp;
-use ctx_core::ids::*;
-use ctx_core::models::*;
 use ctx_daemon::daemon::{
     AuthenticateSessionRouteRequest, DeleteSessionMessageRouteParams,
     PostSessionMessageRouteContext, PostSessionMessageRouteRequest,
@@ -16,7 +13,6 @@ use ctx_daemon::daemon::{
     SessionSnapshotRouteQuery, SessionTurnToolsRouteParams, SessionsHandle,
     SubmitAskUserQuestionRouteRequest,
 };
-use ctx_observability::logs;
 #[cfg(test)]
 use ctx_settings_model as user_settings;
 
@@ -47,12 +43,6 @@ pub(super) use titles_and_modes::{generate_session_title, set_session_mode, set_
 
 #[cfg(test)]
 mod tests;
-
-fn session_data_or_status<T>(result: anyhow::Result<Option<T>>) -> Result<T, StatusCode> {
-    result
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)
-}
 
 fn session_read_model_status(error: SessionReadModelRouteError) -> StatusCode {
     match error.kind() {

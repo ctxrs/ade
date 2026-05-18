@@ -182,19 +182,23 @@ pub fn scoped_mcp_route(method: &Method, path: &str) -> Option<ScopedMcpRoute> {
     if method == Method::POST && path == "/api/merge-queue/entries" {
         return Some(ScopedMcpRoute::MergeQueueSubmit);
     }
-    if let Some(session_id) = parse_scoped_mcp_session_id(
-        path,
-        "/api/mcp/sessions/",
+    let subagent_route_suffixes = if method == Method::POST {
         &[
             "spawn_agent",
             "send_input",
             "archive_agent",
             "interrupt_agent",
-            "list_agents",
             "get_agent",
             "wait_agent",
-        ],
-    ) {
+        ][..]
+    } else if method == Method::GET {
+        &["list_agents"][..]
+    } else {
+        &[][..]
+    };
+    if let Some(session_id) =
+        parse_scoped_mcp_session_id(path, "/api/mcp/sessions/", subagent_route_suffixes)
+    {
         return Some(ScopedMcpRoute::SessionSubagents { session_id });
     }
     if method == Method::POST {
@@ -447,13 +451,24 @@ mod tests {
     #[test]
     fn scoped_mcp_route_classifies_allowed_routes_only() {
         let session_id = SessionId::new();
-        assert_eq!(
-            scoped_mcp_route(
-                &Method::GET,
-                &format!("/api/mcp/sessions/{}/wait_agent", session_id.0)
-            ),
-            Some(ScopedMcpRoute::SessionSubagents { session_id })
-        );
+        for (method, suffix) in [
+            (&Method::POST, "spawn_agent"),
+            (&Method::POST, "send_input"),
+            (&Method::POST, "archive_agent"),
+            (&Method::POST, "interrupt_agent"),
+            (&Method::POST, "get_agent"),
+            (&Method::POST, "wait_agent"),
+            (&Method::GET, "list_agents"),
+        ] {
+            assert_eq!(
+                scoped_mcp_route(
+                    method,
+                    &format!("/api/mcp/sessions/{}/{suffix}", session_id.0)
+                ),
+                Some(ScopedMcpRoute::SessionSubagents { session_id }),
+                "{method} {suffix} should be scoped"
+            );
+        }
         assert_eq!(
             scoped_mcp_route(
                 &Method::POST,
@@ -472,6 +487,38 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn scoped_mcp_route_rejects_subagent_route_drift() {
+        let session_id = SessionId::new();
+        for (wrong_method, suffix) in [
+            (&Method::GET, "spawn_agent"),
+            (&Method::GET, "send_input"),
+            (&Method::GET, "archive_agent"),
+            (&Method::GET, "interrupt_agent"),
+            (&Method::GET, "get_agent"),
+            (&Method::GET, "wait_agent"),
+            (&Method::POST, "list_agents"),
+        ] {
+            assert_eq!(
+                scoped_mcp_route(
+                    wrong_method,
+                    &format!("/api/mcp/sessions/{}/{suffix}", session_id.0)
+                ),
+                None,
+                "{wrong_method} {suffix} should not be scoped"
+            );
+        }
+
+        for path in [
+            format!("/api/mcp/sessions/{}/unknown", session_id.0),
+            format!("/api/mcp/sessions/{}/list_agents/extra", session_id.0),
+            "/api/mcp/sessions/not-a-session/list_agents".to_string(),
+            format!("/api/sessions/{}/list_agents", session_id.0),
+        ] {
+            assert_eq!(scoped_mcp_route(&Method::GET, &path), None, "{path}");
+        }
     }
 
     #[test]

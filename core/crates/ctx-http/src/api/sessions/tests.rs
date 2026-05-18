@@ -1,5 +1,6 @@
 use super::*;
 
+use ctx_core::models::Session;
 use ctx_providers::fake::FakeProviderAdapter;
 
 #[path = "tests/title_generation.rs"]
