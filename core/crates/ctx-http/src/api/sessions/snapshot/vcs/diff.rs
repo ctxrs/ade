@@ -3,27 +3,23 @@ use super::*;
 pub(crate) async fn get_session_diff(
     State(state): State<SessionsHandle>,
     Path(id): Path<String>,
-    Query(q): Query<SessionDiffRouteQuery>,
-) -> Result<Json<SessionDiffResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    let session_id = parse_session_id(&id)?;
+    Query(q): Query<SessionVcsRouteQuery>,
+) -> Result<Json<SessionVcsDiffRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
     state
-        .get_session_vcs_diff_for_request(session_id, session_diff_query(q))
+        .get_session_vcs_diff_for_route(SessionRouteParams::new(id), q)
         .await
-        .map(session_diff_response)
         .map(Json)
-        .map_err(map_session_vcs_error)
+        .map_err(session_vcs_api_error)
 }
 
 pub(crate) async fn get_session_diff_summary(
     State(state): State<SessionsHandle>,
     Path(id): Path<String>,
-    Query(q): Query<SessionDiffRouteQuery>,
-) -> Result<Json<SessionDiffSummaryResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    let session_id = parse_session_id(&id)?;
+    Query(q): Query<SessionVcsRouteQuery>,
+) -> Result<Json<SessionVcsDiffSummaryRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
     state
-        .get_session_vcs_diff_summary_for_request(session_id, session_diff_query(q))
+        .get_session_vcs_diff_summary_for_route(SessionRouteParams::new(id), q)
         .await
-        .map(session_diff_summary_response)
         .map(Json)
-        .map_err(map_session_vcs_error)
+        .map_err(session_vcs_api_error)
 }

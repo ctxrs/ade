@@ -3,12 +3,10 @@ use super::*;
 pub(crate) async fn get_session_git_status(
     State(state): State<SessionsHandle>,
     Path(id): Path<String>,
-) -> Result<Json<SessionGitStatusResponse>, (StatusCode, Json<ApiErrorResp>)> {
-    let session_id = parse_session_id(&id)?;
+) -> Result<Json<SessionVcsGitStatusRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
     state
-        .get_session_vcs_git_status_for_request(session_id)
+        .get_session_vcs_git_status_for_route(SessionRouteParams::new(id))
         .await
-        .map(session_git_status_response)
         .map(Json)
-        .map_err(map_session_vcs_error)
+        .map_err(session_vcs_api_error)
 }

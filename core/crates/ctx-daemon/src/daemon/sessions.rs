@@ -15,6 +15,7 @@ pub mod subagents;
 pub mod title_generation;
 mod title_model_mode_route;
 pub mod vcs;
+mod vcs_route;
 
 pub use artifacts::{SessionArtifactDownload, SessionArtifactInput, SessionArtifactRouteError};
 pub use control_route::{
@@ -43,4 +44,10 @@ pub use title_model_mode_route::{
     GenerateSessionTitleRouteRequest, GenerateSessionTitleRouteResponse,
     SessionTitleModelModeRouteError, SessionTitleModelModeRouteErrorKind,
     SetSessionModeRouteRequest, SetSessionModelRouteRequest, SetSessionModelRouteResponse,
+};
+pub use vcs_route::{
+    ApplySessionVcsDiffPatchRouteRequest, SessionVcsDiffRouteResponse,
+    SessionVcsDiffSummaryRouteResponse, SessionVcsGitStatusEntryRouteResponse,
+    SessionVcsGitStatusRouteResponse, SessionVcsRouteError, SessionVcsRouteErrorKind,
+    SessionVcsRouteQuery,
 };

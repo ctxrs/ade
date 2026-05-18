@@ -1471,6 +1471,29 @@ const SESSION_MESSAGE_COMMAND_ROUTE_API_CONTRACT_PATTERNS = [
 
 const SESSION_VCS_API_ORCHESTRATION_PATTERNS = [
   {
+    name: "session VCS API owns session id parsing",
+    regex: /\bSessionId\b|\buuid\s*::\s*Uuid\s*::\s*parse_str\s*\(/,
+  },
+  {
+    name: "session VCS API owns local route DTOs",
+    regex:
+      /\b(?:SessionDiffApplyReq|SessionDiffRouteQuery|SessionDiffResponse|SessionDiffSummaryResponse|SessionGitStatusResponse|SessionGitStatusEntryResponse)\b/,
+  },
+  {
+    name: "session VCS API imports low-level route contracts",
+    regex:
+      /\b(?:SessionVcsApplyAction|SessionVcsDiff|SessionVcsDiffQuery|SessionVcsDiffSummary|SessionVcsError|SessionVcsGitStatus|SessionVcsGitStatusEntry)\b|\bctx_daemon::daemon::sessions::vcs\b/,
+  },
+  {
+    name: "session VCS API redacts low-level route errors",
+    regex: /\blogs\s*::\s*redact_sensitive\s*\(|\bredact_sensitive\s*\(/,
+  },
+  {
+    name: "session VCS API calls raw VCS facades",
+    regex:
+      /(?:\.|\bSessionsHandle::)(?:get_session_vcs_diff_for_request|get_session_vcs_diff_summary_for_request|apply_session_vcs_diff_patch_for_request|get_session_vcs_git_status_for_request)\s*\(/,
+  },
+  {
     name: "session VCS API imports workspace VCS service",
     regex: /\buse\s+ctx_workspace_services\s*::\s*worktree_vcs\b|\bctx_workspace_services\s*::\s*worktree_vcs\s*::/,
     contentRegex: /\buse\s+ctx_workspace_services\s*::\s*worktree_vcs\s*::\s*\{(?=[^}]*\n)[\s\S]*?\}/gm,

@@ -3215,13 +3215,39 @@ test("daemon boundary guard rejects session VCS API workspace-service orchestrat
   const violations = scanText({
     filePath: "core/crates/ctx-http/src/api/sessions/snapshot/vcs/diff.rs",
     contents: `
+      use ctx_daemon::daemon::sessions::vcs::{
+        SessionVcsApplyAction, SessionVcsDiff, SessionVcsDiffQuery, SessionVcsDiffSummary,
+        SessionVcsError, SessionVcsGitStatus, SessionVcsGitStatusEntry,
+      };
       use ctx_workspace_services::worktree_vcs::{
         apply_worktree_vcs_session_patch as apply_patch,
         WorktreeVcsDiffBaseQuery,
       };
       use ctx_workspace_services::worktree_vcs as vcs;
+      #[derive(Deserialize)]
+      struct SessionDiffApplyReq;
+      #[derive(Deserialize)]
+      struct SessionDiffRouteQuery;
+      struct SessionDiffResponse;
+      struct SessionDiffSummaryResponse;
+      struct SessionGitStatusResponse;
+      struct SessionGitStatusEntryResponse;
 
-      async fn handler() {
+      async fn handler(sessions: SessionsHandle) {
+        let session_id = SessionId(uuid::Uuid::parse_str(&id).unwrap());
+        let _ = logs::redact_sensitive("secret");
+        let _ = SessionVcsApplyAction::Accept;
+        let _ = SessionVcsDiffQuery::default();
+        let _ = SessionVcsDiff;
+        let _ = SessionVcsDiffSummary;
+        let _ = SessionVcsError::NotFound;
+        let _ = SessionVcsGitStatus;
+        let _ = SessionVcsGitStatusEntry;
+        let _ = sessions.get_session_vcs_diff_for_request(session_id, query).await;
+        let _ = sessions.get_session_vcs_diff_summary_for_request(session_id, query).await;
+        let _ = sessions.apply_session_vcs_diff_patch_for_request(session_id, action, patch).await;
+        let _ = sessions.get_session_vcs_git_status_for_request(session_id).await;
+        let _ = SessionsHandle::get_session_vcs_diff_for_request(&sessions, session_id, query).await;
         let _ = ctx_workspace_services::worktree_vcs::worktree_vcs_session_diff_available("x".to_string());
         let _ = session_git_status_summary_from_snapshot(&snapshot);
         let _ = WorktreeDiffBaseResolution;
@@ -3232,8 +3258,31 @@ test("daemon boundary guard rejects session VCS API workspace-service orchestrat
   });
 
   assert.deepEqual(
-    violations.map((violation) => violation.name),
+    violations.map((violation) => violation.name).sort(),
     [
+      "session VCS API owns session id parsing",
+      "session VCS API owns local route DTOs",
+      "session VCS API owns local route DTOs",
+      "session VCS API owns local route DTOs",
+      "session VCS API owns local route DTOs",
+      "session VCS API owns local route DTOs",
+      "session VCS API owns local route DTOs",
+      "session VCS API imports low-level route contracts",
+      "session VCS API imports low-level route contracts",
+      "session VCS API imports low-level route contracts",
+      "session VCS API imports low-level route contracts",
+      "session VCS API imports low-level route contracts",
+      "session VCS API imports low-level route contracts",
+      "session VCS API imports low-level route contracts",
+      "session VCS API imports low-level route contracts",
+      "session VCS API imports low-level route contracts",
+      "session VCS API imports low-level route contracts",
+      "session VCS API redacts low-level route errors",
+      "session VCS API calls raw VCS facades",
+      "session VCS API calls raw VCS facades",
+      "session VCS API calls raw VCS facades",
+      "session VCS API calls raw VCS facades",
+      "session VCS API calls raw VCS facades",
       "session VCS API imports workspace VCS service",
       "session VCS API imports workspace VCS service",
       "session VCS API imports workspace VCS service",
@@ -3244,7 +3293,7 @@ test("daemon boundary guard rejects session VCS API workspace-service orchestrat
       "session VCS API references workspace VCS service type",
       "session VCS API references workspace VCS service type",
       "session VCS API references workspace VCS service type",
-    ],
+    ].sort(),
   );
 });
 
@@ -3266,6 +3315,30 @@ test("daemon boundary guard scopes session VCS orchestration patterns to API VCS
       SESSION_VCS_API_ORCHESTRATION_PATTERNS[0],
     ),
     false,
+  );
+  assert.deepEqual(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/sessions/snapshot/vcs/diff.rs",
+      contents: `
+        async fn handler(state: SessionsHandle) -> Json<SessionVcsDiffRouteResponse> {
+          state
+            .get_session_vcs_diff_for_route(SessionRouteParams::new(id), query)
+            .await?;
+          state
+            .get_session_vcs_diff_summary_for_route(SessionRouteParams::new(id), query)
+            .await?;
+          state
+            .get_session_vcs_git_status_for_route(SessionRouteParams::new(id))
+            .await?;
+          state
+            .apply_session_vcs_diff_patch_for_route(SessionRouteParams::new(id), req)
+            .await?;
+          let _ = SessionVcsRouteErrorKind::BadRequest;
+        }
+      `,
+      patterns: SESSION_VCS_API_ORCHESTRATION_PATTERNS,
+    }),
+    [],
   );
 });
 

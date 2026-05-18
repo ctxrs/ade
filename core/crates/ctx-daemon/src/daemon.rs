@@ -104,19 +104,21 @@ pub use retention::prune_archived_session_data_for_all_workspaces;
 pub use route_files::{RouteFileDownloadError, TextRouteDownload};
 pub use runtime::{bootstrap_daemon_runtime, DaemonRuntime};
 pub use sessions::{
-    AuthenticateSessionRouteRequest, DeleteSessionMessageRouteParams,
-    GenerateSessionTitleRouteRequest, GenerateSessionTitleRouteResponse,
-    PostSessionMessageRouteContext, PostSessionMessageRouteRequest,
-    PostSessionMessageRouteResponse, SessionControlRouteError, SessionControlRouteErrorKind,
-    SessionEventsRouteQuery, SessionEventsRouteResponse, SessionFileCompletionsRouteQuery,
-    SessionFileCompletionsRouteResponse, SessionHeadRouteQuery, SessionHeadRouteResponse,
-    SessionHistoryRouteQuery, SessionHistoryRouteResponse, SessionMessageRouteError,
-    SessionMessageRouteErrorKind, SessionReadModelRouteError, SessionReadModelRouteErrorKind,
-    SessionRouteParams, SessionSnapshotRouteQuery, SessionSnapshotRouteResponse,
-    SessionStateRouteResponse, SessionTitleModelModeRouteError,
+    ApplySessionVcsDiffPatchRouteRequest, AuthenticateSessionRouteRequest,
+    DeleteSessionMessageRouteParams, GenerateSessionTitleRouteRequest,
+    GenerateSessionTitleRouteResponse, PostSessionMessageRouteContext,
+    PostSessionMessageRouteRequest, PostSessionMessageRouteResponse, SessionControlRouteError,
+    SessionControlRouteErrorKind, SessionEventsRouteQuery, SessionEventsRouteResponse,
+    SessionFileCompletionsRouteQuery, SessionFileCompletionsRouteResponse, SessionHeadRouteQuery,
+    SessionHeadRouteResponse, SessionHistoryRouteQuery, SessionHistoryRouteResponse,
+    SessionMessageRouteError, SessionMessageRouteErrorKind, SessionReadModelRouteError,
+    SessionReadModelRouteErrorKind, SessionRouteParams, SessionSnapshotRouteQuery,
+    SessionSnapshotRouteResponse, SessionStateRouteResponse, SessionTitleModelModeRouteError,
     SessionTitleModelModeRouteErrorKind, SessionTurnToolsRouteParams,
-    SessionTurnToolsRouteResponse, SetSessionModeRouteRequest, SetSessionModelRouteRequest,
-    SetSessionModelRouteResponse, SubmitAskUserQuestionRouteRequest,
+    SessionTurnToolsRouteResponse, SessionVcsDiffRouteResponse, SessionVcsDiffSummaryRouteResponse,
+    SessionVcsGitStatusEntryRouteResponse, SessionVcsGitStatusRouteResponse, SessionVcsRouteError,
+    SessionVcsRouteErrorKind, SessionVcsRouteQuery, SetSessionModeRouteRequest,
+    SetSessionModelRouteRequest, SetSessionModelRouteResponse, SubmitAskUserQuestionRouteRequest,
     SubmitAskUserQuestionRouteResponse,
 };
 pub use settings::{SettingsRouteError, SettingsRouteErrorKind};
