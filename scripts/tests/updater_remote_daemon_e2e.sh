@@ -19,6 +19,7 @@ FORBID_PUBLISHED_FALLBACK="${CTX_UPDATER_REMOTE_E2E_FORBID_PUBLISHED_FALLBACK:-0
 PORT_BASE="${CTX_UPDATER_REMOTE_E2E_PORT_BASE:-$((34000 + RANDOM % 20000))}"
 TAURI_DRIVER_PORT_VALUE="${CTX_UPDATER_REMOTE_E2E_DRIVER_PORT:-${TAURI_DRIVER_PORT:-${PORT_BASE}}}"
 TAURI_TEST_BACKEND_PORT_VALUE="${CTX_UPDATER_REMOTE_E2E_BACKEND_PORT:-${TAURI_TEST_BACKEND_PORT:-$((PORT_BASE + 1))}}"
+TAURI_DRIVER_NATIVE_PORT_VALUE="${CTX_UPDATER_REMOTE_E2E_NATIVE_DRIVER_PORT:-${TAURI_DRIVER_NATIVE_PORT:-$((PORT_BASE + 2))}}"
 WDIO_CONNECTION_RETRY_TIMEOUT_MS="${CTX_UPDATER_REMOTE_E2E_WDIO_CONNECTION_RETRY_TIMEOUT_MS:-300000}"
 RESOLVED_CONTROLLER_AUTOMATION_APP_PATH=""
 ORIGINAL_HOME="${HOME:?set HOME}"
@@ -374,12 +375,28 @@ command_matches_current_automation_scope() {
   return 1
 }
 
+command_matches_current_native_webkit_port() {
+  local cmd="$1"
+  local native_port="${TAURI_DRIVER_NATIVE_PORT:-}"
+  if [[ -z "${native_port}" ]]; then
+    return 1
+  fi
+  case "${cmd}" in
+    *WebKitWebDriver*"--port"*"${native_port}"* | \
+    *wkwebdriver*"--port"*"${native_port}"*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 command_is_scoped_webkit_automation_helper() {
   local cmd="$1"
   case "${cmd}" in
     *WebKitWebDriver*|*wkwebdriver*|*WebKitWebProcess*|*WebKitNetworkProcess*|*WebKitGPUProcess*|*WebKitPluginProcess*|*WebKitStorageProcess*|*WebKitWebExtension*) ;;
     *) return 1 ;;
   esac
+  command_matches_current_native_webkit_port "$cmd" && return 0
   command_matches_current_automation_scope "$cmd"
 }
 
@@ -475,7 +492,8 @@ write_attempt_manifest() {
   local attempt_dir="$3"
   local driver_port="$4"
   local backend_port="$5"
-  node - <<'NODE' "$out_path" "$attempt" "$attempt_dir" "$driver_port" "$backend_port" "${RESOLVED_CONTROLLER_AUTOMATION_APP_PATH:-}" "${APPDIR:-}" "${APPIMAGE:-}" "${CTX_AUTOMATION_CN_DRIVER_LOG:-}" "${CTX_AUTOMATION_CN_BACKEND_LOG:-}"
+  local native_driver_port="$6"
+  node - <<'NODE' "$out_path" "$attempt" "$attempt_dir" "$driver_port" "$backend_port" "$native_driver_port" "${RESOLVED_CONTROLLER_AUTOMATION_APP_PATH:-}" "${APPDIR:-}" "${APPIMAGE:-}" "${CTX_AUTOMATION_CN_DRIVER_LOG:-}" "${CTX_AUTOMATION_CN_BACKEND_LOG:-}" "${CTX_AUTOMATION_APP_LAUNCH_LOG:-}"
 const fs = require("node:fs");
 const [
   outPath,
@@ -483,11 +501,13 @@ const [
   attemptDir,
   driverPort,
   backendPort,
+  nativeDriverPort,
   appPath,
   appDir,
   appImage,
   driverLog,
   backendLog,
+  appLaunchLog,
 ] = process.argv.slice(2);
 const platform = process.platform;
 const payload = {
@@ -500,8 +520,10 @@ const payload = {
   appimage: appImage || null,
   driver_port: Number(driverPort),
   backend_port: Number(backendPort),
+  native_driver_port: Number(nativeDriverPort),
   driver_log: driverLog || null,
   backend_log: backendLog || null,
+  app_launch_log: appLaunchLog || null,
   backend_log_expected: platform === "darwin",
   linux_native_webkit: platform === "linux",
 };
@@ -669,12 +691,15 @@ run_updater_remote_automation() {
     local attempt_xdg_runtime_dir="${attempt_xdg_dir}/runtime"
     local attempt_home_dir="${attempt_xdg_dir}/home"
     local attempt_corepack_home="${COREPACK_HOME:-${ORIGINAL_HOME}/.cache/node/corepack}"
-    local attempt_driver_port=$((TAURI_DRIVER_PORT_VALUE + (attempt - 1) * 2))
-    local attempt_backend_port=$((TAURI_TEST_BACKEND_PORT_VALUE + (attempt - 1) * 2))
+    local attempt_driver_port=$((TAURI_DRIVER_PORT_VALUE + (attempt - 1) * 3))
+    local attempt_backend_port=$((TAURI_TEST_BACKEND_PORT_VALUE + (attempt - 1) * 3))
+    local attempt_native_driver_port=$((TAURI_DRIVER_NATIVE_PORT_VALUE + (attempt - 1) * 3))
 
     export CTX_AUTOMATION_TMPDIR="${attempt_tmp_dir}"
+    export CTX_AUTOMATION_XDG_DIR="${attempt_xdg_dir}"
     export CTX_AUTOMATION_CN_BACKEND_LOG="${attempt_dir}/crabnebula-backend.log"
     export CTX_AUTOMATION_CN_DRIVER_LOG="${attempt_dir}/tauri-driver.log"
+    export CTX_AUTOMATION_APP_LAUNCH_LOG="${attempt_dir}/app-launch.log"
     export CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR="${attempt_dir}/controller-daemon-data"
     export HOME="${attempt_home_dir}"
     export XDG_RUNTIME_DIR="${attempt_xdg_runtime_dir}"
@@ -684,6 +709,7 @@ run_updater_remote_automation() {
     export COREPACK_HOME="${attempt_corepack_home}"
     export TAURI_DRIVER_PORT="${attempt_driver_port}"
     export TAURI_TEST_BACKEND_PORT="${attempt_backend_port}"
+    export TAURI_DRIVER_NATIVE_PORT="${attempt_native_driver_port}"
     unset CTX_BUNDLE_DIR
     rm -rf "${attempt_xdg_dir}"
     mkdir -p \
@@ -696,13 +722,13 @@ run_updater_remote_automation() {
       "${XDG_DATA_HOME}"
     chmod 700 "${XDG_RUNTIME_DIR}"
     write_linux_backend_sentinel_if_needed
-    write_attempt_manifest "${attempt_dir}/attempt-manifest.json" "$attempt" "$attempt_dir" "$attempt_driver_port" "$attempt_backend_port"
+    write_attempt_manifest "${attempt_dir}/attempt-manifest.json" "$attempt" "$attempt_dir" "$attempt_driver_port" "$attempt_backend_port" "$attempt_native_driver_port"
     write_host_resource_snapshot "${attempt_dir}" "before-sweep"
     sweep_stale_xvfb_processes
     sweep_local_automation_processes
     write_host_resource_snapshot "${attempt_dir}" "after-preflight-sweep"
 
-    echo "[updater-remote-proof] automation attempt ${attempt}/${max_attempts} using driver port ${TAURI_DRIVER_PORT} and backend port ${TAURI_TEST_BACKEND_PORT}" >&2
+    echo "[updater-remote-proof] automation attempt ${attempt}/${max_attempts} using driver port ${TAURI_DRIVER_PORT}, native driver port ${TAURI_DRIVER_NATIVE_PORT}, and backend port ${TAURI_TEST_BACKEND_PORT}" >&2
     set +e
     pnpm -C "${ROOT}/core/apps/desktop" test:automation:updater-remote 2>&1 | tee "$attempt_log"
     status="${PIPESTATUS[0]}"

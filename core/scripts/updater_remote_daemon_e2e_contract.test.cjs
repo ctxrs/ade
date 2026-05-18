@@ -15,10 +15,13 @@ test("remote updater proof uses isolated WebDriver ports", () => {
   assert.match(scriptText, /PORT_BASE="\$\{CTX_UPDATER_REMOTE_E2E_PORT_BASE:-\$\(\(34000 \+ RANDOM % 20000\)\)\}"/);
   assert.match(scriptText, /TAURI_DRIVER_PORT_VALUE="\$\{CTX_UPDATER_REMOTE_E2E_DRIVER_PORT:-\$\{TAURI_DRIVER_PORT:-\$\{PORT_BASE\}\}\}"/);
   assert.match(scriptText, /TAURI_TEST_BACKEND_PORT_VALUE="\$\{CTX_UPDATER_REMOTE_E2E_BACKEND_PORT:-\$\{TAURI_TEST_BACKEND_PORT:-\$\(\(PORT_BASE \+ 1\)\)\}\}"/);
-  assert.match(scriptText, /local attempt_driver_port=\$\(\(TAURI_DRIVER_PORT_VALUE \+ \(attempt - 1\) \* 2\)\)/);
-  assert.match(scriptText, /local attempt_backend_port=\$\(\(TAURI_TEST_BACKEND_PORT_VALUE \+ \(attempt - 1\) \* 2\)\)/);
+  assert.match(scriptText, /TAURI_DRIVER_NATIVE_PORT_VALUE="\$\{CTX_UPDATER_REMOTE_E2E_NATIVE_DRIVER_PORT:-\$\{TAURI_DRIVER_NATIVE_PORT:-\$\(\(PORT_BASE \+ 2\)\)\}\}"/);
+  assert.match(scriptText, /local attempt_driver_port=\$\(\(TAURI_DRIVER_PORT_VALUE \+ \(attempt - 1\) \* 3\)\)/);
+  assert.match(scriptText, /local attempt_backend_port=\$\(\(TAURI_TEST_BACKEND_PORT_VALUE \+ \(attempt - 1\) \* 3\)\)/);
+  assert.match(scriptText, /local attempt_native_driver_port=\$\(\(TAURI_DRIVER_NATIVE_PORT_VALUE \+ \(attempt - 1\) \* 3\)\)/);
   assert.match(scriptText, /export TAURI_DRIVER_PORT="\$\{attempt_driver_port\}"/);
   assert.match(scriptText, /export TAURI_TEST_BACKEND_PORT="\$\{attempt_backend_port\}"/);
+  assert.match(scriptText, /export TAURI_DRIVER_NATIVE_PORT="\$\{attempt_native_driver_port\}"/);
 });
 
 test("remote updater proof gives WebDriver enough time to launch published AppImages", () => {
@@ -48,8 +51,10 @@ test("remote updater proof keeps shipped-app automation state inside the artifac
   assert.match(scriptText, /local attempt_home_dir="\$\{attempt_xdg_dir\}\/home"/);
   assert.match(scriptText, /local attempt_corepack_home="\$\{COREPACK_HOME:-\$\{ORIGINAL_HOME\}\/\.cache\/node\/corepack\}"/);
   assert.match(scriptText, /export CTX_AUTOMATION_TMPDIR="\$\{attempt_tmp_dir\}"/);
+  assert.match(scriptText, /export CTX_AUTOMATION_XDG_DIR="\$\{attempt_xdg_dir\}"/);
   assert.match(scriptText, /export CTX_AUTOMATION_CN_BACKEND_LOG="\$\{attempt_dir\}\/crabnebula-backend\.log"/);
   assert.match(scriptText, /export CTX_AUTOMATION_CN_DRIVER_LOG="\$\{attempt_dir\}\/tauri-driver\.log"/);
+  assert.match(scriptText, /export CTX_AUTOMATION_APP_LAUNCH_LOG="\$\{attempt_dir\}\/app-launch\.log"/);
   assert.match(scriptText, /export CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR="\$\{attempt_dir\}\/controller-daemon-data"/);
   assert.match(scriptText, /export HOME="\$\{attempt_home_dir\}"/);
   assert.match(scriptText, /export XDG_RUNTIME_DIR="\$\{attempt_xdg_runtime_dir\}"/);
@@ -112,9 +117,13 @@ test("remote updater proof sweeps exact current attempt Xvfb after automation", 
 
 test("remote updater proof sweeps local WebKit helpers and e2e daemons between attempts", () => {
   assert.match(scriptText, /sweep_webkit_automation_helpers\(\) \{/);
+  assert.match(scriptText, /command_matches_current_native_webkit_port\(\) \{/);
   assert.match(scriptText, /command_is_scoped_webkit_automation_helper\(\) \{/);
   assert.match(scriptText, /command_matches_current_automation_scope\(\) \{/);
   assert.match(scriptText, /command_contains_nonempty_path\(\) \{/);
+  assert.match(scriptText, /local native_port="\$\{TAURI_DRIVER_NATIVE_PORT:-\}"/);
+  assert.match(scriptText, /\*WebKitWebDriver\*"--port"\*"\$\{native_port\}"\*/);
+  assert.match(scriptText, /command_matches_current_native_webkit_port "\$cmd" && return 0/);
   assert.match(scriptText, /\*WebKitWebDriver\*\|\*wkwebdriver\*\|\*WebKitWebProcess\*/);
   assert.match(scriptText, /if ! command_is_scoped_webkit_automation_helper "\$cmd"; then\s+continue\s+fi\s+pids\+=\("\$\{pid\}"\)/);
   assert.match(scriptText, /command_contains_nonempty_path "\$cmd" "\$\{artifact_dir\}"/);
@@ -157,6 +166,8 @@ test("remote updater proof writes Linux AppRun launch diagnostics before updater
   assert.match(scriptText, /controller-launch-smoke/);
   assert.match(scriptText, /write_attempt_manifest\(\) \{/);
   assert.match(scriptText, /attempt-manifest\.json/);
+  assert.match(scriptText, /native_driver_port: Number\(nativeDriverPort\)/);
+  assert.match(scriptText, /app_launch_log: appLaunchLog \|\| null/);
   assert.match(scriptText, /backend_log_expected: platform === "darwin"/);
   assert.match(scriptText, /write_linux_backend_sentinel_if_needed\(\) \{/);
   assert.match(scriptText, /Linux updater proof does not start the CrabNebula test-runner-backend/);
@@ -170,10 +181,14 @@ test("remote updater proof retries startup-only WebDriver session failures with 
   assert.match(scriptText, /UND_ERR_HEADERS_TIMEOUT/);
   assert.match(scriptText, /Failed to create a session/);
   assert.match(scriptText, /automation-attempt-\$\{attempt\}/);
-  assert.match(scriptText, /attempt_driver_port=\$\(\(TAURI_DRIVER_PORT_VALUE \+ \(attempt - 1\) \* 2\)\)/);
-  assert.match(scriptText, /attempt_backend_port=\$\(\(TAURI_TEST_BACKEND_PORT_VALUE \+ \(attempt - 1\) \* 2\)\)/);
+  assert.match(scriptText, /attempt_driver_port=\$\(\(TAURI_DRIVER_PORT_VALUE \+ \(attempt - 1\) \* 3\)\)/);
+  assert.match(scriptText, /attempt_backend_port=\$\(\(TAURI_TEST_BACKEND_PORT_VALUE \+ \(attempt - 1\) \* 3\)\)/);
+  assert.match(scriptText, /attempt_native_driver_port=\$\(\(TAURI_DRIVER_NATIVE_PORT_VALUE \+ \(attempt - 1\) \* 3\)\)/);
   assert.match(scriptText, /export CTX_AUTOMATION_TMPDIR="\$\{attempt_tmp_dir\}"/);
   assert.match(scriptText, /export CTX_AUTOMATION_CN_DRIVER_LOG="\$\{attempt_dir\}\/tauri-driver\.log"/);
+  assert.match(scriptText, /export CTX_AUTOMATION_APP_LAUNCH_LOG="\$\{attempt_dir\}\/app-launch\.log"/);
+  assert.match(scriptText, /export TAURI_DRIVER_NATIVE_PORT="\$\{attempt_native_driver_port\}"/);
+  assert.match(scriptText, /native driver port \$\{TAURI_DRIVER_NATIVE_PORT\}/);
   assert.match(scriptText, /tee "\$attempt_log"/);
 });
 
