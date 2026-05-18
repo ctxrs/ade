@@ -19,7 +19,10 @@ const { readDesktopVersion } = require("./desktop_version.cjs");
 const currentDesktopVersion = readDesktopVersion(path.resolve(__dirname, ".."));
 
 test("desktop_tauri_entry uses release prep for normal builds", () => {
-  const invocation = createInvocation(["node", "desktop_tauri_entry", "build", "--bundles", "app"]);
+  const invocation = createInvocation(
+    ["node", "desktop_tauri_entry", "build", "--bundles", "app"],
+    { RELEASE_CHANNEL: "stable" },
+  );
   assert.equal(invocation.prepMode, "release-build");
   assert.deepEqual(invocation.prepArgs, ["scripts/desktop_prepare.cjs", "--mode", "release-build"]);
   assert.equal(invocation.tauriBudgetKey, HOST_HEAVY_BUDGET_KEY);
