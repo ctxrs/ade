@@ -202,6 +202,11 @@ const sessionControlRouteApiRoots = [
   "core/crates/ctx-http/src/api/sessions/file_completions.rs",
 ];
 
+const sessionMessageCommandRouteApiRoots = [
+  "core/crates/ctx-http/src/api/sessions/messages.rs",
+  "core/crates/ctx-http/src/api/sessions/messages/",
+];
+
 const sessionVcsApiRoots = [
   "core/crates/ctx-http/src/api/sessions/snapshot/vcs.rs",
   "core/crates/ctx-http/src/api/sessions/snapshot/vcs/",
@@ -1430,6 +1435,37 @@ const SESSION_CONTROL_ROUTE_API_CONTRACT_PATTERNS = [
     name: "session control API calls raw control facades",
     regex:
       /\.(?:cancel_session|interrupt_session|authenticate_session_for_request|submit_ask_user_answer|complete_files_for_session)\s*\(/,
+  },
+];
+
+const SESSION_MESSAGE_COMMAND_ROUTE_API_CONTRACT_PATTERNS = [
+  {
+    name: "session message command API owns id parsing",
+    regex: /\b(?:SessionId|MessageId|TurnId)\b|\buuid\s*::\s*Uuid\s*::\s*parse_str\s*\(/,
+  },
+  {
+    name: "session message command API owns local route DTOs",
+    regex: /\b(?:PostMessageReq|PostMessageParts)\b/,
+  },
+  {
+    name: "session message command API owns delivery or attachment contracts",
+    regex: /\b(?:MessageAttachment|MessageDelivery|MessageClientIdResolutionError)\b|\bresolve_message_client_ids\s*\(/,
+  },
+  {
+    name: "session message command API owns attachment blob normalization",
+    regex: /\bSessionImageBlobStoreError\b|\.(?:store_inline_image_blob|get_blob)\s*\(|\bbase64\s*::|\b(?:decode_inline_image_attachment|ensure_image_attachment_mime_type|ensure_image_attachment_size|image_attachment_too_large_error|load_image_blob_metadata|normalize_message_attachments)\s*\(/,
+  },
+  {
+    name: "session message command API owns queued-message env policy",
+    regex: /\bCTX_QUEUED_MESSAGES_ENABLED\b|\b(?:queued_messages_enabled|env_bool)\s*\(/,
+  },
+  {
+    name: "session message command API imports low-level message errors",
+    regex: /\b(?:PostUserMessageInput|PostUserMessageError|SessionSchedulerCommandError)\b/,
+  },
+  {
+    name: "session message command API calls raw message facades",
+    regex: /\.(?:post_user_message_for_request|delete_queued_session_message)\s*\(/,
   },
 ];
 
@@ -4781,6 +4817,9 @@ function apiPatternsForPath(relativePath) {
   if (sessionControlRouteApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...SESSION_CONTROL_ROUTE_API_CONTRACT_PATTERNS);
   }
+  if (sessionMessageCommandRouteApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...SESSION_MESSAGE_COMMAND_ROUTE_API_CONTRACT_PATTERNS);
+  }
   if (workspaceRegistrationConfigApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...WORKSPACE_REGISTRATION_CONFIG_API_PATTERNS);
   }
@@ -5038,6 +5077,13 @@ function sessionReadModelRouteApiPatternsForPath(relativePath) {
 function sessionControlRouteApiPatternsForPath(relativePath) {
   if (sessionControlRouteApiRoots.some((root) => relativePath.startsWith(root))) {
     return SESSION_CONTROL_ROUTE_API_CONTRACT_PATTERNS;
+  }
+  return [];
+}
+
+function sessionMessageCommandRouteApiPatternsForPath(relativePath) {
+  if (sessionMessageCommandRouteApiRoots.some((root) => relativePath.startsWith(root))) {
+    return SESSION_MESSAGE_COMMAND_ROUTE_API_CONTRACT_PATTERNS;
   }
   return [];
 }
@@ -5941,6 +5987,7 @@ module.exports = {
   RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS,
   SESSION_HEAD_API_ORCHESTRATION_PATTERNS,
   SESSION_CONTROL_ROUTE_API_CONTRACT_PATTERNS,
+  SESSION_MESSAGE_COMMAND_ROUTE_API_CONTRACT_PATTERNS,
   SESSION_READ_MODEL_ROUTE_API_CONTRACT_PATTERNS,
   WORKSPACE_CONFIG_ROUTE_CONTEXT_PATTERNS,
   WORKSPACE_EXECUTION_CONFIG_API_PATTERNS,
@@ -6075,6 +6122,7 @@ module.exports = {
   runArchiveApiPatternsForPath,
   sessionHeadApiPatternsForPath,
   sessionControlRouteApiPatternsForPath,
+  sessionMessageCommandRouteApiPatternsForPath,
   sessionReadModelRouteApiPatternsForPath,
   routerCompositionPatternsForPath,
   scanRepo,

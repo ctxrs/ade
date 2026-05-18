@@ -64,6 +64,7 @@ const {
   PROVIDER_LAUNCH_OPTIONS_API_PATTERNS,
   SESSION_HEAD_API_ORCHESTRATION_PATTERNS,
   SESSION_CONTROL_ROUTE_API_CONTRACT_PATTERNS,
+  SESSION_MESSAGE_COMMAND_ROUTE_API_CONTRACT_PATTERNS,
   SESSION_READ_MODEL_ROUTE_API_CONTRACT_PATTERNS,
   PROVIDER_STATUS_API_ORCHESTRATION_PATTERNS,
   PROVIDER_USAGE_API_ORCHESTRATION_PATTERNS,
@@ -169,6 +170,7 @@ const {
   schedulerRuntimeStorePatternsForPath,
   sessionHeadApiPatternsForPath,
   sessionControlRouteApiPatternsForPath,
+  sessionMessageCommandRouteApiPatternsForPath,
   sessionReadModelRouteApiPatternsForPath,
   sessionModelApiStorePatternsForPath,
   sessionFixtureStorePatternsForPath,
@@ -3107,6 +3109,104 @@ test("daemon boundary guard scopes session control route contracts and allows ro
   );
   assert.deepEqual(
     sessionControlRouteApiPatternsForPath("core/crates/ctx-http/src/api/workspaces/management/file_completions.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects session message command route contracts in HTTP", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/sessions/messages/post/handler.rs",
+    contents: `
+      use ctx_daemon::daemon::sessions::{PostUserMessageError, PostUserMessageInput, SessionImageBlobStoreError};
+      use ctx_daemon::daemon::sessions::command_dispatch::SessionSchedulerCommandError;
+      use ctx_session_service::message_delivery::MessageClientIdResolutionError;
+      #[derive(Deserialize)]
+      struct PostMessageReq;
+      struct PostMessageParts;
+      async fn handler(state: SessionsHandle, id: String, attachment: MessageAttachment) {
+        let session_id = SessionId(uuid::Uuid::parse_str(&id).unwrap());
+        let message_id = MessageId::new();
+        let turn_id = TurnId::new();
+        let delivery = MessageDelivery::Queued;
+        let ids = resolve_message_client_ids(Some(message_id), Some(turn_id))?;
+        let enabled = env_bool(std::env::var("CTX_QUEUED_MESSAGES_ENABLED").ok().as_deref());
+        let bytes = base64::engine::general_purpose::STANDARD.decode(data)?;
+        ensure_image_attachment_mime_type("image/png")?;
+        ensure_image_attachment_size(bytes.len())?;
+        image_attachment_too_large_error();
+        load_image_blob_metadata(&state, blob_id).await?;
+        normalize_message_attachments(&state, vec![attachment]).await?;
+        state.store_inline_image_blob(&bytes, "image/png", None).await?;
+        state.get_blob(blob_id).await?;
+        state.post_user_message_for_request(session_id, input).await?;
+        state.delete_queued_session_message(session_id, message_id).await?;
+      }
+    `,
+    patterns: SESSION_MESSAGE_COMMAND_ROUTE_API_CONTRACT_PATTERNS,
+  });
+
+  assert.deepEqual(new Set(violations.map((violation) => violation.name)), new Set([
+    "session message command API owns id parsing",
+    "session message command API owns local route DTOs",
+    "session message command API owns delivery or attachment contracts",
+    "session message command API owns attachment blob normalization",
+    "session message command API owns queued-message env policy",
+    "session message command API imports low-level message errors",
+    "session message command API calls raw message facades",
+  ]));
+});
+
+test("daemon boundary guard scopes session message command route contracts and allows route DTOs", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/src/api/sessions/messages.rs",
+    "core/crates/ctx-http/src/api/sessions/messages/delete.rs",
+    "core/crates/ctx-http/src/api/sessions/messages/post.rs",
+    "core/crates/ctx-http/src/api/sessions/messages/post/handler.rs",
+    "core/crates/ctx-http/src/api/sessions/messages/attachments/validation.rs",
+    "core/crates/ctx-http/src/api/sessions/messages/helpers.rs",
+  ]) {
+    assert.deepEqual(
+      sessionMessageCommandRouteApiPatternsForPath(filePath),
+      SESSION_MESSAGE_COMMAND_ROUTE_API_CONTRACT_PATTERNS,
+    );
+    assert.equal(
+      apiPatternsForPath(filePath).includes(SESSION_MESSAGE_COMMAND_ROUTE_API_CONTRACT_PATTERNS[0]),
+      true,
+    );
+  }
+
+  assert.deepEqual(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/sessions/messages/post/handler.rs",
+      contents: `
+        async fn handler(state: SessionsHandle) -> Json<PostSessionMessageRouteResponse> {
+          let response = state
+            .post_session_message_for_route(
+              SessionRouteParams::new(id),
+              req,
+              PostSessionMessageRouteContext::new(run_id_header),
+            )
+            .await?;
+          state
+            .delete_session_message_for_route(DeleteSessionMessageRouteParams::new(session_id, id))
+            .await?;
+          type Allowed = (
+            PostSessionMessageRouteRequest,
+            PostSessionMessageRouteResponse,
+            PostSessionMessageRouteContext,
+            DeleteSessionMessageRouteParams,
+          );
+          Json(response)
+        }
+      `,
+      patterns: SESSION_MESSAGE_COMMAND_ROUTE_API_CONTRACT_PATTERNS,
+    }),
+    [],
+  );
+  assert.deepEqual(
+    sessionMessageCommandRouteApiPatternsForPath(
+      "core/crates/ctx-http/src/api/sessions/snapshot/history.rs",
+    ),
     [],
   );
 });

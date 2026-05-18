@@ -1,5 +1,3 @@
-use base64::Engine;
-
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
@@ -9,10 +7,13 @@ use super::errors::ApiErrorResp;
 use ctx_core::ids::*;
 use ctx_core::models::*;
 use ctx_daemon::daemon::{
-    AuthenticateSessionRouteRequest, SessionControlRouteError, SessionControlRouteErrorKind,
+    AuthenticateSessionRouteRequest, DeleteSessionMessageRouteParams,
+    PostSessionMessageRouteContext, PostSessionMessageRouteRequest,
+    PostSessionMessageRouteResponse, SessionControlRouteError, SessionControlRouteErrorKind,
     SessionEventsRouteQuery, SessionFileCompletionsRouteQuery, SessionHeadRouteQuery,
-    SessionHistoryRouteQuery, SessionReadModelRouteError, SessionReadModelRouteErrorKind,
-    SessionRouteParams, SessionSnapshotRouteQuery, SessionTurnToolsRouteParams, SessionsHandle,
+    SessionHistoryRouteQuery, SessionMessageRouteError, SessionMessageRouteErrorKind,
+    SessionReadModelRouteError, SessionReadModelRouteErrorKind, SessionRouteParams,
+    SessionSnapshotRouteQuery, SessionTurnToolsRouteParams, SessionsHandle,
     SubmitAskUserQuestionRouteRequest,
 };
 use ctx_observability::logs;
@@ -79,6 +80,32 @@ fn session_control_bare_status(error: SessionControlRouteError) -> StatusCode {
 
 fn session_control_api_error(error: SessionControlRouteError) -> (StatusCode, Json<ApiErrorResp>) {
     let status = session_control_status(&error);
+    (
+        status,
+        Json(ApiErrorResp {
+            error: error.message().to_string(),
+        }),
+    )
+}
+
+fn session_message_status(error: &SessionMessageRouteError) -> StatusCode {
+    match error.kind() {
+        SessionMessageRouteErrorKind::BadRequest => StatusCode::BAD_REQUEST,
+        SessionMessageRouteErrorKind::NotFound => StatusCode::NOT_FOUND,
+        SessionMessageRouteErrorKind::Conflict => StatusCode::CONFLICT,
+        SessionMessageRouteErrorKind::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+        SessionMessageRouteErrorKind::UnsupportedMediaType => StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        SessionMessageRouteErrorKind::ServiceUnavailable => StatusCode::SERVICE_UNAVAILABLE,
+        SessionMessageRouteErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
+fn session_message_bare_status(error: SessionMessageRouteError) -> StatusCode {
+    session_message_status(&error)
+}
+
+fn session_message_api_error(error: SessionMessageRouteError) -> (StatusCode, Json<ApiErrorResp>) {
+    let status = session_message_status(&error);
     (
         status,
         Json(ApiErrorResp {

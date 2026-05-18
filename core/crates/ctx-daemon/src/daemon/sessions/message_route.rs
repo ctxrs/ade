@@ -1,0 +1,582 @@
+use base64::Engine;
+use ctx_core::ids::{MessageId, SessionId, TurnId};
+use ctx_core::models::{Message, MessageAttachment, MessageDelivery};
+use ctx_session_service::message_delivery::{
+    resolve_message_client_ids, MessageClientIdResolutionError,
+};
+use serde::{Deserialize, Serialize};
+
+use crate::daemon::sessions::command_dispatch::SessionSchedulerCommandError;
+use crate::daemon::sessions::route_contract::parse_session_route_id;
+use crate::daemon::sessions::SessionImageBlobStoreError;
+use crate::daemon::{SessionRouteParams, SessionsHandle};
+
+const QUEUED_MESSAGES_ENABLED_ENV: &str = "CTX_QUEUED_MESSAGES_ENABLED";
+const MAX_MESSAGE_IMAGE_ATTACHMENT_BYTES: usize = 25 * 1024 * 1024;
+const MAX_MESSAGE_IMAGE_ATTACHMENT_MIB: usize = MAX_MESSAGE_IMAGE_ATTACHMENT_BYTES / (1024 * 1024);
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PostSessionMessageRouteRequest {
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    turn_id: Option<String>,
+    content: String,
+    delivery: Option<MessageDelivery>,
+    #[serde(default)]
+    attachments: Vec<MessageAttachment>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PostSessionMessageRouteContext {
+    run_id_header: Option<String>,
+    queued_messages_enabled: bool,
+}
+
+impl PostSessionMessageRouteContext {
+    pub fn new(run_id_header: Option<String>) -> Self {
+        Self {
+            run_id_header,
+            queued_messages_enabled: queued_messages_enabled_from_env(),
+        }
+    }
+
+    #[cfg(test)]
+    fn with_queued_messages(run_id_header: Option<String>, queued_messages_enabled: bool) -> Self {
+        Self {
+            run_id_header,
+            queued_messages_enabled,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(transparent)]
+pub struct PostSessionMessageRouteResponse(Message);
+
+#[derive(Debug, Clone)]
+pub struct DeleteSessionMessageRouteParams {
+    session_id: String,
+    message_id: String,
+}
+
+impl DeleteSessionMessageRouteParams {
+    pub fn new(session_id: impl Into<String>, message_id: impl Into<String>) -> Self {
+        Self {
+            session_id: session_id.into(),
+            message_id: message_id.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum SessionMessageRouteErrorKind {
+    BadRequest,
+    NotFound,
+    Conflict,
+    PayloadTooLarge,
+    UnsupportedMediaType,
+    ServiceUnavailable,
+    Internal,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct SessionMessageRouteError {
+    kind: SessionMessageRouteErrorKind,
+    message: String,
+}
+
+impl SessionMessageRouteError {
+    fn new(kind: SessionMessageRouteErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+
+    fn bad_request(message: impl Into<String>) -> Self {
+        Self::new(SessionMessageRouteErrorKind::BadRequest, message)
+    }
+
+    fn not_found(message: impl Into<String>) -> Self {
+        Self::new(SessionMessageRouteErrorKind::NotFound, message)
+    }
+
+    fn conflict(message: impl Into<String>) -> Self {
+        Self::new(SessionMessageRouteErrorKind::Conflict, message)
+    }
+
+    fn payload_too_large(message: impl Into<String>) -> Self {
+        Self::new(SessionMessageRouteErrorKind::PayloadTooLarge, message)
+    }
+
+    fn unsupported_media_type(message: impl Into<String>) -> Self {
+        Self::new(SessionMessageRouteErrorKind::UnsupportedMediaType, message)
+    }
+
+    fn service_unavailable(message: impl Into<String>) -> Self {
+        Self::new(SessionMessageRouteErrorKind::ServiceUnavailable, message)
+    }
+
+    fn internal(message: impl Into<String>) -> Self {
+        Self::new(SessionMessageRouteErrorKind::Internal, message)
+    }
+
+    pub fn kind(&self) -> SessionMessageRouteErrorKind {
+        self.kind
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl SessionsHandle {
+    pub async fn post_session_message_for_route(
+        &self,
+        params: SessionRouteParams,
+        request: PostSessionMessageRouteRequest,
+        context: PostSessionMessageRouteContext,
+    ) -> Result<PostSessionMessageRouteResponse, SessionMessageRouteError> {
+        let session_id = parse_post_session_id(params)?;
+        let message_id = parse_optional_message_id(request.id.as_deref())?;
+        let turn_id = parse_optional_turn_id(request.turn_id.as_deref())?;
+        let client_ids =
+            resolve_message_client_ids(message_id, turn_id).map_err(client_id_resolution_error)?;
+        let attachments = self
+            .normalize_message_attachments_for_route(request.attachments)
+            .await?;
+
+        self.post_user_message_for_request(
+            session_id,
+            crate::daemon::sessions::PostUserMessageInput {
+                message_id: client_ids.message_id,
+                turn_id: client_ids.turn_id,
+                client_supplied_ids: client_ids.client_supplied,
+                content: request.content,
+                requested_delivery: request.delivery,
+                attachments,
+                queued_messages_enabled: context.queued_messages_enabled,
+                run_id_header: context.run_id_header,
+            },
+        )
+        .await
+        .map(PostSessionMessageRouteResponse)
+        .map_err(post_user_message_route_error)
+    }
+
+    pub async fn delete_session_message_for_route(
+        &self,
+        params: DeleteSessionMessageRouteParams,
+    ) -> Result<(), SessionMessageRouteError> {
+        let session_id = parse_session_route_id(&params.session_id)
+            .map_err(|_| SessionMessageRouteError::bad_request("invalid session id"))?;
+        let message_id = parse_message_id(&params.message_id)?;
+        self.delete_queued_session_message(session_id, message_id)
+            .await
+            .map_err(delete_message_route_error)
+    }
+
+    async fn normalize_message_attachments_for_route(
+        &self,
+        attachments: Vec<MessageAttachment>,
+    ) -> Result<Vec<MessageAttachment>, SessionMessageRouteError> {
+        let mut out = Vec::with_capacity(attachments.len());
+        for attachment in attachments {
+            match attachment {
+                MessageAttachment::Image {
+                    mime_type,
+                    data_base64,
+                    name,
+                } => {
+                    let bytes = decode_inline_image_attachment(&data_base64)?;
+                    let blob_id = self
+                        .store_inline_image_blob(&bytes, &mime_type, name.as_deref())
+                        .await
+                        .map_err(image_blob_store_error)?;
+                    out.push(MessageAttachment::ImageRef {
+                        blob_id,
+                        mime_type,
+                        name,
+                    });
+                }
+                MessageAttachment::ImageRef { blob_id, name, .. } => {
+                    let mime_type = self.load_image_blob_mime_type_for_route(&blob_id).await?;
+                    out.push(MessageAttachment::ImageRef {
+                        blob_id,
+                        mime_type,
+                        name,
+                    });
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    async fn load_image_blob_mime_type_for_route(
+        &self,
+        blob_id: &str,
+    ) -> Result<String, SessionMessageRouteError> {
+        let blob = self.get_blob(blob_id).await.map_err(|_| {
+            SessionMessageRouteError::internal("Failed to inspect image attachment.")
+        })?;
+        let Some((_sha256, stored_mime_type, bytes, _stored_name, _created_at)) = blob else {
+            return Err(SessionMessageRouteError::bad_request(
+                "Image attachment blob was not found.",
+            ));
+        };
+        ensure_image_attachment_mime_type(&stored_mime_type)?;
+        let bytes = usize::try_from(bytes).map_err(|_| {
+            SessionMessageRouteError::internal("Invalid image attachment metadata.")
+        })?;
+        ensure_image_attachment_size(bytes)?;
+        Ok(stored_mime_type)
+    }
+}
+
+fn parse_post_session_id(
+    params: SessionRouteParams,
+) -> Result<SessionId, SessionMessageRouteError> {
+    parse_session_route_id(params.session_id())
+        .map_err(|_| SessionMessageRouteError::bad_request("Invalid session id."))
+}
+
+fn parse_optional_message_id(
+    raw: Option<&str>,
+) -> Result<Option<MessageId>, SessionMessageRouteError> {
+    raw.map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(parse_message_id_with_post_message)
+        .transpose()
+}
+
+fn parse_optional_turn_id(raw: Option<&str>) -> Result<Option<TurnId>, SessionMessageRouteError> {
+    raw.map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(parse_turn_id_with_post_message)
+        .transpose()
+}
+
+fn parse_message_id(value: &str) -> Result<MessageId, SessionMessageRouteError> {
+    uuid::Uuid::parse_str(value)
+        .map(MessageId)
+        .map_err(|_| SessionMessageRouteError::bad_request("invalid message id"))
+}
+
+fn parse_message_id_with_post_message(value: &str) -> Result<MessageId, SessionMessageRouteError> {
+    uuid::Uuid::parse_str(value)
+        .map(MessageId)
+        .map_err(|_| SessionMessageRouteError::bad_request("Invalid message id."))
+}
+
+fn parse_turn_id_with_post_message(value: &str) -> Result<TurnId, SessionMessageRouteError> {
+    uuid::Uuid::parse_str(value)
+        .map(TurnId)
+        .map_err(|_| SessionMessageRouteError::bad_request("Invalid turn id."))
+}
+
+fn client_id_resolution_error(error: MessageClientIdResolutionError) -> SessionMessageRouteError {
+    match error {
+        MessageClientIdResolutionError::PartialClientIds => {
+            SessionMessageRouteError::bad_request(error.message())
+        }
+    }
+}
+
+fn image_blob_store_error(error: SessionImageBlobStoreError) -> SessionMessageRouteError {
+    match error {
+        SessionImageBlobStoreError::PayloadTooLarge => image_attachment_too_large_error(),
+        SessionImageBlobStoreError::UnsupportedMediaType => {
+            SessionMessageRouteError::unsupported_media_type(
+                "Only image attachments are supported.",
+            )
+        }
+        SessionImageBlobStoreError::Internal => {
+            SessionMessageRouteError::internal("Failed to persist image attachment.")
+        }
+    }
+}
+
+fn post_user_message_route_error(
+    error: crate::daemon::sessions::PostUserMessageError,
+) -> SessionMessageRouteError {
+    match error {
+        crate::daemon::sessions::PostUserMessageError::BadRequest(error) => {
+            SessionMessageRouteError::bad_request(error)
+        }
+        crate::daemon::sessions::PostUserMessageError::Conflict(error) => {
+            SessionMessageRouteError::conflict(error)
+        }
+        crate::daemon::sessions::PostUserMessageError::NotFound(error) => {
+            SessionMessageRouteError::not_found(error)
+        }
+        crate::daemon::sessions::PostUserMessageError::ServiceUnavailable(error) => {
+            SessionMessageRouteError::service_unavailable(error)
+        }
+        crate::daemon::sessions::PostUserMessageError::Internal(error) => {
+            SessionMessageRouteError::internal(error)
+        }
+    }
+}
+
+fn delete_message_route_error(error: SessionSchedulerCommandError) -> SessionMessageRouteError {
+    match error {
+        SessionSchedulerCommandError::BadRequest => {
+            SessionMessageRouteError::bad_request("bad request")
+        }
+        SessionSchedulerCommandError::NotFound => {
+            SessionMessageRouteError::not_found("message not found")
+        }
+        SessionSchedulerCommandError::StoreUnavailable => {
+            SessionMessageRouteError::internal("session store unavailable")
+        }
+    }
+}
+
+fn queued_messages_enabled_from_env() -> bool {
+    env_bool(std::env::var(QUEUED_MESSAGES_ENABLED_ENV).ok().as_deref()).unwrap_or(false)
+}
+
+fn env_bool(value: Option<&str>) -> Option<bool> {
+    value.and_then(|value| match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    })
+}
+
+fn image_attachment_too_large_error() -> SessionMessageRouteError {
+    SessionMessageRouteError::payload_too_large(format!(
+        "Image attachments must be {MAX_MESSAGE_IMAGE_ATTACHMENT_MIB} MiB or smaller."
+    ))
+}
+
+fn ensure_image_attachment_size(bytes: usize) -> Result<(), SessionMessageRouteError> {
+    if bytes > MAX_MESSAGE_IMAGE_ATTACHMENT_BYTES {
+        return Err(image_attachment_too_large_error());
+    }
+    Ok(())
+}
+
+fn ensure_image_attachment_mime_type(mime_type: &str) -> Result<(), SessionMessageRouteError> {
+    if mime_type
+        .trim()
+        .get(..6)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("image/"))
+    {
+        return Ok(());
+    }
+    Err(SessionMessageRouteError::unsupported_media_type(
+        "Only image attachments are supported.",
+    ))
+}
+
+fn decoded_base64_len(data_base64: &str) -> Result<usize, SessionMessageRouteError> {
+    let bytes = data_base64.as_bytes();
+    if bytes.is_empty() {
+        return Ok(0);
+    }
+    if !bytes.len().is_multiple_of(4) {
+        return Err(SessionMessageRouteError::bad_request(
+            "Invalid image attachment.",
+        ));
+    }
+    let padding = if bytes.ends_with(b"==") {
+        2
+    } else if bytes.ends_with(b"=") {
+        1
+    } else {
+        0
+    };
+    Ok((bytes.len() / 4) * 3 - padding)
+}
+
+fn decode_inline_image_attachment(data_base64: &str) -> Result<Vec<u8>, SessionMessageRouteError> {
+    let decoded_len = decoded_base64_len(data_base64)?;
+    ensure_image_attachment_size(decoded_len)?;
+    base64::engine::general_purpose::STANDARD
+        .decode(data_base64.as_bytes())
+        .map_err(|_| SessionMessageRouteError::bad_request("Invalid image attachment."))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use ctx_core::ids::{RunId, TaskId};
+    use ctx_core::models::MessageRole;
+    use serde_json::json;
+
+    fn message() -> Message {
+        Message {
+            id: MessageId::new(),
+            session_id: SessionId::new(),
+            task_id: TaskId::new(),
+            run_id: Some(RunId::new()),
+            turn_id: Some(TurnId::new()),
+            turn_sequence: Some(1),
+            order_seq: Some(2),
+            role: MessageRole::User,
+            content: "hello".to_string(),
+            attachments: vec![MessageAttachment::ImageRef {
+                blob_id: "blob".to_string(),
+                mime_type: "image/png".to_string(),
+                name: Some("pic.png".to_string()),
+            }],
+            delivery: MessageDelivery::Immediate,
+            delivered_at: None,
+            created_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn post_response_preserves_message_wire_shape() {
+        let message = message();
+        assert_eq!(
+            serde_json::to_value(PostSessionMessageRouteResponse(message.clone())).unwrap(),
+            serde_json::to_value(message).unwrap()
+        );
+    }
+
+    #[test]
+    fn post_request_parses_optional_ids_delivery_and_attachments() {
+        let request: PostSessionMessageRouteRequest = serde_json::from_value(json!({
+            "id": MessageId::new().0.to_string(),
+            "turn_id": TurnId::new().0.to_string(),
+            "content": "hello",
+            "delivery": "queued",
+            "attachments": [{
+                "kind": "image_ref",
+                "blob_id": "blob",
+                "mime_type": "image/png",
+                "name": "pic.png"
+            }]
+        }))
+        .unwrap();
+        assert_eq!(request.content, "hello");
+        assert!(matches!(request.delivery, Some(MessageDelivery::Queued)));
+        assert_eq!(request.attachments.len(), 1);
+    }
+
+    #[test]
+    fn client_ids_trim_body_values_and_treat_empty_as_absent() {
+        let message_id = MessageId::new();
+        let turn_id = TurnId::new();
+        assert_eq!(
+            parse_optional_message_id(Some(&format!("  {}  ", message_id.0))).unwrap(),
+            Some(message_id)
+        );
+        assert_eq!(
+            parse_optional_turn_id(Some(&format!("\n{}\t", turn_id.0))).unwrap(),
+            Some(turn_id)
+        );
+        assert_eq!(parse_optional_message_id(Some("   ")).unwrap(), None);
+        assert_eq!(parse_optional_turn_id(Some("")).unwrap(), None);
+    }
+
+    #[test]
+    fn post_path_session_id_is_not_trimmed() {
+        let session_id = SessionId::new();
+        let error = parse_post_session_id(SessionRouteParams::new(format!(" {} ", session_id.0)))
+            .unwrap_err();
+        assert_eq!(error.kind(), SessionMessageRouteErrorKind::BadRequest);
+        assert_eq!(error.message(), "Invalid session id.");
+    }
+
+    #[test]
+    fn post_id_errors_preserve_existing_messages() {
+        let error = parse_optional_message_id(Some("not-a-message")).unwrap_err();
+        assert_eq!(error.kind(), SessionMessageRouteErrorKind::BadRequest);
+        assert_eq!(error.message(), "Invalid message id.");
+
+        let error = parse_optional_turn_id(Some("not-a-turn")).unwrap_err();
+        assert_eq!(error.kind(), SessionMessageRouteErrorKind::BadRequest);
+        assert_eq!(error.message(), "Invalid turn id.");
+    }
+
+    #[test]
+    fn partial_client_ids_preserve_resolution_message() {
+        let message_id = MessageId::new();
+        let error =
+            resolve_message_client_ids(Some(message_id), None).map_err(client_id_resolution_error);
+        let error = error.unwrap_err();
+        assert_eq!(error.kind(), SessionMessageRouteErrorKind::BadRequest);
+        assert_eq!(
+            error.message(),
+            "Message id and turn id must either both be provided or both be omitted."
+        );
+    }
+
+    #[test]
+    fn delete_id_errors_are_bare_status_style_messages() {
+        let error = parse_message_id("not-a-message").unwrap_err();
+        assert_eq!(error.kind(), SessionMessageRouteErrorKind::BadRequest);
+        assert_eq!(error.message(), "invalid message id");
+    }
+
+    #[test]
+    fn env_bool_preserves_current_values() {
+        for value in ["1", "true", "yes", "on"] {
+            assert_eq!(env_bool(Some(value)), Some(true));
+        }
+        for value in ["0", "false", "no", "off"] {
+            assert_eq!(env_bool(Some(value)), Some(false));
+        }
+        assert_eq!(env_bool(None), None);
+        assert_eq!(env_bool(Some("maybe")), None);
+    }
+
+    #[test]
+    fn route_context_can_override_queued_messages_for_route_tests() {
+        let context =
+            PostSessionMessageRouteContext::with_queued_messages(Some("run".to_string()), true);
+        assert_eq!(context.run_id_header.as_deref(), Some("run"));
+        assert!(context.queued_messages_enabled);
+    }
+
+    #[test]
+    fn image_attachment_validation_preserves_errors() {
+        assert_eq!(decoded_base64_len("YQ==").unwrap(), 1);
+        assert_eq!(decoded_base64_len("YWE=").unwrap(), 2);
+        assert_eq!(decoded_base64_len("YWFh").unwrap(), 3);
+
+        let error = decode_inline_image_attachment("bad").unwrap_err();
+        assert_eq!(error.kind(), SessionMessageRouteErrorKind::BadRequest);
+        assert_eq!(error.message(), "Invalid image attachment.");
+
+        let error = ensure_image_attachment_mime_type("text/plain").unwrap_err();
+        assert_eq!(
+            error.kind(),
+            SessionMessageRouteErrorKind::UnsupportedMediaType
+        );
+        assert_eq!(error.message(), "Only image attachments are supported.");
+
+        let error =
+            ensure_image_attachment_size(MAX_MESSAGE_IMAGE_ATTACHMENT_BYTES + 1).unwrap_err();
+        assert_eq!(error.kind(), SessionMessageRouteErrorKind::PayloadTooLarge);
+        assert_eq!(
+            error.message(),
+            "Image attachments must be 25 MiB or smaller."
+        );
+    }
+
+    #[test]
+    fn command_error_classification_preserves_status_categories() {
+        let delete_error = delete_message_route_error(SessionSchedulerCommandError::BadRequest);
+        assert_eq!(
+            delete_error.kind(),
+            SessionMessageRouteErrorKind::BadRequest
+        );
+
+        let post_error = post_user_message_route_error(
+            crate::daemon::sessions::PostUserMessageError::ServiceUnavailable(
+                "retry later".to_string(),
+            ),
+        );
+        assert_eq!(
+            post_error.kind(),
+            SessionMessageRouteErrorKind::ServiceUnavailable
+        );
+        assert_eq!(post_error.message(), "retry later");
+    }
+}
