@@ -577,14 +577,18 @@ test("nightly benchmark evidence wraps prefetch and benchmark under one cache sc
   const scriptText = read("scripts/buildkite/run_nightly_benchmark_evidence.sh");
   const scopeIndex = scriptText.indexOf('CTX_CACHE_SCOPE_KEY="nightly-benchmark-evidence-');
   const prefetchIndex = scriptText.indexOf("cargo fetch --locked");
+  const prefetchStatusIndex = scriptText.indexOf('cargo_prefetch_status="${PIPESTATUS[0]}"');
   const benchmarkIndex = scriptText.indexOf("pnpm sdlc:agent-loop:benchmark:main-band");
 
   assert.notEqual(scopeIndex, -1, "nightly benchmark should pin a stable cache scope");
   assert.notEqual(prefetchIndex, -1, "nightly benchmark should prefetch cargo dependencies");
+  assert.notEqual(prefetchStatusIndex, -1, "nightly benchmark should record prefetch status");
   assert.notEqual(benchmarkIndex, -1, "nightly benchmark should run the benchmark");
   assert.ok(scopeIndex < prefetchIndex, "cache scope must be pinned before prefetch");
-  assert.ok(prefetchIndex < benchmarkIndex, "benchmark should run after prefetch");
+  assert.ok(prefetchIndex < prefetchStatusIndex, "prefetch status should be recorded after prefetch");
+  assert.ok(prefetchStatusIndex < benchmarkIndex, "benchmark should run after bounded prefetch handling");
   assert.match(scriptText, /node core\/scripts\/run_with_ctx_cache_env\.cjs --mode workspace --cwd core -- \\\n\s+cargo fetch/);
+  assert.match(scriptText, /continuing because prefetch is a bounded cache warm-up and benchmark scenarios remain hard-gated/);
   assert.match(scriptText, /node core\/scripts\/run_with_ctx_cache_env\.cjs --mode workspace --cwd core -- \\\n\s+pnpm sdlc:agent-loop:benchmark:main-band/);
   assert.match(scriptText, /nightly-main-band-benchmark\.log/);
   assert.match(scriptText, /trap upload_benchmark_artifacts EXIT/);
