@@ -215,6 +215,7 @@ mod mobile_profile_routes;
 mod mobile_secure_routes;
 mod org_policy_routes;
 mod provider_routes;
+mod resource_utilization_routes;
 mod run_archive_routes;
 mod session_artifacts;
 mod session_head_ctx_ui_sized_http;

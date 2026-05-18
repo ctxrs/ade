@@ -112,6 +112,10 @@ pub use repo_onboarding::{
     RepoOnboardingRouteErrorKind, RepoPathRouteResponse, RepoStatusRouteRequest,
     RepoStatusRouteResponse, RepoValidateDestinationRouteRequest,
 };
+pub use resource_utilization::{
+    ResourceUtilizationRouteError, ResourceUtilizationRouteErrorKind,
+    ResourceUtilizationRouteQuery, ResourceUtilizationRouteResponse,
+};
 #[cfg(test)]
 pub use retention::prune_archived_session_data_for_all_workspaces;
 pub use route_files::{RouteFileDownloadError, TextRouteDownload};

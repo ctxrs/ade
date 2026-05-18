@@ -333,6 +333,10 @@ const healthDiagnosticsApiRoots = [
   "core/crates/ctx-http/src/api/diagnostics.rs",
 ];
 
+const resourceUtilizationApiRoots = [
+  "core/crates/ctx-http/src/api/resource_utilization.rs",
+];
+
 const settingsApiRoots = [
   "core/crates/ctx-http/src/api/settings.rs",
 ];
@@ -2398,6 +2402,25 @@ const DAEMON_HEALTH_VERSION_PATTERNS = [
   {
     name: "daemon health uses daemon crate package version directly",
     regex: /env!\s*\(\s*"CARGO_PKG_VERSION"\s*\)/,
+  },
+];
+
+const RESOURCE_UTILIZATION_API_ROUTE_CONTRACT_PATTERNS = [
+  {
+    name: "resource utilization API parses workspace ids locally",
+    regex: /\buuid\s*::\s*Uuid\s*::\s*parse_str\s*\(|\bWorkspaceId\s*\(/,
+  },
+  {
+    name: "resource utilization API exposes raw resource snapshot",
+    regex: /\bctx_resource_utilization::ResourceUtilizationSnapshot\b|\bResourceUtilizationSnapshot\b/,
+  },
+  {
+    name: "resource utilization API imports low-level resource errors",
+    regex: /\bResourceUtilizationSnapshotError\b|\bctx_daemon::daemon::resource_utilization\b/,
+  },
+  {
+    name: "resource utilization API calls typed resource facade directly",
+    regex: /\.workspace_resource_utilization_snapshot\s*\(/,
   },
 ];
 
@@ -5049,6 +5072,9 @@ function apiPatternsForPath(relativePath) {
   if (healthDiagnosticsApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...HEALTH_DIAGNOSTICS_API_ORCHESTRATION_PATTERNS);
   }
+  if (resourceUtilizationApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...RESOURCE_UTILIZATION_API_ROUTE_CONTRACT_PATTERNS);
+  }
   if (settingsApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...SETTINGS_API_ORCHESTRATION_PATTERNS);
   }
@@ -6262,6 +6288,7 @@ module.exports = {
   DAEMON_UPDATES_VERSION_PATTERNS,
   BLOB_API_ORCHESTRATION_PATTERNS,
   HEALTH_DIAGNOSTICS_API_ORCHESTRATION_PATTERNS,
+  RESOURCE_UTILIZATION_API_ROUTE_CONTRACT_PATTERNS,
   SETTINGS_API_ORCHESTRATION_PATTERNS,
   TELEMETRY_API_ORCHESTRATION_PATTERNS,
   LOGS_API_ORCHESTRATION_PATTERNS,

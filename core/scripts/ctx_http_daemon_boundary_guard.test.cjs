@@ -21,6 +21,7 @@ const {
   DAEMON_UPDATES_VERSION_PATTERNS,
   BLOB_API_ORCHESTRATION_PATTERNS,
   HEALTH_DIAGNOSTICS_API_ORCHESTRATION_PATTERNS,
+  RESOURCE_UTILIZATION_API_ROUTE_CONTRACT_PATTERNS,
   SETTINGS_API_ORCHESTRATION_PATTERNS,
   TELEMETRY_API_ORCHESTRATION_PATTERNS,
   LOGS_API_ORCHESTRATION_PATTERNS,
@@ -7400,6 +7401,39 @@ test("daemon boundary guard rejects health and diagnostics API orchestration", (
   ]) {
     assert(names.has(expected), `expected ${expected}; saw ${[...names].join(", ")}`);
   }
+});
+
+test("daemon boundary guard rejects resource utilization API local route contracts", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/resource_utilization.rs",
+    contents: `
+      use ctx_core::ids::WorkspaceId;
+      use ctx_daemon::daemon::resource_utilization as daemon_resource_utilization;
+      async fn route(state: WorkspacesHandle, raw: String) {
+        let workspace_id = WorkspaceId(uuid::Uuid::parse_str(&raw).unwrap());
+        let _snapshot: ctx_resource_utilization::ResourceUtilizationSnapshot =
+          state.workspace_resource_utilization_snapshot(workspace_id).await.unwrap();
+        let _error: daemon_resource_utilization::ResourceUtilizationSnapshotError = todo!();
+      }
+    `,
+    patterns: apiPatternsForPath("core/crates/ctx-http/src/api/resource_utilization.rs"),
+  });
+
+  const names = new Set(violations.map((violation) => violation.name));
+  for (const expected of [
+    "resource utilization API parses workspace ids locally",
+    "resource utilization API exposes raw resource snapshot",
+    "resource utilization API imports low-level resource errors",
+    "resource utilization API calls typed resource facade directly",
+  ]) {
+    assert(names.has(expected), `expected ${expected}; saw ${[...names].join(", ")}`);
+  }
+  assert(
+    apiPatternsForPath("core/crates/ctx-http/src/api/resource_utilization.rs").includes(
+      RESOURCE_UTILIZATION_API_ROUTE_CONTRACT_PATTERNS[0],
+    ),
+    "resource utilization route should be covered by scoped route-contract guard",
+  );
 });
 
 test("daemon boundary guard rejects daemon health package-version fallback", () => {
