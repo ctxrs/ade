@@ -24,6 +24,10 @@ impl SessionRouteParams {
             session_id: session_id.into(),
         }
     }
+
+    pub(in crate::daemon::sessions) fn session_id(&self) -> &str {
+        &self.session_id
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -387,9 +391,12 @@ impl From<Vec<SessionTurnTool>> for SessionTurnToolsRouteResponse {
     }
 }
 
+pub(in crate::daemon::sessions) fn parse_session_route_id(value: &str) -> Result<SessionId, ()> {
+    uuid::Uuid::parse_str(value).map(SessionId).map_err(|_| ())
+}
+
 fn parse_session_id(value: &str) -> Result<SessionId, SessionReadModelRouteError> {
-    uuid::Uuid::parse_str(value)
-        .map(SessionId)
+    parse_session_route_id(value)
         .map_err(|_| SessionReadModelRouteError::bad_request("invalid session id"))
 }
 

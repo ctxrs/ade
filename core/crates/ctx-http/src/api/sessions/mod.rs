@@ -6,13 +6,14 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 
 use super::errors::ApiErrorResp;
-use super::shared::{map_file_completions_error, FileCompletionsQuery};
 use ctx_core::ids::*;
 use ctx_core::models::*;
 use ctx_daemon::daemon::{
-    SessionEventsRouteQuery, SessionHeadRouteQuery, SessionHistoryRouteQuery,
-    SessionReadModelRouteError, SessionReadModelRouteErrorKind, SessionRouteParams,
-    SessionSnapshotRouteQuery, SessionTurnToolsRouteParams, SessionsHandle,
+    AuthenticateSessionRouteRequest, SessionControlRouteError, SessionControlRouteErrorKind,
+    SessionEventsRouteQuery, SessionFileCompletionsRouteQuery, SessionHeadRouteQuery,
+    SessionHistoryRouteQuery, SessionReadModelRouteError, SessionReadModelRouteErrorKind,
+    SessionRouteParams, SessionSnapshotRouteQuery, SessionTurnToolsRouteParams, SessionsHandle,
+    SubmitAskUserQuestionRouteRequest,
 };
 use ctx_observability::logs;
 #[cfg(test)]
@@ -59,4 +60,29 @@ fn session_read_model_status(error: SessionReadModelRouteError) -> StatusCode {
         SessionReadModelRouteErrorKind::Conflict => StatusCode::CONFLICT,
         SessionReadModelRouteErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
     }
+}
+
+fn session_control_status(error: &SessionControlRouteError) -> StatusCode {
+    match error.kind() {
+        SessionControlRouteErrorKind::BadRequest => StatusCode::BAD_REQUEST,
+        SessionControlRouteErrorKind::NotFound => StatusCode::NOT_FOUND,
+        SessionControlRouteErrorKind::Forbidden => StatusCode::FORBIDDEN,
+        SessionControlRouteErrorKind::Conflict => StatusCode::CONFLICT,
+        SessionControlRouteErrorKind::InsufficientStorage => StatusCode::INSUFFICIENT_STORAGE,
+        SessionControlRouteErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
+fn session_control_bare_status(error: SessionControlRouteError) -> StatusCode {
+    session_control_status(&error)
+}
+
+fn session_control_api_error(error: SessionControlRouteError) -> (StatusCode, Json<ApiErrorResp>) {
+    let status = session_control_status(&error);
+    (
+        status,
+        Json(ApiErrorResp {
+            error: error.message().to_string(),
+        }),
+    )
 }

@@ -104,11 +104,14 @@ pub use retention::prune_archived_session_data_for_all_workspaces;
 pub use route_files::{RouteFileDownloadError, TextRouteDownload};
 pub use runtime::{bootstrap_daemon_runtime, DaemonRuntime};
 pub use sessions::{
-    SessionEventsRouteQuery, SessionEventsRouteResponse, SessionHeadRouteQuery,
-    SessionHeadRouteResponse, SessionHistoryRouteQuery, SessionHistoryRouteResponse,
-    SessionReadModelRouteError, SessionReadModelRouteErrorKind, SessionRouteParams,
-    SessionSnapshotRouteQuery, SessionSnapshotRouteResponse, SessionStateRouteResponse,
-    SessionTurnToolsRouteParams, SessionTurnToolsRouteResponse,
+    AuthenticateSessionRouteRequest, SessionControlRouteError, SessionControlRouteErrorKind,
+    SessionEventsRouteQuery, SessionEventsRouteResponse, SessionFileCompletionsRouteQuery,
+    SessionFileCompletionsRouteResponse, SessionHeadRouteQuery, SessionHeadRouteResponse,
+    SessionHistoryRouteQuery, SessionHistoryRouteResponse, SessionReadModelRouteError,
+    SessionReadModelRouteErrorKind, SessionRouteParams, SessionSnapshotRouteQuery,
+    SessionSnapshotRouteResponse, SessionStateRouteResponse, SessionTurnToolsRouteParams,
+    SessionTurnToolsRouteResponse, SubmitAskUserQuestionRouteRequest,
+    SubmitAskUserQuestionRouteResponse,
 };
 pub use settings::{SettingsRouteError, SettingsRouteErrorKind};
 pub use state::{AppRuntimeFlags, DaemonState};

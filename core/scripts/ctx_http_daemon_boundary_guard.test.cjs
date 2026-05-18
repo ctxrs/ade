@@ -63,6 +63,7 @@ const {
   PROVIDER_LAUNCH_AUTH_API_PATTERNS,
   PROVIDER_LAUNCH_OPTIONS_API_PATTERNS,
   SESSION_HEAD_API_ORCHESTRATION_PATTERNS,
+  SESSION_CONTROL_ROUTE_API_CONTRACT_PATTERNS,
   SESSION_READ_MODEL_ROUTE_API_CONTRACT_PATTERNS,
   PROVIDER_STATUS_API_ORCHESTRATION_PATTERNS,
   PROVIDER_USAGE_API_ORCHESTRATION_PATTERNS,
@@ -167,6 +168,7 @@ const {
   scanText,
   schedulerRuntimeStorePatternsForPath,
   sessionHeadApiPatternsForPath,
+  sessionControlRouteApiPatternsForPath,
   sessionReadModelRouteApiPatternsForPath,
   sessionModelApiStorePatternsForPath,
   sessionFixtureStorePatternsForPath,
@@ -3019,6 +3021,92 @@ test("daemon boundary guard scopes session read-model route contracts and allows
   );
   assert.deepEqual(
     sessionReadModelRouteApiPatternsForPath("core/crates/ctx-http/src/api/sessions/snapshot/vcs.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects session control route contracts in HTTP", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/sessions/control/ask_user.rs",
+    contents: `
+      use ctx_daemon::daemon::sessions::ask_user::SubmitAskUserAnswerError;
+      use ctx_daemon::daemon::sessions::auth::SessionAuthError;
+      use ctx_daemon::daemon::sessions::command_dispatch::SessionSchedulerCommandError;
+      use ctx_daemon::daemon::workspaces::{FileCompletionsError, FileCompletionsErrorKind};
+      use ctx_providers::ask_user_question::AskUserQuestionOutcome;
+      #[derive(Deserialize)]
+      struct SubmitAskUserQuestionReq;
+      #[derive(Serialize)]
+      struct SubmitAskUserQuestionResp;
+      async fn handler(state: SessionsHandle, id: String) {
+        let session_id = SessionId(uuid::Uuid::parse_str(&id).unwrap());
+        state.cancel_session(session_id).await?;
+        state.interrupt_session(session_id, request_started).await?;
+        state.authenticate_session_for_request(session_id, method_id).await?;
+        state.submit_ask_user_answer(session_id, submission).await?;
+        state.complete_files_for_session(session_id, query, limit).await?;
+      }
+    `,
+    patterns: SESSION_CONTROL_ROUTE_API_CONTRACT_PATTERNS,
+  });
+
+  assert.deepEqual(new Set(violations.map((violation) => violation.name)), new Set([
+    "session control API owns session id parsing",
+    "session control API owns local route DTOs",
+    "session control API imports low-level daemon control errors",
+    "session control API calls raw control facades",
+  ]));
+});
+
+test("daemon boundary guard scopes session control route contracts and allows route DTOs", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/src/api/sessions/control/interrupts.rs",
+    "core/crates/ctx-http/src/api/sessions/control/authenticate.rs",
+    "core/crates/ctx-http/src/api/sessions/control/ask_user.rs",
+    "core/crates/ctx-http/src/api/sessions/file_completions.rs",
+  ]) {
+    assert.deepEqual(
+      sessionControlRouteApiPatternsForPath(filePath),
+      SESSION_CONTROL_ROUTE_API_CONTRACT_PATTERNS,
+    );
+    assert.equal(
+      apiPatternsForPath(filePath).includes(SESSION_CONTROL_ROUTE_API_CONTRACT_PATTERNS[0]),
+      true,
+    );
+  }
+
+  assert.deepEqual(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/sessions/control/ask_user.rs",
+      contents: `
+        async fn handler(state: SessionsHandle) -> Json<SubmitAskUserQuestionRouteResponse> {
+          let response = state
+            .submit_ask_user_question_for_route(SessionRouteParams::new(id), req)
+            .await?;
+          state.interrupt_session_for_route(SessionRouteParams::new(id), request_started).await?;
+          state.complete_files_for_session_for_route(SessionRouteParams::new(id), q).await?;
+          Json(response)
+        }
+        type Allowed = (
+          AuthenticateSessionRouteRequest,
+          SubmitAskUserQuestionRouteRequest,
+          SubmitAskUserQuestionRouteResponse,
+          SessionFileCompletionsRouteQuery,
+          SessionFileCompletionsRouteResponse,
+        );
+      `,
+      patterns: SESSION_CONTROL_ROUTE_API_CONTRACT_PATTERNS,
+    }),
+    [],
+  );
+  assert.deepEqual(
+    sessionControlRouteApiPatternsForPath(
+      "core/crates/ctx-http/src/api/sessions/messages/post/handler.rs",
+    ),
+    [],
+  );
+  assert.deepEqual(
+    sessionControlRouteApiPatternsForPath("core/crates/ctx-http/src/api/workspaces/management/file_completions.rs"),
     [],
   );
 });

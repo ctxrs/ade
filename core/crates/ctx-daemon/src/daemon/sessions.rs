@@ -3,6 +3,7 @@ mod artifacts;
 pub mod ask_user;
 pub mod auth;
 pub mod command_dispatch;
+mod control_route;
 mod handle;
 pub mod model_catalog;
 mod model_switch;
@@ -14,6 +15,11 @@ pub mod title_generation;
 pub mod vcs;
 
 pub use artifacts::{SessionArtifactDownload, SessionArtifactInput, SessionArtifactRouteError};
+pub use control_route::{
+    AuthenticateSessionRouteRequest, SessionControlRouteError, SessionControlRouteErrorKind,
+    SessionFileCompletionsRouteQuery, SessionFileCompletionsRouteResponse,
+    SubmitAskUserQuestionRouteRequest, SubmitAskUserQuestionRouteResponse,
+};
 pub use handle::{
     DemoSeedTranscript, DemoSeedTranscriptError, DemoSeedTranscriptTurn, GenerateSessionTitleError,
     PostUserMessageError, PostUserMessageInput, SessionImageBlobStoreError, SetSessionModeError,
