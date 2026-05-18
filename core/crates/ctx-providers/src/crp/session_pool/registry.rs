@@ -1,4 +1,5 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{hash_map::DefaultHasher, HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex as StdMutex};
@@ -14,6 +15,39 @@ use super::{session_shutdown_reason, state::session_is_live, CrpSession, CrpSess
 fn env_has_scoped_mcp_token(env: &HashMap<String, String>) -> bool {
     env.get("CTX_MCP_TOKEN")
         .is_some_and(|value| !value.trim().is_empty())
+}
+
+fn env_is_live_session_field(key: &str) -> bool {
+    // These fields are delivered through session.open/session.prompt, updated
+    // through CRP commands, or handled by explicit refresh paths below. They
+    // should not force a valid already-open process to restart.
+    matches!(
+        key,
+        "CTX_AUTH_TOKEN"
+            | "CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN"
+            | "CTX_MCP_TOKEN"
+            | "CTX_MODEL_ID"
+            | "CTX_ORG_ID"
+            | "CTX_POLICY_VERSION"
+            | "CTX_PROVIDER_SESSION_REF"
+            | "CTX_RUN_GRANT_ID"
+            | "CTX_SYSTEM_PROMPT_APPEND"
+    )
+}
+
+fn env_launch_signature(env: &HashMap<String, String>) -> u64 {
+    let mut entries = env
+        .iter()
+        .filter(|(key, _)| !env_is_live_session_field(key))
+        .collect::<Vec<_>>();
+    entries.sort_by(|(left_key, _), (right_key, _)| left_key.cmp(right_key));
+
+    let mut hasher = DefaultHasher::new();
+    for (key, value) in entries {
+        key.hash(&mut hasher);
+        value.hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 fn env_launch_policy_signature(env: &HashMap<String, String>) -> Result<Option<String>> {
@@ -270,14 +304,17 @@ impl CrpSessionPool {
     ) -> Result<Arc<CrpSession>> {
         let needs_fresh_scoped_mcp_session = env_has_scoped_mcp_token(env);
         let launch_policy_signature = env_launch_policy_signature(env)?;
+        let launch_env_signature = env_launch_signature(env);
         let replaced = {
             let mut sessions = self.sessions.lock().await;
             if let Some(existing) = sessions.get(session_key) {
                 let shutdown_reason = session_shutdown_reason(existing);
                 let launch_policy_changed =
                     existing.launch_policy_signature != launch_policy_signature;
+                let launch_env_changed = existing.launch_env_signature != launch_env_signature;
                 if !needs_fresh_scoped_mcp_session
                     && !launch_policy_changed
+                    && !launch_env_changed
                     && !existing.draining.load(Ordering::SeqCst)
                     && shutdown_reason.is_none()
                 {
@@ -297,6 +334,8 @@ impl CrpSessionPool {
                     format!("scoped MCP token refresh ({session_key})")
                 } else if existing.launch_policy_signature != launch_policy_signature {
                     format!("CRP launch policy refresh ({session_key})")
+                } else if existing.launch_env_signature != launch_env_signature {
+                    format!("CRP launch environment refresh ({session_key})")
                 } else {
                     format!("drain replace ({session_key})")
                 };
@@ -315,6 +354,7 @@ impl CrpSessionPool {
             process,
             self.supports_session_status,
             launch_policy_signature,
+            launch_env_signature,
         ));
         let mut sessions = self.sessions.lock().await;
         sessions.insert(session_key.to_string(), Arc::clone(&session));

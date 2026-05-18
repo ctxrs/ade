@@ -665,6 +665,113 @@ async fn shutdown_cached_session_is_not_live_and_gets_replaced() -> Result<()> {
 }
 
 #[tokio::test]
+async fn get_or_create_session_replaces_live_session_when_launch_env_changes() -> Result<()> {
+    let tempdir = tempfile::tempdir()?;
+    let workdir = tempdir.path().to_path_buf();
+    let adapter = Tier1CrpAdapter::from_raw(
+        "fake-crp",
+        "/bin/sh".to_string(),
+        vec!["-c".into(), "while IFS= read -r _line; do :; done".into()],
+    );
+    let session_key = "session-refresh-after-env-change";
+    let mut env = crp_test_env();
+    env.insert(
+        "CODEX_HOME".to_string(),
+        workdir.join("codex-home-one").to_string_lossy().to_string(),
+    );
+
+    let first = adapter
+        .pool
+        .get_or_create_session(session_key, &workdir, &env)
+        .await?;
+    let same = adapter
+        .pool
+        .get_or_create_session(session_key, &workdir, &env)
+        .await?;
+    assert!(
+        Arc::ptr_eq(&first, &same),
+        "identical launch env should keep reusing the live session"
+    );
+
+    let mut changed_env = env.clone();
+    changed_env.insert(
+        "CODEX_HOME".to_string(),
+        workdir.join("codex-home-two").to_string_lossy().to_string(),
+    );
+    let second = adapter
+        .pool
+        .get_or_create_session(session_key, &workdir, &changed_env)
+        .await?;
+
+    assert!(
+        !Arc::ptr_eq(&first, &second),
+        "changed launch env must replace the stale live process"
+    );
+    assert_eq!(adapter.pool.session_count_for_test().await, 1);
+    assert!(
+        session_shutdown_reason(&first)
+            .as_deref()
+            .unwrap_or_default()
+            .contains("CRP launch environment refresh"),
+        "stale process should record why it was replaced"
+    );
+    assert_eq!(session_shutdown_reason(&second), None);
+
+    second.process.shutdown("test complete").await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_or_create_session_reuses_live_session_when_only_live_fields_change() -> Result<()> {
+    let tempdir = tempfile::tempdir()?;
+    let workdir = tempdir.path().to_path_buf();
+    let adapter = Tier1CrpAdapter::from_raw(
+        "fake-crp",
+        "/bin/sh".to_string(),
+        vec!["-c".into(), "while IFS= read -r _line; do :; done".into()],
+    );
+    let session_key = "session-retained-after-live-env-change";
+    let mut env = crp_test_env();
+    env.insert(
+        "CODEX_HOME".to_string(),
+        workdir.join("codex-home").to_string_lossy().to_string(),
+    );
+    env.insert("CTX_MODEL_ID".to_string(), "gpt-5.4".to_string());
+
+    let first = adapter
+        .pool
+        .get_or_create_session(session_key, &workdir, &env)
+        .await?;
+
+    let mut changed_env = env.clone();
+    changed_env.insert(
+        "CTX_PROVIDER_SESSION_REF".to_string(),
+        "provider-session-ref".to_string(),
+    );
+    changed_env.insert("CTX_MODEL_ID".to_string(), "gpt-5.5".to_string());
+    changed_env.insert(
+        "CTX_SYSTEM_PROMPT_APPEND".to_string(),
+        "updated prompt".to_string(),
+    );
+    changed_env.insert("CTX_RUN_GRANT_ID".to_string(), "grant-two".to_string());
+    changed_env.insert("CTX_POLICY_VERSION".to_string(), "policy-two".to_string());
+
+    let second = adapter
+        .pool
+        .get_or_create_session(session_key, &workdir, &changed_env)
+        .await?;
+
+    assert!(
+        Arc::ptr_eq(&first, &second),
+        "live-session env fields must not force an already-open runtime to restart"
+    );
+    assert_eq!(session_shutdown_reason(&first), None);
+
+    second.process.shutdown("test complete").await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn reap_idle_sessions_reaps_quiescent_live_session() -> Result<()> {
     let tempdir = tempfile::tempdir()?;
     let workdir = tempdir.path().to_path_buf();

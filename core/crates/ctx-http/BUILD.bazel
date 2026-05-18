@@ -14,7 +14,7 @@ exports_files(["Cargo.toml"])
 
 CTX_HTTP_RUSTC_ENV = {
     "CARGO_MANIFEST_DIR": "core/crates/ctx-http",
-    "CARGO_PKG_VERSION": "0.65.46",
+    "CARGO_PKG_VERSION": "0.65.47",
 }
 
 CTX_HTTP_RUNTIME_COMPILE_DATA = [
