@@ -1,36 +1,15 @@
 use super::*;
-use ctx_daemon::daemon::repo_onboarding::DaemonRepoInitRequest;
-
-#[derive(Debug, Deserialize)]
-pub(in crate::api) struct RepoInitReq {
-    path: String,
-    #[serde(default)]
-    allow_existing: bool,
-    #[serde(default)]
-    allow_non_empty: bool,
-}
-
-#[derive(Debug, Serialize)]
-pub(in crate::api) struct RepoInitResp {
-    path: String,
-}
 
 pub(in crate::api) async fn repo_init(
     mobile_auth: Option<Extension<MobileAuthContext>>,
     State(workspaces): State<WorkspacesHandle>,
-    Json(req): Json<RepoInitReq>,
-) -> Result<Json<RepoInitResp>, (StatusCode, Json<ApiErrorResp>)> {
+    Json(req): Json<RepoInitRouteRequest>,
+) -> Result<Json<RepoPathRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
     reject_mobile_auth(mobile_auth)?;
-    let path = workspaces
-        .initialize_repo(DaemonRepoInitRequest {
-            path: req.path,
-            allow_existing: req.allow_existing,
-            allow_non_empty: req.allow_non_empty,
-        })
+    let response = workspaces
+        .initialize_repo_for_route(req)
         .await
         .map_err(repo_onboarding_error_response)?;
 
-    Ok(Json(RepoInitResp {
-        path: path.to_string_lossy().to_string(),
-    }))
+    Ok(Json(response))
 }

@@ -3003,6 +3003,29 @@ const REPO_ONBOARDING_API_ORCHESTRATION_PATTERNS = [
     regex: /\b(?:RepoInitRequest|RepoCloneRequest|RepoValidateDestinationRequest)\b/,
   },
   {
+    name: "repo onboarding API uses low-level daemon onboarding DTOs directly",
+    regex:
+      /\b(?:DaemonRepoInitRequest|DaemonRepoCloneRequest|DaemonRepoValidateDestinationRequest|DaemonRepoStatusCheck)\b/,
+  },
+  {
+    name: "repo onboarding API defines local route DTOs",
+    regex:
+      /\b(?:RepoInitReq|RepoInitResp|RepoCloneReq|RepoCloneResp|RepoValidateDestinationReq|RepoValidateDestinationResp|RepoStagingPathResp|RepoStatusReq|RepoStatusResp)\b/,
+  },
+  {
+    name: "repo onboarding API inspects low-level daemon onboarding errors directly",
+    regex: /\b(?:RepoOnboardingError|RepoOnboardingErrorKind)\b/,
+  },
+  {
+    name: "repo onboarding API calls low-level daemon onboarding facade directly",
+    regex:
+      /(?:\.\s*|WorkspacesHandle\s*::\s*)(?:initialize_repo|clone_repo|validate_repo_destination|create_repo_staging_path|inspect_repo_status)\s*\(/,
+  },
+  {
+    name: "repo onboarding API stringifies paths directly",
+    regex: /\.to_string_lossy\s*\(/,
+  },
+  {
     name: "repo onboarding API reads daemon data root directly",
     regex: /(?:\.|\bCoreHandle::)data_root\s*\(/,
   },

@@ -1502,12 +1502,22 @@ test("daemon boundary guard scopes repo onboarding orchestration bans", () => {
     filePath: "core/crates/ctx-http/src/api/repo/init.rs",
     contents: `
       use ctx_daemon::daemon::repo_onboarding::DaemonRepoInitRequest;
+      #[derive(Deserialize)]
+      struct RepoInitReq {
+        path: String,
+      }
+      #[derive(Serialize)]
+      struct RepoInitResp {
+        path: String,
+      }
       async fn handler(workspaces: WorkspacesHandle, error: RepoOnboardingError) {
         let path = workspaces.initialize_repo(DaemonRepoInitRequest {
           path: req.path,
           allow_existing: false,
           allow_non_empty: false,
         }).await?;
+        let path = WorkspacesHandle::clone_repo(&workspaces, req).await?;
+        let path = path.to_string_lossy().to_string();
         let status = match error.kind() {
           RepoOnboardingErrorKind::BadRequest => StatusCode::BAD_REQUEST,
           RepoOnboardingErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
@@ -1517,7 +1527,45 @@ test("daemon boundary guard scopes repo onboarding orchestration bans", () => {
     `,
     patterns: apiPatternsForPath("core/crates/ctx-http/src/api/repo/init.rs"),
   });
-  assert.deepEqual(violations, []);
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "repo onboarding API uses low-level daemon onboarding DTOs directly",
+      "repo onboarding API uses low-level daemon onboarding DTOs directly",
+      "repo onboarding API defines local route DTOs",
+      "repo onboarding API defines local route DTOs",
+      "repo onboarding API inspects low-level daemon onboarding errors directly",
+      "repo onboarding API inspects low-level daemon onboarding errors directly",
+      "repo onboarding API inspects low-level daemon onboarding errors directly",
+      "repo onboarding API calls low-level daemon onboarding facade directly",
+      "repo onboarding API calls low-level daemon onboarding facade directly",
+      "repo onboarding API stringifies paths directly",
+    ],
+  );
+
+  const routeViolations = scanText({
+    filePath: "core/crates/ctx-http/src/api/repo/init.rs",
+    contents: `
+      use ctx_daemon::daemon::{
+        RepoInitRouteRequest,
+        RepoOnboardingRouteError,
+        RepoOnboardingRouteErrorKind,
+        RepoPathRouteResponse,
+      };
+      async fn handler(workspaces: WorkspacesHandle, error: RepoOnboardingRouteError) {
+        let response: RepoPathRouteResponse = workspaces
+          .initialize_repo_for_route(RepoInitRouteRequest {})
+          .await?;
+        let status = match error.kind() {
+          RepoOnboardingRouteErrorKind::BadRequest => StatusCode::BAD_REQUEST,
+          RepoOnboardingRouteErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        let body = ApiErrorResp { error: error.message().to_string() };
+      }
+    `,
+    patterns: apiPatternsForPath("core/crates/ctx-http/src/api/repo/init.rs"),
+  });
+  assert.deepEqual(routeViolations, []);
 
   assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/settings.rs").includes(

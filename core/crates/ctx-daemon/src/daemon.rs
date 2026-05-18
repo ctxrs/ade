@@ -99,6 +99,11 @@ pub use mcp_auth::{
     require_scoped_mcp_session_context, revoke_provider_session_mcp_token, verify_mcp_auth_token,
     ScopedMcpSessionAccessError,
 };
+pub use repo_onboarding::{
+    RepoCloneRouteRequest, RepoInitRouteRequest, RepoOnboardingRouteError,
+    RepoOnboardingRouteErrorKind, RepoPathRouteResponse, RepoStatusRouteRequest,
+    RepoStatusRouteResponse, RepoValidateDestinationRouteRequest,
+};
 #[cfg(test)]
 pub use retention::prune_archived_session_data_for_all_workspaces;
 pub use route_files::{RouteFileDownloadError, TextRouteDownload};

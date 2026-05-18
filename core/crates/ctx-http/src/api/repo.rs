@@ -1,12 +1,14 @@
 use axum::extract::{Extension, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
-use serde::{Deserialize, Serialize};
 
 use super::errors::ApiErrorResp;
 use crate::api::MobileAuthContext;
-use ctx_daemon::daemon::repo_onboarding::{RepoOnboardingError, RepoOnboardingErrorKind};
-use ctx_daemon::daemon::WorkspacesHandle;
+use ctx_daemon::daemon::{
+    RepoCloneRouteRequest, RepoInitRouteRequest, RepoOnboardingRouteError,
+    RepoOnboardingRouteErrorKind, RepoPathRouteResponse, RepoStatusRouteRequest,
+    RepoStatusRouteResponse, RepoValidateDestinationRouteRequest, WorkspacesHandle,
+};
 
 mod auth;
 mod clone;
@@ -22,10 +24,12 @@ pub(super) use destination::{
 pub(super) use init::repo_init;
 pub(super) use status::repo_status;
 
-fn repo_onboarding_error_response(error: RepoOnboardingError) -> (StatusCode, Json<ApiErrorResp>) {
+fn repo_onboarding_error_response(
+    error: RepoOnboardingRouteError,
+) -> (StatusCode, Json<ApiErrorResp>) {
     let status = match error.kind() {
-        RepoOnboardingErrorKind::BadRequest => StatusCode::BAD_REQUEST,
-        RepoOnboardingErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+        RepoOnboardingRouteErrorKind::BadRequest => StatusCode::BAD_REQUEST,
+        RepoOnboardingRouteErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
     };
     (
         status,
