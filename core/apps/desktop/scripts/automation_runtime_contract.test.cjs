@@ -596,10 +596,10 @@ test("linux local install truth wrapper validates the installed AppImage through
   assert.match(spec, /local sandbox preparation may restart the pre-workspace daemon/);
 });
 
-test("release candidate remote workspace runs standalone Linux launch smoke by default", () => {
+test("release candidate remote workspace keeps standalone Linux launch smoke opt-in", () => {
   const wrapper = fs.readFileSync(RELEASE_CANDIDATE_REMOTE_WORKSPACE_WRAPPER, "utf8");
   assert.match(wrapper, /CTX_REMOTE_WORKSPACE_DESKTOP_FEED_MODE=stage/);
-  assert.match(wrapper, /CTX_REMOTE_WORKSPACE_DESKTOP_LAUNCH_SMOKE="\$\{CTX_REMOTE_WORKSPACE_DESKTOP_LAUNCH_SMOKE:-1\}"/);
+  assert.match(wrapper, /CTX_REMOTE_WORKSPACE_DESKTOP_LAUNCH_SMOKE="\$\{CTX_REMOTE_WORKSPACE_DESKTOP_LAUNCH_SMOKE:-0\}"/);
 });
 
 test("mac remote truth wrapper runs the real remote matrix and rejects docker-backed proof scopes", () => {

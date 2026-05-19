@@ -155,6 +155,30 @@ verify_nerdctl_checksum() {
   [[ "${actual}" == "${expected}" ]]
 }
 
+download_with_retries() {
+  local url="$1"
+  local dest="$2"
+  local label="$3"
+  local attempts="${CTX_LINUX_SANDBOX_BOOTSTRAP_DOWNLOAD_ATTEMPTS:-5}"
+  local delay_seconds="${CTX_LINUX_SANDBOX_BOOTSTRAP_DOWNLOAD_RETRY_DELAY_SECONDS:-3}"
+  local attempt
+  for attempt in $(seq 1 "${attempts}"); do
+    rm -f "${dest}"
+    if curl -fsSL "${url}" -o "${dest}"; then
+      return 0
+    fi
+    local status=$?
+    rm -f "${dest}"
+    if [[ "${attempt}" -ge "${attempts}" ]]; then
+      echo "error: downloading ${label} failed after ${attempts} attempts from ${url} (curl exit ${status})" >&2
+      return "${status}"
+    fi
+    echo "warning: downloading ${label} failed on attempt ${attempt}/${attempts} from ${url} (curl exit ${status}); retrying in ${delay_seconds}s" >&2
+    sleep "${delay_seconds}"
+  done
+  return 1
+}
+
 acquire_nerdctl_download_lock() {
   local lock_dir="${downloads_dir}/.nerdctl-download.lock"
   for _ in $(seq 1 120); do
@@ -177,20 +201,32 @@ download_nerdctl() {
   dest="$(staged_nerdctl_archive_path "${arch}")"
   local lock_dir
   lock_dir="$(acquire_nerdctl_download_lock)"
-  trap 'rm -rf "${lock_dir}"' RETURN
+  release_nerdctl_download_lock() {
+    rm -rf "${lock_dir}"
+  }
+  trap release_nerdctl_download_lock RETURN
   if verify_nerdctl_checksum "${arch}" "${dest}"; then
     return 0
   fi
   rm -f "${dest}"
   local partial="${dest}.partial.$$"
   rm -f "${partial}"
-  curl -fsSL "${url}" -o "${partial}"
+  if ! download_with_retries "${url}" "${partial}" "Linux sandbox runtime archive"; then
+    rm -f "${partial}"
+    release_nerdctl_download_lock
+    trap - RETURN
+    exit 1
+  fi
   if ! verify_nerdctl_checksum "${arch}" "${partial}"; then
     rm -f "${partial}"
+    release_nerdctl_download_lock
+    trap - RETURN
     echo "error: staged Linux sandbox runtime archive failed checksum verification" >&2
     exit 1
   fi
   mv -f "${partial}" "${dest}"
+  release_nerdctl_download_lock
+  trap - RETURN
 }
 
 stage_apt_debs() {

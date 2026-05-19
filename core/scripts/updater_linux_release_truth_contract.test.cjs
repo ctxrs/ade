@@ -143,3 +143,17 @@ test("release Codex sandbox workspace smoke requires selected install progress p
     /local sandbox can start Codex and respond[\s\S]*selectedHarnessProviderIds: \["codex"\],[\s\S]*requireSelectedHarnessInstallsNonBlocking: true,[\s\S]*requireExactSelectedHarnessInstallProof: true/,
   );
 });
+
+test("Linux sandbox runtime bootstrap retries transient archive download failures", () => {
+  const bootstrap = read("core/crates/ctx-linux-sandbox-runtime/src/linux_sandbox_bootstrap.sh");
+  assert.match(bootstrap, /download_with_retries\(\) \{/);
+  assert.match(bootstrap, /CTX_LINUX_SANDBOX_BOOTSTRAP_DOWNLOAD_ATTEMPTS:-5/);
+  assert.match(bootstrap, /CTX_LINUX_SANDBOX_BOOTSTRAP_DOWNLOAD_RETRY_DELAY_SECONDS:-3/);
+  assert.match(bootstrap, /if curl -fsSL "\$\{url\}" -o "\$\{dest\}"; then/);
+  assert.match(bootstrap, /downloading \$\{label\} failed after \$\{attempts\} attempts/);
+  assert.match(bootstrap, /release_nerdctl_download_lock\(\) \{/);
+  assert.match(bootstrap, /if ! download_with_retries "\$\{url\}" "\$\{partial\}" "Linux sandbox runtime archive"; then/);
+  assert.match(bootstrap, /release_nerdctl_download_lock\s+trap - RETURN\s+exit 1/);
+  assert.match(bootstrap, /download_with_retries "\$\{url\}" "\$\{partial\}" "Linux sandbox runtime archive"/);
+  assert.match(bootstrap, /verify_nerdctl_checksum "\$\{arch\}" "\$\{partial\}"/);
+});
