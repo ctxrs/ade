@@ -156,6 +156,11 @@ const mobileAccessStoreDtoApiRoots = [
   "core/crates/ctx-http/src/api/mobile_access/",
 ];
 
+const mobileProfileRouteApiRoots = [
+  "core/crates/ctx-http/src/api/mobile_access/profiles.rs",
+  "core/crates/ctx-http/src/api/mobile_access/profiles/",
+];
+
 const routeFileDownloadApiRoots = [
   "core/crates/ctx-http/src/api/artifacts/",
   "core/crates/ctx-http/src/api/merge_queue_api/logs.rs",
@@ -1277,6 +1282,17 @@ const MOBILE_ACCESS_ORCHESTRATION_API_PATTERNS = [
     name: "mobile access API owns secure proxy request header filtering",
     regex:
       /\bHeaderMap\s*::\s*new\s*\(|\bHeaderName\s*::\s*from_bytes\s*\(|\bHeaderValue\s*::\s*from_str\s*\(/,
+  },
+];
+
+const MOBILE_PROFILE_ROUTE_PARAM_API_PATTERNS = [
+  {
+    name: "mobile profile route constructs ConnectionProfileId locally",
+    regex: /\bConnectionProfileId\s*\(/,
+  },
+  {
+    name: "mobile profile route parses profile UUID locally",
+    regex: /\b(?:uuid\s*::\s*)?Uuid\s*::\s*parse_str\s*\(/,
   },
 ];
 
@@ -5257,6 +5273,9 @@ function apiPatternsForPath(relativePath) {
   if (repoOnboardingApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...REPO_ONBOARDING_API_ORCHESTRATION_PATTERNS);
   }
+  if (mobileProfileRouteApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...MOBILE_PROFILE_ROUTE_PARAM_API_PATTERNS);
+  }
   return patterns;
 }
 
@@ -5315,6 +5334,13 @@ function mobileAccessStoreDtoApiPatternsForPath(relativePath) {
       ...MOBILE_ACCESS_STORE_DTO_API_PATTERNS,
       ...MOBILE_ACCESS_ORCHESTRATION_API_PATTERNS,
     ];
+  }
+  return [];
+}
+
+function mobileProfileRouteApiPatternsForPath(relativePath) {
+  if (mobileProfileRouteApiRoots.some((root) => relativePath.startsWith(root))) {
+    return MOBILE_PROFILE_ROUTE_PARAM_API_PATTERNS;
   }
   return [];
 }
@@ -6384,6 +6410,7 @@ module.exports = {
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MOBILE_ACCESS_STORE_DTO_API_PATTERNS,
   MOBILE_ACCESS_ORCHESTRATION_API_PATTERNS,
+  MOBILE_PROFILE_ROUTE_PARAM_API_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
   MERGE_QUEUE_ENTRY_API_ROUTE_CONTRACT_PATTERNS,
   MERGE_QUEUE_SUBMIT_API_ORCHESTRATION_PATTERNS,
@@ -6483,6 +6510,7 @@ module.exports = {
   mcpDaemonPatternsForPath,
   migratedTestPatternsForPath,
   mobileAccessStoreDtoApiPatternsForPath,
+  mobileProfileRouteApiPatternsForPath,
   mobileStorePatternsForPath,
   providerAuthImportApiPatternsForPath,
   providerAuthGlobalIdFixturePatternsForPath,

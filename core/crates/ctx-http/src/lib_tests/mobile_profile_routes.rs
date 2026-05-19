@@ -134,3 +134,45 @@ async fn delete_mobile_connection_profile_returns_not_found_after_first_removal(
     let res = app.oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn delete_mobile_connection_profile_rejects_invalid_profile_id() {
+    let _serial = home_env_test_lock().lock().await;
+    let home = tempfile::tempdir().unwrap();
+    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
+
+    let data_dir = tempfile::tempdir().unwrap();
+    let fixture =
+        test_daemon_fixture_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
+
+    let app = fixture.router();
+    let req = Request::builder()
+        .method("DELETE")
+        .uri("/api/mobile/connection_profiles/not-a-profile-id")
+        .header(header::AUTHORIZATION, "Bearer daemon-secret")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn list_mobile_devices_for_profile_rejects_invalid_profile_id() {
+    let _serial = home_env_test_lock().lock().await;
+    let home = tempfile::tempdir().unwrap();
+    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
+
+    let data_dir = tempfile::tempdir().unwrap();
+    let fixture =
+        test_daemon_fixture_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
+
+    let app = fixture.router();
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/mobile/connection_profiles/not-a-profile-id/devices")
+        .header(header::AUTHORIZATION, "Bearer daemon-secret")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}

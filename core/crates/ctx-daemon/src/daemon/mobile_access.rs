@@ -26,7 +26,7 @@ pub use lifecycle::{
 };
 pub use profiles::{
     CreateMobileConnectionProfileForRouteRequest, CreateMobileConnectionProfileForRouteResult,
-    RegisterMobileDeviceForRouteRequest,
+    MobileConnectionProfileRouteParams, RegisterMobileDeviceForRouteRequest,
 };
 pub use secure_envelope::{
     MobileSecureEnvelopeForRoute, MobileSecureProxyPayload, MobileSecureProxyResponsePayload,
@@ -526,11 +526,25 @@ impl CoreHandle {
         profiles::delete_mobile_connection_profile_for_route(&self.state, profile_id).await
     }
 
+    pub async fn delete_mobile_connection_profile_for_route_params(
+        &self,
+        params: MobileConnectionProfileRouteParams,
+    ) -> Result<(), MobileAccessRouteError> {
+        profiles::delete_mobile_connection_profile_for_route_params(&self.state, params).await
+    }
+
     pub async fn list_mobile_devices_for_profile_for_route(
         &self,
         profile_id: ConnectionProfileId,
     ) -> Result<Vec<MobileDeviceRegistration>, MobileAccessRouteError> {
         profiles::list_mobile_devices_for_profile_for_route(&self.state, profile_id).await
+    }
+
+    pub async fn list_mobile_devices_for_profile_for_route_params(
+        &self,
+        params: MobileConnectionProfileRouteParams,
+    ) -> Result<Vec<MobileDeviceRegistration>, MobileAccessRouteError> {
+        profiles::list_mobile_devices_for_profile_for_route_params(&self.state, params).await
     }
 
     pub async fn register_mobile_device_for_route(

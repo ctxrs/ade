@@ -77,7 +77,7 @@ use ws::{
     web_session_signal, workspace_active_snapshot_stream_ws, workspace_vcs_stream_ws,
 };
 
-use ctx_core::{ids::*, models::*};
+use ctx_core::models::*;
 use ctx_daemon::daemon::mobile_access::MobileAuthContext;
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
 use ctx_provider_install::install_state::InstallId;

@@ -9,11 +9,12 @@ pub(in crate::api) async fn list_mobile_devices_for_profile(
     if mobile_auth.is_some() {
         return Err(StatusCode::UNAUTHORIZED);
     }
-    let uuid = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
     let devices = state
-        .list_mobile_devices_for_profile_for_route(ConnectionProfileId(uuid))
+        .list_mobile_devices_for_profile_for_route_params(MobileConnectionProfileRouteParams::new(
+            id,
+        ))
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|error| mobile_access_status_code(&error))?;
     Ok(Json(devices))
 }
 

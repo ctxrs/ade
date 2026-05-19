@@ -51,6 +51,7 @@ const {
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   MOBILE_ACCESS_STORE_DTO_API_PATTERNS,
   MOBILE_ACCESS_ORCHESTRATION_API_PATTERNS,
+  MOBILE_PROFILE_ROUTE_PARAM_API_PATTERNS,
   MOBILE_TEST_STORE_ACCESS_PATTERNS,
   MERGE_QUEUE_ENTRY_API_ROUTE_CONTRACT_PATTERNS,
   MERGE_QUEUE_SUBMIT_API_ORCHESTRATION_PATTERNS,
@@ -148,6 +149,7 @@ const {
   mcpDaemonPatternsForPath,
   migratedTestPatternsForPath,
   mobileAccessStoreDtoApiPatternsForPath,
+  mobileProfileRouteApiPatternsForPath,
   mobileStorePatternsForPath,
   providerAuthImportApiPatternsForPath,
   providerAuthGlobalIdFixturePatternsForPath,
@@ -2671,6 +2673,58 @@ test("daemon boundary guard scopes mobile access storage DTO roots", () => {
   assert.deepEqual(
     mobileAccessStoreDtoApiPatternsForPath("core/crates/ctx-http/src/api/providers/status.rs"),
     [],
+  );
+});
+
+test("daemon boundary guard rejects mobile profile route path-id parsing", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/mobile_access/profiles/connection_profiles.rs",
+    contents: `
+      async fn delete_profile(id: String) {
+        let raw = uuid::Uuid::parse_str(&id)?;
+        let _profile_id = ConnectionProfileId(raw);
+        let other = Uuid::parse_str(&id)?;
+      }
+    `,
+    patterns: MOBILE_PROFILE_ROUTE_PARAM_API_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "mobile profile route constructs ConnectionProfileId locally",
+      "mobile profile route parses profile UUID locally",
+      "mobile profile route parses profile UUID locally",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes mobile profile path-id bans to profile routes", () => {
+  assert.deepEqual(
+    mobileProfileRouteApiPatternsForPath(
+      "core/crates/ctx-http/src/api/mobile_access/profiles/connection_profiles.rs",
+    ),
+    MOBILE_PROFILE_ROUTE_PARAM_API_PATTERNS,
+  );
+  assert.deepEqual(
+    mobileProfileRouteApiPatternsForPath(
+      "core/crates/ctx-http/src/api/mobile_access/profiles/devices.rs",
+    ),
+    MOBILE_PROFILE_ROUTE_PARAM_API_PATTERNS,
+  );
+  assert.deepEqual(
+    mobileProfileRouteApiPatternsForPath(
+      "core/crates/ctx-http/src/api/mobile_access/secure.rs",
+    ),
+    [],
+  );
+
+  const routePatternNames = apiPatternsForPath(
+    "core/crates/ctx-http/src/api/mobile_access/profiles/devices.rs",
+  ).map((pattern) => pattern.name);
+  assert.ok(routePatternNames.includes("mobile profile route parses profile UUID locally"));
+  assert.ok(
+    routePatternNames.includes("mobile profile route constructs ConnectionProfileId locally"),
   );
 });
 

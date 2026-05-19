@@ -3,7 +3,8 @@ use ctx_daemon::daemon::{
     mobile_access::{
         CreateMobileConnectionProfileForRouteRequest, EnableMobileAccessRequest,
         MobileAccessRouteError, MobileAccessRouteErrorKind, MobileAccessStatusSnapshot,
-        MobileSecureEnvelopeForRoute, PairMobileDeviceRequest, RegisterMobileDeviceForRouteRequest,
+        MobileConnectionProfileRouteParams, MobileSecureEnvelopeForRoute, PairMobileDeviceRequest,
+        RegisterMobileDeviceForRouteRequest,
     },
     CoreHandle,
 };
@@ -30,7 +31,17 @@ pub(super) use secure::*;
 pub(in crate::api) use secure_pairing::pair_mobile_device;
 
 fn mobile_access_api_error(error: MobileAccessRouteError) -> (StatusCode, Json<ApiErrorResp>) {
-    let status = match error.kind() {
+    let status = mobile_access_status_code(&error);
+    (
+        status,
+        Json(ApiErrorResp {
+            error: error.message().to_string(),
+        }),
+    )
+}
+
+fn mobile_access_status_code(error: &MobileAccessRouteError) -> StatusCode {
+    match error.kind() {
         MobileAccessRouteErrorKind::BadRequest => StatusCode::BAD_REQUEST,
         MobileAccessRouteErrorKind::Unauthorized => StatusCode::UNAUTHORIZED,
         MobileAccessRouteErrorKind::Forbidden => StatusCode::FORBIDDEN,
@@ -38,13 +49,7 @@ fn mobile_access_api_error(error: MobileAccessRouteError) -> (StatusCode, Json<A
         MobileAccessRouteErrorKind::NotFound => StatusCode::NOT_FOUND,
         MobileAccessRouteErrorKind::BadGateway => StatusCode::BAD_GATEWAY,
         MobileAccessRouteErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
-    };
-    (
-        status,
-        Json(ApiErrorResp {
-            error: error.message().to_string(),
-        }),
-    )
+    }
 }
 
 fn mobile_access_status_from_snapshot(snapshot: MobileAccessStatusSnapshot) -> MobileAccessStatus {

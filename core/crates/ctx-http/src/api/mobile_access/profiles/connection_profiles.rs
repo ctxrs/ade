@@ -27,18 +27,11 @@ pub(in crate::api) async fn delete_mobile_connection_profile(
     if mobile_auth.is_some() {
         return Err(StatusCode::UNAUTHORIZED);
     }
-    let uuid = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
     state
-        .delete_mobile_connection_profile_for_route(ConnectionProfileId(uuid))
+        .delete_mobile_connection_profile_for_route_params(MobileConnectionProfileRouteParams::new(
+            id,
+        ))
         .await
-        .map_err(|error| match error.kind() {
-            MobileAccessRouteErrorKind::NotFound => StatusCode::NOT_FOUND,
-            MobileAccessRouteErrorKind::BadRequest => StatusCode::BAD_REQUEST,
-            MobileAccessRouteErrorKind::Unauthorized => StatusCode::UNAUTHORIZED,
-            MobileAccessRouteErrorKind::Forbidden => StatusCode::FORBIDDEN,
-            MobileAccessRouteErrorKind::Conflict => StatusCode::CONFLICT,
-            MobileAccessRouteErrorKind::BadGateway => StatusCode::BAD_GATEWAY,
-            MobileAccessRouteErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
-        })?;
+        .map_err(|error| mobile_access_status_code(&error))?;
     Ok(StatusCode::NO_CONTENT)
 }

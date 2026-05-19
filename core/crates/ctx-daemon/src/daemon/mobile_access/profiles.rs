@@ -27,6 +27,19 @@ pub struct CreateMobileConnectionProfileForRouteResult {
     pub qr_payload: serde_json::Value,
 }
 
+#[derive(Debug, Clone)]
+pub struct MobileConnectionProfileRouteParams {
+    profile_id: String,
+}
+
+impl MobileConnectionProfileRouteParams {
+    pub fn new(profile_id: impl Into<String>) -> Self {
+        Self {
+            profile_id: profile_id.into(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct RegisterMobileDeviceForRouteRequest {
     pub device_id: String,
@@ -117,6 +130,14 @@ pub(super) async fn delete_mobile_connection_profile_for_route(
         })
 }
 
+pub(super) async fn delete_mobile_connection_profile_for_route_params(
+    state: &Arc<DaemonState>,
+    params: MobileConnectionProfileRouteParams,
+) -> Result<(), MobileAccessRouteError> {
+    let profile_id = parse_connection_profile_route_id(&params.profile_id)?;
+    delete_mobile_connection_profile_for_route(state, profile_id).await
+}
+
 pub(super) async fn list_mobile_devices_for_profile_for_route(
     state: &Arc<DaemonState>,
     profile_id: ConnectionProfileId,
@@ -129,6 +150,14 @@ pub(super) async fn list_mobile_devices_for_profile_for_route(
             tracing::error!("failed to list mobile devices: {e:?}");
             MobileAccessRouteError::internal("failed to list mobile devices")
         })
+}
+
+pub(super) async fn list_mobile_devices_for_profile_for_route_params(
+    state: &Arc<DaemonState>,
+    params: MobileConnectionProfileRouteParams,
+) -> Result<Vec<MobileDeviceRegistration>, MobileAccessRouteError> {
+    let profile_id = parse_connection_profile_route_id(&params.profile_id)?;
+    list_mobile_devices_for_profile_for_route(state, profile_id).await
 }
 
 pub(super) async fn register_mobile_device_for_route(
@@ -206,4 +235,24 @@ fn sanitize_optional_mobile_field(input: Option<String>) -> Option<String> {
     input
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
+}
+
+fn parse_connection_profile_route_id(
+    profile_id: &str,
+) -> Result<ConnectionProfileId, MobileAccessRouteError> {
+    uuid::Uuid::parse_str(profile_id)
+        .map(ConnectionProfileId)
+        .map_err(|_| MobileAccessRouteError::bad_request("connection profile id must be a UUID"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_connection_profile_route_id_rejects_invalid_uuid() {
+        let error = parse_connection_profile_route_id("not-a-uuid").unwrap_err();
+        assert_eq!(error.kind(), MobileAccessRouteErrorKind::BadRequest);
+        assert_eq!(error.message(), "connection profile id must be a UUID");
+    }
 }
