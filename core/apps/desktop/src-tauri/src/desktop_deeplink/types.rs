@@ -33,6 +33,7 @@ pub(crate) struct DeepLinkWorkspace {
 
 #[derive(Debug)]
 pub(crate) struct DeepLinkTask {
+    pub(crate) notification_route_id: Option<String>,
     pub(crate) session_id: Option<String>,
     pub(crate) task_id: String,
     pub(crate) workspace_id: String,

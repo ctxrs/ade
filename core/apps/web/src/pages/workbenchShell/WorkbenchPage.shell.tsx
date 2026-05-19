@@ -5,6 +5,7 @@ import {
   interruptSession,
 } from "../../api/client";
 import { useSessionCacheSnapshot, useSessionSupervisor } from "../../state/sessionSupervisor";
+import { useDaemonConnection } from "../../api/useDaemonConnection";
 import { type DraftHarness, type WorkbenchModeId } from "../../components/WorkbenchComposer";
 import type { SlashCommandDescriptor } from "../../state/useComposerAutocomplete";
 import { isDesktopApp } from "../../utils/desktop";
@@ -22,6 +23,7 @@ import { useWorkbenchChromeIntegration } from "./useWorkbenchChromeIntegration";
 import { useWorkbenchShellLayout } from "./useWorkbenchShellLayout";
 import { useWorkbenchSessionBridge } from "./useWorkbenchSessionBridge";
 import { useWorkbenchDesktopAttention } from "./useWorkbenchDesktopAttention";
+import { useWorkbenchDesktopTaskRouting } from "./useWorkbenchDesktopTaskRouting";
 import { useWorkbenchTaskCreation } from "./useWorkbenchTaskCreation";
 import { useWorkbenchTaskListController } from "./useWorkbenchTaskListController";
 import { useWorkbenchActiveTaskController } from "./useWorkbenchActiveTaskController";
@@ -43,6 +45,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
   const supervisor = useSessionSupervisor();
   const sessionSnap = useSessionCacheSnapshot();
   const workbenchStore = useWorkbenchStore();
+  const daemonConnection = useDaemonConnection();
   const workspaceSnapshotStore = useWorkspaceActiveSnapshotStore();
   const workspaceSnapshot = useWorkspaceActiveSnapshotSnapshot();
   const tasksById = workspaceSnapshot.tasksById;
@@ -258,6 +261,16 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     activeTaskIds: workspaceSnapshot.activeIds,
     tasksById,
     taskLiveInfo,
+  });
+
+  useWorkbenchDesktopTaskRouting({
+    activeSessionId,
+    activeTaskId,
+    connection: daemonConnection,
+    windowState: workbenchSnap.window,
+    workbenchStore,
+    workspaceId,
+    workspaceName: workspace?.name ?? null,
   });
 
   const taskListController = useWorkbenchTaskListController({

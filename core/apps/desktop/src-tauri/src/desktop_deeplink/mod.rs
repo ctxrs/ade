@@ -68,12 +68,13 @@ pub(super) fn handle_deep_link_inner(app: &tauri::AppHandle, url: &Url) -> Resul
     let state = app.state::<ConnectionManager>();
     let tokens = app.state::<DeepLinkTokenStore>();
     let registry = app.state::<WorkspaceWindowRegistry>();
+    let notification_routes = app.state::<DesktopNotificationRouteRegistry>();
 
     match action {
         DeepLinkAction::Open(req) => handle_open(app, &state, &tokens, &registry, req),
         DeepLinkAction::Reveal(req) => handle_reveal(app, &state, &tokens, &registry, req),
         DeepLinkAction::Workspace(req) => handle_workspace(app, &state, &registry, req),
-        DeepLinkAction::Task(req) => handle_task(app, &state, &registry, req),
+        DeepLinkAction::Task(req) => handle_task(app, &registry, &notification_routes, req),
         DeepLinkAction::Focus => {
             focus_app_window(app);
             Ok(())

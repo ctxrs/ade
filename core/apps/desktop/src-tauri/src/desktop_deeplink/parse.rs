@@ -86,10 +86,17 @@ pub(crate) fn parse_task(params: &HashMap<String, String>) -> Result<DeepLinkTas
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string);
+    let notification_route_id = params
+        .get("notificationRouteId")
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
     Ok(DeepLinkTask {
         workspace_id,
         task_id,
         session_id,
+        notification_route_id,
     })
 }
 
@@ -234,15 +241,17 @@ mod tests {
 
     #[test]
     fn parse_deep_link_task_with_optional_session() {
-        let url =
-            Url::parse("ctx://task?workspaceId=workspace-1&taskId=task-1&sessionId=session-1")
-                .expect("valid url");
+        let url = Url::parse(
+            "ctx://task?workspaceId=workspace-1&taskId=task-1&sessionId=session-1&notificationRouteId=route-1",
+        )
+        .expect("valid url");
         let action = parse_deep_link(&url).expect("task should parse");
         match action {
             DeepLinkAction::Task(req) => {
                 assert_eq!(req.workspace_id, "workspace-1");
                 assert_eq!(req.task_id, "task-1");
                 assert_eq!(req.session_id.as_deref(), Some("session-1"));
+                assert_eq!(req.notification_route_id.as_deref(), Some("route-1"));
             }
             other => panic!("expected task action, got {other:?}"),
         }

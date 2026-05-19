@@ -12,9 +12,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{anyhow, Context, Result};
 use ctx_desktop_ipc::{
     DesktopDeepLinkToken, DesktopDockRecentLocalWorkspace as DockRecentLocalWorkspaceEntry,
-    DesktopOpenWorkspaceInNewWindowReq, DesktopRecordWorkspaceVisitReq,
-    DesktopSetDockRecentLocalWorkspacesReq, DesktopSetOpenWorkspacesReq, DesktopSetWindowTitleReq,
-    DesktopTitlebarColor,
+    DesktopOpenWorkspaceInNewWindowReq, DesktopRecordWorkbenchRouteReq,
+    DesktopRecordWorkspaceVisitReq, DesktopSetDockRecentLocalWorkspacesReq,
+    DesktopSetOpenWorkspacesReq, DesktopSetWindowTitleReq, DesktopTaskRouteAckReq,
+    DesktopTaskRoutePayload, DesktopTitlebarColor,
 };
 #[cfg(target_os = "macos")]
 use objc2::rc::Retained;
@@ -101,6 +102,7 @@ fn main() {
         .manage(WorkspaceWindowRegistry::default())
         .manage(DesktopAttentionRegistry::default())
         .manage(DesktopNotificationAutomationState::default())
+        .manage(DesktopNotificationRouteRegistry::default())
         .manage(DesktopMenuStateCache::default())
         .manage(DesktopStorage::default())
         .manage(DesktopWebviewRecoveryController::default());
@@ -160,6 +162,8 @@ fn main() {
             desktop_read_binary_file,
             desktop_get_deep_link_token,
             desktop_set_open_workspaces,
+            desktop_ack_task_route,
+            desktop_consume_pending_task_route,
             desktop_open_launcher_in_new_window,
             desktop_open_workspace_in_new_window,
             desktop_open_workspace_setup_in_new_window,
@@ -179,6 +183,7 @@ fn main() {
             desktop_get_attention_automation_snapshot,
             desktop_trigger_menu_command,
             desktop_get_menu_item_state,
+            desktop_record_workbench_route,
             desktop_record_workspace_visit,
             desktop_set_dock_recent_local_workspaces,
             desktop_register_workspace_window,

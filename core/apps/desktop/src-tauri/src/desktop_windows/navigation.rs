@@ -123,6 +123,8 @@ fn navigate_window_to_workspace(
     let _ = window.emit("workspace:open", workspace_id.to_string());
 }
 
+pub(crate) const DESKTOP_TASK_DEEPLINK_OPEN_EVENT: &str = "desktop_task_deeplink_open";
+
 fn daemon_key_for_window_label(app: &tauri::AppHandle, window_label: &str) -> Option<String> {
     app.try_state::<ConnectionManager>()
         .and_then(|state| state.daemon_target_key_for_scope(window_label))
@@ -293,6 +295,112 @@ pub(crate) fn focus_or_open_workspace_target(
         registry.unregister_window(&window_label);
     }
     open_workspace_target_in_new_window(app, registry, workspace_id, task_id, session_id)
+}
+
+pub(crate) fn focus_or_open_workspace_task_target(
+    app: &tauri::AppHandle,
+    registry: &WorkspaceWindowRegistry,
+    workspace_id: &str,
+    task_id: &str,
+    session_id: Option<&str>,
+    daemon_key: Option<&str>,
+    route_id: Option<&str>,
+    preferred_window_label: Option<&str>,
+    allow_new_window: bool,
+) -> Result<()> {
+    let workspace_id = workspace_id.trim();
+    if workspace_id.is_empty() {
+        anyhow::bail!("workspace_id is required");
+    }
+    let task_id = task_id.trim();
+    if task_id.is_empty() {
+        anyhow::bail!("task_id is required");
+    }
+
+    for _ in 0..2 {
+        match registry.window_for_task_target(
+            workspace_id,
+            task_id,
+            session_id,
+            daemon_key,
+            preferred_window_label,
+        ) {
+            WorkspaceTaskWindowLookup::Match {
+                window_label,
+                reason: _,
+            } => {
+                if let Some(window) = app.get_webview_window(&window_label) {
+                    focus_existing_task_window(
+                        app,
+                        registry,
+                        &window,
+                        &window_label,
+                        workspace_id,
+                        task_id,
+                        session_id,
+                        route_id,
+                    )?;
+                    return Ok(());
+                }
+                registry.unregister_window(&window_label);
+            }
+            WorkspaceTaskWindowLookup::AmbiguousWorkspace { window_labels } => {
+                let stale_labels = window_labels
+                    .iter()
+                    .filter(|label| app.get_webview_window(label).is_none())
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if stale_labels.is_empty() {
+                    break;
+                }
+                for label in stale_labels {
+                    registry.unregister_window(&label);
+                }
+            }
+            WorkspaceTaskWindowLookup::None => break,
+        }
+    }
+
+    if !allow_new_window {
+        anyhow::bail!("task route has no live window for its scoped daemon target");
+    }
+
+    open_workspace_target_in_new_window(app, registry, workspace_id, Some(task_id), session_id)
+}
+
+fn focus_existing_task_window(
+    app: &tauri::AppHandle,
+    registry: &WorkspaceWindowRegistry,
+    window: &tauri::WebviewWindow,
+    window_label: &str,
+    workspace_id: &str,
+    task_id: &str,
+    session_id: Option<&str>,
+    route_id: Option<&str>,
+) -> Result<()> {
+    let _ = window.show();
+    let _ = window.set_focus();
+    let route = build_workspace_url(workspace_id, Some(task_id), session_id);
+    record_window_route(app, window_label, &route);
+    registry.record_recent_workspace(workspace_id, None);
+    let payload = DesktopTaskRoutePayload {
+        route_id: route_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+        session_id: session_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+        task_id: task_id.to_string(),
+        workspace_id: workspace_id.to_string(),
+    };
+    registry.set_pending_task_route(window_label, payload.clone());
+    window
+        .emit(DESKTOP_TASK_DEEPLINK_OPEN_EVENT, payload)
+        .context("emitting desktop task deep-link event")?;
+    Ok(())
 }
 
 pub(crate) fn open_launcher_window(app: &tauri::AppHandle) -> Result<()> {

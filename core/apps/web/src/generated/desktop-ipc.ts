@@ -126,6 +126,14 @@ export type DesktopOpenWorkspaceInNewWindowReq = { workspace_id: string, };
 
 export type DesktopRecordWorkspaceVisitReq = { workspace_id: string, workspace_label: string, };
 
+export type DesktopWorkbenchRouteTask = { task_id: string, session_id?: string | null, };
+
+export type DesktopRecordWorkbenchRouteReq = { active_session_id?: string | null, active_task_id?: string | null, open_tasks: Array<DesktopWorkbenchRouteTask>, workspace_id: string, workspace_label: string, };
+
+export type DesktopTaskRoutePayload = { route_id: string, session_id?: string | null, task_id: string, workspace_id: string, };
+
+export type DesktopTaskRouteAckReq = { route_id: string, };
+
 export type DesktopDockRecentLocalWorkspace = { label: string, root_path: string, };
 
 export type DesktopSetDockRecentLocalWorkspacesReq = { entries: Array<DesktopDockRecentLocalWorkspace>, };

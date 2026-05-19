@@ -11,6 +11,7 @@ import type {
   DesktopOpenPathReq,
   DesktopOpenWorkspaceInNewWindowReq,
   DesktopReadBinaryFileResp,
+  DesktopRecordWorkbenchRouteReq,
   DesktopRecordWorkspaceVisitReq,
   DesktopSaveTextFileReq,
   DesktopSetDockRecentLocalWorkspacesReq,
@@ -23,6 +24,8 @@ import type {
   DesktopStorageGetReq,
   DesktopStorageNotice,
   DesktopSyncWorkspaceAttentionReq,
+  DesktopTaskRouteAckReq,
+  DesktopTaskRoutePayload,
   DesktopTitlebarColor,
   DesktopUploadBlobReq,
   DesktopWebviewRecoveryAutomationSnapshot,
@@ -162,6 +165,27 @@ export const desktopRecordWorkspaceVisit = async (
     "desktop_record_workspace_visit",
     req,
   );
+};
+
+export const desktopRecordWorkbenchRoute = async (
+  req: DesktopRecordWorkbenchRouteReq,
+): Promise<void> => {
+  if (!isDesktopApp()) return;
+  await invokeDesktopReq<DesktopRecordWorkbenchRouteReq, void>(
+    "desktop_record_workbench_route",
+    req,
+  );
+};
+
+export const desktopConsumePendingTaskRoute = async (): Promise<DesktopTaskRoutePayload | null> => {
+  if (!isDesktopApp()) return null;
+  return invoke<DesktopTaskRoutePayload | null>("desktop_consume_pending_task_route");
+};
+
+export const desktopAckTaskRoute = async (route_id: string): Promise<void> => {
+  if (!isDesktopApp()) return;
+  const req: DesktopTaskRouteAckReq = { route_id };
+  await invokeDesktopReq<DesktopTaskRouteAckReq, void>("desktop_ack_task_route", req);
 };
 
 export const desktopSetTitlebarColor = async (color: DesktopTitlebarColor): Promise<void> =>

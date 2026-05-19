@@ -118,21 +118,70 @@ pub(crate) fn handle_workspace(
 
 pub(crate) fn handle_task(
     app: &tauri::AppHandle,
-    state: &ConnectionManager,
     registry: &WorkspaceWindowRegistry,
+    notification_routes: &DesktopNotificationRouteRegistry,
     req: DeepLinkTask,
 ) -> Result<()> {
-    if matches!(state.info().kind, DesktopConnectionKind::None) {
-        ensure_local_connection(app, state)?;
-    }
-
-    focus_or_open_workspace_target(
+    let target = resolve_task_route(notification_routes, req)?;
+    let allow_new_window = task_route_allows_new_window(target.daemon_key.as_deref());
+    focus_or_open_workspace_task_target(
         app,
         registry,
-        &req.workspace_id,
-        Some(&req.task_id),
-        req.session_id.as_deref(),
+        &target.workspace_id,
+        &target.task_id,
+        target.session_id.as_deref(),
+        target.daemon_key.as_deref(),
+        target.route_id.as_deref(),
+        target.source_window_label.as_deref(),
+        allow_new_window,
     )
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResolvedTaskRoute {
+    daemon_key: Option<String>,
+    route_id: Option<String>,
+    session_id: Option<String>,
+    source_window_label: Option<String>,
+    task_id: String,
+    workspace_id: String,
+}
+
+fn resolve_task_route(
+    notification_routes: &DesktopNotificationRouteRegistry,
+    req: DeepLinkTask,
+) -> Result<ResolvedTaskRoute> {
+    let Some(route_id) = req.notification_route_id.as_deref() else {
+        return Ok(ResolvedTaskRoute {
+            daemon_key: None,
+            route_id: None,
+            session_id: req.session_id,
+            source_window_label: None,
+            task_id: req.task_id,
+            workspace_id: req.workspace_id,
+        });
+    };
+    let route = notification_routes
+        .get(route_id)
+        .ok_or_else(|| anyhow!("notification route is no longer available"))?;
+    if route.workspace_id != req.workspace_id || route.task_id != req.task_id {
+        anyhow::bail!("notification route does not match task deep link");
+    }
+    if route.session_id != req.session_id {
+        anyhow::bail!("notification route does not match task session");
+    }
+    Ok(ResolvedTaskRoute {
+        daemon_key: Some(route.daemon_key),
+        route_id: Some(route.route_id),
+        session_id: route.session_id,
+        source_window_label: Some(route.source_window_label),
+        task_id: route.task_id,
+        workspace_id: route.workspace_id,
+    })
+}
+
+fn task_route_allows_new_window(daemon_key: Option<&str>) -> bool {
+    matches!(daemon_key.map(str::trim), Some("local"))
 }
 
 pub(crate) fn open_in_ctx(
@@ -257,4 +306,18 @@ fn open_in_editor_with_target(
         remote_authority: settings.remote_authority.clone(),
     };
     open_in_editor(&adjusted, path, line, col, remote)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_routes_only_allow_new_windows_for_explicit_local_scope() {
+        assert!(task_route_allows_new_window(Some("local")));
+        assert!(task_route_allows_new_window(Some(" local ")));
+        assert!(!task_route_allows_new_window(None));
+        assert!(!task_route_allows_new_window(Some("")));
+        assert!(!task_route_allows_new_window(Some("ssh|host||8787|")));
+    }
 }

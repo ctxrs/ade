@@ -30,6 +30,14 @@ describe("desktop request envelopes", () => {
     await desktop.desktopOpenWorkspaceInNewWindow("ws-3");
     await desktop.desktopSetDockRecentLocalWorkspaces([{ label: "Workspace", root_path: "/tmp/ws" }]);
     await desktop.desktopRecordWorkspaceVisit("ws-4", "Workspace 4");
+    await desktop.desktopRecordWorkbenchRoute({
+      active_task_id: "task-1",
+      open_tasks: [{ task_id: "task-1", session_id: "session-1" }],
+      workspace_id: "ws-4",
+      workspace_label: "Workspace 4",
+    });
+    await desktop.desktopConsumePendingTaskRoute();
+    await desktop.desktopAckTaskRoute("route-1");
     await desktop.desktopSetTitlebarColor({ r: 1, g: 2, b: 3 });
     await desktop.desktopSetMenuState([{ id: "task.new", enabled: true }]);
     await desktop.desktopSetWindowTitle("ctx");
@@ -58,6 +66,19 @@ describe("desktop request envelopes", () => {
       ["desktop_open_workspace_in_new_window", { req: { workspace_id: "ws-3" } }],
       ["desktop_set_dock_recent_local_workspaces", { req: { entries: [{ label: "Workspace", root_path: "/tmp/ws" }] } }],
       ["desktop_record_workspace_visit", { req: { workspace_id: "ws-4", workspace_label: "Workspace 4" } }],
+      [
+        "desktop_record_workbench_route",
+        {
+          req: {
+            active_task_id: "task-1",
+            open_tasks: [{ task_id: "task-1", session_id: "session-1" }],
+            workspace_id: "ws-4",
+            workspace_label: "Workspace 4",
+          },
+        },
+      ],
+      ["desktop_consume_pending_task_route", undefined],
+      ["desktop_ack_task_route", { req: { route_id: "route-1" } }],
       ["desktop_set_titlebar_color", { req: { r: 1, g: 2, b: 3 } }],
       ["desktop_set_menu_state", { req: { items: [{ id: "task.new", enabled: true }] } }],
       ["desktop_set_window_title", { req: { title: "ctx" } }],

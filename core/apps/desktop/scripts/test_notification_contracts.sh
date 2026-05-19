@@ -30,7 +30,7 @@ fi
 
 export CTX_DESKTOP_SKIP_TAURI_BUILD="${CTX_DESKTOP_SKIP_TAURI_BUILD:-1}"
 
-if rg -n "mac_notification_sys" "${TAURI_DIR}/src/desktop_notifications.rs"; then
+if rg -n "mac_notification_sys" "${TAURI_DIR}/src/desktop_notifications"; then
   echo "desktop notification code must not import mac_notification_sys" >&2
   exit 1
 fi
@@ -52,6 +52,6 @@ fi
 
 node --test "${ROOT}/apps/desktop/automation/notification-signed-smoke.contract.test.cjs"
 cargo test --manifest-path "${TAURI_DIR}/Cargo.toml" desktop_attention::tests::
-cargo test --manifest-path "${TAURI_DIR}/Cargo.toml" desktop_notifications::tests::
-cargo test --manifest-path "${TAURI_DIR}/Cargo.toml" desktop_deeplink::deep_link_parse_tests::
-cargo test --manifest-path "${TAURI_DIR}/Cargo.toml" desktop_windows::tests::
+cargo test --manifest-path "${TAURI_DIR}/Cargo.toml" desktop_notifications
+cargo test --manifest-path "${TAURI_DIR}/Cargo.toml" desktop_deeplink::parse
+cargo test --manifest-path "${TAURI_DIR}/Cargo.toml" desktop_windows::registry

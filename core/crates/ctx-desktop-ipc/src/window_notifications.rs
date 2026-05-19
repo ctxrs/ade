@@ -34,6 +34,43 @@ pub struct DesktopRecordWorkspaceVisitReq {
     pub workspace_label: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct DesktopWorkbenchRouteTask {
+    pub task_id: String,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct DesktopRecordWorkbenchRouteReq {
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub active_session_id: Option<String>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub active_task_id: Option<String>,
+    #[serde(default)]
+    pub open_tasks: Vec<DesktopWorkbenchRouteTask>,
+    pub workspace_id: String,
+    pub workspace_label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct DesktopTaskRoutePayload {
+    pub route_id: String,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub session_id: Option<String>,
+    pub task_id: String,
+    pub workspace_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct DesktopTaskRouteAckReq {
+    pub route_id: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct DesktopDockRecentLocalWorkspace {
     pub label: String,

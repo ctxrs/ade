@@ -156,6 +156,7 @@ describe("signed macOS notification smoke", () => {
 
     await navigateToTauriUrl("tauri://localhost");
     await waitForDesktopAppReady();
+    await requireTauriValue("desktop_connect_local");
     const permission = await resolveNotificationPermissionForSmoke();
     await requireTauriValue("desktop_clear_notification_automation_snapshot");
 

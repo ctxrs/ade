@@ -68,6 +68,10 @@ pub fn typescript_declarations() -> String {
     push_decl::<DesktopSetOpenWorkspacesReq>(&mut out);
     push_decl::<DesktopOpenWorkspaceInNewWindowReq>(&mut out);
     push_decl::<DesktopRecordWorkspaceVisitReq>(&mut out);
+    push_decl::<DesktopWorkbenchRouteTask>(&mut out);
+    push_decl::<DesktopRecordWorkbenchRouteReq>(&mut out);
+    push_decl::<DesktopTaskRoutePayload>(&mut out);
+    push_decl::<DesktopTaskRouteAckReq>(&mut out);
     push_decl::<DesktopDockRecentLocalWorkspace>(&mut out);
     push_decl::<DesktopSetDockRecentLocalWorkspacesReq>(&mut out);
     push_decl::<DesktopTitlebarColor>(&mut out);

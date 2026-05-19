@@ -2,17 +2,21 @@ use anyhow::Result;
 use ctx_desktop_ipc::{DesktopNotificationPermission, DesktopShowSystemNotificationReq};
 use tauri::Manager;
 
+use crate::ConnectionManager;
+
 mod automation;
 mod deep_links;
 mod platform;
+mod routes;
 
 pub(super) use automation::{
     DesktopClearDeliveredNotificationsReq, DesktopDeliveredNotificationEntry,
     DesktopDeliveredNotificationSnapshot, DesktopNotificationAutomationSnapshot,
     DesktopNotificationAutomationState,
 };
-use deep_links::{build_notification_deep_link, open_notification_target};
+use deep_links::build_notification_deep_link;
 pub(super) use platform::install_macos_notification_delegate;
+pub(super) use routes::{DesktopNotificationRouteRegistry, DesktopNotificationTaskRoute};
 
 pub(super) fn notification_permission() -> DesktopNotificationPermission {
     platform::notification_permission()
@@ -39,9 +43,13 @@ fn should_simulate_system_notifications() -> bool {
 
 pub(super) fn show_system_notification(
     app: &tauri::AppHandle,
+    routes: &DesktopNotificationRouteRegistry,
     req: DesktopShowSystemNotificationReq,
+    source_window_label: &str,
+    daemon_key: &str,
 ) -> Result<()> {
-    let deep_link = build_notification_deep_link(&req)?;
+    let route = routes.create_task_route(&req, source_window_label, daemon_key)?;
+    let deep_link = build_notification_deep_link(&route)?;
     let automation = app.state::<DesktopNotificationAutomationState>();
     automation.record(&req, &deep_link);
     if should_simulate_system_notifications() {
@@ -66,9 +74,15 @@ pub(super) fn desktop_request_notification_permission(
 #[tauri::command]
 pub(super) fn desktop_show_system_notification(
     app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    state: tauri::State<ConnectionManager>,
+    routes: tauri::State<DesktopNotificationRouteRegistry>,
     req: DesktopShowSystemNotificationReq,
 ) -> Result<(), String> {
-    show_system_notification(&app, req).map_err(super::to_err)
+    let daemon_key = state
+        .daemon_target_key_for_scope(window.label())
+        .ok_or_else(|| "desktop notification requires an active daemon target".to_string())?;
+    show_system_notification(&app, &routes, req, window.label(), &daemon_key).map_err(super::to_err)
 }
 
 #[tauri::command]

@@ -173,6 +173,42 @@ pub(crate) fn desktop_record_workspace_visit(
 }
 
 #[tauri::command]
+pub(crate) fn desktop_record_workbench_route(
+    window: tauri::WebviewWindow,
+    state: tauri::State<ConnectionManager>,
+    registry: tauri::State<WorkspaceWindowRegistry>,
+    req: DesktopRecordWorkbenchRouteReq,
+) -> Result<(), String> {
+    let workspace_id = req.workspace_id.trim().to_string();
+    if workspace_id.is_empty() {
+        return Err("workspace_id is required".to_string());
+    }
+    let workspace_label = req.workspace_label.clone();
+    let daemon_key = state.daemon_target_key_for_scope(window.label());
+    registry.record_workbench_route_for_daemon(window.label(), daemon_key.as_deref(), req);
+    registry.record_recent_workspace(&workspace_id, Some(&workspace_label));
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn desktop_consume_pending_task_route(
+    window: tauri::WebviewWindow,
+    registry: tauri::State<WorkspaceWindowRegistry>,
+) -> Result<Option<DesktopTaskRoutePayload>, String> {
+    Ok(registry.consume_pending_task_route(window.label()))
+}
+
+#[tauri::command]
+pub(crate) fn desktop_ack_task_route(
+    window: tauri::WebviewWindow,
+    registry: tauri::State<WorkspaceWindowRegistry>,
+    req: DesktopTaskRouteAckReq,
+) -> Result<(), String> {
+    registry.acknowledge_pending_task_route(window.label(), &req.route_id);
+    Ok(())
+}
+
+#[tauri::command]
 pub(crate) fn desktop_set_dock_recent_local_workspaces(
     registry: tauri::State<WorkspaceWindowRegistry>,
     req: DesktopSetDockRecentLocalWorkspacesReq,
