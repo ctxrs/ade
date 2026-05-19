@@ -47,16 +47,13 @@ fn subagent_api_error(error: SessionSubagentRouteError) -> (StatusCode, Json<Api
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TestDaemonFixture;
     use ctx_core::ids::SessionId;
     use serde::de::DeserializeOwned;
     use serde_json::json;
 
-    async fn sessions_handle() -> SessionsHandle {
-        crate::test_support::TestDaemonFixture::new("http://127.0.0.1:0")
-            .await
-            .daemon()
-            .handle()
-            .sessions()
+    async fn sessions_fixture() -> TestDaemonFixture {
+        TestDaemonFixture::new("http://127.0.0.1:0").await
     }
 
     fn route_request<T: DeserializeOwned>(value: serde_json::Value) -> T {
@@ -65,7 +62,8 @@ mod tests {
 
     #[tokio::test]
     async fn public_listing_routes_preserve_bare_status_errors() {
-        let handle = sessions_handle().await;
+        let fixture = sessions_fixture().await;
+        let handle = fixture.daemon().handle().sessions();
 
         assert_eq!(
             list_session_subagents(State(handle.clone()), Path("not-a-session".to_string()))
@@ -123,7 +121,8 @@ mod tests {
 
     #[tokio::test]
     async fn mcp_subagent_routes_preserve_json_invalid_id_errors() {
-        let handle = sessions_handle().await;
+        let fixture = sessions_fixture().await;
+        let handle = fixture.daemon().handle().sessions();
 
         let err = mcp_spawn_agent(
             State(handle.clone()),
