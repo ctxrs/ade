@@ -14,9 +14,13 @@ import type {
   SubagentInvocation,
 } from "@ctx/types";
 import type { BlobUploadResp } from "../generated/desktop-ipc";
-import { apiAny, authToken } from "./clientBase";
-import { setBrowserCapabilityQueryToken } from "./browserCapabilityAuth";
-import { getDaemonConnection, getDaemonHttpUrl } from "./daemonConnection";
+import { apiAny, authToken, daemonFetchRaw } from "./clientBase";
+import {
+  artifactResourceUrl,
+  blobResourceUrl,
+  browserResourcePathForScope,
+} from "./browserResourceUrls";
+import { getDaemonConnection } from "./daemonConnection";
 import { desktopUploadBlob, isDesktopApp } from "../utils/desktop";
 import {
   trackFeatureUsed,
@@ -463,28 +467,34 @@ export const deleteMessage = (sessionId: string, messageId: string) =>
   apiAny(`/api/sessions/${sessionId}/messages/${messageId}`, { method: "DELETE" });
 
 export const blobUrl = (blobId: string): string => {
-  const url = getDaemonHttpUrl(`/api/blobs/${encodeURIComponent(String(blobId || ""))}`);
-  const query = new URLSearchParams();
-  setBrowserCapabilityQueryToken(query, getDaemonConnection().authToken, {
-    kind: "blob",
-    blobId: String(blobId || ""),
-  });
-  const serialized = query.toString();
-  return serialized ? `${url}?${serialized}` : url;
+  return blobResourceUrl(blobId);
 };
 
 export const artifactUrl = (sessionId: string, artifactId: string): string => {
-  const url = getDaemonHttpUrl(
-    `/api/sessions/${encodeURIComponent(String(sessionId || ""))}/artifacts/${encodeURIComponent(
-      String(artifactId || ""),
-    )}`,
+  return artifactResourceUrl(sessionId, artifactId);
+};
+
+export const fetchArtifactText = async (
+  sessionId: string,
+  artifactId: string,
+  opts?: { signal?: AbortSignal },
+): Promise<string> => {
+  const response = await daemonFetchRaw(
+    browserResourcePathForScope({
+      kind: "session_artifact",
+      sessionId: String(sessionId || ""),
+      artifactId: String(artifactId || ""),
+    }),
+    {
+      cache: "no-store",
+      headers: {
+        accept: "text/plain, text/markdown, application/json, application/octet-stream, */*",
+      },
+      signal: opts?.signal,
+    },
   );
-  const query = new URLSearchParams();
-  setBrowserCapabilityQueryToken(query, getDaemonConnection().authToken, {
-    kind: "session_artifact",
-    sessionId: String(sessionId || ""),
-    artifactId: String(artifactId || ""),
-  });
-  const serialized = query.toString();
-  return serialized ? `${url}?${serialized}` : url;
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`Failed to load artifact (${response.status}).`);
+  }
+  return response.body;
 };

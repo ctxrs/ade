@@ -1,7 +1,12 @@
 import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Artifact } from "../api/client";
+import { resetBrowserResourceUrlCacheForTests } from "../api/browserResourceUrls";
+import {
+  resetDaemonConnectionStateForTests,
+  setDaemonConnection,
+} from "../api/daemonConnection";
 import { ArtifactsPane } from "./ArtifactsPane";
 
 const makeArtifact = (overrides: Partial<Artifact> = {}): Artifact =>
@@ -27,6 +32,9 @@ function mockTextFetch(opts: { ok?: boolean; status?: number; text?: string } = 
   const response = {
     ok: opts.ok ?? true,
     status: opts.status ?? 200,
+    headers: {
+      get: (key: string) => key.toLowerCase() === "content-type" ? "text/plain" : null,
+    },
     text: async () => opts.text ?? "",
   } as Response;
   global.fetch = vi.fn(async () => response);
@@ -46,8 +54,21 @@ Preview body text.
 <p style={{ color: "red" }}>This should not render literally.</p>
 `;
 
+beforeEach(() => {
+  resetBrowserResourceUrlCacheForTests();
+  setDaemonConnection({
+    baseUrl: "http://daemon.test",
+    authToken: "daemon-secret",
+    source: "test",
+    mobileSecure: null,
+  });
+});
+
 afterEach(() => {
   global.fetch = originalFetch;
+  resetBrowserResourceUrlCacheForTests();
+  resetDaemonConnectionStateForTests();
+  vi.restoreAllMocks();
 });
 
 function extractTransformNumber(transform: string, name: "translate" | "scale", axis?: "x" | "y"): number {
@@ -327,6 +348,142 @@ describe("ArtifactsPane", () => {
     expect(await screen.findByText("Inline Heading")).toBeInTheDocument();
     expect(screen.getByText("Preview body text.")).toBeInTheDocument();
     expect(screen.queryByText("## Inline Heading")).not.toBeInTheDocument();
+  });
+
+  it("keeps inline text preview content stable across unrelated rerenders", async () => {
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(1_761_600_000_000);
+    mockTextFetch({ text: "Stable preview body." });
+
+    const rendered = render(
+      <ArtifactsPane
+        sessionId="session-1"
+        artifacts={[
+          makeArtifact({
+            name: "preview.txt",
+            mime_type: "text/plain",
+            absolute_path: "/tmp/preview.txt",
+          }),
+        ]}
+      />,
+    );
+
+    expect(await screen.findByText("Stable preview body.")).toBeInTheDocument();
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+
+    nowSpy.mockReturnValue(1_761_600_002_000);
+    rendered.rerender(
+      <ArtifactsPane
+        sessionId="session-1"
+        artifacts={[
+          makeArtifact({
+            name: "preview.txt",
+            mime_type: "text/plain",
+            absolute_path: "/tmp/preview.txt",
+          }),
+        ]}
+      />,
+    );
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
+    expect(screen.getByText("Stable preview body.")).toBeInTheDocument();
+    expect(screen.queryByText("Loading preview…")).not.toBeInTheDocument();
+  });
+
+  it("keeps modal text preview content stable across unrelated rerenders", async () => {
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(1_761_600_000_000);
+    mockTextFetch({ text: "Modal preview body." });
+
+    const artifact = makeArtifact({
+      name: "modal.txt",
+      mime_type: "text/plain",
+      absolute_path: "/tmp/modal.txt",
+    });
+    const rendered = render(
+      <ArtifactsPane
+        sessionId="session-1"
+        artifacts={[artifact]}
+      />,
+    );
+
+    expect(await screen.findByText("Modal preview body.")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("/tmp/modal.txt"));
+    await waitFor(() => expect(screen.getAllByText("Modal preview body.")).toHaveLength(2));
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+
+    nowSpy.mockReturnValue(1_761_600_002_000);
+    rendered.rerender(
+      <ArtifactsPane
+        sessionId="session-1"
+        artifacts={[artifact]}
+      />,
+    );
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(2));
+    expect(screen.getAllByText("Modal preview body.")).toHaveLength(2);
+    expect(screen.queryByText("Loading artifact…")).not.toBeInTheDocument();
+  });
+
+  it("keeps artifact image URLs stable across rerenders", () => {
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(1_761_600_000_000);
+    const artifact = makeArtifact({
+      name: "sample.png",
+      absolute_path: "/tmp/sample.png",
+      mime_type: "image/png",
+      bytes: 2048,
+    });
+    const rendered = render(
+      <ArtifactsPane
+        sessionId="session-1"
+        artifacts={[artifact]}
+      />,
+    );
+    const image = document.querySelector(".wb-artifact-image") as HTMLImageElement;
+    const src = image.getAttribute("src");
+
+    nowSpy.mockReturnValue(1_761_600_002_000);
+    rendered.rerender(
+      <ArtifactsPane
+        sessionId="session-1"
+        artifacts={[artifact]}
+      />,
+    );
+
+    const nextImage = document.querySelector(".wb-artifact-image") as HTMLImageElement;
+    expect(nextImage.getAttribute("src")).toBe(src);
+  });
+
+  it("shows an explicit unsupported state for image artifacts without a browser resource token", () => {
+    resetBrowserResourceUrlCacheForTests();
+    setDaemonConnection({
+      baseUrl: "http://daemon.test",
+      authToken: null,
+      source: "test",
+      mobileSecure: {
+        kind: "managed_tunnel",
+        deviceId: "device-1",
+        daemonPublicKey: "public-key",
+        pairingRequestEncryption: "pairing",
+        nextSeq: 1,
+      },
+    });
+
+    render(
+      <ArtifactsPane
+        sessionId="session-1"
+        artifacts={[
+          makeArtifact({
+            name: "sample.png",
+            absolute_path: "/tmp/sample.png",
+            mime_type: "image/png",
+            bytes: 2048,
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("Resource preview is unavailable for this connection.")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("sample.png"));
+    expect(screen.getByRole("alert")).toHaveTextContent("Resource preview is unavailable for this connection.");
   });
 
   it("normalizes mdx artifacts in inline and modal previews", async () => {

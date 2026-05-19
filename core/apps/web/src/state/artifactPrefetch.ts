@@ -1,4 +1,5 @@
-import { artifactUrl, idToString, type Artifact } from "../api/client";
+import { idToString, type Artifact } from "../api/client";
+import { artifactResourceUrl } from "../api/browserResourceUrls";
 import { isImageArtifact, isVideoArtifact } from "../utils/artifacts";
 
 const readTunableInt = (key: string, fallback: number) => {
@@ -84,7 +85,13 @@ class ArtifactPrefetcher {
       if (!size || size > remaining) continue;
       remaining -= size;
       this.reservedBytes += size;
-      const url = artifactUrl(sessionId, artifactId);
+      let url: string;
+      try {
+        url = artifactResourceUrl(sessionId, artifactId);
+      } catch {
+        this.reservedBytes = Math.max(0, this.reservedBytes - size);
+        continue;
+      }
       void this.fetchArtifact(artifactId, url, size, sessionId, run);
     }
   }

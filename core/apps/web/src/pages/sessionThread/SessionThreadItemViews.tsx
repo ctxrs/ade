@@ -11,7 +11,8 @@ import {
   type ReactNode,
 } from "react";
 import { Check, Copy } from "lucide-react";
-import { blobUrl, type MessageAttachment } from "../../api/client";
+import { type MessageAttachment } from "../../api/client";
+import { MessageAttachmentImage } from "../../components/MessageAttachmentImage";
 import { type SessionViewVerbosity } from "../../state/uiStateStore";
 import { copyTextToClipboard } from "../../utils/clipboard";
 import { useRelativeNowMs } from "../../utils/useRelativeNowMs";
@@ -22,7 +23,6 @@ import {
   formatToolInput,
   humanToolStatus,
   humanTurnStatus,
-  imageAttachmentSrc,
   looksLikeMarkdown,
   parseIsoMs,
   toolKindIcon,
@@ -193,9 +193,16 @@ export function WorkbenchTurnHeaderView({
           <div className="wb-turn-header-attachments" aria-label="Attachments">
             {header.attachments.map((a, idx) => {
               if (a.kind !== "image" && a.kind !== "image_ref") return null;
-              const src = imageAttachmentSrc(a);
               const name = attachmentDisplayName(a.name);
-              return <img key={idx} className="wb-turn-header-attachment-img" src={src} alt={name} title={name} />;
+              return (
+                <MessageAttachmentImage
+                  key={idx}
+                  attachment={a}
+                  className="wb-turn-header-attachment-img"
+                  alt={name}
+                  title={name}
+                />
+              );
             })}
           </div>
         )}
@@ -258,9 +265,14 @@ function CollapsibleMessage({
           <div className="attachments">
             {attachments.map((a, idx) => {
               if (a.kind !== "image" && a.kind !== "image_ref") return null;
-              const src =
-                a.kind === "image_ref" ? blobUrl(a.blob_id) : `data:${a.mime_type};base64,${a.data_base64}`;
-              return <img key={idx} className="attachment-img" src={src} alt={a.name ?? `image-${idx}`} />;
+              return (
+                <MessageAttachmentImage
+                  key={idx}
+                  attachment={a}
+                  className="attachment-img"
+                  alt={a.name ?? `image-${idx}`}
+                />
+              );
             })}
           </div>
         )}

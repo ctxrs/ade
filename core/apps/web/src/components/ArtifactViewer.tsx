@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Copy, Download, RotateCcw, X, ZoomIn, ZoomOut } from "lucide-react";
-import { artifactUrl, idToString, type Artifact } from "../api/client";
+import { fetchArtifactText, idToString, type Artifact } from "../api/client";
+import { useArtifactResourceUrlState } from "../api/useBrowserResourceUrl";
 import { MemoMarkdown } from "../pages/SessionPage.markdown";
 import { getArtifactPreviewKind } from "../utils/artifacts";
 import { buildArtifactDocumentPreview } from "../utils/documentArtifacts";
@@ -73,7 +74,8 @@ export function ArtifactViewer({
   const isTextPreview = previewKind === "markdown" || previewKind === "text";
   const name = displayName(artifact);
   const artifactId = idToString(artifact.id);
-  const url = artifactUrl(sessionId, artifactId);
+  const resourceUrl = useArtifactResourceUrlState(sessionId, artifactId);
+  const url = resourceUrl.url;
   const meta = `${artifact.mime_type || "application/octet-stream"} · ${formatBytes(artifact.bytes)}`;
   const missing = Boolean(artifact.missing);
   const [copying, setCopying] = useState(false);
@@ -128,15 +130,10 @@ export function ArtifactViewer({
     if (!artifactId || missing || !isTextPreview) return;
     const controller = new AbortController();
     setTextPreview({ status: "loading", content: "", error: null });
-    void fetch(url, {
-      cache: "no-store",
+    void fetchArtifactText(sessionId, artifactId, {
       signal: controller.signal,
     })
-      .then(async (resp) => {
-        if (!resp.ok) {
-          throw new Error(`Failed to load artifact (${resp.status}).`);
-        }
-        const content = await resp.text();
+      .then((content) => {
         setTextPreview({ status: "ready", content, error: null });
       })
       .catch((err: unknown) => {
@@ -146,9 +143,9 @@ export function ArtifactViewer({
           content: "",
           error: errorMessage(err) || "Failed to load artifact.",
         });
-      });
+    });
     return () => controller.abort();
-  }, [artifactId, isTextPreview, missing, url]);
+  }, [artifactId, isTextPreview, missing, sessionId]);
 
   const updateBaseSize = useCallback(() => {
     const img = imageRef.current;
@@ -291,12 +288,12 @@ export function ArtifactViewer({
   }, []);
 
   const onDownload = useCallback(() => {
-    if (!artifactId || missing) return;
+    if (!artifactId || missing || !url) return;
     downloadArtifact(artifact, url);
   }, [artifact, artifactId, missing, url]);
 
   const onCopy = useCallback(async () => {
-    if (!artifactId || missing || !isImage) return;
+    if (!artifactId || missing || !isImage || !url) return;
     setCopying(true);
     try {
       await copyArtifactImage(artifact, url);
@@ -320,7 +317,7 @@ export function ArtifactViewer({
               type="button"
               className="wb-artifact-action"
               onClick={onDownload}
-              disabled={!artifactId || missing}
+              disabled={!artifactId || missing || !url}
               aria-label="Download artifact"
               title={missing ? "Missing" : "Download"}
             >
@@ -331,7 +328,7 @@ export function ArtifactViewer({
                 type="button"
                 className="wb-artifact-action"
                 onClick={() => void onCopy()}
-                disabled={!artifactId || missing || copying}
+                disabled={!artifactId || missing || copying || !url}
                 aria-label="Copy image"
                 title="Copy image"
               >
@@ -395,11 +392,15 @@ export function ArtifactViewer({
         >
           {missing ? (
             <div className="wb-artifact-missing">Missing on disk</div>
-          ) : isVideo ? (
+          ) : (isVideo || isImage) && resourceUrl.status === "unsupported" ? (
+            <div className="wb-artifacts-error" role="alert">
+              <div>{resourceUrl.error}</div>
+            </div>
+          ) : isVideo && url ? (
             <video className="wb-artifact-modal-video" autoPlay controls loop muted playsInline preload="metadata">
               <source src={url} type={artifact.mime_type || "video/mp4"} />
             </video>
-          ) : isImage ? (
+          ) : isImage && url ? (
             <img
               className="wb-artifact-modal-image"
               ref={imageRef}

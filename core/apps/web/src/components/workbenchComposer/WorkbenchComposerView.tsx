@@ -5,6 +5,7 @@ import { formatEffortLabel } from "../../utils/modelEffort";
 import { errorMessage } from "../../utils/errorMessage";
 import { shouldHydrateProviderModels } from "../../pages/workbenchShell/useWorkbenchProviders";
 import { ComposerAutocompleteMenu } from "../ComposerAutocompleteMenu";
+import { MessageAttachmentImage } from "../MessageAttachmentImage";
 import { useComposerAutocomplete } from "../../state/useComposerAutocomplete";
 import { imageFilesToMessageAttachments } from "../../utils/messageAttachments";
 import { TextInput, Textarea } from "../ui/text-input";
@@ -15,7 +16,6 @@ import {
   MENU_DESCRIPTIONS,
   attachmentDisplayName,
   describeContextWindow,
-  imageAttachmentSrc,
   labelForVerbosity,
   pickDefaultEffort,
 } from "./WorkbenchComposer.utils";
@@ -241,11 +241,14 @@ export function WorkbenchComposer(props: WorkbenchComposerProps) {
         <div className="wb-composer-attachments">
           {attachments.map((a, idx) => {
             if (a.kind !== "image" && a.kind !== "image_ref") return null;
-            const src = imageAttachmentSrc(a);
             const name = attachmentDisplayName(a.name);
             return (
               <div key={idx} className="wb-attach-thumb" title={name}>
-                <img className="wb-attach-thumb-img" src={src} alt={name} />
+                <MessageAttachmentImage
+                  attachment={a}
+                  className="wb-attach-thumb-img"
+                  alt={name}
+                />
                 <button
                   type="button"
                   className="wb-attach-thumb-remove"

@@ -3,6 +3,11 @@ import { useEffect, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkbenchComposer } from "./WorkbenchComposer";
 import type { MessageAttachment, ProviderOptions, ProviderStatus } from "../api/client";
+import { resetBrowserResourceUrlCacheForTests } from "../api/browserResourceUrls";
+import {
+  resetDaemonConnectionStateForTests,
+  setDaemonConnection,
+} from "../api/daemonConnection";
 import type { DraftHarness, WorkbenchComposerProps, WorkbenchModeId } from "./WorkbenchComposer";
 import type { HarnessCatalogEntry } from "../utils/harnessCatalog";
 
@@ -89,6 +94,13 @@ describe("WorkbenchComposer textarea sizing", () => {
   const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "scrollHeight");
 
   beforeEach(() => {
+    resetBrowserResourceUrlCacheForTests();
+    setDaemonConnection({
+      baseUrl: "http://daemon.test",
+      authToken: "daemon-secret",
+      source: "test",
+      mobileSecure: null,
+    });
     mockRaf();
     Object.defineProperty(HTMLTextAreaElement.prototype, "scrollHeight", {
       configurable: true,
@@ -102,6 +114,8 @@ describe("WorkbenchComposer textarea sizing", () => {
   });
 
   afterEach(() => {
+    resetBrowserResourceUrlCacheForTests();
+    resetDaemonConnectionStateForTests();
     vi.restoreAllMocks();
     trackFeatureUsedMock.mockReset();
     trackProviderSelectedMock.mockReset();

@@ -5,6 +5,11 @@ import { VirtuosoMockContext } from "react-virtuoso";
 import { describe, it, vi, beforeAll, beforeEach, afterEach } from "vitest";
 import type { WorkbenchTab } from "../workbench/types";
 import type { SessionSupervisorSnapshot } from "../state/sessionSupervisorCore";
+import { resetBrowserResourceUrlCacheForTests } from "../api/browserResourceUrls";
+import {
+  resetDaemonConnectionStateForTests,
+  setDaemonConnection,
+} from "../api/daemonConnection";
 import WorkbenchPage from "./WorkbenchPage";
 
 const workspaceId = "ws-1";
@@ -480,6 +485,13 @@ beforeAll(() => {
 });
 
 beforeEach(() => {
+  resetBrowserResourceUrlCacheForTests();
+  setDaemonConnection({
+    baseUrl: "http://daemon.test",
+    authToken: "daemon-secret",
+    source: "test",
+    mobileSecure: null,
+  });
   navToken = 0;
   activeTab = { id: `tab-${taskId}`, kind: "task", ref: { taskId, sessionId } };
   activeTaskId = taskId;
@@ -524,6 +536,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  resetBrowserResourceUrlCacheForTests();
+  resetDaemonConnectionStateForTests();
   vi.clearAllMocks();
 });
 

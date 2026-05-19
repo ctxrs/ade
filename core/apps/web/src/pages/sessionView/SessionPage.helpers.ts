@@ -1,4 +1,4 @@
-import { blobUrl, type MessageAttachment, type SessionTurn, type SubagentInvocationChild } from "../../api/client";
+import { type SessionTurn, type SubagentInvocationChild } from "../../api/client";
 import {
   markdownToPlainText,
   normalizeTurnHeaderPlainText,
@@ -47,10 +47,6 @@ function humanizeToolIdentifier(value: string): string {
       return part[0]!.toUpperCase() + part.slice(1);
     })
     .join(" ");
-}
-
-export function imageAttachmentSrc(a: MessageAttachment): string {
-  return a.kind === "image_ref" ? blobUrl(a.blob_id) : `data:${a.mime_type};base64,${a.data_base64}`;
 }
 
 export function attachmentDisplayName(name?: string | null) {

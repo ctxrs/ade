@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Copy, Download } from "lucide-react";
-import { artifactUrl, idToString, type Artifact } from "../api/client";
+import { fetchArtifactText, idToString, type Artifact } from "../api/client";
+import { useArtifactResourceUrlState } from "../api/useBrowserResourceUrl";
 import { MemoMarkdown } from "../pages/SessionPage.markdown";
 import {
   getArtifactPreviewKind,
@@ -24,7 +25,6 @@ function ArtifactInlineTextPreview({
   artifact: Artifact;
 }) {
   const artifactId = idToString(artifact.id);
-  const url = artifactUrl(sessionId, artifactId);
   const missing = Boolean(artifact.missing);
   const [textPreview, setTextPreview] = useState<TextPreviewState>({
     status: "idle",
@@ -36,15 +36,10 @@ function ArtifactInlineTextPreview({
     if (!artifactId || missing) return;
     const controller = new AbortController();
     setTextPreview({ status: "loading", content: "", error: null });
-    void fetch(url, {
-      cache: "no-store",
+    void fetchArtifactText(sessionId, artifactId, {
       signal: controller.signal,
     })
-      .then(async (resp) => {
-        if (!resp.ok) {
-          throw new Error(`Failed to load artifact (${resp.status}).`);
-        }
-        const content = await resp.text();
+      .then((content) => {
         setTextPreview({ status: "ready", content, error: null });
       })
       .catch((err: unknown) => {
@@ -54,9 +49,9 @@ function ArtifactInlineTextPreview({
           content: "",
           error: errorMessage(err) || "Failed to load artifact.",
         });
-      });
+    });
     return () => controller.abort();
-  }, [artifactId, missing, url]);
+  }, [artifactId, missing, sessionId]);
 
   if (textPreview.status === "loading" || textPreview.status === "idle") {
     return <div className="wb-artifact-inline-status">Loading preview…</div>;
@@ -92,7 +87,8 @@ function ArtifactCard({
   const name = displayName(artifact);
   const missing = Boolean(artifact.missing);
   const artifactId = idToString(artifact.id);
-  const url = artifactUrl(sessionId, artifactId);
+  const resourceUrl = useArtifactResourceUrlState(sessionId, artifactId);
+  const url = resourceUrl.url;
   const mimeLabel = artifact.mime_type || "application/octet-stream";
   const meta = `${mimeLabel} · ${formatBytes(artifact.bytes)}`;
   const title = artifact.absolute_path || name;
@@ -101,20 +97,20 @@ function ArtifactCard({
   const isImage = previewKind === "image";
   const isInlineTextPreview = previewKind === "markdown" || previewKind === "text";
   const canPreview = isPreviewableArtifact(artifact) && !missing;
-  const canDownload = Boolean(artifactId) && !missing;
-  const canCopy = Boolean(artifactId) && !missing && isImage && !copying;
+  const canDownload = Boolean(artifactId) && !missing && Boolean(url);
+  const canCopy = Boolean(artifactId) && !missing && Boolean(url) && isImage && !copying;
 
   const onDownload = useCallback(
     (event?: React.MouseEvent) => {
       event?.stopPropagation();
-      if (!canDownload) return;
+      if (!canDownload || !url) return;
       downloadArtifact(artifact, url);
     },
     [artifact, canDownload, url],
   );
 
   const onCopy = useCallback(async () => {
-    if (!canCopy) return;
+    if (!canCopy || !url) return;
     setCopying(true);
     try {
       await copyArtifactImage(artifact, url);
@@ -132,7 +128,9 @@ function ArtifactCard({
   let preview: React.ReactNode = null;
   if (missing) {
     preview = <div className="wb-artifact-missing">Missing on disk</div>;
-  } else if (isVideo) {
+  } else if ((isVideo || isImage) && resourceUrl.status === "unsupported") {
+    preview = <div className="wb-artifact-inline-status">{resourceUrl.error}</div>;
+  } else if (isVideo && url) {
     preview = (
       <video
         className="wb-artifact-video"
@@ -148,7 +146,7 @@ function ArtifactCard({
         <source src={url} type={artifact.mime_type || "video/mp4"} />
       </video>
     );
-  } else if (isImage) {
+  } else if (isImage && url) {
     preview = <img className="wb-artifact-image" src={url} alt={name} />;
   } else if (isInlineTextPreview) {
     preview = (
@@ -178,7 +176,7 @@ function ArtifactCard({
               onClick={onDownload}
               disabled={!canDownload}
               aria-label="Download artifact"
-              title={canDownload ? "Download" : "Missing"}
+              title={canDownload ? "Download" : resourceUrl.status === "unsupported" ? "Unavailable" : "Missing"}
             >
               <Download size={14} />
             </button>

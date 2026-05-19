@@ -1,4 +1,4 @@
-import { blobUrl, type MessageAttachment, type ProviderOptions } from "../../api/client";
+import { type ProviderOptions } from "../../api/client";
 import type { SessionViewVerbosity } from "../../state/uiStateStore";
 import type { WorkbenchModeId } from "./WorkbenchComposer.types";
 import type { ContextWindowInfo } from "./WorkbenchComposer.types";
@@ -37,10 +37,6 @@ const selectedEndpointModelOverride = (opts?: ProviderOptions): string => {
   const endpoint = source.endpoints.find((candidate) => candidate.id === endpointId);
   return String(endpoint?.model_override ?? "").trim();
 };
-
-export function imageAttachmentSrc(a: MessageAttachment): string {
-  return a.kind === "image_ref" ? blobUrl(a.blob_id) : `data:${a.mime_type};base64,${a.data_base64}`;
-}
 
 export function attachmentDisplayName(name?: string | null) {
   const n = String(name ?? "").trim();

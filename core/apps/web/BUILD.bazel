@@ -70,6 +70,7 @@ WEB_PRETEXT_APP_SOURCES = [
     "scripts/pretext-parity-probe-shared.*",
     "src/api/**/*",
     "src/components/ExternalLink.tsx",
+    "src/components/MessageAttachmentImage.tsx",
     "src/generated/desktop-ipc.ts",
     "src/pages/SessionPage.thread.ts",
     "src/pages/SessionPage.types.ts",

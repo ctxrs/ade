@@ -4,6 +4,7 @@ import type { DaemonConnection } from "./daemonConnection";
 
 const {
   apiAnyMock,
+  daemonFetchRawMock,
   desktopUploadBlobMock,
   trackFirstTurnSubmittedMock,
   trackSessionCreatedMock,
@@ -12,6 +13,7 @@ const {
   isDesktopAppMock,
 } = vi.hoisted(() => ({
   apiAnyMock: vi.fn(),
+  daemonFetchRawMock: vi.fn(),
   desktopUploadBlobMock: vi.fn(),
   trackFirstTurnSubmittedMock: vi.fn(),
   trackSessionCreatedMock: vi.fn(),
@@ -31,11 +33,11 @@ const {
 vi.mock("./clientBase", () => ({
   apiAny: apiAnyMock,
   authToken: vi.fn(() => null),
+  daemonFetchRaw: daemonFetchRawMock,
 }));
 
 vi.mock("./daemonConnection", () => ({
   getDaemonConnection: getDaemonConnectionMock,
-  getDaemonHttpUrl: vi.fn(),
 }));
 
 vi.mock("../utils/desktop", async (importOriginal) => {
@@ -61,10 +63,11 @@ import {
   artifactUrl,
   blobUrl,
   createSession,
+  fetchArtifactText,
   postMessage,
   uploadBlob,
 } from "./clientSessions";
-import { getDaemonHttpUrl } from "./daemonConnection";
+import { resetBrowserResourceUrlCacheForTests } from "./browserResourceUrls";
 
 describe("createSession analytics", () => {
   beforeEach(() => {
@@ -180,7 +183,7 @@ describe("postMessage analytics", () => {
 describe("browser download urls", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(getDaemonHttpUrl).mockImplementation((path: string) => `http://daemon.test${path}`);
+    resetBrowserResourceUrlCacheForTests();
     vi.spyOn(Date, "now").mockReturnValue(1_761_600_000_000);
   });
 
@@ -237,6 +240,32 @@ describe("browser download urls", () => {
     expect(artifactUrl("session-1", "artifact-1")).toBe(
       `http://daemon.test/api/sessions/session-1/artifacts/artifact-1?expires_at=${expectedExpiresAt}&token=${expectedToken}`,
     );
+  });
+});
+
+describe("fetchArtifactText", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("uses an authenticated daemon raw fetch path instead of a capability query URL", async () => {
+    daemonFetchRawMock.mockResolvedValue({
+      status: 200,
+      body: "artifact body",
+      content_type: "text/markdown",
+    });
+
+    await expect(fetchArtifactText("session-1", "artifact-1")).resolves.toBe("artifact body");
+
+    const [path, init] = daemonFetchRawMock.mock.calls[0] ?? [];
+    expect(path).toBe("/api/sessions/session-1/artifacts/artifact-1");
+    expect(String(path)).not.toContain("token=");
+    expect(init).toMatchObject({
+      cache: "no-store",
+      headers: {
+        accept: expect.stringContaining("text/markdown"),
+      },
+    });
   });
 });
 
