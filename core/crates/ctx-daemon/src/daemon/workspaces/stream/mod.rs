@@ -1,11 +1,17 @@
+mod access;
 mod cursor_acceptance;
 mod event_routing;
+mod handle;
 mod read_model;
 mod replay;
 mod replay_cursor;
 mod subscriptions;
 mod vcs;
 
+pub use access::{
+    WorkspaceStreamAccessError, WorkspaceStreamRouteAdmission, WorkspaceStreamRouteError,
+    WorkspaceStreamRouteErrorKind, WorkspaceStreamRouteParams,
+};
 pub use cursor_acceptance::WorkspaceStreamCursorAcceptance;
 pub(in crate::daemon) use cursor_acceptance::{
     accept_session_delta_cursor, accept_session_head_cursor, is_session_head_delta_after_cursor,
