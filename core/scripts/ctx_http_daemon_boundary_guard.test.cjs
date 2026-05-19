@@ -28,6 +28,7 @@ const {
   UPDATE_API_ORCHESTRATION_PATTERNS,
   UPDATE_DRAIN_API_ORCHESTRATION_PATTERNS,
   ROUTE_FILE_DOWNLOAD_API_PATTERNS,
+  SESSION_ARTIFACT_API_ROUTE_CONTRACT_PATTERNS,
   RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS,
   WEB_SESSION_REST_ROUTE_API_CONTRACT_PATTERNS,
   WORKSPACE_CONFIG_ROUTE_CONTEXT_PATTERNS,
@@ -166,6 +167,7 @@ const {
   providerTargetScopedInstallsStorePatternsForPath,
   replayPropertiesStorePatternsForPath,
   routeFileDownloadApiPatternsForPath,
+  sessionArtifactApiPatternsForPath,
   runArchiveApiPatternsForPath,
   routerCompositionPatternsForPath,
   scanRepo,
@@ -2733,6 +2735,71 @@ test("daemon boundary guard scopes route file download roots", () => {
   }
   assert.deepEqual(
     routeFileDownloadApiPatternsForPath("core/crates/ctx-http/src/api/mobile_access.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects session artifact route contract leaks", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/artifacts/session/set.rs",
+    contents: `
+      use ctx_core::ids::{ArtifactId, SessionId};
+      use ctx_daemon::daemon::sessions::SessionArtifactInput;
+      struct ArtifactInput;
+      struct SetSessionArtifactsReq;
+      async fn helper(state: SessionsHandle, mcp_auth: McpAuthContext) {
+        let session_id = SessionId(uuid::Uuid::parse_str("bad").unwrap());
+        let artifact_id = ArtifactId(uuid::Uuid::parse_str("bad").unwrap());
+        let _input = SessionArtifactInput {
+          absolute_file_path: "/tmp/a".to_string(),
+          name: None,
+          mime_type: None,
+        };
+        validate_scoped_mcp_session_context(&state, mcp_auth, session_id).await?;
+        state.list_session_artifacts_with_missing_for_route(session_id).await?;
+        state.set_session_artifacts_for_route(session_id, vec![]).await?;
+        state.open_session_artifact_for_route(session_id, artifact_id).await?;
+      }
+    `,
+    patterns: SESSION_ARTIFACT_API_ROUTE_CONTRACT_PATTERNS,
+  });
+
+  assert.deepEqual(new Set(violations.map((violation) => violation.name)), new Set([
+    "session artifact API owns local route id parsing",
+    "session artifact API owns local set request DTOs",
+    "session artifact API constructs raw artifact inputs",
+    "session artifact API owns scoped MCP admission",
+    "session artifact API calls raw artifact facades",
+  ]));
+});
+
+test("daemon boundary guard scopes session artifact route contracts", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/src/api/artifacts/session/list.rs",
+    "core/crates/ctx-http/src/api/artifacts/session/set.rs",
+    "core/crates/ctx-http/src/api/artifacts/download.rs",
+  ]) {
+    assert.deepEqual(
+      sessionArtifactApiPatternsForPath(filePath),
+      SESSION_ARTIFACT_API_ROUTE_CONTRACT_PATTERNS,
+    );
+    assert.equal(
+      apiPatternsForPath(filePath).includes(SESSION_ARTIFACT_API_ROUTE_CONTRACT_PATTERNS[0]),
+      true,
+    );
+  }
+
+  assert.deepEqual(
+    sessionArtifactApiPatternsForPath("core/crates/ctx-http/src/api/artifacts/download/response.rs"),
+    [],
+  );
+  assert.deepEqual(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/artifacts/session/set.rs",
+      contents:
+        "state.set_session_artifacts_for_route_params(SessionRouteParams::new(id), SessionArtifactRouteContext::new(ctx), req).await?;",
+      patterns: SESSION_ARTIFACT_API_ROUTE_CONTRACT_PATTERNS,
+    }),
     [],
   );
 });

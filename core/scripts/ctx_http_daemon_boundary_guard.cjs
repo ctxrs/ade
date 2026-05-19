@@ -162,6 +162,12 @@ const routeFileDownloadApiRoots = [
   "core/crates/ctx-http/src/api/workspaces/worktrees.rs",
 ];
 
+const sessionArtifactApiRoots = [
+  "core/crates/ctx-http/src/api/artifacts/session/list.rs",
+  "core/crates/ctx-http/src/api/artifacts/session/set.rs",
+  "core/crates/ctx-http/src/api/artifacts/download.rs",
+];
+
 const mergeQueueSubmitApiRoots = [
   "core/crates/ctx-http/src/api/merge_queue_api/submit.rs",
 ];
@@ -1307,6 +1313,31 @@ const ROUTE_FILE_DOWNLOAD_API_PATTERNS = [
   {
     name: "route file API owns session artifact metadata derivation",
     regex: /\b(?:normalize_session_artifact_name|infer_session_artifact_mime_type|build_session_artifact_etag|build_session_artifact_last_modified)\b/,
+  },
+];
+
+const SESSION_ARTIFACT_API_ROUTE_CONTRACT_PATTERNS = [
+  {
+    name: "session artifact API owns local route id parsing",
+    regex:
+      /\b(?:SessionId|ArtifactId)\b|\buuid\s*::\s*Uuid\s*::\s*parse_str\s*\(/,
+  },
+  {
+    name: "session artifact API owns local set request DTOs",
+    regex: /\b(?:ArtifactInput|SetSessionArtifactsReq)\b/,
+  },
+  {
+    name: "session artifact API constructs raw artifact inputs",
+    regex: /\bSessionArtifactInput\b/,
+  },
+  {
+    name: "session artifact API owns scoped MCP admission",
+    regex: /\bvalidate_scoped_mcp_session_context\s*\(/,
+  },
+  {
+    name: "session artifact API calls raw artifact facades",
+    regex:
+      /\.(?:list_session_artifacts_with_missing_for_route|set_session_artifacts_for_route|open_session_artifact_for_route)\s*\(/,
   },
 ];
 
@@ -5123,6 +5154,9 @@ function apiPatternsForPath(relativePath) {
   if (routeFileDownloadApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...ROUTE_FILE_DOWNLOAD_API_PATTERNS);
   }
+  if (sessionArtifactApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...SESSION_ARTIFACT_API_ROUTE_CONTRACT_PATTERNS);
+  }
   if (mergeQueueSubmitApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...MERGE_QUEUE_SUBMIT_API_ORCHESTRATION_PATTERNS);
   }
@@ -5288,6 +5322,13 @@ function mobileAccessStoreDtoApiPatternsForPath(relativePath) {
 function routeFileDownloadApiPatternsForPath(relativePath) {
   if (routeFileDownloadApiRoots.some((root) => relativePath.startsWith(root))) {
     return ROUTE_FILE_DOWNLOAD_API_PATTERNS;
+  }
+  return [];
+}
+
+function sessionArtifactApiPatternsForPath(relativePath) {
+  if (sessionArtifactApiRoots.some((root) => relativePath.startsWith(root))) {
+    return SESSION_ARTIFACT_API_ROUTE_CONTRACT_PATTERNS;
   }
   return [];
 }
@@ -6322,6 +6363,7 @@ module.exports = {
   UPDATE_API_ORCHESTRATION_PATTERNS,
   UPDATE_DRAIN_API_ORCHESTRATION_PATTERNS,
   ROUTE_FILE_DOWNLOAD_API_PATTERNS,
+  SESSION_ARTIFACT_API_ROUTE_CONTRACT_PATTERNS,
   RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS,
   WEB_SESSION_REST_ROUTE_API_CONTRACT_PATTERNS,
   SESSION_HEAD_API_ORCHESTRATION_PATTERNS,
@@ -6460,6 +6502,7 @@ module.exports = {
   providerTargetScopedInstallsStorePatternsForPath,
   replayPropertiesStorePatternsForPath,
   routeFileDownloadApiPatternsForPath,
+  sessionArtifactApiPatternsForPath,
   runArchiveApiPatternsForPath,
   sessionHeadApiPatternsForPath,
   sessionControlRouteApiPatternsForPath,

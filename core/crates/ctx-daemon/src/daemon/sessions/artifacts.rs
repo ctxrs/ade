@@ -14,13 +14,59 @@ use crate::daemon::handle::SessionsHandle;
 use crate::daemon::route_files::{
     canonicalize_existing_or_raw, open_canonical_route_file, RouteFileDownloadError,
 };
-use crate::daemon::SessionStoreAccessError;
+use crate::daemon::{ScopedMcpSessionAccessError, SessionStoreAccessError};
 
-#[derive(Debug)]
+use super::route_contract::{parse_session_route_id, SessionRouteParams};
+
+#[derive(Debug, serde::Deserialize)]
 pub struct SessionArtifactInput {
     pub absolute_file_path: String,
+    #[serde(default)]
     pub name: Option<String>,
+    #[serde(default)]
     pub mime_type: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct SetSessionArtifactsRouteRequest {
+    #[serde(default)]
+    artifacts: Vec<SessionArtifactInput>,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(transparent)]
+pub struct SessionArtifactsRouteResponse(Vec<Artifact>);
+
+impl From<Vec<Artifact>> for SessionArtifactsRouteResponse {
+    fn from(artifacts: Vec<Artifact>) -> Self {
+        Self(artifacts)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionArtifactDownloadRouteParams {
+    session_id: String,
+    artifact_id: String,
+}
+
+impl SessionArtifactDownloadRouteParams {
+    pub fn new(session_id: impl Into<String>, artifact_id: impl Into<String>) -> Self {
+        Self {
+            session_id: session_id.into(),
+            artifact_id: artifact_id.into(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct SessionArtifactRouteContext {
+    mcp_auth: Option<ctx_mcp_auth::McpAuthContext>,
+}
+
+impl SessionArtifactRouteContext {
+    pub fn new(mcp_auth: Option<ctx_mcp_auth::McpAuthContext>) -> Self {
+        Self { mcp_auth }
+    }
 }
 
 #[derive(Debug)]
@@ -35,12 +81,23 @@ pub struct SessionArtifactDownload {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum SessionArtifactRouteError {
+    Unauthorized(String),
     NotFound,
     BadRequest(String),
     Internal(String),
 }
 
 impl SessionsHandle {
+    pub async fn list_session_artifacts_with_missing_for_route_params(
+        &self,
+        params: SessionRouteParams,
+    ) -> Result<SessionArtifactsRouteResponse, SessionArtifactRouteError> {
+        let session_id = parse_session_artifact_route_session_id(params.session_id())?;
+        self.list_session_artifacts_with_missing_for_route(session_id)
+            .await
+            .map(Into::into)
+    }
+
     pub async fn list_session_artifacts_with_missing_for_route(
         &self,
         session_id: SessionId,
@@ -74,6 +131,23 @@ impl SessionsHandle {
         Ok(artifacts)
     }
 
+    pub async fn set_session_artifacts_for_route_params(
+        &self,
+        params: SessionRouteParams,
+        context: SessionArtifactRouteContext,
+        request: SetSessionArtifactsRouteRequest,
+    ) -> Result<SessionArtifactsRouteResponse, SessionArtifactRouteError> {
+        let session_id = parse_session_artifact_route_session_id(params.session_id())?;
+        if let Some(mcp_auth) = context.mcp_auth {
+            self.require_scoped_mcp_session_context(mcp_auth, session_id)
+                .await
+                .map_err(scoped_mcp_session_artifact_route_error)?;
+        }
+        self.set_session_artifacts_for_route(session_id, request.artifacts)
+            .await
+            .map(Into::into)
+    }
+
     pub async fn set_session_artifacts_for_route(
         &self,
         session_id: SessionId,
@@ -93,6 +167,16 @@ impl SessionsHandle {
             .await
             .map_err(session_artifact_internal_error)?;
         Ok(artifacts)
+    }
+
+    pub async fn open_session_artifact_for_route_params(
+        &self,
+        params: SessionArtifactDownloadRouteParams,
+    ) -> Result<SessionArtifactDownload, SessionArtifactRouteError> {
+        let session_id = parse_session_artifact_route_session_id(&params.session_id)?;
+        let artifact_id = parse_session_artifact_route_artifact_id(&params.artifact_id)?;
+        self.open_session_artifact_for_route(session_id, artifact_id)
+            .await
     }
 
     pub async fn open_session_artifact_for_route(
@@ -142,6 +226,35 @@ impl SessionsHandle {
             mime_type: artifact.mime_type,
             name: artifact.name,
         })
+    }
+}
+
+fn parse_session_artifact_route_session_id(
+    value: &str,
+) -> Result<SessionId, SessionArtifactRouteError> {
+    parse_session_route_id(value)
+        .map_err(|_| SessionArtifactRouteError::BadRequest("invalid session id".to_string()))
+}
+
+fn parse_session_artifact_route_artifact_id(
+    value: &str,
+) -> Result<ArtifactId, SessionArtifactRouteError> {
+    uuid::Uuid::parse_str(value)
+        .map(ArtifactId)
+        .map_err(|_| SessionArtifactRouteError::BadRequest("invalid artifact id".to_string()))
+}
+
+fn scoped_mcp_session_artifact_route_error(
+    error: ScopedMcpSessionAccessError,
+) -> SessionArtifactRouteError {
+    match error {
+        ScopedMcpSessionAccessError::Unauthorized(message) => {
+            SessionArtifactRouteError::Unauthorized(message.to_string())
+        }
+        ScopedMcpSessionAccessError::SessionNotFound => SessionArtifactRouteError::NotFound,
+        ScopedMcpSessionAccessError::StoreUnavailable(error) => {
+            session_artifact_internal_error(error)
+        }
     }
 }
 
@@ -316,5 +429,35 @@ mod tests {
 
         let err = open_canonical_route_file(&canonical).await.unwrap_err();
         assert_eq!(err, RouteFileDownloadError::NotFound);
+    }
+
+    #[test]
+    fn route_params_reject_invalid_session_and_artifact_ids() {
+        let error = parse_session_artifact_route_session_id("not-a-session").unwrap_err();
+        assert_eq!(
+            error,
+            SessionArtifactRouteError::BadRequest("invalid session id".to_string())
+        );
+
+        let error = parse_session_artifact_route_artifact_id("not-an-artifact").unwrap_err();
+        assert_eq!(
+            error,
+            SessionArtifactRouteError::BadRequest("invalid artifact id".to_string())
+        );
+    }
+
+    #[test]
+    fn scoped_mcp_artifact_route_errors_preserve_public_mapping() {
+        let unauthorized = scoped_mcp_session_artifact_route_error(
+            ScopedMcpSessionAccessError::Unauthorized("scoped message"),
+        );
+        assert_eq!(
+            unauthorized,
+            SessionArtifactRouteError::Unauthorized("scoped message".to_string())
+        );
+
+        let missing =
+            scoped_mcp_session_artifact_route_error(ScopedMcpSessionAccessError::SessionNotFound);
+        assert_eq!(missing, SessionArtifactRouteError::NotFound);
     }
 }

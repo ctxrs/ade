@@ -18,7 +18,11 @@ mod title_model_mode_route;
 pub mod vcs;
 mod vcs_route;
 
-pub use artifacts::{SessionArtifactDownload, SessionArtifactInput, SessionArtifactRouteError};
+pub use artifacts::{
+    SessionArtifactDownload, SessionArtifactDownloadRouteParams, SessionArtifactInput,
+    SessionArtifactRouteContext, SessionArtifactRouteError, SessionArtifactsRouteResponse,
+    SetSessionArtifactsRouteRequest,
+};
 pub use control_route::{
     AuthenticateSessionRouteRequest, SessionControlRouteError, SessionControlRouteErrorKind,
     SessionFileCompletionsRouteQuery, SessionFileCompletionsRouteResponse,

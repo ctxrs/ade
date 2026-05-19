@@ -1,8 +1,8 @@
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
-use ctx_core::ids::{ArtifactId, SessionId};
 
+use ctx_daemon::daemon::sessions::SessionArtifactDownloadRouteParams;
 use ctx_daemon::daemon::SessionsHandle;
 
 #[path = "download/response.rs"]
@@ -13,12 +13,11 @@ pub(in crate::api) async fn get_session_artifact(
     Path((session_id, artifact_id)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<Response, StatusCode> {
-    let session_id =
-        SessionId(uuid::Uuid::parse_str(&session_id).map_err(|_| StatusCode::BAD_REQUEST)?);
-    let artifact_id =
-        ArtifactId(uuid::Uuid::parse_str(&artifact_id).map_err(|_| StatusCode::BAD_REQUEST)?);
     let download = state
-        .open_session_artifact_for_route(session_id, artifact_id)
+        .open_session_artifact_for_route_params(SessionArtifactDownloadRouteParams::new(
+            session_id,
+            artifact_id,
+        ))
         .await
         .map_err(super::session::session_artifact_status)?;
     response::build_session_artifact_download_response(

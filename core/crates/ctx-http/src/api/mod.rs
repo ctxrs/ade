@@ -21,7 +21,6 @@ mod execution;
 mod health;
 mod logs_api;
 mod mcp_context;
-mod mcp_scope;
 mod merge_queue_api;
 mod mobile_access;
 mod org_policy;
@@ -51,7 +50,6 @@ use execution::*;
 use health::*;
 use logs_api::*;
 use mcp_context::*;
-use mcp_scope::*;
 use merge_queue_api::*;
 use mobile_access::*;
 use org_policy::*;
@@ -81,7 +79,6 @@ use ws::{
 
 use ctx_core::{ids::*, models::*};
 use ctx_daemon::daemon::mobile_access::MobileAuthContext;
-use ctx_observability::logs;
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
 use ctx_provider_install::install_state::InstallId;
 use ctx_transport_runtime::web_sessions::{

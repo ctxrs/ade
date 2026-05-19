@@ -1,5 +1,8 @@
 use super::*;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 struct EnvVarGuard {
     key: &'static str,
@@ -74,6 +77,7 @@ fn hold_exclusive_codex_runtime_lock(home: &Path) -> std::fs::File {
 
 #[tokio::test]
 async fn refresh_provider_usage_surfaces_agent_server_config_errors() {
+    let _env_lock = ENV_LOCK.lock().expect("provider usage env lock");
     let data_root = tempfile::tempdir().expect("tempdir");
     let runtime_home = tempfile::tempdir().expect("runtime home");
     let _codex_home = EnvVarGuard::set("CTX_CODEX_HOME", &runtime_home.path().to_string_lossy());
@@ -95,6 +99,7 @@ async fn refresh_provider_usage_surfaces_agent_server_config_errors() {
 
 #[tokio::test]
 async fn refresh_provider_usage_replaces_stale_cache_with_error_snapshot_on_config_error() {
+    let _env_lock = ENV_LOCK.lock().expect("provider usage env lock");
     let data_root = tempfile::tempdir().expect("tempdir");
     let runtime_home = tempfile::tempdir().expect("runtime home");
     let _codex_home = EnvVarGuard::set("CTX_CODEX_HOME", &runtime_home.path().to_string_lossy());

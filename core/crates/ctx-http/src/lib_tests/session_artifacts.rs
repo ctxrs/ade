@@ -3,6 +3,7 @@ use super::*;
 mod download_http;
 mod missing_files;
 mod root_paths;
+mod route_contracts;
 mod spool_isolation;
 
 struct SessionArtifactFixture {
@@ -65,11 +66,31 @@ async fn post_session_artifacts(
     session_id: ctx_core::ids::SessionId,
     artifacts: serde_json::Value,
 ) -> axum::response::Response {
+    post_session_artifacts_raw(app, &session_id.0.to_string(), artifacts).await
+}
+
+async fn post_session_artifacts_raw(
+    app: &axum::Router,
+    session_id: &str,
+    artifacts: serde_json::Value,
+) -> axum::response::Response {
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/api/sessions/{}/artifacts", session_id.0))
+        .uri(format!("/api/sessions/{session_id}/artifacts"))
         .header("content-type", "application/json")
         .body(Body::from(json!({ "artifacts": artifacts }).to_string()))
+        .unwrap();
+    app.clone().oneshot(req).await.unwrap()
+}
+
+async fn list_session_artifacts_raw(
+    app: &axum::Router,
+    session_id: &str,
+) -> axum::response::Response {
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/api/sessions/{session_id}/artifacts"))
+        .body(Body::empty())
         .unwrap();
     app.clone().oneshot(req).await.unwrap()
 }
@@ -94,11 +115,18 @@ async fn get_session_artifact(
     session_id: ctx_core::ids::SessionId,
     artifact_id: ctx_core::ids::ArtifactId,
 ) -> axum::response::Response {
+    get_session_artifact_raw(app, &session_id.0.to_string(), &artifact_id.0.to_string()).await
+}
+
+async fn get_session_artifact_raw(
+    app: &axum::Router,
+    session_id: &str,
+    artifact_id: &str,
+) -> axum::response::Response {
     let req = Request::builder()
         .method("GET")
         .uri(format!(
-            "/api/sessions/{}/artifacts/{}",
-            session_id.0, artifact_id.0
+            "/api/sessions/{session_id}/artifacts/{artifact_id}"
         ))
         .body(Body::empty())
         .unwrap();
