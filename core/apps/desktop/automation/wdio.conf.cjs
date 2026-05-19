@@ -6,6 +6,7 @@ const os = require("os");
 const { resolveBoolishFlag } = require("../../../scripts/lib/boolish.cjs");
 const {
   buildLinuxAppDirLaunchEnv,
+  buildLinuxWebDriverHostEnv,
   createLinuxAppDirLaunchWrapper,
 } = require("./helpers/linux_appdir_launch_env.cjs");
 const { buildNonDarwinTauriDriverLaunch } = require("./helpers/tauri_driver_launch.cjs");
@@ -851,6 +852,7 @@ const buildDesktopAppLaunchEnv = () => {
     "APPIMAGE",
     "APPIMAGE_EXTRACT_AND_RUN",
     "ARGV0",
+    "CTX_AUTOMATION_APP_LAUNCH_LOG",
     "CTX_APPIMAGE_PATH",
     "DISPLAY",
     "HOME",
@@ -2223,12 +2225,9 @@ exports.config = {
       }
     }
 
-    const driverEnv = {
-      ...process.env,
-      ...DESKTOP_APP_LAUNCH_ENV,
-      TAURI_DRIVER_PORT: String(activeTauriDriverPort),
-      TAURI_DRIVER_NATIVE_PORT: String(activeTauriDriverNativePort),
-    };
+    const driverEnv = buildLinuxWebDriverHostEnv({ env: process.env });
+    driverEnv.TAURI_DRIVER_PORT = String(activeTauriDriverPort);
+    driverEnv.TAURI_DRIVER_NATIVE_PORT = String(activeTauriDriverNativePort);
     if (isDarwin) {
       // On macOS, tauri-driver talks to CrabNebula's local backend.
       driverEnv.REMOTE_WEBDRIVER_URL = `http://127.0.0.1:${activeTestBackendPort}`;

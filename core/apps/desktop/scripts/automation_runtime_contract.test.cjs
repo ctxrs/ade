@@ -209,8 +209,10 @@ test("remote real CI wrapper retries startup-only WebDriver session failures", (
   assert.match(wdio, /TAURI_WEBVIEW_AUTOMATION: "true"/);
   assert.match(wdio, /"APPDIR"/);
   assert.match(wdio, /"APPIMAGE"/);
+  assert.match(wdio, /"CTX_AUTOMATION_APP_LAUNCH_LOG"/);
   assert.match(wdio, /"CTX_APPIMAGE_PATH"/);
-  assert.match(wdio, /\.\.\.DESKTOP_APP_LAUNCH_ENV,/);
+  assert.match(wdio, /buildLinuxWebDriverHostEnv\(\{ env: process\.env \}\)/);
+  assert.doesNotMatch(wdio, /\.\.\.DESKTOP_APP_LAUNCH_ENV,/);
   assert.match(wdio, /WebDriver application path=/);
   assert.match(script, /HOME="\$\{attempt_home_dir\}"/);
   assert.match(script, /TMPDIR="\$\{attempt_tmp_dir\}"/);
@@ -259,6 +261,7 @@ test("linux bundled launch smoke passes explicit tauri-driver native port", () =
   assert.match(script, /--session-timeout-ms/);
   assert.match(script, /retrying startup-only WebDriver session failure/);
   assert.match(script, /buildLinuxAppDirLaunchEnv/);
+  assert.match(script, /buildLinuxWebDriverHostEnv/);
   assert.match(script, /createLinuxAppDirLaunchWrapper/);
   assert.match(script, /desktop-app-launchers/);
   assert.match(script, /startup-failure-diagnostics\.json/);
@@ -598,10 +601,10 @@ test("linux local install truth wrapper validates the installed AppImage through
   assert.match(spec, /local sandbox preparation may restart the pre-workspace daemon/);
 });
 
-test("release candidate remote workspace keeps standalone Linux launch smoke opt-in", () => {
+test("release candidate remote workspace runs standalone Linux launch smoke by default", () => {
   const wrapper = fs.readFileSync(RELEASE_CANDIDATE_REMOTE_WORKSPACE_WRAPPER, "utf8");
   assert.match(wrapper, /CTX_REMOTE_WORKSPACE_DESKTOP_FEED_MODE=stage/);
-  assert.match(wrapper, /CTX_REMOTE_WORKSPACE_DESKTOP_LAUNCH_SMOKE="\$\{CTX_REMOTE_WORKSPACE_DESKTOP_LAUNCH_SMOKE:-0\}"/);
+  assert.match(wrapper, /CTX_REMOTE_WORKSPACE_DESKTOP_LAUNCH_SMOKE="\$\{CTX_REMOTE_WORKSPACE_DESKTOP_LAUNCH_SMOKE:-1\}"/);
 });
 
 test("mac remote truth wrapper runs the real remote matrix and rejects docker-backed proof scopes", () => {

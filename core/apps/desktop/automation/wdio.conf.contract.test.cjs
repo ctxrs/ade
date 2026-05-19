@@ -161,11 +161,13 @@ test("wdio Linux shipped-app uses AppDir launcher wrapper for WebDriver applicat
     assert.match(script, /buildLinuxAppDirLaunchEnv/);
     assert.match(script, /createLinuxAppDirLaunchWrapper/);
     assert.match(script, /return createDesktopAppLaunchWrapper\(appExecutablePath, DESKTOP_APP_LAUNCH_ENV\);/);
-    assert.match(script, /const driverEnv = \{\s*\.\.\.process\.env,/);
-    assert.match(script, /\.\.\.DESKTOP_APP_LAUNCH_ENV,/);
+  assert.match(script, /buildLinuxWebDriverHostEnv/);
+  assert.match(script, /const driverEnv = buildLinuxWebDriverHostEnv\(\{ env: process\.env \}\);/);
+  assert.doesNotMatch(script, /\.\.\.DESKTOP_APP_LAUNCH_ENV,/);
+  assert.doesNotMatch(script, /\.\.\.DESKTOP_APP_LAUNCH_ENV,/);
     assert.match(script, /console\.error\(`\[wdio\] WebDriver application path=\$\{WDIO_APPLICATION_PATH\}`\)/);
-    assert.match(script, /TAURI_DRIVER_PORT: String\(activeTauriDriverPort\)/);
-    assert.match(script, /TAURI_DRIVER_NATIVE_PORT: String\(activeTauriDriverNativePort\)/);
+    assert.match(script, /driverEnv\.TAURI_DRIVER_PORT = String\(activeTauriDriverPort\);/);
+    assert.match(script, /driverEnv\.TAURI_DRIVER_NATIVE_PORT = String\(activeTauriDriverNativePort\);/);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

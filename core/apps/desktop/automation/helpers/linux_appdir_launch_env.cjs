@@ -55,6 +55,38 @@ const prependPath = (entries, current, delimiter = path.delimiter) => {
 
 const shellQuote = (value) => `'${String(value).replace(/'/g, `'\"'\"'`)}'`;
 
+const LINUX_APPDIR_DRIVER_ENV_STRIP_KEYS = [
+  "APPDIR",
+  "APPIMAGE",
+  "APPIMAGE_EXTRACT_AND_RUN",
+  "ARGV0",
+  "CTX_APPIMAGE_PATH",
+  "CTX_AUTOMATION_APP_LAUNCH_LOG",
+  "CTX_BUNDLE_DIR",
+  "CTX_DESKTOP_DAEMON_DATA_DIR",
+  "GDK_BACKEND",
+  "GDK_PIXBUF_MODULE_FILE",
+  "GIO_EXTRA_MODULES",
+  "GSETTINGS_SCHEMA_DIR",
+  "GTK_DATA_PREFIX",
+  "GTK_EXE_PREFIX",
+  "GTK_IM_MODULE_FILE",
+  "GTK_PATH",
+  "GTK_THEME",
+  "LD_LIBRARY_PATH",
+  "TAURI_WEBVIEW_AUTOMATION",
+  "XDG_DATA_DIRS",
+];
+
+const buildLinuxWebDriverHostEnv = ({ env = process.env } = {}) => {
+  const cleanEnv = { ...env };
+  if (process.platform !== "linux") return cleanEnv;
+  for (const key of LINUX_APPDIR_DRIVER_ENV_STRIP_KEYS) {
+    delete cleanEnv[key];
+  }
+  return cleanEnv;
+};
+
 const buildLinuxAppDirLaunchEnv = ({
   appPath,
   env = process.env,
@@ -195,6 +227,7 @@ const createLinuxAppDirLaunchWrapper = ({
 
 module.exports = {
   buildLinuxAppDirLaunchEnv,
+  buildLinuxWebDriverHostEnv,
   createLinuxAppDirLaunchWrapper,
   resolveLinuxAppDirFromPath,
 };

@@ -16,6 +16,7 @@ const REPO_ROOT = path.resolve(CORE_ROOT, "..");
 const require = createRequire(import.meta.url);
 const {
   buildLinuxAppDirLaunchEnv,
+  buildLinuxWebDriverHostEnv,
   createLinuxAppDirLaunchWrapper,
   resolveLinuxAppDirFromPath,
 } = require("../automation/helpers/linux_appdir_launch_env.cjs");
@@ -481,8 +482,7 @@ function spawnDriver({ port, nativePort, artifactDir, appLaunchEnv }) {
     stdio: ["ignore", driverLogFd, driverLogFd],
     detached: process.platform !== "win32",
     env: {
-      ...process.env,
-      ...appLaunchEnv,
+      ...buildLinuxWebDriverHostEnv({ env: process.env }),
       TAURI_DRIVER_PORT: String(port),
       TAURI_DRIVER_NATIVE_PORT: String(nativePort),
     },

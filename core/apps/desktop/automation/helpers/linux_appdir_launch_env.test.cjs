@@ -6,6 +6,7 @@ const path = require("node:path");
 
 const {
   buildLinuxAppDirLaunchEnv,
+  buildLinuxWebDriverHostEnv,
   createLinuxAppDirLaunchWrapper,
   resolveLinuxAppDirFromPath,
 } = require("./linux_appdir_launch_env.cjs");
@@ -108,5 +109,38 @@ test("linux AppDir launch env leaves ordinary debug binaries alone", async () =>
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
+  });
+});
+
+test("linux WebDriver host env strips AppDir launch-only variables", async () => {
+  await withPlatform("linux", async () => {
+    const env = buildLinuxWebDriverHostEnv({
+      env: {
+        APPDIR: "/tmp/appdir",
+        APPIMAGE: "/tmp/ctx.AppImage",
+        ARGV0: "/tmp/ctx.AppImage",
+        CTX_APPIMAGE_PATH: "/tmp/ctx.AppImage",
+        CTX_AUTOMATION_APP_LAUNCH_LOG: "/tmp/app-launch.log",
+        CTX_BUNDLE_DIR: "/tmp/appdir/usr/lib/ctx/bundles",
+        CTX_DESKTOP_DAEMON_DATA_DIR: "/tmp/daemon",
+        DISPLAY: ":99",
+        HOME: "/tmp/home",
+        LD_LIBRARY_PATH: "/tmp/appdir/usr/lib:/usr/lib",
+        PATH: "/usr/bin:/bin",
+        TAURI_WEBVIEW_AUTOMATION: "true",
+        XDG_RUNTIME_DIR: "/tmp/runtime",
+      },
+    });
+
+    assert.equal(env.APPDIR, undefined);
+    assert.equal(env.APPIMAGE, undefined);
+    assert.equal(env.CTX_AUTOMATION_APP_LAUNCH_LOG, undefined);
+    assert.equal(env.CTX_DESKTOP_DAEMON_DATA_DIR, undefined);
+    assert.equal(env.LD_LIBRARY_PATH, undefined);
+    assert.equal(env.TAURI_WEBVIEW_AUTOMATION, undefined);
+    assert.equal(env.DISPLAY, ":99");
+    assert.equal(env.HOME, "/tmp/home");
+    assert.equal(env.PATH, "/usr/bin:/bin");
+    assert.equal(env.XDG_RUNTIME_DIR, "/tmp/runtime");
   });
 });
