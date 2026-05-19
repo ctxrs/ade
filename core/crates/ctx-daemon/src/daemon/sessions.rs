@@ -8,6 +8,7 @@ mod control_route;
 mod demo_route;
 mod demo_seed;
 mod handle;
+mod message_commands;
 mod message_route;
 pub mod model_catalog;
 mod model_switch;
@@ -41,7 +42,8 @@ pub use demo_route::{
     DemoSeedTranscriptRouteResponse,
 };
 pub use demo_seed::{DemoSeedTranscript, DemoSeedTranscriptError, DemoSeedTranscriptTurn};
-pub use handle::{GenerateSessionTitleError, PostUserMessageError, PostUserMessageInput};
+pub use handle::GenerateSessionTitleError;
+pub use message_commands::{PostUserMessageError, PostUserMessageInput};
 pub use message_route::{
     DeleteSessionMessageRouteParams, PostSessionMessageRouteContext,
     PostSessionMessageRouteRequest, PostSessionMessageRouteResponse, SessionMessageRouteError,
