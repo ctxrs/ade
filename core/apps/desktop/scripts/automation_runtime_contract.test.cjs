@@ -185,6 +185,7 @@ test("remote real CI wrapper retries startup-only WebDriver session failures", (
   const script = fs.readFileSync(REMOTE_REAL_CI_WRAPPER, "utf8");
   const wdio = fs.readFileSync(WDIO_CONF, "utf8");
   assert.match(script, /CTX_REMOTE_REAL_CI_AUTOMATION_ATTEMPTS/);
+  assert.match(script, /CTX_REMOTE_WORKSPACE_E2E_AUTOMATION_ATTEMPTS:-3/);
   assert.match(script, /is_retryable_wdio_session_start_failure\(\) \{/);
   assert.match(script, /UND_ERR_HEADERS_TIMEOUT/);
   assert.match(script, /hyper::Error\\?\(IncompleteMessage\\?\)/);
@@ -201,6 +202,7 @@ test("remote real CI wrapper retries startup-only WebDriver session failures", (
   assert.match(script, /attempt_daemon_data_dir="\$\{attempt_dir\}\/controller-daemon-data"/);
   assert.match(script, /CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP="\$\{CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP:-1\}"/);
   assert.match(script, /CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP="\$\{CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP:-1\}"/);
+  assert.match(script, /CTX_AUTOMATION_FORCE_XVFB="\$\{CTX_AUTOMATION_FORCE_XVFB:-1\}"/);
   assert.match(script, /CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR="\$\{attempt_daemon_data_dir\}"/);
   assert.match(script, /CTX_AUTOMATION_APP_LAUNCH_LOG="\$\{attempt_dir\}\/app-launch\.log"/);
   assert.match(script, /CTX_AUTOMATION_CN_DRIVER_LOG="\$\{attempt_dir\}\/tauri-driver\.log"/);

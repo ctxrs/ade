@@ -541,7 +541,7 @@ run_lane() {
   local status="pass"
   local lane_exit=0
   local reason=""
-  local max_attempts="${CTX_REMOTE_REAL_CI_AUTOMATION_ATTEMPTS:-${CTX_REMOTE_WORKSPACE_E2E_AUTOMATION_ATTEMPTS:-2}}"
+  local max_attempts="${CTX_REMOTE_REAL_CI_AUTOMATION_ATTEMPTS:-${CTX_REMOTE_WORKSPACE_E2E_AUTOMATION_ATTEMPTS:-3}}"
 
   if ! [[ "${max_attempts}" =~ ^[0-9]+$ ]] || [[ "${max_attempts}" -lt 1 ]]; then
     echo "error: CTX_REMOTE_REAL_CI_AUTOMATION_ATTEMPTS must be a positive integer" >&2
@@ -591,6 +591,7 @@ run_lane() {
         cd "${ROOT}"
         export CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP="${CTX_AUTOMATION_ALLOW_PREP_APP_PROCESS_SWEEP:-1}"
         export CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP="${CTX_AUTOMATION_ALLOW_STALE_HELPER_SWEEP:-1}"
+        export CTX_AUTOMATION_FORCE_XVFB="${CTX_AUTOMATION_FORCE_XVFB:-1}"
         export CTX_AUTOMATION_SHIPPED_APP_DAEMON_DATA_DIR="${attempt_daemon_data_dir}"
         export CTX_AUTOMATION_TMPDIR="${attempt_tmp_dir}"
         export CTX_AUTOMATION_APP_LAUNCH_LOG="${attempt_dir}/app-launch.log"
