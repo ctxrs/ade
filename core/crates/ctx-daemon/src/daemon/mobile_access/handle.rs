@@ -1,0 +1,297 @@
+use chrono::{DateTime, Utc};
+use ctx_core::ids::{ConnectionProfileId, MobileDeviceId, WorkspaceId};
+use ctx_core::models::{MobileConnectionProfile, MobileDeviceRegistration};
+
+use super::{
+    lifecycle, pairing, profiles, runtime, secure_envelope, secure_stream,
+    CreateMobileConnectionProfileForRouteRequest, CreateMobileConnectionProfileForRouteResult,
+    DisableMobileAccessError, EnableMobileAccessRequest, EnableMobileAccessResult,
+    MobileAccessConfigSnapshot, MobileAccessConfigUpsert, MobileAccessRouteError,
+    MobileAccessStatusError, MobileAccessStatusSnapshot, MobileAuthContext, MobileAuthContextError,
+    MobileConnectionProfileRouteParams, MobileDeviceRegistrationUpdate,
+    MobileDeviceSequenceAdvance, MobileSecureEnvelope, MobileSecureEnvelopeForRoute,
+    MobileSecureProxyResponsePayload, MobileSecureResponseEncryption,
+    MobileSecureStreamAccessError, MobileSecureStreamContext, MobileSecureWorkspaceStreamAdmission,
+    MobileSecureWorkspaceStreamRouteParams, OpenMobileSecureRequestResult, PairMobileDeviceRequest,
+    RegisterMobileDeviceForRouteRequest, StartMobileTunnelRequest,
+};
+use crate::daemon::CoreHandle;
+
+impl CoreHandle {
+    pub async fn enable_mobile_access_for_route(
+        &self,
+        request: EnableMobileAccessRequest,
+    ) -> Result<EnableMobileAccessResult, MobileAccessRouteError> {
+        lifecycle::enable_mobile_access_for_route(&self.state, request).await
+    }
+
+    pub async fn disable_mobile_access_for_route(
+        &self,
+        supabase_token: String,
+    ) -> Result<(), DisableMobileAccessError> {
+        lifecycle::disable_mobile_access_for_route(&self.state, supabase_token).await
+    }
+
+    pub async fn create_mobile_connection_profile_for_route(
+        &self,
+        request: CreateMobileConnectionProfileForRouteRequest,
+    ) -> Result<CreateMobileConnectionProfileForRouteResult, MobileAccessRouteError> {
+        profiles::create_mobile_connection_profile_for_route(&self.state, request).await
+    }
+
+    pub async fn list_mobile_connection_profiles_for_route(
+        &self,
+    ) -> Result<Vec<MobileConnectionProfile>, MobileAccessRouteError> {
+        profiles::list_mobile_connection_profiles_for_route(&self.state).await
+    }
+
+    pub async fn delete_mobile_connection_profile_for_route(
+        &self,
+        profile_id: ConnectionProfileId,
+    ) -> Result<(), MobileAccessRouteError> {
+        profiles::delete_mobile_connection_profile_for_route(&self.state, profile_id).await
+    }
+
+    pub async fn delete_mobile_connection_profile_for_route_params(
+        &self,
+        params: MobileConnectionProfileRouteParams,
+    ) -> Result<(), MobileAccessRouteError> {
+        profiles::delete_mobile_connection_profile_for_route_params(&self.state, params).await
+    }
+
+    pub async fn list_mobile_devices_for_profile_for_route(
+        &self,
+        profile_id: ConnectionProfileId,
+    ) -> Result<Vec<MobileDeviceRegistration>, MobileAccessRouteError> {
+        profiles::list_mobile_devices_for_profile_for_route(&self.state, profile_id).await
+    }
+
+    pub async fn list_mobile_devices_for_profile_for_route_params(
+        &self,
+        params: MobileConnectionProfileRouteParams,
+    ) -> Result<Vec<MobileDeviceRegistration>, MobileAccessRouteError> {
+        profiles::list_mobile_devices_for_profile_for_route_params(&self.state, params).await
+    }
+
+    pub async fn register_mobile_device_for_route(
+        &self,
+        auth: MobileAuthContext,
+        request: RegisterMobileDeviceForRouteRequest,
+    ) -> Result<MobileDeviceRegistration, MobileAccessRouteError> {
+        profiles::register_mobile_device_for_route(&self.state, auth, request).await
+    }
+
+    pub async fn pair_mobile_device_for_route(
+        &self,
+        request: PairMobileDeviceRequest,
+    ) -> Result<MobileSecureEnvelope, MobileAccessRouteError> {
+        pairing::pair_mobile_device_for_route(&self.state, request).await
+    }
+
+    pub async fn open_mobile_secure_request_for_route(
+        &self,
+        request: MobileSecureEnvelopeForRoute,
+    ) -> Result<OpenMobileSecureRequestResult, MobileAccessRouteError> {
+        secure_envelope::open_mobile_secure_request_for_route(&self.state, request).await
+    }
+
+    pub async fn encrypt_mobile_secure_response_for_route(
+        &self,
+        context: MobileSecureResponseEncryption,
+        response: MobileSecureProxyResponsePayload,
+    ) -> Result<MobileSecureEnvelope, MobileAccessRouteError> {
+        secure_envelope::encrypt_mobile_secure_response_for_route(context, response).await
+    }
+
+    pub async fn create_mobile_connection_profile(
+        &self,
+        label: String,
+        base_url: String,
+        token_hash: String,
+        token_prefix: String,
+        scopes: Vec<String>,
+    ) -> anyhow::Result<MobileConnectionProfile> {
+        self.state
+            .global_store()
+            .create_mobile_connection_profile(label, base_url, token_hash, token_prefix, scopes)
+            .await
+    }
+
+    pub async fn list_mobile_connection_profiles(
+        &self,
+    ) -> anyhow::Result<Vec<MobileConnectionProfile>> {
+        self.state
+            .global_store()
+            .list_mobile_connection_profiles()
+            .await
+    }
+
+    pub async fn get_mobile_connection_profile(
+        &self,
+        profile_id: ConnectionProfileId,
+    ) -> anyhow::Result<Option<MobileConnectionProfile>> {
+        self.state
+            .global_store()
+            .get_mobile_connection_profile(profile_id)
+            .await
+    }
+
+    pub async fn update_mobile_connection_profile_scopes(
+        &self,
+        profile_id: ConnectionProfileId,
+        scopes: Vec<String>,
+    ) -> anyhow::Result<()> {
+        self.state
+            .global_store()
+            .update_mobile_connection_profile_scopes(profile_id, scopes)
+            .await
+    }
+
+    pub async fn delete_mobile_connection_profile(
+        &self,
+        profile_id: ConnectionProfileId,
+    ) -> anyhow::Result<()> {
+        self.state
+            .global_store()
+            .delete_mobile_connection_profile(profile_id)
+            .await
+    }
+
+    pub async fn get_mobile_access_config(
+        &self,
+    ) -> anyhow::Result<Option<MobileAccessConfigSnapshot>> {
+        self.state
+            .global_store()
+            .get_mobile_access_config()
+            .await
+            .map(|config| config.map(Into::into))
+    }
+
+    pub async fn upsert_mobile_access_config(
+        &self,
+        config: MobileAccessConfigUpsert,
+    ) -> anyhow::Result<MobileAccessConfigSnapshot> {
+        self.state
+            .global_store()
+            .upsert_mobile_access_config(config.into_store_config())
+            .await
+            .map(Into::into)
+    }
+
+    pub async fn insert_mobile_pairing_token(
+        &self,
+        token_id: &str,
+        token_hash: &str,
+        expires_at: DateTime<Utc>,
+    ) -> anyhow::Result<()> {
+        self.state
+            .global_store()
+            .insert_mobile_pairing_token(token_id, token_hash, expires_at)
+            .await
+    }
+
+    pub async fn consume_mobile_pairing_token(&self, token_hash: &str) -> anyhow::Result<bool> {
+        self.state
+            .global_store()
+            .consume_mobile_pairing_token(token_hash)
+            .await
+    }
+
+    pub async fn list_mobile_devices(
+        &self,
+        profile_id: ConnectionProfileId,
+    ) -> anyhow::Result<Vec<MobileDeviceRegistration>> {
+        self.state
+            .global_store()
+            .list_mobile_devices(profile_id)
+            .await
+    }
+
+    pub async fn get_mobile_device(
+        &self,
+        device_id: MobileDeviceId,
+    ) -> anyhow::Result<Option<MobileDeviceRegistration>> {
+        self.state.global_store().get_mobile_device(device_id).await
+    }
+
+    pub async fn upsert_mobile_device(
+        &self,
+        device_id: MobileDeviceId,
+        profile_id: ConnectionProfileId,
+        update: MobileDeviceRegistrationUpdate,
+    ) -> anyhow::Result<MobileDeviceRegistration> {
+        self.state
+            .global_store()
+            .upsert_mobile_device(device_id, profile_id, update.into())
+            .await
+    }
+
+    pub async fn advance_mobile_device_seq(
+        &self,
+        device_id: MobileDeviceId,
+        seq: i64,
+    ) -> anyhow::Result<MobileDeviceSequenceAdvance> {
+        self.state
+            .global_store()
+            .advance_mobile_device_seq(device_id, seq)
+            .await
+            .map(Into::into)
+    }
+
+    pub async fn load_mobile_auth_context_for_profile(
+        &self,
+        profile_id: ConnectionProfileId,
+    ) -> Result<Option<MobileAuthContext>, MobileAuthContextError> {
+        super::load_mobile_auth_context_for_profile(&self.state, profile_id).await
+    }
+
+    pub async fn verify_mobile_api_token_hash(
+        &self,
+        hash: &str,
+    ) -> Result<Option<MobileAuthContext>, MobileAuthContextError> {
+        super::verify_mobile_api_token_hash(&self.state, hash).await
+    }
+
+    pub async fn mobile_access_status(
+        &self,
+    ) -> Result<MobileAccessStatusSnapshot, MobileAccessStatusError> {
+        runtime::mobile_access_status(&self.state).await
+    }
+
+    pub async fn disable_mobile_access_runtime(&self) -> Result<(), DisableMobileAccessError> {
+        runtime::disable_mobile_access_runtime(&self.state).await
+    }
+
+    pub async fn start_mobile_tunnel_best_effort(&self, request: StartMobileTunnelRequest) {
+        runtime::start_mobile_tunnel_best_effort(&self.state, request).await;
+    }
+
+    pub async fn require_mobile_secure_stream_access(
+        &self,
+        workspace_id: WorkspaceId,
+        device_id: &str,
+        token: &str,
+    ) -> Result<(), MobileSecureStreamAccessError> {
+        secure_stream::require_mobile_secure_stream_access(
+            &self.state,
+            workspace_id,
+            device_id,
+            token,
+        )
+        .await
+    }
+
+    pub async fn load_mobile_secure_stream_context(
+        &self,
+        device_id: String,
+    ) -> Result<MobileSecureStreamContext, anyhow::Error> {
+        secure_stream::load_mobile_secure_stream_context(&self.state, device_id).await
+    }
+
+    pub async fn admit_mobile_secure_workspace_stream_for_route(
+        &self,
+        params: MobileSecureWorkspaceStreamRouteParams,
+    ) -> Result<MobileSecureWorkspaceStreamAdmission, MobileAccessRouteError> {
+        secure_stream::admit_mobile_secure_workspace_stream_for_route(&self.state, params).await
+    }
+}
