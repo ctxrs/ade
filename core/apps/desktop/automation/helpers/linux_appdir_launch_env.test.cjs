@@ -8,6 +8,7 @@ const {
   buildLinuxAppDirLaunchEnv,
   buildLinuxWebDriverHostEnv,
   createLinuxAppDirLaunchWrapper,
+  resolveLinuxAppDirExecutablePath,
   resolveLinuxAppDirFromPath,
 } = require("./linux_appdir_launch_env.cjs");
 
@@ -63,11 +64,12 @@ test("linux AppDir launch wrapper materializes explicit env before AppRun", asyn
     try {
       const appDir = path.join(tmp, "squashfs-root");
       const appRun = path.join(appDir, "AppRun");
+      const innerBinary = path.join(appDir, "usr", "bin", "ctx");
       const wrapperDir = path.join(tmp, "launchers");
       const appImage = path.join(tmp, "ctx.AppImage");
       fs.mkdirSync(path.join(appDir, "usr", "bin"), { recursive: true });
       fs.writeFileSync(appRun, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-      fs.writeFileSync(path.join(appDir, "usr", "bin", "ctx"), "", { mode: 0o755 });
+      fs.writeFileSync(innerBinary, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
 
       const wrapperPath = createLinuxAppDirLaunchWrapper({
         appPath: appRun,
@@ -90,7 +92,28 @@ test("linux AppDir launch wrapper materializes explicit env before AppRun", asyn
       assert.match(wrapper, new RegExp(`export APPIMAGE='${appImage.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}'`));
       assert.match(wrapper, /export TAURI_WEBVIEW_AUTOMATION='true'/);
       assert.match(wrapper, /launching Linux AppDir desktop app/);
-      assert.match(wrapper, new RegExp(`exec '${appRun.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}' "\\$@"`));
+      assert.match(wrapper, /launch target requested=/);
+      assert.match(wrapper, /desktop app exited status=/);
+      assert.match(wrapper, new RegExp(`'${innerBinary.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}' "\\$@" >> "\\$CTX_AUTOMATION_APP_LAUNCH_LOG" 2>&1`));
+      assert.match(wrapper, new RegExp(`exec '${innerBinary.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}' "\\$@"`));
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+test("linux AppDir automation executable resolves inner desktop binary", async () => {
+  await withPlatform("linux", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-linux-appdir-binary-"));
+    try {
+      const appDir = path.join(tmp, "squashfs-root");
+      const appRun = path.join(appDir, "AppRun");
+      const innerBinary = path.join(appDir, "usr", "bin", "ctx");
+      fs.mkdirSync(path.dirname(innerBinary), { recursive: true });
+      fs.writeFileSync(appRun, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      fs.writeFileSync(innerBinary, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+
+      assert.equal(resolveLinuxAppDirExecutablePath({ appPath: appRun, env: {} }), innerBinary);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

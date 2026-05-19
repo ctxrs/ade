@@ -17,6 +17,16 @@ const existingDirectory = (dir, fsImpl = fs) => {
   }
 };
 
+const existingExecutableFile = (filePath, fsImpl = fs) => {
+  if (!filePath) return "";
+  try {
+    const stat = fsImpl.statSync(filePath);
+    return stat.isFile() && (stat.mode & 0o111) !== 0 ? filePath : "";
+  } catch {
+    return "";
+  }
+};
+
 const resolveLinuxAppDirFromPath = ({
   appPath,
   env = process.env,
@@ -45,6 +55,20 @@ const resolveLinuxAppDirFromPath = ({
     if (appDir) return appDir;
   }
   return "";
+};
+
+const resolveLinuxAppDirExecutablePath = ({
+  appPath,
+  env = process.env,
+  fsImpl = fs,
+  pathImpl = path,
+} = {}) => {
+  if (process.platform !== "linux") return resolveConfiguredPath(appPath, pathImpl);
+  const appExecutablePath = resolveConfiguredPath(appPath, pathImpl);
+  const appDir = resolveLinuxAppDirFromPath({ appPath: appExecutablePath, env, fsImpl, pathImpl });
+  if (!appDir) return appExecutablePath;
+  return existingExecutableFile(pathImpl.join(appDir, "usr", "bin", "ctx"), fsImpl)
+    || appExecutablePath;
 };
 
 const prependPath = (entries, current, delimiter = path.delimiter) => {
@@ -191,6 +215,9 @@ const createLinuxAppDirLaunchWrapper = ({
   const appExecutablePath = resolveConfiguredPath(appPath, pathImpl);
   const appDir = resolveLinuxAppDirFromPath({ appPath: appExecutablePath, env, fsImpl, pathImpl });
   if (!appExecutablePath || !appDir) return appPath;
+  const appLaunchTargetPath =
+    resolveLinuxAppDirExecutablePath({ appPath: appExecutablePath, env, fsImpl, pathImpl })
+    || appExecutablePath;
   const launchEnv = {
     ...env,
     ...buildLinuxAppDirLaunchEnv({ appPath: appExecutablePath, env, fsImpl, pathImpl }),
@@ -202,7 +229,7 @@ const createLinuxAppDirLaunchWrapper = ({
   }
   const signature = cryptoImpl
     .createHash("sha256")
-    .update(JSON.stringify({ appExecutablePath, launchEnv }))
+    .update(JSON.stringify({ appExecutablePath, appLaunchTargetPath, launchEnv }))
     .digest("hex")
     .slice(0, 16);
   fsImpl.mkdirSync(normalizedWrapperDir, { recursive: true });
@@ -214,10 +241,19 @@ const createLinuxAppDirLaunchWrapper = ({
     "if [ -n \"${CTX_AUTOMATION_APP_LAUNCH_LOG:-}\" ]; then",
     "  mkdir -p \"$(dirname \"$CTX_AUTOMATION_APP_LAUNCH_LOG\")\"",
     "  printf '%s\\n' \"launching Linux AppDir desktop app\" >> \"$CTX_AUTOMATION_APP_LAUNCH_LOG\"",
+    `  printf 'launch target requested=%s executable=%s\\n' ${shellQuote(appExecutablePath)} ${shellQuote(appLaunchTargetPath)} >> "$CTX_AUTOMATION_APP_LAUNCH_LOG"`,
+    "  printf 'launch args:' >> \"$CTX_AUTOMATION_APP_LAUNCH_LOG\"",
+    "  for arg in \"$@\"; do",
+    "    printf ' %s' \"$arg\" >> \"$CTX_AUTOMATION_APP_LAUNCH_LOG\"",
+    "  done",
+    "  printf '\\n' >> \"$CTX_AUTOMATION_APP_LAUNCH_LOG\"",
     "  printf 'launch env TAURI_WEBVIEW_AUTOMATION=%s APPDIR=%s APPIMAGE=%s ARGV0=%s CTX_APPIMAGE_PATH=%s DISPLAY=%s XDG_RUNTIME_DIR=%s HOME=%s\\n' \"${TAURI_WEBVIEW_AUTOMATION:-}\" \"${APPDIR:-}\" \"${APPIMAGE:-}\" \"${ARGV0:-}\" \"${CTX_APPIMAGE_PATH:-}\" \"${DISPLAY:-}\" \"${XDG_RUNTIME_DIR:-}\" \"${HOME:-}\" >> \"$CTX_AUTOMATION_APP_LAUNCH_LOG\"",
-    `  exec ${shellQuote(appExecutablePath)} "$@" >> "$CTX_AUTOMATION_APP_LAUNCH_LOG" 2>&1`,
+    `  ${shellQuote(appLaunchTargetPath)} "$@" >> "$CTX_AUTOMATION_APP_LAUNCH_LOG" 2>&1`,
+    "  status=$?",
+    "  printf 'desktop app exited status=%s\\n' \"$status\" >> \"$CTX_AUTOMATION_APP_LAUNCH_LOG\"",
+    "  exit \"$status\"",
     "fi",
-    `exec ${shellQuote(appExecutablePath)} "$@"`,
+    `exec ${shellQuote(appLaunchTargetPath)} "$@"`,
     "",
   ];
   fsImpl.writeFileSync(wrapperPath, lines.join("\n"), { mode: 0o700 });
@@ -229,5 +265,6 @@ module.exports = {
   buildLinuxAppDirLaunchEnv,
   buildLinuxWebDriverHostEnv,
   createLinuxAppDirLaunchWrapper,
+  resolveLinuxAppDirExecutablePath,
   resolveLinuxAppDirFromPath,
 };
