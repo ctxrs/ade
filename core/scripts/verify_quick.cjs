@@ -113,6 +113,7 @@ function main() {
     env,
   );
   run("pnpm", ["supabase:migrations:check"], env);
+  run("pnpm", ["supabase:telemetry-storage:check"], env);
   run("pnpm", ["supabase:functions:check"], env);
   run("pnpm", ["bazel:web:typecheck"], env);
 }

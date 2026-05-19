@@ -173,8 +173,10 @@ function buildOverlayCommands(changedFiles) {
   }
   if (hasSupabaseMigrationChange(changedFiles)) {
     commands.push("pnpm supabase:migrations:check");
+    commands.push("pnpm supabase:telemetry-storage:check");
   }
   if (hasSupabaseFunctionChange(changedFiles)) {
+    commands.push("pnpm supabase:telemetry-storage:check");
     commands.push("pnpm supabase:functions:check");
   }
   return commands;

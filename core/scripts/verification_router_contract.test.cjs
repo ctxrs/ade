@@ -84,6 +84,20 @@ test("verify:affected routes supabase migrations through the dedicated invariant
 
   assert.deepEqual(plan.commands, [
     "pnpm supabase:migrations:check",
+    "pnpm supabase:telemetry-storage:check",
+  ]);
+});
+
+test("verify:affected routes supabase function edits through telemetry storage and function checks", () => {
+  const plan = buildVerificationPlan({
+    intent: "affected",
+    base: "origin/main",
+    changedFiles: ["supabase/functions/telemetry/index.ts"],
+  });
+
+  assert.deepEqual(plan.commands, [
+    "pnpm supabase:telemetry-storage:check",
+    "pnpm supabase:functions:check",
   ]);
 });
 
@@ -383,6 +397,7 @@ test("verify:merge-ready uses the clean checkin profile gate", () => {
 test("verify:merge-ready keeps overlay invariants alongside the checkin profile", () => {
   assert.deepEqual(buildOverlayCommands(["supabase/migrations/20260421000000_test.sql"]), [
     "pnpm supabase:migrations:check",
+    "pnpm supabase:telemetry-storage:check",
   ]);
 });
 
@@ -507,10 +522,10 @@ test("verify router telemetry honors CTX_DISABLE_VERIFICATION_TELEMETRY and stil
     baseRef: "origin/main",
     changedFiles: ["supabase/migrations/20260421000000_test.sql"],
     mergeBase: "",
-    overlayCommands: ["pnpm supabase:migrations:check"],
+    overlayCommands: ["pnpm supabase:migrations:check", "pnpm supabase:telemetry-storage:check"],
     taxonomyEntries: [],
     taxonomyCommands: [],
-    commands: ["pnpm supabase:migrations:check"],
+    commands: ["pnpm supabase:migrations:check", "pnpm supabase:telemetry-storage:check"],
   }, {
     buildCtxCacheEnvImpl: () => ({
       env: {
@@ -528,7 +543,7 @@ test("verify router telemetry honors CTX_DISABLE_VERIFICATION_TELEMETRY and stil
     },
   });
 
-  assert.equal(spawnCalls.length, 1);
+  assert.equal(spawnCalls.length, 2);
 });
 
 test("verify router degrades gracefully when telemetry initialization fails", () => {
@@ -542,10 +557,10 @@ test("verify router degrades gracefully when telemetry initialization fails", ()
     baseRef: "origin/main",
     changedFiles: ["supabase/migrations/20260421000000_test.sql"],
     mergeBase: "",
-    overlayCommands: ["pnpm supabase:migrations:check"],
+    overlayCommands: ["pnpm supabase:migrations:check", "pnpm supabase:telemetry-storage:check"],
     taxonomyEntries: [],
     taxonomyCommands: [],
-    commands: ["pnpm supabase:migrations:check"],
+    commands: ["pnpm supabase:migrations:check", "pnpm supabase:telemetry-storage:check"],
   }, {
     buildCtxCacheEnvImpl: () => ({
       env: {
@@ -566,7 +581,7 @@ test("verify router degrades gracefully when telemetry initialization fails", ()
     },
   });
 
-  assert.equal(spawnCalls.length, 1);
+  assert.equal(spawnCalls.length, 2);
   assert.match(errors[0], /failed to initialize verification telemetry/u);
 });
 
