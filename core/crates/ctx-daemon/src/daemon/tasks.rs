@@ -3,10 +3,8 @@ use std::collections::HashSet;
 use anyhow::Result;
 use ctx_core::ids::{TaskId, WorkspaceId};
 use ctx_core::models::{
-    Session, Task, TaskDeltaKind, Workspace, WorkspaceArchivedPage, WorkspaceIndexCursor,
-    WorkspaceTaskSummary,
+    Session, Task, TaskDeltaKind, WorkspaceArchivedPage, WorkspaceIndexCursor, WorkspaceTaskSummary,
 };
-use ctx_store::Store;
 
 use crate::daemon::handle::TasksHandle;
 use crate::daemon::{workspaces, WorkspaceStoreAccessError};
@@ -15,6 +13,7 @@ mod create_session;
 mod create_task;
 mod lifecycle;
 mod route_contract;
+mod store_bridge;
 
 pub use create_session::{CreateTaskSessionInput, DefaultSessionSeed, TaskSessionCreateError};
 pub use create_task::{CreateTaskInput, TaskCreateError};
@@ -174,47 +173,5 @@ impl TasksHandle {
         if let Err(error) = self.state.emit_workspace_task_upsert(task_id).await {
             tracing::warn!(task_id = %task_id.0, "workspace active snapshot refresh failed: {error:?}");
         }
-    }
-
-    async fn task_store_or_none(&self, task_id: TaskId) -> Result<Option<ctx_store::Store>> {
-        let Some(workspace_id) = self
-            .state
-            .global_store()
-            .get_workspace_id_for_task(task_id)
-            .await?
-        else {
-            return Ok(None);
-        };
-        match self.state.existing_workspace_store(workspace_id).await {
-            Ok(store) => Ok(Some(store)),
-            Err(WorkspaceStoreAccessError::NotFound) => Ok(None),
-            Err(WorkspaceStoreAccessError::Unavailable(error)) => Err(error),
-        }
-    }
-
-    async fn load_task_context(
-        &self,
-        task_id: TaskId,
-    ) -> Result<Option<(Store, Task, Workspace)>, TaskLifecycleError> {
-        let Some(store) = self.task_store_or_none(task_id).await? else {
-            return Ok(None);
-        };
-        let Some(task) = store
-            .get_task(task_id)
-            .await
-            .map_err(TaskLifecycleError::Internal)?
-        else {
-            return Ok(None);
-        };
-        let workspace = self
-            .state
-            .global_store()
-            .get_workspace(task.workspace_id)
-            .await
-            .map_err(TaskLifecycleError::Internal)?;
-        let Some(workspace) = workspace else {
-            return Ok(None);
-        };
-        Ok(Some((store, task, workspace)))
     }
 }
