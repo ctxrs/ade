@@ -35,6 +35,40 @@ async fn mobile_secure_workspace_stream_returns_unauthorized_before_upgrade_for_
 }
 
 #[tokio::test]
+async fn mobile_secure_workspace_stream_returns_bad_request_for_invalid_workspace_id_before_upgrade(
+) {
+    let _serial = home_env_test_lock().lock().await;
+    let home = tempfile::tempdir().unwrap();
+    let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
+
+    let data_dir = tempfile::tempdir().unwrap();
+    let fixture =
+        test_daemon_fixture_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
+    let app = fixture.router();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let client = reqwest::Client::new();
+
+    let res = client
+        .get(format!(
+            "http://{addr}/api/mobile/secure/workspaces/not-a-workspace/stream?device_id=22222222-2222-2222-2222-222222222222&token=bad-token"
+        ))
+        .header("connection", "upgrade")
+        .header("upgrade", "websocket")
+        .header("sec-websocket-version", "13")
+        .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    server.abort();
+}
+
+#[tokio::test]
 async fn mobile_secure_workspace_stream_returns_not_found_before_upgrade_for_authorized_missing_workspace(
 ) {
     let _serial = home_env_test_lock().lock().await;

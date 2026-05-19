@@ -419,6 +419,33 @@ pub struct MobileSecureStreamContext {
     pub key: E2eeKey,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct MobileSecureWorkspaceStreamRouteParams {
+    workspace_id: String,
+    device_id: String,
+    token: String,
+}
+
+impl MobileSecureWorkspaceStreamRouteParams {
+    pub fn new(
+        workspace_id: impl Into<String>,
+        device_id: impl Into<String>,
+        token: impl Into<String>,
+    ) -> Self {
+        Self {
+            workspace_id: workspace_id.into(),
+            device_id: device_id.into(),
+            token: token.into(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct MobileSecureWorkspaceStreamAdmission {
+    pub workspace_id: WorkspaceId,
+    pub context: MobileSecureStreamContext,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MobileSecureStreamAccessError {
     BadDeviceId,
@@ -433,6 +460,17 @@ pub async fn require_mobile_secure_stream_access(
     device_id: &str,
     provided_token: &str,
 ) -> Result<(), MobileSecureStreamAccessError> {
+    load_mobile_secure_stream_context_for_access(state, workspace_id, device_id, provided_token)
+        .await
+        .map(|_| ())
+}
+
+async fn load_mobile_secure_stream_context_for_access(
+    state: &Arc<DaemonState>,
+    workspace_id: WorkspaceId,
+    device_id: &str,
+    provided_token: &str,
+) -> Result<MobileSecureStreamContext, MobileSecureStreamAccessError> {
     let device_uuid =
         uuid::Uuid::parse_str(device_id).map_err(|_| MobileSecureStreamAccessError::BadDeviceId)?;
     let cfg = state
@@ -488,7 +526,29 @@ pub async fn require_mobile_secure_stream_access(
     if !workspace_exists {
         return Err(MobileSecureStreamAccessError::NotFound);
     }
-    Ok(())
+    Ok(MobileSecureStreamContext {
+        device_id: device_id.to_string(),
+        key,
+    })
+}
+
+fn mobile_secure_stream_access_route_error(
+    error: MobileSecureStreamAccessError,
+) -> MobileAccessRouteError {
+    match error {
+        MobileSecureStreamAccessError::BadDeviceId => {
+            MobileAccessRouteError::bad_request("device_id must be a UUID")
+        }
+        MobileSecureStreamAccessError::Unauthorized => {
+            MobileAccessRouteError::unauthorized(MobileScope::WorkspaceStream.missing_error())
+        }
+        MobileSecureStreamAccessError::NotFound => {
+            MobileAccessRouteError::new(MobileAccessRouteErrorKind::NotFound, "workspace not found")
+        }
+        MobileSecureStreamAccessError::Store => {
+            MobileAccessRouteError::internal("failed to authorize mobile stream")
+        }
+    }
 }
 
 impl CoreHandle {
@@ -755,6 +815,29 @@ impl CoreHandle {
     ) -> Result<MobileSecureStreamContext, anyhow::Error> {
         load_mobile_secure_stream_context(&self.state, device_id).await
     }
+
+    pub async fn admit_mobile_secure_workspace_stream_for_route(
+        &self,
+        params: MobileSecureWorkspaceStreamRouteParams,
+    ) -> Result<MobileSecureWorkspaceStreamAdmission, MobileAccessRouteError> {
+        let workspace_id = uuid::Uuid::parse_str(&params.workspace_id)
+            .map(WorkspaceId)
+            .map_err(|_| MobileAccessRouteError::bad_request("invalid workspace id"))?;
+        let device_id = params.device_id.trim();
+        let token = params.token.trim();
+        let context = load_mobile_secure_stream_context_for_access(
+            &self.state,
+            workspace_id,
+            device_id,
+            token,
+        )
+        .await
+        .map_err(mobile_secure_stream_access_route_error)?;
+        Ok(MobileSecureWorkspaceStreamAdmission {
+            workspace_id,
+            context,
+        })
+    }
 }
 
 pub async fn load_mobile_secure_stream_context(
@@ -939,4 +1022,65 @@ async fn delete_mobile_access_config(
             DisableMobileAccessError::DeleteConnectionProfile
         })?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::TestDaemon;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn mobile_secure_workspace_stream_route_rejects_invalid_workspace_id() {
+        let temp = tempdir().expect("tempdir");
+        let daemon = TestDaemon::new_for_test(
+            temp.path().to_path_buf(),
+            "http://127.0.0.1:4567".to_string(),
+        )
+        .await
+        .expect("test daemon");
+
+        let result = daemon
+            .handle()
+            .core()
+            .admit_mobile_secure_workspace_stream_for_route(
+                MobileSecureWorkspaceStreamRouteParams::new(
+                    "not-a-workspace",
+                    "22222222-2222-2222-2222-222222222222",
+                    "bad-token",
+                ),
+            )
+            .await;
+        let error = match result {
+            Ok(_) => panic!("invalid workspace id should reject route admission"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.kind(), MobileAccessRouteErrorKind::BadRequest);
+        assert_eq!(error.message(), "invalid workspace id");
+    }
+
+    #[test]
+    fn mobile_secure_stream_access_errors_map_to_route_errors() {
+        let bad_device =
+            mobile_secure_stream_access_route_error(MobileSecureStreamAccessError::BadDeviceId);
+        assert_eq!(bad_device.kind(), MobileAccessRouteErrorKind::BadRequest);
+        assert_eq!(bad_device.message(), "device_id must be a UUID");
+
+        let unauthorized =
+            mobile_secure_stream_access_route_error(MobileSecureStreamAccessError::Unauthorized);
+        assert_eq!(
+            unauthorized.kind(),
+            MobileAccessRouteErrorKind::Unauthorized
+        );
+
+        let not_found =
+            mobile_secure_stream_access_route_error(MobileSecureStreamAccessError::NotFound);
+        assert_eq!(not_found.kind(), MobileAccessRouteErrorKind::NotFound);
+        assert_eq!(not_found.message(), "workspace not found");
+
+        let store = mobile_secure_stream_access_route_error(MobileSecureStreamAccessError::Store);
+        assert_eq!(store.kind(), MobileAccessRouteErrorKind::Internal);
+        assert_eq!(store.message(), "failed to authorize mobile stream");
+    }
 }

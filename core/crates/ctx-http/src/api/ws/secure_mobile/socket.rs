@@ -4,17 +4,15 @@ use futures::StreamExt;
 use super::super::workspace_stream;
 use super::context::decode_mobile_secure_client_message;
 use ctx_core::ids::WorkspaceId;
-use ctx_daemon::daemon::{CoreHandle, WorkspaceStreamHandle};
+use ctx_daemon::daemon::{mobile_access::MobileSecureStreamContext, WorkspaceStreamHandle};
 
 pub(super) async fn handle_mobile_secure_ws(
     socket: WebSocket,
-    core: CoreHandle,
     workspace_stream: WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
-    device_id: String,
+    stream_context: MobileSecureStreamContext,
 ) -> Result<(), anyhow::Error> {
     let (sender, mut receiver) = socket.split();
-    let stream_context = core.load_mobile_secure_stream_context(device_id).await?;
 
     let labels = workspace_stream::WorkspaceStreamLabels {
         ready_queue_label: "ready_secure",

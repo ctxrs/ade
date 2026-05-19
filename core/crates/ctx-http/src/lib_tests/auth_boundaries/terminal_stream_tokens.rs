@@ -77,6 +77,16 @@ async fn terminal_websocket_stream_requires_terminal_scoped_query_token() {
         websocket_upgrade_status(
             &client,
             addr,
+            "/api/terminals/not-a-terminal/stream?token=x"
+        )
+        .await,
+        StatusCode::BAD_REQUEST
+    );
+
+    assert_eq!(
+        websocket_upgrade_status(
+            &client,
+            addr,
             &format!("/api/terminals/{}/stream", terminal.id.0)
         )
         .await,

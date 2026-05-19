@@ -73,6 +73,7 @@ fn terminal_route_status(error: TerminalRouteError) -> StatusCode {
 fn terminal_route_status_for_kind(kind: TerminalRouteErrorKind) -> StatusCode {
     match kind {
         TerminalRouteErrorKind::BadRequest => StatusCode::BAD_REQUEST,
+        TerminalRouteErrorKind::Unauthorized => StatusCode::UNAUTHORIZED,
         TerminalRouteErrorKind::NotFound => StatusCode::NOT_FOUND,
         TerminalRouteErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
     }

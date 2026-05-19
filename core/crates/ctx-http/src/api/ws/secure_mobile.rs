@@ -3,10 +3,11 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 
-use ctx_core::ids::*;
-
 use ctx_daemon::daemon::{
-    mobile_access::MobileSecureStreamAccessError, CoreHandle, WorkspaceStreamHandle,
+    mobile_access::{
+        MobileAccessRouteError, MobileAccessRouteErrorKind, MobileSecureWorkspaceStreamRouteParams,
+    },
+    CoreHandle, WorkspaceStreamHandle,
 };
 
 #[path = "secure_mobile/context.rs"]
@@ -26,32 +27,34 @@ pub(in crate::api) async fn mobile_secure_workspace_stream_ws(
     Path(id): Path<String>,
     Query(query): Query<MobileSecureStreamQuery>,
 ) -> impl IntoResponse {
-    let workspace_id = match uuid::Uuid::parse_str(&id) {
-        Ok(v) => WorkspaceId(v),
-        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
-    };
-    let device_id = query.device_id.trim().to_string();
-    let token = query.token.trim().to_string();
-    if let Err(error) = core
-        .require_mobile_secure_stream_access(workspace_id, &device_id, &token)
+    let admission = match core
+        .admit_mobile_secure_workspace_stream_for_route(
+            MobileSecureWorkspaceStreamRouteParams::new(id, query.device_id, query.token),
+        )
         .await
     {
-        return mobile_secure_stream_access_status(error).into_response();
-    }
+        Ok(admission) => admission,
+        Err(error) => return mobile_secure_stream_route_status(error).into_response(),
+    };
+    let workspace_id = admission.workspace_id;
+    let stream_context = admission.context;
     ws.on_upgrade(move |socket| async move {
         if let Err(err) =
-            handle_mobile_secure_ws(socket, core, workspace_stream, workspace_id, device_id).await
+            handle_mobile_secure_ws(socket, workspace_stream, workspace_id, stream_context).await
         {
             tracing::warn!("secure mobile ws ended: {err:#}");
         }
     })
 }
 
-fn mobile_secure_stream_access_status(error: MobileSecureStreamAccessError) -> StatusCode {
-    match error {
-        MobileSecureStreamAccessError::BadDeviceId => StatusCode::BAD_REQUEST,
-        MobileSecureStreamAccessError::Unauthorized => StatusCode::UNAUTHORIZED,
-        MobileSecureStreamAccessError::NotFound => StatusCode::NOT_FOUND,
-        MobileSecureStreamAccessError::Store => StatusCode::INTERNAL_SERVER_ERROR,
+fn mobile_secure_stream_route_status(error: MobileAccessRouteError) -> StatusCode {
+    match error.kind() {
+        MobileAccessRouteErrorKind::BadRequest => StatusCode::BAD_REQUEST,
+        MobileAccessRouteErrorKind::Unauthorized => StatusCode::UNAUTHORIZED,
+        MobileAccessRouteErrorKind::NotFound => StatusCode::NOT_FOUND,
+        MobileAccessRouteErrorKind::Forbidden => StatusCode::FORBIDDEN,
+        MobileAccessRouteErrorKind::Conflict => StatusCode::CONFLICT,
+        MobileAccessRouteErrorKind::BadGateway => StatusCode::BAD_GATEWAY,
+        MobileAccessRouteErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }

@@ -1186,10 +1186,20 @@ test("daemon boundary guard rejects workspace websocket admission policy in HTTP
         state: &WorkspaceStreamHandle,
         workspace_id: WorkspaceId,
       ) -> Result<(), StatusCode> {
+        let parsed = WorkspaceId(uuid::Uuid::parse_str(raw)?);
         let exists = state.workspace_exists(workspace_id).await?;
         let exists = WorkspaceStreamHandle::workspace_exists(state, workspace_id).await?;
         let exists = WorkspacesHandle::workspace_exists(workspaces, workspace_id).await?;
+        state.require_workspace_active_stream_access(workspace_id).await?;
         Ok(())
+      }
+
+      fn mobile_secure_stream_access_status() {}
+      fn terminal_stream_access_status() {}
+      fn terminal_stream_tail_bytes() {}
+      fn secure_query(query: MobileSecureStreamQuery) {
+        let device_id = query.device_id.trim();
+        let token = query.token.trim();
       }
     `,
     patterns: WORKSPACE_WS_ADMISSION_API_PATTERNS,
@@ -1198,16 +1208,25 @@ test("daemon boundary guard rejects workspace websocket admission policy in HTTP
   assert.deepEqual(
     violations.map((violation) => violation.name),
     [
+      "workspace WS API parses stream route ids directly",
       "workspace WS API performs direct workspace existence admission",
       "workspace WS API performs direct workspace existence admission",
       "workspace WS API performs direct workspace existence admission",
-      "workspace WS API defines local stream access helper",
+      "workspace WS API calls raw stream admission helpers",
+      "workspace WS API defines local stream admission helper",
+      "workspace WS API defines local stream admission helper",
+      "workspace WS API defines local stream admission helper",
+      "workspace WS API defines local stream admission helper",
+      "workspace WS API trims secure mobile query fields directly",
+      "workspace WS API trims secure mobile query fields directly",
     ],
   );
 });
 
 test("daemon boundary guard scopes workspace websocket admission ban", () => {
   for (const filePath of [
+    "core/crates/ctx-http/src/api/ws/secure_mobile.rs",
+    "core/crates/ctx-http/src/api/ws/terminal.rs",
     "core/crates/ctx-http/src/api/ws/workspace_active.rs",
     "core/crates/ctx-http/src/api/ws/workspace_vcs.rs",
   ]) {

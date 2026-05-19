@@ -17,6 +17,7 @@ pub use route_contract::{
     CreateTerminalRouteRequest, DeleteTerminalRouteParams, ListWorkspaceTerminalsRouteParams,
     MintTerminalStreamTokenRouteParams, TerminalRouteError, TerminalRouteErrorKind,
     TerminalSessionRouteResponse, TerminalStatusRouteResponse, TerminalStreamConnectRouteResponse,
+    TerminalStreamRouteAdmission, TerminalStreamRouteParams,
 };
 
 async fn list_workspace_terminals(
@@ -212,6 +213,13 @@ pub async fn require_terminal_stream_access(
         .get(terminal_id)
         .await
         .ok_or(TerminalStreamAccessError::NotFound)?;
+    consume_terminal_stream_token(handle, provided_token)
+}
+
+fn consume_terminal_stream_token(
+    handle: Arc<TerminalSessionHandle>,
+    provided_token: &str,
+) -> Result<TerminalStreamSession, TerminalStreamAccessError> {
     if !handle.consume_stream_token(provided_token) {
         return Err(TerminalStreamAccessError::Unauthorized);
     }
@@ -258,6 +266,37 @@ mod tests {
             TerminalStreamStatusRecv::Lagged | TerminalStreamStatusRecv::Closed => {
                 panic!("expected status update")
             }
+        }
+    }
+
+    #[test]
+    fn terminal_stream_token_admission_requires_valid_one_shot_token() {
+        let handle = TerminalSessionHandle::test_handle_with_output(b"");
+        assert_eq!(
+            terminal_stream_token_error(Arc::clone(&handle), "bad-token"),
+            TerminalStreamAccessError::Unauthorized
+        );
+
+        let (stream_path, _) = handle.issue_stream_connect_path();
+        let token = stream_path
+            .split("token=")
+            .nth(1)
+            .expect("test stream path should contain token");
+        consume_terminal_stream_token(Arc::clone(&handle), token)
+            .expect("fresh stream token should be accepted");
+        assert_eq!(
+            terminal_stream_token_error(Arc::clone(&handle), token),
+            TerminalStreamAccessError::Unauthorized
+        );
+    }
+
+    fn terminal_stream_token_error(
+        handle: Arc<TerminalSessionHandle>,
+        provided_token: &str,
+    ) -> TerminalStreamAccessError {
+        match consume_terminal_stream_token(handle, provided_token) {
+            Ok(_) => panic!("expected terminal stream token admission error"),
+            Err(error) => error,
         }
     }
 }

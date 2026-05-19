@@ -2,11 +2,15 @@ use chrono::{DateTime, Utc};
 use ctx_core::ids::{SessionId, TaskId, TerminalId, WorkspaceId, WorktreeId};
 use ctx_core::models::{TerminalSession, TerminalStatus};
 use ctx_transport_runtime::terminal_launch::{TerminalLaunchError, TerminalLaunchErrorKind};
+use ctx_transport_runtime::terminals::DEFAULT_OUTPUT_TAIL_BYTES;
 use serde::{Deserialize, Serialize};
 
 use crate::daemon::TransportHandle;
 
-use super::{launch::CreateTerminalLaunchRequest, TerminalStreamConnectPath};
+use super::{
+    launch::CreateTerminalLaunchRequest, TerminalStreamAccessError, TerminalStreamConnectPath,
+    TerminalStreamSession,
+};
 
 #[derive(Debug)]
 pub struct ListWorkspaceTerminalsRouteParams {
@@ -59,6 +63,32 @@ impl MintTerminalStreamTokenRouteParams {
             terminal_id: terminal_id.into(),
         }
     }
+}
+
+#[derive(Debug)]
+pub struct TerminalStreamRouteParams {
+    terminal_id: String,
+    token: Option<String>,
+    tail: Option<String>,
+}
+
+impl TerminalStreamRouteParams {
+    pub fn new(
+        terminal_id: impl Into<String>,
+        token: Option<String>,
+        tail: Option<String>,
+    ) -> Self {
+        Self {
+            terminal_id: terminal_id.into(),
+            token,
+            tail,
+        }
+    }
+}
+
+pub struct TerminalStreamRouteAdmission {
+    pub session: TerminalStreamSession,
+    pub tail_bytes: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -136,6 +166,7 @@ impl From<TerminalStreamConnectPath> for TerminalStreamConnectRouteResponse {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TerminalRouteErrorKind {
     BadRequest,
+    Unauthorized,
     NotFound,
     Internal,
 }
@@ -157,6 +188,13 @@ impl TerminalRouteError {
     fn not_found(message: impl Into<String>) -> Self {
         Self {
             kind: TerminalRouteErrorKind::NotFound,
+            message: message.into(),
+        }
+    }
+
+    fn unauthorized(message: impl Into<String>) -> Self {
+        Self {
+            kind: TerminalRouteErrorKind::Unauthorized,
             message: message.into(),
         }
     }
@@ -253,6 +291,26 @@ impl TransportHandle {
             .map(Into::into)
             .ok_or_else(|| TerminalRouteError::not_found("terminal not found"))
     }
+
+    pub async fn admit_terminal_stream_for_route(
+        &self,
+        params: TerminalStreamRouteParams,
+    ) -> Result<TerminalStreamRouteAdmission, TerminalRouteError> {
+        let terminal_id = parse_terminal_id(&params.terminal_id)?;
+        let tail_bytes = parse_terminal_stream_tail_bytes(params.tail.as_deref());
+        let session = super::require_terminal_stream_access(
+            &self.state,
+            terminal_id,
+            params.token.as_deref(),
+        )
+        .await
+        .map_err(terminal_stream_access_route_error)?;
+
+        Ok(TerminalStreamRouteAdmission {
+            session,
+            tail_bytes,
+        })
+    }
 }
 
 fn parse_workspace_id(value: &str) -> Result<WorkspaceId, TerminalRouteError> {
@@ -265,6 +323,28 @@ fn parse_terminal_id(value: &str) -> Result<TerminalId, TerminalRouteError> {
     uuid::Uuid::parse_str(value)
         .map(TerminalId)
         .map_err(|_| TerminalRouteError::bad_request("invalid terminal id"))
+}
+
+fn parse_terminal_stream_tail_bytes(raw_tail: Option<&str>) -> usize {
+    raw_tail
+        .and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                trimmed.parse::<usize>().ok()
+            }
+        })
+        .unwrap_or(DEFAULT_OUTPUT_TAIL_BYTES)
+}
+
+fn terminal_stream_access_route_error(error: TerminalStreamAccessError) -> TerminalRouteError {
+    match error {
+        TerminalStreamAccessError::MissingToken | TerminalStreamAccessError::Unauthorized => {
+            TerminalRouteError::unauthorized("terminal stream token required")
+        }
+        TerminalStreamAccessError::NotFound => TerminalRouteError::not_found("terminal not found"),
+    }
 }
 
 fn parse_optional_id(
@@ -401,5 +481,80 @@ mod tests {
         assert_eq!(launch.worktree_id, Some(worktree_id));
         assert_eq!(launch.cwd.as_deref(), Some("."));
         assert_eq!(launch.shell.as_deref(), Some("/bin/sh"));
+    }
+
+    #[test]
+    fn terminal_stream_route_rejects_invalid_terminal_id() {
+        let error = parse_terminal_id("not-a-terminal").unwrap_err();
+        assert_eq!(error.kind(), TerminalRouteErrorKind::BadRequest);
+        assert_eq!(error.message(), "invalid terminal id");
+    }
+
+    #[test]
+    fn terminal_stream_access_errors_map_to_route_errors() {
+        for error in [
+            TerminalStreamAccessError::MissingToken,
+            TerminalStreamAccessError::Unauthorized,
+        ] {
+            let route_error = terminal_stream_access_route_error(error);
+            assert_eq!(route_error.kind(), TerminalRouteErrorKind::Unauthorized);
+            assert_eq!(route_error.message(), "terminal stream token required");
+        }
+
+        let route_error = terminal_stream_access_route_error(TerminalStreamAccessError::NotFound);
+        assert_eq!(route_error.kind(), TerminalRouteErrorKind::NotFound);
+        assert_eq!(route_error.message(), "terminal not found");
+    }
+
+    #[tokio::test]
+    async fn terminal_stream_route_checks_missing_token_before_terminal_lookup() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let daemon = crate::test_support::TestDaemon::new_for_test(
+            temp.path().to_path_buf(),
+            "http://127.0.0.1:4567".to_string(),
+        )
+        .await
+        .expect("test daemon");
+        let missing_terminal_id = TerminalId::new();
+
+        let result = daemon
+            .handle()
+            .transport()
+            .admit_terminal_stream_for_route(TerminalStreamRouteParams::new(
+                missing_terminal_id.0.to_string(),
+                None,
+                None,
+            ))
+            .await;
+        let error = match result {
+            Ok(_) => panic!("missing token should reject before terminal lookup"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.kind(), TerminalRouteErrorKind::Unauthorized);
+        assert_eq!(error.message(), "terminal stream token required");
+    }
+
+    #[test]
+    fn terminal_stream_tail_defaults_and_parses() {
+        assert_eq!(
+            parse_terminal_stream_tail_bytes(None),
+            DEFAULT_OUTPUT_TAIL_BYTES
+        );
+        assert_eq!(
+            parse_terminal_stream_tail_bytes(Some("")),
+            DEFAULT_OUTPUT_TAIL_BYTES
+        );
+        assert_eq!(
+            parse_terminal_stream_tail_bytes(Some(" \n\t ")),
+            DEFAULT_OUTPUT_TAIL_BYTES
+        );
+        assert_eq!(
+            parse_terminal_stream_tail_bytes(Some("not-a-number")),
+            DEFAULT_OUTPUT_TAIL_BYTES
+        );
+        assert_eq!(parse_terminal_stream_tail_bytes(Some("0")), 0);
+        assert_eq!(parse_terminal_stream_tail_bytes(Some("42")), 42);
+        assert_eq!(parse_terminal_stream_tail_bytes(Some(" 42 ")), 42);
     }
 }

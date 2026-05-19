@@ -14,12 +14,15 @@ use self::buffer::VcsPendingBuffer;
 #[cfg(test)]
 use self::metrics::VcsStreamMetrics;
 use self::socket::handle_workspace_vcs_ws;
-use ctx_daemon::daemon::WorkspaceStreamAccessError;
+use ctx_daemon::daemon::{
+    WorkspaceStreamRouteError, WorkspaceStreamRouteErrorKind, WorkspaceStreamRouteParams,
+};
 
-fn workspace_stream_access_status(error: WorkspaceStreamAccessError) -> StatusCode {
-    match error {
-        WorkspaceStreamAccessError::NotFound => StatusCode::NOT_FOUND,
-        WorkspaceStreamAccessError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+fn workspace_stream_route_status(error: WorkspaceStreamRouteError) -> StatusCode {
+    match error.kind() {
+        WorkspaceStreamRouteErrorKind::BadRequest => StatusCode::BAD_REQUEST,
+        WorkspaceStreamRouteErrorKind::NotFound => StatusCode::NOT_FOUND,
+        WorkspaceStreamRouteErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
 
@@ -28,15 +31,13 @@ pub(crate) async fn workspace_vcs_stream_ws(
     State(state): State<WorkspacesHandle>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    let workspace_id = match uuid::Uuid::parse_str(&id) {
-        Ok(value) => WorkspaceId(value),
-        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
-    };
-    if let Err(error) = state
-        .require_workspace_vcs_stream_access(workspace_id)
+    let admission = match state
+        .admit_workspace_vcs_stream_for_route(WorkspaceStreamRouteParams::new(id))
         .await
     {
-        return workspace_stream_access_status(error).into_response();
-    }
+        Ok(admission) => admission,
+        Err(error) => return workspace_stream_route_status(error).into_response(),
+    };
+    let workspace_id = admission.workspace_id();
     ws.on_upgrade(move |socket| handle_workspace_vcs_ws(socket, state, workspace_id))
 }

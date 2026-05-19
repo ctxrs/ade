@@ -549,6 +549,8 @@ const dictationWsConfigApiRoots = [
 ];
 
 const workspaceWsAdmissionApiRoots = [
+  "core/crates/ctx-http/src/api/ws/secure_mobile.rs",
+  "core/crates/ctx-http/src/api/ws/terminal.rs",
   "core/crates/ctx-http/src/api/ws/workspace_active.rs",
   "core/crates/ctx-http/src/api/ws/workspace_vcs.rs",
 ];
@@ -3174,12 +3176,26 @@ const DICTATION_WS_CONFIG_API_PATTERNS = [
 
 const WORKSPACE_WS_ADMISSION_API_PATTERNS = [
   {
+    name: "workspace WS API parses stream route ids directly",
+    regex: /\buuid::Uuid::parse_str\s*\(|\b(?:WorkspaceId|TerminalId)\s*\(/,
+  },
+  {
     name: "workspace WS API performs direct workspace existence admission",
     regex: /(?:\.|\b(?:WorkspaceStreamHandle|WorkspacesHandle)::)workspace_exists\s*\(/,
   },
   {
-    name: "workspace WS API defines local stream access helper",
-    regex: /\bfn\s+require_workspace_(?:active|vcs)_stream_access\s*\(/,
+    name: "workspace WS API calls raw stream admission helpers",
+    regex:
+      /\.(?:require_workspace_active_stream_access|require_workspace_vcs_stream_access|require_mobile_secure_stream_access|load_mobile_secure_stream_context|require_terminal_stream_access)\s*\(/,
+  },
+  {
+    name: "workspace WS API defines local stream admission helper",
+    regex:
+      /\bfn\s+(?:require_workspace_(?:active|vcs)_stream_access|mobile_secure_stream_access_status|terminal_stream_access_status|terminal_stream_tail_bytes)\s*\(/,
+  },
+  {
+    name: "workspace WS API trims secure mobile query fields directly",
+    regex: /\bquery\.(?:device_id|token)\.trim\s*\(/,
   },
 ];
 

@@ -116,6 +116,87 @@ pub enum WorkspaceStreamAccessError {
     Internal(anyhow::Error),
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct WorkspaceStreamRouteParams {
+    workspace_id: String,
+}
+
+impl WorkspaceStreamRouteParams {
+    pub fn new(workspace_id: impl Into<String>) -> Self {
+        Self {
+            workspace_id: workspace_id.into(),
+        }
+    }
+
+    fn parse_workspace_id(&self) -> Result<WorkspaceId, WorkspaceStreamRouteError> {
+        uuid::Uuid::parse_str(&self.workspace_id)
+            .map(WorkspaceId)
+            .map_err(|_| WorkspaceStreamRouteError::bad_request("invalid workspace id"))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceStreamRouteErrorKind {
+    BadRequest,
+    NotFound,
+    Internal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceStreamRouteError {
+    kind: WorkspaceStreamRouteErrorKind,
+    message: String,
+}
+
+impl WorkspaceStreamRouteError {
+    fn bad_request(message: impl Into<String>) -> Self {
+        Self {
+            kind: WorkspaceStreamRouteErrorKind::BadRequest,
+            message: message.into(),
+        }
+    }
+
+    fn not_found(message: impl Into<String>) -> Self {
+        Self {
+            kind: WorkspaceStreamRouteErrorKind::NotFound,
+            message: message.into(),
+        }
+    }
+
+    fn internal(message: impl Into<String>) -> Self {
+        Self {
+            kind: WorkspaceStreamRouteErrorKind::Internal,
+            message: message.into(),
+        }
+    }
+
+    fn from_stream_access(error: WorkspaceStreamAccessError) -> Self {
+        match error {
+            WorkspaceStreamAccessError::NotFound => Self::not_found("workspace not found"),
+            WorkspaceStreamAccessError::Internal(error) => Self::internal(error.to_string()),
+        }
+    }
+
+    pub fn kind(&self) -> WorkspaceStreamRouteErrorKind {
+        self.kind
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkspaceStreamRouteAdmission {
+    workspace_id: WorkspaceId,
+}
+
+impl WorkspaceStreamRouteAdmission {
+    pub fn workspace_id(&self) -> WorkspaceId {
+        self.workspace_id
+    }
+}
+
 async fn require_existing_workspace_for_stream(
     state: &DaemonState,
     workspace_id: WorkspaceId,
@@ -157,6 +238,17 @@ impl WorkspacesHandle {
         workspace_id: WorkspaceId,
     ) -> Result<(), WorkspaceStreamAccessError> {
         require_existing_workspace_for_stream(&self.state, workspace_id).await
+    }
+
+    pub async fn admit_workspace_vcs_stream_for_route(
+        &self,
+        params: WorkspaceStreamRouteParams,
+    ) -> Result<WorkspaceStreamRouteAdmission, WorkspaceStreamRouteError> {
+        let workspace_id = params.parse_workspace_id()?;
+        self.require_workspace_vcs_stream_access(workspace_id)
+            .await
+            .map_err(WorkspaceStreamRouteError::from_stream_access)?;
+        Ok(WorkspaceStreamRouteAdmission { workspace_id })
     }
 
     pub async fn create_workspace(
@@ -953,6 +1045,17 @@ impl WorkspaceStreamHandle {
         require_existing_workspace_for_stream(&self.state, workspace_id).await
     }
 
+    pub async fn admit_workspace_active_stream_for_route(
+        &self,
+        params: WorkspaceStreamRouteParams,
+    ) -> Result<WorkspaceStreamRouteAdmission, WorkspaceStreamRouteError> {
+        let workspace_id = params.parse_workspace_id()?;
+        self.require_workspace_active_stream_access(workspace_id)
+            .await
+            .map_err(WorkspaceStreamRouteError::from_stream_access)?;
+        Ok(WorkspaceStreamRouteAdmission { workspace_id })
+    }
+
     pub async fn subscribe_workspace_active_snapshot(
         &self,
         workspace_id: WorkspaceId,
@@ -1400,6 +1503,42 @@ mod workspace_stream_access_tests {
     }
 
     #[tokio::test]
+    async fn workspace_stream_route_admission_rejects_invalid_workspace_id() {
+        let temp = tempdir().expect("tempdir");
+        let daemon = TestDaemon::new_for_test(
+            temp.path().to_path_buf(),
+            "http://127.0.0.1:4567".to_string(),
+        )
+        .await
+        .expect("test daemon");
+
+        let active_error = daemon
+            .handle()
+            .workspace_stream()
+            .admit_workspace_active_stream_for_route(WorkspaceStreamRouteParams::new(
+                "not-a-workspace",
+            ))
+            .await
+            .expect_err("invalid workspace id should reject active stream route admission");
+        assert_eq!(
+            active_error.kind(),
+            WorkspaceStreamRouteErrorKind::BadRequest
+        );
+        assert_eq!(active_error.message(), "invalid workspace id");
+
+        let vcs_error = daemon
+            .handle()
+            .workspaces()
+            .admit_workspace_vcs_stream_for_route(WorkspaceStreamRouteParams::new(
+                "not-a-workspace",
+            ))
+            .await
+            .expect_err("invalid workspace id should reject VCS stream route admission");
+        assert_eq!(vcs_error.kind(), WorkspaceStreamRouteErrorKind::BadRequest);
+        assert_eq!(vcs_error.message(), "invalid workspace id");
+    }
+
+    #[tokio::test]
     async fn workspace_stream_access_allows_existing_workspace() {
         let temp = tempdir().expect("tempdir");
         let daemon = TestDaemon::new_for_test(
@@ -1434,5 +1573,25 @@ mod workspace_stream_access_tests {
             .require_workspace_vcs_stream_access(workspace.id)
             .await
             .expect("existing workspace should allow VCS stream access");
+
+        let active_admission = daemon
+            .handle()
+            .workspace_stream()
+            .admit_workspace_active_stream_for_route(WorkspaceStreamRouteParams::new(
+                workspace.id.0.to_string(),
+            ))
+            .await
+            .expect("existing workspace should allow active stream route admission");
+        assert_eq!(active_admission.workspace_id(), workspace.id);
+
+        let vcs_admission = daemon
+            .handle()
+            .workspaces()
+            .admit_workspace_vcs_stream_for_route(WorkspaceStreamRouteParams::new(
+                workspace.id.0.to_string(),
+            ))
+            .await
+            .expect("existing workspace should allow VCS stream route admission");
+        assert_eq!(vcs_admission.workspace_id(), workspace.id);
     }
 }

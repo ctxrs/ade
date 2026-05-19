@@ -173,7 +173,9 @@ pub use workspaces::{
     WorkspacePromptConfigRouteParams, WorkspaceProviderModelPreferenceRouteParams,
     WorkspaceProviderModelPreferenceRouteResponse, WorkspaceRouteError, WorkspaceRouteErrorKind,
     WorkspaceRouteParams, WorkspaceRouteResponse, WorkspaceStreamAccessError,
-    WorkspaceWorktreeBootstrapConfigRouteResponse, WorktreeRouteParams, WorktreeRouteResponse,
+    WorkspaceStreamRouteAdmission, WorkspaceStreamRouteError, WorkspaceStreamRouteErrorKind,
+    WorkspaceStreamRouteParams, WorkspaceWorktreeBootstrapConfigRouteResponse, WorktreeRouteParams,
+    WorktreeRouteResponse,
 };
 
 #[cfg(test)]
