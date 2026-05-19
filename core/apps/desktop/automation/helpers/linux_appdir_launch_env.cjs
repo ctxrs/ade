@@ -57,15 +57,38 @@ const resolveLinuxAppDirFromPath = ({
   return "";
 };
 
+const resolveLinuxAppDirFromExplicitPath = ({
+  appPath,
+  fsImpl = fs,
+  pathImpl = path,
+} = {}) => {
+  if (process.platform !== "linux") return "";
+  const normalized = resolveConfiguredPath(appPath, pathImpl);
+  if (!normalized) return "";
+  const candidates = [];
+  if (pathImpl.basename(normalized) === "AppRun") {
+    candidates.push(pathImpl.dirname(normalized));
+  }
+  const binaryMarker = `${pathImpl.sep}usr${pathImpl.sep}bin${pathImpl.sep}ctx`;
+  const binaryIndex = normalized.indexOf(binaryMarker);
+  if (binaryIndex > 0) {
+    candidates.push(normalized.slice(0, binaryIndex));
+  }
+  for (const candidate of candidates) {
+    const appDir = existingDirectory(candidate, fsImpl);
+    if (appDir) return appDir;
+  }
+  return "";
+};
+
 const resolveLinuxAppDirExecutablePath = ({
   appPath,
-  env = process.env,
   fsImpl = fs,
   pathImpl = path,
 } = {}) => {
   if (process.platform !== "linux") return resolveConfiguredPath(appPath, pathImpl);
   const appExecutablePath = resolveConfiguredPath(appPath, pathImpl);
-  const appDir = resolveLinuxAppDirFromPath({ appPath: appExecutablePath, env, fsImpl, pathImpl });
+  const appDir = resolveLinuxAppDirFromExplicitPath({ appPath: appExecutablePath, fsImpl, pathImpl });
   if (!appDir) return appExecutablePath;
   return existingExecutableFile(pathImpl.join(appDir, "usr", "bin", "ctx"), fsImpl)
     || appExecutablePath;
@@ -216,7 +239,7 @@ const createLinuxAppDirLaunchWrapper = ({
   const appDir = resolveLinuxAppDirFromPath({ appPath: appExecutablePath, env, fsImpl, pathImpl });
   if (!appExecutablePath || !appDir) return appPath;
   const appLaunchTargetPath =
-    resolveLinuxAppDirExecutablePath({ appPath: appExecutablePath, env, fsImpl, pathImpl })
+    resolveLinuxAppDirExecutablePath({ appPath: appExecutablePath, fsImpl, pathImpl })
     || appExecutablePath;
   const launchEnv = {
     ...env,
@@ -248,8 +271,10 @@ const createLinuxAppDirLaunchWrapper = ({
     "  done",
     "  printf '\\n' >> \"$CTX_AUTOMATION_APP_LAUNCH_LOG\"",
     "  printf 'launch env TAURI_WEBVIEW_AUTOMATION=%s APPDIR=%s APPIMAGE=%s ARGV0=%s CTX_APPIMAGE_PATH=%s DISPLAY=%s XDG_RUNTIME_DIR=%s HOME=%s\\n' \"${TAURI_WEBVIEW_AUTOMATION:-}\" \"${APPDIR:-}\" \"${APPIMAGE:-}\" \"${ARGV0:-}\" \"${CTX_APPIMAGE_PATH:-}\" \"${DISPLAY:-}\" \"${XDG_RUNTIME_DIR:-}\" \"${HOME:-}\" >> \"$CTX_AUTOMATION_APP_LAUNCH_LOG\"",
+    "  set +e",
     `  ${shellQuote(appLaunchTargetPath)} "$@" >> "$CTX_AUTOMATION_APP_LAUNCH_LOG" 2>&1`,
     "  status=$?",
+    "  set -e",
     "  printf 'desktop app exited status=%s\\n' \"$status\" >> \"$CTX_AUTOMATION_APP_LAUNCH_LOG\"",
     "  exit \"$status\"",
     "fi",

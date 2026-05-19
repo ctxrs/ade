@@ -120,6 +120,32 @@ test("linux AppDir automation executable resolves inner desktop binary", async (
   });
 });
 
+test("linux AppDir automation executable ignores stale APPDIR for ordinary binaries", async () => {
+  await withPlatform("linux", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-linux-appdir-stale-"));
+    try {
+      const debugBinary = path.join(tmp, "debug", "ctx");
+      const staleAppDir = path.join(tmp, "stale-appdir");
+      fs.mkdirSync(path.dirname(debugBinary), { recursive: true });
+      fs.mkdirSync(path.join(staleAppDir, "usr", "bin"), { recursive: true });
+      fs.writeFileSync(debugBinary, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(staleAppDir, "usr", "bin", "ctx"), "#!/bin/sh\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      assert.equal(
+        resolveLinuxAppDirExecutablePath({
+          appPath: debugBinary,
+          env: { APPDIR: staleAppDir },
+        }),
+        debugBinary,
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
 test("linux AppDir launch env leaves ordinary debug binaries alone", async () => {
   await withPlatform("linux", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-linux-debug-env-"));
