@@ -10,6 +10,7 @@ mod message_route;
 pub mod model_catalog;
 mod model_switch;
 mod pinning;
+mod read_models;
 mod route_contract;
 mod runtime;
 pub mod subagents;
