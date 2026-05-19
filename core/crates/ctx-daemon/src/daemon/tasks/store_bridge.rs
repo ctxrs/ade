@@ -1,5 +1,5 @@
 use anyhow::Result;
-use ctx_core::ids::TaskId;
+use ctx_core::ids::{TaskId, WorkspaceId};
 use ctx_core::models::{Task, Workspace};
 use ctx_store::Store;
 
@@ -8,7 +8,39 @@ use crate::daemon::WorkspaceStoreAccessError;
 
 use super::TaskLifecycleError;
 
+pub(super) struct TaskWorkspaceStoreContext {
+    pub(super) workspace: Workspace,
+    pub(super) store: Store,
+}
+
 impl TasksHandle {
+    pub(super) async fn upsert_workspace_task_index(
+        &self,
+        task_id: TaskId,
+        workspace_id: WorkspaceId,
+    ) -> Result<()> {
+        self.state
+            .global_store()
+            .upsert_workspace_task_index(task_id, workspace_id)
+            .await
+    }
+
+    pub(super) async fn load_workspace_context(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<Option<TaskWorkspaceStoreContext>> {
+        let Some(workspace) = self
+            .state
+            .global_store()
+            .get_workspace(workspace_id)
+            .await?
+        else {
+            return Ok(None);
+        };
+        let store = self.state.store_for_workspace(workspace_id).await?;
+        Ok(Some(TaskWorkspaceStoreContext { workspace, store }))
+    }
+
     pub(super) async fn task_store_or_none(
         &self,
         task_id: TaskId,

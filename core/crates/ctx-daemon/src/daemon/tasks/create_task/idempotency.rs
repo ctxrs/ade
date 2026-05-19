@@ -59,7 +59,7 @@ pub(super) async fn upsert_workspace_task_index(
     ws_id: WorkspaceId,
 ) {
     if let Err(e) = handles
-        .sessions
+        .tasks
         .upsert_workspace_task_index(task_id, ws_id)
         .await
     {

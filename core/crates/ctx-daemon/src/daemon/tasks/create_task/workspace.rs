@@ -5,7 +5,7 @@ pub(super) async fn load_create_task_workspace(
     workspace_id: WorkspaceId,
 ) -> Result<(Workspace, Store), CreateTaskApiError> {
     let ctx = handles
-        .sessions
+        .tasks
         .load_workspace_context(workspace_id)
         .await
         .map_err(TaskCreateError::internal)?
