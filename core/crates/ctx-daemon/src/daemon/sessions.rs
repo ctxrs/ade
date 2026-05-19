@@ -20,6 +20,7 @@ pub mod title_generation;
 mod title_model_mode_route;
 pub mod vcs;
 mod vcs_route;
+mod workspace_bridge;
 
 pub use artifacts::{
     SessionArtifactDownload, SessionArtifactDownloadRouteParams, SessionArtifactInput,
