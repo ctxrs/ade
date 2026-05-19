@@ -1,15 +1,10 @@
-use std::path::Path;
-
-use ctx_core::ids::WorkspaceId;
 use ctx_observability::telemetry::TelemetryEvent;
 use ctx_settings_model::{ContainerNetworkMode, ExecutionMode, ExecutionSettings};
 use ctx_workspace_config as workspace_config;
-use ctx_workspace_services::workspace_registration::{
-    prepare_workspace_registration, validate_workspace_primary_branch,
-};
+use ctx_workspace_services::workspace_registration::prepare_workspace_registration;
 use serde::{Deserialize, Serialize};
 
-use crate::daemon::{settings, WorkspaceStoreAccessError, WorkspacesHandle};
+use crate::daemon::{WorkspaceStoreAccessError, WorkspacesHandle};
 
 use super::WorkspaceRouteResponse;
 
@@ -19,6 +14,9 @@ mod prompt_and_model;
 pub use management_config::{
     UpdateWorkspaceMergeQueueConfigRequest, UpdateWorktreeBootstrapConfigRequest,
     WorkspaceMergeQueueConfigRouteResponse, WorkspaceWorktreeBootstrapConfigRouteResponse,
+};
+pub(in crate::daemon::workspaces) use prompt_and_model::{
+    parse_workspace_route_id, provider_model_preference_error, workspace_store_error,
 };
 pub use prompt_and_model::{
     AgentSystemPromptConfigRouteResponse, SubagentSystemPromptConfigRouteResponse,
@@ -174,150 +172,9 @@ impl WorkspacesHandle {
             .await;
         Ok(workspace.into())
     }
-
-    pub async fn workspace_primary_branch_for_request(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> Result<WorkspacePrimaryBranchSnapshot, WorkspaceRouteError> {
-        let store = self
-            .existing_workspace_store(workspace_id)
-            .await
-            .map_err(WorkspaceRouteError::from_workspace_store)?;
-        let primary_branch = workspace_config::load_primary_branch(&store)
-            .await
-            .map_err(WorkspaceRouteError::internal)?
-            .ok_or_else(|| {
-                WorkspaceRouteError::not_found("workspace primary branch is not configured")
-            })?;
-        Ok(WorkspacePrimaryBranchSnapshot { primary_branch })
-    }
-
-    pub async fn update_workspace_primary_branch_for_request(
-        &self,
-        workspace_id: WorkspaceId,
-        req: UpdateWorkspacePrimaryBranchRequest,
-    ) -> Result<WorkspacePrimaryBranchSnapshot, WorkspaceRouteError> {
-        let workspace = self
-            .state
-            .global_store()
-            .get_workspace(workspace_id)
-            .await
-            .map_err(WorkspaceRouteError::internal)?
-            .ok_or_else(|| WorkspaceRouteError::not_found("workspace not found"))?;
-        let primary_branch =
-            validate_workspace_primary_branch(Path::new(&workspace.root_path), &req.primary_branch)
-                .await
-                .map_err(|error| WorkspaceRouteError::bad_request(error.message()))?;
-        let store = self
-            .existing_workspace_store(workspace.id)
-            .await
-            .map_err(WorkspaceRouteError::from_workspace_store)?;
-        workspace_config::update_primary_branch(&store, &primary_branch)
-            .await
-            .map_err(WorkspaceRouteError::internal)?;
-        let worktrees = store
-            .list_worktrees(workspace.id)
-            .await
-            .map_err(WorkspaceRouteError::internal)?;
-        for worktree in worktrees {
-            if let Err(error) = self.refresh_worktree_vcs_snapshot(&worktree, true).await {
-                tracing::warn!(
-                    workspace_id = %workspace.id.0,
-                    worktree_id = %worktree.id.0,
-                    "failed to refresh worktree vcs after primary branch update: {error:#}"
-                );
-            }
-        }
-        Ok(WorkspacePrimaryBranchSnapshot { primary_branch })
-    }
-
-    pub async fn workspace_execution_config_for_request(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> Result<WorkspaceExecutionConfigSnapshot, WorkspaceRouteError> {
-        let store = self
-            .existing_workspace_store(workspace_id)
-            .await
-            .map_err(WorkspaceRouteError::from_workspace_store)?;
-        let settings = settings::load_settings(self.state.as_ref())
-            .await
-            .map_err(WorkspaceRouteError::internal)?;
-        let mut effective = settings.execution.clone().unwrap_or_default();
-        let mut source = "daemon_default".to_string();
-        match workspace_config::load_execution_settings_override(&store).await {
-            Ok(Some(override_config)) => {
-                ctx_settings_service::apply_workspace_execution_settings_override(
-                    &mut effective,
-                    &override_config,
-                )
-                .map_err(WorkspaceRouteError::from_request_or_policy_error)?;
-                source = "workspace".to_string();
-            }
-            Ok(None) => {}
-            Err(error) if workspace_config::is_workspace_runtime_settings_parse_error(&error) => {
-                return Err(WorkspaceRouteError::bad_request(error));
-            }
-            Err(error) => return Err(WorkspaceRouteError::internal(error)),
-        }
-        Ok(project_workspace_execution_config(source, &effective))
-    }
-
-    pub async fn update_workspace_execution_config_for_request(
-        &self,
-        workspace_id: WorkspaceId,
-        req: UpdateWorkspaceExecutionConfigRequest,
-    ) -> Result<WorkspaceConfigUpdateResult, WorkspaceRouteError> {
-        let store = self
-            .existing_workspace_store(workspace_id)
-            .await
-            .map_err(WorkspaceRouteError::from_workspace_store)?;
-        let environment = parse_execution_environment_for_request(
-            req.environment.trim(),
-            self.sandbox_runtime_available_for_execution_config(),
-        )?;
-        let network_mode = parse_execution_network_mode_for_request(req.network_mode.as_deref())?;
-        let allowlist = req.allowlist.map(normalize_execution_allowlist);
-        let settings = settings::load_settings(self.state.as_ref())
-            .await
-            .map_err(WorkspaceRouteError::internal)?;
-        let effective = settings.execution.clone().unwrap_or_default();
-        let requested_override = build_workspace_execution_config_override(
-            environment,
-            network_mode.clone(),
-            allowlist.clone(),
-        );
-        ctx_settings_service::validate_workspace_execution_settings_override(
-            &effective,
-            &requested_override,
-        )
-        .map_err(WorkspaceRouteError::from_request_or_policy_error)?;
-        workspace_config::update_execution_config(
-            &store,
-            workspace_config::ExecutionConfigUpdate {
-                environment,
-                network_mode,
-                allowlist,
-                image: None,
-            },
-        )
-        .await
-        .map_err(WorkspaceRouteError::bad_request)?;
-        Ok(WorkspaceConfigUpdateResult { ok: true })
-    }
-
-    fn sandbox_runtime_available_for_execution_config(&self) -> bool {
-        #[cfg(target_os = "macos")]
-        {
-            self.shared_vm_container_runtime_available()
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            true
-        }
-    }
 }
 
-fn project_workspace_execution_config(
+pub(in crate::daemon::workspaces) fn project_workspace_execution_config(
     source: String,
     effective: &ExecutionSettings,
 ) -> WorkspaceExecutionConfigSnapshot {
@@ -341,7 +198,7 @@ fn project_workspace_execution_config(
     }
 }
 
-fn parse_execution_environment_for_request(
+pub(in crate::daemon::workspaces) fn parse_execution_environment_for_request(
     environment: &str,
     sandbox_runtime_available: bool,
 ) -> Result<workspace_config::ExecutionEnvironment, WorkspaceRouteError> {
@@ -361,7 +218,7 @@ fn parse_execution_environment_for_request(
     }
 }
 
-fn parse_execution_network_mode_for_request(
+pub(in crate::daemon::workspaces) fn parse_execution_network_mode_for_request(
     network_mode: Option<&str>,
 ) -> Result<Option<ContainerNetworkMode>, WorkspaceRouteError> {
     match network_mode.map(str::trim) {
@@ -375,7 +232,9 @@ fn parse_execution_network_mode_for_request(
     }
 }
 
-fn normalize_execution_allowlist(values: Vec<String>) -> Vec<String> {
+pub(in crate::daemon::workspaces) fn normalize_execution_allowlist(
+    values: Vec<String>,
+) -> Vec<String> {
     values
         .into_iter()
         .map(|value| value.trim().to_string())
@@ -383,7 +242,7 @@ fn normalize_execution_allowlist(values: Vec<String>) -> Vec<String> {
         .collect()
 }
 
-fn build_workspace_execution_config_override(
+pub(in crate::daemon::workspaces) fn build_workspace_execution_config_override(
     environment: workspace_config::ExecutionEnvironment,
     network_mode: Option<ContainerNetworkMode>,
     allowlist: Option<Vec<String>>,

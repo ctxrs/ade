@@ -6,12 +6,12 @@ use serde::{Deserialize, Serialize};
 use crate::daemon::workspaces::{
     WorkspaceProviderModelPreference, WorkspaceProviderModelPreferenceError, WorkspaceRouteError,
 };
-use crate::daemon::{WorkspaceStoreAccessError, WorkspacesHandle};
+use crate::daemon::WorkspaceStoreAccessError;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct WorkspaceProviderModelPreferenceRouteParams {
-    workspace_id: String,
-    provider_id: String,
+    pub(in crate::daemon::workspaces) workspace_id: String,
+    pub(in crate::daemon::workspaces) provider_id: String,
 }
 
 impl WorkspaceProviderModelPreferenceRouteParams {
@@ -25,7 +25,7 @@ impl WorkspaceProviderModelPreferenceRouteParams {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct WorkspacePromptConfigRouteParams {
-    workspace_id: String,
+    pub(in crate::daemon::workspaces) workspace_id: String,
 }
 
 impl WorkspacePromptConfigRouteParams {
@@ -39,7 +39,7 @@ impl WorkspacePromptConfigRouteParams {
 #[derive(Debug, Clone, Deserialize, Eq, PartialEq)]
 pub struct UpdateWorkspaceProviderModelPreferenceRouteRequest {
     #[serde(default)]
-    preferred_model_id: Option<String>,
+    pub(in crate::daemon::workspaces) preferred_model_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Eq, PartialEq)]
@@ -61,13 +61,13 @@ impl From<WorkspaceProviderModelPreference> for WorkspaceProviderModelPreference
 #[derive(Debug, Clone, Deserialize, Eq, PartialEq)]
 pub struct UpdateAgentSystemPromptConfigRouteRequest {
     #[serde(default)]
-    system_prompt_append: Option<String>,
+    pub(in crate::daemon::workspaces) system_prompt_append: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Eq, PartialEq)]
 pub struct UpdateSubagentSystemPromptConfigRouteRequest {
     #[serde(default)]
-    system_prompt_append: Option<String>,
+    pub(in crate::daemon::workspaces) system_prompt_append: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Eq, PartialEq)]
@@ -86,13 +86,15 @@ pub struct SubagentSystemPromptConfigRouteResponse {
     source: String,
 }
 
-fn parse_workspace_route_id(value: &str) -> Result<WorkspaceId, WorkspaceRouteError> {
+pub(in crate::daemon::workspaces) fn parse_workspace_route_id(
+    value: &str,
+) -> Result<WorkspaceId, WorkspaceRouteError> {
     uuid::Uuid::parse_str(value)
         .map(WorkspaceId)
         .map_err(|_| WorkspaceRouteError::bad_request("invalid workspace id"))
 }
 
-fn provider_model_preference_error(
+pub(in crate::daemon::workspaces) fn provider_model_preference_error(
     error: WorkspaceProviderModelPreferenceError,
 ) -> WorkspaceRouteError {
     match error {
@@ -116,7 +118,9 @@ fn provider_model_preference_error(
     }
 }
 
-fn workspace_store_error(error: WorkspaceStoreAccessError) -> WorkspaceRouteError {
+pub(in crate::daemon::workspaces) fn workspace_store_error(
+    error: WorkspaceStoreAccessError,
+) -> WorkspaceRouteError {
     match error {
         WorkspaceStoreAccessError::NotFound => {
             WorkspaceRouteError::not_found("workspace not found")
@@ -162,81 +166,6 @@ impl From<workspace_config::SubagentSystemPromptAppendConfig>
             effective_append: cfg.effective_append(),
             source: source_label(cfg.source()),
         }
-    }
-}
-
-impl WorkspacesHandle {
-    pub async fn workspace_provider_model_preference_for_route(
-        &self,
-        params: WorkspaceProviderModelPreferenceRouteParams,
-    ) -> Result<WorkspaceProviderModelPreferenceRouteResponse, WorkspaceRouteError> {
-        let workspace_id = parse_workspace_route_id(&params.workspace_id)?;
-        self.get_workspace_provider_model_preference(workspace_id, &params.provider_id)
-            .await
-            .map(Into::into)
-            .map_err(provider_model_preference_error)
-    }
-
-    pub async fn update_workspace_provider_model_preference_for_route(
-        &self,
-        params: WorkspaceProviderModelPreferenceRouteParams,
-        req: UpdateWorkspaceProviderModelPreferenceRouteRequest,
-    ) -> Result<WorkspaceProviderModelPreferenceRouteResponse, WorkspaceRouteError> {
-        let workspace_id = parse_workspace_route_id(&params.workspace_id)?;
-        self.set_workspace_provider_model_preference(
-            workspace_id,
-            &params.provider_id,
-            req.preferred_model_id,
-        )
-        .await
-        .map(Into::into)
-        .map_err(provider_model_preference_error)
-    }
-
-    pub async fn agent_system_prompt_config_for_route(
-        &self,
-        params: WorkspacePromptConfigRouteParams,
-    ) -> Result<AgentSystemPromptConfigRouteResponse, WorkspaceRouteError> {
-        let workspace_id = parse_workspace_route_id(&params.workspace_id)?;
-        self.load_agent_system_prompt_append(workspace_id)
-            .await
-            .map(Into::into)
-            .map_err(workspace_store_error)
-    }
-
-    pub async fn update_agent_system_prompt_config_for_route(
-        &self,
-        params: WorkspacePromptConfigRouteParams,
-        req: UpdateAgentSystemPromptConfigRouteRequest,
-    ) -> Result<AgentSystemPromptConfigRouteResponse, WorkspaceRouteError> {
-        let workspace_id = parse_workspace_route_id(&params.workspace_id)?;
-        self.update_agent_system_prompt_append(workspace_id, req.system_prompt_append)
-            .await
-            .map(Into::into)
-            .map_err(workspace_store_error)
-    }
-
-    pub async fn subagent_system_prompt_config_for_route(
-        &self,
-        params: WorkspacePromptConfigRouteParams,
-    ) -> Result<SubagentSystemPromptConfigRouteResponse, WorkspaceRouteError> {
-        let workspace_id = parse_workspace_route_id(&params.workspace_id)?;
-        self.load_subagent_system_prompt_append(workspace_id)
-            .await
-            .map(Into::into)
-            .map_err(workspace_store_error)
-    }
-
-    pub async fn update_subagent_system_prompt_config_for_route(
-        &self,
-        params: WorkspacePromptConfigRouteParams,
-        req: UpdateSubagentSystemPromptConfigRouteRequest,
-    ) -> Result<SubagentSystemPromptConfigRouteResponse, WorkspaceRouteError> {
-        let workspace_id = parse_workspace_route_id(&params.workspace_id)?;
-        self.update_subagent_system_prompt_append(workspace_id, req.system_prompt_append)
-            .await
-            .map(Into::into)
-            .map_err(workspace_store_error)
     }
 }
 

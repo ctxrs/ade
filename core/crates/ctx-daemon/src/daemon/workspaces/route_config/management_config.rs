@@ -1,10 +1,5 @@
-use ctx_core::ids::WorkspaceId;
 use ctx_workspace_config as workspace_config;
 use serde::{Deserialize, Serialize};
-
-use crate::daemon::WorkspacesHandle;
-
-use super::{WorkspaceConfigUpdateResult, WorkspaceRouteError};
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateWorkspaceMergeQueueConfigRequest {
@@ -77,88 +72,10 @@ impl From<Option<workspace_config::WorktreeBootstrapConfig>>
     }
 }
 
-impl WorkspacesHandle {
-    pub async fn workspace_merge_queue_config_for_route(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> Result<WorkspaceMergeQueueConfigRouteResponse, WorkspaceRouteError> {
-        let store = self
-            .existing_workspace_store(workspace_id)
-            .await
-            .map_err(WorkspaceRouteError::from_workspace_store)?;
-        let cfg = workspace_config::load_merge_queue_config(&store)
-            .await
-            .map_err(WorkspaceRouteError::internal)?;
-        Ok(cfg.into())
-    }
-
-    pub async fn update_workspace_merge_queue_config_for_route(
-        &self,
-        workspace_id: WorkspaceId,
-        req: UpdateWorkspaceMergeQueueConfigRequest,
-    ) -> Result<WorkspaceConfigUpdateResult, WorkspaceRouteError> {
-        let store = self
-            .existing_workspace_store(workspace_id)
-            .await
-            .map_err(WorkspaceRouteError::from_workspace_store)?;
-        let was_enabled = workspace_config::load_merge_queue_config(&store)
-            .await
-            .map_err(WorkspaceRouteError::internal)?
-            .enabled;
-        workspace_config::update_merge_queue_config(&store, req.into_merge_queue_config_update())
-            .await
-            .map_err(WorkspaceRouteError::from_request_or_policy_error)?;
-        let now_enabled = workspace_config::load_merge_queue_config(&store)
-            .await
-            .map_err(WorkspaceRouteError::internal)?
-            .enabled;
-        if !was_enabled && now_enabled {
-            self.schedule_workspace_merge_queue_if_enabled_and_queued(workspace_id)
-                .await
-                .map_err(WorkspaceRouteError::from_request_or_policy_error)?;
-        } else if was_enabled && !now_enabled {
-            self.cancel_queued_entries_for_disabled_workspace(&store, workspace_id)
-                .await
-                .map_err(WorkspaceRouteError::from_request_or_policy_error)?;
-        }
-        Ok(WorkspaceConfigUpdateResult { ok: true })
-    }
-
-    pub async fn worktree_bootstrap_config_for_route(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> Result<WorkspaceWorktreeBootstrapConfigRouteResponse, WorkspaceRouteError> {
-        let store = self
-            .existing_workspace_store(workspace_id)
-            .await
-            .map_err(WorkspaceRouteError::from_workspace_store)?;
-        let cfg = workspace_config::load_worktree_bootstrap_config(&store)
-            .await
-            .map_err(WorkspaceRouteError::internal)?;
-        Ok(cfg.into())
-    }
-
-    pub async fn update_worktree_bootstrap_config_for_route(
-        &self,
-        workspace_id: WorkspaceId,
-        req: UpdateWorktreeBootstrapConfigRequest,
-    ) -> Result<WorkspaceConfigUpdateResult, WorkspaceRouteError> {
-        let store = self
-            .existing_workspace_store(workspace_id)
-            .await
-            .map_err(WorkspaceRouteError::from_workspace_store)?;
-        workspace_config::update_worktree_bootstrap_config(
-            &store,
-            req.into_worktree_bootstrap_config_update(),
-        )
-        .await
-        .map_err(WorkspaceRouteError::bad_request)?;
-        Ok(WorkspaceConfigUpdateResult { ok: true })
-    }
-}
-
 impl UpdateWorkspaceMergeQueueConfigRequest {
-    fn into_merge_queue_config_update(self) -> workspace_config::MergeQueueConfigUpdate {
+    pub(in crate::daemon::workspaces) fn into_merge_queue_config_update(
+        self,
+    ) -> workspace_config::MergeQueueConfigUpdate {
         let verify_commands = self
             .verify_command
             .as_ref()
@@ -180,7 +97,7 @@ impl UpdateWorkspaceMergeQueueConfigRequest {
 }
 
 impl UpdateWorktreeBootstrapConfigRequest {
-    fn into_worktree_bootstrap_config_update(
+    pub(in crate::daemon::workspaces) fn into_worktree_bootstrap_config_update(
         self,
     ) -> workspace_config::WorktreeBootstrapConfigUpdate {
         workspace_config::WorktreeBootstrapConfigUpdate {

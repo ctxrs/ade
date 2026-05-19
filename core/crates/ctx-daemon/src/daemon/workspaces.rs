@@ -1,16 +1,15 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use ctx_core::ids::{MergeQueueEntryId, RunId, TaskId, WorkspaceId, WorktreeId};
+use ctx_core::ids::{RunId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
-    MergeQueueRun, RunArchiveIngestBatch, RunArchiveIngestCursor, SandboxBinding, VcsKind,
-    Workspace, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot, WorkspaceAttachment, Worktree,
+    RunArchiveIngestBatch, RunArchiveIngestCursor, SandboxBinding, VcsKind, Workspace,
+    WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot, WorkspaceAttachment, Worktree,
 };
 use ctx_observability::telemetry::TelemetryEvent;
 use ctx_settings_model::ExecutionSettings;
 use ctx_store::Store;
 use ctx_workspace_attachments::AttachmentConfig;
-use ctx_workspace_config as workspace_config;
 use ctx_workspace_container::WorkspaceContainerStatus;
 
 use super::handle::WorkspacesHandle;
@@ -27,6 +26,7 @@ mod execution;
 mod file_completions;
 mod harness_container;
 mod hydration;
+mod management;
 mod model_preferences;
 mod retry;
 mod route_config;
@@ -148,164 +148,6 @@ impl WorkspacesHandle {
         let store = self.existing_workspace_store(workspace_id).await?;
         store
             .list_workspace_attachments(workspace_id)
-            .await
-            .map_err(WorkspaceStoreAccessError::Unavailable)
-    }
-
-    pub async fn update_workspace_primary_branch(
-        &self,
-        workspace_id: WorkspaceId,
-        primary_branch: &str,
-    ) -> anyhow::Result<()> {
-        let store = self.store_for_workspace(workspace_id).await?;
-        ctx_workspace_config::update_primary_branch(&store, primary_branch).await
-    }
-
-    pub async fn load_workspace_primary_branch_config(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> Result<Option<String>, WorkspaceStoreAccessError> {
-        let store = self.existing_workspace_store(workspace_id).await?;
-        workspace_config::load_primary_branch(&store)
-            .await
-            .map_err(WorkspaceStoreAccessError::Unavailable)
-    }
-
-    pub async fn update_workspace_primary_branch_config(
-        &self,
-        workspace: &Workspace,
-        primary_branch: &str,
-    ) -> anyhow::Result<()> {
-        let store = self.store_for_workspace(workspace.id).await?;
-        workspace_config::update_primary_branch(&store, primary_branch).await?;
-        let worktrees = store.list_worktrees(workspace.id).await?;
-        for worktree in worktrees {
-            if let Err(error) = self.refresh_worktree_vcs_snapshot(&worktree, true).await {
-                tracing::warn!(
-                    workspace_id = %workspace.id.0,
-                    worktree_id = %worktree.id.0,
-                    "failed to refresh worktree vcs after primary branch update: {error:#}"
-                );
-            }
-        }
-        Ok(())
-    }
-
-    pub async fn latest_merge_queue_run_for_route(
-        &self,
-        workspace_id: WorkspaceId,
-        entry_id: MergeQueueEntryId,
-    ) -> Result<Option<(Workspace, MergeQueueRun)>, WorkspaceStoreAccessError> {
-        let store = self.existing_workspace_store(workspace_id).await?;
-        let Some(workspace) = store
-            .get_workspace(workspace_id)
-            .await
-            .map_err(WorkspaceStoreAccessError::Unavailable)?
-        else {
-            return Ok(None);
-        };
-        let run = store
-            .get_latest_merge_queue_run(entry_id)
-            .await
-            .map_err(WorkspaceStoreAccessError::Unavailable)?;
-        Ok(run.map(|run| (workspace, run)))
-    }
-
-    pub async fn download_merge_queue_entry_logs_for_route(
-        &self,
-        workspace_id: WorkspaceId,
-        entry_id: MergeQueueEntryId,
-    ) -> Result<TextRouteDownload, RouteFileDownloadError> {
-        self.get_workspace_merge_queue_entry(workspace_id, entry_id)
-            .await
-            .map_err(|_| RouteFileDownloadError::NotFound)?;
-        let (workspace, run) = self
-            .latest_merge_queue_run_for_route(workspace_id, entry_id)
-            .await
-            .map_err(|_| RouteFileDownloadError::Internal)?
-            .ok_or(RouteFileDownloadError::NotFound)?;
-        let Some(path) = run.log_path.as_deref() else {
-            return Err(RouteFileDownloadError::NotFound);
-        };
-        if path.trim().is_empty() {
-            return Err(RouteFileDownloadError::NotFound);
-        }
-        let log_root = PathBuf::from(&workspace.root_path)
-            .join(".ctx")
-            .join("merge-queue")
-            .join("logs");
-        read_text_route_file(
-            std::path::Path::new(path),
-            &log_root,
-            format!("merge-queue-{}.log", entry_id.0),
-        )
-        .await
-    }
-
-    pub async fn load_workspace_execution_override(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> Result<Option<workspace_config::ExecutionSettingsOverride>, WorkspaceStoreAccessError>
-    {
-        let store = self.existing_workspace_store(workspace_id).await?;
-        workspace_config::load_execution_settings_override(&store)
-            .await
-            .map_err(WorkspaceStoreAccessError::Unavailable)
-    }
-
-    pub async fn update_workspace_execution_config(
-        &self,
-        workspace_id: WorkspaceId,
-        update: workspace_config::ExecutionConfigUpdate,
-    ) -> anyhow::Result<()> {
-        let store = self.store_for_workspace(workspace_id).await?;
-        workspace_config::update_execution_config(&store, update).await
-    }
-
-    pub async fn load_agent_system_prompt_append(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> Result<workspace_config::AgentSystemPromptAppendConfig, WorkspaceStoreAccessError> {
-        let store = self.existing_workspace_store(workspace_id).await?;
-        workspace_config::load_agent_system_prompt_append(&store)
-            .await
-            .map_err(WorkspaceStoreAccessError::Unavailable)
-    }
-
-    pub async fn update_agent_system_prompt_append(
-        &self,
-        workspace_id: WorkspaceId,
-        system_prompt_append: Option<String>,
-    ) -> Result<workspace_config::AgentSystemPromptAppendConfig, WorkspaceStoreAccessError> {
-        let store = self.existing_workspace_store(workspace_id).await?;
-        workspace_config::update_agent_system_prompt_append(&store, system_prompt_append)
-            .await
-            .map_err(WorkspaceStoreAccessError::Unavailable)?;
-        workspace_config::load_agent_system_prompt_append(&store)
-            .await
-            .map_err(WorkspaceStoreAccessError::Unavailable)
-    }
-
-    pub async fn load_subagent_system_prompt_append(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> Result<workspace_config::SubagentSystemPromptAppendConfig, WorkspaceStoreAccessError> {
-        let store = self.existing_workspace_store(workspace_id).await?;
-        workspace_config::load_subagent_system_prompt_append(&store)
-            .await
-            .map_err(WorkspaceStoreAccessError::Unavailable)
-    }
-
-    pub async fn update_subagent_system_prompt_append(
-        &self,
-        workspace_id: WorkspaceId,
-        system_prompt_append: Option<String>,
-    ) -> Result<workspace_config::SubagentSystemPromptAppendConfig, WorkspaceStoreAccessError> {
-        let store = self.existing_workspace_store(workspace_id).await?;
-        workspace_config::update_subagent_system_prompt_append(&store, system_prompt_append)
-            .await
-            .map_err(WorkspaceStoreAccessError::Unavailable)?;
-        workspace_config::load_subagent_system_prompt_append(&store)
             .await
             .map_err(WorkspaceStoreAccessError::Unavailable)
     }
@@ -691,29 +533,6 @@ impl WorkspacesHandle {
         ensure_workspace_harness_container(&self.state, workspace_id).await
     }
 
-    pub async fn get_workspace_provider_model_preference(
-        &self,
-        workspace_id: WorkspaceId,
-        provider_id: &str,
-    ) -> Result<WorkspaceProviderModelPreference, WorkspaceProviderModelPreferenceError> {
-        get_workspace_provider_model_preference(&self.state, workspace_id, provider_id).await
-    }
-
-    pub async fn set_workspace_provider_model_preference(
-        &self,
-        workspace_id: WorkspaceId,
-        provider_id: &str,
-        preferred_model_id: Option<String>,
-    ) -> Result<WorkspaceProviderModelPreference, WorkspaceProviderModelPreferenceError> {
-        set_workspace_provider_model_preference(
-            &self.state,
-            workspace_id,
-            provider_id,
-            preferred_model_id,
-        )
-        .await
-    }
-
     pub async fn complete_files_for_workspace(
         &self,
         workspace_id: WorkspaceId,
@@ -725,51 +544,6 @@ impl WorkspacesHandle {
 
     pub async fn load_settings(&self) -> anyhow::Result<ctx_settings_model::Settings> {
         settings::load_settings(self.state.as_ref()).await
-    }
-
-    #[cfg(target_os = "macos")]
-    pub fn shared_vm_container_runtime_available(&self) -> bool {
-        ctx_harness_runtime::local_runtime_available(
-            &self.state.core.data_root,
-            &ctx_settings_model::ContainerRuntimeKind::SharedVmContainer,
-        )
-    }
-
-    pub async fn refresh_worktree_vcs_snapshot(
-        &self,
-        worktree: &Worktree,
-        force_emit: bool,
-    ) -> anyhow::Result<()> {
-        crate::daemon::git_status::emit_worktree_vcs_snapshot_for_worktree(
-            &self.state,
-            worktree,
-            force_emit,
-        )
-        .await
-    }
-
-    pub async fn schedule_workspace_merge_queue_if_enabled_and_queued(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> anyhow::Result<bool> {
-        crate::daemon::merge_queue::schedule_workspace_if_enabled_and_queued(
-            &self.state,
-            workspace_id,
-        )
-        .await
-    }
-
-    pub async fn cancel_queued_entries_for_disabled_workspace(
-        &self,
-        store: &Store,
-        workspace_id: WorkspaceId,
-    ) -> anyhow::Result<()> {
-        crate::daemon::merge_queue::cancel_queued_entries_for_disabled_workspace(
-            &self.state,
-            store,
-            workspace_id,
-        )
-        .await
     }
 }
 
