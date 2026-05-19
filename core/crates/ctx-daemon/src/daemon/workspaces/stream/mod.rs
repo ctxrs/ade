@@ -1,10 +1,10 @@
 mod access;
 mod cursor_acceptance;
 mod event_routing;
-mod handle;
 mod read_model;
 mod replay;
 mod replay_cursor;
+mod runtime_facade;
 mod subscriptions;
 mod vcs;
 

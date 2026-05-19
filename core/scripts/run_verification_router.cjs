@@ -26,10 +26,12 @@ const coreRoot = path.resolve(__dirname, "..");
 const repoRoot = path.resolve(coreRoot, "..");
 const MERGE_READY_COMMAND = "node scripts/run_test_taxonomy_profile.cjs --run --profile checkin";
 const CTX_HTTP_DAEMON_BOUNDARY_COMMAND = "pnpm ctx-http:daemon-boundary:check";
+const CTX_DAEMON_DECOMPOSITION_BOUNDARY_COMMAND = "pnpm ctx:decomposition-boundary:check";
 const VERIFICATION_TOOLING_COMMAND = [
   "node",
   "--test",
   "scripts/ctx_http_daemon_boundary_guard.test.cjs",
+  "scripts/ctx_daemon_decomposition_guard.test.cjs",
   "scripts/verification_git_changes.test.cjs",
   "scripts/verification_router_contract.test.cjs",
   "scripts/verification_run_store.test.cjs",
@@ -138,6 +140,13 @@ function hasProductionSourceChange(changedFiles) {
   return changedFiles.some((entry) => classifySourceFile(entry) === "production");
 }
 
+function hasRustCrateSourceOrManifestChange(changedFiles) {
+  return changedFiles.some((entry) =>
+    entry.startsWith("core/crates/")
+    && ((entry.includes("/src/") && entry.endsWith(".rs")) || entry.endsWith("/Cargo.toml"))
+  );
+}
+
 function dedupeCommands(commands) {
   return [...new Set(commands.filter(Boolean))];
 }
@@ -146,6 +155,9 @@ function buildOverlayCommands(changedFiles) {
   const commands = [];
   if (hasProductionSourceChange(changedFiles)) {
     commands.push("pnpm source:file-size:report");
+  }
+  if (hasRustCrateSourceOrManifestChange(changedFiles)) {
+    commands.push(CTX_DAEMON_DECOMPOSITION_BOUNDARY_COMMAND);
   }
   if (changedFiles.some((entry) =>
     entry.startsWith("core/crates/ctx-http/src/api/")
@@ -158,6 +170,7 @@ function buildOverlayCommands(changedFiles) {
   if (changedFiles.some((entry) =>
     entry.startsWith("core/scripts/run_verification_router")
     || entry.startsWith("core/scripts/ctx_http_daemon_boundary_guard")
+    || entry.startsWith("core/scripts/ctx_daemon_decomposition_guard")
     || entry.startsWith("core/scripts/managed_runtime_mirror")
     || entry.startsWith("core/scripts/sdlc_verify_metrics_report")
     || entry.startsWith("core/scripts/verification_")
@@ -423,11 +436,14 @@ if (require.main === module) {
 }
 
 module.exports = {
+  CTX_DAEMON_DECOMPOSITION_BOUNDARY_COMMAND,
+  CTX_HTTP_DAEMON_BOUNDARY_COMMAND,
   MERGE_READY_COMMAND,
   buildOverlayCommands,
   buildVerificationPlan,
   dedupeCommands,
   hasProductionSourceChange,
+  hasRustCrateSourceOrManifestChange,
   hasSupabaseFunctionChange,
   hasSupabaseMigrationChange,
   parseArgs,

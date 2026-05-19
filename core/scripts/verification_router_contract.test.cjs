@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const {
+  CTX_DAEMON_DECOMPOSITION_BOUNDARY_COMMAND,
   MERGE_READY_COMMAND,
   buildOverlayCommands,
   buildVerificationPlan,
@@ -24,6 +25,7 @@ test("verify:touched adds source invariants to the targeted Rust gate plan", () 
 
   assert.deepEqual(plan.commands, [
     "pnpm source:file-size:report",
+    "pnpm ctx:decomposition-boundary:check",
     "pnpm rust:package-scripts:check",
     "pnpm exec node scripts/run_rust_gate.cjs --mode workspace --include-reverse-deps --clippy --test-strategy mixed --changed-file core/crates/ctx-provider-accounts/src/lib.rs",
   ]);
@@ -38,6 +40,7 @@ test("verify:affected broadens the canonical Rust leaf beyond verify:touched", (
 
   assert.deepEqual(plan.commands, [
     "pnpm source:file-size:report",
+    "pnpm ctx:decomposition-boundary:check",
     "pnpm rust:package-scripts:check",
     "node scripts/ctx_http_suite_task.cjs --suite provider-auth",
     "node scripts/ctx_http_suite_task.cjs --suite provider-runtime-simulated",
@@ -236,6 +239,7 @@ test("verify:affected adds ctx-http unit-family truth for canonical scheduler ru
 
   assert.deepEqual(plan.commands, [
     "pnpm source:file-size:report",
+    "pnpm ctx:decomposition-boundary:check",
     "pnpm ctx-http:daemon-boundary:check",
     "pnpm rust:package-scripts:check",
     "node scripts/ctx_http_suite_task.cjs --suite scheduler-runtime",
@@ -253,6 +257,7 @@ test("verify:affected keeps shared turn execution paths on both scheduler runtim
 
   assert.deepEqual(plan.commands, [
     "pnpm source:file-size:report",
+    "pnpm ctx:decomposition-boundary:check",
     "pnpm ctx-http:daemon-boundary:check",
     "node scripts/ctx_http_suite_task.cjs --suite scheduler-runtime",
     "node scripts/ctx_http_suite_task.cjs --suite turns-terminal",
@@ -333,6 +338,7 @@ test("verify:affected routes ctx-http binary source edits to bin-tests without b
 
   assert.deepEqual(plan.commands, [
     "pnpm source:file-size:report",
+    "pnpm ctx:decomposition-boundary:check",
     "node scripts/ctx_http_suite_task.cjs --suite bin-tests",
   ]);
   assert.equal(plan.commands.some((command) => command.includes("--suite base")), false);
@@ -385,6 +391,7 @@ test("verify:affected expands ctx-http base children for unmatched ctx-http sour
 
   assert.deepEqual(plan.commands, [
     "pnpm source:file-size:report",
+    "pnpm ctx:decomposition-boundary:check",
     "node scripts/ctx_http_suite_task.cjs --suite unit-tests-api --suite unit-tests-lib --suite unit-tests-lib-session-head-large --suite unit-tests-workspace-runtime --suite unit-tests-daemon-and-scheduler --suite unit-tests-provider-and-settings --suite unit-tests-merge-queue --suite bin-tests --suite doc-tests",
   ]);
   assert.equal(plan.commands.some((command) => command.includes("--suite base")), false);
@@ -399,6 +406,18 @@ test("verify:merge-ready keeps overlay invariants alongside the checkin profile"
     "pnpm supabase:migrations:check",
     "pnpm supabase:telemetry-storage:check",
   ]);
+});
+
+test("verify:touched routes crate manifests through the decomposition boundary guard", () => {
+  assert.equal(CTX_DAEMON_DECOMPOSITION_BOUNDARY_COMMAND, "pnpm ctx:decomposition-boundary:check");
+
+  const plan = buildVerificationPlan({
+    intent: "touched",
+    base: "origin/main",
+    changedFiles: ["core/crates/ctx-session-service/Cargo.toml"],
+  });
+
+  assert.equal(plan.commands[0], "pnpm ctx:decomposition-boundary:check");
 });
 
 test("verify:touched becomes a no-op when there are no relevant changes", () => {
@@ -435,7 +454,7 @@ test("verify:touched routes verification-tooling edits through the local tooling
   });
 
   assert.deepEqual(plan.commands, [
-    "node --test scripts/ctx_http_daemon_boundary_guard.test.cjs scripts/verification_git_changes.test.cjs scripts/verification_router_contract.test.cjs scripts/verification_run_store.test.cjs scripts/sdlc_verify_metrics_report.test.cjs scripts/run_bazel_pilot.test.cjs scripts/ctx_http_suite_task.test.cjs scripts/lib/ctx_http_suites.test.cjs scripts/ctx_http_bazel_contract.test.cjs scripts/testing_tiers_contract.test.cjs scripts/test_taxonomy_execution_contract.test.cjs scripts/managed_runtime_mirror.test.cjs scripts/affected_tests_contract.test.cjs",
+    "node --test scripts/ctx_http_daemon_boundary_guard.test.cjs scripts/ctx_daemon_decomposition_guard.test.cjs scripts/verification_git_changes.test.cjs scripts/verification_router_contract.test.cjs scripts/verification_run_store.test.cjs scripts/sdlc_verify_metrics_report.test.cjs scripts/run_bazel_pilot.test.cjs scripts/ctx_http_suite_task.test.cjs scripts/lib/ctx_http_suites.test.cjs scripts/ctx_http_bazel_contract.test.cjs scripts/testing_tiers_contract.test.cjs scripts/test_taxonomy_execution_contract.test.cjs scripts/managed_runtime_mirror.test.cjs scripts/affected_tests_contract.test.cjs",
   ]);
 });
 
@@ -451,7 +470,7 @@ test("verify:touched routes managed-runtime mirror tool edits through the local 
     });
 
     assert.deepEqual(plan.commands, [
-      "node --test scripts/ctx_http_daemon_boundary_guard.test.cjs scripts/verification_git_changes.test.cjs scripts/verification_router_contract.test.cjs scripts/verification_run_store.test.cjs scripts/sdlc_verify_metrics_report.test.cjs scripts/run_bazel_pilot.test.cjs scripts/ctx_http_suite_task.test.cjs scripts/lib/ctx_http_suites.test.cjs scripts/ctx_http_bazel_contract.test.cjs scripts/testing_tiers_contract.test.cjs scripts/test_taxonomy_execution_contract.test.cjs scripts/managed_runtime_mirror.test.cjs scripts/affected_tests_contract.test.cjs",
+      "node --test scripts/ctx_http_daemon_boundary_guard.test.cjs scripts/ctx_daemon_decomposition_guard.test.cjs scripts/verification_git_changes.test.cjs scripts/verification_router_contract.test.cjs scripts/verification_run_store.test.cjs scripts/sdlc_verify_metrics_report.test.cjs scripts/run_bazel_pilot.test.cjs scripts/ctx_http_suite_task.test.cjs scripts/lib/ctx_http_suites.test.cjs scripts/ctx_http_bazel_contract.test.cjs scripts/testing_tiers_contract.test.cjs scripts/test_taxonomy_execution_contract.test.cjs scripts/managed_runtime_mirror.test.cjs scripts/affected_tests_contract.test.cjs",
     ]);
   }
 });
@@ -485,7 +504,7 @@ test("verify:affected routes ctx-http suite runner edits through tooling coverag
     changedFiles: ["core/scripts/ctx_http_suite_task.cjs"],
   });
 
-  assert.equal(plan.commands[0], "node --test scripts/ctx_http_daemon_boundary_guard.test.cjs scripts/verification_git_changes.test.cjs scripts/verification_router_contract.test.cjs scripts/verification_run_store.test.cjs scripts/sdlc_verify_metrics_report.test.cjs scripts/run_bazel_pilot.test.cjs scripts/ctx_http_suite_task.test.cjs scripts/lib/ctx_http_suites.test.cjs scripts/ctx_http_bazel_contract.test.cjs scripts/testing_tiers_contract.test.cjs scripts/test_taxonomy_execution_contract.test.cjs scripts/managed_runtime_mirror.test.cjs scripts/affected_tests_contract.test.cjs");
+  assert.equal(plan.commands[0], "node --test scripts/ctx_http_daemon_boundary_guard.test.cjs scripts/ctx_daemon_decomposition_guard.test.cjs scripts/verification_git_changes.test.cjs scripts/verification_router_contract.test.cjs scripts/verification_run_store.test.cjs scripts/sdlc_verify_metrics_report.test.cjs scripts/run_bazel_pilot.test.cjs scripts/ctx_http_suite_task.test.cjs scripts/lib/ctx_http_suites.test.cjs scripts/ctx_http_bazel_contract.test.cjs scripts/testing_tiers_contract.test.cjs scripts/test_taxonomy_execution_contract.test.cjs scripts/managed_runtime_mirror.test.cjs scripts/affected_tests_contract.test.cjs");
   assert.equal(plan.commands[1], "pnpm rust:bazel-deps:check");
   assert.equal(plan.commands[2], "pnpm rust:package-scripts:check");
   assert.deepEqual(plan.commands.slice(3, 22), [

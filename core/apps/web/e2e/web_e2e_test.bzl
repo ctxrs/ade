@@ -24,6 +24,9 @@ def web_e2e_test(name, config, runtime_profile, suite = "", specs = None, timeou
     data = [
         "//core/apps/web:e2e_runtime_data",
         "//core/apps/web:node_modules",
+        "//core/apps/web:node_modules/autoprefixer",
+        "//core/apps/web:node_modules/postcss",
+        "//core/apps/web:node_modules/tailwindcss",
         "//core/crates/ctx-http:ctx",
     ]
     playwright_browser_data = select({
