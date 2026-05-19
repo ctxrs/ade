@@ -36,6 +36,8 @@
     "release:preflight:proof": "RELEASE_SOURCE_COMMIT=${RELEASE_SOURCE_COMMIT:?set RELEASE_SOURCE_COMMIT} node scripts/release_preflight_proof_plan.cjs --candidate \"$RELEASE_SOURCE_COMMIT\"",
     "release:preflight:proof:dry-run": "RELEASE_SOURCE_COMMIT=${RELEASE_SOURCE_COMMIT:?set RELEASE_SOURCE_COMMIT} node scripts/release_preflight_proof_run.cjs --candidate \"$RELEASE_SOURCE_COMMIT\" --dry-run --include-remote",
     "release:preflight:proof:run": "RELEASE_SOURCE_COMMIT=${RELEASE_SOURCE_COMMIT:?set RELEASE_SOURCE_COMMIT} node scripts/release_preflight_proof_run.cjs --candidate \"$RELEASE_SOURCE_COMMIT\"",
+    "release:proof:gate": "RELEASE_SOURCE_COMMIT=${RELEASE_SOURCE_COMMIT:?set RELEASE_SOURCE_COMMIT} node scripts/release_power_sdlc_gate.cjs --candidate \"$RELEASE_SOURCE_COMMIT\"",
+    "release:proof:gate:dry-run": "RELEASE_SOURCE_COMMIT=${RELEASE_SOURCE_COMMIT:?set RELEASE_SOURCE_COMMIT} node scripts/release_power_sdlc_gate.cjs --candidate \"$RELEASE_SOURCE_COMMIT\" --dry-run",
     "release:buildkite:provider-deps:verify": "BUILD_BUDDY_RELEASE_COMMIT=${BUILD_BUDDY_RELEASE_COMMIT:?set BUILD_BUDDY_RELEASE_COMMIT} node scripts/trigger_buildkite_provider_deps.cjs --commit \"$BUILD_BUDDY_RELEASE_COMMIT\" --no-publish",
     "release:buildkite:provider-deps:publish": "BUILD_BUDDY_RELEASE_COMMIT=${BUILD_BUDDY_RELEASE_COMMIT:?set BUILD_BUDDY_RELEASE_COMMIT} node scripts/trigger_buildkite_provider_deps.cjs --commit \"$BUILD_BUDDY_RELEASE_COMMIT\" --publish",
     "managed-runtime:mirror:check": "node scripts/managed_runtime_mirror.cjs --check-presence",
