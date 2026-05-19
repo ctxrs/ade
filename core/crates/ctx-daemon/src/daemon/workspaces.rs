@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use ctx_core::ids::{RunId, TaskId, WorkspaceId, WorktreeId};
+use ctx_core::ids::{TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
-    RunArchiveIngestBatch, RunArchiveIngestCursor, SandboxBinding, VcsKind, Workspace,
-    WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot, WorkspaceAttachment, Worktree,
+    SandboxBinding, VcsKind, Workspace, WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot,
+    WorkspaceAttachment, Worktree,
 };
 use ctx_observability::telemetry::TelemetryEvent;
 use ctx_settings_model::ExecutionSettings;
@@ -86,8 +86,8 @@ pub use route_contract::{
 pub use run_archive::{
     AcknowledgeRunArchiveIngestBatchRouteBody, AcknowledgeRunArchiveIngestBatchRouteRequest,
     AcknowledgeRunArchiveIngestBatchRouteResponse, BuildRunArchiveIngestBatchRouteRequest,
-    BuildRunArchiveIngestBatchRouteResponse, RunArchiveBatchRouteQuery, RunArchiveRouteError,
-    RunArchiveRouteErrorKind, RunArchiveRouteParams,
+    BuildRunArchiveIngestBatchRouteResponse, RunArchiveBatchRouteQuery, RunArchiveIngestError,
+    RunArchiveRouteError, RunArchiveRouteErrorKind, RunArchiveRouteParams,
 };
 pub use sandbox_binding::rematerialize_sandbox_binding_for_worktree;
 pub use stream::{
@@ -101,13 +101,6 @@ pub use worktree_cleanup::{
     TaskWorktreeCleanupTarget,
 };
 pub use worktree_provision::{persist_provisioned_worktree, provision_worktree_for_execution};
-
-#[derive(Debug)]
-pub enum RunArchiveIngestError {
-    WorkspaceNotFound,
-    AcknowledgementConflict(&'static str),
-    Internal(anyhow::Error),
-}
 
 impl WorkspacesHandle {
     pub async fn list_workspaces(&self) -> anyhow::Result<Vec<Workspace>> {
@@ -202,68 +195,6 @@ impl WorkspacesHandle {
             format!("worktree-bootstrap-{}.log", worktree_id.0),
         )
         .await
-    }
-
-    pub async fn build_run_archive_ingest_batch(
-        &self,
-        workspace_id: WorkspaceId,
-        run_id: RunId,
-        max_items: u32,
-    ) -> Result<Option<RunArchiveIngestBatch>, RunArchiveIngestError> {
-        let store = self
-            .existing_workspace_store(workspace_id)
-            .await
-            .map_err(run_archive_workspace_store_error)?;
-        let batch = store
-            .build_run_archive_ingest_batch(run_id, max_items)
-            .await
-            .map_err(RunArchiveIngestError::Internal)?;
-        Ok(batch.filter(|batch| batch.run.workspace_id == workspace_id))
-    }
-
-    pub async fn acknowledge_run_archive_ingest_batch(
-        &self,
-        workspace_id: WorkspaceId,
-        run_id: RunId,
-        max_items: u32,
-        batch: RunArchiveIngestBatch,
-    ) -> Result<RunArchiveIngestCursor, RunArchiveIngestError> {
-        let store = self
-            .existing_workspace_store(workspace_id)
-            .await
-            .map_err(run_archive_workspace_store_error)?;
-        let cursor = store
-            .get_run_archive_ingest_cursor(run_id)
-            .await
-            .map_err(RunArchiveIngestError::Internal)?;
-        let current_watermark = cursor
-            .as_ref()
-            .map(|cursor| cursor.watermark)
-            .unwrap_or_default();
-        if batch.from != current_watermark {
-            return Err(RunArchiveIngestError::AcknowledgementConflict(
-                "archive ingest acknowledgement is stale for the current cursor",
-            ));
-        }
-        let Some(mut expected_batch) = store
-            .build_run_archive_ingest_batch_after(run_id, batch.from, max_items, cursor.is_none())
-            .await
-            .map_err(RunArchiveIngestError::Internal)?
-        else {
-            return Err(RunArchiveIngestError::AcknowledgementConflict(
-                "archive ingest acknowledgement does not match an available batch",
-            ));
-        };
-        expected_batch.created_at = batch.created_at;
-        if expected_batch != batch {
-            return Err(RunArchiveIngestError::AcknowledgementConflict(
-                "archive ingest acknowledgement does not match the current batch",
-            ));
-        }
-        store
-            .acknowledge_run_archive_ingest_batch(&batch)
-            .await
-            .map_err(RunArchiveIngestError::Internal)
     }
 
     pub(in crate::daemon) async fn store_for_workspace(
@@ -544,12 +475,5 @@ impl WorkspacesHandle {
 
     pub async fn load_settings(&self) -> anyhow::Result<ctx_settings_model::Settings> {
         settings::load_settings(self.state.as_ref()).await
-    }
-}
-
-fn run_archive_workspace_store_error(error: WorkspaceStoreAccessError) -> RunArchiveIngestError {
-    match error {
-        WorkspaceStoreAccessError::NotFound => RunArchiveIngestError::WorkspaceNotFound,
-        WorkspaceStoreAccessError::Unavailable(error) => RunArchiveIngestError::Internal(error),
     }
 }
