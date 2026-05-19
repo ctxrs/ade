@@ -212,6 +212,10 @@ const sessionReadModelRouteApiRoots = [
   "core/crates/ctx-http/src/api/sessions/snapshot/state.rs",
 ];
 
+const demoSeedTranscriptApiRoots = [
+  "core/crates/ctx-http/src/api/demo/seed_transcript.rs",
+];
+
 const sessionControlRouteApiRoots = [
   "core/crates/ctx-http/src/api/sessions/control/interrupts.rs",
   "core/crates/ctx-http/src/api/sessions/control/authenticate.rs",
@@ -1563,6 +1567,29 @@ const SESSION_READ_MODEL_ROUTE_API_CONTRACT_PATTERNS = [
     name: "session read-model API calls raw read-model facades",
     regex:
       /\.(?:load_session_snapshot|load_session_history_page|list_session_events_page|list_session_turn_tools_for_request|load_session_state)\s*\(/,
+  },
+];
+
+const DEMO_SEED_TRANSCRIPT_API_ROUTE_CONTRACT_PATTERNS = [
+  {
+    name: "demo seed transcript API owns session id parsing",
+    regex: /\bSessionId\b|\buuid\s*::\s*Uuid\s*::\s*parse_str\s*\(/,
+  },
+  {
+    name: "demo seed transcript API owns local route DTOs",
+    regex: /\b(?:SeedTranscriptReq|SeedTranscriptResp|SeedTranscriptTurnReq)\b/,
+  },
+  {
+    name: "demo seed transcript API constructs raw demo seed domain objects",
+    regex: /\b(?:DemoSeedTranscript|DemoSeedTranscriptTurn|DemoSeedTranscriptError)\b/,
+  },
+  {
+    name: "demo seed transcript API owns empty-turn validation",
+    regex: /\.turns\s*\.\s*is_empty\s*\(/,
+  },
+  {
+    name: "demo seed transcript API calls raw seed transcript facade",
+    regex: /\.seed_demo_transcript\s*\(/,
   },
 ];
 
@@ -5194,6 +5221,9 @@ function apiPatternsForPath(relativePath) {
   if (sessionReadModelRouteApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...SESSION_READ_MODEL_ROUTE_API_CONTRACT_PATTERNS);
   }
+  if (demoSeedTranscriptApiRoots.some((root) => relativePath === root)) {
+    patterns.push(...DEMO_SEED_TRANSCRIPT_API_ROUTE_CONTRACT_PATTERNS);
+  }
   if (sessionControlRouteApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...SESSION_CONTROL_ROUTE_API_CONTRACT_PATTERNS);
   }
@@ -5474,6 +5504,13 @@ function sessionHeadApiPatternsForPath(relativePath) {
 function sessionReadModelRouteApiPatternsForPath(relativePath) {
   if (sessionReadModelRouteApiRoots.some((root) => relativePath.startsWith(root))) {
     return SESSION_READ_MODEL_ROUTE_API_CONTRACT_PATTERNS;
+  }
+  return [];
+}
+
+function demoSeedTranscriptApiPatternsForPath(relativePath) {
+  if (demoSeedTranscriptApiRoots.some((root) => relativePath === root)) {
+    return DEMO_SEED_TRANSCRIPT_API_ROUTE_CONTRACT_PATTERNS;
   }
   return [];
 }
@@ -6393,6 +6430,7 @@ module.exports = {
   RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS,
   WEB_SESSION_REST_ROUTE_API_CONTRACT_PATTERNS,
   SESSION_HEAD_API_ORCHESTRATION_PATTERNS,
+  DEMO_SEED_TRANSCRIPT_API_ROUTE_CONTRACT_PATTERNS,
   SESSION_CONTROL_ROUTE_API_CONTRACT_PATTERNS,
   SESSION_MESSAGE_COMMAND_ROUTE_API_CONTRACT_PATTERNS,
   SESSION_READ_MODEL_ROUTE_API_CONTRACT_PATTERNS,
@@ -6536,6 +6574,7 @@ module.exports = {
   sessionControlRouteApiPatternsForPath,
   sessionMessageCommandRouteApiPatternsForPath,
   sessionReadModelRouteApiPatternsForPath,
+  demoSeedTranscriptApiPatternsForPath,
   routerCompositionPatternsForPath,
   scanRepo,
   scanRouterComposition,

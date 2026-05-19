@@ -4,6 +4,7 @@ pub mod ask_user;
 pub mod auth;
 pub mod command_dispatch;
 mod control_route;
+mod demo_route;
 mod handle;
 mod message_route;
 pub mod model_catalog;
@@ -27,6 +28,10 @@ pub use control_route::{
     AuthenticateSessionRouteRequest, SessionControlRouteError, SessionControlRouteErrorKind,
     SessionFileCompletionsRouteQuery, SessionFileCompletionsRouteResponse,
     SubmitAskUserQuestionRouteRequest, SubmitAskUserQuestionRouteResponse,
+};
+pub use demo_route::{
+    DemoSeedTranscriptRouteError, DemoSeedTranscriptRouteErrorKind, DemoSeedTranscriptRouteRequest,
+    DemoSeedTranscriptRouteResponse,
 };
 pub use handle::{
     DemoSeedTranscript, DemoSeedTranscriptError, DemoSeedTranscriptTurn, GenerateSessionTitleError,

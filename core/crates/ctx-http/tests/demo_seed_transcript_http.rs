@@ -5,6 +5,23 @@ use serde_json::json;
 
 mod common;
 
+fn seed_transcript_body() -> serde_json::Value {
+    json!({
+        "session_title": "Ping Pong Build",
+        "task_title": "Ping Pong Demo",
+        "turns": [
+            {
+                "user": "Can you build a tiny browser game?",
+                "assistant": "Yes. I can put it in a single HTML file."
+            },
+            {
+                "user": "Keep it easy to show in a demo.",
+                "assistant": "Understood. I will keep the diff compact and visible."
+            }
+        ]
+    })
+}
+
 struct EnvVarGuard {
     key: String,
     prev: Option<std::ffi::OsString>,
@@ -15,6 +32,17 @@ impl EnvVarGuard {
         let prev = std::env::var_os(key);
         unsafe {
             std::env::set_var(key, value);
+        }
+        Self {
+            key: key.to_string(),
+            prev,
+        }
+    }
+
+    fn unset(key: &str) -> Self {
+        let prev = std::env::var_os(key);
+        unsafe {
+            std::env::remove_var(key);
         }
         Self {
             key: key.to_string(),
@@ -38,6 +66,7 @@ impl Drop for EnvVarGuard {
 
 #[tokio::test]
 async fn dev_seed_session_transcript_populates_prior_turns() {
+    let _env_lock = common::process_env_test_lock().lock().await;
     let _dev_mode = EnvVarGuard::set("CTX_DEV_MODE", "1");
 
     let repo = common::init_git_repo(&[("README.md", "fixture\n")]).await;
@@ -58,20 +87,7 @@ async fn dev_seed_session_transcript_populates_prior_turns() {
         &app,
         Method::POST,
         format!("/api/dev/sessions/{}/seed_transcript", session.id.0),
-        Some(json!({
-            "session_title": "Ping Pong Build",
-            "task_title": "Ping Pong Demo",
-            "turns": [
-                {
-                    "user": "Can you build a tiny browser game?",
-                    "assistant": "Yes. I can put it in a single HTML file."
-                },
-                {
-                    "user": "Keep it easy to show in a demo.",
-                    "assistant": "Understood. I will keep the diff compact and visible."
-                }
-            ]
-        })),
+        Some(seed_transcript_body()),
     )
     .await;
     assert_eq!(seed_status, StatusCode::OK, "{seed_body:#?}");
@@ -145,4 +161,136 @@ async fn dev_seed_session_transcript_populates_prior_turns() {
         seeded_head["messages"].as_array().map(|items| items.len()),
         Some(4)
     );
+}
+
+#[tokio::test]
+async fn dev_seed_session_transcript_rejects_invalid_session_id() {
+    let _env_lock = common::process_env_test_lock().lock().await;
+    let _dev_mode = EnvVarGuard::set("CTX_DEV_MODE", "1");
+
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let app = fixture.router();
+
+    let (status, body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        Method::POST,
+        "/api/dev/sessions/not-a-session/seed_transcript",
+        Some(json!({
+            "turns": [
+                {
+                    "user": "Can you build a tiny browser game?",
+                    "assistant": "Yes."
+                }
+            ]
+        })),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body:#?}");
+    assert_eq!(body["error"], json!("invalid session id"));
+}
+
+#[tokio::test]
+async fn dev_seed_session_transcript_rejects_missing_session() {
+    let _env_lock = common::process_env_test_lock().lock().await;
+    let _dev_mode = EnvVarGuard::set("CTX_DEV_MODE", "1");
+
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let app = fixture.router();
+
+    let (status, body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        Method::POST,
+        format!("/api/dev/sessions/{}/seed_transcript", uuid::Uuid::new_v4()),
+        Some(seed_transcript_body()),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body:#?}");
+    assert_eq!(body["error"], json!("session not found"));
+}
+
+#[tokio::test]
+async fn dev_seed_session_transcript_rejects_empty_turns() {
+    let _env_lock = common::process_env_test_lock().lock().await;
+    let _dev_mode = EnvVarGuard::set("CTX_DEV_MODE", "1");
+
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let app = fixture.router();
+
+    let (status, body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        Method::POST,
+        format!("/api/dev/sessions/{}/seed_transcript", uuid::Uuid::new_v4()),
+        Some(json!({
+            "turns": []
+        })),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body:#?}");
+    assert_eq!(body["error"], json!("turns must not be empty"));
+}
+
+#[tokio::test]
+async fn dev_seed_session_transcript_rejects_duplicate_seed_without_append() {
+    let _env_lock = common::process_env_test_lock().lock().await;
+    let _dev_mode = EnvVarGuard::set("CTX_DEV_MODE", "1");
+
+    let repo = common::init_git_repo(&[("README.md", "fixture\n")]).await;
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let app = fixture.router();
+
+    let workspace = common::create_workspace(&app, repo.path(), "demo").await;
+    let (_task, session) = common::create_task_with_session(
+        &app,
+        workspace.id.0,
+        "Ping Pong Demo",
+        "fake",
+        "fake-model",
+    )
+    .await;
+
+    let (seed_status, seed_body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        Method::POST,
+        format!("/api/dev/sessions/{}/seed_transcript", session.id.0),
+        Some(seed_transcript_body()),
+    )
+    .await;
+    assert_eq!(seed_status, StatusCode::OK, "{seed_body:#?}");
+
+    let (status, body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        Method::POST,
+        format!("/api/dev/sessions/{}/seed_transcript", session.id.0),
+        Some(seed_transcript_body()),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::CONFLICT, "{body:#?}");
+    assert_eq!(
+        body["error"],
+        json!("session already has messages; seed into a fresh session")
+    );
+}
+
+#[tokio::test]
+async fn dev_seed_session_transcript_returns_not_found_when_dev_tools_disabled() {
+    let _env_lock = common::process_env_test_lock().lock().await;
+    let _dev_mode = EnvVarGuard::unset("CTX_DEV_MODE");
+
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let app = fixture.router();
+
+    let (status, body): (StatusCode, serde_json::Value) = common::json_request(
+        &app,
+        Method::POST,
+        format!("/api/dev/sessions/{}/seed_transcript", uuid::Uuid::new_v4()),
+        Some(seed_transcript_body()),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body:#?}");
+    assert_eq!(body["error"], json!("dev tools are disabled"));
 }

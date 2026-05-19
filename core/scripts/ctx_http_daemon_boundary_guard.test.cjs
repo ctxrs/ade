@@ -46,6 +46,7 @@ const {
   CLAUDE_SETUP_TOKEN_LOGIN_API_ORCHESTRATION_PATTERNS,
   PROVIDER_LOGIN_STATUS_ROUTE_DTO_PATTERNS,
   PROVIDER_PRELUDE_ROUTE_DTO_PATTERNS,
+  DEMO_SEED_TRANSCRIPT_API_ROUTE_CONTRACT_PATTERNS,
   MERGE_QUEUE_ISOLATION_TEST_STORE_ACCESS_PATTERNS,
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
@@ -180,6 +181,7 @@ const {
   sessionControlRouteApiPatternsForPath,
   sessionMessageCommandRouteApiPatternsForPath,
   sessionReadModelRouteApiPatternsForPath,
+  demoSeedTranscriptApiPatternsForPath,
   sessionModelApiStorePatternsForPath,
   sessionFixtureStorePatternsForPath,
   smallApiUnitStorePatternsForPath,
@@ -3368,6 +3370,59 @@ test("daemon boundary guard scopes session read-model route contracts and allows
   );
   assert.deepEqual(
     sessionReadModelRouteApiPatternsForPath("core/crates/ctx-http/src/api/sessions/snapshot/vcs.rs"),
+    [],
+  );
+});
+
+test("daemon boundary guard rejects demo seed transcript route contracts in HTTP", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/demo/seed_transcript.rs",
+    contents: `
+      use ctx_core::ids::SessionId;
+      use ctx_daemon::daemon::sessions::{
+        DemoSeedTranscript, DemoSeedTranscriptError, DemoSeedTranscriptTurn,
+      };
+      async fn handler(state: SessionsHandle, id: String, req: SeedTranscriptReq) {
+        let session_id = SessionId(uuid::Uuid::parse_str(&id).unwrap());
+        if req.turns.is_empty() {
+          return Err(StatusCode::BAD_REQUEST);
+        }
+        let seed = DemoSeedTranscript {
+          turns: vec![DemoSeedTranscriptTurn { user, assistant, context_window }],
+        };
+        state.seed_demo_transcript(session_id, seed).await.map_err(|error| match error {
+          DemoSeedTranscriptError::SessionNotFound => StatusCode::NOT_FOUND,
+        })?;
+        let response = SeedTranscriptResp { seeded_turns: 1 };
+      }
+    `,
+    patterns: DEMO_SEED_TRANSCRIPT_API_ROUTE_CONTRACT_PATTERNS,
+  });
+
+  assert.deepEqual(
+    new Set(violations.map((violation) => violation.name)),
+    new Set([
+      "demo seed transcript API owns session id parsing",
+      "demo seed transcript API owns local route DTOs",
+      "demo seed transcript API constructs raw demo seed domain objects",
+      "demo seed transcript API owns empty-turn validation",
+      "demo seed transcript API calls raw seed transcript facade",
+    ]),
+  );
+});
+
+test("daemon boundary guard scopes demo seed transcript route contracts", () => {
+  const filePath = "core/crates/ctx-http/src/api/demo/seed_transcript.rs";
+  assert.deepEqual(
+    demoSeedTranscriptApiPatternsForPath(filePath),
+    DEMO_SEED_TRANSCRIPT_API_ROUTE_CONTRACT_PATTERNS,
+  );
+  assert.equal(
+    apiPatternsForPath(filePath).includes(DEMO_SEED_TRANSCRIPT_API_ROUTE_CONTRACT_PATTERNS[0]),
+    true,
+  );
+  assert.deepEqual(
+    demoSeedTranscriptApiPatternsForPath("core/crates/ctx-http/src/api/demo.rs"),
     [],
   );
 });
