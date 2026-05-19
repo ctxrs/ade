@@ -1,4 +1,3 @@
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -7,7 +6,7 @@ use base64::Engine;
 use chrono::{Duration as ChronoDuration, Utc};
 use ctx_core::ids::{MessageId, RunId, SessionId, TaskId, TurnId};
 use ctx_core::models::{
-    Artifact, Message, MessageAttachment, MessageDelivery, MessageRole, Session, SessionEvent,
+    Message, MessageAttachment, MessageDelivery, MessageRole, Session, SessionEvent,
     SessionEventType, SessionSummary, SessionTurn, SessionTurnStatus, SubagentInvocation, Task,
     Worktree,
 };
@@ -32,25 +31,6 @@ use crate::daemon::maintenance::post_message_update_drain_reason;
 use crate::daemon::{
     require_scoped_mcp_session_context, ScopedMcpSessionAccessError, SessionStoreAccessError,
 };
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum SessionImageBlobStoreError {
-    PayloadTooLarge,
-    UnsupportedMediaType,
-    Internal,
-}
-
-impl From<crate::daemon::blobs::ImageBlobStoreError> for SessionImageBlobStoreError {
-    fn from(error: crate::daemon::blobs::ImageBlobStoreError) -> Self {
-        match error {
-            crate::daemon::blobs::ImageBlobStoreError::PayloadTooLarge => Self::PayloadTooLarge,
-            crate::daemon::blobs::ImageBlobStoreError::UnsupportedMediaType => {
-                Self::UnsupportedMediaType
-            }
-            crate::daemon::blobs::ImageBlobStoreError::Internal => Self::Internal,
-        }
-    }
-}
 
 pub struct DemoSeedTranscript {
     pub session_title: Option<String>,
@@ -121,92 +101,6 @@ pub enum PostUserMessageError {
 }
 
 impl SessionsHandle {
-    pub async fn get_blob(
-        &self,
-        id: &str,
-    ) -> Result<
-        Option<(
-            String,
-            String,
-            i64,
-            Option<String>,
-            chrono::DateTime<chrono::Utc>,
-        )>,
-    > {
-        self.state.global_store().get_blob(id).await
-    }
-
-    pub async fn get_session_for_artifacts(
-        &self,
-        session_id: SessionId,
-    ) -> Result<Option<Session>> {
-        let Some(store) = self.session_store_or_none(session_id).await? else {
-            return Ok(None);
-        };
-        store.get_session(session_id).await
-    }
-
-    pub async fn get_session_worktree(&self, session: &Session) -> Result<Option<Worktree>> {
-        let store = self.store_for_session(session.id).await?;
-        store.get_worktree(session.worktree_id).await
-    }
-
-    pub async fn get_session_artifact_for_download(
-        &self,
-        session_id: SessionId,
-        artifact_id: ctx_core::ids::ArtifactId,
-    ) -> Result<Option<(Session, Artifact)>> {
-        let Some(store) = self.session_store_or_none(session_id).await? else {
-            return Ok(None);
-        };
-        let Some(session) = store.get_session(session_id).await? else {
-            return Ok(None);
-        };
-        let Some(artifact) = store.get_artifact(artifact_id).await? else {
-            return Ok(None);
-        };
-        if artifact.session_id != session.id {
-            return Ok(None);
-        }
-        Ok(Some((session, artifact)))
-    }
-
-    pub async fn list_session_artifacts_for_route(
-        &self,
-        session_id: SessionId,
-    ) -> Result<Option<(Session, Vec<Artifact>)>> {
-        let Some(store) = self.session_store_or_none(session_id).await? else {
-            return Ok(None);
-        };
-        let Some(session) = store.get_session(session_id).await? else {
-            return Ok(None);
-        };
-        let artifacts = store.list_session_artifacts(session.id).await?;
-        Ok(Some((session, artifacts)))
-    }
-
-    pub async fn replace_session_artifacts_and_publish(
-        &self,
-        session: &Session,
-        artifacts: &[Artifact],
-    ) -> Result<()> {
-        let store = self.store_for_session(session.id).await?;
-        store
-            .replace_session_artifacts(session.id, artifacts)
-            .await?;
-        let event = store
-            .append_session_event(
-                session.id,
-                None,
-                None,
-                SessionEventType::ArtifactsSet,
-                serde_json::json!({ "artifacts": artifacts }),
-            )
-            .await?;
-        self.publish_event(event).await;
-        Ok(())
-    }
-
     pub async fn seed_demo_transcript(
         &self,
         session_id: SessionId,
@@ -1051,13 +945,6 @@ impl SessionsHandle {
         self.state.refresh_session_head_cache(session_id).await;
     }
 
-    pub fn session_tool_output_spool_dir(&self, session_id: SessionId) -> PathBuf {
-        self.state
-            .core
-            .tool_output_spool_dir
-            .join(session_id.0.to_string())
-    }
-
     pub async fn task_session_creation_lock(&self, task_id: TaskId) -> Arc<Mutex<()>> {
         self.state.task_session_creation_lock(task_id).await
     }
@@ -1216,59 +1103,6 @@ impl SessionsHandle {
     ) -> Result<subagents::WaitAgentResp, subagents::SubagentError> {
         subagents::wait_agent(Arc::clone(&self.state), parent_id, req).await
     }
-
-    pub async fn store_inline_image_blob(
-        &self,
-        bytes: &[u8],
-        mime_type: &str,
-        name: Option<&str>,
-    ) -> Result<String, SessionImageBlobStoreError> {
-        crate::daemon::blobs::store_image_blob_for_state(
-            self.state.as_ref(),
-            bytes,
-            mime_type,
-            name,
-        )
-        .await
-        .map(|stored| stored.blob_id)
-        .map_err(SessionImageBlobStoreError::from)
-    }
-
-    pub async fn session_artifact_path_is_accessible(
-        &self,
-        store: &Store,
-        session: &Session,
-        path: &Path,
-    ) -> anyhow::Result<bool> {
-        let roots = self.session_artifact_allowed_roots(store, session).await?;
-        let canonical = match tokio::fs::canonicalize(path).await {
-            Ok(canonical) => canonical,
-            Err(_) => return Ok(false),
-        };
-        Ok(roots.iter().any(|root| canonical.starts_with(root)))
-    }
-
-    async fn session_artifact_allowed_roots(
-        &self,
-        store: &Store,
-        session: &Session,
-    ) -> anyhow::Result<Vec<PathBuf>> {
-        let mut roots = Vec::with_capacity(2);
-        if let Some(worktree) = store.get_worktree(session.worktree_id).await? {
-            roots.push(canonicalize_existing_or_raw(&PathBuf::from(worktree.root_path)).await);
-        }
-        roots.push(
-            canonicalize_existing_or_raw(
-                &self
-                    .state
-                    .core
-                    .tool_output_spool_dir
-                    .join(session.id.0.to_string()),
-            )
-            .await,
-        );
-        Ok(roots)
-    }
 }
 
 fn session_root_kind_for_worktree(worktree: Option<&Worktree>) -> &'static str {
@@ -1362,12 +1196,6 @@ impl DemoSeededTurn {
             assistant_order_seq,
         }
     }
-}
-
-async fn canonicalize_existing_or_raw(path: &Path) -> PathBuf {
-    tokio::fs::canonicalize(path)
-        .await
-        .unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn session_store_access_auth_error(error: SessionStoreAccessError) -> auth::SessionAuthError {

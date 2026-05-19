@@ -1,4 +1,5 @@
 mod app_state;
+mod artifact_access;
 mod artifacts;
 pub mod ask_user;
 pub mod auth;
@@ -23,6 +24,7 @@ pub mod vcs;
 mod vcs_route;
 mod workspace_bridge;
 
+pub use artifact_access::SessionImageBlobStoreError;
 pub use artifacts::{
     SessionArtifactDownload, SessionArtifactDownloadRouteParams, SessionArtifactInput,
     SessionArtifactRouteContext, SessionArtifactRouteError, SessionArtifactsRouteResponse,
@@ -39,7 +41,7 @@ pub use demo_route::{
 };
 pub use handle::{
     DemoSeedTranscript, DemoSeedTranscriptError, DemoSeedTranscriptTurn, GenerateSessionTitleError,
-    PostUserMessageError, PostUserMessageInput, SessionImageBlobStoreError,
+    PostUserMessageError, PostUserMessageInput,
 };
 pub use message_route::{
     DeleteSessionMessageRouteParams, PostSessionMessageRouteContext,

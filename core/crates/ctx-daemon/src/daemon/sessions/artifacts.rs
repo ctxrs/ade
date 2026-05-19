@@ -11,11 +11,10 @@ use ctx_session_tools::{
 use ctx_store::Store;
 
 use crate::daemon::handle::SessionsHandle;
-use crate::daemon::route_files::{
-    canonicalize_existing_or_raw, open_canonical_route_file, RouteFileDownloadError,
-};
+use crate::daemon::route_files::{open_canonical_route_file, RouteFileDownloadError};
 use crate::daemon::{ScopedMcpSessionAccessError, SessionStoreAccessError};
 
+use super::artifact_access::session_artifact_allowed_roots;
 use super::route_contract::{parse_session_route_id, SessionRouteParams};
 
 #[derive(Debug, serde::Deserialize)]
@@ -361,28 +360,6 @@ async fn validate_session_artifact_write_path(
         return Ok(canonical);
     }
     Err("absolute_file_path must stay inside the session worktree or tool-output spool".into())
-}
-
-async fn session_artifact_allowed_roots(
-    handle: &SessionsHandle,
-    store: &Store,
-    session: &Session,
-) -> anyhow::Result<Vec<PathBuf>> {
-    let mut roots = Vec::with_capacity(2);
-    if let Some(worktree) = store.get_worktree(session.worktree_id).await? {
-        roots.push(canonicalize_existing_or_raw(&PathBuf::from(worktree.root_path)).await);
-    }
-    roots.push(
-        canonicalize_existing_or_raw(
-            &handle
-                .state
-                .core
-                .tool_output_spool_dir
-                .join(session.id.0.to_string()),
-        )
-        .await,
-    );
-    Ok(roots)
 }
 
 fn session_artifact_store_error(error: SessionStoreAccessError) -> SessionArtifactRouteError {
