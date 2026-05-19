@@ -143,7 +143,7 @@ until docker exec "$POSTGRES_CONTAINER" pg_isready -U postgres >/dev/null 2>&1; 
 done
 
 docker exec -i "$POSTGRES_CONTAINER" psql -U postgres -d postgres \
-  < "$ROOT/supabase/migrations/20260430000100_mobile_tunnel_control_plane.sql" >/dev/null
+  < "$ROOT/supabase/migrations/20260430000400_mobile_tunnel_control_plane.sql" >/dev/null
 docker exec "$POSTGRES_CONTAINER" psql -U postgres -d postgres \
   -c "alter role ctx_tunnel_service with password 'ctx_tunnel_local';" >/dev/null
 echo "ok: postgres 127.0.0.1:${PG_PORT}"
