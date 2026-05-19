@@ -8,7 +8,7 @@ use ctx_session_tools::model_resolution::{
 };
 use ctx_storage_admission::is_storage_exhaustion_error;
 
-use super::handle::SessionModelTargetLoadError;
+use super::model_target_bridge::SessionModelTargetLoadError;
 use crate::daemon::handle::SessionsHandle;
 
 #[derive(Debug, Clone)]

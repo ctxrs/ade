@@ -9,6 +9,7 @@ mod handle;
 mod message_route;
 pub mod model_catalog;
 mod model_switch;
+mod model_target_bridge;
 mod pinning;
 mod read_models;
 mod route_contract;
@@ -38,7 +39,7 @@ pub use demo_route::{
 };
 pub use handle::{
     DemoSeedTranscript, DemoSeedTranscriptError, DemoSeedTranscriptTurn, GenerateSessionTitleError,
-    PostUserMessageError, PostUserMessageInput, SessionImageBlobStoreError, SetSessionModeError,
+    PostUserMessageError, PostUserMessageInput, SessionImageBlobStoreError,
 };
 pub use message_route::{
     DeleteSessionMessageRouteParams, PostSessionMessageRouteContext,
@@ -46,6 +47,7 @@ pub use message_route::{
     SessionMessageRouteErrorKind,
 };
 pub use model_switch::{SetSessionModelError, SetSessionModelErrorKind, SetSessionModelRequest};
+pub use model_target_bridge::SetSessionModeError;
 pub use route_contract::{
     SessionEventsRouteQuery, SessionEventsRouteResponse, SessionHeadRouteQuery,
     SessionHeadRouteResponse, SessionHistoryRouteQuery, SessionHistoryRouteResponse,
