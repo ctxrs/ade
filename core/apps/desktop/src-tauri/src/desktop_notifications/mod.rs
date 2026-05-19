@@ -141,7 +141,7 @@ pub(super) fn desktop_simulate_last_notification_click(
         let deep_link = state
             .last_deep_link()
             .ok_or_else(|| "no recorded system notification".to_string())?;
-        open_notification_target(app, &deep_link);
+        deep_links::open_notification_target(app, &deep_link);
         Ok(())
     }
 
