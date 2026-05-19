@@ -13,6 +13,7 @@ mod pinning;
 mod read_models;
 mod route_contract;
 mod runtime;
+mod store_bridge;
 pub mod subagents;
 mod subagents_route;
 pub mod title_generation;
