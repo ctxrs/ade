@@ -11,6 +11,7 @@ use ctx_workspace_active_snapshot::{
 };
 
 use crate::daemon::DaemonState;
+use crate::daemon::WorkspaceStreamHandle;
 
 use super::replay_cursor::{
     head_only_snapshot_cursor, plan_resume_replay_cursor, WorkspaceStreamResumeReplayCursorPlan,
@@ -297,5 +298,75 @@ where
             Ok(ReplayOutcome::Replay { last_sent })
         }
         WorkspaceSessionReplay::ResetRequired => Ok(ReplayOutcome::ResetRequired),
+    }
+}
+
+impl WorkspaceStreamHandle {
+    pub async fn plan_workspace_stream_replay_program(
+        &self,
+        workspace_id: WorkspaceId,
+        resolved_sessions: &[WorkspaceStreamResolvedSession],
+        live_subscriptions: &HashMap<SessionId, SessionReplayCursor>,
+        active_head_cursors: &HashMap<SessionId, SessionReplayCursor>,
+        include_initial_snapshot: bool,
+    ) -> WorkspaceStreamReplayProgram {
+        plan_workspace_stream_replay_program(
+            &self.state,
+            workspace_id,
+            resolved_sessions,
+            live_subscriptions,
+            active_head_cursors,
+            include_initial_snapshot,
+        )
+        .await
+    }
+
+    pub async fn plan_workspace_stream_replay_program_with_step_hook<H>(
+        &self,
+        workspace_id: WorkspaceId,
+        resolved_sessions: &[WorkspaceStreamResolvedSession],
+        live_subscriptions: &HashMap<SessionId, SessionReplayCursor>,
+        active_head_cursors: &HashMap<SessionId, SessionReplayCursor>,
+        include_initial_snapshot: bool,
+        step_hook: &mut H,
+    ) -> Result<WorkspaceStreamReplayProgram, H::Error>
+    where
+        H: WorkspaceStreamReplayStepHook,
+    {
+        plan_workspace_stream_replay_program_with_step_hook(
+            &self.state,
+            workspace_id,
+            resolved_sessions,
+            live_subscriptions,
+            active_head_cursors,
+            include_initial_snapshot,
+            step_hook,
+        )
+        .await
+    }
+
+    pub async fn replay_session_events<F, Fut>(
+        &self,
+        workspace_id: WorkspaceId,
+        session_id: SessionId,
+        after_cursor: SessionReplayCursor,
+        list_failpoint: &'static str,
+        send_failpoint: Option<&'static str>,
+        emit: F,
+    ) -> Result<ReplayOutcome, ()>
+    where
+        F: FnMut(WorkspaceActiveSnapshotStreamMessage) -> Fut,
+        Fut: std::future::Future<Output = Result<(), ()>>,
+    {
+        replay_session_events(
+            &self.state,
+            workspace_id,
+            session_id,
+            after_cursor,
+            list_failpoint,
+            send_failpoint,
+            emit,
+        )
+        .await
     }
 }

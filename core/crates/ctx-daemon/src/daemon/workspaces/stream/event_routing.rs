@@ -10,6 +10,8 @@ use ctx_workspace_active_snapshot::{
     WorkspaceActiveSubscriptionState,
 };
 
+use crate::daemon::WorkspaceStreamHandle;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WorkspaceStreamHeadLane {
     Foreground,
@@ -227,4 +229,34 @@ fn allows_partial_for_foreground_session(
     foreground_session_ids
         .map(|session_ids| session_ids.contains(&session_id))
         .unwrap_or(false)
+}
+
+impl WorkspaceStreamHandle {
+    pub fn primary_session_id_for_active_task_event(
+        &self,
+        task: &WorkspaceActiveTaskSummary,
+    ) -> SessionId {
+        primary_session_id_for_active_task_event(task)
+    }
+
+    pub fn event_snapshot_rev(&self, event: &WorkspaceActiveSnapshotEvent) -> Option<i64> {
+        event_snapshot_rev(event)
+    }
+
+    pub fn event_blocks_pending_replay(
+        &self,
+        event: &WorkspaceActiveSnapshotEvent,
+        pending_replay_sessions: &HashSet<SessionId>,
+        subscription_state: &WorkspaceActiveSubscriptionState,
+    ) -> bool {
+        event_blocks_pending_replay(event, pending_replay_sessions, subscription_state)
+    }
+
+    pub fn plan_workspace_stream_event_route(
+        &self,
+        subscription_state: &WorkspaceActiveSubscriptionState,
+        event: WorkspaceActiveSnapshotEvent,
+    ) -> WorkspaceStreamEventRoutePlan {
+        plan_workspace_stream_event_route(subscription_state, event)
+    }
 }

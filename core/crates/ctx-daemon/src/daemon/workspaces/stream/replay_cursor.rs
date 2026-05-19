@@ -6,6 +6,7 @@ use ctx_workspace_active_snapshot::{replay_cursor_after_live_progress, SessionRe
 
 use super::read_model::WorkspaceStreamSnapshotReadModel;
 use crate::daemon::DaemonState;
+use crate::daemon::WorkspaceStreamHandle;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WorkspaceStreamResumeReplayCursorPlan {
@@ -87,4 +88,29 @@ async fn session_replay_tail_cursor(
         .workspace_active_snapshot
         .session_replay_cursor(workspace_id, session_id)
         .await
+}
+
+impl WorkspaceStreamHandle {
+    pub async fn session_replay_cursor(
+        &self,
+        workspace_id: WorkspaceId,
+        session_id: SessionId,
+    ) -> SessionReplayCursor {
+        session_replay_tail_cursor(&self.state, workspace_id, session_id).await
+    }
+
+    pub fn active_head_cursors_from_snapshot_read_model(
+        &self,
+        read_model: &WorkspaceStreamSnapshotReadModel,
+    ) -> HashMap<SessionId, SessionReplayCursor> {
+        active_head_cursors_from_snapshot_read_model(read_model)
+    }
+
+    pub async fn active_task_subscription_cursor(
+        &self,
+        workspace_id: WorkspaceId,
+        session_id: SessionId,
+    ) -> SessionReplayCursor {
+        active_task_subscription_cursor(&self.state, workspace_id, session_id).await
+    }
 }

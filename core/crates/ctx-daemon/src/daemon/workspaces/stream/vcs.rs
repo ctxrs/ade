@@ -3,8 +3,16 @@ use std::sync::Arc;
 
 use ctx_core::ids::{WorkspaceId, WorktreeId};
 use ctx_core::models::{Worktree, WorktreeVcsFreshness, WorktreeVcsStreamTier};
+use tokio::sync::broadcast;
 
 use crate::daemon::DaemonState;
+use crate::daemon::WorkspacesHandle;
+
+use super::access::require_existing_workspace_for_stream;
+use super::{
+    WorkspaceStreamAccessError, WorkspaceStreamRouteAdmission, WorkspaceStreamRouteError,
+    WorkspaceStreamRouteParams,
+};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WorkspaceVcsDemandState {
@@ -287,4 +295,147 @@ where
     let mut ids = ids.into_iter().collect::<Vec<_>>();
     ids.sort_by_key(|worktree_id| worktree_id.0);
     ids
+}
+
+impl WorkspacesHandle {
+    pub async fn require_workspace_vcs_stream_access(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<(), WorkspaceStreamAccessError> {
+        require_existing_workspace_for_stream(&self.state, workspace_id).await
+    }
+
+    pub async fn admit_workspace_vcs_stream_for_route(
+        &self,
+        params: WorkspaceStreamRouteParams,
+    ) -> Result<WorkspaceStreamRouteAdmission, WorkspaceStreamRouteError> {
+        let workspace_id = params.parse_workspace_id()?;
+        self.require_workspace_vcs_stream_access(workspace_id)
+            .await
+            .map_err(WorkspaceStreamRouteError::from_stream_access)?;
+        Ok(WorkspaceStreamRouteAdmission::new(workspace_id))
+    }
+
+    pub async fn get_worktree_vcs_snapshot(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> Option<ctx_core::models::WorktreeVcsSnapshot> {
+        self.state.get_worktree_vcs_snapshot(worktree_id).await
+    }
+
+    pub fn subscribe_worktree_vcs_events(
+        &self,
+    ) -> broadcast::Receiver<ctx_core::models::WorktreeVcsSnapshot> {
+        self.state.subscribe_worktree_vcs_events()
+    }
+
+    pub async fn filter_workspace_worktree_ids(
+        &self,
+        workspace_id: WorkspaceId,
+        worktree_ids: Vec<WorktreeId>,
+    ) -> Vec<WorktreeId> {
+        filter_workspace_worktree_ids(&self.state, workspace_id, worktree_ids).await
+    }
+
+    pub async fn refresh_worktree_vcs_for_worktrees(
+        &self,
+        summary_worktree_ids: &[WorktreeId],
+        detail_worktree_ids: &[WorktreeId],
+    ) {
+        refresh_worktree_vcs_for_worktrees(&self.state, summary_worktree_ids, detail_worktree_ids)
+            .await;
+    }
+
+    pub async fn update_worktree_vcs_activity(
+        &self,
+        previous: &HashSet<WorktreeId>,
+        next: &HashSet<WorktreeId>,
+    ) {
+        self.state
+            .update_worktree_vcs_activity(previous, next)
+            .await;
+    }
+
+    pub async fn update_worktree_vcs_open_panes(
+        &self,
+        previous: &HashSet<WorktreeId>,
+        next: &HashSet<WorktreeId>,
+    ) {
+        self.state
+            .update_worktree_vcs_open_panes(previous, next)
+            .await;
+    }
+
+    #[cfg(test)]
+    pub async fn is_worktree_vcs_active_for_test(&self, worktree_id: WorktreeId) -> bool {
+        self.state.is_worktree_vcs_active(worktree_id).await
+    }
+
+    #[cfg(test)]
+    pub async fn is_worktree_vcs_pane_open_for_test(&self, worktree_id: WorktreeId) -> bool {
+        self.state.is_worktree_vcs_pane_open(worktree_id).await
+    }
+
+    pub async fn plan_workspace_vcs_subscription_update(
+        &self,
+        workspace_id: WorkspaceId,
+        current: WorkspaceVcsDemandState,
+        summary_worktree_ids: Vec<WorktreeId>,
+        detail_worktree_ids: Vec<WorktreeId>,
+    ) -> WorkspaceVcsSubscriptionPlan {
+        plan_workspace_vcs_subscription_update(
+            &self.state,
+            workspace_id,
+            current,
+            summary_worktree_ids,
+            detail_worktree_ids,
+        )
+        .await
+    }
+
+    pub async fn plan_workspace_vcs_refresh(
+        &self,
+        workspace_id: WorkspaceId,
+        worktree_ids: Vec<WorktreeId>,
+        tier: WorktreeVcsStreamTier,
+    ) -> WorkspaceVcsRefreshPlan {
+        plan_workspace_vcs_refresh(&self.state, workspace_id, worktree_ids, tier).await
+    }
+
+    pub async fn release_workspace_vcs_demand(&self, demand: &WorkspaceVcsDemandState) {
+        release_workspace_vcs_demand(&self.state, demand).await;
+    }
+
+    pub fn route_workspace_vcs_snapshot(
+        &self,
+        demand: &WorkspaceVcsDemandState,
+        worktree_id: WorktreeId,
+    ) -> WorkspaceVcsSnapshotRoute {
+        route_workspace_vcs_snapshot(demand, worktree_id)
+    }
+
+    pub fn plan_workspace_vcs_lag_reseed(
+        &self,
+        demand: &WorkspaceVcsDemandState,
+    ) -> WorkspaceVcsLagReseedPlan {
+        plan_workspace_vcs_lag_reseed(demand)
+    }
+
+    pub async fn record_workspace_vcs_stream_metric(&self, name: &str, value: u64) {
+        let mut labels = HashMap::new();
+        labels.insert("source".to_string(), "daemon".to_string());
+        labels.insert("stream".to_string(), "workspace_vcs".to_string());
+        let metric = ctx_observability::perf_telemetry::PerfMetric {
+            name: name.to_string(),
+            kind: ctx_observability::perf_telemetry::PerfMetricKind::Counter,
+            unit: "count".to_string(),
+            value: value as f64,
+            labels,
+        };
+        self.state
+            .telemetry
+            .perf_telemetry
+            .record_metric(metric, None, None, None)
+            .await;
+    }
 }
