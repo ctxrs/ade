@@ -176,6 +176,7 @@ const RUST_FAMILY_BY_CRATE = {
   "ctx-settings-model": "settings-config",
   "ctx-settings-service": "settings-config",
   "ctx-storage-admission": "workspace-stream",
+  "ctx-task-service": "workspace-stream",
   "ctx-update-service": "distribution-install",
   "ctx-store": "workspace-stream",
   "ctx-transport-runtime": "subagents-orchestration",

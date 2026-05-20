@@ -4,6 +4,7 @@ use ctx_core::ids::{TaskId, WorkspaceId};
 use ctx_core::models::{ExecutionEnvironment, Task, Workspace};
 use ctx_observability::logs;
 use ctx_store::Store;
+use ctx_task_service::creation::TaskRecordCreateError;
 
 use crate::daemon::handle::TasksHandle;
 use crate::daemon::workspaces::execution_environment_from_settings;
@@ -51,6 +52,16 @@ pub enum TaskCreateError {
 impl TaskCreateError {
     fn internal(error: impl Into<anyhow::Error>) -> Self {
         Self::Internal(error.into())
+    }
+}
+
+impl From<TaskRecordCreateError> for TaskCreateError {
+    fn from(error: TaskRecordCreateError) -> Self {
+        match error {
+            TaskRecordCreateError::NotFound(message) => Self::NotFound(message),
+            TaskRecordCreateError::Conflict(message) => Self::Conflict(message),
+            TaskRecordCreateError::Internal(error) => Self::Internal(error),
+        }
     }
 }
 
@@ -117,8 +128,4 @@ impl CreateTaskInput {
     fn should_preflight_default_session(&self, existing_task: &Option<Task>) -> bool {
         existing_task.is_none() && self.default_session.is_none()
     }
-}
-
-fn task_request_matches(existing: &Task, title: &str, description: &Option<String>) -> bool {
-    existing.title == title && existing.description.as_deref() == description.as_deref()
 }

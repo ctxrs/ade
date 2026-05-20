@@ -74,6 +74,7 @@ RUST_BAZEL_DEPS = {
             "//core/crates/ctx-settings-service:lib",
             "//core/crates/ctx-storage-admission:lib",
             "//core/crates/ctx-store:lib",
+            "//core/crates/ctx-task-service:lib",
             "//core/crates/ctx-transport-runtime:lib",
             "//core/crates/ctx-update-service:lib",
             "//core/crates/ctx-workspace-active-snapshot:lib",

@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use anyhow::Result;
 use ctx_core::ids::TaskId;
 use ctx_core::models::{Task, TaskDeltaKind};
@@ -19,15 +17,7 @@ impl TasksHandle {
         let Some(store) = self.task_store_or_none(task_id).await? else {
             return Ok(None);
         };
-        let updated = if read {
-            store.mark_task_read(task_id).await?
-        } else {
-            store.mark_task_unread(task_id).await?
-        };
-        if !updated {
-            return Ok(None);
-        }
-        let task = store.get_task_with_activity(task_id).await?;
+        let task = ctx_task_service::metadata::set_task_read_state(&store, task_id, read).await?;
         if let Some(task) = task.as_ref() {
             self.publish_task_updated(task_id, task.clone()).await;
         }
@@ -38,52 +28,24 @@ impl TasksHandle {
         let Some(store) = self.task_store_or_none(task_id).await? else {
             return Ok(None);
         };
-        let updated = store.update_task_title(task_id, title).await?;
-        if !updated {
-            return Ok(None);
-        }
-        let Some(task) = store.get_task_with_activity(task_id).await? else {
+        let Some(outcome) =
+            ctx_task_service::metadata::update_task_title_record(&store, task_id, title).await?
+        else {
             return Ok(None);
         };
-        let sessions = store
-            .list_sessions_for_task(task_id)
-            .await
-            .unwrap_or_default();
-        let session_ids = sessions
+        let session_ids = outcome
+            .session_ids
             .iter()
-            .map(|session| session.id.0.to_string())
+            .map(|session_id| session_id.0.to_string())
             .collect();
-        let mut worktree_ids = sessions
+        let worktree_id_strings = outcome
+            .worktree_ids
             .iter()
-            .map(|session| session.worktree_id)
-            .collect::<HashSet<_>>();
-        if let Some(primary_worktree_id) = task.primary_worktree_id {
-            worktree_ids.insert(primary_worktree_id);
-        }
-        let mut worktree_id_strings = HashSet::new();
-        for worktree_id in worktree_ids {
-            match store.get_worktree(worktree_id).await {
-                Ok(Some(worktree)) => {
-                    worktree_id_strings.insert(worktree.id.0.to_string());
-                }
-                Ok(None) => {
-                    tracing::warn!(
-                        task_id = %task_id.0,
-                        worktree_id = %worktree_id.0,
-                        "worktree missing for task title update"
-                    );
-                }
-                Err(error) => {
-                    tracing::warn!(
-                        task_id = %task_id.0,
-                        worktree_id = %worktree_id.0,
-                        "failed to load worktree for task title update: {error:?}"
-                    );
-                }
-            }
-        }
+            .map(|worktree_id| worktree_id.0.to_string())
+            .collect();
 
-        self.publish_task_updated(task_id, task.clone()).await;
+        self.publish_task_updated(task_id, outcome.task.clone())
+            .await;
         if let Err(error) = self
             .state
             .transport
@@ -94,7 +56,7 @@ impl TasksHandle {
             tracing::warn!(task_id = %task_id.0, "failed to close web sessions for title update: {error:?}");
         }
 
-        Ok(Some(task))
+        Ok(Some(outcome.task))
     }
 
     async fn publish_task_updated(&self, task_id: TaskId, task: Task) {

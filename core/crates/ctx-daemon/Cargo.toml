@@ -44,6 +44,7 @@ ctx-settings-model = { path = "../ctx-settings-model" }
 ctx-settings-service = { path = "../ctx-settings-service" }
 ctx-storage-admission = { path = "../ctx-storage-admission" }
 ctx-store = { path = "../ctx-store" }
+ctx-task-service = { path = "../ctx-task-service" }
 ctx-transport-runtime = { path = "../ctx-transport-runtime" }
 ctx-update-service = { path = "../ctx-update-service" }
 ctx-workspace-active-snapshot = { path = "../ctx-workspace-active-snapshot" }

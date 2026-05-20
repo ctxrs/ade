@@ -897,6 +897,7 @@ dependencies = [
  "ctx-settings-service",
  "ctx-storage-admission",
  "ctx-store",
+ "ctx-task-service",
  "ctx-transport-runtime",
  "ctx-update-service",
  "ctx-workspace-active-snapshot",
@@ -1732,6 +1733,19 @@ dependencies = [
  "tracing",
  "uuid",
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "ctx-task-service"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ctx-core",
+ "ctx-observability",
+ "ctx-store",
+ "tempfile",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
