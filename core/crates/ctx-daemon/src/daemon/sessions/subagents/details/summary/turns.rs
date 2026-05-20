@@ -1,82 +1,20 @@
-use std::time::Duration;
-
 use ctx_core::ids::SessionId;
-use ctx_core::models::{MessageDelivery, SessionTurn, SessionTurnStatus};
+use ctx_core::models::{SessionTurn, SessionTurnStatus};
+pub(super) use ctx_subagent_service::agent_health;
+pub(in crate::daemon::sessions::subagents::details) use ctx_subagent_service::{
+    agent_active_state, agent_terminal_result_status,
+};
+pub(in crate::daemon::sessions::subagents) use ctx_subagent_service::{
+    agent_delivery_label, is_active_turn_status,
+};
 
 use super::super::super::{internal_api_error, ApiResult};
-
-pub(in crate::daemon::sessions::subagents::details) fn agent_terminal_result_status(
-    status: SessionTurnStatus,
-) -> Option<&'static str> {
-    match status {
-        SessionTurnStatus::Completed => Some("completed"),
-        SessionTurnStatus::Interrupted => Some("interrupted"),
-        SessionTurnStatus::Failed => Some("failed"),
-        SessionTurnStatus::Queued | SessionTurnStatus::Starting | SessionTurnStatus::Running => {
-            None
-        }
-    }
-}
-
-pub(in crate::daemon::sessions::subagents) fn agent_delivery_label(
-    delivery: &MessageDelivery,
-) -> &'static str {
-    match delivery {
-        MessageDelivery::Immediate => "immediate",
-        MessageDelivery::Queued => "queued",
-    }
-}
-
-pub(in crate::daemon::sessions::subagents) fn is_active_turn_status(
-    status: &SessionTurnStatus,
-) -> bool {
-    matches!(
-        status,
-        SessionTurnStatus::Queued | SessionTurnStatus::Starting | SessionTurnStatus::Running
-    )
-}
 
 fn is_terminal_turn_status(status: &SessionTurnStatus) -> bool {
     matches!(
         status,
         SessionTurnStatus::Completed | SessionTurnStatus::Interrupted | SessionTurnStatus::Failed
     )
-}
-
-pub(in crate::daemon::sessions::subagents::details) fn agent_active_state(
-    status: SessionTurnStatus,
-) -> &'static str {
-    match status {
-        SessionTurnStatus::Queued => "queued",
-        SessionTurnStatus::Starting => "starting",
-        SessionTurnStatus::Running => "running",
-        SessionTurnStatus::Completed
-        | SessionTurnStatus::Interrupted
-        | SessionTurnStatus::Failed => "waiting_input",
-    }
-}
-
-pub(super) fn agent_health(
-    active_turn: Option<&SessionTurn>,
-    inactivity_timeout: Duration,
-) -> &'static str {
-    let Some(turn) = active_turn else {
-        return "healthy";
-    };
-
-    let stalled_after = inactivity_timeout.max(Duration::from_millis(1));
-    let slow_after = stalled_after.checked_div(2).unwrap_or(stalled_after);
-    let age = chrono::Utc::now()
-        .signed_duration_since(turn.updated_at)
-        .to_std()
-        .unwrap_or_default();
-    if age >= stalled_after {
-        "stalled"
-    } else if !slow_after.is_zero() && age >= slow_after {
-        "slow"
-    } else {
-        "healthy"
-    }
 }
 
 pub(super) async fn latest_terminal_turn_for_session(

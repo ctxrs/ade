@@ -1,24 +1,12 @@
 use std::sync::Arc;
 
 use ctx_core::ids::{RunId, SessionId, WorktreeId};
-use ctx_session_service::subagents::{
+use ctx_subagent_service::{
     legacy_context_window_metric_key, summarize_context_window as summarize_context_window_policy,
-    SubagentContextWindowSummary,
 };
 
 use super::ContextWindowSummary;
 use crate::daemon::DaemonState;
-
-impl From<SubagentContextWindowSummary> for ContextWindowSummary {
-    fn from(summary: SubagentContextWindowSummary) -> Self {
-        Self {
-            total: summary.total,
-            used: summary.used,
-            remaining: summary.remaining,
-            utilization: summary.utilization,
-        }
-    }
-}
 
 fn summarize_context_window(metrics: &serde_json::Value) -> Option<ContextWindowSummary> {
     summarize_context_window_policy(metrics).map(Into::into)

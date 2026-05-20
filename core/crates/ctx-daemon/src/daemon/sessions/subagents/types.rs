@@ -1,7 +1,6 @@
-#[path = "types/requests.rs"]
-mod requests;
-#[path = "types/responses.rs"]
-mod responses;
-
-pub use requests::*;
-pub use responses::*;
+pub use ctx_subagent_service::{
+    AgentDetail, AgentInitItem, AgentInitReq, AgentResult, AgentSummary, ArchiveAgentReq,
+    ArchiveAgentResp, ContextWindowSummary, GetAgentReq, GetAgentResp, InterruptAgentReq,
+    InterruptAgentResp, SendInputReq, SendInputResp, SpawnAgentReq, SpawnAgentResp, WaitAgentReq,
+    WaitAgentResp,
+};

@@ -83,7 +83,7 @@ fn wait_update_thresholds(
 
 fn wait_response(
     wait_status: &str,
-    mode: ctx_session_service::subagents::AgentWaitMode,
+    mode: ctx_subagent_service::AgentWaitMode,
     until: AgentWaitUntil,
     results: Vec<AgentDetail>,
 ) -> WaitAgentResp {

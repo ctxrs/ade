@@ -13,12 +13,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use ctx_session_service::subagents::{
+use ctx_session_tools::interrupt_telemetry::InterruptTelemetryContext;
+use ctx_subagent_service::{
     collect_provider_ids, normalize_wait_agent_ids, parse_wait_mode, parse_wait_until,
     wait_predicate_satisfied, AgentWaitDetail, AgentWaitUntil,
     DEFAULT_MAX_ACTIVE_SUBAGENTS_PER_PARENT, DEFAULT_MAX_SUBAGENT_DEPTH,
 };
-use ctx_session_tools::interrupt_telemetry::InterruptTelemetryContext;
 
 pub use self::types::{
     AgentDetail, AgentInitItem, AgentInitReq, AgentResult, AgentSummary, ArchiveAgentReq,

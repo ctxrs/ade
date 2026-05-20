@@ -1,4 +1,4 @@
-use ctx_session_service::subagents::SubagentWorktreeSelection;
+use ctx_subagent_service::SubagentWorktreeSelection;
 
 use super::SubagentChildInit;
 use crate::daemon::sessions::subagents::errors::{api_error, ApiResult, SubagentErrorKind};

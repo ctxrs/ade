@@ -43,6 +43,7 @@ ctx-session-service = { path = "../ctx-session-service" }
 ctx-session-tools = { path = "../ctx-session-tools" }
 ctx-settings-model = { path = "../ctx-settings-model" }
 ctx-settings-service = { path = "../ctx-settings-service" }
+ctx-subagent-service = { path = "../ctx-subagent-service" }
 ctx-storage-admission = { path = "../ctx-storage-admission" }
 ctx-store = { path = "../ctx-store" }
 ctx-task-service = { path = "../ctx-task-service" }

@@ -5,8 +5,8 @@ use ctx_core::ids::TurnId;
 use ctx_core::models::{
     ExecutionEnvironment, Session, SubagentInvocationChild, VcsKind, Workspace,
 };
-use ctx_session_service::subagents::SubagentWorktreeSelection;
 use ctx_session_tools::model_resolution::ModelCatalog;
+use ctx_subagent_service::SubagentWorktreeSelection;
 use tokio::sync::Mutex;
 
 use crate::daemon::DaemonState;

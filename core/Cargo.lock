@@ -898,6 +898,7 @@ dependencies = [
  "ctx-settings-service",
  "ctx-storage-admission",
  "ctx-store",
+ "ctx-subagent-service",
  "ctx-task-service",
  "ctx-transport-runtime",
  "ctx-update-service",
@@ -1747,6 +1748,19 @@ dependencies = [
  "tracing",
  "uuid",
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "ctx-subagent-service"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "ctx-core",
+ "ctx-session-tools",
+ "serde",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]

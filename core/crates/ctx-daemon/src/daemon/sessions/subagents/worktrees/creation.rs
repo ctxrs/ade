@@ -15,7 +15,7 @@ use ctx_workspace_services::worktree_vcs::{
 use super::super::errors::{
     api_error, internal_api_error, internal_request_or_policy_error, ApiResult, SubagentErrorKind,
 };
-use ctx_session_service::subagents::SubagentWorktreeSelection;
+use ctx_subagent_service::SubagentWorktreeSelection;
 
 pub(in crate::daemon::sessions::subagents) async fn plan_subagent_worktree_creation(
     state: &Arc<DaemonState>,

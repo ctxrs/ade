@@ -4,7 +4,7 @@ use crate::daemon::sessions::subagents::errors::{
     api_error, internal_api_error, ApiResult, SubagentErrorKind,
 };
 use crate::daemon::DaemonState;
-use ctx_session_service::subagents::{
+use ctx_subagent_service::{
     build_subagent_request_json, normalize_subagent_labels, parse_subagent_worktree,
     resolve_max_subagents_per_call, SubagentRequestAgent, SubagentWorktreeSelection,
 };
