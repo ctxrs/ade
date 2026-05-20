@@ -1,9 +1,13 @@
 use super::{
-    parse_boolish_flag, parse_session_id, parse_turn_id, SessionEventsRouteQuery,
-    SessionEventsRouteResponse, SessionHeadRouteQuery, SessionHeadRouteResponse,
+    parse_boolish_flag, parse_session_id, parse_turn_id, AuthenticateSessionRouteRequest,
+    GenerateSessionTitleRouteRequest, GenerateSessionTitleRouteResponse, SessionEventsRouteQuery,
+    SessionEventsRouteResponse, SessionFileCompletionsRouteQuery,
+    SessionFileCompletionsRouteResponse, SessionHeadRouteQuery, SessionHeadRouteResponse,
     SessionHistoryRouteQuery, SessionHistoryRouteResponse, SessionReadModelRouteErrorKind,
     SessionSnapshotRouteQuery, SessionSnapshotRouteResponse, SessionStateRouteResponse,
-    SessionTurnToolsRouteResponse, SESSION_EVENTS_DEFAULT_LIMIT, SESSION_EVENTS_MAX_LIMIT,
+    SessionTurnToolsRouteResponse, SetSessionModeRouteRequest, SetSessionModelRouteRequest,
+    SetSessionModelRouteResponse, SubmitAskUserQuestionRouteRequest,
+    SubmitAskUserQuestionRouteResponse, SESSION_EVENTS_DEFAULT_LIMIT, SESSION_EVENTS_MAX_LIMIT,
 };
 use chrono::{TimeZone, Utc};
 use ctx_core::ids::{
@@ -11,7 +15,7 @@ use ctx_core::ids::{
     WorktreeId,
 };
 use ctx_core::models::{
-    Artifact, Message, MessageDelivery, MessageRole, SessionActivityState, SessionEvent,
+    Artifact, Message, MessageDelivery, MessageRole, Session, SessionActivityState, SessionEvent,
     SessionEventType, SessionGitStatusSummary, SessionMetadata, SessionSnapshot,
     SessionSnapshotSummary, SessionState, SessionStatus, SessionTurn, SessionTurnStatus,
     SessionTurnTool,
@@ -24,6 +28,27 @@ fn now(minute: u32) -> chrono::DateTime<Utc> {
 
 fn session_metadata() -> SessionMetadata {
     SessionMetadata {
+        id: SessionId::new(),
+        task_id: TaskId::new(),
+        workspace_id: WorkspaceId::new(),
+        worktree_id: WorktreeId::new(),
+        execution_environment: ctx_core::models::ExecutionEnvironment::Host,
+        parent_session_id: None,
+        relationship: None,
+        provider_id: "fake".to_string(),
+        model_id: "fake-model".to_string(),
+        reasoning_effort: Some("high".to_string()),
+        title: "session".to_string(),
+        agent_role: "default".to_string(),
+        status: SessionStatus::Active,
+        provider_session_ref: None,
+        created_at: now(0),
+        updated_at: now(1),
+    }
+}
+
+fn session() -> Session {
+    Session {
         id: SessionId::new(),
         task_id: TaskId::new(),
         workspace_id: WorkspaceId::new(),
@@ -237,6 +262,106 @@ fn route_wrappers_preserve_read_model_wire_shapes() {
         serde_json::to_value(SessionTurnToolsRouteResponse::from(tools.clone())).unwrap(),
         serde_json::to_value(tools).unwrap()
     );
+}
+
+#[test]
+fn control_requests_and_responses_preserve_wire_shapes() {
+    let auth: AuthenticateSessionRouteRequest = serde_json::from_value(json!({})).unwrap();
+    assert_eq!(auth.into_method_id(), None);
+
+    let auth: AuthenticateSessionRouteRequest =
+        serde_json::from_value(json!({"method_id": "browser", "ignored": true})).unwrap();
+    assert_eq!(auth.into_method_id().as_deref(), Some("browser"));
+
+    let ask_user: SubmitAskUserQuestionRouteRequest = serde_json::from_value(json!({
+        "tool_call_id": "tool-1",
+        "outcome": "cancelled",
+        "answers": {"choice": "no"},
+        "ignored": true
+    }))
+    .unwrap();
+    assert_eq!(ask_user.tool_call_id(), "tool-1");
+    assert_eq!(ask_user.outcome(), Some("cancelled"));
+    let (tool_call_id, outcome, answers) = ask_user.into_parts();
+    assert_eq!(tool_call_id, "tool-1");
+    assert_eq!(outcome.as_deref(), Some("cancelled"));
+    assert_eq!(
+        answers
+            .as_ref()
+            .and_then(|values| values.get("choice"))
+            .map(String::as_str),
+        Some("no")
+    );
+
+    let ask_user: SubmitAskUserQuestionRouteRequest =
+        serde_json::from_value(json!({"tool_call_id": "tool-2"})).unwrap();
+    let (_, outcome, answers) = ask_user.into_parts();
+    assert_eq!(outcome, None);
+    assert_eq!(answers, None);
+
+    assert_eq!(
+        serde_json::to_value(SubmitAskUserQuestionRouteResponse::ok()).unwrap(),
+        json!({"ok": true})
+    );
+
+    let query: SessionFileCompletionsRouteQuery =
+        serde_json::from_value(json!({"query": "src", "limit": 5, "ignored": true})).unwrap();
+    let (query_text, limit) = query.into_parts();
+    assert_eq!(query_text.as_deref(), Some("src"));
+    assert_eq!(limit, Some(5));
+
+    let query: SessionFileCompletionsRouteQuery = serde_json::from_value(json!({})).unwrap();
+    assert_eq!(query.into_parts(), (None, None));
+
+    assert_eq!(
+        serde_json::to_value(SessionFileCompletionsRouteResponse::new(vec![
+            "src/lib.rs".to_string(),
+            "README.md".into()
+        ]))
+        .unwrap(),
+        json!(["src/lib.rs", "README.md"])
+    );
+}
+
+#[test]
+fn title_model_mode_requests_and_responses_preserve_wire_shapes() {
+    let session = session();
+    assert_eq!(
+        serde_json::to_value(GenerateSessionTitleRouteResponse::new(session.clone())).unwrap(),
+        serde_json::to_value(&session).unwrap()
+    );
+    assert_eq!(
+        serde_json::to_value(SetSessionModelRouteResponse::new(session.clone())).unwrap(),
+        serde_json::to_value(session).unwrap()
+    );
+
+    let title: GenerateSessionTitleRouteRequest = serde_json::from_value(json!({
+        "prompt": "hello",
+        "force": false,
+        "ignored": true
+    }))
+    .unwrap();
+    let (prompt, force) = title.into_parts();
+    assert_eq!(prompt.as_deref(), Some("hello"));
+    assert_eq!(force, Some(false));
+
+    let title_defaults: GenerateSessionTitleRouteRequest =
+        serde_json::from_value(json!({ "ignored": true })).unwrap();
+    assert_eq!(title_defaults.into_parts(), (None, None));
+
+    let model: SetSessionModelRouteRequest = serde_json::from_value(json!({
+        "model_id": "codex/gpt-5",
+        "reasoning_effort": "high",
+        "ignored": true
+    }))
+    .unwrap();
+    let (model_id, reasoning_effort) = model.into_parts();
+    assert_eq!(model_id, "codex/gpt-5");
+    assert_eq!(reasoning_effort.as_deref(), Some("high"));
+
+    let mode: SetSessionModeRouteRequest =
+        serde_json::from_value(json!({ "mode_id": "planning", "ignored": true })).unwrap();
+    assert_eq!(mode.into_mode_id(), "planning");
 }
 
 #[test]

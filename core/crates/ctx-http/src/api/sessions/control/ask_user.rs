@@ -5,7 +5,7 @@ pub(crate) async fn submit_ask_user_question(
     Path(id): Path<String>,
     Json(req): Json<SubmitAskUserQuestionRouteRequest>,
 ) -> Result<
-    Json<ctx_daemon::daemon::SubmitAskUserQuestionRouteResponse>,
+    Json<ctx_route_contracts::sessions::SubmitAskUserQuestionRouteResponse>,
     (StatusCode, Json<ApiErrorResp>),
 > {
     state

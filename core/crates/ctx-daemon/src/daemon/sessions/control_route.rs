@@ -1,9 +1,12 @@
-use std::collections::HashMap;
 use std::time::Instant;
 
 use ctx_observability::logs;
 use ctx_providers::ask_user_question::AskUserQuestionOutcome;
-use serde::{Deserialize, Serialize};
+pub use ctx_route_contracts::sessions::{
+    AuthenticateSessionRouteRequest, SessionControlRouteError, SessionControlRouteErrorKind,
+    SessionFileCompletionsRouteQuery, SessionFileCompletionsRouteResponse,
+    SubmitAskUserQuestionRouteRequest, SubmitAskUserQuestionRouteResponse,
+};
 
 use crate::daemon::sessions::ask_user::{SubmitAskUserAnswer, SubmitAskUserAnswerError};
 use crate::daemon::sessions::auth::SessionAuthError;
@@ -11,93 +14,6 @@ use crate::daemon::sessions::command_dispatch::SessionSchedulerCommandError;
 use crate::daemon::sessions::route_contract::parse_session_route_id;
 use crate::daemon::workspaces::FileCompletionsErrorKind;
 use crate::daemon::{SessionRouteParams, SessionsHandle};
-
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct AuthenticateSessionRouteRequest {
-    #[serde(default)]
-    method_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct SubmitAskUserQuestionRouteRequest {
-    tool_call_id: String,
-    #[serde(default)]
-    outcome: Option<String>,
-    #[serde(default)]
-    answers: Option<HashMap<String, String>>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct SubmitAskUserQuestionRouteResponse {
-    ok: bool,
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct SessionFileCompletionsRouteQuery {
-    query: Option<String>,
-    limit: Option<u32>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(transparent)]
-pub struct SessionFileCompletionsRouteResponse(Vec<String>);
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum SessionControlRouteErrorKind {
-    BadRequest,
-    NotFound,
-    Forbidden,
-    Conflict,
-    InsufficientStorage,
-    Internal,
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct SessionControlRouteError {
-    kind: SessionControlRouteErrorKind,
-    message: String,
-}
-
-impl SessionControlRouteError {
-    pub fn new(kind: SessionControlRouteErrorKind, message: impl Into<String>) -> Self {
-        Self {
-            kind,
-            message: message.into(),
-        }
-    }
-
-    fn bad_request(message: impl Into<String>) -> Self {
-        Self::new(SessionControlRouteErrorKind::BadRequest, message)
-    }
-
-    fn not_found(message: impl Into<String>) -> Self {
-        Self::new(SessionControlRouteErrorKind::NotFound, message)
-    }
-
-    fn forbidden(message: impl Into<String>) -> Self {
-        Self::new(SessionControlRouteErrorKind::Forbidden, message)
-    }
-
-    fn conflict(message: impl Into<String>) -> Self {
-        Self::new(SessionControlRouteErrorKind::Conflict, message)
-    }
-
-    fn insufficient_storage(message: impl Into<String>) -> Self {
-        Self::new(SessionControlRouteErrorKind::InsufficientStorage, message)
-    }
-
-    fn internal(message: impl Into<String>) -> Self {
-        Self::new(SessionControlRouteErrorKind::Internal, message)
-    }
-
-    pub fn kind(&self) -> SessionControlRouteErrorKind {
-        self.kind
-    }
-
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-}
 
 impl SessionsHandle {
     pub async fn cancel_session_for_route(
@@ -127,7 +43,7 @@ impl SessionsHandle {
         request: AuthenticateSessionRouteRequest,
     ) -> Result<(), SessionControlRouteError> {
         let session_id = parse_control_session_id(params)?;
-        self.authenticate_session_for_request(session_id, request.method_id)
+        self.authenticate_session_for_request(session_id, request.into_method_id())
             .await
             .map_err(session_auth_error)
     }
@@ -138,28 +54,14 @@ impl SessionsHandle {
         request: SubmitAskUserQuestionRouteRequest,
     ) -> Result<SubmitAskUserQuestionRouteResponse, SessionControlRouteError> {
         let session_id = parse_control_session_id(params)?;
-        let outcome = match request.outcome.as_deref() {
-            Some("cancelled") => AskUserQuestionOutcome::Cancelled,
-            Some("submitted") | None => AskUserQuestionOutcome::Submitted,
-            Some(other) => {
-                return Err(SessionControlRouteError::bad_request(format!(
-                    "invalid outcome: {other}"
-                )));
-            }
-        };
-
         self.submit_ask_user_answer(
             session_id,
-            SubmitAskUserAnswer {
-                tool_call_id: request.tool_call_id,
-                outcome,
-                answers: request.answers.unwrap_or_default(),
-            },
+            submit_ask_user_answer_from_route_request(request)?,
         )
         .await
         .map_err(submit_ask_user_answer_error)?;
 
-        Ok(SubmitAskUserQuestionRouteResponse { ok: true })
+        Ok(SubmitAskUserQuestionRouteResponse::ok())
     }
 
     pub async fn complete_files_for_session_for_route(
@@ -168,11 +70,33 @@ impl SessionsHandle {
         query: SessionFileCompletionsRouteQuery,
     ) -> Result<SessionFileCompletionsRouteResponse, SessionControlRouteError> {
         let session_id = parse_control_session_id(params)?;
-        self.complete_files_for_session(session_id, query.query, query.limit)
+        let (query, limit) = query.into_parts();
+        self.complete_files_for_session(session_id, query, limit)
             .await
-            .map(SessionFileCompletionsRouteResponse)
+            .map(SessionFileCompletionsRouteResponse::new)
             .map_err(file_completions_error)
     }
+}
+
+fn submit_ask_user_answer_from_route_request(
+    request: SubmitAskUserQuestionRouteRequest,
+) -> Result<SubmitAskUserAnswer, SessionControlRouteError> {
+    let (tool_call_id, outcome, answers) = request.into_parts();
+    let outcome = match outcome.as_deref() {
+        Some("cancelled") => AskUserQuestionOutcome::Cancelled,
+        Some("submitted") | None => AskUserQuestionOutcome::Submitted,
+        Some(other) => {
+            return Err(SessionControlRouteError::bad_request(format!(
+                "invalid outcome: {other}"
+            )));
+        }
+    };
+
+    Ok(SubmitAskUserAnswer {
+        tool_call_id,
+        outcome,
+        answers: answers.unwrap_or_default(),
+    })
 }
 
 fn parse_control_session_id(
@@ -257,40 +181,46 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn ask_user_request_parses_default_and_cancelled_outcomes() {
-        let submitted: SubmitAskUserQuestionRouteRequest =
-            serde_json::from_value(json!({"tool_call_id": "tool-1"})).unwrap();
-        assert!(matches!(
-            submitted.outcome.as_deref().unwrap_or("submitted"),
-            "submitted"
-        ));
-
-        let cancelled: SubmitAskUserQuestionRouteRequest = serde_json::from_value(json!({
-            "tool_call_id": "tool-1",
-            "outcome": "cancelled",
-            "answers": {"choice": "no"}
-        }))
+    fn ask_user_request_adapter_defaults_and_validates_outcome() {
+        let submitted = submit_ask_user_answer_from_route_request(
+            serde_json::from_value(json!({"tool_call_id": "tool-1"})).unwrap(),
+        )
         .unwrap();
-        assert_eq!(cancelled.outcome.as_deref(), Some("cancelled"));
+        assert_eq!(submitted.tool_call_id, "tool-1");
+        assert!(matches!(
+            submitted.outcome,
+            AskUserQuestionOutcome::Submitted
+        ));
+        assert!(submitted.answers.is_empty());
+
+        let cancelled = submit_ask_user_answer_from_route_request(
+            serde_json::from_value(json!({
+                "tool_call_id": "tool-1",
+                "outcome": "cancelled",
+                "answers": {"choice": "no"}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(matches!(
+            cancelled.outcome,
+            AskUserQuestionOutcome::Cancelled
+        ));
         assert_eq!(
-            cancelled.answers.unwrap().get("choice").map(String::as_str),
+            cancelled.answers.get("choice").map(String::as_str),
             Some("no")
         );
-    }
 
-    #[test]
-    fn control_responses_preserve_wire_shapes() {
-        assert_eq!(
-            serde_json::to_value(SubmitAskUserQuestionRouteResponse { ok: true }).unwrap(),
-            json!({"ok": true})
-        );
-
-        let completions =
-            SessionFileCompletionsRouteResponse(vec!["src/lib.rs".to_string(), "README.md".into()]);
-        assert_eq!(
-            serde_json::to_value(completions).unwrap(),
-            json!(["src/lib.rs", "README.md"])
-        );
+        let invalid = submit_ask_user_answer_from_route_request(
+            serde_json::from_value(json!({
+                "tool_call_id": "tool-1",
+                "outcome": "declined"
+            }))
+            .unwrap(),
+        )
+        .unwrap_err();
+        assert_eq!(invalid.kind(), SessionControlRouteErrorKind::BadRequest);
+        assert_eq!(invalid.message(), "invalid outcome: declined");
     }
 
     #[test]

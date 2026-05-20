@@ -3,9 +3,10 @@ use axum::http::StatusCode;
 use axum::Json;
 
 use super::super::errors::ApiErrorResp;
-use ctx_daemon::daemon::{
+use ctx_daemon::daemon::SessionsHandle;
+use ctx_route_contracts::sessions::{
     GenerateSessionTitleRouteRequest, GenerateSessionTitleRouteResponse, SessionRouteParams,
-    SessionTitleModelModeRouteError, SessionTitleModelModeRouteErrorKind, SessionsHandle,
+    SessionTitleModelModeRouteError, SessionTitleModelModeRouteErrorKind,
     SetSessionModeRouteRequest, SetSessionModelRouteRequest, SetSessionModelRouteResponse,
 };
 
