@@ -1,10 +1,13 @@
 use base64::Engine;
 use ctx_core::ids::{MessageId, SessionId, TurnId};
-use ctx_core::models::{Message, MessageAttachment, MessageDelivery};
+use ctx_core::models::MessageAttachment;
+pub use ctx_route_contracts::sessions::{
+    DeleteSessionMessageRouteParams, PostSessionMessageRouteRequest,
+    PostSessionMessageRouteResponse, SessionMessageRouteError, SessionMessageRouteErrorKind,
+};
 use ctx_session_service::message_delivery::{
     resolve_message_client_ids, MessageClientIdResolutionError,
 };
-use serde::{Deserialize, Serialize};
 
 use crate::daemon::sessions::command_dispatch::SessionSchedulerCommandError;
 use crate::daemon::sessions::route_contract::parse_session_route_id;
@@ -14,18 +17,6 @@ use crate::daemon::{SessionRouteParams, SessionsHandle};
 const QUEUED_MESSAGES_ENABLED_ENV: &str = "CTX_QUEUED_MESSAGES_ENABLED";
 const MAX_MESSAGE_IMAGE_ATTACHMENT_BYTES: usize = 25 * 1024 * 1024;
 const MAX_MESSAGE_IMAGE_ATTACHMENT_MIB: usize = MAX_MESSAGE_IMAGE_ATTACHMENT_BYTES / (1024 * 1024);
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct PostSessionMessageRouteRequest {
-    #[serde(default)]
-    id: Option<String>,
-    #[serde(default)]
-    turn_id: Option<String>,
-    content: String,
-    delivery: Option<MessageDelivery>,
-    #[serde(default)]
-    attachments: Vec<MessageAttachment>,
-}
 
 #[derive(Debug, Clone)]
 pub struct PostSessionMessageRouteContext {
@@ -50,87 +41,6 @@ impl PostSessionMessageRouteContext {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(transparent)]
-pub struct PostSessionMessageRouteResponse(Message);
-
-#[derive(Debug, Clone)]
-pub struct DeleteSessionMessageRouteParams {
-    session_id: String,
-    message_id: String,
-}
-
-impl DeleteSessionMessageRouteParams {
-    pub fn new(session_id: impl Into<String>, message_id: impl Into<String>) -> Self {
-        Self {
-            session_id: session_id.into(),
-            message_id: message_id.into(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum SessionMessageRouteErrorKind {
-    BadRequest,
-    NotFound,
-    Conflict,
-    PayloadTooLarge,
-    UnsupportedMediaType,
-    ServiceUnavailable,
-    Internal,
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct SessionMessageRouteError {
-    kind: SessionMessageRouteErrorKind,
-    message: String,
-}
-
-impl SessionMessageRouteError {
-    fn new(kind: SessionMessageRouteErrorKind, message: impl Into<String>) -> Self {
-        Self {
-            kind,
-            message: message.into(),
-        }
-    }
-
-    fn bad_request(message: impl Into<String>) -> Self {
-        Self::new(SessionMessageRouteErrorKind::BadRequest, message)
-    }
-
-    fn not_found(message: impl Into<String>) -> Self {
-        Self::new(SessionMessageRouteErrorKind::NotFound, message)
-    }
-
-    fn conflict(message: impl Into<String>) -> Self {
-        Self::new(SessionMessageRouteErrorKind::Conflict, message)
-    }
-
-    fn payload_too_large(message: impl Into<String>) -> Self {
-        Self::new(SessionMessageRouteErrorKind::PayloadTooLarge, message)
-    }
-
-    fn unsupported_media_type(message: impl Into<String>) -> Self {
-        Self::new(SessionMessageRouteErrorKind::UnsupportedMediaType, message)
-    }
-
-    fn service_unavailable(message: impl Into<String>) -> Self {
-        Self::new(SessionMessageRouteErrorKind::ServiceUnavailable, message)
-    }
-
-    fn internal(message: impl Into<String>) -> Self {
-        Self::new(SessionMessageRouteErrorKind::Internal, message)
-    }
-
-    pub fn kind(&self) -> SessionMessageRouteErrorKind {
-        self.kind
-    }
-
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-}
-
 impl SessionsHandle {
     pub async fn post_session_message_for_route(
         &self,
@@ -139,12 +49,13 @@ impl SessionsHandle {
         context: PostSessionMessageRouteContext,
     ) -> Result<PostSessionMessageRouteResponse, SessionMessageRouteError> {
         let session_id = parse_post_session_id(params)?;
-        let message_id = parse_optional_message_id(request.id.as_deref())?;
-        let turn_id = parse_optional_turn_id(request.turn_id.as_deref())?;
+        let (message_id, turn_id, content, delivery, attachments) = request.into_parts();
+        let message_id = parse_optional_message_id(message_id.as_deref())?;
+        let turn_id = parse_optional_turn_id(turn_id.as_deref())?;
         let client_ids =
             resolve_message_client_ids(message_id, turn_id).map_err(client_id_resolution_error)?;
         let attachments = self
-            .normalize_message_attachments_for_route(request.attachments)
+            .normalize_message_attachments_for_route(attachments)
             .await?;
 
         self.post_user_message_for_request(
@@ -153,15 +64,15 @@ impl SessionsHandle {
                 message_id: client_ids.message_id,
                 turn_id: client_ids.turn_id,
                 client_supplied_ids: client_ids.client_supplied,
-                content: request.content,
-                requested_delivery: request.delivery,
+                content,
+                requested_delivery: delivery,
                 attachments,
                 queued_messages_enabled: context.queued_messages_enabled,
                 run_id_header: context.run_id_header,
             },
         )
         .await
-        .map(PostSessionMessageRouteResponse)
+        .map(PostSessionMessageRouteResponse::new)
         .map_err(post_user_message_route_error)
     }
 
@@ -169,9 +80,9 @@ impl SessionsHandle {
         &self,
         params: DeleteSessionMessageRouteParams,
     ) -> Result<(), SessionMessageRouteError> {
-        let session_id = parse_session_route_id(&params.session_id)
+        let session_id = parse_session_route_id(params.session_id())
             .map_err(|_| SessionMessageRouteError::bad_request("invalid session id"))?;
-        let message_id = parse_message_id(&params.message_id)?;
+        let message_id = parse_message_id(params.message_id())?;
         self.delete_queued_session_message(session_id, message_id)
             .await
             .map_err(delete_message_route_error)
@@ -402,44 +313,10 @@ fn decode_inline_image_attachment(data_base64: &str) -> Result<Vec<u8>, SessionM
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
-    use ctx_core::ids::{RunId, TaskId};
-    use ctx_core::models::MessageRole;
     use serde_json::json;
 
-    fn message() -> Message {
-        Message {
-            id: MessageId::new(),
-            session_id: SessionId::new(),
-            task_id: TaskId::new(),
-            run_id: Some(RunId::new()),
-            turn_id: Some(TurnId::new()),
-            turn_sequence: Some(1),
-            order_seq: Some(2),
-            role: MessageRole::User,
-            content: "hello".to_string(),
-            attachments: vec![MessageAttachment::ImageRef {
-                blob_id: "blob".to_string(),
-                mime_type: "image/png".to_string(),
-                name: Some("pic.png".to_string()),
-            }],
-            delivery: MessageDelivery::Immediate,
-            delivered_at: None,
-            created_at: Utc::now(),
-        }
-    }
-
     #[test]
-    fn post_response_preserves_message_wire_shape() {
-        let message = message();
-        assert_eq!(
-            serde_json::to_value(PostSessionMessageRouteResponse(message.clone())).unwrap(),
-            serde_json::to_value(message).unwrap()
-        );
-    }
-
-    #[test]
-    fn post_request_parses_optional_ids_delivery_and_attachments() {
+    fn post_request_adapter_exposes_optional_ids_delivery_and_attachments() {
         let request: PostSessionMessageRouteRequest = serde_json::from_value(json!({
             "id": MessageId::new().0.to_string(),
             "turn_id": TurnId::new().0.to_string(),
@@ -453,9 +330,15 @@ mod tests {
             }]
         }))
         .unwrap();
-        assert_eq!(request.content, "hello");
-        assert!(matches!(request.delivery, Some(MessageDelivery::Queued)));
-        assert_eq!(request.attachments.len(), 1);
+        let (message_id, turn_id, content, delivery, attachments) = request.into_parts();
+        assert!(message_id.is_some());
+        assert!(turn_id.is_some());
+        assert_eq!(content, "hello");
+        assert!(matches!(
+            delivery,
+            Some(ctx_core::models::MessageDelivery::Queued)
+        ));
+        assert_eq!(attachments.len(), 1);
     }
 
     #[test]

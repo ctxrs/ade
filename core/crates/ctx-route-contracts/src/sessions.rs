@@ -1,5 +1,6 @@
 mod common;
 mod control;
+mod messages;
 mod read_models;
 mod title_model_mode;
 mod vcs;
@@ -9,6 +10,10 @@ pub use control::{
     AuthenticateSessionRouteRequest, SessionControlRouteError, SessionControlRouteErrorKind,
     SessionFileCompletionsRouteQuery, SessionFileCompletionsRouteResponse,
     SubmitAskUserQuestionRouteRequest, SubmitAskUserQuestionRouteResponse,
+};
+pub use messages::{
+    DeleteSessionMessageRouteParams, PostSessionMessageRouteRequest,
+    PostSessionMessageRouteResponse, SessionMessageRouteError, SessionMessageRouteErrorKind,
 };
 pub use read_models::{
     parse_boolish_flag, parse_session_id, parse_turn_id, SessionEventsRouteQuery,

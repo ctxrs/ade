@@ -1,15 +1,17 @@
 use super::{
     parse_boolish_flag, parse_session_id, parse_turn_id, ApplySessionVcsDiffPatchRouteRequest,
-    AuthenticateSessionRouteRequest, GenerateSessionTitleRouteRequest,
-    GenerateSessionTitleRouteResponse, SessionEventsRouteQuery, SessionEventsRouteResponse,
-    SessionFileCompletionsRouteQuery, SessionFileCompletionsRouteResponse, SessionHeadRouteQuery,
-    SessionHeadRouteResponse, SessionHistoryRouteQuery, SessionHistoryRouteResponse,
-    SessionReadModelRouteErrorKind, SessionSnapshotRouteQuery, SessionSnapshotRouteResponse,
-    SessionStateRouteResponse, SessionTurnToolsRouteResponse, SessionVcsDiffRouteResponse,
-    SessionVcsDiffSummaryRouteResponse, SessionVcsGitStatusEntryRouteResponse,
-    SessionVcsGitStatusRouteResponse, SessionVcsRouteQuery, SetSessionModeRouteRequest,
-    SetSessionModelRouteRequest, SetSessionModelRouteResponse, SubmitAskUserQuestionRouteRequest,
-    SubmitAskUserQuestionRouteResponse, SESSION_EVENTS_DEFAULT_LIMIT, SESSION_EVENTS_MAX_LIMIT,
+    AuthenticateSessionRouteRequest, DeleteSessionMessageRouteParams,
+    GenerateSessionTitleRouteRequest, GenerateSessionTitleRouteResponse,
+    PostSessionMessageRouteRequest, PostSessionMessageRouteResponse, SessionEventsRouteQuery,
+    SessionEventsRouteResponse, SessionFileCompletionsRouteQuery,
+    SessionFileCompletionsRouteResponse, SessionHeadRouteQuery, SessionHeadRouteResponse,
+    SessionHistoryRouteQuery, SessionHistoryRouteResponse, SessionReadModelRouteErrorKind,
+    SessionSnapshotRouteQuery, SessionSnapshotRouteResponse, SessionStateRouteResponse,
+    SessionTurnToolsRouteResponse, SessionVcsDiffRouteResponse, SessionVcsDiffSummaryRouteResponse,
+    SessionVcsGitStatusEntryRouteResponse, SessionVcsGitStatusRouteResponse, SessionVcsRouteQuery,
+    SetSessionModeRouteRequest, SetSessionModelRouteRequest, SetSessionModelRouteResponse,
+    SubmitAskUserQuestionRouteRequest, SubmitAskUserQuestionRouteResponse,
+    SESSION_EVENTS_DEFAULT_LIMIT, SESSION_EVENTS_MAX_LIMIT,
 };
 use chrono::{TimeZone, Utc};
 use ctx_core::ids::{
@@ -17,10 +19,10 @@ use ctx_core::ids::{
     WorktreeId,
 };
 use ctx_core::models::{
-    Artifact, DiffUnavailableReason, Message, MessageDelivery, MessageRole, Session,
-    SessionActivityState, SessionEvent, SessionEventType, SessionGitStatusSummary, SessionMetadata,
-    SessionSnapshot, SessionSnapshotSummary, SessionState, SessionStatus, SessionTurn,
-    SessionTurnStatus, SessionTurnTool,
+    Artifact, DiffUnavailableReason, Message, MessageAttachment, MessageDelivery, MessageRole,
+    Session, SessionActivityState, SessionEvent, SessionEventType, SessionGitStatusSummary,
+    SessionMetadata, SessionSnapshot, SessionSnapshotSummary, SessionState, SessionStatus,
+    SessionTurn, SessionTurnStatus, SessionTurnTool,
 };
 use serde_json::json;
 
@@ -84,6 +86,28 @@ fn message(session_id: SessionId, task_id: TaskId, turn_id: TurnId) -> Message {
         attachments: Vec::new(),
         delivery: MessageDelivery::Immediate,
         delivered_at: Some(now(2)),
+        created_at: now(2),
+    }
+}
+
+fn route_message() -> Message {
+    Message {
+        id: MessageId::new(),
+        session_id: SessionId::new(),
+        task_id: TaskId::new(),
+        run_id: Some(RunId::new()),
+        turn_id: Some(TurnId::new()),
+        turn_sequence: Some(1),
+        order_seq: Some(2),
+        role: MessageRole::User,
+        content: "hello".to_string(),
+        attachments: vec![MessageAttachment::ImageRef {
+            blob_id: "blob".to_string(),
+            mime_type: "image/png".to_string(),
+            name: Some("pic.png".to_string()),
+        }],
+        delivery: MessageDelivery::Immediate,
+        delivered_at: None,
         created_at: now(2),
     }
 }
@@ -364,6 +388,49 @@ fn title_model_mode_requests_and_responses_preserve_wire_shapes() {
     let mode: SetSessionModeRouteRequest =
         serde_json::from_value(json!({ "mode_id": "planning", "ignored": true })).unwrap();
     assert_eq!(mode.into_mode_id(), "planning");
+}
+
+#[test]
+fn message_requests_and_responses_preserve_wire_shapes() {
+    let message = route_message();
+    assert_eq!(
+        serde_json::to_value(PostSessionMessageRouteResponse::new(message.clone())).unwrap(),
+        serde_json::to_value(message).unwrap()
+    );
+
+    let request: PostSessionMessageRouteRequest = serde_json::from_value(json!({
+        "id": MessageId::new().0.to_string(),
+        "turn_id": TurnId::new().0.to_string(),
+        "content": "hello",
+        "delivery": "queued",
+        "attachments": [{
+            "kind": "image_ref",
+            "blob_id": "blob",
+            "mime_type": "image/png",
+            "name": "pic.png"
+        }],
+        "ignored": true
+    }))
+    .unwrap();
+    let (message_id, turn_id, content, delivery, attachments) = request.into_parts();
+    assert!(message_id.is_some());
+    assert!(turn_id.is_some());
+    assert_eq!(content, "hello");
+    assert!(matches!(delivery, Some(MessageDelivery::Queued)));
+    assert_eq!(attachments.len(), 1);
+
+    let defaults: PostSessionMessageRouteRequest =
+        serde_json::from_value(json!({"content": "hello"})).unwrap();
+    let (message_id, turn_id, content, delivery, attachments) = defaults.into_parts();
+    assert_eq!(message_id, None);
+    assert_eq!(turn_id, None);
+    assert_eq!(content, "hello");
+    assert!(delivery.is_none());
+    assert!(attachments.is_empty());
+
+    let params = DeleteSessionMessageRouteParams::new(" session ", " message ");
+    assert_eq!(params.session_id(), " session ");
+    assert_eq!(params.message_id(), " message ");
 }
 
 #[test]
