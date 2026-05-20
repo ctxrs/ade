@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use ctx_mobile_access_service::{MobileAccessServiceError, MobileAccessServiceErrorKind};
+use ctx_mobile_access_service::{
+    persist_mobile_access_enable_bootstrap, MobileAccessServiceError, MobileAccessServiceErrorKind,
+    PersistMobileAccessEnableBootstrapRequest,
+};
 use serde_json::json;
 use url::Url;
 
@@ -9,12 +12,9 @@ use super::control_plane::{
     request_control_plane_enable, revoke_control_plane_mobile_access_best_effort,
     ControlPlaneEnableResp, PAIRING_TOKEN_TTL_SECS,
 };
-use super::tokens::{
-    generate_mobile_api_token, generate_pairing_token, hash_api_token, hash_pairing_token,
-};
 use super::{
-    default_mobile_profile_scopes, DisableMobileAccessError, EnableMobileAccessRequest,
-    MobileAccessConfigUpsert, MobileAccessStatusSnapshot, StartMobileTunnelRequest,
+    DisableMobileAccessError, EnableMobileAccessRequest, MobileAccessConfigSnapshot,
+    MobileAccessStatusSnapshot, StartMobileTunnelRequest,
 };
 use crate::daemon::DaemonState;
 
@@ -83,18 +83,6 @@ pub struct EnableMobileAccessResult {
     pub pairing_expires_at: DateTime<Utc>,
 }
 
-struct ManagedMobileAccessKeys {
-    daemon_public_key: String,
-    daemon_private_key: String,
-    profile_id: ctx_core::ids::ConnectionProfileId,
-    created_at: DateTime<Utc>,
-}
-
-struct MobilePairingBootstrap {
-    pairing_token: String,
-    expires_at: DateTime<Utc>,
-}
-
 pub fn mobile_public_url_is_allowed(url: &Url) -> bool {
     if url.scheme() == "https" {
         return true;
@@ -128,9 +116,22 @@ pub(super) async fn enable_mobile_access_for_route(
     let payload = request_control_plane_enable(&request.supabase_token).await?;
     let public_url = parse_allowed_public_url(&payload.public_base_url)?;
     let now = Utc::now();
-    let keys = load_or_create_managed_mobile_access_keys(state, &public_url, now).await?;
-    persist_mobile_access_config(state, &payload, &public_url, &keys, now).await?;
-    let pairing = create_mobile_pairing_bootstrap(state, now).await?;
+    let (daemon_public_key, daemon_private_key) =
+        ctx_transport_runtime::mobile_e2ee::generate_keypair();
+    let bootstrap = persist_mobile_access_enable_bootstrap(
+        state.global_store(),
+        PersistMobileAccessEnableBootstrapRequest {
+            public_base_url: public_url.as_str().trim_end_matches('/').to_string(),
+            relay_base_url: payload.relay_base_url.clone(),
+            tunnel_id: payload.tunnel_id.clone(),
+            tunnel_secret: payload.tunnel_secret.clone(),
+            daemon_public_key,
+            daemon_private_key,
+            now,
+            pairing_token_ttl_seconds: PAIRING_TOKEN_TTL_SECS,
+        },
+    )
+    .await?;
     super::start_mobile_tunnel_best_effort(
         state,
         StartMobileTunnelRequest {
@@ -144,9 +145,9 @@ pub(super) async fn enable_mobile_access_for_route(
 
     Ok(build_enable_mobile_access_result(
         payload,
-        &public_url,
-        &keys,
-        pairing,
+        &bootstrap.config,
+        bootstrap.pairing_token,
+        bootstrap.pairing_expires_at,
     ))
 }
 
@@ -169,155 +170,18 @@ fn parse_allowed_public_url(raw_public_base_url: &str) -> Result<Url, MobileAcce
     Ok(public_url)
 }
 
-async fn load_or_create_managed_mobile_access_keys(
-    state: &Arc<DaemonState>,
-    public_url: &Url,
-    now: DateTime<Utc>,
-) -> Result<ManagedMobileAccessKeys, MobileAccessRouteError> {
-    match state
-        .global_store()
-        .get_mobile_access_config()
-        .await
-        .map_err(|e| {
-            tracing::error!("failed to read mobile access config: {e:?}");
-            MobileAccessRouteError::internal("failed to read mobile access config")
-        })? {
-        Some(cfg) => {
-            ensure_managed_profile_scopes(state, cfg.profile_id).await?;
-            Ok(ManagedMobileAccessKeys {
-                daemon_public_key: cfg.daemon_public_key,
-                daemon_private_key: cfg.daemon_private_key,
-                profile_id: cfg.profile_id,
-                created_at: cfg.created_at,
-            })
-        }
-        None => create_managed_mobile_access_keys(state, public_url, now).await,
-    }
-}
-
-async fn ensure_managed_profile_scopes(
-    state: &Arc<DaemonState>,
-    profile_id: ctx_core::ids::ConnectionProfileId,
-) -> Result<(), MobileAccessRouteError> {
-    let profile = state
-        .global_store()
-        .get_mobile_connection_profile(profile_id)
-        .await
-        .map_err(|e| {
-            tracing::error!("failed to read managed mobile profile: {e:?}");
-            MobileAccessRouteError::internal("failed to read managed profile")
-        })?
-        .ok_or_else(|| MobileAccessRouteError::internal("managed mobile profile is missing"))?;
-    if profile.scopes.is_empty() {
-        state
-            .global_store()
-            .update_mobile_connection_profile_scopes(profile.id, default_mobile_profile_scopes())
-            .await
-            .map_err(|e| {
-                tracing::error!("failed to backfill managed mobile profile scopes: {e:?}");
-                MobileAccessRouteError::internal("failed to update managed profile")
-            })?;
-    }
-    Ok(())
-}
-
-async fn create_managed_mobile_access_keys(
-    state: &Arc<DaemonState>,
-    public_url: &Url,
-    now: DateTime<Utc>,
-) -> Result<ManagedMobileAccessKeys, MobileAccessRouteError> {
-    let (public_key, private_key) = ctx_transport_runtime::mobile_e2ee::generate_keypair();
-    let token = generate_mobile_api_token();
-    let token_hash = hash_api_token(&token);
-    let token_prefix: String = token.chars().take(8).collect();
-    let profile = state
-        .global_store()
-        .create_mobile_connection_profile(
-            "Managed Mobile Access".to_string(),
-            public_url.as_str().trim_end_matches('/').to_string(),
-            token_hash,
-            token_prefix,
-            default_mobile_profile_scopes(),
-        )
-        .await
-        .map_err(|e| {
-            tracing::error!("failed to create managed mobile profile: {e:?}");
-            MobileAccessRouteError::internal("failed to create managed profile")
-        })?;
-    Ok(ManagedMobileAccessKeys {
-        daemon_public_key: public_key,
-        daemon_private_key: private_key,
-        profile_id: profile.id,
-        created_at: now,
-    })
-}
-
-async fn persist_mobile_access_config(
-    state: &Arc<DaemonState>,
-    payload: &ControlPlaneEnableResp,
-    public_url: &Url,
-    keys: &ManagedMobileAccessKeys,
-    now: DateTime<Utc>,
-) -> Result<(), MobileAccessRouteError> {
-    let config = MobileAccessConfigUpsert {
-        profile_id: keys.profile_id,
-        tunnel_id: payload.tunnel_id.clone(),
-        public_base_url: public_url.as_str().trim_end_matches('/').to_string(),
-        relay_base_url: payload.relay_base_url.clone(),
-        tunnel_secret: payload.tunnel_secret.clone(),
-        daemon_public_key: keys.daemon_public_key.clone(),
-        daemon_private_key: keys.daemon_private_key.clone(),
-        enabled: true,
-        created_at: keys.created_at,
-        updated_at: now,
-    };
-
-    state
-        .global_store()
-        .upsert_mobile_access_config(config.into_store_config())
-        .await
-        .map_err(|e| {
-            tracing::error!("failed to persist mobile access config: {e:?}");
-            MobileAccessRouteError::internal("failed to persist mobile access config")
-        })?;
-
-    Ok(())
-}
-
-async fn create_mobile_pairing_bootstrap(
-    state: &Arc<DaemonState>,
-    now: DateTime<Utc>,
-) -> Result<MobilePairingBootstrap, MobileAccessRouteError> {
-    let pairing_token = generate_pairing_token();
-    let pairing_hash = hash_pairing_token(&pairing_token);
-    let expires_at = now + chrono::Duration::seconds(PAIRING_TOKEN_TTL_SECS);
-    state
-        .global_store()
-        .insert_mobile_pairing_token(&uuid::Uuid::new_v4().to_string(), &pairing_hash, expires_at)
-        .await
-        .map_err(|e| {
-            tracing::error!("failed to persist pairing token: {e:?}");
-            MobileAccessRouteError::internal("failed to persist pairing token")
-        })?;
-    Ok(MobilePairingBootstrap {
-        pairing_token,
-        expires_at,
-    })
-}
-
 fn build_enable_mobile_access_result(
     payload: ControlPlaneEnableResp,
-    public_url: &Url,
-    keys: &ManagedMobileAccessKeys,
-    pairing: MobilePairingBootstrap,
+    config: &MobileAccessConfigSnapshot,
+    pairing_token: String,
+    pairing_expires_at: DateTime<Utc>,
 ) -> EnableMobileAccessResult {
-    let public_base_url = public_url.as_str().trim_end_matches('/').to_string();
     let status = MobileAccessStatusSnapshot {
         enabled: true,
         tunnel_id: Some(payload.tunnel_id.clone()),
-        public_base_url: Some(public_base_url.clone()),
+        public_base_url: Some(config.public_base_url.clone()),
         relay_base_url: Some(payload.relay_base_url),
-        daemon_public_key: Some(keys.daemon_public_key.clone()),
+        daemon_public_key: Some(config.daemon_public_key.clone()),
         tunnel_state: ctx_transport_runtime::mobile_tunnel::MobileTunnelState::Running,
         last_error: None,
     };
@@ -326,16 +190,16 @@ fn build_enable_mobile_access_result(
         "type": "context_mobile_e2ee",
         "version": 1,
         "tunnel_id": payload.tunnel_id,
-        "base_url": public_base_url,
-        "pairing_token": pairing.pairing_token,
-        "daemon_public_key": keys.daemon_public_key,
+        "base_url": config.public_base_url,
+        "pairing_token": pairing_token,
+        "daemon_public_key": config.daemon_public_key,
         "pairing_request_encryption": ctx_transport_runtime::mobile_e2ee::PAIRING_REQUEST_ENCRYPTION,
     });
 
     EnableMobileAccessResult {
         status,
         qr_payload,
-        pairing_expires_at: pairing.expires_at,
+        pairing_expires_at,
     }
 }
 

@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use ctx_core::ids::ConnectionProfileId;
+use ctx_mobile_access_service::{
+    finish_mobile_access_disable_cleanup, persist_mobile_access_disabled_state,
+    MobileAccessDisablePersistedStateError, MobileAccessDisableRemainingCleanupError,
+};
 use ctx_transport_runtime::mobile_tunnel::{MobileTunnelState, StartMobileTunnelConfig};
 
 use crate::daemon::DaemonState;
@@ -32,9 +35,33 @@ pub enum MobileAccessStatusError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DisableMobileAccessError {
     ReadConfig,
+    DisableConfig,
     ClearPairingTokens,
     DeleteConfig,
     DeleteConnectionProfile,
+}
+
+impl From<MobileAccessDisablePersistedStateError> for DisableMobileAccessError {
+    fn from(error: MobileAccessDisablePersistedStateError) -> Self {
+        match error {
+            MobileAccessDisablePersistedStateError::ReadConfig => Self::ReadConfig,
+            MobileAccessDisablePersistedStateError::DisableConfig => Self::DisableConfig,
+        }
+    }
+}
+
+impl From<MobileAccessDisableRemainingCleanupError> for DisableMobileAccessError {
+    fn from(error: MobileAccessDisableRemainingCleanupError) -> Self {
+        match error {
+            MobileAccessDisableRemainingCleanupError::ClearPairingTokens => {
+                Self::ClearPairingTokens
+            }
+            MobileAccessDisableRemainingCleanupError::DeleteConfig => Self::DeleteConfig,
+            MobileAccessDisableRemainingCleanupError::DeleteConnectionProfile => {
+                Self::DeleteConnectionProfile
+            }
+        }
+    }
 }
 
 pub async fn mobile_access_status(
@@ -89,58 +116,11 @@ pub async fn start_mobile_tunnel_best_effort(
 pub async fn disable_mobile_access_runtime(
     state: &Arc<DaemonState>,
 ) -> Result<(), DisableMobileAccessError> {
-    let cfg = state
-        .global_store()
-        .get_mobile_access_config()
+    let disabled = persist_mobile_access_disabled_state(state.global_store())
         .await
-        .map_err(|err| {
-            tracing::error!(
-                "failed to read mobile access config while disabling mobile access: {err:?}"
-            );
-            DisableMobileAccessError::ReadConfig
-        })?;
-
+        .map_err(DisableMobileAccessError::from)?;
     state.transport.mobile_tunnel.stop().await;
-    state
-        .global_store()
-        .clear_mobile_pairing_tokens()
+    finish_mobile_access_disable_cleanup(state.global_store(), disabled)
         .await
-        .map_err(|err| {
-            tracing::error!(
-                "failed to clear pairing tokens while disabling mobile access: {err:?}"
-            );
-            DisableMobileAccessError::ClearPairingTokens
-        })?;
-
-    if let Some(cfg) = cfg {
-        delete_mobile_access_config(state, cfg.profile_id).await?;
-    }
-    Ok(())
-}
-
-async fn delete_mobile_access_config(
-    state: &Arc<DaemonState>,
-    profile_id: ConnectionProfileId,
-) -> Result<(), DisableMobileAccessError> {
-    state
-        .global_store()
-        .delete_mobile_access_config()
-        .await
-        .map_err(|err| {
-            tracing::error!(
-                "failed to delete mobile access config while disabling mobile access: {err:?}"
-            );
-            DisableMobileAccessError::DeleteConfig
-        })?;
-    state
-        .global_store()
-        .delete_mobile_connection_profile(profile_id)
-        .await
-        .map_err(|err| {
-            tracing::error!(
-                "failed to delete mobile connection profile while disabling mobile access: {err:?}"
-            );
-            DisableMobileAccessError::DeleteConnectionProfile
-        })?;
-    Ok(())
+        .map_err(DisableMobileAccessError::from)
 }

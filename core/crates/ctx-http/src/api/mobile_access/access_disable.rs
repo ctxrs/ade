@@ -27,6 +27,7 @@ fn disable_mobile_access_error(
 ) -> (StatusCode, Json<ApiErrorResp>) {
     let message = match error {
         DisableMobileAccessError::ReadConfig => "failed to read mobile access config",
+        DisableMobileAccessError::DisableConfig => "failed to disable mobile access config",
         DisableMobileAccessError::ClearPairingTokens => "failed to clear pairing tokens",
         DisableMobileAccessError::DeleteConfig => "failed to delete mobile access config",
         DisableMobileAccessError::DeleteConnectionProfile => {

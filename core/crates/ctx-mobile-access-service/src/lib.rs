@@ -1,4 +1,5 @@
 mod auth;
+mod lifecycle;
 mod profiles;
 mod tokens;
 mod types;
@@ -7,6 +8,13 @@ pub use auth::{
     default_mobile_profile_scopes, load_mobile_auth_context_for_profile,
     mobile_scope_set_from_strings, resolve_mobile_auth_context, verify_mobile_api_token_hash,
     MobileAuthContext, MobileAuthContextError, MobileScope, MobileScopeSet,
+};
+pub use lifecycle::{
+    finish_mobile_access_disable_cleanup, persist_mobile_access_disable_cleanup,
+    persist_mobile_access_disabled_state, persist_mobile_access_enable_bootstrap,
+    MobileAccessDisableCleanupError, MobileAccessDisablePersistedStateError,
+    MobileAccessDisableRemainingCleanupError, PersistMobileAccessEnableBootstrapRequest,
+    PersistMobileAccessEnableBootstrapResult, PersistedMobileAccessDisable,
 };
 pub use profiles::{
     create_mobile_connection_profile, delete_mobile_connection_profile,
