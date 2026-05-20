@@ -21,11 +21,14 @@ impl WorkspacesHandle {
             .existing_workspace_store(workspace_id)
             .await
             .map_err(run_archive_workspace_store_error)?;
-        let batch = store
-            .build_run_archive_ingest_batch(run_id, max_items)
-            .await
-            .map_err(RunArchiveIngestError::Internal)?;
-        Ok(batch.filter(|batch| batch.run.workspace_id == workspace_id))
+        ctx_run_archive_service::build_run_archive_ingest_batch(
+            &store,
+            workspace_id,
+            run_id,
+            max_items,
+        )
+        .await
+        .map_err(RunArchiveIngestError::from)
     }
 
     pub async fn acknowledge_run_archive_ingest_batch(
@@ -39,38 +42,24 @@ impl WorkspacesHandle {
             .existing_workspace_store(workspace_id)
             .await
             .map_err(run_archive_workspace_store_error)?;
-        let cursor = store
-            .get_run_archive_ingest_cursor(run_id)
-            .await
-            .map_err(RunArchiveIngestError::Internal)?;
-        let current_watermark = cursor
-            .as_ref()
-            .map(|cursor| cursor.watermark)
-            .unwrap_or_default();
-        if batch.from != current_watermark {
-            return Err(RunArchiveIngestError::AcknowledgementConflict(
-                "archive ingest acknowledgement is stale for the current cursor",
-            ));
+        ctx_run_archive_service::acknowledge_run_archive_ingest_batch(
+            &store, run_id, max_items, batch,
+        )
+        .await
+        .map_err(RunArchiveIngestError::from)
+    }
+}
+
+impl From<ctx_run_archive_service::RunArchiveIngestError> for RunArchiveIngestError {
+    fn from(error: ctx_run_archive_service::RunArchiveIngestError) -> Self {
+        match error {
+            ctx_run_archive_service::RunArchiveIngestError::AcknowledgementConflict(message) => {
+                Self::AcknowledgementConflict(message)
+            }
+            ctx_run_archive_service::RunArchiveIngestError::Internal(error) => {
+                Self::Internal(error)
+            }
         }
-        let Some(mut expected_batch) = store
-            .build_run_archive_ingest_batch_after(run_id, batch.from, max_items, cursor.is_none())
-            .await
-            .map_err(RunArchiveIngestError::Internal)?
-        else {
-            return Err(RunArchiveIngestError::AcknowledgementConflict(
-                "archive ingest acknowledgement does not match an available batch",
-            ));
-        };
-        expected_batch.created_at = batch.created_at;
-        if expected_batch != batch {
-            return Err(RunArchiveIngestError::AcknowledgementConflict(
-                "archive ingest acknowledgement does not match the current batch",
-            ));
-        }
-        store
-            .acknowledge_run_archive_ingest_batch(&batch)
-            .await
-            .map_err(RunArchiveIngestError::Internal)
     }
 }
 

@@ -167,6 +167,7 @@ const RUST_FAMILY_BY_CRATE = {
   "ctx-provider-runtime": "provider-runtime",
   "ctx-providers": "provider-runtime",
   "ctx-resource-utilization": "resilience-performance",
+  "ctx-run-archive-service": "artifacts-provenance",
   "ctx-run-scheduler": "turns-terminal",
   "ctx-runtime-assets": "distribution-install",
   "ctx-mobile-access-service": "mobile-access",

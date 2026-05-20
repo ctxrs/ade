@@ -35,6 +35,7 @@ ctx-provider-matrix = { path = "../ctx-provider-matrix" }
 ctx-provider-runtime = { path = "../ctx-provider-runtime" }
 ctx-providers = { path = "../ctx-providers" }
 ctx-resource-utilization = { path = "../ctx-resource-utilization" }
+ctx-run-archive-service = { path = "../ctx-run-archive-service" }
 ctx-run-scheduler = { path = "../ctx-run-scheduler" }
 ctx-runtime-assets = { path = "../ctx-runtime-assets" }
 ctx-sandbox-container-runtime = { path = "../ctx-sandbox-container-runtime" }

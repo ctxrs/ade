@@ -89,6 +89,7 @@ const PACKAGE_SHAPE_BOUNDARY_CRATES = new Set([
   "ctx-transport-runtime",
   "ctx-update-service",
   "ctx-mobile-access-service",
+  "ctx-run-archive-service",
   "ctx-run-scheduler",
   "ctx-session-runner",
   "ctx-workspace-active-snapshot",

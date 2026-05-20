@@ -42,6 +42,7 @@ test("agent gate crate list keeps the expected ctx-http-centered fast gate", () 
     "ctx-provider-auth-import",
     "ctx-providers",
     "ctx-resource-utilization",
+    "ctx-run-archive-service",
     "ctx-run-scheduler",
     "ctx-runtime-assets",
     "ctx-sandbox-contract",
