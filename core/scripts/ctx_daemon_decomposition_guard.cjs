@@ -85,6 +85,7 @@ const PACKAGE_SHAPE_BOUNDARY_CRATES = new Set([
   "ctx-org-policy",
   "ctx-provider-runtime",
   "ctx-resource-utilization",
+  "ctx-route-contracts",
   "ctx-settings-service",
   "ctx-transport-runtime",
   "ctx-update-service",
@@ -102,6 +103,7 @@ const PACKAGE_SHAPE_BOUNDARY_CRATES = new Set([
 ]);
 const PACKAGE_SHAPE_FORBIDDEN_BACKEDGE_DEPS = new Set(["ctx-daemon", "ctx-http", "axum"]);
 const TRANSPORT_RUNTIME_FORBIDDEN_DEPS = new Set(["ctx-store"]);
+const ROUTE_CONTRACTS_ALLOWED_CTX_DEPS = new Set(["ctx-core"]);
 const HEAD_PROJECTION_ROOT = "core/crates/ctx-session-service/src/head_projection";
 
 const toPosix = (value) => value.split(path.sep).join("/");
@@ -259,6 +261,12 @@ const isWorkspaceActiveSnapshotForbiddenDependency = (dependencyName) => {
   return dependencyName.endsWith("-runtime") || dependencyName.includes("-runtime-");
 };
 
+const isRouteContractsForbiddenDependency = (dependencyName) => {
+  if (dependencyName === "axum") return true;
+  if (!dependencyName.startsWith("ctx-")) return false;
+  return !ROUTE_CONTRACTS_ALLOWED_CTX_DEPS.has(dependencyName);
+};
+
 const listCargoManifests = (rootDir) => {
   const cratesRoot = path.join(rootDir, "core", "crates");
   if (!fs.existsSync(cratesRoot)) return [];
@@ -375,6 +383,14 @@ const checkCargoDependencyDirection = (rootDir) => {
           message: "ctx-transport-runtime must not depend on ctx-store.",
         });
       }
+      if (crateName === "ctx-route-contracts" && isRouteContractsForbiddenDependency(dependency.name)) {
+        violations.push({
+          kind: "cargo_dependency",
+          line: dependency.line,
+          path: manifestRelativePath,
+          message: `ctx-route-contracts must stay DTO-only; found forbidden dependency ${dependency.name}.`,
+        });
+      }
       if (crateName === "ctx-workspace-active-snapshot" && isWorkspaceActiveSnapshotForbiddenDependency(dependency.name)) {
         violations.push({
           kind: "cargo_dependency",
@@ -450,6 +466,7 @@ module.exports = {
   PACKAGE_SHAPE_BOUNDARY_CRATES,
   PACKAGE_SHAPE_FORBIDDEN_BACKEDGE_DEPS,
   RATCHETED_FILE_LIMITS,
+  ROUTE_CONTRACTS_ALLOWED_CTX_DEPS,
   SERVICE_RUNTIME_FORBIDDEN_DEPS,
   checkCargoDependencyDirection,
   checkCollapsedPaths,
@@ -458,6 +475,7 @@ module.exports = {
   countLines,
   evaluateDecompositionBoundaries,
   isPackageShapeBoundaryCrate,
+  isRouteContractsForbiddenDependency,
   isServiceOrRuntimeCrate,
   isWorkspaceActiveSnapshotForbiddenDependency,
   packageNameFromCargoToml,

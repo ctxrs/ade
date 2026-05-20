@@ -38,6 +38,7 @@ ctx-provider-install = { path = "../ctx-provider-install" }
 ctx-provider-runtime = { path = "../ctx-provider-runtime" }
 ctx-providers = { path = "../ctx-providers" }
 ctx-resource-utilization = { path = "../ctx-resource-utilization" }
+ctx-route-contracts = { path = "../ctx-route-contracts" }
 ctx-sandbox-contract = { path = "../ctx-sandbox-contract" }
 ctx-sandbox-materialization = { path = "../ctx-sandbox-materialization" }
 ctx-session-artifacts = { path = "../ctx-session-artifacts" }

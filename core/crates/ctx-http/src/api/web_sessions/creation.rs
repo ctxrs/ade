@@ -1,7 +1,7 @@
 use super::*;
-use ctx_daemon::daemon::{
-    web_sessions::{WebSessionCreateRouteRequest, WebSessionRouteError, WebSessionRouteErrorKind},
-    TransportHandle,
+use ctx_daemon::daemon::TransportHandle;
+use ctx_route_contracts::web_sessions::{
+    WebSessionCreateRouteRequest, WebSessionRouteError, WebSessionRouteErrorKind,
 };
 
 pub(in crate::api) async fn create_web_session(

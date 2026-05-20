@@ -9,6 +9,7 @@ base64 = "0.22"
 chacha20poly1305 = "0.10"
 chrono.workspace = true
 ctx-core = { path = "../ctx-core" }
+ctx-route-contracts = { path = "../ctx-route-contracts" }
 ctx-sandbox-container-runtime = { path = "../ctx-sandbox-container-runtime" }
 ctx-workspace-container = { path = "../ctx-workspace-container" }
 futures.workspace = true

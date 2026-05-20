@@ -16,6 +16,7 @@ const {
   countLines,
   evaluateDecompositionBoundaries,
   isPackageShapeBoundaryCrate,
+  isRouteContractsForbiddenDependency,
   isServiceOrRuntimeCrate,
   isWorkspaceActiveSnapshotForbiddenDependency,
   packageNameFromCargoToml,
@@ -126,6 +127,7 @@ test("package shape boundary classifier covers existing and planned service owne
   assert.equal(isPackageShapeBoundaryCrate("ctx-task-service"), true);
   assert.equal(isPackageShapeBoundaryCrate("ctx-subagent-service"), true);
   assert.equal(isPackageShapeBoundaryCrate("ctx-mobile-access-service"), true);
+  assert.equal(isPackageShapeBoundaryCrate("ctx-route-contracts"), true);
   assert.equal(isPackageShapeBoundaryCrate("ctx-run-archive-service"), true);
   assert.equal(isPackageShapeBoundaryCrate("ctx-run-scheduler"), true);
   assert.equal(isPackageShapeBoundaryCrate("ctx-session-artifacts"), true);
@@ -140,6 +142,15 @@ test("workspace active snapshot forbids daemon, HTTP, store, and runtime depende
   assert.equal(isWorkspaceActiveSnapshotForbiddenDependency("ctx-transport-runtime"), true);
   assert.equal(isWorkspaceActiveSnapshotForbiddenDependency("ctx-provider-runtime"), true);
   assert.equal(isWorkspaceActiveSnapshotForbiddenDependency("ctx-core"), false);
+});
+
+test("route contracts forbid daemon, HTTP, Axum, and runtime dependencies", () => {
+  assert.equal(isRouteContractsForbiddenDependency("ctx-daemon"), true);
+  assert.equal(isRouteContractsForbiddenDependency("ctx-http"), true);
+  assert.equal(isRouteContractsForbiddenDependency("axum"), true);
+  assert.equal(isRouteContractsForbiddenDependency("ctx-transport-runtime"), true);
+  assert.equal(isRouteContractsForbiddenDependency("ctx-core"), false);
+  assert.equal(isRouteContractsForbiddenDependency("serde"), false);
 });
 
 test("cargo dependency direction rejects service, transport runtime, and active snapshot backedges", () => {
@@ -206,12 +217,20 @@ test("cargo dependency direction rejects explicit package-shape crate backedges"
     [dependencies]
     ctx-http = { path = "../ctx-http" }
   `);
+  writeFile(rootDir, "core/crates/ctx-route-contracts/Cargo.toml", `
+    [package]
+    name = "ctx-route-contracts"
+
+    [dependencies]
+    ctx-transport-runtime = { path = "../ctx-transport-runtime" }
+  `);
 
   const messages = checkCargoDependencyDirection(rootDir).map((entry) => entry.message);
 
   assert.equal(messages.some((message) => message.includes("ctx-org-policy must not depend on ctx-daemon")), true);
   assert.equal(messages.some((message) => message.includes("ctx-workspace-stream-service must not depend on axum")), true);
   assert.equal(messages.some((message) => message.includes("ctx-run-scheduler must not depend on ctx-http")), true);
+  assert.equal(messages.some((message) => message.includes("ctx-route-contracts must stay DTO-only")), true);
 });
 
 test("cargo direction does not reject dev-dependency-only test helpers", () => {

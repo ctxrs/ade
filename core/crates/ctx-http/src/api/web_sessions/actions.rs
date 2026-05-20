@@ -1,23 +1,16 @@
 use super::*;
-use ctx_daemon::daemon::{
-    web_sessions::{WebSessionActionRouteRequest, WebSessionListRouteQuery, WebSessionRouteError},
-    TransportHandle,
+use ctx_daemon::daemon::TransportHandle;
+use ctx_route_contracts::web_sessions::{
+    WebSessionActionRouteRequest, WebSessionListRouteQuery, WebSessionRouteError,
+    WebSessionRouteErrorKind,
 };
 
 fn web_session_route_status(error: WebSessionRouteError) -> StatusCode {
     match error.kind() {
-        ctx_daemon::daemon::web_sessions::WebSessionRouteErrorKind::BadRequest => {
-            StatusCode::BAD_REQUEST
-        }
-        ctx_daemon::daemon::web_sessions::WebSessionRouteErrorKind::Forbidden => {
-            StatusCode::FORBIDDEN
-        }
-        ctx_daemon::daemon::web_sessions::WebSessionRouteErrorKind::NotFound => {
-            StatusCode::NOT_FOUND
-        }
-        ctx_daemon::daemon::web_sessions::WebSessionRouteErrorKind::Internal => {
-            StatusCode::INTERNAL_SERVER_ERROR
-        }
+        WebSessionRouteErrorKind::BadRequest => StatusCode::BAD_REQUEST,
+        WebSessionRouteErrorKind::Forbidden => StatusCode::FORBIDDEN,
+        WebSessionRouteErrorKind::NotFound => StatusCode::NOT_FOUND,
+        WebSessionRouteErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
 

@@ -15,6 +15,7 @@ rust_library(
     ],
     deps = [
         "//core/crates/ctx-core:lib",
+        "//core/crates/ctx-route-contracts:lib",
         "//core/crates/ctx-sandbox-container-runtime:lib",
         "//core/crates/ctx-workspace-container:lib",
         "@crates//:anyhow",

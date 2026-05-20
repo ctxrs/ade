@@ -3,12 +3,12 @@ use axum::http::StatusCode;
 use axum::Json;
 
 use super::errors::ApiErrorResp;
-use ctx_daemon::daemon::terminals::{
+use ctx_daemon::daemon::TransportHandle;
+use ctx_route_contracts::terminals::{
     CreateTerminalRouteRequest, DeleteTerminalRouteParams, ListWorkspaceTerminalsRouteParams,
     MintTerminalStreamTokenRouteParams, TerminalRouteError, TerminalRouteErrorKind,
     TerminalSessionRouteResponse, TerminalStreamConnectRouteResponse,
 };
-use ctx_daemon::daemon::TransportHandle;
 
 pub(super) async fn list_workspace_terminals(
     State(state): State<TransportHandle>,

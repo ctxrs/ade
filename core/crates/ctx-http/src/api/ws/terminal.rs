@@ -1,8 +1,8 @@
 use super::*;
-use ctx_daemon::daemon::terminals::{
+use ctx_daemon::daemon::TransportHandle;
+use ctx_route_contracts::terminals::{
     TerminalRouteError, TerminalRouteErrorKind, TerminalStreamRouteParams,
 };
-use ctx_daemon::daemon::TransportHandle;
 
 mod queue;
 mod socket;

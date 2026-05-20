@@ -32,6 +32,7 @@ use uuid::Uuid;
 use ctx_core::env::DAEMON_AUTH_ENV_VARS;
 use ctx_core::ids::{SessionId, TaskId, TerminalId, WorkspaceId, WorktreeId};
 use ctx_core::models::{TerminalSession, TerminalStatus};
+pub use ctx_route_contracts::terminals::DEFAULT_OUTPUT_TAIL_BYTES;
 use terminals_gateway::connect_terminal_gateway;
 use terminals_handle::build_stream_path;
 use terminals_manager::push_output;
@@ -40,7 +41,6 @@ pub use terminals_manager::TerminalManagerStats;
 const DEFAULT_COLS: u16 = 80;
 const DEFAULT_ROWS: u16 = 24;
 const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
-pub const DEFAULT_OUTPUT_TAIL_BYTES: usize = 20 * 1024;
 
 fn scrub_daemon_auth_env(cmd: &mut CommandBuilder) {
     for key in DAEMON_AUTH_ENV_VARS {
