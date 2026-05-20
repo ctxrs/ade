@@ -103,4 +103,39 @@ describe("SessionReplicaDispatchScheduler", () => {
     vi.runOnlyPendingTimers();
     expect(postedSessionIds(posted)).toEqual(["close_session", "retained"]);
   });
+
+  it("invokes browser timer functions with the global receiver", () => {
+    const posted: SessionReplicaCommand[] = [];
+    const brandedSetTimeout = function (
+      this: typeof globalThis,
+      ...args: Parameters<typeof globalThis.setTimeout>
+    ): ReturnType<typeof globalThis.setTimeout> {
+      if (this !== globalThis) {
+        throw new TypeError("Illegal invocation");
+      }
+      return globalThis.setTimeout(...args);
+    } as typeof globalThis.setTimeout;
+    const brandedClearTimeout = function (
+      this: typeof globalThis,
+      ...args: Parameters<typeof globalThis.clearTimeout>
+    ): ReturnType<typeof globalThis.clearTimeout> {
+      if (this !== globalThis) {
+        throw new TypeError("Illegal invocation");
+      }
+      return globalThis.clearTimeout(...args);
+    } as typeof globalThis.clearTimeout;
+    const scheduler = new SessionReplicaDispatchScheduler((cmd) => posted.push(cmd), {
+      backgroundBatchSize: 1,
+      setTimeoutFn: brandedSetTimeout,
+      clearTimeoutFn: brandedClearTimeout,
+    });
+
+    scheduler.dispatch(makeWorkspaceCommand("background", 1, "workspace"));
+
+    vi.runOnlyPendingTimers();
+    expect(postedSessionIds(posted)).toEqual(["background"]);
+
+    scheduler.dispatch(makeWorkspaceCommand("destroyed-before-drain", 2, "workspace"));
+    expect(() => scheduler.destroy()).not.toThrow();
+  });
 });

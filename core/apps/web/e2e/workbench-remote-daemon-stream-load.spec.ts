@@ -2245,6 +2245,11 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
   expect(streamerStats.failures).toEqual([]);
   expect(streamerStats.stopErrors).toEqual([]);
   expect(pageCrashed).toBe(false);
+  const unexpectedDiagnostics = diagnostics.filter((entry) => entry.severity === "error");
+  expect(
+    unexpectedDiagnostics,
+    `Unexpected browser diagnostics:\n${JSON.stringify(unexpectedDiagnostics, null, 2)}`,
+  ).toEqual([]);
   expect(visibleCadence.sampleCount).toBeGreaterThan(0);
   expect(visibleCadence.p95VisibleSilenceMs ?? Infinity).toBeLessThanOrEqual(MAX_VISIBLE_SILENCE_MS);
   expect(visibleCadence.maxVisibleSilenceMs).toBeLessThanOrEqual(MAX_HARD_VISIBLE_SILENCE_MS);

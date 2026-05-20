@@ -13,6 +13,14 @@ type SchedulerOptions = {
 
 type WorkspaceEventCommand = Extract<SessionReplicaCommand, { type: "workspace_event" }>;
 
+const bindSetTimeout = (fn: typeof globalThis.setTimeout): typeof globalThis.setTimeout =>
+  ((...args: Parameters<typeof globalThis.setTimeout>) =>
+    fn.call(globalThis, ...args)) as typeof globalThis.setTimeout;
+
+const bindClearTimeout = (fn: typeof globalThis.clearTimeout): typeof globalThis.clearTimeout =>
+  ((...args: Parameters<typeof globalThis.clearTimeout>) =>
+    fn.call(globalThis, ...args)) as typeof globalThis.clearTimeout;
+
 const normalizeId = (value: unknown): string => (typeof value === "string" ? value.trim() : "");
 
 export const sessionIdForReplicaWorkspaceEvent = (
@@ -61,8 +69,8 @@ export class SessionReplicaDispatchScheduler {
     opts?: SchedulerOptions,
   ) {
     this.backgroundBatchSize = Math.max(1, Math.floor(opts?.backgroundBatchSize ?? DEFAULT_BACKGROUND_BATCH_SIZE));
-    this.setTimeoutFn = opts?.setTimeoutFn ?? globalThis.setTimeout;
-    this.clearTimeoutFn = opts?.clearTimeoutFn ?? globalThis.clearTimeout;
+    this.setTimeoutFn = bindSetTimeout(opts?.setTimeoutFn ?? globalThis.setTimeout);
+    this.clearTimeoutFn = bindClearTimeout(opts?.clearTimeoutFn ?? globalThis.clearTimeout);
   }
 
   dispatch(cmd: SessionReplicaCommand): void {
