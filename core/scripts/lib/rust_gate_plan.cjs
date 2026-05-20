@@ -20,6 +20,7 @@ const AGENT_GATE_CRATES = [
   "ctx-mcp-auth",
   "ctx-mcp-command",
   "ctx-managed-installs",
+  "ctx-mobile-access-service",
   "ctx-observability",
   "ctx-org-policy",
   "ctx-provider-accounts",

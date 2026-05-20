@@ -50,6 +50,11 @@ const FAMILIES = [
     description: "Subagent control, MCP/oracle integration, and orchestration behavior.",
   },
   {
+    id: "mobile-access",
+    title: "Mobile Access",
+    description: "Mobile pairing, connection profiles, secure admission, and mobile-facing daemon access.",
+  },
+  {
     id: "updates-release",
     title: "Updates And Release",
     description: "Updater UX, release safety, channel state, manifests, and release-facing correctness.",

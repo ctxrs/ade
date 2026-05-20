@@ -169,6 +169,7 @@ const RUST_FAMILY_BY_CRATE = {
   "ctx-resource-utilization": "resilience-performance",
   "ctx-run-scheduler": "turns-terminal",
   "ctx-runtime-assets": "distribution-install",
+  "ctx-mobile-access-service": "mobile-access",
   "ctx-sandbox-container-runtime": "sandbox-runtime",
   "ctx-sandbox-contract": "sandbox-runtime",
   "ctx-sandbox-materialization": "sandbox-runtime",

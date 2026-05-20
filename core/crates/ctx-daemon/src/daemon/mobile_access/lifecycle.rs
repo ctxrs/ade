@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
+use ctx_mobile_access_service::{MobileAccessServiceError, MobileAccessServiceErrorKind};
 use serde_json::json;
 use url::Url;
 
@@ -60,6 +61,18 @@ impl MobileAccessRouteError {
 
     pub fn message(&self) -> &str {
         &self.message
+    }
+}
+
+impl From<MobileAccessServiceError> for MobileAccessRouteError {
+    fn from(error: MobileAccessServiceError) -> Self {
+        let kind = match error.kind() {
+            MobileAccessServiceErrorKind::BadRequest => MobileAccessRouteErrorKind::BadRequest,
+            MobileAccessServiceErrorKind::Unauthorized => MobileAccessRouteErrorKind::Unauthorized,
+            MobileAccessServiceErrorKind::NotFound => MobileAccessRouteErrorKind::NotFound,
+            MobileAccessServiceErrorKind::Internal => MobileAccessRouteErrorKind::Internal,
+        };
+        Self::new(kind, error.message())
     }
 }
 

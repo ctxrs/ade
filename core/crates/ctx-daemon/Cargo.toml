@@ -25,6 +25,7 @@ ctx-managed-installs = { path = "../ctx-managed-installs" }
 ctx-mcp-auth = { path = "../ctx-mcp-auth" }
 ctx-mcp-command = { path = "../ctx-mcp-command" }
 ctx-merge-queue = { path = "../ctx-merge-queue" }
+ctx-mobile-access-service = { path = "../ctx-mobile-access-service" }
 ctx-observability = { path = "../ctx-observability" }
 ctx-org-policy = { path = "../ctx-org-policy" }
 ctx-provider-accounts = { path = "../ctx-provider-accounts" }

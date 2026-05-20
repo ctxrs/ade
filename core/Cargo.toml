@@ -34,6 +34,7 @@ members = [
   "crates/ctx-session-service",
   "crates/ctx-subagent-service",
   "crates/ctx-task-service",
+  "crates/ctx-mobile-access-service",
   "crates/ctx-daemon",
   "crates/ctx-session-tools",
   "crates/ctx-storage-admission",
