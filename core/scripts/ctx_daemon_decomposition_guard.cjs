@@ -39,7 +39,7 @@ const RATCHETED_FILE_LIMITS = [
   },
   {
     path: "core/crates/ctx-daemon/src/daemon/tasks/lifecycle.rs",
-    limit: 580,
+    limit: 320,
   },
   {
     path: "core/crates/ctx-daemon/src/daemon/workspaces/management.rs",
