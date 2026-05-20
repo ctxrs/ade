@@ -2,11 +2,11 @@ use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{header, StatusCode};
 use axum::response::Response;
-use ctx_daemon::daemon::merge_queue::{
+use ctx_daemon::daemon::{TextRouteDownload, WorkspacesHandle};
+use ctx_route_contracts::merge_queue::{
     MergeQueueEntryRouteParams, MergeQueueLogDownloadRouteError,
     MergeQueueLogDownloadRouteErrorKind,
 };
-use ctx_daemon::daemon::{TextRouteDownload, WorkspacesHandle};
 
 pub(in crate::api) async fn get_merge_queue_entry_logs(
     State(state): State<WorkspacesHandle>,

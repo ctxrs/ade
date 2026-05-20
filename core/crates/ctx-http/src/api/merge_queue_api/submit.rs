@@ -2,12 +2,12 @@ use axum::extract::{Extension, State};
 use axum::http::StatusCode;
 use axum::Json;
 use ctx_daemon::daemon::merge_queue::{
-    MergeQueueEntryRouteResponse, MergeQueueSubmitRouteError, MergeQueueSubmitRouteErrorKind,
-    SubmitMergeQueueEntryRouteRequest,
+    MergeQueueSubmitRouteError, MergeQueueSubmitRouteErrorKind, SubmitMergeQueueEntryRouteRequest,
 };
+use ctx_daemon::daemon::WorkspacesHandle;
+use ctx_route_contracts::merge_queue::MergeQueueEntryRouteResponse;
 
 use crate::api::errors::ApiErrorResp;
-use ctx_daemon::daemon::WorkspacesHandle;
 
 pub(in crate::api) async fn submit_merge_queue_entry(
     State(workspaces): State<WorkspacesHandle>,

@@ -1,11 +1,11 @@
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
-use ctx_daemon::daemon::merge_queue::{
+use ctx_daemon::daemon::WorkspacesHandle;
+use ctx_route_contracts::merge_queue::{
     ListMergeQueueEntriesRouteRequest, MergeQueueEntryRouteError, MergeQueueEntryRouteErrorKind,
     MergeQueueEntryRouteParams, MergeQueueEntryRouteResponse,
 };
-use ctx_daemon::daemon::WorkspacesHandle;
 
 use crate::api::errors::ApiErrorResp;
 
