@@ -55,6 +55,8 @@ pub fn apply_update(current: Settings, req: UpdateSettingsReq) -> Settings {
 }
 
 #[cfg(test)]
+mod effective_tests;
+#[cfg(test)]
 mod tests;
 
 fn runtime_settings_secrets_from_settings(settings: &Settings) -> RuntimeSettingsSecretEnvelope {

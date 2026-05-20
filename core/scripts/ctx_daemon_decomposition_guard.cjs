@@ -47,7 +47,7 @@ const RATCHETED_FILE_LIMITS = [
   },
   {
     path: "core/crates/ctx-daemon/src/daemon/org_policy.rs",
-    limit: 560,
+    limit: 240,
   },
   {
     path: "core/crates/ctx-daemon/src/daemon/sessions/message_commands.rs",

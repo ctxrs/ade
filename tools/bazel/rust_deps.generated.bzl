@@ -362,7 +362,10 @@ RUST_BAZEL_DEPS = {
             "@crates//:tracing",
             "@crates//:uuid",
         ],
-        dev_deps = [],
+        dev_deps = [
+            "@crates//:tempfile",
+            "@crates//:tokio",
+        ],
         dev_proc_macro_deps = [],
         proc_macro_deps = [],
     ),
