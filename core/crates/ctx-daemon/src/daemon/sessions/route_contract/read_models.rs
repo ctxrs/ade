@@ -1,122 +1,21 @@
 use std::time::Instant;
 
-use ctx_core::ids::{SessionId, TurnId};
-use ctx_core::models::{
-    SessionEventsPage, SessionHeadSnapshot, SessionHistoryPage, SessionSnapshot, SessionState,
-    SessionTurnTool,
+use ctx_route_contracts::sessions::{
+    parse_boolish_flag, parse_session_id, parse_turn_id, SESSION_EVENTS_DEFAULT_LIMIT,
+    SESSION_EVENTS_MAX_LIMIT,
 };
-use serde::{Deserialize, Serialize};
+pub use ctx_route_contracts::sessions::{
+    SessionEventsRouteQuery, SessionEventsRouteResponse, SessionHeadRouteQuery,
+    SessionHeadRouteResponse, SessionHistoryRouteQuery, SessionHistoryRouteResponse,
+    SessionReadModelRouteError, SessionReadModelRouteErrorKind, SessionSnapshotRouteQuery,
+    SessionSnapshotRouteResponse, SessionStateRouteResponse, SessionTurnToolsRouteResponse,
+};
 
 use crate::daemon::SessionsHandle;
 
-use super::common::{parse_session_route_id, SessionRouteParams, SessionTurnToolsRouteParams};
+use super::common::{SessionRouteParams, SessionTurnToolsRouteParams};
 
 const SESSION_HEAD_CACHE: &str = "session_head";
-pub(super) const SESSION_EVENTS_DEFAULT_LIMIT: u32 = 200;
-pub(super) const SESSION_EVENTS_MAX_LIMIT: u32 = 1000;
-
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct SessionSnapshotRouteQuery {
-    pub limit: Option<u32>,
-    pub include_events: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct SessionHeadRouteQuery {
-    pub limit: Option<u32>,
-    pub include_events: Option<String>,
-    pub min_event_seq: Option<i64>,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Default)]
-pub struct SessionHistoryRouteQuery {
-    pub before_seq: Option<i64>,
-    pub limit: Option<u32>,
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct SessionEventsRouteQuery {
-    pub after_seq: Option<i64>,
-    pub limit: Option<u32>,
-    pub tail: Option<u32>,
-    pub include_transient: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(transparent)]
-pub struct SessionSnapshotRouteResponse(SessionSnapshot);
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(transparent)]
-pub struct SessionHeadRouteResponse(SessionHeadSnapshot);
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(transparent)]
-pub struct SessionHistoryRouteResponse(SessionHistoryPage);
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(transparent)]
-pub struct SessionEventsRouteResponse(SessionEventsPage);
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(transparent)]
-pub struct SessionStateRouteResponse(SessionState);
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(transparent)]
-pub struct SessionTurnToolsRouteResponse(Vec<SessionTurnTool>);
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum SessionReadModelRouteErrorKind {
-    BadRequest,
-    NotFound,
-    Conflict,
-    Internal,
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct SessionReadModelRouteError {
-    kind: SessionReadModelRouteErrorKind,
-    message: String,
-}
-
-impl SessionReadModelRouteError {
-    fn bad_request(message: impl Into<String>) -> Self {
-        Self {
-            kind: SessionReadModelRouteErrorKind::BadRequest,
-            message: message.into(),
-        }
-    }
-
-    fn not_found(message: impl Into<String>) -> Self {
-        Self {
-            kind: SessionReadModelRouteErrorKind::NotFound,
-            message: message.into(),
-        }
-    }
-
-    fn conflict(message: impl Into<String>) -> Self {
-        Self {
-            kind: SessionReadModelRouteErrorKind::Conflict,
-            message: message.into(),
-        }
-    }
-
-    fn internal(message: impl Into<String>) -> Self {
-        Self {
-            kind: SessionReadModelRouteErrorKind::Internal,
-            message: message.into(),
-        }
-    }
-
-    pub fn kind(&self) -> SessionReadModelRouteErrorKind {
-        self.kind
-    }
-
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-}
 
 impl SessionsHandle {
     pub async fn load_session_snapshot_for_route(
@@ -322,66 +221,5 @@ impl SessionsHandle {
             })?
             .map(Into::into)
             .ok_or_else(|| SessionReadModelRouteError::not_found("session not found"))
-    }
-}
-
-impl From<SessionSnapshot> for SessionSnapshotRouteResponse {
-    fn from(snapshot: SessionSnapshot) -> Self {
-        Self(snapshot)
-    }
-}
-
-impl From<SessionHeadSnapshot> for SessionHeadRouteResponse {
-    fn from(head: SessionHeadSnapshot) -> Self {
-        Self(head)
-    }
-}
-
-impl From<SessionHistoryPage> for SessionHistoryRouteResponse {
-    fn from(page: SessionHistoryPage) -> Self {
-        Self(page)
-    }
-}
-
-impl From<SessionEventsPage> for SessionEventsRouteResponse {
-    fn from(page: SessionEventsPage) -> Self {
-        Self(page)
-    }
-}
-
-impl From<SessionState> for SessionStateRouteResponse {
-    fn from(state: SessionState) -> Self {
-        Self(state)
-    }
-}
-
-impl From<Vec<SessionTurnTool>> for SessionTurnToolsRouteResponse {
-    fn from(tools: Vec<SessionTurnTool>) -> Self {
-        Self(tools)
-    }
-}
-
-pub(super) fn parse_session_id(value: &str) -> Result<SessionId, SessionReadModelRouteError> {
-    parse_session_route_id(value)
-        .map_err(|_| SessionReadModelRouteError::bad_request("invalid session id"))
-}
-
-pub(super) fn parse_turn_id(value: &str) -> Result<TurnId, SessionReadModelRouteError> {
-    uuid::Uuid::parse_str(value)
-        .map(TurnId)
-        .map_err(|_| SessionReadModelRouteError::bad_request("invalid turn id"))
-}
-
-pub(super) fn parse_boolish_flag(
-    raw: Option<&str>,
-    label: &str,
-) -> Result<bool, SessionReadModelRouteError> {
-    match raw {
-        Some(value) => ctx_core::boolish::parse_boolish(value).ok_or_else(|| {
-            SessionReadModelRouteError::bad_request(format!(
-                "{label} must be one of: 1/true/yes/on or 0/false/no/off"
-            ))
-        }),
-        None => Ok(false),
     }
 }

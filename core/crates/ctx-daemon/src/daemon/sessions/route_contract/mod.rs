@@ -9,6 +9,3 @@ pub use self::read_models::{
     SessionReadModelRouteError, SessionReadModelRouteErrorKind, SessionSnapshotRouteQuery,
     SessionSnapshotRouteResponse, SessionStateRouteResponse, SessionTurnToolsRouteResponse,
 };
-
-#[cfg(test)]
-mod tests;

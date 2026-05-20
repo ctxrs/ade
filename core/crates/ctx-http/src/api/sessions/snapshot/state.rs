@@ -3,7 +3,7 @@ use super::*;
 pub(crate) async fn get_session_state(
     State(state): State<SessionsHandle>,
     Path(id): Path<String>,
-) -> Result<Json<ctx_daemon::daemon::SessionStateRouteResponse>, StatusCode> {
+) -> Result<Json<SessionStateRouteResponse>, StatusCode> {
     state
         .load_session_state_for_route(SessionRouteParams::new(id))
         .await

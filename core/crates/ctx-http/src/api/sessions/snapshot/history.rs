@@ -4,7 +4,7 @@ pub(crate) async fn get_session_history(
     State(state): State<SessionsHandle>,
     Path(id): Path<String>,
     Query(q): Query<SessionHistoryRouteQuery>,
-) -> Result<Json<ctx_daemon::daemon::SessionHistoryRouteResponse>, StatusCode> {
+) -> Result<Json<SessionHistoryRouteResponse>, StatusCode> {
     state
         .load_session_history_page_for_route(SessionRouteParams::new(id), q)
         .await
@@ -15,7 +15,7 @@ pub(crate) async fn get_session_history(
 pub(crate) async fn list_session_turn_tools(
     State(state): State<SessionsHandle>,
     Path((id, turn_id)): Path<(String, String)>,
-) -> Result<Json<ctx_daemon::daemon::SessionTurnToolsRouteResponse>, StatusCode> {
+) -> Result<Json<SessionTurnToolsRouteResponse>, StatusCode> {
     state
         .list_session_turn_tools_for_route(SessionTurnToolsRouteParams::new(id, turn_id))
         .await

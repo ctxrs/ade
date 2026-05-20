@@ -7,11 +7,15 @@ use ctx_daemon::daemon::{
     AuthenticateSessionRouteRequest, DeleteSessionMessageRouteParams,
     PostSessionMessageRouteContext, PostSessionMessageRouteRequest,
     PostSessionMessageRouteResponse, SessionControlRouteError, SessionControlRouteErrorKind,
-    SessionEventsRouteQuery, SessionFileCompletionsRouteQuery, SessionHeadRouteQuery,
-    SessionHistoryRouteQuery, SessionMessageRouteError, SessionMessageRouteErrorKind,
+    SessionFileCompletionsRouteQuery, SessionMessageRouteError, SessionMessageRouteErrorKind,
+    SessionsHandle, SubmitAskUserQuestionRouteRequest,
+};
+use ctx_route_contracts::sessions::{
+    SessionEventsRouteQuery, SessionEventsRouteResponse, SessionHeadRouteQuery,
+    SessionHeadRouteResponse, SessionHistoryRouteQuery, SessionHistoryRouteResponse,
     SessionReadModelRouteError, SessionReadModelRouteErrorKind, SessionRouteParams,
-    SessionSnapshotRouteQuery, SessionTurnToolsRouteParams, SessionsHandle,
-    SubmitAskUserQuestionRouteRequest,
+    SessionSnapshotRouteQuery, SessionSnapshotRouteResponse, SessionStateRouteResponse,
+    SessionTurnToolsRouteParams, SessionTurnToolsRouteResponse,
 };
 #[cfg(test)]
 use ctx_settings_model as user_settings;

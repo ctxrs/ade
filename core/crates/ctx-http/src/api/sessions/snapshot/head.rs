@@ -4,7 +4,7 @@ pub(crate) async fn get_session_head(
     State(state): State<SessionsHandle>,
     Path(id): Path<String>,
     Query(q): Query<SessionHeadRouteQuery>,
-) -> Result<Json<ctx_daemon::daemon::SessionHeadRouteResponse>, StatusCode> {
+) -> Result<Json<SessionHeadRouteResponse>, StatusCode> {
     state
         .session_head_for_route(SessionRouteParams::new(id), q)
         .await

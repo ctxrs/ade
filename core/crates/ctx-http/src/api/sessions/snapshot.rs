@@ -21,7 +21,7 @@ pub(crate) async fn get_session_snapshot(
     State(state): State<SessionsHandle>,
     Path(id): Path<String>,
     Query(q): Query<SessionSnapshotRouteQuery>,
-) -> Result<Json<ctx_daemon::daemon::SessionSnapshotRouteResponse>, StatusCode> {
+) -> Result<Json<SessionSnapshotRouteResponse>, StatusCode> {
     state
         .load_session_snapshot_for_route(SessionRouteParams::new(id), q)
         .await
