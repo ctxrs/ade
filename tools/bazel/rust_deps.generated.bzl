@@ -299,10 +299,13 @@ RUST_BAZEL_DEPS = {
         deps = [
             "//core/crates/ctx-core:lib",
             "//core/crates/ctx-store:lib",
+            "//core/crates/ctx-transport-runtime:lib",
             "@crates//:base64",
             "@crates//:chrono",
             "@crates//:hex",
             "@crates//:rand_core",
+            "@crates//:serde",
+            "@crates//:serde_json",
             "@crates//:sha2",
             "@crates//:tracing",
             "@crates//:url",

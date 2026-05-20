@@ -1,76 +1,39 @@
 use base64::Engine;
 use ctx_core::ids::WorkspaceId;
-use ctx_transport_runtime::{
-    mobile_secure_proxy_allows_request, secure_proxy_path_is_unnormalized,
-};
+use ctx_mobile_access_service::{prepare_mobile_secure_proxy_request, MobileSecureProxyAdmission};
 use http::{header, Method, StatusCode};
 use serde::Serialize;
 
 use super::{
-    MobileAccessRouteError, MobileAccessRouteErrorKind, MobileAuthContext, MobileScope,
+    MobileAccessRouteError, MobileAccessRouteErrorKind, MobileAuthContext,
     MobileSecureProxyPayload, MobileSecureProxyResponsePayload,
 };
 use crate::daemon::CoreHandle;
 
 const JSON_CONTENT_TYPE: &str = "application/json";
-const DESKTOP_AUTH_REQUIRED: &str = "desktop auth required";
 
 impl CoreHandle {
     pub async fn proxy_mobile_secure_request_for_route(
         &self,
         mobile_auth: Option<MobileAuthContext>,
-        mut payload: MobileSecureProxyPayload,
+        payload: MobileSecureProxyPayload,
         package_version: &'static str,
     ) -> Result<MobileSecureProxyResponsePayload, MobileAccessRouteError> {
-        if let Some((path, query)) = payload.path.split_once('?') {
-            let path = path.to_string();
-            let query = query.to_string();
-            payload.path = path;
-            if payload.query.is_none() {
-                payload.query = Some(query);
-            }
-        }
-        let path = payload.path.trim().to_string();
-        if !path.starts_with("/api/") {
-            return Err(MobileAccessRouteError::bad_request(
-                "secure proxy only supports /api/* paths",
-            ));
-        }
-        if secure_proxy_path_is_unnormalized(&path) {
-            return Err(MobileAccessRouteError::bad_request(
-                "secure proxy path must be normalized",
-            ));
-        }
-
-        let method = Method::from_bytes(payload.method.as_bytes())
-            .map_err(|_| MobileAccessRouteError::bad_request("invalid http method"))?;
-        if !mobile_secure_proxy_allows_request(&method, &path) {
-            return secure_error_response(DESKTOP_AUTH_REQUIRED);
-        }
-
-        let Some(mobile_auth) = mobile_auth else {
-            return secure_error_response(MobileScope::WorkspaceRead.missing_error());
-        };
-        if !mobile_auth.allows(MobileScope::WorkspaceRead) {
-            return secure_error_response(MobileScope::WorkspaceRead.missing_error());
-        }
-
-        let mut uri = path.clone();
-        if let Some(query) = payload
-            .query
-            .as_ref()
-            .map(|q| q.trim())
-            .filter(|q| !q.is_empty())
+        match prepare_mobile_secure_proxy_request(mobile_auth, payload)
+            .map_err(MobileAccessRouteError::from)?
         {
-            uri.push('?');
-            uri.push_str(query.trim_start_matches('?'));
+            MobileSecureProxyAdmission::Admitted(admitted) => {
+                dispatch_scoped_secure_proxy_request(
+                    self,
+                    &Method::GET,
+                    &admitted.uri,
+                    &admitted.headers,
+                    package_version,
+                )
+                .await
+            }
+            MobileSecureProxyAdmission::Denied(reason) => secure_error_response(reason.message()),
         }
-
-        let _body = decode_proxy_body_b64(&payload.body_b64)
-            .map_err(MobileAccessRouteError::bad_request)?;
-
-        dispatch_scoped_secure_proxy_request(self, &method, &uri, &payload.headers, package_version)
-            .await
     }
 }
 
@@ -179,18 +142,4 @@ fn empty_response(status: StatusCode) -> MobileSecureProxyResponsePayload {
         headers: Vec::new(),
         body_b64: String::new(),
     }
-}
-
-fn decode_proxy_body_b64(value: &str) -> Result<Vec<u8>, String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Ok(Vec::new());
-    }
-    let mut normalized = trimmed.replace('-', "+").replace('_', "/");
-    while !normalized.len().is_multiple_of(4) {
-        normalized.push('=');
-    }
-    base64::engine::general_purpose::STANDARD
-        .decode(normalized.as_bytes())
-        .map_err(|_| "invalid base64 body".to_string())
 }

@@ -69,6 +69,7 @@ impl From<MobileAccessServiceError> for MobileAccessRouteError {
         let kind = match error.kind() {
             MobileAccessServiceErrorKind::BadRequest => MobileAccessRouteErrorKind::BadRequest,
             MobileAccessServiceErrorKind::Unauthorized => MobileAccessRouteErrorKind::Unauthorized,
+            MobileAccessServiceErrorKind::Conflict => MobileAccessRouteErrorKind::Conflict,
             MobileAccessServiceErrorKind::NotFound => MobileAccessRouteErrorKind::NotFound,
             MobileAccessServiceErrorKind::Internal => MobileAccessRouteErrorKind::Internal,
         };

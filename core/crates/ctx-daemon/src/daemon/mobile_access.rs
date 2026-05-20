@@ -2,13 +2,9 @@ mod auth;
 mod control_plane;
 mod handle;
 mod lifecycle;
-mod pairing;
 mod profiles;
 mod runtime;
-mod secure_envelope;
 mod secure_proxy;
-mod secure_stream;
-mod tokens;
 mod types;
 
 pub use auth::{
@@ -29,17 +25,15 @@ pub use runtime::{
     DisableMobileAccessError, MobileAccessStatusError, MobileAccessStatusSnapshot,
     StartMobileTunnelRequest,
 };
-pub use secure_envelope::{
-    MobileSecureEnvelopeForRoute, MobileSecureProxyPayload, MobileSecureProxyResponsePayload,
-    MobileSecureResponseEncryption, OpenMobileSecureRequestResult,
-};
-pub use secure_stream::{
-    load_mobile_secure_stream_context, require_mobile_secure_stream_access,
-    MobileSecureStreamAccessError, MobileSecureStreamContext, MobileSecureWorkspaceStreamAdmission,
-    MobileSecureWorkspaceStreamRouteParams,
-};
 pub use types::{
     EnableMobileAccessRequest, MobileAccessConfigSnapshot, MobileAccessConfigUpsert,
-    MobileDeviceRegistrationUpdate, MobileDeviceSequenceAdvance, MobileSecureEnvelope,
-    PairMobileDevicePayload, PairMobileDeviceRequest,
+    MobileDeviceRegistrationUpdate,
+};
+
+pub use ctx_mobile_access_service::{
+    MobileDeviceSequenceAdvance, MobileSecureEnvelope, MobileSecureEnvelopeForRoute,
+    MobileSecureProxyPayload, MobileSecureProxyResponsePayload, MobileSecureResponseEncryption,
+    MobileSecureStreamAccessError, MobileSecureStreamContext, MobileSecureWorkspaceStreamAdmission,
+    MobileSecureWorkspaceStreamRouteParams, OpenMobileSecureRequestResult, PairMobileDevicePayload,
+    PairMobileDeviceRequest,
 };

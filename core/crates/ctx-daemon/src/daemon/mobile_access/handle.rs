@@ -3,15 +3,15 @@ use ctx_core::ids::{ConnectionProfileId, MobileDeviceId, WorkspaceId};
 use ctx_core::models::{MobileConnectionProfile, MobileDeviceRegistration};
 
 use super::{
-    lifecycle, pairing, profiles, runtime, secure_envelope, secure_stream,
-    CreateMobileConnectionProfileForRouteRequest, CreateMobileConnectionProfileForRouteResult,
-    DisableMobileAccessError, EnableMobileAccessRequest, EnableMobileAccessResult,
-    MobileAccessConfigSnapshot, MobileAccessConfigUpsert, MobileAccessRouteError,
+    lifecycle, profiles, runtime, CreateMobileConnectionProfileForRouteRequest,
+    CreateMobileConnectionProfileForRouteResult, DisableMobileAccessError,
+    EnableMobileAccessRequest, EnableMobileAccessResult, MobileAccessConfigSnapshot,
+    MobileAccessConfigUpsert, MobileAccessRouteError, MobileAccessRouteErrorKind,
     MobileAccessStatusError, MobileAccessStatusSnapshot, MobileAuthContext, MobileAuthContextError,
     MobileConnectionProfileRouteParams, MobileDeviceRegistrationUpdate,
-    MobileDeviceSequenceAdvance, MobileSecureEnvelope, MobileSecureEnvelopeForRoute,
+    MobileDeviceSequenceAdvance, MobileScope, MobileSecureEnvelope, MobileSecureEnvelopeForRoute,
     MobileSecureProxyResponsePayload, MobileSecureResponseEncryption,
-    MobileSecureStreamAccessError, MobileSecureStreamContext, MobileSecureWorkspaceStreamAdmission,
+    MobileSecureStreamAccessError, MobileSecureWorkspaceStreamAdmission,
     MobileSecureWorkspaceStreamRouteParams, OpenMobileSecureRequestResult, PairMobileDeviceRequest,
     RegisterMobileDeviceForRouteRequest, StartMobileTunnelRequest,
 };
@@ -85,14 +85,18 @@ impl CoreHandle {
         &self,
         request: PairMobileDeviceRequest,
     ) -> Result<MobileSecureEnvelope, MobileAccessRouteError> {
-        pairing::pair_mobile_device_for_route(&self.state, request).await
+        ctx_mobile_access_service::pair_mobile_device(self.state.global_store(), request)
+            .await
+            .map_err(Into::into)
     }
 
     pub async fn open_mobile_secure_request_for_route(
         &self,
         request: MobileSecureEnvelopeForRoute,
     ) -> Result<OpenMobileSecureRequestResult, MobileAccessRouteError> {
-        secure_envelope::open_mobile_secure_request_for_route(&self.state, request).await
+        ctx_mobile_access_service::open_mobile_secure_request(self.state.global_store(), request)
+            .await
+            .map_err(Into::into)
     }
 
     pub async fn encrypt_mobile_secure_response_for_route(
@@ -100,7 +104,9 @@ impl CoreHandle {
         context: MobileSecureResponseEncryption,
         response: MobileSecureProxyResponsePayload,
     ) -> Result<MobileSecureEnvelope, MobileAccessRouteError> {
-        secure_envelope::encrypt_mobile_secure_response_for_route(context, response).await
+        ctx_mobile_access_service::encrypt_mobile_secure_response(context, response)
+            .await
+            .map_err(Into::into)
     }
 
     pub async fn create_mobile_connection_profile(
@@ -272,8 +278,8 @@ impl CoreHandle {
         device_id: &str,
         token: &str,
     ) -> Result<(), MobileSecureStreamAccessError> {
-        secure_stream::require_mobile_secure_stream_access(
-            &self.state,
+        ctx_mobile_access_service::require_mobile_secure_stream_access(
+            self.state.global_store(),
             workspace_id,
             device_id,
             token,
@@ -281,17 +287,37 @@ impl CoreHandle {
         .await
     }
 
-    pub async fn load_mobile_secure_stream_context(
-        &self,
-        device_id: String,
-    ) -> Result<MobileSecureStreamContext, anyhow::Error> {
-        secure_stream::load_mobile_secure_stream_context(&self.state, device_id).await
-    }
-
     pub async fn admit_mobile_secure_workspace_stream_for_route(
         &self,
         params: MobileSecureWorkspaceStreamRouteParams,
     ) -> Result<MobileSecureWorkspaceStreamAdmission, MobileAccessRouteError> {
-        secure_stream::admit_mobile_secure_workspace_stream_for_route(&self.state, params).await
+        ctx_mobile_access_service::admit_mobile_secure_workspace_stream(
+            self.state.global_store(),
+            params,
+        )
+        .await
+        .map_err(mobile_secure_stream_access_route_error)
+    }
+}
+
+fn mobile_secure_stream_access_route_error(
+    error: MobileSecureStreamAccessError,
+) -> MobileAccessRouteError {
+    match error {
+        MobileSecureStreamAccessError::BadDeviceId => {
+            MobileAccessRouteError::bad_request("device_id must be a UUID")
+        }
+        MobileSecureStreamAccessError::BadWorkspaceId => {
+            MobileAccessRouteError::bad_request("invalid workspace id")
+        }
+        MobileSecureStreamAccessError::Unauthorized => {
+            MobileAccessRouteError::unauthorized(MobileScope::WorkspaceStream.missing_error())
+        }
+        MobileSecureStreamAccessError::NotFound => {
+            MobileAccessRouteError::new(MobileAccessRouteErrorKind::NotFound, "workspace not found")
+        }
+        MobileSecureStreamAccessError::Store => {
+            MobileAccessRouteError::internal("failed to authorize mobile stream")
+        }
     }
 }

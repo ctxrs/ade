@@ -1,6 +1,7 @@
 mod auth;
 mod lifecycle;
 mod profiles;
+mod secure;
 mod tokens;
 mod types;
 
@@ -22,17 +23,29 @@ pub use profiles::{
     CreateMobileConnectionProfileRequest, CreateMobileConnectionProfileResult,
     RegisterMobileDeviceRequest,
 };
+pub use secure::{
+    admit_mobile_secure_workspace_stream, encrypt_mobile_secure_response,
+    open_mobile_secure_request, pair_mobile_device, prepare_mobile_secure_proxy_request,
+    require_mobile_secure_stream_access, MobileSecureProxyAdmission,
+    MobileSecureProxyAdmittedRequest, MobileSecureProxyDenyReason, MobileSecureStreamAccessError,
+};
 pub use tokens::{
     generate_mobile_api_token, generate_pairing_token, hash_api_token, hash_pairing_token,
 };
 pub use types::{
     MobileAccessConfigSnapshot, MobileAccessConfigUpsert, MobileDeviceRegistrationUpdate,
+    MobileDeviceSequenceAdvance, MobileSecureEnvelope, MobileSecureEnvelopeForRoute,
+    MobileSecureProxyPayload, MobileSecureProxyResponsePayload, MobileSecureResponseEncryption,
+    MobileSecureStreamContext, MobileSecureWorkspaceStreamAdmission,
+    MobileSecureWorkspaceStreamRouteParams, OpenMobileSecureRequestResult, PairMobileDevicePayload,
+    PairMobileDeviceRequest,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MobileAccessServiceErrorKind {
     BadRequest,
     Unauthorized,
+    Conflict,
     NotFound,
     Internal,
 }
@@ -57,6 +70,10 @@ impl MobileAccessServiceError {
 
     pub fn unauthorized(message: impl Into<String>) -> Self {
         Self::new(MobileAccessServiceErrorKind::Unauthorized, message)
+    }
+
+    pub fn conflict(message: impl Into<String>) -> Self {
+        Self::new(MobileAccessServiceErrorKind::Conflict, message)
     }
 
     pub fn not_found(message: impl Into<String>) -> Self {

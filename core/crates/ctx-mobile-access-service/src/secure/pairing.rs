@@ -1,38 +1,33 @@
-use std::sync::Arc;
-
 use chrono::Utc;
 use ctx_core::ids::MobileDeviceId;
+use ctx_store::Store;
 use ctx_transport_runtime::mobile_e2ee;
 
-use super::tokens::hash_pairing_token;
-use super::{
-    load_mobile_auth_context_for_profile, MobileAccessRouteError, MobileAccessRouteErrorKind,
-    MobileDeviceRegistrationUpdate, MobileScope, MobileSecureEnvelope, PairMobileDevicePayload,
-    PairMobileDeviceRequest,
+use crate::{
+    hash_pairing_token, load_mobile_auth_context_for_profile, MobileAccessConfigSnapshot,
+    MobileAccessServiceError, MobileDeviceRegistrationUpdate, MobileScope, MobileSecureEnvelope,
+    PairMobileDevicePayload, PairMobileDeviceRequest,
 };
-use crate::daemon::DaemonState;
 
-pub(super) async fn pair_mobile_device_for_route(
-    state: &Arc<DaemonState>,
+pub async fn pair_mobile_device(
+    store: &Store,
     request: PairMobileDeviceRequest,
-) -> Result<MobileSecureEnvelope, MobileAccessRouteError> {
-    let verified = verify_mobile_pairing_request(state, request).await?;
+) -> Result<MobileSecureEnvelope, MobileAccessServiceError> {
+    let verified = verify_mobile_pairing_request(store, request).await?;
     let token_hash = hash_pairing_token(verified.payload.pairing_token.trim());
-    let allowed = state
-        .global_store()
+    let allowed = store
         .consume_mobile_pairing_token(&token_hash)
         .await
         .map_err(|e| {
             tracing::error!("failed to check pairing token: {e:?}");
-            MobileAccessRouteError::internal("failed to validate pairing token")
+            MobileAccessServiceError::internal("failed to validate pairing token")
         })?;
     if !allowed {
-        return Err(MobileAccessRouteError::unauthorized(
+        return Err(MobileAccessServiceError::unauthorized(
             "pairing token invalid or expired",
         ));
     }
-    let _device = state
-        .global_store()
+    let _device = store
         .upsert_mobile_device(
             MobileDeviceId(verified.device_uuid),
             verified.config.profile_id,
@@ -49,7 +44,7 @@ pub(super) async fn pair_mobile_device_for_route(
         .await
         .map_err(|e| {
             tracing::error!("failed to register device: {e:?}");
-            MobileAccessRouteError::internal("failed to register device")
+            MobileAccessServiceError::internal("failed to register device")
         })?;
 
     let payload = serde_json::json!({
@@ -59,57 +54,50 @@ pub(super) async fn pair_mobile_device_for_route(
         "paired_at": Utc::now().to_rfc3339(),
     });
     let plaintext = serde_json::to_vec(&payload)
-        .map_err(|_| MobileAccessRouteError::internal("failed to encode pairing response"))?;
+        .map_err(|_| MobileAccessServiceError::internal("failed to encode pairing response"))?;
     mobile_e2ee::encrypt(&verified.key, &verified.device_id, 0, &plaintext)
         .map(Into::into)
-        .map_err(|_| MobileAccessRouteError::internal("failed to encrypt pairing response"))
+        .map_err(|_| MobileAccessServiceError::internal("failed to encrypt pairing response"))
 }
 
 struct VerifiedMobilePairingRequest {
     device_uuid: uuid::Uuid,
     device_id: String,
     device_public_key: String,
-    config: super::MobileAccessConfigSnapshot,
+    config: MobileAccessConfigSnapshot,
     key: mobile_e2ee::E2eeKey,
     payload: PairMobileDevicePayload,
 }
 
 async fn verify_mobile_pairing_request(
-    state: &Arc<DaemonState>,
+    store: &Store,
     request: PairMobileDeviceRequest,
-) -> Result<VerifiedMobilePairingRequest, MobileAccessRouteError> {
-    let config = state
-        .global_store()
+) -> Result<VerifiedMobilePairingRequest, MobileAccessServiceError> {
+    let config = store
         .get_mobile_access_config()
         .await
         .map_err(|e| {
             tracing::error!("failed to read mobile access config: {e:?}");
-            MobileAccessRouteError::new(
-                MobileAccessRouteErrorKind::Internal,
-                "mobile access not configured",
-            )
-        })?;
-    let Some(config) = config.map(super::MobileAccessConfigSnapshot::from) else {
-        return Err(MobileAccessRouteError::bad_request(
-            "mobile access not enabled",
-        ));
-    };
+            MobileAccessServiceError::internal("mobile access not configured")
+        })?
+        .map(MobileAccessConfigSnapshot::from)
+        .ok_or_else(|| MobileAccessServiceError::bad_request("mobile access not enabled"))?;
     if !config.enabled {
-        return Err(MobileAccessRouteError::bad_request(
+        return Err(MobileAccessServiceError::bad_request(
             "mobile access not enabled",
         ));
     }
 
-    let Some(mobile_auth) = load_mobile_auth_context_for_profile(state, config.profile_id)
+    let Some(mobile_auth) = load_mobile_auth_context_for_profile(store, config.profile_id)
         .await
-        .map_err(|_| MobileAccessRouteError::internal("failed to read mobile access profile"))?
+        .map_err(|_| MobileAccessServiceError::internal("failed to read mobile access profile"))?
     else {
-        return Err(MobileAccessRouteError::unauthorized(
+        return Err(MobileAccessServiceError::unauthorized(
             MobileScope::DeviceRegistration.missing_error(),
         ));
     };
     if !mobile_auth.allows(MobileScope::DeviceRegistration) {
-        return Err(MobileAccessRouteError::unauthorized(
+        return Err(MobileAccessServiceError::unauthorized(
             MobileScope::DeviceRegistration.missing_error(),
         ));
     }
@@ -117,12 +105,14 @@ async fn verify_mobile_pairing_request(
     let device_id = request.device_id.trim().to_string();
     let device_public_key = request.public_key.trim().to_string();
     let device_uuid = uuid::Uuid::parse_str(&device_id)
-        .map_err(|_| MobileAccessRouteError::bad_request("device_id must be a UUID"))?;
+        .map_err(|_| MobileAccessServiceError::bad_request("device_id must be a UUID"))?;
 
     let key = mobile_e2ee::derive_key(&device_id, &device_public_key, &config.daemon_private_key)
-        .map_err(|_| MobileAccessRouteError::bad_request("failed to derive pairing key"))?;
+        .map_err(|_| MobileAccessServiceError::bad_request("failed to derive pairing key"))?;
     if request.seq != 0 {
-        return Err(MobileAccessRouteError::bad_request("pairing seq must be 0"));
+        return Err(MobileAccessServiceError::bad_request(
+            "pairing seq must be 0",
+        ));
     }
 
     let decrypted = mobile_e2ee::decrypt_pairing_request(
@@ -132,9 +122,9 @@ async fn verify_mobile_pairing_request(
         &request.nonce,
         &request.ciphertext,
     )
-    .map_err(|_| MobileAccessRouteError::bad_request("failed to decrypt pairing request"))?;
+    .map_err(|_| MobileAccessServiceError::bad_request("failed to decrypt pairing request"))?;
     let payload: PairMobileDevicePayload = serde_json::from_slice(&decrypted)
-        .map_err(|_| MobileAccessRouteError::bad_request("invalid pairing request payload"))?;
+        .map_err(|_| MobileAccessServiceError::bad_request("invalid pairing request payload"))?;
 
     Ok(VerifiedMobilePairingRequest {
         device_uuid,

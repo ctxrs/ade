@@ -86,6 +86,11 @@ impl MobileAuthContext {
     pub fn allows(self, scope: MobileScope) -> bool {
         self.scopes.allows(scope)
     }
+
+    #[cfg(test)]
+    pub(crate) fn new_for_test(profile_id: ConnectionProfileId, scopes: MobileScopeSet) -> Self {
+        Self { profile_id, scopes }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
