@@ -127,11 +127,7 @@ pub use restarts::{
     restart_codex_providers_for_auth_change, restart_provider_for_auth_change,
     stop_codex_providers_for_auth_removal,
 };
-pub use runtime_probe::{
-    probe_provider_auth_verification_runtime, probe_provider_options_env,
-    probe_runtime_models_for_provider_options, probe_selected_endpoint_runtime_launch,
-    provider_has_active_auth_for_workspace_runtime,
-};
+pub use runtime_probe::probe_provider_auth_verification_runtime;
 pub use status::{
     install_target_for_workspace, provider_status_response, providers_statuses_response,
     refresh_provider_statuses, ProviderStatusListRouteError, ProviderStatusResponseError,
