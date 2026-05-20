@@ -339,6 +339,7 @@ fn write_automation_launch_breadcrumb() {
         "PATH",
         "TAURI_WEBVIEW_AUTOMATION",
         "TMPDIR",
+        "WEBKIT_EXEC_PATH",
         "XDG_CACHE_HOME",
         "XDG_CONFIG_HOME",
         "XDG_DATA_DIRS",

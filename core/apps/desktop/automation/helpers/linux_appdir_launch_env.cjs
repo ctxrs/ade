@@ -100,6 +100,27 @@ const prependPath = (entries, current, delimiter = path.delimiter) => {
   return [...normalizedEntries, normalizedCurrent].filter(Boolean).join(delimiter);
 };
 
+const resolveLinuxAppDirWebKitExecPath = ({
+  appDir,
+  fsImpl = fs,
+  pathImpl = path,
+} = {}) => {
+  if (!appDir) return "";
+  for (const candidate of [
+    pathImpl.join(appDir, "lib", "x86_64-linux-gnu", "webkit2gtk-4.1"),
+    pathImpl.join(appDir, "usr", "lib", "x86_64-linux-gnu", "webkit2gtk-4.1"),
+    pathImpl.join(appDir, "usr", "libexec", "webkit2gtk-4.1"),
+  ]) {
+    if (
+      existingExecutableFile(pathImpl.join(candidate, "WebKitNetworkProcess"), fsImpl)
+      || existingExecutableFile(pathImpl.join(candidate, "WebKitWebProcess"), fsImpl)
+    ) {
+      return candidate;
+    }
+  }
+  return "";
+};
+
 const shellQuote = (value) => `'${String(value).replace(/'/g, `'\"'\"'`)}'`;
 
 const LINUX_APPDIR_DRIVER_ENV_STRIP_KEYS = [
@@ -122,6 +143,7 @@ const LINUX_APPDIR_DRIVER_ENV_STRIP_KEYS = [
   "GTK_THEME",
   "LD_LIBRARY_PATH",
   "TAURI_WEBVIEW_AUTOMATION",
+  "WEBKIT_EXEC_PATH",
   "XDG_DATA_DIRS",
 ];
 
@@ -145,6 +167,7 @@ const buildLinuxAppDirLaunchEnv = ({
   if (!appDir) return {};
 
   const usrDir = pathImpl.join(appDir, "usr");
+  const webKitExecPath = resolveLinuxAppDirWebKitExecPath({ appDir, fsImpl, pathImpl });
   const libDirs = [
     pathImpl.join(usrDir, "lib"),
     pathImpl.join(usrDir, "lib", "x86_64-linux-gnu"),
@@ -206,6 +229,9 @@ const buildLinuxAppDirLaunchEnv = ({
     ),
     GDK_BACKEND: String(env.GDK_BACKEND || "").trim() || "x11",
   };
+  if (webKitExecPath) {
+    patch.WEBKIT_EXEC_PATH = webKitExecPath;
+  }
 
   for (const key of ["APPIMAGE", "APPIMAGE_EXTRACT_AND_RUN", "ARGV0", "CTX_APPIMAGE_PATH"]) {
     const value = String(env[key] || "").trim();
@@ -271,7 +297,7 @@ const createLinuxAppDirLaunchWrapper = ({
     "    printf ' %s' \"$arg\" >> \"$CTX_AUTOMATION_APP_LAUNCH_LOG\"",
     "  done",
     "  printf '\\n' >> \"$CTX_AUTOMATION_APP_LAUNCH_LOG\"",
-    "  printf 'launch env TAURI_WEBVIEW_AUTOMATION=%s APPDIR=%s APPIMAGE=%s ARGV0=%s CTX_APPIMAGE_PATH=%s DISPLAY=%s XDG_RUNTIME_DIR=%s HOME=%s\\n' \"${TAURI_WEBVIEW_AUTOMATION:-}\" \"${APPDIR:-}\" \"${APPIMAGE:-}\" \"${ARGV0:-}\" \"${CTX_APPIMAGE_PATH:-}\" \"${DISPLAY:-}\" \"${XDG_RUNTIME_DIR:-}\" \"${HOME:-}\" >> \"$CTX_AUTOMATION_APP_LAUNCH_LOG\"",
+    "  printf 'launch env TAURI_WEBVIEW_AUTOMATION=%s APPDIR=%s APPIMAGE=%s ARGV0=%s CTX_APPIMAGE_PATH=%s WEBKIT_EXEC_PATH=%s DISPLAY=%s XDG_RUNTIME_DIR=%s HOME=%s\\n' \"${TAURI_WEBVIEW_AUTOMATION:-}\" \"${APPDIR:-}\" \"${APPIMAGE:-}\" \"${ARGV0:-}\" \"${CTX_APPIMAGE_PATH:-}\" \"${WEBKIT_EXEC_PATH:-}\" \"${DISPLAY:-}\" \"${XDG_RUNTIME_DIR:-}\" \"${HOME:-}\" >> \"$CTX_AUTOMATION_APP_LAUNCH_LOG\"",
     "  set +e",
     `  ${shellQuote(appLaunchTargetPath)} "$@" >> "$CTX_AUTOMATION_APP_LAUNCH_LOG" 2>&1`,
     "  status=$?",
@@ -293,4 +319,5 @@ module.exports = {
   createLinuxAppDirLaunchWrapper,
   resolveLinuxAppDirExecutablePath,
   resolveLinuxAppDirFromPath,
+  resolveLinuxAppDirWebKitExecPath,
 };

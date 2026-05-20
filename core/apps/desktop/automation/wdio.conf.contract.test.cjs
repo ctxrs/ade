@@ -119,9 +119,12 @@ test("wdio Linux shipped-app uses AppDir launcher wrapper for WebDriver applicat
     const appImage = path.join(tmp, "ctx.AppImage");
     const runtimeDir = path.join(tmp, "xdg-runtime");
     const innerBinary = path.join(appDir, "usr", "bin", "ctx");
+    const webkitExecPath = path.join(appDir, "lib", "x86_64-linux-gnu", "webkit2gtk-4.1");
     fs.mkdirSync(path.dirname(innerBinary), { recursive: true });
+    fs.mkdirSync(webkitExecPath, { recursive: true });
     fs.writeFileSync(appPath, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
     fs.writeFileSync(innerBinary, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+    fs.writeFileSync(path.join(webkitExecPath, "WebKitNetworkProcess"), "", { mode: 0o700 });
     fs.mkdirSync(bundlesDir, { recursive: true });
     fs.mkdirSync(runtimeDir, { recursive: true });
 
@@ -154,7 +157,9 @@ test("wdio Linux shipped-app uses AppDir launcher wrapper for WebDriver applicat
     assert.equal(path.dirname(resolvedPath), path.join(tmp, "desktop-app-launchers"));
     const wrapper = fs.readFileSync(resolvedPath, "utf8");
     assert.match(wrapper, new RegExp(`export APPDIR='${escapeRegExp(appDir)}'`));
+    assert.match(wrapper, new RegExp(`export WEBKIT_EXEC_PATH='${escapeRegExp(webkitExecPath)}'`));
     assert.match(wrapper, /launch target requested=/);
+    assert.match(wrapper, /WEBKIT_EXEC_PATH=/);
     assert.match(wrapper, new RegExp(`cd '${escapeRegExp(appDir)}'`));
     assert.match(wrapper, new RegExp(`'${escapeRegExp(innerBinary)}' "\\$@" >> "\\$CTX_AUTOMATION_APP_LAUNCH_LOG" 2>&1`));
     assert.match(wrapper, new RegExp(`exec '${escapeRegExp(innerBinary)}' "\\$@"`));
@@ -165,9 +170,9 @@ test("wdio Linux shipped-app uses AppDir launcher wrapper for WebDriver applicat
     assert.match(script, /buildLinuxAppDirLaunchEnv/);
     assert.match(script, /createLinuxAppDirLaunchWrapper/);
     assert.match(script, /return createDesktopAppLaunchWrapper\(appExecutablePath, DESKTOP_APP_LAUNCH_ENV\);/);
-  assert.match(script, /buildLinuxWebDriverHostEnv/);
-  assert.match(script, /const driverEnv = buildLinuxWebDriverHostEnv\(\{ env: process\.env \}\);/);
-  assert.doesNotMatch(script, /\.\.\.DESKTOP_APP_LAUNCH_ENV,/);
+    assert.match(script, /buildLinuxWebDriverHostEnv/);
+    assert.match(script, /const driverEnv = buildLinuxWebDriverHostEnv\(\{ env: process\.env \}\);/);
+    assert.doesNotMatch(script, /\.\.\.DESKTOP_APP_LAUNCH_ENV,/);
   assert.doesNotMatch(script, /\.\.\.DESKTOP_APP_LAUNCH_ENV,/);
     assert.match(script, /console\.error\(`\[wdio\] WebDriver application path=\$\{WDIO_APPLICATION_PATH\}`\)/);
     assert.match(script, /driverEnv\.TAURI_DRIVER_PORT = String\(activeTauriDriverPort\);/);
