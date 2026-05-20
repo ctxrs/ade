@@ -147,6 +147,33 @@ describe("useSessionComposerQueueController", () => {
 
     expect(noteInterruptClickedMock).toHaveBeenCalledWith("session-1", "thread_header");
     expect(noteInterruptPendingVisibleMock).toHaveBeenCalledWith("session-1");
+    expect(result.current.interruptPending).toBe(true);
+    expect(result.current.onInterruptSession).not.toBeNull();
+  });
+
+  it("records interrupt pending telemetry with the clicked session when the active target clears during dispatch", async () => {
+    let hookProps = createHookProps({
+      hasActiveTurn: true,
+      interruptSessionId: "session-1",
+    });
+    const { result, rerender } = renderHook((props) => useSessionComposerQueueController(props), {
+      initialProps: hookProps,
+    });
+    interruptSessionMock.mockImplementationOnce(async () => {
+      hookProps = {
+        ...hookProps,
+        hasActiveTurn: false,
+        interruptSessionId: "",
+      };
+      rerender(hookProps);
+    });
+
+    await act(async () => {
+      await result.current.onInterruptSession?.();
+    });
+
+    expect(noteInterruptClickedMock).toHaveBeenCalledWith("session-1", "thread_header");
+    expect(noteInterruptPendingVisibleMock).toHaveBeenCalledWith("session-1");
   });
 
   it("notifies when a valid composer send starts", async () => {

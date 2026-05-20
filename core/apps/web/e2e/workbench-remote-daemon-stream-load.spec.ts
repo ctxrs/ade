@@ -1560,6 +1560,16 @@ function summarizeVisibleCadence(snapshot: VisibleProgressSnapshot, activeUntilM
   };
 }
 
+function sanitizeDiagnosticContext(value: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (!value) return undefined;
+  const sanitized: Record<string, unknown> = {};
+  for (const key of ["filename", "lineno", "colno", "stack"] as const) {
+    const entry = value[key];
+    if (entry !== undefined) sanitized[key] = entry;
+  }
+  return Object.keys(sanitized).length > 0 ? sanitized : undefined;
+}
+
 function summarizeCorrectedReceiveLag(
   samples: readonly WorkspaceStreamTelemetrySample[],
   clockOffsetMs: number,
@@ -2208,6 +2218,7 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
       code: entry.code,
       severity: entry.severity,
       message: entry.message,
+      context: sanitizeDiagnosticContext(entry.context),
     })),
     browserLoadTest,
   };

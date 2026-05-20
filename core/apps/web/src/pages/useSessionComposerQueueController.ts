@@ -142,6 +142,7 @@ export function useSessionComposerQueueController(params: Params): Result {
   const messageCountRef = useRef(messageCount);
   const turnCountRef = useRef(turnCount);
   const pendingSessionHandoffRef = useRef<PendingSessionHandoff | null>(null);
+  const pendingInterruptSessionIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     supervisorRef.current = supervisor;
@@ -194,6 +195,11 @@ export function useSessionComposerQueueController(params: Params): Result {
     sendBusyRef.current = false;
     setSendErrorState(null);
     setQueueActionBusyId(null);
+    const pendingInterruptSessionId = pendingInterruptSessionIdRef.current;
+    if (pendingInterruptSessionId) {
+      clearInterruptPendingMetric(pendingInterruptSessionId);
+      pendingInterruptSessionIdRef.current = null;
+    }
     setInterruptPending(false);
   }, [sessionId]);
 
@@ -220,14 +226,16 @@ export function useSessionComposerQueueController(params: Params): Result {
   }, [hasActiveTurn]);
 
   useLayoutEffect(() => {
-    if (interruptPending && interruptSessionId) {
-      noteInterruptPendingVisible(interruptSessionId);
+    const pendingInterruptSessionId = pendingInterruptSessionIdRef.current;
+    if (!pendingInterruptSessionId) return;
+    if (interruptPending) {
+      noteInterruptPendingVisible(pendingInterruptSessionId);
+      pendingInterruptSessionIdRef.current = null;
       return;
     }
-    if (interruptSessionId) {
-      clearInterruptPendingMetric(interruptSessionId);
-    }
-  }, [interruptPending, interruptSessionId]);
+    clearInterruptPendingMetric(pendingInterruptSessionId);
+    pendingInterruptSessionIdRef.current = null;
+  }, [interruptPending]);
 
   const pendingQueueMessageIdSet = useMemo(() => {
     return new Set(
@@ -427,11 +435,15 @@ export function useSessionComposerQueueController(params: Params): Result {
     setSendErrorState(null);
     pendingSessionHandoffRef.current = null;
     try {
+      pendingInterruptSessionIdRef.current = targetSessionId;
       noteInterruptClicked(targetSessionId, "queued_action");
       setInterruptPending(true);
       await interruptSession(targetSessionId);
     } catch (error: unknown) {
       clearInterruptPendingMetric(targetSessionId);
+      if (pendingInterruptSessionIdRef.current === targetSessionId) {
+        pendingInterruptSessionIdRef.current = null;
+      }
       setInterruptPending(false);
       rollbackOptimisticQueueRemoval(messageId);
       setSendErrorState(errorMessage(error));
@@ -443,6 +455,9 @@ export function useSessionComposerQueueController(params: Params): Result {
       supervisor.removeOptimisticQueuedMessage(sessionId, messageId);
     } catch (error: unknown) {
       clearInterruptPendingMetric(targetSessionId);
+      if (pendingInterruptSessionIdRef.current === targetSessionId) {
+        pendingInterruptSessionIdRef.current = null;
+      }
       setInterruptPending(false);
       if (!shouldKeepQueueRemovalOnError(error)) {
         rollbackOptimisticQueueRemoval(messageId);
@@ -495,19 +510,26 @@ export function useSessionComposerQueueController(params: Params): Result {
     }
   };
 
-  const onInterruptSession = interruptSessionId
-    ? async () => {
-        noteInterruptClicked(interruptSessionId, "thread_header");
+  const onInterruptSession =
+    interruptSessionId || interruptPending
+      ? async () => {
+        const targetSessionId = interruptSessionId || pendingInterruptSessionIdRef.current;
+        if (!targetSessionId || interruptPending) return;
+        pendingInterruptSessionIdRef.current = targetSessionId;
+        noteInterruptClicked(targetSessionId, "thread_header");
         setInterruptPending(true);
         try {
-          await interruptSession(interruptSessionId);
+          await interruptSession(targetSessionId);
         } catch (error: unknown) {
-          clearInterruptPendingMetric(interruptSessionId);
+          clearInterruptPendingMetric(targetSessionId);
+          if (pendingInterruptSessionIdRef.current === targetSessionId) {
+            pendingInterruptSessionIdRef.current = null;
+          }
           setInterruptPending(false);
           setSendErrorState(errorMessage(error));
         }
       }
-    : null;
+      : null;
 
   return {
     sendBusy,

@@ -31,6 +31,7 @@ export type UiDiagnosticPersistenceSink = (event: UiDiagnosticEvent) => void | P
 const DEFAULT_MAX_EVENTS = 200;
 const ANALYTICS_DIAGNOSTIC_THROTTLE_MS = 5 * 60 * 1000;
 const MAX_ANALYTICS_THROTTLE_KEYS = 512;
+const MAX_RUNTIME_STACK_CHARS = 2000;
 let maxEvents = DEFAULT_MAX_EVENTS;
 let nextId = 1;
 let events: UiDiagnosticEvent[] = [];
@@ -114,6 +115,13 @@ const normalizeStatusFamily = (
   if (normalized >= 400 && normalized < 500) return "4xx";
   if (normalized >= 500 && normalized < 600) return "5xx";
   return "none";
+};
+
+const diagnosticStack = (value: unknown): string | undefined => {
+  if (typeof value !== "object" || value === null || !("stack" in value)) return undefined;
+  const stack = (value as { stack?: unknown }).stack;
+  if (typeof stack !== "string" || !stack.trim()) return undefined;
+  return stack.length > MAX_RUNTIME_STACK_CHARS ? `${stack.slice(0, MAX_RUNTIME_STACK_CHARS)}...` : stack;
 };
 
 const buildAnalyticsThrottleKey = (event: UiDiagnosticEvent, signature: string): string => {
@@ -280,6 +288,7 @@ export const installGlobalRuntimeDiagnosticHandlers = () => {
     const isResizeObserverLoop =
       message.includes("ResizeObserver loop completed with undelivered notifications") ||
       message.includes("ResizeObserver loop limit exceeded");
+    const stack = diagnosticStack(event.error);
     emitUiDiagnostic({
       source: "runtime",
       code: isResizeObserverLoop ? "runtime.resize_observer_loop" : "runtime.error",
@@ -289,6 +298,7 @@ export const installGlobalRuntimeDiagnosticHandlers = () => {
         filename: event.filename,
         lineno: event.lineno,
         colno: event.colno,
+        ...(stack ? { stack } : {}),
       },
     });
   };
