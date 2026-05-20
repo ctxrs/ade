@@ -12,7 +12,6 @@ use tokio::sync::broadcast;
 use super::handle::ProvidersHandle;
 mod accounts;
 mod admin_routes;
-mod auth;
 mod auth_check;
 mod auth_import;
 mod bootstrap;
@@ -52,7 +51,6 @@ pub use admin_routes::{
     ProviderAdminRouteError, ProviderAdminRouteErrorKind, ProviderDevRestartRouteRequest,
     ProviderDevRestartRouteResponse, ProviderMatrixRefreshRouteResponse,
 };
-pub use auth::{authenticate_provider_for_workspace_runtime, ProviderWorkspaceAuthenticationError};
 pub use auth_check::{
     authenticate_provider_for_workspace, verify_provider_for_workspace,
     AuthenticateProviderForWorkspaceRouteBody, AuthenticateProviderForWorkspaceRouteRequest,

@@ -28,6 +28,7 @@ rust_library(
         "@crates//:tokio",
         "@crates//:toml",
         "@crates//:tracing",
+        "@crates//:uuid",
     ],
     proc_macro_deps = [
         "@crates//:async-trait",

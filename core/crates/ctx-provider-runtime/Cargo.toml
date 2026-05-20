@@ -23,6 +23,7 @@ sysinfo.workspace = true
 tokio.workspace = true
 toml = "0.8"
 tracing.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 fs2 = "0.4"
