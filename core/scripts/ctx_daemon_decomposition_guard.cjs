@@ -18,6 +18,50 @@ const COLLAPSED_PATHS = [
 
 const RATCHETED_FILE_LIMITS = [
   {
+    path: "core/crates/ctx-daemon/src/daemon/org_policy_route.rs",
+    limit: 750,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/daemon/sessions/subagents_route.rs",
+    limit: 620,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/daemon/sessions/message_route.rs",
+    limit: 610,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/daemon/repo_onboarding.rs",
+    limit: 590,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/daemon/terminals/route_contract.rs",
+    limit: 590,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/daemon/tasks/lifecycle.rs",
+    limit: 580,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/daemon/workspaces/management.rs",
+    limit: 570,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/daemon/org_policy.rs",
+    limit: 560,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/daemon/sessions/message_commands.rs",
+    limit: 540,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/daemon/providers/codex_app_login.rs",
+    limit: 520,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/daemon/providers/bootstrap.rs",
+    limit: 510,
+  },
+  {
     path: "core/crates/ctx-daemon/src/daemon/sessions/handle.rs",
     limit: 600,
   },
@@ -36,6 +80,24 @@ const RATCHETED_FILE_LIMITS = [
 ];
 
 const SERVICE_RUNTIME_FORBIDDEN_DEPS = new Set(["ctx-daemon", "ctx-http", "axum"]);
+const PACKAGE_SHAPE_BOUNDARY_CRATES = new Set([
+  "ctx-merge-queue",
+  "ctx-org-policy",
+  "ctx-provider-runtime",
+  "ctx-resource-utilization",
+  "ctx-settings-service",
+  "ctx-transport-runtime",
+  "ctx-update-service",
+  "ctx-run-scheduler",
+  "ctx-session-runner",
+  "ctx-workspace-active-snapshot",
+  "ctx-workspace-attachments",
+  "ctx-workspace-config",
+  "ctx-workspace-container",
+  "ctx-workspace-runtime",
+  "ctx-workspace-services",
+]);
+const PACKAGE_SHAPE_FORBIDDEN_BACKEDGE_DEPS = new Set(["ctx-daemon", "ctx-http", "axum"]);
 const TRANSPORT_RUNTIME_FORBIDDEN_DEPS = new Set(["ctx-store"]);
 const HEAD_PROJECTION_ROOT = "core/crates/ctx-session-service/src/head_projection";
 
@@ -183,6 +245,10 @@ const isServiceOrRuntimeCrate = (crateName) =>
   || crateName.endsWith("-runtime")
   || crateName.includes("-runtime-");
 
+const isPackageShapeBoundaryCrate = (crateName) =>
+  PACKAGE_SHAPE_BOUNDARY_CRATES.has(crateName)
+  || /^ctx-(?:task|subagent|run-scheduler|session-runner|mobile-access|artifacts|session-artifacts|run-archive|web-session|workspace-stream)-service$/u.test(crateName);
+
 const isWorkspaceActiveSnapshotForbiddenDependency = (dependencyName) => {
   if (dependencyName === "ctx-daemon" || dependencyName === "ctx-store") return true;
   if (dependencyName.startsWith("ctx-http")) return true;
@@ -290,6 +356,14 @@ const checkCargoDependencyDirection = (rootDir) => {
           message: `${crateName} must not depend on ${dependency.name}; service/runtime crates cannot depend on daemon, HTTP, or Axum.`,
         });
       }
+      if (isPackageShapeBoundaryCrate(crateName) && PACKAGE_SHAPE_FORBIDDEN_BACKEDGE_DEPS.has(dependency.name)) {
+        violations.push({
+          kind: "cargo_dependency",
+          line: dependency.line,
+          path: manifestRelativePath,
+          message: `${crateName} must not depend on ${dependency.name}; package-shape boundary crates cannot depend on daemon, HTTP, or Axum.`,
+        });
+      }
       if (crateName === "ctx-transport-runtime" && TRANSPORT_RUNTIME_FORBIDDEN_DEPS.has(dependency.name)) {
         violations.push({
           kind: "cargo_dependency",
@@ -370,6 +444,8 @@ if (require.main === module) {
 module.exports = {
   COLLAPSED_PATHS,
   HEAD_PROJECTION_FORBIDDEN_IMPORT_PATTERNS,
+  PACKAGE_SHAPE_BOUNDARY_CRATES,
+  PACKAGE_SHAPE_FORBIDDEN_BACKEDGE_DEPS,
   RATCHETED_FILE_LIMITS,
   SERVICE_RUNTIME_FORBIDDEN_DEPS,
   checkCargoDependencyDirection,
@@ -378,6 +454,7 @@ module.exports = {
   checkRatchetedFileCaps,
   countLines,
   evaluateDecompositionBoundaries,
+  isPackageShapeBoundaryCrate,
   isServiceOrRuntimeCrate,
   isWorkspaceActiveSnapshotForbiddenDependency,
   packageNameFromCargoToml,

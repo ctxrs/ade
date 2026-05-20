@@ -7,12 +7,15 @@ const test = require("node:test");
 const {
   COLLAPSED_PATHS,
   RATCHETED_FILE_LIMITS,
+  PACKAGE_SHAPE_BOUNDARY_CRATES,
+  PACKAGE_SHAPE_FORBIDDEN_BACKEDGE_DEPS,
   checkCargoDependencyDirection,
   checkCollapsedPaths,
   checkHeadProjectionPurity,
   checkRatchetedFileCaps,
   countLines,
   evaluateDecompositionBoundaries,
+  isPackageShapeBoundaryCrate,
   isServiceOrRuntimeCrate,
   isWorkspaceActiveSnapshotForbiddenDependency,
   packageNameFromCargoToml,
@@ -115,6 +118,18 @@ test("crate classifiers cover service and runtime owners", () => {
   assert.equal(isServiceOrRuntimeCrate("ctx-core"), false);
 });
 
+test("package shape boundary classifier covers existing and planned service owners", () => {
+  assert.equal(PACKAGE_SHAPE_BOUNDARY_CRATES.has("ctx-org-policy"), true);
+  assert.equal(PACKAGE_SHAPE_BOUNDARY_CRATES.has("ctx-workspace-attachments"), true);
+  assert.equal(PACKAGE_SHAPE_FORBIDDEN_BACKEDGE_DEPS.has("ctx-daemon"), true);
+  assert.equal(isPackageShapeBoundaryCrate("ctx-workspace-stream-service"), true);
+  assert.equal(isPackageShapeBoundaryCrate("ctx-task-service"), true);
+  assert.equal(isPackageShapeBoundaryCrate("ctx-subagent-service"), true);
+  assert.equal(isPackageShapeBoundaryCrate("ctx-run-scheduler"), true);
+  assert.equal(isPackageShapeBoundaryCrate("ctx-session-runner"), true);
+  assert.equal(isPackageShapeBoundaryCrate("ctx-core"), false);
+});
+
 test("workspace active snapshot forbids daemon, HTTP, store, and runtime dependencies", () => {
   assert.equal(isWorkspaceActiveSnapshotForbiddenDependency("ctx-daemon"), true);
   assert.equal(isWorkspaceActiveSnapshotForbiddenDependency("ctx-http-auth"), true);
@@ -163,6 +178,37 @@ test("cargo dependency direction rejects service, transport runtime, and active 
   assert.equal(messages.some((message) => message.includes("ctx-transport-runtime must not depend on ctx-store")), true);
   assert.equal(messages.some((message) => message.includes("found ctx-provider-runtime")), true);
   assert.equal(messages.some((message) => message.includes("found ctx-http-auth")), true);
+});
+
+test("cargo dependency direction rejects explicit package-shape crate backedges", () => {
+  const rootDir = makeRoot();
+  writeFile(rootDir, "core/crates/ctx-org-policy/Cargo.toml", `
+    [package]
+    name = "ctx-org-policy"
+
+    [dependencies]
+    ctx-daemon = { path = "../ctx-daemon" }
+  `);
+  writeFile(rootDir, "core/crates/ctx-workspace-stream-service/Cargo.toml", `
+    [package]
+    name = "ctx-workspace-stream-service"
+
+    [dependencies]
+    axum.workspace = true
+  `);
+  writeFile(rootDir, "core/crates/ctx-run-scheduler/Cargo.toml", `
+    [package]
+    name = "ctx-run-scheduler"
+
+    [dependencies]
+    ctx-http = { path = "../ctx-http" }
+  `);
+
+  const messages = checkCargoDependencyDirection(rootDir).map((entry) => entry.message);
+
+  assert.equal(messages.some((message) => message.includes("ctx-org-policy must not depend on ctx-daemon")), true);
+  assert.equal(messages.some((message) => message.includes("ctx-workspace-stream-service must not depend on axum")), true);
+  assert.equal(messages.some((message) => message.includes("ctx-run-scheduler must not depend on ctx-http")), true);
 });
 
 test("cargo direction does not reject dev-dependency-only test helpers", () => {
