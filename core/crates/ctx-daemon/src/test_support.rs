@@ -1379,6 +1379,15 @@ impl TestDaemon {
         Ok(())
     }
 
+    pub async fn seed_workspace_execution_config_for_test(
+        &self,
+        workspace_id: WorkspaceId,
+        update: ctx_workspace_config::ExecutionConfigUpdate,
+    ) -> anyhow::Result<()> {
+        let store = self.state.store_for_workspace(workspace_id).await?;
+        ctx_workspace_config::update_execution_config(&store, update).await
+    }
+
     pub async fn seed_workspace_runtime_settings_without_target_branch_for_test(
         &self,
         workspace_id: WorkspaceId,

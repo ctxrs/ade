@@ -200,26 +200,24 @@ impl WorkspacesHandle {
         let settings = settings::load_settings(self.state.as_ref())
             .await
             .map_err(WorkspaceRouteError::internal)?;
-        let mut effective = settings.execution.clone().unwrap_or_default();
-        let mut source = "daemon_default".to_string();
-        match workspace_config::load_execution_settings_override(&store).await {
-            Ok(Some(override_config)) => {
-                ctx_settings_service::apply_workspace_execution_settings_override(
-                    &mut effective,
-                    &override_config,
-                )
-                .map_err(WorkspaceRouteError::from_request_or_policy_error)?;
-                source = "workspace".to_string();
+        match ctx_settings_service::workspace_execution_config_snapshot_for_loaded_settings(
+            &settings, &store,
+        )
+        .await
+        {
+            Ok(snapshot) => Ok(snapshot),
+            Err(
+                ctx_settings_service::WorkspaceExecutionConfigSnapshotError::InvalidWorkspaceConfig(
+                    error,
+                ),
+            ) => Err(WorkspaceRouteError::bad_request(error)),
+            Err(ctx_settings_service::WorkspaceExecutionConfigSnapshotError::RequestOrPolicy(
+                error,
+            )) => Err(WorkspaceRouteError::from_request_or_policy_error(error)),
+            Err(ctx_settings_service::WorkspaceExecutionConfigSnapshotError::Internal(error)) => {
+                Err(WorkspaceRouteError::internal(error))
             }
-            Ok(None) => {}
-            Err(error) if workspace_config::is_workspace_runtime_settings_parse_error(&error) => {
-                return Err(WorkspaceRouteError::bad_request(error));
-            }
-            Err(error) => return Err(WorkspaceRouteError::internal(error)),
         }
-        Ok(workspace_config::project_execution_config(
-            source, &effective,
-        ))
     }
 
     pub async fn update_workspace_execution_config_for_request(
@@ -241,17 +239,18 @@ impl WorkspacesHandle {
         let settings = settings::load_settings(self.state.as_ref())
             .await
             .map_err(WorkspaceRouteError::internal)?;
-        let effective = settings.execution.clone().unwrap_or_default();
-        let requested_override = workspace_config::execution_settings_override_from_update(&update);
-        ctx_settings_service::validate_workspace_execution_settings_override(
-            &effective,
-            &requested_override,
+        ctx_settings_service::update_workspace_execution_config_for_loaded_settings(
+            &settings, &store, update,
         )
-        .map_err(WorkspaceRouteError::from_request_or_policy_error)?;
-        let update = workspace_config::execution_config_update_from_input(update);
-        workspace_config::update_execution_config(&store, update)
-            .await
-            .map_err(WorkspaceRouteError::bad_request)?;
+        .await
+        .map_err(|error| match error {
+            ctx_settings_service::WorkspaceExecutionConfigUpdateError::RequestOrPolicy(error) => {
+                WorkspaceRouteError::from_request_or_policy_error(error)
+            }
+            ctx_settings_service::WorkspaceExecutionConfigUpdateError::Persistence(error) => {
+                WorkspaceRouteError::bad_request(error)
+            }
+        })?;
         Ok(WorkspaceConfigUpdateResult { ok: true })
     }
 

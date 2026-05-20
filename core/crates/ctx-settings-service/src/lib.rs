@@ -14,8 +14,11 @@ pub use effective::{
     effective_execution_settings, effective_execution_settings_classified,
     effective_execution_settings_for_environment, effective_install_target,
     effective_install_target_for_environment, install_target_for_settings,
+    update_workspace_execution_config_for_loaded_settings,
     validate_execution_environment_against_settings,
-    validate_workspace_execution_settings_override, EffectiveExecutionSettingsError,
+    validate_workspace_execution_settings_override,
+    workspace_execution_config_snapshot_for_loaded_settings, EffectiveExecutionSettingsError,
+    WorkspaceExecutionConfigSnapshotError, WorkspaceExecutionConfigUpdateError,
 };
 pub use execution_policy::EXECUTION_POLICY_TEST_ENV_LOCK;
 pub use execution_policy::{

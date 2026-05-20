@@ -1,6 +1,8 @@
 mod common;
 
 use axum::http::{Method, StatusCode};
+use ctx_settings_model::{ExecutionMode, ExecutionSettings};
+use ctx_workspace_config::{ExecutionConfigUpdate, ExecutionEnvironment};
 use serde_json::Value;
 
 #[tokio::test]
@@ -59,6 +61,50 @@ async fn workspace_execution_config_fails_closed_on_invalid_runtime_settings() {
             .and_then(Value::as_str)
             .is_some_and(|message| message.contains("workspace runtime settings")),
         "invalid workspace runtime settings should be surfaced instead of falling back: {body:#?}"
+    );
+}
+
+#[tokio::test]
+async fn workspace_execution_config_maps_persisted_policy_denial_to_forbidden() {
+    let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    let daemon = &fixture.daemon;
+    daemon
+        .save_execution_settings_for_test(ExecutionSettings {
+            mode: ExecutionMode::Sandbox,
+            ..ExecutionSettings::default()
+        })
+        .await
+        .expect("save daemon execution settings");
+    let app = fixture.router();
+    let workspace = common::create_workspace(&app, repo.path(), "ws").await;
+    daemon
+        .seed_workspace_execution_config_for_test(
+            workspace.id,
+            ExecutionConfigUpdate {
+                environment: ExecutionEnvironment::Host,
+                network_mode: None,
+                allowlist: None,
+                image: None,
+            },
+        )
+        .await
+        .expect("write persisted host override");
+
+    let (status, body): (StatusCode, Value) = common::json_request(
+        &app,
+        Method::GET,
+        format!("/api/workspaces/{}/execution_config", workspace.id.0),
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::FORBIDDEN, "body: {body:#?}");
+    assert!(
+        body.get("error")
+            .and_then(Value::as_str)
+            .is_some_and(|message| message.contains("cannot select host")),
+        "policy denial should be surfaced: {body:#?}"
     );
 }
 
@@ -136,5 +182,39 @@ async fn workspace_execution_config_rejects_invalid_request_values() {
             .and_then(Value::as_str)
             .is_some_and(|message| message.contains("invalid network_mode")),
         "invalid network mode should be rejected: {body:#?}"
+    );
+}
+
+#[tokio::test]
+async fn workspace_execution_config_maps_update_policy_denial_to_forbidden() {
+    let repo = common::init_git_repo(&[("file.txt", "hello\n")]).await;
+    let fixture = common::fake_daemon_fixture("http://127.0.0.1:0").await;
+    fixture
+        .daemon
+        .save_execution_settings_for_test(ExecutionSettings {
+            mode: ExecutionMode::Sandbox,
+            ..ExecutionSettings::default()
+        })
+        .await
+        .expect("save daemon execution settings");
+    let app = fixture.router();
+    let workspace = common::create_workspace(&app, repo.path(), "ws").await;
+
+    let (status, body): (StatusCode, Value) = common::json_request(
+        &app,
+        Method::POST,
+        format!("/api/workspaces/{}/execution_config", workspace.id.0),
+        Some(serde_json::json!({
+            "environment": "host",
+        })),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::FORBIDDEN, "body: {body:#?}");
+    assert!(
+        body.get("error")
+            .and_then(Value::as_str)
+            .is_some_and(|message| message.contains("cannot select host")),
+        "policy denial should be surfaced: {body:#?}"
     );
 }

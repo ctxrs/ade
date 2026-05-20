@@ -9,7 +9,10 @@ use ctx_workspace_config::{ExecutionConfigUpdate, ExecutionEnvironment};
 use crate::{
     effective_execution_settings, effective_execution_settings_classified,
     effective_execution_settings_for_environment, install_target_for_settings, save_settings,
-    validate_workspace_execution_settings_override, EXECUTION_POLICY_TEST_ENV_LOCK,
+    update_workspace_execution_config_for_loaded_settings,
+    validate_workspace_execution_settings_override,
+    workspace_execution_config_snapshot_for_loaded_settings, WorkspaceExecutionConfigSnapshotError,
+    WorkspaceExecutionConfigUpdateError, EXECUTION_POLICY_TEST_ENV_LOCK,
 };
 
 struct EnvVarGuard {
@@ -86,6 +89,179 @@ async fn set_daemon_execution_settings(global_store: &Store, execution: Executio
     )
     .await
     .expect("save daemon settings");
+}
+
+#[tokio::test]
+async fn workspace_execution_config_snapshot_uses_daemon_default_without_override() {
+    let _env = clean_execution_env().await;
+    let (_temp, _global_store, workspace_store) = stores().await;
+    let settings = Settings {
+        execution: Some(ExecutionSettings {
+            mode: ExecutionMode::Sandbox,
+            ..ExecutionSettings::default()
+        }),
+        ..Settings::default()
+    };
+
+    let snapshot =
+        workspace_execution_config_snapshot_for_loaded_settings(&settings, &workspace_store)
+            .await
+            .expect("snapshot");
+
+    assert_eq!(snapshot.source, "daemon_default");
+    assert_eq!(snapshot.environment, "sandbox");
+}
+
+#[tokio::test]
+async fn workspace_execution_config_snapshot_applies_workspace_override_before_projection() {
+    let _env = clean_execution_env().await;
+    let (_temp, _global_store, workspace_store) = stores().await;
+    ctx_workspace_config::update_execution_config(
+        &workspace_store,
+        ExecutionConfigUpdate {
+            environment: ExecutionEnvironment::Sandbox,
+            network_mode: Some(ContainerNetworkMode::All),
+            allowlist: Some(vec!["api.openai.com".to_string()]),
+            image: None,
+        },
+    )
+    .await
+    .expect("write workspace override");
+
+    let snapshot = workspace_execution_config_snapshot_for_loaded_settings(
+        &Settings::default(),
+        &workspace_store,
+    )
+    .await
+    .expect("snapshot");
+
+    assert_eq!(snapshot.source, "workspace");
+    assert_eq!(snapshot.environment, "sandbox");
+    assert_eq!(snapshot.network_mode.as_deref(), Some("all"));
+    assert_eq!(snapshot.allowlist, Some(vec!["api.openai.com".to_string()]));
+}
+
+#[tokio::test]
+async fn workspace_execution_config_snapshot_classifies_malformed_workspace_config() {
+    let _env = clean_execution_env().await;
+    let (_temp, _global_store, workspace_store) = stores().await;
+    workspace_store
+        .upsert_runtime_settings_document(
+            1,
+            r#"{
+  "execution": {
+    "environment": 7
+  }
+}"#,
+        )
+        .await
+        .expect("write malformed workspace settings");
+
+    let err = workspace_execution_config_snapshot_for_loaded_settings(
+        &Settings::default(),
+        &workspace_store,
+    )
+    .await
+    .expect_err("malformed config should be classified");
+
+    assert!(matches!(
+        err,
+        WorkspaceExecutionConfigSnapshotError::InvalidWorkspaceConfig(_)
+    ));
+}
+
+#[tokio::test]
+async fn workspace_execution_config_snapshot_classifies_persisted_policy_denial() {
+    let _env = clean_execution_env().await;
+    let (_temp, _global_store, workspace_store) = stores().await;
+    let settings = Settings {
+        execution: Some(ExecutionSettings {
+            mode: ExecutionMode::Sandbox,
+            ..ExecutionSettings::default()
+        }),
+        ..Settings::default()
+    };
+    ctx_workspace_config::update_execution_config(
+        &workspace_store,
+        ExecutionConfigUpdate {
+            environment: ExecutionEnvironment::Host,
+            network_mode: None,
+            allowlist: None,
+            image: None,
+        },
+    )
+    .await
+    .expect("write workspace override");
+
+    let err = workspace_execution_config_snapshot_for_loaded_settings(&settings, &workspace_store)
+        .await
+        .expect_err("policy denial should be classified");
+
+    let WorkspaceExecutionConfigSnapshotError::RequestOrPolicy(error) = err else {
+        panic!("expected request/policy classification");
+    };
+    assert!(crate::is_execution_policy_denial(&error));
+}
+
+#[tokio::test]
+async fn update_workspace_execution_config_persists_normalized_update() {
+    let _env = clean_execution_env().await;
+    let (_temp, _global_store, workspace_store) = stores().await;
+    let update = ctx_workspace_config::parse_execution_config_update_input(
+        "sandbox",
+        Some(" allowlist "),
+        Some(vec![" api.openai.com ".to_string(), "".to_string()]),
+        true,
+    )
+    .expect("parse update");
+
+    update_workspace_execution_config_for_loaded_settings(
+        &Settings::default(),
+        &workspace_store,
+        update,
+    )
+    .await
+    .expect("persist update");
+
+    let loaded = ctx_workspace_config::load_execution_settings_override(&workspace_store)
+        .await
+        .expect("load override")
+        .expect("override");
+    assert_eq!(loaded.mode, Some(ExecutionMode::Sandbox));
+    assert_eq!(
+        loaded.container.network_mode,
+        Some(ContainerNetworkMode::Allowlist)
+    );
+    assert_eq!(
+        loaded.container.allowlist,
+        Some(vec!["api.openai.com".to_string()])
+    );
+}
+
+#[tokio::test]
+async fn update_workspace_execution_config_classifies_policy_denial() {
+    let _env = clean_execution_env().await;
+    let (_temp, _global_store, workspace_store) = stores().await;
+    let settings = Settings {
+        execution: Some(ExecutionSettings {
+            mode: ExecutionMode::Sandbox,
+            ..ExecutionSettings::default()
+        }),
+        ..Settings::default()
+    };
+    let update =
+        ctx_workspace_config::parse_execution_config_update_input("host", None, None, true)
+            .expect("parse update");
+
+    let err =
+        update_workspace_execution_config_for_loaded_settings(&settings, &workspace_store, update)
+            .await
+            .expect_err("host update should be denied");
+
+    let WorkspaceExecutionConfigUpdateError::RequestOrPolicy(error) = err else {
+        panic!("expected request/policy classification");
+    };
+    assert!(crate::is_execution_policy_denial(&error));
 }
 
 #[test]

@@ -20,6 +20,57 @@ impl EffectiveExecutionSettingsError {
     }
 }
 
+#[derive(Debug)]
+pub enum WorkspaceExecutionConfigSnapshotError {
+    InvalidWorkspaceConfig(anyhow::Error),
+    RequestOrPolicy(anyhow::Error),
+    Internal(anyhow::Error),
+}
+
+#[derive(Debug)]
+pub enum WorkspaceExecutionConfigUpdateError {
+    RequestOrPolicy(anyhow::Error),
+    Persistence(anyhow::Error),
+}
+
+pub async fn workspace_execution_config_snapshot_for_loaded_settings(
+    settings_data: &Settings,
+    workspace_store: &Store,
+) -> Result<workspace_config::ExecutionConfigSnapshot, WorkspaceExecutionConfigSnapshotError> {
+    let mut effective = settings_data.execution.clone().unwrap_or_default();
+    let mut source = "daemon_default".to_string();
+    match workspace_config::load_execution_settings_override(workspace_store).await {
+        Ok(Some(override_config)) => {
+            apply_workspace_execution_settings_override(&mut effective, &override_config)
+                .map_err(WorkspaceExecutionConfigSnapshotError::RequestOrPolicy)?;
+            source = "workspace".to_string();
+        }
+        Ok(None) => {}
+        Err(error) if workspace_config::is_workspace_runtime_settings_parse_error(&error) => {
+            return Err(WorkspaceExecutionConfigSnapshotError::InvalidWorkspaceConfig(error));
+        }
+        Err(error) => return Err(WorkspaceExecutionConfigSnapshotError::Internal(error)),
+    }
+    Ok(workspace_config::project_execution_config(
+        source, &effective,
+    ))
+}
+
+pub async fn update_workspace_execution_config_for_loaded_settings(
+    settings_data: &Settings,
+    workspace_store: &Store,
+    update: workspace_config::ExecutionConfigUpdateInput,
+) -> Result<(), WorkspaceExecutionConfigUpdateError> {
+    let effective = settings_data.execution.clone().unwrap_or_default();
+    let requested_override = workspace_config::execution_settings_override_from_update(&update);
+    validate_workspace_execution_settings_override(&effective, &requested_override)
+        .map_err(WorkspaceExecutionConfigUpdateError::RequestOrPolicy)?;
+    let update = workspace_config::execution_config_update_from_input(update);
+    workspace_config::update_execution_config(workspace_store, update)
+        .await
+        .map_err(WorkspaceExecutionConfigUpdateError::Persistence)
+}
+
 pub async fn effective_execution_settings_classified(
     global_store: &Store,
     workspace_store: &Store,
