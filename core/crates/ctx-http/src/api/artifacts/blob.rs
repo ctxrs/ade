@@ -3,7 +3,7 @@ use axum::extract::{Path, Request, State};
 use axum::http::{header, StatusCode};
 use axum::response::Response;
 use axum::Json;
-use ctx_session_tools::{
+use ctx_session_artifacts::{
     SESSION_IMAGE_BLOB_MAX_BYTES, SESSION_IMAGE_BLOB_MULTIPART_MAX_BYTES,
     SESSION_IMAGE_BLOB_TOO_LARGE_MESSAGE,
 };

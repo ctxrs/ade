@@ -1,40 +1,14 @@
-use chrono::Utc;
-use ctx_session_tools::SESSION_IMAGE_BLOB_MAX_BYTES;
-use sha2::Digest;
+pub use ctx_session_artifacts::{
+    BlobReadError, ImageBlobStoreError, StoredImageBlob, SESSION_IMAGE_BLOB_MAX_BYTES,
+};
 use tokio::fs::File;
 
 use crate::daemon::{CoreHandle, DaemonState};
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum ImageBlobStoreError {
-    PayloadTooLarge,
-    UnsupportedMediaType,
-    Internal,
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum BlobReadError {
-    NotFound,
-    Internal,
-}
-
-#[derive(Debug, Clone)]
-pub struct StoredImageBlob {
-    pub blob_id: String,
-    pub sha256: String,
-    pub bytes: i64,
-    pub mime_type: String,
-    pub name: Option<String>,
-}
 
 pub struct OpenedBlob {
     pub file: File,
     pub mime_type: String,
     pub name: Option<String>,
-}
-
-fn blobs_dir(data_root: &std::path::Path) -> std::path::PathBuf {
-    data_root.join("blobs")
 }
 
 pub(in crate::daemon) async fn store_image_blob_for_state(
@@ -43,52 +17,14 @@ pub(in crate::daemon) async fn store_image_blob_for_state(
     mime_type: &str,
     name: Option<&str>,
 ) -> Result<StoredImageBlob, ImageBlobStoreError> {
-    if bytes.len() > SESSION_IMAGE_BLOB_MAX_BYTES {
-        return Err(ImageBlobStoreError::PayloadTooLarge);
-    }
-    if !mime_type.starts_with("image/") {
-        return Err(ImageBlobStoreError::UnsupportedMediaType);
-    }
-
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(bytes);
-    let sha256 = hex::encode(hasher.finalize());
-    let blob_id = uuid::Uuid::new_v4().to_string();
-
-    let dir = blobs_dir(&state.core.data_root);
-    tokio::fs::create_dir_all(&dir)
-        .await
-        .map_err(|_| ImageBlobStoreError::Internal)?;
-    let path = dir.join(&blob_id);
-    let tmp = dir.join(format!("{blob_id}.tmp"));
-
-    tokio::fs::write(&tmp, bytes)
-        .await
-        .map_err(|_| ImageBlobStoreError::Internal)?;
-    tokio::fs::rename(&tmp, &path)
-        .await
-        .map_err(|_| ImageBlobStoreError::Internal)?;
-
-    state
-        .global_store()
-        .insert_blob(
-            &blob_id,
-            &sha256,
-            bytes.len() as i64,
-            mime_type,
-            name,
-            Utc::now(),
-        )
-        .await
-        .map_err(|_| ImageBlobStoreError::Internal)?;
-
-    Ok(StoredImageBlob {
-        blob_id,
-        sha256,
-        bytes: bytes.len() as i64,
-        mime_type: mime_type.to_string(),
-        name: name.map(str::to_string),
-    })
+    ctx_session_artifacts::store_image_blob(
+        &state.core.data_root,
+        state.global_store(),
+        bytes,
+        mime_type,
+        name,
+    )
+    .await
 }
 
 impl CoreHandle {
@@ -102,22 +38,16 @@ impl CoreHandle {
     }
 
     pub async fn open_blob_for_read(&self, id: &str) -> Result<OpenedBlob, BlobReadError> {
-        let Some((_sha256, mime_type, _bytes, name, _created_at)) = self
-            .get_blob(id)
-            .await
-            .map_err(|_| BlobReadError::Internal)?
-        else {
-            return Err(BlobReadError::NotFound);
-        };
-
-        let path = blobs_dir(self.data_root()).join(id);
-        let file = File::open(&path)
+        let resolved =
+            ctx_session_artifacts::resolve_blob_for_read(self.data_root(), self.global_store(), id)
+                .await?;
+        let file = File::open(&resolved.path)
             .await
             .map_err(|_| BlobReadError::NotFound)?;
         Ok(OpenedBlob {
             file,
-            mime_type,
-            name,
+            mime_type: resolved.mime_type,
+            name: resolved.name,
         })
     }
 }
@@ -128,6 +58,7 @@ mod tests {
 
     use super::*;
     use crate::test_support::TestDaemon;
+    use sha2::Digest;
     use tokio::io::AsyncReadExt;
 
     async fn test_core() -> (tempfile::TempDir, CoreHandle) {
@@ -165,7 +96,7 @@ mod tests {
         assert_eq!(metadata.2, 9);
         assert_eq!(metadata.3.as_deref(), Some("image.png"));
 
-        let path = blobs_dir(core.data_root()).join(&stored.blob_id);
+        let path = ctx_session_artifacts::blobs_dir(core.data_root()).join(&stored.blob_id);
         assert_eq!(
             tokio::fs::read(path).await.expect("blob bytes"),
             b"png-bytes"
@@ -223,7 +154,7 @@ mod tests {
             .store_image_blob(b"jpeg-bytes", "image/jpeg", None)
             .await
             .expect("store image blob");
-        let path = blobs_dir(core.data_root()).join(&stored.blob_id);
+        let path = ctx_session_artifacts::blobs_dir(core.data_root()).join(&stored.blob_id);
         match tokio::fs::remove_file(path).await {
             Ok(()) => {}
             Err(error) if error.kind() == ErrorKind::NotFound => {}

@@ -37,6 +37,7 @@ const AGENT_GATE_CRATES = [
   "ctx-sandbox-contract",
   "ctx-sandbox-container-runtime",
   "ctx-sandbox-materialization",
+  "ctx-session-artifacts",
   "ctx-session-service",
   "ctx-subagent-service",
   "ctx-session-tools",

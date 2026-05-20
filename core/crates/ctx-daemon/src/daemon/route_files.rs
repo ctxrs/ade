@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum RouteFileDownloadError {
@@ -20,12 +20,6 @@ pub async fn path_resolves_within_root(path: &Path, root: &Path) -> bool {
         return false;
     };
     canonical_path.starts_with(&canonical_root)
-}
-
-pub async fn canonicalize_existing_or_raw(path: &Path) -> PathBuf {
-    tokio::fs::canonicalize(path)
-        .await
-        .unwrap_or_else(|_| path.to_path_buf())
 }
 
 pub async fn read_text_route_file(

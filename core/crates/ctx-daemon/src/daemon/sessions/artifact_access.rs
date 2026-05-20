@@ -6,7 +6,6 @@ use ctx_core::models::{Artifact, Session, SessionEventType, Worktree};
 use ctx_store::Store;
 
 use crate::daemon::handle::SessionsHandle;
-use crate::daemon::route_files::canonicalize_existing_or_raw;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum SessionImageBlobStoreError {
@@ -144,26 +143,14 @@ impl SessionsHandle {
         session: &Session,
         path: &Path,
     ) -> anyhow::Result<bool> {
-        let roots = session_artifact_allowed_roots(self, store, session).await?;
-        let canonical = match tokio::fs::canonicalize(path).await {
-            Ok(canonical) => canonical,
-            Err(_) => return Ok(false),
-        };
-        Ok(roots.iter().any(|root| canonical.starts_with(root)))
+        let session_spool_dir = self.session_tool_output_spool_dir(session.id);
+        ctx_session_artifacts::session_artifact_path_is_accessible(
+            store,
+            session,
+            &session_spool_dir,
+            path,
+        )
+        .await
+        .map_err(Into::into)
     }
-}
-
-pub(super) async fn session_artifact_allowed_roots(
-    handle: &SessionsHandle,
-    store: &Store,
-    session: &Session,
-) -> anyhow::Result<Vec<PathBuf>> {
-    let mut roots = Vec::with_capacity(2);
-    if let Some(worktree) = store.get_worktree(session.worktree_id).await? {
-        roots.push(canonicalize_existing_or_raw(&PathBuf::from(worktree.root_path)).await);
-    }
-    roots.push(
-        canonicalize_existing_or_raw(&handle.session_tool_output_spool_dir(session.id)).await,
-    );
-    Ok(roots)
 }

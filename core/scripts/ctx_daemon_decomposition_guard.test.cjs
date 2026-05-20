@@ -128,6 +128,7 @@ test("package shape boundary classifier covers existing and planned service owne
   assert.equal(isPackageShapeBoundaryCrate("ctx-mobile-access-service"), true);
   assert.equal(isPackageShapeBoundaryCrate("ctx-run-archive-service"), true);
   assert.equal(isPackageShapeBoundaryCrate("ctx-run-scheduler"), true);
+  assert.equal(isPackageShapeBoundaryCrate("ctx-session-artifacts"), true);
   assert.equal(isPackageShapeBoundaryCrate("ctx-session-runner"), true);
   assert.equal(isPackageShapeBoundaryCrate("ctx-core"), false);
 });
