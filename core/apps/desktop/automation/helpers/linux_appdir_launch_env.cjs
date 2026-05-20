@@ -88,6 +88,9 @@ const resolveLinuxAppDirExecutablePath = ({
 } = {}) => {
   if (process.platform !== "linux") return resolveConfiguredPath(appPath, pathImpl);
   const appExecutablePath = resolveConfiguredPath(appPath, pathImpl);
+  if (pathImpl.basename(appExecutablePath) === "AppRun") {
+    return appExecutablePath;
+  }
   const appDir = resolveLinuxAppDirFromExplicitPath({ appPath: appExecutablePath, fsImpl, pathImpl });
   if (!appDir) return appExecutablePath;
   return existingExecutableFile(pathImpl.join(appDir, "usr", "bin", "ctx"), fsImpl)
@@ -238,9 +241,10 @@ const createLinuxAppDirLaunchWrapper = ({
   const appExecutablePath = resolveConfiguredPath(appPath, pathImpl);
   const appDir = resolveLinuxAppDirFromPath({ appPath: appExecutablePath, env, fsImpl, pathImpl });
   if (!appExecutablePath || !appDir) return appPath;
-  const appLaunchTargetPath =
-    resolveLinuxAppDirExecutablePath({ appPath: appExecutablePath, fsImpl, pathImpl })
-    || appExecutablePath;
+  const appLaunchTargetPath = pathImpl.basename(appExecutablePath) === "AppRun"
+    ? appExecutablePath
+    : resolveLinuxAppDirExecutablePath({ appPath: appExecutablePath, fsImpl, pathImpl })
+      || appExecutablePath;
   const launchEnv = {
     ...env,
     ...buildLinuxAppDirLaunchEnv({ appPath: appExecutablePath, env, fsImpl, pathImpl }),
@@ -261,6 +265,7 @@ const createLinuxAppDirLaunchWrapper = ({
     "#!/bin/sh",
     "set -eu",
     ...entries.map(([key, value]) => `export ${key}=${shellQuote(value)}`),
+    `cd ${shellQuote(appDir)}`,
     "if [ -n \"${CTX_AUTOMATION_APP_LAUNCH_LOG:-}\" ]; then",
     "  mkdir -p \"$(dirname \"$CTX_AUTOMATION_APP_LAUNCH_LOG\")\"",
     "  printf '%s\\n' \"launching Linux AppDir desktop app\" >> \"$CTX_AUTOMATION_APP_LAUNCH_LOG\"",

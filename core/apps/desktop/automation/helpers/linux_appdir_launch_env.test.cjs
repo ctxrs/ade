@@ -94,15 +94,17 @@ test("linux AppDir launch wrapper materializes explicit env before AppRun", asyn
       assert.match(wrapper, /launching Linux AppDir desktop app/);
       assert.match(wrapper, /launch target requested=/);
       assert.match(wrapper, /desktop app exited status=/);
-      assert.match(wrapper, new RegExp(`'${innerBinary.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}' "\\$@" >> "\\$CTX_AUTOMATION_APP_LAUNCH_LOG" 2>&1`));
-      assert.match(wrapper, new RegExp(`exec '${innerBinary.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}' "\\$@"`));
+      assert.match(wrapper, new RegExp(`cd '${appDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}'`));
+      assert.match(wrapper, new RegExp(`'${appRun.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}' "\\$@" >> "\\$CTX_AUTOMATION_APP_LAUNCH_LOG" 2>&1`));
+      assert.match(wrapper, new RegExp(`exec '${appRun.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}' "\\$@"`));
+      assert.doesNotMatch(wrapper, new RegExp(`'${innerBinary.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}' "\\$@"`));
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
 });
 
-test("linux AppDir automation executable resolves inner desktop binary", async () => {
+test("linux AppDir automation executable preserves AppRun launch contract", async () => {
   await withPlatform("linux", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-linux-appdir-binary-"));
     try {
@@ -113,7 +115,7 @@ test("linux AppDir automation executable resolves inner desktop binary", async (
       fs.writeFileSync(appRun, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
       fs.writeFileSync(innerBinary, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
 
-      assert.equal(resolveLinuxAppDirExecutablePath({ appPath: appRun, env: {} }), innerBinary);
+      assert.equal(resolveLinuxAppDirExecutablePath({ appPath: appRun, env: {} }), appRun);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

@@ -155,8 +155,10 @@ test("wdio Linux shipped-app uses AppDir launcher wrapper for WebDriver applicat
     const wrapper = fs.readFileSync(resolvedPath, "utf8");
     assert.match(wrapper, new RegExp(`export APPDIR='${escapeRegExp(appDir)}'`));
     assert.match(wrapper, /launch target requested=/);
-    assert.match(wrapper, new RegExp(`'${escapeRegExp(innerBinary)}' "\\$@" >> "\\$CTX_AUTOMATION_APP_LAUNCH_LOG" 2>&1`));
-    assert.match(wrapper, new RegExp(`exec '${escapeRegExp(innerBinary)}' "\\$@"`));
+    assert.match(wrapper, new RegExp(`cd '${escapeRegExp(appDir)}'`));
+    assert.match(wrapper, new RegExp(`'${escapeRegExp(appPath)}' "\\$@" >> "\\$CTX_AUTOMATION_APP_LAUNCH_LOG" 2>&1`));
+    assert.match(wrapper, new RegExp(`exec '${escapeRegExp(appPath)}' "\\$@"`));
+    assert.doesNotMatch(wrapper, new RegExp(`'${escapeRegExp(innerBinary)}' "\\$@"`));
     assert.ok(fs.existsSync(path.join(tmp, "desktop-app-launchers")));
 
     const script = fs.readFileSync(configPath, "utf8");

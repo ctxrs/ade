@@ -477,6 +477,33 @@ prepare_webkit_runtime() {
   command -v WebKitWebDriver || return
 }
 
+assert_appdir_webkit_helpers() {
+  local app_dir="$1"
+  local label="$2"
+  local helper=""
+  local helper_path=""
+  local found=""
+
+  for helper in WebKitNetworkProcess WebKitWebProcess; do
+    found=""
+    for helper_path in \
+      "${app_dir}/lib/x86_64-linux-gnu/webkit2gtk-4.1/${helper}" \
+      "${app_dir}/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/${helper}"; do
+      if [[ -f "${helper_path}" ]]; then
+        chmod +x "${helper_path}" || true
+        if [[ -x "${helper_path}" ]]; then
+          found="${helper_path}"
+          break
+        fi
+      fi
+    done
+    if [[ -z "${found}" ]]; then
+      echo "error: extracted ${label} AppDir is missing executable WebKit helper ${helper}; expected ${app_dir}/lib/x86_64-linux-gnu/webkit2gtk-4.1/${helper} or ${app_dir}/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/${helper}" >&2
+      return 1
+    fi
+  done
+}
+
 AUTOMATION_APP_DIR=""
 AUTOMATION_APP_PATH=""
 
@@ -500,6 +527,9 @@ extract_appimage_for_automation() {
   local candidate="${app_dir}/AppRun"
   if [[ ! -x "${candidate}" ]]; then
     echo "error: extracted AppImage is missing executable AppRun under ${app_dir}" >&2
+    return 1
+  fi
+  if ! assert_appdir_webkit_helpers "${app_dir}" "${label}"; then
     return 1
   fi
   AUTOMATION_APP_DIR="${app_dir}"

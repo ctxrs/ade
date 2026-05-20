@@ -2894,11 +2894,20 @@ describe("SessionSupervisor", () => {
       has_more_history: false,
       history_cursor: null,
     };
-    getSessionHeadMock.mockImplementationOnce(() => new Promise<SessionHeadSnapshot>(() => {}));
+    const pendingActiveHydrate = new Promise<SessionHeadSnapshot>(() => {});
+    getSessionHeadMock.mockImplementation((id) => {
+      if (id === sessionId) {
+        return pendingActiveHydrate;
+      }
+      throw new Error(`unexpected getSessionHead call: ${id}`);
+    });
 
     const sup = new SessionSupervisor();
     sup.openSession(sessionId, { mode: "active" });
-    await waitForSessionHeadCalls(1);
+    await waitForCondition(
+      () => getSessionHeadMock.mock.calls.some(([id]) => id === sessionId),
+      SUPERVISOR_ASYNC_WAIT_TIMEOUT_MS,
+    );
 
     const internals = asSupervisorInternals(sup);
     internals.handleReplicaPatches([

@@ -136,6 +136,18 @@ test("Linux clean workspace proof passes expected daemon identity into automatio
   assert.match(wizardSpec, /assertExpectedDaemonIdentity\(\{ label: "release_clean_workspace_codex_sandbox" \}\)/);
 });
 
+test("Linux updater proof fails fast when extracted AppDir lacks WebKit helpers", () => {
+  assert.match(scriptText, /assert_appdir_webkit_helpers\(\) \{/);
+  assert.match(scriptText, /for helper in WebKitNetworkProcess WebKitWebProcess; do/);
+  assert.match(scriptText, /\$\{app_dir\}\/lib\/x86_64-linux-gnu\/webkit2gtk-4\.1\/\$\{helper\}/);
+  assert.match(scriptText, /\$\{app_dir\}\/usr\/lib\/x86_64-linux-gnu\/webkit2gtk-4\.1\/\$\{helper\}/);
+  assert.match(scriptText, /extracted \$\{label\} AppDir is missing executable WebKit helper \$\{helper\}/);
+  assert.match(
+    scriptText,
+    /if ! assert_appdir_webkit_helpers "\$\{app_dir\}" "\$\{label\}"; then\s+return 1\s+fi/,
+  );
+});
+
 test("release Codex sandbox workspace smoke requires selected install progress proof", () => {
   const wizardSpec = read("core/apps/desktop/automation/specs/workspace-wizard.spec.cjs");
   assert.match(
