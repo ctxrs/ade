@@ -1256,10 +1256,10 @@ test("bazel pilot falls back to the repo-managed bazelisk shim when no direct pn
   );
 });
 
-test("bazel pilot prefers the direct pnpm Bazelisk script over the repo shim when both exist", () => {
+test("bazel pilot prefers the repo Bazelisk shim over the direct pnpm script when both exist", () => {
   const repoRoot = "/tmp/ctx-monorepo";
-  const repoShim = path.join(repoRoot, "core", "node_modules", ".bin", process.platform === "win32" ? "bazelisk.cmd" : "bazelisk");
-  const expectedScript = path.join(
+  const expected = path.join(repoRoot, "core", "node_modules", ".bin", process.platform === "win32" ? "bazelisk.cmd" : "bazelisk");
+  const pnpmScript = path.join(
     repoRoot,
     "core",
     "node_modules",
@@ -1271,19 +1271,19 @@ test("bazel pilot prefers the direct pnpm Bazelisk script over the repo shim whe
     "bazelisk.js",
   );
   const existingPaths = new Set([
-    repoShim,
+    expected,
     path.join(repoRoot, "core", "node_modules", ".pnpm"),
-    expectedScript,
+    pnpmScript,
   ]);
   assert.equal(
     resolveBazeliskCommand({
       repoRoot,
       fileExists: (candidate) => existingPaths.has(candidate),
-      pathRunnable: (candidate) => candidate === expectedScript || candidate === repoShim,
+      pathRunnable: (candidate) => candidate === pnpmScript || candidate === expected,
       readDir: () => ["@bazel+bazelisk@1.28.1"],
       commandAvailable: () => false,
     }),
-    expectedScript,
+    expected,
   );
 });
 

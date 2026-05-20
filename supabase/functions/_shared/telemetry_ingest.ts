@@ -310,14 +310,6 @@ function pickBoolean(...values: Array<unknown>): boolean | null {
   return null;
 }
 
-function stringProperty(
-  properties: Record<string, unknown>,
-  key: string,
-): string | null {
-  const value = properties[key];
-  return typeof value === "string" ? value.trim() : null;
-}
-
 function normalizeTrafficClass(value: unknown): TelemetryTrafficClass | null {
   if (typeof value !== "string") return null;
   const normalized = value.trim().toLowerCase();
@@ -330,6 +322,7 @@ function classifyTraffic(
   eventName: string,
   appVersion: string,
   providerId: string | null,
+  modelId: string | null,
   analyticsEnvironment: string | null,
   properties: Record<string, unknown>,
 ): TelemetryTrafficClass {
@@ -337,29 +330,12 @@ function classifyTraffic(
   const explicit = normalizeTrafficClass(properties.traffic_class);
   if (explicit && explicit !== "user") return explicit;
   if (providerId === "fake") return "synthetic";
+  if (modelId === "fake-model") return "synthetic";
   if (appVersion.startsWith("0.0.0")) return "synthetic";
   if (analyticsEnvironment && analyticsEnvironment !== "production") {
     return "internal";
   }
   return explicit ?? "user";
-}
-
-function shouldMirrorPostHogCapture(
-  eventName: string,
-  properties: Record<string, unknown>,
-): boolean {
-  if (eventName === PIPELINE_SMOKE_EVENT_NAME) return true;
-  if (stringProperty(properties, "analytics_environment") !== "production") {
-    return false;
-  }
-  if (stringProperty(properties, "traffic_class") !== "user") return false;
-  if (stringProperty(properties, "origin_runtime") !== "desktop") return false;
-  if (stringProperty(properties, "surface") !== "desktop") return false;
-  if (stringProperty(properties, "provider_id") === "fake") return false;
-  if (stringProperty(properties, "app_version")?.startsWith("0.0.0")) {
-    return false;
-  }
-  return true;
 }
 
 export async function buildTelemetryIngestPlan(
@@ -508,23 +484,38 @@ export async function buildTelemetryIngestPlan(
       eventName,
       appVersion,
       providerId,
+      modelId,
       analyticsEnvironment,
       properties,
     );
 
-    const normalizedProperties = sanitizeProperties({
-      ...properties,
+    const canonicalProperties: Record<string, TelemetryScalar> = {
       event_version: eventVersion,
+      plane,
       origin_runtime: originRuntime,
+      broker_runtime: brokerRuntime,
       source: sourceName,
       surface,
+      provider_id: providerId,
+      model_id: modelId,
       analytics_environment: analyticsEnvironment,
       traffic_class: trafficClass,
       env_target: envTarget,
+      status,
+      success,
+      duration_ms: durationMs,
       duration_bucket: durationBucket,
       session_root_kind: sessionRootKind,
+      app_version: appVersion,
+      os,
+      arch,
       ingested_at: nowIso,
-    });
+    };
+    const normalizedProperties: Record<string, TelemetryScalar> = {
+      ...canonicalProperties,
+      ...properties,
+      ...canonicalProperties,
+    };
 
     rows.push({
       event_id: eventId,
@@ -555,33 +546,23 @@ export async function buildTelemetryIngestPlan(
       properties: normalizedProperties,
     });
 
-    const posthogProperties = {
+    const posthogCanonicalProperties: Record<string, TelemetryScalar> = {
       origin_install_id_hash: originInstallIdHash,
       broker_install_id_hash: brokerInstallIdHash,
-      plane,
-      origin_runtime: originRuntime,
-      broker_runtime: brokerRuntime,
+      ...canonicalProperties,
       source: sourceName ?? "unknown",
-      surface,
-      env_target: envTarget,
-      status,
-      success,
-      duration_ms: durationMs,
-      duration_bucket: durationBucket,
-      session_root_kind: sessionRootKind,
-      app_version: appVersion,
-      os,
-      arch,
-      ...normalizedProperties,
     };
-    if (shouldMirrorPostHogCapture(eventName, posthogProperties)) {
-      posthogCaptures.push({
-        eventId,
-        event: eventName,
-        distinctId: `install:${originInstallIdHash}`,
-        properties: posthogProperties,
-      });
-    }
+    const posthogProperties = {
+      ...posthogCanonicalProperties,
+      ...normalizedProperties,
+      ...posthogCanonicalProperties,
+    };
+    posthogCaptures.push({
+      eventId,
+      event: eventName,
+      distinctId: `install:${originInstallIdHash}`,
+      properties: posthogProperties,
+    });
   }
 
   return { rows, posthogCaptures };

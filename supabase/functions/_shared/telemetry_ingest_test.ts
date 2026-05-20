@@ -7,6 +7,7 @@ import {
   selectPostHogCapturesForInsertedRows,
   TelemetryIngestError,
 } from "./telemetry_ingest.ts";
+import { postHogCaptureTargetNames } from "./posthog.ts";
 
 const basePayload = () => ({
   broker_install_id: "broker-install-1",
@@ -124,10 +125,11 @@ Deno.test("buildTelemetryIngestPlan accepts daemon-origin events by using broker
     plan.rows[0].origin_install_id_hash,
     plan.rows[0].broker_install_id_hash,
   );
-  assertEquals(plan.posthogCaptures.length, 0);
+  assertEquals(plan.posthogCaptures.length, 1);
+  assertEquals(plan.posthogCaptures[0].eventId, plan.rows[0].event_id);
 });
 
-Deno.test("buildTelemetryIngestPlan stores but does not mirror staging client events", async () => {
+Deno.test("buildTelemetryIngestPlan queues staging client events for canary routing", async () => {
   const payload = basePayload();
   const properties = payload.events[0].properties as Record<string, unknown>;
   properties.analytics_environment = "staging";
@@ -137,10 +139,11 @@ Deno.test("buildTelemetryIngestPlan stores but does not mirror staging client ev
   assertEquals(plan.rows.length, 1);
   assertEquals(plan.rows[0].properties.analytics_environment, "staging");
   assertEquals(plan.rows[0].traffic_class, "internal");
-  assertEquals(plan.posthogCaptures.length, 0);
+  assertEquals(plan.posthogCaptures.length, 1);
+  assertEquals(plan.posthogCaptures[0].properties.traffic_class, "internal");
 });
 
-Deno.test("buildTelemetryIngestPlan stores but does not mirror fake provider events", async () => {
+Deno.test("buildTelemetryIngestPlan queues fake provider events for canary routing", async () => {
   const payload = basePayload();
   const event = payload.events[0] as Record<string, unknown>;
   event.event_name = "turn_started";
@@ -153,10 +156,27 @@ Deno.test("buildTelemetryIngestPlan stores but does not mirror fake provider eve
   assertEquals(plan.rows.length, 1);
   assertEquals(plan.rows[0].provider_id, "fake");
   assertEquals(plan.rows[0].traffic_class, "synthetic");
-  assertEquals(plan.posthogCaptures.length, 0);
+  assertEquals(plan.posthogCaptures.length, 1);
+  assertEquals(plan.posthogCaptures[0].properties.provider_id, "fake");
 });
 
-Deno.test("buildTelemetryIngestPlan stores but does not mirror local build events", async () => {
+Deno.test("buildTelemetryIngestPlan copies top-level fake model into routing properties", async () => {
+  const payload = basePayload();
+  const event = payload.events[0] as Record<string, unknown>;
+  event.event_name = "provider_call";
+  event.model_id = "fake-model";
+
+  const plan = await buildTelemetryIngestPlan(payload, { idSalt: "test-salt" });
+
+  assertEquals(plan.rows.length, 1);
+  assertEquals(plan.rows[0].model_id, "fake-model");
+  assertEquals(plan.rows[0].traffic_class, "synthetic");
+  assertEquals(plan.posthogCaptures.length, 1);
+  assertEquals(plan.posthogCaptures[0].properties.model_id, "fake-model");
+  assertEquals(plan.posthogCaptures[0].properties.traffic_class, "synthetic");
+});
+
+Deno.test("buildTelemetryIngestPlan queues local build events for canary routing", async () => {
   const payload = basePayload();
   payload.events[0].app_version = "0.0.0-dev";
 
@@ -165,7 +185,60 @@ Deno.test("buildTelemetryIngestPlan stores but does not mirror local build event
   assertEquals(plan.rows.length, 1);
   assertEquals(plan.rows[0].app_version, "0.0.0-dev");
   assertEquals(plan.rows[0].traffic_class, "synthetic");
-  assertEquals(plan.posthogCaptures.length, 0);
+  assertEquals(plan.posthogCaptures.length, 1);
+  assertEquals(plan.posthogCaptures[0].properties.app_version, "0.0.0-dev");
+});
+
+Deno.test("buildTelemetryIngestPlan lets canonical fields override client properties before routing", async () => {
+  const payload = basePayload();
+  const event = payload.events[0] as Record<string, unknown>;
+  event.event_name = "incident_reported";
+  event.plane = "incident";
+  const properties = event.properties as Record<string, unknown>;
+  properties.plane = "product";
+  properties.app_version = "9.9.9";
+
+  const plan = await buildTelemetryIngestPlan(payload, { idSalt: "test-salt" });
+
+  assertEquals(plan.rows.length, 1);
+  assertEquals(plan.rows[0].plane, "incident");
+  assertEquals(plan.rows[0].properties.plane, "incident");
+  assertEquals(plan.rows[0].properties.app_version, "1.2.3");
+  assertEquals(plan.posthogCaptures[0].properties.plane, "incident");
+  assertEquals(plan.posthogCaptures[0].properties.app_version, "1.2.3");
+  assertEquals(
+    postHogCaptureTargetNames(
+      plan.posthogCaptures[0].event,
+      plan.posthogCaptures[0].properties,
+    ),
+    [],
+  );
+});
+
+Deno.test("buildTelemetryIngestPlan preserves canonical routing fields with max-size client properties", async () => {
+  const payload = basePayload();
+  const event = payload.events[0] as Record<string, unknown>;
+  event.event_name = "provider_call";
+  event.provider_id = "fake";
+  const properties = event.properties as Record<string, unknown>;
+  for (let idx = 0; idx < 48; idx += 1) {
+    properties[`custom_${idx}`] = `value-${idx}`;
+  }
+
+  const plan = await buildTelemetryIngestPlan(payload, { idSalt: "test-salt" });
+
+  assertEquals(plan.rows.length, 1);
+  assertEquals(plan.rows[0].traffic_class, "synthetic");
+  assertEquals(plan.rows[0].properties.provider_id, "fake");
+  assertEquals(plan.posthogCaptures[0].properties.provider_id, "fake");
+  assertEquals(plan.posthogCaptures[0].properties.traffic_class, "synthetic");
+  assertEquals(
+    postHogCaptureTargetNames(
+      plan.posthogCaptures[0].event,
+      plan.posthogCaptures[0].properties,
+    ),
+    ["canary"],
+  );
 });
 
 Deno.test("buildTelemetryIngestPlan still mirrors pipeline smoke health events", async () => {
@@ -184,6 +257,7 @@ Deno.test("buildTelemetryIngestPlan still mirrors pipeline smoke health events",
   assertEquals(plan.rows.length, 1);
   assertEquals(plan.rows[0].traffic_class, "synthetic");
   assertEquals(plan.posthogCaptures.length, 1);
+  assertEquals(plan.posthogCaptures[0].properties.traffic_class, "synthetic");
 });
 
 Deno.test("selectPostHogCapturesForInsertedRows matches captures by event id after filtering", async () => {
@@ -216,7 +290,7 @@ Deno.test("selectPostHogCapturesForInsertedRows matches captures by event id aft
     [plan.rows[1]],
   );
 
-  assertEquals(plan.posthogCaptures.length, 1);
+  assertEquals(plan.posthogCaptures.length, 2);
   assertEquals(captures.length, 1);
   assertEquals(captures[0].eventId, "event-real");
 });

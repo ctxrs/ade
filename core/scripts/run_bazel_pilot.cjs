@@ -641,6 +641,10 @@ function resolveBazeliskCommand({
   readDir = fs.readdirSync,
   commandAvailable = commandExists,
 } = {}) {
+  const repoLocalShim = path.join(repoRoot, "core", "node_modules", ".bin", BAZELISK_SHIM);
+  if (fileExists(repoLocalShim) && pathRunnable(repoLocalShim)) {
+    return repoLocalShim;
+  }
   const pnpmBazeliskScript = resolvePnpmBazeliskScript({
     repoRoot,
     fileExists,
@@ -649,10 +653,6 @@ function resolveBazeliskCommand({
   });
   if (pnpmBazeliskScript) {
     return pnpmBazeliskScript;
-  }
-  const repoLocalShim = path.join(repoRoot, "core", "node_modules", ".bin", BAZELISK_SHIM);
-  if (fileExists(repoLocalShim) && pathRunnable(repoLocalShim)) {
-    return repoLocalShim;
   }
   for (const candidate of [BAZELISK_SHIM, "bazel"]) {
     if (commandAvailable(candidate, { env, cwd: repoRoot })) {

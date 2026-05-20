@@ -11,6 +11,19 @@ const DEFAULT_TIMEOUT_MS = 1500;
 const MAX_KEY_LENGTH = 80;
 const MAX_STRING_LENGTH = 256;
 const MAX_PROPERTY_COUNT = 32;
+const PIPELINE_SMOKE_EVENT_NAME = "analytics_pipeline_smoke";
+const TRUTHY_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
+const NON_USER_TRAFFIC_CLASSES = new Set([
+  "synthetic",
+  "internal",
+  "load_test",
+  "ci",
+]);
+const PRODUCTION_INCIDENT_EVENT_NAMES = new Set([
+  "api_error_observed",
+  "runtime_error_observed",
+  "session_load_fatal_observed",
+]);
 
 const readTrimmedEnv = (name: string): string | null => {
   const raw = Deno.env.get(name);
@@ -38,11 +51,28 @@ const hasLocalBuildVersion = (
   return false;
 };
 
-const shouldCapturePostHogEvent = (
+const isClassifiedTelemetryProperties = (
+  properties: Record<string, unknown> | undefined,
+): boolean => {
+  return Boolean(
+    stringProperty(properties, "origin_runtime") ||
+      stringProperty(properties, "broker_runtime") ||
+      stringProperty(properties, "plane") ||
+      stringProperty(properties, "traffic_class") ||
+      stringProperty(properties, "analytics_environment"),
+  );
+};
+
+const isTruthyEnv = (name: string): boolean => {
+  const raw = readTrimmedEnv(name);
+  return raw !== null && TRUTHY_ENV_VALUES.has(raw.toLowerCase());
+};
+
+const isProductionProductTraffic = (
   eventName: string,
   properties: Record<string, unknown> | undefined,
 ): boolean => {
-  if (eventName === "analytics_pipeline_smoke") return true;
+  if (eventName === PIPELINE_SMOKE_EVENT_NAME) return false;
   if (stringProperty(properties, "analytics_environment") !== "production") {
     return false;
   }
@@ -50,8 +80,61 @@ const shouldCapturePostHogEvent = (
   if (stringProperty(properties, "origin_runtime") !== "desktop") return false;
   if (stringProperty(properties, "surface") !== "desktop") return false;
   if (stringProperty(properties, "provider_id") === "fake") return false;
+  if (stringProperty(properties, "model_id") === "fake-model") return false;
   if (hasLocalBuildVersion(properties)) return false;
-  return true;
+  const plane = stringProperty(properties, "plane");
+  if (plane === "product") return true;
+  return plane === "incident" && PRODUCTION_INCIDENT_EVENT_NAMES.has(eventName);
+};
+
+const isCanaryTraffic = (
+  eventName: string,
+  properties: Record<string, unknown> | undefined,
+): boolean => {
+  if (eventName === PIPELINE_SMOKE_EVENT_NAME) return true;
+  if (!isClassifiedTelemetryProperties(properties)) return false;
+  const trafficClass = stringProperty(properties, "traffic_class");
+  if (trafficClass && NON_USER_TRAFFIC_CLASSES.has(trafficClass)) return true;
+  const analyticsEnvironment = stringProperty(
+    properties,
+    "analytics_environment",
+  );
+  if (analyticsEnvironment && analyticsEnvironment !== "production") {
+    return true;
+  }
+  if (stringProperty(properties, "provider_id") === "fake") return true;
+  if (stringProperty(properties, "model_id") === "fake-model") return true;
+  if (hasLocalBuildVersion(properties)) return true;
+  return false;
+};
+
+export const postHogCaptureTargetNames = (
+  eventName: string,
+  properties: Record<string, unknown> | undefined,
+): string[] => {
+  const normalizedEventName = eventName.trim();
+  const targets: string[] = [];
+  if (isProductionProductTraffic(normalizedEventName, properties)) {
+    targets.push("production");
+  }
+  if (isCanaryTraffic(normalizedEventName, properties)) {
+    targets.push("canary");
+  }
+  if (
+    normalizedEventName === PIPELINE_SMOKE_EVENT_NAME &&
+    isTruthyEnv("POSTHOG_PRODUCTION_CANARY_ENABLED")
+  ) {
+    targets.push("production");
+  }
+  return Array.from(new Set(targets));
+};
+
+const readProjectApiKeyForTarget = (target: string): string | null => {
+  if (target === "production") return readTrimmedEnv("POSTHOG_PROJECT_API_KEY");
+  if (target === "canary") {
+    return readTrimmedEnv("POSTHOG_CANARY_PROJECT_API_KEY");
+  }
+  return null;
 };
 
 const sanitizeProperties = (
@@ -80,40 +163,65 @@ const sanitizeProperties = (
 export const capturePostHogEvent = async (
   input: PostHogCaptureInput,
 ): Promise<void> => {
-  const projectApiKey = readTrimmedEnv("POSTHOG_PROJECT_API_KEY");
-  if (!projectApiKey) return;
-
   const eventName = input.event.trim();
   const distinctId = input.distinctId.trim();
   if (!eventName || !distinctId) return;
-  if (!shouldCapturePostHogEvent(eventName, input.properties)) return;
+
+  const targets = postHogCaptureTargetNames(eventName, input.properties)
+    .map((target) => ({
+      apiKey: readProjectApiKeyForTarget(target),
+      target,
+    }))
+    .filter((target): target is { apiKey: string; target: string } =>
+      target.apiKey !== null
+    );
+  if (targets.length === 0) return;
 
   const host = normalizeHost(
     readTrimmedEnv("POSTHOG_HOST") ?? DEFAULT_POSTHOG_HOST,
   );
-  const payload = {
-    api_key: projectApiKey,
-    event: eventName,
-    distinct_id: distinctId,
-    properties: {
-      ...sanitizeProperties(input.properties),
-      source: "supabase_edge",
-    },
-  };
+  const sanitizedProperties = sanitizeProperties(input.properties);
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
-  try {
-    const response = await fetch(`${host}/capture/`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw new Error(`PostHog capture HTTP ${response.status}`);
+  const seenTargets = new Set<string>();
+  const failures: Error[] = [];
+  for (const target of targets) {
+    const targetIdentity = `${target.target}:${target.apiKey}`;
+    if (seenTargets.has(targetIdentity)) continue;
+    seenTargets.add(targetIdentity);
+    const payload = {
+      api_key: target.apiKey,
+      event: eventName,
+      distinct_id: distinctId,
+      properties: {
+        ...sanitizedProperties,
+        posthog_target: target.target,
+        source: "supabase_edge",
+      },
+    };
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+    try {
+      const response = await fetch(`${host}/capture/`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        throw new Error(`PostHog capture HTTP ${response.status}`);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      failures.push(new Error(`PostHog ${target.target} capture failed: ${message}`));
+    } finally {
+      clearTimeout(timeoutId);
     }
-  } finally {
-    clearTimeout(timeoutId);
+  }
+  if (failures.length > 0) {
+    throw new AggregateError(
+      failures,
+      `PostHog capture failed for ${failures.length} target(s)`,
+    );
   }
 };
