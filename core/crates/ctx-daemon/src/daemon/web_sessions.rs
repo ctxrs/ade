@@ -9,14 +9,13 @@ use ctx_transport_runtime::web_sessions::{
 
 use crate::daemon::{DaemonState, TransportHandle};
 
-mod access;
 mod launch;
 mod route_contract;
-mod signal;
 
-pub use access::{
-    authorize_web_session_signal_access, mint_web_session_view_connect_path,
-    prepare_web_session_view_page, WebSessionAccessError,
+pub use ctx_transport_runtime::web_sessions::{
+    WebSessionAccessError, WebSessionActionError, WebSessionSignalBridgeError,
+    WebSessionSignalUpstream, WebSessionSignalViewerGuard, WebSessionViewConnectPath,
+    WebSessionViewPage,
 };
 pub use launch::{
     create_web_session, WebSessionLaunchError, WebSessionLaunchErrorKind, WebSessionLaunchRequest,
@@ -25,17 +24,10 @@ pub use route_contract::{
     WebSessionActionRouteRequest, WebSessionCreateRouteRequest, WebSessionListRouteQuery,
     WebSessionRouteError, WebSessionRouteErrorKind,
 };
-pub use signal::connect_web_session_signal_bridge;
 
 pub struct PreparedWebSessionWorker {
     pub node_runtime: ctx_managed_installs::NodeRuntime,
     pub bundle: WorkerBundle,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WebSessionActionError {
-    NotFound,
-    Internal,
 }
 
 pub async fn list_web_sessions(state: &Arc<DaemonState>) -> Vec<WebSessionInfo> {
@@ -43,8 +35,7 @@ pub async fn list_web_sessions(state: &Arc<DaemonState>) -> Vec<WebSessionInfo> 
 }
 
 pub async fn get_web_session(state: &Arc<DaemonState>, id: &str) -> Option<WebSessionInfo> {
-    let handle = state.transport.web_sessions.get(id).await?;
-    Some(handle.snapshot().await)
+    state.transport.web_sessions.get_info(id).await
 }
 
 pub async fn run_web_session(
@@ -52,10 +43,7 @@ pub async fn run_web_session(
     id: &str,
     payload: WebSessionRunRequest,
 ) -> Result<WebSessionRunResponse, WebSessionActionError> {
-    match state.transport.web_sessions.run(id, payload).await {
-        Ok(response) => Ok(response),
-        Err(_) => Err(classify_web_session_action_error(state, id).await),
-    }
+    state.transport.web_sessions.run_action(id, payload).await
 }
 
 pub async fn eval_web_session(
@@ -63,31 +51,14 @@ pub async fn eval_web_session(
     id: &str,
     payload: WebSessionRunRequest,
 ) -> Result<WebSessionRunResponse, WebSessionActionError> {
-    match state.transport.web_sessions.eval(id, payload).await {
-        Ok(response) => Ok(response),
-        Err(_) => Err(classify_web_session_action_error(state, id).await),
-    }
+    state.transport.web_sessions.eval_action(id, payload).await
 }
 
 pub async fn close_web_session(
     state: &Arc<DaemonState>,
     id: &str,
 ) -> Result<(), WebSessionActionError> {
-    match state.transport.web_sessions.close(id).await {
-        Ok(()) => Ok(()),
-        Err(_) => Err(classify_web_session_action_error(state, id).await),
-    }
-}
-
-async fn classify_web_session_action_error(
-    state: &Arc<DaemonState>,
-    id: &str,
-) -> WebSessionActionError {
-    if state.transport.web_sessions.get(id).await.is_none() {
-        WebSessionActionError::NotFound
-    } else {
-        WebSessionActionError::Internal
-    }
+    state.transport.web_sessions.close_action(id).await
 }
 
 pub async fn prepare_web_session_worker(
@@ -158,16 +129,24 @@ impl TransportHandle {
     pub async fn mint_web_session_view_connect_path(
         &self,
         id: &str,
-    ) -> Result<access::WebSessionViewConnectPath, WebSessionAccessError> {
-        mint_web_session_view_connect_path(&self.state, id).await
+    ) -> Result<WebSessionViewConnectPath, WebSessionAccessError> {
+        self.state
+            .transport
+            .web_sessions
+            .mint_view_connect_path(id)
+            .await
     }
 
     pub async fn prepare_web_session_view_page(
         &self,
         id: &str,
         token: Option<&str>,
-    ) -> Result<access::WebSessionViewPage, WebSessionAccessError> {
-        prepare_web_session_view_page(&self.state, id, token).await
+    ) -> Result<WebSessionViewPage, WebSessionAccessError> {
+        self.state
+            .transport
+            .web_sessions
+            .prepare_view_page(id, token)
+            .await
     }
 
     pub async fn authorize_web_session_signal_bridge(
@@ -175,19 +154,23 @@ impl TransportHandle {
         id: &str,
         token: Option<&str>,
     ) -> Result<(), WebSessionAccessError> {
-        authorize_web_session_signal_access(&self.state, id, token).await
+        self.state
+            .transport
+            .web_sessions
+            .authorize_signal_access(id, token)
+            .await
     }
 
     pub async fn connect_web_session_signal_bridge(
         &self,
         session_id: String,
-    ) -> Result<
-        (
-            signal::WebSessionSignalUpstream,
-            signal::WebSessionSignalViewerGuard,
-        ),
-        signal::WebSessionSignalBridgeError,
-    > {
-        connect_web_session_signal_bridge(Arc::clone(&self.state), session_id).await
+    ) -> Result<(WebSessionSignalUpstream, WebSessionSignalViewerGuard), WebSessionSignalBridgeError>
+    {
+        self.state
+            .transport
+            .web_sessions
+            .clone()
+            .connect_signal_bridge(session_id)
+            .await
     }
 }

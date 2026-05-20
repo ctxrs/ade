@@ -21,9 +21,11 @@ const REAPER_INTERVAL_SECS: u64 = 60;
 const WEB_SESSION_STREAM_TOKEN_TTL_SECS: i64 = 30;
 pub const WEB_SESSION_WORKER_AUTH_HEADER: &str = "x-ctx-worker-auth";
 
+mod access;
 mod handle;
 mod launch_policy;
 mod runtime_support;
+mod signal;
 mod types;
 mod view;
 mod worker_bundle;
@@ -31,6 +33,7 @@ mod worker_bundle;
 #[cfg(test)]
 mod tests;
 
+pub use access::{WebSessionAccessError, WebSessionViewConnectPath, WebSessionViewPage};
 pub use handle::WebSessionHandle;
 use handle::WebSessionRuntime;
 pub use launch_policy::{
@@ -42,12 +45,21 @@ use runtime_support::{
     allocate_port, build_run_payload, build_signal_connect_path, build_stream_connect_path,
     build_stream_path, log_stream,
 };
+pub use signal::{
+    WebSessionSignalBridgeError, WebSessionSignalUpstream, WebSessionSignalViewerGuard,
+};
 pub use types::{
     WebSessionCreateRequest, WebSessionInfo, WebSessionRunRequest, WebSessionRunResponse,
     WebSessionStatus, WebSessionViewport,
 };
 pub use view::render_web_session_view;
 pub use worker_bundle::ensure_worker_bundle;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WebSessionActionError {
+    NotFound,
+    Internal,
+}
 
 #[derive(Debug, Clone)]
 pub struct NodeRuntimeSpec {
@@ -134,6 +146,11 @@ impl WebSessionManager {
         sessions.get(id).cloned()
     }
 
+    pub async fn get_info(&self, id: &str) -> Option<WebSessionInfo> {
+        let handle = self.get(id).await?;
+        Some(handle.snapshot().await)
+    }
+
     pub async fn create(&self, req: WebSessionCreateRequest) -> Result<Arc<WebSessionHandle>> {
         let id = Uuid::new_v4().to_string();
         let worker_auth_secret = Uuid::new_v4().to_string();
@@ -195,6 +212,25 @@ impl WebSessionManager {
 
     pub async fn run(&self, id: &str, req: WebSessionRunRequest) -> Result<WebSessionRunResponse> {
         let handle = self.get(id).await.context("session not found")?;
+        self.run_for_handle(handle, req).await
+    }
+
+    pub async fn run_action(
+        &self,
+        id: &str,
+        req: WebSessionRunRequest,
+    ) -> Result<WebSessionRunResponse, WebSessionActionError> {
+        let handle = self.get(id).await.ok_or(WebSessionActionError::NotFound)?;
+        self.run_for_handle(handle, req)
+            .await
+            .map_err(|_| WebSessionActionError::Internal)
+    }
+
+    async fn run_for_handle(
+        &self,
+        handle: Arc<WebSessionHandle>,
+        req: WebSessionRunRequest,
+    ) -> Result<WebSessionRunResponse> {
         let _guard = handle.run_lock.lock().await;
         handle.touch().await;
 
@@ -236,6 +272,25 @@ impl WebSessionManager {
 
     pub async fn eval(&self, id: &str, req: WebSessionRunRequest) -> Result<WebSessionRunResponse> {
         let handle = self.get(id).await.context("session not found")?;
+        self.eval_for_handle(handle, req).await
+    }
+
+    pub async fn eval_action(
+        &self,
+        id: &str,
+        req: WebSessionRunRequest,
+    ) -> Result<WebSessionRunResponse, WebSessionActionError> {
+        let handle = self.get(id).await.ok_or(WebSessionActionError::NotFound)?;
+        self.eval_for_handle(handle, req)
+            .await
+            .map_err(|_| WebSessionActionError::Internal)
+    }
+
+    async fn eval_for_handle(
+        &self,
+        handle: Arc<WebSessionHandle>,
+        req: WebSessionRunRequest,
+    ) -> Result<WebSessionRunResponse> {
         let _guard = handle.run_lock.lock().await;
         handle.touch().await;
 
@@ -283,6 +338,18 @@ impl WebSessionManager {
         let handle = handle.context("session not found")?;
         handle.close().await?;
         Ok(())
+    }
+
+    pub async fn close_action(&self, id: &str) -> Result<(), WebSessionActionError> {
+        let handle = {
+            let mut sessions = self.sessions.lock().await;
+            sessions.remove(id)
+        }
+        .ok_or(WebSessionActionError::NotFound)?;
+        handle
+            .close()
+            .await
+            .map_err(|_| WebSessionActionError::Internal)
     }
 
     pub async fn close_for_task(

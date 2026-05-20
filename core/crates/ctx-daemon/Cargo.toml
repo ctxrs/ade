@@ -87,7 +87,6 @@ tar = "0.4"
 tempfile = "3"
 tokio.workspace = true
 tokio-stream.workspace = true
-tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 tokio-util.workspace = true
 toml = "0.8"
 toml_edit = "0.22"

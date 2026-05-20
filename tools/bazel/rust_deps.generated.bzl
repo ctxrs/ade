@@ -123,7 +123,6 @@ RUST_BAZEL_DEPS = {
             "@crates//:tempfile",
             "@crates//:tokio",
             "@crates//:tokio-stream",
-            "@crates//:tokio-tungstenite",
             "@crates//:tokio-util",
             "@crates//:toml",
             "@crates//:toml_edit",
