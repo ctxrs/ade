@@ -1,5 +1,5 @@
 use super::*;
-use ctx_daemon::daemon::CreateWorkspaceRequest;
+use ctx_route_contracts::workspaces::CreateWorkspaceRequest;
 
 pub(in crate::api) async fn create_workspace(
     State(workspaces): State<WorkspacesHandle>,

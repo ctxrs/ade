@@ -1,5 +1,4 @@
 use ctx_core::ids::WorktreeId;
-use serde::Deserialize;
 
 use crate::daemon::TextRouteDownload;
 
@@ -9,14 +8,7 @@ use super::common::{
     WorktreeRouteParams,
 };
 use super::responses::WorktreeRouteResponse;
-
-#[derive(Debug, Clone, Deserialize, Default, Eq, PartialEq)]
-pub struct WorkspaceFileCompletionsRouteQuery {
-    #[serde(default)]
-    pub(super) query: Option<String>,
-    #[serde(default)]
-    pub(super) limit: Option<u32>,
-}
+pub use ctx_route_contracts::workspaces::WorkspaceFileCompletionsRouteQuery;
 
 impl WorkspacesHandle {
     pub async fn get_worktree_for_route_params(
@@ -55,7 +47,8 @@ impl WorkspacesHandle {
         query: WorkspaceFileCompletionsRouteQuery,
     ) -> Result<Vec<String>, WorkspaceRouteError> {
         let workspace_id = params.parse_workspace_id()?;
-        self.complete_files_for_workspace(workspace_id, query.query, query.limit)
+        let (query, limit) = query.into_parts();
+        self.complete_files_for_workspace(workspace_id, query, limit)
             .await
             .map_err(file_completions_route_error)
     }

@@ -1,4 +1,4 @@
-use ctx_core::ids::{WorkspaceId, WorktreeId};
+use ctx_core::ids::WorkspaceId;
 use ctx_core::models::Workspace;
 use ctx_observability::logs;
 use ctx_settings_service::EffectiveExecutionSettingsError;
@@ -9,44 +9,7 @@ use super::super::{
     FileCompletionsError, FileCompletionsErrorKind, WorkspaceDeleteError,
     WorkspaceHarnessContainerError, WorkspaceHydrationError, WorkspaceRouteError, WorkspacesHandle,
 };
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct WorkspaceRouteParams {
-    workspace_id: String,
-}
-
-impl WorkspaceRouteParams {
-    pub fn new(workspace_id: impl Into<String>) -> Self {
-        Self {
-            workspace_id: workspace_id.into(),
-        }
-    }
-
-    pub(super) fn parse_workspace_id(&self) -> Result<WorkspaceId, WorkspaceRouteError> {
-        uuid::Uuid::parse_str(&self.workspace_id)
-            .map(WorkspaceId)
-            .map_err(|_| WorkspaceRouteError::bad_request("invalid workspace id"))
-    }
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct WorktreeRouteParams {
-    worktree_id: String,
-}
-
-impl WorktreeRouteParams {
-    pub fn new(worktree_id: impl Into<String>) -> Self {
-        Self {
-            worktree_id: worktree_id.into(),
-        }
-    }
-
-    pub(super) fn parse_worktree_id(&self) -> Result<WorktreeId, WorkspaceRouteError> {
-        uuid::Uuid::parse_str(&self.worktree_id)
-            .map(WorktreeId)
-            .map_err(|_| WorkspaceRouteError::bad_request("invalid worktree id"))
-    }
-}
+pub use ctx_route_contracts::workspaces::{WorkspaceRouteParams, WorktreeRouteParams};
 
 pub(super) fn workspace_hydration_route_error(
     error: WorkspaceHydrationError,

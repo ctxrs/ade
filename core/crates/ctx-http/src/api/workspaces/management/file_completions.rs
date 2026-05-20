@@ -3,7 +3,8 @@ use axum::http::StatusCode;
 use axum::Json;
 
 use crate::api::workspaces::{workspace_route_status, WorkspaceRouteParams};
-use ctx_daemon::daemon::{WorkspaceFileCompletionsRouteQuery, WorkspacesHandle};
+use ctx_daemon::daemon::WorkspacesHandle;
+use ctx_route_contracts::workspaces::WorkspaceFileCompletionsRouteQuery;
 
 pub(in crate::api) async fn workspace_file_completions(
     State(workspaces): State<WorkspacesHandle>,

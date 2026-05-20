@@ -23,22 +23,24 @@ pub(super) use worktrees::{get_worktree, get_worktree_bootstrap_logs};
 
 use super::errors::ApiErrorResp;
 use ctx_daemon::daemon::{
-    AgentSystemPromptConfigRouteResponse, CreateWorkspaceAttachmentRouteRequest,
-    DeleteWorkspaceAttachmentRouteRequest, SubagentSystemPromptConfigRouteResponse,
-    SyncWorkspaceAttachmentsRouteRequest, UpdateAgentSystemPromptConfigRouteRequest,
-    UpdateSubagentSystemPromptConfigRouteRequest, UpdateWorkspaceExecutionConfigRequest,
-    UpdateWorkspaceMergeQueueConfigRequest, UpdateWorkspacePrimaryBranchRequest,
+    AgentSystemPromptConfigRouteResponse, SubagentSystemPromptConfigRouteResponse,
+    UpdateAgentSystemPromptConfigRouteRequest, UpdateSubagentSystemPromptConfigRouteRequest,
+    UpdateWorkspaceExecutionConfigRequest, UpdateWorkspaceMergeQueueConfigRequest,
     UpdateWorkspaceProviderModelPreferenceRouteRequest, UpdateWorktreeBootstrapConfigRequest,
-    WorkspaceActiveHeadBatchRouteResponse, WorkspaceActiveSnapshotRouteResponse,
-    WorkspaceAttachmentRouteResponse, WorkspaceConfigUpdateResult,
     WorkspaceExecutionConfigSnapshot, WorkspaceHarnessContainerStatusRouteResponse,
-    WorkspaceMergeQueueConfigRouteResponse, WorkspacePrimaryBranchSnapshot,
-    WorkspacePromptConfigRouteParams, WorkspaceProviderModelPreferenceRouteParams,
-    WorkspaceProviderModelPreferenceRouteResponse, WorkspaceRouteError, WorkspaceRouteErrorKind,
-    WorkspaceRouteParams, WorkspaceRouteResponse, WorkspaceWorktreeBootstrapConfigRouteResponse,
-    WorkspacesHandle, WorktreeRouteParams, WorktreeRouteResponse,
+    WorkspaceMergeQueueConfigRouteResponse, WorkspacePromptConfigRouteParams,
+    WorkspaceProviderModelPreferenceRouteParams, WorkspaceProviderModelPreferenceRouteResponse,
+    WorkspaceWorktreeBootstrapConfigRouteResponse, WorkspacesHandle,
 };
 use ctx_observability::logs;
+use ctx_route_contracts::workspaces::{
+    CreateWorkspaceAttachmentRouteRequest, DeleteWorkspaceAttachmentRouteRequest,
+    SyncWorkspaceAttachmentsRouteRequest, UpdateWorkspacePrimaryBranchRequest,
+    WorkspaceActiveHeadBatchRouteResponse, WorkspaceActiveSnapshotRouteResponse,
+    WorkspaceAttachmentRouteResponse, WorkspaceConfigUpdateResult, WorkspacePrimaryBranchSnapshot,
+    WorkspaceRouteError, WorkspaceRouteErrorKind, WorkspaceRouteParams, WorkspaceRouteResponse,
+    WorktreeRouteParams, WorktreeRouteResponse,
+};
 
 #[cfg(test)]
 mod tests;

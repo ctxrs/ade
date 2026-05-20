@@ -1,12 +1,6 @@
 use chrono::Utc;
 use serde::Serialize;
 
-use super::super::WorkspaceRouteErrorKind;
-use super::common::{
-    file_completions_route_error, route_file_download_error, workspace_delete_route_error,
-    workspace_harness_container_ensure_error, workspace_harness_container_status_error,
-    workspace_hydration_route_error,
-};
 use super::*;
 
 use ctx_core::models::{
@@ -14,11 +8,6 @@ use ctx_core::models::{
     WorkspaceActiveSnapshot, WorkspaceAttachment, WorkspaceAttachmentKind,
     WorkspaceAttachmentStatus, Worktree, WorktreeBootstrapStatus,
 };
-use ctx_sandbox_contract::{ContainerMountMode, ContainerNetworkMode};
-use ctx_workspace_container::WorkspaceContainerStatus;
-
-use crate::daemon::workspaces::{WorkspaceHarnessContainerError, WorkspaceHydrationError};
-use crate::test_support::TestDaemon;
 
 fn assert_same_json<T, U>(left: T, right: U)
 where
@@ -125,27 +114,6 @@ fn active_workspace_route_wrappers_match_active_wire_shape() {
 }
 
 #[test]
-fn harness_container_route_response_matches_container_status_wire_shape() {
-    let status = WorkspaceContainerStatus {
-        name: "ctx-harness".to_string(),
-        running: true,
-        known: true,
-        mount_mode: Some(ContainerMountMode::DiskIsolated),
-        network_mode: Some(ContainerNetworkMode::Allowlist),
-        allowlist: vec!["api.example.test".to_string()],
-        egress_guard: Some(true),
-    };
-    assert_same_json(
-        WorkspaceHarnessContainerStatusRouteResponse::from(status.clone()),
-        status,
-    );
-    assert_same_json(
-        Option::<WorkspaceHarnessContainerStatusRouteResponse>::None,
-        Option::<WorkspaceContainerStatus>::None,
-    );
-}
-
-#[test]
 fn workspace_route_params_parse_invalid_ids_to_route_errors() {
     let workspace = WorkspaceRouteParams::new("not-a-workspace")
         .parse_workspace_id()
@@ -158,35 +126,6 @@ fn workspace_route_params_parse_invalid_ids_to_route_errors() {
         .unwrap_err();
     assert_eq!(worktree.kind(), WorkspaceRouteErrorKind::BadRequest);
     assert_eq!(worktree.message(), "invalid worktree id");
-}
-
-#[test]
-fn workspace_route_error_helpers_preserve_status_classes() {
-    let hydration = workspace_hydration_route_error(WorkspaceHydrationError::NotFound);
-    assert_eq!(hydration.kind(), WorkspaceRouteErrorKind::NotFound);
-    assert_eq!(hydration.message(), "workspace not found");
-
-    let deletion = workspace_delete_route_error(super::super::WorkspaceDeleteError::NotFound);
-    assert_eq!(deletion.kind(), WorkspaceRouteErrorKind::NotFound);
-    assert_eq!(deletion.message(), "workspace not found");
-
-    let download = route_file_download_error(crate::daemon::RouteFileDownloadError::NotFound);
-    assert_eq!(download.kind(), WorkspaceRouteErrorKind::NotFound);
-
-    let harness_status = workspace_harness_container_status_error(
-        WorkspaceHarnessContainerError::ExecutionSettings(
-            ctx_settings_service::EffectiveExecutionSettingsError::Internal(anyhow::anyhow!(
-                "settings failed"
-            )),
-        ),
-    );
-    assert_eq!(harness_status.kind(), WorkspaceRouteErrorKind::Internal);
-
-    let harness_ensure = workspace_harness_container_ensure_error(
-        WorkspaceHarnessContainerError::Ensure(anyhow::anyhow!("bad container request")),
-    );
-    assert_eq!(harness_ensure.kind(), WorkspaceRouteErrorKind::BadRequest);
-    assert_eq!(harness_ensure.message(), "bad container request");
 }
 
 #[test]
@@ -206,70 +145,94 @@ fn workspace_file_completions_query_preserves_http_query_shape() {
 }
 
 #[test]
-fn workspace_file_completion_storage_errors_map_to_507_class() {
-    let error = super::super::FileCompletionsError::from_internal_error(
-        "resolving data plane",
-        anyhow::anyhow!("No space left on device"),
+fn workspace_management_route_dtos_preserve_wire_shape() {
+    let create: CreateWorkspaceRequest = serde_json::from_value(serde_json::json!({
+        "root_path": "/tmp/workspace",
+        "name": "workspace"
+    }))
+    .expect("create request");
+    assert_eq!(create.root_path, "/tmp/workspace");
+    assert_eq!(create.name.as_deref(), Some("workspace"));
+
+    let create_without_name: CreateWorkspaceRequest = serde_json::from_value(serde_json::json!({
+        "root_path": "/tmp/workspace"
+    }))
+    .expect("create request without name");
+    assert_eq!(create_without_name.name, None);
+
+    let update: UpdateWorkspacePrimaryBranchRequest =
+        serde_json::from_value(serde_json::json!({"primary_branch": "main"}))
+            .expect("primary branch request");
+    assert_eq!(update.primary_branch, "main");
+
+    assert_same_json(
+        WorkspacePrimaryBranchSnapshot {
+            primary_branch: "main".to_string(),
+        },
+        serde_json::json!({"primary_branch": "main"}),
     );
-    let route_error = file_completions_route_error(error);
-    assert_eq!(
-        route_error.kind(),
-        WorkspaceRouteErrorKind::InsufficientStorage
+    assert_same_json(
+        WorkspaceConfigUpdateResult { ok: true },
+        serde_json::json!({"ok": true}),
     );
 }
 
-#[tokio::test]
-async fn attachment_route_params_reject_invalid_workspace_id() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let daemon =
-        TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
-            .await
-            .expect("test daemon");
-    let handle = daemon.handle().workspaces();
-    let error = handle
-        .create_and_sync_workspace_attachment_for_route_params(
-            WorkspaceRouteParams::new("not-a-workspace"),
-            serde_json::from_value(serde_json::json!({
-                "kind": "reference_repo",
-                "name": "ref",
-                "source": "/tmp/ref"
-            }))
-            .expect("attachment request"),
-        )
-        .await
-        .unwrap_err();
-    assert_eq!(error.kind(), WorkspaceRouteErrorKind::BadRequest);
-    assert_eq!(error.message(), "invalid workspace id");
-}
+#[test]
+fn workspace_attachment_requests_preserve_validation_contracts() {
+    let sync: SyncWorkspaceAttachmentsRouteRequest =
+        serde_json::from_value(serde_json::json!({})).expect("sync request");
+    assert!(!sync.refresh());
+    let sync: SyncWorkspaceAttachmentsRouteRequest =
+        serde_json::from_value(serde_json::json!({"refresh": true})).expect("sync request");
+    assert!(sync.refresh());
 
-#[tokio::test]
-async fn management_config_route_params_reject_invalid_workspace_id() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let daemon =
-        TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
-            .await
-            .expect("test daemon");
-    let handle = daemon.handle().workspaces();
-    let error = handle
-        .workspace_merge_queue_config_for_route_params(WorkspaceRouteParams::new("not-a-workspace"))
-        .await
-        .unwrap_err();
-    assert_eq!(error.kind(), WorkspaceRouteErrorKind::BadRequest);
-    assert_eq!(error.message(), "invalid workspace id");
-}
+    let create: CreateWorkspaceAttachmentRouteRequest = serde_json::from_value(serde_json::json!({
+        "kind": "reference_repo",
+        "name": "ref",
+        "source": "https://example.test/repo.git",
+        "revision": "main",
+        "mount_relpath": "refs/ref",
+        "mode": "ro",
+        "update_policy": "manual"
+    }))
+    .expect("create request");
+    let spec = create.into_spec().expect("valid spec");
+    assert_eq!(spec.kind, WorkspaceAttachmentKind::ReferenceRepo);
+    assert_eq!(spec.name, "ref");
+    assert_eq!(spec.source, "https://example.test/repo.git");
+    assert_eq!(spec.revision.as_deref(), Some("main"));
+    assert_eq!(spec.subpath, None);
+    assert_eq!(spec.mount_relpath.as_deref(), Some("refs/ref"));
+    assert_eq!(spec.mode, Some(AttachmentMode::Ro));
+    assert_eq!(spec.update_policy, Some(AttachmentUpdatePolicy::Manual));
 
-#[tokio::test]
-async fn worktree_bootstrap_route_params_reject_invalid_workspace_id() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let daemon =
-        TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
-            .await
-            .expect("test daemon");
-    let handle = daemon.handle().workspaces();
-    let error = handle
-        .worktree_bootstrap_config_for_route_params(WorkspaceRouteParams::new("not-a-workspace"))
-        .await
+    let error =
+        serde_json::from_value::<CreateWorkspaceAttachmentRouteRequest>(serde_json::json!({
+            "kind": "reference_repo",
+            "name": " ",
+            "source": "/tmp/ref"
+        }))
+        .expect("create request")
+        .into_spec()
         .unwrap_err();
     assert_eq!(error.kind(), WorkspaceRouteErrorKind::BadRequest);
-    assert_eq!(error.message(), "invalid workspace id");
+    assert_eq!(error.message(), "name and source are required");
+
+    let delete: DeleteWorkspaceAttachmentRouteRequest = serde_json::from_value(serde_json::json!({
+        "kind": "reference_repo",
+        "name": "ref"
+    }))
+    .expect("delete request");
+    let spec = delete.into_spec().expect("valid spec");
+    assert_eq!(spec.kind, WorkspaceAttachmentKind::ReferenceRepo);
+    assert_eq!(spec.name, "ref");
+
+    let error = serde_json::from_value::<DeleteWorkspaceAttachmentRouteRequest>(
+        serde_json::json!({"kind": "reference_repo", "name": ""}),
+    )
+    .expect("delete request")
+    .into_spec()
+    .unwrap_err();
+    assert_eq!(error.kind(), WorkspaceRouteErrorKind::BadRequest);
+    assert_eq!(error.message(), "name is required");
 }

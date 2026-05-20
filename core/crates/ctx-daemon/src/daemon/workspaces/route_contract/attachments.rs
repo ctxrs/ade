@@ -1,77 +1,25 @@
 use ctx_core::ids::WorkspaceId;
-use ctx_core::models::{AttachmentMode, AttachmentUpdatePolicy, WorkspaceAttachmentKind};
+use ctx_route_contracts::workspaces::WorkspaceAttachmentCreateRouteSpec;
 use ctx_workspace_attachments::AttachmentConfig;
-use serde::Deserialize;
 
-use super::super::{WorkspaceRouteError, WorkspacesHandle};
+use super::super::{workspace_store_route_error, WorkspaceRouteError, WorkspacesHandle};
 use super::common::require_workspace_for_route;
 use super::responses::WorkspaceAttachmentRouteResponse;
+pub use ctx_route_contracts::workspaces::{
+    CreateWorkspaceAttachmentRouteRequest, DeleteWorkspaceAttachmentRouteRequest,
+    SyncWorkspaceAttachmentsRouteRequest,
+};
 
-#[derive(Debug, Deserialize)]
-pub struct SyncWorkspaceAttachmentsRouteRequest {
-    #[serde(default)]
-    refresh: Option<bool>,
-}
-
-impl SyncWorkspaceAttachmentsRouteRequest {
-    pub(in crate::daemon::workspaces) fn refresh(&self) -> bool {
-        self.refresh.unwrap_or(false)
-    }
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreateWorkspaceAttachmentRouteRequest {
-    pub(super) kind: WorkspaceAttachmentKind,
-    pub(super) name: String,
-    pub(super) source: String,
-    #[serde(default)]
-    pub(super) revision: Option<String>,
-    #[serde(default)]
-    pub(super) subpath: Option<String>,
-    #[serde(default)]
-    pub(super) mount_relpath: Option<String>,
-    #[serde(default)]
-    pub(super) mode: Option<AttachmentMode>,
-    #[serde(default)]
-    pub(super) update_policy: Option<AttachmentUpdatePolicy>,
-}
-
-impl CreateWorkspaceAttachmentRouteRequest {
-    pub(in crate::daemon::workspaces) fn into_attachment_config(
-        self,
-    ) -> Result<AttachmentConfig, WorkspaceRouteError> {
-        if self.name.trim().is_empty() || self.source.trim().is_empty() {
-            return Err(WorkspaceRouteError::bad_request(
-                "name and source are required",
-            ));
-        }
-        Ok(AttachmentConfig {
-            kind: self.kind,
-            name: self.name,
-            source: self.source,
-            revision: self.revision,
-            subpath: self.subpath,
-            mount_relpath: self.mount_relpath,
-            mode: self.mode,
-            update_policy: self.update_policy,
-        })
-    }
-}
-
-#[derive(Debug, Deserialize)]
-pub struct DeleteWorkspaceAttachmentRouteRequest {
-    pub(super) kind: WorkspaceAttachmentKind,
-    pub(super) name: String,
-}
-
-impl DeleteWorkspaceAttachmentRouteRequest {
-    pub(in crate::daemon::workspaces) fn into_parts(
-        self,
-    ) -> Result<(WorkspaceAttachmentKind, String), WorkspaceRouteError> {
-        if self.name.trim().is_empty() {
-            return Err(WorkspaceRouteError::bad_request("name is required"));
-        }
-        Ok((self.kind, self.name))
+fn attachment_config_from_route_spec(spec: WorkspaceAttachmentCreateRouteSpec) -> AttachmentConfig {
+    AttachmentConfig {
+        kind: spec.kind,
+        name: spec.name,
+        source: spec.source,
+        revision: spec.revision,
+        subpath: spec.subpath,
+        mount_relpath: spec.mount_relpath,
+        mode: spec.mode,
+        update_policy: spec.update_policy,
     }
 }
 
@@ -83,7 +31,7 @@ impl WorkspacesHandle {
         let attachments = self
             .list_workspace_attachments(workspace_id)
             .await
-            .map_err(WorkspaceRouteError::from_workspace_store)?;
+            .map_err(workspace_store_route_error)?;
         Ok(attachments.into_iter().map(Into::into).collect())
     }
 
@@ -105,7 +53,7 @@ impl WorkspacesHandle {
         workspace_id: WorkspaceId,
         request: CreateWorkspaceAttachmentRouteRequest,
     ) -> Result<Vec<WorkspaceAttachmentRouteResponse>, WorkspaceRouteError> {
-        let cfg = request.into_attachment_config()?;
+        let cfg = attachment_config_from_route_spec(request.into_spec()?);
         let workspace = require_workspace_for_route(self, workspace_id).await?;
         self.upsert_workspace_attachment(workspace_id, cfg)
             .await
@@ -122,10 +70,10 @@ impl WorkspacesHandle {
         workspace_id: WorkspaceId,
         request: DeleteWorkspaceAttachmentRouteRequest,
     ) -> Result<Vec<WorkspaceAttachmentRouteResponse>, WorkspaceRouteError> {
-        let (kind, name) = request.into_parts()?;
+        let spec = request.into_spec()?;
         let workspace = require_workspace_for_route(self, workspace_id).await?;
         let removed = self
-            .delete_workspace_attachment(workspace_id, kind, &name)
+            .delete_workspace_attachment(workspace_id, spec.kind, &spec.name)
             .await
             .map_err(WorkspaceRouteError::bad_request)?;
         if !removed {

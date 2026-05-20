@@ -1,0 +1,26 @@
+mod attachments;
+mod common;
+mod management;
+mod responses;
+mod worktrees;
+
+pub use attachments::{
+    CreateWorkspaceAttachmentRouteRequest, DeleteWorkspaceAttachmentRouteRequest,
+    SyncWorkspaceAttachmentsRouteRequest, WorkspaceAttachmentCreateRouteSpec,
+    WorkspaceAttachmentDeleteRouteSpec,
+};
+pub use common::{
+    WorkspaceRouteError, WorkspaceRouteErrorKind, WorkspaceRouteParams, WorktreeRouteParams,
+};
+pub use management::{
+    CreateWorkspaceRequest, UpdateWorkspacePrimaryBranchRequest, WorkspaceConfigUpdateResult,
+    WorkspacePrimaryBranchSnapshot,
+};
+pub use responses::{
+    WorkspaceActiveHeadBatchRouteResponse, WorkspaceActiveSnapshotRouteResponse,
+    WorkspaceAttachmentRouteResponse, WorkspaceRouteResponse, WorktreeRouteResponse,
+};
+pub use worktrees::WorkspaceFileCompletionsRouteQuery;
+
+#[cfg(test)]
+mod tests;

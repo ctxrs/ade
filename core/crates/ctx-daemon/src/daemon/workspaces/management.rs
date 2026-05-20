@@ -11,16 +11,17 @@ use super::model_preferences::{
     WorkspaceProviderModelPreference, WorkspaceProviderModelPreferenceError,
 };
 use super::route_config::{
-    parse_workspace_route_id, provider_model_preference_error, workspace_store_error,
-    AgentSystemPromptConfigRouteResponse, SubagentSystemPromptConfigRouteResponse,
-    UpdateAgentSystemPromptConfigRouteRequest, UpdateSubagentSystemPromptConfigRouteRequest,
-    UpdateWorkspaceExecutionConfigRequest, UpdateWorkspaceMergeQueueConfigRequest,
-    UpdateWorkspacePrimaryBranchRequest, UpdateWorkspaceProviderModelPreferenceRouteRequest,
-    UpdateWorktreeBootstrapConfigRequest, WorkspaceConfigUpdateResult,
-    WorkspaceExecutionConfigSnapshot, WorkspaceMergeQueueConfigRouteResponse,
-    WorkspacePrimaryBranchSnapshot, WorkspacePromptConfigRouteParams,
-    WorkspaceProviderModelPreferenceRouteParams, WorkspaceProviderModelPreferenceRouteResponse,
-    WorkspaceRouteError, WorkspaceWorktreeBootstrapConfigRouteResponse,
+    parse_workspace_route_id, provider_model_preference_error, request_or_policy_route_error,
+    workspace_store_error, workspace_store_route_error, AgentSystemPromptConfigRouteResponse,
+    SubagentSystemPromptConfigRouteResponse, UpdateAgentSystemPromptConfigRouteRequest,
+    UpdateSubagentSystemPromptConfigRouteRequest, UpdateWorkspaceExecutionConfigRequest,
+    UpdateWorkspaceMergeQueueConfigRequest, UpdateWorkspacePrimaryBranchRequest,
+    UpdateWorkspaceProviderModelPreferenceRouteRequest, UpdateWorktreeBootstrapConfigRequest,
+    WorkspaceConfigUpdateResult, WorkspaceExecutionConfigSnapshot,
+    WorkspaceMergeQueueConfigRouteResponse, WorkspacePrimaryBranchSnapshot,
+    WorkspacePromptConfigRouteParams, WorkspaceProviderModelPreferenceRouteParams,
+    WorkspaceProviderModelPreferenceRouteResponse, WorkspaceRouteError,
+    WorkspaceWorktreeBootstrapConfigRouteResponse,
 };
 use crate::daemon::route_files::{read_text_route_file, RouteFileDownloadError, TextRouteDownload};
 use crate::daemon::{settings, WorkspaceStoreAccessError, WorkspacesHandle};
@@ -72,7 +73,7 @@ impl WorkspacesHandle {
         let primary_branch = self
             .load_workspace_primary_branch_config(workspace_id)
             .await
-            .map_err(WorkspaceRouteError::from_workspace_store)?
+            .map_err(workspace_store_route_error)?
             .ok_or_else(|| {
                 WorkspaceRouteError::not_found("workspace primary branch is not configured")
             })?;
@@ -98,7 +99,7 @@ impl WorkspacesHandle {
         let store = self
             .existing_workspace_store(workspace.id)
             .await
-            .map_err(WorkspaceRouteError::from_workspace_store)?;
+            .map_err(workspace_store_route_error)?;
         let primary_branch =
             workspace_config::update_and_load_primary_branch(&store, &primary_branch)
                 .await
@@ -197,7 +198,7 @@ impl WorkspacesHandle {
         let store = self
             .existing_workspace_store(workspace_id)
             .await
-            .map_err(WorkspaceRouteError::from_workspace_store)?;
+            .map_err(workspace_store_route_error)?;
         let settings = settings::load_settings(self.state.as_ref())
             .await
             .map_err(WorkspaceRouteError::internal)?;
@@ -214,7 +215,7 @@ impl WorkspacesHandle {
             ) => Err(WorkspaceRouteError::bad_request(error)),
             Err(ctx_settings_service::WorkspaceExecutionConfigSnapshotError::RequestOrPolicy(
                 error,
-            )) => Err(WorkspaceRouteError::from_request_or_policy_error(error)),
+            )) => Err(request_or_policy_route_error(error)),
             Err(ctx_settings_service::WorkspaceExecutionConfigSnapshotError::Internal(error)) => {
                 Err(WorkspaceRouteError::internal(error))
             }
@@ -229,7 +230,7 @@ impl WorkspacesHandle {
         let store = self
             .existing_workspace_store(workspace_id)
             .await
-            .map_err(WorkspaceRouteError::from_workspace_store)?;
+            .map_err(workspace_store_route_error)?;
         let update = workspace_config::parse_execution_config_update_input(
             req.environment.trim(),
             req.network_mode.as_deref(),
@@ -246,7 +247,7 @@ impl WorkspacesHandle {
         .await
         .map_err(|error| match error {
             ctx_settings_service::WorkspaceExecutionConfigUpdateError::RequestOrPolicy(error) => {
-                WorkspaceRouteError::from_request_or_policy_error(error)
+                request_or_policy_route_error(error)
             }
             ctx_settings_service::WorkspaceExecutionConfigUpdateError::Persistence(error) => {
                 WorkspaceRouteError::bad_request(error)
@@ -262,7 +263,7 @@ impl WorkspacesHandle {
         let store = self
             .existing_workspace_store(workspace_id)
             .await
-            .map_err(WorkspaceRouteError::from_workspace_store)?;
+            .map_err(workspace_store_route_error)?;
         let cfg = workspace_config::load_merge_queue_config(&store)
             .await
             .map_err(WorkspaceRouteError::internal)?;
@@ -277,21 +278,21 @@ impl WorkspacesHandle {
         let store = self
             .existing_workspace_store(workspace_id)
             .await
-            .map_err(WorkspaceRouteError::from_workspace_store)?;
+            .map_err(workspace_store_route_error)?;
         let transition = workspace_config::update_merge_queue_config_with_transition(
             &store,
             req.into_merge_queue_config_update(),
         )
         .await
-        .map_err(WorkspaceRouteError::from_request_or_policy_error)?;
+        .map_err(request_or_policy_route_error)?;
         if !transition.was_enabled && transition.now_enabled {
             self.schedule_workspace_merge_queue_if_enabled_and_queued(workspace_id)
                 .await
-                .map_err(WorkspaceRouteError::from_request_or_policy_error)?;
+                .map_err(request_or_policy_route_error)?;
         } else if transition.was_enabled && !transition.now_enabled {
             self.cancel_queued_entries_for_disabled_workspace(&store, workspace_id)
                 .await
-                .map_err(WorkspaceRouteError::from_request_or_policy_error)?;
+                .map_err(request_or_policy_route_error)?;
         }
         Ok(WorkspaceConfigUpdateResult { ok: true })
     }
@@ -303,7 +304,7 @@ impl WorkspacesHandle {
         let store = self
             .existing_workspace_store(workspace_id)
             .await
-            .map_err(WorkspaceRouteError::from_workspace_store)?;
+            .map_err(workspace_store_route_error)?;
         let cfg = workspace_config::load_worktree_bootstrap_config(&store)
             .await
             .map_err(WorkspaceRouteError::internal)?;
@@ -318,7 +319,7 @@ impl WorkspacesHandle {
         let store = self
             .existing_workspace_store(workspace_id)
             .await
-            .map_err(WorkspaceRouteError::from_workspace_store)?;
+            .map_err(workspace_store_route_error)?;
         workspace_config::update_worktree_bootstrap_config(
             &store,
             req.into_worktree_bootstrap_config_update(),

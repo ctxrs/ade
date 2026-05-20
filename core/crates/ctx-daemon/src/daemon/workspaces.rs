@@ -64,6 +64,7 @@ pub use model_preferences::{
     WorkspaceProviderModelPreferenceError,
 };
 pub use retry::retry_global_index_write;
+pub(in crate::daemon::workspaces) use route_config::workspace_store_route_error;
 pub use route_config::{
     AgentSystemPromptConfigRouteResponse, CreateWorkspaceRequest,
     SubagentSystemPromptConfigRouteResponse, UpdateAgentSystemPromptConfigRouteRequest,
