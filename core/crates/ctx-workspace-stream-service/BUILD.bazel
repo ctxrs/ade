@@ -12,9 +12,16 @@ rust_library(
         "//core/crates/ctx-core:lib",
         "//core/crates/ctx-workspace-active-snapshot:lib",
     ],
+    proc_macro_deps = [
+        "@crates//:async-trait",
+    ],
 )
 
 rust_test(
     name = "unit_tests",
     crate = ":lib",
+    deps = [
+        "@crates//:chrono",
+        "@crates//:tokio",
+    ],
 )

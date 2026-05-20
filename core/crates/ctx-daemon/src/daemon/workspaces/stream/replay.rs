@@ -3,48 +3,22 @@ use std::sync::Arc;
 
 use ctx_core::ids::{SessionId, WorkspaceId};
 use ctx_core::models::{
-    WorkspaceActiveSnapshotEvent, WorkspaceActiveSnapshotSessionIntent,
-    WorkspaceActiveSnapshotStreamMessage, WorkspaceActiveSnapshotStreamSource,
+    WorkspaceActiveSnapshotEvent, WorkspaceActiveSnapshotStreamMessage,
+    WorkspaceActiveSnapshotStreamSource,
 };
 use ctx_workspace_active_snapshot::{
     SessionReplayCursor, WorkspaceSessionReplay, WorkspaceSessionReplayItem,
+};
+use ctx_workspace_stream_service::replay as stream_replay_service;
+pub use ctx_workspace_stream_service::replay::{
+    WorkspaceStreamReplayProgram, WorkspaceStreamReplayStep,
 };
 
 use crate::daemon::DaemonState;
 use crate::daemon::WorkspaceStreamHandle;
 
-use super::replay_cursor::{
-    head_only_snapshot_cursor, plan_resume_replay_cursor, WorkspaceStreamResumeReplayCursorPlan,
-};
-use super::subscriptions::{WorkspaceStreamResolvedSession, WorkspaceStreamSessionReplay};
-
-pub enum ReplayOutcome {
-    Replay { last_sent: SessionReplayCursor },
-    ResetRequired,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct WorkspaceStreamReplayProgram {
-    pub pending_replay_sessions: HashSet<SessionId>,
-    pub steps: Vec<WorkspaceStreamReplayStep>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum WorkspaceStreamReplayStep {
-    HeadOnly {
-        session_id: SessionId,
-        cursor: SessionReplayCursor,
-    },
-    Replay {
-        session_id: SessionId,
-        after_seq: i64,
-        after_projection_rev: i64,
-        replay_cursor: SessionReplayCursor,
-    },
-    NoReplayRequired {
-        session_id: SessionId,
-    },
-}
+use super::replay_cursor::session_replay_tail_cursor;
+use super::subscriptions::WorkspaceStreamResolvedSession;
 
 #[async_trait::async_trait]
 pub trait WorkspaceStreamReplayStepHook {
@@ -60,6 +34,11 @@ pub trait WorkspaceStreamReplayStepHook {
     }
 }
 
+pub enum ReplayOutcome {
+    Replay { last_sent: SessionReplayCursor },
+    ResetRequired,
+}
+
 struct NoopWorkspaceStreamReplayStepHook;
 
 #[async_trait::async_trait]
@@ -71,6 +50,41 @@ impl WorkspaceStreamReplayStepHook for NoopWorkspaceStreamReplayStepHook {
         _pending_replay_sessions: &HashSet<SessionId>,
     ) -> Result<(), Self::Error> {
         Ok(())
+    }
+}
+
+struct DaemonWorkspaceStreamReplayStepHookAdapter<'a, H> {
+    state: &'a Arc<DaemonState>,
+    workspace_id: WorkspaceId,
+    inner: &'a mut H,
+}
+
+#[async_trait::async_trait]
+impl<H> stream_replay_service::WorkspaceStreamReplayStepHook
+    for DaemonWorkspaceStreamReplayStepHookAdapter<'_, H>
+where
+    H: WorkspaceStreamReplayStepHook + Send,
+{
+    type Error = H::Error;
+
+    async fn before_workspace_stream_replay_step(
+        &mut self,
+        pending_replay_sessions: &HashSet<SessionId>,
+    ) -> Result<(), Self::Error> {
+        self.inner
+            .before_workspace_stream_replay_step(pending_replay_sessions)
+            .await
+    }
+
+    fn live_subscription_cursor(&self, session_id: SessionId) -> Option<SessionReplayCursor> {
+        self.inner.live_subscription_cursor(session_id)
+    }
+
+    async fn head_only_tail_cursor(
+        &mut self,
+        session_id: SessionId,
+    ) -> Result<SessionReplayCursor, Self::Error> {
+        Ok(session_replay_tail_cursor(self.state, self.workspace_id, session_id).await)
     }
 }
 
@@ -113,83 +127,21 @@ pub async fn plan_workspace_stream_replay_program_with_step_hook<H>(
     step_hook: &mut H,
 ) -> Result<WorkspaceStreamReplayProgram, H::Error>
 where
-    H: WorkspaceStreamReplayStepHook,
+    H: WorkspaceStreamReplayStepHook + Send,
 {
-    let pending_replay_sessions = replay_pending_sessions(resolved_sessions);
-    let mut steps = Vec::new();
-    for subscription in resolved_sessions {
-        step_hook
-            .before_workspace_stream_replay_step(&pending_replay_sessions)
-            .await?;
-        match subscription.intent {
-            WorkspaceActiveSnapshotSessionIntent::Head => {
-                let session_id = subscription.session_id;
-                let live_cursor = step_hook
-                    .live_subscription_cursor(session_id)
-                    .or_else(|| live_subscriptions.get(&session_id).copied());
-                let cursor = head_only_snapshot_cursor(
-                    state,
-                    workspace_id,
-                    session_id,
-                    live_cursor,
-                    active_head_cursors.get(&session_id).copied(),
-                    include_initial_snapshot,
-                )
-                .await;
-                steps.push(WorkspaceStreamReplayStep::HeadOnly { session_id, cursor });
-            }
-            WorkspaceActiveSnapshotSessionIntent::Replay => {
-                let WorkspaceStreamSessionReplay::Resume {
-                    after_seq,
-                    after_projection_rev,
-                } = subscription.replay
-                else {
-                    continue;
-                };
-                let session_id = subscription.session_id;
-                let live_cursor = step_hook
-                    .live_subscription_cursor(session_id)
-                    .or_else(|| live_subscriptions.get(&session_id).copied());
-                match plan_resume_replay_cursor(live_cursor, after_seq, after_projection_rev) {
-                    WorkspaceStreamResumeReplayCursorPlan::Replay { cursor } => {
-                        steps.push(WorkspaceStreamReplayStep::Replay {
-                            session_id,
-                            after_seq,
-                            after_projection_rev,
-                            replay_cursor: cursor,
-                        });
-                    }
-                    WorkspaceStreamResumeReplayCursorPlan::NoReplayRequired => {
-                        steps.push(WorkspaceStreamReplayStep::NoReplayRequired { session_id });
-                    }
-                }
-            }
-        }
-    }
-    Ok(WorkspaceStreamReplayProgram {
-        pending_replay_sessions,
-        steps,
-    })
-}
-
-fn replay_pending_sessions(
-    resolved_sessions: &[WorkspaceStreamResolvedSession],
-) -> HashSet<SessionId> {
-    resolved_sessions
-        .iter()
-        .filter_map(|subscription| {
-            if subscription.intent == WorkspaceActiveSnapshotSessionIntent::Replay
-                && matches!(
-                    subscription.replay,
-                    WorkspaceStreamSessionReplay::Resume { .. }
-                )
-            {
-                Some(subscription.session_id)
-            } else {
-                None
-            }
-        })
-        .collect()
+    let mut service_hook = DaemonWorkspaceStreamReplayStepHookAdapter {
+        state,
+        workspace_id,
+        inner: step_hook,
+    };
+    stream_replay_service::plan_workspace_stream_replay_program_with_step_hook(
+        resolved_sessions,
+        live_subscriptions,
+        active_head_cursors,
+        include_initial_snapshot,
+        &mut service_hook,
+    )
+    .await
 }
 
 pub async fn replay_session_events<F, Fut>(
@@ -331,7 +283,7 @@ impl WorkspaceStreamHandle {
         step_hook: &mut H,
     ) -> Result<WorkspaceStreamReplayProgram, H::Error>
     where
-        H: WorkspaceStreamReplayStepHook,
+        H: WorkspaceStreamReplayStepHook + Send,
     {
         plan_workspace_stream_replay_program_with_step_hook(
             &self.state,

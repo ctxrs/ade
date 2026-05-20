@@ -3,15 +3,17 @@ use std::sync::Arc;
 
 use ctx_core::ids::{SessionId, WorkspaceId};
 use ctx_workspace_active_snapshot::SessionReplayCursor;
+pub use ctx_workspace_stream_service::replay_cursor::active_head_cursors_from_snapshot_read_model;
+#[cfg(test)]
 pub use ctx_workspace_stream_service::replay_cursor::{
-    active_head_cursors_from_snapshot_read_model, plan_resume_replay_cursor,
-    WorkspaceStreamResumeReplayCursorPlan,
+    plan_resume_replay_cursor, WorkspaceStreamResumeReplayCursorPlan,
 };
 
 use super::read_model::WorkspaceStreamSnapshotReadModel;
 use crate::daemon::DaemonState;
 use crate::daemon::WorkspaceStreamHandle;
 
+#[cfg(test)]
 pub async fn head_only_snapshot_cursor(
     state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
@@ -42,7 +44,7 @@ pub async fn active_task_subscription_cursor(
     session_replay_tail_cursor(state, workspace_id, session_id).await
 }
 
-async fn session_replay_tail_cursor(
+pub(super) async fn session_replay_tail_cursor(
     state: &Arc<DaemonState>,
     workspace_id: WorkspaceId,
     session_id: SessionId,

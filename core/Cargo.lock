@@ -2076,8 +2076,11 @@ dependencies = [
 name = "ctx-workspace-stream-service"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "chrono",
  "ctx-core",
  "ctx-workspace-active-snapshot",
+ "tokio",
 ]
 
 [[package]]
