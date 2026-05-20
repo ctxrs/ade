@@ -9,11 +9,11 @@ use ctx_session_tools::interrupt_telemetry::InterruptTelemetryContext;
 use crate::daemon::DaemonState;
 
 use super::super::persistence::emit_event;
-use super::state::{RunningTurn, StopReason};
 use super::terminalization::{
     finalize_provider_outcome_required, revoke_turn_mcp_token, wait_for_provider_outcome,
     wait_for_turn_event_loop,
 };
+use super::{RunningTurn, StopReason};
 
 mod interruption;
 

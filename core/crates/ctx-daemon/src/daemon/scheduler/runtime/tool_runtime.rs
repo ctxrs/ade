@@ -1,13 +1,11 @@
-use std::path::{Path, PathBuf};
-
 use tokio::fs;
 
 use crate::daemon::DaemonState;
 use ctx_core::models::Artifact;
 use ctx_session_tools::{NormalizedToolEvent, ToolOutputArtifactRef};
 
-#[cfg(test)]
-mod tests;
+pub(in crate::daemon::scheduler::runtime) use ctx_run_scheduler::tool_runtime::cwd_outside_worktree;
+use ctx_run_scheduler::tool_runtime::sanitize_spool_segment;
 
 pub(super) struct ToolOutputArtifactScope {
     pub(super) session_id: ctx_core::ids::SessionId,
@@ -15,29 +13,6 @@ pub(super) struct ToolOutputArtifactScope {
     pub(super) workspace_id: ctx_core::ids::WorkspaceId,
     pub(super) worktree_id: ctx_core::ids::WorktreeId,
     pub(super) turn_id: ctx_core::ids::TurnId,
-}
-
-pub(super) fn cwd_outside_worktree(
-    cwd: &str,
-    workdir_root: &Path,
-    workdir_canonical: Option<&PathBuf>,
-) -> bool {
-    if cwd.trim().is_empty() {
-        return false;
-    }
-    let cwd_path = Path::new(cwd);
-    if cwd_path.is_relative() {
-        return false;
-    }
-    if cwd_path.starts_with(workdir_root) {
-        return false;
-    }
-    if let Some(root) = workdir_canonical {
-        if cwd_path.starts_with(root) {
-            return false;
-        }
-    }
-    true
 }
 
 pub(super) async fn maybe_spool_tool_output(
@@ -115,24 +90,4 @@ pub(super) async fn maybe_spool_tool_output(
         mime_type: artifact.mime_type,
         bytes: artifact.bytes,
     })
-}
-
-fn sanitize_spool_segment(raw: &str) -> String {
-    let mut output: String = raw
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_') {
-                ch
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    if output.is_empty() {
-        output.push_str("tool_output");
-    }
-    if output.len() > 80 {
-        output.truncate(80);
-    }
-    output
 }

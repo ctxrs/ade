@@ -10,37 +10,11 @@ use ctx_session_tools::interrupt_telemetry::{payload_fields, InterruptTelemetryC
 use crate::daemon::DaemonState;
 
 use super::super::super::persistence::emit_event;
-use super::super::state::{RunningTurn, StopReason};
+use super::super::RunningTurn;
 pub(super) use telemetry::{record_interrupt_request_telemetry, record_provider_cancel_telemetry};
 
 #[path = "interruption/telemetry.rs"]
 mod telemetry;
-
-impl StopReason {
-    pub(super) fn should_emit_interrupt_requested(self) -> bool {
-        matches!(self, Self::Interrupt)
-    }
-
-    pub(super) fn missing_outcome_reason(self) -> &'static str {
-        match self {
-            Self::Cancel => "user_cancel_missing_outcome",
-            Self::Interrupt => "user_interrupt_missing_outcome",
-            Self::StorageEmergency => "storage_exhausted_missing_outcome",
-        }
-    }
-
-    pub(super) fn outcome_timeout_reason(self) -> &'static str {
-        match self {
-            Self::Cancel => "user_cancel_outcome_timeout",
-            Self::Interrupt => "user_interrupt_outcome_timeout",
-            Self::StorageEmergency => "storage_exhausted_outcome_timeout",
-        }
-    }
-
-    pub(super) fn suspend_queue(self) -> bool {
-        matches!(self, Self::Interrupt)
-    }
-}
 
 pub(super) async fn emit_interrupt_requested_event(
     state: &Arc<DaemonState>,

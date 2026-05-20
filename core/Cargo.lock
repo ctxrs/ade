@@ -887,6 +887,7 @@ dependencies = [
  "ctx-provider-runtime",
  "ctx-providers",
  "ctx-resource-utilization",
+ "ctx-run-scheduler",
  "ctx-runtime-assets",
  "ctx-sandbox-container-runtime",
  "ctx-sandbox-contract",
@@ -1571,6 +1572,19 @@ dependencies = [
  "tikv-jemalloc-ctl",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "ctx-run-scheduler"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ctx-core",
+ "ctx-providers",
+ "ctx-session-tools",
+ "ctx-settings-model",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

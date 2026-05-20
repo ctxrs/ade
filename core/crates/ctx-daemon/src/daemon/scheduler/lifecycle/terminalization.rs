@@ -14,7 +14,7 @@ use super::super::reconcile::reconcile_turn_terminal_state;
 use super::super::terminal::{
     finalize_failed_turn, finalize_provider_outcome, FailedTurnTerminalization,
 };
-use super::state::RunningTurn;
+use super::RunningTurn;
 
 const PROVIDER_OUTCOME_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 const TURN_EVENT_LOOP_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);

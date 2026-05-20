@@ -30,6 +30,7 @@ const AGENT_GATE_CRATES = [
   "ctx-provider-auth-import",
   "ctx-providers",
   "ctx-resource-utilization",
+  "ctx-run-scheduler",
   "ctx-runtime-assets",
   "ctx-sandbox-contract",
   "ctx-sandbox-container-runtime",

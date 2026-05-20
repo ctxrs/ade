@@ -28,6 +28,7 @@ members = [
   "crates/ctx-sandbox-container-runtime",
   "crates/ctx-runtime-assets",
   "crates/ctx-resource-utilization",
+  "crates/ctx-run-scheduler",
   "crates/ctx-sandbox-contract",
   "crates/ctx-sandbox-materialization",
   "crates/ctx-session-service",

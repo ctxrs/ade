@@ -1,32 +1,4 @@
-use serde_json::{json, Value};
-
-use ctx_core::ids::MessageId;
-use ctx_core::models::SessionEventType;
-
-pub(super) fn fallback_interrupted_turn_events(
-    message_id: Option<MessageId>,
-    fallback_reason: &str,
-) -> Vec<(SessionEventType, Value)> {
-    vec![
-        (
-            SessionEventType::TurnInterrupted,
-            json!({
-                "reason": fallback_reason,
-                "provider_cancelled": false,
-                "status": "interrupted",
-            }),
-        ),
-        (
-            SessionEventType::TurnFinished,
-            json!({
-                "message_id": message_id.map(|id| id.0),
-                "status": "interrupted",
-                "reason": fallback_reason,
-                "provider_cancelled": false,
-            }),
-        ),
-    ]
-}
+pub(super) use ctx_run_scheduler::terminal_events::fallback_interrupted_turn_events;
 
 #[cfg(test)]
 mod tests {
