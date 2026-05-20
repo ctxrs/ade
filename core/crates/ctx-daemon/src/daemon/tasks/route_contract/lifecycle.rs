@@ -1,23 +1,19 @@
-use ctx_observability::logs;
-use serde::Deserialize;
+pub use ctx_route_contracts::tasks::UpdateTaskTitleRouteRequest;
 
 use crate::daemon::TasksHandle;
 
-use super::common::{parse_task_id, TaskRouteError, TaskRouteParams};
+use super::common::{
+    classified_internal_route_error, task_route_error_from_task_lifecycle, TaskRouteError,
+    TaskRouteParams,
+};
 use super::responses::{ArchiveTaskRouteResponse, SessionRouteResponse, TaskRouteResponse};
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct UpdateTaskTitleRouteRequest {
-    pub(super) title: String,
-}
 
 impl TasksHandle {
     pub async fn list_task_sessions_for_route(
         &self,
         params: TaskRouteParams,
     ) -> Result<Vec<SessionRouteResponse>, TaskRouteError> {
-        let task_id = parse_task_id(&params.task_id)?;
+        let task_id = params.parse_task_id()?;
         let sessions = self
             .list_task_sessions(task_id)
             .await
@@ -33,7 +29,7 @@ impl TasksHandle {
         &self,
         params: TaskRouteParams,
     ) -> Result<TaskRouteResponse, TaskRouteError> {
-        let task_id = parse_task_id(&params.task_id)?;
+        let task_id = params.parse_task_id()?;
         let task = self
             .mark_task_read(task_id)
             .await
@@ -46,7 +42,7 @@ impl TasksHandle {
         &self,
         params: TaskRouteParams,
     ) -> Result<TaskRouteResponse, TaskRouteError> {
-        let task_id = parse_task_id(&params.task_id)?;
+        let task_id = params.parse_task_id()?;
         let task = self
             .mark_task_unread(task_id)
             .await
@@ -60,14 +56,14 @@ impl TasksHandle {
         params: TaskRouteParams,
         req: UpdateTaskTitleRouteRequest,
     ) -> Result<TaskRouteResponse, TaskRouteError> {
-        let task_id = parse_task_id(&params.task_id)?;
+        let task_id = params.parse_task_id()?;
         let title = req.validated_title()?;
         let task = self
             .update_task_title(task_id, title)
             .await
             .map_err(|error| {
-                let message = logs::redact_sensitive(&error.to_string());
-                TaskRouteError::classified_internal(&error, message)
+                let message = ctx_observability::logs::redact_sensitive(&error.to_string());
+                classified_internal_route_error(&error, message)
             })?
             .ok_or_else(|| TaskRouteError::not_found("task not found"))?;
         Ok(TaskRouteResponse::from(task))
@@ -77,44 +73,31 @@ impl TasksHandle {
         &self,
         params: TaskRouteParams,
     ) -> Result<ArchiveTaskRouteResponse, TaskRouteError> {
-        let task_id = parse_task_id(&params.task_id)?;
+        let task_id = params.parse_task_id()?;
         self.archive_task(task_id)
             .await
             .map(ArchiveTaskRouteResponse::from)
-            .map_err(TaskRouteError::from_task_lifecycle)
+            .map_err(task_route_error_from_task_lifecycle)
     }
 
     pub async fn unarchive_task_for_route(
         &self,
         params: TaskRouteParams,
     ) -> Result<TaskRouteResponse, TaskRouteError> {
-        let task_id = parse_task_id(&params.task_id)?;
+        let task_id = params.parse_task_id()?;
         self.unarchive_task(task_id)
             .await
             .map(TaskRouteResponse::from)
-            .map_err(TaskRouteError::from_task_lifecycle)
+            .map_err(task_route_error_from_task_lifecycle)
     }
 
     pub async fn delete_task_for_route(
         &self,
         params: TaskRouteParams,
     ) -> Result<(), TaskRouteError> {
-        let task_id = parse_task_id(&params.task_id)?;
+        let task_id = params.parse_task_id()?;
         self.delete_task(task_id)
             .await
-            .map_err(TaskRouteError::from_task_lifecycle)
-    }
-}
-
-impl UpdateTaskTitleRouteRequest {
-    pub(super) fn validated_title(self) -> Result<String, TaskRouteError> {
-        let title = self.title.trim().to_string();
-        if title.is_empty() {
-            return Err(TaskRouteError::bad_request("title is required"));
-        }
-        if title.len() > 120 {
-            return Err(TaskRouteError::bad_request("title is too long"));
-        }
-        Ok(title)
+            .map_err(task_route_error_from_task_lifecycle)
     }
 }

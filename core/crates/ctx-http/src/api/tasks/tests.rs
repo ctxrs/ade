@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use ctx_daemon::daemon::tasks::{CreateTaskRouteRequest, CreateTaskSessionRouteRequest};
+use ctx_route_contracts::tasks::{CreateTaskRouteRequest, CreateTaskSessionRouteRequest};
 
 #[test]
 fn create_session_req_accepts_execution_environment() {

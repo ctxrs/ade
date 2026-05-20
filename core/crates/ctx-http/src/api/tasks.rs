@@ -26,18 +26,18 @@ use super::errors::ApiErrorResp;
 use ctx_core::ids::{TaskId, WorkspaceId, WorktreeId};
 #[cfg(test)]
 use ctx_core::models::{ExecutionEnvironment, Workspace, Worktree};
-use ctx_daemon::daemon::tasks::{
+use ctx_daemon::daemon::{
+    ProvidersHandle, SessionsHandle, TasksHandle, TransportHandle, WorkspacesHandle,
+};
+#[cfg(test)]
+use ctx_daemon::test_support::TestDaemon;
+use ctx_route_contracts::tasks::{
     ArchiveTaskRouteResponse, CreateTaskRouteRequest, CreateTaskSessionRouteRequest,
     ListWorkspaceArchivedTasksRouteParams, ListWorkspaceArchivedTasksRouteRequest,
     ListWorkspaceTasksRouteParams, SessionRouteResponse, TaskRouteError, TaskRouteErrorKind,
     TaskRouteParams, TaskRouteResponse, UpdateTaskTitleRouteRequest,
     WorkspaceArchivedPageRouteResponse,
 };
-use ctx_daemon::daemon::{
-    ProvidersHandle, SessionsHandle, TasksHandle, TransportHandle, WorkspacesHandle,
-};
-#[cfg(test)]
-use ctx_daemon::test_support::TestDaemon;
 
 #[cfg(test)]
 pub(super) fn task_api_task_state(daemon: &TestDaemon) -> State<TasksHandle> {
