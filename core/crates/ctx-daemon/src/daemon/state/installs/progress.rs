@@ -1,7 +1,7 @@
 use super::*;
 
 impl DaemonState {
-    pub(super) fn emit_provider_install_ops_events(
+    pub(crate) fn emit_provider_install_ops_events(
         &self,
         events: Vec<ctx_provider_runtime::provider_install_tracker::ProviderInstallOpsEvent>,
     ) {
@@ -10,7 +10,7 @@ impl DaemonState {
         }
     }
 
-    pub(super) fn emit_provider_install_ops_event(
+    pub(crate) fn emit_provider_install_ops_event(
         &self,
         event: ctx_provider_runtime::provider_install_tracker::ProviderInstallOpsEvent,
     ) {

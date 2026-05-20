@@ -18,6 +18,7 @@ pub mod provider_cache;
 pub mod provider_child_reclassifier;
 pub mod provider_endpoint_catalog;
 pub mod provider_guard;
+pub mod provider_harness_config;
 pub mod provider_install_tracker;
 pub mod provider_launch;
 pub mod provider_options;
@@ -25,6 +26,7 @@ pub mod provider_processes;
 pub mod provider_restart;
 pub mod provider_session_auth;
 pub mod provider_state;
+pub mod provider_status_service;
 pub mod provider_usability;
 pub mod provider_usage;
 pub mod provider_workers;
@@ -36,6 +38,12 @@ pub trait ProviderRuntimeHost: Send + Sync + 'static {
     fn current_ctx_version(&self) -> Option<String>;
 
     fn provider_runtime(&self) -> &ProviderRuntime;
+
+    fn publish_provider_install_ops_events(
+        &self,
+        _events: Vec<provider_install_tracker::ProviderInstallOpsEvent>,
+    ) {
+    }
 }
 
 pub type AppState = dyn ProviderRuntimeHost;

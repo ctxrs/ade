@@ -2,23 +2,14 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use ctx_provider_install::install_state::InstallTarget;
-use ctx_provider_runtime::provider_launch::status::provider_status_for_target;
+use ctx_provider_runtime::provider_status_service as status_service;
+pub use ctx_provider_runtime::provider_status_service::ProviderStatusResponseError;
 use ctx_providers::adapters::ProviderStatus;
 use serde::Deserialize;
 use serde_json::Value;
 
 use crate::daemon::providers::parse_provider_install_target;
 use crate::daemon::{execution_effective, DaemonState, ProvidersHandle};
-
-mod details;
-
-use details::decorate_provider_runtime_details;
-pub(super) use details::provider_status_without_target_bootstrap;
-
-#[derive(Debug)]
-pub enum ProviderStatusResponseError {
-    NotFound { provider_id: String },
-}
 
 #[derive(Debug, Default, Deserialize)]
 pub struct ProviderStatusRouteQuery {
@@ -83,7 +74,7 @@ pub async fn install_target_for_workspace(
 }
 
 pub async fn refresh_provider_statuses(state: &DaemonState) -> anyhow::Result<()> {
-    ctx_managed_installs::refresh_provider_statuses(state).await
+    status_service::refresh_provider_statuses(state).await
 }
 
 pub async fn providers_statuses_response(
@@ -91,28 +82,8 @@ pub async fn providers_statuses_response(
     target: InstallTarget,
     include_matrix_providers: bool,
 ) -> Vec<ProviderStatus> {
-    let (managed, managed_config_error) =
-        ctx_provider_runtime::provider_launch::config::load_managed_agent_server_config_with_error(
-            &state.core.data_root,
-        )
-        .await;
-    let matrix = state
-        .providers
-        .load_provider_matrix(&state.core.data_root)
-        .await;
-    let provider_ids = provider_status_ids(state, &matrix, include_matrix_providers).await;
-    let mut out = Vec::with_capacity(provider_ids.len());
-    for provider_id in provider_ids {
-        let status = if managed_config_error.is_some() {
-            provider_status_without_target_bootstrap(state, &provider_id, target).await
-        } else {
-            provider_status_for_target(state.as_ref(), &managed, &matrix, &provider_id, target)
-                .await
-        };
-        out.push(status);
-    }
-    decorate_provider_statuses(state, &matrix, &managed_config_error, target, &mut out).await;
-    out
+    status_service::providers_statuses_response(state.as_ref(), target, include_matrix_providers)
+        .await
 }
 
 pub async fn provider_status_response(
@@ -120,31 +91,7 @@ pub async fn provider_status_response(
     provider_id: &str,
     target: InstallTarget,
 ) -> Result<ProviderStatus, ProviderStatusResponseError> {
-    let (managed, managed_config_error) =
-        ctx_provider_runtime::provider_launch::config::load_managed_agent_server_config_with_error(
-            &state.core.data_root,
-        )
-        .await;
-    let matrix = state
-        .providers
-        .load_provider_matrix(&state.core.data_root)
-        .await;
-    ensure_known_provider(state, &matrix, provider_id).await?;
-
-    let mut status = if managed_config_error.is_some() {
-        provider_status_without_target_bootstrap(state, provider_id, target).await
-    } else {
-        provider_status_for_target(state.as_ref(), &managed, &matrix, provider_id, target).await
-    };
-    decorate_provider_runtime_details(
-        state,
-        &matrix,
-        managed_config_error.as_deref(),
-        target,
-        &mut status,
-    )
-    .await;
-    Ok(status)
+    status_service::provider_status_response(state.as_ref(), provider_id, target).await
 }
 
 impl ProvidersHandle {
@@ -193,59 +140,5 @@ mod route_tests {
             error.body()["error"].as_str(),
             Some("provider not found: missing-provider")
         );
-    }
-}
-
-async fn provider_status_ids(
-    state: &Arc<DaemonState>,
-    matrix: &ctx_provider_matrix::ProviderMatrix,
-    include_matrix_providers: bool,
-) -> Vec<String> {
-    state
-        .providers
-        .visible_provider_status_ids(matrix, include_matrix_providers)
-        .await
-}
-
-async fn ensure_known_provider(
-    state: &Arc<DaemonState>,
-    matrix: &ctx_provider_matrix::ProviderMatrix,
-    provider_id: &str,
-) -> Result<(), ProviderStatusResponseError> {
-    if state
-        .providers
-        .is_known_provider_id(matrix, provider_id)
-        .await
-    {
-        return Ok(());
-    }
-
-    Err(ProviderStatusResponseError::NotFound {
-        provider_id: provider_id.to_string(),
-    })
-}
-
-async fn decorate_provider_statuses(
-    state: &Arc<DaemonState>,
-    matrix: &ctx_provider_matrix::ProviderMatrix,
-    managed_config_error: &Option<String>,
-    target: InstallTarget,
-    statuses: &mut [ProviderStatus],
-) {
-    let show_fake = std::env::var("CTX_SHOW_FAKE_PROVIDER")
-        .ok()
-        .as_deref()
-        .and_then(ctx_core::boolish::parse_boolish)
-        .unwrap_or(false);
-    for status in statuses {
-        details::decorate_provider_list_status(
-            state,
-            matrix,
-            managed_config_error.as_deref(),
-            target,
-            show_fake,
-            status,
-        )
-        .await;
     }
 }

@@ -23,6 +23,13 @@ impl ctx_provider_runtime::ProviderRuntimeHost for DaemonState {
     fn provider_runtime(&self) -> &ProviderRuntime {
         &self.providers
     }
+
+    fn publish_provider_install_ops_events(
+        &self,
+        events: Vec<ctx_provider_runtime::provider_install_tracker::ProviderInstallOpsEvent>,
+    ) {
+        self.emit_provider_install_ops_events(events);
+    }
 }
 
 impl ctx_provider_runtime::provider_usage::ProviderUsageHost for DaemonState {

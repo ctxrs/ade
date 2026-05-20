@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use ctx_harness_sources as harness_sources;
 use ctx_observability::logs;
+use ctx_provider_runtime::provider_harness_config as harness_config_service;
 use serde::Deserialize;
 
 use crate::daemon::{DaemonState, ProvidersHandle};
@@ -103,7 +104,7 @@ pub async fn get_provider_harness_config(
     state: &Arc<DaemonState>,
     provider_id: &str,
 ) -> anyhow::Result<harness_sources::HarnessProviderSourceConfig> {
-    harness_sources::get_provider_source_config(&state.core.data_root, provider_id).await
+    harness_config_service::get_provider_harness_config(&state.core.data_root, provider_id).await
 }
 
 pub async fn select_provider_harness_source(
@@ -112,15 +113,14 @@ pub async fn select_provider_harness_source(
     source_kind: harness_sources::HarnessSourceKind,
     endpoint_id: Option<String>,
 ) -> anyhow::Result<harness_sources::HarnessProviderSourceConfig> {
-    let config = harness_sources::set_provider_source_selection(
+    harness_config_service::select_provider_harness_source(
+        &state.providers,
         &state.core.data_root,
         provider_id,
         source_kind,
         endpoint_id,
     )
-    .await?;
-    super::restarts::invalidate_provider_runtime_state(state, provider_id).await;
-    Ok(config)
+    .await
 }
 
 pub async fn upsert_provider_harness_endpoint(
@@ -129,26 +129,14 @@ pub async fn upsert_provider_harness_endpoint(
     endpoint: harness_sources::HarnessEndpointUpsert,
     manual_model_ids: Option<Vec<String>>,
 ) -> anyhow::Result<harness_sources::HarnessProviderSourceConfig> {
-    let endpoint =
-        harness_sources::upsert_provider_endpoint(&state.core.data_root, provider_id, endpoint)
-            .await?;
-    if let Some(manual_model_ids) = manual_model_ids {
-        harness_sources::set_provider_endpoint_manual_models(
-            &state.core.data_root,
-            provider_id,
-            &endpoint.id,
-            manual_model_ids,
-        )
-        .await?;
-    }
-    harness_sources::refresh_provider_endpoint_model_catalog(
+    harness_config_service::upsert_provider_harness_endpoint(
+        &state.providers,
         &state.core.data_root,
         provider_id,
-        &endpoint.id,
+        endpoint,
+        manual_model_ids,
     )
-    .await?;
-    super::restarts::invalidate_provider_runtime_state(state, provider_id).await;
-    get_provider_harness_config(state, provider_id).await
+    .await
 }
 
 impl ProvidersHandle {
@@ -262,9 +250,13 @@ pub async fn refresh_provider_harness_endpoint_models(
     provider_id: &str,
     endpoint_id: &str,
 ) -> anyhow::Result<harness_sources::HarnessProviderSourceConfig> {
-    refresh_provider_endpoint_model_catalog(state, provider_id, endpoint_id).await?;
-    super::restarts::invalidate_provider_runtime_state(state, provider_id).await;
-    get_provider_harness_config(state, provider_id).await
+    harness_config_service::refresh_provider_harness_endpoint_models(
+        &state.providers,
+        &state.core.data_root,
+        provider_id,
+        endpoint_id,
+    )
+    .await
 }
 
 pub async fn set_provider_harness_endpoint_manual_models(
@@ -273,15 +265,14 @@ pub async fn set_provider_harness_endpoint_manual_models(
     endpoint_id: &str,
     model_ids: Vec<String>,
 ) -> anyhow::Result<harness_sources::HarnessProviderSourceConfig> {
-    harness_sources::set_provider_endpoint_manual_models(
+    harness_config_service::set_provider_harness_endpoint_manual_models(
+        &state.providers,
         &state.core.data_root,
         provider_id,
         endpoint_id,
         model_ids,
     )
-    .await?;
-    super::restarts::invalidate_provider_runtime_state(state, provider_id).await;
-    get_provider_harness_config(state, provider_id).await
+    .await
 }
 
 pub async fn delete_provider_harness_endpoint(
@@ -289,11 +280,13 @@ pub async fn delete_provider_harness_endpoint(
     provider_id: &str,
     endpoint_id: &str,
 ) -> anyhow::Result<harness_sources::HarnessProviderSourceConfig> {
-    let config =
-        harness_sources::delete_provider_endpoint(&state.core.data_root, provider_id, endpoint_id)
-            .await?;
-    super::restarts::invalidate_provider_runtime_state(state, provider_id).await;
-    Ok(config)
+    harness_config_service::delete_provider_harness_endpoint(
+        &state.providers,
+        &state.core.data_root,
+        provider_id,
+        endpoint_id,
+    )
+    .await
 }
 
 pub async fn refresh_provider_endpoint_model_catalog(
@@ -301,7 +294,7 @@ pub async fn refresh_provider_endpoint_model_catalog(
     provider_id: &str,
     endpoint_id: &str,
 ) -> anyhow::Result<harness_sources::HarnessEndpointRecord> {
-    harness_sources::refresh_provider_endpoint_model_catalog(
+    harness_config_service::refresh_provider_endpoint_model_catalog(
         &state.core.data_root,
         provider_id,
         endpoint_id,
@@ -316,7 +309,7 @@ pub async fn mark_provider_endpoint_verification(
     status: harness_sources::HarnessEndpointVerificationStatus,
     error: Option<String>,
 ) -> anyhow::Result<()> {
-    harness_sources::mark_endpoint_verification(
+    harness_config_service::mark_provider_endpoint_verification(
         &state.core.data_root,
         provider_id,
         endpoint_id,
