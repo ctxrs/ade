@@ -1,5 +1,6 @@
 use super::*;
-use ctx_daemon::daemon::{CoreHandle, UpdateCheckSnapshot};
+use ctx_daemon::daemon::CoreHandle;
+use ctx_update_service::route_contract::UpdateCheckSnapshot;
 
 #[derive(Debug, Deserialize)]
 pub(in crate::api) struct UpdateCheckQuery {

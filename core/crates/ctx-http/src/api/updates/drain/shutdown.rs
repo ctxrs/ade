@@ -4,7 +4,8 @@ use axum::Json;
 
 use super::lease::maintenance_route_error;
 use crate::api::errors::ApiErrorResp;
-use ctx_daemon::daemon::{ExecutionHandle, ShutdownDaemonRouteRequest};
+use ctx_daemon::daemon::ExecutionHandle;
+use ctx_update_service::route_contract::{ShutdownDaemonRouteRequest, ShutdownDaemonRouteResult};
 
 const SHUTDOWN_TOKEN_HEADER_NAME: &str = "x-ctx-local-daemon-shutdown-token";
 
@@ -12,7 +13,7 @@ pub(in crate::api) async fn shutdown_daemon(
     State(execution): State<ExecutionHandle>,
     headers: HeaderMap,
     Json(req): Json<ShutdownDaemonRouteRequest>,
-) -> Result<Json<ctx_daemon::daemon::ShutdownDaemonRouteResult>, (StatusCode, Json<ApiErrorResp>)> {
+) -> Result<Json<ShutdownDaemonRouteResult>, (StatusCode, Json<ApiErrorResp>)> {
     let supplied_token = headers
         .get(SHUTDOWN_TOKEN_HEADER_NAME)
         .and_then(|value| value.to_str().ok())

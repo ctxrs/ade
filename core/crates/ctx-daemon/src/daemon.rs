@@ -2,8 +2,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use serde::Serialize;
-
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{ExecutionEnvironment, SessionTurn, SessionTurnStatus};
 #[cfg(test)]
@@ -89,11 +87,6 @@ pub use health::{DaemonHealthSnapshot, HealthCompatibility, HealthSnapshotError}
 pub use lifecycle::spawn_deferred_daemon_shutdown;
 #[cfg(test)]
 pub use listener::daemon_public_base_url_from_env;
-pub use maintenance::{
-    BeginUpdateDrainRouteRequest, BeginUpdateDrainRouteResult, MaintenanceRouteError,
-    MaintenanceRouteErrorKind, ReleaseUpdateDrainRouteRequest, ReleaseUpdateDrainRouteResult,
-    ShutdownDaemonRouteRequest, ShutdownDaemonRouteResult,
-};
 pub use mcp_auth::issue_provider_session_mcp_token;
 pub use mcp_auth::{
     emit_mcp_token_denied, issue_provider_session_mcp_token_with_capabilities,
@@ -148,11 +141,6 @@ pub use state::{
     TimedEntry, WorkspaceStoreAccessError,
 };
 pub use telemetry_export::{TelemetryExportError, TelemetryExportErrorKind};
-pub use updates::{
-    ApplyAppImageUpdateRequest, ApplyAppImageUpdateResult, DownloadAppImageUpdateRequest,
-    DownloadAppImageUpdateResult, UpdateActivitySnapshot, UpdateCheckSnapshot, UpdateRouteError,
-    UpdateRouteErrorKind,
-};
 pub use workspace_init::init_workspace;
 pub use workspaces::{
     AgentSystemPromptConfigRouteResponse, CreateWorkspaceAttachmentRouteRequest,

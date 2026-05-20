@@ -1966,6 +1966,7 @@ dependencies = [
  "async-trait",
  "atty",
  "base64 0.22.1",
+ "ctx-observability",
  "hex",
  "minisign-verify",
  "reqwest 0.12.28",

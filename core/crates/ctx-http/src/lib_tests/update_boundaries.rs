@@ -184,6 +184,40 @@ async fn daemon_shutdown_endpoint_requires_local_shutdown_token() {
 }
 
 #[tokio::test]
+async fn daemon_shutdown_endpoint_ignores_shutdown_token_in_body() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let fixture = {
+        let _serial = home_env_test_lock().lock().await;
+        let _shutdown_token =
+            EnvVarGuard::set("CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN", "local-shutdown-secret");
+        test_daemon_fixture_for_test(data_dir.path(), Some("daemon-secret".to_string())).await
+    };
+    let app = fixture.router();
+
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/api/daemon/shutdown")
+        .header(header::AUTHORIZATION, "Bearer daemon-secret")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({
+                "confirm": true,
+                "supplied_shutdown_token": "local-shutdown-secret"
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        body,
+        json!({"error": "local desktop shutdown token required"})
+    );
+}
+
+#[tokio::test]
 async fn daemon_shutdown_endpoint_rejects_invalid_local_shutdown_token() {
     let data_dir = tempfile::tempdir().unwrap();
     let fixture = {

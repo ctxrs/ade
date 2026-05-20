@@ -7735,6 +7735,25 @@ test("daemon boundary guard rejects update API orchestration", () => {
   }
 });
 
+test("daemon boundary guard allows update API route-contract imports", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/updates/check.rs",
+    contents: `
+      use ctx_update_service::route_contract::{
+        UpdateCheckSnapshot,
+        UpdateRouteError,
+        UpdateRouteErrorKind,
+      };
+      async fn route(core: CoreHandle) -> Result<Json<UpdateCheckSnapshot>, UpdateRouteError> {
+        todo!()
+      }
+    `,
+    patterns: apiPatternsForPath("core/crates/ctx-http/src/api/updates/check.rs"),
+  });
+
+  assert.deepEqual(violations, []);
+});
+
 test("daemon boundary guard rejects workspace registration/config orchestration", () => {
   const registrationViolations = scanText({
     filePath: "core/crates/ctx-http/src/api/workspaces/registry/create.rs",

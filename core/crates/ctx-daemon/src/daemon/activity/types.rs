@@ -1,40 +1,7 @@
 use super::*;
-use ctx_update_service::UpdateDrainState;
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ActiveTurnRecord {
-    pub workspace_id: String,
-    pub session_id: String,
-    pub run_id: Option<String>,
-    pub turn_id: String,
-    pub status: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct DaemonTurnActivitySummary {
-    pub idle: bool,
-    pub active_turn_count: usize,
-    pub queued_turn_count: usize,
-    pub running_turn_count: usize,
-    pub scanned_workspace_count: usize,
-    pub turns: Vec<ActiveTurnRecord>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub update_drain: Option<UpdateDrainState>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct DaemonSandboxWorkActivitySummary {
-    pub active: bool,
-    pub active_sandbox_turn_count: usize,
-    pub queued_sandbox_turn_count: usize,
-    pub running_sandbox_turn_count: usize,
-    pub running_container_backed_terminal: bool,
-    pub running_workspace_container_count: usize,
-    pub runtime_operation_count: usize,
-    pub prewarm_artifact_operation_count: usize,
-    pub scanned_workspace_count: usize,
-    pub turns: Vec<ActiveTurnRecord>,
-}
+pub use ctx_update_service::route_contract::{
+    ActiveTurnRecord, DaemonSandboxWorkActivitySummary, DaemonTurnActivitySummary,
+};
 
 pub(super) fn active_turn_record(workspace_id: WorkspaceId, turn: SessionTurn) -> ActiveTurnRecord {
     ActiveTurnRecord {

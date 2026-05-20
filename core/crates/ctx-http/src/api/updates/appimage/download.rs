@@ -1,7 +1,10 @@
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
-use ctx_daemon::daemon::{CoreHandle, DownloadAppImageUpdateRequest, DownloadAppImageUpdateResult};
+use ctx_daemon::daemon::CoreHandle;
+use ctx_update_service::route_contract::{
+    DownloadAppImageUpdateRequest, DownloadAppImageUpdateResult,
+};
 
 use crate::api::errors::ApiErrorResp;
 use crate::api::updates::update_route_error;

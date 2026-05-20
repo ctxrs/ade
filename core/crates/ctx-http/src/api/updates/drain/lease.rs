@@ -1,18 +1,18 @@
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
+use ctx_daemon::daemon::ExecutionHandle;
+use ctx_update_service::route_contract::{
+    BeginUpdateDrainRouteRequest, BeginUpdateDrainRouteResult, MaintenanceRouteError,
+    MaintenanceRouteErrorKind, ReleaseUpdateDrainRouteRequest, ReleaseUpdateDrainRouteResult,
+};
 
 use crate::api::errors::ApiErrorResp;
-use ctx_daemon::daemon::{
-    BeginUpdateDrainRouteRequest, ExecutionHandle, MaintenanceRouteError,
-    MaintenanceRouteErrorKind, ReleaseUpdateDrainRouteRequest,
-};
 
 pub(in crate::api) async fn begin_update_drain(
     State(execution): State<ExecutionHandle>,
     Json(req): Json<BeginUpdateDrainRouteRequest>,
-) -> Result<Json<ctx_daemon::daemon::BeginUpdateDrainRouteResult>, (StatusCode, Json<ApiErrorResp>)>
-{
+) -> Result<Json<BeginUpdateDrainRouteResult>, (StatusCode, Json<ApiErrorResp>)> {
     let result = execution
         .begin_update_drain_for_route(req)
         .await
@@ -23,8 +23,7 @@ pub(in crate::api) async fn begin_update_drain(
 pub(in crate::api) async fn release_update_drain(
     State(execution): State<ExecutionHandle>,
     Json(req): Json<ReleaseUpdateDrainRouteRequest>,
-) -> Result<Json<ctx_daemon::daemon::ReleaseUpdateDrainRouteResult>, (StatusCode, Json<ApiErrorResp>)>
-{
+) -> Result<Json<ReleaseUpdateDrainRouteResult>, (StatusCode, Json<ApiErrorResp>)> {
     let result = execution
         .release_update_drain_for_route(req)
         .await

@@ -1,5 +1,6 @@
 use super::*;
-use ctx_daemon::daemon::{CoreHandle, UpdateActivitySnapshot};
+use ctx_daemon::daemon::CoreHandle;
+use ctx_update_service::route_contract::UpdateActivitySnapshot;
 
 pub(in crate::api) async fn update_activity(
     State(core): State<CoreHandle>,

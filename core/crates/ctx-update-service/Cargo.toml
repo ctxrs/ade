@@ -8,6 +8,7 @@ anyhow.workspace = true
 async-trait.workspace = true
 atty = "0.2"
 base64.workspace = true
+ctx-observability = { path = "../ctx-observability" }
 hex = "0.4"
 minisign-verify = "0.2"
 reqwest.workspace = true

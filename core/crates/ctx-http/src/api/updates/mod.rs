@@ -1,5 +1,5 @@
 use super::*;
-use ctx_daemon::daemon::{UpdateRouteError, UpdateRouteErrorKind};
+use ctx_update_service::route_contract::{UpdateRouteError, UpdateRouteErrorKind};
 
 mod activity;
 mod appimage;

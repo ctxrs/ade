@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use ctx_store::StoreManager;
+use ctx_update_service::route_contract::MaintenanceRouteErrorKind;
 
 async fn test_state() -> (tempfile::TempDir, Arc<DaemonState>) {
     test_state_with_shutdown_token(None).await
@@ -55,11 +56,7 @@ async fn begin_update_drain_route_requires_confirm() {
     let handle = crate::daemon::DaemonHandle::new(state).execution();
 
     let error = handle
-        .begin_update_drain_for_route(BeginUpdateDrainRouteRequest {
-            confirm: false,
-            reason: None,
-            owner: None,
-        })
+        .begin_update_drain_for_route(BeginUpdateDrainRouteRequest::new(false, None, None))
         .await
         .expect_err("confirm is required");
 
@@ -73,11 +70,11 @@ async fn begin_update_drain_route_defaults_reason_and_owner() {
     let handle = crate::daemon::DaemonHandle::new(Arc::clone(&state)).execution();
 
     let result = handle
-        .begin_update_drain_for_route(BeginUpdateDrainRouteRequest {
-            confirm: true,
-            reason: Some("  ".to_string()),
-            owner: Some("".to_string()),
-        })
+        .begin_update_drain_for_route(BeginUpdateDrainRouteRequest::new(
+            true,
+            Some("  ".to_string()),
+            Some("".to_string()),
+        ))
         .await
         .expect("idle daemon should acquire update drain");
 
@@ -97,11 +94,7 @@ async fn begin_update_drain_route_maps_existing_drain_to_conflict() {
         .expect("acquire initial drain");
 
     let error = handle
-        .begin_update_drain_for_route(BeginUpdateDrainRouteRequest {
-            confirm: true,
-            reason: None,
-            owner: None,
-        })
+        .begin_update_drain_for_route(BeginUpdateDrainRouteRequest::new(true, None, None))
         .await
         .expect_err("second drain should conflict");
 
@@ -115,7 +108,7 @@ async fn release_update_drain_route_requires_confirm() {
     let handle = crate::daemon::DaemonHandle::new(state).execution();
 
     let error = handle
-        .release_update_drain_for_route(ReleaseUpdateDrainRouteRequest { confirm: false })
+        .release_update_drain_for_route(ReleaseUpdateDrainRouteRequest::new(false))
         .await
         .expect_err("confirm is required");
 
@@ -131,12 +124,7 @@ async fn shutdown_route_rejects_missing_or_invalid_local_token() {
     for token in [None, Some("wrong".to_string())] {
         let error = handle
             .request_daemon_shutdown_for_route(
-                ShutdownDaemonRouteRequest {
-                    confirm: true,
-                    reason: None,
-                    supplied_shutdown_token: None,
-                }
-                .with_supplied_shutdown_token(token),
+                ShutdownDaemonRouteRequest::new(true, None).with_supplied_shutdown_token(token),
             )
             .await
             .expect_err("valid local shutdown token is required");

@@ -648,6 +648,7 @@ RUST_BAZEL_DEPS = {
     "ctx-update-service": struct(
         build_deps = [],
         deps = [
+            "//core/crates/ctx-observability:lib",
             "@crates//:anyhow",
             "@crates//:atty",
             "@crates//:base64",

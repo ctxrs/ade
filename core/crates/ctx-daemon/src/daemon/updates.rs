@@ -1,103 +1,11 @@
 use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
+use ctx_update_service::route_contract::{
+    ApplyAppImageUpdateRequest, ApplyAppImageUpdateResult, DownloadAppImageUpdateRequest,
+    DownloadAppImageUpdateResult, UpdateActivitySnapshot, UpdateCheckSnapshot, UpdateRouteError,
+};
 
-use ctx_observability::logs;
-
-use crate::daemon::{CoreHandle, DaemonTurnActivitySummary};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UpdateRouteErrorKind {
-    BadRequest,
-    BadGateway,
-    Internal,
-}
-
-#[derive(Debug, Clone)]
-pub struct UpdateRouteError {
-    kind: UpdateRouteErrorKind,
-    message: String,
-}
-
-impl UpdateRouteError {
-    fn bad_request(error: impl std::fmt::Display) -> Self {
-        Self::new(UpdateRouteErrorKind::BadRequest, error)
-    }
-
-    fn bad_gateway(error: impl std::fmt::Display) -> Self {
-        Self::new(UpdateRouteErrorKind::BadGateway, error)
-    }
-
-    fn internal(error: impl std::fmt::Display) -> Self {
-        Self::new(UpdateRouteErrorKind::Internal, error)
-    }
-
-    fn new(kind: UpdateRouteErrorKind, error: impl std::fmt::Display) -> Self {
-        Self {
-            kind,
-            message: logs::redact_sensitive(&error.to_string()),
-        }
-    }
-
-    pub fn kind(&self) -> UpdateRouteErrorKind {
-        self.kind
-    }
-
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-}
-
-#[derive(Debug, Serialize)]
-pub struct UpdateCheckSnapshot {
-    pub channel: String,
-    pub base_url: String,
-    pub platform: Option<String>,
-    pub current_version: String,
-    pub latest_version: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub min_supported_version: Option<String>,
-    pub platform_supported: bool,
-    pub in_place_update_supported: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub in_place_update_reason: Option<String>,
-    pub update_available: bool,
-    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
-    pub manifest: serde_json::Value,
-}
-
-#[derive(Debug, Serialize)]
-pub struct UpdateActivitySnapshot {
-    pub activity: DaemonTurnActivitySummary,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub managed_daemon_auto_update: Option<ctx_update_service::ManagedDaemonAutoUpdateStatus>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct DownloadAppImageUpdateRequest {
-    #[serde(default)]
-    pub channel: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct DownloadAppImageUpdateResult {
-    pub downloaded_path: String,
-    pub can_apply_in_place: bool,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ApplyAppImageUpdateRequest {
-    pub confirm: bool,
-    #[serde(default)]
-    pub channel: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ApplyAppImageUpdateResult {
-    pub applied: bool,
-    pub target_path: Option<String>,
-    pub message: String,
-}
+use crate::daemon::CoreHandle;
 
 fn normalize_channel(raw: Option<&str>) -> Result<String, UpdateRouteError> {
     ctx_update_service::normalize_release_channel(raw.unwrap_or("stable"))
@@ -200,7 +108,7 @@ impl CoreHandle {
         package_version: &'static str,
         request: DownloadAppImageUpdateRequest,
     ) -> Result<DownloadAppImageUpdateResult, UpdateRouteError> {
-        let channel = normalize_channel(request.channel.as_deref())?;
+        let channel = normalize_channel(request.channel())?;
         let base_url = ctx_update_service::default_download_base_url();
         let platform = required_platform()?;
 
@@ -259,11 +167,11 @@ impl CoreHandle {
         package_version: &'static str,
         request: ApplyAppImageUpdateRequest,
     ) -> Result<ApplyAppImageUpdateResult, UpdateRouteError> {
-        if !request.confirm {
+        if !request.confirm() {
             return Err(UpdateRouteError::bad_request("confirm required"));
         }
 
-        let channel = normalize_channel(request.channel.as_deref())?;
+        let channel = normalize_channel(request.channel())?;
         let base_url = ctx_update_service::default_download_base_url();
         let platform = required_platform()?;
         let target = appimage_target_path()?;
@@ -297,6 +205,7 @@ impl CoreHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ctx_update_service::route_contract::UpdateRouteErrorKind;
 
     #[test]
     fn invalid_update_channel_is_bad_request() {

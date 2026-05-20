@@ -14,6 +14,7 @@ mod drain;
 mod fs_ops;
 mod managed_daemon;
 mod manifest;
+pub mod route_contract;
 mod self_update;
 
 pub use appimage::{

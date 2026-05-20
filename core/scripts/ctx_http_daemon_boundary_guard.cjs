@@ -2603,7 +2603,7 @@ const LOGS_API_ORCHESTRATION_PATTERNS = [
 const UPDATE_API_ORCHESTRATION_PATTERNS = [
   {
     name: "update API calls update service directly",
-    regex: /\bctx_update_service\b/,
+    regex: /\bctx_update_service\b(?!(?:::route_contract\b))/,
   },
   {
     name: "update API redacts errors locally",

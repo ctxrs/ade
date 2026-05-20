@@ -2,9 +2,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Error;
-use ctx_observability::logs;
 use ctx_session_tools::interrupt_telemetry::InterruptTelemetryContext;
-use serde::{Deserialize, Serialize};
+use ctx_update_service::route_contract::{
+    BeginUpdateDrainRouteRequest, BeginUpdateDrainRouteResult, MaintenanceRouteError,
+    ReleaseUpdateDrainRouteRequest, ReleaseUpdateDrainRouteResult, ShutdownDaemonRouteRequest,
+    ShutdownDaemonRouteResult,
+};
 
 use crate::daemon::scheduler::SchedulerCommand;
 use crate::daemon::{
@@ -70,108 +73,6 @@ pub enum MaintenanceDrainError {
 pub enum DaemonShutdownError {
     ActivityUnavailable(Error),
     Reconcile(Error),
-}
-
-#[derive(Debug, Deserialize)]
-pub struct BeginUpdateDrainRouteRequest {
-    #[serde(default)]
-    pub confirm: bool,
-    #[serde(default)]
-    pub reason: Option<String>,
-    #[serde(default)]
-    pub owner: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct BeginUpdateDrainRouteResult {
-    pub acquired: bool,
-    pub activity: DaemonTurnActivitySummary,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ReleaseUpdateDrainRouteRequest {
-    #[serde(default)]
-    pub confirm: bool,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ReleaseUpdateDrainRouteResult {
-    pub released: bool,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ShutdownDaemonRouteRequest {
-    #[serde(default)]
-    pub confirm: bool,
-    #[serde(default)]
-    pub reason: Option<String>,
-    #[serde(skip)]
-    supplied_shutdown_token: Option<String>,
-}
-
-impl ShutdownDaemonRouteRequest {
-    pub fn with_supplied_shutdown_token(mut self, token: Option<String>) -> Self {
-        self.supplied_shutdown_token = token;
-        self
-    }
-}
-
-#[derive(Debug, Serialize)]
-pub struct ShutdownDaemonRouteResult {
-    pub accepted: bool,
-    pub activity: DaemonTurnActivitySummary,
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum MaintenanceRouteErrorKind {
-    BadRequest,
-    Conflict,
-    Forbidden,
-    Internal,
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct MaintenanceRouteError {
-    kind: MaintenanceRouteErrorKind,
-    message: String,
-}
-
-impl MaintenanceRouteError {
-    pub fn kind(&self) -> MaintenanceRouteErrorKind {
-        self.kind
-    }
-
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-
-    fn bad_request(message: impl Into<String>) -> Self {
-        Self {
-            kind: MaintenanceRouteErrorKind::BadRequest,
-            message: message.into(),
-        }
-    }
-
-    fn conflict(message: impl Into<String>) -> Self {
-        Self {
-            kind: MaintenanceRouteErrorKind::Conflict,
-            message: message.into(),
-        }
-    }
-
-    fn forbidden(message: impl Into<String>) -> Self {
-        Self {
-            kind: MaintenanceRouteErrorKind::Forbidden,
-            message: message.into(),
-        }
-    }
-
-    fn internal(error: impl std::fmt::Display) -> Self {
-        Self {
-            kind: MaintenanceRouteErrorKind::Internal,
-            message: logs::redact_sensitive(&error.to_string()),
-        }
-    }
 }
 
 pub async fn begin_update_drain(
@@ -317,15 +218,14 @@ impl ExecutionHandle {
         &self,
         req: BeginUpdateDrainRouteRequest,
     ) -> Result<BeginUpdateDrainRouteResult, MaintenanceRouteError> {
-        if !req.confirm {
+        if !req.confirm() {
             return Err(MaintenanceRouteError::bad_request("confirm required"));
         }
-        let reason = req
-            .reason
+        let (reason, owner) = req.into_reason_owner();
+        let reason = reason
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| "daemon_update".to_string());
-        let owner = req
-            .owner
+        let owner = owner
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| "unknown".to_string());
         let activity = begin_update_drain(&self.state, reason, owner)
@@ -341,7 +241,7 @@ impl ExecutionHandle {
         &self,
         req: ReleaseUpdateDrainRouteRequest,
     ) -> Result<ReleaseUpdateDrainRouteResult, MaintenanceRouteError> {
-        if !req.confirm {
+        if !req.confirm() {
             return Err(MaintenanceRouteError::bad_request("confirm required"));
         }
         Ok(ReleaseUpdateDrainRouteResult {
@@ -353,16 +253,16 @@ impl ExecutionHandle {
         &self,
         req: ShutdownDaemonRouteRequest,
     ) -> Result<ShutdownDaemonRouteResult, MaintenanceRouteError> {
-        if !req.confirm {
+        if !req.confirm() {
             return Err(MaintenanceRouteError::bad_request("confirm required"));
         }
-        if !self.local_shutdown_token_authorized(req.supplied_shutdown_token.as_deref()) {
+        if !self.local_shutdown_token_authorized(req.supplied_shutdown_token()) {
             return Err(MaintenanceRouteError::forbidden(
                 "local desktop shutdown token required",
             ));
         }
         let reason = req
-            .reason
+            .reason()
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| "desktop_quit".to_string());
         let activity = request_daemon_shutdown(std::sync::Arc::clone(&self.state), reason)
