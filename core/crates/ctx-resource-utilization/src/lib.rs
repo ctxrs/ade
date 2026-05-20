@@ -20,6 +20,7 @@ mod process;
 pub mod process_limits;
 pub mod resource_governance;
 pub mod resource_telemetry_log;
+pub mod route_contract;
 pub mod tool_limits;
 
 const SYSTEM_CACHE_TTL: Duration = Duration::from_millis(750);

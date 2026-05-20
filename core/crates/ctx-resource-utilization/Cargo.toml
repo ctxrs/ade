@@ -16,6 +16,7 @@ sysinfo.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tikv-jemalloc-ctl = { version = "0.6.1", optional = true, features = ["profiling", "stats"] }
+uuid.workspace = true
 
 [features]
 daemon-heap-prof = ["dep:tikv-jemalloc-ctl"]
