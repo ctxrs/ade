@@ -10,6 +10,7 @@ const {
   createLinuxAppDirLaunchWrapper,
   resolveLinuxAppDirExecutablePath,
   resolveLinuxAppDirFromPath,
+  resolveLinuxAppDirLaunchCwd,
   resolveLinuxAppDirWebKitExecPath,
 } = require("./linux_appdir_launch_env.cjs");
 
@@ -110,13 +111,47 @@ test("linux AppDir launch wrapper materializes explicit env before bundled binar
       assert.match(wrapper, new RegExp(`export WEBKIT_EXEC_PATH='${webkitExecPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}'`));
       assert.match(wrapper, /export TAURI_WEBVIEW_AUTOMATION='true'/);
       assert.match(wrapper, /launching Linux AppDir desktop app/);
-      assert.match(wrapper, /launch target requested=/);
+      assert.match(wrapper, /launch target requested=.* cwd=/);
       assert.match(wrapper, /WEBKIT_EXEC_PATH=/);
       assert.match(wrapper, /desktop app exited status=/);
-      assert.match(wrapper, new RegExp(`cd '${appDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}'`));
+      assert.match(wrapper, new RegExp(`cd '${path.join(appDir, "usr").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}'`));
       assert.match(wrapper, new RegExp(`'${innerBinary.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}' "\\$@" >> "\\$CTX_AUTOMATION_APP_LAUNCH_LOG" 2>&1`));
       assert.match(wrapper, new RegExp(`exec '${innerBinary.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}' "\\$@"`));
       assert.doesNotMatch(wrapper, new RegExp(`'${appRun.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}' "\\$@"`));
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+test("linux AppDir launch cwd follows WebKit helper prefix", async () => {
+  await withPlatform("linux", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ctx-linux-appdir-cwd-"));
+    try {
+      const appDir = path.join(tmp, "squashfs-root");
+      const usrWebkitExecPath = path.join(appDir, "usr", "lib", "x86_64-linux-gnu", "webkit2gtk-4.1");
+      const rootWebkitExecPath = path.join(appDir, "lib", "x86_64-linux-gnu", "webkit2gtk-4.1");
+
+      assert.equal(
+        resolveLinuxAppDirLaunchCwd({
+          appDir,
+          webKitExecPath: usrWebkitExecPath,
+        }),
+        path.join(appDir, "usr"),
+      );
+      assert.equal(
+        resolveLinuxAppDirLaunchCwd({
+          appDir,
+          webKitExecPath: rootWebkitExecPath,
+        }),
+        appDir,
+      );
+      assert.equal(
+        resolveLinuxAppDirLaunchCwd({
+          appDir,
+        }),
+        appDir,
+      );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

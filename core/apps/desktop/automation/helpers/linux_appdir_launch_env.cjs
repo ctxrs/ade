@@ -121,6 +121,26 @@ const resolveLinuxAppDirWebKitExecPath = ({
   return "";
 };
 
+const resolveLinuxAppDirLaunchCwd = ({
+  appDir,
+  webKitExecPath = "",
+  pathImpl = path,
+} = {}) => {
+  if (!appDir) return "";
+  const usrDir = pathImpl.join(appDir, "usr");
+  const normalizedWebKitExecPath = resolveConfiguredPath(webKitExecPath, pathImpl);
+  if (
+    normalizedWebKitExecPath
+    && (
+      normalizedWebKitExecPath === pathImpl.join(usrDir, "lib", "x86_64-linux-gnu", "webkit2gtk-4.1")
+      || normalizedWebKitExecPath.startsWith(`${usrDir}${pathImpl.sep}`)
+    )
+  ) {
+    return usrDir;
+  }
+  return appDir;
+};
+
 const shellQuote = (value) => `'${String(value).replace(/'/g, `'\"'\"'`)}'`;
 
 const LINUX_APPDIR_DRIVER_ENV_STRIP_KEYS = [
@@ -267,10 +287,16 @@ const createLinuxAppDirLaunchWrapper = ({
   const appLaunchTargetPath =
     resolveLinuxAppDirExecutablePath({ appPath: appExecutablePath, fsImpl, pathImpl })
     || appExecutablePath;
+  const launchEnvPatch = buildLinuxAppDirLaunchEnv({ appPath: appExecutablePath, env, fsImpl, pathImpl });
   const launchEnv = {
     ...env,
-    ...buildLinuxAppDirLaunchEnv({ appPath: appExecutablePath, env, fsImpl, pathImpl }),
+    ...launchEnvPatch,
   };
+  const appLaunchCwd = resolveLinuxAppDirLaunchCwd({
+    appDir,
+    webKitExecPath: launchEnvPatch.WEBKIT_EXEC_PATH,
+    pathImpl,
+  });
   const entries = Object.entries(launchEnv).filter(([, value]) => String(value || "").trim());
   const normalizedWrapperDir = resolveConfiguredPath(wrapperDir, pathImpl);
   if (!normalizedWrapperDir) {
@@ -278,7 +304,7 @@ const createLinuxAppDirLaunchWrapper = ({
   }
   const signature = cryptoImpl
     .createHash("sha256")
-    .update(JSON.stringify({ appExecutablePath, appLaunchTargetPath, launchEnv }))
+    .update(JSON.stringify({ appExecutablePath, appLaunchTargetPath, appLaunchCwd, launchEnv }))
     .digest("hex")
     .slice(0, 16);
   fsImpl.mkdirSync(normalizedWrapperDir, { recursive: true });
@@ -287,11 +313,11 @@ const createLinuxAppDirLaunchWrapper = ({
     "#!/bin/sh",
     "set -eu",
     ...entries.map(([key, value]) => `export ${key}=${shellQuote(value)}`),
-    `cd ${shellQuote(appDir)}`,
+    `cd ${shellQuote(appLaunchCwd)}`,
     "if [ -n \"${CTX_AUTOMATION_APP_LAUNCH_LOG:-}\" ]; then",
     "  mkdir -p \"$(dirname \"$CTX_AUTOMATION_APP_LAUNCH_LOG\")\"",
     "  printf '%s\\n' \"launching Linux AppDir desktop app\" >> \"$CTX_AUTOMATION_APP_LAUNCH_LOG\"",
-    `  printf 'launch target requested=%s executable=%s\\n' ${shellQuote(appExecutablePath)} ${shellQuote(appLaunchTargetPath)} >> "$CTX_AUTOMATION_APP_LAUNCH_LOG"`,
+    `  printf 'launch target requested=%s executable=%s cwd=%s\\n' ${shellQuote(appExecutablePath)} ${shellQuote(appLaunchTargetPath)} ${shellQuote(appLaunchCwd)} >> "$CTX_AUTOMATION_APP_LAUNCH_LOG"`,
     "  printf 'launch args:' >> \"$CTX_AUTOMATION_APP_LAUNCH_LOG\"",
     "  for arg in \"$@\"; do",
     "    printf ' %s' \"$arg\" >> \"$CTX_AUTOMATION_APP_LAUNCH_LOG\"",
@@ -319,5 +345,6 @@ module.exports = {
   createLinuxAppDirLaunchWrapper,
   resolveLinuxAppDirExecutablePath,
   resolveLinuxAppDirFromPath,
+  resolveLinuxAppDirLaunchCwd,
   resolveLinuxAppDirWebKitExecPath,
 };

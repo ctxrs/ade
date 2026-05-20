@@ -164,7 +164,7 @@ test("wdio Linux shipped-app uses AppDir launcher wrapper for WebDriver applicat
     assert.match(wrapper, new RegExp(`export WEBKIT_EXEC_PATH='${escapeRegExp(webkitExecPath)}'`));
     assert.match(wrapper, /launch target requested=/);
     assert.match(wrapper, /WEBKIT_EXEC_PATH=/);
-    assert.match(wrapper, new RegExp(`cd '${escapeRegExp(appDir)}'`));
+    assert.match(wrapper, new RegExp(`cd '${escapeRegExp(path.join(appDir, "usr"))}'`));
     assert.match(wrapper, new RegExp(`'${escapeRegExp(innerBinary)}' "\\$@" >> "\\$CTX_AUTOMATION_APP_LAUNCH_LOG" 2>&1`));
     assert.match(wrapper, new RegExp(`exec '${escapeRegExp(innerBinary)}' "\\$@"`));
     assert.doesNotMatch(wrapper, new RegExp(`'${escapeRegExp(appPath)}' "\\$@"`));
