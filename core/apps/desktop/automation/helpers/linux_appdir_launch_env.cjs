@@ -113,7 +113,7 @@ const resolveLinuxAppDirWebKitExecPath = ({
   ]) {
     if (
       existingExecutableFile(pathImpl.join(candidate, "WebKitNetworkProcess"), fsImpl)
-      || existingExecutableFile(pathImpl.join(candidate, "WebKitWebProcess"), fsImpl)
+      && existingExecutableFile(pathImpl.join(candidate, "WebKitWebProcess"), fsImpl)
     ) {
       return candidate;
     }

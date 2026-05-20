@@ -119,12 +119,16 @@ test("wdio Linux shipped-app uses AppDir launcher wrapper for WebDriver applicat
     const appImage = path.join(tmp, "ctx.AppImage");
     const runtimeDir = path.join(tmp, "xdg-runtime");
     const innerBinary = path.join(appDir, "usr", "bin", "ctx");
-    const webkitExecPath = path.join(appDir, "lib", "x86_64-linux-gnu", "webkit2gtk-4.1");
+    const partialWebkitExecPath = path.join(appDir, "lib", "x86_64-linux-gnu", "webkit2gtk-4.1");
+    const webkitExecPath = path.join(appDir, "usr", "lib", "x86_64-linux-gnu", "webkit2gtk-4.1");
     fs.mkdirSync(path.dirname(innerBinary), { recursive: true });
+    fs.mkdirSync(partialWebkitExecPath, { recursive: true });
     fs.mkdirSync(webkitExecPath, { recursive: true });
     fs.writeFileSync(appPath, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
     fs.writeFileSync(innerBinary, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+    fs.writeFileSync(path.join(partialWebkitExecPath, "WebKitNetworkProcess"), "", { mode: 0o700 });
     fs.writeFileSync(path.join(webkitExecPath, "WebKitNetworkProcess"), "", { mode: 0o700 });
+    fs.writeFileSync(path.join(webkitExecPath, "WebKitWebProcess"), "", { mode: 0o700 });
     fs.mkdirSync(bundlesDir, { recursive: true });
     fs.mkdirSync(runtimeDir, { recursive: true });
 

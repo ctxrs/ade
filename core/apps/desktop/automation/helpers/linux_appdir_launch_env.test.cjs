@@ -30,11 +30,14 @@ test("linux AppDir launch env resolves extracted AppRun", async () => {
     try {
       const appDir = path.join(tmp, "squashfs-root");
       const appRun = path.join(appDir, "AppRun");
+      const partialWebkitExecPath = path.join(appDir, "lib", "x86_64-linux-gnu", "webkit2gtk-4.1");
       const webkitExecPath = path.join(appDir, "usr", "lib", "x86_64-linux-gnu", "webkit2gtk-4.1");
       fs.mkdirSync(path.join(appDir, "usr", "bin"), { recursive: true });
+      fs.mkdirSync(partialWebkitExecPath, { recursive: true });
       fs.mkdirSync(webkitExecPath, { recursive: true });
       fs.writeFileSync(appRun, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
       fs.writeFileSync(path.join(appDir, "usr", "bin", "ctx"), "", { mode: 0o755 });
+      fs.writeFileSync(path.join(partialWebkitExecPath, "WebKitNetworkProcess"), "", { mode: 0o755 });
       fs.writeFileSync(path.join(webkitExecPath, "WebKitNetworkProcess"), "", { mode: 0o755 });
       fs.writeFileSync(path.join(webkitExecPath, "WebKitWebProcess"), "", { mode: 0o755 });
 
@@ -72,14 +75,18 @@ test("linux AppDir launch wrapper materializes explicit env before bundled binar
       const appDir = path.join(tmp, "squashfs-root");
       const appRun = path.join(appDir, "AppRun");
       const innerBinary = path.join(appDir, "usr", "bin", "ctx");
-      const webkitExecPath = path.join(appDir, "lib", "x86_64-linux-gnu", "webkit2gtk-4.1");
+      const partialWebkitExecPath = path.join(appDir, "lib", "x86_64-linux-gnu", "webkit2gtk-4.1");
+      const webkitExecPath = path.join(appDir, "usr", "lib", "x86_64-linux-gnu", "webkit2gtk-4.1");
       const wrapperDir = path.join(tmp, "launchers");
       const appImage = path.join(tmp, "ctx.AppImage");
       fs.mkdirSync(path.join(appDir, "usr", "bin"), { recursive: true });
+      fs.mkdirSync(partialWebkitExecPath, { recursive: true });
       fs.mkdirSync(webkitExecPath, { recursive: true });
       fs.writeFileSync(appRun, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
       fs.writeFileSync(innerBinary, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(partialWebkitExecPath, "WebKitNetworkProcess"), "", { mode: 0o755 });
       fs.writeFileSync(path.join(webkitExecPath, "WebKitNetworkProcess"), "", { mode: 0o755 });
+      fs.writeFileSync(path.join(webkitExecPath, "WebKitWebProcess"), "", { mode: 0o755 });
 
       const wrapperPath = createLinuxAppDirLaunchWrapper({
         appPath: appRun,
