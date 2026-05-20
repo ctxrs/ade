@@ -1,4 +1,5 @@
 pub mod config;
+pub mod config_snapshot;
 pub mod environment;
 pub mod install;
 pub mod models;

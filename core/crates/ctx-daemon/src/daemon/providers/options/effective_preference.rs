@@ -66,14 +66,14 @@ async fn effective_model_payload_for_workspace(
         .await
         .map_err(EffectivePreferredModelError::ExecutionSettings)?;
     let provider_status = launch_config
-        .provider_status(state, provider_id, install_target)
+        .provider_status(state.as_ref(), provider_id, install_target)
         .await;
     let selected_endpoint = launch_config.selected_endpoint_record();
     let source_config = launch_config.source_config();
     let skip_cached_config_surfaces =
         launch_config.managed_config_error.is_some() || launch_config.source_config_error.is_some();
     let cache = providers::ProviderOptionsCacheSnapshot::load(
-        state,
+        &state.providers,
         workspace.id,
         install_target,
         provider_id,
@@ -152,7 +152,7 @@ async fn effective_model_payload_for_workspace(
                             source_config,
                             preferred_model_id,
                         });
-                    cache.store_response(state, response).await;
+                    cache.store_response(&state.providers, response).await;
                     return Ok(Some(models));
                 }
             }

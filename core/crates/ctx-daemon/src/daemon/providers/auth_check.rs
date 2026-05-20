@@ -2,11 +2,8 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use ctx_core::ids::WorkspaceId;
-use ctx_harness_sources::HarnessEndpointVerificationStatus;
 use ctx_observability::logs;
-use ctx_provider_runtime::provider_launch::models::{
-    endpoint_catalog_runtime_probe_failure, endpoint_catalog_verify_outcome,
-};
+pub use ctx_provider_runtime::provider_auth_check::ProviderAuthCheckSnapshot;
 use ctx_provider_runtime::provider_launch::options::endpoint_supports_model_catalog_verify;
 use ctx_provider_runtime::provider_launch::probe_error::classify_probe_error;
 use ctx_provider_runtime::provider_usability::{
@@ -40,16 +37,6 @@ pub enum ProviderAuthCheckError {
     ExecutionSettings(anyhow::Error),
     ProviderLaunchConfig(ProviderLaunchConfigError),
     Verify(String),
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct ProviderAuthCheckSnapshot {
-    pub provider_id: String,
-    pub workspace_id: String,
-    pub status: String,
-    pub auth_required: Option<bool>,
-    pub checked_at: Option<String>,
-    pub message: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -276,7 +263,7 @@ pub async fn verify_provider_for_workspace(
         .map_err(ProviderAuthCheckError::ExecutionSettings)?;
     let launch_config = load_provider_launch_config_snapshot(state, provider_id).await;
     launch_config
-        .ensure_known_provider(state, provider_id)
+        .ensure_known_provider(state.as_ref(), provider_id)
         .await
         .map_err(ProviderAuthCheckError::ProviderLaunchConfig)?;
     let checked_at = Utc::now().to_rfc3339();
@@ -302,7 +289,7 @@ pub async fn verify_provider_for_workspace(
     }
 
     let provider_status = launch_config
-        .provider_status(state, provider_id, install_target)
+        .provider_status(state.as_ref(), provider_id, install_target)
         .await;
     let mut outcome = ProviderVerifyOutcome::new(checked_at, selected_endpoint_id.take());
 

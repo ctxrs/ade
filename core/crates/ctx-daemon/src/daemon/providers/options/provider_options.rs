@@ -150,7 +150,7 @@ pub async fn get_provider_options_response(
     }
 
     let provider_status = launch_config
-        .provider_status(state, provider_id, install_target)
+        .provider_status(state.as_ref(), provider_id, install_target)
         .await;
 
     if let Some(config_error) = launch_config.source_config_error.as_ref() {

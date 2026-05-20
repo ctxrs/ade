@@ -101,7 +101,7 @@ pub(in crate::daemon::providers::options) async fn finalize_provider_options_res
     if write_options_cache {
         context
             .cache
-            .store_response(context.state, response.clone())
+            .store_response(&context.state.providers, response.clone())
             .await;
     }
 

@@ -36,7 +36,7 @@ pub(super) async fn load_provider_options_inputs(
     let skip_cached_config_surfaces =
         launch_config.managed_config_error.is_some() || launch_config.source_config_error.is_some();
     let cache = ProviderOptionsCacheSnapshot::load(
-        state,
+        &state.providers,
         workspace_id,
         install_target,
         provider_id,
@@ -48,7 +48,7 @@ pub(super) async fn load_provider_options_inputs(
         return Ok(ProviderOptionsLoadOutcome::Cached(out));
     }
     launch_config
-        .ensure_known_provider(state, provider_id)
+        .ensure_known_provider(state.as_ref(), provider_id)
         .await
         .map_err(ProviderOptionsResponseError::ProviderLaunchConfig)?;
 
