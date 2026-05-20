@@ -47,6 +47,7 @@ const AGENT_GATE_CRATES = [
   "ctx-workspace-active-snapshot",
   "ctx-workspace-config",
   "ctx-workspace-runtime",
+  "ctx-workspace-stream-service",
 ];
 
 const BAZEL_TEST_CRATES = new Set(getBazelCoveredCrates());

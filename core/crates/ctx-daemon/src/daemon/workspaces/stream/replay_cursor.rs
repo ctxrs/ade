@@ -2,40 +2,15 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use ctx_core::ids::{SessionId, WorkspaceId};
-use ctx_workspace_active_snapshot::{replay_cursor_after_live_progress, SessionReplayCursor};
+use ctx_workspace_active_snapshot::SessionReplayCursor;
+pub use ctx_workspace_stream_service::replay_cursor::{
+    active_head_cursors_from_snapshot_read_model, plan_resume_replay_cursor,
+    WorkspaceStreamResumeReplayCursorPlan,
+};
 
 use super::read_model::WorkspaceStreamSnapshotReadModel;
 use crate::daemon::DaemonState;
 use crate::daemon::WorkspaceStreamHandle;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum WorkspaceStreamResumeReplayCursorPlan {
-    Replay { cursor: SessionReplayCursor },
-    NoReplayRequired,
-}
-
-pub fn active_head_cursors_from_snapshot_read_model(
-    read_model: &WorkspaceStreamSnapshotReadModel,
-) -> HashMap<SessionId, SessionReplayCursor> {
-    read_model
-        .active_heads
-        .heads
-        .iter()
-        .map(|head| (head.session.id, SessionReplayCursor::from_head(head)))
-        .collect()
-}
-
-pub fn plan_resume_replay_cursor(
-    live_cursor: Option<SessionReplayCursor>,
-    after_seq: i64,
-    after_projection_rev: i64,
-) -> WorkspaceStreamResumeReplayCursorPlan {
-    let requested_cursor = resume_replay_cursor(after_seq, after_projection_rev);
-    match replay_cursor_after_live_progress(live_cursor, requested_cursor) {
-        Some(cursor) => WorkspaceStreamResumeReplayCursorPlan::Replay { cursor },
-        None => WorkspaceStreamResumeReplayCursorPlan::NoReplayRequired,
-    }
-}
 
 pub async fn head_only_snapshot_cursor(
     state: &Arc<DaemonState>,
@@ -65,17 +40,6 @@ pub async fn active_task_subscription_cursor(
     session_id: SessionId,
 ) -> SessionReplayCursor {
     session_replay_tail_cursor(state, workspace_id, session_id).await
-}
-
-fn resume_replay_cursor(after_seq: i64, after_projection_rev: i64) -> SessionReplayCursor {
-    SessionReplayCursor {
-        last_event_seq: after_seq,
-        projection_rev: if after_projection_rev > 0 {
-            after_projection_rev
-        } else {
-            i64::MAX
-        },
-    }
 }
 
 async fn session_replay_tail_cursor(

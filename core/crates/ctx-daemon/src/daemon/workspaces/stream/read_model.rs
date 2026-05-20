@@ -4,23 +4,14 @@ use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{
     WorkspaceActiveHeadBatch, WorkspaceActiveSnapshot, WorkspaceActiveSnapshotEvent,
 };
+pub use ctx_workspace_stream_service::read_model::{
+    WorkspaceStreamInitialState, WorkspaceStreamSnapshotReadModel,
+};
 use tokio::sync::broadcast;
 
 use crate::daemon::workspaces::{load_workspace_active_snapshot_state, WorkspaceHydrationError};
 use crate::daemon::DaemonState;
 use crate::daemon::WorkspaceStreamHandle;
-
-#[derive(Clone, Debug)]
-pub struct WorkspaceStreamSnapshotReadModel {
-    pub active_snapshot: WorkspaceActiveSnapshot,
-    pub active_heads: WorkspaceActiveHeadBatch,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct WorkspaceStreamInitialState {
-    pub snapshot_rev: i64,
-    pub archived_rev: i64,
-}
 
 pub async fn initial_stream_state(
     state: &Arc<DaemonState>,

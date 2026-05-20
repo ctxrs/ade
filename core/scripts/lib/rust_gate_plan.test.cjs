@@ -58,6 +58,7 @@ test("agent gate crate list keeps the expected ctx-http-centered fast gate", () 
     "ctx-workspace-active-snapshot",
     "ctx-workspace-config",
     "ctx-workspace-runtime",
+    "ctx-workspace-stream-service",
   ]);
 });
 

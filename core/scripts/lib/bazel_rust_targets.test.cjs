@@ -35,6 +35,7 @@ test("Bazel-covered crates stay on the intended explicit Rust slice", () => {
     "ctx-client",
     "ctx-core",
     "ctx-crp-protocol",
+    "ctx-daemon",
     "ctx-desktop-ipc",
     "ctx-docs-mirror",
     "ctx-egress-proxy",
@@ -87,6 +88,7 @@ test("Bazel-covered crates stay on the intended explicit Rust slice", () => {
     "ctx-workspace-container",
     "ctx-workspace-runtime",
     "ctx-workspace-services",
+    "ctx-workspace-stream-service",
     "ctx-worktree-data-plane",
   ]);
 });

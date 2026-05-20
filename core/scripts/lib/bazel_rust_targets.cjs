@@ -110,6 +110,7 @@ const BAZEL_TEST_TARGETS_BY_CRATE = Object.freeze({
   "ctx-worktree-data-plane": ["//core/crates/ctx-worktree-data-plane:unit_tests"],
   "ctx-workspace-container": ["//core/crates/ctx-workspace-container:unit_tests"],
   "ctx-workspace-active-snapshot": ["//core/crates/ctx-workspace-active-snapshot:unit_tests"],
+  "ctx-workspace-stream-service": ["//core/crates/ctx-workspace-stream-service:unit_tests"],
   "ctx-workspace-runtime": [
     "//core/crates/ctx-workspace-runtime:unit_tests",
     "//core/crates/ctx-workspace-runtime:workspace_runtime_crash_recovery",
@@ -181,6 +182,7 @@ const BAZEL_BUILD_TARGETS_BY_CRATE = Object.freeze({
   "ctx-worktree-data-plane": ["//core/crates/ctx-worktree-data-plane:lib"],
   "ctx-workspace-container": ["//core/crates/ctx-workspace-container:lib"],
   "ctx-workspace-active-snapshot": ["//core/crates/ctx-workspace-active-snapshot:lib"],
+  "ctx-workspace-stream-service": ["//core/crates/ctx-workspace-stream-service:lib"],
   "ctx-workspace-runtime": ["//core/crates/ctx-workspace-runtime:lib"],
 });
 

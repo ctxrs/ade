@@ -1,0 +1,8 @@
+[package]
+name = "ctx-workspace-stream-service"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+ctx-core = { path = "../ctx-core" }
+ctx-workspace-active-snapshot = { path = "../ctx-workspace-active-snapshot" }
