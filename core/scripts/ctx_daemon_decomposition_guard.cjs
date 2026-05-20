@@ -51,7 +51,7 @@ const RATCHETED_FILE_LIMITS = [
   },
   {
     path: "core/crates/ctx-daemon/src/daemon/sessions/message_commands.rs",
-    limit: 540,
+    limit: 220,
   },
   {
     path: "core/crates/ctx-daemon/src/daemon/providers/codex_app_login.rs",
