@@ -1,5 +1,5 @@
 use super::*;
-use ctx_daemon::daemon::{
+use ctx_route_contracts::sessions::{
     ApplySessionVcsDiffPatchRouteRequest, SessionRouteParams, SessionVcsDiffRouteResponse,
     SessionVcsDiffSummaryRouteResponse, SessionVcsGitStatusRouteResponse, SessionVcsRouteError,
     SessionVcsRouteErrorKind, SessionVcsRouteQuery,

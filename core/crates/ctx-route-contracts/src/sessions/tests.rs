@@ -1,12 +1,14 @@
 use super::{
-    parse_boolish_flag, parse_session_id, parse_turn_id, AuthenticateSessionRouteRequest,
-    GenerateSessionTitleRouteRequest, GenerateSessionTitleRouteResponse, SessionEventsRouteQuery,
-    SessionEventsRouteResponse, SessionFileCompletionsRouteQuery,
-    SessionFileCompletionsRouteResponse, SessionHeadRouteQuery, SessionHeadRouteResponse,
-    SessionHistoryRouteQuery, SessionHistoryRouteResponse, SessionReadModelRouteErrorKind,
-    SessionSnapshotRouteQuery, SessionSnapshotRouteResponse, SessionStateRouteResponse,
-    SessionTurnToolsRouteResponse, SetSessionModeRouteRequest, SetSessionModelRouteRequest,
-    SetSessionModelRouteResponse, SubmitAskUserQuestionRouteRequest,
+    parse_boolish_flag, parse_session_id, parse_turn_id, ApplySessionVcsDiffPatchRouteRequest,
+    AuthenticateSessionRouteRequest, GenerateSessionTitleRouteRequest,
+    GenerateSessionTitleRouteResponse, SessionEventsRouteQuery, SessionEventsRouteResponse,
+    SessionFileCompletionsRouteQuery, SessionFileCompletionsRouteResponse, SessionHeadRouteQuery,
+    SessionHeadRouteResponse, SessionHistoryRouteQuery, SessionHistoryRouteResponse,
+    SessionReadModelRouteErrorKind, SessionSnapshotRouteQuery, SessionSnapshotRouteResponse,
+    SessionStateRouteResponse, SessionTurnToolsRouteResponse, SessionVcsDiffRouteResponse,
+    SessionVcsDiffSummaryRouteResponse, SessionVcsGitStatusEntryRouteResponse,
+    SessionVcsGitStatusRouteResponse, SessionVcsRouteQuery, SetSessionModeRouteRequest,
+    SetSessionModelRouteRequest, SetSessionModelRouteResponse, SubmitAskUserQuestionRouteRequest,
     SubmitAskUserQuestionRouteResponse, SESSION_EVENTS_DEFAULT_LIMIT, SESSION_EVENTS_MAX_LIMIT,
 };
 use chrono::{TimeZone, Utc};
@@ -15,10 +17,10 @@ use ctx_core::ids::{
     WorktreeId,
 };
 use ctx_core::models::{
-    Artifact, Message, MessageDelivery, MessageRole, Session, SessionActivityState, SessionEvent,
-    SessionEventType, SessionGitStatusSummary, SessionMetadata, SessionSnapshot,
-    SessionSnapshotSummary, SessionState, SessionStatus, SessionTurn, SessionTurnStatus,
-    SessionTurnTool,
+    Artifact, DiffUnavailableReason, Message, MessageDelivery, MessageRole, Session,
+    SessionActivityState, SessionEvent, SessionEventType, SessionGitStatusSummary, SessionMetadata,
+    SessionSnapshot, SessionSnapshotSummary, SessionState, SessionStatus, SessionTurn,
+    SessionTurnStatus, SessionTurnTool,
 };
 use serde_json::json;
 
@@ -362,6 +364,165 @@ fn title_model_mode_requests_and_responses_preserve_wire_shapes() {
     let mode: SetSessionModeRouteRequest =
         serde_json::from_value(json!({ "mode_id": "planning", "ignored": true })).unwrap();
     assert_eq!(mode.into_mode_id(), "planning");
+}
+
+#[test]
+fn vcs_query_and_body_preserve_current_serde_shape() {
+    let query: SessionVcsRouteQuery = serde_json::from_value(json!({
+        "base_commit_sha": "base",
+        "target_branch": "main",
+        "ignored": true
+    }))
+    .unwrap();
+    let (base_commit_sha, target_branch) = query.into_parts();
+    assert_eq!(base_commit_sha.as_deref(), Some("base"));
+    assert_eq!(target_branch.as_deref(), Some("main"));
+
+    let query_defaults: SessionVcsRouteQuery =
+        serde_json::from_value(json!({ "ignored": true })).unwrap();
+    assert_eq!(query_defaults.into_parts(), (None, None));
+
+    let request: ApplySessionVcsDiffPatchRouteRequest = serde_json::from_value(json!({
+        "action": "accept",
+        "patch": "diff --git a/file b/file",
+        "ignored": true
+    }))
+    .unwrap();
+    assert_eq!(request.action(), "accept");
+    assert_eq!(request.patch(), "diff --git a/file b/file");
+}
+
+#[test]
+fn vcs_diff_responses_preserve_available_serde_contract() {
+    let available = SessionVcsDiffRouteResponse {
+        diff: "diff".to_string(),
+        available: true,
+        unavailable_reason: None,
+    };
+    assert_eq!(
+        serde_json::to_value(available).unwrap(),
+        json!({ "diff": "diff" })
+    );
+
+    let unavailable = SessionVcsDiffRouteResponse {
+        diff: String::new(),
+        available: false,
+        unavailable_reason: Some(DiffUnavailableReason::NoRepo),
+    };
+    assert_eq!(
+        serde_json::to_value(unavailable).unwrap(),
+        json!({
+            "diff": "",
+            "available": false,
+            "unavailable_reason": "no_repo"
+        })
+    );
+
+    let summary_available = SessionVcsDiffSummaryRouteResponse {
+        base_commit_sha: "base".to_string(),
+        head_commit_sha: "head".to_string(),
+        file_count: 1,
+        line_additions: 2,
+        line_deletions: 3,
+        available: true,
+        unavailable_reason: None,
+    };
+    assert_eq!(
+        serde_json::to_value(summary_available).unwrap(),
+        json!({
+            "base_commit_sha": "base",
+            "head_commit_sha": "head",
+            "file_count": 1,
+            "line_additions": 2,
+            "line_deletions": 3
+        })
+    );
+
+    let summary_unavailable = SessionVcsDiffSummaryRouteResponse {
+        base_commit_sha: "base".to_string(),
+        head_commit_sha: "head".to_string(),
+        file_count: 0,
+        line_additions: 0,
+        line_deletions: 0,
+        available: false,
+        unavailable_reason: Some(DiffUnavailableReason::NoTargetBranch),
+    };
+    assert_eq!(
+        serde_json::to_value(summary_unavailable).unwrap(),
+        json!({
+            "base_commit_sha": "base",
+            "head_commit_sha": "head",
+            "file_count": 0,
+            "line_additions": 0,
+            "line_deletions": 0,
+            "available": false,
+            "unavailable_reason": "no_target_branch"
+        })
+    );
+}
+
+#[test]
+fn vcs_git_status_response_preserves_entry_serde_contract() {
+    let empty_entries = SessionVcsGitStatusRouteResponse {
+        raw: "raw".to_string(),
+        summary_line: "summary".to_string(),
+        branch: None,
+        upstream: None,
+        ahead: 0,
+        behind: 0,
+        detached: false,
+        staged: 0,
+        unstaged: 0,
+        untracked: 0,
+        entries: Vec::new(),
+        entries_truncated: false,
+        entries_total_count: 0,
+    };
+    let value = serde_json::to_value(empty_entries).unwrap();
+    assert!(value.get("entries").is_none());
+
+    let with_entry = SessionVcsGitStatusRouteResponse {
+        raw: "raw".to_string(),
+        summary_line: "summary".to_string(),
+        branch: Some("main".to_string()),
+        upstream: Some("origin/main".to_string()),
+        ahead: 1,
+        behind: 2,
+        detached: false,
+        staged: 3,
+        unstaged: 4,
+        untracked: 5,
+        entries: vec![SessionVcsGitStatusEntryRouteResponse {
+            path: "renamed.rs".to_string(),
+            orig_path: None,
+            index_status: "R".to_string(),
+            worktree_status: "M".to_string(),
+        }],
+        entries_truncated: true,
+        entries_total_count: 1,
+    };
+    assert_eq!(
+        serde_json::to_value(with_entry).unwrap(),
+        json!({
+            "raw": "raw",
+            "summary_line": "summary",
+            "branch": "main",
+            "upstream": "origin/main",
+            "ahead": 1,
+            "behind": 2,
+            "detached": false,
+            "staged": 3,
+            "unstaged": 4,
+            "untracked": 5,
+            "entries": [{
+                "path": "renamed.rs",
+                "index_status": "R",
+                "worktree_status": "M"
+            }],
+            "entries_truncated": true,
+            "entries_total_count": 1
+        })
+    );
 }
 
 #[test]

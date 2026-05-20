@@ -2,6 +2,7 @@ mod common;
 mod control;
 mod read_models;
 mod title_model_mode;
+mod vcs;
 
 pub use common::{parse_session_route_id, SessionRouteParams, SessionTurnToolsRouteParams};
 pub use control::{
@@ -21,6 +22,12 @@ pub use title_model_mode::{
     GenerateSessionTitleRouteRequest, GenerateSessionTitleRouteResponse,
     SessionTitleModelModeRouteError, SessionTitleModelModeRouteErrorKind,
     SetSessionModeRouteRequest, SetSessionModelRouteRequest, SetSessionModelRouteResponse,
+};
+pub use vcs::{
+    ApplySessionVcsDiffPatchRouteRequest, SessionVcsDiffRouteResponse,
+    SessionVcsDiffSummaryRouteResponse, SessionVcsGitStatusEntryRouteResponse,
+    SessionVcsGitStatusRouteResponse, SessionVcsRouteError, SessionVcsRouteErrorKind,
+    SessionVcsRouteQuery,
 };
 
 #[cfg(test)]

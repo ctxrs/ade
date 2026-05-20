@@ -1,7 +1,11 @@
 use ctx_core::ids::SessionId;
-use ctx_core::models::DiffUnavailableReason;
 use ctx_observability::logs;
-use serde::{Deserialize, Serialize};
+pub use ctx_route_contracts::sessions::{
+    ApplySessionVcsDiffPatchRouteRequest, SessionVcsDiffRouteResponse,
+    SessionVcsDiffSummaryRouteResponse, SessionVcsGitStatusEntryRouteResponse,
+    SessionVcsGitStatusRouteResponse, SessionVcsRouteError, SessionVcsRouteErrorKind,
+    SessionVcsRouteQuery,
+};
 
 use crate::daemon::sessions::route_contract::parse_session_route_id;
 use crate::daemon::sessions::vcs::{
@@ -9,113 +13,6 @@ use crate::daemon::sessions::vcs::{
     SessionVcsError, SessionVcsGitStatus, SessionVcsGitStatusEntry,
 };
 use crate::daemon::{SessionRouteParams, SessionsHandle};
-
-fn is_true(v: &bool) -> bool {
-    *v
-}
-
-#[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq)]
-pub struct SessionVcsRouteQuery {
-    pub base_commit_sha: Option<String>,
-    pub target_branch: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct ApplySessionVcsDiffPatchRouteRequest {
-    action: String,
-    patch: String,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct SessionVcsDiffRouteResponse {
-    pub diff: String,
-    #[serde(skip_serializing_if = "is_true")]
-    pub available: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub unavailable_reason: Option<DiffUnavailableReason>,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct SessionVcsDiffSummaryRouteResponse {
-    pub base_commit_sha: String,
-    pub head_commit_sha: String,
-    pub file_count: i64,
-    pub line_additions: i64,
-    pub line_deletions: i64,
-    #[serde(skip_serializing_if = "is_true")]
-    pub available: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub unavailable_reason: Option<DiffUnavailableReason>,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct SessionVcsGitStatusRouteResponse {
-    pub raw: String,
-    pub summary_line: String,
-    pub branch: Option<String>,
-    pub upstream: Option<String>,
-    pub ahead: i64,
-    pub behind: i64,
-    pub detached: bool,
-    pub staged: i64,
-    pub unstaged: i64,
-    pub untracked: i64,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub entries: Vec<SessionVcsGitStatusEntryRouteResponse>,
-    pub entries_truncated: bool,
-    pub entries_total_count: i64,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct SessionVcsGitStatusEntryRouteResponse {
-    pub path: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub orig_path: Option<String>,
-    pub index_status: String,
-    pub worktree_status: String,
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum SessionVcsRouteErrorKind {
-    BadRequest,
-    NotFound,
-    Internal,
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct SessionVcsRouteError {
-    kind: SessionVcsRouteErrorKind,
-    message: String,
-}
-
-impl SessionVcsRouteError {
-    fn new(kind: SessionVcsRouteErrorKind, message: impl Into<String>) -> Self {
-        Self {
-            kind,
-            message: message.into(),
-        }
-    }
-
-    fn bad_request(message: impl Into<String>) -> Self {
-        Self::new(SessionVcsRouteErrorKind::BadRequest, message)
-    }
-
-    fn not_found(message: impl Into<String>) -> Self {
-        Self::new(SessionVcsRouteErrorKind::NotFound, message)
-    }
-
-    fn internal(message: impl Into<String>) -> Self {
-        Self::new(SessionVcsRouteErrorKind::Internal, message)
-    }
-
-    pub fn kind(&self) -> SessionVcsRouteErrorKind {
-        self.kind
-    }
-
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-}
 
 impl SessionsHandle {
     pub async fn get_session_vcs_diff_for_route(
@@ -149,7 +46,7 @@ impl SessionsHandle {
     ) -> Result<SessionVcsDiffRouteResponse, SessionVcsRouteError> {
         let session_id = parse_session_vcs_route_id(params)?;
         let action = parse_session_vcs_apply_action(&request)?;
-        self.apply_session_vcs_diff_patch_for_request(session_id, action, &request.patch)
+        self.apply_session_vcs_diff_patch_for_request(session_id, action, request.patch())
             .await
             .map(session_vcs_diff_response)
             .map_err(session_vcs_route_error)
@@ -175,19 +72,20 @@ fn parse_session_vcs_route_id(
 }
 
 fn session_vcs_diff_query(query: SessionVcsRouteQuery) -> SessionVcsDiffQuery {
+    let (base_commit_sha, target_branch) = query.into_parts();
     SessionVcsDiffQuery {
-        base_commit_sha: query.base_commit_sha,
-        target_branch: query.target_branch,
+        base_commit_sha,
+        target_branch,
     }
 }
 
 fn parse_session_vcs_apply_action(
     request: &ApplySessionVcsDiffPatchRouteRequest,
 ) -> Result<SessionVcsApplyAction, SessionVcsRouteError> {
-    if request.patch.trim().is_empty() {
+    if request.patch().trim().is_empty() {
         return Err(SessionVcsRouteError::bad_request("patch is empty"));
     }
-    match request.action.trim().to_lowercase().as_str() {
+    match request.action().trim().to_lowercase().as_str() {
         "accept" => Ok(SessionVcsApplyAction::Accept),
         "reject" => Ok(SessionVcsApplyAction::Reject),
         _ => Err(SessionVcsRouteError::bad_request(
@@ -270,30 +168,28 @@ fn session_vcs_git_status_entry_response(
 mod tests {
     use super::*;
     use anyhow::anyhow;
+    use ctx_core::models::DiffUnavailableReason;
     use serde_json::json;
 
     fn apply_request(action: &str, patch: &str) -> ApplySessionVcsDiffPatchRouteRequest {
-        ApplySessionVcsDiffPatchRouteRequest {
-            action: action.to_string(),
-            patch: patch.to_string(),
-        }
+        serde_json::from_value(json!({
+            "action": action,
+            "patch": patch,
+        }))
+        .unwrap()
     }
 
     #[test]
-    fn route_query_and_body_preserve_current_serde_shape() {
+    fn route_query_maps_to_low_level_query() {
         let query: SessionVcsRouteQuery = serde_json::from_value(json!({
             "base_commit_sha": "base",
             "target_branch": "main",
             "ignored": true
         }))
         .unwrap();
+        let query = session_vcs_diff_query(query);
         assert_eq!(query.base_commit_sha.as_deref(), Some("base"));
         assert_eq!(query.target_branch.as_deref(), Some("main"));
-
-        let query_defaults: SessionVcsRouteQuery =
-            serde_json::from_value(json!({ "ignored": true })).unwrap();
-        assert_eq!(query_defaults.base_commit_sha, None);
-        assert_eq!(query_defaults.target_branch, None);
 
         let request: ApplySessionVcsDiffPatchRouteRequest = serde_json::from_value(json!({
             "action": "accept",
@@ -301,8 +197,8 @@ mod tests {
             "ignored": true
         }))
         .unwrap();
-        assert_eq!(request.action, "accept");
-        assert_eq!(request.patch, "diff --git a/file b/file");
+        assert_eq!(request.action(), "accept");
+        assert_eq!(request.patch(), "diff --git a/file b/file");
     }
 
     #[test]
