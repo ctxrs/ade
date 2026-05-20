@@ -141,6 +141,12 @@ impl MergeQueueConfigUpdate {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MergeQueueConfigTransition {
+    pub was_enabled: bool,
+    pub now_enabled: bool,
+}
+
 pub async fn update_merge_queue_config(
     store: &Store,
     update: MergeQueueConfigUpdate,
@@ -169,4 +175,17 @@ pub async fn update_merge_queue_config(
         Ok(())
     })
     .await
+}
+
+pub async fn update_merge_queue_config_with_transition(
+    store: &Store,
+    update: MergeQueueConfigUpdate,
+) -> Result<MergeQueueConfigTransition> {
+    let was_enabled = load_merge_queue_config(store).await?.enabled;
+    update_merge_queue_config(store, update).await?;
+    let now_enabled = load_merge_queue_config(store).await?.enabled;
+    Ok(MergeQueueConfigTransition {
+        was_enabled,
+        now_enabled,
+    })
 }

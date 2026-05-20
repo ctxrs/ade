@@ -16,12 +16,17 @@ mod vcs;
 mod worktree_bootstrap;
 
 pub use execution::{
-    apply_execution_settings_override, load_execution_settings_override, update_execution_config,
-    ContainerExecutionSettingsOverride, ExecutionConfigUpdate, ExecutionSettingsOverride,
+    apply_execution_settings_override, execution_config_update_from_input,
+    execution_settings_override_from_update, load_execution_settings_override,
+    normalize_execution_allowlist, parse_execution_config_update_input,
+    parse_execution_network_mode_input, project_execution_config, update_execution_config,
+    ContainerExecutionSettingsOverride, ExecutionConfigInputError, ExecutionConfigSnapshot,
+    ExecutionConfigUpdate, ExecutionConfigUpdateInput, ExecutionSettingsOverride,
 };
 pub use merge_queue::{
     load_merge_queue_config, load_merge_queue_target_branch_override, update_merge_queue_config,
-    MergeQueueCanonicalSync, MergeQueueConfig, MergeQueueConfigUpdate,
+    update_merge_queue_config_with_transition, MergeQueueCanonicalSync, MergeQueueConfig,
+    MergeQueueConfigTransition, MergeQueueConfigUpdate,
 };
 pub use new_session::{
     load_preferred_new_session_model_id, load_preferred_new_session_models,

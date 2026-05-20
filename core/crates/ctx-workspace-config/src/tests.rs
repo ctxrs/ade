@@ -39,6 +39,133 @@ async fn update_execution_config_can_leave_runtime_unspecified() {
     store.close().await;
 }
 
+#[test]
+fn execution_config_input_normalizes_request_fields() {
+    let update = parse_execution_config_update_input(
+        "sandbox",
+        Some(" allowlist "),
+        Some(vec![
+            " api.openai.com ".to_string(),
+            "".to_string(),
+            " db.internal ".to_string(),
+        ]),
+        true,
+    )
+    .expect("parse execution update");
+
+    assert_eq!(update.environment, ExecutionEnvironment::Sandbox);
+    assert_eq!(update.network_mode, Some(ContainerNetworkMode::Allowlist));
+    assert_eq!(
+        update.allowlist,
+        Some(vec![
+            "api.openai.com".to_string(),
+            "db.internal".to_string()
+        ])
+    );
+
+    let override_config = execution_settings_override_from_update(&update);
+    assert_eq!(override_config.mode, Some(ExecutionMode::Sandbox));
+    assert_eq!(
+        override_config.container.network_mode,
+        Some(ContainerNetworkMode::Allowlist)
+    );
+}
+
+#[test]
+fn execution_config_input_rejects_unavailable_sandbox_runtime() {
+    let error = parse_execution_config_update_input("sandbox", None, None, false)
+        .expect_err("sandbox requires runtime availability");
+
+    assert_eq!(error, ExecutionConfigInputError::SandboxRuntimeUnavailable);
+    assert!(error.to_string().contains("AVF sandbox is unavailable"));
+}
+
+#[test]
+fn execution_config_input_rejects_unknown_network_mode() {
+    let error = parse_execution_config_update_input("host", Some("public"), None, false)
+        .expect_err("unknown network mode should be rejected");
+
+    assert_eq!(error, ExecutionConfigInputError::InvalidNetworkMode);
+    assert_eq!(
+        error.to_string(),
+        "invalid network_mode (expected llm_only|allowlist|all)"
+    );
+}
+
+#[test]
+fn execution_config_projection_preserves_wire_shape() {
+    let mut settings = ExecutionSettings {
+        mode: ExecutionMode::Sandbox,
+        ..ExecutionSettings::default()
+    };
+    settings.container.network_mode = ContainerNetworkMode::All;
+    settings.container.allowlist = vec!["api.openai.com".to_string()];
+
+    let snapshot = project_execution_config("workspace", &settings);
+
+    assert_eq!(snapshot.source, "workspace");
+    assert_eq!(snapshot.environment, "sandbox");
+    assert_eq!(snapshot.network_mode.as_deref(), Some("all"));
+    assert_eq!(snapshot.allowlist, Some(vec!["api.openai.com".to_string()]));
+}
+
+#[tokio::test]
+async fn merge_queue_config_transition_reports_enabled_state_changes() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let db_path = temp.path().join("db.sqlite");
+    let store = Store::open_sqlite(&db_path, None)
+        .await
+        .expect("open sqlite store");
+
+    let enabled = update_merge_queue_config_with_transition(
+        &store,
+        MergeQueueConfigUpdate {
+            enabled: true,
+            target_branch: Some(" dev ".to_string()),
+            verify_commands: vec![" pnpm verify ".to_string()],
+            push_on_success: Some(true),
+            push_remote: Some(" origin ".to_string()),
+            push_branch: Some(" dev ".to_string()),
+            canonical_sync: Some(MergeQueueCanonicalSync::CleanOnly),
+        },
+    )
+    .await
+    .expect("enable merge queue");
+
+    assert_eq!(
+        enabled,
+        MergeQueueConfigTransition {
+            was_enabled: false,
+            now_enabled: true,
+        }
+    );
+
+    let disabled = update_merge_queue_config_with_transition(
+        &store,
+        MergeQueueConfigUpdate {
+            enabled: false,
+            target_branch: None,
+            verify_commands: Vec::new(),
+            push_on_success: None,
+            push_remote: None,
+            push_branch: None,
+            canonical_sync: None,
+        },
+    )
+    .await
+    .expect("disable merge queue");
+
+    assert_eq!(
+        disabled,
+        MergeQueueConfigTransition {
+            was_enabled: true,
+            now_enabled: false,
+        }
+    );
+
+    store.close().await;
+}
+
 #[tokio::test]
 async fn preferred_new_session_model_round_trips_and_clears() {
     let temp = tempfile::tempdir().expect("tempdir");

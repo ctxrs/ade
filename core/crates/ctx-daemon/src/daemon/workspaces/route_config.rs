@@ -1,5 +1,4 @@
 use ctx_observability::telemetry::TelemetryEvent;
-use ctx_settings_model::{ContainerNetworkMode, ExecutionMode, ExecutionSettings};
 use ctx_workspace_config as workspace_config;
 use ctx_workspace_services::workspace_registration::prepare_workspace_registration;
 use serde::{Deserialize, Serialize};
@@ -50,13 +49,7 @@ pub struct UpdateWorkspaceExecutionConfigRequest {
     pub allowlist: Option<Vec<String>>,
 }
 
-#[derive(Debug, Serialize)]
-pub struct WorkspaceExecutionConfigSnapshot {
-    pub source: String,
-    pub environment: String,
-    pub network_mode: Option<String>,
-    pub allowlist: Option<Vec<String>>,
-}
+pub type WorkspaceExecutionConfigSnapshot = workspace_config::ExecutionConfigSnapshot;
 
 #[derive(Debug, Serialize)]
 pub struct WorkspaceConfigUpdateResult {
@@ -171,126 +164,5 @@ impl WorkspacesHandle {
             .emit(TelemetryEvent::workspace_registered())
             .await;
         Ok(workspace.into())
-    }
-}
-
-pub(in crate::daemon::workspaces) fn project_workspace_execution_config(
-    source: String,
-    effective: &ExecutionSettings,
-) -> WorkspaceExecutionConfigSnapshot {
-    let environment = match effective.mode {
-        ExecutionMode::Host => "host",
-        ExecutionMode::Sandbox => "sandbox",
-    }
-    .to_string();
-    let network_mode = match effective.container.network_mode {
-        ContainerNetworkMode::LlmOnly => "llm_only",
-        ContainerNetworkMode::Allowlist => "allowlist",
-        ContainerNetworkMode::All => "all",
-    }
-    .to_string();
-
-    WorkspaceExecutionConfigSnapshot {
-        source,
-        environment,
-        network_mode: Some(network_mode),
-        allowlist: Some(effective.container.allowlist.clone()),
-    }
-}
-
-pub(in crate::daemon::workspaces) fn parse_execution_environment_for_request(
-    environment: &str,
-    sandbox_runtime_available: bool,
-) -> Result<workspace_config::ExecutionEnvironment, WorkspaceRouteError> {
-    match environment {
-        "host" => Ok(workspace_config::ExecutionEnvironment::Host),
-        "sandbox" => {
-            if !sandbox_runtime_available {
-                return Err(WorkspaceRouteError::bad_request(
-                    "AVF sandbox is unavailable on this macOS host. Install or launch through the desktop app so the AVF helper/runtime is present, then try again.",
-                ));
-            }
-            Ok(workspace_config::ExecutionEnvironment::Sandbox)
-        }
-        _ => Err(WorkspaceRouteError::bad_request(
-            "invalid environment (expected host|sandbox)",
-        )),
-    }
-}
-
-pub(in crate::daemon::workspaces) fn parse_execution_network_mode_for_request(
-    network_mode: Option<&str>,
-) -> Result<Option<ContainerNetworkMode>, WorkspaceRouteError> {
-    match network_mode.map(str::trim) {
-        None | Some("") => Ok(None),
-        Some("llm_only") => Ok(Some(ContainerNetworkMode::LlmOnly)),
-        Some("allowlist") => Ok(Some(ContainerNetworkMode::Allowlist)),
-        Some("all") => Ok(Some(ContainerNetworkMode::All)),
-        _ => Err(WorkspaceRouteError::bad_request(
-            "invalid network_mode (expected llm_only|allowlist|all)",
-        )),
-    }
-}
-
-pub(in crate::daemon::workspaces) fn normalize_execution_allowlist(
-    values: Vec<String>,
-) -> Vec<String> {
-    values
-        .into_iter()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .collect()
-}
-
-pub(in crate::daemon::workspaces) fn build_workspace_execution_config_override(
-    environment: workspace_config::ExecutionEnvironment,
-    network_mode: Option<ContainerNetworkMode>,
-    allowlist: Option<Vec<String>>,
-) -> workspace_config::ExecutionSettingsOverride {
-    workspace_config::ExecutionSettingsOverride {
-        mode: Some(match environment {
-            workspace_config::ExecutionEnvironment::Host => ExecutionMode::Host,
-            workspace_config::ExecutionEnvironment::Sandbox => ExecutionMode::Sandbox,
-        }),
-        container: workspace_config::ContainerExecutionSettingsOverride {
-            network_mode,
-            allowlist,
-            image: None,
-        },
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_execution_environment_rejects_unavailable_sandbox_runtime() {
-        let error = parse_execution_environment_for_request("sandbox", false)
-            .expect_err("sandbox should require available runtime");
-        assert_eq!(error.kind(), WorkspaceRouteErrorKind::BadRequest);
-        assert!(
-            error.message().contains("AVF sandbox is unavailable"),
-            "unexpected error: {}",
-            error.message()
-        );
-    }
-
-    #[test]
-    fn parse_execution_environment_accepts_host_without_sandbox_runtime() {
-        let environment = parse_execution_environment_for_request("host", false)
-            .expect("host mode should not require sandbox runtime");
-        assert_eq!(environment, workspace_config::ExecutionEnvironment::Host);
-    }
-
-    #[test]
-    fn parse_execution_network_mode_rejects_unknown_values() {
-        let error = parse_execution_network_mode_for_request(Some("public"))
-            .expect_err("unknown network mode should be rejected");
-        assert_eq!(error.kind(), WorkspaceRouteErrorKind::BadRequest);
-        assert_eq!(
-            error.message(),
-            "invalid network_mode (expected llm_only|allowlist|all)"
-        );
     }
 }

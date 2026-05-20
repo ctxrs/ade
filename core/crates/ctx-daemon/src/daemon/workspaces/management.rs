@@ -11,19 +11,16 @@ use super::model_preferences::{
     WorkspaceProviderModelPreference, WorkspaceProviderModelPreferenceError,
 };
 use super::route_config::{
-    build_workspace_execution_config_override, normalize_execution_allowlist,
-    parse_execution_environment_for_request, parse_execution_network_mode_for_request,
-    parse_workspace_route_id, project_workspace_execution_config, provider_model_preference_error,
-    workspace_store_error, AgentSystemPromptConfigRouteResponse,
-    SubagentSystemPromptConfigRouteResponse, UpdateAgentSystemPromptConfigRouteRequest,
-    UpdateSubagentSystemPromptConfigRouteRequest, UpdateWorkspaceExecutionConfigRequest,
-    UpdateWorkspaceMergeQueueConfigRequest, UpdateWorkspacePrimaryBranchRequest,
-    UpdateWorkspaceProviderModelPreferenceRouteRequest, UpdateWorktreeBootstrapConfigRequest,
-    WorkspaceConfigUpdateResult, WorkspaceExecutionConfigSnapshot,
-    WorkspaceMergeQueueConfigRouteResponse, WorkspacePrimaryBranchSnapshot,
-    WorkspacePromptConfigRouteParams, WorkspaceProviderModelPreferenceRouteParams,
-    WorkspaceProviderModelPreferenceRouteResponse, WorkspaceRouteError,
-    WorkspaceWorktreeBootstrapConfigRouteResponse,
+    parse_workspace_route_id, provider_model_preference_error, workspace_store_error,
+    AgentSystemPromptConfigRouteResponse, SubagentSystemPromptConfigRouteResponse,
+    UpdateAgentSystemPromptConfigRouteRequest, UpdateSubagentSystemPromptConfigRouteRequest,
+    UpdateWorkspaceExecutionConfigRequest, UpdateWorkspaceMergeQueueConfigRequest,
+    UpdateWorkspacePrimaryBranchRequest, UpdateWorkspaceProviderModelPreferenceRouteRequest,
+    UpdateWorktreeBootstrapConfigRequest, WorkspaceConfigUpdateResult,
+    WorkspaceExecutionConfigSnapshot, WorkspaceMergeQueueConfigRouteResponse,
+    WorkspacePrimaryBranchSnapshot, WorkspacePromptConfigRouteParams,
+    WorkspaceProviderModelPreferenceRouteParams, WorkspaceProviderModelPreferenceRouteResponse,
+    WorkspaceRouteError, WorkspaceWorktreeBootstrapConfigRouteResponse,
 };
 use crate::daemon::route_files::{read_text_route_file, RouteFileDownloadError, TextRouteDownload};
 use crate::daemon::{settings, WorkspaceStoreAccessError, WorkspacesHandle};
@@ -220,7 +217,9 @@ impl WorkspacesHandle {
             }
             Err(error) => return Err(WorkspaceRouteError::internal(error)),
         }
-        Ok(project_workspace_execution_config(source, &effective))
+        Ok(workspace_config::project_execution_config(
+            source, &effective,
+        ))
     }
 
     pub async fn update_workspace_execution_config_for_request(
@@ -232,37 +231,27 @@ impl WorkspacesHandle {
             .existing_workspace_store(workspace_id)
             .await
             .map_err(WorkspaceRouteError::from_workspace_store)?;
-        let environment = parse_execution_environment_for_request(
+        let update = workspace_config::parse_execution_config_update_input(
             req.environment.trim(),
+            req.network_mode.as_deref(),
+            req.allowlist,
             self.sandbox_runtime_available_for_execution_config(),
-        )?;
-        let network_mode = parse_execution_network_mode_for_request(req.network_mode.as_deref())?;
-        let allowlist = req.allowlist.map(normalize_execution_allowlist);
+        )
+        .map_err(WorkspaceRouteError::bad_request)?;
         let settings = settings::load_settings(self.state.as_ref())
             .await
             .map_err(WorkspaceRouteError::internal)?;
         let effective = settings.execution.clone().unwrap_or_default();
-        let requested_override = build_workspace_execution_config_override(
-            environment,
-            network_mode.clone(),
-            allowlist.clone(),
-        );
+        let requested_override = workspace_config::execution_settings_override_from_update(&update);
         ctx_settings_service::validate_workspace_execution_settings_override(
             &effective,
             &requested_override,
         )
         .map_err(WorkspaceRouteError::from_request_or_policy_error)?;
-        workspace_config::update_execution_config(
-            &store,
-            workspace_config::ExecutionConfigUpdate {
-                environment,
-                network_mode,
-                allowlist,
-                image: None,
-            },
-        )
-        .await
-        .map_err(WorkspaceRouteError::bad_request)?;
+        let update = workspace_config::execution_config_update_from_input(update);
+        workspace_config::update_execution_config(&store, update)
+            .await
+            .map_err(WorkspaceRouteError::bad_request)?;
         Ok(WorkspaceConfigUpdateResult { ok: true })
     }
 
@@ -289,22 +278,17 @@ impl WorkspacesHandle {
             .existing_workspace_store(workspace_id)
             .await
             .map_err(WorkspaceRouteError::from_workspace_store)?;
-        let was_enabled = workspace_config::load_merge_queue_config(&store)
-            .await
-            .map_err(WorkspaceRouteError::internal)?
-            .enabled;
-        workspace_config::update_merge_queue_config(&store, req.into_merge_queue_config_update())
-            .await
-            .map_err(WorkspaceRouteError::from_request_or_policy_error)?;
-        let now_enabled = workspace_config::load_merge_queue_config(&store)
-            .await
-            .map_err(WorkspaceRouteError::internal)?
-            .enabled;
-        if !was_enabled && now_enabled {
+        let transition = workspace_config::update_merge_queue_config_with_transition(
+            &store,
+            req.into_merge_queue_config_update(),
+        )
+        .await
+        .map_err(WorkspaceRouteError::from_request_or_policy_error)?;
+        if !transition.was_enabled && transition.now_enabled {
             self.schedule_workspace_merge_queue_if_enabled_and_queued(workspace_id)
                 .await
                 .map_err(WorkspaceRouteError::from_request_or_policy_error)?;
-        } else if was_enabled && !now_enabled {
+        } else if transition.was_enabled && !transition.now_enabled {
             self.cancel_queued_entries_for_disabled_workspace(&store, workspace_id)
                 .await
                 .map_err(WorkspaceRouteError::from_request_or_policy_error)?;
