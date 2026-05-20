@@ -1,14 +1,16 @@
 use std::path::PathBuf;
 
 use super::destination::{
-    prepare_clone_destination, prepare_repo_init_path, RepoCloneDestinationRequest,
-    RepoInitPathRequest, RepoOnboardingPathError,
+    prepare_clone_destination, prepare_repo_init_path, validate_repo_destination,
+    RepoCloneDestinationRequest, RepoInitPathRequest, RepoOnboardingPathError,
 };
 use super::git::{
     canonical_clone_dest, ensure_git_usable, init_git_repo_with_initial_commit, run_git_clone,
     RepoGitCommandError,
 };
+use super::staging::create_repo_staging_path;
 use super::status::{repo_status, RepoStatusCheck};
+use super::RepoValidateDestinationRequest;
 
 pub struct RepoInitRequest<'a> {
     pub path: &'a str,
@@ -28,6 +30,42 @@ pub enum RepoOnboardingWorkflowError {
     GitPreflight(String),
     GitCommand(RepoGitCommandError),
     Path(RepoOnboardingPathError),
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum RepoOnboardingServiceErrorKind {
+    BadRequest,
+    Internal,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct RepoOnboardingServiceError {
+    kind: RepoOnboardingServiceErrorKind,
+    message: String,
+}
+
+impl RepoOnboardingServiceError {
+    fn bad_request(message: impl Into<String>) -> Self {
+        Self {
+            kind: RepoOnboardingServiceErrorKind::BadRequest,
+            message: message.into(),
+        }
+    }
+
+    fn internal(message: impl Into<String>) -> Self {
+        Self {
+            kind: RepoOnboardingServiceErrorKind::Internal,
+            message: message.into(),
+        }
+    }
+
+    pub fn kind(&self) -> RepoOnboardingServiceErrorKind {
+        self.kind
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
 }
 
 impl From<RepoGitCommandError> for RepoOnboardingWorkflowError {
@@ -99,6 +137,75 @@ pub async fn inspect_repo_status(
         .await
         .map_err(RepoOnboardingWorkflowError::GitPreflight)?;
     Ok(repo_status(path).await?)
+}
+
+pub async fn initialize_repo_with_service_errors(
+    req: RepoInitRequest<'_>,
+) -> Result<PathBuf, RepoOnboardingServiceError> {
+    initialize_repo(req).await.map_err(repo_workflow_error)
+}
+
+pub async fn clone_repo_with_service_errors(
+    req: RepoCloneRequest<'_>,
+) -> Result<PathBuf, RepoOnboardingServiceError> {
+    clone_repo(req).await.map_err(repo_workflow_error)
+}
+
+pub async fn validate_repo_destination_with_service_errors(
+    req: RepoValidateDestinationRequest<'_>,
+) -> Result<PathBuf, RepoOnboardingServiceError> {
+    validate_repo_destination(req)
+        .await
+        .map_err(repo_path_error)
+}
+
+pub async fn create_repo_staging_path_with_service_errors(
+    data_root: &std::path::Path,
+) -> Result<PathBuf, RepoOnboardingServiceError> {
+    create_repo_staging_path(data_root)
+        .await
+        .map_err(repo_staging_path_error)
+}
+
+pub async fn inspect_repo_status_with_service_errors(
+    path: &str,
+) -> Result<RepoStatusCheck, RepoOnboardingServiceError> {
+    let mut status = inspect_repo_status(path)
+        .await
+        .map_err(repo_workflow_error)?;
+    status.error = status
+        .error
+        .map(|error| ctx_core::redaction::redact_sensitive(&error));
+    Ok(status)
+}
+
+fn repo_git_command_error(error: RepoGitCommandError) -> RepoOnboardingServiceError {
+    if let Some(message) = error.spawn_message() {
+        return RepoOnboardingServiceError::internal(format!("failed to spawn git: {message}"));
+    }
+    RepoOnboardingServiceError::bad_request(ctx_core::redaction::redact_sensitive(
+        &error
+            .failed_message()
+            .unwrap_or_else(|| "git command failed".to_string()),
+    ))
+}
+
+fn repo_path_error(error: RepoOnboardingPathError) -> RepoOnboardingServiceError {
+    RepoOnboardingServiceError::bad_request(error.message().to_string())
+}
+
+fn repo_staging_path_error(error: RepoOnboardingPathError) -> RepoOnboardingServiceError {
+    RepoOnboardingServiceError::internal(error.message().to_string())
+}
+
+fn repo_workflow_error(error: RepoOnboardingWorkflowError) -> RepoOnboardingServiceError {
+    match error {
+        RepoOnboardingWorkflowError::GitPreflight(error) => {
+            RepoOnboardingServiceError::bad_request(error)
+        }
+        RepoOnboardingWorkflowError::GitCommand(error) => repo_git_command_error(error),
+        RepoOnboardingWorkflowError::Path(error) => repo_path_error(error),
+    }
 }
 
 #[cfg(test)]
@@ -173,5 +280,43 @@ mod tests {
             }
             other => panic!("unexpected error: {other:?}"),
         }
+    }
+
+    #[test]
+    fn service_errors_redact_and_classify_git_failures() {
+        let spawn = repo_git_command_error(RepoGitCommandError::Spawn {
+            message: "permission denied".to_string(),
+        });
+        assert_eq!(spawn.kind(), RepoOnboardingServiceErrorKind::Internal);
+        assert_eq!(spawn.message(), "failed to spawn git: permission denied");
+
+        let failed = repo_git_command_error(RepoGitCommandError::Failed {
+            action: "git clone",
+            stderr: "fatal: https://example.invalid/repo.git?token=secret-token\n".to_string(),
+        });
+        assert_eq!(failed.kind(), RepoOnboardingServiceErrorKind::BadRequest);
+        assert!(failed.message().contains("git clone failed"));
+        assert!(!failed.message().contains("secret-token"));
+    }
+
+    #[test]
+    fn service_errors_preserve_preflight_path_and_staging_categories() {
+        let preflight = repo_workflow_error(RepoOnboardingWorkflowError::GitPreflight(
+            "git is required".to_string(),
+        ));
+        assert_eq!(preflight.kind(), RepoOnboardingServiceErrorKind::BadRequest);
+        assert_eq!(preflight.message(), "git is required");
+
+        let path = repo_path_error(RepoOnboardingPathError::from(
+            "path is required".to_string(),
+        ));
+        assert_eq!(path.kind(), RepoOnboardingServiceErrorKind::BadRequest);
+        assert_eq!(path.message(), "path is required");
+
+        let staging = repo_staging_path_error(RepoOnboardingPathError::from(
+            "failed to create staging dir".to_string(),
+        ));
+        assert_eq!(staging.kind(), RepoOnboardingServiceErrorKind::Internal);
+        assert_eq!(staging.message(), "failed to create staging dir");
     }
 }

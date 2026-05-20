@@ -134,6 +134,14 @@ pub async fn update_agent_system_prompt_append(
     .await
 }
 
+pub async fn update_and_load_agent_system_prompt_append(
+    store: &Store,
+    system_prompt_append: Option<String>,
+) -> Result<AgentSystemPromptAppendConfig> {
+    update_agent_system_prompt_append(store, system_prompt_append).await?;
+    load_agent_system_prompt_append(store).await
+}
+
 pub async fn update_subagent_system_prompt_append(
     store: &Store,
     system_prompt_append: Option<String>,
@@ -151,4 +159,12 @@ pub async fn update_subagent_system_prompt_append(
         Ok(())
     })
     .await
+}
+
+pub async fn update_and_load_subagent_system_prompt_append(
+    store: &Store,
+    system_prompt_append: Option<String>,
+) -> Result<SubagentSystemPromptAppendConfig> {
+    update_subagent_system_prompt_append(store, system_prompt_append).await?;
+    load_subagent_system_prompt_append(store).await
 }

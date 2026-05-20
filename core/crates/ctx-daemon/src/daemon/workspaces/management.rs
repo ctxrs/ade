@@ -99,9 +99,10 @@ impl WorkspacesHandle {
             .existing_workspace_store(workspace.id)
             .await
             .map_err(WorkspaceRouteError::from_workspace_store)?;
-        workspace_config::update_primary_branch(&store, &primary_branch)
-            .await
-            .map_err(WorkspaceRouteError::internal)?;
+        let primary_branch =
+            workspace_config::update_and_load_primary_branch(&store, &primary_branch)
+                .await
+                .map_err(WorkspaceRouteError::internal)?;
         let worktrees = store
             .list_worktrees(workspace.id)
             .await
@@ -343,10 +344,7 @@ impl WorkspacesHandle {
         system_prompt_append: Option<String>,
     ) -> Result<workspace_config::AgentSystemPromptAppendConfig, WorkspaceStoreAccessError> {
         let store = self.existing_workspace_store(workspace_id).await?;
-        workspace_config::update_agent_system_prompt_append(&store, system_prompt_append)
-            .await
-            .map_err(WorkspaceStoreAccessError::Unavailable)?;
-        workspace_config::load_agent_system_prompt_append(&store)
+        workspace_config::update_and_load_agent_system_prompt_append(&store, system_prompt_append)
             .await
             .map_err(WorkspaceStoreAccessError::Unavailable)
     }
@@ -367,12 +365,12 @@ impl WorkspacesHandle {
         system_prompt_append: Option<String>,
     ) -> Result<workspace_config::SubagentSystemPromptAppendConfig, WorkspaceStoreAccessError> {
         let store = self.existing_workspace_store(workspace_id).await?;
-        workspace_config::update_subagent_system_prompt_append(&store, system_prompt_append)
-            .await
-            .map_err(WorkspaceStoreAccessError::Unavailable)?;
-        workspace_config::load_subagent_system_prompt_append(&store)
-            .await
-            .map_err(WorkspaceStoreAccessError::Unavailable)
+        workspace_config::update_and_load_subagent_system_prompt_append(
+            &store,
+            system_prompt_append,
+        )
+        .await
+        .map_err(WorkspaceStoreAccessError::Unavailable)
     }
 
     pub async fn workspace_provider_model_preference_for_route(

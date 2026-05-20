@@ -26,3 +26,10 @@ pub async fn update_primary_branch(store: &Store, primary_branch: &str) -> Resul
     })
     .await
 }
+
+pub async fn update_and_load_primary_branch(store: &Store, primary_branch: &str) -> Result<String> {
+    update_primary_branch(store, primary_branch).await?;
+    load_primary_branch(store)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("primary_branch is required"))
+}

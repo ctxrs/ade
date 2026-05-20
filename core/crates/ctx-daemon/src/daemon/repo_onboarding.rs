@@ -1,75 +1,9 @@
 use std::path::PathBuf;
 
-use ctx_observability::logs;
 use ctx_workspace_services::repo_onboarding as service;
 use serde::{Deserialize, Serialize};
 
 use crate::daemon::WorkspacesHandle;
-
-#[derive(Debug, Clone)]
-struct DaemonRepoInitRequest {
-    pub path: String,
-    pub allow_existing: bool,
-    pub allow_non_empty: bool,
-}
-
-#[derive(Debug, Clone)]
-struct DaemonRepoCloneRequest {
-    pub repo_url: String,
-    pub dest_parent: String,
-    pub branch: Option<String>,
-    pub dest_name: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-struct DaemonRepoValidateDestinationRequest {
-    pub path: String,
-    pub must_not_exist: bool,
-    pub require_empty_if_exists: bool,
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-struct DaemonRepoStatusCheck {
-    pub canonical_path: PathBuf,
-    pub is_repo: bool,
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum RepoOnboardingErrorKind {
-    BadRequest,
-    Internal,
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-struct RepoOnboardingError {
-    kind: RepoOnboardingErrorKind,
-    message: String,
-}
-
-impl RepoOnboardingError {
-    fn bad_request(message: impl Into<String>) -> Self {
-        Self {
-            kind: RepoOnboardingErrorKind::BadRequest,
-            message: message.into(),
-        }
-    }
-
-    fn internal(message: impl Into<String>) -> Self {
-        Self {
-            kind: RepoOnboardingErrorKind::Internal,
-            message: message.into(),
-        }
-    }
-
-    fn kind(&self) -> RepoOnboardingErrorKind {
-        self.kind
-    }
-
-    fn message(&self) -> &str {
-        &self.message
-    }
-}
 
 #[derive(Debug, Clone, Deserialize, Eq, PartialEq)]
 pub struct RepoInitRouteRequest {
@@ -146,11 +80,15 @@ impl RepoOnboardingRouteError {
     }
 }
 
-impl From<RepoOnboardingError> for RepoOnboardingRouteError {
-    fn from(error: RepoOnboardingError) -> Self {
+impl From<service::RepoOnboardingServiceError> for RepoOnboardingRouteError {
+    fn from(error: service::RepoOnboardingServiceError) -> Self {
         let kind = match error.kind() {
-            RepoOnboardingErrorKind::BadRequest => RepoOnboardingRouteErrorKind::BadRequest,
-            RepoOnboardingErrorKind::Internal => RepoOnboardingRouteErrorKind::Internal,
+            service::RepoOnboardingServiceErrorKind::BadRequest => {
+                RepoOnboardingRouteErrorKind::BadRequest
+            }
+            service::RepoOnboardingServiceErrorKind::Internal => {
+                RepoOnboardingRouteErrorKind::Internal
+            }
         };
         Self::new(kind, error.message())
     }
@@ -162,7 +100,7 @@ fn repo_path_route_response(path: PathBuf) -> RepoPathRouteResponse {
     }
 }
 
-fn repo_status_route_response(status: DaemonRepoStatusCheck) -> RepoStatusRouteResponse {
+fn repo_status_route_response(status: service::RepoStatusCheck) -> RepoStatusRouteResponse {
     RepoStatusRouteResponse {
         canonical_path: status.canonical_path.to_string_lossy().to_string(),
         is_repo: status.is_repo,
@@ -170,102 +108,13 @@ fn repo_status_route_response(status: DaemonRepoStatusCheck) -> RepoStatusRouteR
     }
 }
 
-fn repo_git_command_error(error: service::RepoGitCommandError) -> RepoOnboardingError {
-    if let Some(message) = error.spawn_message() {
-        return RepoOnboardingError::internal(format!("failed to spawn git: {message}"));
-    }
-    RepoOnboardingError::bad_request(logs::redact_sensitive(
-        &error
-            .failed_message()
-            .unwrap_or_else(|| "git command failed".to_string()),
-    ))
-}
-
-fn repo_path_error(error: service::RepoOnboardingPathError) -> RepoOnboardingError {
-    RepoOnboardingError::bad_request(error.message().to_string())
-}
-
-fn repo_staging_path_error(error: service::RepoOnboardingPathError) -> RepoOnboardingError {
-    RepoOnboardingError::internal(error.message().to_string())
-}
-
-fn repo_workflow_error(error: service::RepoOnboardingWorkflowError) -> RepoOnboardingError {
-    match error {
-        service::RepoOnboardingWorkflowError::GitPreflight(error) => {
-            RepoOnboardingError::bad_request(error)
-        }
-        service::RepoOnboardingWorkflowError::GitCommand(error) => repo_git_command_error(error),
-        service::RepoOnboardingWorkflowError::Path(error) => repo_path_error(error),
-    }
-}
-
 impl WorkspacesHandle {
-    async fn initialize_repo(
-        &self,
-        req: DaemonRepoInitRequest,
-    ) -> Result<PathBuf, RepoOnboardingError> {
-        service::initialize_repo(service::RepoInitRequest {
-            path: &req.path,
-            allow_existing: req.allow_existing,
-            allow_non_empty: req.allow_non_empty,
-        })
-        .await
-        .map_err(repo_workflow_error)
-    }
-
-    async fn clone_repo(
-        &self,
-        req: DaemonRepoCloneRequest,
-    ) -> Result<PathBuf, RepoOnboardingError> {
-        service::clone_repo(service::RepoCloneRequest {
-            repo_url: &req.repo_url,
-            dest_parent: &req.dest_parent,
-            branch: req.branch.as_deref(),
-            dest_name: req.dest_name.as_deref(),
-        })
-        .await
-        .map_err(repo_workflow_error)
-    }
-
-    async fn validate_repo_destination(
-        &self,
-        req: DaemonRepoValidateDestinationRequest,
-    ) -> Result<PathBuf, RepoOnboardingError> {
-        service::validate_repo_destination(service::RepoValidateDestinationRequest {
-            path: &req.path,
-            must_not_exist: req.must_not_exist,
-            require_empty_if_exists: req.require_empty_if_exists,
-        })
-        .await
-        .map_err(repo_path_error)
-    }
-
-    async fn create_repo_staging_path(&self) -> Result<PathBuf, RepoOnboardingError> {
-        service::create_repo_staging_path(&self.state.core.data_root)
-            .await
-            .map_err(repo_staging_path_error)
-    }
-
-    async fn inspect_repo_status(
-        &self,
-        path: &str,
-    ) -> Result<DaemonRepoStatusCheck, RepoOnboardingError> {
-        let status = service::inspect_repo_status(path)
-            .await
-            .map_err(repo_workflow_error)?;
-        Ok(DaemonRepoStatusCheck {
-            canonical_path: status.canonical_path,
-            is_repo: status.is_repo,
-            error: status.error.map(|error| logs::redact_sensitive(&error)),
-        })
-    }
-
     pub async fn initialize_repo_for_route(
         &self,
         req: RepoInitRouteRequest,
     ) -> Result<RepoPathRouteResponse, RepoOnboardingRouteError> {
-        self.initialize_repo(DaemonRepoInitRequest {
-            path: req.path,
+        service::initialize_repo_with_service_errors(service::RepoInitRequest {
+            path: &req.path,
             allow_existing: req.allow_existing,
             allow_non_empty: req.allow_non_empty,
         })
@@ -278,11 +127,11 @@ impl WorkspacesHandle {
         &self,
         req: RepoCloneRouteRequest,
     ) -> Result<RepoPathRouteResponse, RepoOnboardingRouteError> {
-        self.clone_repo(DaemonRepoCloneRequest {
-            repo_url: req.repo_url,
-            dest_parent: req.dest_parent,
-            branch: req.branch,
-            dest_name: req.dest_name,
+        service::clone_repo_with_service_errors(service::RepoCloneRequest {
+            repo_url: &req.repo_url,
+            dest_parent: &req.dest_parent,
+            branch: req.branch.as_deref(),
+            dest_name: req.dest_name.as_deref(),
         })
         .await
         .map(repo_path_route_response)
@@ -293,11 +142,13 @@ impl WorkspacesHandle {
         &self,
         req: RepoValidateDestinationRouteRequest,
     ) -> Result<RepoPathRouteResponse, RepoOnboardingRouteError> {
-        self.validate_repo_destination(DaemonRepoValidateDestinationRequest {
-            path: req.path,
-            must_not_exist: req.must_not_exist,
-            require_empty_if_exists: req.require_empty_if_exists,
-        })
+        service::validate_repo_destination_with_service_errors(
+            service::RepoValidateDestinationRequest {
+                path: &req.path,
+                must_not_exist: req.must_not_exist,
+                require_empty_if_exists: req.require_empty_if_exists,
+            },
+        )
         .await
         .map(repo_path_route_response)
         .map_err(Into::into)
@@ -306,7 +157,7 @@ impl WorkspacesHandle {
     pub async fn create_repo_staging_path_for_route(
         &self,
     ) -> Result<RepoPathRouteResponse, RepoOnboardingRouteError> {
-        self.create_repo_staging_path()
+        service::create_repo_staging_path_with_service_errors(&self.state.core.data_root)
             .await
             .map(repo_path_route_response)
             .map_err(Into::into)
@@ -316,7 +167,7 @@ impl WorkspacesHandle {
         &self,
         req: RepoStatusRouteRequest,
     ) -> Result<RepoStatusRouteResponse, RepoOnboardingRouteError> {
-        self.inspect_repo_status(&req.path)
+        service::inspect_repo_status_with_service_errors(&req.path)
             .await
             .map(repo_status_route_response)
             .map_err(Into::into)
@@ -340,44 +191,6 @@ mod tests {
         .await
         .expect("test daemon");
         (data_root, daemon.handle().workspaces())
-    }
-
-    #[test]
-    fn repo_error_conversions_redact_and_classify_git_failures() {
-        let spawn = repo_git_command_error(service::RepoGitCommandError::Spawn {
-            message: "permission denied".to_string(),
-        });
-        assert_eq!(spawn.kind(), RepoOnboardingErrorKind::Internal);
-        assert_eq!(spawn.message(), "failed to spawn git: permission denied");
-
-        let failed = repo_git_command_error(service::RepoGitCommandError::Failed {
-            action: "git clone",
-            stderr: "fatal: token=secret-token\n".to_string(),
-        });
-        assert_eq!(failed.kind(), RepoOnboardingErrorKind::BadRequest);
-        assert!(failed.message().contains("git clone failed"));
-        assert!(!failed.message().contains("secret-token"));
-    }
-
-    #[test]
-    fn repo_error_conversions_preserve_preflight_and_path_messages() {
-        let preflight = repo_workflow_error(service::RepoOnboardingWorkflowError::GitPreflight(
-            "git is required".to_string(),
-        ));
-        assert_eq!(preflight.kind(), RepoOnboardingErrorKind::BadRequest);
-        assert_eq!(preflight.message(), "git is required");
-
-        let path = repo_path_error(service::RepoOnboardingPathError::from(
-            "path is required".to_string(),
-        ));
-        assert_eq!(path.kind(), RepoOnboardingErrorKind::BadRequest);
-        assert_eq!(path.message(), "path is required");
-
-        let staging = repo_staging_path_error(service::RepoOnboardingPathError::from(
-            "failed to create staging dir".to_string(),
-        ));
-        assert_eq!(staging.kind(), RepoOnboardingErrorKind::Internal);
-        assert_eq!(staging.message(), "failed to create staging dir");
     }
 
     #[test]
@@ -425,7 +238,7 @@ mod tests {
             })
         );
 
-        let status_without_error = repo_status_route_response(DaemonRepoStatusCheck {
+        let status_without_error = repo_status_route_response(service::RepoStatusCheck {
             canonical_path: PathBuf::from("/tmp/repo"),
             is_repo: true,
             error: None,
@@ -438,7 +251,7 @@ mod tests {
             })
         );
 
-        let status_with_error = repo_status_route_response(DaemonRepoStatusCheck {
+        let status_with_error = repo_status_route_response(service::RepoStatusCheck {
             canonical_path: PathBuf::from("/tmp/repo"),
             is_repo: false,
             error: Some("not a repo".to_string()),
@@ -453,31 +266,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn route_errors_preserve_daemon_categories_and_messages() {
-        let bad_request =
-            RepoOnboardingRouteError::from(RepoOnboardingError::bad_request("path is required"));
-        assert_eq!(bad_request.kind(), RepoOnboardingRouteErrorKind::BadRequest);
-        assert_eq!(bad_request.message(), "path is required");
-
-        let internal = RepoOnboardingRouteError::from(RepoOnboardingError::internal(
-            "failed to create staging dir",
-        ));
-        assert_eq!(internal.kind(), RepoOnboardingRouteErrorKind::Internal);
-        assert_eq!(internal.message(), "failed to create staging dir");
-    }
-
     #[tokio::test]
     async fn create_repo_staging_path_uses_daemon_data_root() {
         let (data_root, workspaces) = test_workspaces_handle().await;
-
-        let staging = workspaces
-            .create_repo_staging_path()
-            .await
-            .expect("staging path");
-
-        assert!(staging.exists());
-        assert!(staging.starts_with(data_root.path().join("workspaces").join("staging")));
 
         let response = workspaces
             .create_repo_staging_path_for_route()
@@ -498,18 +289,6 @@ mod tests {
     async fn validate_repo_destination_preserves_path_error_behavior() {
         let (_data_root, workspaces) = test_workspaces_handle().await;
 
-        let error = workspaces
-            .validate_repo_destination(DaemonRepoValidateDestinationRequest {
-                path: "   ".to_string(),
-                must_not_exist: false,
-                require_empty_if_exists: false,
-            })
-            .await
-            .expect_err("blank path should fail");
-
-        assert_eq!(error.kind(), RepoOnboardingErrorKind::BadRequest);
-        assert_eq!(error.message(), "path is required");
-
         let route_error = workspaces
             .validate_repo_destination_for_route(RepoValidateDestinationRouteRequest {
                 path: "   ".to_string(),
@@ -529,21 +308,32 @@ mod tests {
         let temp = tempdir().expect("repo parent");
         let repo_path = temp.path().join("repo");
 
-        let initialized = workspaces
-            .initialize_repo(DaemonRepoInitRequest {
+        let response = workspaces
+            .initialize_repo_for_route(RepoInitRouteRequest {
                 path: repo_path.to_string_lossy().to_string(),
                 allow_existing: false,
                 allow_non_empty: false,
             })
             .await
             .expect("initialize repo");
+        let value = serde_json::to_value(response).expect("route response json");
+        let initialized = value
+            .get("path")
+            .and_then(|path| path.as_str())
+            .expect("path field");
         let status = workspaces
-            .inspect_repo_status(initialized.to_str().expect("utf8 path"))
+            .inspect_repo_status_for_route(RepoStatusRouteRequest {
+                path: initialized.to_string(),
+            })
             .await
             .expect("repo status");
+        let status = serde_json::to_value(status).expect("status json");
 
-        assert!(status.is_repo);
-        assert_eq!(status.error, None);
+        assert_eq!(
+            status.get("is_repo").and_then(|value| value.as_bool()),
+            Some(true)
+        );
+        assert_eq!(status.get("error"), None);
     }
 
     #[tokio::test]
@@ -553,11 +343,13 @@ mod tests {
         let missing = temp.path().join("missing");
 
         let error = workspaces
-            .inspect_repo_status(missing.to_str().expect("utf8 path"))
+            .inspect_repo_status_for_route(RepoStatusRouteRequest {
+                path: missing.to_string_lossy().to_string(),
+            })
             .await
             .expect_err("missing path should fail");
 
-        assert_eq!(error.kind(), RepoOnboardingErrorKind::BadRequest);
+        assert_eq!(error.kind(), RepoOnboardingRouteErrorKind::BadRequest);
         assert!(error.message().starts_with("invalid path '"));
     }
 }

@@ -284,6 +284,104 @@ async fn malformed_preferred_new_session_model_entries_are_ignored() {
 }
 
 #[tokio::test]
+async fn prompt_update_helpers_trim_disable_and_clear_agent_and_subagent_prompts() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let db_path = temp.path().join("db.sqlite");
+    let store = Store::open_sqlite(&db_path, None)
+        .await
+        .expect("open sqlite store");
+
+    let agent =
+        update_and_load_agent_system_prompt_append(&store, Some("  Agent append  ".to_string()))
+            .await
+            .expect("update agent prompt");
+    assert_eq!(agent.configured_append.as_deref(), Some("Agent append"));
+    assert_eq!(agent.effective_append().as_deref(), Some("Agent append"));
+    assert_eq!(agent.source(), AgentSystemPromptAppendSource::Config);
+
+    let agent = update_and_load_agent_system_prompt_append(&store, Some("   ".to_string()))
+        .await
+        .expect("disable agent prompt");
+    assert_eq!(agent.configured_append.as_deref(), Some(""));
+    assert_eq!(agent.effective_append(), None);
+    assert_eq!(agent.source(), AgentSystemPromptAppendSource::Disabled);
+
+    let agent = update_and_load_agent_system_prompt_append(&store, None)
+        .await
+        .expect("clear agent prompt");
+    assert_eq!(agent.configured_append, None);
+    assert_eq!(agent.source(), AgentSystemPromptAppendSource::Default);
+
+    let subagent = update_and_load_subagent_system_prompt_append(
+        &store,
+        Some("  Subagent append  ".to_string()),
+    )
+    .await
+    .expect("update subagent prompt");
+    assert_eq!(
+        subagent.configured_append.as_deref(),
+        Some("Subagent append")
+    );
+    assert_eq!(
+        subagent.effective_append().as_deref(),
+        Some("Subagent append")
+    );
+    assert_eq!(subagent.source(), AgentSystemPromptAppendSource::Config);
+
+    let subagent = update_and_load_subagent_system_prompt_append(&store, None)
+        .await
+        .expect("clear subagent prompt");
+    assert_eq!(subagent.configured_append, None);
+    assert_eq!(subagent.source(), AgentSystemPromptAppendSource::Default);
+
+    store.close().await;
+}
+
+#[tokio::test]
+async fn primary_branch_update_helper_trims_rejects_blank_and_preserves_other_settings() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let db_path = temp.path().join("db.sqlite");
+    let store = Store::open_sqlite(&db_path, None)
+        .await
+        .expect("open sqlite store");
+
+    assert_eq!(
+        load_primary_branch(&store)
+            .await
+            .expect("load missing branch"),
+        None
+    );
+
+    update_preferred_new_session_model_id(&store, "codex", Some("gpt-5.4/xhigh".to_string()))
+        .await
+        .expect("persist unrelated preference");
+    let primary_branch = update_and_load_primary_branch(&store, "  dev  ")
+        .await
+        .expect("update primary branch");
+
+    assert_eq!(primary_branch, "dev");
+    assert_eq!(
+        load_primary_branch(&store)
+            .await
+            .expect("load primary branch"),
+        Some("dev".to_string())
+    );
+    assert_eq!(
+        load_preferred_new_session_model_id(&store, "codex")
+            .await
+            .expect("load unrelated preference"),
+        Some("gpt-5.4/xhigh".to_string())
+    );
+
+    let error = update_and_load_primary_branch(&store, "   ")
+        .await
+        .expect_err("blank primary branch should fail");
+    assert!(error.to_string().contains("primary_branch is required"));
+
+    store.close().await;
+}
+
+#[tokio::test]
 async fn concurrent_workspace_settings_updates_do_not_clobber_each_other() {
     let temp = tempfile::tempdir().expect("tempdir");
     let db_path = temp.path().join("db.sqlite");

@@ -34,10 +34,11 @@ pub use new_session::{
 };
 pub use prompts::{
     load_agent_system_prompt_append, load_subagent_system_prompt_append,
-    update_agent_system_prompt_append, update_subagent_system_prompt_append,
+    update_agent_system_prompt_append, update_and_load_agent_system_prompt_append,
+    update_and_load_subagent_system_prompt_append, update_subagent_system_prompt_append,
     AgentSystemPromptAppendConfig, AgentSystemPromptAppendSource, SubagentSystemPromptAppendConfig,
 };
-pub use vcs::{load_primary_branch, update_primary_branch};
+pub use vcs::{load_primary_branch, update_and_load_primary_branch, update_primary_branch};
 pub use worktree_bootstrap::{
     load_worktree_bootstrap_config, update_worktree_bootstrap_config, WorktreeBootstrapConfig,
     WorktreeBootstrapConfigUpdate,
