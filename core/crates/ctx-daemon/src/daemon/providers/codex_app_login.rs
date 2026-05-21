@@ -5,8 +5,11 @@ use std::time::Duration;
 
 use anyhow::Context;
 use ctx_core::provider_policy::CODEX_APP_SERVER_ARGS;
-use ctx_provider_accounts as provider_accounts;
-use serde::{Deserialize, Serialize};
+use ctx_provider_accounts::{
+    CodexLoginCompleteRouteRequest, CodexLoginCompleteRouteResponse, CodexLoginRouteError,
+    CodexLoginRouteErrorKind, CodexLoginStartRouteRequest, CodexLoginStartRouteResponse,
+    CodexLoginStatusRouteResponse,
+};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
@@ -78,119 +81,14 @@ struct CodexLoginCompleteError {
     message: String,
 }
 
-#[derive(Debug, Default, Deserialize)]
-pub struct CodexLoginStartRouteRequest {
-    label: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct CodexLoginStartRouteResponse {
-    account_id: String,
-    auth_url: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    expected_callback_url: Option<String>,
-    completion_token: String,
-}
-
-impl From<StartedCodexLoginSession> for CodexLoginStartRouteResponse {
-    fn from(session: StartedCodexLoginSession) -> Self {
-        Self {
-            account_id: session.account_id,
-            auth_url: session.auth_url,
-            expected_callback_url: session.expected_callback_url,
-            completion_token: session.completion_token,
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CodexLoginCompleteRouteRequest {
-    callback_url: String,
-    completion_token: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct CodexLoginCompleteRouteResponse {
-    accepted: bool,
-    status_code: u16,
-}
-
-impl From<CodexLoginCompleteResponse> for CodexLoginCompleteRouteResponse {
-    fn from(response: CodexLoginCompleteResponse) -> Self {
-        Self {
-            accepted: response.accepted,
-            status_code: response.status_code,
-        }
-    }
-}
-
-#[derive(Debug, Serialize)]
-pub struct CodexLoginStatusRouteResponse {
-    account_id: String,
-    auth_url: String,
-    #[serde(default)]
-    expected_callback_url: Option<String>,
-    #[serde(default)]
-    completion_token: Option<String>,
-    status: String,
-    #[serde(default)]
-    error: Option<String>,
-}
-
-impl From<provider_accounts::CodexLoginStatus> for CodexLoginStatusRouteResponse {
-    fn from(status: provider_accounts::CodexLoginStatus) -> Self {
-        Self {
-            account_id: status.account_id,
-            auth_url: status.auth_url,
-            expected_callback_url: status.expected_callback_url,
-            completion_token: status.completion_token,
-            status: status.status,
-            error: status.error,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum CodexLoginRouteErrorKind {
-    BadRequest,
-    NotFound,
-    Conflict,
-    Unauthorized,
-    BadGateway,
-    Internal,
-}
-
-#[derive(Debug)]
-pub struct CodexLoginRouteError {
-    kind: CodexLoginRouteErrorKind,
-    message: String,
-}
-
-impl CodexLoginRouteError {
-    pub fn kind(&self) -> CodexLoginRouteErrorKind {
-        self.kind
-    }
-
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-
-    fn new(kind: CodexLoginRouteErrorKind, message: impl Into<String>) -> Self {
-        Self {
-            kind,
-            message: message.into(),
-        }
-    }
-}
-
 impl ProvidersHandle {
     pub async fn start_codex_login_for_route(
         &self,
         request: CodexLoginStartRouteRequest,
     ) -> Result<CodexLoginStartRouteResponse, CodexLoginRouteError> {
-        start_codex_app_server_login(&self.state, request.label)
+        start_codex_app_server_login(&self.state, request.into_label())
             .await
-            .map(CodexLoginStartRouteResponse::from)
+            .map(codex_login_start_route_response)
             .map_err(codex_login_start_route_error)
     }
 
@@ -209,27 +107,37 @@ impl ProvidersHandle {
         account_id: &str,
         request: CodexLoginCompleteRouteRequest,
     ) -> Result<CodexLoginCompleteRouteResponse, CodexLoginRouteError> {
-        complete_codex_app_server_login(
-            &self.state,
-            account_id,
-            request.callback_url,
-            request.completion_token,
-        )
-        .await
-        .map(Into::into)
-        .map_err(codex_login_complete_route_error)
+        let (callback_url, completion_token) = request.into_parts();
+        complete_codex_app_server_login(&self.state, account_id, callback_url, completion_token)
+            .await
+            .map(codex_login_complete_route_response)
+            .map_err(codex_login_complete_route_error)
     }
 }
 
+fn codex_login_start_route_response(
+    session: StartedCodexLoginSession,
+) -> CodexLoginStartRouteResponse {
+    CodexLoginStartRouteResponse::new(
+        session.account_id,
+        session.auth_url,
+        session.expected_callback_url,
+        session.completion_token,
+    )
+}
+
+fn codex_login_complete_route_response(
+    response: CodexLoginCompleteResponse,
+) -> CodexLoginCompleteRouteResponse {
+    CodexLoginCompleteRouteResponse::new(response.accepted, response.status_code)
+}
+
 fn codex_login_not_found_route_error() -> CodexLoginRouteError {
-    CodexLoginRouteError::new(CodexLoginRouteErrorKind::NotFound, "login not found")
+    CodexLoginRouteError::not_found("login not found")
 }
 
 fn codex_login_start_route_error(error: CodexLoginStartError) -> CodexLoginRouteError {
-    CodexLoginRouteError::new(
-        CodexLoginRouteErrorKind::Internal,
-        error.route_safe_message().to_string(),
-    )
+    CodexLoginRouteError::internal(error.route_safe_message().to_string())
 }
 
 fn codex_login_complete_route_error(error: CodexLoginCompleteError) -> CodexLoginRouteError {
@@ -365,6 +273,8 @@ fn claim_error_response(
 
 #[cfg(test)]
 mod route_tests {
+    use ctx_provider_accounts as provider_accounts;
+
     use super::*;
 
     #[test]
@@ -424,15 +334,14 @@ mod route_tests {
 
     #[test]
     fn codex_login_route_start_response_omits_absent_expected_callback() {
-        let payload = serde_json::to_value(CodexLoginStartRouteResponse::from(
-            StartedCodexLoginSession {
+        let payload =
+            serde_json::to_value(codex_login_start_route_response(StartedCodexLoginSession {
                 account_id: "acct-1".to_string(),
                 auth_url: "https://example.test/auth".to_string(),
                 expected_callback_url: None,
                 completion_token: "token-1".to_string(),
-            },
-        ))
-        .unwrap();
+            }))
+            .unwrap();
 
         assert_eq!(payload["account_id"].as_str(), Some("acct-1"));
         assert_eq!(
@@ -445,15 +354,14 @@ mod route_tests {
 
     #[test]
     fn codex_login_route_start_response_preserves_expected_callback() {
-        let payload = serde_json::to_value(CodexLoginStartRouteResponse::from(
-            StartedCodexLoginSession {
+        let payload =
+            serde_json::to_value(codex_login_start_route_response(StartedCodexLoginSession {
                 account_id: "acct-2".to_string(),
                 auth_url: "https://example.test/auth".to_string(),
                 expected_callback_url: Some("http://localhost:1234/auth/callback".to_string()),
                 completion_token: "token-2".to_string(),
-            },
-        ))
-        .unwrap();
+            }))
+            .unwrap();
 
         assert_eq!(
             payload["expected_callback_url"].as_str(),
@@ -463,7 +371,7 @@ mod route_tests {
 
     #[test]
     fn codex_login_route_complete_response_preserves_shape() {
-        let payload = serde_json::to_value(CodexLoginCompleteRouteResponse::from(
+        let payload = serde_json::to_value(codex_login_complete_route_response(
             CodexLoginCompleteResponse {
                 accepted: true,
                 status_code: 200,

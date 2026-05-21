@@ -5303,6 +5303,50 @@ test("daemon boundary guard scopes provider login status DTO bans", () => {
   );
 });
 
+test("daemon boundary guard catches provider login daemon route-contract imports", () => {
+  const direct = scanText({
+    filePath: "core/crates/ctx-http/src/api/providers/login/browser/gemini.rs",
+    contents: `
+      use ctx_daemon::daemon::providers::ProviderLoginStartRouteRequest;
+    `,
+    patterns: PROVIDER_LOGIN_STATUS_ROUTE_DTO_PATTERNS,
+  });
+  assert.deepEqual(
+    direct.map((violation) => violation.name),
+    ["provider login API imports login route contracts from daemon"],
+  );
+
+  const multiline = scanText({
+    filePath: "core/crates/ctx-http/src/api/providers/login/browser/gemini.rs",
+    contents: `
+      use ctx_daemon::daemon::providers::{
+        CursorLoginStatusRouteResponse,
+        ProviderLoginRouteErrorKind,
+      };
+    `,
+    patterns: PROVIDER_LOGIN_STATUS_ROUTE_DTO_PATTERNS,
+  });
+  assert.deepEqual(
+    multiline.map((violation) => violation.name),
+    ["provider login API imports login route contracts from daemon"],
+  );
+
+  const nested = scanText({
+    filePath: "core/crates/ctx-http/src/api/providers/login/browser/gemini.rs",
+    contents: `
+      use ctx_daemon::daemon::{
+        providers::{CodexLoginStartRouteResponse, ClaudeLoginRouteError},
+        ProvidersHandle,
+      };
+    `,
+    patterns: PROVIDER_LOGIN_STATUS_ROUTE_DTO_PATTERNS,
+  });
+  assert.deepEqual(
+    nested.map((violation) => violation.name),
+    ["provider login API imports login route contracts from nested daemon providers group"],
+  );
+});
+
 test("daemon boundary guard rejects provider-account prelude leaks", () => {
   const violations = scanText({
     filePath: "core/crates/ctx-http/src/api/providers.rs",
@@ -5321,6 +5365,81 @@ test("daemon boundary guard rejects provider-account prelude leaks", () => {
       PROVIDER_PRELUDE_ROUTE_DTO_PATTERNS[0],
     ),
     true,
+  );
+});
+
+test("daemon boundary guard catches provider prelude daemon login route-contract imports", () => {
+  const direct = scanText({
+    filePath: "core/crates/ctx-http/src/api/providers.rs",
+    contents: `
+      use ctx_daemon::daemon::providers::CodexLoginCompleteRouteRequest;
+    `,
+    patterns: PROVIDER_PRELUDE_ROUTE_DTO_PATTERNS,
+  });
+  assert.deepEqual(
+    direct.map((violation) => violation.name),
+    ["provider API prelude imports login route contracts from daemon"],
+  );
+
+  const multiline = scanText({
+    filePath: "core/crates/ctx-http/src/api/providers.rs",
+    contents: `
+      use ctx_daemon::daemon::providers::{
+        ClaudeLoginStartRouteResponse,
+        ProviderLoginStartRouteResponse,
+      };
+    `,
+    patterns: PROVIDER_PRELUDE_ROUTE_DTO_PATTERNS,
+  });
+  assert.deepEqual(
+    multiline.map((violation) => violation.name),
+    ["provider API prelude imports login route contracts from daemon"],
+  );
+
+  const nested = scanText({
+    filePath: "core/crates/ctx-http/src/api/providers.rs",
+    contents: `
+      use ctx_daemon::daemon::{
+        providers::{AmpLoginStatusRouteResponse, CursorLoginRouteErrorKind},
+        ProvidersHandle,
+      };
+    `,
+    patterns: PROVIDER_PRELUDE_ROUTE_DTO_PATTERNS,
+  });
+  assert.deepEqual(
+    nested.map((violation) => violation.name),
+    [
+      "provider API prelude imports login route contracts from nested daemon providers group",
+    ],
+  );
+});
+
+test("daemon boundary guard keeps provider login daemon import bans narrow", () => {
+  assert.deepEqual(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/providers.rs",
+      contents: `
+        use ctx_daemon::daemon::ProvidersHandle;
+      `,
+      patterns: PROVIDER_PRELUDE_ROUTE_DTO_PATTERNS,
+    }),
+    [],
+  );
+
+  assert.deepEqual(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/providers/login/claude.rs",
+      contents: stripCfgTestItems(`
+        #[cfg(test)]
+        pub(crate) async fn resolve_claude_login_runtime_from_config(
+          data_root: &std::path::Path,
+        ) -> anyhow::Result<ctx_daemon::daemon::providers::ProviderLoginRuntimeCommand> {
+          runtime::resolve_claude_login_runtime_from_config(data_root).await
+        }
+      `),
+      patterns: apiPatternsForPath("core/crates/ctx-http/src/api/providers/login/claude.rs"),
+    }),
+    [],
   );
 });
 

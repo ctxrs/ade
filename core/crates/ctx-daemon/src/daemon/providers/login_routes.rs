@@ -1,232 +1,58 @@
-use ctx_provider_accounts as provider_accounts;
-use serde::{Deserialize, Serialize};
+use ctx_provider_accounts::{
+    AmpLoginStatusRouteResponse, GeminiLoginStatusRouteResponse, KimiLoginStatusRouteResponse,
+    MistralLoginStatusRouteResponse, ProviderLoginRouteError, ProviderLoginStartRouteRequest,
+    ProviderLoginStartRouteResponse, QwenLoginStatusRouteResponse,
+};
 
 use crate::daemon::ProvidersHandle;
 
 use super::login_sessions::StartedLoginSession;
 use super::{browser_logins, kimi_oauth_login, login_sessions};
 
-#[derive(Debug, Default, Deserialize)]
-pub struct ProviderLoginStartRouteRequest {
-    label: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ProviderLoginStartRouteResponse {
-    login_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    auth_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    device_code: Option<String>,
-}
-
-impl From<StartedLoginSession> for ProviderLoginStartRouteResponse {
-    fn from(session: StartedLoginSession) -> Self {
-        Self {
-            login_id: session.login_id,
-            auth_url: session.auth_url,
-            device_code: session.device_code,
-        }
-    }
-}
-
-#[derive(Debug, Serialize)]
-pub struct AmpLoginStatusRouteResponse {
-    login_id: String,
-    #[serde(default)]
-    auth_url: Option<String>,
-    status: String,
-    #[serde(default)]
-    error: Option<String>,
-}
-
-impl From<provider_accounts::AmpLoginStatus> for AmpLoginStatusRouteResponse {
-    fn from(status: provider_accounts::AmpLoginStatus) -> Self {
-        Self {
-            login_id: status.login_id,
-            auth_url: status.auth_url,
-            status: status.status,
-            error: status.error,
-        }
-    }
-}
-
-#[derive(Debug, Serialize)]
-pub struct GeminiLoginStatusRouteResponse {
-    login_id: String,
-    #[serde(default)]
-    auth_url: Option<String>,
-    status: String,
-    #[serde(default)]
-    account_id: Option<String>,
-    #[serde(default)]
-    error: Option<String>,
-}
-
-impl From<provider_accounts::GeminiLoginStatus> for GeminiLoginStatusRouteResponse {
-    fn from(status: provider_accounts::GeminiLoginStatus) -> Self {
-        Self {
-            login_id: status.login_id,
-            auth_url: status.auth_url,
-            status: status.status,
-            account_id: status.account_id,
-            error: status.error,
-        }
-    }
-}
-
-#[derive(Debug, Serialize)]
-pub struct QwenLoginStatusRouteResponse {
-    login_id: String,
-    #[serde(default)]
-    auth_url: Option<String>,
-    status: String,
-    #[serde(default)]
-    account_id: Option<String>,
-    #[serde(default)]
-    error: Option<String>,
-}
-
-impl From<provider_accounts::QwenLoginStatus> for QwenLoginStatusRouteResponse {
-    fn from(status: provider_accounts::QwenLoginStatus) -> Self {
-        Self {
-            login_id: status.login_id,
-            auth_url: status.auth_url,
-            status: status.status,
-            account_id: status.account_id,
-            error: status.error,
-        }
-    }
-}
-
-#[derive(Debug, Serialize)]
-pub struct MistralLoginStatusRouteResponse {
-    login_id: String,
-    #[serde(default)]
-    auth_url: Option<String>,
-    status: String,
-    #[serde(default)]
-    error: Option<String>,
-}
-
-impl From<provider_accounts::MistralLoginStatus> for MistralLoginStatusRouteResponse {
-    fn from(status: provider_accounts::MistralLoginStatus) -> Self {
-        Self {
-            login_id: status.login_id,
-            auth_url: status.auth_url,
-            status: status.status,
-            error: status.error,
-        }
-    }
-}
-
-#[derive(Debug, Serialize)]
-pub struct KimiLoginStatusRouteResponse {
-    login_id: String,
-    status: String,
-    #[serde(default)]
-    account_id: Option<String>,
-    #[serde(default)]
-    auth_url: Option<String>,
-    #[serde(default)]
-    device_code: Option<String>,
-    #[serde(default)]
-    error: Option<String>,
-}
-
-impl From<provider_accounts::KimiLoginStatus> for KimiLoginStatusRouteResponse {
-    fn from(status: provider_accounts::KimiLoginStatus) -> Self {
-        Self {
-            login_id: status.login_id,
-            status: status.status,
-            account_id: status.account_id,
-            auth_url: status.auth_url,
-            device_code: status.device_code,
-            error: status.error,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProviderLoginRouteErrorKind {
-    NotFound,
-    BadGateway,
-}
-
-#[derive(Debug)]
-pub struct ProviderLoginRouteError {
-    kind: ProviderLoginRouteErrorKind,
-    message: String,
-}
-
-impl ProviderLoginRouteError {
-    pub fn kind(&self) -> ProviderLoginRouteErrorKind {
-        self.kind
-    }
-
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-
-    fn not_found(message: impl Into<String>) -> Self {
-        Self {
-            kind: ProviderLoginRouteErrorKind::NotFound,
-            message: message.into(),
-        }
-    }
-
-    fn bad_gateway(message: impl Into<String>) -> Self {
-        Self {
-            kind: ProviderLoginRouteErrorKind::BadGateway,
-            message: message.into(),
-        }
-    }
-}
-
 impl ProvidersHandle {
     pub async fn start_amp_login_for_route(
         &self,
         request: ProviderLoginStartRouteRequest,
     ) -> ProviderLoginStartRouteResponse {
-        browser_logins::start_amp_browser_login(&self.state, request.label)
-            .await
-            .into()
+        provider_login_start_response(
+            browser_logins::start_amp_browser_login(&self.state, request.into_label()).await,
+        )
     }
 
     pub async fn start_gemini_login_for_route(
         &self,
         request: ProviderLoginStartRouteRequest,
     ) -> ProviderLoginStartRouteResponse {
-        browser_logins::start_gemini_browser_login(&self.state, request.label)
-            .await
-            .into()
+        provider_login_start_response(
+            browser_logins::start_gemini_browser_login(&self.state, request.into_label()).await,
+        )
     }
 
     pub async fn start_qwen_login_for_route(
         &self,
         request: ProviderLoginStartRouteRequest,
     ) -> ProviderLoginStartRouteResponse {
-        browser_logins::start_qwen_browser_login(&self.state, request.label)
-            .await
-            .into()
+        provider_login_start_response(
+            browser_logins::start_qwen_browser_login(&self.state, request.into_label()).await,
+        )
     }
 
     pub async fn start_mistral_login_for_route(
         &self,
         request: ProviderLoginStartRouteRequest,
     ) -> ProviderLoginStartRouteResponse {
-        browser_logins::start_mistral_browser_login(&self.state, request.label)
-            .await
-            .into()
+        provider_login_start_response(
+            browser_logins::start_mistral_browser_login(&self.state, request.into_label()).await,
+        )
     }
 
     pub async fn start_kimi_login_for_route(
         &self,
         request: ProviderLoginStartRouteRequest,
     ) -> Result<ProviderLoginStartRouteResponse, ProviderLoginRouteError> {
-        kimi_oauth_login::start_kimi_oauth_login(&self.state, request.label)
+        kimi_oauth_login::start_kimi_oauth_login(&self.state, request.into_label())
             .await
-            .map(Into::into)
+            .map(provider_login_start_response)
             .map_err(kimi_login_start_route_error)
     }
 
@@ -281,6 +107,10 @@ impl ProvidersHandle {
     }
 }
 
+fn provider_login_start_response(session: StartedLoginSession) -> ProviderLoginStartRouteResponse {
+    ProviderLoginStartRouteResponse::new(session.login_id, session.auth_url, session.device_code)
+}
+
 fn login_not_found_route_error() -> ProviderLoginRouteError {
     ProviderLoginRouteError::not_found("login not found")
 }
@@ -293,6 +123,8 @@ fn kimi_login_start_route_error(
 
 #[cfg(test)]
 mod tests {
+    use ctx_provider_accounts::{self as provider_accounts, ProviderLoginRouteErrorKind};
+
     use super::*;
 
     #[test]
@@ -317,13 +149,12 @@ mod tests {
 
     #[test]
     fn provider_login_route_start_response_omits_absent_optional_fields() {
-        let payload =
-            serde_json::to_value(ProviderLoginStartRouteResponse::from(StartedLoginSession {
-                login_id: "login-1".to_string(),
-                auth_url: None,
-                device_code: None,
-            }))
-            .unwrap();
+        let payload = serde_json::to_value(provider_login_start_response(StartedLoginSession {
+            login_id: "login-1".to_string(),
+            auth_url: None,
+            device_code: None,
+        }))
+        .unwrap();
 
         assert_eq!(payload["login_id"].as_str(), Some("login-1"));
         assert!(payload.get("auth_url").is_none());
@@ -332,13 +163,12 @@ mod tests {
 
     #[test]
     fn provider_login_route_start_response_preserves_present_optional_fields() {
-        let payload =
-            serde_json::to_value(ProviderLoginStartRouteResponse::from(StartedLoginSession {
-                login_id: "login-2".to_string(),
-                auth_url: Some("https://example.test/auth".to_string()),
-                device_code: Some("CODE-123".to_string()),
-            }))
-            .unwrap();
+        let payload = serde_json::to_value(provider_login_start_response(StartedLoginSession {
+            login_id: "login-2".to_string(),
+            auth_url: Some("https://example.test/auth".to_string()),
+            device_code: Some("CODE-123".to_string()),
+        }))
+        .unwrap();
 
         assert_eq!(payload["login_id"].as_str(), Some("login-2"));
         assert_eq!(

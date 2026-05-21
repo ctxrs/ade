@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
-use ctx_provider_accounts as provider_accounts;
-use serde::{Deserialize, Serialize};
+use ctx_provider_accounts::{
+    ClaudeLoginRouteError, ClaudeLoginRouteErrorKind, ClaudeLoginStartRouteRequest,
+    ClaudeLoginStartRouteResponse, ClaudeLoginStatusRouteResponse,
+};
 
 use crate::daemon::providers::{login_sessions, StartedLoginSession};
 use crate::daemon::{DaemonState, ProvidersHandle};
@@ -60,89 +62,14 @@ impl ClaudeSetupTokenLoginStartError {
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
-pub struct ClaudeLoginStartRouteRequest {
-    label: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ClaudeLoginStartRouteResponse {
-    login_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    auth_url: Option<String>,
-}
-
-impl From<StartedLoginSession> for ClaudeLoginStartRouteResponse {
-    fn from(session: StartedLoginSession) -> Self {
-        Self {
-            login_id: session.login_id,
-            auth_url: session.auth_url,
-        }
-    }
-}
-
-#[derive(Debug, Serialize)]
-pub struct ClaudeLoginStatusRouteResponse {
-    login_id: String,
-    #[serde(default)]
-    auth_url: Option<String>,
-    status: String,
-    #[serde(default)]
-    account_id: Option<String>,
-    #[serde(default)]
-    error: Option<String>,
-}
-
-impl From<provider_accounts::ClaudeLoginStatus> for ClaudeLoginStatusRouteResponse {
-    fn from(status: provider_accounts::ClaudeLoginStatus) -> Self {
-        Self {
-            login_id: status.login_id,
-            auth_url: status.auth_url,
-            status: status.status,
-            account_id: status.account_id,
-            error: status.error,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum ClaudeLoginRouteErrorKind {
-    BadRequest,
-    NotFound,
-    Internal,
-}
-
-#[derive(Debug)]
-pub struct ClaudeLoginRouteError {
-    kind: ClaudeLoginRouteErrorKind,
-    message: String,
-}
-
-impl ClaudeLoginRouteError {
-    pub fn kind(&self) -> ClaudeLoginRouteErrorKind {
-        self.kind
-    }
-
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-
-    fn new(kind: ClaudeLoginRouteErrorKind, message: impl Into<String>) -> Self {
-        Self {
-            kind,
-            message: message.into(),
-        }
-    }
-}
-
 impl ProvidersHandle {
     pub async fn start_claude_login_for_route(
         &self,
         request: ClaudeLoginStartRouteRequest,
     ) -> Result<ClaudeLoginStartRouteResponse, ClaudeLoginRouteError> {
-        start_claude_setup_token_login(&self.state, request.label)
+        start_claude_setup_token_login(&self.state, request.into_label())
             .await
-            .map(ClaudeLoginStartRouteResponse::from)
+            .map(claude_login_start_route_response)
             .map_err(claude_login_start_route_error)
     }
 
@@ -157,8 +84,14 @@ impl ProvidersHandle {
     }
 }
 
+fn claude_login_start_route_response(
+    session: StartedLoginSession,
+) -> ClaudeLoginStartRouteResponse {
+    ClaudeLoginStartRouteResponse::new(session.login_id, session.auth_url)
+}
+
 fn claude_login_not_found_route_error() -> ClaudeLoginRouteError {
-    ClaudeLoginRouteError::new(ClaudeLoginRouteErrorKind::NotFound, "login not found")
+    ClaudeLoginRouteError::not_found("login not found")
 }
 
 fn claude_login_start_route_error(error: ClaudeSetupTokenLoginStartError) -> ClaudeLoginRouteError {
@@ -193,6 +126,8 @@ async fn start_claude_setup_token_login(
 
 #[cfg(test)]
 mod route_tests {
+    use ctx_provider_accounts as provider_accounts;
+
     use super::*;
 
     #[test]
@@ -228,7 +163,7 @@ mod route_tests {
     #[test]
     fn claude_login_route_start_response_omits_absent_auth_url() {
         let payload =
-            serde_json::to_value(ClaudeLoginStartRouteResponse::from(StartedLoginSession {
+            serde_json::to_value(claude_login_start_route_response(StartedLoginSession {
                 login_id: "login-1".to_string(),
                 auth_url: None,
                 device_code: None,
@@ -242,7 +177,7 @@ mod route_tests {
     #[test]
     fn claude_login_route_start_response_preserves_auth_url() {
         let payload =
-            serde_json::to_value(ClaudeLoginStartRouteResponse::from(StartedLoginSession {
+            serde_json::to_value(claude_login_start_route_response(StartedLoginSession {
                 login_id: "login-2".to_string(),
                 auth_url: Some("https://claude.ai/oauth/authorize".to_string()),
                 device_code: None,

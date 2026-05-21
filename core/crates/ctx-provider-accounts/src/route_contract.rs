@@ -386,6 +386,553 @@ impl ProviderAccountRouteError {
     }
 }
 
+#[derive(Debug, Default, Deserialize)]
+pub struct ProviderLoginStartRouteRequest {
+    label: Option<String>,
+}
+
+impl ProviderLoginStartRouteRequest {
+    pub fn new(label: Option<String>) -> Self {
+        Self { label }
+    }
+
+    pub fn label(&self) -> Option<&str> {
+        self.label.as_deref()
+    }
+
+    pub fn into_label(self) -> Option<String> {
+        self.label
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProviderLoginStartRouteResponse {
+    login_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auth_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    device_code: Option<String>,
+}
+
+impl ProviderLoginStartRouteResponse {
+    pub fn new(
+        login_id: impl Into<String>,
+        auth_url: Option<String>,
+        device_code: Option<String>,
+    ) -> Self {
+        Self {
+            login_id: login_id.into(),
+            auth_url,
+            device_code,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct AmpLoginStatusRouteResponse {
+    login_id: String,
+    #[serde(default)]
+    auth_url: Option<String>,
+    status: String,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+impl From<provider_accounts::AmpLoginStatus> for AmpLoginStatusRouteResponse {
+    fn from(status: provider_accounts::AmpLoginStatus) -> Self {
+        Self {
+            login_id: status.login_id,
+            auth_url: status.auth_url,
+            status: status.status,
+            error: status.error,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct GeminiLoginStatusRouteResponse {
+    login_id: String,
+    #[serde(default)]
+    auth_url: Option<String>,
+    status: String,
+    #[serde(default)]
+    account_id: Option<String>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+impl From<provider_accounts::GeminiLoginStatus> for GeminiLoginStatusRouteResponse {
+    fn from(status: provider_accounts::GeminiLoginStatus) -> Self {
+        Self {
+            login_id: status.login_id,
+            auth_url: status.auth_url,
+            status: status.status,
+            account_id: status.account_id,
+            error: status.error,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct QwenLoginStatusRouteResponse {
+    login_id: String,
+    #[serde(default)]
+    auth_url: Option<String>,
+    status: String,
+    #[serde(default)]
+    account_id: Option<String>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+impl From<provider_accounts::QwenLoginStatus> for QwenLoginStatusRouteResponse {
+    fn from(status: provider_accounts::QwenLoginStatus) -> Self {
+        Self {
+            login_id: status.login_id,
+            auth_url: status.auth_url,
+            status: status.status,
+            account_id: status.account_id,
+            error: status.error,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct MistralLoginStatusRouteResponse {
+    login_id: String,
+    #[serde(default)]
+    auth_url: Option<String>,
+    status: String,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+impl From<provider_accounts::MistralLoginStatus> for MistralLoginStatusRouteResponse {
+    fn from(status: provider_accounts::MistralLoginStatus) -> Self {
+        Self {
+            login_id: status.login_id,
+            auth_url: status.auth_url,
+            status: status.status,
+            error: status.error,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct KimiLoginStatusRouteResponse {
+    login_id: String,
+    status: String,
+    #[serde(default)]
+    account_id: Option<String>,
+    #[serde(default)]
+    auth_url: Option<String>,
+    #[serde(default)]
+    device_code: Option<String>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+impl From<provider_accounts::KimiLoginStatus> for KimiLoginStatusRouteResponse {
+    fn from(status: provider_accounts::KimiLoginStatus) -> Self {
+        Self {
+            login_id: status.login_id,
+            status: status.status,
+            account_id: status.account_id,
+            auth_url: status.auth_url,
+            device_code: status.device_code,
+            error: status.error,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderLoginRouteErrorKind {
+    NotFound,
+    BadGateway,
+}
+
+#[derive(Debug)]
+pub struct ProviderLoginRouteError {
+    kind: ProviderLoginRouteErrorKind,
+    message: String,
+}
+
+impl ProviderLoginRouteError {
+    pub fn new(kind: ProviderLoginRouteErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+
+    pub fn not_found(message: impl Into<String>) -> Self {
+        Self::new(ProviderLoginRouteErrorKind::NotFound, message)
+    }
+
+    pub fn bad_gateway(message: impl Into<String>) -> Self {
+        Self::new(ProviderLoginRouteErrorKind::BadGateway, message)
+    }
+
+    pub fn kind(&self) -> ProviderLoginRouteErrorKind {
+        self.kind
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct CursorLoginStartRouteRequest {
+    label: Option<String>,
+}
+
+impl CursorLoginStartRouteRequest {
+    pub fn new(label: Option<String>) -> Self {
+        Self { label }
+    }
+
+    pub fn into_label(self) -> Option<String> {
+        self.label
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct CursorLoginStartRouteResponse {
+    login_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auth_url: Option<String>,
+}
+
+impl CursorLoginStartRouteResponse {
+    pub fn new(login_id: impl Into<String>, auth_url: Option<String>) -> Self {
+        Self {
+            login_id: login_id.into(),
+            auth_url,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct CursorLoginStatusRouteResponse {
+    login_id: String,
+    #[serde(default)]
+    auth_url: Option<String>,
+    status: String,
+    #[serde(default)]
+    account_id: Option<String>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+impl From<provider_accounts::CursorLoginStatus> for CursorLoginStatusRouteResponse {
+    fn from(status: provider_accounts::CursorLoginStatus) -> Self {
+        Self {
+            login_id: status.login_id,
+            auth_url: status.auth_url,
+            status: status.status,
+            account_id: status.account_id,
+            error: status.error,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CursorLoginRouteErrorKind {
+    BadRequest,
+    NotFound,
+    Internal,
+}
+
+#[derive(Debug)]
+pub struct CursorLoginRouteError {
+    kind: CursorLoginRouteErrorKind,
+    message: String,
+}
+
+impl CursorLoginRouteError {
+    pub fn new(kind: CursorLoginRouteErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+
+    pub fn bad_request(message: impl Into<String>) -> Self {
+        Self::new(CursorLoginRouteErrorKind::BadRequest, message)
+    }
+
+    pub fn not_found(message: impl Into<String>) -> Self {
+        Self::new(CursorLoginRouteErrorKind::NotFound, message)
+    }
+
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self::new(CursorLoginRouteErrorKind::Internal, message)
+    }
+
+    pub fn kind(&self) -> CursorLoginRouteErrorKind {
+        self.kind
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct ClaudeLoginStartRouteRequest {
+    label: Option<String>,
+}
+
+impl ClaudeLoginStartRouteRequest {
+    pub fn new(label: Option<String>) -> Self {
+        Self { label }
+    }
+
+    pub fn into_label(self) -> Option<String> {
+        self.label
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct ClaudeLoginStartRouteResponse {
+    login_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auth_url: Option<String>,
+}
+
+impl ClaudeLoginStartRouteResponse {
+    pub fn new(login_id: impl Into<String>, auth_url: Option<String>) -> Self {
+        Self {
+            login_id: login_id.into(),
+            auth_url,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct ClaudeLoginStatusRouteResponse {
+    login_id: String,
+    #[serde(default)]
+    auth_url: Option<String>,
+    status: String,
+    #[serde(default)]
+    account_id: Option<String>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+impl From<provider_accounts::ClaudeLoginStatus> for ClaudeLoginStatusRouteResponse {
+    fn from(status: provider_accounts::ClaudeLoginStatus) -> Self {
+        Self {
+            login_id: status.login_id,
+            auth_url: status.auth_url,
+            status: status.status,
+            account_id: status.account_id,
+            error: status.error,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum ClaudeLoginRouteErrorKind {
+    BadRequest,
+    NotFound,
+    Internal,
+}
+
+#[derive(Debug)]
+pub struct ClaudeLoginRouteError {
+    kind: ClaudeLoginRouteErrorKind,
+    message: String,
+}
+
+impl ClaudeLoginRouteError {
+    pub fn new(kind: ClaudeLoginRouteErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+
+    pub fn bad_request(message: impl Into<String>) -> Self {
+        Self::new(ClaudeLoginRouteErrorKind::BadRequest, message)
+    }
+
+    pub fn not_found(message: impl Into<String>) -> Self {
+        Self::new(ClaudeLoginRouteErrorKind::NotFound, message)
+    }
+
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self::new(ClaudeLoginRouteErrorKind::Internal, message)
+    }
+
+    pub fn kind(&self) -> ClaudeLoginRouteErrorKind {
+        self.kind
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct CodexLoginStartRouteRequest {
+    label: Option<String>,
+}
+
+impl CodexLoginStartRouteRequest {
+    pub fn new(label: Option<String>) -> Self {
+        Self { label }
+    }
+
+    pub fn into_label(self) -> Option<String> {
+        self.label
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct CodexLoginStartRouteResponse {
+    account_id: String,
+    auth_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expected_callback_url: Option<String>,
+    completion_token: String,
+}
+
+impl CodexLoginStartRouteResponse {
+    pub fn new(
+        account_id: impl Into<String>,
+        auth_url: impl Into<String>,
+        expected_callback_url: Option<String>,
+        completion_token: impl Into<String>,
+    ) -> Self {
+        Self {
+            account_id: account_id.into(),
+            auth_url: auth_url.into(),
+            expected_callback_url,
+            completion_token: completion_token.into(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CodexLoginCompleteRouteRequest {
+    callback_url: String,
+    completion_token: String,
+}
+
+impl CodexLoginCompleteRouteRequest {
+    pub fn new(callback_url: impl Into<String>, completion_token: impl Into<String>) -> Self {
+        Self {
+            callback_url: callback_url.into(),
+            completion_token: completion_token.into(),
+        }
+    }
+
+    pub fn into_parts(self) -> (String, String) {
+        (self.callback_url, self.completion_token)
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct CodexLoginCompleteRouteResponse {
+    accepted: bool,
+    status_code: u16,
+}
+
+impl CodexLoginCompleteRouteResponse {
+    pub fn new(accepted: bool, status_code: u16) -> Self {
+        Self {
+            accepted,
+            status_code,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct CodexLoginStatusRouteResponse {
+    account_id: String,
+    auth_url: String,
+    #[serde(default)]
+    expected_callback_url: Option<String>,
+    #[serde(default)]
+    completion_token: Option<String>,
+    status: String,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+impl From<provider_accounts::CodexLoginStatus> for CodexLoginStatusRouteResponse {
+    fn from(status: provider_accounts::CodexLoginStatus) -> Self {
+        Self {
+            account_id: status.account_id,
+            auth_url: status.auth_url,
+            expected_callback_url: status.expected_callback_url,
+            completion_token: status.completion_token,
+            status: status.status,
+            error: status.error,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum CodexLoginRouteErrorKind {
+    BadRequest,
+    NotFound,
+    Conflict,
+    Unauthorized,
+    BadGateway,
+    Internal,
+}
+
+#[derive(Debug)]
+pub struct CodexLoginRouteError {
+    kind: CodexLoginRouteErrorKind,
+    message: String,
+}
+
+impl CodexLoginRouteError {
+    pub fn new(kind: CodexLoginRouteErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+
+    pub fn bad_request(message: impl Into<String>) -> Self {
+        Self::new(CodexLoginRouteErrorKind::BadRequest, message)
+    }
+
+    pub fn not_found(message: impl Into<String>) -> Self {
+        Self::new(CodexLoginRouteErrorKind::NotFound, message)
+    }
+
+    pub fn conflict(message: impl Into<String>) -> Self {
+        Self::new(CodexLoginRouteErrorKind::Conflict, message)
+    }
+
+    pub fn unauthorized(message: impl Into<String>) -> Self {
+        Self::new(CodexLoginRouteErrorKind::Unauthorized, message)
+    }
+
+    pub fn bad_gateway(message: impl Into<String>) -> Self {
+        Self::new(CodexLoginRouteErrorKind::BadGateway, message)
+    }
+
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self::new(CodexLoginRouteErrorKind::Internal, message)
+    }
+
+    pub fn kind(&self) -> CodexLoginRouteErrorKind {
+        self.kind
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -466,5 +1013,218 @@ mod tests {
 
         assert_eq!(error.kind(), ProviderAccountRouteErrorKind::NotFound);
         assert_eq!(error.message(), "unknown account");
+    }
+
+    #[test]
+    fn provider_login_start_request_defaults_to_no_label() {
+        let request: ProviderLoginStartRouteRequest =
+            serde_json::from_value(json!({})).expect("deserialize login start");
+
+        assert_eq!(request.label(), None);
+        assert_eq!(request.into_label(), None);
+    }
+
+    #[test]
+    fn provider_login_start_response_omits_absent_optional_fields() {
+        let payload = serde_json::to_value(ProviderLoginStartRouteResponse::new(
+            "login-1".to_string(),
+            None,
+            None,
+        ))
+        .expect("serialize start response");
+
+        assert_eq!(payload["login_id"].as_str(), Some("login-1"));
+        assert!(payload.get("auth_url").is_none());
+        assert!(payload.get("device_code").is_none());
+    }
+
+    #[test]
+    fn provider_login_start_response_preserves_present_optional_fields() {
+        let payload = serde_json::to_value(ProviderLoginStartRouteResponse::new(
+            "login-2",
+            Some("https://example.test/auth".to_string()),
+            Some("CODE-123".to_string()),
+        ))
+        .expect("serialize start response");
+
+        assert_eq!(
+            payload["auth_url"].as_str(),
+            Some("https://example.test/auth")
+        );
+        assert_eq!(payload["device_code"].as_str(), Some("CODE-123"));
+    }
+
+    #[test]
+    fn provider_login_status_route_responses_match_domain_wire_shape() {
+        let amp = provider_accounts::AmpLoginStatus {
+            login_id: "amp-login".to_string(),
+            auth_url: None,
+            status: "pending".to_string(),
+            error: None,
+        };
+        assert_eq!(
+            serde_json::to_value(AmpLoginStatusRouteResponse::from(amp.clone())).unwrap(),
+            serde_json::to_value(amp).unwrap()
+        );
+
+        let gemini = provider_accounts::GeminiLoginStatus {
+            login_id: "gemini-login".to_string(),
+            auth_url: None,
+            status: "complete".to_string(),
+            account_id: None,
+            error: None,
+        };
+        assert_eq!(
+            serde_json::to_value(GeminiLoginStatusRouteResponse::from(gemini.clone())).unwrap(),
+            serde_json::to_value(gemini).unwrap()
+        );
+
+        let qwen = provider_accounts::QwenLoginStatus {
+            login_id: "qwen-login".to_string(),
+            auth_url: None,
+            status: "error".to_string(),
+            account_id: None,
+            error: Some("failed".to_string()),
+        };
+        assert_eq!(
+            serde_json::to_value(QwenLoginStatusRouteResponse::from(qwen.clone())).unwrap(),
+            serde_json::to_value(qwen).unwrap()
+        );
+
+        let mistral = provider_accounts::MistralLoginStatus {
+            login_id: "mistral-login".to_string(),
+            auth_url: None,
+            status: "pending".to_string(),
+            error: None,
+        };
+        assert_eq!(
+            serde_json::to_value(MistralLoginStatusRouteResponse::from(mistral.clone())).unwrap(),
+            serde_json::to_value(mistral).unwrap()
+        );
+
+        let kimi = provider_accounts::KimiLoginStatus {
+            login_id: "kimi-login".to_string(),
+            status: "pending".to_string(),
+            account_id: None,
+            auth_url: None,
+            device_code: None,
+            error: None,
+        };
+        assert_eq!(
+            serde_json::to_value(KimiLoginStatusRouteResponse::from(kimi.clone())).unwrap(),
+            serde_json::to_value(kimi).unwrap()
+        );
+    }
+
+    #[test]
+    fn cursor_and_claude_login_start_responses_omit_absent_auth_url() {
+        let cursor = serde_json::to_value(CursorLoginStartRouteResponse::new("cursor-login", None))
+            .expect("serialize cursor start");
+        let claude = serde_json::to_value(ClaudeLoginStartRouteResponse::new("claude-login", None))
+            .expect("serialize claude start");
+
+        assert_eq!(cursor["login_id"].as_str(), Some("cursor-login"));
+        assert!(cursor.get("auth_url").is_none());
+        assert_eq!(claude["login_id"].as_str(), Some("claude-login"));
+        assert!(claude.get("auth_url").is_none());
+    }
+
+    #[test]
+    fn cursor_and_claude_login_status_route_responses_match_domain_wire_shape() {
+        let cursor = provider_accounts::CursorLoginStatus {
+            login_id: "cursor-login".to_string(),
+            auth_url: None,
+            status: "pending".to_string(),
+            account_id: None,
+            error: None,
+        };
+        assert_eq!(
+            serde_json::to_value(CursorLoginStatusRouteResponse::from(cursor.clone())).unwrap(),
+            serde_json::to_value(cursor).unwrap()
+        );
+
+        let claude = provider_accounts::ClaudeLoginStatus {
+            login_id: "claude-login".to_string(),
+            auth_url: None,
+            status: "pending".to_string(),
+            account_id: None,
+            error: None,
+        };
+        assert_eq!(
+            serde_json::to_value(ClaudeLoginStatusRouteResponse::from(claude.clone())).unwrap(),
+            serde_json::to_value(claude).unwrap()
+        );
+    }
+
+    #[test]
+    fn codex_login_start_response_omits_absent_expected_callback() {
+        let payload = serde_json::to_value(CodexLoginStartRouteResponse::new(
+            "acct-1",
+            "https://example.test/auth",
+            None,
+            "token-1",
+        ))
+        .expect("serialize codex start");
+
+        assert_eq!(payload["account_id"].as_str(), Some("acct-1"));
+        assert_eq!(
+            payload["auth_url"].as_str(),
+            Some("https://example.test/auth")
+        );
+        assert_eq!(payload["completion_token"].as_str(), Some("token-1"));
+        assert!(payload.get("expected_callback_url").is_none());
+    }
+
+    #[test]
+    fn codex_login_complete_contract_preserves_request_and_response_shape() {
+        let request: CodexLoginCompleteRouteRequest = serde_json::from_value(json!({
+            "callback_url": "http://localhost:1234/auth/callback",
+            "completion_token": "token-1",
+        }))
+        .expect("deserialize complete request");
+        let (callback_url, completion_token) = request.into_parts();
+        assert_eq!(callback_url, "http://localhost:1234/auth/callback");
+        assert_eq!(completion_token, "token-1");
+
+        let payload = serde_json::to_value(CodexLoginCompleteRouteResponse::new(true, 200))
+            .expect("serialize complete response");
+        assert_eq!(payload["accepted"].as_bool(), Some(true));
+        assert_eq!(payload["status_code"].as_u64(), Some(200));
+    }
+
+    #[test]
+    fn codex_login_status_route_response_matches_domain_wire_shape() {
+        let status = provider_accounts::CodexLoginStatus {
+            account_id: "codex-account".to_string(),
+            auth_url: "https://chat.openai.com/oauth/authorize".to_string(),
+            expected_callback_url: None,
+            completion_token: None,
+            status: "pending".to_string(),
+            error: None,
+        };
+
+        assert_eq!(
+            serde_json::to_value(CodexLoginStatusRouteResponse::from(status.clone())).unwrap(),
+            serde_json::to_value(status).unwrap()
+        );
+    }
+
+    #[test]
+    fn login_route_errors_preserve_kind_and_message() {
+        let provider = ProviderLoginRouteError::bad_gateway("provider failed");
+        assert_eq!(provider.kind(), ProviderLoginRouteErrorKind::BadGateway);
+        assert_eq!(provider.message(), "provider failed");
+
+        let cursor = CursorLoginRouteError::internal("cursor failed");
+        assert_eq!(cursor.kind(), CursorLoginRouteErrorKind::Internal);
+        assert_eq!(cursor.message(), "cursor failed");
+
+        let claude = ClaudeLoginRouteError::bad_request("bad command");
+        assert_eq!(claude.kind(), ClaudeLoginRouteErrorKind::BadRequest);
+        assert_eq!(claude.message(), "bad command");
+
+        let codex = CodexLoginRouteError::unauthorized("invalid completion token");
+        assert_eq!(codex.kind(), CodexLoginRouteErrorKind::Unauthorized);
+        assert_eq!(codex.message(), "invalid completion token");
     }
 }

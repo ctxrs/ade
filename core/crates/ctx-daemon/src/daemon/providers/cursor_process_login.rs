@@ -3,9 +3,10 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use ctx_observability::logs;
-use ctx_provider_accounts as provider_accounts;
-use serde::Deserialize;
-use serde::Serialize;
+use ctx_provider_accounts::{
+    CursorLoginRouteError, CursorLoginRouteErrorKind, CursorLoginStartRouteRequest,
+    CursorLoginStartRouteResponse, CursorLoginStatusRouteResponse,
+};
 
 use crate::daemon::providers::{login_runtime, login_sessions, StartedLoginSession};
 use crate::daemon::{DaemonState, ProvidersHandle};
@@ -52,89 +53,14 @@ impl CursorProcessLoginStartError {
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
-pub struct CursorLoginStartRouteRequest {
-    label: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct CursorLoginStartRouteResponse {
-    login_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    auth_url: Option<String>,
-}
-
-impl From<StartedLoginSession> for CursorLoginStartRouteResponse {
-    fn from(session: StartedLoginSession) -> Self {
-        Self {
-            login_id: session.login_id,
-            auth_url: session.auth_url,
-        }
-    }
-}
-
-#[derive(Debug, Serialize)]
-pub struct CursorLoginStatusRouteResponse {
-    login_id: String,
-    #[serde(default)]
-    auth_url: Option<String>,
-    status: String,
-    #[serde(default)]
-    account_id: Option<String>,
-    #[serde(default)]
-    error: Option<String>,
-}
-
-impl From<provider_accounts::CursorLoginStatus> for CursorLoginStatusRouteResponse {
-    fn from(status: provider_accounts::CursorLoginStatus) -> Self {
-        Self {
-            login_id: status.login_id,
-            auth_url: status.auth_url,
-            status: status.status,
-            account_id: status.account_id,
-            error: status.error,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CursorLoginRouteErrorKind {
-    BadRequest,
-    NotFound,
-    Internal,
-}
-
-#[derive(Debug)]
-pub struct CursorLoginRouteError {
-    kind: CursorLoginRouteErrorKind,
-    message: String,
-}
-
-impl CursorLoginRouteError {
-    pub fn kind(&self) -> CursorLoginRouteErrorKind {
-        self.kind
-    }
-
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-
-    fn new(kind: CursorLoginRouteErrorKind, message: impl Into<String>) -> Self {
-        Self {
-            kind,
-            message: message.into(),
-        }
-    }
-}
-
 impl ProvidersHandle {
     pub async fn start_cursor_login_for_route(
         &self,
         request: CursorLoginStartRouteRequest,
     ) -> Result<CursorLoginStartRouteResponse, CursorLoginRouteError> {
-        start_cursor_process_login(&self.state, request.label)
+        start_cursor_process_login(&self.state, request.into_label())
             .await
-            .map(CursorLoginStartRouteResponse::from)
+            .map(cursor_login_start_route_response)
             .map_err(cursor_login_start_route_error)
     }
 
@@ -149,8 +75,14 @@ impl ProvidersHandle {
     }
 }
 
+fn cursor_login_start_route_response(
+    session: StartedLoginSession,
+) -> CursorLoginStartRouteResponse {
+    CursorLoginStartRouteResponse::new(session.login_id, session.auth_url)
+}
+
 fn cursor_login_not_found_route_error() -> CursorLoginRouteError {
-    CursorLoginRouteError::new(CursorLoginRouteErrorKind::NotFound, "login not found")
+    CursorLoginRouteError::not_found("login not found")
 }
 
 fn cursor_login_start_route_error(error: CursorProcessLoginStartError) -> CursorLoginRouteError {
@@ -183,6 +115,8 @@ async fn start_cursor_process_login(
 
 #[cfg(test)]
 mod route_tests {
+    use ctx_provider_accounts as provider_accounts;
+
     use super::*;
 
     #[test]
@@ -219,7 +153,7 @@ mod route_tests {
     #[test]
     fn cursor_login_route_start_response_omits_absent_auth_url() {
         let payload =
-            serde_json::to_value(CursorLoginStartRouteResponse::from(StartedLoginSession {
+            serde_json::to_value(cursor_login_start_route_response(StartedLoginSession {
                 login_id: "login-1".to_string(),
                 auth_url: None,
                 device_code: None,
@@ -233,7 +167,7 @@ mod route_tests {
     #[test]
     fn cursor_login_route_start_response_preserves_auth_url() {
         let payload =
-            serde_json::to_value(CursorLoginStartRouteResponse::from(StartedLoginSession {
+            serde_json::to_value(cursor_login_start_route_response(StartedLoginSession {
                 login_id: "login-2".to_string(),
                 auth_url: Some("https://cursor.com/login/device?code=test".to_string()),
                 device_code: None,

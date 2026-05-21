@@ -13,17 +13,8 @@ use url::Url;
 
 use super::errors::ApiErrorResp;
 use ctx_daemon::daemon::providers::{
-    AmpLoginStatusRouteResponse, ClaudeLoginRouteError, ClaudeLoginRouteErrorKind,
-    ClaudeLoginStartRouteRequest, ClaudeLoginStartRouteResponse, ClaudeLoginStatusRouteResponse,
-    CodexLoginCompleteRouteRequest, CodexLoginCompleteRouteResponse, CodexLoginRouteError,
-    CodexLoginRouteErrorKind, CodexLoginStartRouteRequest, CodexLoginStartRouteResponse,
-    CodexLoginStatusRouteResponse, CursorLoginRouteError, CursorLoginRouteErrorKind,
-    CursorLoginStartRouteRequest, CursorLoginStartRouteResponse, CursorLoginStatusRouteResponse,
-    GeminiLoginStatusRouteResponse, KimiLoginStatusRouteResponse, MistralLoginStatusRouteResponse,
     ProviderAdminRouteError, ProviderAdminRouteErrorKind, ProviderDevRestartRouteRequest,
-    ProviderDevRestartRouteResponse, ProviderLoginRouteError, ProviderLoginRouteErrorKind,
-    ProviderLoginStartRouteRequest, ProviderLoginStartRouteResponse,
-    ProviderMatrixRefreshRouteResponse, QwenLoginStatusRouteResponse,
+    ProviderDevRestartRouteResponse, ProviderMatrixRefreshRouteResponse,
     SelectProviderHarnessSourceRouteRequest,
 };
 use ctx_daemon::daemon::ProvidersHandle;
@@ -35,6 +26,17 @@ use ctx_harness_sources as harness_sources;
 use ctx_harness_sources::{HarnessApiShape, HarnessSourceKind};
 #[cfg(test)]
 use ctx_managed_installs as installer;
+use ctx_provider_accounts::route_contract::{
+    AmpLoginStatusRouteResponse, ClaudeLoginRouteError, ClaudeLoginRouteErrorKind,
+    ClaudeLoginStartRouteRequest, ClaudeLoginStartRouteResponse, ClaudeLoginStatusRouteResponse,
+    CodexLoginCompleteRouteRequest, CodexLoginCompleteRouteResponse, CodexLoginRouteError,
+    CodexLoginRouteErrorKind, CodexLoginStartRouteRequest, CodexLoginStartRouteResponse,
+    CodexLoginStatusRouteResponse, CursorLoginRouteError, CursorLoginRouteErrorKind,
+    CursorLoginStartRouteRequest, CursorLoginStartRouteResponse, CursorLoginStatusRouteResponse,
+    GeminiLoginStatusRouteResponse, KimiLoginStatusRouteResponse, MistralLoginStatusRouteResponse,
+    ProviderLoginRouteError, ProviderLoginRouteErrorKind, ProviderLoginStartRouteRequest,
+    ProviderLoginStartRouteResponse, QwenLoginStatusRouteResponse,
+};
 #[cfg(test)]
 use ctx_provider_auth_import as provider_auth_import;
 #[cfg(test)]

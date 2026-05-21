@@ -2503,12 +2503,38 @@ const CLAUDE_SETUP_TOKEN_LOGIN_API_ORCHESTRATION_PATTERNS = [
   },
 ];
 
+const providerManagedLoginRouteContractPattern = String.raw`(?:ProviderLoginStartRouteRequest|ProviderLoginStartRouteResponse|AmpLoginStatusRouteResponse|GeminiLoginStatusRouteResponse|QwenLoginStatusRouteResponse|MistralLoginStatusRouteResponse|KimiLoginStatusRouteResponse|ProviderLoginRouteError(?:Kind)?|CursorLoginStartRouteRequest|CursorLoginStartRouteResponse|CursorLoginStatusRouteResponse|CursorLoginRouteError(?:Kind)?|CodexLoginStartRouteRequest|CodexLoginStartRouteResponse|CodexLoginCompleteRouteRequest|CodexLoginCompleteRouteResponse|CodexLoginStatusRouteResponse|CodexLoginRouteError(?:Kind)?|ClaudeLoginStartRouteRequest|ClaudeLoginStartRouteResponse|ClaudeLoginStatusRouteResponse|ClaudeLoginRouteError(?:Kind)?)`;
+
+function providerManagedLoginRouteContractPatterns(scopeName) {
+  return [
+    {
+      name: `${scopeName} imports login route contracts from daemon`,
+      regex: new RegExp(
+        String.raw`\bctx_daemon::daemon::providers::${providerManagedLoginRouteContractPattern}\b`,
+      ),
+      contentRegex: new RegExp(
+        String.raw`\buse\s+ctx_daemon::daemon::providers::\s*\{(?=[^}]*\b${providerManagedLoginRouteContractPattern}\b)[^}]*\}\s*;`,
+        "gm",
+      ),
+    },
+    {
+      name: `${scopeName} imports login route contracts from nested daemon providers group`,
+      regex: /\b\B/,
+      contentRegex: new RegExp(
+        String.raw`\buse\s+ctx_daemon::daemon::\s*\{(?=[^;]*\bproviders\s*::\s*\{[^;]*\b${providerManagedLoginRouteContractPattern}\b)[^;]*;`,
+        "gm",
+      ),
+    },
+  ];
+}
+
 const PROVIDER_LOGIN_STATUS_ROUTE_DTO_PATTERNS = [
   {
     name: "provider login API exposes provider-account login status DTOs",
     regex:
       /\b(?:provider_accounts|ctx_provider_accounts)::(?:Codex|Claude|Cursor|Amp|Gemini|Qwen|Mistral|Kimi)LoginStatus\b|\buse\s+ctx_provider_accounts(?:::|\s*::\s*\{)[^;]*(?:Codex|Claude|Cursor|Amp|Gemini|Qwen|Mistral|Kimi)LoginStatus\b|\b(?:Json\s*<\s*)?(?:Codex|Claude|Cursor|Amp|Gemini|Qwen|Mistral|Kimi)LoginStatus\b/,
   },
+  ...providerManagedLoginRouteContractPatterns("provider login API"),
 ];
 
 const PROVIDER_PRELUDE_ROUTE_DTO_PATTERNS = [
@@ -2516,6 +2542,7 @@ const PROVIDER_PRELUDE_ROUTE_DTO_PATTERNS = [
     name: "provider API prelude exposes provider-account module",
     regex: /\buse\s+ctx_provider_accounts\s+as\s+provider_accounts\s*;/,
   },
+  ...providerManagedLoginRouteContractPatterns("provider API prelude"),
 ];
 
 const EXECUTION_API_ORCHESTRATION_PATTERNS = [
