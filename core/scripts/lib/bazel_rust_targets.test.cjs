@@ -80,6 +80,7 @@ test("Bazel-covered crates stay on the intended explicit Rust slice", () => {
     "ctx-session-service",
     "ctx-session-title-service",
     "ctx-session-tools",
+    "ctx-session-vcs-service",
     "ctx-settings-model",
     "ctx-settings-service",
     "ctx-storage-admission",

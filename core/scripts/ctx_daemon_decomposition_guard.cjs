@@ -97,6 +97,7 @@ const PACKAGE_SHAPE_BOUNDARY_CRATES = new Set([
   "ctx-session-runtime",
   "ctx-session-runner",
   "ctx-session-title-service",
+  "ctx-session-vcs-service",
   "ctx-workspace-active-snapshot",
   "ctx-workspace-attachments",
   "ctx-workspace-config",
@@ -126,6 +127,14 @@ const TITLE_SERVICE_FORBIDDEN_DEPS = new Set([
   "ctx-route-contracts",
   "axum",
 ]);
+const SESSION_VCS_SERVICE_FORBIDDEN_DEPS = new Set([
+  "ctx-session-service",
+  "ctx-daemon",
+  "ctx-http",
+  "ctx-route-contracts",
+  "ctx-workspace-services",
+  "axum",
+]);
 const TRANSPORT_RUNTIME_FORBIDDEN_DEPS = new Set(["ctx-store"]);
 const ROUTE_CONTRACTS_ALLOWED_CTX_DEPS = new Set(["ctx-core"]);
 const HEAD_PROJECTION_ROOT = "core/crates/ctx-session-runtime/src/head_projection";
@@ -147,17 +156,35 @@ const dependencyNameFromKey = (key) => unquoteTomlKey(key.split(".")[0] || "");
 const isProdDependencySection = (section) =>
   section === "dependencies" || /^target\..+\.dependencies$/u.test(section);
 
+const isDevDependencySection = (section) =>
+  section === "dev-dependencies" || /^target\..+\.dev-dependencies$/u.test(section);
+
+const isDependencySection = (section, { includeDev = false } = {}) =>
+  isProdDependencySection(section) || (includeDev && isDevDependencySection(section));
+
 const dependencyTableNameFromSection = (section) => {
   if (section.startsWith("dependencies.")) {
     return unquoteTomlKey(section.slice("dependencies.".length));
   }
   const targetMatch = section.match(/^target\..+\.dependencies\.(.+)$/u);
-  return targetMatch ? unquoteTomlKey(targetMatch[1]) : "";
+  if (targetMatch) return unquoteTomlKey(targetMatch[1]);
+  if (section.startsWith("dev-dependencies.")) {
+    return unquoteTomlKey(section.slice("dev-dependencies.".length));
+  }
+  const targetDevMatch = section.match(/^target\..+\.dev-dependencies\.(.+)$/u);
+  return targetDevMatch ? unquoteTomlKey(targetDevMatch[1]) : "";
 };
 
 const isProdDependencyTable = (section) =>
   section.startsWith("dependencies.")
   || /^target\..+\.dependencies\./u.test(section);
+
+const isDevDependencyTable = (section) =>
+  section.startsWith("dev-dependencies.")
+  || /^target\..+\.dev-dependencies\./u.test(section);
+
+const isDependencyTable = (section, { includeDev = false } = {}) =>
+  isProdDependencyTable(section) || (includeDev && isDevDependencyTable(section));
 
 const packageNameFromInlineValue = (value) => {
   const match = value.match(/\bpackage\s*=\s*["']([^"']+)["']/u);
@@ -172,7 +199,7 @@ const packageNameFromLine = (trimmed) => {
 const startsMultilineInlineTable = (value) =>
   value.trim().startsWith("{") && !value.includes("}");
 
-const parseCargoDependencies = (raw) => {
+const parseCargoDependencies = (raw, { includeDev = false } = {}) => {
   const dependencies = [];
   let currentSection = "";
   let currentDependencyTable = "";
@@ -209,7 +236,7 @@ const parseCargoDependencies = (raw) => {
     if (sectionMatch) {
       currentSection = sectionMatch[1].trim();
       currentDependencyTable = dependencyTableNameFromSection(currentSection);
-      if (isProdDependencyTable(currentSection)) {
+      if (isDependencyTable(currentSection, { includeDev })) {
         addDependency({
           line: lineNumber,
           name: currentDependencyTable,
@@ -219,7 +246,7 @@ const parseCargoDependencies = (raw) => {
       continue;
     }
 
-    if (currentDependencyTable && isProdDependencyTable(currentSection)) {
+    if (currentDependencyTable && isDependencyTable(currentSection, { includeDev })) {
       addDependency({
         line: lineNumber,
         name: packageNameFromLine(trimmed),
@@ -228,7 +255,7 @@ const parseCargoDependencies = (raw) => {
       continue;
     }
 
-    if (!isProdDependencySection(currentSection)) continue;
+    if (!isDependencySection(currentSection, { includeDev })) continue;
     const keyValueMatch = trimmed.match(/^([^=]+?)\s*=\s*(.+)$/u);
     if (!keyValueMatch) continue;
 
@@ -380,10 +407,15 @@ const checkCargoDependencyDirection = (rootDir) => {
     const raw = fs.readFileSync(manifestPath, "utf8");
     const crateName = packageNameFromCargoToml(raw);
     const manifestRelativePath = toPosix(path.relative(rootDir, manifestPath));
-    const dependencies = parseCargoDependencies(raw);
+    const dependencies = parseCargoDependencies(raw, {
+      includeDev: crateName === "ctx-session-vcs-service",
+    });
 
     for (const dependency of dependencies) {
-      if (isServiceOrRuntimeCrate(crateName) && SERVICE_RUNTIME_FORBIDDEN_DEPS.has(dependency.name)) {
+      const dependencyIsProd = isProdDependencySection(dependency.section)
+        || isProdDependencyTable(dependency.section);
+
+      if (dependencyIsProd && isServiceOrRuntimeCrate(crateName) && SERVICE_RUNTIME_FORBIDDEN_DEPS.has(dependency.name)) {
         violations.push({
           kind: "cargo_dependency",
           line: dependency.line,
@@ -391,7 +423,7 @@ const checkCargoDependencyDirection = (rootDir) => {
           message: `${crateName} must not depend on ${dependency.name}; service/runtime crates cannot depend on daemon, HTTP, or Axum.`,
         });
       }
-      if (isPackageShapeBoundaryCrate(crateName) && PACKAGE_SHAPE_FORBIDDEN_BACKEDGE_DEPS.has(dependency.name)) {
+      if (dependencyIsProd && isPackageShapeBoundaryCrate(crateName) && PACKAGE_SHAPE_FORBIDDEN_BACKEDGE_DEPS.has(dependency.name)) {
         violations.push({
           kind: "cargo_dependency",
           line: dependency.line,
@@ -423,7 +455,15 @@ const checkCargoDependencyDirection = (rootDir) => {
           message: `ctx-session-title-service must not depend on ${dependency.name}; title generation must stay below session orchestration, daemon, HTTP, route contracts, and Axum.`,
         });
       }
-      if (crateName === "ctx-transport-runtime" && TRANSPORT_RUNTIME_FORBIDDEN_DEPS.has(dependency.name)) {
+      if (crateName === "ctx-session-vcs-service" && SESSION_VCS_SERVICE_FORBIDDEN_DEPS.has(dependency.name)) {
+        violations.push({
+          kind: "cargo_dependency",
+          line: dependency.line,
+          path: manifestRelativePath,
+          message: `ctx-session-vcs-service must not depend on ${dependency.name}; session VCS policy must stay below session orchestration, daemon, HTTP, route contracts, raw workspace VCS IO, and Axum.`,
+        });
+      }
+      if (dependencyIsProd && crateName === "ctx-transport-runtime" && TRANSPORT_RUNTIME_FORBIDDEN_DEPS.has(dependency.name)) {
         violations.push({
           kind: "cargo_dependency",
           line: dependency.line,
@@ -431,7 +471,7 @@ const checkCargoDependencyDirection = (rootDir) => {
           message: "ctx-transport-runtime must not depend on ctx-store.",
         });
       }
-      if (crateName === "ctx-route-contracts" && isRouteContractsForbiddenDependency(dependency.name)) {
+      if (dependencyIsProd && crateName === "ctx-route-contracts" && isRouteContractsForbiddenDependency(dependency.name)) {
         violations.push({
           kind: "cargo_dependency",
           line: dependency.line,
@@ -439,7 +479,7 @@ const checkCargoDependencyDirection = (rootDir) => {
           message: `ctx-route-contracts must stay DTO-only; found forbidden dependency ${dependency.name}.`,
         });
       }
-      if (crateName === "ctx-workspace-active-snapshot" && isWorkspaceActiveSnapshotForbiddenDependency(dependency.name)) {
+      if (dependencyIsProd && crateName === "ctx-workspace-active-snapshot" && isWorkspaceActiveSnapshotForbiddenDependency(dependency.name)) {
         violations.push({
           kind: "cargo_dependency",
           line: dependency.line,
@@ -518,6 +558,7 @@ module.exports = {
   ROUTE_CONTRACTS_ALLOWED_CTX_DEPS,
   SERVICE_RUNTIME_FORBIDDEN_DEPS,
   SESSION_RUNTIME_FORBIDDEN_DEPS,
+  SESSION_VCS_SERVICE_FORBIDDEN_DEPS,
   TITLE_SERVICE_FORBIDDEN_DEPS,
   checkCargoDependencyDirection,
   checkCollapsedPaths,

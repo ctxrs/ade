@@ -901,6 +901,7 @@ dependencies = [
  "ctx-session-service",
  "ctx-session-title-service",
  "ctx-session-tools",
+ "ctx-session-vcs-service",
  "ctx-settings-model",
  "ctx-settings-service",
  "ctx-storage-admission",
@@ -1140,7 +1141,6 @@ dependencies = [
  "ctx-sandbox-contract",
  "ctx-sandbox-materialization",
  "ctx-session-artifacts",
- "ctx-session-service",
  "ctx-session-title-service",
  "ctx-session-tools",
  "ctx-settings-model",
@@ -1772,19 +1772,12 @@ dependencies = [
 name = "ctx-session-service"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "async-trait",
  "chrono",
  "ctx-core",
  "ctx-provider-runtime",
  "ctx-providers",
  "ctx-session-tools",
- "ctx-store",
- "serde",
  "serde_json",
- "tempfile",
- "tokio",
- "tracing",
  "uuid",
 ]
 
@@ -1809,6 +1802,18 @@ dependencies = [
  "ctx-core",
  "serde",
  "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "ctx-session-vcs-service"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "ctx-core",
+ "tokio",
  "tracing",
 ]
 

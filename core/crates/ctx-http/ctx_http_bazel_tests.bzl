@@ -159,11 +159,9 @@ CTX_HTTP_INTEGRATION_SOURCE_DEPS = {
         "//core/crates/ctx-settings-model:lib",
     ],
     "title_generation_local": [
-        "//core/crates/ctx-session-service:lib",
         "//core/crates/ctx-settings-model:lib",
     ],
     "title_generation_local_e2e": [
-        "//core/crates/ctx-session-service:lib",
         "//core/crates/ctx-settings-model:lib",
     ],
 }

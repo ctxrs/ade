@@ -11,6 +11,7 @@ const {
   PACKAGE_SHAPE_BOUNDARY_CRATES,
   PACKAGE_SHAPE_FORBIDDEN_BACKEDGE_DEPS,
   SESSION_RUNTIME_FORBIDDEN_DEPS,
+  SESSION_VCS_SERVICE_FORBIDDEN_DEPS,
   TITLE_SERVICE_FORBIDDEN_DEPS,
   checkCargoDependencyDirection,
   checkCollapsedPaths,
@@ -228,6 +229,37 @@ test("session title service boundary rejects route and orchestration coupling", 
   );
   assert.equal(
     messages.some((message) => message.includes("ctx-session-title-service must not depend on ctx-route-contracts")),
+    true,
+  );
+});
+
+test("session VCS service boundary rejects orchestration and raw workspace IO coupling", () => {
+  assert.equal(SESSION_VCS_SERVICE_FORBIDDEN_DEPS.has("ctx-session-service"), true);
+  assert.equal(SESSION_VCS_SERVICE_FORBIDDEN_DEPS.has("ctx-workspace-services"), true);
+
+  const rootDir = makeRoot();
+  writeFile(rootDir, "core/crates/ctx-session-vcs-service/Cargo.toml", `
+    [package]
+    name = "ctx-session-vcs-service"
+
+    [dependencies]
+    ctx-core = { path = "../ctx-core" }
+
+    [dev-dependencies]
+    ctx-session-service = { path = "../ctx-session-service" }
+
+    [target.'cfg(test)'.dev-dependencies]
+    ctx-workspace-services = { path = "../ctx-workspace-services" }
+  `);
+
+  const messages = checkCargoDependencyDirection(rootDir).map((entry) => entry.message);
+
+  assert.equal(
+    messages.some((message) => message.includes("ctx-session-vcs-service must not depend on ctx-session-service")),
+    true,
+  );
+  assert.equal(
+    messages.some((message) => message.includes("ctx-session-vcs-service must not depend on ctx-workspace-services")),
     true,
   );
 });

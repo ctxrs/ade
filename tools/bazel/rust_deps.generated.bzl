@@ -78,6 +78,7 @@ RUST_BAZEL_DEPS = {
             "//core/crates/ctx-session-service:lib",
             "//core/crates/ctx-session-title-service:lib",
             "//core/crates/ctx-session-tools:lib",
+            "//core/crates/ctx-session-vcs-service:lib",
             "//core/crates/ctx-settings-model:lib",
             "//core/crates/ctx-settings-service:lib",
             "//core/crates/ctx-storage-admission:lib",
@@ -596,22 +597,14 @@ RUST_BAZEL_DEPS = {
             "//core/crates/ctx-provider-runtime:lib",
             "//core/crates/ctx-providers:lib",
             "//core/crates/ctx-session-tools:lib",
-            "//core/crates/ctx-store:lib",
-            "@crates//:anyhow",
-            "@crates//:chrono",
-            "@crates//:serde",
             "@crates//:serde_json",
-            "@crates//:tokio",
-            "@crates//:tracing",
             "@crates//:uuid",
         ],
         dev_deps = [
-            "@crates//:tempfile",
+            "@crates//:chrono",
         ],
         dev_proc_macro_deps = [],
-        proc_macro_deps = [
-            "@crates//:async-trait",
-        ],
+        proc_macro_deps = [],
     ),
     "ctx-session-title-service": struct(
         build_deps = [],
@@ -640,6 +633,22 @@ RUST_BAZEL_DEPS = {
         dev_deps = [],
         dev_proc_macro_deps = [],
         proc_macro_deps = [],
+    ),
+    "ctx-session-vcs-service": struct(
+        build_deps = [],
+        deps = [
+            "//core/crates/ctx-core:lib",
+            "@crates//:anyhow",
+            "@crates//:tracing",
+        ],
+        dev_deps = [
+            "@crates//:chrono",
+            "@crates//:tokio",
+        ],
+        dev_proc_macro_deps = [],
+        proc_macro_deps = [
+            "@crates//:async-trait",
+        ],
     ),
     "ctx-settings-model": struct(
         build_deps = [],

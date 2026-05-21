@@ -2,11 +2,11 @@ use anyhow::Error;
 use async_trait::async_trait;
 use ctx_core::ids::{SessionId, WorktreeId};
 use ctx_core::models::{Session, SessionGitStatusSummary, Worktree};
-pub use ctx_session_service::vcs::{
+pub use ctx_session_vcs_service::vcs::{
     SessionVcsApplyAction, SessionVcsDiff, SessionVcsDiffQuery, SessionVcsDiffSummary,
     SessionVcsError, SessionVcsGitStatus, SessionVcsGitStatusEntry,
 };
-use ctx_session_service::vcs::{
+use ctx_session_vcs_service::vcs::{
     SessionVcsDataPlane, SessionVcsDiffBaseQuery, SessionVcsDiffBaseResolution,
     SessionVcsDiffSummaryCounts, SessionVcsDiffSummaryMismatch, SessionVcsGitStatusSnapshot,
     SessionVcsService,
