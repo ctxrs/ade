@@ -3816,11 +3816,11 @@ test("daemon boundary guard rejects session VCS API workspace-service orchestrat
         SessionVcsApplyAction, SessionVcsDiff, SessionVcsDiffQuery, SessionVcsDiffSummary,
         SessionVcsError, SessionVcsGitStatus, SessionVcsGitStatusEntry,
       };
-      use ctx_workspace_services::worktree_vcs::{
+      use ctx_worktree_vcs_service::{
         apply_worktree_vcs_session_patch as apply_patch,
         WorktreeVcsDiffBaseQuery,
       };
-      use ctx_workspace_services::worktree_vcs as vcs;
+      use ctx_worktree_vcs_service as vcs;
       #[derive(Deserialize)]
       struct SessionDiffApplyReq;
       #[derive(Deserialize)]
@@ -3845,7 +3845,7 @@ test("daemon boundary guard rejects session VCS API workspace-service orchestrat
         let _ = sessions.apply_session_vcs_diff_patch_for_request(session_id, action, patch).await;
         let _ = sessions.get_session_vcs_git_status_for_request(session_id).await;
         let _ = SessionsHandle::get_session_vcs_diff_for_request(&sessions, session_id, query).await;
-        let _ = ctx_workspace_services::worktree_vcs::worktree_vcs_session_diff_available("x".to_string());
+        let _ = ctx_worktree_vcs_service::worktree_vcs_session_diff_available("x".to_string());
         let _ = session_git_status_summary_from_snapshot(&snapshot);
         let _ = WorktreeDiffBaseResolution;
         let _ = GitStatusEntry;

@@ -8,7 +8,7 @@ use ctx_core::models::{
     WorkspaceActiveTaskSummary,
 };
 use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotHub;
-use ctx_workspace_services::worktree_vcs::WorktreeVcsSchedulerRuntime;
+use ctx_worktree_vcs_service::WorktreeVcsSchedulerRuntime;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;

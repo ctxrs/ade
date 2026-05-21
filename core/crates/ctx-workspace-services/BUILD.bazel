@@ -15,7 +15,6 @@ rust_library(
         "@crates//:chrono",
         "@crates//:directories",
         "@crates//:serde",
-        "@crates//:serde_json",
         "@crates//:tempfile",
         "@crates//:tokio",
         "@crates//:toml",

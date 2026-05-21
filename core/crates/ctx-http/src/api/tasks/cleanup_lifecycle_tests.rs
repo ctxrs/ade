@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use crate::test_support::DataRootTestDaemonFixture;
 use ctx_core::models::VcsKind;
 use ctx_daemon::test_support::{TaskLifecycleWorktreeSeed, TestDaemon};
-use ctx_workspace_services::worktree_vcs::{managed_worktree_path, standaloneize_worktree_git_dir};
+use ctx_worktree_vcs_service::{managed_worktree_path, standaloneize_worktree_git_dir};
 
 fn git(args: &[&str], cwd: &StdPath) {
     let status = std::process::Command::new("git")

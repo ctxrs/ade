@@ -1,5 +1,5 @@
 use ctx_core::ids::TaskId;
-use ctx_workspace_services::worktree_vcs::{delete_worktree_branch, prune_worktrees};
+use ctx_worktree_vcs_service::{delete_worktree_branch, prune_worktrees};
 
 use super::BranchCleanupErrorMode;
 

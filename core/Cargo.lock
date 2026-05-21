@@ -918,6 +918,7 @@ dependencies = [
  "ctx-workspace-services",
  "ctx-workspace-stream-service",
  "ctx-worktree-data-plane",
+ "ctx-worktree-vcs-service",
  "directories",
  "ed25519-dalek",
  "flate2",
@@ -1157,6 +1158,7 @@ dependencies = [
  "ctx-workspace-services",
  "ctx-workspace-stream-service",
  "ctx-worktree-data-plane",
+ "ctx-worktree-vcs-service",
  "directories",
  "ed25519-dalek",
  "flate2",
@@ -2136,7 +2138,6 @@ dependencies = [
  "ctx-fs",
  "directories",
  "serde",
- "serde_json",
  "tempfile",
  "tokio",
  "toml",
@@ -2167,6 +2168,22 @@ dependencies = [
  "ctx-store",
  "serde_json",
  "uuid",
+]
+
+[[package]]
+name = "ctx-worktree-vcs-service"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "ctx-core",
+ "ctx-fs",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

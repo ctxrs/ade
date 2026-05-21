@@ -11,7 +11,7 @@ mod scheduler;
 mod snapshot;
 mod source;
 mod watch;
-use ctx_workspace_services::worktree_vcs::{
+use ctx_worktree_vcs_service::{
     worktree_has_vcs_repo_from_source, worktree_vcs_dirty_transient_snapshot,
     worktree_vcs_driver_for_kind, worktree_vcs_refresh_transient_snapshot, WorktreeVcsDirtyBits,
     WorktreeVcsDriver,

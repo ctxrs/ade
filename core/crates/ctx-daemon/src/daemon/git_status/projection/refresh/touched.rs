@@ -1,5 +1,5 @@
 use ctx_core::models::Worktree;
-use ctx_workspace_services::worktree_vcs::{
+use ctx_worktree_vcs_service::{
     is_no_vcs_repo_error, load_diff_touched_entries_from_source,
     worktree_vcs_touched_files_error_fallback, worktree_vcs_touched_files_from_entries,
     worktree_vcs_touched_files_large_change_set, worktree_vcs_touched_files_reuse,

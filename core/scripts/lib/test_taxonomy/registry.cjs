@@ -202,6 +202,7 @@ const RUST_FAMILY_BY_CRATE = {
   "ctx-workspace-services": "workspace-stream",
   "ctx-workspace-stream-service": "workspace-stream",
   "ctx-worktree-data-plane": "repo-vcs",
+  "ctx-worktree-vcs-service": "repo-vcs",
 };
 
 function toPosix(value) {

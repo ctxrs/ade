@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use ctx_core::models::{Worktree, WorktreeVcsSnapshot};
-use ctx_workspace_services::worktree_vcs::snapshot_for_durable_cache;
+use ctx_worktree_vcs_service::snapshot_for_durable_cache;
 
 use crate::daemon::DaemonState;
 

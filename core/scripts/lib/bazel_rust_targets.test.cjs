@@ -101,6 +101,7 @@ test("Bazel-covered crates stay on the intended explicit Rust slice", () => {
     "ctx-workspace-services",
     "ctx-workspace-stream-service",
     "ctx-worktree-data-plane",
+    "ctx-worktree-vcs-service",
   ]);
 });
 

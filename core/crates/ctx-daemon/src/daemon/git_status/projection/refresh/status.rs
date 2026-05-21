@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use ctx_core::models::{Worktree, WorktreeVcsGitStatusSummary};
-use ctx_workspace_services::worktree_vcs::{
+use ctx_worktree_vcs_service::{
     build_git_status_entries, build_git_status_summary, is_no_vcs_repo_error, GitStatusSnapshot,
 };
 

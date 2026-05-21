@@ -6,7 +6,7 @@ use ctx_core::models::{VcsKind, Workspace, Worktree};
 use ctx_sandbox_contract::{container_worktree_root, sandbox_worktree_root};
 use ctx_store::StoreManager;
 use ctx_transport_runtime::terminal_launch::TerminalLaunchErrorKind;
-use ctx_workspace_services::worktree_vcs::managed_worktree_path;
+use ctx_worktree_vcs_service::managed_worktree_path;
 use std::path::PathBuf;
 use std::sync::Arc;
 

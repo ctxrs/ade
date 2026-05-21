@@ -104,6 +104,7 @@ const PACKAGE_SHAPE_BOUNDARY_CRATES = new Set([
   "ctx-workspace-container",
   "ctx-workspace-runtime",
   "ctx-workspace-services",
+  "ctx-worktree-vcs-service",
 ]);
 const PACKAGE_SHAPE_FORBIDDEN_BACKEDGE_DEPS = new Set(["ctx-daemon", "ctx-http", "axum"]);
 const MESSAGE_SERVICE_FORBIDDEN_DEPS = new Set([
@@ -129,6 +130,16 @@ const TITLE_SERVICE_FORBIDDEN_DEPS = new Set([
 ]);
 const SESSION_VCS_SERVICE_FORBIDDEN_DEPS = new Set([
   "ctx-session-service",
+  "ctx-daemon",
+  "ctx-http",
+  "ctx-route-contracts",
+  "ctx-workspace-services",
+  "ctx-worktree-vcs-service",
+  "axum",
+]);
+const WORKTREE_VCS_SERVICE_FORBIDDEN_DEPS = new Set([
+  "ctx-session-service",
+  "ctx-session-vcs-service",
   "ctx-daemon",
   "ctx-http",
   "ctx-route-contracts",
@@ -408,7 +419,7 @@ const checkCargoDependencyDirection = (rootDir) => {
     const crateName = packageNameFromCargoToml(raw);
     const manifestRelativePath = toPosix(path.relative(rootDir, manifestPath));
     const dependencies = parseCargoDependencies(raw, {
-      includeDev: crateName === "ctx-session-vcs-service",
+      includeDev: crateName === "ctx-session-vcs-service" || crateName === "ctx-worktree-vcs-service",
     });
 
     for (const dependency of dependencies) {
@@ -461,6 +472,14 @@ const checkCargoDependencyDirection = (rootDir) => {
           line: dependency.line,
           path: manifestRelativePath,
           message: `ctx-session-vcs-service must not depend on ${dependency.name}; session VCS policy must stay below session orchestration, daemon, HTTP, route contracts, raw workspace VCS IO, and Axum.`,
+        });
+      }
+      if (crateName === "ctx-worktree-vcs-service" && WORKTREE_VCS_SERVICE_FORBIDDEN_DEPS.has(dependency.name)) {
+        violations.push({
+          kind: "cargo_dependency",
+          line: dependency.line,
+          path: manifestRelativePath,
+          message: `ctx-worktree-vcs-service must not depend on ${dependency.name}; raw worktree VCS IO must stay below session VCS, broad workspace services, daemon, HTTP, route contracts, and Axum.`,
         });
       }
       if (dependencyIsProd && crateName === "ctx-transport-runtime" && TRANSPORT_RUNTIME_FORBIDDEN_DEPS.has(dependency.name)) {
@@ -560,6 +579,7 @@ module.exports = {
   SESSION_RUNTIME_FORBIDDEN_DEPS,
   SESSION_VCS_SERVICE_FORBIDDEN_DEPS,
   TITLE_SERVICE_FORBIDDEN_DEPS,
+  WORKTREE_VCS_SERVICE_FORBIDDEN_DEPS,
   checkCargoDependencyDirection,
   checkCollapsedPaths,
   checkHeadProjectionPurity,

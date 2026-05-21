@@ -2,7 +2,7 @@ use ctx_core::ids::TaskId;
 use ctx_core::models::{Task, TaskDeltaKind, Workspace};
 use ctx_store::Store;
 use ctx_task_service::lifecycle::{self, LifecycleCleanupTarget};
-use ctx_workspace_services::worktree_vcs::ensure_worktree_attached;
+use ctx_worktree_vcs_service::ensure_worktree_attached;
 
 use crate::daemon::handle::TasksHandle;
 use crate::daemon::workspaces::{self, BranchCleanupErrorMode, TaskWorktreeCleanupTarget};

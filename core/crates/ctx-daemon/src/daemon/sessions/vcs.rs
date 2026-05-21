@@ -11,7 +11,7 @@ use ctx_session_vcs_service::vcs::{
     SessionVcsDiffSummaryCounts, SessionVcsDiffSummaryMismatch, SessionVcsGitStatusSnapshot,
     SessionVcsService,
 };
-use ctx_workspace_services::worktree_vcs::{
+use ctx_worktree_vcs_service::{
     apply_worktree_vcs_session_patch, is_no_vcs_repo_error as workspace_is_no_vcs_repo_error,
     resolve_worktree_diff_base_from_source, GitStatusEntry, GitStatusSnapshot,
     WorktreeDiffBaseResolution, WorktreeVcsCommitLookupSource, WorktreeVcsDiffBaseQuery,
@@ -182,7 +182,7 @@ impl SessionVcsDataPlane for SessionsHandle {
         counts: SessionVcsDiffSummaryCounts,
     ) -> Option<SessionVcsDiffSummaryMismatch> {
         let snapshot = self.state.get_worktree_vcs_snapshot(worktree.id).await?;
-        ctx_workspace_services::worktree_vcs::worktree_vcs_diff_summary_mismatch(
+        ctx_worktree_vcs_service::worktree_vcs_diff_summary_mismatch(
             &snapshot,
             base_commit_sha,
             workspace_vcs_diff_summary_counts(counts),

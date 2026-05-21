@@ -8,7 +8,7 @@ pub(super) async fn create_session_execution_worktree(
     workspace_effective: &ExecutionSettings,
 ) -> Result<WorktreeId, TaskSessionCreateError> {
     let workspace_root = StdPath::new(&workspace.root_path);
-    let base = ctx_workspace_services::worktree_vcs::resolve_worktree_creation_base(workspace_root)
+    let base = ctx_worktree_vcs_service::resolve_worktree_creation_base(workspace_root)
         .await
         .map_err(|error| {
             if error.is_client_error() {

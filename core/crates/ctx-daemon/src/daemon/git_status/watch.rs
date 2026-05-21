@@ -5,7 +5,7 @@ use anyhow::Result;
 use notify::{RecursiveMode, Watcher};
 
 use ctx_core::models::Worktree;
-use ctx_workspace_services::worktree_vcs::{
+use ctx_worktree_vcs_service::{
     resolve_worktree_vcs_metadata_roots, WorktreeVcsGitCommand, WORKTREE_VCS_WATCH_DEBOUNCE_MS,
 };
 

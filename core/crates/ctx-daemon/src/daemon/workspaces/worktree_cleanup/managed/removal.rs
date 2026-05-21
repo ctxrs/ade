@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::Context;
 use ctx_core::ids::TaskId;
 use ctx_core::models::{Workspace, Worktree};
-use ctx_workspace_services::worktree_vcs::remove_worktree;
+use ctx_worktree_vcs_service::remove_worktree;
 
 use super::super::branches::WorktreeBranchCleanup;
 

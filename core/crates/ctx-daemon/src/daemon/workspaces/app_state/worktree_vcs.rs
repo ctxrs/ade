@@ -6,9 +6,7 @@ use ctx_core::models::{
     WorktreeVcsComputeState, WorktreeVcsFreshness, WorktreeVcsSnapshot, WorktreeVcsTouchedFiles,
     WorktreeVcsTouchedFilesState,
 };
-use ctx_workspace_services::worktree_vcs::{
-    GitStatusSnapshot, WorktreeVcsDirtyBits, WorktreeVcsSchedulerJob,
-};
+use ctx_worktree_vcs_service::{GitStatusSnapshot, WorktreeVcsDirtyBits, WorktreeVcsSchedulerJob};
 use tokio::sync::{broadcast, OwnedSemaphorePermit};
 
 use crate::daemon::state::DaemonState;

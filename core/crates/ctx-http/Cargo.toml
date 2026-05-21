@@ -113,6 +113,7 @@ ctx-bundled-assets = { path = "../ctx-bundled-assets", features = ["test-support
 ctx-daemon = { path = "../ctx-daemon", features = ["test-support"] }
 ctx-session-title-service = { path = "../ctx-session-title-service" }
 ctx-workspace-runtime = { path = "../ctx-workspace-runtime", features = ["test-support"] }
+ctx-worktree-vcs-service = { path = "../ctx-worktree-vcs-service" }
 blake2 = "0.10"
 ed25519-dalek = "2"
 fs2 = "0.4"

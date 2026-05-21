@@ -8,7 +8,7 @@ use ctx_workspace_active_snapshot::{
     WorkspaceActiveHeadCacheEntry, WorkspaceActiveSnapshotCacheEntry,
 };
 use ctx_workspace_services::file_completions::CachedFileCompletions;
-use ctx_workspace_services::worktree_vcs::{
+use ctx_worktree_vcs_service::{
     GitStatusSnapshotCacheEntry, WorktreeVcsRuntimeState, WorktreeVcsSchedulerRuntime,
     WorktreeVcsSnapshotCacheEntry,
 };

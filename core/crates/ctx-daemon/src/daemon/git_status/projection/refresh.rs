@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use ctx_core::models::{Worktree, WorktreeVcsBaseResolutionKind};
-use ctx_workspace_services::worktree_vcs::{
+use ctx_worktree_vcs_service::{
     plan_worktree_vcs_touched_files_refresh, resolve_worktree_diff_base_from_source,
     worktree_vcs_projection_cache_state, WorktreeDiffBaseResolution, WorktreeVcsDiffBaseQuery,
 };

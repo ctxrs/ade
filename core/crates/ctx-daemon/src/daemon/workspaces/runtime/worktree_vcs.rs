@@ -2,7 +2,7 @@ use ctx_core::ids::WorktreeId;
 use ctx_core::models::{
     WorktreeVcsSnapshot, WorktreeVcsTouchedFiles, WorktreeVcsTouchedFilesState,
 };
-use ctx_workspace_services::worktree_vcs::{
+use ctx_worktree_vcs_service::{
     claim_next_worktree_vcs_job, finish_worktree_vcs_job, finish_worktree_vcs_refresh,
     mark_worktree_vcs_runtime_dirty, pending_worktree_vcs_snapshot_cache_entry,
     publish_worktree_vcs_snapshot_cache_entry, published_worktree_vcs_snapshot_cache_entry,

@@ -1,5 +1,5 @@
 use super::super::super::*;
-use ctx_workspace_services::worktree_vcs::{
+use ctx_worktree_vcs_service::{
     worktree_vcs_scheduler_concurrency_from_env, WorktreeVcsSchedulerRuntime,
 };
 

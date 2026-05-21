@@ -3511,7 +3511,7 @@ impl TestDaemon {
         daemon::git_status::mark_worktree_vcs_dirty(
             &self.state,
             worktree,
-            ctx_workspace_services::worktree_vcs::WorktreeVcsDirtyBits {
+            ctx_worktree_vcs_service::WorktreeVcsDirtyBits {
                 worktree_fs: true,
                 vcs_meta: false,
             },
@@ -3528,7 +3528,7 @@ impl TestDaemon {
         daemon::git_status::mark_worktree_vcs_dirty(
             &self.state,
             worktree,
-            ctx_workspace_services::worktree_vcs::WorktreeVcsDirtyBits {
+            ctx_worktree_vcs_service::WorktreeVcsDirtyBits {
                 worktree_fs: false,
                 vcs_meta: true,
             },

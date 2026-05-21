@@ -5,7 +5,7 @@ use ctx_core::models::{
     Worktree, WorktreeVcsComputeState, WorktreeVcsGitStatusSummary, WorktreeVcsSnapshot,
     WorktreeVcsSummary, WorktreeVcsTouchedFiles, WorktreeVcsTouchedFilesState,
 };
-use ctx_workspace_services::worktree_vcs::{
+use ctx_worktree_vcs_service::{
     build_worktree_vcs_snapshot_from_source, WorktreeDiffBaseResolution,
 };
 

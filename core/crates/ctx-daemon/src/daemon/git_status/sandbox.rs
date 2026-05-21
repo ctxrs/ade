@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 
 use ctx_core::models::Worktree;
 use ctx_workspace_container::workspace_container_name;
-use ctx_workspace_services::worktree_vcs::{WorktreeVcsGitCommand, WorktreeVcsSandboxGitExecutor};
+use ctx_worktree_vcs_service::{WorktreeVcsGitCommand, WorktreeVcsSandboxGitExecutor};
 
 use crate::daemon::execution_effective;
 use crate::daemon::DaemonState;

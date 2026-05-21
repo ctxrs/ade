@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use ctx_core::models::Worktree;
-use ctx_workspace_services::worktree_vcs::{
+use ctx_worktree_vcs_service::{
     is_no_vcs_repo_error, load_diff_file_count_from_source, plan_worktree_vcs_summary_refresh,
     worktree_vcs_summary_refresh_error_fallback, worktree_vcs_summary_refresh_from_file_count,
     worktree_vcs_summary_refresh_no_repo, WorktreeDiffBaseResolution,

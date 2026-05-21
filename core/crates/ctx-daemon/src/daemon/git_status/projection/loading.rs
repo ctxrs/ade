@@ -2,9 +2,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use ctx_core::models::Worktree;
-use ctx_workspace_services::worktree_vcs::{
-    load_git_status_snapshot_from_source, GitStatusSnapshot,
-};
+use ctx_worktree_vcs_service::{load_git_status_snapshot_from_source, GitStatusSnapshot};
 
 use crate::daemon::DaemonState;
 

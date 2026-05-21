@@ -8,9 +8,7 @@ use crate::daemon::DaemonState;
 use ctx_core::ids::TaskId;
 use ctx_core::models::{VcsKind, Workspace, Worktree};
 use ctx_settings_model::ExecutionSettings;
-use ctx_workspace_services::worktree_vcs::{
-    effective_worktree_vcs_kind, WorktreeVcsCommitLookupSource,
-};
+use ctx_worktree_vcs_service::{effective_worktree_vcs_kind, WorktreeVcsCommitLookupSource};
 
 use super::super::errors::{
     api_error, internal_api_error, internal_request_or_policy_error, ApiResult, SubagentErrorKind,

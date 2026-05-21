@@ -68,7 +68,7 @@ pub async fn provision_worktree_for_execution(
     branch_name: &str,
     effective: &ExecutionSettings,
 ) -> anyhow::Result<(PathBuf, Option<SandboxBinding>)> {
-    let canonical_root = ctx_workspace_services::worktree_vcs::create_managed_worktree(
+    let canonical_root = ctx_worktree_vcs_service::create_managed_worktree(
         &state.core.data_root,
         &workspace.root_path,
         workspace.id,
@@ -79,7 +79,7 @@ pub async fn provision_worktree_for_execution(
     .await?;
 
     let created_at = Utc::now();
-    let worktree = ctx_workspace_services::worktree_vcs::managed_worktree_record(
+    let worktree = ctx_worktree_vcs_service::managed_worktree_record(
         workspace.id,
         worktree_id,
         &canonical_root,

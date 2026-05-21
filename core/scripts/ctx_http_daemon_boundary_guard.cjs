@@ -1746,12 +1746,12 @@ const SESSION_VCS_API_ORCHESTRATION_PATTERNS = [
   },
   {
     name: "session VCS API imports workspace VCS service",
-    regex: /\buse\s+ctx_workspace_services\s*::\s*worktree_vcs\b|\bctx_workspace_services\s*::\s*worktree_vcs\s*::/,
-    contentRegex: /\buse\s+ctx_workspace_services\s*::\s*worktree_vcs\s*::\s*\{(?=[^}]*\n)[\s\S]*?\}/gm,
+    regex: /\buse\s+ctx_worktree_vcs_service\b|\bctx_worktree_vcs_service\s*::|\buse\s+ctx_workspace_services\s*::\s*worktree_vcs\b|\bctx_workspace_services\s*::\s*worktree_vcs\s*::/,
+    contentRegex: /\buse\s+(?:ctx_worktree_vcs_service|ctx_workspace_services\s*::\s*worktree_vcs)\s*::\s*\{(?=[^}]*\n)[\s\S]*?\}/gm,
   },
   {
     name: "session VCS API aliases workspace VCS service",
-    regex: /\buse\s+ctx_workspace_services\s*::\s*worktree_vcs\s+as\s+\w+\b/,
+    regex: /\buse\s+ctx_worktree_vcs_service\s+as\s+\w+\b|\buse\s+ctx_workspace_services\s*::\s*worktree_vcs\s+as\s+\w+\b/,
   },
   {
     name: "session VCS API calls workspace VCS service helper",
@@ -4814,7 +4814,7 @@ const WORKTREE_ARCHIVE_TEST_STORE_ACCESS_PATTERNS = [
   },
   {
     name: "direct worktree-archive managed worktree path reconstruction",
-    regex: /\bctx_fs::worktrees::managed_worktree_path\b|\bmanaged_worktree_path\b|\bmatching_managed_worktree_path\b|\bctx_workspace_services::worktree_vcs\b|\bctx_daemon::daemon::workspaces::managed_worktree_root\b|\bdaemon::workspaces::managed_worktree_root\b|\bworkspaces::managed_worktree_root\b|\bmanaged_worktree_root\b/,
+    regex: /\bctx_fs::worktrees::managed_worktree_path\b|\bmanaged_worktree_path\b|\bmatching_managed_worktree_path\b|\bctx_worktree_vcs_service\b|\bctx_workspace_services::worktree_vcs\b|\bctx_daemon::daemon::workspaces::managed_worktree_root\b|\bdaemon::workspaces::managed_worktree_root\b|\bworkspaces::managed_worktree_root\b|\bmanaged_worktree_root\b/,
   },
   {
     name: "raw worktree-archive ctx_store Store",

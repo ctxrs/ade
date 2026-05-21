@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use ctx_core::models::Worktree;
-use ctx_workspace_services::worktree_vcs::{WorktreeVcsDirtyBits, WORKTREE_VCS_POLL_INTERVAL_MS};
+use ctx_worktree_vcs_service::{WorktreeVcsDirtyBits, WORKTREE_VCS_POLL_INTERVAL_MS};
 
 use crate::daemon::DaemonState;
 

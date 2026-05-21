@@ -5,12 +5,12 @@ use anyhow::Context;
 use ctx_core::models::Worktree;
 use ctx_harness_runtime::sandbox_container_command;
 use ctx_sandbox_container_runtime::command_output_with_timeout;
-use ctx_workspace_services::worktree_vcs::{
+use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
+use ctx_worktree_vcs_service::{
     load_worktree_vcs_session_diff_from_sandbox,
     load_worktree_vcs_session_diff_summary_from_sandbox, WorktreeVcsDiffSummaryCounts,
     WorktreeVcsSessionDiffCommand, WorktreeVcsSessionDiffSandboxExecutor,
 };
-use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
 
 use crate::daemon::DaemonState;
 use target::{ensure_container_for_worktree, SandboxExecTarget};

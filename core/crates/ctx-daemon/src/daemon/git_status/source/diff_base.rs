@@ -1,11 +1,11 @@
 use anyhow::Result;
 use ctx_settings_model::ExecutionMode;
 use ctx_workspace_config as workspace_config;
-use ctx_workspace_services::worktree_vcs::{
+use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
+use ctx_worktree_vcs_service::{
     LocalWorktreeVcsSource, SandboxWorktreeVcsSource, WorktreeVcsCommitLookupSource,
     WorktreeVcsDiffBaseSource,
 };
-use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
 
 use super::super::sandbox::HttpSandboxWorktreeVcsExecutor;
 use super::HttpWorktreeVcsSource;

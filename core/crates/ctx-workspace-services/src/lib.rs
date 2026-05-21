@@ -4,4 +4,3 @@ pub mod vcs_hooks;
 pub mod workspace_attachments;
 pub mod workspace_registration;
 pub mod worktree_bootstrap;
-pub mod worktree_vcs;
