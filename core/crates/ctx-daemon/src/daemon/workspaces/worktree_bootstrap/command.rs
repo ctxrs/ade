@@ -4,7 +4,7 @@ use std::time::Duration;
 use anyhow::Result;
 use ctx_core::models::{Workspace, Worktree};
 use ctx_settings_model::{ContainerRuntimeKind, ExecutionMode};
-use ctx_workspace_services::worktree_bootstrap::{
+use ctx_worktree_bootstrap_service::{
     bootstrap_command_env, run_bootstrap_command, shell_bootstrap_command, BootstrapCommandResult,
     BootstrapCommandRuntime, BootstrapStep,
 };

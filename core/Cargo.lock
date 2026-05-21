@@ -917,6 +917,7 @@ dependencies = [
  "ctx-workspace-runtime",
  "ctx-workspace-services",
  "ctx-workspace-stream-service",
+ "ctx-worktree-bootstrap-service",
  "ctx-worktree-data-plane",
  "ctx-worktree-vcs-service",
  "directories",
@@ -2141,7 +2142,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "toml",
- "tracing",
  "uuid",
 ]
 
@@ -2154,6 +2154,18 @@ dependencies = [
  "ctx-core",
  "ctx-workspace-active-snapshot",
  "tokio",
+]
+
+[[package]]
+name = "ctx-worktree-bootstrap-service"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "ctx-core",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

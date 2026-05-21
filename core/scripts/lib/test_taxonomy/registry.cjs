@@ -201,6 +201,7 @@ const RUST_FAMILY_BY_CRATE = {
   "ctx-workspace-runtime": "workspace-stream",
   "ctx-workspace-services": "workspace-stream",
   "ctx-workspace-stream-service": "workspace-stream",
+  "ctx-worktree-bootstrap-service": "workspace-stream",
   "ctx-worktree-data-plane": "repo-vcs",
   "ctx-worktree-vcs-service": "repo-vcs",
 };

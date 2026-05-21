@@ -64,6 +64,7 @@ ctx-workspace-container = { path = "../ctx-workspace-container" }
 ctx-workspace-runtime = { path = "../ctx-workspace-runtime" }
 ctx-workspace-services = { path = "../ctx-workspace-services" }
 ctx-workspace-stream-service = { path = "../ctx-workspace-stream-service" }
+ctx-worktree-bootstrap-service = { path = "../ctx-worktree-bootstrap-service" }
 ctx-worktree-data-plane = { path = "../ctx-worktree-data-plane" }
 ctx-worktree-vcs-service = { path = "../ctx-worktree-vcs-service" }
 directories.workspace = true

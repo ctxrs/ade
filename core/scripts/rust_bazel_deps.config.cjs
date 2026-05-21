@@ -38,6 +38,7 @@ const GENERATED_DEP_CONSUMER_CRATES = Object.freeze([
   "ctx-settings-service",
   "ctx-workspace-attachments",
   "ctx-workspace-active-snapshot",
+  "ctx-worktree-bootstrap-service",
   "ctx-worktree-vcs-service",
 ]);
 

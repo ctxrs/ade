@@ -1,7 +1,7 @@
 use anyhow::Result;
 use ctx_core::models::Workspace;
 use ctx_workspace_config as workspace_config;
-use ctx_workspace_services::worktree_bootstrap::{
+use ctx_worktree_bootstrap_service::{
     normalize_bootstrap_config, BootstrapConfig, BootstrapConfigInput,
 };
 

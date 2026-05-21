@@ -5,7 +5,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use ctx_core::ids::WorktreeId;
 use ctx_core::models::{Workspace, Worktree};
-use ctx_workspace_services::worktree_bootstrap::{
+use ctx_worktree_bootstrap_service::{
     BootstrapCommandResult, BootstrapConfig, BootstrapReport, BootstrapStep,
 };
 
@@ -20,12 +20,11 @@ pub async fn spawn_worktree_bootstrap(
     workspace: Workspace,
     worktree: Worktree,
 ) -> Result<()> {
-    ctx_workspace_services::worktree_bootstrap::spawn_worktree_bootstrap(state, workspace, worktree)
-        .await
+    ctx_worktree_bootstrap_service::spawn_worktree_bootstrap(state, workspace, worktree).await
 }
 
 #[async_trait]
-impl ctx_workspace_services::worktree_bootstrap::WorktreeBootstrapHost for DaemonState {
+impl ctx_worktree_bootstrap_service::WorktreeBootstrapHost for DaemonState {
     async fn load_bootstrap_config(
         &self,
         workspace: &Workspace,

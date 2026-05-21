@@ -13,6 +13,7 @@ const {
   SESSION_RUNTIME_FORBIDDEN_DEPS,
   SESSION_VCS_SERVICE_FORBIDDEN_DEPS,
   TITLE_SERVICE_FORBIDDEN_DEPS,
+  WORKTREE_BOOTSTRAP_SERVICE_FORBIDDEN_DEPS,
   WORKTREE_VCS_SERVICE_FORBIDDEN_DEPS,
   checkCargoDependencyDirection,
   checkCollapsedPaths,
@@ -140,6 +141,7 @@ test("package shape boundary classifier covers existing and planned service owne
   assert.equal(isPackageShapeBoundaryCrate("ctx-session-runtime"), true);
   assert.equal(isPackageShapeBoundaryCrate("ctx-session-runner"), true);
   assert.equal(isPackageShapeBoundaryCrate("ctx-session-title-service"), true);
+  assert.equal(isPackageShapeBoundaryCrate("ctx-worktree-bootstrap-service"), true);
   assert.equal(isPackageShapeBoundaryCrate("ctx-worktree-vcs-service"), true);
   assert.equal(isPackageShapeBoundaryCrate("ctx-core"), false);
 });
@@ -309,6 +311,65 @@ test("worktree VCS service boundary rejects session, workspace, daemon, route, a
   );
   assert.equal(
     messages.some((message) => message.includes("ctx-worktree-vcs-service must not depend on ctx-route-contracts")),
+    true,
+  );
+});
+
+test("worktree bootstrap service boundary rejects daemon runtime, route, config, store, and container coupling", () => {
+  assert.equal(WORKTREE_BOOTSTRAP_SERVICE_FORBIDDEN_DEPS.has("ctx-workspace-config"), true);
+  assert.equal(WORKTREE_BOOTSTRAP_SERVICE_FORBIDDEN_DEPS.has("ctx-worktree-data-plane"), true);
+  assert.equal(WORKTREE_BOOTSTRAP_SERVICE_FORBIDDEN_DEPS.has("ctx-execution-runtime"), true);
+  assert.equal(WORKTREE_BOOTSTRAP_SERVICE_FORBIDDEN_DEPS.has("ctx-harness-runtime"), true);
+  assert.equal(WORKTREE_BOOTSTRAP_SERVICE_FORBIDDEN_DEPS.has("ctx-workspace-runtime"), true);
+
+  const rootDir = makeRoot();
+  writeFile(rootDir, "core/crates/ctx-worktree-bootstrap-service/Cargo.toml", `
+    [package]
+    name = "ctx-worktree-bootstrap-service"
+
+    [dependencies]
+    ctx-core = { path = "../ctx-core" }
+    ctx-workspace-config = { path = "../ctx-workspace-config" }
+    ctx-store = { path = "../ctx-store" }
+    ctx-worktree-data-plane = { path = "../ctx-worktree-data-plane" }
+    ctx-workspace-runtime = { path = "../ctx-workspace-runtime" }
+
+    [dev-dependencies]
+    ctx-http = { path = "../ctx-http" }
+
+    [target.'cfg(test)'.dev-dependencies]
+    ctx-harness-runtime = { path = "../ctx-harness-runtime" }
+    ctx-execution-runtime = { path = "../ctx-execution-runtime" }
+  `);
+
+  const messages = checkCargoDependencyDirection(rootDir).map((entry) => entry.message);
+
+  assert.equal(
+    messages.some((message) => message.includes("ctx-worktree-bootstrap-service must not depend on ctx-workspace-config")),
+    true,
+  );
+  assert.equal(
+    messages.some((message) => message.includes("ctx-worktree-bootstrap-service must not depend on ctx-store")),
+    true,
+  );
+  assert.equal(
+    messages.some((message) => message.includes("ctx-worktree-bootstrap-service must not depend on ctx-worktree-data-plane")),
+    true,
+  );
+  assert.equal(
+    messages.some((message) => message.includes("ctx-worktree-bootstrap-service must not depend on ctx-http")),
+    true,
+  );
+  assert.equal(
+    messages.some((message) => message.includes("ctx-worktree-bootstrap-service must not depend on ctx-harness-runtime")),
+    true,
+  );
+  assert.equal(
+    messages.some((message) => message.includes("ctx-worktree-bootstrap-service must not depend on ctx-workspace-runtime")),
+    true,
+  );
+  assert.equal(
+    messages.some((message) => message.includes("ctx-worktree-bootstrap-service must not depend on ctx-execution-runtime")),
     true,
   );
 });

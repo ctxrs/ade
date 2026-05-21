@@ -80,6 +80,7 @@ const BAZEL_TEST_TARGETS_BY_CRATE = Object.freeze({
   "ctx-org-policy": ["//core/crates/ctx-org-policy:unit_tests"],
   "ctx-provider-runtime": ["//core/crates/ctx-provider-runtime:unit_tests"],
   "ctx-workspace-services": ["//core/crates/ctx-workspace-services:unit_tests"],
+  "ctx-worktree-bootstrap-service": ["//core/crates/ctx-worktree-bootstrap-service:unit_tests"],
   "ctx-worktree-vcs-service": ["//core/crates/ctx-worktree-vcs-service:unit_tests"],
   "ctx-transport-runtime": ["//core/crates/ctx-transport-runtime:unit_tests"],
   "ctx-linux-sandbox-runtime": ["//core/crates/ctx-linux-sandbox-runtime:unit_tests"],
@@ -206,6 +207,7 @@ const BAZEL_BUILD_TARGETS_BY_CRATE = Object.freeze({
   "ctx-workspace-container": ["//core/crates/ctx-workspace-container:lib"],
   "ctx-workspace-active-snapshot": ["//core/crates/ctx-workspace-active-snapshot:lib"],
   "ctx-workspace-stream-service": ["//core/crates/ctx-workspace-stream-service:lib"],
+  "ctx-worktree-bootstrap-service": ["//core/crates/ctx-worktree-bootstrap-service:lib"],
   "ctx-worktree-vcs-service": ["//core/crates/ctx-worktree-vcs-service:lib"],
   "ctx-workspace-runtime": ["//core/crates/ctx-workspace-runtime:lib"],
 });

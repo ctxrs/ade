@@ -94,6 +94,7 @@ RUST_BAZEL_DEPS = {
             "//core/crates/ctx-workspace-runtime:lib",
             "//core/crates/ctx-workspace-services:lib",
             "//core/crates/ctx-workspace-stream-service:lib",
+            "//core/crates/ctx-worktree-bootstrap-service:lib",
             "//core/crates/ctx-worktree-data-plane:lib",
             "//core/crates/ctx-worktree-vcs-service:lib",
             "@crates//:anyhow",
@@ -772,6 +773,21 @@ RUST_BAZEL_DEPS = {
         dev_deps = [
             "@crates//:tempfile",
         ],
+        dev_proc_macro_deps = [],
+        proc_macro_deps = [
+            "@crates//:async-trait",
+        ],
+    ),
+    "ctx-worktree-bootstrap-service": struct(
+        build_deps = [],
+        deps = [
+            "//core/crates/ctx-core:lib",
+            "@crates//:anyhow",
+            "@crates//:chrono",
+            "@crates//:tokio",
+            "@crates//:tracing",
+        ],
+        dev_deps = [],
         dev_proc_macro_deps = [],
         proc_macro_deps = [
             "@crates//:async-trait",

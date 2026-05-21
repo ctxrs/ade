@@ -28,6 +28,7 @@ const AGENT_GATE_CRATES = [
   "ctx-provider-runtime",
   "ctx-provider-matrix",
   "ctx-workspace-services",
+  "ctx-worktree-bootstrap-service",
   "ctx-worktree-vcs-service",
   "ctx-provider-auth-import",
   "ctx-providers",

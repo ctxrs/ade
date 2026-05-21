@@ -104,6 +104,7 @@ const PACKAGE_SHAPE_BOUNDARY_CRATES = new Set([
   "ctx-workspace-container",
   "ctx-workspace-runtime",
   "ctx-workspace-services",
+  "ctx-worktree-bootstrap-service",
   "ctx-worktree-vcs-service",
 ]);
 const PACKAGE_SHAPE_FORBIDDEN_BACKEDGE_DEPS = new Set(["ctx-daemon", "ctx-http", "axum"]);
@@ -144,6 +145,29 @@ const WORKTREE_VCS_SERVICE_FORBIDDEN_DEPS = new Set([
   "ctx-http",
   "ctx-route-contracts",
   "ctx-workspace-services",
+  "axum",
+]);
+const WORKTREE_BOOTSTRAP_SERVICE_FORBIDDEN_DEPS = new Set([
+  "ctx-session-service",
+  "ctx-session-runtime",
+  "ctx-daemon",
+  "ctx-http",
+  "ctx-route-contracts",
+  "ctx-workspace-services",
+  "ctx-workspace-config",
+  "ctx-store",
+  "ctx-workspace-active-snapshot",
+  "ctx-worktree-data-plane",
+  "ctx-execution-runtime",
+  "ctx-harness-runtime",
+  "ctx-linux-sandbox-runtime",
+  "ctx-provider-runtime",
+  "ctx-runtime-assets",
+  "ctx-sandbox-container-runtime",
+  "ctx-avf-linux-runtime",
+  "ctx-workspace-container",
+  "ctx-transport-runtime",
+  "ctx-workspace-runtime",
   "axum",
 ]);
 const TRANSPORT_RUNTIME_FORBIDDEN_DEPS = new Set(["ctx-store"]);
@@ -419,7 +443,10 @@ const checkCargoDependencyDirection = (rootDir) => {
     const crateName = packageNameFromCargoToml(raw);
     const manifestRelativePath = toPosix(path.relative(rootDir, manifestPath));
     const dependencies = parseCargoDependencies(raw, {
-      includeDev: crateName === "ctx-session-vcs-service" || crateName === "ctx-worktree-vcs-service",
+      includeDev:
+        crateName === "ctx-session-vcs-service"
+        || crateName === "ctx-worktree-vcs-service"
+        || crateName === "ctx-worktree-bootstrap-service",
     });
 
     for (const dependency of dependencies) {
@@ -480,6 +507,14 @@ const checkCargoDependencyDirection = (rootDir) => {
           line: dependency.line,
           path: manifestRelativePath,
           message: `ctx-worktree-vcs-service must not depend on ${dependency.name}; raw worktree VCS IO must stay below session VCS, broad workspace services, daemon, HTTP, route contracts, and Axum.`,
+        });
+      }
+      if (crateName === "ctx-worktree-bootstrap-service" && WORKTREE_BOOTSTRAP_SERVICE_FORBIDDEN_DEPS.has(dependency.name)) {
+        violations.push({
+          kind: "cargo_dependency",
+          line: dependency.line,
+          path: manifestRelativePath,
+          message: `ctx-worktree-bootstrap-service must not depend on ${dependency.name}; bootstrap command/log policy must stay below daemon runtime wiring, route contracts, workspace config/store, container runtimes, HTTP, and Axum.`,
         });
       }
       if (dependencyIsProd && crateName === "ctx-transport-runtime" && TRANSPORT_RUNTIME_FORBIDDEN_DEPS.has(dependency.name)) {
@@ -579,6 +614,7 @@ module.exports = {
   SESSION_RUNTIME_FORBIDDEN_DEPS,
   SESSION_VCS_SERVICE_FORBIDDEN_DEPS,
   TITLE_SERVICE_FORBIDDEN_DEPS,
+  WORKTREE_BOOTSTRAP_SERVICE_FORBIDDEN_DEPS,
   WORKTREE_VCS_SERVICE_FORBIDDEN_DEPS,
   checkCargoDependencyDirection,
   checkCollapsedPaths,

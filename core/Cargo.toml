@@ -58,6 +58,7 @@ members = [
   "crates/ctx-workspace-container",
   "crates/ctx-workspace-active-snapshot",
   "crates/ctx-workspace-stream-service",
+  "crates/ctx-worktree-bootstrap-service",
   "crates/ctx-worktree-vcs-service",
   "crates/ctx-merge-queue",
   "crates/ctx-mcp-command",

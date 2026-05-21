@@ -1,7 +1,7 @@
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{Worktree, WorktreeBootstrapNotice, WorktreeBootstrapStatus};
 use ctx_store::WorktreeBootstrapResultUpdate;
-use ctx_workspace_services::worktree_bootstrap::{
+use ctx_worktree_bootstrap_service::{
     prepare_bootstrap_log_for_storage, write_bootstrap_log, BootstrapReport,
 };
 
