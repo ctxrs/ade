@@ -28,7 +28,7 @@ pub(super) fn spawn_workspace_active_send_loop(
                     NextWorkspaceStreamItem::Control(entry) => {
                         let (enqueued_at, message) = entry.into_parts();
                         let queued_ms = enqueued_at.elapsed().as_millis();
-                        let sequenced = sequencer.sequence_control_message(message);
+                        let sequenced = sequencer.sequence_control_message(&runtime, message);
                         let message = sequenced.message;
                         let serialize_start = Instant::now();
                         let Ok(text) = serde_json::to_string(&message) else {
@@ -93,7 +93,7 @@ pub(super) fn spawn_workspace_active_send_loop(
                         let mut send_failed = false;
                         for queued in events {
                             let message = sequencer
-                                .sequence_summary_event(queued.event, queued.stream_source);
+                                .sequence_summary_event(&runtime, queued.event, queued.stream_source);
                             let Ok(text) = serde_json::to_string(&message) else {
                                 send_failed = true;
                                 break;

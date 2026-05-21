@@ -423,6 +423,58 @@ describe("WorkspaceActiveSnapshotStore", () => {
     store.destroy();
   });
 
+  it("ignores lower live snapshot revs without resetting active subscriptions", async () => {
+    const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
+
+    const now = new Date().toISOString();
+    const task = mkTask("task-1", "ws-1", now);
+    const session = mkSession("session-1", "task-1", "ws-1", now);
+    const summary = mkSummary(session, now);
+    const head = mkHead(session);
+    const store = new WorkspaceActiveSnapshotStoreImpl("ws-1", { disableWorker: true });
+    const ws = mkOpenWs();
+    asStoreInternals(store).ws = ws;
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "snapshot",
+        rev: 10,
+        active_snapshot: {
+          workspace_id: "ws-1",
+          snapshot_rev: 10,
+          archived_rev: 0,
+          active: { total_count: 1, tasks: [mkActiveSummary(task, summary, head, now)] },
+        },
+      }),
+    );
+    await waitForCondition(() => store.getSnapshot().initialized);
+    store.setSubscribedSessions([{ sessionId: session.id, replay: { kind: "resume", afterSeq: 1 } }]);
+    ws.send.mockClear();
+
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "heads_batch",
+        rev: 11,
+        snapshot_rev: 7,
+        deltas: [],
+      }),
+    );
+    await asStoreInternals(store).handleStreamMessage(
+      JSON.stringify({
+        type: "event",
+        rev: 12,
+        event: { type: "ready", workspace_id: "ws-1", snapshot_rev: 8 },
+      }),
+    );
+
+    const internalState = (store as unknown as {
+      state: { getSnapshotRev: () => number };
+    }).state;
+    expect(internalState.getSnapshotRev()).toBe(10);
+    expect(ws.send).not.toHaveBeenCalled();
+    store.destroy();
+  });
+
   it("requests snapshot on reset_required", async () => {
     const { WorkspaceActiveSnapshotStoreImpl } = await import("./workspaceActiveSnapshotStoreCore");
     const { getWorkspaceActiveSnapshot } = await import("../api/client");

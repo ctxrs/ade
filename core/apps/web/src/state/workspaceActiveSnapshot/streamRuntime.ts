@@ -188,12 +188,8 @@ const updateLiveWorkspaceSnapshotRev = (
   streamSource: WorkspaceActiveSnapshotStreamSource,
 ): void => {
   if (streamSource === "replay") return;
-  if (snapshotRev < host.state.getSnapshotRev()) {
-    host.state.updateSnapshotRev(snapshotRev, { allowReset: true });
-    host.allowSnapshotReset = true;
-    if (host.state.hasLiveSnapshotApplied()) {
-      host.flushSubscriptions("snapshot_rev_reset");
-    }
+  const currentRev = host.state.getSnapshotRev();
+  if (snapshotRev < currentRev) {
     return;
   }
   host.state.updateSnapshotRev(snapshotRev);

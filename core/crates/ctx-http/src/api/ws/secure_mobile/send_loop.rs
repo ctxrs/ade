@@ -31,7 +31,7 @@ pub(super) fn spawn_mobile_secure_send_loop(
                     NextWorkspaceStreamItem::Control(entry) => {
                         let (enqueued_at, message) = entry.into_parts();
                         let queued_ms = enqueued_at.elapsed().as_millis();
-                        let sequenced = sequencer.sequence_control_message(message);
+                        let sequenced = sequencer.sequence_control_message(&runtime, message);
                         envelope_seq += 1;
                         let message = sequenced.message;
                         let send_start = Instant::now();
@@ -93,7 +93,7 @@ pub(super) fn spawn_mobile_secure_send_loop(
                         for queued in events {
                             envelope_seq += 1;
                             let message = sequencer
-                                .sequence_summary_event(queued.event, queued.stream_source);
+                                .sequence_summary_event(&runtime, queued.event, queued.stream_source);
                             if send_secure_ws(&mut sender, &key, &device_id, envelope_seq, &message)
                                 .await
                                 .is_err()
