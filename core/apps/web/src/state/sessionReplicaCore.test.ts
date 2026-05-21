@@ -2827,7 +2827,7 @@ describe("SessionReplicaCore", () => {
           session_id: sessionId,
           run_id: "run-1",
           turn_id: "turn-1",
-          event_type: "assistant_chunk",
+          event_type: "assistant_chunk" as const,
           payload_json: {
             content_fragment: "stale-visible",
           },
