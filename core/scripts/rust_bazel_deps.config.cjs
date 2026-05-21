@@ -25,6 +25,7 @@ const GENERATED_DEP_CONSUMER_CRATES = Object.freeze([
   "ctx-runtime-assets",
   "ctx-sandbox-contract",
   "ctx-session-artifacts",
+  "ctx-session-message-service",
   "ctx-session-service",
   "ctx-subagent-service",
   "ctx-session-tools",

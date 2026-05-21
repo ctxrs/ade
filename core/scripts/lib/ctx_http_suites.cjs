@@ -309,7 +309,11 @@ const CTX_HTTP_SHARED_SOURCE_GLOBS = [
 
 const CTX_HTTP_UNIT_SUITES = [
   {
-    dependencyCrates: ["ctx-session-service", "ctx-storage-admission"],
+    dependencyCrates: [
+      "ctx-session-message-service",
+      "ctx-session-service",
+      "ctx-storage-admission",
+    ],
     family: "workspace-stream",
     name: "unit-tests-api",
     description: "ctx-http API unit test family",
@@ -712,6 +716,7 @@ const CTX_HTTP_SUITES = [
       "ctx-events",
       "ctx-store",
       "ctx-mcp-command",
+      "ctx-session-message-service",
       "ctx-storage-admission",
       "ctx-transport-runtime",
     ],
@@ -753,6 +758,7 @@ const CTX_HTTP_SUITES = [
       "ctx-core",
       "ctx-events",
       "ctx-store",
+      "ctx-session-message-service",
       "ctx-transport-runtime",
     ],
     name: "turns-terminal",
@@ -801,6 +807,7 @@ const CTX_HTTP_SUITES = [
       "ctx-events",
       "ctx-managed-installs",
       "ctx-store",
+      "ctx-session-message-service",
       "ctx-transport-runtime",
       "ctx-workspace-attachments",
       "ctx-workspace-services",

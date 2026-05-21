@@ -6,6 +6,7 @@ const test = require("node:test");
 
 const {
   COLLAPSED_PATHS,
+  MESSAGE_SERVICE_FORBIDDEN_DEPS,
   RATCHETED_FILE_LIMITS,
   PACKAGE_SHAPE_BOUNDARY_CRATES,
   PACKAGE_SHAPE_FORBIDDEN_BACKEDGE_DEPS,
@@ -131,6 +132,7 @@ test("package shape boundary classifier covers existing and planned service owne
   assert.equal(isPackageShapeBoundaryCrate("ctx-run-archive-service"), true);
   assert.equal(isPackageShapeBoundaryCrate("ctx-run-scheduler"), true);
   assert.equal(isPackageShapeBoundaryCrate("ctx-session-artifacts"), true);
+  assert.equal(isPackageShapeBoundaryCrate("ctx-session-message-service"), true);
   assert.equal(isPackageShapeBoundaryCrate("ctx-session-runner"), true);
   assert.equal(isPackageShapeBoundaryCrate("ctx-core"), false);
 });
@@ -151,6 +153,27 @@ test("route contracts forbid daemon, HTTP, Axum, and runtime dependencies", () =
   assert.equal(isRouteContractsForbiddenDependency("ctx-transport-runtime"), true);
   assert.equal(isRouteContractsForbiddenDependency("ctx-core"), false);
   assert.equal(isRouteContractsForbiddenDependency("serde"), false);
+});
+
+test("message service boundary rejects reverse coupling to session orchestration", () => {
+  assert.equal(MESSAGE_SERVICE_FORBIDDEN_DEPS.has("ctx-session-service"), true);
+  assert.equal(MESSAGE_SERVICE_FORBIDDEN_DEPS.has("ctx-daemon"), true);
+
+  const rootDir = makeRoot();
+  writeFile(rootDir, "core/crates/ctx-session-message-service/Cargo.toml", `
+    [package]
+    name = "ctx-session-message-service"
+
+    [dependencies]
+    ctx-session-service = { path = "../ctx-session-service" }
+  `);
+
+  const messages = checkCargoDependencyDirection(rootDir).map((entry) => entry.message);
+
+  assert.equal(
+    messages.some((message) => message.includes("ctx-session-message-service must not depend on ctx-session-service")),
+    true,
+  );
 });
 
 test("cargo dependency direction rejects service, transport runtime, and active snapshot backedges", () => {

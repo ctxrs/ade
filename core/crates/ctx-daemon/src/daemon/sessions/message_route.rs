@@ -5,7 +5,7 @@ pub use ctx_route_contracts::sessions::{
     DeleteSessionMessageRouteParams, PostSessionMessageRouteRequest,
     PostSessionMessageRouteResponse, SessionMessageRouteError, SessionMessageRouteErrorKind,
 };
-use ctx_session_service::message_delivery::{
+use ctx_session_message_service::message_delivery::{
     resolve_message_client_ids, MessageClientIdResolutionError,
 };
 

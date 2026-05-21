@@ -896,6 +896,7 @@ dependencies = [
  "ctx-sandbox-contract",
  "ctx-sandbox-materialization",
  "ctx-session-artifacts",
+ "ctx-session-message-service",
  "ctx-session-service",
  "ctx-session-tools",
  "ctx-settings-model",
@@ -1731,6 +1732,21 @@ dependencies = [
  "tempfile",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "ctx-session-message-service"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "ctx-core",
+ "ctx-session-tools",
+ "ctx-store",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

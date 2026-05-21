@@ -93,6 +93,7 @@ const PACKAGE_SHAPE_BOUNDARY_CRATES = new Set([
   "ctx-run-archive-service",
   "ctx-run-scheduler",
   "ctx-session-artifacts",
+  "ctx-session-message-service",
   "ctx-session-runner",
   "ctx-workspace-active-snapshot",
   "ctx-workspace-attachments",
@@ -102,6 +103,12 @@ const PACKAGE_SHAPE_BOUNDARY_CRATES = new Set([
   "ctx-workspace-services",
 ]);
 const PACKAGE_SHAPE_FORBIDDEN_BACKEDGE_DEPS = new Set(["ctx-daemon", "ctx-http", "axum"]);
+const MESSAGE_SERVICE_FORBIDDEN_DEPS = new Set([
+  "ctx-session-service",
+  "ctx-daemon",
+  "ctx-http",
+  "axum",
+]);
 const TRANSPORT_RUNTIME_FORBIDDEN_DEPS = new Set(["ctx-store"]);
 const ROUTE_CONTRACTS_ALLOWED_CTX_DEPS = new Set(["ctx-core"]);
 const HEAD_PROJECTION_ROOT = "core/crates/ctx-session-service/src/head_projection";
@@ -375,6 +382,14 @@ const checkCargoDependencyDirection = (rootDir) => {
           message: `${crateName} must not depend on ${dependency.name}; package-shape boundary crates cannot depend on daemon, HTTP, or Axum.`,
         });
       }
+      if (crateName === "ctx-session-message-service" && MESSAGE_SERVICE_FORBIDDEN_DEPS.has(dependency.name)) {
+        violations.push({
+          kind: "cargo_dependency",
+          line: dependency.line,
+          path: manifestRelativePath,
+          message: `ctx-session-message-service must not depend on ${dependency.name}; message persistence must not couple back to session orchestration, daemon, HTTP, or Axum.`,
+        });
+      }
       if (crateName === "ctx-transport-runtime" && TRANSPORT_RUNTIME_FORBIDDEN_DEPS.has(dependency.name)) {
         violations.push({
           kind: "cargo_dependency",
@@ -463,6 +478,7 @@ if (require.main === module) {
 module.exports = {
   COLLAPSED_PATHS,
   HEAD_PROJECTION_FORBIDDEN_IMPORT_PATTERNS,
+  MESSAGE_SERVICE_FORBIDDEN_DEPS,
   PACKAGE_SHAPE_BOUNDARY_CRATES,
   PACKAGE_SHAPE_FORBIDDEN_BACKEDGE_DEPS,
   RATCHETED_FILE_LIMITS,

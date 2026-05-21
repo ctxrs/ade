@@ -50,6 +50,7 @@ test("agent gate crate list keeps the expected ctx-http-centered fast gate", () 
     "ctx-sandbox-container-runtime",
     "ctx-sandbox-materialization",
     "ctx-session-artifacts",
+    "ctx-session-message-service",
     "ctx-session-service",
     "ctx-subagent-service",
     "ctx-session-tools",

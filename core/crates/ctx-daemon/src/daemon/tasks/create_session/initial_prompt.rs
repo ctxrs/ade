@@ -3,7 +3,7 @@ use super::*;
 use std::sync::Arc;
 
 use ctx_core::ids::{MessageId, TurnId};
-use ctx_session_service::initial_prompt::{
+use ctx_session_message_service::initial_prompt::{
     seed_initial_prompt_record, InitialPromptOrderSeqSource, InitialPromptSeedError,
     InitialPromptSeedInput, InitialPromptSeedOutcome,
 };

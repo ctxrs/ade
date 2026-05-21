@@ -1,7 +1,7 @@
 use base64::Engine;
 use ctx_core::ids::{MessageId, SessionId, TurnId};
 use ctx_core::models::{Message, MessageAttachment, MessageDelivery, Session};
-use ctx_session_service::message_admission::{
+use ctx_session_message_service::message_admission::{
     post_user_message_record, MessageAdmissionError, MessageAttachmentSignature,
     MessageAttachmentSignatureError, MessageAttachmentSignatureResolver,
     PostUserMessageRecordInput,
