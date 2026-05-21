@@ -5,7 +5,7 @@ mod send_loop;
 #[path = "workspace_active/socket.rs"]
 mod socket;
 
-use ctx_daemon::daemon::{
+use ctx_route_contracts::workspaces::{
     WorkspaceStreamRouteError, WorkspaceStreamRouteErrorKind, WorkspaceStreamRouteParams,
 };
 use socket::handle_workspace_active_snapshot_ws;

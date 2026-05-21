@@ -1,5 +1,5 @@
 use super::*;
-use ctx_daemon::daemon::workspaces::stream::WorkspaceStreamReplayProgram;
+use ctx_workspace_stream_service::replay::WorkspaceStreamReplayProgram;
 
 pub(in crate::api::ws::workspace_stream::subscription) struct WorkspaceStreamReplayRequest<'a> {
     pub(in crate::api::ws::workspace_stream::subscription) state: &'a WorkspaceStreamHandle,

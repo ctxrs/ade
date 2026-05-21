@@ -1,5 +1,5 @@
 use super::*;
-use ctx_daemon::daemon::workspaces::stream::WorkspaceStreamSnapshotReadModel;
+use ctx_workspace_stream_service::read_model::WorkspaceStreamSnapshotReadModel;
 
 pub(super) fn with_stream_rev(
     message: WorkspaceActiveSnapshotStreamMessage,

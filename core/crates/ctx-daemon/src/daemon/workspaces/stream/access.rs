@@ -1,4 +1,5 @@
 use ctx_core::ids::WorkspaceId;
+use ctx_route_contracts::workspaces::{WorkspaceStreamRouteError, WorkspaceStreamRouteParams};
 
 use crate::daemon::DaemonState;
 use crate::daemon::WorkspaceStreamHandle;
@@ -7,76 +8,6 @@ use crate::daemon::WorkspaceStreamHandle;
 pub enum WorkspaceStreamAccessError {
     NotFound,
     Internal(anyhow::Error),
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct WorkspaceStreamRouteParams {
-    workspace_id: String,
-}
-
-impl WorkspaceStreamRouteParams {
-    pub fn new(workspace_id: impl Into<String>) -> Self {
-        Self {
-            workspace_id: workspace_id.into(),
-        }
-    }
-
-    pub(super) fn parse_workspace_id(&self) -> Result<WorkspaceId, WorkspaceStreamRouteError> {
-        uuid::Uuid::parse_str(&self.workspace_id)
-            .map(WorkspaceId)
-            .map_err(|_| WorkspaceStreamRouteError::bad_request("invalid workspace id"))
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WorkspaceStreamRouteErrorKind {
-    BadRequest,
-    NotFound,
-    Internal,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WorkspaceStreamRouteError {
-    kind: WorkspaceStreamRouteErrorKind,
-    message: String,
-}
-
-impl WorkspaceStreamRouteError {
-    pub(super) fn bad_request(message: impl Into<String>) -> Self {
-        Self {
-            kind: WorkspaceStreamRouteErrorKind::BadRequest,
-            message: message.into(),
-        }
-    }
-
-    pub(super) fn not_found(message: impl Into<String>) -> Self {
-        Self {
-            kind: WorkspaceStreamRouteErrorKind::NotFound,
-            message: message.into(),
-        }
-    }
-
-    pub(super) fn internal(message: impl Into<String>) -> Self {
-        Self {
-            kind: WorkspaceStreamRouteErrorKind::Internal,
-            message: message.into(),
-        }
-    }
-
-    pub(super) fn from_stream_access(error: WorkspaceStreamAccessError) -> Self {
-        match error {
-            WorkspaceStreamAccessError::NotFound => Self::not_found("workspace not found"),
-            WorkspaceStreamAccessError::Internal(error) => Self::internal(error.to_string()),
-        }
-    }
-
-    pub fn kind(&self) -> WorkspaceStreamRouteErrorKind {
-        self.kind
-    }
-
-    pub fn message(&self) -> &str {
-        &self.message
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,6 +22,19 @@ impl WorkspaceStreamRouteAdmission {
 
     pub fn workspace_id(&self) -> WorkspaceId {
         self.workspace_id
+    }
+}
+
+pub(super) fn workspace_stream_route_error_from_access(
+    error: WorkspaceStreamAccessError,
+) -> WorkspaceStreamRouteError {
+    match error {
+        WorkspaceStreamAccessError::NotFound => {
+            WorkspaceStreamRouteError::not_found("workspace not found")
+        }
+        WorkspaceStreamAccessError::Internal(error) => {
+            WorkspaceStreamRouteError::internal(error.to_string())
+        }
     }
 }
 
@@ -133,7 +77,7 @@ impl WorkspaceStreamHandle {
         let workspace_id = params.parse_workspace_id()?;
         self.require_workspace_active_stream_access(workspace_id)
             .await
-            .map_err(WorkspaceStreamRouteError::from_stream_access)?;
+            .map_err(workspace_stream_route_error_from_access)?;
         Ok(WorkspaceStreamRouteAdmission::new(workspace_id))
     }
 }

@@ -4,8 +4,8 @@ use super::super::buffer::{VcsPendingBuffer, VcsSnapshotKey};
 use super::super::metrics::VcsStreamMetrics;
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{WorktreeVcsSnapshot, WorktreeVcsStreamMessage, WorktreeVcsStreamTier};
-use ctx_daemon::daemon::workspaces::stream::WorkspaceVcsLagReseedPlan;
 use ctx_daemon::daemon::WorkspacesHandle;
+use ctx_workspace_stream_service::vcs::WorkspaceVcsLagReseedPlan;
 
 pub(in crate::api::ws::workspace_vcs) async fn seed_current_vcs_snapshots(
     state: &WorkspacesHandle,

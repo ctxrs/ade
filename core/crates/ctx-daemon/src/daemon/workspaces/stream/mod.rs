@@ -8,10 +8,7 @@ mod runtime_facade;
 mod subscriptions;
 mod vcs;
 
-pub use access::{
-    WorkspaceStreamAccessError, WorkspaceStreamRouteAdmission, WorkspaceStreamRouteError,
-    WorkspaceStreamRouteErrorKind, WorkspaceStreamRouteParams,
-};
+pub use access::{WorkspaceStreamAccessError, WorkspaceStreamRouteAdmission};
 pub use cursor_acceptance::WorkspaceStreamCursorAcceptance;
 #[cfg(test)]
 pub(in crate::daemon) use cursor_acceptance::{

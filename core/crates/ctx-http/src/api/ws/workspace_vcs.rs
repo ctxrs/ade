@@ -14,7 +14,7 @@ use self::buffer::VcsPendingBuffer;
 #[cfg(test)]
 use self::metrics::VcsStreamMetrics;
 use self::socket::handle_workspace_vcs_ws;
-use ctx_daemon::daemon::{
+use ctx_route_contracts::workspaces::{
     WorkspaceStreamRouteError, WorkspaceStreamRouteErrorKind, WorkspaceStreamRouteParams,
 };
 

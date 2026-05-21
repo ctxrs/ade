@@ -1152,6 +1152,7 @@ dependencies = [
  "ctx-workspace-container",
  "ctx-workspace-runtime",
  "ctx-workspace-services",
+ "ctx-workspace-stream-service",
  "ctx-worktree-data-plane",
  "directories",
  "ed25519-dalek",

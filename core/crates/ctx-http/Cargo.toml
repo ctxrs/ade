@@ -53,6 +53,7 @@ ctx-workspace-runtime = { path = "../ctx-workspace-runtime" }
 ctx-workspace-config = { path = "../ctx-workspace-config" }
 ctx-workspace-container = { path = "../ctx-workspace-container" }
 ctx-workspace-services = { path = "../ctx-workspace-services" }
+ctx-workspace-stream-service = { path = "../ctx-workspace-stream-service" }
 ctx-workspace-active-snapshot = { path = "../ctx-workspace-active-snapshot" }
 ctx-store = { path = "../ctx-store" }
 directories.workspace = true

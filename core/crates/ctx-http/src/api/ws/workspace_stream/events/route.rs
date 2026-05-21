@@ -1,6 +1,6 @@
 use super::super::lifecycle::queue_workspace_stream_reset;
 use super::super::*;
-use ctx_daemon::daemon::workspaces::stream::{
+use ctx_workspace_stream_service::event_routing::{
     WorkspaceStreamControlLane, WorkspaceStreamEventRoutePlan, WorkspaceStreamHeadLane,
 };
 

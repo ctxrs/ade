@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use ctx_core::ids::{WorkspaceId, WorktreeId};
 use ctx_core::models::{Worktree, WorktreeVcsFreshness, WorktreeVcsStreamTier};
+use ctx_route_contracts::workspaces::{WorkspaceStreamRouteError, WorkspaceStreamRouteParams};
 use ctx_workspace_stream_service::vcs as stream_vcs_service;
 pub use ctx_workspace_stream_service::vcs::{
     plan_workspace_vcs_lag_reseed, route_workspace_vcs_snapshot, WorkspaceVcsDemandState,
@@ -14,11 +15,10 @@ use tokio::sync::broadcast;
 use crate::daemon::DaemonState;
 use crate::daemon::WorkspacesHandle;
 
-use super::access::require_existing_workspace_for_stream;
-use super::{
-    WorkspaceStreamAccessError, WorkspaceStreamRouteAdmission, WorkspaceStreamRouteError,
-    WorkspaceStreamRouteParams,
+use super::access::{
+    require_existing_workspace_for_stream, workspace_stream_route_error_from_access,
 };
+use super::{WorkspaceStreamAccessError, WorkspaceStreamRouteAdmission};
 
 pub async fn filter_workspace_worktree_ids(
     state: &Arc<DaemonState>,
@@ -173,7 +173,7 @@ impl WorkspacesHandle {
         let workspace_id = params.parse_workspace_id()?;
         self.require_workspace_vcs_stream_access(workspace_id)
             .await
-            .map_err(WorkspaceStreamRouteError::from_stream_access)?;
+            .map_err(workspace_stream_route_error_from_access)?;
         Ok(WorkspaceStreamRouteAdmission::new(workspace_id))
     }
 

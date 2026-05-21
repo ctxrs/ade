@@ -1,7 +1,7 @@
 use super::*;
-use ctx_daemon::daemon::workspaces::stream::{
-    ReplayOutcome, WorkspaceStreamControlLane, WorkspaceStreamEventRoutePlan,
-    WorkspaceStreamHeadLane,
+use ctx_daemon::daemon::workspaces::stream::ReplayOutcome;
+use ctx_workspace_stream_service::event_routing::{
+    WorkspaceStreamControlLane, WorkspaceStreamEventRoutePlan, WorkspaceStreamHeadLane,
 };
 
 #[cfg(test)]

@@ -129,6 +129,23 @@ fn workspace_route_params_parse_invalid_ids_to_route_errors() {
 }
 
 #[test]
+fn workspace_stream_route_params_and_errors_preserve_status_contract() {
+    let workspace = WorkspaceStreamRouteParams::new("not-a-workspace")
+        .parse_workspace_id()
+        .unwrap_err();
+    assert_eq!(workspace.kind(), WorkspaceStreamRouteErrorKind::BadRequest);
+    assert_eq!(workspace.message(), "invalid workspace id");
+
+    let not_found = WorkspaceStreamRouteError::not_found("workspace not found");
+    assert_eq!(not_found.kind(), WorkspaceStreamRouteErrorKind::NotFound);
+    assert_eq!(not_found.message(), "workspace not found");
+
+    let internal = WorkspaceStreamRouteError::internal("store failed");
+    assert_eq!(internal.kind(), WorkspaceStreamRouteErrorKind::Internal);
+    assert_eq!(internal.message(), "store failed");
+}
+
+#[test]
 fn workspace_file_completions_query_preserves_http_query_shape() {
     let empty: WorkspaceFileCompletionsRouteQuery =
         serde_json::from_value(serde_json::json!({})).expect("empty query shape");

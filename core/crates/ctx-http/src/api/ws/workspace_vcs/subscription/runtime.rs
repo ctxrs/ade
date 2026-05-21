@@ -1,5 +1,5 @@
-use ctx_daemon::daemon::workspaces::stream::WorkspaceVcsDemandState;
 use ctx_daemon::daemon::WorkspacesHandle;
+use ctx_workspace_stream_service::vcs::WorkspaceVcsDemandState;
 
 pub(in crate::api::ws::workspace_vcs) type WorkspaceVcsRuntime = WorkspaceVcsDemandState;
 

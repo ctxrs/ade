@@ -2,8 +2,8 @@ use super::lifecycle::{clear_runtime_queues, queue_workspace_stream_reset};
 use super::*;
 use ctx_daemon::daemon::workspaces::stream::{
     WorkspaceStreamReplayStepHook, WorkspaceStreamSubscriptionResolutionError,
-    WorkspaceStreamSubscriptionTransactionPlan,
 };
+use ctx_workspace_stream_service::subscriptions::planning::WorkspaceStreamSubscriptionTransactionPlan;
 use std::collections::HashSet;
 
 mod replay;

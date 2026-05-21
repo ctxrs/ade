@@ -91,10 +91,7 @@ pub use run_archive::{
     RunArchiveRouteError, RunArchiveRouteErrorKind, RunArchiveRouteParams,
 };
 pub use sandbox_binding::rematerialize_sandbox_binding_for_worktree;
-pub use stream::{
-    WorkspaceStreamAccessError, WorkspaceStreamRouteAdmission, WorkspaceStreamRouteError,
-    WorkspaceStreamRouteErrorKind, WorkspaceStreamRouteParams,
-};
+pub use stream::{WorkspaceStreamAccessError, WorkspaceStreamRouteAdmission};
 pub use vcs_hooks::{cleanup_workspace_hooks, cleanup_worktree_hooks, ensure_task_commit_hook};
 pub use worktree_bootstrap::spawn_worktree_bootstrap;
 pub use worktree_cleanup::{

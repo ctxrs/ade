@@ -2,6 +2,7 @@ mod attachments;
 mod common;
 mod management;
 mod responses;
+mod stream;
 mod worktrees;
 
 pub use attachments::{
@@ -19,6 +20,9 @@ pub use management::{
 pub use responses::{
     WorkspaceActiveHeadBatchRouteResponse, WorkspaceActiveSnapshotRouteResponse,
     WorkspaceAttachmentRouteResponse, WorkspaceRouteResponse, WorktreeRouteResponse,
+};
+pub use stream::{
+    WorkspaceStreamRouteError, WorkspaceStreamRouteErrorKind, WorkspaceStreamRouteParams,
 };
 pub use worktrees::WorkspaceFileCompletionsRouteQuery;
 

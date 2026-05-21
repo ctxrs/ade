@@ -3,6 +3,7 @@ use super::*;
 use crate::test_support::TestDaemon;
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::VcsKind;
+use ctx_route_contracts::workspaces::{WorkspaceStreamRouteErrorKind, WorkspaceStreamRouteParams};
 use tempfile::tempdir;
 
 #[tokio::test]

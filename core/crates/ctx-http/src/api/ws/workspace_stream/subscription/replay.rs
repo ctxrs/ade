@@ -1,5 +1,6 @@
 use super::*;
-use ctx_daemon::daemon::workspaces::stream::{ReplayOutcome, WorkspaceStreamReplayStep};
+use ctx_daemon::daemon::workspaces::stream::ReplayOutcome;
+use ctx_workspace_stream_service::replay::WorkspaceStreamReplayStep;
 
 mod buffers;
 mod live_events;

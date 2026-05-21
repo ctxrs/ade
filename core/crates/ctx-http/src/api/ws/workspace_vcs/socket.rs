@@ -6,7 +6,7 @@ use super::send_loop::spawn_workspace_vcs_send_loop;
 use super::subscription::{
     handle_workspace_vcs_client_message, release_workspace_vcs_demand, WorkspaceVcsRuntime,
 };
-use ctx_daemon::daemon::workspaces::stream::WorkspaceVcsSnapshotRoute;
+use ctx_workspace_stream_service::vcs::WorkspaceVcsSnapshotRoute;
 
 fn spawn_workspace_vcs_metrics_loop(
     state: WorkspacesHandle,
