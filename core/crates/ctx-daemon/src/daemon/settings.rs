@@ -1,38 +1,10 @@
 use ctx_observability::telemetry::TelemetryConfig;
 use ctx_settings_model::{PublicSettings, Settings};
+use ctx_settings_service::route_contract::SettingsRouteError;
 
 use crate::daemon::{
     provider_guard, provider_restart, resource_governance, tool_cgroup, CoreHandle, DaemonState,
 };
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SettingsRouteErrorKind {
-    Forbidden,
-    Internal,
-}
-
-#[derive(Debug, Clone)]
-pub struct SettingsRouteError {
-    kind: SettingsRouteErrorKind,
-}
-
-impl SettingsRouteError {
-    fn forbidden(_error: impl std::fmt::Display) -> Self {
-        Self {
-            kind: SettingsRouteErrorKind::Forbidden,
-        }
-    }
-
-    fn internal(_error: impl std::fmt::Display) -> Self {
-        Self {
-            kind: SettingsRouteErrorKind::Internal,
-        }
-    }
-
-    pub fn kind(&self) -> SettingsRouteErrorKind {
-        self.kind
-    }
-}
 
 pub async fn load_settings(state: &DaemonState) -> anyhow::Result<Settings> {
     ctx_settings_service::load_settings(state.global_store()).await

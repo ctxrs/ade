@@ -2,8 +2,9 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
 
-use ctx_daemon::daemon::{CoreHandle, SettingsRouteError, SettingsRouteErrorKind};
+use ctx_daemon::daemon::CoreHandle;
 use ctx_settings_model as user_settings;
+use ctx_settings_service::route_contract::{SettingsRouteError, SettingsRouteErrorKind};
 
 fn settings_route_status(error: SettingsRouteError) -> StatusCode {
     match error.kind() {

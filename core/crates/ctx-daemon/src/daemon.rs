@@ -134,7 +134,6 @@ pub use sessions::{
     SubmitAskUserQuestionRouteRequest, SubmitAskUserQuestionRouteResponse, WaitAgentRouteRequest,
     WaitAgentRouteResponse,
 };
-pub use settings::{SettingsRouteError, SettingsRouteErrorKind};
 pub use state::{AppRuntimeFlags, DaemonState};
 pub use state::{
     AttachmentMaterializationTask, CacheSweepConfig, SessionStoreAccessError, StoreLookup,

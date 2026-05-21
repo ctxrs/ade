@@ -5830,6 +5830,27 @@ test("daemon boundary guard rejects settings API orchestration", () => {
   );
 });
 
+test("daemon boundary guard allows settings API route-contract imports", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/settings.rs",
+    contents: `
+      use ctx_settings_service::route_contract::{
+        SettingsRouteError,
+        SettingsRouteErrorKind,
+      };
+      fn status(error: SettingsRouteError) -> StatusCode {
+        match error.kind() {
+          SettingsRouteErrorKind::Forbidden => StatusCode::FORBIDDEN,
+          SettingsRouteErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+      }
+    `,
+    patterns: SETTINGS_API_ORCHESTRATION_PATTERNS,
+  });
+
+  assert.deepEqual(violations, []);
+});
+
 test("daemon boundary guard rejects telemetry export filesystem pathing", () => {
   const violations = scanText({
     filePath: "core/crates/ctx-http/src/api/telemetry.rs",

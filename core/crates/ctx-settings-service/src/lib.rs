@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 mod effective;
 mod execution_policy;
 mod overrides;
+pub mod route_contract;
 
 pub use effective::{
     apply_execution_environment, apply_workspace_execution_settings_override,

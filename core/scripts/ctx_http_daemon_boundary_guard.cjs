@@ -2530,7 +2530,7 @@ const RESOURCE_UTILIZATION_API_ROUTE_CONTRACT_PATTERNS = [
 const SETTINGS_API_ORCHESTRATION_PATTERNS = [
   {
     name: "settings API imports settings service directly",
-    regex: /\bctx_settings_service\b/,
+    regex: /\bctx_settings_service\b(?!(?:::route_contract\b))/,
   },
   {
     name: "settings API owns host execution policy checks",
