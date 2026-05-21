@@ -6,11 +6,11 @@ use ctx_core::models::{
     ExecutionEnvironment, Message, MessageDelivery, Session, SessionEventType, Task, VcsKind,
     Workspace, Worktree,
 };
+pub use ctx_session_service::session_creation::DefaultSessionSeed;
 use ctx_session_service::session_creation::{
-    session_matches_creation_identity, validate_create_session_request, CreateSessionRequestError,
-    CreateSessionRequestPolicy, SessionCreationIdentity,
+    session_matches_creation_identity, SessionCreationIdentity,
 };
-use ctx_session_tools::model_resolution::{compose_model_id, resolve_model_id};
+use ctx_session_tools::model_resolution::resolve_model_id;
 use ctx_settings_model::ExecutionSettings;
 use ctx_store::{is_unique_constraint_violation, Store};
 
@@ -79,13 +79,6 @@ impl CreateTaskSessionInput {
             run_id_header: None,
         }
     }
-}
-
-pub struct DefaultSessionSeed {
-    pub provider_id: String,
-    pub model_id: String,
-    pub reasoning_effort: Option<String>,
-    pub execution_environment: ExecutionEnvironment,
 }
 
 #[derive(Debug)]

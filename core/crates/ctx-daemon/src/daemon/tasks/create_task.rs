@@ -3,6 +3,7 @@ use std::path::Path as StdPath;
 use ctx_core::ids::{TaskId, WorkspaceId};
 use ctx_core::models::{ExecutionEnvironment, Task, Workspace};
 use ctx_observability::logs;
+use ctx_session_service::session_creation::should_preflight_default_session;
 use ctx_store::Store;
 use ctx_task_service::creation::TaskRecordCreateError;
 
@@ -126,6 +127,6 @@ impl TasksHandle {
 
 impl CreateTaskInput {
     fn should_preflight_default_session(&self, existing_task: &Option<Task>) -> bool {
-        existing_task.is_none() && self.default_session.is_none()
+        should_preflight_default_session(existing_task.is_some(), self.default_session.is_some())
     }
 }

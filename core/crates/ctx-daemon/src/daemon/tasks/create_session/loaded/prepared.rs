@@ -1,4 +1,8 @@
 use super::*;
+use ctx_session_service::session_creation::{
+    prepare_loaded_session_request as prepare_loaded_session_request_policy,
+    LoadedSessionRequestError, LoadedSessionRequestInput,
+};
 use model::{resolve_loaded_session_model, LoadedSessionModelRequest, ResolvedLoadedSessionModel};
 
 #[path = "prepared/model.rs"]
@@ -26,16 +30,15 @@ pub(super) async fn prepare_loaded_session_request(
     workspace: &Workspace,
     input: &CreateTaskSessionInput,
 ) -> Result<PreparedLoadedSessionRequest, TaskSessionCreateError> {
-    let run_id_header = input.run_id_header.clone();
     let provider_id = input.provider_id.trim().to_string();
-    if !handles
+    let provider_can_create_loaded_session = handles
         .providers
         .can_create_loaded_session_for_provider(&provider_id)
-        .await
-    {
-        return Err(TaskSessionCreateError::BadRequest);
-    }
-    let session_request = match validate_create_session_request(CreateSessionRequestPolicy {
+        .await;
+    let session_request = match prepare_loaded_session_request_policy(LoadedSessionRequestInput {
+        run_id_header: input.run_id_header.as_deref(),
+        provider_id: input.provider_id.as_str(),
+        provider_can_create_loaded_session,
         requested_session_id: input.id.as_deref(),
         parent_session_id: input.parent_session_id.as_deref(),
         relationship: input.relationship.as_deref(),
@@ -45,32 +48,16 @@ pub(super) async fn prepare_loaded_session_request(
         task_primary_session_id: task.primary_session_id,
     }) {
         Ok(decision) => decision,
-        Err(CreateSessionRequestError::MissingInitialPromptIds) => {
-            handles
-                .sessions
-                .emit_compat_payload_reject_counter(
-                    "tasks.create_session",
-                    "missing_initial_ids",
-                    None,
-                )
-                .await;
-            return Err(TaskSessionCreateError::BadRequest);
-        }
-        Err(CreateSessionRequestError::PrimarySessionConflict) => {
-            return Err(TaskSessionCreateError::Conflict);
-        }
-        Err(
-            CreateSessionRequestError::InvalidSessionId
-            | CreateSessionRequestError::InvalidParentSessionId
-            | CreateSessionRequestError::RelationshipRequiresParent,
-        ) => {
-            return Err(TaskSessionCreateError::BadRequest);
+        Err(error) => {
+            if let Some(issue) = error.compat_issue() {
+                handles
+                    .sessions
+                    .emit_compat_payload_reject_counter("tasks.create_session", issue, None)
+                    .await;
+            }
+            return Err(task_session_create_error_from_loaded_request(error));
         }
     };
-    let session_id = session_request.session_id;
-    let parent_session_id = session_request.parent_session_id;
-    let relationship = session_request.relationship;
-    let requested_relationship = relationship.clone();
 
     let worktree_resolution = resolve_session_worktree_for_task(
         handles,
@@ -103,12 +90,12 @@ pub(super) async fn prepare_loaded_session_request(
     .await?;
 
     Ok(PreparedLoadedSessionRequest {
-        run_id_header,
-        provider_id,
-        session_id,
-        parent_session_id,
-        relationship,
-        requested_relationship,
+        run_id_header: session_request.run_id_header,
+        provider_id: session_request.provider_id,
+        session_id: session_request.session_id,
+        parent_session_id: session_request.parent_session_id,
+        relationship: session_request.relationship,
+        requested_relationship: session_request.requested_relationship,
         worktree_id,
         created_worktree_id,
         execution_environment,
@@ -116,4 +103,92 @@ pub(super) async fn prepare_loaded_session_request(
         reasoning_effort,
         preferred_model_id,
     })
+}
+
+fn task_session_create_error_from_loaded_request(
+    error: LoadedSessionRequestError,
+) -> TaskSessionCreateError {
+    match error {
+        LoadedSessionRequestError::PrimarySessionConflict => TaskSessionCreateError::Conflict,
+        LoadedSessionRequestError::ProviderUnavailable
+        | LoadedSessionRequestError::InvalidSessionId
+        | LoadedSessionRequestError::InvalidParentSessionId
+        | LoadedSessionRequestError::RelationshipRequiresParent
+        | LoadedSessionRequestError::MissingInitialPromptIds => TaskSessionCreateError::BadRequest,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::TestDaemon;
+    use ctx_core::ids::MessageId;
+    use ctx_core::models::VcsKind;
+    use ctx_providers::adapters::ProviderAdapter;
+    use ctx_providers::fake::FakeProviderAdapter;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn missing_initial_ids_emits_create_session_compat_counter() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let workspace_root = temp.path().join("workspace");
+        std::fs::create_dir_all(&workspace_root).expect("workspace root");
+        let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
+        providers.insert("fake".to_string(), Arc::new(FakeProviderAdapter::new()));
+        let daemon = TestDaemon::new_with_providers_for_test(
+            temp.path().join("data"),
+            providers,
+            "http://localhost".to_string(),
+            None,
+        )
+        .await
+        .expect("daemon");
+        let workspace = daemon
+            .seed_workspace_for_test("workspace", &workspace_root, VcsKind::Git)
+            .await
+            .expect("workspace");
+        let task = daemon
+            .seed_task_default_session_task_for_test(workspace.id, "task")
+            .await
+            .expect("task");
+
+        let error = daemon
+            .handle()
+            .tasks()
+            .create_session_for_task(
+                task.id,
+                CreateTaskSessionInput {
+                    id: None,
+                    provider_id: "fake".to_string(),
+                    model_id: "fake-model".to_string(),
+                    reasoning_effort: None,
+                    remember_model_preference: false,
+                    parent_session_id: None,
+                    relationship: None,
+                    initial_prompt: Some("hello".to_string()),
+                    initial_message_id: Some(MessageId::new().0.to_string()),
+                    initial_turn_id: None,
+                    worktree_id: None,
+                    execution_environment: None,
+                    run_id_header: None,
+                },
+            )
+            .await
+            .expect_err("missing turn id should be rejected");
+
+        assert!(matches!(error, TaskSessionCreateError::BadRequest));
+        let summary = daemon.handle().telemetry().perf_telemetry().summary(
+            Some("compat.payload_reject_count"),
+            None,
+            None,
+            None,
+        );
+        assert!(summary.metrics.iter().any(|metric| {
+            metric.labels.get("source").map(String::as_str) == Some("daemon")
+                && metric.labels.get("surface").map(String::as_str) == Some("tasks.create_session")
+                && metric.labels.get("issue").map(String::as_str) == Some("missing_initial_ids")
+                && metric.sum >= 1.0
+        }));
+    }
 }

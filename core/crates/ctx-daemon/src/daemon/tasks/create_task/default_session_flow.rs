@@ -1,4 +1,7 @@
 use super::*;
+use ctx_session_service::session_creation::{
+    default_session_id_for_existing_primary, DefaultSessionSeed,
+};
 
 #[path = "default_session_flow/effects.rs"]
 mod effects;
@@ -16,15 +19,10 @@ pub(super) async fn ensure_default_session_for_task(
 ) -> Result<Task, TaskCreateError> {
     if let Some(primary_session_id) = task.primary_session_id {
         if let Some(mut default_session_input) = requested_default_session {
-            if default_session_input
-                .id
-                .as_deref()
-                .map(str::trim)
-                .unwrap_or_default()
-                .is_empty()
-            {
-                default_session_input.id = Some(primary_session_id.0.to_string());
-            }
+            default_session_input.id = Some(default_session_id_for_existing_primary(
+                default_session_input.id.as_deref(),
+                primary_session_id,
+            ));
             handles
                 .tasks
                 .create_session_for_loaded_task(
@@ -76,7 +74,7 @@ pub(super) async fn ensure_default_session_for_task(
                 task.clone(),
                 workspace.clone(),
                 crate::daemon::tasks::CreateTaskSessionInput::from_default_seed(
-                    crate::daemon::tasks::DefaultSessionSeed {
+                    DefaultSessionSeed {
                         provider_id,
                         model_id,
                         reasoning_effort,

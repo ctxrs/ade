@@ -1,4 +1,5 @@
 use super::*;
+use ctx_session_service::session_creation::compose_loaded_session_preferred_model_id;
 
 pub(super) struct ResolvedLoadedSessionModel {
     pub(super) model_id: String,
@@ -68,7 +69,8 @@ pub(super) async fn resolve_loaded_session_model(
     };
     let model_id = resolved_model.model_id.clone();
     let reasoning_effort = resolved_model.reasoning_effort.clone();
-    let preferred_model_id = compose_model_id(&model_id, reasoning_effort.as_deref());
+    let preferred_model_id =
+        compose_loaded_session_preferred_model_id(&model_id, reasoning_effort.as_deref());
 
     Ok(ResolvedLoadedSessionModel {
         model_id,
