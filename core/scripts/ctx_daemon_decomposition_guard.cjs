@@ -14,6 +14,16 @@ const COLLAPSED_PATHS = [
   "core/crates/ctx-daemon/src/daemon/workspaces/stream/subscriptions.rs",
   "core/crates/ctx-daemon/src/daemon/workspaces/run_archive.rs",
   "core/crates/ctx-session-service/src/head_projection.rs",
+  "core/crates/ctx-workspace-services/src/workspace_attachments.rs",
+  "core/crates/ctx-workspace-services/src/workspace_attachments/doc_mirror.rs",
+  "core/crates/ctx-workspace-services/src/workspace_attachments/materialized_install.rs",
+  "core/crates/ctx-workspace-services/src/workspace_attachments/materialized_paths.rs",
+  "core/crates/ctx-workspace-services/src/workspace_attachments/reference_repo.rs",
+  "core/crates/ctx-workspace-services/src/workspace_attachments/tests.rs",
+];
+
+const COLLAPSED_DIRECTORIES = [
+  "core/crates/ctx-workspace-services/src/workspace_attachments",
 ];
 
 const RATCHETED_FILE_LIMITS = [
@@ -170,6 +180,7 @@ const WORKTREE_BOOTSTRAP_SERVICE_FORBIDDEN_DEPS = new Set([
   "ctx-workspace-runtime",
   "axum",
 ]);
+const WORKSPACE_ATTACHMENTS_FORBIDDEN_DEPS = new Set(["ctx-workspace-services"]);
 const TRANSPORT_RUNTIME_FORBIDDEN_DEPS = new Set(["ctx-store"]);
 const ROUTE_CONTRACTS_ALLOWED_CTX_DEPS = new Set(["ctx-core"]);
 const HEAD_PROJECTION_ROOT = "core/crates/ctx-session-runtime/src/head_projection";
@@ -409,14 +420,22 @@ const HEAD_PROJECTION_FORBIDDEN_IMPORT_PATTERNS = [
   },
 ];
 
-const checkCollapsedPaths = (rootDir) =>
-  COLLAPSED_PATHS
+const checkCollapsedPaths = (rootDir) => [
+  ...COLLAPSED_PATHS
     .filter((relativePath) => fs.existsSync(path.join(rootDir, relativePath)))
     .map((relativePath) => ({
       kind: "collapsed_path",
       path: relativePath,
       message: `${relativePath} must not be reintroduced; keep the decomposed directory/module layout.`,
-    }));
+    })),
+  ...COLLAPSED_DIRECTORIES
+    .filter((relativePath) => fs.existsSync(path.join(rootDir, relativePath)))
+    .map((relativePath) => ({
+      kind: "collapsed_path",
+      path: relativePath,
+      message: `${relativePath} must not be reintroduced; keep retired module directories removed.`,
+    })),
+];
 
 const checkRatchetedFileCaps = (rootDir) => {
   const violations = [];
@@ -445,6 +464,7 @@ const checkCargoDependencyDirection = (rootDir) => {
     const dependencies = parseCargoDependencies(raw, {
       includeDev:
         crateName === "ctx-session-vcs-service"
+        || crateName === "ctx-workspace-attachments"
         || crateName === "ctx-worktree-vcs-service"
         || crateName === "ctx-worktree-bootstrap-service",
     });
@@ -515,6 +535,14 @@ const checkCargoDependencyDirection = (rootDir) => {
           line: dependency.line,
           path: manifestRelativePath,
           message: `ctx-worktree-bootstrap-service must not depend on ${dependency.name}; bootstrap command/log policy must stay below daemon runtime wiring, route contracts, workspace config/store, container runtimes, HTTP, and Axum.`,
+        });
+      }
+      if (crateName === "ctx-workspace-attachments" && WORKSPACE_ATTACHMENTS_FORBIDDEN_DEPS.has(dependency.name)) {
+        violations.push({
+          kind: "cargo_dependency",
+          line: dependency.line,
+          path: manifestRelativePath,
+          message: "ctx-workspace-attachments must not depend on ctx-workspace-services; attachment policy and mount behavior must stay in the attachment crate.",
         });
       }
       if (dependencyIsProd && crateName === "ctx-transport-runtime" && TRANSPORT_RUNTIME_FORBIDDEN_DEPS.has(dependency.name)) {
@@ -604,6 +632,7 @@ if (require.main === module) {
 
 module.exports = {
   COLLAPSED_PATHS,
+  COLLAPSED_DIRECTORIES,
   HEAD_PROJECTION_FORBIDDEN_IMPORT_PATTERNS,
   MESSAGE_SERVICE_FORBIDDEN_DEPS,
   PACKAGE_SHAPE_BOUNDARY_CRATES,
@@ -614,6 +643,7 @@ module.exports = {
   SESSION_RUNTIME_FORBIDDEN_DEPS,
   SESSION_VCS_SERVICE_FORBIDDEN_DEPS,
   TITLE_SERVICE_FORBIDDEN_DEPS,
+  WORKSPACE_ATTACHMENTS_FORBIDDEN_DEPS,
   WORKTREE_BOOTSTRAP_SERVICE_FORBIDDEN_DEPS,
   WORKTREE_VCS_SERVICE_FORBIDDEN_DEPS,
   checkCargoDependencyDirection,

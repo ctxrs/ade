@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::{Workspace, WorkspaceAttachment, WorkspaceAttachmentKind};
-use ctx_workspace_services::workspace_attachments;
+use ctx_workspace_attachments as workspace_attachments;
 
 use crate::daemon::DaemonState;
 

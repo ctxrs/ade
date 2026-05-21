@@ -2062,10 +2062,11 @@ dependencies = [
  "ctx-sandbox-contract",
  "ctx-store",
  "ctx-workspace-container",
- "ctx-workspace-services",
  "ctx-worktree-data-plane",
+ "serde",
  "tempfile",
  "tokio",
+ "toml",
  "tracing",
 ]
 
@@ -2134,14 +2135,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "chrono",
  "ctx-core",
  "ctx-fs",
  "directories",
- "serde",
  "tempfile",
  "tokio",
- "toml",
  "uuid",
 ]
 

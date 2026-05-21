@@ -65,7 +65,7 @@ async fn run_attachment_materialization(
     attachment_id: WorkspaceAttachmentId,
     refresh: bool,
 ) {
-    if let Err(err) = ctx_workspace_services::workspace_attachments::run_attachment_materialization(
+    if let Err(err) = ctx_workspace_attachments::run_attachment_materialization(
         state.as_ref(),
         &workspace,
         attachment_id,

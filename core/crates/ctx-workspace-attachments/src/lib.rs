@@ -9,14 +9,21 @@ use ctx_worktree_data_plane::WorktreeDataPlane;
 
 mod container_mounts;
 mod mount_files;
+mod workspace_attachments;
 
-pub use ctx_workspace_services::workspace_attachments::AttachmentConfig;
 pub use mount_files::{
     ensure_mount_in_worktree, materialized_path_for_attachment, remove_mount_path_in_worktree,
     revision_key, sanitize_mount_relpath, validate_mount_path_in_worktree,
 };
 
 pub use container_mounts::{cleanup_removed_attachment, ensure_attachment_mount};
+pub use workspace_attachments::{
+    delete_workspace_attachment, find_workspace_attachment, materialize_attachment,
+    materialized_root_for_attachment, remove_materialized_root_if_exists,
+    run_attachment_materialization, sanitize_attachment_subpath, sync_workspace_attachments,
+    upsert_workspace_attachment, validate_materialized_path, AttachmentConfig, AttachmentSyncPlan,
+    MaterializationResult, WorkspaceAttachmentSyncResult, WorkspaceAttachmentsHost,
+};
 
 #[async_trait::async_trait]
 pub trait WorkspaceAttachmentMountHost: Send + Sync {
@@ -36,18 +43,6 @@ pub trait WorkspaceAttachmentMountHost: Send + Sync {
         worktree: &Worktree,
         settings: &ExecutionSettings,
     ) -> Result<()>;
-}
-
-pub async fn materialize_attachment(
-    data_root: &Path,
-    workspace: &Workspace,
-    attachment: &WorkspaceAttachment,
-    refresh: bool,
-) -> Result<ctx_workspace_services::workspace_attachments::MaterializationResult> {
-    ctx_workspace_services::workspace_attachments::materialize_attachment(
-        data_root, workspace, attachment, refresh,
-    )
-    .await
 }
 
 pub async fn ensure_git_exclude<H>(
@@ -145,5 +140,124 @@ async fn resolve_common_git_dir(git_dir: &Path) -> Result<PathBuf> {
         Ok(path)
     } else {
         Ok(git_dir.join(path))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use chrono::Utc;
+    use ctx_core::ids::{WorkspaceId, WorktreeId};
+    use ctx_execution_runtime::{ExecutionMode, ExecutionSettings};
+    use ctx_store::Store;
+    use ctx_worktree_data_plane::WorktreeDataPlane;
+
+    struct HostModeGitExcludeHost {
+        data_root: PathBuf,
+        workspace: Workspace,
+        worktree: Worktree,
+    }
+
+    #[async_trait::async_trait]
+    impl WorkspaceAttachmentMountHost for HostModeGitExcludeHost {
+        fn data_root(&self) -> &Path {
+            &self.data_root
+        }
+
+        fn daemon_url(&self) -> &str {
+            "http://127.0.0.1:0"
+        }
+
+        async fn get_worktree(&self, worktree_id: WorktreeId) -> Result<Option<Worktree>> {
+            Ok((self.worktree.id == worktree_id).then(|| self.worktree.clone()))
+        }
+
+        async fn workspace_store(&self, _workspace_id: WorkspaceId) -> Result<Store> {
+            anyhow::bail!("host-mode git exclude test must not request a store")
+        }
+
+        async fn resolve_worktree_data_plane(
+            &self,
+            _worktree: &Worktree,
+        ) -> Result<WorktreeDataPlane> {
+            Ok(WorktreeDataPlane {
+                binding: None,
+                workspace: self.workspace.clone(),
+                execution_mode: ExecutionMode::Host,
+                live_workspace_root: PathBuf::from(&self.workspace.root_path),
+                live_worktree_root: PathBuf::from(&self.worktree.root_path),
+            })
+        }
+
+        async fn effective_execution_settings(
+            &self,
+            _workspace_id: WorkspaceId,
+        ) -> Result<ExecutionSettings> {
+            Ok(ExecutionSettings::default())
+        }
+
+        async fn ensure_workspace_container_for_worktree(
+            &self,
+            _workspace: &Workspace,
+            _worktree: &Worktree,
+            _settings: &ExecutionSettings,
+        ) -> Result<()> {
+            anyhow::bail!("host-mode git exclude test must not prepare a container")
+        }
+    }
+
+    #[tokio::test]
+    async fn ensure_git_exclude_writes_attachment_roots_for_host_worktree() {
+        let data_root = tempfile::tempdir().unwrap();
+        let workspace_root = tempfile::tempdir().unwrap();
+        let worktree_root = workspace_root.path().join("worktree");
+        tokio::fs::create_dir_all(worktree_root.join(".git"))
+            .await
+            .unwrap();
+
+        let workspace = Workspace {
+            id: WorkspaceId::new(),
+            name: "workspace".to_string(),
+            root_path: workspace_root.path().to_string_lossy().to_string(),
+            created_at: Utc::now(),
+            vcs_kind: None,
+        };
+        let worktree = Worktree {
+            id: WorktreeId::new(),
+            workspace_id: workspace.id,
+            root_path: worktree_root.to_string_lossy().to_string(),
+            base_commit_sha: "base".to_string(),
+            git_branch: Some("main".to_string()),
+            vcs_kind: None,
+            base_revision: None,
+            vcs_ref: None,
+            created_at: Utc::now(),
+            bootstrap_status: None,
+            bootstrap_started_at: None,
+            bootstrap_finished_at: None,
+            bootstrap_exit_code: None,
+            bootstrap_timeout_sec: None,
+            bootstrap_error: None,
+            bootstrap_log_path: None,
+            bootstrap_log_truncated: None,
+            bootstrap_command: None,
+            bootstrap_script_path: None,
+        };
+        let host = HostModeGitExcludeHost {
+            data_root: data_root.path().to_path_buf(),
+            workspace: workspace.clone(),
+            worktree: worktree.clone(),
+        };
+
+        ensure_git_exclude(&host, &workspace, worktree.id, &worktree_root)
+            .await
+            .unwrap();
+
+        let exclude = tokio::fs::read_to_string(worktree_root.join(".git/info/exclude"))
+            .await
+            .unwrap();
+        assert!(exclude.contains(".ctx/attachments/refs/"));
+        assert!(exclude.contains(".ctx/attachments/docs/"));
     }
 }

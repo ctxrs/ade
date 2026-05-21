@@ -1,11 +1,11 @@
 use super::*;
+use crate::workspace_attachments::{self, MaterializationResult};
 use chrono::Utc;
 use ctx_core::models::{AttachmentMode, AttachmentUpdatePolicy, WorktreeAttachmentStatus};
 use ctx_execution_runtime::{ContainerRuntimeKind, ExecutionMode};
 use ctx_harness_runtime::sandbox_container_command;
 use ctx_sandbox_contract::CTX_CONTAINER_WORKSPACE_ROOT;
 use ctx_workspace_container::workspace_container_name;
-use ctx_workspace_services::workspace_attachments::{self, MaterializationResult};
 use ctx_worktree_data_plane::apply_data_plane_to_execution_settings;
 
 const CONTAINER_ATTACHMENTS_SUBDIR: &str = "attachments";

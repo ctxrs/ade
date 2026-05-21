@@ -6,6 +6,7 @@ const test = require("node:test");
 
 const {
   COLLAPSED_PATHS,
+  COLLAPSED_DIRECTORIES,
   MESSAGE_SERVICE_FORBIDDEN_DEPS,
   RATCHETED_FILE_LIMITS,
   PACKAGE_SHAPE_BOUNDARY_CRATES,
@@ -13,6 +14,7 @@ const {
   SESSION_RUNTIME_FORBIDDEN_DEPS,
   SESSION_VCS_SERVICE_FORBIDDEN_DEPS,
   TITLE_SERVICE_FORBIDDEN_DEPS,
+  WORKSPACE_ATTACHMENTS_FORBIDDEN_DEPS,
   WORKTREE_BOOTSTRAP_SERVICE_FORBIDDEN_DEPS,
   WORKTREE_VCS_SERVICE_FORBIDDEN_DEPS,
   checkCargoDependencyDirection,
@@ -55,6 +57,32 @@ test("collapsed god-file paths are rejected when recreated", () => {
 
   assert.equal(violations.length, 1);
   assert.equal(violations[0].path, COLLAPSED_PATHS[0]);
+  assert.equal(violations[0].kind, "collapsed_path");
+});
+
+test("retired workspace-services attachment paths are rejected when recreated", () => {
+  const rootDir = makeRoot();
+  const retired = "core/crates/ctx-workspace-services/src/workspace_attachments.rs";
+  assert.equal(COLLAPSED_PATHS.includes(retired), true);
+  writeFile(rootDir, retired, "// retired attachment policy\n");
+
+  const violations = checkCollapsedPaths(rootDir);
+
+  assert.equal(violations.length, 1);
+  assert.equal(violations[0].path, retired);
+  assert.equal(violations[0].kind, "collapsed_path");
+});
+
+test("retired workspace-services attachment directory is rejected when recreated", () => {
+  const rootDir = makeRoot();
+  const retiredDir = "core/crates/ctx-workspace-services/src/workspace_attachments";
+  assert.equal(COLLAPSED_DIRECTORIES.includes(retiredDir), true);
+  writeFile(rootDir, `${retiredDir}/new_file.rs`, "// retired attachment policy\n");
+
+  const violations = checkCollapsedPaths(rootDir);
+
+  assert.equal(violations.length, 1);
+  assert.equal(violations[0].path, retiredDir);
   assert.equal(violations[0].kind, "collapsed_path");
 });
 
@@ -370,6 +398,27 @@ test("worktree bootstrap service boundary rejects daemon runtime, route, config,
   );
   assert.equal(
     messages.some((message) => message.includes("ctx-worktree-bootstrap-service must not depend on ctx-execution-runtime")),
+    true,
+  );
+});
+
+test("workspace attachments boundary rejects broad workspace-services backedge", () => {
+  assert.equal(WORKSPACE_ATTACHMENTS_FORBIDDEN_DEPS.has("ctx-workspace-services"), true);
+
+  const rootDir = makeRoot();
+  writeFile(rootDir, "core/crates/ctx-workspace-attachments/Cargo.toml", `
+    [package]
+    name = "ctx-workspace-attachments"
+
+    [dependencies]
+    ctx-core = { path = "../ctx-core" }
+    ctx-workspace-services = { path = "../ctx-workspace-services" }
+  `);
+
+  const messages = checkCargoDependencyDirection(rootDir).map((entry) => entry.message);
+
+  assert.equal(
+    messages.some((message) => message.includes("ctx-workspace-attachments must not depend on ctx-workspace-services")),
     true,
   );
 });

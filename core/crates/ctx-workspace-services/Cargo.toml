@@ -6,12 +6,9 @@ edition.workspace = true
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
-chrono.workspace = true
 ctx-core = { path = "../ctx-core" }
 ctx-fs = { path = "../ctx-fs" }
 directories.workspace = true
-serde.workspace = true
 tempfile = "3"
 tokio.workspace = true
-toml = "0.8"
 uuid.workspace = true

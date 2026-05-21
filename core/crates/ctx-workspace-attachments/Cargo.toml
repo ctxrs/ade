@@ -14,10 +14,9 @@ ctx-harness-runtime = { path = "../ctx-harness-runtime" }
 ctx-sandbox-contract = { path = "../ctx-sandbox-contract" }
 ctx-store = { path = "../ctx-store" }
 ctx-workspace-container = { path = "../ctx-workspace-container" }
-ctx-workspace-services = { path = "../ctx-workspace-services" }
 ctx-worktree-data-plane = { path = "../ctx-worktree-data-plane" }
-tokio.workspace = true
-tracing.workspace = true
-
-[dev-dependencies]
+serde.workspace = true
 tempfile = "3"
+tokio.workspace = true
+toml = "0.8"
+tracing.workspace = true

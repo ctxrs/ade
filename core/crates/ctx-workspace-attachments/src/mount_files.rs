@@ -2,9 +2,9 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::workspace_attachments;
 use anyhow::{Context, Result};
 use ctx_core::models::{AttachmentMode, WorkspaceAttachment};
-use ctx_workspace_services::workspace_attachments;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum SymlinkCopyMode {

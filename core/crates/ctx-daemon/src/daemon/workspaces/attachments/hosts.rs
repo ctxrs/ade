@@ -2,7 +2,7 @@ use anyhow::Result;
 use chrono::Utc;
 use ctx_core::ids::{WorkspaceAttachmentId, WorkspaceId};
 use ctx_core::models::{Workspace, WorkspaceAttachment, WorkspaceAttachmentStatus, Worktree};
-use ctx_workspace_services::workspace_attachments;
+use ctx_workspace_attachments as workspace_attachments;
 use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
 
 use super::ensure_workspace_attachments_for_worktrees_with_attachments;

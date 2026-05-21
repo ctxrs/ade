@@ -3667,7 +3667,7 @@ impl TestDaemon {
         configs: impl IntoIterator<Item = ctx_workspace_attachments::AttachmentConfig>,
     ) -> anyhow::Result<Vec<WorktreeAttachmentMount>> {
         for config in configs {
-            ctx_workspace_services::workspace_attachments::upsert_workspace_attachment(
+            ctx_workspace_attachments::upsert_workspace_attachment(
                 self.state.as_ref(),
                 workspace.id,
                 config,
@@ -3675,14 +3675,14 @@ impl TestDaemon {
             .await?;
         }
 
-        let sync = ctx_workspace_services::workspace_attachments::sync_workspace_attachments(
+        let sync = ctx_workspace_attachments::sync_workspace_attachments(
             self.state.as_ref(),
             workspace,
             false,
         )
         .await?;
         for plan in sync.plans {
-            ctx_workspace_services::workspace_attachments::run_attachment_materialization(
+            ctx_workspace_attachments::run_attachment_materialization(
                 self.state.as_ref(),
                 workspace,
                 plan.id,
