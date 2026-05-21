@@ -2957,7 +2957,7 @@ describe("SessionReplicaCore", () => {
     }
     expect(latest.data.messages.some((message) => message.id === "message-2")).toBe(true);
     expect(latest.data.turns.some((turn) => turn.turn_id === "turn-2")).toBe(true);
-    expect(latest.data.lastEventSeq).toBeUndefined();
+    expect(latest.data.lastEventSeq).toBe(10);
     expect(latest.data.projectionRev).toBeUndefined();
   });
 

@@ -121,12 +121,6 @@ const TURN_LIFECYCLE_EVENT_TYPES = new Set([
   "turn_interrupted",
 ]);
 
-const TURN_CREATION_VISIBLE_EVENT_TYPES = new Set([
-  "turn_queued",
-  "turn_started",
-  "user_message",
-]);
-
 const findReplicaTurn = (
   turns: readonly SessionTurn[],
   turnId: string,
@@ -245,11 +239,6 @@ const staleEventHasVisibleForwardProgress = (
     if (messageId && !hasReplicaMessage(entry.messages, messageId)) return true;
   }
 
-  if (TURN_CREATION_VISIBLE_EVENT_TYPES.has(eventType)) {
-    const eventTurnId = normalizeReplicaId(event.turn_id ?? "");
-    if (eventTurnId && !findReplicaTurn(entry.turns, eventTurnId)) return true;
-  }
-
   return false;
 };
 
@@ -265,8 +254,10 @@ const staleDeltaHasVisibleForwardProgress = (
   const deltaTurnId = normalizeReplicaId(delta.turn?.turn_id ?? "");
   if (delta.turn && deltaTurnId) {
     const existingTurn = findReplicaTurn(entry.turns, deltaTurnId);
-    if (!existingTurn) return true;
-    if (isTerminalTurnStatus(delta.turn.status) && !isTerminalTurnStatus(existingTurn.status)) {
+    if (
+      (!existingTurn || !isTerminalTurnStatus(existingTurn.status)) &&
+      isTerminalTurnStatus(delta.turn.status)
+    ) {
       return true;
     }
   }
