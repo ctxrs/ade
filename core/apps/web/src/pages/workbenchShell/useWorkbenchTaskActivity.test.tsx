@@ -1353,7 +1353,7 @@ describe("useWorkbenchTaskActivity", () => {
       primarySessionId: "session-1",
       sessions: [
         makeSessionSummary(activeSession, {
-          activity: { is_working: true, last_turn_status: "running" },
+          activity: { is_working: false, last_turn_status: "completed" },
         }),
       ],
     });
@@ -1415,10 +1415,61 @@ describe("useWorkbenchTaskActivity", () => {
       expect(workspaceSnapshotStore.setSubscribedSessions).toHaveBeenCalledWith([
         { sessionId: "session-1", intent: "replay", replay: { kind: "resume", afterSeq: 3 } },
       ]);
-      expect(idleDetails.at(-1)).toEqual({ allTasksIdle: false });
+      expect(idleDetails.at(-1)).toEqual({ allTasksIdle: true });
     } finally {
       window.removeEventListener(WORKBENCH_TASK_IDLE_EVENT, onIdle as EventListener);
     }
+  });
+
+  it("suppresses warm-session ownership while the foreground task is working", async () => {
+    const activeSession = makeSession("session-1", "task-1", "active");
+    const warmSession = makeSession("session-2", "task-2", "completed", "claude-crp");
+    const taskSummary = makeTaskSummary({
+      taskId: "task-1",
+      primarySessionId: "session-1",
+      sessions: [
+        makeSessionSummary(activeSession, {
+          activity: { is_working: true, last_turn_status: "running" },
+        }),
+      ],
+    });
+    const warmTaskSummary = makeTaskSummary({
+      taskId: "task-2",
+      primarySessionId: "session-2",
+      sessions: [makeSessionSummary(warmSession)],
+    });
+    const tasksById = { "task-1": taskSummary, "task-2": warmTaskSummary };
+    const workspaceSnapshot = makeWorkspaceSnapshot(tasksById, ["task-1", "task-2"]);
+    const supervisor = makeSupervisor();
+    const workspaceSnapshotStore = makeWorkspaceSnapshotStore(workspaceSnapshot);
+    const workbenchStore = makeWorkbenchStore("task-1");
+
+    renderHarness({
+      activeTaskId: "task-1",
+      activeSessionIdFromTab: null,
+      activeTaskSummary: taskSummary,
+      tasksById,
+      workspaceSnapshot,
+      sessionSnap: makeSessionSnapshot({
+        "session-1": makeSessionEntry({
+          session: activeSession,
+          activity: { is_working: true, last_turn_status: "running" },
+        }),
+        "session-2": makeSessionEntry({ session: warmSession }),
+      }),
+      optimisticTasks: [] satisfies OptimisticTaskSummary[],
+      optimisticTasksById: {},
+      supervisor,
+      workbenchStore,
+      workspaceSnapshotStore,
+      markTaskRead: vi.fn(async () => {}),
+    });
+
+    await waitFor(() => {
+      expect(supervisor.setActiveTaskSessionIds).toHaveBeenCalledWith(["session-1"]);
+    });
+
+    expect(supervisor.setWarmSessionIds).toHaveBeenCalledWith([]);
   });
 
   it("hydrates retained foreground heads before the workspace snapshot gains the session summary", async () => {

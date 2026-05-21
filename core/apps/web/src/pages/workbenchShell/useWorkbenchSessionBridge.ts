@@ -541,8 +541,8 @@ export function useWorkbenchSessionBridge({
   ]);
 
   useEffect(() => {
-    supervisor.setWarmSessionIds(warmSessionIds);
-  }, [supervisor, warmSessionIds]);
+    supervisor.setWarmSessionIds(prefetchWarmSessionIds);
+  }, [prefetchWarmSessionIds, supervisor]);
 
   useEffect(() => {
     if (!workspaceSnapshot.initialized || foregroundSessionIds.length === 0) return;
