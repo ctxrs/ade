@@ -2856,6 +2856,111 @@ describe("SessionReplicaCore", () => {
     expect(patches).toHaveLength(patchCount);
   });
 
+  it("applies stale user message events when they introduce a visible turn", () => {
+    const sessionId = "session-stale-user-message-forward-progress";
+    const patches: SessionReplicaPatch[] = [];
+    const core = new SessionReplicaCore({
+      api: { getSessionHead: vi.fn() },
+      emit: (next) => patches.push(...next),
+    });
+    const createdAt = new Date().toISOString();
+
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 100, headLimit: 50 } });
+    core.handleCommand({
+      type: "seed_head",
+      sessionId,
+      head: {
+        session: mkSession(sessionId),
+        turns: [
+          {
+            turn_id: "turn-1",
+            session_id: sessionId,
+            run_id: "run-1",
+            user_message_id: "message-1",
+            status: "completed",
+            start_seq: 1,
+            end_seq: 2,
+            started_at: createdAt,
+            updated_at: createdAt,
+            assistant_partial: null,
+            thought_partial: "",
+            metrics_json: null,
+            tool_total: 0,
+            tool_pending: 0,
+            tool_running: 0,
+            tool_completed: 0,
+            tool_failed: 0,
+          },
+        ],
+        events: [],
+        messages: [
+          {
+            id: "message-1",
+            session_id: sessionId,
+            task_id: "task-1",
+            turn_id: "turn-1",
+            role: "user",
+            content: "old",
+            delivery: "immediate",
+            created_at: createdAt,
+          },
+        ],
+        last_event_seq: 10,
+        state_rev: 10,
+        activity: { is_working: true, last_turn_status: "running" },
+        has_more_turns: false,
+        has_more_history: false,
+        history_cursor: null,
+      },
+      mode: "bootstrap_seed",
+    });
+    patches.length = 0;
+
+    core.handleCommand({
+      type: "workspace_event",
+      event: {
+        type: "session_head_delta",
+        workspace_id: "ws-1",
+        snapshot_rev: 11,
+        delta: {
+          session_id: sessionId,
+          last_event_seq: 8,
+          projection_rev: 8,
+          state_rev: 8,
+          event: {
+            seq: 8,
+            id: "event-stale-user-message",
+            session_id: sessionId,
+            run_id: "run-2",
+            turn_id: "turn-2",
+            event_type: "user_message",
+            payload_json: {
+              message_id: "message-2",
+              content: "stale visible user prompt",
+              delivery: "immediate",
+            },
+            created_at: createdAt,
+          },
+        },
+      },
+    });
+
+    const latest = [...patches].reverse().find(
+      (patch) =>
+        patch.sessionId === sessionId &&
+        patch.op === "append" &&
+        Array.isArray(patch.data.messages) &&
+        Array.isArray(patch.data.turns),
+    );
+    if (!latest || latest.op === "evict" || !latest.data.messages || !latest.data.turns) {
+      throw new Error("expected stale user message to emit visible transcript data");
+    }
+    expect(latest.data.messages.some((message) => message.id === "message-2")).toBe(true);
+    expect(latest.data.turns.some((turn) => turn.turn_id === "turn-2")).toBe(true);
+    expect(latest.data.lastEventSeq).toBeUndefined();
+    expect(latest.data.projectionRev).toBeUndefined();
+  });
+
   it("keeps stream-only assistant chunks out of durable event buffer eviction", () => {
     const sessionId = "session-assistant-stream-buffer-rollover";
     const patches: SessionReplicaPatch[] = [];

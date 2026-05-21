@@ -121,6 +121,12 @@ const TURN_LIFECYCLE_EVENT_TYPES = new Set([
   "turn_interrupted",
 ]);
 
+const TURN_CREATION_VISIBLE_EVENT_TYPES = new Set([
+  "turn_queued",
+  "turn_started",
+  "user_message",
+]);
+
 const findReplicaTurn = (
   turns: readonly SessionTurn[],
   turnId: string,
@@ -223,6 +229,30 @@ const staleStreamOnlyAssistantChunkHasVisibleForwardProgress = (
   return true;
 };
 
+const staleEventHasVisibleForwardProgress = (
+  entry: SessionReplicaEntry,
+  event: SessionEvent | null,
+): boolean => {
+  if (!event) return false;
+  const eventType = String(event.event_type ?? "");
+  const eventSeq = typeof event.seq === "number" ? event.seq : null;
+  if (hasReplicaEventSeq(entry.events, eventSeq)) return false;
+
+  if (eventType === "user_message") {
+    const messageId = normalizeReplicaId(
+      readEventPayloadString(event.payload_json, ["message_id", "messageId"]),
+    );
+    if (messageId && !hasReplicaMessage(entry.messages, messageId)) return true;
+  }
+
+  if (TURN_CREATION_VISIBLE_EVENT_TYPES.has(eventType)) {
+    const eventTurnId = normalizeReplicaId(event.turn_id ?? "");
+    if (eventTurnId && !findReplicaTurn(entry.turns, eventTurnId)) return true;
+  }
+
+  return false;
+};
+
 const staleDeltaHasVisibleForwardProgress = (
   entry: SessionReplicaEntry,
   delta: SessionHeadDelta,
@@ -233,11 +263,15 @@ const staleDeltaHasVisibleForwardProgress = (
   if (messageId && !hasReplicaMessage(entry.messages, messageId)) return true;
 
   const deltaTurnId = normalizeReplicaId(delta.turn?.turn_id ?? "");
-  if (delta.turn && deltaTurnId && isTerminalTurnStatus(delta.turn.status)) {
+  if (delta.turn && deltaTurnId) {
     const existingTurn = findReplicaTurn(entry.turns, deltaTurnId);
-    if (!existingTurn || !isTerminalTurnStatus(existingTurn.status)) return true;
+    if (!existingTurn) return true;
+    if (isTerminalTurnStatus(delta.turn.status) && !isTerminalTurnStatus(existingTurn.status)) {
+      return true;
+    }
   }
 
+  if (staleEventHasVisibleForwardProgress(entry, event)) return true;
   if (staleStreamOnlyAssistantChunkHasVisibleForwardProgress(entry, event)) return true;
 
   const eventType = String(event?.event_type ?? "");
