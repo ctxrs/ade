@@ -18,6 +18,7 @@ import { HEAD_LIMIT, WARM_SESSION_BUDGET } from "../../state/sessionSupervisor/c
 import { loadSessionHeadV1 } from "../../state/uiStateStore";
 import {
   isSessionHeadCompatibleWithSummary,
+  isSessionSummaryWorking,
   shouldReplaceSessionHead,
 } from "../../state/workspaceActiveSnapshot/summaryHelpers";
 import {
@@ -52,6 +53,7 @@ export type SessionHeadPrefetchReason =
 type AuthoritativePrefetchOutcome =
   | "skip_current"
   | "skip_bootstrap_current"
+  | "skip_working"
   | "wait_in_flight"
   | "fetch_started"
   | "fetch_success"
@@ -240,7 +242,19 @@ export const buildWorkspaceSyncPrefetchVersionKey = (
     .join("\u001f");
 };
 
-export const noteWorkspaceSyncPrefetchSuppressed = (reason: "unchanged_session_versions"): void => {
+export const collectAuthoritativePrefetchReadySessionIds = (
+  snapshot: WorkspaceActiveSnapshotState,
+  sessionIds: readonly string[],
+): string[] => {
+  return uniqueSessionIds(sessionIds).filter((sessionId) => {
+    const summary = findSessionSummary(snapshot, sessionId);
+    return !isSessionSummaryWorking(summary);
+  });
+};
+
+export const noteWorkspaceSyncPrefetchSuppressed = (
+  reason: "unchanged_session_versions" | "working_sessions",
+): void => {
   recordClientCounterMetric("workbench.workspace_sync_prefetch_suppressed_count", {
     reason,
   });
@@ -370,6 +384,10 @@ export const primeAuthoritativeSessionHeads = async (
         if (opts?.shouldContinue && !opts.shouldContinue()) return;
         if (opts?.shouldRetainSessionId && !opts.shouldRetainSessionId(sessionId)) return;
         const summary = findSessionSummary(snapshot, sessionId);
+        if (!opts?.force && isSessionSummaryWorking(summary)) {
+          noteAuthoritativePrefetchOutcome(reason, "skip_working", forced);
+          return;
+        }
         const directHead = batchHeads[sessionId] ?? store.getSessionHeadSnapshot(sessionId);
         if (!opts?.force && isSessionHeadCompatibleWithSummary(summary, directHead)) {
           noteAuthoritativePrefetchOutcome(reason, "skip_current", forced);

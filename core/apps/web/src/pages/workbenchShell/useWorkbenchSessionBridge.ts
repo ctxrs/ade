@@ -23,6 +23,7 @@ import {
 import type { OptimisticTaskSummary } from "./WorkbenchPage.types";
 import {
   collectSessionHeadsForSupervisor,
+  collectAuthoritativePrefetchReadySessionIds,
   buildWorkspaceSyncPrefetchVersionKey,
   planSessionHeadPrefetchTargets,
   primeAuthoritativeSessionHeads,
@@ -266,10 +267,15 @@ export function useWorkbenchSessionBridge({
       supervisor.setWorkspaceSnapshotState(snapshot);
       lifecycleCoordinator.setWorkspaceSnapshotState(snapshot);
       if (snapshot.initialized && sessionIds.length > 0) {
-        const prefetchKey = buildWorkspaceSyncPrefetchVersionKey(snapshot, sessionIds);
+        const prefetchSessionIdsForSync = collectAuthoritativePrefetchReadySessionIds(snapshot, sessionIds);
+        if (prefetchSessionIdsForSync.length === 0) {
+          noteWorkspaceSyncPrefetchSuppressed("working_sessions");
+          return;
+        }
+        const prefetchKey = buildWorkspaceSyncPrefetchVersionKey(snapshot, prefetchSessionIdsForSync);
         if (prefetchKey !== workspaceSyncPrefetchKeyRef.current) {
           workspaceSyncPrefetchKeyRef.current = prefetchKey;
-          void primeAuthoritativeHeadsForSessions(sessionIds, undefined, { reason: "workspace_sync" });
+          void primeAuthoritativeHeadsForSessions(prefetchSessionIdsForSync, undefined, { reason: "workspace_sync" });
         } else {
           noteWorkspaceSyncPrefetchSuppressed("unchanged_session_versions");
         }
@@ -310,7 +316,12 @@ export function useWorkbenchSessionBridge({
           (evt.type === "session_summary_delta" || evt.type === "session_summary") &&
           sessionIdSet.has(sessionId)
         ) {
-          void primeAuthoritativeHeadsForSessions([sessionId], undefined, { reason: "summary_repair" });
+          const repairSessionIds = collectAuthoritativePrefetchReadySessionIds(snapshot, [sessionId]);
+          if (repairSessionIds.length > 0) {
+            void primeAuthoritativeHeadsForSessions(repairSessionIds, undefined, { reason: "summary_repair" });
+          } else {
+            noteWorkspaceSyncPrefetchSuppressed("working_sessions");
+          }
         }
       } else if (didCacheSeed) {
         supervisor.setWorkspaceSessionHeads(

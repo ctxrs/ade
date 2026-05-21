@@ -25,6 +25,15 @@ const WORKING_TURN_STATUSES = new Set<SessionTurnStatus>(["queued", "starting", 
 const isWorkingTurnStatus = (status: SessionTurnStatus | null | undefined): boolean =>
   status ? WORKING_TURN_STATUSES.has(status) : false;
 
+export const isSessionSummaryWorking = (
+  summary: SessionSnapshotSummary | null | undefined,
+): boolean => {
+  const activity = summary?.activity ?? null;
+  if (!activity) return false;
+  if (activity.is_working) return true;
+  return isWorkingTurnStatus(activity.last_turn_status);
+};
+
 const isSessionHeadActivityCompatible = (
   summary: SessionSnapshotSummary,
   head: SessionHeadSnapshot,

@@ -4,6 +4,7 @@ import { SessionHeadBootstrapCache } from "../../state/sessionHeadBootstrapCache
 import type { WorkspaceActiveSnapshotState } from "../../state/workspaceActiveSnapshotStore";
 import {
   buildWorkspaceSyncPrefetchVersionKey,
+  collectAuthoritativePrefetchReadySessionIds,
   collectSessionHeadsForSupervisor,
   maybeCacheSessionHeadSeed,
   planSessionHeadPrefetchTargets,
@@ -995,6 +996,52 @@ describe("sessionHeadPrefetch", () => {
     expect(plan.targetSessionIds).toEqual(["foreground", "warm-1", "warm-2"]);
     expect(plan.foregroundSessionIds).toEqual(["foreground", "warm-1"]);
     expect(plan.warmSessionIds).toEqual(["warm-2"]);
+  });
+
+  it("excludes working sessions from workspace-sync authoritative prefetch readiness", () => {
+    const snapshot = makeSnapshot("session-1", {
+      lastEventSeq: 8,
+      activity: { is_working: true, last_turn_status: "running" },
+    });
+
+    expect(collectAuthoritativePrefetchReadySessionIds(snapshot, ["session-1"])).toEqual([]);
+    expect(
+      collectAuthoritativePrefetchReadySessionIds(
+        makeSnapshot("session-1", {
+          lastEventSeq: 8,
+          activity: { is_working: false, last_turn_status: "completed" },
+        }),
+        ["session-1"],
+      ),
+    ).toEqual(["session-1"]);
+  });
+
+  it("does not fetch authoritative heads for working summaries unless forced", async () => {
+    const sessionId = "session-1";
+    const snapshot = makeSnapshot(sessionId, {
+      lastEventSeq: 8,
+      activity: { is_working: true, last_turn_status: "running" },
+    });
+    getSessionHeadMock.mockResolvedValue(makeHead(sessionId, { turnCount: 3, lastEventSeq: 8, turnStatus: "running" }));
+    const bootstrapCache = new SessionHeadBootstrapCache();
+    const store = {
+      getSessionHeadSnapshot: vi.fn(() => null),
+      getSessionHeadsSnapshot: vi.fn(() => ({})),
+    };
+
+    const changed = await primeAuthoritativeSessionHeads(snapshot, store, bootstrapCache, [sessionId], {
+      reason: "workspace_sync",
+    });
+
+    expect(changed).toBe(false);
+    expect(getSessionHeadMock).not.toHaveBeenCalled();
+
+    await primeAuthoritativeSessionHeads(snapshot, store, bootstrapCache, [sessionId], {
+      force: true,
+      reason: "foreground_force",
+    });
+
+    expect(getSessionHeadMock).toHaveBeenCalledTimes(1);
   });
 
   it("caps authoritative head prefetch when no explicit target list is provided", async () => {
