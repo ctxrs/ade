@@ -100,7 +100,6 @@ pub fn plan_workspace_stream_event_route(
             ..
         } => {
             if !should_stream_head_delta(
-                &subscription_state.active_task_sessions,
                 &subscription_state.explicit_sessions,
                 subscription_state.foreground_session_ids.as_ref(),
                 delta.session_id,
@@ -167,15 +166,11 @@ pub fn is_foreground_session(
 }
 
 pub fn should_stream_head_delta(
-    active_task_sessions: &HashMap<TaskId, SessionId>,
     explicit_sessions: &HashSet<SessionId>,
     foreground_session_ids: Option<&HashSet<SessionId>>,
     session_id: SessionId,
 ) -> bool {
-    active_task_sessions
-        .values()
-        .any(|active_session_id| *active_session_id == session_id)
-        || explicit_sessions.contains(&session_id)
+    explicit_sessions.contains(&session_id)
         || allows_partial_for_foreground_session(foreground_session_ids, session_id)
 }
 
@@ -227,4 +222,132 @@ fn allows_partial_for_foreground_session(
     foreground_session_ids
         .map(|session_ids| session_ids.contains(&session_id))
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use ctx_core::ids::{RunId, SessionEventId, TurnId, WorkspaceId};
+    use serde_json::json;
+
+    fn delta(session_id: SessionId, event_type: SessionEventType) -> SessionHeadDelta {
+        let transient = matches!(event_type, SessionEventType::AssistantChunk);
+        SessionHeadDelta {
+            session_id,
+            last_event_seq: 5,
+            projection_rev: 7,
+            state_rev: 7,
+            emitted_at_ms: None,
+            session: None,
+            activity: None,
+            event: Some(SessionEvent {
+                seq: 5,
+                id: SessionEventId::new(),
+                session_id,
+                run_id: Some(RunId::new()),
+                turn_id: Some(TurnId::new()),
+                event_type,
+                payload_json: json!({ "content_fragment": "partial" }),
+                transient,
+                created_at: Utc::now(),
+            }),
+            turn: None,
+            message: None,
+            tool_summaries: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn active_scope_only_session_head_deltas_are_not_routed() {
+        let workspace_id = WorkspaceId::new();
+        let task_id = TaskId::new();
+        let session_id = SessionId::new();
+        let mut state = WorkspaceActiveSubscriptionState {
+            active_scope: true,
+            ..WorkspaceActiveSubscriptionState::default()
+        };
+        state.active_task_sessions.insert(task_id, session_id);
+
+        let plan = plan_workspace_stream_event_route(
+            &state,
+            WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                workspace_id,
+                snapshot_rev: 10,
+                delta: Box::new(delta(session_id, SessionEventType::Notice)),
+            },
+        );
+
+        assert!(matches!(plan, WorkspaceStreamEventRoutePlan::Drop));
+    }
+
+    #[test]
+    fn explicit_head_session_routes_background_head_deltas() {
+        let workspace_id = WorkspaceId::new();
+        let session_id = SessionId::new();
+        let mut state = WorkspaceActiveSubscriptionState::default();
+        state.explicit_sessions.insert(session_id);
+        state.replay_sessions.insert(session_id);
+
+        let plan = plan_workspace_stream_event_route(
+            &state,
+            WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                workspace_id,
+                snapshot_rev: 10,
+                delta: Box::new(delta(session_id, SessionEventType::Notice)),
+            },
+        );
+
+        assert!(matches!(
+            plan,
+            WorkspaceStreamEventRoutePlan::HeadDelta {
+                lane: WorkspaceStreamHeadLane::Background,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn foreground_session_routes_partial_head_deltas() {
+        let workspace_id = WorkspaceId::new();
+        let session_id = SessionId::new();
+        let mut state = WorkspaceActiveSubscriptionState::default();
+        state.foreground_session_ids = Some(HashSet::from([session_id]));
+
+        let plan = plan_workspace_stream_event_route(
+            &state,
+            WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                workspace_id,
+                snapshot_rev: 10,
+                delta: Box::new(delta(session_id, SessionEventType::AssistantChunk)),
+            },
+        );
+
+        assert!(matches!(
+            plan,
+            WorkspaceStreamEventRoutePlan::HeadDelta {
+                lane: WorkspaceStreamHeadLane::Foreground,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn explicit_background_session_drops_partial_only_deltas() {
+        let workspace_id = WorkspaceId::new();
+        let session_id = SessionId::new();
+        let mut state = WorkspaceActiveSubscriptionState::default();
+        state.explicit_sessions.insert(session_id);
+
+        let plan = plan_workspace_stream_event_route(
+            &state,
+            WorkspaceActiveSnapshotEvent::SessionHeadDelta {
+                workspace_id,
+                snapshot_rev: 10,
+                delta: Box::new(delta(session_id, SessionEventType::AssistantChunk)),
+            },
+        );
+
+        assert!(matches!(plan, WorkspaceStreamEventRoutePlan::Drop));
+    }
 }

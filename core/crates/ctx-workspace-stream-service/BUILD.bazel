@@ -22,6 +22,7 @@ rust_test(
     crate = ":lib",
     deps = [
         "@crates//:chrono",
+        "@crates//:serde_json",
         "@crates//:tokio",
     ],
 )
