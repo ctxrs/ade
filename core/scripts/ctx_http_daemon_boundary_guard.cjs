@@ -3201,6 +3201,13 @@ const WORKSPACE_WS_ADMISSION_API_PATTERNS = [
 
 const ORG_POLICY_API_ORCHESTRATION_PATTERNS = [
   {
+    name: "org policy API imports route contracts from daemon",
+    regex:
+      /\bctx_daemon::daemon::(?:CacheOrgPolicySnapshotRouteRequest|DaemonEnrollmentRouteResponse|DaemonEnrollmentsRouteResponse|OrgPolicyOrgRouteParams|OrgPolicyRouteError|OrgPolicyRouteErrorKind|OrgPolicySnapshotRouteResponse|OrgPolicyWorkspaceRouteParams|UpsertDaemonEnrollmentRouteRequest|UpsertWorkspacePolicyOverlayRouteRequest|WorkspacePolicyOverlayOptionalRouteResponse|WorkspacePolicyOverlayRouteResponse)\b/,
+    contentRegex:
+      /\buse\s+ctx_daemon::daemon::\s*\{(?=[^}]*\b(?:CacheOrgPolicySnapshotRouteRequest|DaemonEnrollmentRouteResponse|DaemonEnrollmentsRouteResponse|OrgPolicyOrgRouteParams|OrgPolicyRouteError|OrgPolicyRouteErrorKind|OrgPolicySnapshotRouteResponse|OrgPolicyWorkspaceRouteParams|UpsertDaemonEnrollmentRouteRequest|UpsertWorkspacePolicyOverlayRouteRequest|WorkspacePolicyOverlayOptionalRouteResponse|WorkspacePolicyOverlayRouteResponse)\b)[^}]*\}\s*;/gm,
+  },
+  {
     name: "org policy API verifies policy snapshot signatures directly",
     regex: /\bverify_policy_snapshot_signature\s*\(/,
   },

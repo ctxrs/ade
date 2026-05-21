@@ -1493,7 +1493,10 @@ test("daemon boundary guard scopes org policy orchestration bans", () => {
     `,
     patterns: apiPatternsForPath("core/crates/ctx-http/src/api/org_policy/enrollments.rs"),
   });
-  assert.deepEqual(routeViolations, []);
+  assert.deepEqual(
+    routeViolations.map((violation) => violation.name),
+    ["org policy API imports route contracts from daemon"],
+  );
 
   assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/settings.rs").includes(

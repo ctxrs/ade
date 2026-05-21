@@ -19,7 +19,7 @@ const COLLAPSED_PATHS = [
 const RATCHETED_FILE_LIMITS = [
   {
     path: "core/crates/ctx-daemon/src/daemon/org_policy_route.rs",
-    limit: 750,
+    limit: 510,
   },
   {
     path: "core/crates/ctx-daemon/src/daemon/sessions/subagents_route.rs",

@@ -1,4 +1,5 @@
 pub mod merge_queue;
+pub mod org_policy;
 pub mod repo_onboarding;
 pub mod run_archive;
 pub mod sessions;

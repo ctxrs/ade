@@ -1,11 +1,11 @@
 use super::*;
-use ctx_daemon::daemon::{
-    CacheOrgPolicySnapshotRouteRequest, CoreHandle, DaemonEnrollmentRouteResponse,
+use ctx_daemon::daemon::{CoreHandle, WorkspacesHandle};
+use ctx_route_contracts::org_policy::{
+    CacheOrgPolicySnapshotRouteRequest, DaemonEnrollmentRouteResponse,
     DaemonEnrollmentsRouteResponse, OrgPolicyOrgRouteParams, OrgPolicyRouteError,
     OrgPolicyRouteErrorKind, OrgPolicySnapshotRouteResponse, OrgPolicyWorkspaceRouteParams,
     UpsertDaemonEnrollmentRouteRequest, UpsertWorkspacePolicyOverlayRouteRequest,
     WorkspacePolicyOverlayOptionalRouteResponse, WorkspacePolicyOverlayRouteResponse,
-    WorkspacesHandle,
 };
 
 mod common;

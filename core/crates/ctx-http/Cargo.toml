@@ -26,7 +26,6 @@ ctx-http-auth = { path = "../ctx-http-auth" }
 ctx-mcp-auth = { path = "../ctx-mcp-auth" }
 ctx-mcp-command = { path = "../ctx-mcp-command" }
 ctx-observability = { path = "../ctx-observability" }
-ctx-org-policy = { path = "../ctx-org-policy" }
 ctx-transport-runtime = { path = "../ctx-transport-runtime" }
 ctx-update-service = { path = "../ctx-update-service" }
 ctx-sandbox-container-runtime = { path = "../ctx-sandbox-container-runtime" }

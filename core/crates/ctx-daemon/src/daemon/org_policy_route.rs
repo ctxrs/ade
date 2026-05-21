@@ -1,167 +1,16 @@
-use ctx_core::ids::{OrgId, WorkspaceId};
-use ctx_core::models::{
-    DaemonEnrollment, DaemonEnrollmentStatus, OrgMembershipRole, OrgPolicySnapshot, PlanType,
-    PolicySignatureAlgorithm, WorkspacePolicyOverlay,
+use ctx_route_contracts::org_policy::{
+    CacheOrgPolicySnapshotRouteRequest, DaemonEnrollmentRouteResponse,
+    DaemonEnrollmentsRouteResponse, OrgPolicyOrgRouteParams, OrgPolicyRouteError,
+    OrgPolicySnapshotRouteResponse, OrgPolicyWorkspaceRouteParams,
+    UpsertDaemonEnrollmentRouteRequest, UpsertWorkspacePolicyOverlayRouteRequest,
+    WorkspacePolicyOverlayOptionalRouteResponse, WorkspacePolicyOverlayRouteResponse,
 };
-use serde::{Deserialize, Serialize};
 
 use crate::daemon::org_policy::{
     CacheOrgPolicySnapshotError, UpsertDaemonEnrollmentError, UpsertWorkspacePolicyOverlayError,
     WorkspacePolicyOverlayError,
 };
 use crate::daemon::{CoreHandle, WorkspacesHandle};
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct OrgPolicyOrgRouteParams {
-    org_id: String,
-}
-
-impl OrgPolicyOrgRouteParams {
-    pub fn new(org_id: impl Into<String>) -> Self {
-        Self {
-            org_id: org_id.into(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct OrgPolicyWorkspaceRouteParams {
-    workspace_id: String,
-}
-
-impl OrgPolicyWorkspaceRouteParams {
-    pub fn new(workspace_id: impl Into<String>) -> Self {
-        Self {
-            workspace_id: workspace_id.into(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(transparent)]
-pub struct UpsertDaemonEnrollmentRouteRequest(DaemonEnrollment);
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(transparent)]
-pub struct CacheOrgPolicySnapshotRouteRequest(OrgPolicySnapshot);
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(transparent)]
-pub struct UpsertWorkspacePolicyOverlayRouteRequest(WorkspacePolicyOverlay);
-
-#[derive(Debug, Clone, Serialize)]
-pub struct DaemonEnrollmentRouteResponse {
-    id: ctx_core::ids::DaemonEnrollmentId,
-    account_id: ctx_core::ids::AccountId,
-    org_id: OrgId,
-    org_membership_id: ctx_core::ids::OrgMembershipId,
-    membership_role: OrgMembershipRole,
-    plan_type: PlanType,
-    status: DaemonEnrollmentStatus,
-    policy_signature_algorithm: PolicySignatureAlgorithm,
-    policy_signing_key_present: bool,
-    active_policy_snapshot_id: Option<ctx_core::ids::OrgPolicySnapshotId>,
-    enrolled_at: chrono::DateTime<chrono::Utc>,
-    updated_at: chrono::DateTime<chrono::Utc>,
-    revoked_at: Option<chrono::DateTime<chrono::Utc>>,
-}
-
-impl From<DaemonEnrollment> for DaemonEnrollmentRouteResponse {
-    fn from(enrollment: DaemonEnrollment) -> Self {
-        Self {
-            id: enrollment.id,
-            account_id: enrollment.account_id,
-            org_id: enrollment.org_id,
-            org_membership_id: enrollment.org_membership_id,
-            membership_role: enrollment.membership_role,
-            plan_type: enrollment.plan_type,
-            status: enrollment.status,
-            policy_signature_algorithm: enrollment.policy_signature_algorithm,
-            policy_signing_key_present: !enrollment.policy_signing_key.trim().is_empty(),
-            active_policy_snapshot_id: enrollment.active_policy_snapshot_id,
-            enrolled_at: enrollment.enrolled_at,
-            updated_at: enrollment.updated_at,
-            revoked_at: enrollment.revoked_at,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(transparent)]
-pub struct DaemonEnrollmentsRouteResponse(Vec<DaemonEnrollmentRouteResponse>);
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(transparent)]
-pub struct OrgPolicySnapshotRouteResponse(OrgPolicySnapshot);
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(transparent)]
-pub struct WorkspacePolicyOverlayRouteResponse(WorkspacePolicyOverlay);
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(transparent)]
-pub struct WorkspacePolicyOverlayOptionalRouteResponse(Option<WorkspacePolicyOverlay>);
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum OrgPolicyRouteErrorKind {
-    BadRequest,
-    Conflict,
-    NotFound,
-    Internal,
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct OrgPolicyRouteError {
-    kind: OrgPolicyRouteErrorKind,
-    message: String,
-}
-
-impl OrgPolicyRouteError {
-    fn new(kind: OrgPolicyRouteErrorKind, message: impl Into<String>) -> Self {
-        Self {
-            kind,
-            message: message.into(),
-        }
-    }
-
-    fn bad_request(message: impl Into<String>) -> Self {
-        Self::new(OrgPolicyRouteErrorKind::BadRequest, message)
-    }
-
-    fn conflict(message: impl Into<String>) -> Self {
-        Self::new(OrgPolicyRouteErrorKind::Conflict, message)
-    }
-
-    fn not_found(message: impl Into<String>) -> Self {
-        Self::new(OrgPolicyRouteErrorKind::NotFound, message)
-    }
-
-    fn internal(message: impl Into<String>) -> Self {
-        Self::new(OrgPolicyRouteErrorKind::Internal, message)
-    }
-
-    pub fn kind(&self) -> OrgPolicyRouteErrorKind {
-        self.kind
-    }
-
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-}
-
-fn parse_org_route_id(params: OrgPolicyOrgRouteParams) -> Result<OrgId, OrgPolicyRouteError> {
-    uuid::Uuid::parse_str(&params.org_id)
-        .map(OrgId)
-        .map_err(|_| OrgPolicyRouteError::bad_request("invalid org id"))
-}
-
-fn parse_workspace_route_id(
-    params: OrgPolicyWorkspaceRouteParams,
-) -> Result<WorkspaceId, OrgPolicyRouteError> {
-    uuid::Uuid::parse_str(&params.workspace_id)
-        .map(WorkspaceId)
-        .map_err(|_| OrgPolicyRouteError::bad_request("invalid workspace id"))
-}
 
 fn upsert_daemon_enrollment_route_error(error: UpsertDaemonEnrollmentError) -> OrgPolicyRouteError {
     match error {
@@ -240,14 +89,7 @@ impl CoreHandle {
     ) -> Result<DaemonEnrollmentsRouteResponse, OrgPolicyRouteError> {
         self.list_daemon_enrollments()
             .await
-            .map(|enrollments| {
-                DaemonEnrollmentsRouteResponse(
-                    enrollments
-                        .into_iter()
-                        .map(DaemonEnrollmentRouteResponse::from)
-                        .collect(),
-                )
-            })
+            .map(DaemonEnrollmentsRouteResponse::from)
             .map_err(|error| {
                 OrgPolicyRouteError::internal(format!(
                     "failed to list daemon enrollments: {error:#}"
@@ -260,8 +102,8 @@ impl CoreHandle {
         params: OrgPolicyOrgRouteParams,
         request: UpsertDaemonEnrollmentRouteRequest,
     ) -> Result<DaemonEnrollmentRouteResponse, OrgPolicyRouteError> {
-        let org_id = parse_org_route_id(params)?;
-        let enrollment = request.0;
+        let org_id = params.parse()?;
+        let enrollment = request.into_inner();
         if enrollment.org_id != org_id {
             return Err(OrgPolicyRouteError::bad_request(
                 "enrollment org_id must match route org id",
@@ -278,8 +120,8 @@ impl CoreHandle {
         params: OrgPolicyOrgRouteParams,
         request: CacheOrgPolicySnapshotRouteRequest,
     ) -> Result<OrgPolicySnapshotRouteResponse, OrgPolicyRouteError> {
-        let org_id = parse_org_route_id(params)?;
-        let snapshot = request.0;
+        let org_id = params.parse()?;
+        let snapshot = request.into_inner();
         if snapshot.org_id != org_id {
             return Err(OrgPolicyRouteError::bad_request(
                 "policy snapshot org_id must match route org id",
@@ -287,7 +129,7 @@ impl CoreHandle {
         }
         self.cache_and_activate_org_policy_snapshot(snapshot)
             .await
-            .map(OrgPolicySnapshotRouteResponse)
+            .map(OrgPolicySnapshotRouteResponse::from)
             .map_err(cache_org_policy_snapshot_route_error)
     }
 }
@@ -297,10 +139,10 @@ impl WorkspacesHandle {
         &self,
         params: OrgPolicyWorkspaceRouteParams,
     ) -> Result<WorkspacePolicyOverlayOptionalRouteResponse, OrgPolicyRouteError> {
-        let workspace_id = parse_workspace_route_id(params)?;
+        let workspace_id = params.parse()?;
         self.get_workspace_policy_overlay(workspace_id)
             .await
-            .map(WorkspacePolicyOverlayOptionalRouteResponse)
+            .map(WorkspacePolicyOverlayOptionalRouteResponse::from)
             .map_err(|error| {
                 workspace_policy_route_error(error, "failed to load workspace org policy")
             })
@@ -311,8 +153,8 @@ impl WorkspacesHandle {
         params: OrgPolicyWorkspaceRouteParams,
         request: UpsertWorkspacePolicyOverlayRouteRequest,
     ) -> Result<WorkspacePolicyOverlayRouteResponse, OrgPolicyRouteError> {
-        let workspace_id = parse_workspace_route_id(params)?;
-        let overlay = request.0;
+        let workspace_id = params.parse()?;
+        let overlay = request.into_inner();
         if overlay.workspace_id != workspace_id {
             return Err(OrgPolicyRouteError::bad_request(
                 "workspace policy overlay workspace_id must match route workspace id",
@@ -320,7 +162,7 @@ impl WorkspacesHandle {
         }
         self.upsert_workspace_policy_overlay_checked(overlay)
             .await
-            .map(WorkspacePolicyOverlayRouteResponse)
+            .map(WorkspacePolicyOverlayRouteResponse::from)
             .map_err(upsert_workspace_policy_route_error)
     }
 }
@@ -329,13 +171,16 @@ impl WorkspacesHandle {
 mod tests {
     use super::*;
     use chrono::{Duration, Utc};
-    use ctx_core::ids::{AccountId, DaemonEnrollmentId, OrgMembershipId, OrgPolicySnapshotId};
-    use ctx_core::models::{
-        ArchiveMode, ArchivePolicy, DaemonEnrollmentStatus, NetworkProfile, OrgMembershipRole,
-        PolicyFeatureState, PolicySignatureAlgorithm, RoutePolicy, RouteType, VcsKind,
+    use ctx_core::ids::{
+        AccountId, DaemonEnrollmentId, OrgId, OrgMembershipId, OrgPolicySnapshotId, WorkspaceId,
     };
+    use ctx_core::models::{
+        ArchiveMode, ArchivePolicy, DaemonEnrollment, DaemonEnrollmentStatus, NetworkProfile,
+        OrgMembershipRole, OrgPolicySnapshot, PlanType, PolicyFeatureState,
+        PolicySignatureAlgorithm, RoutePolicy, RouteType, VcsKind, WorkspacePolicyOverlay,
+    };
+    use ctx_route_contracts::org_policy::OrgPolicyRouteErrorKind;
     use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
-    use serde_json::json;
     use std::collections::BTreeMap;
     use tempfile::tempdir;
 
@@ -425,107 +270,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn route_params_parse_ids_and_classify_invalid_values() {
-        let org_id = OrgId::new();
-        assert_eq!(
-            parse_org_route_id(OrgPolicyOrgRouteParams::new(org_id.0.to_string())).unwrap(),
-            org_id
-        );
-        let org_error = parse_org_route_id(OrgPolicyOrgRouteParams::new("not-an-org")).unwrap_err();
-        assert_eq!(org_error.kind(), OrgPolicyRouteErrorKind::BadRequest);
-        assert_eq!(org_error.message(), "invalid org id");
-
-        let workspace_id = WorkspaceId::new();
-        assert_eq!(
-            parse_workspace_route_id(OrgPolicyWorkspaceRouteParams::new(
-                workspace_id.0.to_string()
-            ))
-            .unwrap(),
-            workspace_id
-        );
-        let workspace_error =
-            parse_workspace_route_id(OrgPolicyWorkspaceRouteParams::new("not-a-workspace"))
-                .unwrap_err();
-        assert_eq!(workspace_error.kind(), OrgPolicyRouteErrorKind::BadRequest);
-        assert_eq!(workspace_error.message(), "invalid workspace id");
-    }
-
-    #[test]
-    fn route_request_wrappers_preserve_unknown_field_compatibility() {
-        let org_id = OrgId::new();
-        let workspace_id = WorkspaceId::new();
-
-        let enrollment_value = serde_json::to_value(enrollment(org_id)).expect("enrollment json");
-        let mut enrollment_object = enrollment_value.as_object().expect("object").clone();
-        enrollment_object.insert("unknown_field".to_string(), json!("ignored"));
-        serde_json::from_value::<UpsertDaemonEnrollmentRouteRequest>(json!(enrollment_object))
-            .expect("enrollment route request allows unknown fields");
-
-        let snapshot_value = serde_json::to_value(snapshot(org_id)).expect("snapshot json");
-        let mut snapshot_object = snapshot_value.as_object().expect("object").clone();
-        snapshot_object.insert("unknown_field".to_string(), json!("ignored"));
-        serde_json::from_value::<CacheOrgPolicySnapshotRouteRequest>(json!(snapshot_object))
-            .expect("snapshot route request allows unknown fields");
-
-        let overlay_value =
-            serde_json::to_value(overlay(workspace_id, org_id)).expect("overlay json");
-        let mut overlay_object = overlay_value.as_object().expect("object").clone();
-        overlay_object.insert("unknown_field".to_string(), json!("ignored"));
-        serde_json::from_value::<UpsertWorkspacePolicyOverlayRouteRequest>(json!(overlay_object))
-            .expect("overlay route request allows unknown fields");
-    }
-
-    #[test]
-    fn enrollment_route_response_redacts_signing_key() {
-        let response = DaemonEnrollmentRouteResponse::from(enrollment(OrgId::new()));
-        let value = serde_json::to_value(response).expect("response json");
-        assert!(value.get("policy_signing_key").is_none());
-        assert_eq!(
-            value
-                .get("policy_signing_key_present")
-                .and_then(|value| value.as_bool()),
-            Some(true)
-        );
-    }
-
-    #[test]
-    fn route_response_wrappers_preserve_json_shapes() {
-        let org_id = OrgId::new();
-        let enrollment_response = DaemonEnrollmentRouteResponse::from(enrollment(org_id));
-        let list = DaemonEnrollmentsRouteResponse(vec![enrollment_response]);
-        assert!(serde_json::to_value(list).unwrap().is_array());
-
-        let snapshot_value =
-            serde_json::to_value(OrgPolicySnapshotRouteResponse(snapshot(org_id))).unwrap();
-        let org_id_text = org_id.0.to_string();
-        assert_eq!(
-            snapshot_value
-                .get("org_id")
-                .and_then(|value| value.as_str()),
-            Some(org_id_text.as_str())
-        );
-
-        let workspace_id = WorkspaceId::new();
-        let overlay_value = serde_json::to_value(WorkspacePolicyOverlayRouteResponse(overlay(
-            workspace_id,
-            org_id,
-        )))
-        .unwrap();
-        let workspace_id_text = workspace_id.0.to_string();
-        assert_eq!(
-            overlay_value
-                .get("workspace_id")
-                .and_then(|value| value.as_str()),
-            Some(workspace_id_text.as_str())
-        );
-
-        assert_eq!(
-            serde_json::to_value(WorkspacePolicyOverlayOptionalRouteResponse(None)).unwrap(),
-            serde_json::Value::Null
-        );
-    }
-
     #[tokio::test]
     async fn enrollment_route_checks_route_body_mismatch_first() {
         let (_temp, daemon) = test_daemon().await;
@@ -538,7 +282,7 @@ mod tests {
             .core()
             .upsert_daemon_enrollment_for_route(
                 OrgPolicyOrgRouteParams::new(route_org_id.0.to_string()),
-                UpsertDaemonEnrollmentRouteRequest(request),
+                UpsertDaemonEnrollmentRouteRequest::from(request),
             )
             .await
             .expect_err("route/body mismatch should fail first");
@@ -555,7 +299,7 @@ mod tests {
             .core()
             .cache_org_policy_snapshot_for_route(
                 OrgPolicyOrgRouteParams::new(OrgId::new().0.to_string()),
-                CacheOrgPolicySnapshotRouteRequest(snapshot(OrgId::new())),
+                CacheOrgPolicySnapshotRouteRequest::from(snapshot(OrgId::new())),
             )
             .await
             .expect_err("route/body mismatch should fail first");
@@ -575,7 +319,10 @@ mod tests {
             .workspaces()
             .upsert_workspace_policy_overlay_for_route(
                 OrgPolicyWorkspaceRouteParams::new(WorkspaceId::new().0.to_string()),
-                UpsertWorkspacePolicyOverlayRouteRequest(overlay(WorkspaceId::new(), OrgId::new())),
+                UpsertWorkspacePolicyOverlayRouteRequest::from(overlay(
+                    WorkspaceId::new(),
+                    OrgId::new(),
+                )),
             )
             .await
             .expect_err("route/body mismatch should fail first");
@@ -597,7 +344,7 @@ mod tests {
             .core()
             .cache_org_policy_snapshot_for_route(
                 OrgPolicyOrgRouteParams::new(org_id.0.to_string()),
-                CacheOrgPolicySnapshotRouteRequest(snapshot(org_id)),
+                CacheOrgPolicySnapshotRouteRequest::from(snapshot(org_id)),
             )
             .await
             .expect_err("missing enrollment should conflict");
@@ -625,7 +372,7 @@ mod tests {
             .workspaces()
             .upsert_workspace_policy_overlay_for_route(
                 OrgPolicyWorkspaceRouteParams::new(workspace.id.0.to_string()),
-                UpsertWorkspacePolicyOverlayRouteRequest(overlay(workspace.id, OrgId::new())),
+                UpsertWorkspacePolicyOverlayRouteRequest::from(overlay(workspace.id, OrgId::new())),
             )
             .await
             .expect_err("missing enrollment should conflict");
@@ -648,7 +395,10 @@ mod tests {
             .workspaces()
             .upsert_workspace_policy_overlay_for_route(
                 OrgPolicyWorkspaceRouteParams::new(missing_workspace_id.0.to_string()),
-                UpsertWorkspacePolicyOverlayRouteRequest(overlay(missing_workspace_id, org_id)),
+                UpsertWorkspacePolicyOverlayRouteRequest::from(overlay(
+                    missing_workspace_id,
+                    org_id,
+                )),
             )
             .await
             .expect_err("missing workspace should return not found");
@@ -681,7 +431,7 @@ mod tests {
             .core()
             .cache_org_policy_snapshot_for_route(
                 OrgPolicyOrgRouteParams::new(org_id.0.to_string()),
-                CacheOrgPolicySnapshotRouteRequest(snapshot),
+                CacheOrgPolicySnapshotRouteRequest::from(snapshot),
             )
             .await
             .expect_err("invalid signature should fail");
@@ -711,7 +461,7 @@ mod tests {
             .core()
             .cache_org_policy_snapshot_for_route(
                 OrgPolicyOrgRouteParams::new(org_id.0.to_string()),
-                CacheOrgPolicySnapshotRouteRequest(snapshot.clone()),
+                CacheOrgPolicySnapshotRouteRequest::from(snapshot.clone()),
             )
             .await
             .expect("cache snapshot");
