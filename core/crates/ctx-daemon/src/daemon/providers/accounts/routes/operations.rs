@@ -1,15 +1,14 @@
 use std::sync::Arc;
 
 use crate::daemon::{providers::accounts, DaemonState};
+use ctx_provider_accounts::{
+    AmpAccountsResponse, ClaudeAccountsResponse, CodexAccountsResponse, CopilotAccountsResponse,
+    CursorAccountsResponse, GeminiAccountsResponse, KimiAccountsResponse, MistralAccountsResponse,
+    ProviderAccountRouteError, QwenAccountsResponse,
+};
 
 use super::error::{
     codex_set_active_error, ensure_known_account, internal_error, provider_account_mutation_error,
-    ProviderAccountRouteError,
-};
-use super::responses::{
-    AmpAccountsResponse, ClaudeAccountsResponse, CodexAccountsResponse, CopilotAccountsResponse,
-    CursorAccountsResponse, GeminiAccountsResponse, KimiAccountsResponse, MistralAccountsResponse,
-    QwenAccountsResponse,
 };
 
 pub(in crate::daemon::providers::accounts::routes) async fn codex_accounts_response(
@@ -17,7 +16,7 @@ pub(in crate::daemon::providers::accounts::routes) async fn codex_accounts_respo
 ) -> Result<CodexAccountsResponse, ProviderAccountRouteError> {
     accounts::load_codex_accounts_snapshot(state)
         .await
-        .map(CodexAccountsResponse::from_snapshot)
+        .map(codex_accounts_route_response)
         .map_err(internal_error)
 }
 
@@ -43,7 +42,7 @@ pub(in crate::daemon::providers::accounts::routes) async fn set_active_codex_acc
     }
     accounts::set_active_codex_account(state, account_id)
         .await
-        .map(CodexAccountsResponse::from_snapshot)
+        .map(codex_accounts_route_response)
         .map_err(codex_set_active_error)
 }
 
@@ -53,8 +52,18 @@ pub(in crate::daemon::providers::accounts::routes) async fn delete_codex_account
 ) -> Result<CodexAccountsResponse, ProviderAccountRouteError> {
     accounts::remove_codex_account(state, account_id)
         .await
-        .map(CodexAccountsResponse::from_snapshot)
+        .map(codex_accounts_route_response)
         .map_err(provider_account_mutation_error)
+}
+
+fn codex_accounts_route_response(
+    snapshot: accounts::CodexAccountsSnapshot,
+) -> CodexAccountsResponse {
+    CodexAccountsResponse::new(
+        snapshot.active_account_id,
+        snapshot.accounts,
+        snapshot.logins,
+    )
 }
 
 pub(in crate::daemon::providers::accounts::routes) async fn amp_accounts_response(
@@ -62,7 +71,7 @@ pub(in crate::daemon::providers::accounts::routes) async fn amp_accounts_respons
 ) -> Result<AmpAccountsResponse, ProviderAccountRouteError> {
     accounts::ensure_amp_account_registry_from_runtime_auth(state)
         .await
-        .map(AmpAccountsResponse::from_registry)
+        .map(AmpAccountsResponse::from)
         .map_err(internal_error)
 }
 
@@ -108,7 +117,7 @@ pub(in crate::daemon::providers::accounts::routes) async fn claude_accounts_resp
 ) -> Result<ClaudeAccountsResponse, ProviderAccountRouteError> {
     accounts::load_claude_account_registry(state)
         .await
-        .map(ClaudeAccountsResponse::from_registry)
+        .map(ClaudeAccountsResponse::from)
         .map_err(internal_error)
 }
 
@@ -154,7 +163,7 @@ pub(in crate::daemon::providers::accounts::routes) async fn copilot_accounts_res
 ) -> Result<CopilotAccountsResponse, ProviderAccountRouteError> {
     accounts::load_copilot_account_registry(state)
         .await
-        .map(CopilotAccountsResponse::from_registry)
+        .map(CopilotAccountsResponse::from)
         .map_err(internal_error)
 }
 
@@ -201,7 +210,7 @@ pub(in crate::daemon::providers::accounts::routes) async fn cursor_accounts_resp
 ) -> Result<CursorAccountsResponse, ProviderAccountRouteError> {
     accounts::load_cursor_account_registry(state)
         .await
-        .map(CursorAccountsResponse::from_registry)
+        .map(CursorAccountsResponse::from)
         .map_err(internal_error)
 }
 
@@ -248,7 +257,7 @@ pub(in crate::daemon::providers::accounts::routes) async fn gemini_accounts_resp
 ) -> Result<GeminiAccountsResponse, ProviderAccountRouteError> {
     accounts::load_gemini_account_registry(state)
         .await
-        .map(GeminiAccountsResponse::from_registry)
+        .map(GeminiAccountsResponse::from)
         .map_err(internal_error)
 }
 
@@ -296,7 +305,7 @@ pub(in crate::daemon::providers::accounts::routes) async fn kimi_accounts_respon
 ) -> Result<KimiAccountsResponse, ProviderAccountRouteError> {
     accounts::load_kimi_account_registry(state)
         .await
-        .map(KimiAccountsResponse::from_registry)
+        .map(KimiAccountsResponse::from)
         .map_err(internal_error)
 }
 
@@ -345,7 +354,7 @@ pub(in crate::daemon::providers::accounts::routes) async fn mistral_accounts_res
 ) -> Result<MistralAccountsResponse, ProviderAccountRouteError> {
     accounts::load_mistral_account_registry(state)
         .await
-        .map(MistralAccountsResponse::from_registry)
+        .map(MistralAccountsResponse::from)
         .map_err(internal_error)
 }
 
@@ -391,7 +400,7 @@ pub(in crate::daemon::providers::accounts::routes) async fn qwen_accounts_respon
 ) -> Result<QwenAccountsResponse, ProviderAccountRouteError> {
     accounts::load_qwen_account_registry(state)
         .await
-        .map(QwenAccountsResponse::from_registry)
+        .map(QwenAccountsResponse::from)
         .map_err(internal_error)
 }
 

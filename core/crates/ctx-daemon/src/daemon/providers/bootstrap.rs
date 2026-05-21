@@ -4,6 +4,11 @@ use std::sync::Arc;
 use ctx_core::ids::WorkspaceId;
 use ctx_harness_sources::HarnessProviderSourceConfig;
 use ctx_observability::logs;
+use ctx_provider_accounts::{
+    AmpAccountsResponse, ClaudeAccountsResponse, CodexAccountsResponse, CopilotAccountsResponse,
+    CursorAccountsResponse, GeminiAccountsResponse, KimiAccountsResponse, MistralAccountsResponse,
+    QwenAccountsResponse,
+};
 use ctx_provider_runtime::model_preferences::preferred_model_id_from_available_models;
 use ctx_provider_runtime::provider_auth::{
     provider_auth_mode, provider_has_active_auth_config_with_runtime_root,
@@ -29,15 +34,15 @@ pub struct ProvidersBootstrapResponse {
     providers: Vec<ProviderStatus>,
     provider_options: HashMap<String, serde_json::Value>,
     provider_harness_config: HashMap<String, HarnessProviderSourceConfig>,
-    codex_accounts: accounts::CodexAccountsResponse,
-    claude_accounts: accounts::ClaudeAccountsResponse,
-    gemini_accounts: accounts::GeminiAccountsResponse,
-    qwen_accounts: accounts::QwenAccountsResponse,
-    kimi_accounts: accounts::KimiAccountsResponse,
-    mistral_accounts: accounts::MistralAccountsResponse,
-    copilot_accounts: accounts::CopilotAccountsResponse,
-    cursor_accounts: accounts::CursorAccountsResponse,
-    amp_accounts: accounts::AmpAccountsResponse,
+    codex_accounts: CodexAccountsResponse,
+    claude_accounts: ClaudeAccountsResponse,
+    gemini_accounts: GeminiAccountsResponse,
+    qwen_accounts: QwenAccountsResponse,
+    kimi_accounts: KimiAccountsResponse,
+    mistral_accounts: MistralAccountsResponse,
+    copilot_accounts: CopilotAccountsResponse,
+    cursor_accounts: CursorAccountsResponse,
+    amp_accounts: AmpAccountsResponse,
 }
 
 #[derive(Debug)]
@@ -284,15 +289,15 @@ async fn load_preferred_model_by_provider(
 }
 
 struct BootstrapAccounts {
-    codex_accounts: accounts::CodexAccountsResponse,
-    claude_accounts: accounts::ClaudeAccountsResponse,
-    gemini_accounts: accounts::GeminiAccountsResponse,
-    qwen_accounts: accounts::QwenAccountsResponse,
-    kimi_accounts: accounts::KimiAccountsResponse,
-    mistral_accounts: accounts::MistralAccountsResponse,
-    copilot_accounts: accounts::CopilotAccountsResponse,
-    cursor_accounts: accounts::CursorAccountsResponse,
-    amp_accounts: accounts::AmpAccountsResponse,
+    codex_accounts: CodexAccountsResponse,
+    claude_accounts: ClaudeAccountsResponse,
+    gemini_accounts: GeminiAccountsResponse,
+    qwen_accounts: QwenAccountsResponse,
+    kimi_accounts: KimiAccountsResponse,
+    mistral_accounts: MistralAccountsResponse,
+    copilot_accounts: CopilotAccountsResponse,
+    cursor_accounts: CursorAccountsResponse,
+    amp_accounts: AmpAccountsResponse,
 }
 
 fn bootstrap_accounts_error(provider_id: &str, err: anyhow::Error) -> ProvidersBootstrapError {
@@ -334,15 +339,19 @@ async fn load_bootstrap_accounts(
         .map_err(|err| bootstrap_accounts_error("amp", err))?;
 
     Ok(BootstrapAccounts {
-        codex_accounts: accounts::CodexAccountsResponse::from_snapshot(codex_snapshot),
-        claude_accounts: accounts::ClaudeAccountsResponse::from_registry(claude_registry),
-        gemini_accounts: accounts::GeminiAccountsResponse::from_registry(gemini_registry),
-        qwen_accounts: accounts::QwenAccountsResponse::from_registry(qwen_registry),
-        kimi_accounts: accounts::KimiAccountsResponse::from_registry(kimi_registry),
-        mistral_accounts: accounts::MistralAccountsResponse::from_registry(mistral_registry),
-        copilot_accounts: accounts::CopilotAccountsResponse::from_registry(copilot_registry),
-        cursor_accounts: accounts::CursorAccountsResponse::from_registry(cursor_registry),
-        amp_accounts: accounts::AmpAccountsResponse::from_registry(amp_registry),
+        codex_accounts: CodexAccountsResponse::new(
+            codex_snapshot.active_account_id,
+            codex_snapshot.accounts,
+            codex_snapshot.logins,
+        ),
+        claude_accounts: ClaudeAccountsResponse::from(claude_registry),
+        gemini_accounts: GeminiAccountsResponse::from(gemini_registry),
+        qwen_accounts: QwenAccountsResponse::from(qwen_registry),
+        kimi_accounts: KimiAccountsResponse::from(kimi_registry),
+        mistral_accounts: MistralAccountsResponse::from(mistral_registry),
+        copilot_accounts: CopilotAccountsResponse::from(copilot_registry),
+        cursor_accounts: CursorAccountsResponse::from(cursor_registry),
+        amp_accounts: AmpAccountsResponse::from(amp_registry),
     })
 }
 

@@ -1,19 +1,15 @@
 use crate::daemon::ProvidersHandle;
+use ctx_provider_accounts::{
+    AmpAccountUpsertRouteRequest, AmpAccountsResponse, ClaudeAccountUpsertRouteRequest,
+    ClaudeAccountsResponse, CodexAccountsResponse, CodexHostImportProbeRouteResponse,
+    CodexHostImportRouteRequest, CopilotAccountUpsertRouteRequest, CopilotAccountsResponse,
+    CursorAccountUpsertRouteRequest, CursorAccountsResponse, GeminiAccountUpsertRouteRequest,
+    GeminiAccountsResponse, KimiAccountUpsertRouteRequest, KimiAccountsResponse,
+    MistralAccountUpsertRouteRequest, MistralAccountsResponse, ProviderAccountRouteError,
+    ProviderActiveAccountRouteRequest, QwenAccountUpsertRouteRequest, QwenAccountsResponse,
+};
 
-use super::error::ProviderAccountRouteError;
 use super::operations;
-use super::requests::{
-    AmpAccountUpsertRouteRequest, ClaudeAccountUpsertRouteRequest, CodexHostImportRouteRequest,
-    CopilotAccountUpsertRouteRequest, CursorAccountUpsertRouteRequest,
-    GeminiAccountUpsertRouteRequest, KimiAccountUpsertRouteRequest,
-    MistralAccountUpsertRouteRequest, ProviderActiveAccountRouteRequest,
-    QwenAccountUpsertRouteRequest,
-};
-use super::responses::{
-    AmpAccountsResponse, ClaudeAccountsResponse, CodexAccountsResponse,
-    CodexHostImportProbeRouteResponse, CopilotAccountsResponse, CursorAccountsResponse,
-    GeminiAccountsResponse, KimiAccountsResponse, MistralAccountsResponse, QwenAccountsResponse,
-};
 
 impl ProvidersHandle {
     pub async fn codex_host_import_probe_for_route(&self) -> CodexHostImportProbeRouteResponse {
@@ -30,14 +26,14 @@ impl ProvidersHandle {
         &self,
         request: CodexHostImportRouteRequest,
     ) -> Result<CodexAccountsResponse, ProviderAccountRouteError> {
-        operations::import_host_codex_auth_response(&self.state, request.label).await
+        operations::import_host_codex_auth_response(&self.state, request.into_label()).await
     }
 
     pub async fn set_active_codex_account_for_route(
         &self,
         request: ProviderActiveAccountRouteRequest,
     ) -> Result<CodexAccountsResponse, ProviderAccountRouteError> {
-        operations::set_active_codex_account_response(&self.state, request.account_id).await
+        operations::set_active_codex_account_response(&self.state, request.into_account_id()).await
     }
 
     pub async fn delete_codex_account_for_route(
@@ -57,14 +53,15 @@ impl ProvidersHandle {
         &self,
         request: AmpAccountUpsertRouteRequest,
     ) -> Result<AmpAccountsResponse, ProviderAccountRouteError> {
-        operations::upsert_amp_account_response(&self.state, request.label, request.email).await
+        let (label, email) = request.into_parts();
+        operations::upsert_amp_account_response(&self.state, label, email).await
     }
 
     pub async fn set_active_amp_account_for_route(
         &self,
         request: ProviderActiveAccountRouteRequest,
     ) -> Result<AmpAccountsResponse, ProviderAccountRouteError> {
-        operations::set_active_amp_account_response(&self.state, request.account_id).await
+        operations::set_active_amp_account_response(&self.state, request.into_account_id()).await
     }
 
     pub async fn delete_amp_account_for_route(
@@ -84,15 +81,15 @@ impl ProvidersHandle {
         &self,
         request: ClaudeAccountUpsertRouteRequest,
     ) -> Result<ClaudeAccountsResponse, ProviderAccountRouteError> {
-        operations::add_claude_account_response(&self.state, request.label, request.setup_token)
-            .await
+        let (label, setup_token) = request.into_parts();
+        operations::add_claude_account_response(&self.state, label, setup_token).await
     }
 
     pub async fn set_active_claude_account_for_route(
         &self,
         request: ProviderActiveAccountRouteRequest,
     ) -> Result<ClaudeAccountsResponse, ProviderAccountRouteError> {
-        operations::set_active_claude_account_response(&self.state, request.account_id).await
+        operations::set_active_claude_account_response(&self.state, request.into_account_id()).await
     }
 
     pub async fn delete_claude_account_for_route(
@@ -112,20 +109,16 @@ impl ProvidersHandle {
         &self,
         request: CopilotAccountUpsertRouteRequest,
     ) -> Result<CopilotAccountsResponse, ProviderAccountRouteError> {
-        operations::add_copilot_account_response(
-            &self.state,
-            request.label,
-            request.token,
-            request.email,
-        )
-        .await
+        let (label, token, email) = request.into_parts();
+        operations::add_copilot_account_response(&self.state, label, token, email).await
     }
 
     pub async fn set_active_copilot_account_for_route(
         &self,
         request: ProviderActiveAccountRouteRequest,
     ) -> Result<CopilotAccountsResponse, ProviderAccountRouteError> {
-        operations::set_active_copilot_account_response(&self.state, request.account_id).await
+        operations::set_active_copilot_account_response(&self.state, request.into_account_id())
+            .await
     }
 
     pub async fn delete_copilot_account_for_route(
@@ -145,20 +138,15 @@ impl ProvidersHandle {
         &self,
         request: CursorAccountUpsertRouteRequest,
     ) -> Result<CursorAccountsResponse, ProviderAccountRouteError> {
-        operations::add_cursor_account_response(
-            &self.state,
-            request.label,
-            request.token,
-            request.email,
-        )
-        .await
+        let (label, token, email) = request.into_parts();
+        operations::add_cursor_account_response(&self.state, label, token, email).await
     }
 
     pub async fn set_active_cursor_account_for_route(
         &self,
         request: ProviderActiveAccountRouteRequest,
     ) -> Result<CursorAccountsResponse, ProviderAccountRouteError> {
-        operations::set_active_cursor_account_response(&self.state, request.account_id).await
+        operations::set_active_cursor_account_response(&self.state, request.into_account_id()).await
     }
 
     pub async fn delete_cursor_account_for_route(
@@ -178,12 +166,13 @@ impl ProvidersHandle {
         &self,
         request: GeminiAccountUpsertRouteRequest,
     ) -> Result<GeminiAccountsResponse, ProviderAccountRouteError> {
+        let (label, oauth_creds_json, google_accounts_json, email) = request.into_parts();
         operations::add_gemini_account_response(
             &self.state,
-            request.label,
-            request.oauth_creds_json,
-            request.google_accounts_json,
-            request.email,
+            label,
+            oauth_creds_json,
+            google_accounts_json,
+            email,
         )
         .await
     }
@@ -192,7 +181,7 @@ impl ProvidersHandle {
         &self,
         request: ProviderActiveAccountRouteRequest,
     ) -> Result<GeminiAccountsResponse, ProviderAccountRouteError> {
-        operations::set_active_gemini_account_response(&self.state, request.account_id).await
+        operations::set_active_gemini_account_response(&self.state, request.into_account_id()).await
     }
 
     pub async fn delete_gemini_account_for_route(
@@ -212,13 +201,14 @@ impl ProvidersHandle {
         &self,
         request: KimiAccountUpsertRouteRequest,
     ) -> Result<KimiAccountsResponse, ProviderAccountRouteError> {
+        let (label, provider, credentials_json, config_toml, email) = request.into_parts();
         operations::add_kimi_account_response(
             &self.state,
-            request.label,
-            request.provider,
-            request.credentials_json,
-            request.config_toml,
-            request.email,
+            label,
+            provider,
+            credentials_json,
+            config_toml,
+            email,
         )
         .await
     }
@@ -227,7 +217,7 @@ impl ProvidersHandle {
         &self,
         request: ProviderActiveAccountRouteRequest,
     ) -> Result<KimiAccountsResponse, ProviderAccountRouteError> {
-        operations::set_active_kimi_account_response(&self.state, request.account_id).await
+        operations::set_active_kimi_account_response(&self.state, request.into_account_id()).await
     }
 
     pub async fn delete_kimi_account_for_route(
@@ -247,14 +237,16 @@ impl ProvidersHandle {
         &self,
         request: MistralAccountUpsertRouteRequest,
     ) -> Result<MistralAccountsResponse, ProviderAccountRouteError> {
-        operations::upsert_mistral_account_response(&self.state, request.label, request.email).await
+        let (label, email) = request.into_parts();
+        operations::upsert_mistral_account_response(&self.state, label, email).await
     }
 
     pub async fn set_active_mistral_account_for_route(
         &self,
         request: ProviderActiveAccountRouteRequest,
     ) -> Result<MistralAccountsResponse, ProviderAccountRouteError> {
-        operations::set_active_mistral_account_response(&self.state, request.account_id).await
+        operations::set_active_mistral_account_response(&self.state, request.into_account_id())
+            .await
     }
 
     pub async fn delete_mistral_account_for_route(
@@ -274,20 +266,15 @@ impl ProvidersHandle {
         &self,
         request: QwenAccountUpsertRouteRequest,
     ) -> Result<QwenAccountsResponse, ProviderAccountRouteError> {
-        operations::add_qwen_account_response(
-            &self.state,
-            request.label,
-            request.oauth_creds_json,
-            request.email,
-        )
-        .await
+        let (label, oauth_creds_json, email) = request.into_parts();
+        operations::add_qwen_account_response(&self.state, label, oauth_creds_json, email).await
     }
 
     pub async fn set_active_qwen_account_for_route(
         &self,
         request: ProviderActiveAccountRouteRequest,
     ) -> Result<QwenAccountsResponse, ProviderAccountRouteError> {
-        operations::set_active_qwen_account_response(&self.state, request.account_id).await
+        operations::set_active_qwen_account_response(&self.state, request.into_account_id()).await
     }
 
     pub async fn delete_qwen_account_for_route(

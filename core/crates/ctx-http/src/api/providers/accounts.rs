@@ -11,7 +11,7 @@ mod kimi;
 mod mistral;
 mod qwen;
 
-pub(crate) use ctx_daemon::daemon::providers::{
+pub(crate) use ctx_provider_accounts::route_contract::{
     AmpAccountUpsertRouteRequest, AmpAccountsResponse, ClaudeAccountUpsertRouteRequest,
     ClaudeAccountsResponse, CodexAccountsResponse, CodexHostImportProbeRouteResponse,
     CodexHostImportRouteRequest, CopilotAccountUpsertRouteRequest, CopilotAccountsResponse,

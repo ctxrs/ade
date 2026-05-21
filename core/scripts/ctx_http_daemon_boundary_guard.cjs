@@ -293,6 +293,7 @@ const providerStatusApiRoots = [
 ];
 
 const providerAccountsApiRoots = [
+  "core/crates/ctx-http/src/api/providers.rs",
   "core/crates/ctx-http/src/api/providers/accounts.rs",
   "core/crates/ctx-http/src/api/providers/accounts/",
   "core/crates/ctx-http/src/api/providers/types/accounts.rs",
@@ -2145,6 +2146,15 @@ const PROVIDER_USAGE_API_ORCHESTRATION_PATTERNS = [
 ];
 
 const PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS = [
+  {
+    name: "provider account API imports route contracts from daemon",
+    regex:
+      /\bctx_daemon::daemon::providers::(?:\{[^}]*\b(?:ProviderActiveAccountRouteRequest|(?:CodexHostImport|(?:Claude|Gemini|Qwen|Amp|Mistral|Kimi|Copilot|Cursor)AccountUpsert)RouteRequest|(?:CodexHostImportProbe|(?:Codex|Claude|Gemini|Qwen|Kimi|Mistral|Copilot|Cursor|Amp)Accounts)Response|ProviderAccountRouteError(?:Kind)?)\b|(?:ProviderActiveAccountRouteRequest|(?:CodexHostImport|(?:Claude|Gemini|Qwen|Amp|Mistral|Kimi|Copilot|Cursor)AccountUpsert)RouteRequest|(?:CodexHostImportProbe|(?:Codex|Claude|Gemini|Qwen|Kimi|Mistral|Copilot|Cursor|Amp)Accounts)Response|ProviderAccountRouteError(?:Kind)?)\b)/,
+  },
+  {
+    name: "provider account API imports provider-account domain directly",
+    regex: /\bctx_provider_accounts(?!(?:::route_contract\b))/,
+  },
   {
     name: "provider account API loads account registries directly",
     regex:

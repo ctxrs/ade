@@ -4878,6 +4878,12 @@ test("daemon boundary guard rejects provider account orchestration in HTTP", () 
 
 test("daemon boundary guard scopes provider account orchestration patterns", () => {
   assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/providers.rs").includes(
+      PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/providers/accounts.rs").includes(
       PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS[0],
     ),
@@ -4892,7 +4898,7 @@ test("daemon boundary guard scopes provider account orchestration patterns", () 
   assert.equal(
     apiPatternsForPath(
       "core/crates/ctx-http/src/api/providers/types/accounts/requests.rs",
-    ).includes(PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS[5]),
+    ).includes(PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS[7]),
     true,
   );
   assert.equal(
@@ -4900,6 +4906,43 @@ test("daemon boundary guard scopes provider account orchestration patterns", () 
       PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS[0],
     ),
     false,
+  );
+});
+
+test("daemon boundary guard allows provider-account route contracts only", () => {
+  assert.deepEqual(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/providers/accounts.rs",
+      contents: `
+        pub(crate) use ctx_provider_accounts::route_contract::{
+          AmpAccountUpsertRouteRequest, AmpAccountsResponse, ProviderAccountRouteError,
+          ProviderAccountRouteErrorKind, ProviderActiveAccountRouteRequest,
+        };
+      `,
+      patterns: PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS,
+    }),
+    [],
+  );
+
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/providers.rs",
+    contents: `
+      use ctx_daemon::daemon::providers::{ProviderActiveAccountRouteRequest};
+      use ctx_provider_accounts as provider_accounts;
+
+      async fn handler() {
+        let _ = provider_accounts::load_codex_registry(data_root).await?;
+      }
+    `,
+    patterns: PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "provider account API imports route contracts from daemon",
+      "provider account API imports provider-account domain directly",
+    ],
   );
 });
 

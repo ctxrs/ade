@@ -1,54 +1,5 @@
 use super::super::ProviderAccountMutationError;
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum ProviderAccountRouteErrorKind {
-    BadRequest,
-    NotFound,
-    Internal,
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct ProviderAccountRouteError {
-    kind: ProviderAccountRouteErrorKind,
-    message: String,
-}
-
-impl ProviderAccountRouteError {
-    pub(in crate::daemon::providers::accounts::routes) fn bad_request(
-        message: impl Into<String>,
-    ) -> Self {
-        Self {
-            kind: ProviderAccountRouteErrorKind::BadRequest,
-            message: message.into(),
-        }
-    }
-
-    pub(in crate::daemon::providers::accounts::routes) fn not_found(
-        message: impl Into<String>,
-    ) -> Self {
-        Self {
-            kind: ProviderAccountRouteErrorKind::NotFound,
-            message: message.into(),
-        }
-    }
-
-    pub(in crate::daemon::providers::accounts::routes) fn internal(
-        message: impl Into<String>,
-    ) -> Self {
-        Self {
-            kind: ProviderAccountRouteErrorKind::Internal,
-            message: message.into(),
-        }
-    }
-
-    pub fn kind(&self) -> ProviderAccountRouteErrorKind {
-        self.kind
-    }
-
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-}
+use ctx_provider_accounts::ProviderAccountRouteError;
 
 pub(in crate::daemon::providers::accounts::routes) fn internal_error(
     error: impl ToString,

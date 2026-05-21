@@ -1,16 +1,16 @@
 use super::*;
 
 pub(super) fn provider_account_route_error(
-    err: ctx_daemon::daemon::providers::ProviderAccountRouteError,
+    err: ctx_provider_accounts::route_contract::ProviderAccountRouteError,
 ) -> (StatusCode, Json<ApiErrorResp>) {
     let status = match err.kind() {
-        ctx_daemon::daemon::providers::ProviderAccountRouteErrorKind::BadRequest => {
+        ctx_provider_accounts::route_contract::ProviderAccountRouteErrorKind::BadRequest => {
             StatusCode::BAD_REQUEST
         }
-        ctx_daemon::daemon::providers::ProviderAccountRouteErrorKind::NotFound => {
+        ctx_provider_accounts::route_contract::ProviderAccountRouteErrorKind::NotFound => {
             StatusCode::NOT_FOUND
         }
-        ctx_daemon::daemon::providers::ProviderAccountRouteErrorKind::Internal => {
+        ctx_provider_accounts::route_contract::ProviderAccountRouteErrorKind::Internal => {
             StatusCode::INTERNAL_SERVER_ERROR
         }
     };
