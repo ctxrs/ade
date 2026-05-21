@@ -1,104 +1,28 @@
-use std::path::Path;
-
 use anyhow::Error;
-use ctx_core::ids::SessionId;
-use ctx_core::models::{DiffUnavailableReason, Session, Worktree};
+use async_trait::async_trait;
+use ctx_core::ids::{SessionId, WorktreeId};
+use ctx_core::models::{Session, SessionGitStatusSummary, Worktree};
+pub use ctx_session_service::vcs::{
+    SessionVcsApplyAction, SessionVcsDiff, SessionVcsDiffQuery, SessionVcsDiffSummary,
+    SessionVcsError, SessionVcsGitStatus, SessionVcsGitStatusEntry,
+};
+use ctx_session_service::vcs::{
+    SessionVcsDataPlane, SessionVcsDiffBaseQuery, SessionVcsDiffBaseResolution,
+    SessionVcsDiffSummaryCounts, SessionVcsDiffSummaryMismatch, SessionVcsGitStatusSnapshot,
+    SessionVcsService,
+};
 use ctx_workspace_services::worktree_vcs::{
-    apply_worktree_vcs_session_patch, is_no_vcs_repo_error,
-    session_git_status_summary_from_snapshot, worktree_vcs_diff_summary_mismatch,
-    WorktreeDiffBaseResolution, WorktreeVcsDiffBaseQuery,
+    apply_worktree_vcs_session_patch, is_no_vcs_repo_error as workspace_is_no_vcs_repo_error,
+    resolve_worktree_diff_base_from_source, GitStatusEntry, GitStatusSnapshot,
+    WorktreeDiffBaseResolution, WorktreeVcsCommitLookupSource, WorktreeVcsDiffBaseQuery,
+    WorktreeVcsDiffSummaryCounts, WorktreeVcsDiffSummaryMismatch,
 };
 
+use crate::daemon::git_status::{
+    load_git_status_snapshot, worktree_has_vcs_repo, HttpWorktreeVcsSource,
+};
+use crate::daemon::workspaces::{diff_worktree_for_session, diff_worktree_summary_for_session};
 use crate::daemon::SessionsHandle;
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SessionVcsDiffQuery {
-    pub base_commit_sha: Option<String>,
-    pub target_branch: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SessionVcsApplyAction {
-    Accept,
-    Reject,
-}
-
-impl SessionVcsApplyAction {
-    fn reverse_patch(self) -> bool {
-        matches!(self, Self::Reject)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SessionVcsDiff {
-    pub diff: String,
-    pub available: bool,
-    pub unavailable_reason: Option<DiffUnavailableReason>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SessionVcsDiffSummary {
-    pub base_commit_sha: String,
-    pub head_commit_sha: String,
-    pub file_count: i64,
-    pub line_additions: i64,
-    pub line_deletions: i64,
-    pub available: bool,
-    pub unavailable_reason: Option<DiffUnavailableReason>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SessionVcsGitStatus {
-    pub raw: String,
-    pub summary_line: String,
-    pub branch: Option<String>,
-    pub upstream: Option<String>,
-    pub ahead: i64,
-    pub behind: i64,
-    pub detached: bool,
-    pub staged: i64,
-    pub unstaged: i64,
-    pub untracked: i64,
-    pub entries: Vec<SessionVcsGitStatusEntry>,
-    pub entries_truncated: bool,
-    pub entries_total_count: i64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SessionVcsGitStatusEntry {
-    pub path: String,
-    pub orig_path: Option<String>,
-    pub index_status: String,
-    pub worktree_status: String,
-}
-
-#[derive(Debug)]
-pub enum SessionVcsError {
-    NotFound,
-    InvalidExplicitTarget(String),
-    BadPatch(Error),
-    Internal(Error),
-}
-
-struct SessionVcsContext {
-    session: Session,
-    worktree: Worktree,
-}
-
-enum PreparedSessionDiffRequest {
-    Available {
-        ctx: SessionVcsContext,
-        base_commit_sha: String,
-    },
-    NoRepo {
-        ctx: SessionVcsContext,
-    },
-    Unavailable {
-        ctx: SessionVcsContext,
-        base_commit_sha: String,
-        reason: DiffUnavailableReason,
-    },
-}
 
 impl SessionsHandle {
     pub async fn get_session_vcs_diff_for_request(
@@ -106,36 +30,9 @@ impl SessionsHandle {
         session_id: SessionId,
         query: SessionVcsDiffQuery,
     ) -> Result<SessionVcsDiff, SessionVcsError> {
-        let (ctx, base_commit_sha) = match self
-            .prepare_session_diff_request(session_id, query, "sessions.diff")
-            .await?
-        {
-            PreparedSessionDiffRequest::Available {
-                ctx,
-                base_commit_sha,
-            } => (ctx, base_commit_sha),
-            PreparedSessionDiffRequest::NoRepo { .. } => {
-                return Ok(session_vcs_diff_unavailable(DiffUnavailableReason::NoRepo));
-            }
-            PreparedSessionDiffRequest::Unavailable { reason, .. } => {
-                return Ok(session_vcs_diff_unavailable(reason));
-            }
-        };
-        let diff = match self
-            .diff_worktree_for_session(&ctx.worktree, &base_commit_sha)
+        SessionVcsService::new(self)
+            .get_session_vcs_diff(session_id, query)
             .await
-        {
-            Ok(diff) => diff,
-            Err(err) if is_no_vcs_repo_error(&err) => {
-                return Ok(session_vcs_diff_unavailable(DiffUnavailableReason::NoRepo));
-            }
-            Err(err) => return Err(SessionVcsError::Internal(err)),
-        };
-        Ok(SessionVcsDiff {
-            diff,
-            available: true,
-            unavailable_reason: None,
-        })
     }
 
     pub async fn get_session_vcs_diff_summary_for_request(
@@ -143,37 +40,9 @@ impl SessionsHandle {
         session_id: SessionId,
         query: SessionVcsDiffQuery,
     ) -> Result<SessionVcsDiffSummary, SessionVcsError> {
-        match self
-            .prepare_session_diff_request(session_id, query, "sessions.diff_summary")
-            .await?
-        {
-            PreparedSessionDiffRequest::Available {
-                ctx,
-                base_commit_sha,
-            } => {
-                self.session_vcs_diff_summary_available(&ctx.worktree, base_commit_sha)
-                    .await
-            }
-            PreparedSessionDiffRequest::NoRepo { ctx } => Ok(session_vcs_diff_summary_unavailable(
-                ctx.worktree.base_commit_sha.clone(),
-                ctx.worktree.base_commit_sha,
-                DiffUnavailableReason::NoRepo,
-            )),
-            PreparedSessionDiffRequest::Unavailable {
-                ctx,
-                base_commit_sha,
-                reason,
-            } => {
-                let head_commit_sha = self
-                    .resolve_head_commit_sha_or_base(&ctx.worktree, &base_commit_sha)
-                    .await;
-                Ok(session_vcs_diff_summary_unavailable(
-                    base_commit_sha,
-                    head_commit_sha,
-                    reason,
-                ))
-            }
-        }
+        SessionVcsService::new(self)
+            .get_session_vcs_diff_summary(session_id, query)
+            .await
     }
 
     pub async fn apply_session_vcs_diff_patch_for_request(
@@ -182,233 +51,228 @@ impl SessionsHandle {
         action: SessionVcsApplyAction,
         patch: &str,
     ) -> Result<SessionVcsDiff, SessionVcsError> {
-        let ctx = self.load_session_vcs_context(session_id).await?;
-        apply_worktree_vcs_session_patch(
-            Path::new(&ctx.worktree.root_path),
-            patch,
-            action.reverse_patch(),
-        )
-        .await
-        .map_err(SessionVcsError::BadPatch)?;
-
-        let resolution = self
-            .resolve_session_diff_base(&ctx.worktree, SessionVcsDiffQuery::default())
-            .await?;
-        if let Some(unavailable_reason) = resolution.unavailable_reason.clone() {
-            self.emit_compat_payload_reject_counter(
-                "sessions.diff_apply",
-                "no_target_branch",
-                None,
-            )
-            .await;
-            return Ok(session_vcs_diff_unavailable(unavailable_reason));
-        }
-        let diff = self
-            .diff_worktree_for_session(&ctx.worktree, &resolution.base_commit_sha)
+        SessionVcsService::new(self)
+            .apply_session_vcs_diff_patch(session_id, action, patch)
             .await
-            .map_err(SessionVcsError::Internal)?;
-        Ok(SessionVcsDiff {
-            diff,
-            available: true,
-            unavailable_reason: None,
-        })
     }
 
     pub async fn get_session_vcs_git_status_for_request(
         &self,
         session_id: SessionId,
     ) -> Result<SessionVcsGitStatus, SessionVcsError> {
-        let ctx = self.load_session_vcs_context(session_id).await?;
-        let snapshot = self
-            .load_git_status_snapshot(&ctx.worktree, true, true)
+        SessionVcsService::new(self)
+            .get_session_vcs_git_status(session_id)
             .await
-            .map_err(SessionVcsError::Internal)?;
-        let summary = session_git_status_summary_from_snapshot(&snapshot);
-        let status = SessionVcsGitStatus {
-            raw: snapshot.raw,
-            summary_line: snapshot.summary_line,
-            branch: snapshot.branch,
-            upstream: snapshot.upstream,
-            ahead: snapshot.ahead,
-            behind: snapshot.behind,
-            detached: snapshot.detached,
-            staged: snapshot.staged,
-            unstaged: snapshot.unstaged,
-            untracked: snapshot.untracked,
-            entries: snapshot
-                .entries
-                .into_iter()
-                .map(|entry| SessionVcsGitStatusEntry {
-                    path: entry.path,
-                    orig_path: entry.orig_path,
-                    index_status: entry.index_status,
-                    worktree_status: entry.worktree_status,
-                })
-                .collect(),
-            entries_truncated: snapshot.entries_truncated,
-            entries_total_count: snapshot.entries_total_count,
-        };
-        if let Err(err) = self
-            .persist_session_git_status_summary(ctx.session.id, ctx.worktree.id, &summary)
-            .await
-        {
-            tracing::warn!(
-                session_id = %ctx.session.id.0,
-                "git status summary persist failed: {err:?}"
-            );
-        }
-        Ok(status)
     }
+}
 
-    async fn prepare_session_diff_request(
+#[async_trait]
+impl SessionVcsDataPlane for SessionsHandle {
+    async fn load_session_vcs_parts(
         &self,
         session_id: SessionId,
-        query: SessionVcsDiffQuery,
-        compat_route: &'static str,
-    ) -> Result<PreparedSessionDiffRequest, SessionVcsError> {
-        let ctx = self.load_session_vcs_context(session_id).await?;
-        if !self
-            .worktree_has_vcs_repo(&ctx.worktree)
-            .await
-            .map_err(SessionVcsError::Internal)?
-        {
-            return Ok(PreparedSessionDiffRequest::NoRepo { ctx });
-        }
-        let resolution = self.resolve_session_diff_base(&ctx.worktree, query).await?;
-        if let Some(reason) = resolution.unavailable_reason.clone() {
-            self.emit_compat_payload_reject_counter(compat_route, "no_target_branch", None)
-                .await;
-            return Ok(PreparedSessionDiffRequest::Unavailable {
-                ctx,
-                base_commit_sha: resolution.base_commit_sha,
-                reason,
-            });
-        }
-        Ok(PreparedSessionDiffRequest::Available {
-            ctx,
-            base_commit_sha: resolution.base_commit_sha,
-        })
+    ) -> anyhow::Result<Option<(Session, Worktree)>> {
+        let Some(store) = self.session_store_or_none(session_id).await? else {
+            return Ok(None);
+        };
+        let Some(session) = store.get_session(session_id).await? else {
+            return Ok(None);
+        };
+        let Some(worktree) = store.get_worktree(session.worktree_id).await? else {
+            return Ok(None);
+        };
+        Ok(Some((session, worktree)))
     }
 
-    async fn load_session_vcs_context(
+    async fn persist_session_git_status_summary(
         &self,
         session_id: SessionId,
-    ) -> Result<SessionVcsContext, SessionVcsError> {
-        let (session, worktree) = self
-            .load_session_vcs_parts(session_id)
+        worktree_id: WorktreeId,
+        summary: &SessionGitStatusSummary,
+    ) -> anyhow::Result<()> {
+        let store = self.store_for_session(session_id).await?;
+        store
+            .upsert_session_git_status_summary(session_id, worktree_id, summary)
             .await
-            .map_err(SessionVcsError::Internal)?
-            .ok_or(SessionVcsError::NotFound)?;
-        Ok(SessionVcsContext { session, worktree })
     }
 
-    async fn resolve_session_diff_base(
+    async fn worktree_has_vcs_repo(&self, worktree: &Worktree) -> anyhow::Result<bool> {
+        worktree_has_vcs_repo(&self.state, worktree).await
+    }
+
+    async fn load_git_status_snapshot(
         &self,
         worktree: &Worktree,
-        query: SessionVcsDiffQuery,
-    ) -> Result<WorktreeDiffBaseResolution, SessionVcsError> {
-        let resolution = self
-            .resolve_worktree_diff_base(
-                worktree,
-                WorktreeVcsDiffBaseQuery {
-                    base_commit_sha: query.base_commit_sha,
-                    target_branch: query.target_branch,
-                },
-            )
-            .await;
-        if resolution.explicit_target {
-            if let Some(error) = resolution.error.clone() {
-                return Err(SessionVcsError::InvalidExplicitTarget(error));
-            }
-        }
-        Ok(resolution)
+        include_untracked_files: bool,
+        include_entries: bool,
+    ) -> anyhow::Result<SessionVcsGitStatusSnapshot> {
+        load_git_status_snapshot(
+            &self.state,
+            worktree,
+            include_untracked_files,
+            include_entries,
+        )
+        .await
+        .map(session_vcs_git_status_snapshot)
     }
 
-    async fn session_vcs_diff_summary_available(
+    async fn resolve_worktree_commit(
         &self,
         worktree: &Worktree,
-        base_commit_sha: String,
-    ) -> Result<SessionVcsDiffSummary, SessionVcsError> {
-        let summary_counts = match self
-            .diff_worktree_summary_for_session(worktree, &base_commit_sha)
-            .await
-        {
-            Ok(counts) => Ok(counts),
-            Err(err) if is_no_vcs_repo_error(&err) => Err(DiffUnavailableReason::NoRepo),
-            Err(err) => return Err(SessionVcsError::Internal(err)),
-        };
-        let head_commit_sha = self
-            .resolve_head_commit_sha_or_base(worktree, &base_commit_sha)
-            .await;
-        match summary_counts {
-            Ok(counts) => {
-                if let Some(snapshot) = self.get_worktree_vcs_snapshot(worktree.id).await {
-                    if let Some(mismatch) =
-                        worktree_vcs_diff_summary_mismatch(&snapshot, &base_commit_sha, counts)
-                    {
-                        tracing::warn!(
-                            worktree_id = %worktree.id.0,
-                            snapshot_rev = snapshot.rev,
-                            base_commit_sha = %base_commit_sha,
-                            snapshot_file_count = ?mismatch.snapshot_file_count,
-                            snapshot_additions = ?mismatch.snapshot_line_additions,
-                            snapshot_deletions = ?mismatch.snapshot_line_deletions,
-                            summary_file_count = mismatch.actual_file_count,
-                            summary_additions = mismatch.actual_line_additions,
-                            summary_deletions = mismatch.actual_line_deletions,
-                            "worktree vcs snapshot summary mismatch"
-                        );
-                    }
-                }
-                Ok(SessionVcsDiffSummary {
-                    base_commit_sha,
-                    head_commit_sha,
-                    file_count: counts.file_count,
-                    line_additions: counts.line_additions,
-                    line_deletions: counts.line_deletions,
-                    available: true,
-                    unavailable_reason: None,
-                })
-            }
-            Err(unavailable_reason) => Ok(session_vcs_diff_summary_unavailable(
-                base_commit_sha,
-                head_commit_sha,
-                unavailable_reason,
-            )),
-        }
+        revision: &str,
+    ) -> anyhow::Result<String> {
+        let source = HttpWorktreeVcsSource::new(&self.state, worktree);
+        source.resolve_commit(revision).await
     }
 
-    async fn resolve_head_commit_sha_or_base(
+    async fn diff_worktree_for_session(
         &self,
         worktree: &Worktree,
         base_commit_sha: &str,
-    ) -> String {
-        self.resolve_worktree_commit(worktree, "HEAD")
+    ) -> anyhow::Result<String> {
+        diff_worktree_for_session(&self.state, worktree, base_commit_sha).await
+    }
+
+    async fn diff_worktree_summary_for_session(
+        &self,
+        worktree: &Worktree,
+        base_commit_sha: &str,
+    ) -> anyhow::Result<SessionVcsDiffSummaryCounts> {
+        diff_worktree_summary_for_session(&self.state, worktree, base_commit_sha)
             .await
-            .unwrap_or_else(|_| base_commit_sha.to_string())
+            .map(session_vcs_diff_summary_counts)
+    }
+
+    async fn resolve_worktree_diff_base(
+        &self,
+        worktree: &Worktree,
+        query: SessionVcsDiffBaseQuery,
+    ) -> SessionVcsDiffBaseResolution {
+        let source = HttpWorktreeVcsSource::new(&self.state, worktree);
+        let resolution = resolve_worktree_diff_base_from_source(
+            &source,
+            worktree,
+            WorktreeVcsDiffBaseQuery {
+                base_commit_sha: query.base_commit_sha,
+                target_branch: query.target_branch,
+            },
+        )
+        .await;
+        session_vcs_diff_base_resolution(resolution)
+    }
+
+    async fn apply_worktree_vcs_session_patch(
+        &self,
+        worktree: &Worktree,
+        patch: &str,
+        reverse_patch: bool,
+    ) -> anyhow::Result<()> {
+        apply_worktree_vcs_session_patch(
+            std::path::Path::new(&worktree.root_path),
+            patch,
+            reverse_patch,
+        )
+        .await
+    }
+
+    async fn session_vcs_diff_summary_mismatch(
+        &self,
+        worktree: &Worktree,
+        base_commit_sha: &str,
+        counts: SessionVcsDiffSummaryCounts,
+    ) -> Option<SessionVcsDiffSummaryMismatch> {
+        let snapshot = self.state.get_worktree_vcs_snapshot(worktree.id).await?;
+        ctx_workspace_services::worktree_vcs::worktree_vcs_diff_summary_mismatch(
+            &snapshot,
+            base_commit_sha,
+            workspace_vcs_diff_summary_counts(counts),
+        )
+        .map(|mismatch| session_vcs_diff_summary_mismatch(snapshot.rev, mismatch))
+    }
+
+    async fn emit_compat_payload_reject_counter(&self, surface: &'static str, issue: &'static str) {
+        self.emit_compat_payload_reject_counter(surface, issue, None)
+            .await;
+    }
+
+    fn is_no_vcs_repo_error(&self, error: &Error) -> bool {
+        workspace_is_no_vcs_repo_error(error)
     }
 }
 
-fn session_vcs_diff_unavailable(reason: DiffUnavailableReason) -> SessionVcsDiff {
-    SessionVcsDiff {
-        diff: String::new(),
-        available: false,
-        unavailable_reason: Some(reason),
+fn session_vcs_diff_base_resolution(
+    resolution: WorktreeDiffBaseResolution,
+) -> SessionVcsDiffBaseResolution {
+    SessionVcsDiffBaseResolution {
+        base_commit_sha: resolution.base_commit_sha,
+        unavailable_reason: resolution.unavailable_reason,
+        explicit_target: resolution.explicit_target,
+        error: resolution.error,
     }
 }
 
-fn session_vcs_diff_summary_unavailable(
-    base_commit_sha: String,
-    head_commit_sha: String,
-    reason: DiffUnavailableReason,
-) -> SessionVcsDiffSummary {
-    SessionVcsDiffSummary {
-        base_commit_sha,
-        head_commit_sha,
-        file_count: 0,
-        line_additions: 0,
-        line_deletions: 0,
-        available: false,
-        unavailable_reason: Some(reason),
+fn session_vcs_diff_summary_counts(
+    counts: WorktreeVcsDiffSummaryCounts,
+) -> SessionVcsDiffSummaryCounts {
+    SessionVcsDiffSummaryCounts {
+        file_count: counts.file_count,
+        line_additions: counts.line_additions,
+        line_deletions: counts.line_deletions,
+    }
+}
+
+fn workspace_vcs_diff_summary_counts(
+    counts: SessionVcsDiffSummaryCounts,
+) -> WorktreeVcsDiffSummaryCounts {
+    WorktreeVcsDiffSummaryCounts {
+        file_count: counts.file_count,
+        line_additions: counts.line_additions,
+        line_deletions: counts.line_deletions,
+    }
+}
+
+fn session_vcs_diff_summary_mismatch(
+    snapshot_rev: i64,
+    mismatch: WorktreeVcsDiffSummaryMismatch,
+) -> SessionVcsDiffSummaryMismatch {
+    SessionVcsDiffSummaryMismatch {
+        snapshot_rev,
+        snapshot_file_count: mismatch.snapshot_file_count,
+        snapshot_line_additions: mismatch.snapshot_line_additions,
+        snapshot_line_deletions: mismatch.snapshot_line_deletions,
+        actual_file_count: mismatch.actual_file_count,
+        actual_line_additions: mismatch.actual_line_additions,
+        actual_line_deletions: mismatch.actual_line_deletions,
+    }
+}
+
+fn session_vcs_git_status_snapshot(snapshot: GitStatusSnapshot) -> SessionVcsGitStatusSnapshot {
+    SessionVcsGitStatusSnapshot {
+        raw: snapshot.raw,
+        summary_line: snapshot.summary_line,
+        branch: snapshot.branch,
+        upstream: snapshot.upstream,
+        ahead: snapshot.ahead,
+        behind: snapshot.behind,
+        detached: snapshot.detached,
+        staged: snapshot.staged,
+        unstaged: snapshot.unstaged,
+        untracked: snapshot.untracked,
+        entries: snapshot
+            .entries
+            .into_iter()
+            .map(session_vcs_git_status_entry)
+            .collect(),
+        entries_total_count: snapshot.entries_total_count,
+        entries_truncated: snapshot.entries_truncated,
+    }
+}
+
+fn session_vcs_git_status_entry(entry: GitStatusEntry) -> SessionVcsGitStatusEntry {
+    SessionVcsGitStatusEntry {
+        path: entry.path,
+        orig_path: entry.orig_path,
+        index_status: entry.index_status,
+        worktree_status: entry.worktree_status,
     }
 }
