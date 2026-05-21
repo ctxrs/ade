@@ -1,113 +1,12 @@
-use ctx_provider_runtime::provider_workers::ProviderAdapterRestartResult;
+use ctx_provider_runtime::{
+    ProviderAdminRouteError, ProviderDevRestartRouteRequest, ProviderDevRestartRouteResponse,
+    ProviderMatrixRefreshRouteResponse,
+};
 use ctx_providers::adapters::ProviderRestartMode;
-use serde::{Deserialize, Serialize};
 
 use crate::daemon::ProvidersHandle;
 
 use super::inventory::{refresh_provider_inventory, ProviderMatrixRefreshSummary};
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ProviderMatrixRefreshRouteResponse {
-    provider_count: usize,
-    generated_at: Option<String>,
-    source: String,
-    degraded: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    last_error: Option<String>,
-}
-
-impl From<ProviderMatrixRefreshSummary> for ProviderMatrixRefreshRouteResponse {
-    fn from(summary: ProviderMatrixRefreshSummary) -> Self {
-        Self {
-            provider_count: summary.provider_count,
-            generated_at: summary.generated_at,
-            source: summary.source,
-            degraded: summary.degraded,
-            last_error: summary.last_error,
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ProviderDevRestartRouteRequest {
-    mode: String,
-    #[serde(default)]
-    reason: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ProviderDevRestartRouteResponse {
-    mode: String,
-    results: Vec<ProviderDevRestartRouteResult>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ProviderDevRestartRouteResult {
-    provider_id: String,
-    status: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    message: Option<String>,
-}
-
-impl From<ProviderAdapterRestartResult> for ProviderDevRestartRouteResult {
-    fn from(result: ProviderAdapterRestartResult) -> Self {
-        Self {
-            provider_id: result.provider_id,
-            status: result.status.as_str().to_string(),
-            message: result.message,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProviderAdminRouteErrorKind {
-    NotFound,
-    BadRequest,
-    Internal,
-}
-
-#[derive(Debug)]
-pub struct ProviderAdminRouteError {
-    kind: ProviderAdminRouteErrorKind,
-    message: String,
-}
-
-impl ProviderAdminRouteError {
-    pub fn kind(&self) -> ProviderAdminRouteErrorKind {
-        self.kind
-    }
-
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-
-    fn not_found(message: impl Into<String>) -> Self {
-        Self {
-            kind: ProviderAdminRouteErrorKind::NotFound,
-            message: message.into(),
-        }
-    }
-
-    fn bad_request(message: impl Into<String>) -> Self {
-        Self {
-            kind: ProviderAdminRouteErrorKind::BadRequest,
-            message: message.into(),
-        }
-    }
-
-    fn internal(message: impl Into<String>) -> Self {
-        Self {
-            kind: ProviderAdminRouteErrorKind::Internal,
-            message: message.into(),
-        }
-    }
-}
-
-impl std::fmt::Display for ProviderAdminRouteError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.message)
-    }
-}
 
 #[derive(Debug)]
 struct ProviderDevRestartRoutePlan {
@@ -121,7 +20,7 @@ impl ProvidersHandle {
     ) -> Result<ProviderMatrixRefreshRouteResponse, ProviderAdminRouteError> {
         refresh_provider_inventory(self.state.as_ref())
             .await
-            .map(Into::into)
+            .map(provider_matrix_refresh_route_response)
             .map_err(matrix_refresh_route_error)
     }
 
@@ -141,6 +40,18 @@ impl ProvidersHandle {
 
 fn matrix_refresh_route_error(error: anyhow::Error) -> ProviderAdminRouteError {
     ProviderAdminRouteError::internal(format!("failed to refresh provider statuses: {error:#}"))
+}
+
+fn provider_matrix_refresh_route_response(
+    summary: ProviderMatrixRefreshSummary,
+) -> ProviderMatrixRefreshRouteResponse {
+    ProviderMatrixRefreshRouteResponse::new(
+        summary.provider_count,
+        summary.generated_at,
+        summary.source,
+        summary.degraded,
+        summary.last_error,
+    )
 }
 
 fn dev_tools_enabled() -> bool {
@@ -163,29 +74,25 @@ fn dev_restart_route_plan(
     enabled: bool,
     request: ProviderDevRestartRouteRequest,
 ) -> Result<ProviderDevRestartRoutePlan, ProviderAdminRouteError> {
+    let (mode, reason) = request.into_parts();
     if !enabled {
         return Err(ProviderAdminRouteError::not_found("dev tools are disabled"));
     }
 
-    let Some(mode) = parse_restart_mode(&request.mode) else {
+    let Some(mode) = parse_restart_mode(&mode) else {
         return Err(ProviderAdminRouteError::bad_request(
             "mode must be 'immediate' or 'drain'",
         ));
     };
-    let reason = request
-        .reason
-        .unwrap_or_else(|| format!("dev restart ({})", mode.as_str()));
+    let reason = reason.unwrap_or_else(|| format!("dev restart ({})", mode.as_str()));
     Ok(ProviderDevRestartRoutePlan { mode, reason })
 }
 
 fn dev_restart_route_response(
     mode: ProviderRestartMode,
-    results: Vec<ProviderAdapterRestartResult>,
+    results: Vec<ctx_provider_runtime::provider_workers::ProviderAdapterRestartResult>,
 ) -> ProviderDevRestartRouteResponse {
-    ProviderDevRestartRouteResponse {
-        mode: mode.as_str().to_string(),
-        results: results.into_iter().map(Into::into).collect(),
-    }
+    ProviderDevRestartRouteResponse::new(mode, results)
 }
 
 #[cfg(test)]
@@ -195,6 +102,7 @@ mod route_tests {
     use ctx_provider_runtime::provider_workers::{
         ProviderAdapterRestartResult, ProviderAdapterRestartStatus,
     };
+    use ctx_provider_runtime::ProviderAdminRouteErrorKind;
 
     use super::*;
 
@@ -256,10 +164,7 @@ mod route_tests {
     fn dev_restart_route_plan_rejects_disabled_dev_tools() {
         let error = dev_restart_route_plan(
             false,
-            ProviderDevRestartRouteRequest {
-                mode: "immediate".to_string(),
-                reason: None,
-            },
+            ProviderDevRestartRouteRequest::new("immediate".to_string(), None),
         )
         .unwrap_err();
 
@@ -271,10 +176,7 @@ mod route_tests {
     fn dev_restart_route_plan_rejects_unknown_mode() {
         let error = dev_restart_route_plan(
             true,
-            ProviderDevRestartRouteRequest {
-                mode: "later".to_string(),
-                reason: None,
-            },
+            ProviderDevRestartRouteRequest::new("later".to_string(), None),
         )
         .unwrap_err();
 
@@ -286,10 +188,7 @@ mod route_tests {
     fn dev_restart_route_plan_defaults_reason_from_mode() {
         let plan = dev_restart_route_plan(
             true,
-            ProviderDevRestartRouteRequest {
-                mode: " DRAIN ".to_string(),
-                reason: None,
-            },
+            ProviderDevRestartRouteRequest::new(" DRAIN ".to_string(), None),
         )
         .unwrap();
 
@@ -301,10 +200,10 @@ mod route_tests {
     fn dev_restart_route_plan_preserves_custom_reason() {
         let plan = dev_restart_route_plan(
             true,
-            ProviderDevRestartRouteRequest {
-                mode: "immediate".to_string(),
-                reason: Some("operator request".to_string()),
-            },
+            ProviderDevRestartRouteRequest::new(
+                "immediate".to_string(),
+                Some("operator request".to_string()),
+            ),
         )
         .unwrap();
 

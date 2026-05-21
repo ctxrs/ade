@@ -30,10 +30,10 @@ async fn select_provider_harness_source_invalidates_only_matching_provider_probe
     let Json(config) = select_provider_harness_source(
         State(fixture.providers()),
         Path("codex".to_string()),
-        Json(SelectProviderHarnessSourceRouteRequest {
-            source_kind: HarnessSourceKind::Subscription,
-            endpoint_id: None,
-        }),
+        Json(SelectProviderHarnessSourceRouteRequest::new(
+            HarnessSourceKind::Subscription,
+            None,
+        )),
     )
     .await
     .expect("select provider harness source");

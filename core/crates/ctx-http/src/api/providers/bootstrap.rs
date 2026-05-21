@@ -1,6 +1,6 @@
 use super::*;
 
-use ctx_daemon::daemon::providers::{
+use ctx_provider_runtime::{
     ProvidersBootstrapResponse, ProvidersBootstrapRouteError, ProvidersBootstrapRouteErrorKind,
     ProvidersBootstrapRouteRequest,
 };
@@ -10,7 +10,7 @@ pub(crate) async fn get_workspace_providers_bootstrap(
     Path(workspace_id): Path<String>,
 ) -> Result<Json<ProvidersBootstrapResponse>, (StatusCode, Json<serde_json::Value>)> {
     providers
-        .workspace_providers_bootstrap_for_route(ProvidersBootstrapRouteRequest { workspace_id })
+        .workspace_providers_bootstrap_for_route(ProvidersBootstrapRouteRequest::new(workspace_id))
         .await
         .map(Json)
         .map_err(provider_bootstrap_route_error_json)

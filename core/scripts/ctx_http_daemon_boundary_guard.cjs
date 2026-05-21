@@ -1827,6 +1827,32 @@ const SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS = [
   },
 ];
 
+const providerBootstrapRouteContractPattern = String.raw`(?:ProvidersBootstrapResponse|ProvidersBootstrapRouteError(?:Kind)?|ProvidersBootstrapRouteRequest)`;
+const providerHarnessRouteContractPattern = String.raw`(?:ProviderHarnessConfigRouteError|ProviderHarnessEndpointRouteError(?:Kind)?|ProviderHarnessSourceConfig|SelectProviderHarnessSourceRouteRequest|SetProviderHarnessEndpointManualModelsRouteRequest|UpsertProviderHarnessEndpointRouteRequest)`;
+const providerAdminRouteContractPattern = String.raw`(?:ProviderAdminRouteError(?:Kind)?|ProviderDevRestartRouteRequest|ProviderDevRestartRouteResponse|ProviderDevRestartRouteResult|ProviderMatrixRefreshRouteResponse)`;
+const movedProviderRouteContractPattern = String.raw`(?:${providerBootstrapRouteContractPattern}|${providerHarnessRouteContractPattern}|${providerAdminRouteContractPattern})`;
+
+const PROVIDER_ROUTE_CONTRACT_DAEMON_IMPORT_PATTERNS = [
+  {
+    name: "provider API imports moved provider route contracts from daemon",
+    regex: new RegExp(
+      String.raw`\bctx_daemon::daemon::providers::(?:\{[^}]*\b${movedProviderRouteContractPattern}\b|${movedProviderRouteContractPattern}\b)`,
+    ),
+    contentRegex: new RegExp(
+      String.raw`\buse\s+ctx_daemon::daemon::providers::\s*\{(?=[^}]*\b${movedProviderRouteContractPattern}\b)[^}]*\}\s*;`,
+      "gm",
+    ),
+  },
+  {
+    name: "provider API imports moved provider route contracts from nested daemon providers group",
+    regex: /\b\B/,
+    contentRegex: new RegExp(
+      String.raw`\buse\s+ctx_daemon::daemon::\s*\{(?=[^;]*\bproviders\s*::\s*\{[^;]*\b${movedProviderRouteContractPattern}\b)[^;]*;`,
+      "gm",
+    ),
+  },
+];
+
 const PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS = [
   {
     name: "provider bootstrap API parses workspace ids directly",
@@ -5291,7 +5317,10 @@ function repoRelative(filePath) {
 }
 
 function apiPatternsForPath(relativePath) {
-  const patterns = [...API_RAW_DAEMON_PATTERNS];
+  const patterns = [
+    ...API_RAW_DAEMON_PATTERNS,
+    ...PROVIDER_ROUTE_CONTRACT_DAEMON_IMPORT_PATTERNS,
+  ];
   if (rawStoreBlindApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...API_DOMAIN_RAW_STORE_PATTERNS);
   }

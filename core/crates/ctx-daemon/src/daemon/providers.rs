@@ -38,10 +38,6 @@ mod usage;
 
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use accounts::persist_successful_codex_login;
-pub use admin_routes::{
-    ProviderAdminRouteError, ProviderAdminRouteErrorKind, ProviderDevRestartRouteRequest,
-    ProviderDevRestartRouteResponse, ProviderMatrixRefreshRouteResponse,
-};
 pub use auth_check::{
     authenticate_provider_for_workspace, verify_provider_for_workspace, ProviderAuthCheckError,
 };
@@ -50,20 +46,12 @@ pub use auth_import::{
     import_provider_auth_candidates, list_provider_auth_import_candidates,
     list_provider_auth_import_profiles,
 };
-pub use bootstrap::{
-    ProvidersBootstrapResponse, ProvidersBootstrapRouteError, ProvidersBootstrapRouteErrorKind,
-    ProvidersBootstrapRouteRequest,
-};
 pub use diagnostics::provider_diagnostics_snapshot;
 pub use harness_config::{
     delete_provider_harness_endpoint, get_provider_harness_config,
     mark_provider_endpoint_verification, refresh_provider_endpoint_model_catalog,
     refresh_provider_harness_endpoint_models, select_provider_harness_source,
     set_provider_harness_endpoint_manual_models, upsert_provider_harness_endpoint,
-    ProviderHarnessConfigRouteError, ProviderHarnessEndpointRouteError,
-    ProviderHarnessEndpointRouteErrorKind, ProviderHarnessSourceConfig,
-    SelectProviderHarnessSourceRouteRequest, SetProviderHarnessEndpointManualModelsRouteRequest,
-    UpsertProviderHarnessEndpointRouteRequest,
 };
 pub use installs::{
     cancel_provider_install, get_provider_install_info, list_provider_install_events,

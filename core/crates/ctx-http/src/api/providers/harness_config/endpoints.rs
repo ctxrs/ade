@@ -3,11 +3,11 @@ use axum::http::StatusCode;
 use axum::Json;
 
 use super::provider_harness_endpoint_error;
-use ctx_daemon::daemon::providers::{
+use ctx_daemon::daemon::ProvidersHandle;
+use ctx_provider_runtime::{
     ProviderHarnessSourceConfig, SetProviderHarnessEndpointManualModelsRouteRequest,
     UpsertProviderHarnessEndpointRouteRequest,
 };
-use ctx_daemon::daemon::ProvidersHandle;
 
 pub(crate) async fn upsert_provider_harness_endpoint(
     State(providers): State<ProvidersHandle>,

@@ -12,14 +12,17 @@ use tokio::sync::Mutex;
 pub mod login_sessions;
 pub mod model_preferences;
 pub mod provider_adapters;
+pub mod provider_admin_route_contract;
 pub mod provider_auth;
 pub mod provider_auth_check;
 pub mod provider_auth_check_route_contract;
+pub mod provider_bootstrap_route_contract;
 pub mod provider_cache;
 pub mod provider_child_reclassifier;
 pub mod provider_endpoint_catalog;
 pub mod provider_guard;
 pub mod provider_harness_config;
+pub mod provider_harness_config_route_contract;
 pub mod provider_install_tracker;
 pub mod provider_launch;
 pub mod provider_options;
@@ -37,10 +40,25 @@ pub mod provider_usage_route_contract;
 pub mod provider_workers;
 pub mod resource_governance;
 
+pub use provider_admin_route_contract::{
+    ProviderAdminRouteError, ProviderAdminRouteErrorKind, ProviderDevRestartRouteRequest,
+    ProviderDevRestartRouteResponse, ProviderDevRestartRouteResult,
+    ProviderMatrixRefreshRouteResponse,
+};
 pub use provider_auth_check_route_contract::{
     AuthenticateProviderForWorkspaceRouteBody, AuthenticateProviderForWorkspaceRouteRequest,
     ProviderAuthCheckRouteError, ProviderAuthCheckRouteErrorStatus, ProviderAuthCheckRouteResponse,
     VerifyProviderForWorkspaceRouteRequest,
+};
+pub use provider_bootstrap_route_contract::{
+    ProvidersBootstrapResponse, ProvidersBootstrapRouteError, ProvidersBootstrapRouteErrorKind,
+    ProvidersBootstrapRouteRequest,
+};
+pub use provider_harness_config_route_contract::{
+    ProviderHarnessConfigRouteError, ProviderHarnessEndpointRouteError,
+    ProviderHarnessEndpointRouteErrorKind, ProviderHarnessSourceConfig,
+    SelectProviderHarnessSourceRouteRequest, SetProviderHarnessEndpointManualModelsRouteRequest,
+    UpsertProviderHarnessEndpointRouteRequest,
 };
 pub use provider_options_route_contract::{
     ProviderOptionsRouteError, ProviderOptionsRouteErrorStatus, ProviderOptionsRouteRequest,

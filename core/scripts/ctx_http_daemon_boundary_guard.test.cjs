@@ -4497,6 +4497,82 @@ test("daemon boundary guard scopes provider admin API roots", () => {
   );
 });
 
+test("daemon boundary guard catches moved provider route-contract daemon imports", () => {
+  const parentPath = "core/crates/ctx-http/src/api/providers.rs";
+  const unrelatedApiPath = "core/crates/ctx-http/src/api/sessions/example.rs";
+
+  const direct = scanText({
+    filePath: parentPath,
+    contents: `
+      use ctx_daemon::daemon::providers::ProvidersBootstrapRouteRequest;
+    `,
+    patterns: apiPatternsForPath(parentPath),
+  });
+  assert.deepEqual(
+    direct.map((violation) => violation.name),
+    ["provider API imports moved provider route contracts from daemon"],
+  );
+
+  const multiline = scanText({
+    filePath: "core/crates/ctx-http/src/api/providers/harness_config/endpoints.rs",
+    contents: `
+      use ctx_daemon::daemon::providers::{
+        ProviderHarnessEndpointRouteError,
+        UpsertProviderHarnessEndpointRouteRequest,
+      };
+    `,
+    patterns: apiPatternsForPath(
+      "core/crates/ctx-http/src/api/providers/harness_config/endpoints.rs",
+    ),
+  });
+  assert.deepEqual(
+    multiline.map((violation) => violation.name),
+    ["provider API imports moved provider route contracts from daemon"],
+  );
+
+  const nested = scanText({
+    filePath: "core/crates/ctx-http/src/api/providers/install.rs",
+    contents: `
+      use ctx_daemon::daemon::{
+        providers::{ProviderAdminRouteError, ProviderDevRestartRouteRequest},
+        ProvidersHandle,
+      };
+    `,
+    patterns: apiPatternsForPath("core/crates/ctx-http/src/api/providers/install.rs"),
+  });
+  assert.deepEqual(
+    nested.map((violation) => violation.name),
+    [
+      "provider API imports moved provider route contracts from nested daemon providers group",
+    ],
+  );
+
+  const runtimeImport = scanText({
+    filePath: parentPath,
+    contents: `
+      use ctx_provider_runtime::{
+        ProviderAdminRouteError,
+        ProvidersBootstrapRouteRequest,
+        SelectProviderHarnessSourceRouteRequest,
+      };
+    `,
+    patterns: apiPatternsForPath(parentPath),
+  });
+  assert.deepEqual(runtimeImport, []);
+
+  const unrelatedApiImport = scanText({
+    filePath: unrelatedApiPath,
+    contents: `
+      use ctx_daemon::daemon::providers::ProviderMatrixRefreshRouteResponse;
+    `,
+    patterns: apiPatternsForPath(unrelatedApiPath),
+  });
+  assert.deepEqual(
+    unrelatedApiImport.map((violation) => violation.name),
+    ["provider API imports moved provider route contracts from daemon"],
+  );
+});
+
 test("daemon boundary guard rejects provider launch auth API orchestration", () => {
   const violations = scanText({
     filePath: "core/crates/ctx-http/src/api/provider_launch/handlers/auth.rs",
