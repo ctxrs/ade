@@ -13,9 +13,7 @@ rust_library(
         "//core/crates/ctx-fs:lib",
         "@crates//:anyhow",
         "@crates//:directories",
-        "@crates//:tempfile",
         "@crates//:tokio",
-        "@crates//:uuid",
     ],
     proc_macro_deps = [
         "@crates//:async-trait",
@@ -25,4 +23,7 @@ rust_library(
 rust_test(
     name = "unit_tests",
     crate = ":lib",
+    deps = [
+        "@crates//:tempfile",
+    ],
 )

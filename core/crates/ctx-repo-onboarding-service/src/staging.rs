@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use super::RepoOnboardingPathError;
+use super::destination::RepoOnboardingPathError;
 
 pub async fn create_repo_staging_path(
     data_root: &Path,

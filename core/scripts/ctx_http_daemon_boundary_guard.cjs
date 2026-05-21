@@ -3461,9 +3461,9 @@ const ORG_POLICY_API_ORCHESTRATION_PATTERNS = [
 
 const REPO_ONBOARDING_API_ORCHESTRATION_PATTERNS = [
   {
-    name: "repo onboarding API calls workspace-service onboarding directly",
+    name: "repo onboarding API calls repo onboarding service directly",
     regex:
-      /\bctx_workspace_services::repo_onboarding\b|\b[A-Za-z_][A-Za-z0-9_]*::repo_onboarding::(?:initialize_repo|clone_repo|validate_repo_destination|create_repo_staging_path|inspect_repo_status)\b|\brepo_onboarding::(?:initialize_repo|clone_repo|validate_repo_destination|create_repo_staging_path|inspect_repo_status)\b|\bservice::(?:initialize_repo|clone_repo|validate_repo_destination|create_repo_staging_path|inspect_repo_status)\b/,
+      /\bctx_workspace_services::repo_onboarding\b|\bctx_repo_onboarding_service\b|\b[A-Za-z_][A-Za-z0-9_]*::repo_onboarding::(?:initialize_repo|clone_repo|validate_repo_destination|create_repo_staging_path|inspect_repo_status)\b|\brepo_onboarding::(?:initialize_repo|clone_repo|validate_repo_destination|create_repo_staging_path|inspect_repo_status)\b|\bservice::(?:initialize_repo|clone_repo|validate_repo_destination|create_repo_staging_path|inspect_repo_status)\b/,
   },
   {
     name: "repo onboarding API uses workspace-service onboarding DTOs directly",

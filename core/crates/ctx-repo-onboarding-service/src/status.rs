@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
-use super::{expand_tilde, validate_absolute_path, RepoOnboardingPathError};
+use super::destination::RepoOnboardingPathError;
+use super::path_policy::{expand_tilde, validate_absolute_path};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RepoStatusCheck {

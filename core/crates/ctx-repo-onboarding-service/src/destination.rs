@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
-use super::{derive_repo_name, expand_tilde, validate_absolute_path, validate_dest_name};
+use super::path_policy::{
+    derive_repo_name, expand_tilde, validate_absolute_path, validate_dest_name,
+};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RepoOnboardingPathError {
@@ -190,4 +192,5 @@ async fn directory_has_entries(path: &std::path::Path) -> Result<bool, RepoOnboa
 }
 
 #[cfg(test)]
+#[path = "destination_tests.rs"]
 mod tests;

@@ -64,6 +64,7 @@ RUST_BAZEL_DEPS = {
             "//core/crates/ctx-provider-matrix:lib",
             "//core/crates/ctx-provider-runtime:lib",
             "//core/crates/ctx-providers:lib",
+            "//core/crates/ctx-repo-onboarding-service:lib",
             "//core/crates/ctx-resource-utilization:lib",
             "//core/crates/ctx-route-contracts:lib",
             "//core/crates/ctx-run-archive-service:lib",
@@ -423,6 +424,21 @@ RUST_BAZEL_DEPS = {
             "@crates//:serde",
             "@crates//:serde_json",
             "@crates//:tokio",
+        ],
+        dev_deps = [
+            "@crates//:tempfile",
+        ],
+        dev_proc_macro_deps = [],
+        proc_macro_deps = [],
+    ),
+    "ctx-repo-onboarding-service": struct(
+        build_deps = [],
+        deps = [
+            "//core/crates/ctx-core:lib",
+            "//core/crates/ctx-fs:lib",
+            "@crates//:directories",
+            "@crates//:tokio",
+            "@crates//:uuid",
         ],
         dev_deps = [
             "@crates//:tempfile",

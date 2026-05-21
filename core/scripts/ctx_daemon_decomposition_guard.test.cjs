@@ -7,14 +7,17 @@ const test = require("node:test");
 const {
   COLLAPSED_PATHS,
   COLLAPSED_DIRECTORIES,
+  CTX_HTTP_FORBIDDEN_DOMAIN_SERVICE_DEPS,
   MESSAGE_SERVICE_FORBIDDEN_DEPS,
   RATCHETED_FILE_LIMITS,
   PACKAGE_SHAPE_BOUNDARY_CRATES,
   PACKAGE_SHAPE_FORBIDDEN_BACKEDGE_DEPS,
+  REPO_ONBOARDING_SERVICE_FORBIDDEN_DEPS,
   SESSION_RUNTIME_FORBIDDEN_DEPS,
   SESSION_VCS_SERVICE_FORBIDDEN_DEPS,
   TITLE_SERVICE_FORBIDDEN_DEPS,
   WORKSPACE_ATTACHMENTS_FORBIDDEN_DEPS,
+  WORKSPACE_SERVICES_FORBIDDEN_DEPS,
   WORKTREE_BOOTSTRAP_SERVICE_FORBIDDEN_DEPS,
   WORKTREE_VCS_SERVICE_FORBIDDEN_DEPS,
   checkCargoDependencyDirection,
@@ -78,6 +81,19 @@ test("retired workspace-services attachment directory is rejected when recreated
   const retiredDir = "core/crates/ctx-workspace-services/src/workspace_attachments";
   assert.equal(COLLAPSED_DIRECTORIES.includes(retiredDir), true);
   writeFile(rootDir, `${retiredDir}/new_file.rs`, "// retired attachment policy\n");
+
+  const violations = checkCollapsedPaths(rootDir);
+
+  assert.equal(violations.length, 1);
+  assert.equal(violations[0].path, retiredDir);
+  assert.equal(violations[0].kind, "collapsed_path");
+});
+
+test("retired workspace-services repo onboarding directory is rejected when recreated", () => {
+  const rootDir = makeRoot();
+  const retiredDir = "core/crates/ctx-workspace-services/src/repo_onboarding";
+  assert.equal(COLLAPSED_DIRECTORIES.includes(retiredDir), true);
+  writeFile(rootDir, `${retiredDir}/new_file.rs`, "// retired repo onboarding policy\n");
 
   const violations = checkCollapsedPaths(rootDir);
 
@@ -419,6 +435,65 @@ test("workspace attachments boundary rejects broad workspace-services backedge",
 
   assert.equal(
     messages.some((message) => message.includes("ctx-workspace-attachments must not depend on ctx-workspace-services")),
+    true,
+  );
+});
+
+test("repo onboarding service boundary rejects route, broad workspace, runtime, and HTTP bypass coupling", () => {
+  assert.equal(REPO_ONBOARDING_SERVICE_FORBIDDEN_DEPS.has("ctx-workspace-services"), true);
+  assert.equal(REPO_ONBOARDING_SERVICE_FORBIDDEN_DEPS.has("ctx-route-contracts"), true);
+  assert.equal(REPO_ONBOARDING_SERVICE_FORBIDDEN_DEPS.has("ctx-workspace-runtime"), true);
+  assert.equal(WORKSPACE_SERVICES_FORBIDDEN_DEPS.has("ctx-repo-onboarding-service"), true);
+  assert.equal(CTX_HTTP_FORBIDDEN_DOMAIN_SERVICE_DEPS.has("ctx-repo-onboarding-service"), true);
+
+  const rootDir = makeRoot();
+  writeFile(rootDir, "core/crates/ctx-repo-onboarding-service/Cargo.toml", `
+    [package]
+    name = "ctx-repo-onboarding-service"
+
+    [dependencies]
+    ctx-core = { path = "../ctx-core" }
+    ctx-workspace-services = { path = "../ctx-workspace-services" }
+    ctx-route-contracts = { path = "../ctx-route-contracts" }
+
+    [dev-dependencies]
+    ctx-workspace-runtime = { path = "../ctx-workspace-runtime" }
+  `);
+  writeFile(rootDir, "core/crates/ctx-workspace-services/Cargo.toml", `
+    [package]
+    name = "ctx-workspace-services"
+
+    [dependencies]
+    ctx-repo-onboarding-service = { path = "../ctx-repo-onboarding-service" }
+  `);
+  writeFile(rootDir, "core/crates/ctx-http/Cargo.toml", `
+    [package]
+    name = "ctx-http"
+
+    [dev-dependencies]
+    ctx-repo-onboarding-service = { path = "../ctx-repo-onboarding-service" }
+  `);
+
+  const messages = checkCargoDependencyDirection(rootDir).map((entry) => entry.message);
+
+  assert.equal(
+    messages.some((message) => message.includes("ctx-repo-onboarding-service must not depend on ctx-workspace-services")),
+    true,
+  );
+  assert.equal(
+    messages.some((message) => message.includes("ctx-repo-onboarding-service must not depend on ctx-route-contracts")),
+    true,
+  );
+  assert.equal(
+    messages.some((message) => message.includes("ctx-repo-onboarding-service must not depend on ctx-workspace-runtime")),
+    true,
+  );
+  assert.equal(
+    messages.some((message) => message.includes("ctx-workspace-services must not depend on ctx-repo-onboarding-service")),
+    true,
+  );
+  assert.equal(
+    messages.some((message) => message.includes("ctx-http must not depend on ctx-repo-onboarding-service")),
     true,
   );
 });

@@ -38,6 +38,7 @@ test("agent gate crate list keeps the expected ctx-http-centered fast gate", () 
     "ctx-provider-install",
     "ctx-provider-runtime",
     "ctx-provider-matrix",
+    "ctx-repo-onboarding-service",
     "ctx-workspace-services",
     "ctx-worktree-bootstrap-service",
     "ctx-worktree-vcs-service",

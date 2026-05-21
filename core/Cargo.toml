@@ -28,6 +28,7 @@ members = [
   "crates/ctx-sandbox-container-runtime",
   "crates/ctx-runtime-assets",
   "crates/ctx-resource-utilization",
+  "crates/ctx-repo-onboarding-service",
   "crates/ctx-route-contracts",
   "crates/ctx-run-scheduler",
   "crates/ctx-run-archive-service",

@@ -1516,6 +1516,7 @@ test("daemon boundary guard rejects repo onboarding orchestration in HTTP routes
         RepoValidateDestinationRequest,
       };
       use ctx_workspace_services as cws;
+      use ctx_repo_onboarding_service as service;
       async fn handler(state: CoreHandle, error: RepoGitCommandError, path_error: RepoOnboardingPathError) {
         let path = ctx_workspace_services::repo_onboarding::initialize_repo(RepoInitRequest {
           path: &req.path,
@@ -1545,12 +1546,13 @@ test("daemon boundary guard rejects repo onboarding orchestration in HTTP routes
   assert.deepEqual(
     violations.map((violation) => violation.name),
     [
-      "repo onboarding API calls workspace-service onboarding directly",
-      "repo onboarding API calls workspace-service onboarding directly",
-      "repo onboarding API calls workspace-service onboarding directly",
-      "repo onboarding API calls workspace-service onboarding directly",
-      "repo onboarding API calls workspace-service onboarding directly",
-      "repo onboarding API calls workspace-service onboarding directly",
+      "repo onboarding API calls repo onboarding service directly",
+      "repo onboarding API calls repo onboarding service directly",
+      "repo onboarding API calls repo onboarding service directly",
+      "repo onboarding API calls repo onboarding service directly",
+      "repo onboarding API calls repo onboarding service directly",
+      "repo onboarding API calls repo onboarding service directly",
+      "repo onboarding API calls repo onboarding service directly",
       "repo onboarding API uses workspace-service onboarding DTOs directly",
       "repo onboarding API uses workspace-service onboarding DTOs directly",
       "repo onboarding API uses workspace-service onboarding DTOs directly",

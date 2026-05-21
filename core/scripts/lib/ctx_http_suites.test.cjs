@@ -392,6 +392,10 @@ test("ctx-http extracted owner crates route to behavior-owning suites", () => {
     true,
   );
   assert.equal(
+    suiteByName.get("repo-vcs").dependencyCrates.includes("ctx-repo-onboarding-service"),
+    true,
+  );
+  assert.equal(
     suiteByName.get("attachments-routing").dependencyCrates.includes("ctx-mcp-command"),
     false,
   );

@@ -14,6 +14,7 @@ const COLLAPSED_PATHS = [
   "core/crates/ctx-daemon/src/daemon/workspaces/stream/subscriptions.rs",
   "core/crates/ctx-daemon/src/daemon/workspaces/run_archive.rs",
   "core/crates/ctx-session-service/src/head_projection.rs",
+  "core/crates/ctx-workspace-services/src/repo_onboarding.rs",
   "core/crates/ctx-workspace-services/src/workspace_attachments.rs",
   "core/crates/ctx-workspace-services/src/workspace_attachments/doc_mirror.rs",
   "core/crates/ctx-workspace-services/src/workspace_attachments/materialized_install.rs",
@@ -23,6 +24,7 @@ const COLLAPSED_PATHS = [
 ];
 
 const COLLAPSED_DIRECTORIES = [
+  "core/crates/ctx-workspace-services/src/repo_onboarding",
   "core/crates/ctx-workspace-services/src/workspace_attachments",
 ];
 
@@ -181,6 +183,25 @@ const WORKTREE_BOOTSTRAP_SERVICE_FORBIDDEN_DEPS = new Set([
   "axum",
 ]);
 const WORKSPACE_ATTACHMENTS_FORBIDDEN_DEPS = new Set(["ctx-workspace-services"]);
+const REPO_ONBOARDING_SERVICE_FORBIDDEN_DEPS = new Set([
+  "ctx-workspace-services",
+  "ctx-daemon",
+  "ctx-http",
+  "ctx-route-contracts",
+  "ctx-store",
+  "ctx-workspace-config",
+  "ctx-workspace-container",
+  "ctx-workspace-runtime",
+  "ctx-worktree-data-plane",
+  "ctx-execution-runtime",
+  "ctx-harness-runtime",
+  "ctx-linux-sandbox-runtime",
+  "ctx-sandbox-container-runtime",
+  "ctx-transport-runtime",
+  "axum",
+]);
+const WORKSPACE_SERVICES_FORBIDDEN_DEPS = new Set(["ctx-repo-onboarding-service"]);
+const CTX_HTTP_FORBIDDEN_DOMAIN_SERVICE_DEPS = new Set(["ctx-repo-onboarding-service"]);
 const TRANSPORT_RUNTIME_FORBIDDEN_DEPS = new Set(["ctx-store"]);
 const ROUTE_CONTRACTS_ALLOWED_CTX_DEPS = new Set(["ctx-core"]);
 const HEAD_PROJECTION_ROOT = "core/crates/ctx-session-runtime/src/head_projection";
@@ -463,8 +484,11 @@ const checkCargoDependencyDirection = (rootDir) => {
     const manifestRelativePath = toPosix(path.relative(rootDir, manifestPath));
     const dependencies = parseCargoDependencies(raw, {
       includeDev:
-        crateName === "ctx-session-vcs-service"
+        crateName === "ctx-http"
+        || crateName === "ctx-repo-onboarding-service"
+        || crateName === "ctx-session-vcs-service"
         || crateName === "ctx-workspace-attachments"
+        || crateName === "ctx-workspace-services"
         || crateName === "ctx-worktree-vcs-service"
         || crateName === "ctx-worktree-bootstrap-service",
     });
@@ -543,6 +567,30 @@ const checkCargoDependencyDirection = (rootDir) => {
           line: dependency.line,
           path: manifestRelativePath,
           message: "ctx-workspace-attachments must not depend on ctx-workspace-services; attachment policy and mount behavior must stay in the attachment crate.",
+        });
+      }
+      if (crateName === "ctx-repo-onboarding-service" && REPO_ONBOARDING_SERVICE_FORBIDDEN_DEPS.has(dependency.name)) {
+        violations.push({
+          kind: "cargo_dependency",
+          line: dependency.line,
+          path: manifestRelativePath,
+          message: `ctx-repo-onboarding-service must not depend on ${dependency.name}; repo onboarding policy must stay below daemon, HTTP, route contracts, broad workspace services, and runtime/container wiring.`,
+        });
+      }
+      if (crateName === "ctx-workspace-services" && WORKSPACE_SERVICES_FORBIDDEN_DEPS.has(dependency.name)) {
+        violations.push({
+          kind: "cargo_dependency",
+          line: dependency.line,
+          path: manifestRelativePath,
+          message: "ctx-workspace-services must not depend on ctx-repo-onboarding-service; do not reintroduce a repo onboarding compatibility bridge.",
+        });
+      }
+      if (crateName === "ctx-http" && CTX_HTTP_FORBIDDEN_DOMAIN_SERVICE_DEPS.has(dependency.name)) {
+        violations.push({
+          kind: "cargo_dependency",
+          line: dependency.line,
+          path: manifestRelativePath,
+          message: "ctx-http must not depend on ctx-repo-onboarding-service; repo onboarding routes must go through daemon handles and route contracts.",
         });
       }
       if (dependencyIsProd && crateName === "ctx-transport-runtime" && TRANSPORT_RUNTIME_FORBIDDEN_DEPS.has(dependency.name)) {
@@ -633,17 +681,20 @@ if (require.main === module) {
 module.exports = {
   COLLAPSED_PATHS,
   COLLAPSED_DIRECTORIES,
+  CTX_HTTP_FORBIDDEN_DOMAIN_SERVICE_DEPS,
   HEAD_PROJECTION_FORBIDDEN_IMPORT_PATTERNS,
   MESSAGE_SERVICE_FORBIDDEN_DEPS,
   PACKAGE_SHAPE_BOUNDARY_CRATES,
   PACKAGE_SHAPE_FORBIDDEN_BACKEDGE_DEPS,
   RATCHETED_FILE_LIMITS,
   ROUTE_CONTRACTS_ALLOWED_CTX_DEPS,
+  REPO_ONBOARDING_SERVICE_FORBIDDEN_DEPS,
   SERVICE_RUNTIME_FORBIDDEN_DEPS,
   SESSION_RUNTIME_FORBIDDEN_DEPS,
   SESSION_VCS_SERVICE_FORBIDDEN_DEPS,
   TITLE_SERVICE_FORBIDDEN_DEPS,
   WORKSPACE_ATTACHMENTS_FORBIDDEN_DEPS,
+  WORKSPACE_SERVICES_FORBIDDEN_DEPS,
   WORKTREE_BOOTSTRAP_SERVICE_FORBIDDEN_DEPS,
   WORKTREE_VCS_SERVICE_FORBIDDEN_DEPS,
   checkCargoDependencyDirection,

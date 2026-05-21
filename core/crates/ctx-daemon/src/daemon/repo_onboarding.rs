@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 
+use ctx_repo_onboarding_service as service;
 pub use ctx_route_contracts::repo_onboarding::{
     RepoCloneRouteRequest, RepoInitRouteRequest, RepoOnboardingRouteError,
     RepoOnboardingRouteErrorKind, RepoPathRouteResponse, RepoStatusRouteRequest,
     RepoStatusRouteResponse, RepoValidateDestinationRouteRequest,
 };
-use ctx_workspace_services::repo_onboarding as service;
 
 use crate::daemon::WorkspacesHandle;
 
