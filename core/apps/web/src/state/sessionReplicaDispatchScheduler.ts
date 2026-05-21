@@ -1,14 +1,16 @@
 import type { WorkspaceActiveSnapshotEvent } from "@ctx/types";
 import type { SessionReplicaCommand } from "./sessionReplicaProtocol";
 
-const DEFAULT_BACKGROUND_BATCH_SIZE = 4;
-const DEFAULT_BACKGROUND_DRAIN_DELAY_MS = 8;
+const DEFAULT_BACKGROUND_BATCH_SIZE = 1;
+const DEFAULT_BACKGROUND_DRAIN_DELAY_MS = 16;
+const DEFAULT_FOREGROUND_QUIET_DELAY_MS = 200;
 
 type TimerHandle = ReturnType<typeof globalThis.setTimeout>;
 
 type SchedulerOptions = {
   backgroundBatchSize?: number;
   backgroundDrainDelayMs?: number;
+  foregroundQuietDelayMs?: number;
   setTimeoutFn?: typeof globalThis.setTimeout;
   clearTimeoutFn?: typeof globalThis.clearTimeout;
 };
@@ -61,6 +63,7 @@ const sessionIdForCommand = (cmd: SessionReplicaCommand): string => {
 export class SessionReplicaDispatchScheduler {
   private readonly backgroundBatchSize: number;
   private readonly backgroundDrainDelayMs: number;
+  private readonly foregroundQuietDelayMs: number;
   private readonly setTimeoutFn: typeof globalThis.setTimeout;
   private readonly clearTimeoutFn: typeof globalThis.clearTimeout;
   private backgroundQueue: WorkspaceEventCommand[] = [];
@@ -76,6 +79,10 @@ export class SessionReplicaDispatchScheduler {
       0,
       Math.floor(opts?.backgroundDrainDelayMs ?? DEFAULT_BACKGROUND_DRAIN_DELAY_MS),
     );
+    this.foregroundQuietDelayMs = Math.max(
+      0,
+      Math.floor(opts?.foregroundQuietDelayMs ?? DEFAULT_FOREGROUND_QUIET_DELAY_MS),
+    );
     this.setTimeoutFn = bindSetTimeout(opts?.setTimeoutFn ?? globalThis.setTimeout);
     this.clearTimeoutFn = bindClearTimeout(opts?.clearTimeoutFn ?? globalThis.clearTimeout);
   }
@@ -89,6 +96,7 @@ export class SessionReplicaDispatchScheduler {
     if (cmd.lane === "foreground") {
       this.flushQueuedSession(sessionIdForReplicaWorkspaceEvent(cmd.event));
       this.post(cmd);
+      this.deferBackgroundDrainAfterForeground();
       return;
     }
     this.backgroundQueue.push(cmd);
@@ -138,6 +146,17 @@ export class SessionReplicaDispatchScheduler {
       this.backgroundTimer = null;
       this.drainBackgroundBatch();
     }, this.backgroundDrainDelayMs);
+  }
+
+  private deferBackgroundDrainAfterForeground(): void {
+    if (this.destroyed || this.backgroundQueue.length === 0) return;
+    if (this.backgroundTimer) {
+      this.clearTimeoutFn(this.backgroundTimer);
+    }
+    this.backgroundTimer = this.setTimeoutFn(() => {
+      this.backgroundTimer = null;
+      this.drainBackgroundBatch();
+    }, this.foregroundQuietDelayMs);
   }
 
   private drainBackgroundBatch(): void {

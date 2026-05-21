@@ -116,38 +116,39 @@ describe("SessionReplicaDispatchScheduler", () => {
 
     expect(postedSessionIds(posted)).toEqual([]);
 
-    vi.advanceTimersByTime(7);
+    vi.advanceTimersByTime(15);
     expect(postedSessionIds(posted)).toEqual([]);
 
     vi.advanceTimersByTime(1);
-    expect(postedSessionIds(posted)).toEqual([
-      "background-1",
-      "background-2",
-      "background-3",
-      "background-4",
-    ]);
+    expect(postedSessionIds(posted)).toEqual(["background-1"]);
 
     scheduler.dispatch(makeWorkspaceCommand("foreground", 99, "foreground"));
-    expect(postedSessionIds(posted)).toEqual([
-      "background-1",
-      "background-2",
-      "background-3",
-      "background-4",
-      "foreground",
-    ]);
+    expect(postedSessionIds(posted)).toEqual(["background-1", "foreground"]);
 
-    vi.advanceTimersByTime(8);
-    expect(postedSessionIds(posted)).toEqual([
-      "background-1",
-      "background-2",
-      "background-3",
-      "background-4",
-      "foreground",
-      "background-5",
-      "background-6",
-      "background-7",
-      "background-8",
-    ]);
+    vi.advanceTimersByTime(199);
+    expect(postedSessionIds(posted)).toEqual(["background-1", "foreground"]);
+
+    vi.advanceTimersByTime(1);
+    expect(postedSessionIds(posted)).toEqual(["background-1", "foreground", "background-2"]);
+  });
+
+  it("keeps extending the background drain quiet window while foreground events arrive", () => {
+    const posted: SessionReplicaCommand[] = [];
+    const scheduler = new SessionReplicaDispatchScheduler((cmd) => posted.push(cmd), {
+      foregroundQuietDelayMs: 50,
+    });
+
+    scheduler.dispatch(makeWorkspaceCommand("background-1", 1, "workspace"));
+    scheduler.dispatch(makeWorkspaceCommand("background-2", 2, "workspace"));
+    scheduler.dispatch(makeWorkspaceCommand("foreground", 3, "foreground"));
+    vi.advanceTimersByTime(49);
+    scheduler.dispatch(makeWorkspaceCommand("foreground", 4, "foreground"));
+    vi.advanceTimersByTime(49);
+
+    expect(postedSessionIds(posted)).toEqual(["foreground", "foreground"]);
+
+    vi.advanceTimersByTime(1);
+    expect(postedSessionIds(posted)).toEqual(["foreground", "foreground", "background-1"]);
   });
 
   it("invokes browser timer functions with the global receiver", () => {
