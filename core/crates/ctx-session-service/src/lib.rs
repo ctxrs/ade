@@ -1,5 +1,6 @@
 pub mod default_session;
 pub mod head_projection;
+pub mod initial_prompt;
 mod llm;
 pub mod message_admission;
 pub mod message_delivery;

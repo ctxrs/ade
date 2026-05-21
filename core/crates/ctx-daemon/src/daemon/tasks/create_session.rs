@@ -1,10 +1,6 @@
-use std::path::Path as StdPath;
-use std::time::Instant;
-
-use ctx_core::ids::{RunId, SessionId, TaskId, TurnId, WorkspaceId, WorktreeId};
+use ctx_core::ids::{SessionId, TaskId, WorkspaceId, WorktreeId};
 use ctx_core::models::{
-    ExecutionEnvironment, Message, MessageDelivery, Session, SessionEventType, Task, VcsKind,
-    Workspace, Worktree,
+    ExecutionEnvironment, Message, Session, Task, VcsKind, Workspace, Worktree,
 };
 pub use ctx_session_service::session_creation::DefaultSessionSeed;
 use ctx_session_service::session_creation::{
@@ -12,7 +8,8 @@ use ctx_session_service::session_creation::{
 };
 use ctx_session_tools::model_resolution::resolve_model_id;
 use ctx_settings_model::ExecutionSettings;
-use ctx_store::{is_unique_constraint_violation, Store};
+use ctx_store::Store;
+use std::path::Path as StdPath;
 
 use crate::daemon::handle::TasksHandle;
 use crate::daemon::scheduler::SchedulerCommand;
