@@ -1,9 +1,7 @@
 use axum::http::StatusCode;
 use axum::Json;
 
-use ctx_daemon::daemon::providers::{
-    ProviderInstallJsonRouteError, ProviderInstallJsonRouteErrorStatus,
-};
+use ctx_provider_install::{ProviderInstallJsonRouteError, ProviderInstallJsonRouteErrorStatus};
 
 pub(in crate::api::provider_launch) fn provider_install_error_response(
     error: ProviderInstallJsonRouteError,
@@ -19,7 +17,7 @@ pub(in crate::api::provider_launch) fn provider_install_error_response(
 mod tests {
     use super::provider_install_error_response;
     use axum::http::StatusCode;
-    use ctx_daemon::daemon::providers::{
+    use ctx_provider_install::{
         ProviderInstallJsonRouteError, ProviderInstallJsonRouteErrorStatus,
     };
 

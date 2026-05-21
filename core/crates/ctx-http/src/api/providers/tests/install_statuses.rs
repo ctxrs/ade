@@ -31,18 +31,18 @@ async fn get_install_statuses_returns_known_and_missing_installs_in_request_orde
 
     let Json(resp) = get_install_statuses(
         State(fixture.providers()),
-        Json(ProviderInstallStatusesRouteRequest {
-            install_ids: vec![install_id.to_string(), missing_install_id.to_string()],
-        }),
+        Json(ProviderInstallStatusesRouteRequest::new(vec![
+            install_id.to_string(),
+            missing_install_id.to_string(),
+        ])),
     )
     .await
     .expect("get install statuses should succeed");
 
-    assert_eq!(resp.installs.len(), 2);
-    assert_eq!(resp.installs[0].install_id, install_id.to_string());
-    let info = resp.installs[0]
-        .info
-        .as_ref()
+    assert_eq!(resp.installs().len(), 2);
+    assert_eq!(resp.installs()[0].install_id(), install_id.to_string());
+    let info = resp.installs()[0]
+        .info()
         .expect("known install should return status");
     assert_eq!(info.provider_id, "codex");
     assert_eq!(info.target, Some(InstallTarget::Container));
@@ -54,8 +54,11 @@ async fn get_install_statuses_returns_known_and_missing_installs_in_request_orde
         info.last_event.as_ref().map(|event| event.stage.as_str()),
         Some("download")
     );
-    assert_eq!(resp.installs[1].install_id, missing_install_id.to_string());
-    assert!(resp.installs[1].info.is_none());
+    assert_eq!(
+        resp.installs()[1].install_id(),
+        missing_install_id.to_string()
+    );
+    assert!(resp.installs()[1].info().is_none());
 }
 
 #[tokio::test]
@@ -64,9 +67,9 @@ async fn get_install_statuses_rejects_invalid_install_ids() {
 
     let err = get_install_statuses(
         State(fixture.providers()),
-        Json(ProviderInstallStatusesRouteRequest {
-            install_ids: vec!["not-a-uuid".to_string()],
-        }),
+        Json(ProviderInstallStatusesRouteRequest::new(vec![
+            "not-a-uuid".to_string()
+        ])),
     )
     .await
     .expect_err("invalid install id should fail");

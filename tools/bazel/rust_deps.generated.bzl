@@ -400,6 +400,7 @@ RUST_BAZEL_DEPS = {
         deps = [
             "@crates//:chrono",
             "@crates//:serde",
+            "@crates//:serde_json",
             "@crates//:tokio",
             "@crates//:uuid",
         ],

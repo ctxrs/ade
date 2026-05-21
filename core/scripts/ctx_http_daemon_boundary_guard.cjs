@@ -259,6 +259,7 @@ const providerHarnessConfigApiRoots = [
 
 const providerInstallApiRoots = [
   "core/crates/ctx-http/src/api/provider_launch.rs",
+  "core/crates/ctx-http/src/api/provider_launch/errors.rs",
   "core/crates/ctx-http/src/api/provider_launch/handlers/installs.rs",
   "core/crates/ctx-http/src/api/provider_launch/handlers/installs/",
 ];
@@ -1902,6 +1903,19 @@ const PROVIDER_HARNESS_CONFIG_API_PATTERNS = [
 ];
 
 const PROVIDER_INSTALL_API_ORCHESTRATION_PATTERNS = [
+  {
+    name: "provider install API imports install route contracts from daemon",
+    regex:
+      /\bctx_daemon::daemon::providers::(?:ProviderInstallInfo|ProviderInstallProgressEvent|ProviderInstallStartRouteResponse|ProviderInstallJsonRouteError|ProviderInstallJsonRouteErrorStatus|ProviderInstallStatusesRouteRequest|ProviderInstallStatusBatchItem|ProviderInstallStatusesRouteResponse|ProviderInstallStatusOnlyRouteError)\b/,
+    contentRegex:
+      /\buse\s+ctx_daemon::daemon::providers::\s*\{(?=[^}]*\b(?:ProviderInstallInfo|ProviderInstallProgressEvent|ProviderInstallStartRouteResponse|ProviderInstallJsonRouteError|ProviderInstallJsonRouteErrorStatus|ProviderInstallStatusesRouteRequest|ProviderInstallStatusBatchItem|ProviderInstallStatusesRouteResponse|ProviderInstallStatusOnlyRouteError)\b)[^}]*\}\s*;/gm,
+  },
+  {
+    name: "provider install API imports install route contracts from nested daemon providers group",
+    regex: /\b\B/,
+    contentRegex:
+      /\buse\s+ctx_daemon::daemon::\s*\{(?=[^;]*\bproviders\s*::\s*\{[^;]*\b(?:ProviderInstallInfo|ProviderInstallProgressEvent|ProviderInstallStartRouteResponse|ProviderInstallJsonRouteError|ProviderInstallJsonRouteErrorStatus|ProviderInstallStatusesRouteRequest|ProviderInstallStatusBatchItem|ProviderInstallStatusesRouteResponse|ProviderInstallStatusOnlyRouteError)\b)[^;]*;/gm,
+  },
   {
     name: "provider install API imports install domain directly",
     regex: /\bctx_provider_install::install_state\b/,

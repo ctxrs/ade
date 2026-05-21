@@ -1,8 +1,8 @@
 use super::*;
 use crate::api::provider_launch::get_install_statuses;
 use chrono::Utc;
-use ctx_daemon::daemon::providers::ProviderInstallStatusesRouteRequest;
 use ctx_provider_install::install_state::{InstallEventLevel, InstallProgressEvent};
+use ctx_provider_install::ProviderInstallStatusesRouteRequest;
 use ctx_provider_runtime::provider_launch::install::should_skip_install_for_healthy_provider;
 use ctx_provider_runtime::provider_launch::probe_error::classify_probe_error;
 use ctx_provider_runtime::provider_launch::status::apply_target_aware_provider_status;

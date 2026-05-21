@@ -4245,6 +4245,10 @@ test("daemon boundary guard rejects provider install API orchestration", () => {
 
 test("daemon boundary guard scopes provider install API roots", () => {
   assert.deepEqual(
+    providerInstallApiPatternsForPath("core/crates/ctx-http/src/api/provider_launch/errors.rs"),
+    PROVIDER_INSTALL_API_ORCHESTRATION_PATTERNS,
+  );
+  assert.deepEqual(
     providerInstallApiPatternsForPath(
       "core/crates/ctx-http/src/api/provider_launch/handlers/installs/status.rs",
     ),
@@ -4267,6 +4271,52 @@ test("daemon boundary guard scopes provider install API roots", () => {
   assert.deepEqual(
     providerInstallApiPatternsForPath("core/crates/ctx-http/src/api/providers/status/routes.rs"),
     [],
+  );
+});
+
+test("daemon boundary guard catches provider install daemon route-contract imports", () => {
+  const direct = scanText({
+    filePath: "core/crates/ctx-http/src/api/provider_launch/errors.rs",
+    contents: `
+      use ctx_daemon::daemon::providers::ProviderInstallJsonRouteError;
+    `,
+    patterns: PROVIDER_INSTALL_API_ORCHESTRATION_PATTERNS,
+  });
+  assert.deepEqual(
+    direct.map((violation) => violation.name),
+    ["provider install API imports install route contracts from daemon"],
+  );
+
+  const multiline = scanText({
+    filePath: "core/crates/ctx-http/src/api/provider_launch/errors.rs",
+    contents: `
+      use ctx_daemon::daemon::providers::{
+        ProviderInstallJsonRouteError,
+        ProviderInstallJsonRouteErrorStatus,
+      };
+    `,
+    patterns: PROVIDER_INSTALL_API_ORCHESTRATION_PATTERNS,
+  });
+  assert.deepEqual(
+    multiline.map((violation) => violation.name),
+    ["provider install API imports install route contracts from daemon"],
+  );
+
+  const nested = scanText({
+    filePath: "core/crates/ctx-http/src/api/provider_launch/errors.rs",
+    contents: `
+      use ctx_daemon::daemon::{
+        providers::{ProviderInstallInfo, ProviderInstallStatusesRouteRequest},
+        ProvidersHandle,
+      };
+    `,
+    patterns: PROVIDER_INSTALL_API_ORCHESTRATION_PATTERNS,
+  });
+  assert.deepEqual(
+    nested.map((violation) => violation.name),
+    [
+      "provider install API imports install route contracts from nested daemon providers group",
+    ],
   );
 });
 

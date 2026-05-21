@@ -4,96 +4,17 @@ use ctx_observability::logs;
 use ctx_provider_install::install_state::{
     InstallId, InstallInfo, InstallProgressEvent, InstallTarget,
 };
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use ctx_provider_install::{
+    ProviderInstallJsonRouteError, ProviderInstallJsonRouteErrorStatus,
+    ProviderInstallStartRouteResponse, ProviderInstallStatusBatchItem,
+    ProviderInstallStatusOnlyRouteError, ProviderInstallStatusesRouteRequest,
+    ProviderInstallStatusesRouteResponse,
+};
 use tokio::sync::broadcast;
 
 use crate::daemon::{DaemonState, ProvidersHandle};
 
 pub use ctx_provider_runtime::provider_launch::install::StartProviderInstallError;
-
-pub type ProviderInstallInfo = InstallInfo;
-pub type ProviderInstallProgressEvent = InstallProgressEvent;
-
-#[derive(Debug, Serialize)]
-pub struct ProviderInstallStartRouteResponse {
-    pub provider_id: String,
-    pub install_id: InstallId,
-    pub target: InstallTarget,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum ProviderInstallJsonRouteErrorStatus {
-    BadRequest,
-    Forbidden,
-}
-
-#[derive(Debug)]
-pub struct ProviderInstallJsonRouteError {
-    status: ProviderInstallJsonRouteErrorStatus,
-    body: Value,
-}
-
-impl ProviderInstallJsonRouteError {
-    pub fn new(status: ProviderInstallJsonRouteErrorStatus, body: Value) -> Self {
-        Self { status, body }
-    }
-
-    pub fn status(&self) -> &ProviderInstallJsonRouteErrorStatus {
-        &self.status
-    }
-
-    pub fn body(&self) -> &Value {
-        &self.body
-    }
-
-    fn bad_request_error(message: String) -> Self {
-        Self {
-            status: ProviderInstallJsonRouteErrorStatus::BadRequest,
-            body: serde_json::json!({
-                "error": message,
-            }),
-        }
-    }
-
-    fn start_error(error: StartProviderInstallError) -> Self {
-        let status = if error.code.as_deref() == Some("install_target_disabled") {
-            ProviderInstallJsonRouteErrorStatus::Forbidden
-        } else {
-            ProviderInstallJsonRouteErrorStatus::BadRequest
-        };
-        Self {
-            status,
-            body: serde_json::json!({
-                "error": logs::redact_sensitive(&error.message),
-                "code": error.code,
-            }),
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ProviderInstallStatusesRouteRequest {
-    pub install_ids: Vec<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ProviderInstallStatusBatchItem {
-    pub install_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub info: Option<InstallInfo>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ProviderInstallStatusesRouteResponse {
-    pub installs: Vec<ProviderInstallStatusBatchItem>,
-}
-
-#[derive(Debug)]
-pub enum ProviderInstallStatusOnlyRouteError {
-    BadRequest,
-    NotFound,
-}
 
 pub struct ProviderInstallEventStreamRoute {
     pub history: Vec<InstallProgressEvent>,
@@ -160,15 +81,15 @@ impl ProvidersHandle {
         raw_target: Option<&str>,
     ) -> Result<ProviderInstallStartRouteResponse, ProviderInstallJsonRouteError> {
         let target = parse_provider_install_target(raw_target)
-            .map_err(ProviderInstallJsonRouteError::bad_request_error)?;
+            .map_err(ProviderInstallJsonRouteError::bad_request)?;
         let install_id = start_provider_install(&self.state, provider_id, target)
             .await
-            .map_err(ProviderInstallJsonRouteError::start_error)?;
-        Ok(ProviderInstallStartRouteResponse {
-            provider_id: provider_id.to_string(),
+            .map_err(provider_install_start_route_error)?;
+        Ok(ProviderInstallStartRouteResponse::new(
+            provider_id.to_string(),
             install_id,
             target,
-        })
+        ))
     }
 
     pub async fn start_all_provider_installs_for_route(
@@ -176,19 +97,15 @@ impl ProvidersHandle {
         raw_target: Option<&str>,
     ) -> Result<Vec<ProviderInstallStartRouteResponse>, ProviderInstallJsonRouteError> {
         let target = parse_provider_install_target(raw_target)
-            .map_err(ProviderInstallJsonRouteError::bad_request_error)?;
+            .map_err(ProviderInstallJsonRouteError::bad_request)?;
         let installs = start_all_provider_installs(&self.state, target)
             .await
-            .map_err(ProviderInstallJsonRouteError::start_error)?;
+            .map_err(provider_install_start_route_error)?;
         Ok(installs
             .into_iter()
-            .map(
-                |(provider_id, install_id)| ProviderInstallStartRouteResponse {
-                    provider_id,
-                    install_id,
-                    target,
-                },
-            )
+            .map(|(provider_id, install_id)| {
+                ProviderInstallStartRouteResponse::new(provider_id, install_id, target)
+            })
             .collect())
     }
 
@@ -207,13 +124,11 @@ impl ProvidersHandle {
         request: ProviderInstallStatusesRouteRequest,
     ) -> Result<ProviderInstallStatusesRouteResponse, ProviderInstallJsonRouteError> {
         let install_ids = request
-            .install_ids
+            .into_raw_install_ids()
             .into_iter()
             .map(|raw| {
                 let parsed = uuid::Uuid::parse_str(raw.trim()).map_err(|_| {
-                    ProviderInstallJsonRouteError::bad_request_error(format!(
-                        "invalid install id: {raw}"
-                    ))
+                    ProviderInstallJsonRouteError::bad_request(format!("invalid install id: {raw}"))
                 })?;
                 Ok(InstallId::from(parsed))
             })
@@ -222,13 +137,13 @@ impl ProvidersHandle {
         let mut installs = Vec::with_capacity(install_ids.len());
         for install_id in install_ids {
             let info = get_provider_install_info(&self.state, install_id).await;
-            installs.push(ProviderInstallStatusBatchItem {
-                install_id: install_id.to_string(),
+            installs.push(ProviderInstallStatusBatchItem::new(
+                install_id.to_string(),
                 info,
-            });
+            ));
         }
 
-        Ok(ProviderInstallStatusesRouteResponse { installs })
+        Ok(ProviderInstallStatusesRouteResponse::new(installs))
     }
 
     pub async fn cancel_provider_install_for_route(
@@ -267,6 +182,21 @@ impl ProvidersHandle {
             receiver: sender.subscribe(),
         })
     }
+}
+
+fn provider_install_start_route_error(
+    error: StartProviderInstallError,
+) -> ProviderInstallJsonRouteError {
+    let status = if error.code.as_deref() == Some("install_target_disabled") {
+        ProviderInstallJsonRouteErrorStatus::Forbidden
+    } else {
+        ProviderInstallJsonRouteErrorStatus::BadRequest
+    };
+    ProviderInstallJsonRouteError::start_failure(
+        status,
+        logs::redact_sensitive(&error.message),
+        error.code,
+    )
 }
 
 fn parse_install_id_for_status_route(
