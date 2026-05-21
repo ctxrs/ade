@@ -2752,6 +2752,110 @@ describe("SessionReplicaCore", () => {
     expect(latest.data.assistantStreamingByTurnId?.["turn-1"]?.content).toBe("Hello world");
   });
 
+  it("applies stale stream-only assistant chunks when they advance visible streaming text", () => {
+    const sessionId = "session-stale-assistant-stream-forward-progress";
+    const patches: SessionReplicaPatch[] = [];
+    const core = new SessionReplicaCore({
+      api: { getSessionHead: vi.fn() },
+      emit: (next) => patches.push(...next),
+    });
+    const createdAt = new Date().toISOString();
+
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 100, headLimit: 50 } });
+    core.handleCommand({
+      type: "seed_head",
+      sessionId,
+      head: {
+        session: mkSession(sessionId),
+        turns: [
+          {
+            turn_id: "turn-1",
+            session_id: sessionId,
+            run_id: "run-1",
+            user_message_id: "message-1",
+            status: "running",
+            start_seq: 1,
+            end_seq: null,
+            started_at: createdAt,
+            updated_at: createdAt,
+            assistant_partial: null,
+            thought_partial: "",
+            metrics_json: null,
+            tool_total: 0,
+            tool_pending: 0,
+            tool_running: 0,
+            tool_completed: 0,
+            tool_failed: 0,
+          },
+        ],
+        events: [],
+        messages: [
+          {
+            id: "message-1",
+            session_id: sessionId,
+            task_id: "task-1",
+            turn_id: "turn-1",
+            role: "user",
+            content: "hi",
+            delivery: "immediate",
+            created_at: createdAt,
+          },
+        ],
+        last_event_seq: 10,
+        state_rev: 10,
+        activity: { is_working: true, last_turn_status: "running" },
+        has_more_turns: false,
+        has_more_history: false,
+        history_cursor: null,
+      },
+      mode: "bootstrap_seed",
+    });
+    patches.length = 0;
+
+    const staleChunkDelta = {
+      type: "session_head_delta" as const,
+      workspace_id: "ws-1",
+      snapshot_rev: 11,
+      delta: {
+        session_id: sessionId,
+        last_event_seq: 8,
+        projection_rev: 8,
+        state_rev: 8,
+        event: {
+          seq: 8,
+          id: "event-stale-assistant-chunk",
+          session_id: sessionId,
+          run_id: "run-1",
+          turn_id: "turn-1",
+          event_type: "assistant_chunk",
+          payload_json: {
+            content_fragment: "stale-visible",
+          },
+          created_at: createdAt,
+        },
+      },
+    };
+
+    core.handleCommand({ type: "workspace_event", event: staleChunkDelta });
+
+    const latest = [...patches].reverse().find(
+      (patch) =>
+        patch.sessionId === sessionId &&
+        patch.op === "append" &&
+        patch.data.appendMode === "stream_delta",
+    );
+    if (!latest || latest.op === "evict") {
+      throw new Error("expected stale assistant chunk to emit a stream delta patch");
+    }
+    expect(latest.data.assistantStreamingByTurnId?.["turn-1"]?.content).toBe("stale-visible");
+    expect(latest.data.lastEventSeq).toBeUndefined();
+    expect(latest.data.projectionRev).toBeUndefined();
+
+    const patchCount = patches.length;
+    core.handleCommand({ type: "workspace_event", event: staleChunkDelta });
+    expect(patches).toHaveLength(patchCount);
+  });
+
   it("keeps stream-only assistant chunks out of durable event buffer eviction", () => {
     const sessionId = "session-assistant-stream-buffer-rollover";
     const patches: SessionReplicaPatch[] = [];

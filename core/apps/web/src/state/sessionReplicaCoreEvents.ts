@@ -157,6 +157,16 @@ const hasReplicaMessage = (
   messageId: string,
 ): boolean => Boolean(messageId) && messages.some((message) => idToString(message.id) === messageId);
 
+const hasReplicaAssistantMessageForTurn = (
+  messages: readonly Message[],
+  turnId: string,
+): boolean =>
+  Boolean(turnId) &&
+  messages.some(
+    (message) =>
+      message.role === "assistant" && idToString(message.turn_id ?? "") === turnId,
+  );
+
 const hasReplicaToolSummary = (
   summaries: readonly SessionTurnToolSummary[],
   toolCallId: string,
@@ -176,6 +186,43 @@ const readEventPayloadString = (
   return "";
 };
 
+const readEventPayloadText = (
+  payload: SessionEvent["payload_json"],
+  keys: readonly string[],
+): string => {
+  if (!payload) return "";
+  for (const key of keys) {
+    const value = payload[key];
+    if (typeof value === "string" && value.length > 0) return value;
+  }
+  return "";
+};
+
+const staleStreamOnlyAssistantChunkHasVisibleForwardProgress = (
+  entry: SessionReplicaEntry,
+  event: SessionEvent | null,
+): boolean => {
+  if (!event || !isStreamOnlyAssistantChunk(event)) return false;
+  const turnId = normalizeReplicaId(event.turn_id ?? "");
+  if (!turnId || hasReplicaAssistantMessageForTurn(entry.messages, turnId)) return false;
+  const turn = findReplicaTurn(entry.turns, turnId);
+  if (!turn || isTerminalTurnStatus(turn.status)) return false;
+
+  const fragment = readEventPayloadText(event.payload_json, [
+    "content_fragment",
+    "contentFragment",
+    "delta",
+    "text",
+  ]);
+  if (!fragment) return false;
+
+  const previous = entry.assistantStreamingByTurnId[turnId]?.content ?? "";
+  if (!previous) return true;
+  if (fragment.startsWith(previous)) return fragment.length > previous.length;
+  if (previous.endsWith(fragment)) return false;
+  return true;
+};
+
 const staleDeltaHasVisibleForwardProgress = (
   entry: SessionReplicaEntry,
   delta: SessionHeadDelta,
@@ -190,6 +237,8 @@ const staleDeltaHasVisibleForwardProgress = (
     const existingTurn = findReplicaTurn(entry.turns, deltaTurnId);
     if (!existingTurn || !isTerminalTurnStatus(existingTurn.status)) return true;
   }
+
+  if (staleStreamOnlyAssistantChunkHasVisibleForwardProgress(entry, event)) return true;
 
   const eventType = String(event?.event_type ?? "");
   const eventSeq = typeof event?.seq === "number" ? event.seq : null;
