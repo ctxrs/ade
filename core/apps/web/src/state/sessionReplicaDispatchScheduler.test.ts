@@ -116,7 +116,7 @@ describe("SessionReplicaDispatchScheduler", () => {
 
     expect(postedSessionIds(posted)).toEqual([]);
 
-    vi.advanceTimersByTime(15);
+    vi.advanceTimersByTime(49);
     expect(postedSessionIds(posted)).toEqual([]);
 
     vi.advanceTimersByTime(1);
@@ -125,7 +125,7 @@ describe("SessionReplicaDispatchScheduler", () => {
     scheduler.dispatch(makeWorkspaceCommand("foreground", 99, "foreground"));
     expect(postedSessionIds(posted)).toEqual(["background-1", "foreground"]);
 
-    vi.advanceTimersByTime(199);
+    vi.advanceTimersByTime(999);
     expect(postedSessionIds(posted)).toEqual(["background-1", "foreground"]);
 
     vi.advanceTimersByTime(1);

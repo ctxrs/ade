@@ -2,8 +2,8 @@ import type { WorkspaceActiveSnapshotEvent } from "@ctx/types";
 import type { SessionReplicaCommand } from "./sessionReplicaProtocol";
 
 const DEFAULT_BACKGROUND_BATCH_SIZE = 1;
-const DEFAULT_BACKGROUND_DRAIN_DELAY_MS = 16;
-const DEFAULT_FOREGROUND_QUIET_DELAY_MS = 200;
+const DEFAULT_BACKGROUND_DRAIN_DELAY_MS = 50;
+const DEFAULT_FOREGROUND_QUIET_DELAY_MS = 1000;
 
 type TimerHandle = ReturnType<typeof globalThis.setTimeout>;
 

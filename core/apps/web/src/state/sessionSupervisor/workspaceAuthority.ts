@@ -73,11 +73,6 @@ const workspaceReplicaEventSessionId = (evt: SessionSupervisorWorkspaceEvent): s
 const sessionGapSeedFollows = (evt: SessionSupervisorWorkspaceEvent): boolean =>
   evt.type === "session_gap" && (evt as { seed_follows?: unknown }).seed_follows === true;
 
-const isVisibleReplicaSession = (
-  host: SessionSupervisorWorkspaceAuthorityHost,
-  sessionId: string,
-): boolean => (host.entries.get(sessionId)?.refCount ?? 0) > 0;
-
 const workspaceReplicaLane = (
   host: SessionSupervisorWorkspaceAuthorityHost,
   evt: SessionSupervisorWorkspaceEvent,
@@ -87,7 +82,7 @@ const workspaceReplicaLane = (
   if (evt.type === "session_gap" && streamSource === "replay") {
     return "workspace";
   }
-  return isVisibleReplicaSession(host, sessionId) ? "foreground" : "workspace";
+  return host.getActiveTaskSessionIds().includes(sessionId) ? "foreground" : "workspace";
 };
 
 const isRetainedReplicaSession = (
