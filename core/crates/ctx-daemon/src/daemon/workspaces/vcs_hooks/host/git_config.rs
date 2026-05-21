@@ -1,6 +1,6 @@
 use anyhow::{bail, Context, Result};
 use ctx_core::models::{Workspace, Worktree};
-use ctx_workspace_services::vcs_hooks::WorktreeHookExecution;
+use ctx_worktree_vcs_service::WorktreeHookExecution;
 
 use super::super::sandbox::sandbox_command;
 use crate::daemon::DaemonState;

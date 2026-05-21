@@ -24,6 +24,7 @@ const COLLAPSED_PATHS = [
 ];
 
 const COLLAPSED_DIRECTORIES = [
+  "core/crates/ctx-workspace-services",
   "core/crates/ctx-workspace-services/src/repo_onboarding",
   "core/crates/ctx-workspace-services/src/workspace_attachments",
 ];
@@ -157,6 +158,15 @@ const WORKTREE_VCS_SERVICE_FORBIDDEN_DEPS = new Set([
   "ctx-http",
   "ctx-route-contracts",
   "ctx-workspace-services",
+  "ctx-worktree-data-plane",
+  "ctx-execution-runtime",
+  "ctx-harness-runtime",
+  "ctx-linux-sandbox-runtime",
+  "ctx-sandbox-container-runtime",
+  "ctx-avf-linux-runtime",
+  "ctx-workspace-container",
+  "ctx-workspace-runtime",
+  "ctx-transport-runtime",
   "axum",
 ]);
 const WORKTREE_BOOTSTRAP_SERVICE_FORBIDDEN_DEPS = new Set([
@@ -201,7 +211,10 @@ const REPO_ONBOARDING_SERVICE_FORBIDDEN_DEPS = new Set([
   "axum",
 ]);
 const WORKSPACE_SERVICES_FORBIDDEN_DEPS = new Set(["ctx-repo-onboarding-service"]);
-const CTX_HTTP_FORBIDDEN_DOMAIN_SERVICE_DEPS = new Set(["ctx-repo-onboarding-service"]);
+const CTX_HTTP_FORBIDDEN_DOMAIN_SERVICE_DEPS = new Set([
+  "ctx-repo-onboarding-service",
+  "ctx-worktree-vcs-service",
+]);
 const TRANSPORT_RUNTIME_FORBIDDEN_DEPS = new Set(["ctx-store"]);
 const ROUTE_CONTRACTS_ALLOWED_CTX_DEPS = new Set(["ctx-core"]);
 const HEAD_PROJECTION_ROOT = "core/crates/ctx-session-runtime/src/head_projection";
@@ -550,7 +563,7 @@ const checkCargoDependencyDirection = (rootDir) => {
           kind: "cargo_dependency",
           line: dependency.line,
           path: manifestRelativePath,
-          message: `ctx-worktree-vcs-service must not depend on ${dependency.name}; raw worktree VCS IO must stay below session VCS, broad workspace services, daemon, HTTP, route contracts, and Axum.`,
+          message: `ctx-worktree-vcs-service must not depend on ${dependency.name}; raw worktree VCS IO must stay below session VCS, broad workspace services, daemon, HTTP, route contracts, runtime/container/data-plane wiring, and Axum.`,
         });
       }
       if (crateName === "ctx-worktree-bootstrap-service" && WORKTREE_BOOTSTRAP_SERVICE_FORBIDDEN_DEPS.has(dependency.name)) {
@@ -590,7 +603,7 @@ const checkCargoDependencyDirection = (rootDir) => {
           kind: "cargo_dependency",
           line: dependency.line,
           path: manifestRelativePath,
-          message: "ctx-http must not depend on ctx-repo-onboarding-service; repo onboarding routes must go through daemon handles and route contracts.",
+          message: `ctx-http must not depend on ${dependency.name}; HTTP routes must go through daemon handles and route contracts.`,
         });
       }
       if (dependencyIsProd && crateName === "ctx-transport-runtime" && TRANSPORT_RUNTIME_FORBIDDEN_DEPS.has(dependency.name)) {

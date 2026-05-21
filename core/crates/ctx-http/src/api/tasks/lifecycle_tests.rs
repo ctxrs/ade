@@ -1,9 +1,9 @@
 use super::*;
 use ctx_core::models::{SandboxSubstrate, VcsKind};
 use ctx_daemon::test_support::{
-    TaskLifecycleSandboxBindingSeed, TaskLifecycleSessionSeed, TaskLifecycleWorktreeSeed,
+    branch_exists, managed_worktree_path, TaskLifecycleSandboxBindingSeed,
+    TaskLifecycleSessionSeed, TaskLifecycleWorktreeSeed,
 };
-use ctx_worktree_vcs_service::{branch_exists, managed_worktree_path};
 
 #[path = "lifecycle_tests/archive.rs"]
 mod archive;

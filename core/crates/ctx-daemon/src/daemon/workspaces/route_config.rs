@@ -1,6 +1,6 @@
 use ctx_observability::telemetry::TelemetryEvent;
+use ctx_repo_onboarding_service::prepare_workspace_registration;
 use ctx_workspace_config as workspace_config;
-use ctx_workspace_services::workspace_registration::prepare_workspace_registration;
 use serde::Deserialize;
 
 use crate::daemon::{WorkspaceStoreAccessError, WorkspacesHandle};

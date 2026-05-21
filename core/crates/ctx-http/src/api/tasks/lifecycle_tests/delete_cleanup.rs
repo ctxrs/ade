@@ -1,5 +1,5 @@
 use super::*;
-use ctx_worktree_vcs_service::standaloneize_worktree_git_dir;
+use ctx_daemon::test_support::standaloneize_worktree_git_dir;
 
 #[path = "delete_cleanup/branch_reclaim.rs"]
 mod branch_reclaim;

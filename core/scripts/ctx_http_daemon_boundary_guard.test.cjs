@@ -8333,9 +8333,7 @@ test("daemon boundary guard rejects workspace registration/config orchestration"
   const registrationViolations = scanText({
     filePath: "core/crates/ctx-http/src/api/workspaces/registry/create.rs",
     contents: `
-      use ctx_workspace_services::workspace_registration::{
-        prepare_workspace_registration, WorkspaceRegistrationError,
-      };
+      use ctx_repo_onboarding_service::{prepare_workspace_registration, WorkspaceRegistrationError};
       async fn create(workspaces: WorkspacesHandle) {
         let _ = prepare_workspace_registration(root).await;
         workspaces.record_workspace_registered().await;
@@ -8357,7 +8355,7 @@ test("daemon boundary guard rejects workspace registration/config orchestration"
     filePath: "core/crates/ctx-http/src/api/workspaces/management/config_ops/primary_branch.rs",
     contents: `
       async fn update() {
-        ctx_workspace_services::workspace_registration::validate_workspace_primary_branch(root, branch).await?;
+        ctx_repo_onboarding_service::validate_workspace_primary_branch(root, branch).await?;
       }
     `,
     patterns: apiPatternsForPath(

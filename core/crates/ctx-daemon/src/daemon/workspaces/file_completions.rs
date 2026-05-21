@@ -7,8 +7,11 @@ use ctx_core::ids::{SessionId, WorkspaceId};
 use ctx_core::models::{ExecutionEnvironment, Worktree};
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
 use ctx_storage_admission::is_storage_exhaustion_error;
-use ctx_workspace_services::file_completions::{self, CachedFileCompletions};
 use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
+use ctx_worktree_vcs_service::{
+    filter_and_rank_paths, list_host_git_files as service_list_host_git_files,
+    workspace_has_git_repo, CachedFileCompletions,
+};
 
 use crate::daemon::{DaemonState, StoreLookup, TimedEntry};
 
@@ -124,7 +127,7 @@ pub async fn complete_files_for_workspace(
         .ok_or_else(|| FileCompletionsError::not_found("workspace not found"))?;
 
     let root = PathBuf::from(&workspace.root_path);
-    if !file_completions::workspace_has_git_repo(&root).await {
+    if !workspace_has_git_repo(&root).await {
         return Ok(Vec::new());
     }
 
@@ -260,7 +263,7 @@ async fn load_and_cache_workspace_files(
 }
 
 async fn list_host_git_files(root: &Path) -> Result<Vec<String>, FileCompletionsError> {
-    file_completions::list_host_git_files(root)
+    service_list_host_git_files(root)
         .await
         .map_err(|err| FileCompletionsError::internal(format!("listing host git files: {err}")))
 }
@@ -268,7 +271,7 @@ async fn list_host_git_files(root: &Path) -> Result<Vec<String>, FileCompletions
 fn rank_files(paths: &[String], query: Option<String>, limit: Option<u32>) -> Vec<String> {
     let query = query.unwrap_or_default();
     let limit = limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT) as usize;
-    file_completions::filter_and_rank_paths(paths, &query, limit)
+    filter_and_rank_paths(paths, &query, limit)
 }
 
 async fn record_list_files_metric(

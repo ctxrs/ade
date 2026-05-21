@@ -67,7 +67,6 @@ members = [
   "crates/ctx-managed-installs",
   "crates/ctx-provider-install",
   "crates/ctx-provider-runtime",
-  "crates/ctx-workspace-services",
   "crates/ctx-http",
   "crates/ctx-egress-proxy",
   "crates/ctx-avf-linux-guest-agent",

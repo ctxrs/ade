@@ -2,6 +2,7 @@ mod cache;
 mod diff_output;
 mod diff_paths;
 mod driver;
+mod file_completions;
 mod git_commands;
 mod local_source;
 mod managed_worktree;
@@ -14,6 +15,7 @@ mod session_diff_exec;
 mod session_patch;
 mod snapshot;
 mod status;
+mod vcs_hooks;
 mod watch;
 mod worktree_creation;
 
@@ -34,6 +36,10 @@ pub use diff_paths::{
     load_diff_touched_entries_from_source, WorktreeVcsDiffPathSource,
 };
 pub use driver::{effective_worktree_vcs_kind, worktree_vcs_driver_for_kind, WorktreeVcsDriver};
+pub use file_completions::{
+    filter_and_rank_paths, list_host_git_files, merge_and_sort_git_paths, workspace_has_git_repo,
+    CachedFileCompletions,
+};
 pub use git_commands::{
     parse_git_diff_name_status, parse_git_list_untracked, parse_git_refs, parse_git_single_ref,
     WorktreeVcsGitCommand,
@@ -94,6 +100,12 @@ pub use status::{
     resolve_worktree_vcs_commit_lookup_from_source, session_git_status_summary_from_snapshot,
     worktree_has_vcs_repo_from_source, worktree_vcs_structured_status_from_vcs,
     WorktreeVcsCommitLookupSource, WorktreeVcsStatusSource, WorktreeVcsStructuredStatus,
+};
+pub use vcs_hooks::{
+    cleanup_workspace_hooks, cleanup_worktree_hooks, ensure_task_commit_hook, get_git_config,
+    set_git_config, worktree_hooks_dir, SandboxContainerRuntime, VcsHooksHost,
+    WorktreeExecutionLocation, WorktreeHookExecution, CORE_HOOKS_PATH_KEY, CTX_PREV_HOOKS_PATH_KEY,
+    CTX_TASK_ID_KEY,
 };
 pub use watch::{
     normalize_worktree_vcs_watch_path, resolve_worktree_vcs_metadata_roots,

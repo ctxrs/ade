@@ -2,9 +2,9 @@ use std::path::{Path, PathBuf};
 
 use ctx_core::ids::{MergeQueueEntryId, WorkspaceId};
 use ctx_core::models::{MergeQueueRun, Workspace, Worktree};
+use ctx_repo_onboarding_service::validate_workspace_primary_branch;
 use ctx_store::Store;
 use ctx_workspace_config as workspace_config;
-use ctx_workspace_services::workspace_registration::validate_workspace_primary_branch;
 
 use super::model_preferences::{
     get_workspace_provider_model_preference, set_workspace_provider_model_preference,

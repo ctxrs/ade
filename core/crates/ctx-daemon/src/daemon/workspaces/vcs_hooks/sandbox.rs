@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use ctx_core::models::{Workspace, Worktree};
 use ctx_harness_runtime::sandbox_container_command;
 use ctx_workspace_container::workspace_container_name;
-use ctx_workspace_services::vcs_hooks::{SandboxContainerRuntime, WorktreeHookExecution};
+use ctx_worktree_vcs_service::{SandboxContainerRuntime, WorktreeHookExecution};
 use tokio::process::Command;
 
 use crate::daemon::DaemonState;

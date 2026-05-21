@@ -28,6 +28,9 @@ use ctx_settings_model::{ExecutionSettings, Settings};
 use ctx_storage_admission::StorageGuardStatus;
 use ctx_store::store::{MobileAccessConfig, MobileDeviceUpsert};
 use ctx_store::{Store, StoreManager, WorktreeBootstrapResultUpdate};
+pub use ctx_worktree_vcs_service::{
+    branch_exists, managed_worktree_path, standaloneize_worktree_git_dir,
+};
 use sha2::Digest;
 use sqlx::{QueryBuilder, Sqlite};
 use tokio::sync::Mutex as AsyncMutex;

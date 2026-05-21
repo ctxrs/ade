@@ -268,7 +268,6 @@ CTX_HTTP_SHARED_INTERNAL_DEPS = [
     "//core/crates/ctx-workspace-attachments:lib",
     "//core/crates/ctx-workspace-config:lib",
     "//core/crates/ctx-workspace-container:lib",
-    "//core/crates/ctx-workspace-services:lib",
     "//core/crates/ctx-workspace-stream-service:lib",
     "//core/crates/ctx-worktree-data-plane:lib",
 ]
@@ -313,10 +312,8 @@ CTX_HTTP_SHARED_INTERNAL_TEST_SUPPORT_DEPS = [
     "//core/crates/ctx-workspace-attachments:lib",
     "//core/crates/ctx-workspace-config:lib",
     "//core/crates/ctx-workspace-container:lib_test_support",
-    "//core/crates/ctx-workspace-services:lib",
     "//core/crates/ctx-workspace-stream-service:lib",
     "//core/crates/ctx-worktree-data-plane:lib",
-    "//core/crates/ctx-worktree-vcs-service:lib",
 ]
 
 CTX_HTTP_SHARED_EXTERNAL_DEPS = [
@@ -417,9 +414,7 @@ CTX_HTTP_DIRECT_TEST_DEPS = [
     "//core/crates/ctx-workspace-container:lib_test_support",
     "//core/crates/ctx-workspace-config:lib",
     "//core/crates/ctx-workspace-runtime:lib_test_support",
-    "//core/crates/ctx-workspace-services:lib",
     "//core/crates/ctx-workspace-stream-service:lib",
-    "//core/crates/ctx-worktree-vcs-service:lib",
     "@crates//:anyhow",
     "@crates//:axum",
     "@crates//:base64",

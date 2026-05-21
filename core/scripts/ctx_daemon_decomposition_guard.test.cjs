@@ -71,9 +71,9 @@ test("retired workspace-services attachment paths are rejected when recreated", 
 
   const violations = checkCollapsedPaths(rootDir);
 
-  assert.equal(violations.length, 1);
-  assert.equal(violations[0].path, retired);
-  assert.equal(violations[0].kind, "collapsed_path");
+  assert(
+    violations.some((violation) => violation.path === retired && violation.kind === "collapsed_path"),
+  );
 });
 
 test("retired workspace-services attachment directory is rejected when recreated", () => {
@@ -84,9 +84,9 @@ test("retired workspace-services attachment directory is rejected when recreated
 
   const violations = checkCollapsedPaths(rootDir);
 
-  assert.equal(violations.length, 1);
-  assert.equal(violations[0].path, retiredDir);
-  assert.equal(violations[0].kind, "collapsed_path");
+  assert(
+    violations.some((violation) => violation.path === retiredDir && violation.kind === "collapsed_path"),
+  );
 });
 
 test("retired workspace-services repo onboarding directory is rejected when recreated", () => {
@@ -94,6 +94,19 @@ test("retired workspace-services repo onboarding directory is rejected when recr
   const retiredDir = "core/crates/ctx-workspace-services/src/repo_onboarding";
   assert.equal(COLLAPSED_DIRECTORIES.includes(retiredDir), true);
   writeFile(rootDir, `${retiredDir}/new_file.rs`, "// retired repo onboarding policy\n");
+
+  const violations = checkCollapsedPaths(rootDir);
+
+  assert(
+    violations.some((violation) => violation.path === retiredDir && violation.kind === "collapsed_path"),
+  );
+});
+
+test("retired workspace-services crate directory is rejected when recreated", () => {
+  const rootDir = makeRoot();
+  const retiredDir = "core/crates/ctx-workspace-services";
+  assert.equal(COLLAPSED_DIRECTORIES.includes(retiredDir), true);
+  writeFile(rootDir, `${retiredDir}/Cargo.toml`, "[package]\nname = \"ctx-workspace-services\"\n");
 
   const violations = checkCollapsedPaths(rootDir);
 
@@ -318,9 +331,12 @@ test("session VCS service boundary rejects orchestration and raw workspace IO co
   );
 });
 
-test("worktree VCS service boundary rejects session, workspace, daemon, route, and HTTP coupling", () => {
+test("worktree VCS service boundary rejects session, workspace, daemon, route, HTTP, and runtime coupling", () => {
   assert.equal(WORKTREE_VCS_SERVICE_FORBIDDEN_DEPS.has("ctx-session-vcs-service"), true);
   assert.equal(WORKTREE_VCS_SERVICE_FORBIDDEN_DEPS.has("ctx-workspace-services"), true);
+  assert.equal(WORKTREE_VCS_SERVICE_FORBIDDEN_DEPS.has("ctx-worktree-data-plane"), true);
+  assert.equal(WORKTREE_VCS_SERVICE_FORBIDDEN_DEPS.has("ctx-workspace-container"), true);
+  assert.equal(WORKTREE_VCS_SERVICE_FORBIDDEN_DEPS.has("ctx-harness-runtime"), true);
 
   const rootDir = makeRoot();
   writeFile(rootDir, "core/crates/ctx-worktree-vcs-service/Cargo.toml", `
@@ -331,6 +347,9 @@ test("worktree VCS service boundary rejects session, workspace, daemon, route, a
     ctx-core = { path = "../ctx-core" }
     ctx-session-vcs-service = { path = "../ctx-session-vcs-service" }
     ctx-workspace-services = { path = "../ctx-workspace-services" }
+    ctx-worktree-data-plane = { path = "../ctx-worktree-data-plane" }
+    ctx-workspace-container = { path = "../ctx-workspace-container" }
+    ctx-harness-runtime = { path = "../ctx-harness-runtime" }
 
     [dev-dependencies]
     ctx-http = { path = "../ctx-http" }
@@ -347,6 +366,18 @@ test("worktree VCS service boundary rejects session, workspace, daemon, route, a
   );
   assert.equal(
     messages.some((message) => message.includes("ctx-worktree-vcs-service must not depend on ctx-workspace-services")),
+    true,
+  );
+  assert.equal(
+    messages.some((message) => message.includes("ctx-worktree-vcs-service must not depend on ctx-worktree-data-plane")),
+    true,
+  );
+  assert.equal(
+    messages.some((message) => message.includes("ctx-worktree-vcs-service must not depend on ctx-workspace-container")),
+    true,
+  );
+  assert.equal(
+    messages.some((message) => message.includes("ctx-worktree-vcs-service must not depend on ctx-harness-runtime")),
     true,
   );
   assert.equal(
@@ -445,6 +476,7 @@ test("repo onboarding service boundary rejects route, broad workspace, runtime, 
   assert.equal(REPO_ONBOARDING_SERVICE_FORBIDDEN_DEPS.has("ctx-workspace-runtime"), true);
   assert.equal(WORKSPACE_SERVICES_FORBIDDEN_DEPS.has("ctx-repo-onboarding-service"), true);
   assert.equal(CTX_HTTP_FORBIDDEN_DOMAIN_SERVICE_DEPS.has("ctx-repo-onboarding-service"), true);
+  assert.equal(CTX_HTTP_FORBIDDEN_DOMAIN_SERVICE_DEPS.has("ctx-worktree-vcs-service"), true);
 
   const rootDir = makeRoot();
   writeFile(rootDir, "core/crates/ctx-repo-onboarding-service/Cargo.toml", `
@@ -472,6 +504,7 @@ test("repo onboarding service boundary rejects route, broad workspace, runtime, 
 
     [dev-dependencies]
     ctx-repo-onboarding-service = { path = "../ctx-repo-onboarding-service" }
+    ctx-worktree-vcs-service = { path = "../ctx-worktree-vcs-service" }
   `);
 
   const messages = checkCargoDependencyDirection(rootDir).map((entry) => entry.message);
@@ -494,6 +527,10 @@ test("repo onboarding service boundary rejects route, broad workspace, runtime, 
   );
   assert.equal(
     messages.some((message) => message.includes("ctx-http must not depend on ctx-repo-onboarding-service")),
+    true,
+  );
+  assert.equal(
+    messages.some((message) => message.includes("ctx-http must not depend on ctx-worktree-vcs-service")),
     true,
   );
 });

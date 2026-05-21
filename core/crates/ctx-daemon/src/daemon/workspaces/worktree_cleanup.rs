@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
+use crate::daemon::workspaces::vcs_hooks;
 use ctx_core::ids::TaskId;
 use ctx_core::models::{SandboxBinding, Workspace, Worktree};
-use ctx_workspace_services::vcs_hooks;
 use ctx_worktree_vcs_service::matching_managed_worktree_path;
 
 use crate::daemon::DaemonState;

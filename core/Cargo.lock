@@ -916,7 +916,6 @@ dependencies = [
  "ctx-workspace-config",
  "ctx-workspace-container",
  "ctx-workspace-runtime",
- "ctx-workspace-services",
  "ctx-workspace-stream-service",
  "ctx-worktree-bootstrap-service",
  "ctx-worktree-data-plane",
@@ -1157,10 +1156,8 @@ dependencies = [
  "ctx-workspace-config",
  "ctx-workspace-container",
  "ctx-workspace-runtime",
- "ctx-workspace-services",
  "ctx-workspace-stream-service",
  "ctx-worktree-data-plane",
- "ctx-worktree-vcs-service",
  "directories",
  "ed25519-dalek",
  "flate2",
@@ -1599,6 +1596,7 @@ dependencies = [
 name = "ctx-repo-onboarding-service"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "ctx-core",
  "ctx-fs",
  "directories",
@@ -2140,19 +2138,6 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
-]
-
-[[package]]
-name = "ctx-workspace-services"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "ctx-core",
- "ctx-fs",
- "directories",
- "tempfile",
- "tokio",
 ]
 
 [[package]]

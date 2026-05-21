@@ -2823,7 +2823,7 @@ const UPDATE_DRAIN_API_ORCHESTRATION_PATTERNS = [
 const WORKSPACE_REGISTRATION_CONFIG_API_PATTERNS = [
   {
     name: "workspace registration API imports registration service directly",
-    regex: /\bctx_workspace_services::workspace_registration\b/,
+    regex: /\bctx_workspace_services::workspace_registration\b|\bctx_repo_onboarding_service\b/,
   },
   {
     name: "workspace registration API owns registration preparation",

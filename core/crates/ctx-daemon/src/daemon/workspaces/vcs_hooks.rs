@@ -15,8 +15,7 @@ pub async fn ensure_task_commit_hook(
     worktree: &Worktree,
     task_id: TaskId,
 ) -> Result<()> {
-    ctx_workspace_services::vcs_hooks::ensure_task_commit_hook(state, workspace, worktree, task_id)
-        .await
+    ctx_worktree_vcs_service::ensure_task_commit_hook(state, workspace, worktree, task_id).await
 }
 
 pub async fn cleanup_worktree_hooks(
@@ -24,12 +23,11 @@ pub async fn cleanup_worktree_hooks(
     workspace: &Workspace,
     worktree: &Worktree,
 ) -> Result<()> {
-    ctx_workspace_services::vcs_hooks::cleanup_worktree_hooks(state, workspace, worktree).await
+    ctx_worktree_vcs_service::cleanup_worktree_hooks(state, workspace, worktree).await
 }
 
 pub async fn cleanup_workspace_hooks(state: &DaemonState, workspace_id: WorkspaceId) -> Result<()> {
-    ctx_workspace_services::vcs_hooks::cleanup_workspace_hooks(&state.core.data_root, workspace_id)
-        .await
+    ctx_worktree_vcs_service::cleanup_workspace_hooks(&state.core.data_root, workspace_id).await
 }
 
 #[cfg(test)]

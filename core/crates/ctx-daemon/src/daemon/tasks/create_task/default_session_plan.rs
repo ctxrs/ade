@@ -8,7 +8,7 @@ pub(super) type DefaultSessionPlan = (ExecutionEnvironment, String, String, Opti
 
 async fn validate_workspace_root_is_repo(workspace: &Workspace) -> Result<(), TaskCreateError> {
     let workspace_root = StdPath::new(&workspace.root_path);
-    ctx_workspace_services::workspace_registration::validate_workspace_root_repo(workspace_root)
+    ctx_repo_onboarding_service::validate_workspace_root_repo(workspace_root)
         .await
         .map_err(|error| TaskCreateError::BadRequest(error.to_string()))?;
     Ok(())

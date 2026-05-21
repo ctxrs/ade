@@ -93,7 +93,6 @@ RUST_BAZEL_DEPS = {
             "//core/crates/ctx-workspace-config:lib",
             "//core/crates/ctx-workspace-container:lib",
             "//core/crates/ctx-workspace-runtime:lib",
-            "//core/crates/ctx-workspace-services:lib",
             "//core/crates/ctx-workspace-stream-service:lib",
             "//core/crates/ctx-worktree-bootstrap-service:lib",
             "//core/crates/ctx-worktree-data-plane:lib",
@@ -436,6 +435,7 @@ RUST_BAZEL_DEPS = {
         deps = [
             "//core/crates/ctx-core:lib",
             "//core/crates/ctx-fs:lib",
+            "@crates//:anyhow",
             "@crates//:directories",
             "@crates//:tokio",
             "@crates//:uuid",
