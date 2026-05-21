@@ -4,6 +4,111 @@ use ctx_core::models::{MergeQueueEntry, MergeQueueEntryStatus, MergeQueuePatchSo
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
+pub struct SubmitMergeQueueEntryRouteRequest {
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    worktree_id: Option<String>,
+    #[serde(default)]
+    worktree_root: Option<String>,
+    #[serde(default)]
+    target_branch: Option<String>,
+    #[serde(default)]
+    message: Option<String>,
+}
+
+impl SubmitMergeQueueEntryRouteRequest {
+    pub fn new(
+        session_id: Option<String>,
+        worktree_id: Option<String>,
+        worktree_root: Option<String>,
+        target_branch: Option<String>,
+        message: Option<String>,
+    ) -> Self {
+        Self {
+            session_id,
+            worktree_id,
+            worktree_root,
+            target_branch,
+            message,
+        }
+    }
+
+    pub fn session_id(&self) -> Option<&str> {
+        self.session_id.as_deref()
+    }
+
+    pub fn worktree_id(&self) -> Option<&str> {
+        self.worktree_id.as_deref()
+    }
+
+    pub fn into_parts(
+        self,
+    ) -> (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ) {
+        (
+            self.session_id,
+            self.worktree_id,
+            self.worktree_root,
+            self.target_branch,
+            self.message,
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum MergeQueueSubmitRouteErrorKind {
+    BadRequest,
+    Unauthorized,
+    NotFound,
+    Internal,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct MergeQueueSubmitRouteError {
+    kind: MergeQueueSubmitRouteErrorKind,
+    message: String,
+}
+
+impl MergeQueueSubmitRouteError {
+    fn new(kind: MergeQueueSubmitRouteErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+
+    pub fn bad_request(message: impl Into<String>) -> Self {
+        Self::new(MergeQueueSubmitRouteErrorKind::BadRequest, message)
+    }
+
+    pub fn unauthorized(message: impl Into<String>) -> Self {
+        Self::new(MergeQueueSubmitRouteErrorKind::Unauthorized, message)
+    }
+
+    pub fn not_found(message: impl Into<String>) -> Self {
+        Self::new(MergeQueueSubmitRouteErrorKind::NotFound, message)
+    }
+
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self::new(MergeQueueSubmitRouteErrorKind::Internal, message)
+    }
+
+    pub fn kind(&self) -> MergeQueueSubmitRouteErrorKind {
+        self.kind
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+#[derive(Debug, Deserialize)]
 pub struct ListMergeQueueEntriesRouteRequest {
     workspace_id: String,
     #[serde(default)]
@@ -339,5 +444,46 @@ mod tests {
             params_error.kind(),
             MergeQueueLogDownloadRouteErrorKind::BadRequest
         );
+    }
+
+    #[test]
+    fn submit_route_request_defaults_missing_fields_to_none() {
+        let request: SubmitMergeQueueEntryRouteRequest =
+            serde_json::from_value(serde_json::json!({})).expect("deserialize submit request");
+
+        let (session_id, worktree_id, worktree_root, target_branch, message) = request.into_parts();
+        assert_eq!(session_id, None);
+        assert_eq!(worktree_id, None);
+        assert_eq!(worktree_root, None);
+        assert_eq!(target_branch, None);
+        assert_eq!(message, None);
+    }
+
+    #[test]
+    fn submit_route_request_preserves_raw_optional_strings() {
+        let request: SubmitMergeQueueEntryRouteRequest =
+            serde_json::from_value(serde_json::json!({
+                "session_id": "session",
+                "worktree_id": "worktree",
+                "worktree_root": "  /tmp/worktree  ",
+                "target_branch": "main",
+                "message": "ship it"
+            }))
+            .expect("deserialize submit request");
+
+        assert_eq!(request.session_id(), Some("session"));
+        assert_eq!(request.worktree_id(), Some("worktree"));
+        let parts = request.into_parts();
+        assert_eq!(parts.2.as_deref(), Some("  /tmp/worktree  "));
+        assert_eq!(parts.3.as_deref(), Some("main"));
+        assert_eq!(parts.4.as_deref(), Some("ship it"));
+    }
+
+    #[test]
+    fn submit_route_errors_keep_kind_and_message_private_with_accessors() {
+        let error = MergeQueueSubmitRouteError::unauthorized("scope denied");
+
+        assert_eq!(error.kind(), MergeQueueSubmitRouteErrorKind::Unauthorized);
+        assert_eq!(error.message(), "scope denied");
     }
 }

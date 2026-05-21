@@ -1386,6 +1386,19 @@ const SESSION_ARTIFACT_API_ROUTE_CONTRACT_PATTERNS = [
 
 const MERGE_QUEUE_SUBMIT_API_ORCHESTRATION_PATTERNS = [
   {
+    name: "merge queue submit API imports submit route contracts from daemon",
+    regex:
+      /\bctx_daemon::daemon::merge_queue::(?:SubmitMergeQueueEntryRouteRequest|MergeQueueSubmitRouteError(?:Kind)?)\b/,
+    contentRegex:
+      /\buse\s+ctx_daemon::daemon::merge_queue::\s*\{(?=[^}]*\b(?:SubmitMergeQueueEntryRouteRequest|MergeQueueSubmitRouteError(?:Kind)?)\b)[^}]*\}\s*;/gm,
+  },
+  {
+    name: "merge queue submit API imports submit route contracts from nested daemon merge_queue group",
+    regex: /\b\B/,
+    contentRegex:
+      /\buse\s+ctx_daemon::daemon::\s*\{(?=[^;]*\bmerge_queue\s*::\s*\{[^;]*\b(?:SubmitMergeQueueEntryRouteRequest|MergeQueueSubmitRouteError(?:Kind)?)\b)[^;]*;/gm,
+  },
+  {
     name: "merge queue submit API imports sessions handle",
     regex: /\bSessionsHandle\b/,
   },

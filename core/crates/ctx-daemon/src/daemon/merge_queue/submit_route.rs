@@ -2,74 +2,13 @@ use ctx_core::ids::{SessionId, WorktreeId};
 use ctx_mcp_auth::McpAuthContext;
 use ctx_merge_queue::MergeQueueSubmitParams;
 use ctx_observability::logs;
-use serde::Deserialize;
+use ctx_route_contracts::merge_queue::{
+    MergeQueueEntryRouteResponse, MergeQueueSubmitRouteError, SubmitMergeQueueEntryRouteRequest,
+};
 
 use crate::daemon::{
     require_scoped_mcp_session_context, ScopedMcpSessionAccessError, WorkspacesHandle,
 };
-
-use super::MergeQueueEntryRouteResponse;
-
-#[derive(Debug, Deserialize)]
-pub struct SubmitMergeQueueEntryRouteRequest {
-    #[serde(default)]
-    pub session_id: Option<String>,
-    #[serde(default)]
-    pub worktree_id: Option<String>,
-    #[serde(default)]
-    pub worktree_root: Option<String>,
-    #[serde(default)]
-    pub target_branch: Option<String>,
-    #[serde(default)]
-    pub message: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum MergeQueueSubmitRouteErrorKind {
-    BadRequest,
-    Unauthorized,
-    NotFound,
-    Internal,
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct MergeQueueSubmitRouteError {
-    kind: MergeQueueSubmitRouteErrorKind,
-    message: String,
-}
-
-impl MergeQueueSubmitRouteError {
-    fn new(kind: MergeQueueSubmitRouteErrorKind, message: impl Into<String>) -> Self {
-        Self {
-            kind,
-            message: message.into(),
-        }
-    }
-
-    fn bad_request(message: impl Into<String>) -> Self {
-        Self::new(MergeQueueSubmitRouteErrorKind::BadRequest, message)
-    }
-
-    fn unauthorized(message: impl Into<String>) -> Self {
-        Self::new(MergeQueueSubmitRouteErrorKind::Unauthorized, message)
-    }
-
-    fn not_found(message: impl Into<String>) -> Self {
-        Self::new(MergeQueueSubmitRouteErrorKind::NotFound, message)
-    }
-
-    fn internal(message: impl Into<String>) -> Self {
-        Self::new(MergeQueueSubmitRouteErrorKind::Internal, message)
-    }
-
-    pub fn kind(&self) -> MergeQueueSubmitRouteErrorKind {
-        self.kind
-    }
-
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-}
 
 impl WorkspacesHandle {
     pub async fn submit_merge_queue_entry_for_route(
@@ -77,9 +16,11 @@ impl WorkspacesHandle {
         req: SubmitMergeQueueEntryRouteRequest,
         mcp_auth: Option<McpAuthContext>,
     ) -> Result<MergeQueueEntryRouteResponse, MergeQueueSubmitRouteError> {
-        let mut session_id = parse_optional_session_id(req.session_id.as_deref())?;
-        let mut worktree_id = parse_optional_worktree_id(req.worktree_id.as_deref())?;
-        let worktree_root = normalized_worktree_root(req.worktree_root);
+        let (raw_session_id, raw_worktree_id, raw_worktree_root, target_branch, message) =
+            req.into_parts();
+        let mut session_id = parse_optional_session_id(raw_session_id.as_deref())?;
+        let mut worktree_id = parse_optional_worktree_id(raw_worktree_id.as_deref())?;
+        let worktree_root = normalized_worktree_root(raw_worktree_root);
 
         if let Some(mcp_auth) = mcp_auth {
             if worktree_root.is_some() {
@@ -105,8 +46,8 @@ impl WorkspacesHandle {
             session_id,
             worktree_id,
             worktree_root,
-            target_branch: req.target_branch,
-            message: req.message,
+            target_branch,
+            message,
         })
         .await
         .map(Into::into)
@@ -166,6 +107,7 @@ fn scoped_mcp_session_route_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ctx_route_contracts::merge_queue::MergeQueueSubmitRouteErrorKind;
 
     #[test]
     fn route_id_parsing_preserves_public_bad_request_messages() {

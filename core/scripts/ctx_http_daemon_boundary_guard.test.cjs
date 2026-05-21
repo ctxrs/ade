@@ -2937,6 +2937,7 @@ test("daemon boundary guard rejects merge queue submit API scoped-admission leak
     filePath: "core/crates/ctx-http/src/api/merge_queue_api/submit.rs",
     contents: `
       use ctx_daemon::daemon::{SessionsHandle, WorkspacesHandle};
+      use ctx_daemon::daemon::merge_queue::SubmitMergeQueueEntryRouteRequest;
       use ctx_core::ids::{SessionId, WorktreeId};
       use ctx_merge_queue::MergeQueueSubmitParams;
       async fn helper(sessions: SessionsHandle, workspaces: WorkspacesHandle, mcp_auth: McpAuthContext) {
@@ -2955,6 +2956,7 @@ test("daemon boundary guard rejects merge queue submit API scoped-admission leak
   assert.deepEqual(
     violations.map((violation) => violation.name),
     [
+      "merge queue submit API imports submit route contracts from daemon",
       "merge queue submit API imports sessions handle",
       "merge queue submit API imports sessions handle",
       "merge queue submit API parses session or worktree ids locally",
@@ -2968,6 +2970,39 @@ test("daemon boundary guard rejects merge queue submit API scoped-admission leak
       "merge queue submit API calls low-level submit facade",
     ],
   );
+});
+
+test("daemon boundary guard catches merge queue submit daemon route-contract imports", () => {
+  for (const contents of [
+    `
+      use ctx_daemon::daemon::merge_queue::{
+        MergeQueueSubmitRouteError,
+        SubmitMergeQueueEntryRouteRequest,
+      };
+    `,
+    `
+      use ctx_daemon::daemon::{
+        merge_queue::{
+          MergeQueueSubmitRouteErrorKind,
+        },
+      };
+    `,
+  ]) {
+    const violations = scanText({
+      filePath: "core/crates/ctx-http/src/api/merge_queue_api/submit.rs",
+      contents,
+      patterns: MERGE_QUEUE_SUBMIT_API_ORCHESTRATION_PATTERNS,
+    });
+
+    assert(
+      violations.some((violation) =>
+        violation.name.startsWith(
+          "merge queue submit API imports submit route contracts from",
+        ),
+      ),
+      `expected submit route-contract import violation for ${contents}`,
+    );
+  }
 });
 
 test("daemon boundary guard scopes merge queue submit API orchestration roots", () => {

@@ -20,9 +20,6 @@ pub use route_contract::{
     MergeQueueEntryRouteParams, MergeQueueEntryRouteResponse, MergeQueueLogDownloadRouteError,
     MergeQueueLogDownloadRouteErrorKind,
 };
-pub use submit_route::{
-    MergeQueueSubmitRouteError, MergeQueueSubmitRouteErrorKind, SubmitMergeQueueEntryRouteRequest,
-};
 
 pub async fn get_workspace_merge_queue_entry(
     state: &DaemonState,
