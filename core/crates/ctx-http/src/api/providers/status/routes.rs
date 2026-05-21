@@ -1,5 +1,5 @@
 use super::*;
-use ctx_daemon::daemon::providers::{
+use ctx_provider_runtime::{
     ProviderStatusListRouteError, ProviderStatusRouteError, ProviderStatusRouteErrorKind,
 };
 

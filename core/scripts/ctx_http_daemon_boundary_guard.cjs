@@ -286,6 +286,7 @@ const providerAuthImportApiRoots = [
 ];
 
 const providerStatusApiRoots = [
+  "core/crates/ctx-http/src/api/providers.rs",
   "core/crates/ctx-http/src/api/providers/status.rs",
   "core/crates/ctx-http/src/api/providers/status/",
   "core/crates/ctx-http/src/api/providers/types/queries.rs",
@@ -299,6 +300,7 @@ const providerAccountsApiRoots = [
 ];
 
 const providerUsageApiRoots = [
+  "core/crates/ctx-http/src/api/providers.rs",
   "core/crates/ctx-http/src/api/providers/status/usage.rs",
   "core/crates/ctx-http/src/api/providers/accounts/codex/usage.rs",
   "core/crates/ctx-http/src/api/providers/types/queries.rs",
@@ -2071,6 +2073,15 @@ const PROVIDER_AUTH_IMPORT_API_ORCHESTRATION_PATTERNS = [
 
 const PROVIDER_STATUS_API_ORCHESTRATION_PATTERNS = [
   {
+    name: "provider status API imports route contracts from daemon",
+    regex:
+      /\bctx_daemon::daemon::providers::(?:\{[^}]*\bProviderStatus(?:ListRouteError|Route(?:Query|Error|ErrorKind))\b|ProviderStatus(?:ListRouteError|Route(?:Query|Error|ErrorKind))\b)/,
+  },
+  {
+    name: "provider status API imports provider-runtime status orchestration",
+    regex: /\bctx_provider_runtime::provider_status_service\b/,
+  },
+  {
     name: "provider status API parses install target directly",
     regex: /\bparse_provider_install_target\b/,
   },
@@ -2084,7 +2095,8 @@ const PROVIDER_STATUS_API_ORCHESTRATION_PATTERNS = [
   },
   {
     name: "provider status API calls broad status facades",
-    regex: /\.(?:providers_statuses_response|provider_status_response)\s*\(/,
+    regex:
+      /(?:\.|\bprovider_status_service::)(?:providers_statuses_response|provider_status_response|refresh_provider_statuses)\s*\(/,
   },
   {
     name: "provider status API owns provider status error mapping",
@@ -2093,6 +2105,11 @@ const PROVIDER_STATUS_API_ORCHESTRATION_PATTERNS = [
 ];
 
 const PROVIDER_USAGE_API_ORCHESTRATION_PATTERNS = [
+  {
+    name: "provider usage API imports route contracts from daemon",
+    regex:
+      /\bctx_daemon::daemon::providers::(?:\{[^}]*\b(?:ProviderUsageRoute(?:Query|Snapshot|Error)|CodexAccountsUsageRouteResponse|CodexAccountUsageRouteEntry)\b|(?:ProviderUsageRoute(?:Query|Snapshot|Error)|CodexAccountsUsageRouteResponse|CodexAccountUsageRouteEntry)\b)/,
+  },
   {
     name: "provider usage API imports provider-runtime usage DTOs",
     regex:
@@ -2110,6 +2127,11 @@ const PROVIDER_USAGE_API_ORCHESTRATION_PATTERNS = [
     name: "provider usage API calls low-level usage facades",
     regex:
       /(?:\.|\bProvidersHandle::|\b)(?:load_provider_usage|load_codex_accounts_usage)\s*\(/,
+  },
+  {
+    name: "provider usage API calls provider-runtime usage orchestration",
+    regex:
+      /(?:\bprovider_usage::|\b)(?:refresh_provider_usage_for|refresh_provider_usage|fetch_codex_usage_snapshot|spawn_provider_usage_poller)\s*\(/,
   },
   {
     name: "provider usage API owns usage internal-error mapping",

@@ -4,96 +4,12 @@ use std::sync::Arc;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use ctx_core::provider_ids::CODEX_PROVIDER_ID;
-use ctx_provider_runtime::provider_usage;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use ctx_provider_runtime::{
+    provider_usage, CodexAccountUsageRouteEntry, CodexAccountsUsageRouteResponse,
+    ProviderUsageRouteError, ProviderUsageRouteQuery, ProviderUsageRouteSnapshot,
+};
 
 use crate::daemon::{DaemonState, ProvidersHandle};
-
-#[derive(Debug, Default, Deserialize)]
-pub struct ProviderUsageRouteQuery {
-    refresh: Option<bool>,
-}
-
-impl ProviderUsageRouteQuery {
-    fn refresh(&self) -> bool {
-        self.refresh.unwrap_or(false)
-    }
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ProviderUsageRouteSnapshot {
-    provider_id: String,
-    source: String,
-    fetched_at: DateTime<Utc>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    payload: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<String>,
-}
-
-impl From<provider_usage::ProviderUsageSnapshot> for ProviderUsageRouteSnapshot {
-    fn from(snapshot: provider_usage::ProviderUsageSnapshot) -> Self {
-        Self {
-            provider_id: snapshot.provider_id,
-            source: snapshot.source,
-            fetched_at: snapshot.fetched_at,
-            payload: snapshot.payload,
-            error: snapshot.error,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct CodexAccountUsageRouteEntry {
-    account_id: Option<String>,
-    label: String,
-    email: Option<String>,
-    plan_type: Option<String>,
-    last_used_at: Option<DateTime<Utc>>,
-    usage: ProviderUsageRouteSnapshot,
-}
-
-impl From<CodexAccountUsageRecord> for CodexAccountUsageRouteEntry {
-    fn from(record: CodexAccountUsageRecord) -> Self {
-        Self {
-            account_id: record.account_id,
-            label: record.label,
-            email: record.email,
-            plan_type: record.plan_type,
-            last_used_at: record.last_used_at,
-            usage: record.usage.into(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct CodexAccountsUsageRouteResponse {
-    entries: Vec<CodexAccountUsageRouteEntry>,
-}
-
-#[derive(Debug)]
-pub struct ProviderUsageRouteError {
-    message: String,
-}
-
-impl ProviderUsageRouteError {
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-
-    fn from_error(error: anyhow::Error) -> Self {
-        Self {
-            message: error.to_string(),
-        }
-    }
-}
-
-impl std::fmt::Display for ProviderUsageRouteError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.message)
-    }
-}
 
 impl ProvidersHandle {
     pub async fn provider_usage_for_route(
@@ -104,7 +20,7 @@ impl ProvidersHandle {
         load_provider_usage(&self.state, provider_id, query.refresh())
             .await
             .map(Into::into)
-            .map_err(ProviderUsageRouteError::from_error)
+            .map_err(provider_usage_route_error)
     }
 
     pub async fn codex_accounts_usage_for_route(
@@ -113,12 +29,16 @@ impl ProvidersHandle {
     ) -> Result<CodexAccountsUsageRouteResponse, ProviderUsageRouteError> {
         let entries = load_codex_accounts_usage(&self.state, query.refresh())
             .await
-            .map_err(ProviderUsageRouteError::from_error)?
+            .map_err(provider_usage_route_error)?
             .into_iter()
-            .map(Into::into)
+            .map(CodexAccountUsageRecord::into_route_entry)
             .collect();
-        Ok(CodexAccountsUsageRouteResponse { entries })
+        Ok(CodexAccountsUsageRouteResponse::new(entries))
     }
+}
+
+fn provider_usage_route_error(error: anyhow::Error) -> ProviderUsageRouteError {
+    ProviderUsageRouteError::new(error.to_string())
 }
 
 async fn provider_usage_env(
@@ -173,6 +93,19 @@ struct CodexAccountUsageRecord {
     plan_type: Option<String>,
     last_used_at: Option<DateTime<Utc>>,
     usage: provider_usage::ProviderUsageSnapshot,
+}
+
+impl CodexAccountUsageRecord {
+    fn into_route_entry(self) -> CodexAccountUsageRouteEntry {
+        CodexAccountUsageRouteEntry::new(
+            self.account_id,
+            self.label,
+            self.email,
+            self.plan_type,
+            self.last_used_at,
+            self.usage.into(),
+        )
+    }
 }
 
 fn codex_account_usage_error(error: String) -> provider_usage::ProviderUsageSnapshot {
@@ -261,9 +194,8 @@ mod route_tests {
 
     #[test]
     fn provider_usage_route_error_preserves_current_message() {
-        let error = ProviderUsageRouteError::from_error(anyhow::anyhow!(
-            "parsing agent server config failed"
-        ));
+        let error =
+            provider_usage_route_error(anyhow::anyhow!("parsing agent server config failed"));
 
         assert_eq!(error.message(), "parsing agent server config failed");
     }
@@ -302,7 +234,7 @@ mod route_tests {
             },
         };
 
-        let payload = serde_json::to_value(CodexAccountUsageRouteEntry::from(record)).unwrap();
+        let payload = serde_json::to_value(record.into_route_entry()).unwrap();
 
         assert_eq!(payload["account_id"].as_str(), Some("acct-1"));
         assert_eq!(payload["label"].as_str(), Some("Work"));

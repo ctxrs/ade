@@ -4623,6 +4623,10 @@ test("daemon boundary guard rejects provider status API orchestration", () => {
 
 test("daemon boundary guard scopes provider status API roots", () => {
   assert.deepEqual(
+    providerStatusApiPatternsForPath("core/crates/ctx-http/src/api/providers.rs"),
+    PROVIDER_STATUS_API_ORCHESTRATION_PATTERNS,
+  );
+  assert.deepEqual(
     providerStatusApiPatternsForPath(
       "core/crates/ctx-http/src/api/providers/status/routes.rs",
     ),
@@ -4650,6 +4654,44 @@ test("daemon boundary guard scopes provider status API roots", () => {
       patterns: PROVIDER_STATUS_API_ORCHESTRATION_PATTERNS,
     }),
     [],
+  );
+});
+
+test("daemon boundary guard allows runtime provider status route contracts only", () => {
+  assert.deepEqual(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/providers.rs",
+      contents: `
+        use ctx_provider_runtime::{
+          ProviderStatusListRouteError, ProviderStatusRouteError, ProviderStatusRouteErrorKind,
+          ProviderStatusRouteQuery,
+        };
+      `,
+      patterns: PROVIDER_STATUS_API_ORCHESTRATION_PATTERNS,
+    }),
+    [],
+  );
+
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/providers.rs",
+    contents: `
+      use ctx_daemon::daemon::providers::{ProviderStatusRouteQuery};
+      use ctx_provider_runtime::provider_status_service;
+
+      async fn handler() {
+        provider_status_service::provider_status_response(state, "codex", target).await?;
+      }
+    `,
+    patterns: PROVIDER_STATUS_API_ORCHESTRATION_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "provider status API imports route contracts from daemon",
+      "provider status API imports provider-runtime status orchestration",
+      "provider status API calls broad status facades",
+    ],
   );
 });
 
@@ -4699,6 +4741,10 @@ test("daemon boundary guard rejects provider usage API orchestration", () => {
 
 test("daemon boundary guard scopes provider usage API roots", () => {
   assert.deepEqual(
+    providerUsageApiPatternsForPath("core/crates/ctx-http/src/api/providers.rs"),
+    PROVIDER_USAGE_API_ORCHESTRATION_PATTERNS,
+  );
+  assert.deepEqual(
     providerUsageApiPatternsForPath(
       "core/crates/ctx-http/src/api/providers/status/usage.rs",
     ),
@@ -4737,6 +4783,44 @@ test("daemon boundary guard scopes provider usage API roots", () => {
       patterns: PROVIDER_USAGE_API_ORCHESTRATION_PATTERNS,
     }),
     [],
+  );
+});
+
+test("daemon boundary guard allows runtime provider usage route contracts only", () => {
+  assert.deepEqual(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/providers.rs",
+      contents: `
+        use ctx_provider_runtime::{
+          CodexAccountsUsageRouteResponse, ProviderUsageRouteError, ProviderUsageRouteQuery,
+          ProviderUsageRouteSnapshot,
+        };
+      `,
+      patterns: PROVIDER_USAGE_API_ORCHESTRATION_PATTERNS,
+    }),
+    [],
+  );
+
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/providers.rs",
+    contents: `
+      use ctx_daemon::daemon::providers::{ProviderUsageRouteQuery};
+      use ctx_provider_runtime::provider_usage;
+
+      async fn handler() {
+        provider_usage::refresh_provider_usage_for(state, "codex", env).await?;
+      }
+    `,
+    patterns: PROVIDER_USAGE_API_ORCHESTRATION_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "provider usage API imports route contracts from daemon",
+      "provider usage API imports provider-runtime usage DTOs",
+      "provider usage API calls provider-runtime usage orchestration",
+    ],
   );
 });
 

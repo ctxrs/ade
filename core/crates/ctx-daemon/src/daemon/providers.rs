@@ -128,12 +128,7 @@ pub use restarts::{
 pub use runtime_probe::probe_provider_auth_verification_runtime;
 pub use status::{
     install_target_for_workspace, provider_status_response, providers_statuses_response,
-    refresh_provider_statuses, ProviderStatusListRouteError, ProviderStatusResponseError,
-    ProviderStatusRouteError, ProviderStatusRouteErrorKind, ProviderStatusRouteQuery,
-};
-pub use usage::{
-    CodexAccountsUsageRouteResponse, ProviderUsageRouteError, ProviderUsageRouteQuery,
-    ProviderUsageRouteSnapshot,
+    refresh_provider_statuses, ProviderStatusResponseError,
 };
 
 impl ProvidersHandle {

@@ -27,11 +27,22 @@ pub mod provider_restart;
 pub mod provider_runtime_probe_service;
 pub mod provider_session_auth;
 pub mod provider_state;
+pub mod provider_status_route_contract;
 pub mod provider_status_service;
 pub mod provider_usability;
 pub mod provider_usage;
+pub mod provider_usage_route_contract;
 pub mod provider_workers;
 pub mod resource_governance;
+
+pub use provider_status_route_contract::{
+    ProviderStatusListRouteError, ProviderStatusRouteError, ProviderStatusRouteErrorKind,
+    ProviderStatusRouteQuery,
+};
+pub use provider_usage_route_contract::{
+    CodexAccountUsageRouteEntry, CodexAccountsUsageRouteResponse, ProviderUsageRouteError,
+    ProviderUsageRouteQuery, ProviderUsageRouteSnapshot,
+};
 
 pub trait ProviderRuntimeHost: Send + Sync + 'static {
     fn data_root(&self) -> &Path;
