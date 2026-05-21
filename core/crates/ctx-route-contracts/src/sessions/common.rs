@@ -40,6 +40,19 @@ impl SessionTurnToolsRouteParams {
     }
 }
 
-pub fn parse_session_route_id(value: &str) -> Result<SessionId, ()> {
-    uuid::Uuid::parse_str(value).map(SessionId).map_err(|_| ())
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct SessionRouteIdParseError;
+
+impl std::fmt::Display for SessionRouteIdParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("invalid session id")
+    }
+}
+
+impl std::error::Error for SessionRouteIdParseError {}
+
+pub fn parse_session_route_id(value: &str) -> Result<SessionId, SessionRouteIdParseError> {
+    uuid::Uuid::parse_str(value)
+        .map(SessionId)
+        .map_err(|_| SessionRouteIdParseError)
 }

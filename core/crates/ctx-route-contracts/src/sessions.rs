@@ -5,7 +5,10 @@ mod read_models;
 mod title_model_mode;
 mod vcs;
 
-pub use common::{parse_session_route_id, SessionRouteParams, SessionTurnToolsRouteParams};
+pub use common::{
+    parse_session_route_id, SessionRouteIdParseError, SessionRouteParams,
+    SessionTurnToolsRouteParams,
+};
 pub use control::{
     AuthenticateSessionRouteRequest, SessionControlRouteError, SessionControlRouteErrorKind,
     SessionFileCompletionsRouteQuery, SessionFileCompletionsRouteResponse,
