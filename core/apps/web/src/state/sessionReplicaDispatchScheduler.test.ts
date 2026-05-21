@@ -43,6 +43,7 @@ describe("SessionReplicaDispatchScheduler", () => {
     const posted: SessionReplicaCommand[] = [];
     const scheduler = new SessionReplicaDispatchScheduler((cmd) => posted.push(cmd), {
       backgroundBatchSize: 2,
+      backgroundDrainDelayMs: 0,
     });
 
     scheduler.dispatch(makeWorkspaceCommand("background-1", 1, "workspace"));
@@ -72,6 +73,7 @@ describe("SessionReplicaDispatchScheduler", () => {
     const posted: SessionReplicaCommand[] = [];
     const scheduler = new SessionReplicaDispatchScheduler((cmd) => posted.push(cmd), {
       backgroundBatchSize: 10,
+      backgroundDrainDelayMs: 0,
     });
 
     scheduler.dispatch(makeWorkspaceCommand("background", 1, "workspace"));
@@ -104,6 +106,50 @@ describe("SessionReplicaDispatchScheduler", () => {
     expect(postedSessionIds(posted)).toEqual(["close_session", "retained"]);
   });
 
+  it("paces default background batches so foreground events cannot be buried behind worker backlog", () => {
+    const posted: SessionReplicaCommand[] = [];
+    const scheduler = new SessionReplicaDispatchScheduler((cmd) => posted.push(cmd));
+
+    for (let seq = 1; seq <= 12; seq += 1) {
+      scheduler.dispatch(makeWorkspaceCommand(`background-${seq}`, seq, "workspace"));
+    }
+
+    expect(postedSessionIds(posted)).toEqual([]);
+
+    vi.advanceTimersByTime(7);
+    expect(postedSessionIds(posted)).toEqual([]);
+
+    vi.advanceTimersByTime(1);
+    expect(postedSessionIds(posted)).toEqual([
+      "background-1",
+      "background-2",
+      "background-3",
+      "background-4",
+    ]);
+
+    scheduler.dispatch(makeWorkspaceCommand("foreground", 99, "foreground"));
+    expect(postedSessionIds(posted)).toEqual([
+      "background-1",
+      "background-2",
+      "background-3",
+      "background-4",
+      "foreground",
+    ]);
+
+    vi.advanceTimersByTime(8);
+    expect(postedSessionIds(posted)).toEqual([
+      "background-1",
+      "background-2",
+      "background-3",
+      "background-4",
+      "foreground",
+      "background-5",
+      "background-6",
+      "background-7",
+      "background-8",
+    ]);
+  });
+
   it("invokes browser timer functions with the global receiver", () => {
     const posted: SessionReplicaCommand[] = [];
     const brandedSetTimeout = function (
@@ -126,6 +172,7 @@ describe("SessionReplicaDispatchScheduler", () => {
     } as typeof globalThis.clearTimeout;
     const scheduler = new SessionReplicaDispatchScheduler((cmd) => posted.push(cmd), {
       backgroundBatchSize: 1,
+      backgroundDrainDelayMs: 0,
       setTimeoutFn: brandedSetTimeout,
       clearTimeoutFn: brandedClearTimeout,
     });

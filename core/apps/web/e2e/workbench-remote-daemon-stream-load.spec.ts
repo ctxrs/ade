@@ -1098,16 +1098,18 @@ async function runForegroundProbe(
       { retryBusyForMs: 5000 },
     );
     sentAtMs = Date.now();
-    const firstVisiblePromise = waitForVisibleMarker(page, marker, PROBE_TIMEOUT_MS);
-    const { backendReadyAtMs, turnId } = await waitForForegroundTurnCompletion(
-      request,
-      sessionId,
-      sent.turnId,
-      sent.afterSeq,
-      PROBE_TIMEOUT_MS,
-    );
-    const firstVisibleAtMs = await firstVisiblePromise;
-    const domVisibleAtMs = await waitForVisibleMarker(page, marker, PROBE_TIMEOUT_MS);
+    const [firstVisibleAtMs, completion] = await Promise.all([
+      waitForVisibleMarker(page, marker, PROBE_TIMEOUT_MS),
+      waitForForegroundTurnCompletion(
+        request,
+        sessionId,
+        sent.turnId,
+        sent.afterSeq,
+        PROBE_TIMEOUT_MS,
+      ),
+    ]);
+    const { backendReadyAtMs, turnId } = completion;
+    const domVisibleAtMs = firstVisibleAtMs;
     return {
       marker,
       turnId,
@@ -1116,7 +1118,7 @@ async function runForegroundProbe(
       sendToFirstVisibleMs: firstVisibleAtMs - sentAtMs,
       backendReadyAtMs,
       domVisibleAtMs,
-      backendToDomMs: domVisibleAtMs - backendReadyAtMs,
+      backendToDomMs: Math.max(0, domVisibleAtMs - backendReadyAtMs),
       timedOut: false,
       error: null,
     };

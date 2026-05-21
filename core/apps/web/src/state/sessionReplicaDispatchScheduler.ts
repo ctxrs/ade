@@ -1,12 +1,14 @@
 import type { WorkspaceActiveSnapshotEvent } from "@ctx/types";
 import type { SessionReplicaCommand } from "./sessionReplicaProtocol";
 
-const DEFAULT_BACKGROUND_BATCH_SIZE = 25;
+const DEFAULT_BACKGROUND_BATCH_SIZE = 4;
+const DEFAULT_BACKGROUND_DRAIN_DELAY_MS = 8;
 
 type TimerHandle = ReturnType<typeof globalThis.setTimeout>;
 
 type SchedulerOptions = {
   backgroundBatchSize?: number;
+  backgroundDrainDelayMs?: number;
   setTimeoutFn?: typeof globalThis.setTimeout;
   clearTimeoutFn?: typeof globalThis.clearTimeout;
 };
@@ -58,6 +60,7 @@ const sessionIdForCommand = (cmd: SessionReplicaCommand): string => {
 
 export class SessionReplicaDispatchScheduler {
   private readonly backgroundBatchSize: number;
+  private readonly backgroundDrainDelayMs: number;
   private readonly setTimeoutFn: typeof globalThis.setTimeout;
   private readonly clearTimeoutFn: typeof globalThis.clearTimeout;
   private backgroundQueue: WorkspaceEventCommand[] = [];
@@ -69,6 +72,10 @@ export class SessionReplicaDispatchScheduler {
     opts?: SchedulerOptions,
   ) {
     this.backgroundBatchSize = Math.max(1, Math.floor(opts?.backgroundBatchSize ?? DEFAULT_BACKGROUND_BATCH_SIZE));
+    this.backgroundDrainDelayMs = Math.max(
+      0,
+      Math.floor(opts?.backgroundDrainDelayMs ?? DEFAULT_BACKGROUND_DRAIN_DELAY_MS),
+    );
     this.setTimeoutFn = bindSetTimeout(opts?.setTimeoutFn ?? globalThis.setTimeout);
     this.clearTimeoutFn = bindClearTimeout(opts?.clearTimeoutFn ?? globalThis.clearTimeout);
   }
@@ -130,7 +137,7 @@ export class SessionReplicaDispatchScheduler {
     this.backgroundTimer = this.setTimeoutFn(() => {
       this.backgroundTimer = null;
       this.drainBackgroundBatch();
-    }, 0);
+    }, this.backgroundDrainDelayMs);
   }
 
   private drainBackgroundBatch(): void {
