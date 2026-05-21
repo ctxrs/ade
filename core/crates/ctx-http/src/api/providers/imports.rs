@@ -1,4 +1,8 @@
 use super::*;
+use ctx_provider_auth_import::{
+    ProviderAuthImportCandidatesRouteResponse, ProviderAuthImportProfilesRouteResponse,
+    ProviderAuthImportRouteError, ProviderAuthImportRouteRequest, ProviderAuthImportRouteResponse,
+};
 
 pub(crate) async fn list_provider_auth_import_candidates(
     State(providers): State<ProvidersHandle>,
@@ -40,4 +44,19 @@ fn provider_auth_import_error_response(
             error: error.message().to_string(),
         }),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_auth_import_error_response_preserves_redacted_candidate_errors() {
+        let (status, Json(body)) = provider_auth_import_error_response(
+            ProviderAuthImportRouteError::new("candidate scan failed: [REDACTED]"),
+        );
+
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(body.error, "candidate scan failed: [REDACTED]");
+    }
 }

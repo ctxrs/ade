@@ -3,51 +3,19 @@ use std::sync::Arc;
 
 use ctx_observability::logs;
 use ctx_provider_auth_import as provider_auth_import;
-use serde::{Deserialize, Serialize};
+use ctx_provider_auth_import::{
+    ProviderAuthImportCandidatesRouteResponse, ProviderAuthImportProfilesRouteResponse,
+    ProviderAuthImportRouteError, ProviderAuthImportRouteRequest, ProviderAuthImportRouteResponse,
+};
 
 use crate::daemon::{DaemonState, ProvidersHandle};
 
-#[derive(Debug, Serialize)]
-pub struct ProviderAuthImportCandidatesRouteResponse {
-    pub candidates: Vec<provider_auth_import::ProviderAuthImportCandidate>,
+fn redacted_route_error(error: anyhow::Error) -> ProviderAuthImportRouteError {
+    ProviderAuthImportRouteError::new(logs::redact_sensitive(&error.to_string()))
 }
 
-#[derive(Debug, Serialize)]
-pub struct ProviderAuthImportProfilesRouteResponse {
-    pub profiles: Vec<provider_auth_import::ProviderImportedAuthProfile>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ProviderAuthImportRouteRequest {
-    pub candidate_ids: Vec<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ProviderAuthImportRouteResponse {
-    pub results: Vec<provider_auth_import::ProviderAuthImportResult>,
-}
-
-#[derive(Debug)]
-pub struct ProviderAuthImportRouteError {
-    message: String,
-}
-
-impl ProviderAuthImportRouteError {
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-
-    fn redacted(error: anyhow::Error) -> Self {
-        Self {
-            message: logs::redact_sensitive(&error.to_string()),
-        }
-    }
-
-    fn raw(error: anyhow::Error) -> Self {
-        Self {
-            message: error.to_string(),
-        }
-    }
+fn raw_route_error(error: anyhow::Error) -> ProviderAuthImportRouteError {
+    ProviderAuthImportRouteError::new(error.to_string())
 }
 
 pub async fn list_provider_auth_import_candidates(
@@ -119,8 +87,8 @@ impl ProvidersHandle {
     ) -> Result<ProviderAuthImportCandidatesRouteResponse, ProviderAuthImportRouteError> {
         let candidates = list_provider_auth_import_candidates()
             .await
-            .map_err(ProviderAuthImportRouteError::redacted)?;
-        Ok(ProviderAuthImportCandidatesRouteResponse { candidates })
+            .map_err(redacted_route_error)?;
+        Ok(ProviderAuthImportCandidatesRouteResponse::new(candidates))
     }
 
     pub async fn list_provider_auth_import_profiles_for_route(
@@ -128,17 +96,42 @@ impl ProvidersHandle {
     ) -> Result<ProviderAuthImportProfilesRouteResponse, ProviderAuthImportRouteError> {
         let profiles = list_provider_auth_import_profiles(&self.state)
             .await
-            .map_err(ProviderAuthImportRouteError::raw)?;
-        Ok(ProviderAuthImportProfilesRouteResponse { profiles })
+            .map_err(raw_route_error)?;
+        Ok(ProviderAuthImportProfilesRouteResponse::new(profiles))
     }
 
     pub async fn import_provider_auth_candidates_for_route(
         &self,
         request: ProviderAuthImportRouteRequest,
     ) -> Result<ProviderAuthImportRouteResponse, ProviderAuthImportRouteError> {
-        let results = import_provider_auth_candidates(&self.state, request.candidate_ids)
+        let results = import_provider_auth_candidates(&self.state, request.into_candidate_ids())
             .await
-            .map_err(ProviderAuthImportRouteError::raw)?;
-        Ok(ProviderAuthImportRouteResponse { results })
+            .map_err(raw_route_error)?;
+        Ok(ProviderAuthImportRouteResponse::new(results))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn candidate_route_errors_are_redacted_before_crossing_route_boundary() {
+        let error = redacted_route_error(anyhow::anyhow!(
+            r#"candidate scan failed with {{"ctx_mcp_token":"secret-token"}}"#
+        ));
+
+        assert!(error.message().contains("[REDACTED]"));
+        assert!(!error.message().contains("secret-token"));
+    }
+
+    #[test]
+    fn profile_and_import_route_errors_keep_actionable_context() {
+        let error = raw_route_error(anyhow::anyhow!(
+            "parsing imported auth registry at /tmp/profiles.json"
+        ));
+
+        assert!(error.message().contains("parsing imported auth registry"));
+        assert!(error.message().contains("profiles.json"));
     }
 }

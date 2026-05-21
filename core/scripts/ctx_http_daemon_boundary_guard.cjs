@@ -280,6 +280,7 @@ const providerLaunchOptionsApiRoots = [
 ];
 
 const providerAuthImportApiRoots = [
+  "core/crates/ctx-http/src/api/providers.rs",
   "core/crates/ctx-http/src/api/providers/imports.rs",
   "core/crates/ctx-http/src/api/providers/types/auth_import.rs",
 ];
@@ -2027,8 +2028,21 @@ const PROVIDER_LAUNCH_OPTIONS_API_PATTERNS = [
 
 const PROVIDER_AUTH_IMPORT_API_ORCHESTRATION_PATTERNS = [
   {
-    name: "provider auth import API imports auth-import domain directly",
-    regex: /\bctx_provider_auth_import\b/,
+    name: "provider auth import API imports route contracts from daemon",
+    regex:
+      /\bctx_daemon::daemon::providers::(?:ProviderAuthImportCandidatesRouteResponse|ProviderAuthImportProfilesRouteResponse|ProviderAuthImportRouteError|ProviderAuthImportRouteRequest|ProviderAuthImportRouteResponse)\b/,
+    contentRegex:
+      /\buse\s+ctx_daemon::daemon::providers::\s*\{(?=[^}]*\b(?:ProviderAuthImportCandidatesRouteResponse|ProviderAuthImportProfilesRouteResponse|ProviderAuthImportRouteError|ProviderAuthImportRouteRequest|ProviderAuthImportRouteResponse)\b)[^}]*\}\s*;/gm,
+  },
+  {
+    name: "provider auth import API imports auth-import domain payloads directly",
+    regex:
+      /\b(?:ProviderAuthImportCandidate|ProviderImportedAuthProfile|ProviderImportedAuthRegistry|ProviderAuthImportResult)\b/,
+  },
+  {
+    name: "provider auth import API calls auth-import domain crate directly",
+    regex:
+      /\bctx_provider_auth_import::(?:list_provider_auth_import_candidates|list_provider_auth_profiles|import_provider_auth_candidates)\s*\(/,
   },
   {
     name: "provider auth import API owns old route DTOs",

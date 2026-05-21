@@ -21,6 +21,12 @@ mod catalog;
 mod importers;
 mod legacy;
 mod parsers;
+mod route_contract;
+
+pub use route_contract::{
+    ProviderAuthImportCandidatesRouteResponse, ProviderAuthImportProfilesRouteResponse,
+    ProviderAuthImportRouteError, ProviderAuthImportRouteRequest, ProviderAuthImportRouteResponse,
+};
 
 #[cfg(test)]
 use catalog::{host_roots, scan_with_roots, sha256_hex, summarize_env};

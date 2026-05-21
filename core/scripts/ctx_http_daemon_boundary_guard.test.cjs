@@ -4501,8 +4501,13 @@ test("daemon boundary guard rejects provider auth-import API orchestration", () 
   const violations = scanText({
     filePath: "core/crates/ctx-http/src/api/providers/imports.rs",
     contents: `
-      use ctx_provider_auth_import as provider_auth_import;
+      use ctx_daemon::daemon::providers::{
+        ProviderAuthImportCandidatesRouteResponse,
+        ProviderAuthImportRouteRequest,
+      };
       async fn handler(providers: ProvidersHandle) {
+        let _ = ProviderAuthImportCandidate { id };
+        let _ = ctx_provider_auth_import::list_provider_auth_import_candidates().await?;
         let _ = ProviderAuthImportCandidatesResponse { candidates };
         let _ = ProviderAuthImportProfilesResponse { profiles };
         let _ = ProviderAuthImportReq { candidate_ids };
@@ -4520,7 +4525,9 @@ test("daemon boundary guard rejects provider auth-import API orchestration", () 
   assert.deepEqual(
     violations.map((violation) => violation.name),
     [
-      "provider auth import API imports auth-import domain directly",
+      "provider auth import API imports route contracts from daemon",
+      "provider auth import API imports auth-import domain payloads directly",
+      "provider auth import API calls auth-import domain crate directly",
       "provider auth import API owns old route DTOs",
       "provider auth import API owns old route DTOs",
       "provider auth import API owns old route DTOs",
@@ -4537,6 +4544,10 @@ test("daemon boundary guard rejects provider auth-import API orchestration", () 
 
 test("daemon boundary guard scopes provider auth-import API roots", () => {
   assert.deepEqual(
+    providerAuthImportApiPatternsForPath("core/crates/ctx-http/src/api/providers.rs"),
+    PROVIDER_AUTH_IMPORT_API_ORCHESTRATION_PATTERNS,
+  );
+  assert.deepEqual(
     providerAuthImportApiPatternsForPath("core/crates/ctx-http/src/api/providers/imports.rs"),
     PROVIDER_AUTH_IMPORT_API_ORCHESTRATION_PATTERNS,
   );
@@ -4548,8 +4559,30 @@ test("daemon boundary guard scopes provider auth-import API roots", () => {
   );
   assert.deepEqual(
     scanText({
+      filePath: "core/crates/ctx-http/src/api/providers.rs",
+      contents: `
+        use ctx_daemon::daemon::providers::{
+          ProviderAuthImportCandidatesRouteResponse,
+          ProviderAuthImportRouteRequest,
+        };
+      `,
+      patterns: apiPatternsForPath("core/crates/ctx-http/src/api/providers.rs"),
+    }).map((violation) => violation.name),
+    ["provider auth import API imports route contracts from daemon"],
+  );
+  assert.deepEqual(
+    scanText({
       filePath: "core/crates/ctx-http/src/api/providers/imports.rs",
-      contents: "providers.import_provider_auth_candidates_for_route(req).await?;",
+      contents: `
+        use ctx_provider_auth_import::{
+          ProviderAuthImportCandidatesRouteResponse,
+          ProviderAuthImportProfilesRouteResponse,
+          ProviderAuthImportRouteError,
+          ProviderAuthImportRouteRequest,
+          ProviderAuthImportRouteResponse,
+        };
+        providers.import_provider_auth_candidates_for_route(req).await?;
+      `,
       patterns: PROVIDER_AUTH_IMPORT_API_ORCHESTRATION_PATTERNS,
     }),
     [],
