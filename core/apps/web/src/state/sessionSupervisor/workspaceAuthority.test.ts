@@ -89,6 +89,13 @@ describe("workspaceAuthority", () => {
       activity: { is_working: true, last_turn_status: "running" },
     }) as unknown as InternalEntry;
 
+  const makeOpenEntry = (sessionId = "session-1"): InternalEntry =>
+    ({
+      ...makeStaleEntry(),
+      sessionId,
+      refCount: 1,
+    }) as unknown as InternalEntry;
+
   const completedHead: SessionHeadSnapshot = {
     session,
     turns: [completedTurn],
@@ -339,7 +346,7 @@ describe("workspaceAuthority", () => {
     expect(replicaDispatch).not.toHaveBeenCalled();
   });
 
-  it("forwards retained foreground stream deltas to the session replica", () => {
+  it("keeps retained active task stream deltas on the workspace replica lane", () => {
     const replicaDispatch = vi.fn();
     const event = makeDeltaEvent("session-foreground");
     markWorkspaceEventStreamSource(event, "replay");
@@ -353,9 +360,29 @@ describe("workspaceAuthority", () => {
     expect(replicaDispatch).toHaveBeenCalledWith({
       type: "workspace_event",
       event,
-      lane: "foreground",
+      lane: "workspace",
       receivedAtMs: null,
       streamSource: "replay",
+    });
+  });
+
+  it("routes visible open session stream deltas to the foreground replica lane", () => {
+    const replicaDispatch = vi.fn();
+    const event = makeDeltaEvent("session-visible");
+    const host = makeIngestHost({
+      entries: new Map([["session-visible", makeOpenEntry("session-visible")]]),
+      activeTaskSessionIds: ["session-visible"],
+      replicaDispatch,
+    });
+
+    ingestWorkspaceEvent(host, event);
+
+    expect(replicaDispatch).toHaveBeenCalledWith({
+      type: "workspace_event",
+      event,
+      lane: "foreground",
+      receivedAtMs: null,
+      streamSource: null,
     });
   });
 
@@ -404,7 +431,7 @@ describe("workspaceAuthority", () => {
     const event = makeGapEvent("session-foreground");
     markWorkspaceEventStreamSource(event, "live");
     const host = makeIngestHost({
-      entries: new Map([["session-foreground", makeStaleEntry()]]),
+      entries: new Map([["session-foreground", makeOpenEntry("session-foreground")]]),
       activeTaskSessionIds: ["session-foreground"],
       replicaDispatch,
     });
