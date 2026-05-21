@@ -5,7 +5,7 @@ use crate::daemon::{DaemonState, SessionsHandle};
 use ctx_core::models::Session;
 use ctx_observability::logs;
 use ctx_provider_install::install_state::InstallId;
-use ctx_session_service::title_generation;
+use ctx_session_title_service::title_generation;
 use ctx_settings_model as user_settings;
 
 mod persistence;

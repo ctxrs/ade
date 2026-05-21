@@ -457,3 +457,32 @@ async fn ensure_grammar_file(data_root: &Path) -> Result<PathBuf> {
         .with_context(|| format!("write {}", path.display()))?;
     Ok(path)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fallback_title_collapses_and_trims_prompt() {
+        assert_eq!(
+            fallback_title_from_prompt("  Build   a better\nsession title.  "),
+            "Build a better session title"
+        );
+    }
+
+    #[test]
+    fn normalize_title_strips_quotes_punctuation_and_truncates() {
+        let raw = format!("\"{}:\"", "a".repeat(TITLE_MAX_CHARS + 8));
+        assert_eq!(normalize_title(&raw), "a".repeat(TITLE_MAX_CHARS));
+    }
+
+    #[test]
+    fn parse_completion_accepts_json_schema_title() {
+        let title = match parse_completion(r#"{"title":"\"Focused refactor:\""}"#, true) {
+            Ok(title) => title,
+            Err(error) => panic!("json title should parse: {error}"),
+        };
+
+        assert_eq!(title, "Focused refactor");
+    }
+}

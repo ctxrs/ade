@@ -179,6 +179,7 @@ const RUST_FAMILY_BY_CRATE = {
   "ctx-session-message-service": "turns-terminal",
   "ctx-session-runtime": "workspace-stream",
   "ctx-session-service": "workspace-stream",
+  "ctx-session-title-service": "subagents-orchestration",
   "ctx-subagent-service": "subagents-orchestration",
   "ctx-session-tools": "turns-terminal",
   "ctx-settings-model": "settings-config",

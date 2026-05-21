@@ -96,6 +96,7 @@ const PACKAGE_SHAPE_BOUNDARY_CRATES = new Set([
   "ctx-session-message-service",
   "ctx-session-runtime",
   "ctx-session-runner",
+  "ctx-session-title-service",
   "ctx-workspace-active-snapshot",
   "ctx-workspace-attachments",
   "ctx-workspace-config",
@@ -115,6 +116,13 @@ const SESSION_RUNTIME_FORBIDDEN_DEPS = new Set([
   "ctx-daemon",
   "ctx-http",
   "ctx-workspace-active-snapshot",
+  "ctx-route-contracts",
+  "axum",
+]);
+const TITLE_SERVICE_FORBIDDEN_DEPS = new Set([
+  "ctx-session-service",
+  "ctx-daemon",
+  "ctx-http",
   "ctx-route-contracts",
   "axum",
 ]);
@@ -407,6 +415,14 @@ const checkCargoDependencyDirection = (rootDir) => {
           message: `ctx-session-runtime must not depend on ${dependency.name}; session runtime must stay below session orchestration, daemon, HTTP, active-snapshot runtime, route contracts, and Axum.`,
         });
       }
+      if (crateName === "ctx-session-title-service" && TITLE_SERVICE_FORBIDDEN_DEPS.has(dependency.name)) {
+        violations.push({
+          kind: "cargo_dependency",
+          line: dependency.line,
+          path: manifestRelativePath,
+          message: `ctx-session-title-service must not depend on ${dependency.name}; title generation must stay below session orchestration, daemon, HTTP, route contracts, and Axum.`,
+        });
+      }
       if (crateName === "ctx-transport-runtime" && TRANSPORT_RUNTIME_FORBIDDEN_DEPS.has(dependency.name)) {
         violations.push({
           kind: "cargo_dependency",
@@ -502,6 +518,7 @@ module.exports = {
   ROUTE_CONTRACTS_ALLOWED_CTX_DEPS,
   SERVICE_RUNTIME_FORBIDDEN_DEPS,
   SESSION_RUNTIME_FORBIDDEN_DEPS,
+  TITLE_SERVICE_FORBIDDEN_DEPS,
   checkCargoDependencyDirection,
   checkCollapsedPaths,
   checkHeadProjectionPurity,

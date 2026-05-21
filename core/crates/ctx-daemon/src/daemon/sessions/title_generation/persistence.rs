@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use ctx_core::models::{Session, SessionEventType};
-use ctx_session_service::title_generation;
+use ctx_session_title_service::title_generation;
 
 use super::TitleGenerationOutcome;
 use crate::daemon::DaemonState;

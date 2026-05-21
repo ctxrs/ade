@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use ctx_managed_installs::title_generation_local;
-use ctx_session_service::title_generation;
+use ctx_session_title_service::title_generation;
 use ctx_settings_model::{
     TitleGenerationLocalSettings, TitleGenerationMode, TitleGenerationSettings,
 };

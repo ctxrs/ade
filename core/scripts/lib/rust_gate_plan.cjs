@@ -42,6 +42,7 @@ const AGENT_GATE_CRATES = [
   "ctx-session-message-service",
   "ctx-session-runtime",
   "ctx-session-service",
+  "ctx-session-title-service",
   "ctx-subagent-service",
   "ctx-session-tools",
   "ctx-settings-model",

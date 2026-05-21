@@ -1537,7 +1537,7 @@ impl TestDaemon {
         let task = store
             .create_task(
                 workspace.id,
-                ctx_session_service::title_generation::DEFAULT_SESSION_TITLE.to_string(),
+                ctx_session_title_service::title_generation::DEFAULT_SESSION_TITLE.to_string(),
                 None,
             )
             .await?;

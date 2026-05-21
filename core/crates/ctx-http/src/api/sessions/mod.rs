@@ -40,7 +40,7 @@ pub(super) use snapshot::{
 };
 mod titles_and_modes;
 #[cfg(test)]
-use ctx_session_service::title_generation;
+use ctx_session_title_service::title_generation;
 pub(super) use titles_and_modes::{generate_session_title, set_session_mode, set_session_model};
 
 #[cfg(test)]

@@ -46,6 +46,7 @@ ctx-session-artifacts = { path = "../ctx-session-artifacts" }
 ctx-session-message-service = { path = "../ctx-session-message-service" }
 ctx-session-runtime = { path = "../ctx-session-runtime" }
 ctx-session-service = { path = "../ctx-session-service" }
+ctx-session-title-service = { path = "../ctx-session-title-service" }
 ctx-session-tools = { path = "../ctx-session-tools" }
 ctx-settings-model = { path = "../ctx-settings-model" }
 ctx-settings-service = { path = "../ctx-settings-service" }

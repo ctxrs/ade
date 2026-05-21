@@ -899,6 +899,7 @@ dependencies = [
  "ctx-session-message-service",
  "ctx-session-runtime",
  "ctx-session-service",
+ "ctx-session-title-service",
  "ctx-session-tools",
  "ctx-settings-model",
  "ctx-settings-service",
@@ -1140,6 +1141,7 @@ dependencies = [
  "ctx-sandbox-materialization",
  "ctx-session-artifacts",
  "ctx-session-service",
+ "ctx-session-title-service",
  "ctx-session-tools",
  "ctx-settings-model",
  "ctx-settings-service",
@@ -1774,19 +1776,29 @@ dependencies = [
  "async-trait",
  "chrono",
  "ctx-core",
- "ctx-managed-installs",
  "ctx-provider-runtime",
  "ctx-providers",
  "ctx-session-tools",
- "ctx-settings-model",
  "ctx-store",
- "reqwest 0.12.28",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "ctx-session-title-service"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ctx-managed-installs",
+ "ctx-settings-model",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

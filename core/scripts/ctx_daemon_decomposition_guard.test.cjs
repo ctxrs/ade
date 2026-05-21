@@ -11,6 +11,7 @@ const {
   PACKAGE_SHAPE_BOUNDARY_CRATES,
   PACKAGE_SHAPE_FORBIDDEN_BACKEDGE_DEPS,
   SESSION_RUNTIME_FORBIDDEN_DEPS,
+  TITLE_SERVICE_FORBIDDEN_DEPS,
   checkCargoDependencyDirection,
   checkCollapsedPaths,
   checkHeadProjectionPurity,
@@ -136,6 +137,7 @@ test("package shape boundary classifier covers existing and planned service owne
   assert.equal(isPackageShapeBoundaryCrate("ctx-session-message-service"), true);
   assert.equal(isPackageShapeBoundaryCrate("ctx-session-runtime"), true);
   assert.equal(isPackageShapeBoundaryCrate("ctx-session-runner"), true);
+  assert.equal(isPackageShapeBoundaryCrate("ctx-session-title-service"), true);
   assert.equal(isPackageShapeBoundaryCrate("ctx-core"), false);
 });
 
@@ -200,6 +202,32 @@ test("session runtime boundary rejects reverse coupling to orchestration and run
   );
   assert.equal(
     messages.some((message) => message.includes("ctx-session-runtime must not depend on ctx-workspace-active-snapshot")),
+    true,
+  );
+});
+
+test("session title service boundary rejects route and orchestration coupling", () => {
+  assert.equal(TITLE_SERVICE_FORBIDDEN_DEPS.has("ctx-session-service"), true);
+  assert.equal(TITLE_SERVICE_FORBIDDEN_DEPS.has("ctx-route-contracts"), true);
+
+  const rootDir = makeRoot();
+  writeFile(rootDir, "core/crates/ctx-session-title-service/Cargo.toml", `
+    [package]
+    name = "ctx-session-title-service"
+
+    [dependencies]
+    ctx-session-service = { path = "../ctx-session-service" }
+    ctx-route-contracts = { path = "../ctx-route-contracts" }
+  `);
+
+  const messages = checkCargoDependencyDirection(rootDir).map((entry) => entry.message);
+
+  assert.equal(
+    messages.some((message) => message.includes("ctx-session-title-service must not depend on ctx-session-service")),
+    true,
+  );
+  assert.equal(
+    messages.some((message) => message.includes("ctx-session-title-service must not depend on ctx-route-contracts")),
     true,
   );
 });

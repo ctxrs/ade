@@ -37,6 +37,7 @@ members = [
   "crates/ctx-session-message-service",
   "crates/ctx-session-runtime",
   "crates/ctx-session-service",
+  "crates/ctx-session-title-service",
   "crates/ctx-subagent-service",
   "crates/ctx-task-service",
   "crates/ctx-mobile-access-service",
