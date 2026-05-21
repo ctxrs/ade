@@ -6,6 +6,44 @@ use ctx_settings_model::update::{
 use ctx_store::Store;
 use serde_json::json;
 
+struct EnvVarGuard {
+    key: &'static str,
+    previous: Option<String>,
+}
+
+impl EnvVarGuard {
+    fn remove(key: &'static str) -> Self {
+        let previous = std::env::var(key).ok();
+        std::env::remove_var(key);
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        if let Some(value) = &self.previous {
+            std::env::set_var(self.key, value);
+        } else {
+            std::env::remove_var(self.key);
+        }
+    }
+}
+
+struct CleanExecutionEnvGuard {
+    _lock: tokio::sync::MutexGuard<'static, ()>,
+    _policy: EnvVarGuard,
+    _mode: EnvVarGuard,
+}
+
+async fn clean_execution_env() -> CleanExecutionEnvGuard {
+    let lock = EXECUTION_POLICY_TEST_ENV_LOCK.lock().await;
+    CleanExecutionEnvGuard {
+        _lock: lock,
+        _policy: EnvVarGuard::remove("CTX_HOST_EXECUTION_POLICY"),
+        _mode: EnvVarGuard::remove("CTX_EXECUTION_MODE"),
+    }
+}
+
 fn runtime_settings_secret_sidecar_path(
     root: &std::path::Path,
     db_file_name: &str,
@@ -247,6 +285,7 @@ fn to_public_redacts_secret_values() {
 
 #[tokio::test]
 async fn save_settings_persists_runtime_secrets_outside_sqlite() {
+    let _env = clean_execution_env().await;
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("db.sqlite");
     let store = Store::open(&db_path).await.unwrap();
@@ -317,6 +356,7 @@ async fn save_settings_persists_runtime_secrets_outside_sqlite() {
 
 #[tokio::test]
 async fn load_settings_migrates_legacy_runtime_setting_secrets() {
+    let _env = clean_execution_env().await;
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("db.sqlite");
     let store = Store::open(&db_path).await.unwrap();
@@ -393,6 +433,7 @@ async fn load_settings_migrates_legacy_runtime_setting_secrets() {
 
 #[tokio::test]
 async fn load_settings_removes_legacy_cloud_worker_settings_and_secrets() {
+    let _env = clean_execution_env().await;
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("db.sqlite");
     let store = Store::open(&db_path).await.unwrap();
@@ -452,6 +493,7 @@ async fn load_settings_removes_legacy_cloud_worker_settings_and_secrets() {
 
 #[tokio::test]
 async fn load_settings_removes_empty_legacy_cloud_worker_secret_fields() {
+    let _env = clean_execution_env().await;
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("db.sqlite");
     let store = Store::open(&db_path).await.unwrap();
@@ -520,6 +562,7 @@ async fn load_settings_removes_empty_legacy_cloud_worker_secret_fields() {
 
 #[tokio::test]
 async fn load_settings_fails_closed_on_corrupt_runtime_setting_secret_sidecar() {
+    let _env = clean_execution_env().await;
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("db.sqlite");
     let store = Store::open(&db_path).await.unwrap();
@@ -558,6 +601,7 @@ async fn load_settings_fails_closed_on_corrupt_runtime_setting_secret_sidecar() 
 
 #[tokio::test]
 async fn save_settings_without_runtime_secrets_clears_secret_ref_and_sidecar() {
+    let _env = clean_execution_env().await;
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("db.sqlite");
     let store = Store::open(&db_path).await.unwrap();
