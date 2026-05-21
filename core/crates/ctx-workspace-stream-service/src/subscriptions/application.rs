@@ -62,7 +62,8 @@ pub fn apply_workspace_stream_subscription_event(
     mut subscriptions: HashMap<SessionId, SessionReplayCursor>,
     event: &WorkspaceActiveSnapshotEvent,
     active_task_cursor_seed: Option<WorkspaceStreamActiveTaskCursorSeed>,
-) -> Result<WorkspaceStreamSubscriptionEventApplication, WorkspaceStreamActiveTaskCursorMissing> {
+) -> Result<WorkspaceStreamSubscriptionEventApplication, Box<WorkspaceStreamActiveTaskCursorMissing>>
+{
     let previous_subscriptions = subscriptions.keys().copied().collect::<HashSet<_>>();
     if let WorkspaceActiveSnapshotEvent::SessionRemoved { session_id, .. } = event {
         let removed_explicit = subscription_state.explicit_sessions.remove(session_id);
@@ -109,12 +110,12 @@ pub fn apply_workspace_stream_subscription_event(
                 let Some(seed) =
                     active_task_cursor_seed.filter(|seed| seed.session_id == session_id)
                 else {
-                    return Err(WorkspaceStreamActiveTaskCursorMissing {
+                    return Err(Box::new(WorkspaceStreamActiveTaskCursorMissing {
                         state: subscription_state,
                         subscriptions,
                         session_id,
                         previous_subscriptions,
-                    });
+                    }));
                 };
                 entry.insert(seed.cursor);
             }
@@ -146,7 +147,7 @@ pub fn apply_workspace_stream_subscription_event(
 }
 
 pub fn apply_missing_active_task_cursor(
-    mut missing: WorkspaceStreamActiveTaskCursorMissing,
+    mut missing: Box<WorkspaceStreamActiveTaskCursorMissing>,
     cursor: SessionReplayCursor,
 ) -> WorkspaceStreamSubscriptionEventApplication {
     missing.subscriptions.insert(missing.session_id, cursor);
@@ -163,7 +164,7 @@ pub fn apply_workspace_stream_live_event(
     subscriptions: HashMap<SessionId, SessionReplayCursor>,
     event: WorkspaceActiveSnapshotEvent,
     active_task_cursor_seed: Option<WorkspaceStreamActiveTaskCursorSeed>,
-) -> Result<WorkspaceStreamLiveEventApplication, WorkspaceStreamActiveTaskCursorMissing> {
+) -> Result<WorkspaceStreamLiveEventApplication, Box<WorkspaceStreamActiveTaskCursorMissing>> {
     let application = apply_workspace_stream_subscription_event(
         subscription_state,
         subscriptions,
