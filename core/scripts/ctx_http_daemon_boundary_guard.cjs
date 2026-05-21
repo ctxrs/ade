@@ -168,6 +168,7 @@ const routeFileDownloadApiRoots = [
 ];
 
 const sessionArtifactApiRoots = [
+  "core/crates/ctx-http/src/api/artifacts/session.rs",
   "core/crates/ctx-http/src/api/artifacts/session/list.rs",
   "core/crates/ctx-http/src/api/artifacts/session/set.rs",
   "core/crates/ctx-http/src/api/artifacts/download.rs",
@@ -1346,6 +1347,19 @@ const ROUTE_FILE_DOWNLOAD_API_PATTERNS = [
 ];
 
 const SESSION_ARTIFACT_API_ROUTE_CONTRACT_PATTERNS = [
+  {
+    name: "session artifact API imports route contracts from daemon",
+    regex:
+      /\bctx_daemon::daemon::sessions::(?:SessionArtifactInput|SetSessionArtifactsRouteRequest|SessionArtifactsRouteResponse|SessionArtifactDownloadRouteParams|SessionArtifactRoute(?:Context|Error))\b/,
+    contentRegex:
+      /\buse\s+ctx_daemon::daemon::sessions::\s*\{(?=[^}]*\b(?:SessionArtifactInput|SetSessionArtifactsRouteRequest|SessionArtifactsRouteResponse|SessionArtifactDownloadRouteParams|SessionArtifactRoute(?:Context|Error))\b)[^}]*\}\s*;/gm,
+  },
+  {
+    name: "session artifact API imports route contracts from nested daemon sessions group",
+    regex: /\b\B/,
+    contentRegex:
+      /\buse\s+ctx_daemon::daemon::\s*\{(?=[^;]*\bsessions\s*::\s*\{[^;]*\b(?:SessionArtifactInput|SetSessionArtifactsRouteRequest|SessionArtifactsRouteResponse|SessionArtifactDownloadRouteParams|SessionArtifactRoute(?:Context|Error))\b)[^;]*;/gm,
+  },
   {
     name: "session artifact API owns local route id parsing",
     regex:
@@ -2683,6 +2697,19 @@ const TELEMETRY_API_ORCHESTRATION_PATTERNS = [
 ];
 
 const BLOB_API_ORCHESTRATION_PATTERNS = [
+  {
+    name: "blob API imports blob service contracts from daemon",
+    regex:
+      /\bctx_daemon::daemon::(?:BlobReadError|ImageBlobStoreError|StoredImageBlob|SESSION_IMAGE_BLOB_MAX_BYTES)\b/,
+    contentRegex:
+      /\buse\s+ctx_daemon::daemon::\s*\{(?=[^}]*\b(?:BlobReadError|ImageBlobStoreError|StoredImageBlob|SESSION_IMAGE_BLOB_MAX_BYTES)\b)[^}]*\}\s*;/gm,
+  },
+  {
+    name: "blob API imports blob service contracts from nested daemon group",
+    regex: /\b\B/,
+    contentRegex:
+      /\buse\s+ctx_daemon::\s*\{(?=[^;]*\bdaemon\s*::\s*\{[^;]*\b(?:BlobReadError|ImageBlobStoreError|StoredImageBlob|SESSION_IMAGE_BLOB_MAX_BYTES)\b)[^;]*;/gm,
+  },
   {
     name: "blob API accesses daemon data root directly",
     regex: /\.data_root\s*\(/,

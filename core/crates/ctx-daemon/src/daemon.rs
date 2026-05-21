@@ -71,7 +71,7 @@ pub use activity::{
     daemon_sandbox_work_activity_summary, daemon_turn_activity_summary, ActiveTurnRecord,
     DaemonSandboxWorkActivitySummary, DaemonTurnActivitySummary,
 };
-pub use blobs::{BlobReadError, ImageBlobStoreError, OpenedBlob, StoredImageBlob};
+pub use blobs::OpenedBlob;
 pub use diagnostics::{DaemonDiagnosticsSnapshot, DiagnosticsSnapshotError};
 pub use dictation::DictationConfigError;
 pub use execution_setup::{

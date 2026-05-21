@@ -536,6 +536,7 @@ RUST_BAZEL_DEPS = {
             "@crates//:chrono",
             "@crates//:hex",
             "@crates//:mime_guess",
+            "@crates//:serde",
             "@crates//:sha2",
             "@crates//:tokio",
             "@crates//:uuid",

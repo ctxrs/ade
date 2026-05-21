@@ -2,8 +2,8 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 
-use ctx_daemon::daemon::sessions::SessionArtifactDownloadRouteParams;
 use ctx_daemon::daemon::SessionsHandle;
+use ctx_session_artifacts::route_contract::SessionArtifactDownloadRouteParams;
 
 #[path = "download/response.rs"]
 mod response;

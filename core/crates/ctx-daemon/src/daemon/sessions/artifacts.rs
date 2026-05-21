@@ -1,73 +1,15 @@
-use ctx_core::ids::{ArtifactId, SessionId};
 use ctx_core::models::Artifact;
 use ctx_observability::logs;
+use ctx_route_contracts::sessions::{parse_session_route_id, SessionRouteParams};
+use ctx_session_artifacts::route_contract::{
+    SessionArtifactDownloadRouteParams, SessionArtifactInput, SessionArtifactRouteError,
+    SessionArtifactsRouteResponse, SetSessionArtifactsRouteRequest,
+};
 
 use crate::daemon::handle::SessionsHandle;
 use crate::daemon::route_files::{open_canonical_route_file, RouteFileDownloadError};
 use crate::daemon::{ScopedMcpSessionAccessError, SessionStoreAccessError};
-
-use super::route_contract::{parse_session_route_id, SessionRouteParams};
-
-#[derive(Debug, serde::Deserialize)]
-pub struct SessionArtifactInput {
-    pub absolute_file_path: String,
-    #[serde(default)]
-    pub name: Option<String>,
-    #[serde(default)]
-    pub mime_type: Option<String>,
-}
-
-impl From<SessionArtifactInput> for ctx_session_artifacts::SessionArtifactInput {
-    fn from(input: SessionArtifactInput) -> Self {
-        Self {
-            absolute_file_path: input.absolute_file_path,
-            name: input.name,
-            mime_type: input.mime_type,
-        }
-    }
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct SetSessionArtifactsRouteRequest {
-    #[serde(default)]
-    artifacts: Vec<SessionArtifactInput>,
-}
-
-#[derive(Debug, serde::Serialize)]
-#[serde(transparent)]
-pub struct SessionArtifactsRouteResponse(Vec<Artifact>);
-
-impl From<Vec<Artifact>> for SessionArtifactsRouteResponse {
-    fn from(artifacts: Vec<Artifact>) -> Self {
-        Self(artifacts)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct SessionArtifactDownloadRouteParams {
-    session_id: String,
-    artifact_id: String,
-}
-
-impl SessionArtifactDownloadRouteParams {
-    pub fn new(session_id: impl Into<String>, artifact_id: impl Into<String>) -> Self {
-        Self {
-            session_id: session_id.into(),
-            artifact_id: artifact_id.into(),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct SessionArtifactRouteContext {
-    mcp_auth: Option<ctx_mcp_auth::McpAuthContext>,
-}
-
-impl SessionArtifactRouteContext {
-    pub fn new(mcp_auth: Option<ctx_mcp_auth::McpAuthContext>) -> Self {
-        Self { mcp_auth }
-    }
-}
+use ctx_core::ids::{ArtifactId, SessionId};
 
 #[derive(Debug)]
 pub struct SessionArtifactDownload {
@@ -77,14 +19,6 @@ pub struct SessionArtifactDownload {
     pub last_modified: Option<String>,
     pub mime_type: String,
     pub name: Option<String>,
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub enum SessionArtifactRouteError {
-    Unauthorized(String),
-    NotFound,
-    BadRequest(String),
-    Internal(String),
 }
 
 impl SessionsHandle {
@@ -124,16 +58,16 @@ impl SessionsHandle {
     pub async fn set_session_artifacts_for_route_params(
         &self,
         params: SessionRouteParams,
-        context: SessionArtifactRouteContext,
+        mcp_auth: Option<ctx_mcp_auth::McpAuthContext>,
         request: SetSessionArtifactsRouteRequest,
     ) -> Result<SessionArtifactsRouteResponse, SessionArtifactRouteError> {
         let session_id = parse_session_artifact_route_session_id(params.session_id())?;
-        if let Some(mcp_auth) = context.mcp_auth {
+        if let Some(mcp_auth) = mcp_auth {
             self.require_scoped_mcp_session_context(mcp_auth, session_id)
                 .await
                 .map_err(scoped_mcp_session_artifact_route_error)?;
         }
-        self.set_session_artifacts_for_route(session_id, request.artifacts)
+        self.set_session_artifacts_for_route(session_id, request.into_artifacts())
             .await
             .map(Into::into)
     }
@@ -173,8 +107,8 @@ impl SessionsHandle {
         &self,
         params: SessionArtifactDownloadRouteParams,
     ) -> Result<SessionArtifactDownload, SessionArtifactRouteError> {
-        let session_id = parse_session_artifact_route_session_id(&params.session_id)?;
-        let artifact_id = parse_session_artifact_route_artifact_id(&params.artifact_id)?;
+        let session_id = parse_session_artifact_route_session_id(params.session_id())?;
+        let artifact_id = parse_session_artifact_route_artifact_id(params.artifact_id())?;
         self.open_session_artifact_for_route(session_id, artifact_id)
             .await
     }

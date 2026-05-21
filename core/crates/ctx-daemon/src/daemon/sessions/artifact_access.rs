@@ -14,14 +14,14 @@ pub enum SessionImageBlobStoreError {
     Internal,
 }
 
-impl From<crate::daemon::blobs::ImageBlobStoreError> for SessionImageBlobStoreError {
-    fn from(error: crate::daemon::blobs::ImageBlobStoreError) -> Self {
+impl From<ctx_session_artifacts::ImageBlobStoreError> for SessionImageBlobStoreError {
+    fn from(error: ctx_session_artifacts::ImageBlobStoreError) -> Self {
         match error {
-            crate::daemon::blobs::ImageBlobStoreError::PayloadTooLarge => Self::PayloadTooLarge,
-            crate::daemon::blobs::ImageBlobStoreError::UnsupportedMediaType => {
+            ctx_session_artifacts::ImageBlobStoreError::PayloadTooLarge => Self::PayloadTooLarge,
+            ctx_session_artifacts::ImageBlobStoreError::UnsupportedMediaType => {
                 Self::UnsupportedMediaType
             }
-            crate::daemon::blobs::ImageBlobStoreError::Internal => Self::Internal,
+            ctx_session_artifacts::ImageBlobStoreError::Internal => Self::Internal,
         }
     }
 }

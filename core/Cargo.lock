@@ -1725,6 +1725,7 @@ dependencies = [
  "ctx-store",
  "hex",
  "mime_guess",
+ "serde",
  "serde_json",
  "sha2",
  "tempfile",

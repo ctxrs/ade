@@ -2843,6 +2843,7 @@ test("daemon boundary guard rejects session artifact route contract leaks", () =
   });
 
   assert.deepEqual(new Set(violations.map((violation) => violation.name)), new Set([
+    "session artifact API imports route contracts from daemon",
     "session artifact API owns local route id parsing",
     "session artifact API owns local set request DTOs",
     "session artifact API constructs raw artifact inputs",
@@ -2851,8 +2852,57 @@ test("daemon boundary guard rejects session artifact route contract leaks", () =
   ]));
 });
 
+test("daemon boundary guard rejects grouped session artifact route contract daemon imports", () => {
+  for (const contents of [
+    `
+      use ctx_daemon::daemon::sessions::{
+        SessionArtifactDownloadRouteParams,
+        SessionArtifactRouteError,
+      };
+    `,
+    `
+      use ctx_daemon::daemon::{
+        sessions::{
+          SessionArtifactsRouteResponse,
+          SetSessionArtifactsRouteRequest,
+        },
+      };
+    `,
+  ]) {
+    const violations = scanText({
+      filePath: "core/crates/ctx-http/src/api/artifacts/download.rs",
+      contents,
+      patterns: SESSION_ARTIFACT_API_ROUTE_CONTRACT_PATTERNS,
+    });
+
+    assert(
+      violations.some((violation) =>
+        violation.name.startsWith("session artifact API imports route contracts from"),
+      ),
+      `expected grouped route-contract import violation for ${contents}`,
+    );
+  }
+});
+
+test("daemon boundary guard rejects shared session artifact error daemon import", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/artifacts/session.rs",
+    contents: `
+      use ctx_daemon::daemon::sessions::SessionArtifactRouteError;
+      fn status(error: SessionArtifactRouteError) {}
+    `,
+    patterns: apiPatternsForPath("core/crates/ctx-http/src/api/artifacts/session.rs"),
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    ["session artifact API imports route contracts from daemon"],
+  );
+});
+
 test("daemon boundary guard scopes session artifact route contracts", () => {
   for (const filePath of [
+    "core/crates/ctx-http/src/api/artifacts/session.rs",
     "core/crates/ctx-http/src/api/artifacts/session/list.rs",
     "core/crates/ctx-http/src/api/artifacts/session/set.rs",
     "core/crates/ctx-http/src/api/artifacts/download.rs",
@@ -6388,6 +6438,7 @@ test("daemon boundary guard rejects blob API storage orchestration", () => {
   const violations = scanText({
     filePath: "core/crates/ctx-http/src/api/artifacts/blob.rs",
     contents: `
+      use ctx_daemon::daemon::{BlobReadError, StoredImageBlob};
       use sha2::Digest;
       use tokio::fs as async_fs;
       async fn helper(state: CoreHandle) {
@@ -6413,6 +6464,7 @@ test("daemon boundary guard rejects blob API storage orchestration", () => {
 
   const names = violations.map((violation) => violation.name);
   for (const expected of [
+    "blob API imports blob service contracts from daemon",
     "blob API accesses daemon data root directly",
     "blob API owns blob filesystem operations",
     "blob API owns blob checksum generation",
@@ -6425,6 +6477,41 @@ test("daemon boundary guard rejects blob API storage orchestration", () => {
     names.filter((name) => name === "blob API accesses blob store metadata directly").length,
     2,
   );
+});
+
+test("daemon boundary guard rejects multiline blob service contract daemon imports", () => {
+  for (const [contents, expected] of [
+    [
+      `
+        use ctx_daemon::daemon::{
+          BlobReadError,
+          ImageBlobStoreError,
+        };
+      `,
+      "blob API imports blob service contracts from daemon",
+    ],
+    [
+      `
+        use ctx_daemon::{
+          daemon::{
+            StoredImageBlob,
+          },
+        };
+      `,
+      "blob API imports blob service contracts from nested daemon group",
+    ],
+  ]) {
+    const violations = scanText({
+      filePath: "core/crates/ctx-http/src/api/artifacts/blob/errors.rs",
+      contents,
+      patterns: BLOB_API_ORCHESTRATION_PATTERNS,
+    });
+
+    assert.deepEqual(
+      violations.map((violation) => violation.name),
+      [expected],
+    );
+  }
 });
 
 test("daemon boundary guard scopes blob API orchestration roots", () => {

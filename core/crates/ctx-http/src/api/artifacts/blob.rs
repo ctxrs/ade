@@ -4,14 +4,14 @@ use axum::http::{header, StatusCode};
 use axum::response::Response;
 use axum::Json;
 use ctx_session_artifacts::{
-    SESSION_IMAGE_BLOB_MAX_BYTES, SESSION_IMAGE_BLOB_MULTIPART_MAX_BYTES,
+    StoredImageBlob, SESSION_IMAGE_BLOB_MAX_BYTES, SESSION_IMAGE_BLOB_MULTIPART_MAX_BYTES,
     SESSION_IMAGE_BLOB_TOO_LARGE_MESSAGE,
 };
 use serde::Serialize;
 use tokio_util::io::ReaderStream;
 
 use super::super::errors::ApiErrorResp;
-use ctx_daemon::daemon::{CoreHandle, StoredImageBlob};
+use ctx_daemon::daemon::CoreHandle;
 
 #[path = "blob/errors.rs"]
 mod errors;

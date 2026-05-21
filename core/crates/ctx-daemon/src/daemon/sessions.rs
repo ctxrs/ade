@@ -27,11 +27,7 @@ mod vcs_route;
 mod workspace_bridge;
 
 pub use artifact_access::SessionImageBlobStoreError;
-pub use artifacts::{
-    SessionArtifactDownload, SessionArtifactDownloadRouteParams, SessionArtifactInput,
-    SessionArtifactRouteContext, SessionArtifactRouteError, SessionArtifactsRouteResponse,
-    SetSessionArtifactsRouteRequest,
-};
+pub use artifacts::SessionArtifactDownload;
 pub use control_route::{
     AuthenticateSessionRouteRequest, SessionControlRouteError, SessionControlRouteErrorKind,
     SessionFileCompletionsRouteQuery, SessionFileCompletionsRouteResponse,

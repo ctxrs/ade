@@ -1,9 +1,9 @@
 use super::*;
-use ctx_daemon::daemon::sessions::{
-    SessionArtifactRouteContext, SessionArtifactsRouteResponse, SessionRouteParams,
-    SetSessionArtifactsRouteRequest,
-};
 use ctx_daemon::daemon::SessionsHandle;
+use ctx_route_contracts::sessions::SessionRouteParams;
+use ctx_session_artifacts::route_contract::{
+    SessionArtifactsRouteResponse, SetSessionArtifactsRouteRequest,
+};
 
 pub(in crate::api) async fn set_session_artifacts(
     State(state): State<SessionsHandle>,
@@ -14,7 +14,7 @@ pub(in crate::api) async fn set_session_artifacts(
     let artifacts = state
         .set_session_artifacts_for_route_params(
             SessionRouteParams::new(id),
-            SessionArtifactRouteContext::new(mcp_auth.map(|Extension(auth)| auth)),
+            mcp_auth.map(|Extension(auth)| auth),
             req,
         )
         .await

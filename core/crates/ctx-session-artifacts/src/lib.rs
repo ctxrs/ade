@@ -7,6 +7,8 @@ use ctx_core::models::{Artifact, Session};
 use ctx_store::Store;
 use sha2::Digest;
 
+pub mod route_contract;
+
 pub const SESSION_IMAGE_BLOB_MAX_BYTES: usize = 25 * 1024 * 1024;
 pub const SESSION_IMAGE_BLOB_MULTIPART_MAX_BYTES: usize = SESSION_IMAGE_BLOB_MAX_BYTES + 64 * 1024;
 pub const SESSION_IMAGE_BLOB_TOO_LARGE_MESSAGE: &str =

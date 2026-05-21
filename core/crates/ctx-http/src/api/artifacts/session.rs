@@ -1,7 +1,7 @@
 use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
 use axum::Json;
-use ctx_daemon::daemon::sessions::SessionArtifactRouteError;
+use ctx_session_artifacts::route_contract::SessionArtifactRouteError;
 
 use super::super::errors::ApiErrorResp;
 

@@ -1,5 +1,5 @@
 use super::*;
-use ctx_daemon::daemon::{BlobReadError, ImageBlobStoreError};
+use ctx_session_artifacts::{BlobReadError, ImageBlobStoreError};
 
 pub(super) fn blob_upload_api_error(
     status: StatusCode,

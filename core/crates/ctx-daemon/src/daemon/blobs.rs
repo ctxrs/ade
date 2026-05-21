@@ -1,6 +1,4 @@
-pub use ctx_session_artifacts::{
-    BlobReadError, ImageBlobStoreError, StoredImageBlob, SESSION_IMAGE_BLOB_MAX_BYTES,
-};
+use ctx_session_artifacts::{BlobReadError, ImageBlobStoreError, StoredImageBlob};
 use tokio::fs::File;
 
 use crate::daemon::{CoreHandle, DaemonState};
@@ -106,7 +104,7 @@ mod tests {
     #[tokio::test]
     async fn store_image_blob_rejects_invalid_inputs() {
         let (_data_dir, core) = test_core().await;
-        let too_large = vec![0u8; SESSION_IMAGE_BLOB_MAX_BYTES + 1];
+        let too_large = vec![0u8; ctx_session_artifacts::SESSION_IMAGE_BLOB_MAX_BYTES + 1];
         assert!(matches!(
             core.store_image_blob(&too_large, "image/png", None).await,
             Err(ImageBlobStoreError::PayloadTooLarge)
