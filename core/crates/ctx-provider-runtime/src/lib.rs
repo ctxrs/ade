@@ -14,6 +14,7 @@ pub mod model_preferences;
 pub mod provider_adapters;
 pub mod provider_auth;
 pub mod provider_auth_check;
+pub mod provider_auth_check_route_contract;
 pub mod provider_cache;
 pub mod provider_child_reclassifier;
 pub mod provider_endpoint_catalog;
@@ -22,6 +23,7 @@ pub mod provider_harness_config;
 pub mod provider_install_tracker;
 pub mod provider_launch;
 pub mod provider_options;
+pub mod provider_options_route_contract;
 pub mod provider_processes;
 pub mod provider_restart;
 pub mod provider_runtime_probe_service;
@@ -35,6 +37,14 @@ pub mod provider_usage_route_contract;
 pub mod provider_workers;
 pub mod resource_governance;
 
+pub use provider_auth_check_route_contract::{
+    AuthenticateProviderForWorkspaceRouteBody, AuthenticateProviderForWorkspaceRouteRequest,
+    ProviderAuthCheckRouteError, ProviderAuthCheckRouteErrorStatus, ProviderAuthCheckRouteResponse,
+    VerifyProviderForWorkspaceRouteRequest,
+};
+pub use provider_options_route_contract::{
+    ProviderOptionsRouteError, ProviderOptionsRouteErrorStatus, ProviderOptionsRouteRequest,
+};
 pub use provider_status_route_contract::{
     ProviderStatusListRouteError, ProviderStatusRouteError, ProviderStatusRouteErrorKind,
     ProviderStatusRouteQuery,

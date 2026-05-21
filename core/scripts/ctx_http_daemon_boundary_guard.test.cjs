@@ -4364,12 +4364,14 @@ test("daemon boundary guard rejects provider launch auth API orchestration", () 
   const violations = scanText({
     filePath: "core/crates/ctx-http/src/api/provider_launch/handlers/auth.rs",
     contents: `
+      use ctx_daemon::daemon::providers::{AuthenticateProviderForWorkspaceRouteRequest, ProviderAuthCheckRouteResponse};
       async fn handler(providers: ProvidersHandle) {
         let req = AuthenticateProviderReq { method_id: None };
         let response = ProviderAuthCheckResp::from(snapshot);
         let _snapshot: ProviderAuthCheckSnapshot = snapshot;
         let _ = ProviderAuthCheckError::WorkspaceNotFound;
         let workspace_id = parse_workspace_id(&ws_id)?;
+        authenticate_provider_for_workspace_runtime(state, workspace, workspace_id, &provider_id, target, None).await?;
         providers.authenticate_provider_for_workspace(workspace_id, &provider_id, req.method_id).await?;
         providers.verify_provider_for_workspace(workspace_id, &provider_id).await?;
         provider_auth_check_error_json(err);
@@ -4383,6 +4385,8 @@ test("daemon boundary guard rejects provider launch auth API orchestration", () 
   assert.deepEqual(
     violations.map((violation) => violation.name),
     [
+      "provider launch auth API imports auth route contracts from daemon",
+      "provider launch auth API calls provider-runtime auth orchestration directly",
       "provider launch auth API owns auth response DTO",
       "provider launch auth API references auth check snapshot directly",
       "provider launch auth API matches auth check errors directly",
@@ -4399,6 +4403,10 @@ test("daemon boundary guard rejects provider launch auth API orchestration", () 
 
 test("daemon boundary guard scopes provider launch auth API roots", () => {
   assert.deepEqual(
+    providerLaunchAuthApiPatternsForPath("core/crates/ctx-http/src/api/provider_launch.rs"),
+    PROVIDER_LAUNCH_AUTH_API_PATTERNS,
+  );
+  assert.deepEqual(
     providerLaunchAuthApiPatternsForPath(
       "core/crates/ctx-http/src/api/provider_launch/handlers/auth.rs",
     ),
@@ -4414,6 +4422,11 @@ test("daemon boundary guard scopes provider launch auth API roots", () => {
     scanText({
       filePath: "core/crates/ctx-http/src/api/provider_launch/handlers/auth.rs",
       contents: `
+        use ctx_provider_runtime::{
+          AuthenticateProviderForWorkspaceRouteRequest,
+          ProviderAuthCheckRouteError,
+          ProviderAuthCheckRouteResponse,
+        };
         providers.authenticate_provider_for_workspace_for_route(req).await?;
         providers.verify_provider_for_workspace_for_route(req).await?;
       `,
@@ -4429,12 +4442,52 @@ test("daemon boundary guard scopes provider launch auth API roots", () => {
   );
 });
 
+test("daemon boundary guard catches multiline provider launch auth daemon imports", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/provider_launch.rs",
+    contents: `
+      use ctx_daemon::daemon::providers::{
+        ProviderInstallInfo,
+        AuthenticateProviderForWorkspaceRouteRequest,
+      };
+    `,
+    patterns: PROVIDER_LAUNCH_AUTH_API_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    ["provider launch auth API imports auth route contracts from daemon"],
+  );
+});
+
+test("daemon boundary guard catches nested provider launch auth daemon imports", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/provider_launch.rs",
+    contents: `
+      use ctx_daemon::daemon::{
+        providers::{ProviderInstallInfo, AuthenticateProviderForWorkspaceRouteRequest},
+        ProvidersHandle,
+      };
+    `,
+    patterns: PROVIDER_LAUNCH_AUTH_API_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "provider launch auth API imports auth route contracts from nested daemon providers group",
+    ],
+  );
+});
+
 test("daemon boundary guard rejects provider launch options API orchestration", () => {
   const violations = scanText({
     filePath: "core/crates/ctx-http/src/api/provider_launch/handlers/options.rs",
     contents: `
+      use ctx_daemon::daemon::providers::{ProviderOptionsRouteError, ProviderOptionsRouteRequest};
       async fn handler(providers: ProvidersHandle) {
         let _ = ProviderOptionsResponseError::WorkspaceNotFound;
+        prepare_provider_options_response(state, request).await?;
         providers.get_provider_options_response(workspace_id, &provider_id).await?;
         get_provider_options_response(&state, workspace_id, &provider_id).await?;
         ctx_daemon::daemon::providers::get_provider_options_response(&state, workspace_id, &provider_id).await?;
@@ -4452,6 +4505,8 @@ test("daemon boundary guard rejects provider launch options API orchestration", 
   assert.deepEqual(
     violations.map((violation) => violation.name),
     [
+      "provider launch options API imports options route contracts from daemon",
+      "provider launch options API calls provider-runtime options orchestration directly",
       "provider launch options API matches options errors directly",
       "provider launch options API calls broad options method facade",
       "provider launch options API calls options free function directly",
@@ -4468,6 +4523,10 @@ test("daemon boundary guard rejects provider launch options API orchestration", 
 
 test("daemon boundary guard scopes provider launch options API roots", () => {
   assert.deepEqual(
+    providerLaunchOptionsApiPatternsForPath("core/crates/ctx-http/src/api/provider_launch.rs"),
+    PROVIDER_LAUNCH_OPTIONS_API_PATTERNS,
+  );
+  assert.deepEqual(
     providerLaunchOptionsApiPatternsForPath(
       "core/crates/ctx-http/src/api/provider_launch/handlers/options.rs",
     ),
@@ -4483,6 +4542,7 @@ test("daemon boundary guard scopes provider launch options API roots", () => {
     scanText({
       filePath: "core/crates/ctx-http/src/api/provider_launch/handlers/options.rs",
       contents: `
+        use ctx_provider_runtime::{ProviderOptionsRouteError, ProviderOptionsRouteRequest};
         providers.get_provider_options_for_route(req).await?;
       `,
       patterns: PROVIDER_LAUNCH_OPTIONS_API_PATTERNS,
@@ -4494,6 +4554,44 @@ test("daemon boundary guard scopes provider launch options API roots", () => {
       "core/crates/ctx-http/src/api/provider_launch/handlers/auth.rs",
     ),
     [],
+  );
+});
+
+test("daemon boundary guard catches multiline provider launch options daemon imports", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/provider_launch.rs",
+    contents: `
+      use ctx_daemon::daemon::providers::{
+        ProviderInstallInfo,
+        ProviderOptionsRouteRequest,
+      };
+    `,
+    patterns: PROVIDER_LAUNCH_OPTIONS_API_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    ["provider launch options API imports options route contracts from daemon"],
+  );
+});
+
+test("daemon boundary guard catches nested provider launch options daemon imports", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/provider_launch.rs",
+    contents: `
+      use ctx_daemon::daemon::{
+        providers::{ProviderInstallInfo, ProviderOptionsRouteRequest},
+        ProvidersHandle,
+      };
+    `,
+    patterns: PROVIDER_LAUNCH_OPTIONS_API_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "provider launch options API imports options route contracts from nested daemon providers group",
+    ],
   );
 });
 

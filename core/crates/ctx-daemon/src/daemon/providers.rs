@@ -5,6 +5,7 @@ use ctx_harness_sources as harness_sources;
 use ctx_provider_install::install_state::{
     InstallId, InstallInfo, InstallProgressEvent, InstallTarget,
 };
+use ctx_provider_runtime::provider_auth_check::ProviderAuthCheckSnapshot;
 use ctx_providers::adapters::ProviderStatus;
 use serde_json::Value;
 use tokio::sync::broadcast;
@@ -42,11 +43,7 @@ pub use admin_routes::{
     ProviderDevRestartRouteResponse, ProviderMatrixRefreshRouteResponse,
 };
 pub use auth_check::{
-    authenticate_provider_for_workspace, verify_provider_for_workspace,
-    AuthenticateProviderForWorkspaceRouteBody, AuthenticateProviderForWorkspaceRouteRequest,
-    ProviderAuthCheckError, ProviderAuthCheckRouteError, ProviderAuthCheckRouteErrorStatus,
-    ProviderAuthCheckRouteResponse, ProviderAuthCheckSnapshot,
-    VerifyProviderForWorkspaceRouteRequest,
+    authenticate_provider_for_workspace, verify_provider_for_workspace, ProviderAuthCheckError,
 };
 pub use auth_import::provider_auth_import_result_requires_restart;
 pub use auth_import::{
@@ -107,8 +104,7 @@ pub use login_sessions::{
 };
 pub use options::{
     effective_preferred_model_id_for_workspace, get_provider_options_response,
-    EffectivePreferredModelError, ProviderOptionsResponseError, ProviderOptionsRouteError,
-    ProviderOptionsRouteErrorStatus, ProviderOptionsRouteRequest,
+    EffectivePreferredModelError, ProviderOptionsResponseError,
 };
 pub use options_cache::{store_provider_verify_cache_value, ProviderOptionsCacheSnapshot};
 pub use restarts::{

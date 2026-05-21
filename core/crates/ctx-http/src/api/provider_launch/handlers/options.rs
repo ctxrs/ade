@@ -5,10 +5,7 @@ pub(in crate::api) async fn get_provider_options(
     Path((ws_id, provider_id)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     providers
-        .get_provider_options_for_route(ProviderOptionsRouteRequest {
-            workspace_id: ws_id,
-            provider_id,
-        })
+        .get_provider_options_for_route(ProviderOptionsRouteRequest::new(ws_id, provider_id))
         .await
         .map(Json)
         .map_err(provider_options_route_error)

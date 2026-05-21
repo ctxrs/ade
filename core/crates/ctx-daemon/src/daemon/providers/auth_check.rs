@@ -6,8 +6,10 @@ use ctx_provider_runtime::provider_auth_check::{
     ProviderAuthCheckServiceError, ProviderWorkspaceAuthenticationError,
 };
 pub use ctx_provider_runtime::provider_launch::config_snapshot::ProviderLaunchConfigError;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use ctx_provider_runtime::{
+    AuthenticateProviderForWorkspaceRouteRequest, ProviderAuthCheckRouteError,
+    ProviderAuthCheckRouteResponse, VerifyProviderForWorkspaceRouteRequest,
+};
 
 use crate::daemon::providers::install_target_for_workspace;
 use crate::daemon::{DaemonState, ProvidersHandle};
@@ -23,99 +25,6 @@ pub enum ProviderAuthCheckError {
     ExecutionSettings(anyhow::Error),
     ProviderLaunchConfig(ProviderLaunchConfigError),
     Verify(String),
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AuthenticateProviderForWorkspaceRouteBody {
-    #[serde(default)]
-    pub method_id: Option<String>,
-}
-
-pub struct AuthenticateProviderForWorkspaceRouteRequest {
-    pub workspace_id: String,
-    pub provider_id: String,
-    pub method_id: Option<String>,
-}
-
-pub struct VerifyProviderForWorkspaceRouteRequest {
-    pub workspace_id: String,
-    pub provider_id: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ProviderAuthCheckRouteResponse {
-    pub provider_id: String,
-    pub workspace_id: String,
-    pub status: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub auth_required: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub checked_at: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-}
-
-impl From<ProviderAuthCheckSnapshot> for ProviderAuthCheckRouteResponse {
-    fn from(value: ProviderAuthCheckSnapshot) -> Self {
-        Self {
-            provider_id: value.provider_id,
-            workspace_id: value.workspace_id,
-            status: value.status,
-            auth_required: value.auth_required,
-            checked_at: value.checked_at,
-            message: value.message,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum ProviderAuthCheckRouteErrorStatus {
-    BadRequest,
-    NotFound,
-    InternalServerError,
-}
-
-#[derive(Debug)]
-pub struct ProviderAuthCheckRouteError {
-    status: ProviderAuthCheckRouteErrorStatus,
-    body: Value,
-}
-
-impl ProviderAuthCheckRouteError {
-    pub fn status(&self) -> ProviderAuthCheckRouteErrorStatus {
-        self.status
-    }
-
-    pub fn body(&self) -> &Value {
-        &self.body
-    }
-
-    fn bad_request(message: impl Into<String>) -> Self {
-        Self {
-            status: ProviderAuthCheckRouteErrorStatus::BadRequest,
-            body: serde_json::json!({
-                "error": message.into(),
-            }),
-        }
-    }
-
-    fn not_found(message: impl Into<String>) -> Self {
-        Self {
-            status: ProviderAuthCheckRouteErrorStatus::NotFound,
-            body: serde_json::json!({
-                "error": message.into(),
-            }),
-        }
-    }
-
-    fn internal_server_error(message: impl Into<String>) -> Self {
-        Self {
-            status: ProviderAuthCheckRouteErrorStatus::InternalServerError,
-            body: serde_json::json!({
-                "error": message.into(),
-            }),
-        }
-    }
 }
 
 pub async fn authenticate_provider_for_workspace(
@@ -149,24 +58,21 @@ impl ProvidersHandle {
         &self,
         request: AuthenticateProviderForWorkspaceRouteRequest,
     ) -> Result<ProviderAuthCheckRouteResponse, ProviderAuthCheckRouteError> {
-        let workspace_id = parse_workspace_id_for_auth_route(&request.workspace_id)?;
-        authenticate_provider_for_workspace(
-            &self.state,
-            workspace_id,
-            &request.provider_id,
-            request.method_id,
-        )
-        .await
-        .map(ProviderAuthCheckRouteResponse::from)
-        .map_err(provider_auth_check_route_error)
+        let (workspace_id_raw, provider_id, method_id) = request.into_parts();
+        let workspace_id = parse_workspace_id_for_auth_route(&workspace_id_raw)?;
+        authenticate_provider_for_workspace(&self.state, workspace_id, &provider_id, method_id)
+            .await
+            .map(ProviderAuthCheckRouteResponse::from)
+            .map_err(provider_auth_check_route_error)
     }
 
     pub async fn verify_provider_for_workspace_for_route(
         &self,
         request: VerifyProviderForWorkspaceRouteRequest,
     ) -> Result<ProviderAuthCheckRouteResponse, ProviderAuthCheckRouteError> {
-        let workspace_id = parse_workspace_id_for_auth_route(&request.workspace_id)?;
-        verify_provider_for_workspace(&self.state, workspace_id, &request.provider_id)
+        let (workspace_id_raw, provider_id) = request.into_parts();
+        let workspace_id = parse_workspace_id_for_auth_route(&workspace_id_raw)?;
+        verify_provider_for_workspace(&self.state, workspace_id, &provider_id)
             .await
             .map(ProviderAuthCheckRouteResponse::from)
             .map_err(provider_auth_check_route_error)
@@ -236,4 +142,84 @@ pub async fn verify_provider_for_workspace(
         }
         ProviderAuthCheckServiceError::Verify(error) => ProviderAuthCheckError::Verify(error),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ctx_provider_runtime::ProviderAuthCheckRouteErrorStatus;
+
+    #[test]
+    fn auth_route_parse_error_preserves_json_body() {
+        let error = parse_workspace_id_for_auth_route("not-a-uuid").unwrap_err();
+
+        assert_eq!(
+            error.status(),
+            ProviderAuthCheckRouteErrorStatus::BadRequest
+        );
+        assert_eq!(error.body()["error"].as_str(), Some("invalid workspace id"));
+    }
+
+    #[test]
+    fn auth_route_error_preserves_basic_status_bodies() {
+        let missing_workspace =
+            provider_auth_check_route_error(ProviderAuthCheckError::WorkspaceNotFound);
+        assert_eq!(
+            missing_workspace.status(),
+            ProviderAuthCheckRouteErrorStatus::NotFound
+        );
+        assert_eq!(
+            missing_workspace.body()["error"].as_str(),
+            Some("workspace not found")
+        );
+
+        let workspace_load = provider_auth_check_route_error(ProviderAuthCheckError::WorkspaceLoad);
+        assert_eq!(
+            workspace_load.status(),
+            ProviderAuthCheckRouteErrorStatus::InternalServerError
+        );
+        assert_eq!(
+            workspace_load.body()["error"].as_str(),
+            Some("failed to load workspace")
+        );
+
+        let unsupported =
+            provider_auth_check_route_error(ProviderAuthCheckError::ProviderLaunchConfig(
+                ProviderLaunchConfigError::UnsupportedProvider {
+                    provider_id: "missing-provider".to_string(),
+                },
+            ));
+        assert_eq!(
+            unsupported.status(),
+            ProviderAuthCheckRouteErrorStatus::BadRequest
+        );
+        assert_eq!(
+            unsupported.body()["error"].as_str(),
+            Some("unsupported provider id: missing-provider")
+        );
+    }
+
+    #[test]
+    fn auth_route_error_preserves_execution_settings_and_verify_messages() {
+        let execution = provider_auth_check_route_error(ProviderAuthCheckError::ExecutionSettings(
+            anyhow::anyhow!("settings failed"),
+        ));
+        assert_eq!(
+            execution.status(),
+            ProviderAuthCheckRouteErrorStatus::InternalServerError
+        );
+        assert!(execution.body()["error"]
+            .as_str()
+            .is_some_and(|message| message
+                .starts_with("failed to load workspace execution settings: settings failed")));
+
+        let verify = provider_auth_check_route_error(ProviderAuthCheckError::Verify(
+            "login required".to_string(),
+        ));
+        assert_eq!(
+            verify.status(),
+            ProviderAuthCheckRouteErrorStatus::BadRequest
+        );
+        assert_eq!(verify.body()["error"].as_str(), Some("login required"));
+    }
 }

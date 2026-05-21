@@ -9,14 +9,10 @@ pub(in crate::api) async fn authenticate_provider_for_workspace(
     Path((ws_id, provider_id)): Path<(String, String)>,
     req: Option<Json<AuthenticateProviderForWorkspaceRouteBody>>,
 ) -> Result<Json<ProviderAuthCheckRouteResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let method_id = req.and_then(|value| value.0.method_id);
+    let method_id = req.and_then(|value| value.0.into_method_id());
     providers
         .authenticate_provider_for_workspace_for_route(
-            AuthenticateProviderForWorkspaceRouteRequest {
-                workspace_id: ws_id,
-                provider_id,
-                method_id,
-            },
+            AuthenticateProviderForWorkspaceRouteRequest::new(ws_id, provider_id, method_id),
         )
         .await
         .map(Json)

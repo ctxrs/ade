@@ -6,6 +6,7 @@ use ctx_provider_runtime::provider_options::service::{
     finish_provider_options_response, prepare_provider_options_response, ProviderOptionsPreflight,
     ProviderOptionsPreflightRequest, ProviderOptionsServiceError, ProviderOptionsWorkspaceInput,
 };
+use ctx_provider_runtime::{ProviderOptionsRouteError, ProviderOptionsRouteRequest};
 use serde_json::Value;
 
 use crate::daemon::providers::{install_target_for_workspace, ProviderLaunchConfigError};
@@ -24,61 +25,6 @@ pub enum ProviderOptionsResponseError {
     WorkspaceStoreLoad(anyhow::Error),
     WorkspacePreferenceLoad(anyhow::Error),
     SelectedEndpointMissing,
-}
-
-pub struct ProviderOptionsRouteRequest {
-    pub workspace_id: String,
-    pub provider_id: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProviderOptionsRouteErrorStatus {
-    BadRequest,
-    NotFound,
-    InternalServerError,
-}
-
-#[derive(Debug)]
-pub struct ProviderOptionsRouteError {
-    status: ProviderOptionsRouteErrorStatus,
-    body: Value,
-}
-
-impl ProviderOptionsRouteError {
-    pub fn status(&self) -> ProviderOptionsRouteErrorStatus {
-        self.status
-    }
-
-    pub fn body(&self) -> &Value {
-        &self.body
-    }
-
-    fn bad_request(message: impl Into<String>) -> Self {
-        Self {
-            status: ProviderOptionsRouteErrorStatus::BadRequest,
-            body: serde_json::json!({
-                "error": message.into(),
-            }),
-        }
-    }
-
-    fn not_found(message: impl Into<String>) -> Self {
-        Self {
-            status: ProviderOptionsRouteErrorStatus::NotFound,
-            body: serde_json::json!({
-                "error": message.into(),
-            }),
-        }
-    }
-
-    fn internal_server_error(message: impl Into<String>) -> Self {
-        Self {
-            status: ProviderOptionsRouteErrorStatus::InternalServerError,
-            body: serde_json::json!({
-                "error": message.into(),
-            }),
-        }
-    }
 }
 
 pub async fn get_provider_options_response(
@@ -135,8 +81,9 @@ impl ProvidersHandle {
         &self,
         request: ProviderOptionsRouteRequest,
     ) -> Result<Value, ProviderOptionsRouteError> {
-        let workspace_id = parse_workspace_id_for_options_route(&request.workspace_id)?;
-        get_provider_options_response(&self.state, workspace_id, &request.provider_id)
+        let (workspace_id_raw, provider_id) = request.into_parts();
+        let workspace_id = parse_workspace_id_for_options_route(&workspace_id_raw)?;
+        get_provider_options_response(&self.state, workspace_id, &provider_id)
             .await
             .map_err(provider_options_route_error)
     }
@@ -201,9 +148,20 @@ fn provider_launch_config_options_route_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ctx_provider_runtime::ProviderOptionsRouteErrorStatus;
 
     #[test]
     fn provider_options_route_error_preserves_basic_status_bodies() {
+        let invalid_workspace = parse_workspace_id_for_options_route("not-a-uuid").unwrap_err();
+        assert_eq!(
+            invalid_workspace.status(),
+            ProviderOptionsRouteErrorStatus::BadRequest
+        );
+        assert_eq!(
+            invalid_workspace.body()["error"].as_str(),
+            Some("invalid workspace id")
+        );
+
         let unsupported =
             provider_options_route_error(ProviderOptionsResponseError::ProviderLaunchConfig(
                 ProviderLaunchConfigError::UnsupportedProvider {
@@ -229,6 +187,42 @@ mod tests {
             missing_workspace.body()["error"].as_str(),
             Some("workspace not found")
         );
+
+        let workspace_load =
+            provider_options_route_error(ProviderOptionsResponseError::WorkspaceLoad);
+        assert_eq!(
+            workspace_load.status(),
+            ProviderOptionsRouteErrorStatus::InternalServerError
+        );
+        assert_eq!(
+            workspace_load.body()["error"].as_str(),
+            Some("failed to load workspace")
+        );
+
+        let selected_endpoint =
+            provider_options_route_error(ProviderOptionsResponseError::SelectedEndpointMissing);
+        assert_eq!(
+            selected_endpoint.status(),
+            ProviderOptionsRouteErrorStatus::InternalServerError
+        );
+        assert_eq!(
+            selected_endpoint.body()["error"].as_str(),
+            Some("selected endpoint missing from provider configuration")
+        );
+    }
+
+    #[test]
+    fn provider_options_route_error_preserves_execution_settings_prefix() {
+        let error = provider_options_route_error(ProviderOptionsResponseError::ExecutionSettings(
+            anyhow::anyhow!("settings failed"),
+        ));
+
+        assert_eq!(
+            error.status(),
+            ProviderOptionsRouteErrorStatus::InternalServerError
+        );
+        assert!(error.body()["error"].as_str().is_some_and(|message| message
+            .starts_with("failed to load workspace execution settings: settings failed")));
     }
 
     #[test]

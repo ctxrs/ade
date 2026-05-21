@@ -270,11 +270,13 @@ const providerAdminApiRoots = [
 ];
 
 const providerLaunchAuthApiRoots = [
+  "core/crates/ctx-http/src/api/provider_launch.rs",
   "core/crates/ctx-http/src/api/provider_launch/handlers/auth.rs",
   "core/crates/ctx-http/src/api/provider_launch/handlers/auth/",
 ];
 
 const providerLaunchOptionsApiRoots = [
+  "core/crates/ctx-http/src/api/provider_launch.rs",
   "core/crates/ctx-http/src/api/provider_launch/handlers/options.rs",
   "core/crates/ctx-http/src/api/provider_launch/handlers/options/",
 ];
@@ -1961,6 +1963,24 @@ const PROVIDER_ADMIN_API_ORCHESTRATION_PATTERNS = [
 
 const PROVIDER_LAUNCH_AUTH_API_PATTERNS = [
   {
+    name: "provider launch auth API imports auth route contracts from daemon",
+    regex:
+      /\bctx_daemon::daemon::providers::(?:AuthenticateProviderForWorkspaceRouteBody|AuthenticateProviderForWorkspaceRouteRequest|VerifyProviderForWorkspaceRouteRequest|ProviderAuthCheckRoute(?:Error|ErrorStatus|Response))\b/,
+    contentRegex:
+      /\buse\s+ctx_daemon::daemon::providers::\s*\{(?=[^}]*\b(?:AuthenticateProviderForWorkspaceRouteBody|AuthenticateProviderForWorkspaceRouteRequest|VerifyProviderForWorkspaceRouteRequest|ProviderAuthCheckRoute(?:Error|ErrorStatus|Response))\b)[^}]*\}\s*;/gm,
+  },
+  {
+    name: "provider launch auth API imports auth route contracts from nested daemon providers group",
+    regex: /\b\B/,
+    contentRegex:
+      /\buse\s+ctx_daemon::daemon::\s*\{(?=[^;]*\bproviders\s*::\s*\{[^;]*\b(?:AuthenticateProviderForWorkspaceRouteBody|AuthenticateProviderForWorkspaceRouteRequest|VerifyProviderForWorkspaceRouteRequest|ProviderAuthCheckRoute(?:Error|ErrorStatus|Response))\b)[^;]*;/gm,
+  },
+  {
+    name: "provider launch auth API calls provider-runtime auth orchestration directly",
+    regex:
+      /ctx_provider_runtime::provider_auth_check::(?:authenticate_provider_for_workspace_runtime|verify_provider_for_workspace_runtime)\b|\b(?:authenticate_provider_for_workspace_runtime|verify_provider_for_workspace_runtime)\s*\(/,
+  },
+  {
     name: "provider launch auth API owns auth response DTO",
     regex: /\bProviderAuthCheckResp\b/,
   },
@@ -1995,6 +2015,24 @@ const PROVIDER_LAUNCH_AUTH_API_PATTERNS = [
 ];
 
 const PROVIDER_LAUNCH_OPTIONS_API_PATTERNS = [
+  {
+    name: "provider launch options API imports options route contracts from daemon",
+    regex:
+      /\bctx_daemon::daemon::providers::(?:ProviderOptionsRouteRequest|ProviderOptionsRouteError|ProviderOptionsRouteErrorStatus)\b/,
+    contentRegex:
+      /\buse\s+ctx_daemon::daemon::providers::\s*\{(?=[^}]*\b(?:ProviderOptionsRouteRequest|ProviderOptionsRouteError|ProviderOptionsRouteErrorStatus)\b)[^}]*\}\s*;/gm,
+  },
+  {
+    name: "provider launch options API imports options route contracts from nested daemon providers group",
+    regex: /\b\B/,
+    contentRegex:
+      /\buse\s+ctx_daemon::daemon::\s*\{(?=[^;]*\bproviders\s*::\s*\{[^;]*\b(?:ProviderOptionsRouteRequest|ProviderOptionsRouteError|ProviderOptionsRouteErrorStatus)\b)[^;]*;/gm,
+  },
+  {
+    name: "provider launch options API calls provider-runtime options orchestration directly",
+    regex:
+      /ctx_provider_runtime::provider_options::service::(?:prepare_provider_options_response|finish_provider_options_response)\b|\b(?:prepare_provider_options_response|finish_provider_options_response)\s*\(/,
+  },
   {
     name: "provider launch options API matches options errors directly",
     regex: /\bProviderOptionsResponseError\b/,

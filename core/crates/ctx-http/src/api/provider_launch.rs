@@ -14,15 +14,17 @@ use futures::{Stream, StreamExt};
 use serde::Deserialize;
 
 use ctx_daemon::daemon::providers::{
-    AuthenticateProviderForWorkspaceRouteBody, AuthenticateProviderForWorkspaceRouteRequest,
-    ProviderAuthCheckRouteError, ProviderAuthCheckRouteErrorStatus, ProviderAuthCheckRouteResponse,
     ProviderInstallInfo, ProviderInstallProgressEvent, ProviderInstallStartRouteResponse,
     ProviderInstallStatusOnlyRouteError, ProviderInstallStatusesRouteRequest,
-    ProviderInstallStatusesRouteResponse, ProviderOptionsRouteError,
-    ProviderOptionsRouteErrorStatus, ProviderOptionsRouteRequest,
-    VerifyProviderForWorkspaceRouteRequest,
+    ProviderInstallStatusesRouteResponse,
 };
 use ctx_daemon::daemon::ProvidersHandle;
+use ctx_provider_runtime::{
+    AuthenticateProviderForWorkspaceRouteBody, AuthenticateProviderForWorkspaceRouteRequest,
+    ProviderAuthCheckRouteError, ProviderAuthCheckRouteErrorStatus, ProviderAuthCheckRouteResponse,
+    ProviderOptionsRouteError, ProviderOptionsRouteErrorStatus, ProviderOptionsRouteRequest,
+    VerifyProviderForWorkspaceRouteRequest,
+};
 
 #[derive(Debug, Deserialize)]
 pub(super) struct RawInstallTargetQuery {
