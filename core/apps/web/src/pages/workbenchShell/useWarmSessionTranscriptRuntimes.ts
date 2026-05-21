@@ -68,19 +68,23 @@ export function useWarmSessionTranscriptRuntimes({
   workspaceSnapshot,
   sessionSnap,
   activeSessionId,
+  suppressWarmSessions = false,
 }: {
   workspaceSnapshot: WorkspaceActiveSnapshotState;
   sessionSnap: SessionSupervisorSnapshot;
   activeSessionId: string | null;
+  suppressWarmSessions?: boolean;
 }) {
   const activePrimarySessionIds = useMemo(
     () => collectWorkspaceActivePrimarySessionIds(workspaceSnapshot),
     [workspaceSnapshot],
   );
   const retainedSessionIds = useMemo(() => {
-    const backgroundWarmSessionIds = planSessionHeadPrefetchTargets({
-      warmSessionIds: activePrimarySessionIds.filter((sessionId) => sessionId !== activeSessionId),
-    }).targetSessionIds;
+    const backgroundWarmSessionIds = suppressWarmSessions
+      ? []
+      : planSessionHeadPrefetchTargets({
+          warmSessionIds: activePrimarySessionIds.filter((sessionId) => sessionId !== activeSessionId),
+        }).targetSessionIds;
     return Array.from(
       new Set(
         [activeSessionId, ...backgroundWarmSessionIds].filter((sessionId): sessionId is string =>
@@ -88,7 +92,7 @@ export function useWarmSessionTranscriptRuntimes({
         ),
       ),
     );
-  }, [activePrimarySessionIds, activeSessionId]);
+  }, [activePrimarySessionIds, activeSessionId, suppressWarmSessions]);
   const warmState = useSyncExternalStore(
     subscribeSessionTranscriptWarmState,
     getSessionTranscriptWarmState,

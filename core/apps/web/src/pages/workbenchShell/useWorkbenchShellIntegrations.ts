@@ -9,6 +9,7 @@ export function useWorkbenchShellIntegrations({
   sessionSnap,
   activeTaskId,
   activeSessionId,
+  foregroundTaskWorking,
   focusNewTask,
   clearDraftHarness,
   focusTask,
@@ -19,6 +20,7 @@ export function useWorkbenchShellIntegrations({
   sessionSnap: SessionSupervisorSnapshot;
   activeTaskId: string | null;
   activeSessionId: string | null;
+  foregroundTaskWorking: boolean;
   focusNewTask: () => void;
   clearDraftHarness: () => void;
   focusTask: (taskId: string, sessionId?: string | null) => boolean;
@@ -31,6 +33,7 @@ export function useWorkbenchShellIntegrations({
     workspaceSnapshot,
     sessionSnap,
     activeSessionId,
+    suppressWarmSessions: foregroundTaskWorking,
   });
 
   useWorkbenchE2EBridge({

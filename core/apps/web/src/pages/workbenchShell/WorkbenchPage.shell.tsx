@@ -315,6 +315,7 @@ export function WorkbenchPageInner({ workspaceId }: { workspaceId: string }) {
     sessionSnap,
     activeTaskId,
     activeSessionId,
+    foregroundTaskWorking: Boolean(activeTaskId && taskLiveInfo.workingByTask.has(activeTaskId)),
     focusNewTask,
     clearDraftHarness,
     focusTask,

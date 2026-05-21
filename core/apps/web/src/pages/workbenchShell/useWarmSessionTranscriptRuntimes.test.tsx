@@ -350,4 +350,35 @@ describe("useWarmSessionTranscriptRuntimes", () => {
       expectedWarmSessionIds,
     );
   });
+
+  it("suppresses background warming while retaining only the foreground runtime", () => {
+    const foregroundSessionId = "session-foreground";
+    const warmSessionIds = ["session-1", "session-2", "session-3"];
+    const entries = [foregroundSessionId, ...warmSessionIds].map((sessionId) =>
+      buildEntry({
+        sessionId,
+        session: {
+          ...baseSession,
+          id: sessionId,
+          task_id: `task-${sessionId}`,
+        },
+      }),
+    );
+
+    renderHook(() =>
+      useWarmSessionTranscriptRuntimes({
+        workspaceSnapshot: makeWorkspaceSnapshot([foregroundSessionId, ...warmSessionIds]),
+        sessionSnap: buildSessionSnapshotMap(entries),
+        activeSessionId: foregroundSessionId,
+        suppressWarmSessions: true,
+      }),
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+
+    expect(pruneWarmWorkbenchThreadViewModelCacheMock).toHaveBeenCalledWith([foregroundSessionId]);
+    expect(primeWarmWorkbenchThreadViewModelMock).not.toHaveBeenCalled();
+  });
 });
