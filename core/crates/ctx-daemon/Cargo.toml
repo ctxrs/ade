@@ -44,6 +44,7 @@ ctx-sandbox-contract = { path = "../ctx-sandbox-contract" }
 ctx-sandbox-materialization = { path = "../ctx-sandbox-materialization" }
 ctx-session-artifacts = { path = "../ctx-session-artifacts" }
 ctx-session-message-service = { path = "../ctx-session-message-service" }
+ctx-session-runtime = { path = "../ctx-session-runtime" }
 ctx-session-service = { path = "../ctx-session-service" }
 ctx-session-tools = { path = "../ctx-session-tools" }
 ctx-settings-model = { path = "../ctx-settings-model" }

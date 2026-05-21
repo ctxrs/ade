@@ -1,6 +1,6 @@
 use ctx_core::ids::SessionId;
 use ctx_core::models::SessionHeadSnapshot;
-use ctx_session_service::runtime::{SessionHeadRefreshHost, SessionHeadRefreshLoad};
+use ctx_session_runtime::runtime::{SessionHeadRefreshHost, SessionHeadRefreshLoad};
 
 use crate::daemon::state::DaemonState;
 

@@ -1,5 +1,5 @@
 use ctx_core::ids::SessionId;
-use ctx_session_service::runtime::SessionLifecycleHost;
+use ctx_session_runtime::runtime::SessionLifecycleHost;
 
 use crate::daemon::state::DaemonState;
 

@@ -35,6 +35,7 @@ members = [
   "crates/ctx-sandbox-materialization",
   "crates/ctx-session-artifacts",
   "crates/ctx-session-message-service",
+  "crates/ctx-session-runtime",
   "crates/ctx-session-service",
   "crates/ctx-subagent-service",
   "crates/ctx-task-service",

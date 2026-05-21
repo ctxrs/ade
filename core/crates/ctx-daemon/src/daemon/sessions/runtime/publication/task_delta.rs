@@ -2,7 +2,7 @@ use std::sync::{Arc, Weak};
 
 use ctx_core::ids::TaskId;
 use ctx_core::models::TaskDeltaKind;
-use ctx_session_service::runtime::SessionTaskDeltaRefreshHost;
+use ctx_session_runtime::runtime::SessionTaskDeltaRefreshHost;
 
 use crate::daemon::state::DaemonState;
 

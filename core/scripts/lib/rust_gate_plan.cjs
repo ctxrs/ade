@@ -40,6 +40,7 @@ const AGENT_GATE_CRATES = [
   "ctx-sandbox-materialization",
   "ctx-session-artifacts",
   "ctx-session-message-service",
+  "ctx-session-runtime",
   "ctx-session-service",
   "ctx-subagent-service",
   "ctx-session-tools",

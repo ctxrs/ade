@@ -5,7 +5,7 @@ use tokio::sync::{mpsc, watch, Mutex};
 
 use ctx_core::ids::{SessionId, TaskId, WorkspaceId};
 use ctx_core::models::{Session, SessionEvent};
-use ctx_session_service::runtime::SessionRuntimeCacheDebugStats;
+use ctx_session_runtime::runtime::SessionRuntimeCacheDebugStats;
 use ctx_session_tools::order_seq::OrderSeqState;
 use ctx_store::Store;
 

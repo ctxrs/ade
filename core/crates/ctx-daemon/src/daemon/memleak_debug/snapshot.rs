@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use ctx_harness_runtime::HarnessRuntimeStats;
 use ctx_observability::perf_telemetry::PerfTelemetryStats;
 use ctx_resource_utilization::memleak_debug::{GlibcMallinfo, JemallocStats};
-use ctx_session_service::runtime::SessionRuntimeCacheDebugStats;
+use ctx_session_runtime::runtime::SessionRuntimeCacheDebugStats;
 use ctx_store::StoreManagerStats;
 use ctx_transport_runtime::terminals::TerminalManagerStats;
 use ctx_transport_runtime::web_sessions::WebSessionManagerStats;

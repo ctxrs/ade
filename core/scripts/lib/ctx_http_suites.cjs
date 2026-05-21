@@ -311,6 +311,7 @@ const CTX_HTTP_UNIT_SUITES = [
   {
     dependencyCrates: [
       "ctx-session-message-service",
+      "ctx-session-runtime",
       "ctx-session-service",
       "ctx-storage-admission",
     ],
@@ -323,6 +324,7 @@ const CTX_HTTP_UNIT_SUITES = [
     ],
   },
   {
+    dependencyCrates: ["ctx-session-runtime"],
     family: "workspace-stream",
     name: "unit-tests-lib",
     description: "ctx-http lib route and shared helper unit family",
@@ -334,6 +336,7 @@ const CTX_HTTP_UNIT_SUITES = [
     ],
   },
   {
+    dependencyCrates: ["ctx-session-runtime"],
     family: "workspace-stream",
     name: "unit-tests-lib-session-head-large",
     description: "ctx-http large session-head response-boundary unit family",
@@ -360,6 +363,7 @@ const CTX_HTTP_UNIT_SUITES = [
     ],
   },
   {
+    dependencyCrates: ["ctx-session-runtime"],
     family: "turns-terminal",
     name: "unit-tests-daemon-and-scheduler",
     description: "ctx-http daemon and scheduler unit family",
@@ -477,6 +481,7 @@ const CTX_HTTP_SUITES = [
       "ctx-events",
       "ctx-store",
       "ctx-workspace-active-snapshot",
+      "ctx-session-runtime",
       "ctx-session-service",
       "ctx-workspace-services",
     ],
@@ -717,6 +722,7 @@ const CTX_HTTP_SUITES = [
       "ctx-store",
       "ctx-mcp-command",
       "ctx-session-message-service",
+      "ctx-session-runtime",
       "ctx-storage-admission",
       "ctx-transport-runtime",
     ],

@@ -5,7 +5,7 @@ use ctx_core::models::{
     Session, SessionEvent, SessionHeadDelta, SessionSummaryDelta, SessionTurn,
     SessionTurnToolSummary,
 };
-use ctx_session_service::runtime::{SessionEventPublicationHost, SessionReplayCursor};
+use ctx_session_runtime::runtime::{SessionEventPublicationHost, SessionReplayCursor};
 
 use crate::daemon::state::DaemonState;
 

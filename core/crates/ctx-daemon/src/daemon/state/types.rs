@@ -29,7 +29,7 @@ pub struct CoreState {
     pub(crate) update_drain: Arc<UpdateDrainCoordinator>,
 }
 
-pub type SessionRuntime = ctx_session_service::runtime::SessionRuntime<SchedulerCommand>;
+pub type SessionRuntime = ctx_session_runtime::runtime::SessionRuntime<SchedulerCommand>;
 
 pub struct WorkspaceRuntime {
     pub(crate) worktree_vcs_enabled: bool,

@@ -94,6 +94,7 @@ const PACKAGE_SHAPE_BOUNDARY_CRATES = new Set([
   "ctx-run-scheduler",
   "ctx-session-artifacts",
   "ctx-session-message-service",
+  "ctx-session-runtime",
   "ctx-session-runner",
   "ctx-workspace-active-snapshot",
   "ctx-workspace-attachments",
@@ -109,9 +110,17 @@ const MESSAGE_SERVICE_FORBIDDEN_DEPS = new Set([
   "ctx-http",
   "axum",
 ]);
+const SESSION_RUNTIME_FORBIDDEN_DEPS = new Set([
+  "ctx-session-service",
+  "ctx-daemon",
+  "ctx-http",
+  "ctx-workspace-active-snapshot",
+  "ctx-route-contracts",
+  "axum",
+]);
 const TRANSPORT_RUNTIME_FORBIDDEN_DEPS = new Set(["ctx-store"]);
 const ROUTE_CONTRACTS_ALLOWED_CTX_DEPS = new Set(["ctx-core"]);
-const HEAD_PROJECTION_ROOT = "core/crates/ctx-session-service/src/head_projection";
+const HEAD_PROJECTION_ROOT = "core/crates/ctx-session-runtime/src/head_projection";
 
 const toPosix = (value) => value.split(path.sep).join("/");
 
@@ -390,6 +399,14 @@ const checkCargoDependencyDirection = (rootDir) => {
           message: `ctx-session-message-service must not depend on ${dependency.name}; message persistence must not couple back to session orchestration, daemon, HTTP, or Axum.`,
         });
       }
+      if (crateName === "ctx-session-runtime" && SESSION_RUNTIME_FORBIDDEN_DEPS.has(dependency.name)) {
+        violations.push({
+          kind: "cargo_dependency",
+          line: dependency.line,
+          path: manifestRelativePath,
+          message: `ctx-session-runtime must not depend on ${dependency.name}; session runtime must stay below session orchestration, daemon, HTTP, active-snapshot runtime, route contracts, and Axum.`,
+        });
+      }
       if (crateName === "ctx-transport-runtime" && TRANSPORT_RUNTIME_FORBIDDEN_DEPS.has(dependency.name)) {
         violations.push({
           kind: "cargo_dependency",
@@ -484,6 +501,7 @@ module.exports = {
   RATCHETED_FILE_LIMITS,
   ROUTE_CONTRACTS_ALLOWED_CTX_DEPS,
   SERVICE_RUNTIME_FORBIDDEN_DEPS,
+  SESSION_RUNTIME_FORBIDDEN_DEPS,
   checkCargoDependencyDirection,
   checkCollapsedPaths,
   checkHeadProjectionPurity,

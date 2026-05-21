@@ -10,6 +10,7 @@ const {
   RATCHETED_FILE_LIMITS,
   PACKAGE_SHAPE_BOUNDARY_CRATES,
   PACKAGE_SHAPE_FORBIDDEN_BACKEDGE_DEPS,
+  SESSION_RUNTIME_FORBIDDEN_DEPS,
   checkCargoDependencyDirection,
   checkCollapsedPaths,
   checkHeadProjectionPurity,
@@ -133,6 +134,7 @@ test("package shape boundary classifier covers existing and planned service owne
   assert.equal(isPackageShapeBoundaryCrate("ctx-run-scheduler"), true);
   assert.equal(isPackageShapeBoundaryCrate("ctx-session-artifacts"), true);
   assert.equal(isPackageShapeBoundaryCrate("ctx-session-message-service"), true);
+  assert.equal(isPackageShapeBoundaryCrate("ctx-session-runtime"), true);
   assert.equal(isPackageShapeBoundaryCrate("ctx-session-runner"), true);
   assert.equal(isPackageShapeBoundaryCrate("ctx-core"), false);
 });
@@ -172,6 +174,32 @@ test("message service boundary rejects reverse coupling to session orchestration
 
   assert.equal(
     messages.some((message) => message.includes("ctx-session-message-service must not depend on ctx-session-service")),
+    true,
+  );
+});
+
+test("session runtime boundary rejects reverse coupling to orchestration and runtime adapters", () => {
+  assert.equal(SESSION_RUNTIME_FORBIDDEN_DEPS.has("ctx-session-service"), true);
+  assert.equal(SESSION_RUNTIME_FORBIDDEN_DEPS.has("ctx-workspace-active-snapshot"), true);
+
+  const rootDir = makeRoot();
+  writeFile(rootDir, "core/crates/ctx-session-runtime/Cargo.toml", `
+    [package]
+    name = "ctx-session-runtime"
+
+    [dependencies]
+    ctx-session-service = { path = "../ctx-session-service" }
+    ctx-workspace-active-snapshot = { path = "../ctx-workspace-active-snapshot" }
+  `);
+
+  const messages = checkCargoDependencyDirection(rootDir).map((entry) => entry.message);
+
+  assert.equal(
+    messages.some((message) => message.includes("ctx-session-runtime must not depend on ctx-session-service")),
+    true,
+  );
+  assert.equal(
+    messages.some((message) => message.includes("ctx-session-runtime must not depend on ctx-workspace-active-snapshot")),
     true,
   );
 });
@@ -275,7 +303,7 @@ test("cargo direction does not reject dev-dependency-only test helpers", () => {
 
 test("head projection purity rejects daemon, HTTP, store, provider, transport, and runtime imports", () => {
   const rootDir = makeRoot();
-  writeFile(rootDir, "core/crates/ctx-session-service/src/head_projection/mod.rs", `
+  writeFile(rootDir, "core/crates/ctx-session-runtime/src/head_projection/mod.rs", `
     use ctx_daemon::daemon::DaemonHandle;
     use ctx_http::api::router;
     use ctx_store::Store;
@@ -293,7 +321,7 @@ test("head projection purity rejects daemon, HTTP, store, provider, transport, a
 
 test("head projection purity ignores line comments", () => {
   const rootDir = makeRoot();
-  writeFile(rootDir, "core/crates/ctx-session-service/src/head_projection/mod.rs", `
+  writeFile(rootDir, "core/crates/ctx-session-runtime/src/head_projection/mod.rs", `
     // use ctx_store::Store;
     use ctx_core::models::Session;
   `);
@@ -312,7 +340,7 @@ test("full evaluator aggregates all static decomposition violations", () => {
     [dependencies]
     ctx-http = { path = "../ctx-http" }
   `);
-  writeFile(rootDir, "core/crates/ctx-session-service/src/head_projection/mod.rs", "use ctx_store::Store;\n");
+  writeFile(rootDir, "core/crates/ctx-session-runtime/src/head_projection/mod.rs", "use ctx_store::Store;\n");
 
   const violations = evaluateDecompositionBoundaries(rootDir).violations;
 

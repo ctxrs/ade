@@ -74,6 +74,7 @@ RUST_BAZEL_DEPS = {
             "//core/crates/ctx-sandbox-materialization:lib",
             "//core/crates/ctx-session-artifacts:lib",
             "//core/crates/ctx-session-message-service:lib",
+            "//core/crates/ctx-session-runtime:lib",
             "//core/crates/ctx-session-service:lib",
             "//core/crates/ctx-session-tools:lib",
             "//core/crates/ctx-settings-model:lib",
@@ -563,6 +564,25 @@ RUST_BAZEL_DEPS = {
         dev_deps = [
             "@crates//:tempfile",
         ],
+        dev_proc_macro_deps = [],
+        proc_macro_deps = [
+            "@crates//:async-trait",
+        ],
+    ),
+    "ctx-session-runtime": struct(
+        build_deps = [],
+        deps = [
+            "//core/crates/ctx-core:lib",
+            "//core/crates/ctx-session-tools:lib",
+            "//core/crates/ctx-store:lib",
+            "@crates//:chrono",
+            "@crates//:serde",
+            "@crates//:serde_json",
+            "@crates//:tokio",
+            "@crates//:tracing",
+            "@crates//:uuid",
+        ],
+        dev_deps = [],
         dev_proc_macro_deps = [],
         proc_macro_deps = [
             "@crates//:async-trait",
