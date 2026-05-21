@@ -234,11 +234,7 @@ fn event_routing_head_delta_applicability_preserves_subscription_rules() {
         Some(&HashSet::from([session_id])),
         session_id,
     ));
-    assert!(!should_stream_head_delta(
-        &HashSet::new(),
-        None,
-        session_id,
-    ));
+    assert!(!should_stream_head_delta(&HashSet::new(), None, session_id,));
 }
 
 #[test]

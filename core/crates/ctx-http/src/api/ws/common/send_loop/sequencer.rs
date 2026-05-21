@@ -168,7 +168,11 @@ fn clamp_stream_message_snapshot_rev(
             active_heads,
         } => WorkspaceActiveSnapshotStreamMessage::Snapshot {
             rev,
-            active_snapshot: clamp_snapshot_payload_rev(latest, active_snapshot, active_heads.as_ref()),
+            active_snapshot: clamp_snapshot_payload_rev(
+                latest,
+                active_snapshot,
+                active_heads.as_ref(),
+            ),
             active_heads: active_heads.map(|heads| clamp_head_batch_payload_rev(latest, heads)),
         },
         WorkspaceActiveSnapshotStreamMessage::ResetRequired { latest_rev } => {

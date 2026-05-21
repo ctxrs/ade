@@ -92,8 +92,11 @@ pub(super) fn spawn_workspace_active_send_loop(
                     NextWorkspaceStreamItem::SummaryBatch { events } => {
                         let mut send_failed = false;
                         for queued in events {
-                            let message = sequencer
-                                .sequence_summary_event(&runtime, queued.event, queued.stream_source);
+                            let message = sequencer.sequence_summary_event(
+                                &runtime,
+                                queued.event,
+                                queued.stream_source,
+                            );
                             let Ok(text) = serde_json::to_string(&message) else {
                                 send_failed = true;
                                 break;

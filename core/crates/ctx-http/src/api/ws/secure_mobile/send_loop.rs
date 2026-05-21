@@ -92,8 +92,11 @@ pub(super) fn spawn_mobile_secure_send_loop(
                         let mut send_failed = false;
                         for queued in events {
                             envelope_seq += 1;
-                            let message = sequencer
-                                .sequence_summary_event(&runtime, queued.event, queued.stream_source);
+                            let message = sequencer.sequence_summary_event(
+                                &runtime,
+                                queued.event,
+                                queued.stream_source,
+                            );
                             if send_secure_ws(&mut sender, &key, &device_id, envelope_seq, &message)
                                 .await
                                 .is_err()
