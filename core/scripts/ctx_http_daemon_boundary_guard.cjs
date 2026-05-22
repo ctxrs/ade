@@ -962,7 +962,6 @@ const APPSTATE_FULL_STATE_DOMAIN_HANDLE_BASELINE = new Set([
   "WorkspacesHandle",
   "WorkspaceStreamHandle",
   "ProvidersHandle",
-  "TelemetryHandle",
   "TransportHandle",
   "ExecutionHandle",
 ]);

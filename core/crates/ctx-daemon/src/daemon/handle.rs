@@ -6,7 +6,7 @@ use ctx_observability::telemetry::Telemetry;
 use ctx_storage_admission::StorageGuardStatus;
 use ctx_store::Store;
 
-use super::state::DaemonState;
+use super::state::{DaemonState, TelemetryRuntime};
 
 #[derive(Clone)]
 pub struct DaemonHandle {
@@ -43,7 +43,7 @@ impl DaemonHandle {
     }
 
     pub fn telemetry(&self) -> TelemetryHandle {
-        TelemetryHandle::new(Arc::clone(&self.state))
+        TelemetryHandle::new(&self.state.telemetry)
     }
 
     pub fn transport(&self) -> TransportHandle {
@@ -140,13 +140,26 @@ impl CoreHandle {
 }
 
 impl TelemetryHandle {
+    pub(in crate::daemon) fn new(runtime: &TelemetryRuntime) -> Self {
+        Self {
+            perf_telemetry: runtime.perf_telemetry.clone(),
+            telemetry: runtime.telemetry.clone(),
+        }
+    }
+
     pub fn perf_telemetry(&self) -> &PerfTelemetry {
-        &self.state.telemetry.perf_telemetry
+        &self.perf_telemetry
     }
 
     pub fn telemetry(&self) -> &Telemetry {
-        &self.state.telemetry.telemetry
+        &self.telemetry
     }
+}
+
+#[derive(Clone)]
+pub struct TelemetryHandle {
+    perf_telemetry: PerfTelemetry,
+    telemetry: Telemetry,
 }
 
 macro_rules! domain_handle_with_accessor {
@@ -171,6 +184,5 @@ domain_handle_with_accessor!(TasksHandle, tasks);
 domain_handle_with_accessor!(WorkspacesHandle, workspaces);
 domain_handle_with_accessor!(WorkspaceStreamHandle, workspace_stream);
 domain_handle_with_accessor!(ProvidersHandle, providers);
-domain_handle_with_accessor!(TelemetryHandle, telemetry);
 domain_handle_with_accessor!(TransportHandle, transport);
 domain_handle_with_accessor!(ExecutionHandle, execution);
