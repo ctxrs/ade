@@ -39,6 +39,10 @@ impl DaemonHandle {
         )
     }
 
+    pub fn logs(&self) -> LogsHandle {
+        LogsHandle::new(self.state.core.data_root.clone())
+    }
+
     pub fn sessions(&self) -> SessionsHandle {
         SessionsHandle::new(Arc::clone(&self.state))
     }
@@ -199,6 +203,21 @@ impl RequestBaseHandle {
 
     pub fn public_base_url(&self) -> Option<&str> {
         self.public_base_url.as_deref()
+    }
+}
+
+#[derive(Clone)]
+pub struct LogsHandle {
+    data_root: std::path::PathBuf,
+}
+
+impl LogsHandle {
+    pub(in crate::daemon) fn new(data_root: std::path::PathBuf) -> Self {
+        Self { data_root }
+    }
+
+    pub(in crate::daemon) fn data_root(&self) -> &Path {
+        &self.data_root
     }
 }
 

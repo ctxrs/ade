@@ -1,8 +1,8 @@
 use super::*;
-use ctx_daemon::daemon::CoreHandle;
+use ctx_daemon::daemon::LogsHandle;
 
 pub(in crate::api) async fn open_logs_folder(
-    State(state): State<CoreHandle>,
+    State(state): State<LogsHandle>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiErrorResp>)> {
     state.open_logs_folder().await.map_err(|error| {
         (
@@ -22,7 +22,7 @@ pub(in crate::api) struct DesktopLogReq {
 }
 
 pub(in crate::api) async fn append_desktop_log(
-    State(state): State<CoreHandle>,
+    State(state): State<LogsHandle>,
     Json(req): Json<DesktopLogReq>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiErrorResp>)> {
     state
