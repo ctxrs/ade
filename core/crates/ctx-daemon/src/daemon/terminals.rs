@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use ctx_core::ids::{TerminalId, WorkspaceId};
 use ctx_core::models::TerminalSession;
 use ctx_transport_runtime::terminal_launch::TerminalLaunchError;
+use ctx_transport_runtime::terminals::TerminalStreamSession;
 
 use crate::daemon::DaemonState;
 
@@ -11,13 +12,6 @@ mod launch;
 mod route_contract;
 
 use self::launch::CreateTerminalLaunchRequest;
-
-pub use route_contract::{
-    CreateTerminalRouteRequest, DeleteTerminalRouteParams, ListWorkspaceTerminalsRouteParams,
-    MintTerminalStreamTokenRouteParams, TerminalRouteError, TerminalRouteErrorKind,
-    TerminalSessionRouteResponse, TerminalStatusRouteResponse, TerminalStreamConnectRouteResponse,
-    TerminalStreamRouteAdmission, TerminalStreamRouteParams,
-};
 
 async fn list_workspace_terminals(
     state: &Arc<DaemonState>,
@@ -46,6 +40,11 @@ async fn delete_terminal(state: &Arc<DaemonState>, terminal_id: TerminalId) -> b
 pub struct TerminalStreamConnectPath {
     pub stream_path: String,
     pub expires_at: DateTime<Utc>,
+}
+
+pub struct TerminalStreamRouteAdmission {
+    pub session: TerminalStreamSession,
+    pub tail_bytes: usize,
 }
 
 async fn mint_terminal_stream_token(

@@ -1,8 +1,7 @@
 use ctx_route_contracts::downloads::TextRouteDownload;
-pub use ctx_route_contracts::merge_queue::{
-    ListMergeQueueEntriesRouteRequest, MergeQueueEntryRouteError, MergeQueueEntryRouteErrorKind,
-    MergeQueueEntryRouteParams, MergeQueueEntryRouteResponse, MergeQueueLogDownloadRouteError,
-    MergeQueueLogDownloadRouteErrorKind,
+use ctx_route_contracts::merge_queue::{
+    ListMergeQueueEntriesRouteRequest, MergeQueueEntryRouteError, MergeQueueEntryRouteParams,
+    MergeQueueEntryRouteResponse, MergeQueueLogDownloadRouteError,
 };
 
 use crate::daemon::{RouteFileDownloadError, WorkspaceStoreAccessError, WorkspacesHandle};
@@ -80,6 +79,7 @@ fn list_store_error(error: WorkspaceStoreAccessError) -> MergeQueueEntryRouteErr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ctx_route_contracts::merge_queue::MergeQueueLogDownloadRouteErrorKind;
 
     #[test]
     fn log_download_route_file_error_classification_is_transport_safe() {

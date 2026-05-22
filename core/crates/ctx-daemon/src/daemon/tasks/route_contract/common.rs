@@ -1,4 +1,4 @@
-pub use ctx_route_contracts::tasks::{TaskRouteError, TaskRouteErrorKind, TaskRouteParams};
+pub(super) use ctx_route_contracts::tasks::{TaskRouteError, TaskRouteErrorKind, TaskRouteParams};
 
 use ctx_observability::logs;
 

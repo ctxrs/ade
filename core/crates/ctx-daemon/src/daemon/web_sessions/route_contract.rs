@@ -8,9 +8,9 @@ use super::{
     WebSessionLaunchRequest,
 };
 
-pub use ctx_route_contracts::web_sessions::{
+use ctx_route_contracts::web_sessions::{
     WebSessionActionRouteRequest, WebSessionCreateRouteRequest, WebSessionCreateRouteSpec,
-    WebSessionListRouteQuery, WebSessionRouteError, WebSessionRouteErrorKind,
+    WebSessionListRouteQuery, WebSessionRouteError,
 };
 
 fn web_session_launch_request(spec: WebSessionCreateRouteSpec) -> WebSessionLaunchRequest {
@@ -102,6 +102,7 @@ impl TransportHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ctx_route_contracts::web_sessions::WebSessionRouteErrorKind;
 
     #[test]
     fn action_errors_map_to_route_status_classes() {

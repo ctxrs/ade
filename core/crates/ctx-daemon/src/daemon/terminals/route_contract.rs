@@ -1,20 +1,14 @@
-pub use ctx_route_contracts::terminals::{
+use ctx_route_contracts::terminals::{
     CreateTerminalRouteRequest, CreateTerminalRouteSpec, DeleteTerminalRouteParams,
     ListWorkspaceTerminalsRouteParams, MintTerminalStreamTokenRouteParams, TerminalRouteError,
-    TerminalRouteErrorKind, TerminalSessionRouteResponse, TerminalStatusRouteResponse,
-    TerminalStreamConnectRouteResponse, TerminalStreamRouteParams,
+    TerminalSessionRouteResponse, TerminalStreamConnectRouteResponse, TerminalStreamRouteParams,
 };
 use ctx_transport_runtime::terminal_launch::{TerminalLaunchError, TerminalLaunchErrorKind};
-use ctx_transport_runtime::terminals::{TerminalStreamAccessError, TerminalStreamSession};
+use ctx_transport_runtime::terminals::TerminalStreamAccessError;
 
 use crate::daemon::TransportHandle;
 
-use super::launch::CreateTerminalLaunchRequest;
-
-pub struct TerminalStreamRouteAdmission {
-    pub session: TerminalStreamSession,
-    pub tail_bytes: usize,
-}
+use super::{launch::CreateTerminalLaunchRequest, TerminalStreamRouteAdmission};
 
 fn create_terminal_launch_request(spec: CreateTerminalRouteSpec) -> CreateTerminalLaunchRequest {
     CreateTerminalLaunchRequest {
@@ -123,6 +117,7 @@ fn terminal_stream_access_route_error(error: TerminalStreamAccessError) -> Termi
 mod tests {
     use super::*;
     use ctx_core::ids::TerminalId;
+    use ctx_route_contracts::terminals::TerminalRouteErrorKind;
 
     #[test]
     fn terminal_stream_access_errors_map_to_route_errors() {

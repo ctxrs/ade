@@ -15,12 +15,6 @@ mod host;
 mod route_contract;
 mod submit_route;
 
-pub use route_contract::{
-    ListMergeQueueEntriesRouteRequest, MergeQueueEntryRouteError, MergeQueueEntryRouteErrorKind,
-    MergeQueueEntryRouteParams, MergeQueueEntryRouteResponse, MergeQueueLogDownloadRouteError,
-    MergeQueueLogDownloadRouteErrorKind,
-};
-
 pub async fn get_workspace_merge_queue_entry(
     state: &DaemonState,
     workspace_id: WorkspaceId,

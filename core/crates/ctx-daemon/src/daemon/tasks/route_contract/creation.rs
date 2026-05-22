@@ -1,8 +1,6 @@
-pub use ctx_route_contracts::tasks::{
-    CreateTaskDefaultSessionRouteRequest, CreateTaskRouteRequest, CreateTaskSessionRouteRequest,
-};
 use ctx_route_contracts::tasks::{
-    CreateTaskRouteSpec, CreateTaskSessionRouteSpec, ListWorkspaceTasksRouteParams,
+    CreateTaskRouteRequest, CreateTaskRouteSpec, CreateTaskSessionRouteRequest,
+    CreateTaskSessionRouteSpec, ListWorkspaceTasksRouteParams,
 };
 
 use crate::daemon::TasksHandle;

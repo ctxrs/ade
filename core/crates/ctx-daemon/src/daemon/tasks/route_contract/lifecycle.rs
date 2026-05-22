@@ -1,4 +1,4 @@
-pub use ctx_route_contracts::tasks::UpdateTaskTitleRouteRequest;
+use ctx_route_contracts::tasks::UpdateTaskTitleRouteRequest;
 
 use crate::daemon::TasksHandle;
 

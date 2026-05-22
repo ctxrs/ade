@@ -9,6 +9,8 @@ const {
   COLLAPSED_DIRECTORIES,
   CTX_HTTP_CLI_ONLY_SERVICE_DEPS,
   CTX_HTTP_FORBIDDEN_DOMAIN_SERVICE_DEPS,
+  DAEMON_ROOT_ROUTE_FACADE_TARGETS,
+  DAEMON_ROOT_WEB_SESSION_TRANSPORT_FACADE_DENY,
   MESSAGE_SERVICE_FORBIDDEN_DEPS,
   RATCHETED_FILE_LIMITS,
   PACKAGE_SHAPE_BOUNDARY_CRATES,
@@ -24,6 +26,7 @@ const {
   checkCargoDependencyDirection,
   checkCollapsedPaths,
   checkCtxHttpCliOnlyServiceUsage,
+  checkDaemonRootRouteFacades,
   checkHeadProjectionPurity,
   checkRatchetedFileCaps,
   countLines,
@@ -564,6 +567,68 @@ test("ctx-http allows repo onboarding service only from CLI main", () => {
     violations.every((entry) =>
       entry.message.includes("ctx-repo-onboarding-service is allowed in ctx-http only for the CLI entrypoint"),
     ),
+  );
+});
+
+test("daemon root route facade guard rejects route-contract reexports", () => {
+  const rootDir = makeRoot();
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/tasks.rs", `
+    pub use route_contract::{TaskRouteResponse as PublicTaskRouteResponse};
+  `);
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/merge_queue.rs", `
+    pub use self::route_contract::*;
+  `);
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/terminals.rs", `
+    pub use route_contract
+      ::TerminalRouteError;
+  `);
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/web_sessions.rs", `
+    pub use crate::daemon::web_sessions::route_contract::*;
+  `);
+
+  const violations = checkDaemonRootRouteFacades(rootDir);
+
+  assert.equal(
+    DAEMON_ROOT_ROUTE_FACADE_TARGETS.includes("core/crates/ctx-daemon/src/daemon/tasks.rs"),
+    true,
+  );
+  assert.deepEqual(
+    violations.map((entry) => entry.path).sort(),
+    [
+      "core/crates/ctx-daemon/src/daemon/merge_queue.rs",
+      "core/crates/ctx-daemon/src/daemon/tasks.rs",
+      "core/crates/ctx-daemon/src/daemon/terminals.rs",
+      "core/crates/ctx-daemon/src/daemon/web_sessions.rs",
+    ],
+  );
+  assert(
+    violations.every((entry) =>
+      entry.message.includes("must not publicly reexport route_contract symbols"),
+    ),
+  );
+});
+
+test("daemon root route facade guard rejects web-session transport leaf reexports", () => {
+  const rootDir = makeRoot();
+  writeFile(rootDir, "core/crates/ctx-daemon/src/daemon/web_sessions.rs", `
+    pub use ctx_transport_runtime::web_sessions::{
+      WebSessionActionError,
+      WebSessionSignalUpstream as PublicSignalUpstream,
+    };
+    pub use ctx_transport_runtime::web_sessions::*;
+    use ctx_transport_runtime::web_sessions::WebSessionViewPage;
+  `);
+
+  const violations = checkDaemonRootRouteFacades(rootDir);
+
+  assert.equal(DAEMON_ROOT_WEB_SESSION_TRANSPORT_FACADE_DENY.has("WebSessionActionError"), true);
+  assert.deepEqual(
+    violations.map((entry) => entry.message),
+    [
+      "core/crates/ctx-daemon/src/daemon/web_sessions.rs must not publicly reexport WebSessionActionError from ctx_transport_runtime::web_sessions; use the owner crate directly.",
+      "core/crates/ctx-daemon/src/daemon/web_sessions.rs must not publicly reexport WebSessionSignalUpstream from ctx_transport_runtime::web_sessions; use the owner crate directly.",
+      "core/crates/ctx-daemon/src/daemon/web_sessions.rs must not publicly glob-reexport ctx_transport_runtime::web_sessions; use owner-crate symbols directly.",
+    ],
   );
 });
 

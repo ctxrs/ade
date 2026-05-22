@@ -217,6 +217,20 @@ const TRANSPORT_RUNTIME_FORBIDDEN_DEPS = new Set(["ctx-store"]);
 const ROUTE_CONTRACTS_ALLOWED_CTX_DEPS = new Set(["ctx-core"]);
 const HEAD_PROJECTION_ROOT = "core/crates/ctx-session-runtime/src/head_projection";
 const CTX_HTTP_CLI_MAIN = "core/crates/ctx-http/src/main.rs";
+const DAEMON_ROOT_ROUTE_FACADE_TARGETS = [
+  "core/crates/ctx-daemon/src/daemon/tasks.rs",
+  "core/crates/ctx-daemon/src/daemon/merge_queue.rs",
+  "core/crates/ctx-daemon/src/daemon/terminals.rs",
+  "core/crates/ctx-daemon/src/daemon/web_sessions.rs",
+];
+const DAEMON_ROOT_WEB_SESSION_TRANSPORT_FACADE_DENY = new Set([
+  "WebSessionActionError",
+  "WebSessionSignalBridgeError",
+  "WebSessionSignalUpstream",
+  "WebSessionSignalViewerGuard",
+  "WebSessionViewConnectPath",
+  "WebSessionViewPage",
+]);
 
 const toPosix = (value) => value.split(path.sep).join("/");
 
@@ -672,6 +686,48 @@ const checkCtxHttpCliOnlyServiceUsage = (rootDir) => {
   return violations;
 };
 
+const checkDaemonRootRouteFacades = (rootDir) => {
+  const violations = [];
+  const routeContractReexportPattern =
+    /\bpub\s+use\s+(?:(?:self|crate)\s*::\s*)?(?:daemon\s*::\s*[A-Za-z_][A-Za-z0-9_]*\s*::\s*)?route_contract\s*::/u;
+  const webSessionTransportReexportPattern =
+    /\bpub\s+use\s+ctx_transport_runtime\s*::\s*web_sessions\s*::[\s\S]*?;/gu;
+
+  for (const relativePath of DAEMON_ROOT_ROUTE_FACADE_TARGETS) {
+    const absolutePath = path.join(rootDir, relativePath);
+    if (!fs.existsSync(absolutePath)) continue;
+    const contents = stripRustLineComments(fs.readFileSync(absolutePath, "utf8"));
+    if (routeContractReexportPattern.test(contents)) {
+      violations.push({
+        kind: "daemon_root_route_facade",
+        path: relativePath,
+        message: `${relativePath} must not publicly reexport route_contract symbols; callers should use the focused route-contract module or owner crate.`,
+      });
+    }
+    if (!relativePath.endsWith("/web_sessions.rs")) continue;
+    for (const match of contents.matchAll(webSessionTransportReexportPattern)) {
+      const statement = match[0];
+      if (/\*\s*;/u.test(statement)) {
+        violations.push({
+          kind: "daemon_root_route_facade",
+          path: relativePath,
+          message: `${relativePath} must not publicly glob-reexport ctx_transport_runtime::web_sessions; use owner-crate symbols directly.`,
+        });
+        continue;
+      }
+      for (const name of DAEMON_ROOT_WEB_SESSION_TRANSPORT_FACADE_DENY) {
+        if (!new RegExp(`\\b${name}\\b`, "u").test(statement)) continue;
+        violations.push({
+          kind: "daemon_root_route_facade",
+          path: relativePath,
+          message: `${relativePath} must not publicly reexport ${name} from ctx_transport_runtime::web_sessions; use the owner crate directly.`,
+        });
+      }
+    }
+  }
+  return violations;
+};
+
 const evaluateDecompositionBoundaries = (rootDir = repoRoot) => {
   const violations = [
     ...checkCollapsedPaths(rootDir),
@@ -679,6 +735,7 @@ const evaluateDecompositionBoundaries = (rootDir = repoRoot) => {
     ...checkCargoDependencyDirection(rootDir),
     ...checkHeadProjectionPurity(rootDir),
     ...checkCtxHttpCliOnlyServiceUsage(rootDir),
+    ...checkDaemonRootRouteFacades(rootDir),
   ];
   return { violations };
 };
@@ -716,6 +773,8 @@ module.exports = {
   COLLAPSED_DIRECTORIES,
   CTX_HTTP_CLI_ONLY_SERVICE_DEPS,
   CTX_HTTP_FORBIDDEN_DOMAIN_SERVICE_DEPS,
+  DAEMON_ROOT_ROUTE_FACADE_TARGETS,
+  DAEMON_ROOT_WEB_SESSION_TRANSPORT_FACADE_DENY,
   HEAD_PROJECTION_FORBIDDEN_IMPORT_PATTERNS,
   MESSAGE_SERVICE_FORBIDDEN_DEPS,
   PACKAGE_SHAPE_BOUNDARY_CRATES,
@@ -734,6 +793,7 @@ module.exports = {
   checkCargoDependencyDirection,
   checkCollapsedPaths,
   checkCtxHttpCliOnlyServiceUsage,
+  checkDaemonRootRouteFacades,
   checkHeadProjectionPurity,
   checkRatchetedFileCaps,
   countLines,
