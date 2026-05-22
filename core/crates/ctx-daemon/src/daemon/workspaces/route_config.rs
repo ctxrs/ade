@@ -1,7 +1,6 @@
 use ctx_observability::telemetry::TelemetryEvent;
 use ctx_repo_onboarding_service::prepare_workspace_registration;
 use ctx_workspace_config as workspace_config;
-use serde::Deserialize;
 
 use crate::daemon::{WorkspaceStoreAccessError, WorkspacesHandle};
 
@@ -10,34 +9,29 @@ use super::WorkspaceRouteResponse;
 mod management_config;
 mod prompt_and_model;
 
+pub(in crate::daemon::workspaces) use ctx_route_contracts::workspaces::{
+    AgentSystemPromptConfigRouteResponse, SubagentSystemPromptConfigRouteResponse,
+    UpdateAgentSystemPromptConfigRouteRequest, UpdateSubagentSystemPromptConfigRouteRequest,
+    UpdateWorkspaceExecutionConfigRequest, UpdateWorkspaceMergeQueueConfigRequest,
+    UpdateWorkspaceProviderModelPreferenceRouteRequest, UpdateWorktreeBootstrapConfigRequest,
+    WorkspaceExecutionConfigRouteSnapshot, WorkspaceMergeQueueConfigRouteResponse,
+    WorkspacePromptConfigRouteParams, WorkspaceProviderModelPreferenceRouteParams,
+    WorkspaceProviderModelPreferenceRouteResponse, WorkspaceWorktreeBootstrapConfigRouteResponse,
+};
 pub use ctx_route_contracts::workspaces::{
     CreateWorkspaceRequest, UpdateWorkspacePrimaryBranchRequest, WorkspaceConfigUpdateResult,
     WorkspacePrimaryBranchSnapshot, WorkspaceRouteError, WorkspaceRouteErrorKind,
 };
-pub use management_config::{
-    UpdateWorkspaceMergeQueueConfigRequest, UpdateWorktreeBootstrapConfigRequest,
-    WorkspaceMergeQueueConfigRouteResponse, WorkspaceWorktreeBootstrapConfigRouteResponse,
+pub(in crate::daemon::workspaces) use management_config::{
+    merge_queue_config_route_response, merge_queue_config_update,
+    workspace_execution_config_route_snapshot, worktree_bootstrap_config_route_response,
+    worktree_bootstrap_config_update,
 };
 pub(in crate::daemon::workspaces) use prompt_and_model::{
-    parse_workspace_route_id, provider_model_preference_error, workspace_store_error,
+    agent_system_prompt_config_route_response, provider_model_preference_error,
+    provider_model_preference_route_response, subagent_system_prompt_config_route_response,
+    workspace_store_error,
 };
-pub use prompt_and_model::{
-    AgentSystemPromptConfigRouteResponse, SubagentSystemPromptConfigRouteResponse,
-    UpdateAgentSystemPromptConfigRouteRequest, UpdateSubagentSystemPromptConfigRouteRequest,
-    UpdateWorkspaceProviderModelPreferenceRouteRequest, WorkspacePromptConfigRouteParams,
-    WorkspaceProviderModelPreferenceRouteParams, WorkspaceProviderModelPreferenceRouteResponse,
-};
-
-#[derive(Debug, Deserialize)]
-pub struct UpdateWorkspaceExecutionConfigRequest {
-    pub environment: String,
-    #[serde(default)]
-    pub network_mode: Option<String>,
-    #[serde(default)]
-    pub allowlist: Option<Vec<String>>,
-}
-
-pub type WorkspaceExecutionConfigSnapshot = workspace_config::ExecutionConfigSnapshot;
 
 pub(in crate::daemon::workspaces) fn request_or_policy_route_error(
     error: anyhow::Error,

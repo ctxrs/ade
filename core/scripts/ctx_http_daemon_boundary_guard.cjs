@@ -422,6 +422,11 @@ const workspaceManagementConfigApiRoots = [
   "core/crates/ctx-http/src/api/workspaces/management/worktree_bootstrap.rs",
 ];
 
+const workspaceApiRoots = [
+  "core/crates/ctx-http/src/api/workspaces.rs",
+  "core/crates/ctx-http/src/api/workspaces/",
+];
+
 const workspacePromptAndModelConfigApiPaths = [
   "core/crates/ctx-http/src/api/workspaces/management/prompt_config/agent.rs",
   "core/crates/ctx-http/src/api/workspaces/management/prompt_config/subagent.rs",
@@ -3011,7 +3016,41 @@ const WORKSPACE_EXECUTION_CONFIG_API_PATTERNS = [
   },
 ];
 
+const workspaceManagementConfigMovedDaemonContractPattern = String.raw`(?:AgentSystemPromptConfigRouteResponse|SubagentSystemPromptConfigRouteResponse|UpdateAgentSystemPromptConfigRouteRequest|UpdateSubagentSystemPromptConfigRouteRequest|UpdateWorkspaceExecutionConfigRequest|UpdateWorkspaceMergeQueueConfigRequest|UpdateWorkspaceProviderModelPreferenceRouteRequest|UpdateWorktreeBootstrapConfigRequest|WorkspaceExecutionConfig(?:Route)?Snapshot|WorkspaceMergeQueueConfigRouteResponse|WorkspacePromptConfigRouteParams|WorkspaceProviderModelPreferenceRouteParams|WorkspaceProviderModelPreferenceRouteResponse|WorkspaceWorktreeBootstrapConfigRouteResponse)`;
+
+const WORKSPACE_MANAGEMENT_CONFIG_MOVED_DAEMON_IMPORT_PATTERNS = [
+  {
+    name: "workspace management config API imports moved config contracts from daemon",
+    regex:
+      /\bctx_daemon::daemon::(?:workspaces::)?(?:\{[^}]*\b(?:AgentSystemPromptConfigRouteResponse|SubagentSystemPromptConfigRouteResponse|UpdateAgentSystemPromptConfigRouteRequest|UpdateSubagentSystemPromptConfigRouteRequest|UpdateWorkspaceExecutionConfigRequest|UpdateWorkspaceMergeQueueConfigRequest|UpdateWorkspaceProviderModelPreferenceRouteRequest|UpdateWorktreeBootstrapConfigRequest|WorkspaceExecutionConfig(?:Route)?Snapshot|WorkspaceMergeQueueConfigRouteResponse|WorkspacePromptConfigRouteParams|WorkspaceProviderModelPreferenceRouteParams|WorkspaceProviderModelPreferenceRouteResponse|WorkspaceWorktreeBootstrapConfigRouteResponse)\b|(?:AgentSystemPromptConfigRouteResponse|SubagentSystemPromptConfigRouteResponse|UpdateAgentSystemPromptConfigRouteRequest|UpdateSubagentSystemPromptConfigRouteRequest|UpdateWorkspaceExecutionConfigRequest|UpdateWorkspaceMergeQueueConfigRequest|UpdateWorkspaceProviderModelPreferenceRouteRequest|UpdateWorktreeBootstrapConfigRequest|WorkspaceExecutionConfig(?:Route)?Snapshot|WorkspaceMergeQueueConfigRouteResponse|WorkspacePromptConfigRouteParams|WorkspaceProviderModelPreferenceRouteParams|WorkspaceProviderModelPreferenceRouteResponse|WorkspaceWorktreeBootstrapConfigRouteResponse)\b)/,
+    contentRegex:
+      /\buse\s+ctx_daemon::daemon::\s*\{(?=[^;]*\b(?:AgentSystemPromptConfigRouteResponse|SubagentSystemPromptConfigRouteResponse|UpdateAgentSystemPromptConfigRouteRequest|UpdateSubagentSystemPromptConfigRouteRequest|UpdateWorkspaceExecutionConfigRequest|UpdateWorkspaceMergeQueueConfigRequest|UpdateWorkspaceProviderModelPreferenceRouteRequest|UpdateWorktreeBootstrapConfigRequest|WorkspaceExecutionConfig(?:Route)?Snapshot|WorkspaceMergeQueueConfigRouteResponse|WorkspacePromptConfigRouteParams|WorkspaceProviderModelPreferenceRouteParams|WorkspaceProviderModelPreferenceRouteResponse|WorkspaceWorktreeBootstrapConfigRouteResponse)\b)[^;]*;/gm,
+  },
+  {
+    name: "workspace management config API imports moved config contracts from nested daemon workspaces group",
+    regex: /\b\B/,
+    contentRegex:
+      /\buse\s+ctx_daemon::daemon::\s*\{(?=[^;]*\bworkspaces\s*::\s*(?:\{[^;]*\b(?:AgentSystemPromptConfigRouteResponse|SubagentSystemPromptConfigRouteResponse|UpdateAgentSystemPromptConfigRouteRequest|UpdateSubagentSystemPromptConfigRouteRequest|UpdateWorkspaceExecutionConfigRequest|UpdateWorkspaceMergeQueueConfigRequest|UpdateWorkspaceProviderModelPreferenceRouteRequest|UpdateWorktreeBootstrapConfigRequest|WorkspaceExecutionConfig(?:Route)?Snapshot|WorkspaceMergeQueueConfigRouteResponse|WorkspacePromptConfigRouteParams|WorkspaceProviderModelPreferenceRouteParams|WorkspaceProviderModelPreferenceRouteResponse|WorkspaceWorktreeBootstrapConfigRouteResponse)\b|(?:AgentSystemPromptConfigRouteResponse|SubagentSystemPromptConfigRouteResponse|UpdateAgentSystemPromptConfigRouteRequest|UpdateSubagentSystemPromptConfigRouteRequest|UpdateWorkspaceExecutionConfigRequest|UpdateWorkspaceMergeQueueConfigRequest|UpdateWorkspaceProviderModelPreferenceRouteRequest|UpdateWorktreeBootstrapConfigRouteRequest|WorkspaceExecutionConfig(?:Route)?Snapshot|WorkspaceMergeQueueConfigRouteResponse|WorkspacePromptConfigRouteParams|WorkspaceProviderModelPreferenceRouteParams|WorkspaceProviderModelPreferenceRouteResponse|WorkspaceWorktreeBootstrapConfigRouteResponse)\b))[^;]*;/gm,
+  },
+  {
+    name: "workspace management config API imports daemon workspaces root",
+    regex:
+      /\buse\s+ctx_daemon::daemon::workspaces\s*(?:;|as\b|::\s*\*|::\s*\{[^}]*\bself\b)/,
+    contentRegex:
+      /\buse\s+ctx_daemon::daemon::\s*\{(?=[^;]*\bworkspaces\b\s*(?:,|as\b|::\s*\*|::\s*\{[^}]*\bself\b))[^;]*;/gm,
+  },
+  {
+    name: "workspace management config API imports moved config contracts from daemon",
+    regex: /\b\B/,
+    contentRegex: new RegExp(
+      String.raw`\buse\s+ctx_daemon::daemon::workspaces::\s*\{(?=[^}]*\b${workspaceManagementConfigMovedDaemonContractPattern}\b)[^}]*\}\s*;`,
+      "gm",
+    ),
+  },
+];
+
 const WORKSPACE_MANAGEMENT_CONFIG_API_PATTERNS = [
+  ...WORKSPACE_MANAGEMENT_CONFIG_MOVED_DAEMON_IMPORT_PATTERNS,
   {
     name: "workspace management config API owns workspace context lookup",
     regex: /\brequire_workspace(?:_ctx)?\s*\(/,
@@ -5536,8 +5575,17 @@ function apiPatternsForPath(relativePath) {
   if (workspaceExecutionConfigApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...WORKSPACE_EXECUTION_CONFIG_API_PATTERNS);
   }
-  if (workspaceManagementConfigApiRoots.some((root) => relativePath.startsWith(root))) {
+  const isWorkspaceManagementConfigApiRoot = workspaceManagementConfigApiRoots.some((root) =>
+    relativePath.startsWith(root)
+  );
+  if (isWorkspaceManagementConfigApiRoot) {
     patterns.push(...WORKSPACE_MANAGEMENT_CONFIG_API_PATTERNS);
+  } else if (
+    workspaceApiRoots.some((root) =>
+      root.endsWith("/") ? relativePath.startsWith(root) : relativePath === root
+    )
+  ) {
+    patterns.push(...WORKSPACE_MANAGEMENT_CONFIG_MOVED_DAEMON_IMPORT_PATTERNS);
   }
   if (
     workspaceRouteContractApiRoots.some((root) =>

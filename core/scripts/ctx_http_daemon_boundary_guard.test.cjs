@@ -8893,6 +8893,79 @@ test("daemon boundary guard rejects workspace management config backdoors", () =
   assert.deepEqual(routeViolations, []);
 });
 
+test("daemon boundary guard rejects moved workspace config contracts from daemon", () => {
+  for (const [filePath, contents, expectedName] of [
+    [
+      "core/crates/ctx-http/src/api/workspaces.rs",
+      `
+        use ctx_daemon::daemon::{
+          UpdateWorkspaceExecutionConfigRequest,
+          WorkspaceMergeQueueConfigRouteResponse,
+          WorkspacesHandle,
+        };
+      `,
+      "workspace management config API imports moved config contracts from daemon",
+    ],
+    [
+      "core/crates/ctx-http/src/api/workspaces/management.rs",
+      `
+        use ctx_daemon::daemon::workspaces::{
+          UpdateWorkspaceMergeQueueConfigRequest,
+          WorkspaceExecutionConfigSnapshot,
+        };
+      `,
+      "workspace management config API imports moved config contracts from daemon",
+    ],
+    [
+      "core/crates/ctx-http/src/api/workspaces/management/provider_model_preferences.rs",
+      `
+        use ctx_daemon::daemon::{
+          workspaces::{WorkspaceProviderModelPreferenceRouteParams, WorkspaceProviderModelPreferenceRouteResponse},
+          WorkspacesHandle,
+        };
+      `,
+      "workspace management config API imports moved config contracts from nested daemon workspaces group",
+    ],
+    [
+      "core/crates/ctx-http/src/api/workspaces/management/prompt_config/agent.rs",
+      `use ctx_daemon::daemon::workspaces as daemon_workspaces;`,
+      "workspace management config API imports daemon workspaces root",
+    ],
+    [
+      "core/crates/ctx-http/src/api/workspaces/management/prompt_config/subagent.rs",
+      `use ctx_daemon::daemon::{workspaces, WorkspacesHandle};`,
+      "workspace management config API imports daemon workspaces root",
+    ],
+    [
+      "core/crates/ctx-http/src/api/workspaces/management/worktree_bootstrap.rs",
+      `use ctx_daemon::daemon::workspaces::*;`,
+      "workspace management config API imports daemon workspaces root",
+    ],
+    [
+      "core/crates/ctx-http/src/api/workspaces/attachments.rs",
+      `
+        use ctx_daemon::daemon::{
+          UpdateWorkspaceExecutionConfigRequest,
+          WorkspacesHandle,
+        };
+      `,
+      "workspace management config API imports moved config contracts from daemon",
+    ],
+  ]) {
+    const violations = scanText({
+      filePath,
+      contents,
+      patterns: apiPatternsForPath(filePath),
+    });
+    assert(
+      violations.some((violation) => violation.name === expectedName),
+      `expected ${expectedName} for ${filePath}; saw ${violations
+        .map((violation) => violation.name)
+        .join(", ")}`,
+    );
+  }
+});
+
 test("daemon boundary guard scopes workspace management config roots", () => {
   assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/workspaces.rs").includes(
@@ -8932,6 +9005,12 @@ test("daemon boundary guard scopes workspace management config roots", () => {
   );
   assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/management/provider_model_preferences.rs").includes(
+      WORKSPACE_MANAGEMENT_CONFIG_API_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/workspaces/attachments.rs").includes(
       WORKSPACE_MANAGEMENT_CONFIG_API_PATTERNS[0],
     ),
     true,

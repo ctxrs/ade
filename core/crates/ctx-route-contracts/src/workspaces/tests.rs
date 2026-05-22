@@ -195,6 +195,192 @@ fn workspace_management_route_dtos_preserve_wire_shape() {
 }
 
 #[test]
+fn workspace_config_route_dtos_preserve_wire_shape() {
+    let execution: UpdateWorkspaceExecutionConfigRequest =
+        serde_json::from_value(serde_json::json!({
+            "environment": "sandbox",
+            "network_mode": "allowlist",
+            "allowlist": ["api.example.test"],
+            "unknown": "ignored"
+        }))
+        .expect("execution request");
+    assert_eq!(execution.environment, "sandbox");
+    assert_eq!(execution.network_mode.as_deref(), Some("allowlist"));
+    assert_eq!(
+        execution.allowlist.as_deref(),
+        Some(["api.example.test".to_string()].as_slice())
+    );
+
+    assert_same_json(
+        WorkspaceExecutionConfigRouteSnapshot {
+            source: "workspace".to_string(),
+            environment: "sandbox".to_string(),
+            network_mode: Some("allowlist".to_string()),
+            allowlist: Some(vec!["api.example.test".to_string()]),
+        },
+        serde_json::json!({
+            "source": "workspace",
+            "environment": "sandbox",
+            "network_mode": "allowlist",
+            "allowlist": ["api.example.test"]
+        }),
+    );
+
+    let merge_queue: UpdateWorkspaceMergeQueueConfigRequest =
+        serde_json::from_value(serde_json::json!({
+            "enabled": true,
+            "target_branch": " main ",
+            "verify_command": "pnpm test",
+            "push_on_success": true,
+            "push_remote": "origin",
+            "push_branch": "dev",
+            "unknown": "ignored"
+        }))
+        .expect("merge queue request");
+    assert!(merge_queue.enabled);
+    assert_eq!(merge_queue.target_branch.as_deref(), Some(" main "));
+    assert_eq!(merge_queue.verify_command.as_deref(), Some("pnpm test"));
+    assert_eq!(merge_queue.push_on_success, Some(true));
+    assert_eq!(merge_queue.push_remote.as_deref(), Some("origin"));
+    assert_eq!(merge_queue.push_branch.as_deref(), Some("dev"));
+
+    assert_same_json(
+        WorkspaceMergeQueueConfigRouteResponse {
+            enabled: false,
+            target_branch: "main".to_string(),
+            verify_command: None,
+            push_on_success: false,
+            push_remote: "origin".to_string(),
+            push_branch: "main".to_string(),
+        },
+        serde_json::json!({
+            "enabled": false,
+            "target_branch": "main",
+            "push_on_success": false,
+            "push_remote": "origin",
+            "push_branch": "main"
+        }),
+    );
+
+    assert_same_json(
+        WorkspaceMergeQueueConfigRouteResponse {
+            enabled: false,
+            target_branch: "main".to_string(),
+            verify_command: Some("pnpm test".to_string()),
+            push_on_success: false,
+            push_remote: "origin".to_string(),
+            push_branch: "main".to_string(),
+        },
+        serde_json::json!({
+            "enabled": false,
+            "target_branch": "main",
+            "verify_command": "pnpm test",
+            "push_on_success": false,
+            "push_remote": "origin",
+            "push_branch": "main"
+        }),
+    );
+
+    let bootstrap: UpdateWorktreeBootstrapConfigRequest =
+        serde_json::from_value(serde_json::json!({
+            "setup_command": "pnpm install",
+            "timeout_sec": 30,
+            "wait_for_completion": true,
+            "unknown": "ignored"
+        }))
+        .expect("bootstrap request");
+    assert_eq!(bootstrap.setup_command.as_deref(), Some("pnpm install"));
+    assert_eq!(bootstrap.timeout_sec, Some(30));
+    assert_eq!(bootstrap.wait_for_completion, Some(true));
+
+    assert_same_json(
+        WorkspaceWorktreeBootstrapConfigRouteResponse {
+            setup_command: None,
+            timeout_sec: None,
+            wait_for_completion: None,
+        },
+        serde_json::json!({}),
+    );
+}
+
+#[test]
+fn workspace_prompt_and_provider_route_dtos_preserve_wire_shape() {
+    let provider_params =
+        WorkspaceProviderModelPreferenceRouteParams::new("not-a-workspace", "codex");
+    let error = provider_params.parse_workspace_id().unwrap_err();
+    assert_eq!(error.kind(), WorkspaceRouteErrorKind::BadRequest);
+    assert_eq!(error.message(), "invalid workspace id");
+    assert_eq!(provider_params.provider_id(), "codex");
+
+    let prompt_params = WorkspacePromptConfigRouteParams::new("not-a-workspace");
+    let error = prompt_params.parse_workspace_id().unwrap_err();
+    assert_eq!(error.kind(), WorkspaceRouteErrorKind::BadRequest);
+    assert_eq!(error.message(), "invalid workspace id");
+
+    let provider: UpdateWorkspaceProviderModelPreferenceRouteRequest =
+        serde_json::from_value(serde_json::json!({"unknown": "ignored"}))
+            .expect("provider preference request");
+    assert_eq!(provider.preferred_model_id, None);
+
+    let provider: UpdateWorkspaceProviderModelPreferenceRouteRequest =
+        serde_json::from_value(serde_json::json!({
+            "preferred_model_id": " gpt-5.4/xhigh "
+        }))
+        .expect("provider preference request");
+    assert_eq!(
+        provider.preferred_model_id.as_deref(),
+        Some(" gpt-5.4/xhigh ")
+    );
+
+    assert_same_json(
+        WorkspaceProviderModelPreferenceRouteResponse::new("codex", None),
+        serde_json::json!({
+            "provider_id": "codex"
+        }),
+    );
+
+    let agent: UpdateAgentSystemPromptConfigRouteRequest =
+        serde_json::from_value(serde_json::json!({"unknown": "ignored"}))
+            .expect("agent prompt request");
+    assert_eq!(agent.system_prompt_append, None);
+
+    let subagent: UpdateSubagentSystemPromptConfigRouteRequest =
+        serde_json::from_value(serde_json::json!({"unknown": "ignored"}))
+            .expect("subagent prompt request");
+    assert_eq!(subagent.system_prompt_append, None);
+
+    assert_same_json(
+        AgentSystemPromptConfigRouteResponse::new(
+            "Default",
+            Some("Configured".to_string()),
+            Some("Configured".to_string()),
+            "config",
+        ),
+        serde_json::json!({
+            "default_append": "Default",
+            "configured_append": "Configured",
+            "effective_append": "Configured",
+            "source": "config"
+        }),
+    );
+
+    assert_same_json(
+        SubagentSystemPromptConfigRouteResponse::new(
+            "Subagent default",
+            None,
+            Some("Subagent default".to_string()),
+            "default",
+        ),
+        serde_json::json!({
+            "default_append": "Subagent default",
+            "configured_append": null,
+            "effective_append": "Subagent default",
+            "source": "default"
+        }),
+    );
+}
+
+#[test]
 fn workspace_attachment_requests_preserve_validation_contracts() {
     let sync: SyncWorkspaceAttachmentsRouteRequest =
         serde_json::from_value(serde_json::json!({})).expect("sync request");

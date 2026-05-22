@@ -225,16 +225,29 @@ fn vcs_seed_pairs(plan: &WorkspaceVcsLagReseedPlan) -> Vec<(WorktreeId, Worktree
 fn event_routing_head_delta_applicability_preserves_subscription_rules() {
     let session_id = SessionId::new();
     assert!(should_stream_head_delta(
+        &HashMap::from([(TaskId::new(), session_id)]),
+        &HashSet::new(),
+        None,
+        session_id,
+    ));
+    assert!(should_stream_head_delta(
+        &HashMap::new(),
         &HashSet::from([session_id]),
         None,
         session_id,
     ));
     assert!(should_stream_head_delta(
+        &HashMap::new(),
         &HashSet::new(),
         Some(&HashSet::from([session_id])),
         session_id,
     ));
-    assert!(!should_stream_head_delta(&HashSet::new(), None, session_id,));
+    assert!(!should_stream_head_delta(
+        &HashMap::new(),
+        &HashSet::new(),
+        None,
+        session_id,
+    ));
 }
 
 #[test]

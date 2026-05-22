@@ -128,22 +128,15 @@ pub use state::{
 pub use telemetry_export::{TelemetryExportError, TelemetryExportErrorKind};
 pub use workspace_init::init_workspace;
 pub use workspaces::{
-    AgentSystemPromptConfigRouteResponse, CreateWorkspaceAttachmentRouteRequest,
-    CreateWorkspaceRequest, DeleteWorkspaceAttachmentRouteRequest,
-    SubagentSystemPromptConfigRouteResponse, SyncWorkspaceAttachmentsRouteRequest,
-    UpdateAgentSystemPromptConfigRouteRequest, UpdateSubagentSystemPromptConfigRouteRequest,
-    UpdateWorkspaceExecutionConfigRequest, UpdateWorkspaceMergeQueueConfigRequest,
-    UpdateWorkspacePrimaryBranchRequest, UpdateWorkspaceProviderModelPreferenceRouteRequest,
-    UpdateWorktreeBootstrapConfigRequest, WorkspaceActiveHeadBatchRouteResponse,
+    CreateWorkspaceAttachmentRouteRequest, CreateWorkspaceRequest,
+    DeleteWorkspaceAttachmentRouteRequest, SyncWorkspaceAttachmentsRouteRequest,
+    UpdateWorkspacePrimaryBranchRequest, WorkspaceActiveHeadBatchRouteResponse,
     WorkspaceActiveSnapshotRouteResponse, WorkspaceAttachmentRouteResponse,
-    WorkspaceConfigUpdateResult, WorkspaceExecutionConfigSnapshot,
-    WorkspaceFileCompletionsRouteQuery, WorkspaceHarnessContainerStatusRouteResponse,
-    WorkspaceMergeQueueConfigRouteResponse, WorkspacePrimaryBranchSnapshot,
-    WorkspacePromptConfigRouteParams, WorkspaceProviderModelPreferenceRouteParams,
-    WorkspaceProviderModelPreferenceRouteResponse, WorkspaceRouteError, WorkspaceRouteErrorKind,
-    WorkspaceRouteParams, WorkspaceRouteResponse, WorkspaceStreamAccessError,
-    WorkspaceStreamRouteAdmission, WorkspaceWorktreeBootstrapConfigRouteResponse,
-    WorktreeRouteParams, WorktreeRouteResponse,
+    WorkspaceConfigUpdateResult, WorkspaceFileCompletionsRouteQuery,
+    WorkspaceHarnessContainerStatusRouteResponse, WorkspacePrimaryBranchSnapshot,
+    WorkspaceRouteError, WorkspaceRouteErrorKind, WorkspaceRouteParams, WorkspaceRouteResponse,
+    WorkspaceStreamAccessError, WorkspaceStreamRouteAdmission, WorktreeRouteParams,
+    WorktreeRouteResponse,
 };
 
 #[cfg(test)]

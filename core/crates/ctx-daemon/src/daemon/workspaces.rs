@@ -66,16 +66,8 @@ pub use model_preferences::{
 pub use retry::retry_global_index_write;
 pub(in crate::daemon::workspaces) use route_config::workspace_store_route_error;
 pub use route_config::{
-    AgentSystemPromptConfigRouteResponse, CreateWorkspaceRequest,
-    SubagentSystemPromptConfigRouteResponse, UpdateAgentSystemPromptConfigRouteRequest,
-    UpdateSubagentSystemPromptConfigRouteRequest, UpdateWorkspaceExecutionConfigRequest,
-    UpdateWorkspaceMergeQueueConfigRequest, UpdateWorkspacePrimaryBranchRequest,
-    UpdateWorkspaceProviderModelPreferenceRouteRequest, UpdateWorktreeBootstrapConfigRequest,
-    WorkspaceConfigUpdateResult, WorkspaceExecutionConfigSnapshot,
-    WorkspaceMergeQueueConfigRouteResponse, WorkspacePrimaryBranchSnapshot,
-    WorkspacePromptConfigRouteParams, WorkspaceProviderModelPreferenceRouteParams,
-    WorkspaceProviderModelPreferenceRouteResponse, WorkspaceRouteError, WorkspaceRouteErrorKind,
-    WorkspaceWorktreeBootstrapConfigRouteResponse,
+    CreateWorkspaceRequest, UpdateWorkspacePrimaryBranchRequest, WorkspaceConfigUpdateResult,
+    WorkspacePrimaryBranchSnapshot, WorkspaceRouteError, WorkspaceRouteErrorKind,
 };
 pub use route_contract::{
     CreateWorkspaceAttachmentRouteRequest, DeleteWorkspaceAttachmentRouteRequest,

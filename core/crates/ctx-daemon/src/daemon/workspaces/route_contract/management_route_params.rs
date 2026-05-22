@@ -2,12 +2,13 @@ use super::{
     CreateWorkspaceAttachmentRouteRequest, DeleteWorkspaceAttachmentRouteRequest,
     SyncWorkspaceAttachmentsRouteRequest, WorkspaceAttachmentRouteResponse, WorkspaceRouteParams,
 };
-use crate::daemon::workspaces::{
+use crate::daemon::workspaces::WorkspacesHandle;
+use ctx_route_contracts::workspaces::{
     UpdateWorkspaceExecutionConfigRequest, UpdateWorkspaceMergeQueueConfigRequest,
     UpdateWorkspacePrimaryBranchRequest, UpdateWorktreeBootstrapConfigRequest,
-    WorkspaceConfigUpdateResult, WorkspaceExecutionConfigSnapshot,
+    WorkspaceConfigUpdateResult, WorkspaceExecutionConfigRouteSnapshot,
     WorkspaceMergeQueueConfigRouteResponse, WorkspacePrimaryBranchSnapshot, WorkspaceRouteError,
-    WorkspaceWorktreeBootstrapConfigRouteResponse, WorkspacesHandle,
+    WorkspaceWorktreeBootstrapConfigRouteResponse,
 };
 
 impl WorkspacesHandle {
@@ -91,7 +92,7 @@ impl WorkspacesHandle {
     pub async fn workspace_execution_config_for_route_params(
         &self,
         params: WorkspaceRouteParams,
-    ) -> Result<WorkspaceExecutionConfigSnapshot, WorkspaceRouteError> {
+    ) -> Result<WorkspaceExecutionConfigRouteSnapshot, WorkspaceRouteError> {
         let workspace_id = params.parse_workspace_id()?;
         self.workspace_execution_config_for_request(workspace_id)
             .await

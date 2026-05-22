@@ -11,13 +11,17 @@ use super::model_preferences::{
     WorkspaceProviderModelPreference, WorkspaceProviderModelPreferenceError,
 };
 use super::route_config::{
-    parse_workspace_route_id, provider_model_preference_error, request_or_policy_route_error,
-    workspace_store_error, workspace_store_route_error, AgentSystemPromptConfigRouteResponse,
+    agent_system_prompt_config_route_response, merge_queue_config_route_response,
+    merge_queue_config_update, provider_model_preference_error,
+    provider_model_preference_route_response, request_or_policy_route_error,
+    subagent_system_prompt_config_route_response, workspace_execution_config_route_snapshot,
+    workspace_store_error, workspace_store_route_error, worktree_bootstrap_config_route_response,
+    worktree_bootstrap_config_update, AgentSystemPromptConfigRouteResponse,
     SubagentSystemPromptConfigRouteResponse, UpdateAgentSystemPromptConfigRouteRequest,
     UpdateSubagentSystemPromptConfigRouteRequest, UpdateWorkspaceExecutionConfigRequest,
     UpdateWorkspaceMergeQueueConfigRequest, UpdateWorkspacePrimaryBranchRequest,
     UpdateWorkspaceProviderModelPreferenceRouteRequest, UpdateWorktreeBootstrapConfigRequest,
-    WorkspaceConfigUpdateResult, WorkspaceExecutionConfigSnapshot,
+    WorkspaceConfigUpdateResult, WorkspaceExecutionConfigRouteSnapshot,
     WorkspaceMergeQueueConfigRouteResponse, WorkspacePrimaryBranchSnapshot,
     WorkspacePromptConfigRouteParams, WorkspaceProviderModelPreferenceRouteParams,
     WorkspaceProviderModelPreferenceRouteResponse, WorkspaceRouteError,
@@ -194,7 +198,7 @@ impl WorkspacesHandle {
     pub async fn workspace_execution_config_for_request(
         &self,
         workspace_id: WorkspaceId,
-    ) -> Result<WorkspaceExecutionConfigSnapshot, WorkspaceRouteError> {
+    ) -> Result<WorkspaceExecutionConfigRouteSnapshot, WorkspaceRouteError> {
         let store = self
             .existing_workspace_store(workspace_id)
             .await
@@ -207,7 +211,7 @@ impl WorkspacesHandle {
         )
         .await
         {
-            Ok(snapshot) => Ok(snapshot),
+            Ok(snapshot) => Ok(workspace_execution_config_route_snapshot(snapshot)),
             Err(
                 ctx_settings_service::WorkspaceExecutionConfigSnapshotError::InvalidWorkspaceConfig(
                     error,
@@ -267,7 +271,7 @@ impl WorkspacesHandle {
         let cfg = workspace_config::load_merge_queue_config(&store)
             .await
             .map_err(WorkspaceRouteError::internal)?;
-        Ok(cfg.into())
+        Ok(merge_queue_config_route_response(cfg))
     }
 
     pub async fn update_workspace_merge_queue_config_for_route(
@@ -281,7 +285,7 @@ impl WorkspacesHandle {
             .map_err(workspace_store_route_error)?;
         let transition = workspace_config::update_merge_queue_config_with_transition(
             &store,
-            req.into_merge_queue_config_update(),
+            merge_queue_config_update(req),
         )
         .await
         .map_err(request_or_policy_route_error)?;
@@ -308,7 +312,7 @@ impl WorkspacesHandle {
         let cfg = workspace_config::load_worktree_bootstrap_config(&store)
             .await
             .map_err(WorkspaceRouteError::internal)?;
-        Ok(cfg.into())
+        Ok(worktree_bootstrap_config_route_response(cfg))
     }
 
     pub async fn update_worktree_bootstrap_config_for_route(
@@ -322,7 +326,7 @@ impl WorkspacesHandle {
             .map_err(workspace_store_route_error)?;
         workspace_config::update_worktree_bootstrap_config(
             &store,
-            req.into_worktree_bootstrap_config_update(),
+            worktree_bootstrap_config_update(req),
         )
         .await
         .map_err(WorkspaceRouteError::bad_request)?;
@@ -378,10 +382,10 @@ impl WorkspacesHandle {
         &self,
         params: WorkspaceProviderModelPreferenceRouteParams,
     ) -> Result<WorkspaceProviderModelPreferenceRouteResponse, WorkspaceRouteError> {
-        let workspace_id = parse_workspace_route_id(&params.workspace_id)?;
-        self.get_workspace_provider_model_preference(workspace_id, &params.provider_id)
+        let workspace_id = params.parse_workspace_id()?;
+        self.get_workspace_provider_model_preference(workspace_id, params.provider_id())
             .await
-            .map(Into::into)
+            .map(provider_model_preference_route_response)
             .map_err(provider_model_preference_error)
     }
 
@@ -390,14 +394,14 @@ impl WorkspacesHandle {
         params: WorkspaceProviderModelPreferenceRouteParams,
         req: UpdateWorkspaceProviderModelPreferenceRouteRequest,
     ) -> Result<WorkspaceProviderModelPreferenceRouteResponse, WorkspaceRouteError> {
-        let workspace_id = parse_workspace_route_id(&params.workspace_id)?;
+        let workspace_id = params.parse_workspace_id()?;
         self.set_workspace_provider_model_preference(
             workspace_id,
-            &params.provider_id,
+            params.provider_id(),
             req.preferred_model_id,
         )
         .await
-        .map(Into::into)
+        .map(provider_model_preference_route_response)
         .map_err(provider_model_preference_error)
     }
 
@@ -405,10 +409,10 @@ impl WorkspacesHandle {
         &self,
         params: WorkspacePromptConfigRouteParams,
     ) -> Result<AgentSystemPromptConfigRouteResponse, WorkspaceRouteError> {
-        let workspace_id = parse_workspace_route_id(&params.workspace_id)?;
+        let workspace_id = params.parse_workspace_id()?;
         self.load_agent_system_prompt_append(workspace_id)
             .await
-            .map(Into::into)
+            .map(agent_system_prompt_config_route_response)
             .map_err(workspace_store_error)
     }
 
@@ -417,10 +421,10 @@ impl WorkspacesHandle {
         params: WorkspacePromptConfigRouteParams,
         req: UpdateAgentSystemPromptConfigRouteRequest,
     ) -> Result<AgentSystemPromptConfigRouteResponse, WorkspaceRouteError> {
-        let workspace_id = parse_workspace_route_id(&params.workspace_id)?;
+        let workspace_id = params.parse_workspace_id()?;
         self.update_agent_system_prompt_append(workspace_id, req.system_prompt_append)
             .await
-            .map(Into::into)
+            .map(agent_system_prompt_config_route_response)
             .map_err(workspace_store_error)
     }
 
@@ -428,10 +432,10 @@ impl WorkspacesHandle {
         &self,
         params: WorkspacePromptConfigRouteParams,
     ) -> Result<SubagentSystemPromptConfigRouteResponse, WorkspaceRouteError> {
-        let workspace_id = parse_workspace_route_id(&params.workspace_id)?;
+        let workspace_id = params.parse_workspace_id()?;
         self.load_subagent_system_prompt_append(workspace_id)
             .await
-            .map(Into::into)
+            .map(subagent_system_prompt_config_route_response)
             .map_err(workspace_store_error)
     }
 
@@ -440,10 +444,10 @@ impl WorkspacesHandle {
         params: WorkspacePromptConfigRouteParams,
         req: UpdateSubagentSystemPromptConfigRouteRequest,
     ) -> Result<SubagentSystemPromptConfigRouteResponse, WorkspaceRouteError> {
-        let workspace_id = parse_workspace_route_id(&params.workspace_id)?;
+        let workspace_id = params.parse_workspace_id()?;
         self.update_subagent_system_prompt_append(workspace_id, req.system_prompt_append)
             .await
-            .map(Into::into)
+            .map(subagent_system_prompt_config_route_response)
             .map_err(workspace_store_error)
     }
 

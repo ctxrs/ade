@@ -1,5 +1,6 @@
 mod attachments;
 mod common;
+mod config;
 mod management;
 mod responses;
 mod stream;
@@ -12,6 +13,15 @@ pub use attachments::{
 };
 pub use common::{
     WorkspaceRouteError, WorkspaceRouteErrorKind, WorkspaceRouteParams, WorktreeRouteParams,
+};
+pub use config::{
+    AgentSystemPromptConfigRouteResponse, SubagentSystemPromptConfigRouteResponse,
+    UpdateAgentSystemPromptConfigRouteRequest, UpdateSubagentSystemPromptConfigRouteRequest,
+    UpdateWorkspaceExecutionConfigRequest, UpdateWorkspaceMergeQueueConfigRequest,
+    UpdateWorkspaceProviderModelPreferenceRouteRequest, UpdateWorktreeBootstrapConfigRequest,
+    WorkspaceExecutionConfigRouteSnapshot, WorkspaceMergeQueueConfigRouteResponse,
+    WorkspacePromptConfigRouteParams, WorkspaceProviderModelPreferenceRouteParams,
+    WorkspaceProviderModelPreferenceRouteResponse, WorkspaceWorktreeBootstrapConfigRouteResponse,
 };
 pub use management::{
     CreateWorkspaceRequest, UpdateWorkspacePrimaryBranchRequest, WorkspaceConfigUpdateResult,

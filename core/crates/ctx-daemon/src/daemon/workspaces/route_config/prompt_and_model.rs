@@ -1,98 +1,14 @@
-use ctx_core::ids::WorkspaceId;
 use ctx_observability::logs;
+use ctx_route_contracts::workspaces::{
+    AgentSystemPromptConfigRouteResponse, SubagentSystemPromptConfigRouteResponse,
+    WorkspaceProviderModelPreferenceRouteResponse, WorkspaceRouteError,
+};
 use ctx_workspace_config as workspace_config;
-use serde::{Deserialize, Serialize};
 
 use crate::daemon::workspaces::{
-    WorkspaceProviderModelPreference, WorkspaceProviderModelPreferenceError, WorkspaceRouteError,
+    WorkspaceProviderModelPreference, WorkspaceProviderModelPreferenceError,
 };
 use crate::daemon::WorkspaceStoreAccessError;
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct WorkspaceProviderModelPreferenceRouteParams {
-    pub(in crate::daemon::workspaces) workspace_id: String,
-    pub(in crate::daemon::workspaces) provider_id: String,
-}
-
-impl WorkspaceProviderModelPreferenceRouteParams {
-    pub fn new(workspace_id: impl Into<String>, provider_id: impl Into<String>) -> Self {
-        Self {
-            workspace_id: workspace_id.into(),
-            provider_id: provider_id.into(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct WorkspacePromptConfigRouteParams {
-    pub(in crate::daemon::workspaces) workspace_id: String,
-}
-
-impl WorkspacePromptConfigRouteParams {
-    pub fn new(workspace_id: impl Into<String>) -> Self {
-        Self {
-            workspace_id: workspace_id.into(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, Eq, PartialEq)]
-pub struct UpdateWorkspaceProviderModelPreferenceRouteRequest {
-    #[serde(default)]
-    pub(in crate::daemon::workspaces) preferred_model_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Eq, PartialEq)]
-pub struct WorkspaceProviderModelPreferenceRouteResponse {
-    provider_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    preferred_model_id: Option<String>,
-}
-
-impl From<WorkspaceProviderModelPreference> for WorkspaceProviderModelPreferenceRouteResponse {
-    fn from(value: WorkspaceProviderModelPreference) -> Self {
-        Self {
-            provider_id: value.provider_id,
-            preferred_model_id: value.preferred_model_id,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, Eq, PartialEq)]
-pub struct UpdateAgentSystemPromptConfigRouteRequest {
-    #[serde(default)]
-    pub(in crate::daemon::workspaces) system_prompt_append: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, Eq, PartialEq)]
-pub struct UpdateSubagentSystemPromptConfigRouteRequest {
-    #[serde(default)]
-    pub(in crate::daemon::workspaces) system_prompt_append: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Eq, PartialEq)]
-pub struct AgentSystemPromptConfigRouteResponse {
-    default_append: String,
-    configured_append: Option<String>,
-    effective_append: Option<String>,
-    source: String,
-}
-
-#[derive(Debug, Clone, Serialize, Eq, PartialEq)]
-pub struct SubagentSystemPromptConfigRouteResponse {
-    default_append: String,
-    configured_append: Option<String>,
-    effective_append: Option<String>,
-    source: String,
-}
-
-pub(in crate::daemon::workspaces) fn parse_workspace_route_id(
-    value: &str,
-) -> Result<WorkspaceId, WorkspaceRouteError> {
-    uuid::Uuid::parse_str(value)
-        .map(WorkspaceId)
-        .map_err(|_| WorkspaceRouteError::bad_request("invalid workspace id"))
-}
 
 pub(in crate::daemon::workspaces) fn provider_model_preference_error(
     error: WorkspaceProviderModelPreferenceError,
@@ -116,6 +32,12 @@ pub(in crate::daemon::workspaces) fn provider_model_preference_error(
             ))
         }
     }
+}
+
+pub(in crate::daemon::workspaces) fn provider_model_preference_route_response(
+    value: WorkspaceProviderModelPreference,
+) -> WorkspaceProviderModelPreferenceRouteResponse {
+    WorkspaceProviderModelPreferenceRouteResponse::new(value.provider_id, value.preferred_model_id)
 }
 
 pub(in crate::daemon::workspaces) fn workspace_store_error(
@@ -143,78 +65,43 @@ fn configured_append(value: &Option<String>) -> Option<String> {
     value.as_ref().map(|value| value.trim().to_string())
 }
 
-impl From<workspace_config::AgentSystemPromptAppendConfig>
-    for AgentSystemPromptConfigRouteResponse
-{
-    fn from(cfg: workspace_config::AgentSystemPromptAppendConfig) -> Self {
-        Self {
-            default_append: cfg.default_append.clone(),
-            configured_append: configured_append(&cfg.configured_append),
-            effective_append: cfg.effective_append(),
-            source: source_label(cfg.source()),
-        }
-    }
+pub(in crate::daemon::workspaces) fn agent_system_prompt_config_route_response(
+    cfg: workspace_config::AgentSystemPromptAppendConfig,
+) -> AgentSystemPromptConfigRouteResponse {
+    AgentSystemPromptConfigRouteResponse::new(
+        cfg.default_append.clone(),
+        configured_append(&cfg.configured_append),
+        cfg.effective_append(),
+        source_label(cfg.source()),
+    )
 }
 
-impl From<workspace_config::SubagentSystemPromptAppendConfig>
-    for SubagentSystemPromptConfigRouteResponse
-{
-    fn from(cfg: workspace_config::SubagentSystemPromptAppendConfig) -> Self {
-        Self {
-            default_append: cfg.default_append.clone(),
-            configured_append: configured_append(&cfg.configured_append),
-            effective_append: cfg.effective_append(),
-            source: source_label(cfg.source()),
-        }
-    }
+pub(in crate::daemon::workspaces) fn subagent_system_prompt_config_route_response(
+    cfg: workspace_config::SubagentSystemPromptAppendConfig,
+) -> SubagentSystemPromptConfigRouteResponse {
+    SubagentSystemPromptConfigRouteResponse::new(
+        cfg.default_append.clone(),
+        configured_append(&cfg.configured_append),
+        cfg.effective_append(),
+        source_label(cfg.source()),
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ctx_route_contracts::workspaces::{
+        UpdateWorkspaceProviderModelPreferenceRouteRequest,
+        WorkspaceProviderModelPreferenceRouteParams,
+    };
     use serde_json::json;
 
     #[test]
-    fn route_requests_preserve_defaults_and_unknown_field_compatibility() {
-        let provider: UpdateWorkspaceProviderModelPreferenceRouteRequest =
-            serde_json::from_value(json!({
-                "unknown": "ignored"
-            }))
-            .expect("provider preference request");
-        assert_eq!(provider.preferred_model_id, None);
-
-        let provider: UpdateWorkspaceProviderModelPreferenceRouteRequest =
-            serde_json::from_value(json!({
-                "preferred_model_id": " gpt-5.4/xhigh ",
-                "unknown": "ignored"
-            }))
-            .expect("provider preference request");
-        assert_eq!(
-            provider.preferred_model_id.as_deref(),
-            Some(" gpt-5.4/xhigh ")
-        );
-
-        let agent: UpdateAgentSystemPromptConfigRouteRequest = serde_json::from_value(json!({
-            "unknown": "ignored"
-        }))
-        .expect("agent prompt request");
-        assert_eq!(agent.system_prompt_append, None);
-
-        let subagent: UpdateSubagentSystemPromptConfigRouteRequest =
-            serde_json::from_value(json!({
-                "unknown": "ignored"
-            }))
-            .expect("subagent prompt request");
-        assert_eq!(subagent.system_prompt_append, None);
-    }
-
-    #[test]
     fn provider_preference_response_omits_absent_model() {
-        let response =
-            WorkspaceProviderModelPreferenceRouteResponse::from(WorkspaceProviderModelPreference {
-                provider_id: "codex".to_string(),
-                preferred_model_id: None,
-            });
+        let response = provider_model_preference_route_response(WorkspaceProviderModelPreference {
+            provider_id: "codex".to_string(),
+            preferred_model_id: None,
+        });
 
         assert_eq!(
             serde_json::to_value(response).unwrap(),
@@ -270,8 +157,10 @@ mod tests {
     }
 
     #[test]
-    fn parse_workspace_route_id_rejects_invalid_ids_with_wire_message() {
-        let error = parse_workspace_route_id("not-a-workspace").unwrap_err();
+    fn route_params_reject_invalid_ids_with_wire_message() {
+        let error = WorkspaceProviderModelPreferenceRouteParams::new("not-a-workspace", "codex")
+            .parse_workspace_id()
+            .unwrap_err();
         assert_eq!(
             error.kind(),
             crate::daemon::workspaces::WorkspaceRouteErrorKind::BadRequest
@@ -281,7 +170,7 @@ mod tests {
 
     #[test]
     fn prompt_response_projection_preserves_source_and_trimming() {
-        let response = AgentSystemPromptConfigRouteResponse::from(
+        let response = agent_system_prompt_config_route_response(
             workspace_config::AgentSystemPromptAppendConfig {
                 default_append: "Default".to_string(),
                 configured_append: Some("  Configured  ".to_string()),
@@ -298,7 +187,7 @@ mod tests {
             })
         );
 
-        let response = SubagentSystemPromptConfigRouteResponse::from(
+        let response = subagent_system_prompt_config_route_response(
             workspace_config::SubagentSystemPromptAppendConfig {
                 default_append: "Subagent default".to_string(),
                 configured_append: None,

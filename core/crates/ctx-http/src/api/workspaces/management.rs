@@ -65,7 +65,7 @@ pub(in crate::api) async fn update_workspace_primary_branch(
 pub(in crate::api) async fn get_execution_config(
     State(workspaces): State<WorkspacesHandle>,
     Path(id): Path<String>,
-) -> Result<Json<WorkspaceExecutionConfigSnapshot>, (StatusCode, Json<ApiErrorResp>)> {
+) -> Result<Json<WorkspaceExecutionConfigRouteSnapshot>, (StatusCode, Json<ApiErrorResp>)> {
     workspaces
         .workspace_execution_config_for_route_params(WorkspaceRouteParams::new(id))
         .await
