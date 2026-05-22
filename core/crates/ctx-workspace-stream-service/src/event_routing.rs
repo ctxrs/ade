@@ -100,6 +100,7 @@ pub fn plan_workspace_stream_event_route(
             ..
         } => {
             if !should_stream_head_delta(
+                &subscription_state.active_task_sessions,
                 &subscription_state.explicit_sessions,
                 subscription_state.foreground_session_ids.as_ref(),
                 delta.session_id,
@@ -166,11 +167,15 @@ pub fn is_foreground_session(
 }
 
 pub fn should_stream_head_delta(
+    active_task_sessions: &HashMap<TaskId, SessionId>,
     explicit_sessions: &HashSet<SessionId>,
     foreground_session_ids: Option<&HashSet<SessionId>>,
     session_id: SessionId,
 ) -> bool {
-    explicit_sessions.contains(&session_id)
+    active_task_sessions
+        .values()
+        .any(|active_session_id| *active_session_id == session_id)
+        || explicit_sessions.contains(&session_id)
         || allows_partial_for_foreground_session(foreground_session_ids, session_id)
 }
 
@@ -259,7 +264,7 @@ mod tests {
     }
 
     #[test]
-    fn active_scope_only_session_head_deltas_are_not_routed() {
+    fn active_scope_primary_session_head_deltas_are_routed() {
         let workspace_id = WorkspaceId::new();
         let task_id = TaskId::new();
         let session_id = SessionId::new();
@@ -278,7 +283,13 @@ mod tests {
             },
         );
 
-        assert!(matches!(plan, WorkspaceStreamEventRoutePlan::Drop));
+        assert!(matches!(
+            plan,
+            WorkspaceStreamEventRoutePlan::HeadDelta {
+                lane: WorkspaceStreamHeadLane::Background,
+                ..
+            }
+        ));
     }
 
     #[test]

@@ -1102,7 +1102,7 @@ dependencies = [
 
 [[package]]
 name = "ctx-http"
-version = "0.65.123"
+version = "0.65.124"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2149,6 +2149,7 @@ dependencies = [
  "chrono",
  "ctx-core",
  "ctx-workspace-active-snapshot",
+ "serde_json",
  "tokio",
 ]
 

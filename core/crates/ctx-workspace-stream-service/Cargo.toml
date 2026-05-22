@@ -10,4 +10,5 @@ ctx-workspace-active-snapshot = { path = "../ctx-workspace-active-snapshot" }
 
 [dev-dependencies]
 chrono.workspace = true
+serde_json.workspace = true
 tokio.workspace = true
