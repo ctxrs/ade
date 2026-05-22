@@ -7,7 +7,7 @@ use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use tokio::sync::{mpsc, oneshot};
 
 use super::shim::create_claude_browser_open_shim;
-use crate::daemon::providers::ProviderLoginRuntimeCommand;
+use ctx_provider_runtime::provider_login_runtime::ProviderLoginRuntimeCommand;
 use output::pump_claude_login_output;
 
 #[path = "process/output.rs"]

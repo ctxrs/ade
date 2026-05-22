@@ -74,6 +74,17 @@ pub struct ProviderAuthImportResult {
     pub message: Option<String>,
 }
 
+pub fn provider_auth_import_result_mutates_effective_auth(
+    result: &ProviderAuthImportResult,
+) -> bool {
+    // `already_imported` can still mutate active account selection through
+    // dedupe/upsert paths, so it is auth-affecting even when the secret is not new.
+    matches!(
+        result.status.as_str(),
+        "imported" | "updated" | "already_imported"
+    )
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderImportedAuthProfile {
     pub id: String,

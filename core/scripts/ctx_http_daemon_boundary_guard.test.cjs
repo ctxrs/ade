@@ -65,6 +65,7 @@ const {
   TASK_ROUTE_API_CONTRACT_PATTERNS,
   PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS,
   PROVIDER_AUTH_IMPORT_API_ORCHESTRATION_PATTERNS,
+  PROVIDER_TEST_HELPER_DAEMON_IMPORT_PATTERNS,
   PROVIDER_BOOTSTRAP_API_ORCHESTRATION_PATTERNS,
   PROVIDER_HARNESS_CONFIG_API_PATTERNS,
   PROVIDER_HARNESS_ENDPOINT_API_PATTERNS,
@@ -160,6 +161,7 @@ const {
   mobileProfileRouteApiPatternsForPath,
   mobileStorePatternsForPath,
   providerAuthImportApiPatternsForPath,
+  providerTestHelperDaemonImportPatternsForPath,
   providerAuthGlobalIdFixturePatternsForPath,
   providerHarnessConfigApiPatternsForPath,
   providerHarnessEndpointApiPatternsForPath,
@@ -5228,6 +5230,53 @@ test("daemon boundary guard rejects provider auth-import API orchestration", () 
       "provider auth import API stringifies lower-level errors locally",
       "provider auth import API stringifies lower-level errors locally",
     ],
+  );
+});
+
+test("daemon boundary guard rejects moved provider helper imports from daemon", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/providers/tests/install_policy.rs",
+    contents: `
+      use ctx_daemon::daemon::providers::provider_auth_import_result_requires_restart;
+      use ctx_daemon::daemon::providers::{
+        ProviderLoginRuntimeCommand,
+        resolve_claude_login_runtime_from_config,
+      };
+      use ctx_daemon::daemon::{
+        providers::{resolve_cursor_login_runtime_from_config},
+      };
+    `,
+    patterns: PROVIDER_TEST_HELPER_DAEMON_IMPORT_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "provider API imports moved provider test helpers from daemon",
+      "provider API imports moved provider test helpers from daemon",
+      "provider API imports moved provider test helpers from nested daemon providers group",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes moved provider helper imports to provider API tests", () => {
+  assert.equal(
+    providerTestHelperDaemonImportPatternsForPath(
+      "core/crates/ctx-http/src/api/providers/tests/install_policy.rs",
+    ).includes(PROVIDER_TEST_HELPER_DAEMON_IMPORT_PATTERNS[0]),
+    true,
+  );
+  assert.equal(
+    providerTestHelperDaemonImportPatternsForPath(
+      "core/crates/ctx-http/src/api/providers/login/claude/runtime.rs",
+    ).includes(PROVIDER_TEST_HELPER_DAEMON_IMPORT_PATTERNS[0]),
+    true,
+  );
+  assert.deepEqual(
+    providerTestHelperDaemonImportPatternsForPath(
+      "core/crates/ctx-http/src/api/workspaces.rs",
+    ),
+    [],
   );
 });
 

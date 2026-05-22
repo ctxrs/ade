@@ -176,10 +176,7 @@ impl<'a> CanonicalAuthImporter<'a> {
                 label: Some(profile.label.clone()),
             };
             let migrated = match self.import_candidate_to_canonical(&material).await {
-                Ok(result) => matches!(
-                    result.status.as_str(),
-                    "imported" | "updated" | "already_imported"
-                ),
+                Ok(result) => provider_auth_import_result_mutates_effective_auth(&result),
                 Err(_) => false,
             };
             if migrated {

@@ -45,7 +45,9 @@ pub async fn import_provider_auth_candidates(
 
     let mutated_providers: HashSet<String> = results
         .iter()
-        .filter(|result| provider_auth_import_result_requires_restart(result))
+        .filter(|result| {
+            provider_auth_import::provider_auth_import_result_mutates_effective_auth(result)
+        })
         .map(|result| result.provider_id.clone())
         .collect();
     let mut restart_errors = Vec::new();
@@ -68,17 +70,6 @@ pub async fn import_provider_auth_candidates(
     }
 
     Ok(results)
-}
-
-pub fn provider_auth_import_result_requires_restart(
-    result: &provider_auth_import::ProviderAuthImportResult,
-) -> bool {
-    // `already_imported` can still mutate active account selection (dedupe/upsert paths),
-    // so treat it as auth-affecting to avoid stale runtime credentials.
-    matches!(
-        result.status.as_str(),
-        "imported" | "updated" | "already_imported"
-    )
 }
 
 impl ProvidersHandle {

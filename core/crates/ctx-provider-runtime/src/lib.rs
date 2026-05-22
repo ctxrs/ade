@@ -25,6 +25,7 @@ pub mod provider_harness_config;
 pub mod provider_harness_config_route_contract;
 pub mod provider_install_tracker;
 pub mod provider_launch;
+pub mod provider_login_runtime;
 pub mod provider_options;
 pub mod provider_options_route_contract;
 pub mod provider_processes;

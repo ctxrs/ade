@@ -310,6 +310,11 @@ const providerAuthImportApiRoots = [
   "core/crates/ctx-http/src/api/providers/types/auth_import.rs",
 ];
 
+const providerTestHelperDaemonImportRoots = [
+  "core/crates/ctx-http/src/api/providers.rs",
+  "core/crates/ctx-http/src/api/providers/",
+];
+
 const providerStatusApiRoots = [
   "core/crates/ctx-http/src/api/providers.rs",
   "core/crates/ctx-http/src/api/providers/status.rs",
@@ -1963,6 +1968,7 @@ const providerBootstrapRouteContractPattern = String.raw`(?:ProvidersBootstrapRe
 const providerHarnessRouteContractPattern = String.raw`(?:ProviderHarnessConfigRouteError|ProviderHarnessEndpointRouteError(?:Kind)?|ProviderHarnessSourceConfig|SelectProviderHarnessSourceRouteRequest|SetProviderHarnessEndpointManualModelsRouteRequest|UpsertProviderHarnessEndpointRouteRequest)`;
 const providerAdminRouteContractPattern = String.raw`(?:ProviderAdminRouteError(?:Kind)?|ProviderDevRestartRouteRequest|ProviderDevRestartRouteResponse|ProviderDevRestartRouteResult|ProviderMatrixRefreshRouteResponse)`;
 const movedProviderRouteContractPattern = String.raw`(?:${providerBootstrapRouteContractPattern}|${providerHarnessRouteContractPattern}|${providerAdminRouteContractPattern})`;
+const movedProviderTestHelperPattern = String.raw`(?:provider_auth_import_result_requires_restart|resolve_(?:claude|cursor)_login_runtime_from_config|ProviderLoginRuntimeCommand)`;
 
 const PROVIDER_ROUTE_CONTRACT_DAEMON_IMPORT_PATTERNS = [
   {
@@ -1980,6 +1986,27 @@ const PROVIDER_ROUTE_CONTRACT_DAEMON_IMPORT_PATTERNS = [
     regex: /\b\B/,
     contentRegex: new RegExp(
       String.raw`\buse\s+ctx_daemon::daemon::\s*\{(?=[^;]*\bproviders\s*::\s*\{[^;]*\b${movedProviderRouteContractPattern}\b)[^;]*;`,
+      "gm",
+    ),
+  },
+];
+
+const PROVIDER_TEST_HELPER_DAEMON_IMPORT_PATTERNS = [
+  {
+    name: "provider API imports moved provider test helpers from daemon",
+    regex: new RegExp(
+      String.raw`\bctx_daemon::daemon::providers::(?:\{[^}]*\b${movedProviderTestHelperPattern}\b|${movedProviderTestHelperPattern}\b)`,
+    ),
+    contentRegex: new RegExp(
+      String.raw`\buse\s+ctx_daemon::daemon::providers::\s*\{(?=[^}]*\b${movedProviderTestHelperPattern}\b)[^}]*\}\s*;`,
+      "gm",
+    ),
+  },
+  {
+    name: "provider API imports moved provider test helpers from nested daemon providers group",
+    regex: /\b\B/,
+    contentRegex: new RegExp(
+      String.raw`\buse\s+ctx_daemon::daemon::\s*\{(?=[^;]*\bproviders\s*::\s*\{[^;]*\b${movedProviderTestHelperPattern}\b)[^;]*;`,
       "gm",
     ),
   },
@@ -5944,6 +5971,13 @@ function providerAuthImportApiPatternsForPath(relativePath) {
   return [];
 }
 
+function providerTestHelperDaemonImportPatternsForPath(relativePath) {
+  if (providerTestHelperDaemonImportRoots.some((root) => relativePath.startsWith(root))) {
+    return PROVIDER_TEST_HELPER_DAEMON_IMPORT_PATTERNS;
+  }
+  return [];
+}
+
 function providerStatusApiPatternsForPath(relativePath) {
   if (providerStatusApiRoots.some((root) => relativePath.startsWith(root))) {
     return PROVIDER_STATUS_API_ORCHESTRATION_PATTERNS;
@@ -6439,6 +6473,17 @@ function scanRepo() {
         filePath: relativePath,
         contents,
         patterns: apiPatternsForPath(relativePath),
+      }),
+    );
+  }
+
+  for (const filePath of listRustFiles(apiRoot)) {
+    const relativePath = repoRelative(filePath);
+    violations.push(
+      ...scanText({
+        filePath: relativePath,
+        contents: fs.readFileSync(filePath, "utf8"),
+        patterns: providerTestHelperDaemonImportPatternsForPath(relativePath),
       }),
     );
   }
@@ -6954,6 +6999,7 @@ module.exports = {
   PROVIDER_LAUNCH_AUTH_API_PATTERNS,
   PROVIDER_LAUNCH_OPTIONS_API_PATTERNS,
   PROVIDER_AUTH_IMPORT_API_ORCHESTRATION_PATTERNS,
+  PROVIDER_TEST_HELPER_DAEMON_IMPORT_PATTERNS,
   PROVIDER_STATUS_API_ORCHESTRATION_PATTERNS,
   PROVIDER_USAGE_API_ORCHESTRATION_PATTERNS,
   PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS,
@@ -7039,6 +7085,7 @@ module.exports = {
   mobileProfileRouteApiPatternsForPath,
   mobileStorePatternsForPath,
   providerAuthImportApiPatternsForPath,
+  providerTestHelperDaemonImportPatternsForPath,
   providerAuthGlobalIdFixturePatternsForPath,
   providerHarnessConfigApiPatternsForPath,
   providerHarnessEndpointApiPatternsForPath,

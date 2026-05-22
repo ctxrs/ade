@@ -10,8 +10,6 @@ use ctx_provider_accounts::{
 
 use crate::daemon::providers::{login_runtime, login_sessions, StartedLoginSession};
 use crate::daemon::{DaemonState, ProvidersHandle};
-#[cfg(test)]
-use login_runtime::resolve_cursor_login_runtime_from_config;
 
 mod auth_url;
 mod capture;
@@ -118,6 +116,8 @@ mod route_tests {
     use ctx_provider_accounts as provider_accounts;
 
     use super::*;
+    use crate::test_support::TestDaemon;
+    use ctx_managed_installs as installer;
 
     #[test]
     fn cursor_login_route_missing_status_preserves_not_found_message() {
@@ -194,5 +194,54 @@ mod route_tests {
             serde_json::to_value(CursorLoginStatusRouteResponse::from(status.clone())).unwrap(),
             serde_json::to_value(status).unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn cursor_login_start_rejects_missing_runtime_without_session() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let daemon =
+            TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+                .await
+                .expect("test daemon");
+
+        let err = daemon
+            .handle()
+            .providers()
+            .start_cursor_login_for_route(CursorLoginStartRouteRequest::default())
+            .await
+            .expect_err("missing runtime should fail before session creation");
+
+        assert_eq!(err.kind(), CursorLoginRouteErrorKind::BadRequest);
+        assert!(err
+            .message()
+            .contains("runtime_command_missing: provider=cursor-login"));
+        assert!(daemon.provider_login_session_caches_empty().await);
+    }
+
+    #[tokio::test]
+    async fn cursor_login_start_rejects_config_parse_error_without_session() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let cfg_path = installer::agent_server_config_path(temp.path());
+        tokio::fs::create_dir_all(cfg_path.parent().expect("config parent"))
+            .await
+            .expect("create config parent");
+        tokio::fs::write(&cfg_path, b"{not-json")
+            .await
+            .expect("write malformed config");
+        let daemon =
+            TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+                .await
+                .expect("test daemon");
+
+        let err = daemon
+            .handle()
+            .providers()
+            .start_cursor_login_for_route(CursorLoginStartRouteRequest::default())
+            .await
+            .expect_err("config parse failure should fail before session creation");
+
+        assert_eq!(err.kind(), CursorLoginRouteErrorKind::Internal);
+        assert!(err.message().contains("agent server config"));
+        assert!(daemon.provider_login_session_caches_empty().await);
     }
 }

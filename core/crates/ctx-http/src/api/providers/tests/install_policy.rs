@@ -1,38 +1,6 @@
 use super::*;
 
 #[test]
-fn import_result_restart_filter_treats_already_imported_as_mutation() {
-    let already_imported = provider_auth_import::ProviderAuthImportResult {
-        candidate_id: "cand-1".to_string(),
-        provider_id: "claude-crp".to_string(),
-        status: "already_imported".to_string(),
-        profile_id: Some("acct-1".to_string()),
-        message: Some("Matching credential already imported.".to_string()),
-    };
-    assert!(import_result_requires_provider_restart(&already_imported));
-}
-
-#[test]
-fn import_result_restart_filter_ignores_non_mutating_statuses() {
-    let unsupported = provider_auth_import::ProviderAuthImportResult {
-        candidate_id: "cand-2".to_string(),
-        provider_id: "cursor".to_string(),
-        status: "unsupported".to_string(),
-        profile_id: None,
-        message: Some("Unsupported in this flow.".to_string()),
-    };
-    let error = provider_auth_import::ProviderAuthImportResult {
-        candidate_id: "cand-3".to_string(),
-        provider_id: "codex".to_string(),
-        status: "error".to_string(),
-        profile_id: None,
-        message: Some("failed".to_string()),
-    };
-    assert!(!import_result_requires_provider_restart(&unsupported));
-    assert!(!import_result_requires_provider_restart(&error));
-}
-
-#[test]
 fn apply_install_target_status_marks_mismatched_managed_target_missing() {
     let mut status = ctx_providers::adapters::ProviderStatus {
         provider_id: "codex".to_string(),

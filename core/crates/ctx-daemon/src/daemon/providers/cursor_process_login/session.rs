@@ -1,6 +1,7 @@
 use super::capture::parse_cursor_captured_tokens;
 use super::*;
-use crate::daemon::providers::{accounts, login_sessions, ProviderLoginRuntimeCommand};
+use crate::daemon::providers::{accounts, login_sessions};
+use ctx_provider_runtime::provider_login_runtime::ProviderLoginRuntimeCommand;
 
 mod command;
 mod completion;

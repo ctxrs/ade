@@ -30,6 +30,44 @@ impl Drop for EnvGuard {
     }
 }
 
+#[test]
+fn import_result_mutation_filter_treats_already_imported_as_mutation() {
+    let already_imported = ProviderAuthImportResult {
+        candidate_id: "cand-1".to_string(),
+        provider_id: "claude-crp".to_string(),
+        status: "already_imported".to_string(),
+        profile_id: Some("acct-1".to_string()),
+        message: Some("Matching credential already imported.".to_string()),
+    };
+
+    assert!(provider_auth_import_result_mutates_effective_auth(
+        &already_imported
+    ));
+}
+
+#[test]
+fn import_result_mutation_filter_ignores_non_mutating_statuses() {
+    let unsupported = ProviderAuthImportResult {
+        candidate_id: "cand-2".to_string(),
+        provider_id: "cursor".to_string(),
+        status: "unsupported".to_string(),
+        profile_id: None,
+        message: Some("Unsupported in this flow.".to_string()),
+    };
+    let error = ProviderAuthImportResult {
+        candidate_id: "cand-3".to_string(),
+        provider_id: "codex".to_string(),
+        status: "error".to_string(),
+        profile_id: None,
+        message: Some("failed".to_string()),
+    };
+
+    assert!(!provider_auth_import_result_mutates_effective_auth(
+        &unsupported
+    ));
+    assert!(!provider_auth_import_result_mutates_effective_auth(&error));
+}
+
 async fn write_legacy_secret_material(
     data_root: &Path,
     profile_id: &str,

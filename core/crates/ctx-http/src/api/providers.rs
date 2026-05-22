@@ -33,8 +33,6 @@ use ctx_provider_accounts::route_contract::{
     ProviderLoginStartRouteResponse, QwenLoginStatusRouteResponse,
 };
 #[cfg(test)]
-use ctx_provider_auth_import as provider_auth_import;
-#[cfg(test)]
 use ctx_provider_install::install_state::InstallId;
 #[cfg(test)]
 use ctx_provider_install::install_state::InstallTarget;
@@ -84,8 +82,6 @@ pub(super) use login::{
 pub(super) use status::{get_provider, get_provider_usage, list_providers};
 
 #[cfg(test)]
-use ctx_daemon::daemon::providers::provider_auth_import_result_requires_restart as import_result_requires_provider_restart;
-#[cfg(test)]
 use ctx_provider_runtime::provider_auth::{
     endpoint_selection_is_active, provider_auth_mode, provider_has_active_auth_config,
 };
@@ -96,9 +92,6 @@ use ctx_provider_runtime::{
     ProviderUsageRouteQuery, ProviderUsageRouteSnapshot, SelectProviderHarnessSourceRouteRequest,
 };
 #[cfg(test)]
-use login::{
-    expected_callback_from_auth_url, resolve_claude_login_runtime_from_config,
-    validate_callback_url,
-};
+use login::{expected_callback_from_auth_url, validate_callback_url};
 #[cfg(test)]
 mod tests;

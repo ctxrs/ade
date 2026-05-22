@@ -41,7 +41,6 @@ pub(crate) use accounts::persist_successful_codex_login;
 pub use auth_check::{
     authenticate_provider_for_workspace, verify_provider_for_workspace, ProviderAuthCheckError,
 };
-pub use auth_import::provider_auth_import_result_requires_restart;
 pub use auth_import::{
     import_provider_auth_candidates, list_provider_auth_import_candidates,
     list_provider_auth_import_profiles,
@@ -61,7 +60,6 @@ pub use installs::{
 pub use launch_config::{
     load_provider_launch_config_snapshot, ProviderLaunchConfigError, ProviderLaunchConfigSnapshot,
 };
-pub use login_runtime::{resolve_claude_login_runtime_from_config, ProviderLoginRuntimeCommand};
 pub use login_sessions::{
     claim_codex_login_callback, claude_login_status, codex_login_status, codex_login_statuses,
     cursor_login_status, finish_codex_login_session, remove_codex_login_session,

@@ -1,6 +1,6 @@
 use super::*;
 
-use crate::daemon::providers::ProviderLoginRuntimeCommand;
+use ctx_provider_runtime::provider_login_runtime::ProviderLoginRuntimeCommand;
 
 pub(in crate::daemon::providers::claude_setup_token_login) async fn start_claude_login_process(
     runtime: &ProviderLoginRuntimeCommand,
