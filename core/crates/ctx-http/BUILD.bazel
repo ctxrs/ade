@@ -14,7 +14,7 @@ exports_files(["Cargo.toml"])
 
 CTX_HTTP_RUSTC_ENV = {
     "CARGO_MANIFEST_DIR": "core/crates/ctx-http",
-    "CARGO_PKG_VERSION": "0.65.126",
+    "CARGO_PKG_VERSION": "0.65.127",
 }
 
 CTX_HTTP_RUNTIME_COMPILE_DATA = [
@@ -288,6 +288,7 @@ CTX_HTTP_SHARED_INTERNAL_TEST_SUPPORT_DEPS = [
     "//core/crates/ctx-http-auth:lib",
     "//core/crates/ctx-mcp-auth:lib",
     "//core/crates/ctx-mcp-command:lib",
+    "//core/crates/ctx-mobile-access-service:lib",
     "//core/crates/ctx-observability:lib_test_support",
     "//core/crates/ctx-provider-accounts:lib",
     "//core/crates/ctx-provider-auth-import:lib",
