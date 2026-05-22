@@ -7,7 +7,8 @@ use tokio_tungstenite::tungstenite::{
     protocol::CloseFrame as TungsteniteCloseFrame, Message as TungsteniteMessage,
 };
 
-use ctx_daemon::daemon::{web_sessions::WebSessionAccessError, TransportHandle};
+use ctx_daemon::daemon::TransportHandle;
+use ctx_transport_runtime::web_sessions::WebSessionAccessError;
 
 use super::super::web_sessions::WebSessionStreamAccessQuery;
 

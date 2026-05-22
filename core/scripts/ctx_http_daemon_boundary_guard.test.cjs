@@ -30,6 +30,7 @@ const {
   ROUTE_FILE_DOWNLOAD_API_PATTERNS,
   SESSION_ARTIFACT_API_ROUTE_CONTRACT_PATTERNS,
   RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS,
+  WEB_SESSION_ACCESS_ERROR_API_PATTERNS,
   WEB_SESSION_REST_ROUTE_API_CONTRACT_PATTERNS,
   WORKSPACE_CONFIG_ROUTE_CONTEXT_PATTERNS,
   WORKSPACE_EXECUTION_CONFIG_API_PATTERNS,
@@ -3412,7 +3413,12 @@ test("daemon boundary guard rejects web-session REST route contract leaks", () =
   const violations = scanText({
     filePath: "core/crates/ctx-http/src/api/web_sessions/actions.rs",
     contents: `
-      use ctx_daemon::daemon::web_sessions::{WebSessionActionError, WebSessionLaunchRequest};
+      use ctx_daemon::daemon::web_sessions::{
+        WebSessionAccessError, WebSessionActionError, WebSessionLaunchRequest,
+      };
+      use ctx_daemon::daemon::{web_sessions::WebSessionAccessError};
+      use ctx_daemon::{daemon::web_sessions::WebSessionAccessError};
+      use ctx_daemon::{daemon::{web_sessions::WebSessionAccessError, TransportHandle}};
       struct WebSessionListQuery {
         session_id: Option<String>,
       }
@@ -3430,12 +3436,22 @@ test("daemon boundary guard rejects web-session REST route contract leaks", () =
         let _ = state.close_web_session(&id).await;
       }
     `,
-    patterns: WEB_SESSION_REST_ROUTE_API_CONTRACT_PATTERNS,
+    patterns: [
+      ...WEB_SESSION_ACCESS_ERROR_API_PATTERNS,
+      ...WEB_SESSION_REST_ROUTE_API_CONTRACT_PATTERNS,
+    ],
   });
 
   assert.deepEqual(
     violations.map((violation) => violation.name),
     [
+      "web-session API imports moved access error from daemon",
+      "web-session API imports moved access error from daemon",
+      "web-session API imports moved access error from daemon",
+      "web-session API imports moved access error from daemon",
+      "web-session API imports moved access error from daemon",
+      "web-session API imports moved access error from daemon",
+      "web-session API imports moved access error from daemon",
       "web-session REST API owns session/worktree ids or local id parsing",
       "web-session REST API owns session/worktree ids or local id parsing",
       "web-session REST API exposes old local route DTOs",
@@ -3452,6 +3468,25 @@ test("daemon boundary guard rejects web-session REST route contract leaks", () =
       "web-session REST API calls low-level transport facades directly",
     ],
   );
+});
+
+test("daemon boundary guard allows web-session signal/view transport access error", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/src/api/web_sessions/stream_view.rs",
+    "core/crates/ctx-http/src/api/ws/web_session.rs",
+  ]) {
+    const violations = scanText({
+      filePath,
+      contents: `
+        use ctx_daemon::daemon::TransportHandle;
+        use ctx_transport_runtime::web_sessions::WebSessionAccessError;
+        fn status(error: WebSessionAccessError) {}
+      `,
+      patterns: apiPatternsForPath(filePath),
+    });
+
+    assert.deepEqual(violations, []);
+  }
 });
 
 test("daemon boundary guard scopes web-session REST route contract roots", () => {
@@ -3483,6 +3518,17 @@ test("daemon boundary guard scopes web-session REST route contract roots", () =>
     webSessionRestRouteApiPatternsForPath("core/crates/ctx-http/src/api/ws/web_session.rs"),
     [],
   );
+  for (const filePath of [
+    "core/crates/ctx-http/src/api/web_sessions/creation.rs",
+    "core/crates/ctx-http/src/api/web_sessions/actions.rs",
+    "core/crates/ctx-http/src/api/web_sessions/stream_view.rs",
+    "core/crates/ctx-http/src/api/ws/web_session.rs",
+  ]) {
+    assert.equal(
+      apiPatternsForPath(filePath).includes(WEB_SESSION_ACCESS_ERROR_API_PATTERNS[0]),
+      true,
+    );
+  }
   assert.deepEqual(
     scanText({
       filePath: "core/crates/ctx-http/src/api/web_sessions/actions.rs",

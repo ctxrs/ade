@@ -208,6 +208,12 @@ const webSessionRestRouteApiRoots = [
   "core/crates/ctx-http/src/api/web_sessions/actions.rs",
 ];
 
+const webSessionAccessErrorApiRoots = [
+  ...webSessionRestRouteApiRoots,
+  "core/crates/ctx-http/src/api/web_sessions/stream_view.rs",
+  "core/crates/ctx-http/src/api/ws/web_session.rs",
+];
+
 const sessionHeadApiRoots = [
   "core/crates/ctx-http/src/api/sessions/snapshot/head.rs",
   "core/crates/ctx-http/src/api/sessions/snapshot/head_metrics.rs",
@@ -1567,6 +1573,16 @@ const RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS = [
   {
     name: "run archive API owns ingest error mapping",
     regex: /\brun_archive_ingest_api_error\s*\(/,
+  },
+];
+
+const WEB_SESSION_ACCESS_ERROR_API_PATTERNS = [
+  {
+    name: "web-session API imports moved access error from daemon",
+    regex:
+      /\bctx_daemon(?:::daemon(?:::web_sessions::(?:\{[^}]*\bWebSessionAccessError\b|WebSessionAccessError\b)|::\s*\{[^;]*\bweb_sessions\s*::\s*(?:\{[^;]*\bWebSessionAccessError\b|WebSessionAccessError\b))|::\s*\{[^;]*\bdaemon\s*::\s*(?:web_sessions\s*::\s*(?:\{[^;]*\bWebSessionAccessError\b|WebSessionAccessError\b)|\{[^;]*\bweb_sessions\s*::\s*(?:\{[^;]*\bWebSessionAccessError\b|WebSessionAccessError\b)))/,
+    contentRegex:
+      /\buse\s+ctx_daemon(?:::daemon(?:::web_sessions::\s*\{(?=[^;]*\bWebSessionAccessError\b)[^;]*|::\s*\{(?=[^;]*\bweb_sessions\s*::\s*(?:\{[^;]*\bWebSessionAccessError\b|WebSessionAccessError\b))[^;]*)|::\s*\{(?=[^;]*\bdaemon\s*::\s*(?:web_sessions\s*::\s*(?:\{[^;]*\bWebSessionAccessError\b|WebSessionAccessError\b)|\{[^;]*\bweb_sessions\s*::\s*(?:\{[^;]*\bWebSessionAccessError\b|WebSessionAccessError\b)))[^;]*)\s*;/gm,
   },
 ];
 
@@ -5580,6 +5596,9 @@ function apiPatternsForPath(relativePath) {
   if (runArchiveApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS);
   }
+  if (webSessionAccessErrorApiRoots.some((root) => relativePath === root)) {
+    patterns.push(...WEB_SESSION_ACCESS_ERROR_API_PATTERNS);
+  }
   if (webSessionRestRouteApiRoots.some((root) => relativePath === root)) {
     patterns.push(...WEB_SESSION_REST_ROUTE_API_CONTRACT_PATTERNS);
   }
@@ -6809,6 +6828,7 @@ module.exports = {
   ROUTE_FILE_DOWNLOAD_API_PATTERNS,
   SESSION_ARTIFACT_API_ROUTE_CONTRACT_PATTERNS,
   RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS,
+  WEB_SESSION_ACCESS_ERROR_API_PATTERNS,
   WEB_SESSION_REST_ROUTE_API_CONTRACT_PATTERNS,
   SESSION_HEAD_API_ORCHESTRATION_PATTERNS,
   DEMO_SEED_TRANSCRIPT_API_ROUTE_CONTRACT_PATTERNS,
