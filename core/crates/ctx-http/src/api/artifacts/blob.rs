@@ -11,7 +11,7 @@ use serde::Serialize;
 use tokio_util::io::ReaderStream;
 
 use super::super::errors::ApiErrorResp;
-use ctx_daemon::daemon::CoreHandle;
+use ctx_daemon::daemon::BlobHandle;
 
 #[path = "blob/errors.rs"]
 mod errors;
@@ -51,7 +51,7 @@ pub(in crate::api) const MAX_BLOB_MULTIPART_BODY_BYTES: usize =
     SESSION_IMAGE_BLOB_MULTIPART_MAX_BYTES;
 
 pub(in crate::api) async fn upload_blob(
-    State(state): State<CoreHandle>,
+    State(state): State<BlobHandle>,
     req: Request,
 ) -> Result<Json<BlobUploadResp>, (StatusCode, Json<ApiErrorResp>)> {
     let file = parse_blob_upload_file(req, &state).await?;
@@ -64,7 +64,7 @@ pub(in crate::api) async fn upload_blob(
 }
 
 pub(in crate::api) async fn get_blob(
-    State(state): State<CoreHandle>,
+    State(state): State<BlobHandle>,
     Path(id): Path<String>,
 ) -> Result<Response, StatusCode> {
     let opened = state

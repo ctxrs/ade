@@ -6,8 +6,8 @@ use tower_http::services::{ServeDir, ServeFile};
 use url::Url;
 
 use ctx_daemon::daemon::{
-    CoreHandle, DaemonHandle, ExecutionHandle, ProvidersHandle, SessionsHandle, TasksHandle,
-    TelemetryHandle, TransportHandle, WorkspaceStreamHandle, WorkspacesHandle,
+    BlobHandle, CoreHandle, DaemonHandle, ExecutionHandle, ProvidersHandle, SessionsHandle,
+    TasksHandle, TelemetryHandle, TransportHandle, WorkspaceStreamHandle, WorkspacesHandle,
 };
 
 use super::auth::auth_middleware;
@@ -71,6 +71,7 @@ macro_rules! impl_route_state_extractors {
 #[derive(Clone)]
 pub struct RouteHandles {
     pub(in crate::api) core: CoreHandle,
+    pub(in crate::api) blob: BlobHandle,
     pub(in crate::api) sessions: SessionsHandle,
     pub(in crate::api) tasks: TasksHandle,
     pub(in crate::api) workspaces: WorkspacesHandle,
@@ -85,6 +86,7 @@ impl RouteHandles {
     pub fn from_daemon_handle(handle: DaemonHandle) -> Self {
         Self {
             core: handle.core(),
+            blob: handle.blob(),
             sessions: handle.sessions(),
             tasks: handle.tasks(),
             workspaces: handle.workspaces(),
@@ -104,6 +106,7 @@ pub(in crate::api) struct RouteState {
 
 impl_route_state_extractors! {
     CoreHandle, core;
+    BlobHandle, blob;
     SessionsHandle, sessions;
     TasksHandle, tasks;
     WorkspacesHandle, workspaces;

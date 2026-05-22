@@ -6,7 +6,10 @@ use ctx_observability::telemetry::Telemetry;
 use ctx_storage_admission::StorageGuardStatus;
 use ctx_store::Store;
 
-use super::state::{DaemonState, TelemetryRuntime};
+use super::{
+    blobs::BlobHandle,
+    state::{DaemonState, TelemetryRuntime},
+};
 
 #[derive(Clone)]
 pub struct DaemonHandle {
@@ -20,6 +23,13 @@ impl DaemonHandle {
 
     pub fn core(&self) -> CoreHandle {
         CoreHandle::new(Arc::clone(&self.state))
+    }
+
+    pub fn blob(&self) -> BlobHandle {
+        BlobHandle::new(
+            self.state.core.data_root.clone(),
+            self.state.global_store().clone(),
+        )
     }
 
     pub fn sessions(&self) -> SessionsHandle {

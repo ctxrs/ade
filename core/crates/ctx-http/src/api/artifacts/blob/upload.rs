@@ -2,7 +2,7 @@ use super::*;
 
 use axum::body::Bytes;
 use axum::extract::{FromRequest, Multipart};
-use ctx_daemon::daemon::CoreHandle;
+use ctx_daemon::daemon::BlobHandle;
 use ctx_session_artifacts::infer_session_upload_blob_mime_type;
 
 pub(super) struct ParsedBlobUploadFile {
@@ -13,7 +13,7 @@ pub(super) struct ParsedBlobUploadFile {
 
 pub(super) async fn parse_blob_upload_file(
     req: Request,
-    state: &CoreHandle,
+    state: &BlobHandle,
 ) -> Result<ParsedBlobUploadFile, (StatusCode, Json<ApiErrorResp>)> {
     let mut multipart = Multipart::from_request(req, state)
         .await
