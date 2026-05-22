@@ -3319,6 +3319,13 @@ const WORKSPACE_STREAM_REPLAY_CURSOR_API_PATTERNS = [
 
 const WORKSPACE_STREAM_REPLAY_PROGRAM_API_PATTERNS = [
   {
+    name: "workspace stream API imports moved replay outcome from daemon",
+    regex:
+      /\bctx_daemon::daemon::workspaces(?:::stream::(?:\{[^}]*\bReplayOutcome\b|ReplayOutcome\b)|::\s*\{[^;]*\bstream\s*::\s*(?:\{[^;]*\bReplayOutcome\b|ReplayOutcome\b))/,
+    contentRegex:
+      /\buse\s+ctx_daemon::daemon::workspaces(?:::stream::\s*\{(?=[^;]*\bReplayOutcome\b)[^;]*|::\s*\{(?=[^;]*\bstream\s*::\s*(?:\{[^;]*\bReplayOutcome\b|ReplayOutcome\b))[^;]*)\s*;/gm,
+  },
+  {
     name: "workspace stream API references raw replay intent policy",
     regex: /\bWorkspaceActiveSnapshotSessionIntent\b/,
   },

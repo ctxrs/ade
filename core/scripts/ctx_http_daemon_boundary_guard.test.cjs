@@ -618,6 +618,8 @@ test("daemon boundary guard rejects raw workspace stream replay planning in HTTP
         subscription: WorkspaceStreamResolvedSession,
         resolved_sessions: &[WorkspaceStreamResolvedSession],
       ) {
+        use ctx_daemon::daemon::workspaces::stream::{ReplayOutcome, WorkspaceStreamReplayStepHook};
+        use ctx_daemon::daemon::workspaces::{stream::ReplayOutcome};
         let _ = matches!(subscription.intent, WorkspaceActiveSnapshotSessionIntent::Replay);
         let _ = matches!(subscription.replay, WorkspaceStreamSessionReplay::Resume { .. });
         let _ = matches!(subscription.replay, Resume { .. });
@@ -636,6 +638,10 @@ test("daemon boundary guard rejects raw workspace stream replay planning in HTTP
   assert.deepEqual(
     violations.map((violation) => violation.name),
     [
+      "workspace stream API imports moved replay outcome from daemon",
+      "workspace stream API imports moved replay outcome from daemon",
+      "workspace stream API imports moved replay outcome from daemon",
+      "workspace stream API imports moved replay outcome from daemon",
       "workspace stream API references raw replay intent policy",
       "workspace stream API references raw replay mode policy",
       "workspace stream API matches raw replay policy variant",
@@ -664,6 +670,23 @@ test("daemon boundary guard allows daemon workspace stream replay program DTOs",
           WorkspaceStreamReplayStep::NoReplayRequired { session_id } => {}
         }
         let _ = program.pending_replay_sessions;
+      }
+    `,
+    patterns: WORKSPACE_STREAM_REPLAY_PROGRAM_API_PATTERNS,
+  });
+
+  assert.deepEqual(violations, []);
+});
+
+test("daemon boundary guard allows intentionally daemon-owned workspace stream imports", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/ws/workspace_stream/subscription.rs",
+    contents: `
+      use ctx_daemon::daemon::workspaces::stream::{
+        WorkspaceStreamReplayStepHook, WorkspaceStreamSubscriptionResolutionError,
+      };
+      fn handler(error: WorkspaceStreamSubscriptionResolutionError) {
+        let _ = error;
       }
     `,
     patterns: WORKSPACE_STREAM_REPLAY_PROGRAM_API_PATTERNS,

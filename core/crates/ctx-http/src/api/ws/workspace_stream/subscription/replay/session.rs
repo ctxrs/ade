@@ -1,8 +1,8 @@
 use super::*;
-use ctx_daemon::daemon::workspaces::stream::ReplayOutcome;
 use ctx_workspace_stream_service::event_routing::{
     WorkspaceStreamControlLane, WorkspaceStreamEventRoutePlan, WorkspaceStreamHeadLane,
 };
+use ctx_workspace_stream_service::replay::WorkspaceStreamSessionReplayOutcome;
 
 #[cfg(test)]
 mod tests;
@@ -15,7 +15,7 @@ pub(super) async fn replay_workspace_session(
     labels: &WorkspaceStreamLabels,
     next_state: &WorkspaceActiveSubscriptionState,
     runtime: &WorkspaceStreamRuntime,
-) -> Result<ReplayOutcome, ()> {
+) -> Result<WorkspaceStreamSessionReplayOutcome, ()> {
     let control = runtime.control.clone();
     let priority_control = runtime.priority_control.clone();
     let foreground_head_buffer = runtime.foreground_head_buffer.clone();

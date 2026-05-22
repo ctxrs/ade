@@ -1,6 +1,7 @@
 use super::*;
-use ctx_daemon::daemon::workspaces::stream::ReplayOutcome;
-use ctx_workspace_stream_service::replay::WorkspaceStreamReplayStep;
+use ctx_workspace_stream_service::replay::{
+    WorkspaceStreamReplayStep, WorkspaceStreamSessionReplayOutcome,
+};
 
 mod buffers;
 mod live_events;
@@ -86,7 +87,7 @@ pub(super) async fn replay_workspace_stream_subscriptions(
         )
         .await;
         match replay {
-            Ok(ReplayOutcome::Replay { last_sent }) => {
+            Ok(WorkspaceStreamSessionReplayOutcome::Replay { last_sent }) => {
                 next_map.insert(session_id, SessionCursor { last_sent });
                 pending_replay_sessions.remove(&session_id);
                 flush_replay_ready_deferred_live_events(
@@ -115,7 +116,7 @@ pub(super) async fn replay_workspace_stream_subscriptions(
                     return Ok(None);
                 }
             }
-            Ok(ReplayOutcome::ResetRequired) | Err(_) => {
+            Ok(WorkspaceStreamSessionReplayOutcome::ResetRequired) | Err(_) => {
                 queue_failed_replay_reset(
                     state,
                     workspace_id,

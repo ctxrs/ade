@@ -9,7 +9,9 @@ use ctx_core::models::{
 use ctx_workspace_active_snapshot::{
     SessionReplayCursor, WorkspaceSessionReplay, WorkspaceSessionReplayItem,
 };
-use ctx_workspace_stream_service::replay as stream_replay_service;
+use ctx_workspace_stream_service::replay::{
+    self as stream_replay_service, WorkspaceStreamSessionReplayOutcome,
+};
 pub use ctx_workspace_stream_service::replay::{
     WorkspaceStreamReplayProgram, WorkspaceStreamReplayStep,
 };
@@ -32,11 +34,6 @@ pub trait WorkspaceStreamReplayStepHook {
     fn live_subscription_cursor(&self, _session_id: SessionId) -> Option<SessionReplayCursor> {
         None
     }
-}
-
-pub enum ReplayOutcome {
-    Replay { last_sent: SessionReplayCursor },
-    ResetRequired,
 }
 
 struct NoopWorkspaceStreamReplayStepHook;
@@ -152,7 +149,7 @@ pub async fn replay_session_events<F, Fut>(
     list_failpoint: &'static str,
     send_failpoint: Option<&'static str>,
     mut emit: F,
-) -> Result<ReplayOutcome, ()>
+) -> Result<WorkspaceStreamSessionReplayOutcome, ()>
 where
     F: FnMut(WorkspaceActiveSnapshotStreamMessage) -> Fut,
     Fut: std::future::Future<Output = Result<(), ()>>,
@@ -160,7 +157,7 @@ where
     let (snapshot_rev, _) =
         crate::daemon::workspaces::load_workspace_active_snapshot_state(state, workspace_id).await;
     if crate::fault_injection::maybe_fail(list_failpoint).is_err() {
-        return Ok(ReplayOutcome::ResetRequired);
+        return Ok(WorkspaceStreamSessionReplayOutcome::ResetRequired);
     }
     let replay = state
         .workspaces
@@ -247,9 +244,11 @@ where
                 })
                 .await?;
             }
-            Ok(ReplayOutcome::Replay { last_sent })
+            Ok(WorkspaceStreamSessionReplayOutcome::Replay { last_sent })
         }
-        WorkspaceSessionReplay::ResetRequired => Ok(ReplayOutcome::ResetRequired),
+        WorkspaceSessionReplay::ResetRequired => {
+            Ok(WorkspaceStreamSessionReplayOutcome::ResetRequired)
+        }
     }
 }
 
@@ -305,7 +304,7 @@ impl WorkspaceStreamHandle {
         list_failpoint: &'static str,
         send_failpoint: Option<&'static str>,
         emit: F,
-    ) -> Result<ReplayOutcome, ()>
+    ) -> Result<WorkspaceStreamSessionReplayOutcome, ()>
     where
         F: FnMut(WorkspaceActiveSnapshotStreamMessage) -> Fut,
         Fut: std::future::Future<Output = Result<(), ()>>,

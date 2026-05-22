@@ -32,6 +32,12 @@ pub enum WorkspaceStreamReplayStep {
     },
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WorkspaceStreamSessionReplayOutcome {
+    Replay { last_sent: SessionReplayCursor },
+    ResetRequired,
+}
+
 #[async_trait::async_trait]
 pub trait WorkspaceStreamReplayStepHook {
     type Error;

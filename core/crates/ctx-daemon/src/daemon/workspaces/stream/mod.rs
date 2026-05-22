@@ -33,7 +33,7 @@ pub use read_model::{
 };
 pub use replay::{
     plan_workspace_stream_replay_program, plan_workspace_stream_replay_program_with_step_hook,
-    replay_session_events, ReplayOutcome, WorkspaceStreamReplayProgram, WorkspaceStreamReplayStep,
+    replay_session_events, WorkspaceStreamReplayProgram, WorkspaceStreamReplayStep,
     WorkspaceStreamReplayStepHook,
 };
 pub use replay_cursor::active_head_cursors_from_snapshot_read_model;
