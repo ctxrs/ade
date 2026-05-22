@@ -6,6 +6,8 @@ const {
   AUTH_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
   CACHE_REHYDRATION_TEST_STORE_ACCESS_PATTERNS,
   DAEMON_EXTRACTION_BLOCKER_PATTERNS,
+  APPSTATE_DAEMON_HANDLE_CONSTRUCTION_BASELINE,
+  APPSTATE_FULL_STATE_DOMAIN_HANDLE_BASELINE,
   API_DOMAIN_RAW_STORE_PATTERNS,
   API_RAW_DAEMON_PATTERNS,
   DEFAULT_SESSION_AND_DIFF_FAKE_DAEMON_FIXTURE_PATTERNS,
@@ -63,6 +65,7 @@ const {
   MERGE_QUEUE_SUBMIT_API_ORCHESTRATION_PATTERNS,
   TERMINAL_REST_ROUTE_API_CONTRACT_PATTERNS,
   TASK_ROUTE_API_CONTRACT_PATTERNS,
+  TASK_CREATION_PLACEHOLDER_EXTRACTOR_PATTERNS,
   PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS,
   PROVIDER_AUTH_IMPORT_API_ORCHESTRATION_PATTERNS,
   PROVIDER_TEST_HELPER_DAEMON_IMPORT_PATTERNS,
@@ -182,6 +185,8 @@ const {
   sessionArtifactApiPatternsForPath,
   runArchiveApiPatternsForPath,
   routerCompositionPatternsForPath,
+  scanAppStateRouteHandleRatchet,
+  scanDaemonHandleConstructionRatchet,
   scanRepo,
   scanRouterComposition,
   scanText,
@@ -252,6 +257,148 @@ test("daemon boundary guard rejects broad daemon handle access in API code", () 
     [
       "broad daemon handle extractor",
       "daemon handle escalation call",
+    ],
+  );
+});
+
+test("appstate route handle ratchet rejects new full-state handle families", () => {
+  assert.equal(APPSTATE_FULL_STATE_DOMAIN_HANDLE_BASELINE.has("CoreHandle"), true);
+  const violations = scanAppStateRouteHandleRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      use std::sync::Arc;
+      use super::state::DaemonState;
+      macro_rules! domain_handle_with_accessor {
+        ($name:ident, $accessor:ident) => {
+          pub struct $name {
+            state: Arc<DaemonState>,
+          }
+        };
+      }
+      domain_handle_with_accessor!(CoreHandle, core);
+      domain_handle_with_accessor!(SessionsHandle, sessions);
+      domain_handle_with_accessor!(TasksHandle, tasks);
+      domain_handle_with_accessor!(WorkspacesHandle, workspaces);
+      domain_handle_with_accessor!(WorkspaceStreamHandle, workspace_stream);
+      domain_handle_with_accessor!(ProvidersHandle, providers);
+      domain_handle_with_accessor!(TelemetryHandle, telemetry);
+      domain_handle_with_accessor!(TransportHandle, transport);
+      domain_handle_with_accessor!(ExecutionHandle, execution);
+      domain_handle_with_accessor!(SurpriseHandle, surprise);
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "full-state route handle ratchet exceeded",
+      "unclassified full-state route handle",
+    ],
+  );
+});
+
+test("appstate route handle ratchet rejects direct full-state route handles", () => {
+  const violations = scanAppStateRouteHandleRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      use std::sync::Arc;
+      use super::state::DaemonState;
+      pub struct DaemonHandle {
+        state: Arc<DaemonState>,
+      }
+      pub struct SurpriseHandle {
+        state: Arc<DaemonState>,
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    ["direct full-state route handle"],
+  );
+});
+
+test("appstate daemon handle construction ratchet rejects new production reconstructions", () => {
+  assert.equal(APPSTATE_DAEMON_HANDLE_CONSTRUCTION_BASELINE.length, 3);
+  const violations = scanDaemonHandleConstructionRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/tasks/other.rs",
+    contents: `
+      use crate::daemon::DaemonHandle;
+      fn rebuild(tasks: TasksHandle) {
+        let daemon = DaemonHandle::new(tasks.state.clone());
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    ["unclassified daemon handle reconstruction"],
+  );
+});
+
+test("appstate daemon handle construction ratchet rejects From and into escape hatches", () => {
+  const violations = scanDaemonHandleConstructionRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/tasks/other.rs",
+    contents: `
+      fn rebuild(tasks: TasksHandle) {
+        let daemon = DaemonHandle::from(tasks.state.clone());
+        let multiline_from = DaemonHandle::from
+          (tasks.state.clone());
+        let multiline_new = DaemonHandle::new
+          (tasks.state.clone());
+        let other:
+          DaemonHandle =
+          tasks.state.clone().into();
+        consume(tasks.state.clone().into());
+        let arc_clone: DaemonHandle = Arc::clone(&tasks.state).into();
+      }
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "unclassified daemon handle reconstruction",
+      "unclassified daemon handle reconstruction",
+      "unclassified daemon handle reconstruction",
+      "unclassified daemon handle reconstruction",
+      "unclassified daemon handle reconstruction",
+      "unclassified daemon handle reconstruction",
+    ],
+  );
+});
+
+test("appstate daemon handle construction ratchet preserves known baseline reconstructions", () => {
+  const violations = scanDaemonHandleConstructionRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/tasks/create_task.rs",
+    contents: "let daemon = DaemonHandle::new(tasks.state.clone());",
+  });
+
+  assert.deepEqual(violations, []);
+});
+
+test("appstate guard rejects task creation placeholder extractors", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/tasks/creation_task.rs",
+    contents: `
+      async fn create_task(
+        State(tasks): State<TasksHandle>,
+        State(_sessions): State<SessionsHandle>,
+        State(_providers): State<ProvidersHandle>,
+        State(_workspaces): State<WorkspacesHandle>,
+        State(_transport): State<TransportHandle>,
+      ) {}
+    `,
+    patterns: TASK_CREATION_PLACEHOLDER_EXTRACTOR_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "task creation placeholder session extractor",
+      "task creation placeholder provider extractor",
+      "task creation placeholder workspace extractor",
+      "task creation placeholder transport extractor",
     ],
   );
 });

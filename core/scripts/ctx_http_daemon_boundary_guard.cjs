@@ -204,6 +204,10 @@ const terminalRestRouteApiRoots = [
   "core/crates/ctx-http/src/api/terminals/",
 ];
 
+const taskCreationPlaceholderExtractorApiRoots = [
+  "core/crates/ctx-http/src/api/tasks/creation_task.rs",
+];
+
 const runArchiveApiRoots = [
   "core/crates/ctx-http/src/api/run_archive.rs",
   "core/crates/ctx-http/src/api/run_archive/",
@@ -948,6 +952,33 @@ const HANDLE_BACKDOOR_PATTERNS = [
   {
     name: "secure proxy full-router backdoor",
     regex: /router\s*\(\s*handle\.clone\s*\(\s*\)\s*\)|Arc\s*<\s*axum::Router\s*>/,
+  },
+];
+
+const APPSTATE_FULL_STATE_DOMAIN_HANDLE_BASELINE = new Set([
+  "CoreHandle",
+  "SessionsHandle",
+  "TasksHandle",
+  "WorkspacesHandle",
+  "WorkspaceStreamHandle",
+  "ProvidersHandle",
+  "TelemetryHandle",
+  "TransportHandle",
+  "ExecutionHandle",
+]);
+
+const APPSTATE_DAEMON_HANDLE_CONSTRUCTION_BASELINE = [
+  {
+    path: "core/crates/ctx-daemon/src/daemon/runtime.rs",
+    regex: /\blet\s+handle\s*=\s*DaemonHandle::new\s*\(\s*state\.clone\s*\(\s*\)\s*\)\s*;/,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/daemon/tasks/create_task.rs",
+    regex: /\blet\s+daemon\s*=\s*DaemonHandle::new\s*\(\s*tasks\.state\.clone\s*\(\s*\)\s*\)\s*;/,
+  },
+  {
+    path: "core/crates/ctx-daemon/src/daemon/tasks/create_session.rs",
+    regex: /\blet\s+daemon\s*=\s*DaemonHandle::new\s*\(\s*handle\.state\.clone\s*\(\s*\)\s*\)\s*;/,
   },
 ];
 
@@ -3412,6 +3443,26 @@ const TASK_ROUTE_API_CONTRACT_PATTERNS = [
   },
 ];
 
+const TASK_CREATION_PLACEHOLDER_EXTRACTOR_PATTERNS = [
+  {
+    name: "task creation placeholder session extractor",
+    regex: /State\s*\(\s*_sessions\s*\)\s*:\s*State\s*<\s*SessionsHandle\s*>/,
+  },
+  {
+    name: "task creation placeholder provider extractor",
+    regex: /State\s*\(\s*_providers\s*\)\s*:\s*State\s*<\s*ProvidersHandle\s*>/,
+  },
+  {
+    name: "task creation placeholder workspace extractor",
+    regex: /State\s*\(\s*_workspaces\s*\)\s*:\s*State\s*<\s*WorkspacesHandle\s*>/,
+  },
+  {
+    name: "task creation placeholder transport extractor",
+    regex: /State\s*\(\s*_transport\s*\)\s*:\s*State\s*<\s*TransportHandle\s*>/,
+  },
+];
+
+
 const WORKSPACE_STREAM_READ_MODEL_API_PATTERNS = [
   {
     name: "workspace stream API owns read-model preparation",
@@ -5821,6 +5872,9 @@ function apiPatternsForPath(relativePath) {
   if (taskRouteContractApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...TASK_ROUTE_API_CONTRACT_PATTERNS);
   }
+  if (taskCreationPlaceholderExtractorApiRoots.some((root) => relativePath === root)) {
+    patterns.push(...TASK_CREATION_PLACEHOLDER_EXTRACTOR_PATTERNS);
+  }
   if (workspaceStreamReadModelApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...WORKSPACE_STREAM_READ_MODEL_API_PATTERNS);
   }
@@ -6522,6 +6576,158 @@ function scanRouterComposition({ filePath, contents, patterns }) {
   return violations;
 }
 
+function scanAppStateRouteHandleRatchet({ filePath, contents }) {
+  const violations = [];
+  const macroHandles = [];
+  const macroRegex = /domain_handle_with_accessor!\s*\(\s*([A-Za-z][A-Za-z0-9_]*)\s*,/gu;
+  for (let match = macroRegex.exec(contents); match; match = macroRegex.exec(contents)) {
+    macroHandles.push({ name: match[1], offset: match.index });
+  }
+  if (macroHandles.length > APPSTATE_FULL_STATE_DOMAIN_HANDLE_BASELINE.size) {
+    violations.push({
+      filePath,
+      line: 1,
+      name: "full-state route handle ratchet exceeded",
+      text: `${macroHandles.length} full-state route handles exceeds baseline ${APPSTATE_FULL_STATE_DOMAIN_HANDLE_BASELINE.size}`,
+    });
+  }
+  const lines = contents.split(/\r?\n/u);
+  for (const handle of macroHandles) {
+    if (APPSTATE_FULL_STATE_DOMAIN_HANDLE_BASELINE.has(handle.name)) {
+      continue;
+    }
+    const line = contents.slice(0, handle.offset).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "unclassified full-state route handle",
+      text: handle.name,
+    });
+  }
+
+  const directHandleRegex =
+    /pub(?:\s*\([^)]*\))?\s+struct\s+([A-Za-z][A-Za-z0-9_]*Handle)\s*\{[^}]*Arc\s*<\s*DaemonState\s*>/gsu;
+  for (
+    let match = directHandleRegex.exec(contents);
+    match;
+    match = directHandleRegex.exec(contents)
+  ) {
+    const handleName = match[1];
+    if (handleName === "DaemonHandle") {
+      continue;
+    }
+    const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "direct full-state route handle",
+      text: lines[line - 1]?.trim() ?? handleName,
+    });
+  }
+  return violations;
+}
+
+function isAllowedDaemonHandleConstruction({ filePath, line }) {
+  return APPSTATE_DAEMON_HANDLE_CONSTRUCTION_BASELINE.some(
+    (entry) => entry.path === filePath && entry.regex.test(line),
+  );
+}
+
+function scanDaemonHandleConstructionRatchet({ filePath, contents }) {
+  const violations = [];
+  const violationKeys = new Set();
+  const lines = contents.split(/\r?\n/u);
+  const lineStartOffsets = [];
+  let offset = 0;
+  for (const line of lines) {
+    lineStartOffsets.push(offset);
+    offset += line.length + 1;
+  }
+  const lineForOffset = (matchOffset) => {
+    let lineIndex = 0;
+    for (let index = 0; index < lineStartOffsets.length; index += 1) {
+      if (lineStartOffsets[index] > matchOffset) {
+        break;
+      }
+      lineIndex = index;
+    }
+    return lineIndex;
+  };
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const reconstructsDaemonHandle =
+      /\bDaemonHandle::(?:new|from)\s*\(/u.test(line) ||
+      /:\s*DaemonHandle\b[^;]*\.into\s*\(\s*\)/u.test(line);
+    if (!reconstructsDaemonHandle) {
+      continue;
+    }
+    if (isAllowedDaemonHandleConstruction({ filePath, line })) {
+      continue;
+    }
+    const key = `${index + 1}:unclassified daemon handle reconstruction`;
+    if (violationKeys.has(key)) {
+      continue;
+    }
+    violationKeys.add(key);
+    violations.push({
+      filePath,
+      line: index + 1,
+      name: "unclassified daemon handle reconstruction",
+      text: line.trim(),
+    });
+  }
+
+  const daemonHandleConstructorRegex = /\bDaemonHandle::(?:new|from)\s*\(/gsu;
+  for (
+    let match = daemonHandleConstructorRegex.exec(contents);
+    match;
+    match = daemonHandleConstructorRegex.exec(contents)
+  ) {
+    const lineIndex = lineForOffset(match.index);
+    const line = lines[lineIndex] ?? "";
+    if (isAllowedDaemonHandleConstruction({ filePath, line })) {
+      continue;
+    }
+    const key = `${lineIndex + 1}:unclassified daemon handle reconstruction`;
+    if (violationKeys.has(key)) {
+      continue;
+    }
+    violationKeys.add(key);
+    violations.push({
+      filePath,
+      line: lineIndex + 1,
+      name: "unclassified daemon handle reconstruction",
+      text: match[0].trim().replace(/\s+/g, " "),
+    });
+  }
+
+  const stateCloneIntoRegex =
+    /(?:(?:[A-Za-z_][A-Za-z0-9_]*\.)?state\.clone\s*\(\s*\)|Arc::clone\s*\(\s*&\s*(?:[A-Za-z_][A-Za-z0-9_]*\.)?state\s*\))\s*\.into\s*\(\s*\)/gsu;
+  for (
+    let match = stateCloneIntoRegex.exec(contents);
+    match;
+    match = stateCloneIntoRegex.exec(contents)
+  ) {
+    const lineIndex = lineForOffset(match.index);
+    const line = lines[lineIndex] ?? "";
+    if (isAllowedDaemonHandleConstruction({ filePath, line })) {
+      continue;
+    }
+    const key = `${lineIndex + 1}:unclassified daemon handle reconstruction`;
+    if (violationKeys.has(key)) {
+      continue;
+    }
+    violationKeys.add(key);
+    violations.push({
+      filePath,
+      line: lineIndex + 1,
+      name: "unclassified daemon handle reconstruction",
+      text: match[0].trim().replace(/\s+/g, " "),
+    });
+  }
+  return violations;
+}
+
 function scanRepo() {
   const violations = [];
   if (fs.existsSync(legacyHttpDaemonRootPath)) {
@@ -6578,11 +6784,17 @@ function scanRepo() {
   }
 
   if (fs.existsSync(daemonHandlePath)) {
+    const relativePath = repoRelative(daemonHandlePath);
+    const contents = fs.readFileSync(daemonHandlePath, "utf8");
     violations.push(
       ...scanText({
-        filePath: repoRelative(daemonHandlePath),
-        contents: fs.readFileSync(daemonHandlePath, "utf8"),
+        filePath: relativePath,
+        contents,
         patterns: HANDLE_BACKDOOR_PATTERNS,
+      }),
+      ...scanAppStateRouteHandleRatchet({
+        filePath: relativePath,
+        contents,
       }),
     );
   }
@@ -6605,6 +6817,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
         patterns: DAEMON_EXTRACTION_BLOCKER_PATTERNS,
+      }),
+      ...scanDaemonHandleConstructionRatchet({
+        filePath: relativePath,
+        contents,
       }),
     );
     if (relativePath === "core/crates/ctx-daemon/src/daemon/health.rs") {
@@ -7009,6 +7225,8 @@ module.exports = {
   AUTH_BOUNDARY_TEST_STORE_ACCESS_PATTERNS,
   CACHE_REHYDRATION_TEST_STORE_ACCESS_PATTERNS,
   DAEMON_EXTRACTION_BLOCKER_PATTERNS,
+  APPSTATE_DAEMON_HANDLE_CONSTRUCTION_BASELINE,
+  APPSTATE_FULL_STATE_DOMAIN_HANDLE_BASELINE,
   API_RAW_DAEMON_PATTERNS,
   API_DOMAIN_RAW_STORE_PATTERNS,
   DEFAULT_SESSION_AND_DIFF_FAKE_DAEMON_FIXTURE_PATTERNS,
@@ -7064,6 +7282,7 @@ module.exports = {
   MERGE_QUEUE_SUBMIT_API_ORCHESTRATION_PATTERNS,
   TERMINAL_REST_ROUTE_API_CONTRACT_PATTERNS,
   TASK_ROUTE_API_CONTRACT_PATTERNS,
+  TASK_CREATION_PLACEHOLDER_EXTRACTOR_PATTERNS,
   MANAGED_BROWSER_LOGIN_API_ORCHESTRATION_PATTERNS,
   CURSOR_PROCESS_LOGIN_API_ORCHESTRATION_PATTERNS,
   CODEX_APP_SERVER_LOGIN_API_ORCHESTRATION_PATTERNS,
@@ -7190,6 +7409,8 @@ module.exports = {
   sessionReadModelRouteApiPatternsForPath,
   demoSeedTranscriptApiPatternsForPath,
   routerCompositionPatternsForPath,
+  scanAppStateRouteHandleRatchet,
+  scanDaemonHandleConstructionRatchet,
   scanRepo,
   scanRouterComposition,
   scanText,

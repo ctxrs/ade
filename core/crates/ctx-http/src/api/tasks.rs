@@ -26,9 +26,7 @@ use super::errors::ApiErrorResp;
 use ctx_core::ids::{TaskId, WorkspaceId, WorktreeId};
 #[cfg(test)]
 use ctx_core::models::{ExecutionEnvironment, Workspace, Worktree};
-use ctx_daemon::daemon::{
-    ProvidersHandle, SessionsHandle, TasksHandle, TransportHandle, WorkspacesHandle,
-};
+use ctx_daemon::daemon::TasksHandle;
 #[cfg(test)]
 use ctx_daemon::test_support::TestDaemon;
 use ctx_route_contracts::tasks::{
