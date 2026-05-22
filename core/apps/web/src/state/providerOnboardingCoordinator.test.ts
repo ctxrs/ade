@@ -6,6 +6,8 @@ import {
   getProviderHarnessConfig,
   getProviderOptions,
   getProvidersBootstrap,
+  installAllProviders,
+  installProvider,
   listAmpAccounts,
   listClaudeAccounts,
   listCodexAccounts,
@@ -34,6 +36,12 @@ import {
   PROVIDER_BOOTSTRAP_TIMEOUT_MS,
 } from "../utils/providerBootstrapTimeout";
 
+const analyticsMocks = vi.hoisted(() => ({
+  trackProviderInstallCompleted: vi.fn(),
+  trackProviderInstallFailed: vi.fn(),
+  trackProviderInstallStarted: vi.fn(),
+}));
+
 vi.mock("../api/client", async (importOriginal) => {
   const original = await importOriginal<typeof import("../api/client")>();
   return {
@@ -41,6 +49,8 @@ vi.mock("../api/client", async (importOriginal) => {
     getProviderHarnessConfig: vi.fn(),
     getProviderOptions: vi.fn(),
     getProvidersBootstrap: vi.fn(),
+    installAllProviders: vi.fn(),
+    installProvider: vi.fn(),
     listAmpAccounts: vi.fn(),
     listClaudeAccounts: vi.fn(),
     listCodexAccounts: vi.fn(),
@@ -51,6 +61,14 @@ vi.mock("../api/client", async (importOriginal) => {
     listMistralAccounts: vi.fn(),
     listProviders: vi.fn(),
     listQwenAccounts: vi.fn(),
+  };
+});
+
+vi.mock("../utils/analytics", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../utils/analytics")>();
+  return {
+    ...actual,
+    ...analyticsMocks,
   };
 });
 
@@ -224,9 +242,14 @@ beforeEach(() => {
   vi.clearAllMocks();
   resetProviderOnboardingCoordinatorForTests();
   clearProviderInstallProgress();
+  analyticsMocks.trackProviderInstallCompleted.mockReset();
+  analyticsMocks.trackProviderInstallFailed.mockReset();
+  analyticsMocks.trackProviderInstallStarted.mockReset();
   vi.mocked(getProviderHarnessConfig).mockImplementation(async (providerId: string) =>
     makeHostHarnessConfig(providerId));
   vi.mocked(listProviders).mockResolvedValue([]);
+  vi.mocked(installAllProviders).mockReset();
+  vi.mocked(installProvider).mockReset();
   vi.mocked(listCodexAccounts).mockResolvedValue({ ...EMPTY_CODEX_ACCOUNTS });
   vi.mocked(listClaudeAccounts).mockResolvedValue({ ...EMPTY_ACCOUNTS });
   vi.mocked(listGeminiAccounts).mockResolvedValue({ ...EMPTY_ACCOUNTS });
@@ -371,6 +394,19 @@ describe("providerOnboardingCoordinator", () => {
       expect(vi.mocked(observeInstall)).toHaveBeenCalledTimes(1);
     });
 
+    act(() => {
+      upsertProviderInstallProgressForScope(getProviderOwnerScope(workspaceId), "codex", {
+        installId: "install-codex",
+        state: "running",
+        pct: 50,
+        target: "container",
+      });
+    });
+
+    await waitFor(() => {
+      expect(hookValue?.installsById.codex?.state).toBe("running");
+    });
+
     currentBootstrap = makeBootstrap(workspaceId, {
       providers: [
         {
@@ -419,6 +455,83 @@ describe("providerOnboardingCoordinator", () => {
         current_model_id: "gpt-5",
       });
       expect(stopInstallObservation).toHaveBeenCalled();
+      expect(analyticsMocks.trackProviderInstallCompleted).toHaveBeenCalledWith({
+        providerId: "codex",
+        target: "container",
+      });
+    });
+  });
+
+  it("tracks provider install request start and API failure diagnostics", async () => {
+    const workspaceId = "ws-install-analytics";
+    let hookValue: HookValue | null = null;
+
+    vi.mocked(getProvidersBootstrap).mockImplementation(async () => makeBootstrap(workspaceId));
+    vi.mocked(installProvider).mockResolvedValueOnce({
+      provider_id: "codex",
+      install_id: "install-new",
+      target: "container",
+    });
+
+    render(createElement(CoordinatorHarness, {
+      workspaceId,
+      onChange: (value) => {
+        hookValue = value;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(hookValue?.bootstrap.providers[0]?.provider_id).toBe("codex");
+    });
+
+    await act(async () => {
+      await requireHookValue(hookValue).startProviderInstall("codex");
+    });
+
+    expect(vi.mocked(installProvider)).toHaveBeenCalledWith("codex", "container");
+    expect(analyticsMocks.trackProviderInstallStarted).toHaveBeenCalledWith({
+      providerId: "codex",
+      target: "container",
+    });
+
+    vi.mocked(installProvider).mockRejectedValueOnce(new Error("install request failed"));
+
+    await expect(requireHookValue(hookValue).startProviderInstall("codex")).rejects.toThrow(
+      /install request failed/,
+    );
+    expect(analyticsMocks.trackProviderInstallFailed).toHaveBeenCalledWith({
+      providerId: "codex",
+      target: "container",
+      failureKind: "request_failed",
+    });
+  });
+
+  it("tracks bulk provider install request failure diagnostics", async () => {
+    const workspaceId = "ws-bulk-install-analytics";
+    let hookValue: HookValue | null = null;
+
+    vi.mocked(getProvidersBootstrap).mockImplementation(async () => makeBootstrap(workspaceId));
+    vi.mocked(installAllProviders).mockRejectedValueOnce(new Error("bulk install request failed"));
+
+    render(createElement(CoordinatorHarness, {
+      workspaceId,
+      onChange: (value) => {
+        hookValue = value;
+      },
+    }));
+
+    await waitFor(() => {
+      expect(hookValue?.bootstrap.providers[0]?.provider_id).toBe("codex");
+    });
+
+    await expect(requireHookValue(hookValue).startAllProviderInstalls()).rejects.toThrow(
+      /bulk install request failed/,
+    );
+
+    expect(vi.mocked(installAllProviders)).toHaveBeenCalledWith("container");
+    expect(analyticsMocks.trackProviderInstallFailed).toHaveBeenCalledWith({
+      target: "container",
+      failureKind: "request_failed",
     });
   });
 

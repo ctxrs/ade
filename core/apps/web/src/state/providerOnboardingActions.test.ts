@@ -44,6 +44,20 @@ const clientMocks = vi.hoisted(() => ({
 
 vi.mock("../api/client", () => clientMocks);
 
+const analyticsMocks = vi.hoisted(() => ({
+  trackProviderAuthCompleted: vi.fn(),
+  trackProviderAuthFailed: vi.fn(),
+  trackProviderAuthStarted: vi.fn(),
+}));
+
+vi.mock("../utils/analytics", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../utils/analytics")>();
+  return {
+    ...actual,
+    ...analyticsMocks,
+  };
+});
+
 const emptyAccounts = {
   active_account_id: null,
   accounts: [],
@@ -206,6 +220,9 @@ beforeEach(() => {
   clientMocks.setQwenActiveAccount.mockReset();
   clientMocks.upsertProviderHarnessEndpoint.mockReset();
   clientMocks.verifyProviderForWorkspace.mockReset();
+  analyticsMocks.trackProviderAuthCompleted.mockReset();
+  analyticsMocks.trackProviderAuthFailed.mockReset();
+  analyticsMocks.trackProviderAuthStarted.mockReset();
 });
 
 describe("providerOnboardingActions", () => {
@@ -546,6 +563,16 @@ describe("providerOnboardingActions", () => {
     expect(clientMocks.selectProviderHarnessSource).toHaveBeenNthCalledWith(2, "codex", "subscription", null);
     expect(store.getProvidersBootstrapSnapshot(workspaceId).provider_harness_config.codex?.selected_source_kind)
       .toBe("subscription");
+    expect(analyticsMocks.trackProviderAuthStarted).toHaveBeenCalledWith({
+      providerId: "codex",
+      authMethod: "endpoint",
+    });
+    expect(analyticsMocks.trackProviderAuthFailed).toHaveBeenCalledWith({
+      providerId: "codex",
+      authMethod: "endpoint",
+      failureKind: "verification_failed",
+    });
+    expect(analyticsMocks.trackProviderAuthCompleted).not.toHaveBeenCalled();
   });
 
   it("submitProviderEndpointAuth skips workspace verification for host scope and does not touch workspace bootstrap", async () => {
@@ -614,6 +641,15 @@ describe("providerOnboardingActions", () => {
     expect(store.getHostProvidersBootstrapSnapshot().provider_harness_config.codex?.selected_source_kind).toBe("endpoint");
     expect(store.getProvidersBootstrapSnapshot(workspaceId).provider_harness_config.codex?.selected_source_kind)
       .toBe("subscription");
+    expect(analyticsMocks.trackProviderAuthStarted).toHaveBeenCalledWith({
+      providerId: "codex",
+      authMethod: "endpoint",
+    });
+    expect(analyticsMocks.trackProviderAuthCompleted).toHaveBeenCalledWith({
+      providerId: "codex",
+      authMethod: "endpoint",
+    });
+    expect(analyticsMocks.trackProviderAuthFailed).not.toHaveBeenCalled();
   });
 
   it("submitProviderEndpointAuth suppresses stale completion before selecting the endpoint source", async () => {
@@ -672,6 +708,12 @@ describe("providerOnboardingActions", () => {
     });
     expect(clientMocks.selectProviderHarnessSource).not.toHaveBeenCalled();
     expect(clientMocks.verifyProviderForWorkspace).not.toHaveBeenCalled();
+    expect(analyticsMocks.trackProviderAuthFailed).toHaveBeenCalledWith({
+      providerId: "codex",
+      authMethod: "endpoint",
+      failureKind: "user_cancelled",
+    });
+    expect(analyticsMocks.trackProviderAuthCompleted).not.toHaveBeenCalled();
   });
 
   it("submitProviderEndpointAuth suppresses stale rollback messaging when verification finishes stale", async () => {

@@ -21,11 +21,15 @@ vi.mock("../clientSettings", () => ({
   getClientSettingsState,
 }));
 
-vi.mock("../../utils/analytics", () => ({
-  trackTurnCompleted,
-  trackProviderRunCompleted,
-  trackFirstTurnCompleted,
-}));
+vi.mock("../../utils/analytics", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../utils/analytics")>();
+  return {
+    ...actual,
+    trackTurnCompleted,
+    trackProviderRunCompleted,
+    trackFirstTurnCompleted,
+  };
+});
 
 const baseIso = "2024-01-01T00:00:00.000Z";
 
@@ -192,6 +196,7 @@ describe("turnOutcomeEffects", () => {
       durationMs: 42000,
       sessionKind: "primary",
       metrics: undefined,
+      failureKind: undefined,
     });
     expect(trackProviderRunCompleted).toHaveBeenCalledWith({
       providerId: "codex",
@@ -199,6 +204,7 @@ describe("turnOutcomeEffects", () => {
       status: "completed",
       durationMs: 42000,
       sessionKind: "primary",
+      failureKind: undefined,
     });
     expect(trackFirstTurnCompleted).toHaveBeenCalledWith({
       sessionId: "session-1",
@@ -233,7 +239,15 @@ describe("turnOutcomeEffects", () => {
     });
 
     expect(trackTurnCompleted).toHaveBeenCalledTimes(1);
+    expect(trackTurnCompleted).toHaveBeenCalledWith(expect.objectContaining({
+      status: "failed",
+      failureKind: "unknown",
+    }));
     expect(trackProviderRunCompleted).toHaveBeenCalledTimes(1);
+    expect(trackProviderRunCompleted).toHaveBeenCalledWith(expect.objectContaining({
+      status: "failed",
+      failureKind: "unknown",
+    }));
     expect(trackFirstTurnCompleted).toHaveBeenCalledTimes(1);
     expect(sendDesktopNotification).toHaveBeenCalledWith({
       kind: "turn_failed",
@@ -343,5 +357,71 @@ describe("turnOutcomeEffects", () => {
     expect(trackProviderRunCompleted).toHaveBeenCalledTimes(1);
     expect(trackFirstTurnCompleted).toHaveBeenCalledTimes(1);
     expect(sendDesktopNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it("tracks bounded first-turn failure kinds from terminal failure metadata", () => {
+    replayTurnOutcomeEffectsFromTurns({
+      notify: false,
+      sessionId: "session-1",
+      taskId: "task-1",
+      workspaceId: "workspace-1",
+      providerId: "codex",
+      modelId: "gpt-5",
+      sessionKind: "primary",
+      session: null,
+      workspaceSnapshotState: makeWorkspaceSnapshot("Fix login race"),
+      events: [],
+      messages: [],
+      previousTurns: [{
+        turn_id: "turn-auth",
+        session_id: "session-1",
+        run_id: null,
+        user_message_id: null,
+        status: "running",
+        start_seq: 1,
+        end_seq: null,
+        started_at: baseIso,
+        updated_at: baseIso,
+        assistant_partial: "",
+        thought_partial: "",
+        metrics_json: null,
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+      }],
+      nextTurns: [{
+        turn_id: "turn-auth",
+        session_id: "session-1",
+        run_id: null,
+        user_message_id: null,
+        status: "failed",
+        start_seq: 1,
+        end_seq: 2,
+        started_at: baseIso,
+        updated_at: "2024-01-01T00:00:10.000Z",
+        assistant_partial: "",
+        thought_partial: "",
+        metrics_json: null,
+        failure: {
+          kind: "provider_auth_required",
+        },
+        tool_total: 0,
+        tool_pending: 0,
+        tool_running: 0,
+        tool_completed: 0,
+        tool_failed: 0,
+      }],
+    });
+
+    expect(trackTurnCompleted).toHaveBeenCalledWith(expect.objectContaining({
+      status: "failed",
+      failureKind: "auth_missing",
+    }));
+    expect(trackProviderRunCompleted).toHaveBeenCalledWith(expect.objectContaining({
+      status: "failed",
+      failureKind: "auth_missing",
+    }));
   });
 });

@@ -74,13 +74,18 @@ import {
 } from "../../../utils/desktop";
 import { readAcknowledgedProviderRuntimeWarningIds } from "../../../utils/providerRuntimeWarnings";
 
-const trackFeatureUsed = vi.hoisted(() => vi.fn());
+const analyticsMocks = vi.hoisted(() => ({
+  trackFeatureUsed: vi.fn(),
+  trackProviderAuthCompleted: vi.fn(),
+  trackProviderAuthFailed: vi.fn(),
+  trackProviderAuthStarted: vi.fn(),
+}));
 
 vi.mock("../../../utils/analytics", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../../utils/analytics")>();
   return {
     ...actual,
-    trackFeatureUsed,
+    ...analyticsMocks,
   };
 });
 
@@ -482,7 +487,10 @@ beforeEach(() => {
   vi.mocked(startKimiLogin).mockReset();
   vi.mocked(upsertProviderHarnessEndpoint).mockReset();
   vi.mocked(verifyProviderForWorkspace).mockReset();
-  trackFeatureUsed.mockReset();
+  analyticsMocks.trackFeatureUsed.mockReset();
+  analyticsMocks.trackProviderAuthCompleted.mockReset();
+  analyticsMocks.trackProviderAuthFailed.mockReset();
+  analyticsMocks.trackProviderAuthStarted.mockReset();
   vi.mocked(invalidateHostProvidersBootstrap).mockReset();
   vi.mocked(invalidateProvidersBootstrap).mockReset();
   vi.mocked(loadHostProvidersBootstrap).mockReset();
@@ -1054,7 +1062,7 @@ describe("useHarnessAuthenticationController", () => {
 
     await waitFor(() => {
       expect(vi.mocked(selectProviderHarnessSource)).toHaveBeenCalledWith("codex", "endpoint", "ep-old");
-      expect(trackFeatureUsed).toHaveBeenCalledWith("provider_source_selected", {
+      expect(analyticsMocks.trackFeatureUsed).toHaveBeenCalledWith("provider_source_selected", {
         provider_id: "codex",
         source_kind: "endpoint",
         scope_kind: "workspace",
@@ -1942,6 +1950,15 @@ describe("useHarnessAuthenticationController", () => {
     expect(requireController(controller).harnessAuthModal).toBeNull();
     expect(requireController(controller).providerError).toBeNull();
     expect(vi.mocked(selectProviderHarnessSource)).toHaveBeenCalledWith("kimi", "subscription", null);
+    expect(analyticsMocks.trackProviderAuthStarted).toHaveBeenCalledWith({
+      providerId: "kimi",
+      authMethod: "subscription_browser",
+    });
+    expect(analyticsMocks.trackProviderAuthCompleted).toHaveBeenCalledWith({
+      providerId: "kimi",
+      authMethod: "subscription_browser",
+    });
+    expect(analyticsMocks.trackProviderAuthFailed).not.toHaveBeenCalled();
   });
 
   it("starts Claude setup-token sign-in without any web-driven browser open", async () => {

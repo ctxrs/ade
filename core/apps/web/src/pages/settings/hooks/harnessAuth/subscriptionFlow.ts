@@ -26,6 +26,12 @@ import {
   type QwenAccountsResponse,
 } from "../../../../api/client";
 import type { HarnessAuthModalState } from "../../../SettingsPage.types";
+import {
+  trackProviderAuthCompleted,
+  trackProviderAuthFailed,
+  trackProviderAuthStarted,
+  type ProviderAuthMethod,
+} from "../../../../utils/analytics";
 import { isCancelledOperationError } from "./operationOwner";
 import {
   AMP_LOGIN_POLL_ATTEMPTS,
@@ -81,6 +87,26 @@ const setCurrentProviderError = (
   deps.setProviderError(message);
 };
 
+const authMethodForModal = (modal: HarnessAuthModalState): ProviderAuthMethod => {
+  const providerId = modal.provider_id;
+  const hasToken = modal.subscription_token.trim().length > 0;
+  if (providerId === "claude-crp" && hasToken) return "subscription_token";
+  if (providerId === "copilot") return "subscription_token";
+  if (
+    providerId === "codex"
+    || providerId === "claude-crp"
+    || providerId === "gemini"
+    || providerId === "qwen"
+    || providerId === "cursor"
+    || providerId === "amp"
+    || providerId === "mistral"
+    || providerId === "kimi"
+  ) {
+    return "subscription_browser";
+  }
+  return "workspace_auth";
+};
+
 const refreshAccountsAfterFlow = async <TResponse>(
   flow: HarnessAuthModalOperation,
   refresh: ((opts?: RefreshAccountsOptions) => Promise<TResponse | null>) | undefined,
@@ -89,50 +115,73 @@ const refreshAccountsAfterFlow = async <TResponse>(
   return refresh({ silent: !flow.isCurrent() });
 };
 const runCodexSubscriptionFlow = async (deps: SubscriptionFlowDeps): Promise<void> => {
-  const login = await startCodexLogin();
-  deps.flow.throwIfCancelled();
+  try {
+    const login = await startCodexLogin();
+    deps.flow.throwIfCancelled();
 
-  await deps.openCodexAuthUrl(login.auth_url, {
-    accountId: login.account_id,
-    expectedCallbackUrl: login.expected_callback_url ?? null,
-    completionToken: login.completion_token,
-  });
-  deps.flow.throwIfCancelled();
+    await deps.openCodexAuthUrl(login.auth_url, {
+      accountId: login.account_id,
+      expectedCallbackUrl: login.expected_callback_url ?? null,
+      completionToken: login.completion_token,
+    });
+    deps.flow.throwIfCancelled();
 
-  deps.markAwaitingBrowserForOperation(
-    deps.flow,
-    "Waiting for browser sign-in to complete. You can close this dialog after finishing auth.",
-  );
+    deps.markAwaitingBrowserForOperation(
+      deps.flow,
+      "Waiting for browser sign-in to complete. You can close this dialog after finishing auth.",
+    );
 
-  const outcome = await waitForCodexLoginOutcome(login.account_id, deps.flow);
+    const outcome = await waitForCodexLoginOutcome(login.account_id, deps.flow);
 
-  if (outcome === "success") {
-    deps.markFinalizingForOperation(deps.flow);
+    if (outcome === "success") {
+      deps.markFinalizingForOperation(deps.flow);
+      await refreshAccountsAfterFlow(deps.flow, deps.refreshCodexAccounts);
+      if (!deps.flow.isCurrent()) return;
+      await deps.refreshBootstrapAfterMutation("codex");
+      if (!deps.flow.isCurrent()) return;
+      await deps.selectSubscriptionSourceIfSupported("codex");
+      deps.closeHarnessAuthModalForOperation(deps.flow);
+      trackProviderAuthCompleted({
+        providerId: "codex",
+        authMethod: "subscription_browser",
+      });
+      return;
+    }
+
     await refreshAccountsAfterFlow(deps.flow, deps.refreshCodexAccounts);
+
     if (!deps.flow.isCurrent()) return;
-    await deps.refreshBootstrapAfterMutation("codex");
-    if (!deps.flow.isCurrent()) return;
-    await deps.selectSubscriptionSourceIfSupported("codex");
-    deps.closeHarnessAuthModalForOperation(deps.flow);
-    return;
-  }
 
-  await refreshAccountsAfterFlow(deps.flow, deps.refreshCodexAccounts);
+    if (outcome === "failed") {
+      trackProviderAuthFailed({
+        providerId: "codex",
+        authMethod: "subscription_browser",
+        failureKind: "provider_failed",
+      });
+      deps.failSubscriptionFlowForOperation(
+        deps.flow,
+        "Sign-in failed. Please retry or use the callback completion flow.",
+      );
+      return;
+    }
 
-  if (!deps.flow.isCurrent()) return;
-
-  if (outcome === "failed") {
+    trackProviderAuthFailed({
+      providerId: "codex",
+      authMethod: "subscription_browser",
+      failureKind: "timeout",
+    });
     deps.failSubscriptionFlowForOperation(
       deps.flow,
-      "Sign-in failed. Please retry or use the callback completion flow.",
+      "Still waiting for callback completion. Continue in Harness Subscriptions if needed.",
     );
-    return;
+  } catch (error) {
+    trackProviderAuthFailed({
+      providerId: "codex",
+      authMethod: "subscription_browser",
+      failureKind: isCancelledOperationError(error) ? "user_cancelled" : "request_failed",
+    });
+    throw error;
   }
-
-  deps.failSubscriptionFlowForOperation(
-    deps.flow,
-    "Still waiting for callback completion. Continue in Harness Subscriptions if needed.",
-  );
 };
 
 const runClaudeSubscriptionFlow = async (deps: SubscriptionFlowDeps): Promise<void> => {
@@ -150,6 +199,10 @@ const runClaudeSubscriptionFlow = async (deps: SubscriptionFlowDeps): Promise<vo
     deps.markFinalizingForOperation(deps.flow);
     await deps.selectSubscriptionSourceIfSupported("claude-crp");
     deps.closeHarnessAuthModalForOperation(deps.flow);
+    trackProviderAuthCompleted({
+      providerId: "claude-crp",
+      authMethod: "subscription_token",
+    });
     return;
   }
 
@@ -193,6 +246,10 @@ const runCopilotSubscriptionFlow = async (deps: SubscriptionFlowDeps): Promise<v
   deps.markFinalizingForOperation(deps.flow);
   await deps.selectSubscriptionSourceIfSupported("copilot");
   deps.closeHarnessAuthModalForOperation(deps.flow);
+  trackProviderAuthCompleted({
+    providerId: "copilot",
+    authMethod: "subscription_token",
+  });
 };
 
 const runWorkspaceSubscriptionFlow = async (deps: SubscriptionFlowDeps): Promise<void> => {
@@ -207,9 +264,18 @@ const runWorkspaceSubscriptionFlow = async (deps: SubscriptionFlowDeps): Promise
   deps.markFinalizingForOperation(deps.flow);
   await deps.selectSubscriptionSourceIfSupported(deps.modal.provider_id);
   deps.closeHarnessAuthModalForOperation(deps.flow);
+  trackProviderAuthCompleted({
+    providerId: deps.modal.provider_id,
+    authMethod: "workspace_auth",
+  });
 };
 
 export const runHarnessSubscriptionFlow = async (deps: SubscriptionFlowDeps): Promise<void> => {
+  const authMethod = authMethodForModal(deps.modal);
+  trackProviderAuthStarted({
+    providerId: deps.modal.provider_id,
+    authMethod,
+  });
   try {
     switch (deps.modal.provider_id) {
       case "codex":
@@ -311,6 +377,13 @@ export const runHarnessSubscriptionFlow = async (deps: SubscriptionFlowDeps): Pr
         await runWorkspaceSubscriptionFlow(deps);
     }
   } catch (error) {
+    if (authMethod !== "subscription_browser") {
+      trackProviderAuthFailed({
+        providerId: deps.modal.provider_id,
+        authMethod,
+        failureKind: isCancelledOperationError(error) ? "user_cancelled" : "request_failed",
+      });
+    }
     if (isCancelledOperationError(error)) {
       return;
     }

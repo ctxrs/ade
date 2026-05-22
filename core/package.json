@@ -300,6 +300,7 @@
     "reserved:script-1": "node -p 0",
     "reserved:script-2": "node -p 0",
     "reserved:script-3": "node -p 0",
+    "reserved:script-4": "node -p 0",
     "reserved:script-5": "node -p 0",
     "reserved:script-6": "node -p 0",
     "reserved:script-7": "node -p 0",

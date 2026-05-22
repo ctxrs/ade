@@ -11,7 +11,14 @@ vi.mock("./client", () => ({
 }));
 
 import {
+  normalizeTurnFailureKind,
   trackDesktopWebviewRecoveryObserved,
+  trackProviderAuthCompleted,
+  trackProviderAuthFailed,
+  trackProviderAuthStarted,
+  trackProviderInstallCompleted,
+  trackProviderInstallFailed,
+  trackProviderInstallStarted,
   trackTaskCreated,
   trackTurnCompleted,
   trackTurnStarted,
@@ -120,6 +127,122 @@ describe("usage analytics activity helpers", () => {
         remaining_fraction: 0.4,
       },
     );
+  });
+
+  it("captures bounded provider setup diagnostics", () => {
+    trackProviderInstallStarted({
+      providerId: "codex",
+      source: "provider_onboarding",
+      target: "container",
+    });
+    trackProviderInstallCompleted({
+      providerId: "codex",
+      target: "container",
+    });
+    trackProviderInstallFailed({
+      providerId: "claude-crp",
+      target: "host",
+      installErrorCode: "download_failed",
+    });
+    trackProviderAuthStarted({
+      providerId: "gemini",
+      authMethod: "subscription_browser",
+    });
+    trackProviderAuthCompleted({
+      providerId: "gemini",
+      authMethod: "subscription_browser",
+    });
+    trackProviderAuthFailed({
+      providerId: "cursor",
+      authMethod: "endpoint",
+      failureKind: "verification_failed",
+    });
+
+    expect(captureProductEventMock).toHaveBeenCalledWith(
+      "provider_install_started",
+      1,
+      {
+        provider_id: "codex",
+        source: "provider_onboarding",
+        target: "container",
+      },
+    );
+    expect(captureProductEventMock).toHaveBeenCalledWith(
+      "provider_install_completed",
+      1,
+      {
+        provider_id: "codex",
+        source: "provider_onboarding",
+        status: "succeeded",
+        target: "container",
+      },
+    );
+    expect(captureProductEventMock).toHaveBeenCalledWith(
+      "provider_install_failed",
+      1,
+      {
+        provider_id: "claude-crp",
+        source: "provider_onboarding",
+        status: "failed",
+        failure_kind: "download_failed",
+        target: "host",
+        install_error_kind: "download_failed",
+      },
+    );
+    expect(captureProductEventMock).toHaveBeenCalledWith(
+      "provider_auth_started",
+      1,
+      {
+        provider_id: "gemini",
+        source: "settings",
+        auth_method: "subscription_browser",
+      },
+    );
+    expect(captureProductEventMock).toHaveBeenCalledWith(
+      "provider_auth_completed",
+      1,
+      {
+        provider_id: "gemini",
+        source: "settings",
+        auth_method: "subscription_browser",
+        status: "succeeded",
+      },
+    );
+    expect(captureProductEventMock).toHaveBeenCalledWith(
+      "provider_auth_failed",
+      1,
+      {
+        provider_id: "cursor",
+        source: "settings",
+        auth_method: "endpoint",
+        status: "failed",
+        failure_kind: "verification_failed",
+      },
+    );
+  });
+
+  it("adds bounded failure kinds to failed turn diagnostics", () => {
+    trackTurnCompleted({
+      providerId: "codex",
+      status: "failed",
+      failureKind: "auth_failed",
+    });
+
+    expect(captureProductEventMock).toHaveBeenCalledWith(
+      "turn_completed",
+      1,
+      {
+        provider_id: "codex",
+        status: "failed",
+        duration_bucket: "unknown",
+        failure_kind: "auth_failed",
+      },
+    );
+  });
+
+  it("keeps structured interrupted turn failures more specific than cancellation", () => {
+    expect(normalizeTurnFailureKind("provider_auth_required", "interrupted")).toBe("auth_missing");
+    expect(normalizeTurnFailureKind(undefined, "interrupted")).toBe("user_cancelled");
   });
 
   it("buckets unknown event original types before remote incident capture", () => {

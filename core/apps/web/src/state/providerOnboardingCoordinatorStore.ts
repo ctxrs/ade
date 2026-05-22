@@ -27,6 +27,12 @@ import {
   subscribeProviderInstallProgressForScope,
   upsertProviderInstallProgressForScope,
 } from "./providerInstallProgressStore";
+import {
+  normalizeProviderInstallFailureKind,
+  trackProviderInstallCompleted,
+  trackProviderInstallFailed,
+  trackProviderInstallStarted,
+} from "../utils/analytics";
 import { getProviderOwnerScope } from "./providerScopeAdapters";
 import {
   createProviderAuthScopeFromOptions,
@@ -214,6 +220,22 @@ const handleInstallTransitions = (entry: ProviderOnboardingEntry): void => {
     }
 
     needsBootstrapRefresh = true;
+    if (previous?.installId === install.installId && previous.state === "running") {
+      if (install.state === "succeeded") {
+        trackProviderInstallCompleted({
+          providerId,
+          target: install.target,
+        });
+      } else if (install.state === "failed" || install.state === "cancelled") {
+        trackProviderInstallFailed({
+          providerId,
+          target: install.target,
+          status: install.state,
+          failureKind: normalizeProviderInstallFailureKind(install.errorCode ?? install.state),
+          installErrorCode: install.errorCode,
+        });
+      }
+    }
     if (
       entry.workspaceId
       && install.state === "succeeded"
@@ -365,7 +387,21 @@ export const startProviderInstall = async (
 ): Promise<InstallStartResponse> => {
   const entry = getOrCreateEntry(getProviderOwnerScope(workspaceId));
   const target = providerInstallTargetForProvider(entry.snapshot.providersById[providerId]) ?? "host";
-  const started = await installProvider(providerId, target);
+  let started: InstallStartResponse;
+  try {
+    started = await installProvider(providerId, target);
+  } catch (error) {
+    trackProviderInstallFailed({
+      providerId,
+      target,
+      failureKind: "request_failed",
+    });
+    throw error;
+  }
+  trackProviderInstallStarted({
+    providerId,
+    target: started.target,
+  });
   attachInstallObserver(entry, providerId, started.install_id, started.target);
   return started;
 };
@@ -377,8 +413,21 @@ export const startAllProviderInstalls = async (
   const target = providerInstallTargetForProvider(
     entry.snapshot.bootstrap.providers.find((provider) => provider.details?.install_target),
   ) ?? "host";
-  const started = await installAllProviders(target);
+  let started: InstallStartResponse[];
+  try {
+    started = await installAllProviders(target);
+  } catch (error) {
+    trackProviderInstallFailed({
+      target,
+      failureKind: "request_failed",
+    });
+    throw error;
+  }
   for (const install of started) {
+    trackProviderInstallStarted({
+      providerId: install.provider_id,
+      target: install.target,
+    });
     attachInstallObserver(entry, install.provider_id, install.install_id, install.target);
   }
   return started;

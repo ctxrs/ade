@@ -44,6 +44,11 @@ import {
   updateProvidersBootstrapForScope,
 } from "./providersBootstrapStore";
 import type { OwnerScope } from "./scopeIdentity";
+import {
+  trackEndpointAuthCompleted,
+  trackEndpointAuthFailed,
+  trackEndpointAuthStarted,
+} from "./providerEndpointAuthTelemetry";
 
 export type ResolveUpsertedEndpointArgs = {
   requestedEndpointId: string | null;
@@ -490,85 +495,96 @@ export const submitProviderEndpointAuth = async ({
   previousSelection,
   isStale,
 }: SubmitProviderEndpointAuthParams): Promise<SubmitProviderEndpointAuthResult> => {
+  trackEndpointAuthStarted(providerId);
   const stale = isStale ?? (() => false);
-  const previousEndpointIds = new Set(
-    (
-      getProvidersBootstrapSnapshotForScope(ownerScope).provider_harness_config[providerId]?.endpoints
-      ?? []
-    ).map((endpoint) => endpoint.id),
-  );
-  const next = await upsertProviderHarnessEndpoint(providerId, {
-    endpoint_id: requestedEndpointId,
-    name,
-    base_url: baseUrl,
-    api_shape: apiShape,
-    auth_type: authType,
-    api_key: apiKey,
-    service_account_json: serviceAccountJson,
-    project_id: projectId,
-    location,
-    manual_model_ids: manualModelIds,
-  });
+  try {
+    const previousEndpointIds = new Set(
+      (
+        getProvidersBootstrapSnapshotForScope(ownerScope).provider_harness_config[providerId]?.endpoints
+        ?? []
+      ).map((endpoint) => endpoint.id),
+    );
+    const next = await upsertProviderHarnessEndpoint(providerId, {
+      endpoint_id: requestedEndpointId,
+      name,
+      base_url: baseUrl,
+      api_shape: apiShape,
+      auth_type: authType,
+      api_key: apiKey,
+      service_account_json: serviceAccountJson,
+      project_id: projectId,
+      location,
+      manual_model_ids: manualModelIds,
+    });
 
-  const upsertedEndpoint = resolveUpsertedEndpoint({
-    requestedEndpointId,
-    previousEndpointIds,
-    nextEndpoints: next.endpoints,
-    name,
-    normalizedBase: baseUrl,
-    authType,
-  });
-  const selectedEndpointId = upsertedEndpoint?.id ?? next.selected_endpoint_id ?? requestedEndpointId ?? null;
+    const upsertedEndpoint = resolveUpsertedEndpoint({
+      requestedEndpointId,
+      previousEndpointIds,
+      nextEndpoints: next.endpoints,
+      name,
+      normalizedBase: baseUrl,
+      authType,
+    });
+    const selectedEndpointId = upsertedEndpoint?.id ?? next.selected_endpoint_id ?? requestedEndpointId ?? null;
 
-  if (stale()) {
-    return {
-      status: "stale",
-      selectedEndpointId,
-    };
-  }
-
-  await selectProviderSourceInternal(ownerScope, providerId, {
-    sourceKind: "endpoint",
-    endpointId: selectedEndpointId,
-  });
-
-  if (ownerScope.kind === "workspace") {
-    const verify = await verifyProviderForWorkspace(ownerScope.workspaceId, providerId);
     if (stale()) {
-      await rollbackPreviousSource(ownerScope, providerId, previousSelection);
+      trackEndpointAuthFailed(providerId, "user_cancelled");
       return {
         status: "stale",
         selectedEndpointId,
       };
     }
-    if (verify.status !== "ok") {
-      const rollbackError = await rollbackPreviousSource(ownerScope, providerId, previousSelection);
-      const message = trimMessage(verify.message)
-        ?? `Endpoint verification failed for ${providerId} (${verify.status}).`;
-      if (rollbackError) {
+
+    await selectProviderSourceInternal(ownerScope, providerId, {
+      sourceKind: "endpoint",
+      endpointId: selectedEndpointId,
+    });
+
+    if (ownerScope.kind === "workspace") {
+      const verify = await verifyProviderForWorkspace(ownerScope.workspaceId, providerId);
+      if (stale()) {
+        await rollbackPreviousSource(ownerScope, providerId, previousSelection);
+        trackEndpointAuthFailed(providerId, "user_cancelled");
         return {
-          status: "rollback_failed",
+          status: "stale",
           selectedEndpointId,
-          message,
-          rollbackError,
         };
       }
+      if (verify.status !== "ok") {
+        const rollbackError = await rollbackPreviousSource(ownerScope, providerId, previousSelection);
+        const message = trimMessage(verify.message)
+          ?? `Endpoint verification failed for ${providerId} (${verify.status}).`;
+        trackEndpointAuthFailed(providerId, "verification_failed");
+        if (rollbackError) {
+          return {
+            status: "rollback_failed",
+            selectedEndpointId,
+            message,
+            rollbackError,
+          };
+        }
+        return {
+          status: "rolled_back",
+          selectedEndpointId,
+          message,
+        };
+      }
+    } else if (stale()) {
+      await rollbackPreviousSource(ownerScope, providerId, previousSelection);
+      trackEndpointAuthFailed(providerId, "user_cancelled");
       return {
-        status: "rolled_back",
+        status: "stale",
         selectedEndpointId,
-        message,
       };
     }
-  } else if (stale()) {
-    await rollbackPreviousSource(ownerScope, providerId, previousSelection);
+
+    trackEndpointAuthCompleted(providerId);
     return {
-      status: "stale",
+      status: "applied",
       selectedEndpointId,
     };
+  } catch (error) {
+    trackEndpointAuthFailed(providerId, "request_failed");
+    throw error;
   }
-
-  return {
-    status: "applied",
-    selectedEndpointId,
-  };
 };

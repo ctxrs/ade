@@ -2,6 +2,7 @@ import { idToString, type Message, type Session, type SessionEvent, type Session
 import { sendDesktopNotification } from "../../utils/desktopNotifications";
 import { isAppInForeground } from "../../utils/windowFocus";
 import {
+  normalizeTurnFailureKind,
   trackFirstTurnCompleted,
   trackProviderRunCompleted,
   trackTurnCompleted,
@@ -33,6 +34,7 @@ type TurnOutcomeEffectInput = {
   startedAt?: string;
   completedAt?: string;
   metrics?: unknown;
+  failure?: SessionTurn["failure"];
   title?: string;
   notificationBody?: string;
   notificationTitle?: string;
@@ -95,6 +97,17 @@ const notificationTitleForStatus = (status: NotifiableTurnStatus): string =>
 const notificationKindForStatus = (status: NotifiableTurnStatus): "turn_completed" | "turn_failed" =>
   status === "completed" ? "turn_completed" : "turn_failed";
 
+const turnFailureSignal = (
+  status: TerminalTurnStatus,
+  failure: SessionTurn["failure"] | undefined,
+) => {
+  if (status === "completed") return undefined;
+  return normalizeTurnFailureKind(
+    failure?.kind ?? failure?.reason ?? failure?.provider ?? failure?.provider_id,
+    status,
+  );
+};
+
 export const applyTurnOutcomeEffects = ({
   sessionId,
   taskId,
@@ -108,6 +121,7 @@ export const applyTurnOutcomeEffects = ({
   startedAt,
   completedAt,
   metrics,
+  failure,
   notificationBody,
   notificationTitle,
   previousStatus,
@@ -118,6 +132,9 @@ export const applyTurnOutcomeEffects = ({
   const completedAtMs = parseTimestampMs(completedAt);
   const durationMs = startedAtMs !== null && completedAtMs !== null && completedAtMs >= startedAtMs
     ? completedAtMs - startedAtMs
+    : undefined;
+  const failureKind = nextStatus && isTerminalTurnStatus(nextStatus)
+    ? turnFailureSignal(nextStatus, failure)
     : undefined;
   if (
     shouldTrackTurnOutcome(previousStatus, nextStatus)
@@ -132,6 +149,7 @@ export const applyTurnOutcomeEffects = ({
       durationMs,
       sessionKind,
       metrics,
+      failureKind,
     });
     trackProviderRunCompleted({
       providerId,
@@ -139,6 +157,7 @@ export const applyTurnOutcomeEffects = ({
       status: nextStatus,
       durationMs,
       sessionKind,
+      failureKind,
     });
     trackFirstTurnCompleted({
       sessionId,
@@ -220,6 +239,7 @@ export const replayTurnOutcomeEffectsFromTurns = ({
       startedAt: turn.started_at,
       completedAt: turn.updated_at,
       metrics: turn.metrics_json,
+      failure: turn.failure,
       notificationBody,
       notificationTitle,
       previousStatus: previousStatusesByTurnId.get(turnId),

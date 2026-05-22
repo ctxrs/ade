@@ -25,12 +25,21 @@ export {
   trackSessionCreated,
   trackTaskCreated,
   trackProviderSelected,
+  trackProviderInstallStarted,
+  trackProviderInstallCompleted,
+  trackProviderInstallFailed,
+  trackProviderAuthStarted,
+  trackProviderAuthCompleted,
+  trackProviderAuthFailed,
   trackFirstTurnSubmitted,
   trackUserMessageSent,
   trackTurnStarted,
   trackTurnCompleted,
   trackFirstTurnCompleted,
   trackProviderRunCompleted,
+  normalizeProviderInstallFailureKind,
+  normalizeProviderAuthFailureKind,
+  normalizeTurnFailureKind,
   trackFeatureUsed,
   trackWorkbenchPanelToggled,
   trackPlanViewed,
@@ -54,6 +63,14 @@ export {
   trackUnknownEventBurst,
   trackSessionEventVolumeBurst,
   trackRendererHeartbeatMissed,
+} from "./activity";
+
+export type {
+  ProviderAuthFailureKind,
+  ProviderAuthMethod,
+  ProviderInstallFailureKind,
+  ProviderSetupSource,
+  TurnFailureKind,
 } from "./activity";
 
 export { sanitizeAnalyticsProperties } from "./schema";

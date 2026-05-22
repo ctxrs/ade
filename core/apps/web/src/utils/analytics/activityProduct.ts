@@ -15,6 +15,143 @@ import {
   tokenUsageProperties,
 } from "./activityShared";
 
+export type ProviderSetupSource =
+  | "provider_onboarding"
+  | "settings"
+  | "workbench"
+  | "workspace_setup"
+  | "session_auth"
+  | "unknown";
+
+export type ProviderInstallFailureKind =
+  | "download_failed"
+  | "checksum_mismatch"
+  | "command_failed"
+  | "timeout"
+  | "matrix_mismatch"
+  | "health_check_failed"
+  | "registry_write_failed"
+  | "unsupported_target"
+  | "request_failed"
+  | "user_cancelled"
+  | "unknown";
+
+export type ProviderAuthMethod =
+  | "subscription_browser"
+  | "subscription_token"
+  | "subscription_account"
+  | "endpoint"
+  | "workspace_auth"
+  | "unknown";
+
+export type ProviderAuthFailureKind =
+  | "request_failed"
+  | "browser_open_failed"
+  | "timeout"
+  | "provider_failed"
+  | "verification_failed"
+  | "user_cancelled"
+  | "unknown";
+
+export type TurnFailureKind =
+  | "auth_missing"
+  | "auth_failed"
+  | "install_missing"
+  | "install_failed"
+  | "provider_launch_failed"
+  | "sandbox_prepare_failed"
+  | "network_error"
+  | "timeout"
+  | "user_cancelled"
+  | "unknown";
+
+const normalizeBoundedKey = (value: unknown): string =>
+  String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+export const normalizeProviderInstallFailureKind = (
+  value: unknown,
+): ProviderInstallFailureKind => {
+  const key = normalizeBoundedKey(value);
+  switch (key) {
+    case "download_failed":
+    case "checksum_mismatch":
+    case "command_failed":
+    case "timeout":
+    case "matrix_mismatch":
+    case "health_check_failed":
+    case "registry_write_failed":
+    case "unsupported_target":
+    case "request_failed":
+    case "user_cancelled":
+      return key;
+    case "invalid_target":
+      return "unsupported_target";
+    case "cancelled":
+    case "canceled":
+      return "user_cancelled";
+    default:
+      return "unknown";
+  }
+};
+
+export const normalizeProviderAuthFailureKind = (
+  value: unknown,
+): ProviderAuthFailureKind => {
+  const key = normalizeBoundedKey(value);
+  switch (key) {
+    case "request_failed":
+    case "browser_open_failed":
+    case "timeout":
+    case "provider_failed":
+    case "verification_failed":
+    case "user_cancelled":
+      return key;
+    case "failed":
+    case "auth_failed":
+      return "provider_failed";
+    case "cancelled":
+    case "canceled":
+      return "user_cancelled";
+    default:
+      return "unknown";
+  }
+};
+
+export const normalizeTurnFailureKind = (
+  value: unknown,
+  status?: "failed" | "interrupted",
+): TurnFailureKind => {
+  const key = normalizeBoundedKey(value);
+  if (!key) return status === "interrupted" ? "user_cancelled" : "unknown";
+  if (key.includes("auth") && (key.includes("missing") || key.includes("required"))) {
+    return "auth_missing";
+  }
+  if (key.includes("auth") || key.includes("credential") || key.includes("login")) {
+    return "auth_failed";
+  }
+  if (key.includes("install") && (key.includes("missing") || key.includes("required"))) {
+    return "install_missing";
+  }
+  if (key.includes("install")) return "install_failed";
+  if (key.includes("sandbox") || key.includes("container") || key.includes("vm")) {
+    return "sandbox_prepare_failed";
+  }
+  if (key.includes("network") || key.includes("connection") || key.includes("fetch")) {
+    return "network_error";
+  }
+  if (key.includes("timeout") || key.includes("timed_out")) return "timeout";
+  if (key.includes("cancel") || key.includes("interrupt")) return "user_cancelled";
+  if (key.includes("spawn") || key.includes("launch") || key.includes("provider")) {
+    return "provider_launch_failed";
+  }
+  if (status === "interrupted") return "user_cancelled";
+  return "unknown";
+};
+
 export const trackSessionCreated = (props: {
   providerId: string;
   modelId?: string;
@@ -52,6 +189,89 @@ export const trackProviderSelected = (props: {
   capture("provider_selected", {
     provider_id: props.providerId,
     source: props.source,
+  });
+};
+
+export const trackProviderInstallStarted = (props: {
+  providerId: string;
+  source?: ProviderSetupSource;
+  target?: string;
+}): void => {
+  capture("provider_install_started", {
+    provider_id: props.providerId,
+    source: props.source ?? "provider_onboarding",
+    ...(props.target ? { target: props.target } : {}),
+  });
+};
+
+export const trackProviderInstallCompleted = (props: {
+  providerId: string;
+  source?: ProviderSetupSource;
+  target?: string;
+}): void => {
+  capture("provider_install_completed", {
+    provider_id: props.providerId,
+    source: props.source ?? "provider_onboarding",
+    status: "succeeded",
+    ...(props.target ? { target: props.target } : {}),
+  });
+};
+
+export const trackProviderInstallFailed = (props: {
+  providerId?: string;
+  source?: ProviderSetupSource;
+  target?: string;
+  failureKind?: ProviderInstallFailureKind;
+  installErrorCode?: string;
+  status?: "failed" | "cancelled";
+}): void => {
+  capture("provider_install_failed", {
+    ...(props.providerId ? { provider_id: props.providerId } : {}),
+    source: props.source ?? "provider_onboarding",
+    status: props.status ?? "failed",
+    failure_kind: normalizeProviderInstallFailureKind(props.failureKind ?? props.installErrorCode),
+    ...(props.target ? { target: props.target } : {}),
+    ...(props.installErrorCode ? { install_error_kind: normalizeBoundedKey(props.installErrorCode) } : {}),
+  });
+};
+
+export const trackProviderAuthStarted = (props: {
+  providerId: string;
+  source?: ProviderSetupSource;
+  authMethod?: ProviderAuthMethod;
+}): void => {
+  capture("provider_auth_started", {
+    provider_id: props.providerId,
+    source: props.source ?? "settings",
+    auth_method: props.authMethod ?? "unknown",
+  });
+};
+
+export const trackProviderAuthCompleted = (props: {
+  providerId: string;
+  source?: ProviderSetupSource;
+  authMethod?: ProviderAuthMethod;
+}): void => {
+  capture("provider_auth_completed", {
+    provider_id: props.providerId,
+    source: props.source ?? "settings",
+    auth_method: props.authMethod ?? "unknown",
+    status: "succeeded",
+  });
+};
+
+export const trackProviderAuthFailed = (props: {
+  providerId: string;
+  source?: ProviderSetupSource;
+  authMethod?: ProviderAuthMethod;
+  failureKind?: ProviderAuthFailureKind;
+}): void => {
+  capture("provider_auth_failed", {
+    provider_id: props.providerId,
+    source: props.source ?? "settings",
+    auth_method: props.authMethod ?? "unknown",
+    status: props.failureKind === "user_cancelled" ? "cancelled" : "failed",
+    failure_kind: normalizeProviderAuthFailureKind(props.failureKind),
   });
 };
 
@@ -105,6 +325,7 @@ export const trackProviderRunCompleted = (props: {
   status: "completed" | "failed" | "interrupted";
   durationMs?: number;
   sessionKind?: AnalyticsSessionKind;
+  failureKind?: TurnFailureKind;
 }): void => {
   capture("provider_run_completed", {
     ...(props.providerId ? { provider_id: props.providerId } : {}),
@@ -112,6 +333,7 @@ export const trackProviderRunCompleted = (props: {
     status: props.status,
     duration_bucket: durationBucketForMs(props.durationMs),
     ...(props.sessionKind ? { session_kind: props.sessionKind } : {}),
+    ...(props.status !== "completed" ? { failure_kind: props.failureKind ?? "unknown" } : {}),
   });
 };
 
@@ -124,6 +346,7 @@ export const trackTurnCompleted = (props: {
   durationMs?: number;
   sessionKind?: AnalyticsSessionKind;
   metrics?: unknown;
+  failureKind?: TurnFailureKind;
 }): void => {
   capture("turn_completed", {
     ...(props.providerId ? { provider_id: props.providerId } : {}),
@@ -132,6 +355,7 @@ export const trackTurnCompleted = (props: {
     status: props.status,
     duration_bucket: durationBucketForMs(props.durationMs),
     ...(props.sessionKind ? { session_kind: props.sessionKind } : {}),
+    ...(props.status !== "completed" ? { failure_kind: props.failureKind ?? "unknown" } : {}),
     ...tokenUsageProperties(props.metrics),
   });
 };

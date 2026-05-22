@@ -1,5 +1,9 @@
 import type { Dispatch, SetStateAction } from "react";
 import { getCodexLogin } from "../../../../api/client";
+import {
+  trackProviderAuthCompleted,
+  trackProviderAuthFailed,
+} from "../../../../utils/analytics";
 import { openExternalLink } from "../../../../utils/desktop";
 import type { HarnessAuthModalState } from "../../../SettingsPage.types";
 import { delayWithAbort, isCancelledOperationError } from "./operationOwner";
@@ -290,6 +294,10 @@ export const runBrowserSubscriptionFlow = async (
       await deps.refreshBootstrapAfterMutation(definition.providerId);
       if (!deps.flow.isCurrent()) return;
       await finalizeSuccessfulSubscription(deps, definition.providerId);
+      trackProviderAuthCompleted({
+        providerId: definition.providerId,
+        authMethod: "subscription_browser",
+      });
       return;
     }
 
@@ -302,19 +310,45 @@ export const runBrowserSubscriptionFlow = async (
     }
 
     if (outcome.status === "failed") {
+      trackProviderAuthFailed({
+        providerId: definition.providerId,
+        authMethod: "subscription_browser",
+        failureKind: "provider_failed",
+      });
       deps.failSubscriptionFlowForOperation(deps.flow, outcome.error?.trim() || "Sign-in failed. Retry.");
       return;
     }
 
     if (outcome.status === "timeout") {
+      trackProviderAuthFailed({
+        providerId: definition.providerId,
+        authMethod: "subscription_browser",
+        failureKind: "timeout",
+      });
       deps.failSubscriptionFlowForOperation(deps.flow, outcome.error?.trim() || definition.timeoutMessage);
       return;
     }
 
+    trackProviderAuthFailed({
+      providerId: definition.providerId,
+      authMethod: "subscription_browser",
+      failureKind: "unknown",
+    });
     deps.failSubscriptionFlowForOperation(
       deps.flow,
       "Still waiting for completion. Keep this dialog open or retry.",
     );
+  } catch (error) {
+    trackProviderAuthFailed({
+      providerId: definition.providerId,
+      authMethod: "subscription_browser",
+      failureKind: isCancelledOperationError(error)
+        ? "user_cancelled"
+        : error instanceof Error && error.message === BROWSER_OPEN_FAILURE_MESSAGE
+          ? "browser_open_failed"
+          : "request_failed",
+    });
+    throw error;
   } finally {
     if (!reservedWindowUsed) {
       closeReservedBrowserWindow(reservedWindow);
