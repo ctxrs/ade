@@ -23,6 +23,7 @@ const {
   HEALTH_DIAGNOSTICS_API_ORCHESTRATION_PATTERNS,
   RESOURCE_UTILIZATION_API_ROUTE_CONTRACT_PATTERNS,
   SETTINGS_API_ORCHESTRATION_PATTERNS,
+  TITLE_GENERATION_API_ROUTE_CONTRACT_PATTERNS,
   TELEMETRY_API_ORCHESTRATION_PATTERNS,
   LOGS_API_ORCHESTRATION_PATTERNS,
   UPDATE_API_ORCHESTRATION_PATTERNS,
@@ -151,6 +152,7 @@ const {
   terminalRestRouteApiPatternsForPath,
   webSessionRestRouteApiPatternsForPath,
   taskRouteApiPatternsForPath,
+  titleGenerationApiPatternsForPath,
   mcpDaemonPatternsForPath,
   migratedTestPatternsForPath,
   mobileAccessStoreDtoApiPatternsForPath,
@@ -6819,6 +6821,105 @@ test("daemon boundary guard allows settings API route-contract imports", () => {
   assert.deepEqual(violations, []);
 });
 
+test("daemon boundary guard rejects title-generation daemon status leaves", () => {
+  const rejectedImports = [
+    `
+      use ctx_daemon::daemon::sessions::title_generation::{
+        TitleGenerationLocalModelStatus,
+        TitleGenerationLocalRuntimeStatus,
+      };
+    `,
+    `
+      use ctx_daemon::{daemon::sessions::title_generation::TitleGenerationLocalRuntimeStatus};
+    `,
+    `
+      use ctx_daemon::daemon::sessions::title_generation as daemon_title_generation;
+      type RuntimeStatus = daemon_title_generation::TitleGenerationLocalRuntimeStatus;
+    `,
+    `
+      use ctx_daemon::daemon::sessions::{title_generation as daemon_title_generation};
+      type RuntimeStatus = daemon_title_generation::TitleGenerationLocalRuntimeStatus;
+    `,
+    `
+      use ctx_daemon::{daemon::sessions::{title_generation as daemon_title_generation}};
+      type RuntimeStatus = daemon_title_generation::TitleGenerationLocalRuntimeStatus;
+    `,
+    `
+      use ctx_daemon::daemon::sessions::*;
+      type RuntimeStatus = title_generation::TitleGenerationLocalRuntimeStatus;
+    `,
+    `
+      use ctx_daemon::{daemon::sessions::*};
+      type RuntimeStatus = title_generation::TitleGenerationLocalRuntimeStatus;
+    `,
+    `
+      use ctx_daemon::daemon::sessions as daemon_sessions;
+      type RuntimeStatus = daemon_sessions::title_generation::TitleGenerationLocalRuntimeStatus;
+    `,
+    `
+      use ctx_daemon::{daemon::{sessions as daemon_sessions}};
+      type RuntimeStatus = daemon_sessions::title_generation::TitleGenerationLocalRuntimeStatus;
+    `,
+    `
+      use ctx_daemon::daemon as daemon_alias;
+      type RuntimeStatus = daemon_alias::sessions::title_generation::TitleGenerationLocalRuntimeStatus;
+    `,
+    `
+      use ctx_daemon::{daemon as daemon_alias};
+      type RuntimeStatus = daemon_alias::sessions::title_generation::TitleGenerationLocalRuntimeStatus;
+    `,
+    `
+      use ctx_daemon as ctxd;
+      type RuntimeStatus = ctxd::daemon::sessions::title_generation::TitleGenerationLocalRuntimeStatus;
+    `,
+    `
+      use ctx_daemon::{self as ctxd};
+      type RuntimeStatus = ctxd::daemon::sessions::title_generation::TitleGenerationLocalRuntimeStatus;
+    `,
+    `
+      extern crate ctx_daemon as ctxd;
+      type RuntimeStatus = ctxd::daemon::sessions::title_generation::TitleGenerationLocalRuntimeStatus;
+    `,
+    `
+      use ctx_daemon::{daemon::{self}};
+      type RuntimeStatus = daemon::sessions::title_generation::TitleGenerationLocalRuntimeStatus;
+    `,
+    `
+      type RuntimeStatus =
+        ctx_daemon::daemon::sessions::title_generation::TitleGenerationLocalRuntimeStatus;
+    `,
+    `
+      use ::ctx_daemon as ctxd;
+      type RuntimeStatus = ctxd::daemon::sessions::title_generation::TitleGenerationLocalRuntimeStatus;
+    `,
+  ];
+
+  for (const contents of rejectedImports) {
+    const violations = scanText({
+      filePath: "core/crates/ctx-http/src/api/title_generation.rs",
+      contents,
+      patterns: TITLE_GENERATION_API_ROUTE_CONTRACT_PATTERNS,
+    });
+
+    assert.ok(
+      violations.some(
+        (violation) =>
+          violation.name ===
+          "title-generation API imports daemon beyond SessionsHandle",
+      ),
+      `expected title-generation daemon import violation for:\n${contents}`,
+    );
+  }
+
+  const allowed = scanText({
+    filePath: "core/crates/ctx-http/src/api/title_generation.rs",
+    contents: "use ctx_daemon::daemon::SessionsHandle;",
+    patterns: TITLE_GENERATION_API_ROUTE_CONTRACT_PATTERNS,
+  });
+
+  assert.deepEqual(allowed, []);
+});
+
 test("daemon boundary guard rejects telemetry export filesystem pathing", () => {
   const violations = scanText({
     filePath: "core/crates/ctx-http/src/api/telemetry.rs",
@@ -6839,12 +6940,32 @@ test("daemon boundary guard rejects telemetry export filesystem pathing", () => 
   );
 });
 
-test("daemon boundary guard scopes settings and telemetry API orchestration roots", () => {
+test("daemon boundary guard scopes settings, title-generation, and telemetry API orchestration roots", () => {
   assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/settings.rs").includes(
       SETTINGS_API_ORCHESTRATION_PATTERNS[0],
     ),
     true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/title_generation.rs").includes(
+      TITLE_GENERATION_API_ROUTE_CONTRACT_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/mod.rs").includes(
+      TITLE_GENERATION_API_ROUTE_CONTRACT_PATTERNS[0],
+    ),
+    true,
+  );
+  assert.deepEqual(
+    titleGenerationApiPatternsForPath("core/crates/ctx-http/src/api/title_generation.rs"),
+    TITLE_GENERATION_API_ROUTE_CONTRACT_PATTERNS,
+  );
+  assert.deepEqual(
+    titleGenerationApiPatternsForPath("core/crates/ctx-http/src/api/mod.rs"),
+    TITLE_GENERATION_API_ROUTE_CONTRACT_PATTERNS,
   );
   assert.equal(
     apiPatternsForPath("core/crates/ctx-http/src/api/telemetry.rs").includes(

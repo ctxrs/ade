@@ -385,6 +385,11 @@ const settingsApiRoots = [
   "core/crates/ctx-http/src/api/settings.rs",
 ];
 
+const titleGenerationApiRoots = [
+  "core/crates/ctx-http/src/api/mod.rs",
+  "core/crates/ctx-http/src/api/title_generation.rs",
+];
+
 const telemetryApiRoots = [
   "core/crates/ctx-http/src/api/telemetry.rs",
 ];
@@ -2860,6 +2865,15 @@ const SETTINGS_API_ORCHESTRATION_PATTERNS = [
   {
     name: "settings API owns settings persistence sequencing",
     regex: /\.(?:load_settings|save_settings|apply_settings_side_effects|public_settings_for_response)\s*\(/,
+  },
+];
+
+const TITLE_GENERATION_API_ROUTE_CONTRACT_PATTERNS = [
+  {
+    name: "title-generation API imports daemon beyond SessionsHandle",
+    regex: /a^/,
+    contentRegex: /\bctx_daemon\b/gm,
+    allowContentRegex: /\buse\s+ctx_daemon::daemon::SessionsHandle\s*;/gm,
   },
 ];
 
@@ -5595,6 +5609,9 @@ function apiPatternsForPath(relativePath) {
   if (settingsApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...SETTINGS_API_ORCHESTRATION_PATTERNS);
   }
+  if (titleGenerationApiRoots.some((root) => relativePath === root)) {
+    patterns.push(...TITLE_GENERATION_API_ROUTE_CONTRACT_PATTERNS);
+  }
   if (telemetryApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...TELEMETRY_API_ORCHESTRATION_PATTERNS);
   }
@@ -5936,6 +5953,13 @@ function providerUsageApiPatternsForPath(relativePath) {
 function sessionHeadApiPatternsForPath(relativePath) {
   if (sessionHeadApiRoots.some((root) => relativePath.startsWith(root))) {
     return SESSION_HEAD_API_ORCHESTRATION_PATTERNS;
+  }
+  return [];
+}
+
+function titleGenerationApiPatternsForPath(relativePath) {
+  if (titleGenerationApiRoots.some((root) => relativePath === root)) {
+    return TITLE_GENERATION_API_ROUTE_CONTRACT_PATTERNS;
   }
   return [];
 }
@@ -6860,6 +6884,7 @@ module.exports = {
   HEALTH_DIAGNOSTICS_API_ORCHESTRATION_PATTERNS,
   RESOURCE_UTILIZATION_API_ROUTE_CONTRACT_PATTERNS,
   SETTINGS_API_ORCHESTRATION_PATTERNS,
+  TITLE_GENERATION_API_ROUTE_CONTRACT_PATTERNS,
   TELEMETRY_API_ORCHESTRATION_PATTERNS,
   LOGS_API_ORCHESTRATION_PATTERNS,
   UPDATE_API_ORCHESTRATION_PATTERNS,
@@ -6988,6 +7013,7 @@ module.exports = {
   terminalRestRouteApiPatternsForPath,
   webSessionRestRouteApiPatternsForPath,
   taskRouteApiPatternsForPath,
+  titleGenerationApiPatternsForPath,
   mcpDaemonPatternsForPath,
   migratedTestPatternsForPath,
   mobileAccessStoreDtoApiPatternsForPath,

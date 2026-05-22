@@ -1,12 +1,14 @@
 use super::*;
-use ctx_daemon::daemon::sessions::title_generation as daemon_title_generation;
 use ctx_daemon::daemon::SessionsHandle;
+use ctx_managed_installs::title_generation_local::{
+    TitleGenerationLocalModelStatus, TitleGenerationLocalRuntimeStatus,
+};
 
 #[derive(Debug, Serialize)]
 pub(in crate::api) struct TitleGenerationLocalStatusResponse {
     pub ready: bool,
-    pub runtime: daemon_title_generation::TitleGenerationLocalRuntimeStatus,
-    pub model: daemon_title_generation::TitleGenerationLocalModelStatus,
+    pub runtime: TitleGenerationLocalRuntimeStatus,
+    pub model: TitleGenerationLocalModelStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub install_id: Option<InstallId>,
     pub install_running: bool,

@@ -3,15 +3,15 @@ use std::sync::Arc;
 
 use crate::daemon::{DaemonState, SessionsHandle};
 use ctx_core::models::Session;
+use ctx_managed_installs::title_generation_local::{
+    TitleGenerationLocalModelStatus, TitleGenerationLocalRuntimeStatus,
+};
 use ctx_observability::logs;
 use ctx_provider_install::install_state::InstallId;
 use ctx_session_title_service::title_generation;
 use ctx_settings_model as user_settings;
 
 mod persistence;
-pub use ctx_managed_installs::title_generation_local::{
-    TitleGenerationLocalModelStatus, TitleGenerationLocalRuntimeStatus,
-};
 pub use persistence::apply_session_title_update;
 
 pub const TITLE_GENERATION_LOCAL_INSTALL_KEY: &str = "title_generation_local";
