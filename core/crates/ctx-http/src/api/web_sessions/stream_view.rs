@@ -3,7 +3,7 @@ use super::*;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
-use ctx_daemon::daemon::{CoreHandle, TransportHandle};
+use ctx_daemon::daemon::{RequestBaseHandle, TransportHandle};
 use ctx_transport_runtime::web_sessions::WebSessionAccessError;
 
 #[derive(Debug, Serialize)]
@@ -14,7 +14,7 @@ pub(in crate::api) struct WebSessionStreamConnectInfo {
 }
 
 pub(in crate::api) async fn mint_web_session_stream_token(
-    State(core): State<CoreHandle>,
+    State(request_base): State<RequestBaseHandle>,
     State(state): State<TransportHandle>,
     headers: HeaderMap,
     Path(id): Path<String>,
@@ -23,12 +23,12 @@ pub(in crate::api) async fn mint_web_session_stream_token(
         .mint_web_session_view_connect_path(&id)
         .await
         .map_err(web_session_access_status)?;
-    let stream_url = match core.public_base_url() {
+    let stream_url = match request_base.public_base_url() {
         Some(base_url) => Some(
             public_route_url(base_url, &connect_path.stream_path)
                 .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?,
         ),
-        None => resolve_request_base_url(&headers, core.daemon_url(), None)
+        None => resolve_request_base_url(&headers, request_base.daemon_url(), None)
             .map(|base_url| format!("{base_url}{}", connect_path.stream_path)),
     };
     Ok(Json(WebSessionStreamConnectInfo {
@@ -39,7 +39,7 @@ pub(in crate::api) async fn mint_web_session_stream_token(
 }
 
 pub(in crate::api) async fn web_session_view(
-    State(core): State<CoreHandle>,
+    State(request_base): State<RequestBaseHandle>,
     State(state): State<TransportHandle>,
     Path(id): Path<String>,
     Query(query): Query<WebSessionStreamAccessQuery>,
@@ -48,7 +48,7 @@ pub(in crate::api) async fn web_session_view(
         .prepare_web_session_view_page(&id, query.token.as_deref())
         .await
         .map_err(web_session_access_status)?;
-    let signal_endpoint = match core.public_base_url() {
+    let signal_endpoint = match request_base.public_base_url() {
         Some(base_url) => public_websocket_url(base_url, &view_page.signal_path)
             .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?,
         None => view_page.signal_path,

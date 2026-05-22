@@ -32,6 +32,13 @@ impl DaemonHandle {
         )
     }
 
+    pub fn request_base(&self) -> RequestBaseHandle {
+        RequestBaseHandle::new(
+            self.state.core.daemon_url.clone(),
+            self.state.core.public_base_url.clone(),
+        )
+    }
+
     pub fn sessions(&self) -> SessionsHandle {
         SessionsHandle::new(Arc::clone(&self.state))
     }
@@ -170,6 +177,29 @@ impl TelemetryHandle {
 pub struct TelemetryHandle {
     perf_telemetry: PerfTelemetry,
     telemetry: Telemetry,
+}
+
+#[derive(Clone)]
+pub struct RequestBaseHandle {
+    daemon_url: String,
+    public_base_url: Option<String>,
+}
+
+impl RequestBaseHandle {
+    pub(in crate::daemon) fn new(daemon_url: String, public_base_url: Option<String>) -> Self {
+        Self {
+            daemon_url,
+            public_base_url,
+        }
+    }
+
+    pub fn daemon_url(&self) -> &str {
+        &self.daemon_url
+    }
+
+    pub fn public_base_url(&self) -> Option<&str> {
+        self.public_base_url.as_deref()
+    }
 }
 
 macro_rules! domain_handle_with_accessor {
