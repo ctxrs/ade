@@ -1170,6 +1170,10 @@ test("daemon boundary guard rejects dictation websocket config policy in HTTP", 
   const violations = scanText({
     filePath: "core/crates/ctx-http/src/api/ws/dictation_livekit/settings.rs",
     contents: `
+      use ctx_daemon::daemon::{CoreHandle, DictationConfigError};
+      use ctx_daemon::daemon::dictation::DictationConfigError;
+      use ctx_daemon::{daemon::dictation::DictationConfigError};
+      use ctx_daemon::{daemon::{dictation::DictationConfigError, CoreHandle}};
       use ctx_settings_model::DictationProvider;
       use ctx_transport_runtime::dictation_livekit::{
         normalize_livekit_dictation_config, LiveKitDictationConfigInput,
@@ -1196,6 +1200,14 @@ test("daemon boundary guard rejects dictation websocket config policy in HTTP", 
   assert.deepEqual(
     violations.map((violation) => violation.name),
     [
+      "dictation WS API imports moved config error from daemon",
+      "dictation WS API imports moved config error from daemon",
+      "dictation WS API imports moved config error from daemon",
+      "dictation WS API imports moved config error from daemon",
+      "dictation WS API imports moved config error from daemon",
+      "dictation WS API imports moved config error from daemon",
+      "dictation WS API imports moved config error from daemon",
+      "dictation WS API imports moved config error from daemon",
       "dictation WS API loads settings directly",
       "dictation WS API loads settings directly",
       "dictation WS API loads settings directly",

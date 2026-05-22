@@ -1,18 +1,10 @@
 use ctx_settings_model::{DictationProvider, Settings};
+use ctx_settings_service::DictationConfigError;
 use ctx_transport_runtime::dictation_livekit::{
     normalize_livekit_dictation_config, LiveKitDictationConfig, LiveKitDictationConfigInput,
 };
 
 use crate::daemon::{settings, CoreHandle, DaemonState};
-
-#[derive(Debug)]
-pub enum DictationConfigError {
-    Unavailable { message: String },
-    NotConfigured,
-    Disabled,
-    MissingLiveKitConfig,
-    InvalidLiveKitConfig { message: String },
-}
 
 pub async fn resolve_livekit_dictation_config(
     state: &DaemonState,

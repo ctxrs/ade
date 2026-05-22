@@ -1,8 +1,9 @@
 use axum::extract::ws::{Message as WsMessage, WebSocket};
+use ctx_settings_service::DictationConfigError;
 use ctx_transport_runtime::dictation_livekit::LiveKitDictationConfig;
 use serde::Serialize;
 
-use ctx_daemon::daemon::{CoreHandle, DictationConfigError};
+use ctx_daemon::daemon::CoreHandle;
 
 #[derive(Debug)]
 pub(super) struct DictationStreamError {

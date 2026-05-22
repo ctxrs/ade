@@ -3535,6 +3535,12 @@ const TERMINAL_STREAM_RUNTIME_API_PATTERNS = [
 
 const DICTATION_WS_CONFIG_API_PATTERNS = [
   {
+    name: "dictation WS API imports moved config error from daemon",
+    regex: /\bctx_daemon(?=[^;]*\bDictationConfigError\b)[^;]*\bDictationConfigError\b/,
+    contentRegex:
+      /\buse\s+ctx_daemon(?=[^;]*\bDictationConfigError\b)[^;]*;/gm,
+  },
+  {
     name: "dictation WS API loads settings directly",
     regex: /\b(?:[A-Za-z_][\w]*\s*(?:\.|::)\s*)?load_settings\s*\(/,
   },

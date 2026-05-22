@@ -5,11 +5,13 @@ pub use ctx_settings_model::*;
 use ctx_store::Store;
 use serde::{Deserialize, Serialize};
 
+mod dictation;
 mod effective;
 mod execution_policy;
 mod overrides;
 pub mod route_contract;
 
+pub use dictation::DictationConfigError;
 pub use effective::{
     apply_execution_environment, apply_workspace_execution_settings_override,
     effective_execution_settings, effective_execution_settings_classified,

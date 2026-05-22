@@ -73,7 +73,6 @@ pub use activity::{
 };
 pub use blobs::OpenedBlob;
 pub use diagnostics::DiagnosticsSnapshotError;
-pub use dictation::DictationConfigError;
 pub use handle::{
     CoreHandle, DaemonHandle, ExecutionHandle, ProvidersHandle, SessionsHandle, TasksHandle,
     TelemetryHandle, TransportHandle, WorkspaceStreamHandle, WorkspacesHandle,
