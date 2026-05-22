@@ -5,7 +5,7 @@ use ctx_update_service::route_contract::{
     DownloadAppImageUpdateResult, UpdateActivitySnapshot, UpdateCheckSnapshot, UpdateRouteError,
 };
 
-use crate::daemon::CoreHandle;
+use crate::daemon::{CoreHandle, UpdateReleaseHandle};
 
 fn normalize_channel(raw: Option<&str>) -> Result<String, UpdateRouteError> {
     ctx_update_service::normalize_release_channel(raw.unwrap_or("stable"))
@@ -29,7 +29,7 @@ fn appimage_target_path() -> Result<PathBuf, UpdateRouteError> {
     })
 }
 
-impl CoreHandle {
+impl UpdateReleaseHandle {
     pub async fn check_updates(
         &self,
         package_version: &'static str,
@@ -86,23 +86,6 @@ impl CoreHandle {
         })
     }
 
-    pub async fn update_activity_snapshot(
-        &self,
-    ) -> Result<UpdateActivitySnapshot, UpdateRouteError> {
-        let activity = crate::daemon::daemon_turn_activity_summary(&self.state)
-            .await
-            .map_err(UpdateRouteError::internal)?;
-        let managed_daemon_auto_update =
-            ctx_update_service::managed_daemon_auto_update_status_snapshot(
-                &self.state.core.data_root,
-            )
-            .await;
-        Ok(UpdateActivitySnapshot {
-            activity,
-            managed_daemon_auto_update,
-        })
-    }
-
     pub async fn download_appimage_update(
         &self,
         package_version: &'static str,
@@ -130,7 +113,7 @@ impl CoreHandle {
         let manifest_url = ctx_update_service::release_manifest_url(&base_url, &channel);
         let meta = ctx_update_service::download_verified_appimage_candidate(
             ctx_update_service::AppImageCandidateRequest {
-                data_root: &self.state.core.data_root,
+                data_root: self.data_root(),
                 target_path: &target_path,
                 channel: &channel,
                 platform,
@@ -177,7 +160,7 @@ impl CoreHandle {
         let target = appimage_target_path()?;
         let current_version = current_version(package_version)?;
         let (downloaded, _meta) = ctx_update_service::validate_verified_appimage_candidate(
-            &self.state.core.data_root,
+            self.data_root(),
             &target,
             &channel,
             platform,
@@ -190,7 +173,7 @@ impl CoreHandle {
         ctx_update_service::atomic_replace_file(&target, &downloaded)
             .await
             .map_err(UpdateRouteError::internal)?;
-        ctx_update_service::clear_appimage_candidate(&self.state.core.data_root).await;
+        ctx_update_service::clear_appimage_candidate(self.data_root()).await;
 
         Ok(ApplyAppImageUpdateResult {
             applied: true,
@@ -198,6 +181,25 @@ impl CoreHandle {
             message:
                 "Update applied in place. Quit and relaunch the desktop app to run the new version."
                     .to_string(),
+        })
+    }
+}
+
+impl CoreHandle {
+    pub async fn update_activity_snapshot(
+        &self,
+    ) -> Result<UpdateActivitySnapshot, UpdateRouteError> {
+        let activity = crate::daemon::daemon_turn_activity_summary(&self.state)
+            .await
+            .map_err(UpdateRouteError::internal)?;
+        let managed_daemon_auto_update =
+            ctx_update_service::managed_daemon_auto_update_status_snapshot(
+                &self.state.core.data_root,
+            )
+            .await;
+        Ok(UpdateActivitySnapshot {
+            activity,
+            managed_daemon_auto_update,
         })
     }
 }

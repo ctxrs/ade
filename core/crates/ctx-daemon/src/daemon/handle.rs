@@ -82,6 +82,10 @@ impl DaemonHandle {
         DictationHandle::new(self.state.global_store().clone())
     }
 
+    pub fn update_release(&self) -> UpdateReleaseHandle {
+        UpdateReleaseHandle::new(self.state.core.data_root.clone())
+    }
+
     pub fn sessions(&self) -> SessionsHandle {
         SessionsHandle::new(Arc::clone(&self.state))
     }
@@ -433,6 +437,21 @@ impl DictationHandle {
 
     pub(in crate::daemon) fn store(&self) -> &Store {
         &self.store
+    }
+}
+
+#[derive(Clone)]
+pub struct UpdateReleaseHandle {
+    data_root: PathBuf,
+}
+
+impl UpdateReleaseHandle {
+    pub(in crate::daemon) fn new(data_root: PathBuf) -> Self {
+        Self { data_root }
+    }
+
+    pub(in crate::daemon) fn data_root(&self) -> &Path {
+        &self.data_root
     }
 }
 
