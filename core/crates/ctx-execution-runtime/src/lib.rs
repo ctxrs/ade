@@ -8,6 +8,7 @@ use ctx_core::ids::WorkspaceId;
 use ctx_core::models::Workspace;
 
 pub mod execution_setup;
+pub mod route_contract;
 
 pub use ctx_harness_setup::{
     HarnessSetupDownloadStatus, HarnessSetupLogLevel, HarnessSetupObserver,

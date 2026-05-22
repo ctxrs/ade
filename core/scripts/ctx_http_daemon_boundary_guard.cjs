@@ -2682,7 +2682,20 @@ const PROVIDER_PRELUDE_ROUTE_DTO_PATTERNS = [
   ...providerManagedLoginRouteContractPatterns("provider API prelude"),
 ];
 
+const executionMovedRouteContractPattern =
+  "(?:StartExecutionLaunchRequest|StartExecutionLaunchError|LinuxSandboxRuntimePrepareRequest|LinuxSandboxRuntimeError|LinuxSandboxRuntimeOperation|LinuxSandboxActivationMode|LinuxSandboxRuntimePrepareResult|LinuxSandboxRuntimeStatus)";
+
 const EXECUTION_API_ORCHESTRATION_PATTERNS = [
+  {
+    name: "execution API imports moved execution route contracts from daemon",
+    regex: new RegExp(
+      String.raw`\bctx_daemon::daemon::(?:\{[^}]*\b${executionMovedRouteContractPattern}\b|${executionMovedRouteContractPattern}\b)`,
+    ),
+    contentRegex: new RegExp(
+      String.raw`\buse\s+ctx_daemon::daemon::\s*\{(?=[^;]*\b${executionMovedRouteContractPattern}\b)[^;]*;`,
+      "gm",
+    ),
+  },
   {
     name: "execution API imports Linux sandbox runtime directly",
     regex: /\bctx_linux_sandbox_runtime\b/,

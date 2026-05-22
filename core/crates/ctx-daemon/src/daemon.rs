@@ -74,11 +74,6 @@ pub use activity::{
 pub use blobs::OpenedBlob;
 pub use diagnostics::{DaemonDiagnosticsSnapshot, DiagnosticsSnapshotError};
 pub use dictation::DictationConfigError;
-pub use execution_setup::{
-    LinuxSandboxActivationMode, LinuxSandboxRuntimeError, LinuxSandboxRuntimeOperation,
-    LinuxSandboxRuntimePrepareResult, LinuxSandboxRuntimeStatus, StartExecutionLaunchError,
-    StartExecutionLaunchRequest,
-};
 pub use handle::{
     CoreHandle, DaemonHandle, ExecutionHandle, ProvidersHandle, SessionsHandle, TasksHandle,
     TelemetryHandle, TransportHandle, WorkspaceStreamHandle, WorkspacesHandle,

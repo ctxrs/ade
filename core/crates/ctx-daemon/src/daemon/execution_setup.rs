@@ -5,6 +5,11 @@ use tokio::sync::broadcast;
 use ctx_core::ids::WorkspaceId;
 use ctx_core::models::Workspace;
 use ctx_execution_runtime::{
+    route_contract::{
+        LinuxSandboxActivationMode, LinuxSandboxRuntimeError, LinuxSandboxRuntimeOperation,
+        LinuxSandboxRuntimePrepareResult, LinuxSandboxRuntimeStatus, StartExecutionLaunchError,
+        StartExecutionLaunchRequest,
+    },
     ExecutionLaunchSnapshot, ExecutionLaunchStreamEvent, ExecutionSetupJobKind,
     RuntimePrewarmScope, StartupPrewarmSnapshot,
 };
@@ -13,120 +18,11 @@ use ctx_linux_sandbox_runtime::{
     prepare_linux_sandbox_runtime as runtime_prepare_linux_sandbox_runtime,
     stage_linux_sandbox_runtime_downloads as runtime_stage_linux_sandbox_runtime_downloads,
 };
-pub use ctx_linux_sandbox_runtime::{
-    LinuxSandboxActivationMode, LinuxSandboxRuntimePrepareResult, LinuxSandboxRuntimeStatus,
-};
 use ctx_observability::logs;
 use ctx_settings_model::{ExecutionMode, ExecutionSettings};
 use ctx_settings_service::EffectiveExecutionSettingsError;
 
 use crate::daemon::{maintenance, settings, DaemonState, ExecutionHandle};
-
-#[derive(Debug, serde::Deserialize)]
-pub struct StartExecutionLaunchRequest {
-    #[serde(default)]
-    pub kind: Option<ExecutionSetupJobKind>,
-    #[serde(default)]
-    pub workspace_id: Option<String>,
-    #[serde(default)]
-    pub prewarm_scope: RuntimePrewarmScope,
-}
-
-#[derive(Debug)]
-pub enum StartExecutionLaunchError {
-    MissingWorkspaceId,
-    InvalidWorkspaceId,
-    WorkspaceNotFound,
-    MaintenanceActive {
-        message: String,
-    },
-    InvalidWorkspaceExecutionSettings {
-        message: String,
-        policy_denial: bool,
-    },
-    Internal {
-        message: String,
-    },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LinuxSandboxRuntimeOperation {
-    Status,
-    Stage,
-    Prepare,
-}
-
-#[derive(Debug)]
-pub enum LinuxSandboxRuntimeError {
-    Runtime {
-        operation: LinuxSandboxRuntimeOperation,
-        message: String,
-    },
-    PrepareAlreadyActive,
-    PrepareActivityUnavailable {
-        message: String,
-    },
-    PrepareSandboxWorkActive,
-}
-
-impl LinuxSandboxRuntimeOperation {
-    fn user_message(self) -> String {
-        match self {
-            Self::Status => "Linux sandbox runtime status check failed".to_string(),
-            Self::Stage => "Linux sandbox runtime downloads failed to stage".to_string(),
-            Self::Prepare => "Preparing Linux sandbox runtime failed".to_string(),
-        }
-    }
-}
-
-impl LinuxSandboxRuntimeError {
-    fn runtime(operation: LinuxSandboxRuntimeOperation, error: anyhow::Error) -> Self {
-        let operation_name = match operation {
-            LinuxSandboxRuntimeOperation::Status => "linux_sandbox_runtime_status",
-            LinuxSandboxRuntimeOperation::Stage => "linux_sandbox_runtime_stage",
-            LinuxSandboxRuntimeOperation::Prepare => "linux_sandbox_runtime_prepare",
-        };
-        tracing::warn!(
-            target: "linux_sandbox",
-            error = %logs::redact_sensitive(&error.to_string()),
-            "{operation_name} error"
-        );
-        Self::Runtime {
-            operation,
-            message: operation.user_message(),
-        }
-    }
-
-    fn from_prepare_drain(error: maintenance::MaintenanceDrainError) -> Self {
-        match error {
-            maintenance::MaintenanceDrainError::AlreadyActive => Self::PrepareAlreadyActive,
-            maintenance::MaintenanceDrainError::ActivityUnavailable(error) => {
-                tracing::warn!(
-                    target: "linux_sandbox",
-                    error = %logs::redact_sensitive(&error.to_string()),
-                    "linux_sandbox_runtime_prepare activity gate error"
-                );
-                Self::PrepareActivityUnavailable {
-                    message: LinuxSandboxRuntimeOperation::Prepare.user_message(),
-                }
-            }
-            maintenance::MaintenanceDrainError::SandboxWorkActive => Self::PrepareSandboxWorkActive,
-        }
-    }
-
-    pub fn message(&self) -> &str {
-        match self {
-            Self::Runtime { message, .. } => message,
-            Self::PrepareAlreadyActive => {
-                "Linux sandbox runtime prepare is already in progress. Retry when current maintenance completes."
-            }
-            Self::PrepareActivityUnavailable { message } => message,
-            Self::PrepareSandboxWorkActive => {
-                "Preparing Linux sandbox runtime is blocked while sandbox work is active. Retry when sandbox turns, terminals, containers, and runtime operations are idle."
-            }
-        }
-    }
-}
 
 fn classify_effective_execution_settings_error(
     error: EffectiveExecutionSettingsError,
@@ -148,6 +44,51 @@ fn parse_workspace_id(raw_workspace_id: &str) -> Result<WorkspaceId, StartExecut
     uuid::Uuid::parse_str(raw_workspace_id.trim())
         .map(WorkspaceId)
         .map_err(|_| StartExecutionLaunchError::InvalidWorkspaceId)
+}
+
+fn linux_sandbox_runtime_error(
+    operation: LinuxSandboxRuntimeOperation,
+    error: anyhow::Error,
+) -> LinuxSandboxRuntimeError {
+    let operation_name = match operation {
+        LinuxSandboxRuntimeOperation::Status => "linux_sandbox_runtime_status",
+        LinuxSandboxRuntimeOperation::Stage => "linux_sandbox_runtime_stage",
+        LinuxSandboxRuntimeOperation::Prepare => "linux_sandbox_runtime_prepare",
+    };
+    tracing::warn!(
+        target: "linux_sandbox",
+        error = %logs::redact_sensitive(&error.to_string()),
+        "{operation_name} error"
+    );
+    LinuxSandboxRuntimeError::Runtime {
+        operation,
+        message: operation.user_message().to_string(),
+    }
+}
+
+fn linux_sandbox_prepare_drain_error(
+    error: maintenance::MaintenanceDrainError,
+) -> LinuxSandboxRuntimeError {
+    match error {
+        maintenance::MaintenanceDrainError::AlreadyActive => {
+            LinuxSandboxRuntimeError::PrepareAlreadyActive
+        }
+        maintenance::MaintenanceDrainError::ActivityUnavailable(error) => {
+            tracing::warn!(
+                target: "linux_sandbox",
+                error = %logs::redact_sensitive(&error.to_string()),
+                "linux_sandbox_runtime_prepare activity gate error"
+            );
+            LinuxSandboxRuntimeError::PrepareActivityUnavailable {
+                message: LinuxSandboxRuntimeOperation::Prepare
+                    .user_message()
+                    .to_string(),
+            }
+        }
+        maintenance::MaintenanceDrainError::SandboxWorkActive => {
+            LinuxSandboxRuntimeError::PrepareSandboxWorkActive
+        }
+    }
 }
 
 pub async fn launch_status(
@@ -250,9 +191,7 @@ pub async fn linux_sandbox_runtime_status(
 ) -> Result<LinuxSandboxRuntimeStatus, LinuxSandboxRuntimeError> {
     runtime_linux_sandbox_runtime_status(&state.core.data_root)
         .await
-        .map_err(|error| {
-            LinuxSandboxRuntimeError::runtime(LinuxSandboxRuntimeOperation::Status, error)
-        })
+        .map_err(|error| linux_sandbox_runtime_error(LinuxSandboxRuntimeOperation::Status, error))
 }
 
 pub async fn stage_linux_sandbox_runtime(
@@ -260,9 +199,7 @@ pub async fn stage_linux_sandbox_runtime(
 ) -> Result<LinuxSandboxRuntimeStatus, LinuxSandboxRuntimeError> {
     runtime_stage_linux_sandbox_runtime_downloads(&state.core.data_root, None)
         .await
-        .map_err(|error| {
-            LinuxSandboxRuntimeError::runtime(LinuxSandboxRuntimeOperation::Stage, error)
-        })
+        .map_err(|error| linux_sandbox_runtime_error(LinuxSandboxRuntimeOperation::Stage, error))
 }
 
 pub async fn prepare_linux_sandbox_runtime(
@@ -272,7 +209,7 @@ pub async fn prepare_linux_sandbox_runtime(
 ) -> Result<LinuxSandboxRuntimePrepareResult, LinuxSandboxRuntimeError> {
     let drain_permit = maintenance::acquire_linux_sandbox_prepare_drain(state)
         .await
-        .map_err(LinuxSandboxRuntimeError::from_prepare_drain)?;
+        .map_err(linux_sandbox_prepare_drain_error)?;
     let result = match runtime_prepare_linux_sandbox_runtime(
         &state.core.data_root,
         activation_mode.unwrap_or(LinuxSandboxActivationMode::Local),
@@ -284,7 +221,7 @@ pub async fn prepare_linux_sandbox_runtime(
         Ok(result) => result,
         Err(error) => {
             let _ = drain_permit.release().await;
-            return Err(LinuxSandboxRuntimeError::runtime(
+            return Err(linux_sandbox_runtime_error(
                 LinuxSandboxRuntimeOperation::Prepare,
                 error,
             ));

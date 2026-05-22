@@ -8418,7 +8418,10 @@ test("daemon boundary guard rejects execution API orchestration", () => {
     filePath: "core/crates/ctx-http/src/api/execution/linux_sandbox.rs",
     contents: `
       use ctx_linux_sandbox_runtime::{linux_sandbox_runtime_status, LinuxSandboxRuntimeStatus};
-      use ctx_daemon::daemon::{maintenance as daemon_maintenance, WorkspacesHandle};
+      use ctx_daemon::daemon::{
+        maintenance as daemon_maintenance, WorkspacesHandle, StartExecutionLaunchRequest,
+        LinuxSandboxRuntimeError,
+      };
       use ctx_settings_model::{ExecutionMode, ExecutionSettings};
       async fn route(core: CoreHandle, workspaces: WorkspacesHandle, execution: ExecutionHandle) {
         let _ = core.data_root();
@@ -8436,6 +8439,7 @@ test("daemon boundary guard rejects execution API orchestration", () => {
 
   const names = new Set(violations.map((violation) => violation.name));
   for (const expected of [
+    "execution API imports moved execution route contracts from daemon",
     "execution API imports Linux sandbox runtime directly",
     "execution API accesses daemon data root directly",
     "execution API owns workspace lookup",

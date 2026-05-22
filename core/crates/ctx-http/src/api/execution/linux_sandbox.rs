@@ -1,22 +1,15 @@
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
-use serde::Deserialize;
 
-use ctx_daemon::daemon::{
-    ExecutionHandle, LinuxSandboxActivationMode, LinuxSandboxRuntimeError,
-    LinuxSandboxRuntimePrepareResult, LinuxSandboxRuntimeStatus,
+use ctx_execution_runtime::route_contract::{
+    LinuxSandboxRuntimeError, LinuxSandboxRuntimePrepareRequest, LinuxSandboxRuntimePrepareResult,
+    LinuxSandboxRuntimeStatus,
 };
 
-use crate::api::errors::ApiErrorResp;
+use ctx_daemon::daemon::ExecutionHandle;
 
-#[derive(Debug, Deserialize)]
-pub(in crate::api) struct LinuxSandboxRuntimePrepareReq {
-    #[serde(default)]
-    activation_mode: Option<LinuxSandboxActivationMode>,
-    #[serde(default)]
-    sudo_password: Option<String>,
-}
+use crate::api::errors::ApiErrorResp;
 
 pub(in crate::api) async fn linux_sandbox_runtime_status_api(
     State(execution): State<ExecutionHandle>,
@@ -40,7 +33,7 @@ pub(in crate::api) async fn linux_sandbox_runtime_stage(
 
 pub(in crate::api) async fn linux_sandbox_runtime_prepare(
     State(execution): State<ExecutionHandle>,
-    Json(req): Json<LinuxSandboxRuntimePrepareReq>,
+    Json(req): Json<LinuxSandboxRuntimePrepareRequest>,
 ) -> Result<Json<LinuxSandboxRuntimePrepareResult>, (StatusCode, Json<ApiErrorResp>)> {
     let result = execution
         .prepare_linux_sandbox_runtime(req.activation_mode, req.sudo_password.as_deref())
@@ -67,7 +60,7 @@ fn map_linux_sandbox_runtime_error(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ctx_daemon::daemon::LinuxSandboxRuntimeOperation;
+    use ctx_execution_runtime::route_contract::LinuxSandboxRuntimeOperation;
 
     #[test]
     fn maps_linux_sandbox_prepare_conflicts() {
