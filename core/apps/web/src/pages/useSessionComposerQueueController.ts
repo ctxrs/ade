@@ -143,6 +143,7 @@ export function useSessionComposerQueueController(params: Params): Result {
   const turnCountRef = useRef(turnCount);
   const pendingSessionHandoffRef = useRef<PendingSessionHandoff | null>(null);
   const pendingInterruptSessionIdRef = useRef<string | null>(null);
+  const latestInterruptClickSessionIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     supervisorRef.current = supervisor;
@@ -199,6 +200,9 @@ export function useSessionComposerQueueController(params: Params): Result {
     if (pendingInterruptSessionId) {
       clearInterruptPendingMetric(pendingInterruptSessionId);
       pendingInterruptSessionIdRef.current = null;
+      if (latestInterruptClickSessionIdRef.current === pendingInterruptSessionId) {
+        latestInterruptClickSessionIdRef.current = null;
+      }
     }
     setInterruptPending(false);
   }, [sessionId]);
@@ -226,15 +230,20 @@ export function useSessionComposerQueueController(params: Params): Result {
   }, [hasActiveTurn]);
 
   useLayoutEffect(() => {
-    const pendingInterruptSessionId = pendingInterruptSessionIdRef.current;
+    const pendingInterruptSessionId =
+      pendingInterruptSessionIdRef.current ?? latestInterruptClickSessionIdRef.current;
     if (!pendingInterruptSessionId) return;
     if (interruptPending) {
       noteInterruptPendingVisible(pendingInterruptSessionId);
       pendingInterruptSessionIdRef.current = null;
+      latestInterruptClickSessionIdRef.current = null;
       return;
     }
     clearInterruptPendingMetric(pendingInterruptSessionId);
     pendingInterruptSessionIdRef.current = null;
+    if (latestInterruptClickSessionIdRef.current === pendingInterruptSessionId) {
+      latestInterruptClickSessionIdRef.current = null;
+    }
   }, [interruptPending]);
 
   const pendingQueueMessageIdSet = useMemo(() => {
@@ -436,11 +445,15 @@ export function useSessionComposerQueueController(params: Params): Result {
     pendingSessionHandoffRef.current = null;
     try {
       pendingInterruptSessionIdRef.current = targetSessionId;
+      latestInterruptClickSessionIdRef.current = targetSessionId;
       noteInterruptClicked(targetSessionId, "queued_action");
       setInterruptPending(true);
       await interruptSession(targetSessionId);
     } catch (error: unknown) {
       clearInterruptPendingMetric(targetSessionId);
+      if (latestInterruptClickSessionIdRef.current === targetSessionId) {
+        latestInterruptClickSessionIdRef.current = null;
+      }
       if (pendingInterruptSessionIdRef.current === targetSessionId) {
         pendingInterruptSessionIdRef.current = null;
       }
@@ -455,6 +468,9 @@ export function useSessionComposerQueueController(params: Params): Result {
       supervisor.removeOptimisticQueuedMessage(sessionId, messageId);
     } catch (error: unknown) {
       clearInterruptPendingMetric(targetSessionId);
+      if (latestInterruptClickSessionIdRef.current === targetSessionId) {
+        latestInterruptClickSessionIdRef.current = null;
+      }
       if (pendingInterruptSessionIdRef.current === targetSessionId) {
         pendingInterruptSessionIdRef.current = null;
       }
@@ -516,12 +532,16 @@ export function useSessionComposerQueueController(params: Params): Result {
         const targetSessionId = interruptSessionId || pendingInterruptSessionIdRef.current;
         if (!targetSessionId || interruptPending) return;
         pendingInterruptSessionIdRef.current = targetSessionId;
+        latestInterruptClickSessionIdRef.current = targetSessionId;
         noteInterruptClicked(targetSessionId, "thread_header");
         setInterruptPending(true);
         try {
           await interruptSession(targetSessionId);
         } catch (error: unknown) {
           clearInterruptPendingMetric(targetSessionId);
+          if (latestInterruptClickSessionIdRef.current === targetSessionId) {
+            latestInterruptClickSessionIdRef.current = null;
+          }
           if (pendingInterruptSessionIdRef.current === targetSessionId) {
             pendingInterruptSessionIdRef.current = null;
           }
