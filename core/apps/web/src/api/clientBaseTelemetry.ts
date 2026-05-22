@@ -78,7 +78,9 @@ export const getTelemetryRunId = (): string | null => {
 
 const queueClientTelemetry = (event: ClientTelemetryMetric) => {
   if (typeof window === "undefined") return;
-  if (clientTelemetryQueue.length >= CLIENT_TELEMETRY_MAX) return;
+  if (clientTelemetryQueue.length >= CLIENT_TELEMETRY_MAX) {
+    clientTelemetryQueue.shift();
+  }
   clientTelemetryQueue.push(event);
   if (clientTelemetryTimer !== null) return;
   clientTelemetryTimer = window.setTimeout(() => {

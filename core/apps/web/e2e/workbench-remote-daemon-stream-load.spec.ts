@@ -2045,6 +2045,15 @@ test("workbench: remote daemon stream load keeps UI progress fresh", async ({
     interrupt.clickToTerminalEventMs = interrupt.terminalEventAtMs - interrupt.clickAtMs;
   }
 
+  if (interrupt.error === null) {
+    await waitForTelemetryMetricSum(
+      request,
+      "workbench.interrupt_click_to_pending_ms",
+      1,
+      10_000,
+    );
+  }
+
   await sleep(1500);
   const visibleSnapshot = await stopVisibleProgressProbe(page);
   const streamTelemetrySamples = await readWorkspaceStreamTelemetrySamples(page);
