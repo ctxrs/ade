@@ -95,7 +95,7 @@ impl DaemonHandle {
     }
 
     pub fn telemetry(&self) -> TelemetryHandle {
-        TelemetryHandle::new(&self.state.telemetry)
+        TelemetryHandle::new(self.state.core.data_root.clone(), &self.state.telemetry)
     }
 
     pub fn transport(&self) -> TransportHandle {
@@ -178,8 +178,9 @@ impl CoreHandle {
 }
 
 impl TelemetryHandle {
-    pub(in crate::daemon) fn new(runtime: &TelemetryRuntime) -> Self {
+    pub(in crate::daemon) fn new(data_root: PathBuf, runtime: &TelemetryRuntime) -> Self {
         Self {
+            data_root,
             perf_telemetry: runtime.perf_telemetry.clone(),
             telemetry: runtime.telemetry.clone(),
         }
@@ -192,10 +193,21 @@ impl TelemetryHandle {
     pub fn telemetry(&self) -> &Telemetry {
         &self.telemetry
     }
+
+    pub async fn read_perf_telemetry_export_for_date(
+        &self,
+        date: &str,
+    ) -> Result<Vec<u8>, ctx_route_contracts::telemetry::TelemetryExportError> {
+        let path = ctx_observability::perf_telemetry::perf_log_path_for_date(&self.data_root, date);
+        tokio::fs::read(&path)
+            .await
+            .map_err(|_| ctx_route_contracts::telemetry::TelemetryExportError::not_found())
+    }
 }
 
 #[derive(Clone)]
 pub struct TelemetryHandle {
+    data_root: PathBuf,
     perf_telemetry: PerfTelemetry,
     telemetry: Telemetry,
 }

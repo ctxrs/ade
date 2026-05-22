@@ -51,7 +51,6 @@ pub mod settings;
 mod state;
 pub mod storage_guard;
 pub mod tasks;
-pub mod telemetry_export;
 pub mod terminals;
 #[cfg(any(test, feature = "test-support"))]
 mod test_support_access;

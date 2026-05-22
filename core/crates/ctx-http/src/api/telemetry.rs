@@ -1,6 +1,6 @@
 use super::*;
 use chrono::{NaiveDate, Utc};
-use ctx_daemon::daemon::{CoreHandle, TelemetryHandle};
+use ctx_daemon::daemon::TelemetryHandle;
 use ctx_route_contracts::telemetry::{TelemetryExportError, TelemetryExportErrorKind};
 use serde::Deserialize;
 
@@ -50,11 +50,11 @@ fn telemetry_export_status(error: TelemetryExportError) -> StatusCode {
 }
 
 pub(super) async fn export_telemetry(
-    State(core): State<CoreHandle>,
+    State(telemetry): State<TelemetryHandle>,
     Query(q): Query<TelemetryExportQuery>,
 ) -> Result<Response, StatusCode> {
     let date = normalize_export_date(q.date)?;
-    let bytes = core
+    let bytes = telemetry
         .read_perf_telemetry_export_for_date(&date)
         .await
         .map_err(telemetry_export_status)?;
