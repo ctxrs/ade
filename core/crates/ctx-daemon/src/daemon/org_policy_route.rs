@@ -10,7 +10,7 @@ use crate::daemon::org_policy::{
     CacheOrgPolicySnapshotError, UpsertDaemonEnrollmentError, UpsertWorkspacePolicyOverlayError,
     WorkspacePolicyOverlayError,
 };
-use crate::daemon::{CoreHandle, WorkspacesHandle};
+use crate::daemon::{OrgPolicyHandle, WorkspacesHandle};
 
 fn upsert_daemon_enrollment_route_error(error: UpsertDaemonEnrollmentError) -> OrgPolicyRouteError {
     match error {
@@ -83,7 +83,7 @@ fn upsert_workspace_policy_route_error(
     }
 }
 
-impl CoreHandle {
+impl OrgPolicyHandle {
     pub async fn list_daemon_enrollments_for_route(
         &self,
     ) -> Result<DaemonEnrollmentsRouteResponse, OrgPolicyRouteError> {
@@ -279,7 +279,7 @@ mod tests {
 
         let error = daemon
             .handle()
-            .core()
+            .org_policy()
             .upsert_daemon_enrollment_for_route(
                 OrgPolicyOrgRouteParams::new(route_org_id.0.to_string()),
                 UpsertDaemonEnrollmentRouteRequest::from(request),
@@ -296,7 +296,7 @@ mod tests {
         let (_temp, daemon) = test_daemon().await;
         let error = daemon
             .handle()
-            .core()
+            .org_policy()
             .cache_org_policy_snapshot_for_route(
                 OrgPolicyOrgRouteParams::new(OrgId::new().0.to_string()),
                 CacheOrgPolicySnapshotRouteRequest::from(snapshot(OrgId::new())),
@@ -341,7 +341,7 @@ mod tests {
 
         let snapshot_error = daemon
             .handle()
-            .core()
+            .org_policy()
             .cache_org_policy_snapshot_for_route(
                 OrgPolicyOrgRouteParams::new(org_id.0.to_string()),
                 CacheOrgPolicySnapshotRouteRequest::from(snapshot(org_id)),
@@ -385,7 +385,7 @@ mod tests {
         let org_id = OrgId::new();
         daemon
             .handle()
-            .core()
+            .org_policy()
             .upsert_daemon_enrollment_unchecked(enrollment(org_id))
             .await
             .expect("seed enrollment");
@@ -419,7 +419,7 @@ mod tests {
         let enrollment = enrollment(org_id);
         daemon
             .handle()
-            .core()
+            .org_policy()
             .upsert_daemon_enrollment_unchecked(enrollment)
             .await
             .expect("seed enrollment");
@@ -428,7 +428,7 @@ mod tests {
 
         let error = daemon
             .handle()
-            .core()
+            .org_policy()
             .cache_org_policy_snapshot_for_route(
                 OrgPolicyOrgRouteParams::new(org_id.0.to_string()),
                 CacheOrgPolicySnapshotRouteRequest::from(snapshot),
@@ -449,7 +449,7 @@ mod tests {
         let enrollment = enrollment(org_id);
         daemon
             .handle()
-            .core()
+            .org_policy()
             .upsert_daemon_enrollment_unchecked(enrollment.clone())
             .await
             .expect("seed enrollment");
@@ -458,7 +458,7 @@ mod tests {
 
         let response = daemon
             .handle()
-            .core()
+            .org_policy()
             .cache_org_policy_snapshot_for_route(
                 OrgPolicyOrgRouteParams::new(org_id.0.to_string()),
                 CacheOrgPolicySnapshotRouteRequest::from(snapshot.clone()),

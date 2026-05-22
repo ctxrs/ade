@@ -125,7 +125,7 @@ async fn policy_snapshot_invalid_signature_returns_bad_request() {
     fixture
         .daemon()
         .handle()
-        .core()
+        .org_policy()
         .upsert_daemon_enrollment_checked(daemon_enrollment(org_id, "policy-signing-secret"))
         .await
         .expect("seed enrollment");
@@ -200,7 +200,7 @@ async fn workspace_policy_overlay_missing_workspace_returns_not_found() {
     fixture
         .daemon()
         .handle()
-        .core()
+        .org_policy()
         .upsert_daemon_enrollment_checked(daemon_enrollment(org_id, "policy-signing-secret"))
         .await
         .expect("seed enrollment");

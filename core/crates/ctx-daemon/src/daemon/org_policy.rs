@@ -1,7 +1,7 @@
 use ctx_core::ids::{OrgId, WorkspaceId};
 use ctx_core::models::{DaemonEnrollment, OrgPolicySnapshot, WorkspacePolicyOverlay};
 
-use crate::daemon::{CoreHandle, WorkspaceStoreAccessError, WorkspacesHandle};
+use crate::daemon::{OrgPolicyHandle, WorkspaceStoreAccessError, WorkspacesHandle};
 
 pub use ctx_org_policy::{
     CacheOrgPolicySnapshotError, UpsertDaemonEnrollmentError, UpsertWorkspacePolicyOverlayError,
@@ -21,9 +21,9 @@ fn upsert_workspace_policy_overlay_error(
     ctx_org_policy::workspace_overlay::upsert_workspace_policy_overlay_error(error)
 }
 
-impl CoreHandle {
+impl OrgPolicyHandle {
     pub async fn list_daemon_enrollments(&self) -> anyhow::Result<Vec<DaemonEnrollment>> {
-        ctx_org_policy::list_daemon_enrollments(self.global_store()).await
+        ctx_org_policy::list_daemon_enrollments(self.store()).await
     }
 
     #[cfg(test)]
@@ -31,35 +31,35 @@ impl CoreHandle {
         &self,
         enrollment: DaemonEnrollment,
     ) -> anyhow::Result<DaemonEnrollment> {
-        ctx_org_policy::upsert_daemon_enrollment_unchecked(self.global_store(), enrollment).await
+        ctx_org_policy::upsert_daemon_enrollment_unchecked(self.store(), enrollment).await
     }
 
     pub async fn upsert_daemon_enrollment_checked(
         &self,
         enrollment: DaemonEnrollment,
     ) -> Result<DaemonEnrollment, UpsertDaemonEnrollmentError> {
-        ctx_org_policy::upsert_daemon_enrollment_checked(self.global_store(), enrollment).await
+        ctx_org_policy::upsert_daemon_enrollment_checked(self.store(), enrollment).await
     }
 
     pub async fn get_daemon_enrollment_by_org_id(
         &self,
         org_id: OrgId,
     ) -> anyhow::Result<Option<DaemonEnrollment>> {
-        ctx_org_policy::get_daemon_enrollment_by_org_id(self.global_store(), org_id).await
+        ctx_org_policy::get_daemon_enrollment_by_org_id(self.store(), org_id).await
     }
 
     pub async fn upsert_org_policy_snapshot(
         &self,
         snapshot: OrgPolicySnapshot,
     ) -> anyhow::Result<OrgPolicySnapshot> {
-        ctx_org_policy::upsert_org_policy_snapshot(self.global_store(), snapshot).await
+        ctx_org_policy::upsert_org_policy_snapshot(self.store(), snapshot).await
     }
 
     pub async fn cache_and_activate_org_policy_snapshot(
         &self,
         snapshot: OrgPolicySnapshot,
     ) -> Result<OrgPolicySnapshot, CacheOrgPolicySnapshotError> {
-        ctx_org_policy::cache_and_activate_org_policy_snapshot(self.global_store(), snapshot).await
+        ctx_org_policy::cache_and_activate_org_policy_snapshot(self.store(), snapshot).await
     }
 }
 
@@ -179,7 +179,7 @@ mod tests {
         let org_id = OrgId::new();
         daemon
             .handle()
-            .core()
+            .org_policy()
             .upsert_daemon_enrollment_unchecked(enrollment(org_id))
             .await
             .expect("seed enrollment");
@@ -203,7 +203,7 @@ mod tests {
         let org_id = OrgId::new();
         daemon
             .handle()
-            .core()
+            .org_policy()
             .upsert_daemon_enrollment_unchecked(enrollment(org_id))
             .await
             .expect("seed enrollment");

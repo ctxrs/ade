@@ -74,6 +74,10 @@ impl DaemonHandle {
         LogsHandle::new(self.state.core.data_root.clone())
     }
 
+    pub fn org_policy(&self) -> OrgPolicyHandle {
+        OrgPolicyHandle::new(self.state.global_store().clone())
+    }
+
     pub fn sessions(&self) -> SessionsHandle {
         SessionsHandle::new(Arc::clone(&self.state))
     }
@@ -114,10 +118,6 @@ impl From<Arc<DaemonState>> for DaemonHandle {
 }
 
 impl CoreHandle {
-    pub(in crate::daemon) fn global_store(&self) -> &Store {
-        self.state.global_store()
-    }
-
     pub async fn insert_blob(
         &self,
         id: &str,
@@ -399,6 +399,21 @@ impl LogsHandle {
 
     pub(in crate::daemon) fn data_root(&self) -> &Path {
         &self.data_root
+    }
+}
+
+#[derive(Clone)]
+pub struct OrgPolicyHandle {
+    store: Store,
+}
+
+impl OrgPolicyHandle {
+    pub(in crate::daemon) fn new(store: Store) -> Self {
+        Self { store }
+    }
+
+    pub(in crate::daemon) fn store(&self) -> &Store {
+        &self.store
     }
 }
 

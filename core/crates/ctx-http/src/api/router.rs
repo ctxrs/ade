@@ -7,8 +7,8 @@ use url::Url;
 
 use ctx_daemon::daemon::{
     AuthHandle, BlobHandle, CoreHandle, DaemonHandle, DiagnosticsHandle, ExecutionHandle,
-    HealthHandle, LogsHandle, ProvidersHandle, RequestBaseHandle, SessionsHandle, TasksHandle,
-    TelemetryHandle, TransportHandle, WorkspaceStreamHandle, WorkspacesHandle,
+    HealthHandle, LogsHandle, OrgPolicyHandle, ProvidersHandle, RequestBaseHandle, SessionsHandle,
+    TasksHandle, TelemetryHandle, TransportHandle, WorkspaceStreamHandle, WorkspacesHandle,
 };
 
 use super::auth::auth_middleware;
@@ -78,6 +78,7 @@ pub struct RouteHandles {
     pub(in crate::api) blob: BlobHandle,
     pub(in crate::api) request_base: RequestBaseHandle,
     pub(in crate::api) logs: LogsHandle,
+    pub(in crate::api) org_policy: OrgPolicyHandle,
     pub(in crate::api) sessions: SessionsHandle,
     pub(in crate::api) tasks: TasksHandle,
     pub(in crate::api) workspaces: WorkspacesHandle,
@@ -98,6 +99,7 @@ impl RouteHandles {
             blob: handle.blob(),
             request_base: handle.request_base(),
             logs: handle.logs(),
+            org_policy: handle.org_policy(),
             sessions: handle.sessions(),
             tasks: handle.tasks(),
             workspaces: handle.workspaces(),
@@ -123,6 +125,7 @@ impl_route_state_extractors! {
     BlobHandle, blob;
     RequestBaseHandle, request_base;
     LogsHandle, logs;
+    OrgPolicyHandle, org_policy;
     SessionsHandle, sessions;
     TasksHandle, tasks;
     WorkspacesHandle, workspaces;
