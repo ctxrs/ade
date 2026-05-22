@@ -7,6 +7,7 @@ const test = require("node:test");
 const {
   COLLAPSED_PATHS,
   COLLAPSED_DIRECTORIES,
+  CTX_HTTP_CLI_ONLY_SERVICE_DEPS,
   CTX_HTTP_FORBIDDEN_DOMAIN_SERVICE_DEPS,
   MESSAGE_SERVICE_FORBIDDEN_DEPS,
   RATCHETED_FILE_LIMITS,
@@ -22,6 +23,7 @@ const {
   WORKTREE_VCS_SERVICE_FORBIDDEN_DEPS,
   checkCargoDependencyDirection,
   checkCollapsedPaths,
+  checkCtxHttpCliOnlyServiceUsage,
   checkHeadProjectionPurity,
   checkRatchetedFileCaps,
   countLines,
@@ -475,7 +477,8 @@ test("repo onboarding service boundary rejects route, broad workspace, runtime, 
   assert.equal(REPO_ONBOARDING_SERVICE_FORBIDDEN_DEPS.has("ctx-route-contracts"), true);
   assert.equal(REPO_ONBOARDING_SERVICE_FORBIDDEN_DEPS.has("ctx-workspace-runtime"), true);
   assert.equal(WORKSPACE_SERVICES_FORBIDDEN_DEPS.has("ctx-repo-onboarding-service"), true);
-  assert.equal(CTX_HTTP_FORBIDDEN_DOMAIN_SERVICE_DEPS.has("ctx-repo-onboarding-service"), true);
+  assert.equal(CTX_HTTP_CLI_ONLY_SERVICE_DEPS.has("ctx-repo-onboarding-service"), true);
+  assert.equal(CTX_HTTP_FORBIDDEN_DOMAIN_SERVICE_DEPS.has("ctx-repo-onboarding-service"), false);
   assert.equal(CTX_HTTP_FORBIDDEN_DOMAIN_SERVICE_DEPS.has("ctx-worktree-vcs-service"), true);
 
   const rootDir = makeRoot();
@@ -527,11 +530,40 @@ test("repo onboarding service boundary rejects route, broad workspace, runtime, 
   );
   assert.equal(
     messages.some((message) => message.includes("ctx-http must not depend on ctx-repo-onboarding-service")),
-    true,
+    false,
   );
   assert.equal(
     messages.some((message) => message.includes("ctx-http must not depend on ctx-worktree-vcs-service")),
     true,
+  );
+});
+
+test("ctx-http allows repo onboarding service only from CLI main", () => {
+  const rootDir = makeRoot();
+  writeFile(rootDir, "core/crates/ctx-http/src/main.rs", `
+    fn main() {
+      let _ = ctx_repo_onboarding_service::init_workspace;
+    }
+  `);
+  writeFile(rootDir, "core/crates/ctx-http/src/api/repo.rs", `
+    use ctx_repo_onboarding_service::init_workspace;
+  `);
+  writeFile(rootDir, "core/crates/ctx-http/src/lib.rs", `
+    fn bad() {
+      let _ = ctx_repo_onboarding_service::init_workspace;
+    }
+  `);
+
+  const violations = checkCtxHttpCliOnlyServiceUsage(rootDir);
+
+  assert.deepEqual(
+    violations.map((entry) => entry.path),
+    ["core/crates/ctx-http/src/api/repo.rs", "core/crates/ctx-http/src/lib.rs"],
+  );
+  assert(
+    violations.every((entry) =>
+      entry.message.includes("ctx-repo-onboarding-service is allowed in ctx-http only for the CLI entrypoint"),
+    ),
   );
 });
 

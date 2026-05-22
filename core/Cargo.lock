@@ -1137,6 +1137,7 @@ dependencies = [
  "ctx-provider-matrix",
  "ctx-provider-runtime",
  "ctx-providers",
+ "ctx-repo-onboarding-service",
  "ctx-resource-utilization",
  "ctx-route-contracts",
  "ctx-runtime-assets",

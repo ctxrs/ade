@@ -58,7 +58,6 @@ mod test_support_access;
 pub mod tool_cgroup;
 pub mod updates;
 pub mod web_sessions;
-mod workspace_init;
 #[cfg(test)]
 mod workspace_runtime;
 pub mod workspaces;
@@ -119,7 +118,6 @@ pub use state::{
     AttachmentMaterializationTask, CacheSweepConfig, SessionStoreAccessError, StoreLookup,
     TimedEntry, WorkspaceStoreAccessError,
 };
-pub use workspace_init::init_workspace;
 pub use workspaces::{
     CreateWorkspaceAttachmentRouteRequest, CreateWorkspaceRequest,
     DeleteWorkspaceAttachmentRouteRequest, SyncWorkspaceAttachmentsRouteRequest,

@@ -211,13 +211,12 @@ const REPO_ONBOARDING_SERVICE_FORBIDDEN_DEPS = new Set([
   "axum",
 ]);
 const WORKSPACE_SERVICES_FORBIDDEN_DEPS = new Set(["ctx-repo-onboarding-service"]);
-const CTX_HTTP_FORBIDDEN_DOMAIN_SERVICE_DEPS = new Set([
-  "ctx-repo-onboarding-service",
-  "ctx-worktree-vcs-service",
-]);
+const CTX_HTTP_FORBIDDEN_DOMAIN_SERVICE_DEPS = new Set(["ctx-worktree-vcs-service"]);
+const CTX_HTTP_CLI_ONLY_SERVICE_DEPS = new Set(["ctx-repo-onboarding-service"]);
 const TRANSPORT_RUNTIME_FORBIDDEN_DEPS = new Set(["ctx-store"]);
 const ROUTE_CONTRACTS_ALLOWED_CTX_DEPS = new Set(["ctx-core"]);
 const HEAD_PROJECTION_ROOT = "core/crates/ctx-session-runtime/src/head_projection";
+const CTX_HTTP_CLI_MAIN = "core/crates/ctx-http/src/main.rs";
 
 const toPosix = (value) => value.split(path.sep).join("/");
 
@@ -653,12 +652,33 @@ const checkHeadProjectionPurity = (rootDir) => {
   return violations;
 };
 
+const checkCtxHttpCliOnlyServiceUsage = (rootDir) => {
+  const srcRoot = path.join(rootDir, "core", "crates", "ctx-http", "src");
+  const violations = [];
+  for (const absolutePath of walkFiles(srcRoot).filter((entry) => entry.endsWith(".rs"))) {
+    const relativePath = toPosix(path.relative(rootDir, absolutePath));
+    if (relativePath === CTX_HTTP_CLI_MAIN) continue;
+    const contents = stripRustLineComments(fs.readFileSync(absolutePath, "utf8"));
+    for (const serviceCrate of CTX_HTTP_CLI_ONLY_SERVICE_DEPS) {
+      const crateIdent = serviceCrate.replaceAll("-", "_");
+      if (!new RegExp(`\\b${crateIdent}\\b`, "u").test(contents)) continue;
+      violations.push({
+        kind: "ctx_http_cli_only_service_import",
+        path: relativePath,
+        message: `${serviceCrate} is allowed in ctx-http only for the CLI entrypoint (${CTX_HTTP_CLI_MAIN}); HTTP library and routes must not call repo/workspace onboarding services directly.`,
+      });
+    }
+  }
+  return violations;
+};
+
 const evaluateDecompositionBoundaries = (rootDir = repoRoot) => {
   const violations = [
     ...checkCollapsedPaths(rootDir),
     ...checkRatchetedFileCaps(rootDir),
     ...checkCargoDependencyDirection(rootDir),
     ...checkHeadProjectionPurity(rootDir),
+    ...checkCtxHttpCliOnlyServiceUsage(rootDir),
   ];
   return { violations };
 };
@@ -694,6 +714,7 @@ if (require.main === module) {
 module.exports = {
   COLLAPSED_PATHS,
   COLLAPSED_DIRECTORIES,
+  CTX_HTTP_CLI_ONLY_SERVICE_DEPS,
   CTX_HTTP_FORBIDDEN_DOMAIN_SERVICE_DEPS,
   HEAD_PROJECTION_FORBIDDEN_IMPORT_PATTERNS,
   MESSAGE_SERVICE_FORBIDDEN_DEPS,
@@ -712,6 +733,7 @@ module.exports = {
   WORKTREE_VCS_SERVICE_FORBIDDEN_DEPS,
   checkCargoDependencyDirection,
   checkCollapsedPaths,
+  checkCtxHttpCliOnlyServiceUsage,
   checkHeadProjectionPurity,
   checkRatchetedFileCaps,
   countLines,

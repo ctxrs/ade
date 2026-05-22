@@ -500,6 +500,7 @@ rust_binary(
         "//core/crates/ctx-core:lib",
         "//core/crates/ctx-daemon:lib",
         "//core/crates/ctx-observability:lib",
+        "//core/crates/ctx-repo-onboarding-service:lib",
         "//core/crates/ctx-resource-utilization:lib",
         "//core/crates/ctx-update-service:lib",
         "@crates//:anyhow",

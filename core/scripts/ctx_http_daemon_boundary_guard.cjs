@@ -9,6 +9,7 @@ const ctxHttpSrcRoot = path.join(coreRoot, "crates", "ctx-http", "src");
 const ctxHttpTestsRoot = path.join(coreRoot, "crates", "ctx-http", "tests");
 const ctxHttpTestSupportSrcRoot = path.join(coreRoot, "crates", "ctx-http-test-support", "src");
 const apiRoot = path.join(coreRoot, "crates", "ctx-http", "src", "api");
+const ctxHttpMainPath = path.join(coreRoot, "crates", "ctx-http", "src", "main.rs");
 const legacyHttpDaemonRoot = path.join(coreRoot, "crates", "ctx-http", "src", "daemon");
 const legacyHttpDaemonRootPath = path.join(coreRoot, "crates", "ctx-http", "src", "daemon.rs");
 const daemonRoot = path.join(coreRoot, "crates", "ctx-daemon", "src", "daemon");
@@ -2874,6 +2875,13 @@ const TITLE_GENERATION_API_ROUTE_CONTRACT_PATTERNS = [
     regex: /a^/,
     contentRegex: /\bctx_daemon\b/gm,
     allowContentRegex: /\buse\s+ctx_daemon::daemon::SessionsHandle\s*;/gm,
+  },
+];
+
+const CTX_HTTP_MAIN_DAEMON_INIT_PATTERNS = [
+  {
+    name: "ctx CLI init calls daemon workspace init",
+    regex: /\bctx_daemon::daemon::init_workspace\b/,
   },
 ];
 
@@ -6435,6 +6443,16 @@ function scanRepo() {
     );
   }
 
+  if (fs.existsSync(ctxHttpMainPath)) {
+    violations.push(
+      ...scanText({
+        filePath: repoRelative(ctxHttpMainPath),
+        contents: stripCfgTestItems(fs.readFileSync(ctxHttpMainPath, "utf8")),
+        patterns: CTX_HTTP_MAIN_DAEMON_INIT_PATTERNS,
+      }),
+    );
+  }
+
   if (fs.existsSync(daemonHandlePath)) {
     violations.push(
       ...scanText({
@@ -6883,6 +6901,7 @@ module.exports = {
   BLOB_API_ORCHESTRATION_PATTERNS,
   HEALTH_DIAGNOSTICS_API_ORCHESTRATION_PATTERNS,
   RESOURCE_UTILIZATION_API_ROUTE_CONTRACT_PATTERNS,
+  CTX_HTTP_MAIN_DAEMON_INIT_PATTERNS,
   SETTINGS_API_ORCHESTRATION_PATTERNS,
   TITLE_GENERATION_API_ROUTE_CONTRACT_PATTERNS,
   TELEMETRY_API_ORCHESTRATION_PATTERNS,

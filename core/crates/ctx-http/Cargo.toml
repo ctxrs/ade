@@ -37,6 +37,7 @@ ctx-provider-auth-import = { path = "../ctx-provider-auth-import" }
 ctx-provider-install = { path = "../ctx-provider-install" }
 ctx-provider-runtime = { path = "../ctx-provider-runtime" }
 ctx-providers = { path = "../ctx-providers" }
+ctx-repo-onboarding-service = { path = "../ctx-repo-onboarding-service" }
 ctx-resource-utilization = { path = "../ctx-resource-utilization" }
 ctx-route-contracts = { path = "../ctx-route-contracts" }
 ctx-sandbox-contract = { path = "../ctx-sandbox-contract" }

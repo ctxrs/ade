@@ -17,6 +17,7 @@ const {
   GLOBAL_ID_ROUTING_TEST_STORE_ACCESS_PATTERNS,
   HARNESS_CONTAINER_SANDBOX_TEST_STORE_ACCESS_PATTERNS,
   HANDLE_BACKDOOR_PATTERNS,
+  CTX_HTTP_MAIN_DAEMON_INIT_PATTERNS,
   DAEMON_HEALTH_VERSION_PATTERNS,
   DAEMON_UPDATES_VERSION_PATTERNS,
   BLOB_API_ORCHESTRATION_PATTERNS,
@@ -6918,6 +6919,24 @@ test("daemon boundary guard rejects title-generation daemon status leaves", () =
   });
 
   assert.deepEqual(allowed, []);
+});
+
+test("daemon boundary guard rejects CLI init daemon workspace bootstrap", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/main.rs",
+    contents: `
+      async fn run_init(root: Option<String>) -> anyhow::Result<()> {
+        ctx_daemon::daemon::init_workspace(root).await?;
+        Ok(())
+      }
+    `,
+    patterns: CTX_HTTP_MAIN_DAEMON_INIT_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    ["ctx CLI init calls daemon workspace init"],
+  );
 });
 
 test("daemon boundary guard rejects telemetry export filesystem pathing", () => {
