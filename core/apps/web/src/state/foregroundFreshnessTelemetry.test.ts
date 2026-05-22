@@ -102,7 +102,7 @@ describe("foregroundFreshnessTelemetry", () => {
     expect(analyticsMocks.trackForegroundFreshnessSlaMissed).not.toHaveBeenCalled();
   });
 
-  it("records final visibility freshness and emits SLA miss diagnostics when breached", () => {
+  it("records final visibility freshness and warns when the telemetry SLA is breached", () => {
     const timeOrigin = performance.timeOrigin ?? 0;
     vi.spyOn(performance, "now").mockReturnValue(100);
     noteFinalDeltaReceived({
@@ -127,7 +127,18 @@ describe("foregroundFreshnessTelemetry", () => {
       160,
       undefined,
     );
-    expect(diagnosticMocks.emitUiDiagnostic).toHaveBeenCalled();
+    expect(diagnosticMocks.emitUiDiagnostic).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: "final.ws_to_dom_sla_missed",
+        severity: "warning",
+      }),
+    );
+    expect(diagnosticMocks.emitUiDiagnostic).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: "final.ingress_to_dom_sla_missed",
+        severity: "warning",
+      }),
+    );
     expect(analyticsMocks.trackForegroundFreshnessSlaMissed).toHaveBeenCalledWith({
       metric: "workbench.final_ws_to_dom_ms",
       surface: "final_delivery",
@@ -138,6 +149,33 @@ describe("foregroundFreshnessTelemetry", () => {
       surface: "final_delivery",
       bucket: "slight",
     });
+  });
+
+  it("escalates final visibility diagnostics to error only past the hard user-visible budget", () => {
+    const timeOrigin = performance.timeOrigin ?? 0;
+    vi.spyOn(performance, "now").mockReturnValue(100);
+    noteFinalDeltaReceived({
+      sessionId: "session-1",
+      turnId: "turn-1",
+      emittedAtMs: timeOrigin + 100,
+      lastEventSeq: 42,
+    });
+
+    vi.spyOn(performance, "now").mockReturnValue(10_250);
+    noteFinalVisible("session-1", ["turn-1"]);
+
+    expect(diagnosticMocks.emitUiDiagnostic).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: "final.ws_to_dom_sla_missed",
+        severity: "error",
+      }),
+    );
+    expect(diagnosticMocks.emitUiDiagnostic).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: "final.ingress_to_dom_sla_missed",
+        severity: "error",
+      }),
+    );
   });
 
   it("records interrupt click to pending latency", () => {
@@ -168,6 +206,34 @@ describe("foregroundFreshnessTelemetry", () => {
       { lane: "foreground", stream_source: "live" },
     );
     expect(diagnosticMocks.emitUiDiagnostic).not.toHaveBeenCalled();
+  });
+
+  it("keeps foreground receive lag diagnostics as warnings below the hard remote-soak budget", () => {
+    noteClientReceiveLag("foreground", 12_000, {
+      stream_source: "live",
+      event_type: "session_head_delta",
+    });
+
+    expect(diagnosticMocks.emitUiDiagnostic).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: "client_receive_lag.foreground.sla_missed",
+        severity: "warning",
+      }),
+    );
+  });
+
+  it("escalates foreground receive lag diagnostics at the hard remote-soak budget", () => {
+    noteClientReceiveLag("foreground", 20_000, {
+      stream_source: "live",
+      event_type: "session_head_delta",
+    });
+
+    expect(diagnosticMocks.emitUiDiagnostic).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: "client_receive_lag.foreground.sla_missed",
+        severity: "error",
+      }),
+    );
   });
 
   it("records workspace event age without treating it as live receive lag", () => {
@@ -216,6 +282,20 @@ describe("foregroundFreshnessTelemetry", () => {
       "ms",
       12,
       { patch_count: "2", op: "append" },
+    );
+  });
+
+  it("keeps load-level replica lag diagnostics as warnings below the hard freshness budget", () => {
+    noteSessionReplicaApplyLag(2045, {
+      lag_source: "received_at",
+      event_type: "session_delta",
+    });
+
+    expect(diagnosticMocks.emitUiDiagnostic).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: "session_replica.apply_lag_sla_missed",
+        severity: "warning",
+      }),
     );
   });
 

@@ -33,6 +33,15 @@ const WORKSPACE_CLIENT_RECEIVE_LAG_SLA_MS = 1000;
 const SESSION_REPLICA_APPLY_LAG_SLA_MS = 100;
 const RENDERER_START_TIMEOUT_MS = 1000;
 const FIRST_PAINT_TIMEOUT_MS = 500;
+const SWITCH_FIRST_PAINT_ERROR_MS = 1000;
+const SWITCH_AUTHORITATIVE_ERROR_MS = 2000;
+const FINAL_DELIVERY_ERROR_MS = 10_000;
+const INTERRUPT_TO_PENDING_ERROR_MS = 1500;
+const FOREGROUND_CLIENT_RECEIVE_LAG_ERROR_MS = 20_000;
+const WORKSPACE_CLIENT_RECEIVE_LAG_ERROR_MS = 30_000;
+const SESSION_REPLICA_APPLY_LAG_ERROR_MS = 20_000;
+const FOREGROUND_QUEUE_AGE_ERROR_MS = 20_000;
+const WORKSPACE_QUEUE_AGE_ERROR_MS = 30_000;
 
 const SLA_DIAGNOSTIC_DEDUPE_MS = 60_000;
 const GAUGE_SAMPLE_INTERVAL_MS = 1000;
@@ -114,6 +123,7 @@ const maybeEmitGaugeSample = (
   thresholdMs: number,
   lane: QueueLane,
   context?: Record<string, unknown>,
+  errorThresholdMs = thresholdMs * 4,
 ) => {
   if (!Number.isFinite(value) || value < 0) return;
   const source = typeof context?.source === "string" && context.source.trim() ? context.source : "unknown";
@@ -158,7 +168,7 @@ const maybeEmitGaugeSample = (
   emitUiDiagnostic({
     source: "foreground_freshness",
     code: `${metric}.sla_missed`,
-    severity: value >= thresholdMs * 4 ? "error" : "warning",
+    severity: value >= errorThresholdMs ? "error" : "warning",
     message: `${lane} backlog age crossed the freshness budget.`,
     context: {
       metric,
@@ -184,6 +194,7 @@ const recordLatencyMetric = (args: {
   diagnosticCode: string;
   message: string;
   context?: Record<string, unknown>;
+  errorThresholdMs?: number;
 }) => {
   if (!Number.isFinite(args.valueMs) || args.valueMs < 0) return;
   recordClientHistogramMetric(args.metric, "ms", args.valueMs, args.labels);
@@ -193,7 +204,8 @@ const recordLatencyMetric = (args: {
     emitUiDiagnostic({
       source: "foreground_freshness",
       code: args.diagnosticCode,
-      severity: args.valueMs >= args.thresholdMs * 4 ? "error" : "warning",
+      severity:
+        args.valueMs >= (args.errorThresholdMs ?? args.thresholdMs * 4) ? "error" : "warning",
       message: args.message,
       context: {
         metric: args.metric,
@@ -248,6 +260,7 @@ export const noteSessionSwitchFirstPaint = (sessionId: string): void => {
     message: "Foreground session switch missed first-paint freshness budget.",
     labels: { phase: "first_paint" },
     context: { session_id: sessionId },
+    errorThresholdMs: SWITCH_FIRST_PAINT_ERROR_MS,
   });
 };
 
@@ -263,6 +276,7 @@ export const noteSessionSwitchAuthoritative = (sessionId: string): void => {
     message: "Foreground session switch missed authoritative freshness budget.",
     labels: { phase: "authoritative" },
     context: { session_id: sessionId },
+    errorThresholdMs: SWITCH_AUTHORITATIVE_ERROR_MS,
   });
   pendingSwitches.delete(sessionId);
 };
@@ -291,6 +305,7 @@ export const noteInterruptPendingVisible = (sessionId: string): void => {
     message: "Interrupt pending UI missed the freshness budget.",
     labels: { source: pending.source },
     context: { session_id: sessionId, source: pending.source },
+    errorThresholdMs: INTERRUPT_TO_PENDING_ERROR_MS,
   });
   pendingInterrupts.delete(sessionId);
 };
@@ -341,6 +356,10 @@ export const noteClientReceiveLag = (
       lane,
       ...(context ?? {}),
     },
+    errorThresholdMs:
+      lane === "foreground"
+        ? FOREGROUND_CLIENT_RECEIVE_LAG_ERROR_MS
+        : WORKSPACE_CLIENT_RECEIVE_LAG_ERROR_MS,
   });
 };
 
@@ -402,6 +421,7 @@ export const noteSessionReplicaApplyLag = (
     diagnosticCode: "session_replica.apply_lag_sla_missed",
     message: "Session replica patches missed the apply freshness budget.",
     context,
+    errorThresholdMs: SESSION_REPLICA_APPLY_LAG_ERROR_MS,
   });
 };
 
@@ -448,6 +468,7 @@ export const noteSessionReplicaApplyDuration = (
     diagnosticCode: "session_replica.apply_duration_sla_missed",
     message: "Session replica patches missed the apply duration budget.",
     context,
+    errorThresholdMs: SESSION_REPLICA_APPLY_LAG_ERROR_MS,
   });
 };
 
@@ -473,6 +494,7 @@ export const noteFinalVisible = (sessionId: string, turnIds: readonly string[]):
         turn_id: turnId,
         last_event_seq: pending.lastEventSeq,
       },
+      errorThresholdMs: FINAL_DELIVERY_ERROR_MS,
     });
     if (typeof pending.emittedAtMs === "number") {
       recordLatencyMetric({
@@ -487,6 +509,7 @@ export const noteFinalVisible = (sessionId: string, turnIds: readonly string[]):
           turn_id: turnId,
           last_event_seq: pending.lastEventSeq,
         },
+        errorThresholdMs: FINAL_DELIVERY_ERROR_MS,
       });
     }
     pendingFinals.delete(key);
@@ -644,6 +667,7 @@ export const noteQueueAgeSample = (
     thresholdMs,
     lane,
     context,
+    lane === "foreground" ? FOREGROUND_QUEUE_AGE_ERROR_MS : WORKSPACE_QUEUE_AGE_ERROR_MS,
   );
 };
 
