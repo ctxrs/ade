@@ -225,6 +225,15 @@ export function useSessionComposerQueueController(params: Params): Result {
 
   useEffect(() => {
     if (!hasActiveTurn) {
+      const pendingInterruptSessionId =
+        pendingInterruptSessionIdRef.current ?? latestInterruptClickSessionIdRef.current;
+      if (pendingInterruptSessionId) {
+        clearInterruptPendingMetric(pendingInterruptSessionId);
+        pendingInterruptSessionIdRef.current = null;
+        if (latestInterruptClickSessionIdRef.current === pendingInterruptSessionId) {
+          latestInterruptClickSessionIdRef.current = null;
+        }
+      }
       setInterruptPending(false);
     }
   }, [hasActiveTurn]);
@@ -236,12 +245,6 @@ export function useSessionComposerQueueController(params: Params): Result {
     if (interruptPending) {
       noteInterruptPendingVisible(pendingInterruptSessionId);
       pendingInterruptSessionIdRef.current = null;
-      latestInterruptClickSessionIdRef.current = null;
-      return;
-    }
-    clearInterruptPendingMetric(pendingInterruptSessionId);
-    pendingInterruptSessionIdRef.current = null;
-    if (latestInterruptClickSessionIdRef.current === pendingInterruptSessionId) {
       latestInterruptClickSessionIdRef.current = null;
     }
   }, [interruptPending]);
