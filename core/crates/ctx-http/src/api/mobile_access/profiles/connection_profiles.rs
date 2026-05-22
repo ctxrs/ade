@@ -6,7 +6,7 @@ mod creation;
 pub(in crate::api) use creation::create_mobile_connection_profile;
 
 pub(in crate::api) async fn list_mobile_connection_profiles(
-    State(state): State<CoreHandle>,
+    State(state): State<MobileStoreHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
 ) -> Result<Json<Vec<MobileConnectionProfile>>, StatusCode> {
     if mobile_auth.is_some() {
@@ -20,7 +20,7 @@ pub(in crate::api) async fn list_mobile_connection_profiles(
 }
 
 pub(in crate::api) async fn delete_mobile_connection_profile(
-    State(state): State<CoreHandle>,
+    State(state): State<MobileStoreHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {

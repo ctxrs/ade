@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::api) async fn create_mobile_connection_profile(
-    State(state): State<CoreHandle>,
+    State(state): State<MobileStoreHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<CreateMobileConnectionProfileReq>,
 ) -> Result<Json<CreateMobileConnectionProfileResp>, (StatusCode, Json<ApiErrorResp>)> {

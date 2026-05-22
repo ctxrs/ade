@@ -3,7 +3,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 
-use ctx_daemon::daemon::{CoreHandle, WorkspaceStreamHandle};
+use ctx_daemon::daemon::{MobileStoreHandle, WorkspaceStreamHandle};
 use ctx_mobile_access_service::route_contract::{
     MobileAccessRouteError, MobileAccessRouteErrorKind, MobileSecureWorkspaceStreamRouteParams,
 };
@@ -20,12 +20,12 @@ use socket::handle_mobile_secure_ws;
 
 pub(in crate::api) async fn mobile_secure_workspace_stream_ws(
     ws: WebSocketUpgrade,
-    State(core): State<CoreHandle>,
+    State(mobile_store): State<MobileStoreHandle>,
     State(workspace_stream): State<WorkspaceStreamHandle>,
     Path(id): Path<String>,
     Query(query): Query<MobileSecureStreamQuery>,
 ) -> impl IntoResponse {
-    let admission = match core
+    let admission = match mobile_store
         .admit_mobile_secure_workspace_stream_for_route(
             MobileSecureWorkspaceStreamRouteParams::new(id, query.device_id, query.token),
         )

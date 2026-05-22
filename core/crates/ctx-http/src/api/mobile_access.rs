@@ -1,5 +1,5 @@
 use super::*;
-use ctx_daemon::daemon::CoreHandle;
+use ctx_daemon::daemon::{CoreHandle, MobileStoreHandle};
 use ctx_mobile_access_service::route_contract::{
     CreateMobileConnectionProfileForRouteRequest, EnableMobileAccessRequest,
     MobileAccessRouteError, MobileAccessRouteErrorKind, MobileAccessStatusSnapshot,

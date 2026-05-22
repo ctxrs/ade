@@ -1,7 +1,8 @@
 use super::*;
 
 pub(in crate::api) async fn handle_mobile_secure(
-    State(state): State<CoreHandle>,
+    State(state): State<MobileStoreHandle>,
+    State(core): State<CoreHandle>,
     body: Bytes,
 ) -> Result<Json<SecureEnvelope>, (StatusCode, Json<ApiErrorResp>)> {
     let req: MobileSecureEnvelope = parse_json_body(body)?;
@@ -15,7 +16,7 @@ pub(in crate::api) async fn handle_mobile_secure(
         .await
         .map_err(mobile_access_api_error)?;
 
-    let response_payload = state
+    let response_payload = core
         .proxy_mobile_secure_request_for_route(
             verified.mobile_auth,
             verified.payload,

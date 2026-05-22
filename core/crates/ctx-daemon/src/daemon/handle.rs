@@ -86,6 +86,10 @@ impl DaemonHandle {
         UpdateReleaseHandle::new(self.state.core.data_root.clone())
     }
 
+    pub fn mobile_store(&self) -> MobileStoreHandle {
+        MobileStoreHandle::new(self.state.global_store().clone())
+    }
+
     pub fn sessions(&self) -> SessionsHandle {
         SessionsHandle::new(Arc::clone(&self.state))
     }
@@ -452,6 +456,21 @@ impl UpdateReleaseHandle {
 
     pub(in crate::daemon) fn data_root(&self) -> &Path {
         &self.data_root
+    }
+}
+
+#[derive(Clone)]
+pub struct MobileStoreHandle {
+    store: Store,
+}
+
+impl MobileStoreHandle {
+    pub(in crate::daemon) fn new(store: Store) -> Self {
+        Self { store }
+    }
+
+    pub(in crate::daemon) fn store(&self) -> &Store {
+        &self.store
     }
 }
 

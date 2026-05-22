@@ -2,7 +2,7 @@ use super::types::RegisterMobileDeviceReq;
 use super::*;
 
 pub(in crate::api) async fn list_mobile_devices_for_profile(
-    State(state): State<CoreHandle>,
+    State(state): State<MobileStoreHandle>,
     mobile_auth: Option<Extension<MobileAuthContext>>,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<MobileDeviceRegistration>>, StatusCode> {
@@ -19,7 +19,7 @@ pub(in crate::api) async fn list_mobile_devices_for_profile(
 }
 
 pub(in crate::api) async fn register_mobile_device(
-    State(state): State<CoreHandle>,
+    State(state): State<MobileStoreHandle>,
     auth: Option<Extension<MobileAuthContext>>,
     Json(req): Json<RegisterMobileDeviceReq>,
 ) -> Result<Json<MobileDeviceRegistration>, (StatusCode, Json<ApiErrorResp>)> {

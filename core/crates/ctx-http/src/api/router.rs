@@ -7,9 +7,9 @@ use url::Url;
 
 use ctx_daemon::daemon::{
     AuthHandle, BlobHandle, CoreHandle, DaemonHandle, DiagnosticsHandle, DictationHandle,
-    ExecutionHandle, HealthHandle, LogsHandle, OrgPolicyHandle, ProvidersHandle, RequestBaseHandle,
-    SessionsHandle, TasksHandle, TelemetryHandle, TransportHandle, UpdateReleaseHandle,
-    WorkspaceStreamHandle, WorkspacesHandle,
+    ExecutionHandle, HealthHandle, LogsHandle, MobileStoreHandle, OrgPolicyHandle, ProvidersHandle,
+    RequestBaseHandle, SessionsHandle, TasksHandle, TelemetryHandle, TransportHandle,
+    UpdateReleaseHandle, WorkspaceStreamHandle, WorkspacesHandle,
 };
 
 use super::auth::auth_middleware;
@@ -82,6 +82,7 @@ pub struct RouteHandles {
     pub(in crate::api) org_policy: OrgPolicyHandle,
     pub(in crate::api) dictation: DictationHandle,
     pub(in crate::api) update_release: UpdateReleaseHandle,
+    pub(in crate::api) mobile_store: MobileStoreHandle,
     pub(in crate::api) sessions: SessionsHandle,
     pub(in crate::api) tasks: TasksHandle,
     pub(in crate::api) workspaces: WorkspacesHandle,
@@ -105,6 +106,7 @@ impl RouteHandles {
             org_policy: handle.org_policy(),
             dictation: handle.dictation(),
             update_release: handle.update_release(),
+            mobile_store: handle.mobile_store(),
             sessions: handle.sessions(),
             tasks: handle.tasks(),
             workspaces: handle.workspaces(),
@@ -133,6 +135,7 @@ impl_route_state_extractors! {
     OrgPolicyHandle, org_policy;
     DictationHandle, dictation;
     UpdateReleaseHandle, update_release;
+    MobileStoreHandle, mobile_store;
     SessionsHandle, sessions;
     TasksHandle, tasks;
     WorkspacesHandle, workspaces;

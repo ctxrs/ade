@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::api) async fn pair_mobile_device(
-    State(state): State<CoreHandle>,
+    State(state): State<MobileStoreHandle>,
     body: Bytes,
 ) -> Result<Json<SecureEnvelope>, (StatusCode, Json<ApiErrorResp>)> {
     let req: PairMobileDeviceReq = parse_json_body(body)?;
