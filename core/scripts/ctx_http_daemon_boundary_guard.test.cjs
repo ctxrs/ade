@@ -72,6 +72,7 @@ const {
   SESSION_MESSAGE_COMMAND_ROUTE_API_CONTRACT_PATTERNS,
   SESSION_READ_MODEL_ROUTE_API_CONTRACT_PATTERNS,
   SESSION_SUBAGENT_ROUTE_API_CONTRACT_PATTERNS,
+  SESSION_SUBAGENT_ROUTE_DAEMON_IMPORT_PATTERNS,
   PROVIDER_STATUS_API_ORCHESTRATION_PATTERNS,
   PROVIDER_USAGE_API_ORCHESTRATION_PATTERNS,
   SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS,
@@ -3795,10 +3796,10 @@ test("daemon boundary guard scopes session subagent route contracts and allows r
       contents: `
         async fn handler(state: SessionsHandle) -> Json<ListAgentsRouteResponse> {
           state
-            .list_agents_for_mcp_route(SessionRouteParams::new(id), McpSessionRouteContext::new(None))
+            .list_agents_for_mcp_route(SessionRouteParams::new(id), None)
             .await?;
           state
-            .spawn_agent_for_mcp_route(SessionRouteParams::new(id), McpSessionRouteContext::new(None), req)
+            .spawn_agent_for_mcp_route(SessionRouteParams::new(id), None, req)
             .await?;
           let _ = SpawnAgentRouteRequest;
           let _ = SessionSubagentRouteErrorKind::BadRequest;
@@ -3808,6 +3809,72 @@ test("daemon boundary guard scopes session subagent route contracts and allows r
     }),
     [],
   );
+});
+
+test("daemon boundary guard rejects moved subagent route contracts from daemon across HTTP API", () => {
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/api/sessions/snapshot/head.rs").includes(
+      SESSION_SUBAGENT_ROUTE_DAEMON_IMPORT_PATTERNS[0],
+    ),
+    true,
+  );
+
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/sessions/snapshot/head.rs",
+    contents: `
+      use ctx_daemon::daemon::{
+        SpawnAgentRouteRequest,
+        sessions::{WaitAgentRouteResponse},
+      };
+      use ctx_daemon::daemon::sessions::{SessionSubagentRouteError};
+
+      async fn handler() {
+        let _ = ctx_daemon::daemon::GetAgentRouteRequest;
+        let _ = ctx_daemon::daemon::sessions::ArchiveAgentRouteResponse;
+      }
+    `,
+    patterns: apiPatternsForPath("core/crates/ctx-http/src/api/sessions/snapshot/head.rs"),
+  });
+
+  const names = new Set(violations.map((violation) => violation.name));
+  assert(names.has("HTTP API imports moved subagent route contracts from daemon"));
+  assert(names.has("HTTP API imports moved subagent route contracts from daemon sessions"));
+  assert(
+    names.has(
+      "HTTP API imports moved subagent route contracts from nested daemon sessions group",
+    ),
+  );
+});
+
+test("daemon boundary guard allows subagent route_contract imports only", () => {
+  assert.deepEqual(
+    scanText({
+      filePath: "core/crates/ctx-http/src/api/sessions/subagents.rs",
+      contents: `
+        use ctx_subagent_service::route_contract::{
+          SpawnAgentRouteRequest,
+          WaitAgentRouteResponse,
+        };
+      `,
+      patterns: apiPatternsForPath("core/crates/ctx-http/src/api/sessions/subagents.rs"),
+    }),
+    [],
+  );
+
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/sessions/subagents.rs",
+    contents: `
+      use ctx_subagent_service::{SpawnAgentReq};
+      async fn handler() {
+        let _ = ctx_subagent_service::WaitAgentReq;
+      }
+    `,
+    patterns: apiPatternsForPath("core/crates/ctx-http/src/api/sessions/subagents.rs"),
+  });
+
+  const names = violations.map((violation) => violation.name);
+  assert(names.includes("HTTP API imports subagent service through root group"));
+  assert(names.includes("HTTP API imports non-contract subagent service APIs"));
 });
 
 test("daemon boundary guard rejects session VCS API workspace-service orchestration", () => {

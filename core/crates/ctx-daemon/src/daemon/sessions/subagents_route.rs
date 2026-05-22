@@ -1,180 +1,19 @@
-use ctx_core::ids::{SessionId, TurnId};
-use ctx_core::models::{SessionSummary, SubagentInvocation};
+use ctx_core::ids::SessionId;
+use ctx_mcp_auth::McpAuthContext;
 use ctx_observability::logs;
-use serde::{Deserialize, Serialize};
+use ctx_subagent_service::route_contract::{
+    ArchiveAgentRouteRequest, ArchiveAgentRouteResponse, GetAgentRouteRequest,
+    GetAgentRouteResponse, InterruptAgentRouteRequest, InterruptAgentRouteResponse,
+    ListAgentsRouteResponse, SendInputRouteRequest, SendInputRouteResponse,
+    SessionSubagentInvocationRouteResponse, SessionSubagentInvocationsRouteQuery,
+    SessionSubagentInvocationsRouteResponse, SessionSubagentRouteError,
+    SessionSubagentsRouteResponse, SpawnAgentRouteRequest, SpawnAgentRouteResponse,
+    WaitAgentRouteRequest, WaitAgentRouteResponse,
+};
 
 use crate::daemon::sessions::route_contract::parse_session_route_id;
-use crate::daemon::sessions::subagents::{self, SubagentError, SubagentErrorKind};
+use crate::daemon::sessions::subagents::{SubagentError, SubagentErrorKind};
 use crate::daemon::{ScopedMcpSessionAccessError, SessionRouteParams, SessionsHandle};
-
-#[derive(Debug, Clone, Copy, Default)]
-pub struct McpSessionRouteContext {
-    mcp_auth: Option<ctx_mcp_auth::McpAuthContext>,
-}
-
-impl McpSessionRouteContext {
-    pub fn new(mcp_auth: Option<ctx_mcp_auth::McpAuthContext>) -> Self {
-        Self { mcp_auth }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct SessionSubagentInvocationsRouteQuery {
-    #[serde(default)]
-    turn_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct SpawnAgentRouteRequest {
-    #[serde(default)]
-    tool_call_id: Option<String>,
-    #[serde(default)]
-    worktree: Option<String>,
-    task_label: String,
-    prompt: String,
-    #[serde(default)]
-    harness: Option<String>,
-    #[serde(default)]
-    model: Option<String>,
-    #[serde(default)]
-    reasoning_effort: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct SendInputRouteRequest {
-    agent_id: String,
-    message: String,
-    #[serde(default)]
-    interrupt: Option<bool>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct ArchiveAgentRouteRequest {
-    agent_id: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct GetAgentRouteRequest {
-    agent_id: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct InterruptAgentRouteRequest {
-    agent_id: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct WaitAgentRouteRequest {
-    #[serde(default)]
-    agent_id: Option<String>,
-    #[serde(default)]
-    agent_ids: Option<Vec<String>>,
-    #[serde(default)]
-    timeout_ms: Option<u64>,
-    #[serde(default)]
-    mode: Option<String>,
-    #[serde(default)]
-    until: Option<String>,
-    #[serde(default)]
-    since_seq: Option<i64>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(transparent)]
-pub struct SessionSubagentsRouteResponse(Vec<SessionSummary>);
-
-#[derive(Debug, Serialize)]
-#[serde(transparent)]
-pub struct SessionSubagentInvocationsRouteResponse(Vec<SubagentInvocation>);
-
-#[derive(Debug, Serialize)]
-#[serde(transparent)]
-pub struct SessionSubagentInvocationRouteResponse(SubagentInvocation);
-
-#[derive(Debug, Serialize)]
-#[serde(transparent)]
-pub struct SpawnAgentRouteResponse(subagents::SpawnAgentResp);
-
-#[derive(Debug, Serialize)]
-#[serde(transparent)]
-pub struct SendInputRouteResponse(subagents::SendInputResp);
-
-#[derive(Debug, Serialize)]
-#[serde(transparent)]
-pub struct ArchiveAgentRouteResponse(subagents::ArchiveAgentResp);
-
-#[derive(Debug, Serialize)]
-#[serde(transparent)]
-pub struct ListAgentsRouteResponse(Vec<subagents::AgentSummary>);
-
-#[derive(Debug, Serialize)]
-#[serde(transparent)]
-pub struct GetAgentRouteResponse(subagents::GetAgentResp);
-
-#[derive(Debug, Serialize)]
-#[serde(transparent)]
-pub struct InterruptAgentRouteResponse(subagents::InterruptAgentResp);
-
-#[derive(Debug, Serialize)]
-#[serde(transparent)]
-pub struct WaitAgentRouteResponse(subagents::WaitAgentResp);
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum SessionSubagentRouteErrorKind {
-    BadRequest,
-    Unauthorized,
-    Forbidden,
-    NotFound,
-    InsufficientStorage,
-    Internal,
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct SessionSubagentRouteError {
-    kind: SessionSubagentRouteErrorKind,
-    message: String,
-}
-
-impl SessionSubagentRouteError {
-    fn new(kind: SessionSubagentRouteErrorKind, message: impl Into<String>) -> Self {
-        Self {
-            kind,
-            message: message.into(),
-        }
-    }
-
-    fn bad_request(message: impl Into<String>) -> Self {
-        Self::new(SessionSubagentRouteErrorKind::BadRequest, message)
-    }
-
-    fn unauthorized(message: impl Into<String>) -> Self {
-        Self::new(SessionSubagentRouteErrorKind::Unauthorized, message)
-    }
-
-    fn forbidden(message: impl Into<String>) -> Self {
-        Self::new(SessionSubagentRouteErrorKind::Forbidden, message)
-    }
-
-    fn not_found(message: impl Into<String>) -> Self {
-        Self::new(SessionSubagentRouteErrorKind::NotFound, message)
-    }
-
-    fn insufficient_storage(message: impl Into<String>) -> Self {
-        Self::new(SessionSubagentRouteErrorKind::InsufficientStorage, message)
-    }
-
-    fn internal(message: impl Into<String>) -> Self {
-        Self::new(SessionSubagentRouteErrorKind::Internal, message)
-    }
-
-    pub fn kind(&self) -> SessionSubagentRouteErrorKind {
-        self.kind
-    }
-
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-}
 
 impl SessionsHandle {
     pub async fn list_session_subagents_for_route(
@@ -187,7 +26,7 @@ impl SessionsHandle {
             .await
             .map_err(|_| SessionSubagentRouteError::internal("internal server error"))?
             .ok_or_else(|| SessionSubagentRouteError::not_found("session not found"))?;
-        Ok(SessionSubagentsRouteResponse(subagents))
+        Ok(SessionSubagentsRouteResponse::new(subagents))
     }
 
     pub async fn list_session_subagent_invocations_for_route(
@@ -196,13 +35,13 @@ impl SessionsHandle {
         query: SessionSubagentInvocationsRouteQuery,
     ) -> Result<SessionSubagentInvocationsRouteResponse, SessionSubagentRouteError> {
         let session_id = parse_subagent_route_id(params)?;
-        let turn_id = parse_optional_turn_id(query.turn_id)?;
+        let turn_id = query.into_turn_id()?;
         let invocations = self
             .list_session_subagent_invocations_for_request(session_id, turn_id)
             .await
             .map_err(|_| SessionSubagentRouteError::internal("internal server error"))?
             .ok_or_else(|| SessionSubagentRouteError::not_found("session not found"))?;
-        Ok(SessionSubagentInvocationsRouteResponse(invocations))
+        Ok(SessionSubagentInvocationsRouteResponse::new(invocations))
     }
 
     pub async fn get_session_subagent_invocation_for_route(
@@ -216,120 +55,120 @@ impl SessionsHandle {
             .await
             .map_err(|_| SessionSubagentRouteError::internal("internal server error"))?
             .ok_or_else(|| SessionSubagentRouteError::not_found("session not found"))?;
-        Ok(SessionSubagentInvocationRouteResponse(invocation))
+        Ok(SessionSubagentInvocationRouteResponse::new(invocation))
     }
 
     pub async fn spawn_agent_for_mcp_route(
         &self,
         params: SessionRouteParams,
-        context: McpSessionRouteContext,
+        mcp_auth: Option<McpAuthContext>,
         request: SpawnAgentRouteRequest,
     ) -> Result<SpawnAgentRouteResponse, SessionSubagentRouteError> {
         let parent_id = self
-            .resolve_mcp_subagent_parent_session_id(params, context)
+            .resolve_mcp_subagent_parent_session_id(params, mcp_auth)
             .await?;
         self.spawn_agent(parent_id, request.into_low_level())
             .await
-            .map(SpawnAgentRouteResponse)
+            .map(SpawnAgentRouteResponse::new)
             .map_err(subagent_route_error)
     }
 
     pub async fn send_input_for_mcp_route(
         &self,
         params: SessionRouteParams,
-        context: McpSessionRouteContext,
+        mcp_auth: Option<McpAuthContext>,
         request: SendInputRouteRequest,
     ) -> Result<SendInputRouteResponse, SessionSubagentRouteError> {
         let parent_id = self
-            .resolve_mcp_subagent_parent_session_id(params, context)
+            .resolve_mcp_subagent_parent_session_id(params, mcp_auth)
             .await?;
         self.send_input(parent_id, request.into_low_level())
             .await
-            .map(SendInputRouteResponse)
+            .map(SendInputRouteResponse::new)
             .map_err(subagent_route_error)
     }
 
     pub async fn archive_agent_for_mcp_route(
         &self,
         params: SessionRouteParams,
-        context: McpSessionRouteContext,
+        mcp_auth: Option<McpAuthContext>,
         request: ArchiveAgentRouteRequest,
     ) -> Result<ArchiveAgentRouteResponse, SessionSubagentRouteError> {
         let parent_id = self
-            .resolve_mcp_subagent_parent_session_id(params, context)
+            .resolve_mcp_subagent_parent_session_id(params, mcp_auth)
             .await?;
         self.archive_agent(parent_id, request.into_low_level())
             .await
-            .map(ArchiveAgentRouteResponse)
+            .map(ArchiveAgentRouteResponse::new)
             .map_err(subagent_route_error)
     }
 
     pub async fn list_agents_for_mcp_route(
         &self,
         params: SessionRouteParams,
-        context: McpSessionRouteContext,
+        mcp_auth: Option<McpAuthContext>,
     ) -> Result<ListAgentsRouteResponse, SessionSubagentRouteError> {
         let parent_id = self
-            .resolve_mcp_subagent_parent_session_id(params, context)
+            .resolve_mcp_subagent_parent_session_id(params, mcp_auth)
             .await?;
         self.list_agents(parent_id)
             .await
-            .map(ListAgentsRouteResponse)
+            .map(ListAgentsRouteResponse::new)
             .map_err(subagent_route_error)
     }
 
     pub async fn get_agent_for_mcp_route(
         &self,
         params: SessionRouteParams,
-        context: McpSessionRouteContext,
+        mcp_auth: Option<McpAuthContext>,
         request: GetAgentRouteRequest,
     ) -> Result<GetAgentRouteResponse, SessionSubagentRouteError> {
         let parent_id = self
-            .resolve_mcp_subagent_parent_session_id(params, context)
+            .resolve_mcp_subagent_parent_session_id(params, mcp_auth)
             .await?;
         self.get_agent(parent_id, request.into_low_level())
             .await
-            .map(GetAgentRouteResponse)
+            .map(GetAgentRouteResponse::new)
             .map_err(subagent_route_error)
     }
 
     pub async fn interrupt_agent_for_mcp_route(
         &self,
         params: SessionRouteParams,
-        context: McpSessionRouteContext,
+        mcp_auth: Option<McpAuthContext>,
         request: InterruptAgentRouteRequest,
     ) -> Result<InterruptAgentRouteResponse, SessionSubagentRouteError> {
         let parent_id = self
-            .resolve_mcp_subagent_parent_session_id(params, context)
+            .resolve_mcp_subagent_parent_session_id(params, mcp_auth)
             .await?;
         self.interrupt_agent(parent_id, request.into_low_level())
             .await
-            .map(InterruptAgentRouteResponse)
+            .map(InterruptAgentRouteResponse::new)
             .map_err(subagent_route_error)
     }
 
     pub async fn wait_agent_for_mcp_route(
         &self,
         params: SessionRouteParams,
-        context: McpSessionRouteContext,
+        mcp_auth: Option<McpAuthContext>,
         request: WaitAgentRouteRequest,
     ) -> Result<WaitAgentRouteResponse, SessionSubagentRouteError> {
         let parent_id = self
-            .resolve_mcp_subagent_parent_session_id(params, context)
+            .resolve_mcp_subagent_parent_session_id(params, mcp_auth)
             .await?;
         self.wait_agent(parent_id, request.into_low_level())
             .await
-            .map(WaitAgentRouteResponse)
+            .map(WaitAgentRouteResponse::new)
             .map_err(subagent_route_error)
     }
 
     async fn resolve_mcp_subagent_parent_session_id(
         &self,
         params: SessionRouteParams,
-        context: McpSessionRouteContext,
+        mcp_auth: Option<McpAuthContext>,
     ) -> Result<SessionId, SessionSubagentRouteError> {
         let session_id = parse_subagent_route_id(params)?;
-        if let Some(mcp_auth) = context.mcp_auth {
+        if let Some(mcp_auth) = mcp_auth {
             self.require_scoped_mcp_session_context(mcp_auth, session_id)
                 .await
                 .map_err(scoped_mcp_session_route_error)?;
@@ -338,88 +177,11 @@ impl SessionsHandle {
     }
 }
 
-impl SpawnAgentRouteRequest {
-    fn into_low_level(self) -> subagents::SpawnAgentReq {
-        subagents::SpawnAgentReq {
-            tool_call_id: self.tool_call_id,
-            worktree: self.worktree,
-            task_label: self.task_label,
-            prompt: self.prompt,
-            harness: self.harness,
-            model: self.model,
-            reasoning_effort: self.reasoning_effort,
-        }
-    }
-}
-
-impl SendInputRouteRequest {
-    fn into_low_level(self) -> subagents::SendInputReq {
-        subagents::SendInputReq {
-            agent_id: self.agent_id,
-            message: self.message,
-            interrupt: self.interrupt,
-        }
-    }
-}
-
-impl ArchiveAgentRouteRequest {
-    fn into_low_level(self) -> subagents::ArchiveAgentReq {
-        subagents::ArchiveAgentReq {
-            agent_id: self.agent_id,
-        }
-    }
-}
-
-impl GetAgentRouteRequest {
-    fn into_low_level(self) -> subagents::GetAgentReq {
-        subagents::GetAgentReq {
-            agent_id: self.agent_id,
-        }
-    }
-}
-
-impl InterruptAgentRouteRequest {
-    fn into_low_level(self) -> subagents::InterruptAgentReq {
-        subagents::InterruptAgentReq {
-            agent_id: self.agent_id,
-        }
-    }
-}
-
-impl WaitAgentRouteRequest {
-    fn into_low_level(self) -> subagents::WaitAgentReq {
-        subagents::WaitAgentReq {
-            agent_id: self.agent_id,
-            agent_ids: self.agent_ids,
-            timeout_ms: self.timeout_ms,
-            mode: self.mode,
-            until: self.until,
-            since_seq: self.since_seq,
-        }
-    }
-}
-
 fn parse_subagent_route_id(
     params: SessionRouteParams,
 ) -> Result<SessionId, SessionSubagentRouteError> {
     parse_session_route_id(params.session_id())
         .map_err(|_| SessionSubagentRouteError::bad_request("invalid session id"))
-}
-
-fn parse_optional_turn_id(
-    raw: Option<String>,
-) -> Result<Option<TurnId>, SessionSubagentRouteError> {
-    let Some(raw) = raw else {
-        return Ok(None);
-    };
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Ok(None);
-    }
-    uuid::Uuid::parse_str(trimmed)
-        .map(TurnId)
-        .map(Some)
-        .map_err(|_| SessionSubagentRouteError::bad_request("invalid turn id"))
 }
 
 fn scoped_mcp_session_route_error(error: ScopedMcpSessionAccessError) -> SessionSubagentRouteError {
@@ -452,89 +214,13 @@ fn subagent_route_error(error: SubagentError) -> SessionSubagentRouteError {
 mod tests {
     use super::*;
     use anyhow::anyhow;
-    use serde_json::json;
-
-    #[test]
-    fn listing_query_preserves_turn_id_contract() {
-        let query: SessionSubagentInvocationsRouteQuery =
-            serde_json::from_value(json!({ "turn_id": "  ", "ignored": true })).unwrap();
-        assert_eq!(parse_optional_turn_id(query.turn_id).unwrap(), None);
-
-        let turn_id = TurnId::new();
-        let query: SessionSubagentInvocationsRouteQuery = serde_json::from_value(json!({
-            "turn_id": turn_id.0.to_string()
-        }))
-        .unwrap();
-        assert_eq!(
-            parse_optional_turn_id(query.turn_id).unwrap(),
-            Some(turn_id)
-        );
-
-        let query: SessionSubagentInvocationsRouteQuery =
-            serde_json::from_value(json!({ "turn_id": "not-a-turn" })).unwrap();
-        let error = parse_optional_turn_id(query.turn_id).unwrap_err();
-        assert_eq!(error.kind(), SessionSubagentRouteErrorKind::BadRequest);
-        assert_eq!(error.message(), "invalid turn id");
-    }
+    use ctx_subagent_service::route_contract::SessionSubagentRouteErrorKind;
 
     #[test]
     fn invalid_session_id_uses_existing_route_message() {
         let error = parse_subagent_route_id(SessionRouteParams::new("not-a-session")).unwrap_err();
         assert_eq!(error.kind(), SessionSubagentRouteErrorKind::BadRequest);
         assert_eq!(error.message(), "invalid session id");
-    }
-
-    #[test]
-    fn mcp_route_requests_preserve_current_serde_shape() {
-        let spawn: SpawnAgentRouteRequest = serde_json::from_value(json!({
-            "tool_call_id": "tool",
-            "worktree": "new",
-            "task_label": "child",
-            "prompt": "do work",
-            "harness": "codex",
-            "model": "gpt",
-            "reasoning_effort": "high",
-            "ignored": true
-        }))
-        .unwrap();
-        let spawn = spawn.into_low_level();
-        assert_eq!(spawn.tool_call_id.as_deref(), Some("tool"));
-        assert_eq!(spawn.worktree.as_deref(), Some("new"));
-        assert_eq!(spawn.task_label, "child");
-        assert_eq!(spawn.prompt, "do work");
-        assert_eq!(spawn.harness.as_deref(), Some("codex"));
-        assert_eq!(spawn.model.as_deref(), Some("gpt"));
-        assert_eq!(spawn.reasoning_effort.as_deref(), Some("high"));
-
-        let send: SendInputRouteRequest = serde_json::from_value(json!({
-            "agent_id": "agent",
-            "message": "hello",
-            "interrupt": true,
-            "ignored": true
-        }))
-        .unwrap();
-        let send = send.into_low_level();
-        assert_eq!(send.agent_id, "agent");
-        assert_eq!(send.message, "hello");
-        assert_eq!(send.interrupt, Some(true));
-
-        let wait: WaitAgentRouteRequest = serde_json::from_value(json!({
-            "agent_id": "agent",
-            "agent_ids": ["a", "b"],
-            "timeout_ms": 1,
-            "mode": "all",
-            "until": "update",
-            "since_seq": 2,
-            "ignored": true
-        }))
-        .unwrap();
-        let wait = wait.into_low_level();
-        assert_eq!(wait.agent_id.as_deref(), Some("agent"));
-        assert_eq!(wait.agent_ids, Some(vec!["a".to_string(), "b".to_string()]));
-        assert_eq!(wait.timeout_ms, Some(1));
-        assert_eq!(wait.mode.as_deref(), Some("all"));
-        assert_eq!(wait.until.as_deref(), Some("update"));
-        assert_eq!(wait.since_seq, Some(2));
     }
 
     #[test]

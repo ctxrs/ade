@@ -1720,6 +1720,47 @@ const SESSION_SUBAGENT_ROUTE_API_CONTRACT_PATTERNS = [
   },
 ];
 
+const sessionSubagentMovedRouteContractPattern = String.raw`(?:ArchiveAgentRouteRequest|ArchiveAgentRouteResponse|GetAgentRouteRequest|GetAgentRouteResponse|InterruptAgentRouteRequest|InterruptAgentRouteResponse|ListAgentsRouteResponse|McpSessionRouteContext|SendInputRouteRequest|SendInputRouteResponse|SessionSubagentInvocationRouteResponse|SessionSubagentInvocationsRouteQuery|SessionSubagentInvocationsRouteResponse|SessionSubagentRouteError|SessionSubagentRouteErrorKind|SessionSubagentsRouteResponse|SpawnAgentRouteRequest|SpawnAgentRouteResponse|WaitAgentRouteRequest|WaitAgentRouteResponse)`;
+
+const SESSION_SUBAGENT_ROUTE_DAEMON_IMPORT_PATTERNS = [
+  {
+    name: "HTTP API imports moved subagent route contracts from daemon",
+    regex: new RegExp(
+      String.raw`\bctx_daemon::daemon::(?:\{[^}]*\b${sessionSubagentMovedRouteContractPattern}\b|${sessionSubagentMovedRouteContractPattern}\b)`,
+    ),
+    contentRegex: new RegExp(
+      String.raw`\buse\s+ctx_daemon::daemon::\s*\{(?=[^}]*\b${sessionSubagentMovedRouteContractPattern}\b)[^}]*\}\s*;`,
+      "gm",
+    ),
+  },
+  {
+    name: "HTTP API imports moved subagent route contracts from daemon sessions",
+    regex: new RegExp(
+      String.raw`\bctx_daemon::daemon::sessions::(?:\{[^}]*\b${sessionSubagentMovedRouteContractPattern}\b|${sessionSubagentMovedRouteContractPattern}\b)`,
+    ),
+    contentRegex: new RegExp(
+      String.raw`\buse\s+ctx_daemon::daemon::sessions::\s*\{(?=[^}]*\b${sessionSubagentMovedRouteContractPattern}\b)[^}]*\}\s*;`,
+      "gm",
+    ),
+  },
+  {
+    name: "HTTP API imports moved subagent route contracts from nested daemon sessions group",
+    regex: /\b\B/,
+    contentRegex: new RegExp(
+      String.raw`\buse\s+ctx_daemon::daemon::\s*\{(?=[^;]*\bsessions\s*::\s*\{[^;]*\b${sessionSubagentMovedRouteContractPattern}\b)[^;]*;`,
+      "gm",
+    ),
+  },
+  {
+    name: "HTTP API imports non-contract subagent service APIs",
+    regex: /\bctx_subagent_service::(?!route_contract\b)[A-Za-z_][A-Za-z0-9_]*/,
+  },
+  {
+    name: "HTTP API imports subagent service through root group",
+    regex: /\buse\s+ctx_subagent_service\s*::\s*\{/,
+  },
+];
+
 const SESSION_VCS_API_ORCHESTRATION_PATTERNS = [
   {
     name: "session VCS API owns session id parsing",
@@ -5320,6 +5361,7 @@ function apiPatternsForPath(relativePath) {
   const patterns = [
     ...API_RAW_DAEMON_PATTERNS,
     ...PROVIDER_ROUTE_CONTRACT_DAEMON_IMPORT_PATTERNS,
+    ...SESSION_SUBAGENT_ROUTE_DAEMON_IMPORT_PATTERNS,
   ];
   if (rawStoreBlindApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...API_DOMAIN_RAW_STORE_PATTERNS);
@@ -6689,6 +6731,7 @@ module.exports = {
   PROVIDER_USAGE_API_ORCHESTRATION_PATTERNS,
   PROVIDER_ACCOUNT_API_ORCHESTRATION_PATTERNS,
   SESSION_MODEL_SWITCH_API_ORCHESTRATION_PATTERNS,
+  SESSION_SUBAGENT_ROUTE_DAEMON_IMPORT_PATTERNS,
   SESSION_SUBAGENT_ROUTE_API_CONTRACT_PATTERNS,
   SESSION_VCS_API_ORCHESTRATION_PATTERNS,
   TASK_SESSION_CREATION_API_ADMISSION_PATTERNS,

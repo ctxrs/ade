@@ -10,7 +10,7 @@ pub(crate) async fn mcp_spawn_agent(
     state
         .spawn_agent_for_mcp_route(
             SessionRouteParams::new(id),
-            McpSessionRouteContext::new(mcp_auth.map(|Extension(auth)| auth)),
+            mcp_auth.map(|Extension(auth)| auth),
             req,
         )
         .await

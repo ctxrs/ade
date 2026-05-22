@@ -257,6 +257,7 @@ CTX_HTTP_SHARED_INTERNAL_DEPS = [
     "//core/crates/ctx-sandbox-contract:lib",
     "//core/crates/ctx-sandbox-materialization:lib",
     "//core/crates/ctx-session-artifacts:lib",
+    "//core/crates/ctx-subagent-service:lib",
     "//core/crates/ctx-session-tools:lib",
     "//core/crates/ctx-settings-model:lib",
     "//core/crates/ctx-settings-service:lib",

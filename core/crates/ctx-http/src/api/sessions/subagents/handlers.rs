@@ -103,6 +103,6 @@ pub(crate) async fn mcp_wait_agent(
 
 fn mcp_session_route_context(
     mcp_auth: Option<Extension<ctx_mcp_auth::McpAuthContext>>,
-) -> McpSessionRouteContext {
-    McpSessionRouteContext::new(mcp_auth.map(|Extension(auth)| auth))
+) -> Option<ctx_mcp_auth::McpAuthContext> {
+    mcp_auth.map(|Extension(auth)| auth)
 }
