@@ -393,6 +393,7 @@ const settingsApiRoots = [
 
 const titleGenerationApiRoots = [
   "core/crates/ctx-http/src/api/mod.rs",
+  "core/crates/ctx-http/src/api/sessions/tests/title_generation.rs",
   "core/crates/ctx-http/src/api/title_generation.rs",
 ];
 

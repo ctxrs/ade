@@ -1804,11 +1804,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ctx-managed-installs",
+ "ctx-observability",
  "ctx-settings-model",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

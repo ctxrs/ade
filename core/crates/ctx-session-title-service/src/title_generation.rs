@@ -12,6 +12,7 @@ use crate::llm::{
     ChatCompletionRequest, ChatMessage, JsonSchemaSpec, OpenAiClient, ResponseFormat,
 };
 use ctx_managed_installs::title_generation_local;
+use ctx_observability::logs;
 use ctx_settings_model::{TitleGenerationMode, TitleGenerationSettings};
 
 pub const DEFAULT_SESSION_TITLE: &str = "New Task";
@@ -74,6 +75,60 @@ pub fn normalize_title(raw: &str) -> String {
 pub fn fallback_title_from_prompt(prompt: &str) -> String {
     let collapsed = collapse_whitespace(prompt);
     normalize_title(&collapsed)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TitleGenerationSource {
+    Llm,
+    Fallback,
+}
+
+impl TitleGenerationSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TitleGenerationSource::Llm => "llm",
+            TitleGenerationSource::Fallback => "fallback",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TitleGenerationOutcome {
+    pub title: String,
+    pub source: TitleGenerationSource,
+}
+
+pub async fn generate_title_for_prompt(
+    cfg: Option<&TitleGenerationSettings>,
+    prompt: &str,
+    data_root: &Path,
+) -> Result<TitleGenerationOutcome> {
+    let fallback = fallback_title_from_prompt(prompt);
+    if fallback.trim().is_empty() {
+        return Err(anyhow!("prompt is empty"));
+    }
+
+    if let Some(cfg) = cfg.filter(|c| is_configured(c)) {
+        match generate_title(cfg, prompt, data_root).await {
+            Ok(title) => {
+                return Ok(TitleGenerationOutcome {
+                    title,
+                    source: TitleGenerationSource::Llm,
+                });
+            }
+            Err(err) => {
+                tracing::warn!(
+                    "title generation failed: {}",
+                    logs::redact_sensitive(&err.to_string())
+                );
+            }
+        }
+    }
+
+    Ok(TitleGenerationOutcome {
+        title: fallback,
+        source: TitleGenerationSource::Fallback,
+    })
 }
 
 fn title_schema_json() -> serde_json::Value {
@@ -484,5 +539,36 @@ mod tests {
         };
 
         assert_eq!(title, "Focused refactor");
+    }
+
+    #[tokio::test]
+    async fn generate_title_for_prompt_falls_back_when_local_runtime_missing() {
+        let data_dir = tempfile::tempdir().expect("tempdir");
+        let model_path = title_generation_local::model_path(data_dir.path());
+        if let Some(parent) = model_path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .expect("model parent");
+        }
+        tokio::fs::write(&model_path, b"stub")
+            .await
+            .expect("model stub");
+
+        let cfg = TitleGenerationSettings {
+            mode: TitleGenerationMode::Local,
+            local: ctx_settings_model::TitleGenerationLocalSettings {
+                model_id: title_generation_local::LOCAL_MODEL_ID.to_string(),
+                use_json: true,
+            },
+            ..Default::default()
+        };
+
+        let prompt = "make the title this: hello world";
+        let outcome = generate_title_for_prompt(Some(&cfg), prompt, data_dir.path())
+            .await
+            .expect("fallback outcome");
+
+        assert_eq!(outcome.source, TitleGenerationSource::Fallback);
+        assert_eq!(outcome.title, fallback_title_from_prompt(prompt));
     }
 }

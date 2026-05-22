@@ -6,6 +6,7 @@ use ctx_core::ids::{SessionId, TaskId, TurnId};
 use ctx_core::models::{Session, SessionEvent, SessionSummary, SubagentInvocation, Task, Worktree};
 use ctx_observability::ops_events::OpsEvent;
 use ctx_observability::telemetry::TelemetryEvent;
+use ctx_session_title_service::title_generation::TitleGenerationOutcome;
 use ctx_session_tools::model_resolution::compose_model_id;
 use ctx_session_tools::order_seq::OrderSeqState;
 use ctx_store::Store;
@@ -13,7 +14,7 @@ use tokio::sync::{mpsc, Mutex};
 
 use super::{
     ask_user, auth, command_dispatch, subagents, title_generation,
-    title_generation::{schedule_session_title_generation, TitleGenerationOutcome},
+    title_generation::schedule_session_title_generation,
 };
 use crate::daemon::handle::SessionsHandle;
 use crate::daemon::{

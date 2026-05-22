@@ -1,11 +1,9 @@
 use std::sync::Arc;
 
+use crate::daemon::DaemonState;
 use anyhow::Context;
 use ctx_core::models::{Session, SessionEventType};
-use ctx_session_title_service::title_generation;
-
-use super::TitleGenerationOutcome;
-use crate::daemon::DaemonState;
+use ctx_session_title_service::title_generation::{self, TitleGenerationOutcome};
 
 pub async fn apply_session_title_update(
     state: &Arc<DaemonState>,

@@ -1,8 +1,8 @@
 use super::*;
-use ctx_daemon::daemon::sessions::title_generation::{
+use ctx_managed_installs::title_generation_local;
+use ctx_session_title_service::title_generation::{
     generate_title_for_prompt, TitleGenerationSource,
 };
-use ctx_managed_installs::title_generation_local;
 
 #[tokio::test]
 async fn schedule_title_generation_falls_back_without_config() {

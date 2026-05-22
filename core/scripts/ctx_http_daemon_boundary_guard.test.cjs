@@ -6995,6 +6995,39 @@ test("daemon boundary guard rejects title-generation daemon status leaves", () =
   });
 
   assert.deepEqual(allowed, []);
+
+  const sessionTitleTestViolations = scanText({
+    filePath: "core/crates/ctx-http/src/api/sessions/tests/title_generation.rs",
+    contents: `
+      use ctx_daemon::daemon::sessions::title_generation::{
+        generate_title_for_prompt,
+        TitleGenerationSource,
+      };
+    `,
+    patterns: TITLE_GENERATION_API_ROUTE_CONTRACT_PATTERNS,
+  });
+
+  assert.ok(
+    sessionTitleTestViolations.some(
+      (violation) =>
+        violation.name ===
+        "title-generation API imports daemon beyond SessionsHandle",
+    ),
+    "expected title-generation session API test to reject daemon title policy imports",
+  );
+
+  const sessionTitleServiceAllowed = scanText({
+    filePath: "core/crates/ctx-http/src/api/sessions/tests/title_generation.rs",
+    contents: `
+      use ctx_session_title_service::title_generation::{
+        generate_title_for_prompt,
+        TitleGenerationSource,
+      };
+    `,
+    patterns: TITLE_GENERATION_API_ROUTE_CONTRACT_PATTERNS,
+  });
+
+  assert.deepEqual(sessionTitleServiceAllowed, []);
 });
 
 test("daemon boundary guard rejects CLI init daemon workspace bootstrap", () => {
@@ -7054,12 +7087,24 @@ test("daemon boundary guard scopes settings, title-generation, and telemetry API
     ),
     true,
   );
+  assert.equal(
+    apiPatternsForPath(
+      "core/crates/ctx-http/src/api/sessions/tests/title_generation.rs",
+    ).includes(TITLE_GENERATION_API_ROUTE_CONTRACT_PATTERNS[0]),
+    true,
+  );
   assert.deepEqual(
     titleGenerationApiPatternsForPath("core/crates/ctx-http/src/api/title_generation.rs"),
     TITLE_GENERATION_API_ROUTE_CONTRACT_PATTERNS,
   );
   assert.deepEqual(
     titleGenerationApiPatternsForPath("core/crates/ctx-http/src/api/mod.rs"),
+    TITLE_GENERATION_API_ROUTE_CONTRACT_PATTERNS,
+  );
+  assert.deepEqual(
+    titleGenerationApiPatternsForPath(
+      "core/crates/ctx-http/src/api/sessions/tests/title_generation.rs",
+    ),
     TITLE_GENERATION_API_ROUTE_CONTRACT_PATTERNS,
   );
   assert.equal(

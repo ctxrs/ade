@@ -1,4 +1,3 @@
-use std::path::Path as StdPath;
 use std::sync::Arc;
 
 use crate::daemon::{DaemonState, SessionsHandle};
@@ -8,7 +7,7 @@ use ctx_managed_installs::title_generation_local::{
 };
 use ctx_observability::logs;
 use ctx_provider_install::install_state::InstallId;
-use ctx_session_title_service::title_generation;
+use ctx_session_title_service::title_generation::{self, TitleGenerationOutcome};
 use ctx_settings_model as user_settings;
 
 mod persistence;
@@ -61,27 +60,6 @@ pub async fn start_title_generation_local_install(state: Arc<DaemonState>) -> In
     install_id
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum TitleGenerationSource {
-    Llm,
-    Fallback,
-}
-
-impl TitleGenerationSource {
-    pub(super) fn as_str(self) -> &'static str {
-        match self {
-            TitleGenerationSource::Llm => "llm",
-            TitleGenerationSource::Fallback => "fallback",
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct TitleGenerationOutcome {
-    pub title: String,
-    pub source: TitleGenerationSource,
-}
-
 pub async fn configured_title_generation_settings(
     state: &DaemonState,
 ) -> Option<user_settings::TitleGenerationSettings> {
@@ -102,39 +80,6 @@ pub async fn configured_title_generation_settings(
         .cloned()
 }
 
-pub async fn generate_title_for_prompt(
-    cfg: Option<&user_settings::TitleGenerationSettings>,
-    prompt: &str,
-    data_root: &StdPath,
-) -> anyhow::Result<TitleGenerationOutcome> {
-    let fallback = title_generation::fallback_title_from_prompt(prompt);
-    if fallback.trim().is_empty() {
-        return Err(anyhow::anyhow!("prompt is empty"));
-    }
-
-    if let Some(cfg) = cfg.filter(|c| title_generation::is_configured(c)) {
-        match title_generation::generate_title(cfg, prompt, data_root).await {
-            Ok(title) => {
-                return Ok(TitleGenerationOutcome {
-                    title,
-                    source: TitleGenerationSource::Llm,
-                });
-            }
-            Err(err) => {
-                tracing::warn!(
-                    "title generation failed: {}",
-                    logs::redact_sensitive(&err.to_string())
-                );
-            }
-        }
-    }
-
-    Ok(TitleGenerationOutcome {
-        title: fallback,
-        source: TitleGenerationSource::Fallback,
-    })
-}
-
 pub async fn maybe_generate_session_title(
     state: Arc<DaemonState>,
     session: Session,
@@ -152,7 +97,9 @@ pub async fn maybe_generate_session_title(
         return Ok(None);
     }
 
-    let outcome = generate_title_for_prompt(cfg.as_ref(), &prompt, &state.core.data_root).await?;
+    let outcome =
+        title_generation::generate_title_for_prompt(cfg.as_ref(), &prompt, &state.core.data_root)
+            .await?;
     apply_session_title_update(&state, &session, outcome.clone()).await?;
     Ok(Some(outcome))
 }
