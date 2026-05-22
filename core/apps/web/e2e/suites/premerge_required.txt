@@ -1,5 +1,6 @@
 # Deterministic, required pre-merge E2E suite.
 e2e/golden.spec.ts
+e2e/diagnostics-bundle-schema.spec.ts
 e2e/launcher-wizard-smoke.spec.ts
 e2e/terminal-reconnect.spec.ts
 e2e/workbench-index.spec.ts
