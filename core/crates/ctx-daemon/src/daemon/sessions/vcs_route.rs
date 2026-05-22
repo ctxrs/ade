@@ -1,5 +1,6 @@
 use ctx_core::ids::SessionId;
 use ctx_observability::logs;
+use ctx_route_contracts::sessions::SessionRouteParams;
 pub use ctx_route_contracts::sessions::{
     ApplySessionVcsDiffPatchRouteRequest, SessionVcsDiffRouteResponse,
     SessionVcsDiffSummaryRouteResponse, SessionVcsGitStatusEntryRouteResponse,
@@ -12,7 +13,7 @@ use crate::daemon::sessions::vcs::{
     SessionVcsApplyAction, SessionVcsDiff, SessionVcsDiffQuery, SessionVcsDiffSummary,
     SessionVcsError, SessionVcsGitStatus, SessionVcsGitStatusEntry,
 };
-use crate::daemon::{SessionRouteParams, SessionsHandle};
+use crate::daemon::SessionsHandle;
 
 impl SessionsHandle {
     pub async fn get_session_vcs_diff_for_route(

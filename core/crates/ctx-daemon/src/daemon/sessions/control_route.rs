@@ -2,6 +2,7 @@ use std::time::Instant;
 
 use ctx_observability::logs;
 use ctx_providers::ask_user_question::AskUserQuestionOutcome;
+use ctx_route_contracts::sessions::SessionRouteParams;
 pub use ctx_route_contracts::sessions::{
     AuthenticateSessionRouteRequest, SessionControlRouteError, SessionControlRouteErrorKind,
     SessionFileCompletionsRouteQuery, SessionFileCompletionsRouteResponse,
@@ -13,7 +14,7 @@ use crate::daemon::sessions::auth::SessionAuthError;
 use crate::daemon::sessions::command_dispatch::SessionSchedulerCommandError;
 use crate::daemon::sessions::route_contract::parse_session_route_id;
 use crate::daemon::workspaces::FileCompletionsErrorKind;
-use crate::daemon::{SessionRouteParams, SessionsHandle};
+use crate::daemon::SessionsHandle;
 
 impl SessionsHandle {
     pub async fn cancel_session_for_route(

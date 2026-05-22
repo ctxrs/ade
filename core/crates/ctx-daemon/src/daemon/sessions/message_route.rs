@@ -1,6 +1,7 @@
 use base64::Engine;
 use ctx_core::ids::{MessageId, SessionId, TurnId};
 use ctx_core::models::{MessageAttachment, MessageDelivery};
+use ctx_route_contracts::sessions::SessionRouteParams;
 pub use ctx_route_contracts::sessions::{
     DeleteSessionMessageRouteParams, PostSessionMessageRouteRequest,
     PostSessionMessageRouteResponse, SessionMessageRouteError, SessionMessageRouteErrorKind,
@@ -12,7 +13,7 @@ use ctx_session_message_service::message_delivery::{
 use crate::daemon::sessions::command_dispatch::SessionSchedulerCommandError;
 use crate::daemon::sessions::route_contract::parse_session_route_id;
 use crate::daemon::sessions::SessionImageBlobStoreError;
-use crate::daemon::{SessionRouteParams, SessionsHandle};
+use crate::daemon::SessionsHandle;
 
 const QUEUED_MESSAGES_ENABLED_ENV: &str = "CTX_QUEUED_MESSAGES_ENABLED";
 const MAX_MESSAGE_IMAGE_ATTACHMENT_BYTES: usize = 25 * 1024 * 1024;

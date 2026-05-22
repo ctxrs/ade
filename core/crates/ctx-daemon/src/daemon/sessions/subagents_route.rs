@@ -1,6 +1,7 @@
 use ctx_core::ids::SessionId;
 use ctx_mcp_auth::McpAuthContext;
 use ctx_observability::logs;
+use ctx_route_contracts::sessions::SessionRouteParams;
 use ctx_subagent_service::route_contract::{
     ArchiveAgentRouteRequest, ArchiveAgentRouteResponse, GetAgentRouteRequest,
     GetAgentRouteResponse, InterruptAgentRouteRequest, InterruptAgentRouteResponse,
@@ -13,7 +14,7 @@ use ctx_subagent_service::route_contract::{
 
 use crate::daemon::sessions::route_contract::parse_session_route_id;
 use crate::daemon::sessions::subagents::{SubagentError, SubagentErrorKind};
-use crate::daemon::{ScopedMcpSessionAccessError, SessionRouteParams, SessionsHandle};
+use crate::daemon::{ScopedMcpSessionAccessError, SessionsHandle};
 
 impl SessionsHandle {
     pub async fn list_session_subagents_for_route(

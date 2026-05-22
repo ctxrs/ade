@@ -2,9 +2,10 @@ use super::route_contract::parse_session_route_id;
 use crate::daemon::sessions::{
     DemoSeedTranscript, DemoSeedTranscriptError, DemoSeedTranscriptTurn,
 };
-use crate::daemon::{SessionRouteParams, SessionsHandle};
+use crate::daemon::SessionsHandle;
 use ctx_route_contracts::sessions::{
     DemoSeedTranscriptRouteError, DemoSeedTranscriptRouteRequest, DemoSeedTranscriptRouteResponse,
+    SessionRouteParams,
 };
 
 impl SessionsHandle {

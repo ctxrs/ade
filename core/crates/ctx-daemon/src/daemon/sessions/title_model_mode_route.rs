@@ -1,5 +1,6 @@
 use ctx_core::ids::SessionId;
 use ctx_observability::logs;
+use ctx_route_contracts::sessions::SessionRouteParams;
 pub use ctx_route_contracts::sessions::{
     GenerateSessionTitleRouteRequest, GenerateSessionTitleRouteResponse,
     SessionTitleModelModeRouteError, SessionTitleModelModeRouteErrorKind,
@@ -10,7 +11,7 @@ use crate::daemon::sessions::route_contract::parse_session_route_id;
 use crate::daemon::sessions::{
     GenerateSessionTitleError, SetSessionModeError, SetSessionModelError, SetSessionModelErrorKind,
 };
-use crate::daemon::{SessionRouteParams, SessionsHandle};
+use crate::daemon::SessionsHandle;
 
 impl SessionsHandle {
     pub async fn generate_session_title_for_route(

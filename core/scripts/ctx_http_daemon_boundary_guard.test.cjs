@@ -1696,7 +1696,7 @@ test("daemon boundary guard scopes repo onboarding orchestration bans", () => {
   const routeViolations = scanText({
     filePath: "core/crates/ctx-http/src/api/repo/init.rs",
     contents: `
-      use ctx_daemon::daemon::{
+      use ctx_route_contracts::repo_onboarding::{
         RepoInitRouteRequest,
         RepoOnboardingRouteError,
         RepoOnboardingRouteErrorKind,
@@ -3044,6 +3044,33 @@ test("daemon boundary guard rejects moved route DTO daemon imports", () => {
       "route DTO sweep API imports moved route DTOs from daemon",
       "route DTO sweep API imports moved route DTOs from daemon",
     ],
+  );
+});
+
+test("daemon boundary guard rejects stale daemon root route contract facades", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/sessions/mod.rs",
+    contents: `
+      use ctx_daemon::daemon::{
+        RepoCloneRouteRequest, RepoStatusRouteResponse, SessionRouteParams,
+        SessionHeadRouteResponse, WorkspaceRouteParams, WorkspaceRouteError,
+        WorkspaceRouteResponse, WorktreeRouteParams,
+      };
+      use ctx_daemon::{daemon::{RepoOnboardingRouteError, SessionControlRouteError}};
+      use ctx_daemon::daemon::sessions::SessionEventsRouteQuery;
+      use ctx_daemon::daemon::workspaces::WorkspaceActiveSnapshotRouteResponse;
+    `,
+    patterns: ROUTE_DTO_SWEEP_API_PATTERNS,
+  });
+
+  assert(
+    violations.length >= 4,
+    `expected daemon root facade violations, saw ${JSON.stringify(violations)}`,
+  );
+  assert(
+    violations.every(
+      (violation) => violation.name === "route DTO sweep API imports moved route DTOs from daemon",
+    ),
   );
 });
 

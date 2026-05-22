@@ -86,48 +86,16 @@ pub use mcp_auth::{
     require_scoped_mcp_session_context, revoke_provider_session_mcp_token, verify_mcp_auth_token,
     ScopedMcpSessionAccessError,
 };
-pub use repo_onboarding::{
-    RepoCloneRouteRequest, RepoInitRouteRequest, RepoOnboardingRouteError,
-    RepoOnboardingRouteErrorKind, RepoPathRouteResponse, RepoStatusRouteRequest,
-    RepoStatusRouteResponse, RepoValidateDestinationRouteRequest,
-};
 #[cfg(test)]
 pub use retention::prune_archived_session_data_for_all_workspaces;
 pub use route_files::RouteFileDownloadError;
 pub use runtime::{bootstrap_daemon_runtime, DaemonRuntime};
-pub use sessions::{
-    ApplySessionVcsDiffPatchRouteRequest, AuthenticateSessionRouteRequest,
-    DeleteSessionMessageRouteParams, GenerateSessionTitleRouteRequest,
-    GenerateSessionTitleRouteResponse, PostSessionMessageRouteRequest,
-    PostSessionMessageRouteResponse, SessionControlRouteError, SessionControlRouteErrorKind,
-    SessionEventsRouteQuery, SessionEventsRouteResponse, SessionFileCompletionsRouteQuery,
-    SessionFileCompletionsRouteResponse, SessionHeadRouteQuery, SessionHeadRouteResponse,
-    SessionHistoryRouteQuery, SessionHistoryRouteResponse, SessionMessageRouteError,
-    SessionMessageRouteErrorKind, SessionReadModelRouteError, SessionReadModelRouteErrorKind,
-    SessionRouteParams, SessionSnapshotRouteQuery, SessionSnapshotRouteResponse,
-    SessionStateRouteResponse, SessionTitleModelModeRouteError,
-    SessionTitleModelModeRouteErrorKind, SessionTurnToolsRouteParams,
-    SessionTurnToolsRouteResponse, SessionVcsDiffRouteResponse, SessionVcsDiffSummaryRouteResponse,
-    SessionVcsGitStatusEntryRouteResponse, SessionVcsGitStatusRouteResponse, SessionVcsRouteError,
-    SessionVcsRouteErrorKind, SessionVcsRouteQuery, SetSessionModeRouteRequest,
-    SetSessionModelRouteRequest, SetSessionModelRouteResponse, SubmitAskUserQuestionRouteRequest,
-    SubmitAskUserQuestionRouteResponse,
-};
 pub use state::{AppRuntimeFlags, DaemonState};
 pub use state::{
     AttachmentMaterializationTask, CacheSweepConfig, SessionStoreAccessError, StoreLookup,
     TimedEntry, WorkspaceStoreAccessError,
 };
-pub use workspaces::{
-    CreateWorkspaceAttachmentRouteRequest, CreateWorkspaceRequest,
-    DeleteWorkspaceAttachmentRouteRequest, SyncWorkspaceAttachmentsRouteRequest,
-    UpdateWorkspacePrimaryBranchRequest, WorkspaceActiveHeadBatchRouteResponse,
-    WorkspaceActiveSnapshotRouteResponse, WorkspaceAttachmentRouteResponse,
-    WorkspaceConfigUpdateResult, WorkspaceFileCompletionsRouteQuery,
-    WorkspacePrimaryBranchSnapshot, WorkspaceRouteError, WorkspaceRouteErrorKind,
-    WorkspaceRouteParams, WorkspaceRouteResponse, WorkspaceStreamAccessError,
-    WorkspaceStreamRouteAdmission, WorktreeRouteParams, WorktreeRouteResponse,
-};
+pub use workspaces::{WorkspaceStreamAccessError, WorkspaceStreamRouteAdmission};
 
 #[cfg(test)]
 mod tests;
