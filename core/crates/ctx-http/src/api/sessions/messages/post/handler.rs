@@ -12,11 +12,7 @@ pub(crate) async fn post_message(
         .map(|v| v.to_string());
 
     state
-        .post_session_message_for_route(
-            SessionRouteParams::new(id),
-            req,
-            PostSessionMessageRouteContext::new(run_id_header),
-        )
+        .post_session_message_for_route(SessionRouteParams::new(id), req, run_id_header)
         .await
         .map(Json)
         .map_err(session_message_api_error)

@@ -244,6 +244,7 @@ const sessionControlRouteApiRoots = [
 ];
 
 const sessionMessageCommandRouteApiRoots = [
+  "core/crates/ctx-http/src/api/sessions/mod.rs",
   "core/crates/ctx-http/src/api/sessions/messages.rs",
   "core/crates/ctx-http/src/api/sessions/messages/",
 ];
@@ -1732,6 +1733,10 @@ const SESSION_CONTROL_ROUTE_API_CONTRACT_PATTERNS = [
 ];
 
 const SESSION_MESSAGE_COMMAND_ROUTE_API_CONTRACT_PATTERNS = [
+  {
+    name: "session message command API imports removed post-message context",
+    regex: /\bPostSessionMessageRouteContext\b/,
+  },
   {
     name: "session message command API owns id parsing",
     regex: /\b(?:SessionId|MessageId|TurnId)\b|\buuid\s*::\s*Uuid\s*::\s*parse_str\s*\(/,

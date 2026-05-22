@@ -1,12 +1,12 @@
 use base64::Engine;
 use ctx_core::ids::{MessageId, SessionId, TurnId};
-use ctx_core::models::MessageAttachment;
+use ctx_core::models::{MessageAttachment, MessageDelivery};
 pub use ctx_route_contracts::sessions::{
     DeleteSessionMessageRouteParams, PostSessionMessageRouteRequest,
     PostSessionMessageRouteResponse, SessionMessageRouteError, SessionMessageRouteErrorKind,
 };
 use ctx_session_message_service::message_delivery::{
-    resolve_message_client_ids, MessageClientIdResolutionError,
+    resolve_message_client_ids, MessageClientIdResolutionError, MessageClientIds,
 };
 
 use crate::daemon::sessions::command_dispatch::SessionSchedulerCommandError;
@@ -18,35 +18,12 @@ const QUEUED_MESSAGES_ENABLED_ENV: &str = "CTX_QUEUED_MESSAGES_ENABLED";
 const MAX_MESSAGE_IMAGE_ATTACHMENT_BYTES: usize = 25 * 1024 * 1024;
 const MAX_MESSAGE_IMAGE_ATTACHMENT_MIB: usize = MAX_MESSAGE_IMAGE_ATTACHMENT_BYTES / (1024 * 1024);
 
-#[derive(Debug, Clone)]
-pub struct PostSessionMessageRouteContext {
-    run_id_header: Option<String>,
-    queued_messages_enabled: bool,
-}
-
-impl PostSessionMessageRouteContext {
-    pub fn new(run_id_header: Option<String>) -> Self {
-        Self {
-            run_id_header,
-            queued_messages_enabled: queued_messages_enabled_from_env(),
-        }
-    }
-
-    #[cfg(test)]
-    fn with_queued_messages(run_id_header: Option<String>, queued_messages_enabled: bool) -> Self {
-        Self {
-            run_id_header,
-            queued_messages_enabled,
-        }
-    }
-}
-
 impl SessionsHandle {
     pub async fn post_session_message_for_route(
         &self,
         params: SessionRouteParams,
         request: PostSessionMessageRouteRequest,
-        context: PostSessionMessageRouteContext,
+        run_id_header: Option<String>,
     ) -> Result<PostSessionMessageRouteResponse, SessionMessageRouteError> {
         let session_id = parse_post_session_id(params)?;
         let (message_id, turn_id, content, delivery, attachments) = request.into_parts();
@@ -58,22 +35,19 @@ impl SessionsHandle {
             .normalize_message_attachments_for_route(attachments)
             .await?;
 
-        self.post_user_message_for_request(
-            session_id,
-            crate::daemon::sessions::PostUserMessageInput {
-                message_id: client_ids.message_id,
-                turn_id: client_ids.turn_id,
-                client_supplied_ids: client_ids.client_supplied,
-                content,
-                requested_delivery: delivery,
-                attachments,
-                queued_messages_enabled: context.queued_messages_enabled,
-                run_id_header: context.run_id_header,
-            },
-        )
-        .await
-        .map(PostSessionMessageRouteResponse::new)
-        .map_err(post_user_message_route_error)
+        let input = post_user_message_input_for_route(
+            client_ids,
+            content,
+            delivery,
+            attachments,
+            queued_messages_enabled_from_env(),
+            run_id_header,
+        );
+
+        self.post_user_message_for_request(session_id, input)
+            .await
+            .map(PostSessionMessageRouteResponse::new)
+            .map_err(post_user_message_route_error)
     }
 
     pub async fn delete_session_message_for_route(
@@ -191,6 +165,26 @@ fn client_id_resolution_error(error: MessageClientIdResolutionError) -> SessionM
         MessageClientIdResolutionError::PartialClientIds => {
             SessionMessageRouteError::bad_request(error.message())
         }
+    }
+}
+
+fn post_user_message_input_for_route(
+    client_ids: MessageClientIds,
+    content: String,
+    delivery: Option<MessageDelivery>,
+    attachments: Vec<MessageAttachment>,
+    queued_messages_enabled: bool,
+    run_id_header: Option<String>,
+) -> crate::daemon::sessions::PostUserMessageInput {
+    crate::daemon::sessions::PostUserMessageInput {
+        message_id: client_ids.message_id,
+        turn_id: client_ids.turn_id,
+        client_supplied_ids: client_ids.client_supplied,
+        content,
+        requested_delivery: delivery,
+        attachments,
+        queued_messages_enabled,
+        run_id_header,
     }
 }
 
@@ -410,11 +404,35 @@ mod tests {
     }
 
     #[test]
-    fn route_context_can_override_queued_messages_for_route_tests() {
-        let context =
-            PostSessionMessageRouteContext::with_queued_messages(Some("run".to_string()), true);
-        assert_eq!(context.run_id_header.as_deref(), Some("run"));
-        assert!(context.queued_messages_enabled);
+    fn post_user_message_input_preserves_daemon_owned_context_values() {
+        let client_ids = resolve_message_client_ids(None, None).unwrap();
+        let input = post_user_message_input_for_route(
+            client_ids,
+            "hello".to_string(),
+            Some(MessageDelivery::Queued),
+            Vec::new(),
+            true,
+            Some("run".to_string()),
+        );
+
+        assert_eq!(input.message_id, client_ids.message_id);
+        assert_eq!(input.turn_id, client_ids.turn_id);
+        assert!(!input.client_supplied_ids);
+        assert_eq!(input.content, "hello");
+        assert!(matches!(
+            input.requested_delivery,
+            Some(MessageDelivery::Queued)
+        ));
+        assert!(input.attachments.is_empty());
+        assert!(input.queued_messages_enabled);
+        assert_eq!(input.run_id_header.as_deref(), Some("run"));
+    }
+
+    #[test]
+    fn queued_message_env_policy_is_daemon_owned() {
+        assert_eq!(env_bool(Some("true")), Some(true));
+        assert_eq!(env_bool(Some("false")), Some(false));
+        assert_eq!(env_bool(Some("unknown")), None);
     }
 
     #[test]

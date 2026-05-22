@@ -37,9 +37,8 @@ pub use demo_seed::{DemoSeedTranscript, DemoSeedTranscriptError, DemoSeedTranscr
 pub use handle::GenerateSessionTitleError;
 pub use message_commands::{PostUserMessageError, PostUserMessageInput};
 pub use message_route::{
-    DeleteSessionMessageRouteParams, PostSessionMessageRouteContext,
-    PostSessionMessageRouteRequest, PostSessionMessageRouteResponse, SessionMessageRouteError,
-    SessionMessageRouteErrorKind,
+    DeleteSessionMessageRouteParams, PostSessionMessageRouteRequest,
+    PostSessionMessageRouteResponse, SessionMessageRouteError, SessionMessageRouteErrorKind,
 };
 pub use model_switch::{SetSessionModelError, SetSessionModelErrorKind, SetSessionModelRequest};
 pub use model_target_bridge::SetSessionModeError;

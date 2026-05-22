@@ -3923,6 +3923,7 @@ test("daemon boundary guard rejects session message command route contracts in H
     filePath: "core/crates/ctx-http/src/api/sessions/messages/post/handler.rs",
     contents: `
       use ctx_daemon::daemon::sessions::{PostUserMessageError, PostUserMessageInput, SessionImageBlobStoreError};
+      use ctx_daemon::daemon::{PostSessionMessageRouteContext, SessionsHandle};
       use ctx_daemon::daemon::sessions::command_dispatch::SessionSchedulerCommandError;
       use ctx_session_service::message_delivery::MessageClientIdResolutionError;
       #[derive(Deserialize)]
@@ -3952,6 +3953,7 @@ test("daemon boundary guard rejects session message command route contracts in H
 
   assert.deepEqual(new Set(violations.map((violation) => violation.name)), new Set([
     "session message command API owns id parsing",
+    "session message command API imports removed post-message context",
     "session message command API owns local route DTOs",
     "session message command API owns delivery or attachment contracts",
     "session message command API owns attachment blob normalization",
@@ -3963,6 +3965,7 @@ test("daemon boundary guard rejects session message command route contracts in H
 
 test("daemon boundary guard scopes session message command route contracts and allows route DTOs", () => {
   for (const filePath of [
+    "core/crates/ctx-http/src/api/sessions/mod.rs",
     "core/crates/ctx-http/src/api/sessions/messages.rs",
     "core/crates/ctx-http/src/api/sessions/messages/delete.rs",
     "core/crates/ctx-http/src/api/sessions/messages/post.rs",
@@ -3982,6 +3985,17 @@ test("daemon boundary guard scopes session message command route contracts and a
 
   assert.deepEqual(
     scanText({
+      filePath: "core/crates/ctx-http/src/api/sessions/mod.rs",
+      contents: `
+        use ctx_daemon::daemon::{PostSessionMessageRouteContext, SessionsHandle};
+      `,
+      patterns: SESSION_MESSAGE_COMMAND_ROUTE_API_CONTRACT_PATTERNS,
+    }).map((violation) => violation.name),
+    ["session message command API imports removed post-message context"],
+  );
+
+  assert.deepEqual(
+    scanText({
       filePath: "core/crates/ctx-http/src/api/sessions/messages/post/handler.rs",
       contents: `
         async fn handler(state: SessionsHandle) -> Json<PostSessionMessageRouteResponse> {
@@ -3989,7 +4003,7 @@ test("daemon boundary guard scopes session message command route contracts and a
             .post_session_message_for_route(
               SessionRouteParams::new(id),
               req,
-              PostSessionMessageRouteContext::new(run_id_header),
+              run_id_header,
             )
             .await?;
           state
@@ -3998,7 +4012,6 @@ test("daemon boundary guard scopes session message command route contracts and a
           type Allowed = (
             PostSessionMessageRouteRequest,
             PostSessionMessageRouteResponse,
-            PostSessionMessageRouteContext,
             DeleteSessionMessageRouteParams,
           );
           Json(response)
