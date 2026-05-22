@@ -16,6 +16,7 @@ pub mod provider_admin_route_contract;
 pub mod provider_auth;
 pub mod provider_auth_check;
 pub mod provider_auth_check_route_contract;
+pub mod provider_bootstrap;
 pub mod provider_bootstrap_route_contract;
 pub mod provider_cache;
 pub mod provider_child_reclassifier;

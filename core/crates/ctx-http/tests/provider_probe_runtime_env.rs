@@ -1453,6 +1453,23 @@ async fn fake_provider_bootstrap_and_options_are_ready_without_browser_rewrite()
         },
     )
     .await;
+    let mut hidden_details = HashMap::new();
+    hidden_details.insert("ui_hidden".to_string(), "true".to_string());
+    seed_provider_status(
+        &state,
+        ProviderStatus {
+            provider_id: "codex".to_string(),
+            installed: true,
+            detected_path: None,
+            version: None,
+            capabilities: None,
+            health: ProviderHealth::Ok,
+            diagnostics: Vec::new(),
+            details: hidden_details,
+            usability: ctx_providers::adapters::ProviderUsability::default(),
+        },
+    )
+    .await;
 
     let ws = common::create_workspace(&app, repo.path(), "ws").await;
     let (status, options): (StatusCode, serde_json::Value) = common::json_request(
@@ -1553,6 +1570,32 @@ async fn fake_provider_bootstrap_and_options_are_ready_without_browser_rewrite()
             .and_then(serde_json::Value::as_str),
         Some("fake-model"),
         "expected fake bootstrap options to expose the concrete fake model: {bootstrap:#?}"
+    );
+    assert!(
+        bootstrap
+            .get("providers")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|providers| providers.iter().any(|provider| {
+                provider
+                    .get("provider_id")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("codex")
+                    && provider
+                        .pointer("/details/ui_hidden")
+                        .and_then(|v| v.as_str())
+                        == Some("true")
+            })),
+        "hidden providers should remain in top-level bootstrap statuses: {bootstrap:#?}"
+    );
+    assert!(
+        bootstrap.pointer("/provider_options/codex").is_none(),
+        "hidden providers must not receive bootstrap options: {bootstrap:#?}"
+    );
+    assert!(
+        bootstrap
+            .pointer("/provider_harness_config/codex")
+            .is_none(),
+        "hidden providers must not receive bootstrap harness config: {bootstrap:#?}"
     );
 }
 
