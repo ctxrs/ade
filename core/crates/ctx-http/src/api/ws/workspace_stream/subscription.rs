@@ -1,9 +1,8 @@
 use super::lifecycle::{clear_runtime_queues, queue_workspace_stream_reset};
 use super::*;
-use ctx_daemon::daemon::workspaces::stream::{
-    WorkspaceStreamReplayStepHook, WorkspaceStreamSubscriptionResolutionError,
-};
+use ctx_workspace_stream_service::replay::WorkspaceStreamReplayDrainHook;
 use ctx_workspace_stream_service::subscriptions::planning::WorkspaceStreamSubscriptionTransactionPlan;
+use ctx_workspace_stream_service::subscriptions::WorkspaceStreamSubscriptionResolutionError;
 use std::collections::HashSet;
 
 mod replay;
@@ -25,7 +24,7 @@ struct ReplayPlanningDrainHook<'a> {
 }
 
 #[async_trait::async_trait]
-impl WorkspaceStreamReplayStepHook for ReplayPlanningDrainHook<'_> {
+impl WorkspaceStreamReplayDrainHook for ReplayPlanningDrainHook<'_> {
     type Error = ();
 
     async fn before_workspace_stream_replay_step(
@@ -76,11 +75,11 @@ pub(crate) async fn handle_workspace_stream_subscription(
     {
         Ok(WorkspaceStreamSubscriptionTransactionPlan::NoChange) => return Ok(()),
         Ok(WorkspaceStreamSubscriptionTransactionPlan::Apply(plan)) => plan,
-        Err(WorkspaceStreamSubscriptionResolutionError::Hydration(error)) => {
+        Err(WorkspaceStreamSubscriptionResolutionError::Hydration) => {
             tracing::error!(
                 target: "ctx_http.ws_active_snapshot",
                 workspace_id = %workspace_id.0,
-                "workspace stream hydration failed: {error:?}"
+                "workspace stream hydration failed"
             );
             return Err(());
         }

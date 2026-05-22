@@ -620,8 +620,13 @@ test("daemon boundary guard rejects raw workspace stream replay planning in HTTP
         subscription: WorkspaceStreamResolvedSession,
         resolved_sessions: &[WorkspaceStreamResolvedSession],
       ) {
-        use ctx_daemon::daemon::workspaces::stream::{ReplayOutcome, WorkspaceStreamReplayStepHook};
-        use ctx_daemon::daemon::workspaces::{stream::ReplayOutcome};
+        use ctx_daemon::daemon::workspaces::stream::{
+          ReplayOutcome, WorkspaceStreamReplayStepHook,
+          WorkspaceStreamReplayDrainHook, WorkspaceStreamSubscriptionResolutionError,
+        };
+        use ctx_daemon::daemon::workspaces::{
+          stream::{ReplayOutcome, WorkspaceStreamSubscriptionResolutionError},
+        };
         let _ = matches!(subscription.intent, WorkspaceActiveSnapshotSessionIntent::Replay);
         let _ = matches!(subscription.replay, WorkspaceStreamSessionReplay::Resume { .. });
         let _ = matches!(subscription.replay, Resume { .. });
@@ -640,10 +645,7 @@ test("daemon boundary guard rejects raw workspace stream replay planning in HTTP
   assert.deepEqual(
     violations.map((violation) => violation.name),
     [
-      "workspace stream API imports moved replay outcome from daemon",
-      "workspace stream API imports moved replay outcome from daemon",
-      "workspace stream API imports moved replay outcome from daemon",
-      "workspace stream API imports moved replay outcome from daemon",
+      "workspace stream API imports moved replay contracts from daemon",
       "workspace stream API references raw replay intent policy",
       "workspace stream API references raw replay mode policy",
       "workspace stream API matches raw replay policy variant",
@@ -680,13 +682,18 @@ test("daemon boundary guard allows daemon workspace stream replay program DTOs",
   assert.deepEqual(violations, []);
 });
 
-test("daemon boundary guard allows intentionally daemon-owned workspace stream imports", () => {
+test("daemon boundary guard rejects moved workspace stream contract daemon imports", () => {
   const violations = scanText({
     filePath: "core/crates/ctx-http/src/api/ws/workspace_stream/subscription.rs",
     contents: `
       use ctx_daemon::daemon::workspaces::stream::{
-        WorkspaceStreamReplayStepHook, WorkspaceStreamSubscriptionResolutionError,
+        WorkspaceStreamReplayStepHook, WorkspaceStreamReplayDrainHook,
+        WorkspaceStreamSubscriptionResolutionError,
       };
+      use ctx_daemon::daemon::workspaces::stream::*;
+      use ctx_daemon::daemon::workspaces::{stream::*};
+      use ctx_daemon::daemon::{workspaces::stream::*};
+      use ctx_daemon::{daemon::workspaces::stream::*};
       fn handler(error: WorkspaceStreamSubscriptionResolutionError) {
         let _ = error;
       }
@@ -694,7 +701,13 @@ test("daemon boundary guard allows intentionally daemon-owned workspace stream i
     patterns: WORKSPACE_STREAM_REPLAY_PROGRAM_API_PATTERNS,
   });
 
-  assert.deepEqual(violations, []);
+  assert.equal(
+    violations.filter(
+      (violation) =>
+        violation.name === "workspace stream API imports moved replay contracts from daemon",
+    ).length >= 5,
+    true,
+  );
 });
 
 test("daemon boundary guard scopes workspace stream replay-program planning ban", () => {

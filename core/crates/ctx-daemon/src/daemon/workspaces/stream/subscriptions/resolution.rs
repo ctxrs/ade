@@ -8,14 +8,7 @@ use ctx_workspace_active_snapshot::{
     ResolvedWorkspaceActiveSubscriptions, SessionReplayCursor, WorkspaceActiveSubscriptionSource,
 };
 
-use crate::daemon::workspaces::WorkspaceHydrationError;
 use crate::daemon::DaemonState;
-
-#[derive(Debug)]
-pub enum WorkspaceStreamSubscriptionResolutionError {
-    Hydration(WorkspaceHydrationError),
-    Resolution,
-}
 
 pub async fn resolve_workspace_active_snapshot_subscriptions(
     state: &Arc<DaemonState>,

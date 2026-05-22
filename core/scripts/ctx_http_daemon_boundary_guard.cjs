@@ -3356,11 +3356,11 @@ const WORKSPACE_STREAM_REPLAY_CURSOR_API_PATTERNS = [
 
 const WORKSPACE_STREAM_REPLAY_PROGRAM_API_PATTERNS = [
   {
-    name: "workspace stream API imports moved replay outcome from daemon",
+    name: "workspace stream API imports moved replay contracts from daemon",
     regex:
-      /\bctx_daemon::daemon::workspaces(?:::stream::(?:\{[^}]*\bReplayOutcome\b|ReplayOutcome\b)|::\s*\{[^;]*\bstream\s*::\s*(?:\{[^;]*\bReplayOutcome\b|ReplayOutcome\b))/,
+      /\bctx_daemon(?=(?:[^;]*::\s*)?[^;]*\bdaemon\b[^;]*\bworkspaces\s*::\s*stream\s*::\s*(?:\*|\{[^;]*(?:\*|\b(?:ReplayOutcome|WorkspaceStreamReplayStepHook|WorkspaceStreamReplayDrainHook|WorkspaceStreamSubscriptionResolutionError)\b)|\b(?:ReplayOutcome|WorkspaceStreamReplayStepHook|WorkspaceStreamReplayDrainHook|WorkspaceStreamSubscriptionResolutionError)\b))[^;]*/,
     contentRegex:
-      /\buse\s+ctx_daemon::daemon::workspaces(?:::stream::\s*\{(?=[^;]*\bReplayOutcome\b)[^;]*|::\s*\{(?=[^;]*\bstream\s*::\s*(?:\{[^;]*\bReplayOutcome\b|ReplayOutcome\b))[^;]*)\s*;/gm,
+      /\buse\s+ctx_daemon(?=(?:[^;]*::\s*)?[^;]*\bdaemon\b[^;]*\bworkspaces\s*::\s*stream\s*::\s*(?:\*|\{[^;]*(?:\*|\b(?:ReplayOutcome|WorkspaceStreamReplayStepHook|WorkspaceStreamReplayDrainHook|WorkspaceStreamSubscriptionResolutionError)\b)|\b(?:ReplayOutcome|WorkspaceStreamReplayStepHook|WorkspaceStreamReplayDrainHook|WorkspaceStreamSubscriptionResolutionError)\b))[^;]*;/gm,
   },
   {
     name: "workspace stream API references raw replay intent policy",

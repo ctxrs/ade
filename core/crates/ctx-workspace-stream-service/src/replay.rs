@@ -39,6 +39,20 @@ pub enum WorkspaceStreamSessionReplayOutcome {
 }
 
 #[async_trait::async_trait]
+pub trait WorkspaceStreamReplayDrainHook {
+    type Error;
+
+    async fn before_workspace_stream_replay_step(
+        &mut self,
+        pending_replay_sessions: &HashSet<SessionId>,
+    ) -> Result<(), Self::Error>;
+
+    fn live_subscription_cursor(&self, _session_id: SessionId) -> Option<SessionReplayCursor> {
+        None
+    }
+}
+
+#[async_trait::async_trait]
 pub trait WorkspaceStreamReplayStepHook {
     type Error;
 

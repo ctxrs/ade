@@ -9,6 +9,7 @@ mod subscriptions;
 mod vcs;
 
 pub use access::{WorkspaceStreamAccessError, WorkspaceStreamRouteAdmission};
+pub use ctx_workspace_stream_service::subscriptions::WorkspaceStreamSubscriptionResolutionError;
 pub use cursor_acceptance::WorkspaceStreamCursorAcceptance;
 #[cfg(test)]
 pub(in crate::daemon) use cursor_acceptance::{
@@ -33,8 +34,8 @@ pub use read_model::{
 };
 pub use replay::{
     plan_workspace_stream_replay_program, plan_workspace_stream_replay_program_with_step_hook,
-    replay_session_events, WorkspaceStreamReplayProgram, WorkspaceStreamReplayStep,
-    WorkspaceStreamReplayStepHook,
+    replay_session_events, WorkspaceStreamReplayDrainHook, WorkspaceStreamReplayProgram,
+    WorkspaceStreamReplayStep,
 };
 pub use replay_cursor::active_head_cursors_from_snapshot_read_model;
 pub(in crate::daemon) use replay_cursor::active_task_subscription_cursor;
@@ -50,7 +51,7 @@ pub use subscriptions::{
     WorkspaceStreamResolvedSession, WorkspaceStreamSessionPinChanges, WorkspaceStreamSessionReplay,
     WorkspaceStreamSubscriptionApplyPlan, WorkspaceStreamSubscriptionEventApplication,
     WorkspaceStreamSubscriptionPlan, WorkspaceStreamSubscriptionReplayFinalization,
-    WorkspaceStreamSubscriptionResolutionError, WorkspaceStreamSubscriptionTransactionPlan,
+    WorkspaceStreamSubscriptionTransactionPlan,
 };
 pub use vcs::{
     filter_workspace_worktree_ids, plan_workspace_vcs_lag_reseed, plan_workspace_vcs_refresh,

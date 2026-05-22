@@ -31,7 +31,7 @@ struct RecordingReplayStepHook {
 }
 
 #[async_trait::async_trait]
-impl WorkspaceStreamReplayStepHook for RecordingReplayStepHook {
+impl WorkspaceStreamReplayDrainHook for RecordingReplayStepHook {
     type Error = ();
 
     async fn before_workspace_stream_replay_step(

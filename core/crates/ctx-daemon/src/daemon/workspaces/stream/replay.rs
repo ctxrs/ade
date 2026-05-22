@@ -13,7 +13,7 @@ use ctx_workspace_stream_service::replay::{
     self as stream_replay_service, WorkspaceStreamSessionReplayOutcome,
 };
 pub use ctx_workspace_stream_service::replay::{
-    WorkspaceStreamReplayProgram, WorkspaceStreamReplayStep,
+    WorkspaceStreamReplayDrainHook, WorkspaceStreamReplayProgram, WorkspaceStreamReplayStep,
 };
 
 use crate::daemon::DaemonState;
@@ -22,24 +22,10 @@ use crate::daemon::WorkspaceStreamHandle;
 use super::replay_cursor::session_replay_tail_cursor;
 use super::subscriptions::WorkspaceStreamResolvedSession;
 
-#[async_trait::async_trait]
-pub trait WorkspaceStreamReplayStepHook {
-    type Error;
-
-    async fn before_workspace_stream_replay_step(
-        &mut self,
-        pending_replay_sessions: &HashSet<SessionId>,
-    ) -> Result<(), Self::Error>;
-
-    fn live_subscription_cursor(&self, _session_id: SessionId) -> Option<SessionReplayCursor> {
-        None
-    }
-}
-
 struct NoopWorkspaceStreamReplayStepHook;
 
 #[async_trait::async_trait]
-impl WorkspaceStreamReplayStepHook for NoopWorkspaceStreamReplayStepHook {
+impl WorkspaceStreamReplayDrainHook for NoopWorkspaceStreamReplayStepHook {
     type Error = std::convert::Infallible;
 
     async fn before_workspace_stream_replay_step(
@@ -60,7 +46,7 @@ struct DaemonWorkspaceStreamReplayStepHookAdapter<'a, H> {
 impl<H> stream_replay_service::WorkspaceStreamReplayStepHook
     for DaemonWorkspaceStreamReplayStepHookAdapter<'_, H>
 where
-    H: WorkspaceStreamReplayStepHook + Send,
+    H: WorkspaceStreamReplayDrainHook + Send,
 {
     type Error = H::Error;
 
@@ -124,7 +110,7 @@ pub async fn plan_workspace_stream_replay_program_with_step_hook<H>(
     step_hook: &mut H,
 ) -> Result<WorkspaceStreamReplayProgram, H::Error>
 where
-    H: WorkspaceStreamReplayStepHook + Send,
+    H: WorkspaceStreamReplayDrainHook + Send,
 {
     let mut service_hook = DaemonWorkspaceStreamReplayStepHookAdapter {
         state,
@@ -282,7 +268,7 @@ impl WorkspaceStreamHandle {
         step_hook: &mut H,
     ) -> Result<WorkspaceStreamReplayProgram, H::Error>
     where
-        H: WorkspaceStreamReplayStepHook + Send,
+        H: WorkspaceStreamReplayDrainHook + Send,
     {
         plan_workspace_stream_replay_program_with_step_hook(
             &self.state,

@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use ctx_core::ids::{SessionId, WorkspaceId};
 use ctx_core::models::{WorkspaceActiveSnapshotClientMessage, WorkspaceActiveSnapshotEvent};
 use ctx_workspace_active_snapshot::{SessionReplayCursor, WorkspaceActiveSubscriptionState};
+pub use ctx_workspace_stream_service::subscriptions::WorkspaceStreamSubscriptionResolutionError;
 
 use crate::daemon::WorkspaceStreamHandle;
 
@@ -21,9 +22,7 @@ pub use planning::{
     WorkspaceStreamSubscriptionApplyPlan, WorkspaceStreamSubscriptionPlan,
     WorkspaceStreamSubscriptionReplayFinalization, WorkspaceStreamSubscriptionTransactionPlan,
 };
-pub use resolution::{
-    resolve_workspace_active_snapshot_subscriptions, WorkspaceStreamSubscriptionResolutionError,
-};
+pub use resolution::resolve_workspace_active_snapshot_subscriptions;
 
 impl WorkspaceStreamHandle {
     pub fn finalize_workspace_stream_subscription_replay(
@@ -83,7 +82,14 @@ impl WorkspaceStreamHandle {
     ) -> Result<WorkspaceStreamSubscriptionPlan, WorkspaceStreamSubscriptionResolutionError> {
         super::prepare_subscription_read_model(&self.state, workspace_id)
             .await
-            .map_err(WorkspaceStreamSubscriptionResolutionError::Hydration)?;
+            .map_err(|error| {
+                tracing::error!(
+                    target: "ctx_daemon.workspace_stream",
+                    workspace_id = %workspace_id.0,
+                    "workspace stream hydration failed while resolving subscriptions: {error:?}"
+                );
+                WorkspaceStreamSubscriptionResolutionError::Hydration
+            })?;
         let resolved = resolution::resolve_workspace_active_snapshot_subscriptions(
             &self.state,
             workspace_id,
@@ -109,7 +115,14 @@ impl WorkspaceStreamHandle {
     > {
         super::prepare_subscription_read_model(&self.state, workspace_id)
             .await
-            .map_err(WorkspaceStreamSubscriptionResolutionError::Hydration)?;
+            .map_err(|error| {
+                tracing::error!(
+                    target: "ctx_daemon.workspace_stream",
+                    workspace_id = %workspace_id.0,
+                    "workspace stream hydration failed while planning subscription transaction: {error:?}"
+                );
+                WorkspaceStreamSubscriptionResolutionError::Hydration
+            })?;
         let resolved = resolution::resolve_workspace_active_snapshot_subscriptions(
             &self.state,
             workspace_id,
