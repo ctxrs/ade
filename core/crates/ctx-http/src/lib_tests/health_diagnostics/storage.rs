@@ -2,6 +2,9 @@ use super::*;
 
 #[tokio::test]
 async fn health_and_diagnostics_include_storage_guard_state() {
+    let _serial = home_env_test_lock().lock().await;
+    let _build_identity = EnvVarGuard::unset(ctx_update_service::BUILD_IDENTITY_PATH_ENV);
+
     let data_dir = tempfile::tempdir().unwrap();
     let fixture = test_daemon_fixture_for_test(data_dir.path(), None).await;
     let state = fixture.daemon();

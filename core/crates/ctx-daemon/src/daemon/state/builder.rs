@@ -54,7 +54,7 @@ impl DaemonState {
         let worktree_vcs_enabled = runtime_flags.worktree_vcs_enabled;
         let tool_output_spool = build_tool_output_spool(&data_root);
         let runtime_parts = build_runtime_parts(&data_root);
-        let storage_guard = StorageGuardRuntime::new(&data_root);
+        let storage_guard = Arc::new(StorageGuardRuntime::new(&data_root));
         let local_shutdown_token = std::env::var("CTX_LOCAL_DAEMON_SHUTDOWN_TOKEN")
             .ok()
             .filter(|value| !value.trim().is_empty());

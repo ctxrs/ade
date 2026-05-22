@@ -1,9 +1,9 @@
 use super::*;
-use ctx_daemon::daemon::CoreHandle;
+use ctx_daemon::daemon::HealthHandle;
 use ctx_route_contracts::health::DaemonHealthSnapshot;
 
 pub(in crate::api) async fn health(
-    State(state): State<CoreHandle>,
+    State(state): State<HealthHandle>,
     headers: HeaderMap,
 ) -> Result<Json<DaemonHealthSnapshot>, StatusCode> {
     let include_sensitive = health_request_is_authorized(&state, &headers);
@@ -24,7 +24,7 @@ pub(in crate::api) async fn dev_clock() -> Json<DevClockResp> {
     })
 }
 
-fn health_request_is_authorized(state: &CoreHandle, headers: &HeaderMap) -> bool {
+fn health_request_is_authorized(state: &HealthHandle, headers: &HeaderMap) -> bool {
     let Some(expected) = state.auth_token() else {
         return true;
     };

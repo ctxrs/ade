@@ -3,7 +3,7 @@ use ctx_route_contracts::health::{DaemonHealthSnapshot, HealthCompatibility};
 use ctx_update_service::BuildIdentity;
 use serde::Serialize;
 
-use crate::daemon::{CoreHandle, DaemonState};
+use crate::daemon::{CoreHandle, HealthHandle};
 
 const MOBILE_API_MIN_VERSION: i64 = 1;
 const MOBILE_API_MAX_VERSION: i64 = 1;
@@ -11,7 +11,7 @@ const MOBILE_API_MAX_VERSION: i64 = 1;
 pub type HealthSnapshotError = anyhow::Error;
 
 fn build_health_snapshot(
-    state: &DaemonState,
+    health: &HealthHandle,
     identity: &BuildIdentity,
     include_sensitive: bool,
 ) -> anyhow::Result<DaemonHealthSnapshot> {
@@ -26,9 +26,9 @@ fn build_health_snapshot(
         version: version.clone(),
         daemon_version: version.clone(),
         pid: include_sensitive.then_some(std::process::id()),
-        data_root: include_sensitive.then(|| state.core.data_root.to_string_lossy().to_string()),
-        daemon_url: include_sensitive.then(|| state.core.daemon_url.clone()),
-        auth_required: state.core.auth_token.is_some(),
+        data_root: include_sensitive.then(|| health.data_root().to_string_lossy().to_string()),
+        daemon_url: include_sensitive.then(|| health.daemon_url().to_string()),
+        auth_required: health.auth_required(),
         open_file_limit: if include_sensitive {
             ctx_resource_utilization::process_limits::current_open_file_limit()
                 .map(route_json_value)
@@ -37,7 +37,7 @@ fn build_health_snapshot(
             None
         },
         storage: if include_sensitive {
-            Some(route_json_value(state.storage_guard_snapshot())?)
+            Some(route_json_value(health.storage_guard_snapshot())?)
         } else {
             None
         },
@@ -56,6 +56,17 @@ fn route_json_value<T: Serialize>(value: T) -> anyhow::Result<serde_json::Value>
     serde_json::to_value(value).context("serializing health route payload")
 }
 
+impl HealthHandle {
+    pub fn health_snapshot(
+        &self,
+        package_version: &'static str,
+        include_sensitive: bool,
+    ) -> Result<DaemonHealthSnapshot, HealthSnapshotError> {
+        let identity = ctx_update_service::current_build_identity(package_version)?;
+        build_health_snapshot(self, identity, include_sensitive)
+    }
+}
+
 impl CoreHandle {
     pub fn health_snapshot(
         &self,
@@ -63,7 +74,13 @@ impl CoreHandle {
         include_sensitive: bool,
     ) -> Result<DaemonHealthSnapshot, HealthSnapshotError> {
         let identity = ctx_update_service::current_build_identity(package_version)?;
-        build_health_snapshot(self.state.as_ref(), identity, include_sensitive)
+        let health = HealthHandle::new(
+            self.state.core.data_root.clone(),
+            self.state.core.daemon_url.clone(),
+            self.state.core.auth_token.clone(),
+            self.state.core.storage_guard.clone(),
+        );
+        build_health_snapshot(&health, identity, include_sensitive)
     }
 }
 

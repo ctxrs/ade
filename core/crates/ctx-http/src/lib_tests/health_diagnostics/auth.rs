@@ -2,6 +2,9 @@ use super::*;
 
 #[tokio::test]
 async fn unauthenticated_health_omits_sensitive_fields_when_daemon_auth_is_enabled() {
+    let _serial = home_env_test_lock().lock().await;
+    let _build_identity = EnvVarGuard::unset(ctx_update_service::BUILD_IDENTITY_PATH_ENV);
+
     let data_dir = tempfile::tempdir().unwrap();
     let fixture =
         test_daemon_fixture_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;
@@ -65,6 +68,9 @@ async fn unauthenticated_health_omits_sensitive_fields_when_daemon_auth_is_enabl
 
 #[tokio::test]
 async fn authorized_health_keeps_sensitive_fields_when_daemon_auth_is_enabled() {
+    let _serial = home_env_test_lock().lock().await;
+    let _build_identity = EnvVarGuard::unset(ctx_update_service::BUILD_IDENTITY_PATH_ENV);
+
     let data_dir = tempfile::tempdir().unwrap();
     let fixture =
         test_daemon_fixture_for_test(data_dir.path(), Some("daemon-secret".to_string())).await;

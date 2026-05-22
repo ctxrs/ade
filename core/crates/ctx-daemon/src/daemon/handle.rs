@@ -5,7 +5,7 @@ use ctx_mcp_auth::McpAuthRegistry;
 use ctx_observability::ops_events::{OpsEvent, OpsEvents};
 use ctx_observability::perf_telemetry::PerfTelemetry;
 use ctx_observability::telemetry::Telemetry;
-use ctx_storage_admission::StorageGuardStatus;
+use ctx_storage_admission::{StorageGuardRuntime, StorageGuardStatus};
 use ctx_store::Store;
 
 use super::{
@@ -33,6 +33,15 @@ impl DaemonHandle {
             Arc::clone(&self.state.core.mcp_auth),
             self.state.global_store().clone(),
             self.state.telemetry.ops_events.clone(),
+        )
+    }
+
+    pub fn health(&self) -> HealthHandle {
+        HealthHandle::new(
+            self.state.core.data_root.clone(),
+            self.state.core.daemon_url.clone(),
+            self.state.core.auth_token.clone(),
+            Arc::clone(&self.state.core.storage_guard),
         )
     }
 
@@ -245,6 +254,50 @@ impl AuthHandle {
         ctx_mobile_access_service::MobileAuthContextError,
     > {
         ctx_mobile_access_service::verify_mobile_api_token_hash(&self.store, hash).await
+    }
+}
+
+#[derive(Clone)]
+pub struct HealthHandle {
+    data_root: std::path::PathBuf,
+    daemon_url: String,
+    auth_token: Option<String>,
+    storage_guard: Arc<StorageGuardRuntime>,
+}
+
+impl HealthHandle {
+    pub(in crate::daemon) fn new(
+        data_root: std::path::PathBuf,
+        daemon_url: String,
+        auth_token: Option<String>,
+        storage_guard: Arc<StorageGuardRuntime>,
+    ) -> Self {
+        Self {
+            data_root,
+            daemon_url,
+            auth_token,
+            storage_guard,
+        }
+    }
+
+    pub(in crate::daemon) fn data_root(&self) -> &Path {
+        &self.data_root
+    }
+
+    pub(in crate::daemon) fn daemon_url(&self) -> &str {
+        &self.daemon_url
+    }
+
+    pub fn auth_token(&self) -> Option<&str> {
+        self.auth_token.as_deref()
+    }
+
+    pub(in crate::daemon) fn auth_required(&self) -> bool {
+        self.auth_token.is_some()
+    }
+
+    pub(in crate::daemon) fn storage_guard_snapshot(&self) -> StorageGuardStatus {
+        self.storage_guard.snapshot()
     }
 }
 

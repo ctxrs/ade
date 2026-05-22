@@ -15,7 +15,7 @@ use ctx_worktree_vcs_service::{
 
 pub struct CoreState {
     pub(crate) data_root: PathBuf,
-    pub(crate) storage_guard: StorageGuardRuntime,
+    pub(crate) storage_guard: Arc<StorageGuardRuntime>,
     pub(crate) tool_output_spool_enabled: bool,
     pub(crate) tool_output_spool_dir: PathBuf,
     pub(crate) stores: StoreManager,

@@ -13,6 +13,7 @@ fn write_invalid_agent_server_config(data_root: &std::path::Path) {
 #[tokio::test]
 async fn diagnostics_marks_provider_statuses_with_agent_server_config_errors() {
     let _serial = home_env_test_lock().lock().await;
+    let _build_identity = EnvVarGuard::unset(ctx_update_service::BUILD_IDENTITY_PATH_ENV);
     let home = tempfile::tempdir().unwrap();
     let _home = EnvVarGuard::set("HOME", &home.path().to_string_lossy());
 
