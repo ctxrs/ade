@@ -7,6 +7,7 @@ import {
   type Dispatch,
   type SetStateAction,
 } from "react";
+import { flushSync } from "react-dom";
 import {
   deleteMessage,
   type Message,
@@ -249,6 +250,17 @@ export function useSessionComposerQueueController(params: Params): Result {
     }
   }, [interruptPending]);
 
+  const showInterruptPending = (targetSessionId: string) => {
+    flushSync(() => {
+      setInterruptPending(true);
+    });
+    noteInterruptPendingVisible(targetSessionId);
+    pendingInterruptSessionIdRef.current = null;
+    if (latestInterruptClickSessionIdRef.current === targetSessionId) {
+      latestInterruptClickSessionIdRef.current = null;
+    }
+  };
+
   const pendingQueueMessageIdSet = useMemo(() => {
     return new Set(
       optimisticQueuedMessages
@@ -450,7 +462,7 @@ export function useSessionComposerQueueController(params: Params): Result {
       pendingInterruptSessionIdRef.current = targetSessionId;
       latestInterruptClickSessionIdRef.current = targetSessionId;
       noteInterruptClicked(targetSessionId, "queued_action");
-      setInterruptPending(true);
+      showInterruptPending(targetSessionId);
       await interruptSession(targetSessionId);
     } catch (error: unknown) {
       clearInterruptPendingMetric(targetSessionId);
@@ -537,7 +549,7 @@ export function useSessionComposerQueueController(params: Params): Result {
         pendingInterruptSessionIdRef.current = targetSessionId;
         latestInterruptClickSessionIdRef.current = targetSessionId;
         noteInterruptClicked(targetSessionId, "thread_header");
-        setInterruptPending(true);
+        showInterruptPending(targetSessionId);
         try {
           await interruptSession(targetSessionId);
         } catch (error: unknown) {
