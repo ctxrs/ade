@@ -3,7 +3,7 @@ use ctx_settings_service::DictationConfigError;
 use ctx_transport_runtime::dictation_livekit::LiveKitDictationConfig;
 use serde::Serialize;
 
-use ctx_daemon::daemon::CoreHandle;
+use ctx_daemon::daemon::DictationHandle;
 
 #[derive(Debug)]
 pub(super) struct DictationStreamError {
@@ -39,7 +39,7 @@ pub(super) async fn send_dictation_error(socket: &mut WebSocket, error: Dictatio
 }
 
 pub(super) async fn load_livekit_dictation_config(
-    state: &CoreHandle,
+    state: &DictationHandle,
 ) -> Result<LiveKitDictationConfig, DictationStreamError> {
     state
         .resolve_livekit_dictation_config()

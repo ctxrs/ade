@@ -15,7 +15,7 @@ use ctx_core::ids::*;
 use ctx_core::models::*;
 use ctx_workspace_active_snapshot::{SessionReplayCursor, WorkspaceActiveSubscriptionState};
 
-use ctx_daemon::daemon::{CoreHandle, WorkspaceStreamHandle, WorkspacesHandle};
+use ctx_daemon::daemon::{DictationHandle, WorkspaceStreamHandle, WorkspacesHandle};
 
 mod async_util;
 mod common;
@@ -52,7 +52,7 @@ pub(super) use workspace_vcs::workspace_vcs_stream_ws;
 
 pub(super) async fn dictation_livekit_stream_ws(
     ws: WebSocketUpgrade,
-    State(state): State<CoreHandle>,
+    State(state): State<DictationHandle>,
 ) -> impl IntoResponse {
     ws.on_upgrade(move |socket| dictation_livekit::dictation_livekit_stream(socket, state))
 }

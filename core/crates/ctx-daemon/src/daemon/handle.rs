@@ -78,6 +78,10 @@ impl DaemonHandle {
         OrgPolicyHandle::new(self.state.global_store().clone())
     }
 
+    pub fn dictation(&self) -> DictationHandle {
+        DictationHandle::new(self.state.global_store().clone())
+    }
+
     pub fn sessions(&self) -> SessionsHandle {
         SessionsHandle::new(Arc::clone(&self.state))
     }
@@ -408,6 +412,21 @@ pub struct OrgPolicyHandle {
 }
 
 impl OrgPolicyHandle {
+    pub(in crate::daemon) fn new(store: Store) -> Self {
+        Self { store }
+    }
+
+    pub(in crate::daemon) fn store(&self) -> &Store {
+        &self.store
+    }
+}
+
+#[derive(Clone)]
+pub struct DictationHandle {
+    store: Store,
+}
+
+impl DictationHandle {
     pub(in crate::daemon) fn new(store: Store) -> Self {
         Self { store }
     }

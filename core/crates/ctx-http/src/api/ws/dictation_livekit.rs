@@ -2,12 +2,12 @@ use axum::extract::ws::{Message as WsMessage, WebSocket};
 use ctx_transport_runtime::dictation_livekit::connect_livekit_inference_stt;
 use serde_json::json;
 
-use ctx_daemon::daemon::CoreHandle;
+use ctx_daemon::daemon::DictationHandle;
 
 mod bridge;
 mod settings;
 
-pub async fn dictation_livekit_stream(mut socket: WebSocket, state: CoreHandle) {
+pub async fn dictation_livekit_stream(mut socket: WebSocket, state: DictationHandle) {
     tracing::info!("dictation: client connected");
     let cfg = match settings::load_livekit_dictation_config(&state).await {
         Ok(cfg) => cfg,

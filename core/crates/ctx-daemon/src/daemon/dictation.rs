@@ -4,17 +4,27 @@ use ctx_transport_runtime::dictation_livekit::{
     normalize_livekit_dictation_config, LiveKitDictationConfig, LiveKitDictationConfigInput,
 };
 
-use crate::daemon::{settings, CoreHandle, DaemonState};
+use ctx_store::Store;
 
-pub async fn resolve_livekit_dictation_config(
-    state: &DaemonState,
+use crate::daemon::DictationHandle;
+
+async fn resolve_livekit_dictation_config_from_store(
+    store: &Store,
 ) -> Result<LiveKitDictationConfig, DictationConfigError> {
-    let settings = settings::load_settings(state).await.map_err(|error| {
-        DictationConfigError::Unavailable {
+    let settings = ctx_settings_service::load_settings(store)
+        .await
+        .map_err(|error| DictationConfigError::Unavailable {
             message: error.to_string(),
-        }
-    })?;
+        })?;
     livekit_dictation_config_from_settings(settings)
+}
+
+impl DictationHandle {
+    pub async fn resolve_livekit_dictation_config(
+        &self,
+    ) -> Result<LiveKitDictationConfig, DictationConfigError> {
+        resolve_livekit_dictation_config_from_store(self.store()).await
+    }
 }
 
 fn livekit_dictation_config_from_settings(
@@ -42,14 +52,6 @@ fn livekit_dictation_config_from_settings(
     .map_err(|error| DictationConfigError::InvalidLiveKitConfig {
         message: error.to_string(),
     })
-}
-
-impl CoreHandle {
-    pub async fn resolve_livekit_dictation_config(
-        &self,
-    ) -> Result<LiveKitDictationConfig, DictationConfigError> {
-        resolve_livekit_dictation_config(self.state.as_ref()).await
-    }
 }
 
 #[cfg(test)]

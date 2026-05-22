@@ -72,9 +72,9 @@ pub use activity::{
 pub use blobs::{BlobHandle, OpenedBlob};
 pub use diagnostics::DiagnosticsSnapshotError;
 pub use handle::{
-    AuthHandle, CoreHandle, DaemonHandle, DiagnosticsHandle, ExecutionHandle, HealthHandle,
-    LogsHandle, OrgPolicyHandle, ProvidersHandle, RequestBaseHandle, SessionsHandle, TasksHandle,
-    TelemetryHandle, TransportHandle, WorkspaceStreamHandle, WorkspacesHandle,
+    AuthHandle, CoreHandle, DaemonHandle, DiagnosticsHandle, DictationHandle, ExecutionHandle,
+    HealthHandle, LogsHandle, OrgPolicyHandle, ProvidersHandle, RequestBaseHandle, SessionsHandle,
+    TasksHandle, TelemetryHandle, TransportHandle, WorkspaceStreamHandle, WorkspacesHandle,
 };
 pub use health::HealthSnapshotError;
 pub use lifecycle::spawn_deferred_daemon_shutdown;

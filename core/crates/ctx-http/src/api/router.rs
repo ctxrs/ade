@@ -6,9 +6,10 @@ use tower_http::services::{ServeDir, ServeFile};
 use url::Url;
 
 use ctx_daemon::daemon::{
-    AuthHandle, BlobHandle, CoreHandle, DaemonHandle, DiagnosticsHandle, ExecutionHandle,
-    HealthHandle, LogsHandle, OrgPolicyHandle, ProvidersHandle, RequestBaseHandle, SessionsHandle,
-    TasksHandle, TelemetryHandle, TransportHandle, WorkspaceStreamHandle, WorkspacesHandle,
+    AuthHandle, BlobHandle, CoreHandle, DaemonHandle, DiagnosticsHandle, DictationHandle,
+    ExecutionHandle, HealthHandle, LogsHandle, OrgPolicyHandle, ProvidersHandle, RequestBaseHandle,
+    SessionsHandle, TasksHandle, TelemetryHandle, TransportHandle, WorkspaceStreamHandle,
+    WorkspacesHandle,
 };
 
 use super::auth::auth_middleware;
@@ -79,6 +80,7 @@ pub struct RouteHandles {
     pub(in crate::api) request_base: RequestBaseHandle,
     pub(in crate::api) logs: LogsHandle,
     pub(in crate::api) org_policy: OrgPolicyHandle,
+    pub(in crate::api) dictation: DictationHandle,
     pub(in crate::api) sessions: SessionsHandle,
     pub(in crate::api) tasks: TasksHandle,
     pub(in crate::api) workspaces: WorkspacesHandle,
@@ -100,6 +102,7 @@ impl RouteHandles {
             request_base: handle.request_base(),
             logs: handle.logs(),
             org_policy: handle.org_policy(),
+            dictation: handle.dictation(),
             sessions: handle.sessions(),
             tasks: handle.tasks(),
             workspaces: handle.workspaces(),
@@ -126,6 +129,7 @@ impl_route_state_extractors! {
     RequestBaseHandle, request_base;
     LogsHandle, logs;
     OrgPolicyHandle, org_policy;
+    DictationHandle, dictation;
     SessionsHandle, sessions;
     TasksHandle, tasks;
     WorkspacesHandle, workspaces;
