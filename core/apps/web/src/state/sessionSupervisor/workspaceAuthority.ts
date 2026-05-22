@@ -93,13 +93,13 @@ const isForegroundReplicaSession = (
 const isRetainedReplicaSession = (
   host: SessionSupervisorWorkspaceAuthorityHost,
   sessionId: string,
+  streamSource: ReturnType<typeof readWorkspaceEventStreamSource>,
 ): boolean => {
   const entry = host.entries.get(sessionId);
-  if ((entry?.refCount ?? 0) > 0 || entry?.subscribed) return true;
-  return (
-    isForegroundReplicaSession(host, sessionId) ||
-    host.getWarmSessionIds().includes(sessionId)
-  );
+  if ((entry?.refCount ?? 0) > 0) return true;
+  if (isForegroundReplicaSession(host, sessionId)) return true;
+  if (streamSource === "live") return false;
+  return host.getWarmSessionIds().includes(sessionId);
 };
 
 export const setWorkspaceSnapshotState = (
@@ -247,10 +247,10 @@ export const ingestWorkspaceEvent = (
   // The workspace stream carries all active-task deltas, but the session replica
   // should only spend transcript work on sessions the workbench is retaining.
   const replicaSessionId = workspaceReplicaEventSessionId(evt);
-  if (!replicaSessionId || !isRetainedReplicaSession(host, replicaSessionId)) {
+  const streamSource = readWorkspaceEventStreamSource(evt);
+  if (!replicaSessionId || !isRetainedReplicaSession(host, replicaSessionId, streamSource)) {
     return;
   }
-  const streamSource = readWorkspaceEventStreamSource(evt);
   host.replicaDispatch({
     type: "workspace_event",
     event: evt,

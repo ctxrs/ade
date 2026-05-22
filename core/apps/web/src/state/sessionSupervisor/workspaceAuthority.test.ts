@@ -375,9 +375,24 @@ describe("workspaceAuthority", () => {
     });
   });
 
-  it("keeps subscribed warm stream deltas on the workspace replica lane", () => {
+  it("does not forward live warm stream deltas to the transcript replica", () => {
     const replicaDispatch = vi.fn();
     const event = makeDeltaEvent("session-warm");
+    markWorkspaceEventStreamSource(event, "live");
+    const host = makeIngestHost({
+      warmSessionIds: ["session-warm"],
+      replicaDispatch,
+    });
+
+    ingestWorkspaceEvent(host, event);
+
+    expect(replicaDispatch).not.toHaveBeenCalled();
+  });
+
+  it("keeps replay warm stream deltas on the workspace replica lane", () => {
+    const replicaDispatch = vi.fn();
+    const event = makeDeltaEvent("session-warm");
+    markWorkspaceEventStreamSource(event, "replay");
     const host = makeIngestHost({
       warmSessionIds: ["session-warm"],
       replicaDispatch,
@@ -390,7 +405,7 @@ describe("workspaceAuthority", () => {
       event,
       lane: "workspace",
       receivedAtMs: null,
-      streamSource: null,
+      streamSource: "replay",
     });
   });
 
