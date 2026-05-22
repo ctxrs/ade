@@ -2,11 +2,10 @@ use std::time::Instant;
 
 use ctx_observability::logs;
 use ctx_providers::ask_user_question::AskUserQuestionOutcome;
-use ctx_route_contracts::sessions::SessionRouteParams;
-pub use ctx_route_contracts::sessions::{
-    AuthenticateSessionRouteRequest, SessionControlRouteError, SessionControlRouteErrorKind,
-    SessionFileCompletionsRouteQuery, SessionFileCompletionsRouteResponse,
-    SubmitAskUserQuestionRouteRequest, SubmitAskUserQuestionRouteResponse,
+use ctx_route_contracts::sessions::{
+    AuthenticateSessionRouteRequest, SessionControlRouteError, SessionFileCompletionsRouteQuery,
+    SessionFileCompletionsRouteResponse, SessionRouteParams, SubmitAskUserQuestionRouteRequest,
+    SubmitAskUserQuestionRouteResponse,
 };
 
 use crate::daemon::sessions::ask_user::{SubmitAskUserAnswer, SubmitAskUserAnswerError};
@@ -179,6 +178,7 @@ fn file_completions_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ctx_route_contracts::sessions::SessionControlRouteErrorKind;
     use serde_json::json;
 
     #[test]

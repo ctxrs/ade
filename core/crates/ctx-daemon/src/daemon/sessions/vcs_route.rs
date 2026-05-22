@@ -1,11 +1,9 @@
 use ctx_core::ids::SessionId;
 use ctx_observability::logs;
-use ctx_route_contracts::sessions::SessionRouteParams;
-pub use ctx_route_contracts::sessions::{
-    ApplySessionVcsDiffPatchRouteRequest, SessionVcsDiffRouteResponse,
+use ctx_route_contracts::sessions::{
+    ApplySessionVcsDiffPatchRouteRequest, SessionRouteParams, SessionVcsDiffRouteResponse,
     SessionVcsDiffSummaryRouteResponse, SessionVcsGitStatusEntryRouteResponse,
-    SessionVcsGitStatusRouteResponse, SessionVcsRouteError, SessionVcsRouteErrorKind,
-    SessionVcsRouteQuery,
+    SessionVcsGitStatusRouteResponse, SessionVcsRouteError, SessionVcsRouteQuery,
 };
 
 use crate::daemon::sessions::route_contract::parse_session_route_id;
@@ -170,6 +168,7 @@ mod tests {
     use super::*;
     use anyhow::anyhow;
     use ctx_core::models::DiffUnavailableReason;
+    use ctx_route_contracts::sessions::SessionVcsRouteErrorKind;
     use serde_json::json;
 
     fn apply_request(action: &str, patch: &str) -> ApplySessionVcsDiffPatchRouteRequest {

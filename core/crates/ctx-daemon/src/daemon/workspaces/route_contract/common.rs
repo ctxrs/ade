@@ -9,7 +9,6 @@ use super::super::{
     FileCompletionsError, FileCompletionsErrorKind, WorkspaceDeleteError,
     WorkspaceHarnessContainerError, WorkspaceHydrationError, WorkspaceRouteError, WorkspacesHandle,
 };
-pub use ctx_route_contracts::workspaces::{WorkspaceRouteParams, WorktreeRouteParams};
 
 pub(super) fn workspace_hydration_route_error(
     error: WorkspaceHydrationError,

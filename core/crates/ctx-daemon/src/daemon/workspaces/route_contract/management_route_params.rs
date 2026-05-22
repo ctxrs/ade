@@ -1,14 +1,12 @@
-use super::{
-    CreateWorkspaceAttachmentRouteRequest, DeleteWorkspaceAttachmentRouteRequest,
-    SyncWorkspaceAttachmentsRouteRequest, WorkspaceAttachmentRouteResponse, WorkspaceRouteParams,
-};
 use crate::daemon::workspaces::WorkspacesHandle;
 use ctx_route_contracts::workspaces::{
-    UpdateWorkspaceExecutionConfigRequest, UpdateWorkspaceMergeQueueConfigRequest,
-    UpdateWorkspacePrimaryBranchRequest, UpdateWorktreeBootstrapConfigRequest,
+    CreateWorkspaceAttachmentRouteRequest, DeleteWorkspaceAttachmentRouteRequest,
+    SyncWorkspaceAttachmentsRouteRequest, UpdateWorkspaceExecutionConfigRequest,
+    UpdateWorkspaceMergeQueueConfigRequest, UpdateWorkspacePrimaryBranchRequest,
+    UpdateWorktreeBootstrapConfigRequest, WorkspaceAttachmentRouteResponse,
     WorkspaceConfigUpdateResult, WorkspaceExecutionConfigRouteSnapshot,
     WorkspaceMergeQueueConfigRouteResponse, WorkspacePrimaryBranchSnapshot, WorkspaceRouteError,
-    WorkspaceWorktreeBootstrapConfigRouteResponse,
+    WorkspaceRouteParams, WorkspaceWorktreeBootstrapConfigRouteResponse,
 };
 
 impl WorkspacesHandle {

@@ -1,10 +1,9 @@
 use ctx_core::ids::SessionId;
 use ctx_observability::logs;
-use ctx_route_contracts::sessions::SessionRouteParams;
-pub use ctx_route_contracts::sessions::{
-    GenerateSessionTitleRouteRequest, GenerateSessionTitleRouteResponse,
-    SessionTitleModelModeRouteError, SessionTitleModelModeRouteErrorKind,
-    SetSessionModeRouteRequest, SetSessionModelRouteRequest, SetSessionModelRouteResponse,
+use ctx_route_contracts::sessions::{
+    GenerateSessionTitleRouteRequest, GenerateSessionTitleRouteResponse, SessionRouteParams,
+    SessionTitleModelModeRouteError, SetSessionModeRouteRequest, SetSessionModelRouteRequest,
+    SetSessionModelRouteResponse,
 };
 
 use crate::daemon::sessions::route_contract::parse_session_route_id;
@@ -125,6 +124,7 @@ fn set_mode_route_error(error: SetSessionModeError) -> SessionTitleModelModeRout
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ctx_route_contracts::sessions::SessionTitleModelModeRouteErrorKind;
 
     #[test]
     fn invalid_session_id_uses_existing_route_message() {

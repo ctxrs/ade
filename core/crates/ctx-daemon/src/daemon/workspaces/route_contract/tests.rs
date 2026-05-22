@@ -1,20 +1,22 @@
 use chrono::Utc;
 use serde::Serialize;
 
-use super::super::WorkspaceRouteErrorKind;
 use super::common::{
     file_completions_route_error, route_file_download_error, workspace_delete_route_error,
     workspace_harness_container_ensure_error, workspace_harness_container_status_error,
     workspace_hydration_route_error,
 };
-use super::*;
-
 use crate::daemon::workspaces::{WorkspaceHarnessContainerError, WorkspaceHydrationError};
 use crate::test_support::TestDaemon;
 use ctx_core::models::{
     AttachmentMode, AttachmentUpdatePolicy, VcsKind, Workspace, WorkspaceActiveHeadBatch,
     WorkspaceActiveSnapshot, WorkspaceAttachment, WorkspaceAttachmentKind,
     WorkspaceAttachmentStatus, Worktree, WorktreeBootstrapStatus,
+};
+use ctx_route_contracts::workspaces::{
+    WorkspaceActiveHeadBatchRouteResponse, WorkspaceActiveSnapshotRouteResponse,
+    WorkspaceAttachmentRouteResponse, WorkspaceFileCompletionsRouteQuery, WorkspaceRouteErrorKind,
+    WorkspaceRouteParams, WorkspaceRouteResponse, WorktreeRouteParams, WorktreeRouteResponse,
 };
 
 fn assert_same_json<T, U>(left: T, right: U)

@@ -1,13 +1,12 @@
 use ctx_core::ids::WorktreeId;
 use ctx_route_contracts::downloads::TextRouteDownload;
+use ctx_route_contracts::workspaces::{
+    WorkspaceFileCompletionsRouteQuery, WorkspaceRouteParams, WorktreeRouteParams,
+    WorktreeRouteResponse,
+};
 
 use super::super::{WorkspaceRouteError, WorkspacesHandle};
-use super::common::{
-    file_completions_route_error, route_file_download_error, WorkspaceRouteParams,
-    WorktreeRouteParams,
-};
-use super::responses::WorktreeRouteResponse;
-pub use ctx_route_contracts::workspaces::WorkspaceFileCompletionsRouteQuery;
+use super::common::{file_completions_route_error, route_file_download_error};
 
 impl WorkspacesHandle {
     pub async fn get_worktree_for_route_params(

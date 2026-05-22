@@ -28,35 +28,8 @@ mod workspace_bridge;
 
 pub use artifact_access::SessionImageBlobStoreError;
 pub use artifacts::SessionArtifactDownload;
-pub use control_route::{
-    AuthenticateSessionRouteRequest, SessionControlRouteError, SessionControlRouteErrorKind,
-    SessionFileCompletionsRouteQuery, SessionFileCompletionsRouteResponse,
-    SubmitAskUserQuestionRouteRequest, SubmitAskUserQuestionRouteResponse,
-};
 pub use demo_seed::{DemoSeedTranscript, DemoSeedTranscriptError, DemoSeedTranscriptTurn};
 pub use handle::GenerateSessionTitleError;
 pub use message_commands::{PostUserMessageError, PostUserMessageInput};
-pub use message_route::{
-    DeleteSessionMessageRouteParams, PostSessionMessageRouteRequest,
-    PostSessionMessageRouteResponse, SessionMessageRouteError, SessionMessageRouteErrorKind,
-};
 pub use model_switch::{SetSessionModelError, SetSessionModelErrorKind, SetSessionModelRequest};
 pub use model_target_bridge::SetSessionModeError;
-pub use route_contract::{
-    SessionEventsRouteQuery, SessionEventsRouteResponse, SessionHeadRouteQuery,
-    SessionHeadRouteResponse, SessionHistoryRouteQuery, SessionHistoryRouteResponse,
-    SessionReadModelRouteError, SessionReadModelRouteErrorKind, SessionRouteParams,
-    SessionSnapshotRouteQuery, SessionSnapshotRouteResponse, SessionStateRouteResponse,
-    SessionTurnToolsRouteParams, SessionTurnToolsRouteResponse,
-};
-pub use title_model_mode_route::{
-    GenerateSessionTitleRouteRequest, GenerateSessionTitleRouteResponse,
-    SessionTitleModelModeRouteError, SessionTitleModelModeRouteErrorKind,
-    SetSessionModeRouteRequest, SetSessionModelRouteRequest, SetSessionModelRouteResponse,
-};
-pub use vcs_route::{
-    ApplySessionVcsDiffPatchRouteRequest, SessionVcsDiffRouteResponse,
-    SessionVcsDiffSummaryRouteResponse, SessionVcsGitStatusEntryRouteResponse,
-    SessionVcsGitStatusRouteResponse, SessionVcsRouteError, SessionVcsRouteErrorKind,
-    SessionVcsRouteQuery,
-};

@@ -4,11 +4,11 @@ use ctx_route_contracts::sessions::{
     parse_boolish_flag, parse_session_id, parse_turn_id, SESSION_EVENTS_DEFAULT_LIMIT,
     SESSION_EVENTS_MAX_LIMIT,
 };
-pub use ctx_route_contracts::sessions::{
+use ctx_route_contracts::sessions::{
     SessionEventsRouteQuery, SessionEventsRouteResponse, SessionHeadRouteQuery,
     SessionHeadRouteResponse, SessionHistoryRouteQuery, SessionHistoryRouteResponse,
-    SessionReadModelRouteError, SessionReadModelRouteErrorKind, SessionSnapshotRouteQuery,
-    SessionSnapshotRouteResponse, SessionStateRouteResponse, SessionTurnToolsRouteResponse,
+    SessionReadModelRouteError, SessionSnapshotRouteQuery, SessionSnapshotRouteResponse,
+    SessionStateRouteResponse, SessionTurnToolsRouteResponse,
 };
 
 use crate::daemon::SessionsHandle;

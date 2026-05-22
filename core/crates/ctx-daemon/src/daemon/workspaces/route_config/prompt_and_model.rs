@@ -113,13 +113,12 @@ mod tests {
 
     #[test]
     fn provider_preference_error_mapping_preserves_wire_messages() {
+        use ctx_route_contracts::workspaces::WorkspaceRouteErrorKind;
+
         let required = provider_model_preference_error(
             WorkspaceProviderModelPreferenceError::ProviderIdRequired,
         );
-        assert_eq!(
-            required.kind(),
-            crate::daemon::workspaces::WorkspaceRouteErrorKind::BadRequest
-        );
+        assert_eq!(required.kind(), WorkspaceRouteErrorKind::BadRequest);
         assert_eq!(required.message(), "provider_id is required");
 
         let missing = provider_model_preference_error(
@@ -127,19 +126,13 @@ mod tests {
                 provider_id: "missing".to_string(),
             },
         );
-        assert_eq!(
-            missing.kind(),
-            crate::daemon::workspaces::WorkspaceRouteErrorKind::NotFound
-        );
+        assert_eq!(missing.kind(), WorkspaceRouteErrorKind::NotFound);
         assert_eq!(missing.message(), "provider not found: missing");
 
         let workspace = provider_model_preference_error(
             WorkspaceProviderModelPreferenceError::WorkspaceNotFound,
         );
-        assert_eq!(
-            workspace.kind(),
-            crate::daemon::workspaces::WorkspaceRouteErrorKind::NotFound
-        );
+        assert_eq!(workspace.kind(), WorkspaceRouteErrorKind::NotFound);
         assert_eq!(workspace.message(), "workspace not found");
 
         let execution = provider_model_preference_error(
@@ -147,10 +140,7 @@ mod tests {
                 "bad settings"
             )),
         );
-        assert_eq!(
-            execution.kind(),
-            crate::daemon::workspaces::WorkspaceRouteErrorKind::Internal
-        );
+        assert_eq!(execution.kind(), WorkspaceRouteErrorKind::Internal);
         assert!(execution
             .message()
             .starts_with("failed to load workspace execution settings:"));
@@ -158,13 +148,12 @@ mod tests {
 
     #[test]
     fn route_params_reject_invalid_ids_with_wire_message() {
+        use ctx_route_contracts::workspaces::WorkspaceRouteErrorKind;
+
         let error = WorkspaceProviderModelPreferenceRouteParams::new("not-a-workspace", "codex")
             .parse_workspace_id()
             .unwrap_err();
-        assert_eq!(
-            error.kind(),
-            crate::daemon::workspaces::WorkspaceRouteErrorKind::BadRequest
-        );
+        assert_eq!(error.kind(), WorkspaceRouteErrorKind::BadRequest);
         assert_eq!(error.message(), "invalid workspace id");
     }
 

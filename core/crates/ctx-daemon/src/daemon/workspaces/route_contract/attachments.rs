@@ -1,14 +1,13 @@
 use ctx_core::ids::WorkspaceId;
-use ctx_route_contracts::workspaces::WorkspaceAttachmentCreateRouteSpec;
+use ctx_route_contracts::workspaces::{
+    CreateWorkspaceAttachmentRouteRequest, DeleteWorkspaceAttachmentRouteRequest,
+    SyncWorkspaceAttachmentsRouteRequest, WorkspaceAttachmentCreateRouteSpec,
+    WorkspaceAttachmentRouteResponse,
+};
 use ctx_workspace_attachments::AttachmentConfig;
 
 use super::super::{workspace_store_route_error, WorkspaceRouteError, WorkspacesHandle};
 use super::common::require_workspace_for_route;
-use super::responses::WorkspaceAttachmentRouteResponse;
-pub use ctx_route_contracts::workspaces::{
-    CreateWorkspaceAttachmentRouteRequest, DeleteWorkspaceAttachmentRouteRequest,
-    SyncWorkspaceAttachmentsRouteRequest,
-};
 
 fn attachment_config_from_route_spec(spec: WorkspaceAttachmentCreateRouteSpec) -> AttachmentConfig {
     AttachmentConfig {

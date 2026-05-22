@@ -1,7 +1,7 @@
 use ctx_core::ids::WorkspaceId;
 use ctx_route_contracts::workspaces::{
     WorkspaceHarnessContainerMountModeRouteValue, WorkspaceHarnessContainerNetworkModeRouteValue,
-    WorkspaceHarnessContainerStatusRouteResponse,
+    WorkspaceHarnessContainerStatusRouteResponse, WorkspaceRouteParams,
 };
 use ctx_sandbox_contract::{ContainerMountMode, ContainerNetworkMode};
 use ctx_workspace_container::WorkspaceContainerStatus;
@@ -9,7 +9,6 @@ use ctx_workspace_container::WorkspaceContainerStatus;
 use super::super::{WorkspaceHarnessContainerError, WorkspaceRouteError, WorkspacesHandle};
 use super::common::{
     workspace_harness_container_ensure_error, workspace_harness_container_status_error,
-    WorkspaceRouteParams,
 };
 
 impl WorkspacesHandle {

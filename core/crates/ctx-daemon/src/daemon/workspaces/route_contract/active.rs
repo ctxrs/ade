@@ -1,10 +1,11 @@
 use ctx_core::ids::WorkspaceId;
+use ctx_route_contracts::workspaces::{
+    WorkspaceActiveHeadBatchRouteResponse, WorkspaceActiveSnapshotRouteResponse,
+    WorkspaceRouteParams,
+};
 
 use super::super::{WorkspaceHydrationError, WorkspaceRouteError, WorkspacesHandle};
-use super::common::{workspace_hydration_route_error, WorkspaceRouteParams};
-use super::responses::{
-    WorkspaceActiveHeadBatchRouteResponse, WorkspaceActiveSnapshotRouteResponse,
-};
+use super::common::workspace_hydration_route_error;
 
 impl WorkspacesHandle {
     pub async fn workspace_active_snapshot_for_route(

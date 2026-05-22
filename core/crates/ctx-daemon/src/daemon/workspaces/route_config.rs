@@ -1,10 +1,9 @@
 use ctx_observability::telemetry::TelemetryEvent;
 use ctx_repo_onboarding_service::prepare_workspace_registration;
+use ctx_route_contracts::workspaces::WorkspaceRouteResponse;
 use ctx_workspace_config as workspace_config;
 
 use crate::daemon::{WorkspaceStoreAccessError, WorkspacesHandle};
-
-use super::WorkspaceRouteResponse;
 
 mod management_config;
 mod prompt_and_model;
@@ -20,7 +19,7 @@ pub(in crate::daemon::workspaces) use ctx_route_contracts::workspaces::{
 };
 pub use ctx_route_contracts::workspaces::{
     CreateWorkspaceRequest, UpdateWorkspacePrimaryBranchRequest, WorkspaceConfigUpdateResult,
-    WorkspacePrimaryBranchSnapshot, WorkspaceRouteError, WorkspaceRouteErrorKind,
+    WorkspacePrimaryBranchSnapshot, WorkspaceRouteError,
 };
 pub(in crate::daemon::workspaces) use management_config::{
     merge_queue_config_route_response, merge_queue_config_update,

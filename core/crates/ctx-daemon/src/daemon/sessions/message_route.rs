@@ -1,10 +1,9 @@
 use base64::Engine;
 use ctx_core::ids::{MessageId, SessionId, TurnId};
 use ctx_core::models::{MessageAttachment, MessageDelivery};
-use ctx_route_contracts::sessions::SessionRouteParams;
-pub use ctx_route_contracts::sessions::{
+use ctx_route_contracts::sessions::{
     DeleteSessionMessageRouteParams, PostSessionMessageRouteRequest,
-    PostSessionMessageRouteResponse, SessionMessageRouteError, SessionMessageRouteErrorKind,
+    PostSessionMessageRouteResponse, SessionMessageRouteError, SessionRouteParams,
 };
 use ctx_session_message_service::message_delivery::{
     resolve_message_client_ids, MessageClientIdResolutionError, MessageClientIds,
@@ -308,6 +307,7 @@ fn decode_inline_image_attachment(data_base64: &str) -> Result<Vec<u8>, SessionM
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ctx_route_contracts::sessions::SessionMessageRouteErrorKind;
     use serde_json::json;
 
     #[test]

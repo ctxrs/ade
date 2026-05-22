@@ -1,8 +1,8 @@
 use ctx_core::ids::WorkspaceId;
+use ctx_route_contracts::workspaces::{WorkspaceRouteParams, WorkspaceRouteResponse};
 
 use super::super::{WorkspaceRouteError, WorkspacesHandle};
-use super::common::{workspace_delete_route_error, WorkspaceRouteParams};
-use super::responses::WorkspaceRouteResponse;
+use super::common::workspace_delete_route_error;
 
 impl WorkspacesHandle {
     pub async fn list_workspaces_for_route(

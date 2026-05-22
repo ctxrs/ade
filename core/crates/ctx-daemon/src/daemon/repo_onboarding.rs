@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use ctx_repo_onboarding_service as service;
-pub use ctx_route_contracts::repo_onboarding::{
+use ctx_route_contracts::repo_onboarding::{
     RepoCloneRouteRequest, RepoInitRouteRequest, RepoOnboardingRouteError,
     RepoOnboardingRouteErrorKind, RepoPathRouteResponse, RepoStatusRouteRequest,
     RepoStatusRouteResponse, RepoValidateDestinationRouteRequest,

@@ -66,23 +66,8 @@ pub use model_preferences::{
 };
 pub use retry::retry_global_index_write;
 pub(in crate::daemon::workspaces) use route_config::workspace_store_route_error;
-pub use route_config::{
-    CreateWorkspaceRequest, UpdateWorkspacePrimaryBranchRequest, WorkspaceConfigUpdateResult,
-    WorkspacePrimaryBranchSnapshot, WorkspaceRouteError, WorkspaceRouteErrorKind,
-};
-pub use route_contract::{
-    CreateWorkspaceAttachmentRouteRequest, DeleteWorkspaceAttachmentRouteRequest,
-    SyncWorkspaceAttachmentsRouteRequest, WorkspaceActiveHeadBatchRouteResponse,
-    WorkspaceActiveSnapshotRouteResponse, WorkspaceAttachmentRouteResponse,
-    WorkspaceFileCompletionsRouteQuery, WorkspaceRouteParams, WorkspaceRouteResponse,
-    WorktreeRouteParams, WorktreeRouteResponse,
-};
-pub use run_archive::{
-    AcknowledgeRunArchiveIngestBatchRouteBody, AcknowledgeRunArchiveIngestBatchRouteRequest,
-    AcknowledgeRunArchiveIngestBatchRouteResponse, BuildRunArchiveIngestBatchRouteRequest,
-    BuildRunArchiveIngestBatchRouteResponse, RunArchiveBatchRouteQuery, RunArchiveIngestError,
-    RunArchiveRouteError, RunArchiveRouteErrorKind, RunArchiveRouteParams,
-};
+pub(in crate::daemon::workspaces) use route_config::WorkspaceRouteError;
+pub use run_archive::RunArchiveIngestError;
 pub use sandbox_binding::rematerialize_sandbox_binding_for_worktree;
 pub use stream::{WorkspaceStreamAccessError, WorkspaceStreamRouteAdmission};
 pub use vcs_hooks::{cleanup_workspace_hooks, cleanup_worktree_hooks, ensure_task_commit_hook};
