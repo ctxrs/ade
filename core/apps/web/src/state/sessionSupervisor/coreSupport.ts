@@ -353,6 +353,7 @@ export const refreshSupervisorSubscriptions = (
   refreshSubscriptions({
     entries: supervisor.entries,
     activeTaskSessionIds: supervisor.activeTaskSessionIds,
+    workspaceActivePrimarySessionIds: supervisor.workspaceActivePrimarySessionIds,
     warmSessionIds: supervisor.warmSessionIds,
     subscribedSessionIds: supervisor.subscribedSessionIds,
     setSubscribedSessionIds: (next) => {

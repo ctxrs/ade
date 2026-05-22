@@ -10,9 +10,12 @@ export function buildSubscribedSessions(
   entries: Map<string, InternalEntry>,
   workspaceSessionHeadsById: Map<string, SessionHeadSnapshot>,
   activeTaskSessionIds: string[] = [],
+  workspaceActivePrimarySessionIds: string[] = [],
   warmSessionIds: string[] = [],
 ): SessionSubscriptionCursor[] {
-  const activeTaskSessionSet = new Set(activeTaskSessionIds);
+  const activeTaskSessionSet = new Set(
+    mergeOrderedSessionIds(activeTaskSessionIds, workspaceActivePrimarySessionIds),
+  );
   const warmSessionSet = new Set(warmSessionIds);
   return subscribedSessionIds.map((sessionId) => {
     const entry = entries.get(sessionId);
@@ -171,12 +174,27 @@ export function applySessionActivityUpdate(
 export type SessionSupervisorSubscriptionHost = {
   entries: Map<string, InternalEntry>;
   activeTaskSessionIds: string[];
+  workspaceActivePrimarySessionIds: string[];
   warmSessionIds: string[];
   subscribedSessionIds: string[];
   setSubscribedSessionIds(next: string[]): void;
   emitSubscribedSessions(): void;
   ensureEntry(sessionId: string): InternalEntry;
   publish(): void;
+};
+
+const mergeOrderedSessionIds = (...groups: readonly (readonly string[])[]): string[] => {
+  const next: string[] = [];
+  const seen = new Set<string>();
+  for (const group of groups) {
+    for (const rawSessionId of group) {
+      const sessionId = String(rawSessionId ?? "").trim();
+      if (!sessionId || seen.has(sessionId)) continue;
+      seen.add(sessionId);
+      next.push(sessionId);
+    }
+  }
+  return next;
 };
 
 export function refreshSubscriptions(
@@ -186,9 +204,13 @@ export function refreshSubscriptions(
   const openSessionIds = Array.from(host.entries.values())
     .filter((entry) => entry.refCount > 0)
     .map((entry) => entry.sessionId);
+  const activeHeadSessionIds = mergeOrderedSessionIds(
+    host.activeTaskSessionIds,
+    host.workspaceActivePrimarySessionIds,
+  );
   const plan = buildSessionSubscriptionPlan({
     openSessionIds,
-    activeTaskSessionIds: host.activeTaskSessionIds,
+    activeTaskSessionIds: activeHeadSessionIds,
     warmSessionIds: host.warmSessionIds,
     previousSubscribedSessionIds: host.subscribedSessionIds,
   });

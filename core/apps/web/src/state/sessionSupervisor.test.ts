@@ -613,7 +613,33 @@ describe("SessionSupervisor", () => {
     expect(sink).toHaveBeenCalledWith([{ sessionId, intent: "replay", replay: { kind: "auto" } }]);
   });
 
-  it("re-emits subscribed session ids when workspace active-primary membership flips under an identical plan", async () => {
+  it("auto-subscribes workspace active-primary sessions even when they are not open or warm", async () => {
+    const { SessionSupervisor } = await import("./sessionSupervisor");
+
+    const sink = vi.fn();
+    const sup = new SessionSupervisor();
+    sup.setSubscribedSessionIdsSink(sink);
+    sink.mockClear();
+
+    sup.setWorkspaceSnapshotState({
+      ...mkWorkspaceSnapshotState(),
+      activeIds: ["task-primary"],
+      tasksById: {
+        "task-primary": mkWorkspaceTaskSummary({
+          taskId: "task-primary",
+          primarySessionId: "session-primary",
+          sessionIds: ["session-primary"],
+        }),
+      },
+      totalActive: 1,
+    });
+
+    expect(sink).toHaveBeenCalledWith([
+      { sessionId: "session-primary", intent: "head", replay: { kind: "auto" } },
+    ]);
+  });
+
+  it("re-emits subscribed session ids when workspace active-primary membership reprioritizes an existing plan", async () => {
     const { SessionSupervisor } = await import("./sessionSupervisor");
 
     const sink = vi.fn();
@@ -660,8 +686,8 @@ describe("SessionSupervisor", () => {
     sup.setWorkspaceSnapshotState(stateWithPrimaryTwo);
 
     expect(sink).toHaveBeenCalledWith([
-      { sessionId: "session-1", intent: "head", replay: { kind: "auto" } },
       { sessionId: "session-2", intent: "head", replay: { kind: "auto" } },
+      { sessionId: "session-1", intent: "head", replay: { kind: "auto" } },
     ]);
   });
 
@@ -6302,7 +6328,9 @@ describe("SessionSupervisor", () => {
 
     await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.messages.length === 1);
 
-    expect(getSessionHead).toHaveBeenCalledTimes(1);
+    expect(
+      getSessionHeadMock.mock.calls.filter(([calledSessionId]) => calledSessionId === sessionId),
+    ).toHaveLength(1);
   });
 
   it("marks archived hydrate failures as fatal", async () => {
@@ -6353,7 +6381,9 @@ describe("SessionSupervisor", () => {
     await waitForCondition(() => sup.getSnapshot().sessions[sessionId]?.loadState === "fatal");
     const entry = sup.getSnapshot().sessions[sessionId];
     expect(entry?.error).toContain("Load failed");
-    expect(getSessionHead).toHaveBeenCalledTimes(1);
+    expect(
+      getSessionHeadMock.mock.calls.filter(([calledSessionId]) => calledSessionId === sessionId),
+    ).toHaveLength(1);
   });
 
   it("does not fallback to /head for unknown sessions and marks fatal after bounded resolution", async () => {

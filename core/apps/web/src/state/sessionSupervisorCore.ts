@@ -323,6 +323,7 @@ export class SessionSupervisor {
       this.entries,
       this.workspaceSessionHeadsById,
       this.activeTaskSessionIds,
+      this.workspaceActivePrimarySessionIds,
       this.warmSessionIds,
     );
   }

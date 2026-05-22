@@ -130,17 +130,20 @@ describe("workspaceAuthority", () => {
   const makeIngestHost = ({
     entries = new Map<string, InternalEntry>(),
     activeTaskSessionIds = [],
+    workspaceActivePrimarySessionIds = [],
     warmSessionIds = [],
     replicaDispatch = vi.fn(),
   }: {
     entries?: Map<string, InternalEntry>;
     activeTaskSessionIds?: string[];
+    workspaceActivePrimarySessionIds?: string[];
     warmSessionIds?: string[];
     replicaDispatch?: ReturnType<typeof vi.fn>;
   } = {}) =>
     ({
       entries,
       getActiveTaskSessionIds: () => activeTaskSessionIds,
+      getWorkspaceActivePrimarySessionIds: () => workspaceActivePrimarySessionIds,
       getWarmSessionIds: () => warmSessionIds,
       replicaDispatch,
       publish: vi.fn(),
@@ -337,6 +340,25 @@ describe("workspaceAuthority", () => {
     ingestWorkspaceEvent(host, makeDeltaEvent("session-background"));
 
     expect(replicaDispatch).not.toHaveBeenCalled();
+  });
+
+  it("forwards workspace active-primary stream deltas to the foreground replica lane", () => {
+    const replicaDispatch = vi.fn();
+    const event = makeDeltaEvent("session-active-primary");
+    const host = makeIngestHost({
+      workspaceActivePrimarySessionIds: ["session-active-primary"],
+      replicaDispatch,
+    });
+
+    ingestWorkspaceEvent(host, event);
+
+    expect(replicaDispatch).toHaveBeenCalledWith({
+      type: "workspace_event",
+      event,
+      lane: "foreground",
+      receivedAtMs: null,
+      streamSource: null,
+    });
   });
 
   it("forwards retained foreground stream deltas to the session replica", () => {
