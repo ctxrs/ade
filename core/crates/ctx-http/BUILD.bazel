@@ -14,7 +14,7 @@ exports_files(["Cargo.toml"])
 
 CTX_HTTP_RUSTC_ENV = {
     "CARGO_MANIFEST_DIR": "core/crates/ctx-http",
-    "CARGO_PKG_VERSION": "0.65.124",
+    "CARGO_PKG_VERSION": "0.65.125",
 }
 
 CTX_HTTP_RUNTIME_COMPILE_DATA = [
@@ -302,6 +302,7 @@ CTX_HTTP_SHARED_INTERNAL_TEST_SUPPORT_DEPS = [
     "//core/crates/ctx-sandbox-contract:lib",
     "//core/crates/ctx-sandbox-materialization:lib_test_support",
     "//core/crates/ctx-session-artifacts:lib",
+    "//core/crates/ctx-subagent-service:lib",
     "//core/crates/ctx-session-title-service:lib",
     "//core/crates/ctx-session-tools:lib",
     "//core/crates/ctx-settings-model:lib",
