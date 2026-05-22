@@ -379,10 +379,10 @@ export class SessionReplicaCore {
     const id = normalizeReplicaId(sessionId);
     if (!id) return;
     const entry = this.ensureEntry(id);
-    if (entry.loading && !opts?.force) return;
     const shouldHydrate =
       Boolean(opts?.forceHydrate) ||
       (Boolean(opts?.hydrateIfNeeded) && entry.freshness !== "authoritative");
+    if (entry.loading && !opts?.force && !shouldHydrate) return;
     const minSeq = typeof opts?.minEventSeq === "number" ? opts.minEventSeq : undefined;
     if (!opts?.force && entry.hydrated) {
       const entrySeq = typeof entry.lastEventSeq === "number" ? entry.lastEventSeq : -1;

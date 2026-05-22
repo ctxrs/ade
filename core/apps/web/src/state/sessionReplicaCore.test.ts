@@ -212,6 +212,49 @@ describe("SessionReplicaCore", () => {
     expect(latest?.data?.error).toBeFalsy();
   });
 
+  it("lets forced hydration supersede an in-flight open_session load", async () => {
+    const sessionId = "session-force-hydrate-supersedes-loading";
+    let resolveFirstHead!: (value: SessionHeadSnapshot) => void;
+    const firstHeadPromise = new Promise<SessionHeadSnapshot>((resolve) => {
+      resolveFirstHead = resolve;
+    });
+    const getSessionHead = vi
+      .fn<() => Promise<SessionHeadSnapshot>>()
+      .mockImplementationOnce(() => firstHeadPromise)
+      .mockResolvedValueOnce(mkHead(sessionId, "second-head", 2));
+    const patches: SessionReplicaPatch[] = [];
+    const core = new SessionReplicaCore({
+      api: { getSessionHead },
+      emit: (next) => patches.push(...next),
+    });
+
+    core.handleCommand({ type: "init", config: { eventBufferLimit: 100, headLimit: 50 } });
+    core.handleCommand({ type: "open_session", sessionId, hydrateIfNeeded: true });
+    await waitForCondition(() => getSessionHead.mock.calls.length === 1);
+
+    core.handleCommand({ type: "open_session", sessionId, forceHydrate: true });
+    await waitForCondition(() => getSessionHead.mock.calls.length === 2);
+    await waitForCondition(() =>
+      patches.some(
+        (patch) =>
+          patch.op !== "evict" &&
+          patch.sessionId === sessionId &&
+          patch.data.messages?.some((message) => message.content === "second-head"),
+      ),
+    );
+
+    resolveFirstHead(mkHead(sessionId, "stale-first-head", 1));
+    await Promise.resolve();
+    expect(
+      patches.some(
+        (patch) =>
+          patch.op !== "evict" &&
+          patch.sessionId === sessionId &&
+          patch.data.messages?.some((message) => message.content === "stale-first-head"),
+      ),
+    ).toBe(false);
+  });
+
   it("emits explicit lifecycle replace modes for bootstrap seeds and authoritative repairs", () => {
     const sessionId = "session-replace-modes";
     const patches: SessionReplicaPatch[] = [];
