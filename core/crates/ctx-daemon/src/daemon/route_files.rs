@@ -1,15 +1,11 @@
 use std::path::Path;
 
+use ctx_route_contracts::downloads::TextRouteDownload;
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum RouteFileDownloadError {
     NotFound,
     Internal,
-}
-
-#[derive(Debug)]
-pub struct TextRouteDownload {
-    pub bytes: Vec<u8>,
-    pub filename: String,
 }
 
 pub async fn path_resolves_within_root(path: &Path, root: &Path) -> bool {

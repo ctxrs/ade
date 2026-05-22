@@ -1,5 +1,6 @@
 mod common;
 mod control;
+mod demo_seed;
 mod messages;
 mod read_models;
 mod title_model_mode;
@@ -13,6 +14,10 @@ pub use control::{
     AuthenticateSessionRouteRequest, SessionControlRouteError, SessionControlRouteErrorKind,
     SessionFileCompletionsRouteQuery, SessionFileCompletionsRouteResponse,
     SubmitAskUserQuestionRouteRequest, SubmitAskUserQuestionRouteResponse,
+};
+pub use demo_seed::{
+    DemoSeedTranscriptRouteError, DemoSeedTranscriptRouteErrorKind, DemoSeedTranscriptRouteRequest,
+    DemoSeedTranscriptRouteResponse, DemoSeedTranscriptRouteTurn,
 };
 pub use messages::{
     DeleteSessionMessageRouteParams, PostSessionMessageRouteRequest,

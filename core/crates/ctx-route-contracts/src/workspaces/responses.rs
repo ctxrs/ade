@@ -132,6 +132,32 @@ impl From<WorkspaceAttachment> for WorkspaceAttachmentRouteResponse {
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceHarnessContainerMountModeRouteValue {
+    DiskIsolated,
+    Legacy,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceHarnessContainerNetworkModeRouteValue {
+    LlmOnly,
+    Allowlist,
+    All,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceHarnessContainerStatusRouteResponse {
+    pub name: String,
+    pub running: bool,
+    pub known: bool,
+    pub mount_mode: Option<WorkspaceHarnessContainerMountModeRouteValue>,
+    pub network_mode: Option<WorkspaceHarnessContainerNetworkModeRouteValue>,
+    pub allowlist: Vec<String>,
+    pub egress_guard: Option<bool>,
+}
+
 #[derive(Debug, Clone)]
 pub struct WorkspaceActiveSnapshotRouteResponse {
     value: WorkspaceActiveSnapshot,

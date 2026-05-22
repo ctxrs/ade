@@ -2,7 +2,8 @@ use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{header, StatusCode};
 use axum::response::Response;
-use ctx_daemon::daemon::{TextRouteDownload, WorkspacesHandle};
+use ctx_daemon::daemon::WorkspacesHandle;
+use ctx_route_contracts::downloads::TextRouteDownload;
 use ctx_route_contracts::merge_queue::{
     MergeQueueEntryRouteParams, MergeQueueLogDownloadRouteError,
     MergeQueueLogDownloadRouteErrorKind,

@@ -175,6 +175,11 @@ const routeFileDownloadApiRoots = [
   "core/crates/ctx-http/src/api/workspaces/worktrees.rs",
 ];
 
+const routeDtoSweepApiRoots = [
+  "core/crates/ctx-http/src/api.rs",
+  "core/crates/ctx-http/src/api/",
+];
+
 const sessionArtifactApiRoots = [
   "core/crates/ctx-http/src/api/artifacts/session.rs",
   "core/crates/ctx-http/src/api/artifacts/session/list.rs",
@@ -1392,6 +1397,22 @@ const ROUTE_FILE_DOWNLOAD_API_PATTERNS = [
   {
     name: "route file API owns session artifact metadata derivation",
     regex: /\b(?:normalize_session_artifact_name|infer_session_artifact_mime_type|build_session_artifact_etag|build_session_artifact_last_modified)\b/,
+  },
+];
+
+const ROUTE_DTO_SWEEP_MOVED_DTO_NAMES =
+  "(?:DaemonDiagnosticsSnapshot|DaemonHealthSnapshot|HealthCompatibility|TextRouteDownload|WorkspaceHarnessContainerStatusRouteResponse|DemoSeedTranscriptRoute(?:Turn|Request|Response|Error|ErrorKind)|TelemetryExportErrorKind|TelemetryExportError)";
+
+const ROUTE_DTO_SWEEP_API_PATTERNS = [
+  {
+    name: "route DTO sweep API imports moved route DTOs from daemon",
+    regex: new RegExp(
+      `\\bctx_daemon(?=[^;]*\\b${ROUTE_DTO_SWEEP_MOVED_DTO_NAMES}\\b)[^;]*\\b${ROUTE_DTO_SWEEP_MOVED_DTO_NAMES}\\b`,
+    ),
+    contentRegex: new RegExp(
+      `\\buse\\s+ctx_daemon(?=[^;]*\\b${ROUTE_DTO_SWEEP_MOVED_DTO_NAMES}\\b)[^;]*;`,
+      "gm",
+    ),
   },
 ];
 
@@ -5581,6 +5602,13 @@ function apiPatternsForPath(relativePath) {
   if (routeFileDownloadApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...ROUTE_FILE_DOWNLOAD_API_PATTERNS);
   }
+  if (
+    routeDtoSweepApiRoots.some(
+      (root) => relativePath === root || relativePath.startsWith(root),
+    )
+  ) {
+    patterns.push(...ROUTE_DTO_SWEEP_API_PATTERNS);
+  }
   if (sessionArtifactApiRoots.some((root) => relativePath.startsWith(root))) {
     patterns.push(...SESSION_ARTIFACT_API_ROUTE_CONTRACT_PATTERNS);
   }
@@ -6826,6 +6854,7 @@ module.exports = {
   UPDATE_API_ORCHESTRATION_PATTERNS,
   UPDATE_DRAIN_API_ORCHESTRATION_PATTERNS,
   ROUTE_FILE_DOWNLOAD_API_PATTERNS,
+  ROUTE_DTO_SWEEP_API_PATTERNS,
   SESSION_ARTIFACT_API_ROUTE_CONTRACT_PATTERNS,
   RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS,
   WEB_SESSION_ACCESS_ERROR_API_PATTERNS,

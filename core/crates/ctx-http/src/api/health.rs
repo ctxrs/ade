@@ -1,5 +1,6 @@
 use super::*;
-use ctx_daemon::daemon::{CoreHandle, DaemonHealthSnapshot};
+use ctx_daemon::daemon::CoreHandle;
+use ctx_route_contracts::health::DaemonHealthSnapshot;
 
 pub(in crate::api) async fn health(
     State(state): State<CoreHandle>,

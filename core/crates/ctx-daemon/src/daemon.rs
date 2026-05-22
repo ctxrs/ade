@@ -72,13 +72,13 @@ pub use activity::{
     DaemonSandboxWorkActivitySummary, DaemonTurnActivitySummary,
 };
 pub use blobs::OpenedBlob;
-pub use diagnostics::{DaemonDiagnosticsSnapshot, DiagnosticsSnapshotError};
+pub use diagnostics::DiagnosticsSnapshotError;
 pub use dictation::DictationConfigError;
 pub use handle::{
     CoreHandle, DaemonHandle, ExecutionHandle, ProvidersHandle, SessionsHandle, TasksHandle,
     TelemetryHandle, TransportHandle, WorkspaceStreamHandle, WorkspacesHandle,
 };
-pub use health::{DaemonHealthSnapshot, HealthCompatibility, HealthSnapshotError};
+pub use health::HealthSnapshotError;
 pub use lifecycle::spawn_deferred_daemon_shutdown;
 #[cfg(test)]
 pub use listener::daemon_public_base_url_from_env;
@@ -95,7 +95,7 @@ pub use repo_onboarding::{
 };
 #[cfg(test)]
 pub use retention::prune_archived_session_data_for_all_workspaces;
-pub use route_files::{RouteFileDownloadError, TextRouteDownload};
+pub use route_files::RouteFileDownloadError;
 pub use runtime::{bootstrap_daemon_runtime, DaemonRuntime};
 pub use sessions::{
     ApplySessionVcsDiffPatchRouteRequest, AuthenticateSessionRouteRequest,
@@ -120,7 +120,6 @@ pub use state::{
     AttachmentMaterializationTask, CacheSweepConfig, SessionStoreAccessError, StoreLookup,
     TimedEntry, WorkspaceStoreAccessError,
 };
-pub use telemetry_export::{TelemetryExportError, TelemetryExportErrorKind};
 pub use workspace_init::init_workspace;
 pub use workspaces::{
     CreateWorkspaceAttachmentRouteRequest, CreateWorkspaceRequest,
@@ -128,10 +127,9 @@ pub use workspaces::{
     UpdateWorkspacePrimaryBranchRequest, WorkspaceActiveHeadBatchRouteResponse,
     WorkspaceActiveSnapshotRouteResponse, WorkspaceAttachmentRouteResponse,
     WorkspaceConfigUpdateResult, WorkspaceFileCompletionsRouteQuery,
-    WorkspaceHarnessContainerStatusRouteResponse, WorkspacePrimaryBranchSnapshot,
-    WorkspaceRouteError, WorkspaceRouteErrorKind, WorkspaceRouteParams, WorkspaceRouteResponse,
-    WorkspaceStreamAccessError, WorkspaceStreamRouteAdmission, WorktreeRouteParams,
-    WorktreeRouteResponse,
+    WorkspacePrimaryBranchSnapshot, WorkspaceRouteError, WorkspaceRouteErrorKind,
+    WorkspaceRouteParams, WorkspaceRouteResponse, WorkspaceStreamAccessError,
+    WorkspaceStreamRouteAdmission, WorktreeRouteParams, WorktreeRouteResponse,
 };
 
 #[cfg(test)]

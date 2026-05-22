@@ -28,6 +28,7 @@ const {
   UPDATE_API_ORCHESTRATION_PATTERNS,
   UPDATE_DRAIN_API_ORCHESTRATION_PATTERNS,
   ROUTE_FILE_DOWNLOAD_API_PATTERNS,
+  ROUTE_DTO_SWEEP_API_PATTERNS,
   SESSION_ARTIFACT_API_ROUTE_CONTRACT_PATTERNS,
   RUN_ARCHIVE_API_ORCHESTRATION_PATTERNS,
   WEB_SESSION_ACCESS_ERROR_API_PATTERNS,
@@ -2979,6 +2980,68 @@ test("daemon boundary guard scopes route file download roots", () => {
   assert.deepEqual(
     routeFileDownloadApiPatternsForPath("core/crates/ctx-http/src/api/mobile_access.rs"),
     [],
+  );
+});
+
+test("daemon boundary guard rejects moved route DTO daemon imports", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/health.rs",
+    contents: `
+      use ctx_daemon::daemon::{
+        CoreHandle, DaemonHealthSnapshot, HealthCompatibility, TextRouteDownload,
+        WorkspaceHarnessContainerStatusRouteResponse, TelemetryExportError,
+        TelemetryExportErrorKind,
+      };
+      use ctx_daemon::daemon::sessions::{
+        DemoSeedTranscriptRouteRequest, DemoSeedTranscriptRouteResponse,
+      };
+      use ctx_daemon::{daemon::DaemonDiagnosticsSnapshot};
+      use ctx_daemon::{daemon::{sessions::DemoSeedTranscriptRouteError, SessionsHandle}};
+      use ctx_daemon::{daemon::{sessions::{DemoSeedTranscriptRouteErrorKind, DemoSeedTranscriptRouteTurn}}};
+    `,
+    patterns: ROUTE_DTO_SWEEP_API_PATTERNS,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "route DTO sweep API imports moved route DTOs from daemon",
+      "route DTO sweep API imports moved route DTOs from daemon",
+      "route DTO sweep API imports moved route DTOs from daemon",
+      "route DTO sweep API imports moved route DTOs from daemon",
+      "route DTO sweep API imports moved route DTOs from daemon",
+      "route DTO sweep API imports moved route DTOs from daemon",
+      "route DTO sweep API imports moved route DTOs from daemon",
+      "route DTO sweep API imports moved route DTOs from daemon",
+    ],
+  );
+});
+
+test("daemon boundary guard scopes moved route DTO bans", () => {
+  for (const filePath of [
+    "core/crates/ctx-http/src/api.rs",
+    "core/crates/ctx-http/src/api/demo.rs",
+    "core/crates/ctx-http/src/api/diagnostics.rs",
+    "core/crates/ctx-http/src/api/demo/seed_transcript.rs",
+    "core/crates/ctx-http/src/api/health.rs",
+    "core/crates/ctx-http/src/api/merge_queue_api.rs",
+    "core/crates/ctx-http/src/api/merge_queue_api/logs.rs",
+    "core/crates/ctx-http/src/api/mobile_access.rs",
+    "core/crates/ctx-http/src/api/telemetry.rs",
+    "core/crates/ctx-http/src/api/telemetry/semantic.rs",
+    "core/crates/ctx-http/src/api/workspaces.rs",
+    "core/crates/ctx-http/src/api/workspaces/harness_container.rs",
+  ]) {
+    assert.equal(
+      apiPatternsForPath(filePath).includes(ROUTE_DTO_SWEEP_API_PATTERNS[0]),
+      true,
+    );
+  }
+  assert.equal(
+    apiPatternsForPath("core/crates/ctx-http/src/lib_tests/health_diagnostics/mod.rs").includes(
+      ROUTE_DTO_SWEEP_API_PATTERNS[0],
+    ),
+    false,
   );
 });
 

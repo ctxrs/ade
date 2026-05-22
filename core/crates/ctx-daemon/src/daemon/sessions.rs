@@ -33,10 +33,6 @@ pub use control_route::{
     SessionFileCompletionsRouteQuery, SessionFileCompletionsRouteResponse,
     SubmitAskUserQuestionRouteRequest, SubmitAskUserQuestionRouteResponse,
 };
-pub use demo_route::{
-    DemoSeedTranscriptRouteError, DemoSeedTranscriptRouteErrorKind, DemoSeedTranscriptRouteRequest,
-    DemoSeedTranscriptRouteResponse,
-};
 pub use demo_seed::{DemoSeedTranscript, DemoSeedTranscriptError, DemoSeedTranscriptTurn};
 pub use handle::GenerateSessionTitleError;
 pub use message_commands::{PostUserMessageError, PostUserMessageInput};

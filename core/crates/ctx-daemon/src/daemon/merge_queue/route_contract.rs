@@ -1,12 +1,11 @@
+use ctx_route_contracts::downloads::TextRouteDownload;
 pub use ctx_route_contracts::merge_queue::{
     ListMergeQueueEntriesRouteRequest, MergeQueueEntryRouteError, MergeQueueEntryRouteErrorKind,
     MergeQueueEntryRouteParams, MergeQueueEntryRouteResponse, MergeQueueLogDownloadRouteError,
     MergeQueueLogDownloadRouteErrorKind,
 };
 
-use crate::daemon::{
-    RouteFileDownloadError, TextRouteDownload, WorkspaceStoreAccessError, WorkspacesHandle,
-};
+use crate::daemon::{RouteFileDownloadError, WorkspaceStoreAccessError, WorkspacesHandle};
 
 impl WorkspacesHandle {
     pub async fn list_merge_queue_entry_responses_for_route(

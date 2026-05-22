@@ -1,6 +1,5 @@
 use ctx_core::ids::WorktreeId;
-
-use crate::daemon::TextRouteDownload;
+use ctx_route_contracts::downloads::TextRouteDownload;
 
 use super::super::{WorkspaceRouteError, WorkspacesHandle};
 use super::common::{

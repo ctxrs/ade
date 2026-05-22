@@ -1,11 +1,16 @@
 use ctx_core::ids::WorkspaceId;
+use ctx_route_contracts::workspaces::{
+    WorkspaceHarnessContainerMountModeRouteValue, WorkspaceHarnessContainerNetworkModeRouteValue,
+    WorkspaceHarnessContainerStatusRouteResponse,
+};
+use ctx_sandbox_contract::{ContainerMountMode, ContainerNetworkMode};
+use ctx_workspace_container::WorkspaceContainerStatus;
 
 use super::super::{WorkspaceHarnessContainerError, WorkspaceRouteError, WorkspacesHandle};
 use super::common::{
     workspace_harness_container_ensure_error, workspace_harness_container_status_error,
     WorkspaceRouteParams,
 };
-use super::responses::WorkspaceHarnessContainerStatusRouteResponse;
 
 impl WorkspacesHandle {
     pub async fn workspace_harness_container_status_for_route(
@@ -15,7 +20,7 @@ impl WorkspacesHandle {
     {
         self.workspace_harness_container_status(workspace_id)
             .await
-            .map(|status| status.map(Into::into))
+            .map(|status| status.map(workspace_harness_container_status_route_response))
     }
 
     pub async fn workspace_harness_container_status_for_route_params(
@@ -46,5 +51,46 @@ impl WorkspacesHandle {
         self.ensure_workspace_harness_container(workspace_id)
             .await
             .map_err(workspace_harness_container_ensure_error)
+    }
+}
+
+fn workspace_harness_container_status_route_response(
+    status: WorkspaceContainerStatus,
+) -> WorkspaceHarnessContainerStatusRouteResponse {
+    WorkspaceHarnessContainerStatusRouteResponse {
+        name: status.name,
+        running: status.running,
+        known: status.known,
+        mount_mode: status
+            .mount_mode
+            .map(workspace_harness_container_mount_mode_route_value),
+        network_mode: status
+            .network_mode
+            .map(workspace_harness_container_network_mode_route_value),
+        allowlist: status.allowlist,
+        egress_guard: status.egress_guard,
+    }
+}
+
+fn workspace_harness_container_mount_mode_route_value(
+    mode: ContainerMountMode,
+) -> WorkspaceHarnessContainerMountModeRouteValue {
+    match mode {
+        ContainerMountMode::DiskIsolated => {
+            WorkspaceHarnessContainerMountModeRouteValue::DiskIsolated
+        }
+        ContainerMountMode::Legacy => WorkspaceHarnessContainerMountModeRouteValue::Legacy,
+    }
+}
+
+fn workspace_harness_container_network_mode_route_value(
+    mode: ContainerNetworkMode,
+) -> WorkspaceHarnessContainerNetworkModeRouteValue {
+    match mode {
+        ContainerNetworkMode::LlmOnly => WorkspaceHarnessContainerNetworkModeRouteValue::LlmOnly,
+        ContainerNetworkMode::Allowlist => {
+            WorkspaceHarnessContainerNetworkModeRouteValue::Allowlist
+        }
+        ContainerNetworkMode::All => WorkspaceHarnessContainerNetworkModeRouteValue::All,
     }
 }

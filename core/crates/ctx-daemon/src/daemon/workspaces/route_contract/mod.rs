@@ -14,8 +14,7 @@ pub use attachments::{
 pub use common::{WorkspaceRouteParams, WorktreeRouteParams};
 pub use responses::{
     WorkspaceActiveHeadBatchRouteResponse, WorkspaceActiveSnapshotRouteResponse,
-    WorkspaceAttachmentRouteResponse, WorkspaceHarnessContainerStatusRouteResponse,
-    WorkspaceRouteResponse, WorktreeRouteResponse,
+    WorkspaceAttachmentRouteResponse, WorkspaceRouteResponse, WorktreeRouteResponse,
 };
 pub use worktrees::WorkspaceFileCompletionsRouteQuery;
 

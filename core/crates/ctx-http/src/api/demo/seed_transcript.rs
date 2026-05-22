@@ -4,11 +4,11 @@ use axum::Json;
 
 use super::dev_mode::dev_tools_enabled;
 use crate::api::errors::ApiErrorResp;
-use ctx_daemon::daemon::sessions::{
+use ctx_daemon::daemon::SessionsHandle;
+use ctx_route_contracts::sessions::{
     DemoSeedTranscriptRouteError, DemoSeedTranscriptRouteErrorKind, DemoSeedTranscriptRouteRequest,
-    DemoSeedTranscriptRouteResponse,
+    DemoSeedTranscriptRouteResponse, SessionRouteParams,
 };
-use ctx_daemon::daemon::{SessionRouteParams, SessionsHandle};
 
 pub(crate) async fn dev_seed_session_transcript(
     State(sessions): State<SessionsHandle>,

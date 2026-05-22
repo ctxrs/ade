@@ -114,6 +114,55 @@ fn active_workspace_route_wrappers_match_active_wire_shape() {
 }
 
 #[test]
+fn harness_container_route_response_preserves_wire_shape() {
+    let response = WorkspaceHarnessContainerStatusRouteResponse {
+        name: "ctx-harness".to_string(),
+        running: true,
+        known: true,
+        mount_mode: Some(WorkspaceHarnessContainerMountModeRouteValue::DiskIsolated),
+        network_mode: Some(WorkspaceHarnessContainerNetworkModeRouteValue::Allowlist),
+        allowlist: vec!["api.example.test".to_string()],
+        egress_guard: Some(true),
+    };
+
+    assert_eq!(
+        serde_json::to_value(response).unwrap(),
+        serde_json::json!({
+            "name": "ctx-harness",
+            "running": true,
+            "known": true,
+            "mount_mode": "disk_isolated",
+            "network_mode": "allowlist",
+            "allowlist": ["api.example.test"],
+            "egress_guard": true,
+        })
+    );
+
+    let legacy = WorkspaceHarnessContainerStatusRouteResponse {
+        name: "legacy".to_string(),
+        running: false,
+        known: false,
+        mount_mode: Some(WorkspaceHarnessContainerMountModeRouteValue::Legacy),
+        network_mode: Some(WorkspaceHarnessContainerNetworkModeRouteValue::LlmOnly),
+        allowlist: Vec::new(),
+        egress_guard: None,
+    };
+
+    assert_eq!(
+        serde_json::to_value(legacy).unwrap(),
+        serde_json::json!({
+            "name": "legacy",
+            "running": false,
+            "known": false,
+            "mount_mode": "legacy",
+            "network_mode": "llm_only",
+            "allowlist": [],
+            "egress_guard": null,
+        })
+    );
+}
+
+#[test]
 fn workspace_route_params_parse_invalid_ids_to_route_errors() {
     let workspace = WorkspaceRouteParams::new("not-a-workspace")
         .parse_workspace_id()

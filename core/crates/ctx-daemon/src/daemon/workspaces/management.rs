@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use ctx_core::ids::{MergeQueueEntryId, WorkspaceId};
 use ctx_core::models::{MergeQueueRun, Workspace, Worktree};
 use ctx_repo_onboarding_service::validate_workspace_primary_branch;
+use ctx_route_contracts::downloads::TextRouteDownload;
 use ctx_store::Store;
 use ctx_workspace_config as workspace_config;
 
@@ -27,7 +28,7 @@ use super::route_config::{
     WorkspaceProviderModelPreferenceRouteResponse, WorkspaceRouteError,
     WorkspaceWorktreeBootstrapConfigRouteResponse,
 };
-use crate::daemon::route_files::{read_text_route_file, RouteFileDownloadError, TextRouteDownload};
+use crate::daemon::route_files::{read_text_route_file, RouteFileDownloadError};
 use crate::daemon::{settings, WorkspaceStoreAccessError, WorkspacesHandle};
 
 impl WorkspacesHandle {

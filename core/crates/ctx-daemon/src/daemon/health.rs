@@ -1,8 +1,7 @@
-use serde::Serialize;
-
-use ctx_resource_utilization::process_limits::OpenFileLimitSnapshot;
-use ctx_storage_admission::StorageGuardStatus;
+use anyhow::Context;
+use ctx_route_contracts::health::{DaemonHealthSnapshot, HealthCompatibility};
 use ctx_update_service::BuildIdentity;
+use serde::Serialize;
 
 use crate::daemon::{CoreHandle, DaemonState};
 
@@ -11,39 +10,11 @@ const MOBILE_API_MAX_VERSION: i64 = 1;
 
 pub type HealthSnapshotError = anyhow::Error;
 
-#[derive(Debug, Serialize)]
-pub struct HealthCompatibility {
-    desktop_exact_version: String,
-    desktop_build_id: String,
-    desktop_dev_instance_id: String,
-    protocol_compatibility_token: String,
-    mobile_api_min: i64,
-    mobile_api_max: i64,
-}
-
-#[derive(Debug, Serialize)]
-pub struct DaemonHealthSnapshot {
-    version: String,
-    daemon_version: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pid: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    data_root: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    daemon_url: Option<String>,
-    auth_required: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    open_file_limit: Option<OpenFileLimitSnapshot>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    storage: Option<StorageGuardStatus>,
-    compatibility: HealthCompatibility,
-}
-
 fn build_health_snapshot(
     state: &DaemonState,
     identity: &BuildIdentity,
     include_sensitive: bool,
-) -> DaemonHealthSnapshot {
+) -> anyhow::Result<DaemonHealthSnapshot> {
     let version = identity.exact_version.clone();
     let compatibility_token = if include_sensitive {
         identity.compatibility_token.clone()
@@ -51,7 +22,7 @@ fn build_health_snapshot(
         String::new()
     };
 
-    DaemonHealthSnapshot {
+    Ok(DaemonHealthSnapshot {
         version: version.clone(),
         daemon_version: version.clone(),
         pid: include_sensitive.then_some(std::process::id()),
@@ -60,10 +31,16 @@ fn build_health_snapshot(
         auth_required: state.core.auth_token.is_some(),
         open_file_limit: if include_sensitive {
             ctx_resource_utilization::process_limits::current_open_file_limit()
+                .map(route_json_value)
+                .transpose()?
         } else {
             None
         },
-        storage: include_sensitive.then(|| state.storage_guard_snapshot()),
+        storage: if include_sensitive {
+            Some(route_json_value(state.storage_guard_snapshot())?)
+        } else {
+            None
+        },
         compatibility: HealthCompatibility {
             desktop_exact_version: version,
             desktop_build_id: identity.build_id.clone(),
@@ -72,7 +49,11 @@ fn build_health_snapshot(
             mobile_api_min: MOBILE_API_MIN_VERSION,
             mobile_api_max: MOBILE_API_MAX_VERSION,
         },
-    }
+    })
+}
+
+fn route_json_value<T: Serialize>(value: T) -> anyhow::Result<serde_json::Value> {
+    serde_json::to_value(value).context("serializing health route payload")
 }
 
 impl CoreHandle {
@@ -82,11 +63,7 @@ impl CoreHandle {
         include_sensitive: bool,
     ) -> Result<DaemonHealthSnapshot, HealthSnapshotError> {
         let identity = ctx_update_service::current_build_identity(package_version)?;
-        Ok(build_health_snapshot(
-            self.state.as_ref(),
-            identity,
-            include_sensitive,
-        ))
+        build_health_snapshot(self.state.as_ref(), identity, include_sensitive)
     }
 }
 

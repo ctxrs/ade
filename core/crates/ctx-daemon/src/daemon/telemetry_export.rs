@@ -1,26 +1,5 @@
 use crate::daemon::CoreHandle;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TelemetryExportErrorKind {
-    NotFound,
-}
-
-#[derive(Debug, Clone)]
-pub struct TelemetryExportError {
-    kind: TelemetryExportErrorKind,
-}
-
-impl TelemetryExportError {
-    fn not_found() -> Self {
-        Self {
-            kind: TelemetryExportErrorKind::NotFound,
-        }
-    }
-
-    pub fn kind(&self) -> TelemetryExportErrorKind {
-        self.kind
-    }
-}
+use ctx_route_contracts::telemetry::TelemetryExportError;
 
 impl CoreHandle {
     pub async fn read_perf_telemetry_export_for_date(

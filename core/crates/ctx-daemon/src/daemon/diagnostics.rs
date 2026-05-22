@@ -1,22 +1,11 @@
-use serde::Serialize;
-
+use anyhow::Context;
 use ctx_observability::logs;
-use ctx_providers::adapters::ProviderStatus;
+use ctx_route_contracts::diagnostics::DaemonDiagnosticsSnapshot;
 
-use crate::daemon::health::{DaemonHealthSnapshot, HealthSnapshotError};
+use crate::daemon::health::HealthSnapshotError;
 use crate::daemon::{CoreHandle, DaemonState};
 
 pub type DiagnosticsSnapshotError = anyhow::Error;
-
-#[derive(Debug, Serialize)]
-pub struct DaemonDiagnosticsSnapshot {
-    daemon: DaemonHealthSnapshot,
-    platform: serde_json::Value,
-    logs: serde_json::Value,
-    execution: serde_json::Value,
-    providers: Vec<ProviderStatus>,
-    managed_installs: serde_json::Value,
-}
 
 async fn linux_sandbox_runtime_diagnostics(state: &DaemonState) -> serde_json::Value {
     ctx_linux_sandbox_runtime::linux_sandbox_runtime_status(&state.core.data_root)
@@ -41,6 +30,13 @@ impl CoreHandle {
         let linux_sandbox_runtime = linux_sandbox_runtime_diagnostics(self.state.as_ref()).await;
         let provider_diagnostics =
             crate::daemon::providers::provider_diagnostics_snapshot(&self.state).await;
+        let providers = provider_diagnostics
+            .providers
+            .into_iter()
+            .map(|provider| {
+                serde_json::to_value(provider).context("serializing provider diagnostics")
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let log_files = logs::list_log_files(&self.state.core.data_root).await;
 
         Ok(DaemonDiagnosticsSnapshot {
@@ -57,7 +53,7 @@ impl CoreHandle {
                 "startup_prewarm": startup_prewarm,
                 "linux_sandbox_runtime": linux_sandbox_runtime,
             }),
-            providers: provider_diagnostics.providers,
+            providers,
             managed_installs: provider_diagnostics.managed_installs,
         })
     }

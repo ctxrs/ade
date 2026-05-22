@@ -9,16 +9,13 @@ use super::common::{
 };
 use super::*;
 
+use crate::daemon::workspaces::{WorkspaceHarnessContainerError, WorkspaceHydrationError};
+use crate::test_support::TestDaemon;
 use ctx_core::models::{
     AttachmentMode, AttachmentUpdatePolicy, VcsKind, Workspace, WorkspaceActiveHeadBatch,
     WorkspaceActiveSnapshot, WorkspaceAttachment, WorkspaceAttachmentKind,
     WorkspaceAttachmentStatus, Worktree, WorktreeBootstrapStatus,
 };
-use ctx_sandbox_contract::{ContainerMountMode, ContainerNetworkMode};
-use ctx_workspace_container::WorkspaceContainerStatus;
-
-use crate::daemon::workspaces::{WorkspaceHarnessContainerError, WorkspaceHydrationError};
-use crate::test_support::TestDaemon;
 
 fn assert_same_json<T, U>(left: T, right: U)
 where
@@ -121,27 +118,6 @@ fn active_workspace_route_wrappers_match_active_wire_shape() {
     assert_same_json(
         WorkspaceActiveHeadBatchRouteResponse::from(heads.clone()),
         heads,
-    );
-}
-
-#[test]
-fn harness_container_route_response_matches_container_status_wire_shape() {
-    let status = WorkspaceContainerStatus {
-        name: "ctx-harness".to_string(),
-        running: true,
-        known: true,
-        mount_mode: Some(ContainerMountMode::DiskIsolated),
-        network_mode: Some(ContainerNetworkMode::Allowlist),
-        allowlist: vec!["api.example.test".to_string()],
-        egress_guard: Some(true),
-    };
-    assert_same_json(
-        WorkspaceHarnessContainerStatusRouteResponse::from(status.clone()),
-        status,
-    );
-    assert_same_json(
-        Option::<WorkspaceHarnessContainerStatusRouteResponse>::None,
-        Option::<WorkspaceContainerStatus>::None,
     );
 }
 

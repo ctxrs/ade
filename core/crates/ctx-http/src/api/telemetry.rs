@@ -1,8 +1,7 @@
 use super::*;
 use chrono::{NaiveDate, Utc};
-use ctx_daemon::daemon::{
-    CoreHandle, TelemetryExportError, TelemetryExportErrorKind, TelemetryHandle,
-};
+use ctx_daemon::daemon::{CoreHandle, TelemetryHandle};
+use ctx_route_contracts::telemetry::{TelemetryExportError, TelemetryExportErrorKind};
 use serde::Deserialize;
 
 mod semantic;

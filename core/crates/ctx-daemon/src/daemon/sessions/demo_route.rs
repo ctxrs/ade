@@ -1,85 +1,11 @@
-use serde::{Deserialize, Serialize};
-
 use super::route_contract::parse_session_route_id;
 use crate::daemon::sessions::{
     DemoSeedTranscript, DemoSeedTranscriptError, DemoSeedTranscriptTurn,
 };
 use crate::daemon::{SessionRouteParams, SessionsHandle};
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct DemoSeedTranscriptRouteTurn {
-    user: String,
-    assistant: String,
-    #[serde(default)]
-    context_window: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct DemoSeedTranscriptRouteRequest {
-    #[serde(default)]
-    session_title: Option<String>,
-    #[serde(default)]
-    task_title: Option<String>,
-    #[serde(default)]
-    append: bool,
-    #[serde(default = "default_demo_seed_transcript_refresh")]
-    refresh: bool,
-    #[serde(default)]
-    materialize_tail_turns: Option<usize>,
-    turns: Vec<DemoSeedTranscriptRouteTurn>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct DemoSeedTranscriptRouteResponse {
-    pub session_id: String,
-    pub seeded_turns: usize,
-    pub seeded_messages: usize,
-    pub seeded_events: usize,
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum DemoSeedTranscriptRouteErrorKind {
-    BadRequest,
-    NotFound,
-    Conflict,
-    Internal,
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct DemoSeedTranscriptRouteError {
-    kind: DemoSeedTranscriptRouteErrorKind,
-    message: &'static str,
-}
-
-impl DemoSeedTranscriptRouteError {
-    fn new(kind: DemoSeedTranscriptRouteErrorKind, message: &'static str) -> Self {
-        Self { kind, message }
-    }
-
-    fn bad_request(message: &'static str) -> Self {
-        Self::new(DemoSeedTranscriptRouteErrorKind::BadRequest, message)
-    }
-
-    fn not_found(message: &'static str) -> Self {
-        Self::new(DemoSeedTranscriptRouteErrorKind::NotFound, message)
-    }
-
-    fn conflict(message: &'static str) -> Self {
-        Self::new(DemoSeedTranscriptRouteErrorKind::Conflict, message)
-    }
-
-    fn internal(message: &'static str) -> Self {
-        Self::new(DemoSeedTranscriptRouteErrorKind::Internal, message)
-    }
-
-    pub fn kind(&self) -> DemoSeedTranscriptRouteErrorKind {
-        self.kind
-    }
-
-    pub fn message(&self) -> &'static str {
-        self.message
-    }
-}
+use ctx_route_contracts::sessions::{
+    DemoSeedTranscriptRouteError, DemoSeedTranscriptRouteRequest, DemoSeedTranscriptRouteResponse,
+};
 
 impl SessionsHandle {
     pub async fn seed_demo_transcript_for_route(
@@ -89,7 +15,7 @@ impl SessionsHandle {
     ) -> Result<DemoSeedTranscriptRouteResponse, DemoSeedTranscriptRouteError> {
         let session_id = parse_session_route_id(params.session_id())
             .map_err(|_| DemoSeedTranscriptRouteError::bad_request("invalid session id"))?;
-        let seed = request.into_seed()?;
+        let seed = demo_seed_transcript_request_into_seed(request)?;
         let result = self
             .seed_demo_transcript(session_id, seed)
             .await
@@ -103,30 +29,34 @@ impl SessionsHandle {
     }
 }
 
-impl DemoSeedTranscriptRouteRequest {
-    fn into_seed(self) -> Result<DemoSeedTranscript, DemoSeedTranscriptRouteError> {
-        if self.turns.is_empty() {
-            return Err(DemoSeedTranscriptRouteError::bad_request(
-                "turns must not be empty",
-            ));
-        }
-        Ok(DemoSeedTranscript {
-            session_title: self.session_title,
-            task_title: self.task_title,
-            append: self.append,
-            refresh: self.refresh,
-            materialize_tail_turns: self.materialize_tail_turns,
-            turns: self
-                .turns
-                .into_iter()
-                .map(|turn| DemoSeedTranscriptTurn {
-                    user: turn.user,
-                    assistant: turn.assistant,
-                    context_window: turn.context_window,
-                })
-                .collect(),
-        })
+fn demo_seed_transcript_request_into_seed(
+    request: DemoSeedTranscriptRouteRequest,
+) -> Result<DemoSeedTranscript, DemoSeedTranscriptRouteError> {
+    let (session_title, task_title, append, refresh, materialize_tail_turns, turns) =
+        request.into_parts();
+    if turns.is_empty() {
+        return Err(DemoSeedTranscriptRouteError::bad_request(
+            "turns must not be empty",
+        ));
     }
+    Ok(DemoSeedTranscript {
+        session_title,
+        task_title,
+        append,
+        refresh,
+        materialize_tail_turns,
+        turns: turns
+            .into_iter()
+            .map(|turn| {
+                let (user, assistant, context_window) = turn.into_parts();
+                DemoSeedTranscriptTurn {
+                    user,
+                    assistant,
+                    context_window,
+                }
+            })
+            .collect(),
+    })
 }
 
 fn demo_seed_transcript_route_error(
@@ -183,26 +113,19 @@ fn demo_seed_transcript_route_error(
     }
 }
 
-fn default_demo_seed_transcript_refresh() -> bool {
-    true
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ctx_route_contracts::sessions::DemoSeedTranscriptRouteErrorKind;
 
     #[test]
     fn route_request_requires_turns() {
-        let request = DemoSeedTranscriptRouteRequest {
-            session_title: None,
-            task_title: None,
-            append: false,
-            refresh: true,
-            materialize_tail_turns: None,
-            turns: Vec::new(),
-        };
+        let request: DemoSeedTranscriptRouteRequest = serde_json::from_value(serde_json::json!({
+            "turns": []
+        }))
+        .expect("empty route request");
 
-        let error = match request.into_seed() {
+        let error = match demo_seed_transcript_request_into_seed(request) {
             Ok(_) => panic!("empty seed transcript request should fail"),
             Err(error) => error,
         };

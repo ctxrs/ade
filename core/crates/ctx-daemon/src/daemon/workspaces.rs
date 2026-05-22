@@ -7,13 +7,14 @@ use ctx_core::models::{
     WorkspaceAttachment, Worktree,
 };
 use ctx_observability::telemetry::TelemetryEvent;
+use ctx_route_contracts::downloads::TextRouteDownload;
 use ctx_settings_model::ExecutionSettings;
 use ctx_store::Store;
 use ctx_workspace_attachments::AttachmentConfig;
 use ctx_workspace_container::WorkspaceContainerStatus;
 
 use super::handle::WorkspacesHandle;
-use crate::daemon::route_files::{read_text_route_file, RouteFileDownloadError, TextRouteDownload};
+use crate::daemon::route_files::{read_text_route_file, RouteFileDownloadError};
 use crate::daemon::{settings, WorkspaceStoreAccessError};
 
 mod active_snapshot_state;
@@ -73,8 +74,8 @@ pub use route_contract::{
     CreateWorkspaceAttachmentRouteRequest, DeleteWorkspaceAttachmentRouteRequest,
     SyncWorkspaceAttachmentsRouteRequest, WorkspaceActiveHeadBatchRouteResponse,
     WorkspaceActiveSnapshotRouteResponse, WorkspaceAttachmentRouteResponse,
-    WorkspaceFileCompletionsRouteQuery, WorkspaceHarnessContainerStatusRouteResponse,
-    WorkspaceRouteParams, WorkspaceRouteResponse, WorktreeRouteParams, WorktreeRouteResponse,
+    WorkspaceFileCompletionsRouteQuery, WorkspaceRouteParams, WorkspaceRouteResponse,
+    WorktreeRouteParams, WorktreeRouteResponse,
 };
 pub use run_archive::{
     AcknowledgeRunArchiveIngestBatchRouteBody, AcknowledgeRunArchiveIngestBatchRouteRequest,
