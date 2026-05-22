@@ -66,6 +66,7 @@ vi.mock("../api/client", () => ({
     return String(id);
   },
   interruptSession: vi.fn(async () => ({})),
+  recordClientHistogramMetric: vi.fn(async () => ({})),
   uploadBlob: vi.fn(async () => ({ blob_id: "blob-1" })),
 }));
 
