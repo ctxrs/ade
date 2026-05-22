@@ -105,6 +105,9 @@ test("buildCtxCacheEnv sets shared cache defaults and keeps verify quick on the 
   assert.equal(env.CTX_RUST_CACHE_VOLATILE_ROOT_MODE, "explicit");
   assert.equal(env.CTX_RUST_CACHE_SCCACHE, "unconfigured");
   assert.equal(env.CTX_BAZEL_DISK_CACHE_DIR, path.join(volatileRoot, "cache", "bazel-disk", "ctx-monorepo"));
+  assert.equal(env.CTX_PNPM_STORE_DIR, path.join(volatileRoot, "cache", "pnpm-store"));
+  assert.equal(env.npm_config_store_dir, env.CTX_PNPM_STORE_DIR);
+  assert.equal(env.NPM_CONFIG_STORE_DIR, env.CTX_PNPM_STORE_DIR);
   assert.equal(
     env.CTX_BAZEL_REPOSITORY_CACHE_DIR,
     path.join(volatileRoot, "cache", "bazel-repository", "ctx-monorepo"),
@@ -116,6 +119,7 @@ test("buildCtxCacheEnv sets shared cache defaults and keeps verify quick on the 
   assert.equal(env.CTX_BUNDLE_CACHE_DIR, path.join(volatileRoot, "cache", "bundles"));
   assert.equal(env.PLAYWRIGHT_BROWSERS_PATH, path.join(volatileRoot, "cache", "playwright"));
   assert.equal(layout.bazelDiskCacheDir, path.join(volatileRoot, "cache", "bazel-disk", "ctx-monorepo"));
+  assert.equal(layout.pnpmStoreDir, path.join(volatileRoot, "cache", "pnpm-store"));
   assert.equal(
     layout.bazelRepositoryCacheDir,
     path.join(volatileRoot, "cache", "bazel-repository", "ctx-monorepo"),
@@ -145,6 +149,64 @@ test("buildCtxCacheEnv scrubs retired Turbo cache environment", () => {
   for (const key of LEGACY_TURBO_ENV_KEYS) {
     assert.equal(env[key], undefined);
   }
+});
+
+test("buildCtxCacheEnv lets explicit pnpm store override inherited npm config", () => {
+  const cwd = path.resolve(__dirname, "..", "..");
+  const volatileRoot = path.join(os.tmpdir(), "ctx-cache-roots-pnpm-store");
+  const explicitStore = path.join(volatileRoot, "custom-pnpm-store");
+  const { env, layout } = buildCtxCacheEnv({
+    cwd,
+    env: {
+      CTX_VOLATILE_ROOT: volatileRoot,
+      CTX_PNPM_STORE_DIR: explicitStore,
+      npm_config_store_dir: "/Volumes/ctx-cache/.pnpm-store",
+      NPM_CONFIG_STORE_DIR: "/Volumes/ctx-cache/.pnpm-store",
+    },
+  });
+
+  assert.equal(layout.pnpmStoreDir, explicitStore);
+  assert.equal(env.CTX_PNPM_STORE_DIR, layout.pnpmStoreDir);
+  assert.equal(env.npm_config_store_dir, layout.pnpmStoreDir);
+  assert.equal(env.NPM_CONFIG_STORE_DIR, layout.pnpmStoreDir);
+});
+
+test("buildCtxCacheEnv ignores ambient pnpm store outside selected volatile root", () => {
+  const cwd = path.resolve(__dirname, "..", "..");
+  const volatileRoot = path.join(os.tmpdir(), "ctx-cache-roots-pnpm-ambient");
+  const { env, layout } = buildCtxCacheEnv({
+    cwd,
+    env: {
+      CTX_VOLATILE_ROOT: volatileRoot,
+      npm_config_store_dir: "/Volumes/ctx-cache/.pnpm-store",
+      NPM_CONFIG_STORE_DIR: "/Volumes/ctx-cache/.pnpm-store",
+    },
+  });
+
+  assert.equal(layout.pnpmStoreDir, path.join(volatileRoot, "cache", "pnpm-store"));
+  assert.equal(env.CTX_PNPM_STORE_DIR, layout.pnpmStoreDir);
+  assert.equal(env.npm_config_store_dir, layout.pnpmStoreDir);
+  assert.equal(env.NPM_CONFIG_STORE_DIR, layout.pnpmStoreDir);
+});
+
+test("buildCtxCacheEnv overwrites ambient pnpm store when selected root falls back internally", () => {
+  const cwd = path.resolve(__dirname, "..", "..");
+  const internalRoot = path.join(os.tmpdir(), "ctx-cache-roots-pnpm-internal-fallback");
+  const { env, layout } = buildCtxCacheEnv({
+    cwd,
+    env: {
+      CTX_EXTERNAL_CACHE_ROOT: path.join(os.tmpdir(), "ctx-cache-roots-pnpm-missing-external"),
+      CTX_INTERNAL_VOLATILE_ROOT: internalRoot,
+      npm_config_store_dir: "/Volumes/ctx-cache/.pnpm-store",
+      NPM_CONFIG_STORE_DIR: "/Volumes/ctx-cache/.pnpm-store",
+    },
+  });
+
+  assert.equal(layout.volatileRootMode, "internal-fallback");
+  assert.equal(layout.pnpmStoreDir, path.join(internalRoot, "cache", "pnpm-store"));
+  assert.equal(env.CTX_PNPM_STORE_DIR, layout.pnpmStoreDir);
+  assert.equal(env.npm_config_store_dir, layout.pnpmStoreDir);
+  assert.equal(env.NPM_CONFIG_STORE_DIR, layout.pnpmStoreDir);
 });
 
 test("buildCtxCacheEnv derives a per-shell session scope when none is provided", () => {

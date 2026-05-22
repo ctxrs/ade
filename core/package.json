@@ -171,7 +171,7 @@
     "desktop:runtime:prepare:override": "CTX_RUNTIME_PROFILE=override node scripts/desktop_runtime_prepare.cjs",
     "desktop:avf:guest-agent:build": "bash -lc 'scripts/build_avf_linux_guest_agent.sh'",
     "desktop:avf:guest-agent:build:release": "bash -lc 'scripts/build_avf_linux_guest_agent.sh --release'",
-    "install:bootstrap:contracts": "pnpm install --frozen-lockfile && pnpm bazel:install-site:test",
+    "install:bootstrap:contracts": "node scripts/run_with_ctx_cache_env.cjs --mode workspace -- pnpm install --frozen-lockfile && pnpm bazel:install-site:test",
     "desktop:runtime:lock:validate": "node scripts/runtime_lock_validate.cjs --profile ${CTX_RUNTIME_PROFILE:-parity}",
     "desktop:check:versions": "node scripts/desktop_check_versions.cjs",
     "desktop:runtime:lock:check-matrix": "node scripts/runtime_lock_matrix_consistency.cjs",

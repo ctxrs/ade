@@ -320,6 +320,19 @@ function resolveCtxCacheLayout({ cwd = process.cwd(), env = process.env } = {}) 
   const artifactsDir = sanitizeExplicitSubdir(env.CTX_VOLATILE_ARTIFACTS_DIR, ["artifacts"]);
   const tmpDir = sanitizeExplicitSubdir(env.CTX_VOLATILE_TMPDIR, ["tmp"]);
   const cacheDir = sanitizeExplicitSubdir(env.CTX_VOLATILE_CACHE_DIR, ["cache"]);
+  const defaultPnpmStoreDir = path.join(cacheDir, "pnpm-store");
+  const explicitPnpmStoreDir = sanitizeExplicitPath(env.CTX_PNPM_STORE_DIR, defaultPnpmStoreDir);
+  const inheritedPnpmStoreDir = resolveConfiguredPath(
+    env.npm_config_store_dir || env.NPM_CONFIG_STORE_DIR,
+    { cwd },
+  );
+  const pnpmStoreDir = trimValue(env.CTX_PNPM_STORE_DIR)
+    ? explicitPnpmStoreDir
+    : inheritedPnpmStoreDir
+      && isPathInsideRoot(inheritedPnpmStoreDir, volatileRoot)
+      && isWritablePath(inheritedPnpmStoreDir)
+        ? inheritedPnpmStoreDir
+        : defaultPnpmStoreDir;
   const cargoHome = sanitizeExplicitPath(env.CARGO_HOME, path.join(cacheDir, "cargo-home"));
   const sccacheDir = sanitizeExplicitPath(env.SCCACHE_DIR, path.join(cacheDir, "sccache"));
   const bazelDiskCacheDir = sanitizeExplicitPath(
@@ -362,6 +375,7 @@ function resolveCtxCacheLayout({ cwd = process.cwd(), env = process.env } = {}) 
     artifactsDir,
     tmpDir,
     cacheDir,
+    pnpmStoreDir,
     cargoHome,
     sccacheDir,
     bazelDiskCacheDir,
@@ -393,6 +407,7 @@ function ensureCacheLayout(layout, { includeTargets = true } = {}) {
     layout.artifactsDir,
     layout.tmpDir,
     layout.cacheDir,
+    layout.pnpmStoreDir,
     layout.cargoHome,
     layout.sccacheDir,
     layout.bazelDiskCacheDir,
@@ -485,6 +500,9 @@ function buildCtxCacheEnv({
       cwd,
       explicitVolatileRoot,
     });
+    resolvedEnv.CTX_PNPM_STORE_DIR = layout.pnpmStoreDir;
+    resolvedEnv.npm_config_store_dir = layout.pnpmStoreDir;
+    resolvedEnv.NPM_CONFIG_STORE_DIR = layout.pnpmStoreDir;
     setDerivedPathEnvValue(resolvedEnv, "SCCACHE_DIR", layout.sccacheDir, {
       cwd,
       explicitVolatileRoot,

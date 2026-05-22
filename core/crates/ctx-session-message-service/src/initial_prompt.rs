@@ -63,7 +63,7 @@ struct InitialPromptIds {
 pub async fn seed_initial_prompt_record(
     store: &Store,
     session: &Session,
-    order_seq_source: &(impl InitialPromptOrderSeqSource + Sync),
+    order_seq_source: &impl InitialPromptOrderSeqSource,
     input: InitialPromptSeedInput,
 ) -> Result<InitialPromptSeedOutcome, InitialPromptSeedError> {
     let ids = initial_prompt_ids(input.message_id, input.turn_id)?;

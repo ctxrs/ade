@@ -1,6 +1,12 @@
 import { test as base, expect, chromium } from "playwright/test";
+import {
+  collectPageFailureDiagnosticBundleInput,
+  writeE2EDiagnosticBundleForFailure,
+} from "./utils/diagnostics";
 
 const AUTH_TOKEN = process.env.CTX_E2E_AUTH_TOKEN ?? "ctx-e2e-auth-token";
+const MAX_BROWSER_CONSOLE_TAIL = 200;
+const MAX_BROWSER_CONSOLE_ENTRY_LENGTH = 2000;
 
 type E2EWindow = Window & {
   __ctxE2E?: {
@@ -59,6 +65,29 @@ const test = base.extend({
       };
     }, AUTH_TOKEN);
     await use(context);
+  },
+  page: async ({ page }, use, testInfo) => {
+    const browserConsoleTail: string[] = [];
+    page.on("console", (message) => {
+      browserConsoleTail.push(`${message.type()}: ${message.text()}`.slice(0, MAX_BROWSER_CONSOLE_ENTRY_LENGTH));
+      while (browserConsoleTail.length > MAX_BROWSER_CONSOLE_TAIL) {
+        browserConsoleTail.shift();
+      }
+    });
+    await use(page);
+    if (testInfo.status !== testInfo.expectedStatus) {
+      const bundle = await collectPageFailureDiagnosticBundleInput({
+        browserConsoleTail,
+        failurePhase: "test_failure",
+        launchState: "invoked",
+        page,
+        testInfo,
+      });
+      await writeE2EDiagnosticBundleForFailure({
+        bundle,
+        testInfo,
+      });
+    }
   },
 });
 

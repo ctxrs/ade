@@ -17,6 +17,14 @@ pub struct SubmitMergeQueueEntryRouteRequest {
     message: Option<String>,
 }
 
+pub type SubmitMergeQueueEntryRouteParts = (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+
 impl SubmitMergeQueueEntryRouteRequest {
     pub fn new(
         session_id: Option<String>,
@@ -42,15 +50,7 @@ impl SubmitMergeQueueEntryRouteRequest {
         self.worktree_id.as_deref()
     }
 
-    pub fn into_parts(
-        self,
-    ) -> (
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-    ) {
+    pub fn into_parts(self) -> SubmitMergeQueueEntryRouteParts {
         (
             self.session_id,
             self.worktree_id,
