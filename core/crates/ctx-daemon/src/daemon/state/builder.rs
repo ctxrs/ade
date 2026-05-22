@@ -74,7 +74,7 @@ impl DaemonState {
                 public_base_url,
                 auth_token,
                 local_shutdown_token,
-                mcp_auth: ctx_mcp_auth::McpAuthRegistry::new(),
+                mcp_auth: Arc::new(ctx_mcp_auth::McpAuthRegistry::new()),
                 ask_user_question: runtime_parts.ask_user_question,
                 shutdown_tx: runtime_parts.shutdown_tx,
                 update_drain: Arc::new(ctx_update_service::UpdateDrainCoordinator::new()),

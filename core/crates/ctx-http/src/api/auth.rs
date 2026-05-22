@@ -9,7 +9,7 @@ use ctx_http_auth::{
     browser_stream_query_token_is_valid, is_websocket_upgrade, scoped_mcp_route, ScopedMcpRoute,
 };
 
-use ctx_daemon::daemon::CoreHandle;
+use ctx_daemon::daemon::AuthHandle;
 use ctx_mobile_access_service::MobileAuthContext;
 
 mod mobile;
@@ -17,7 +17,7 @@ mod mobile;
 use mobile::verify_mobile_api_token;
 
 pub(super) async fn auth_middleware(
-    State(state): State<CoreHandle>,
+    State(state): State<AuthHandle>,
     mut req: Request<Body>,
     next: Next,
 ) -> Result<impl IntoResponse, StatusCode> {

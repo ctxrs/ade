@@ -1,6 +1,8 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use ctx_mcp_auth::McpAuthRegistry;
+use ctx_observability::ops_events::{OpsEvent, OpsEvents};
 use ctx_observability::perf_telemetry::PerfTelemetry;
 use ctx_observability::telemetry::Telemetry;
 use ctx_storage_admission::StorageGuardStatus;
@@ -23,6 +25,15 @@ impl DaemonHandle {
 
     pub fn core(&self) -> CoreHandle {
         CoreHandle::new(Arc::clone(&self.state))
+    }
+
+    pub fn auth(&self) -> AuthHandle {
+        AuthHandle::new(
+            self.state.core.auth_token.clone(),
+            Arc::clone(&self.state.core.mcp_auth),
+            self.state.global_store().clone(),
+            self.state.telemetry.ops_events.clone(),
+        )
     }
 
     pub fn blob(&self) -> BlobHandle {
@@ -144,20 +155,6 @@ impl CoreHandle {
     pub fn storage_guard_snapshot(&self) -> StorageGuardStatus {
         self.state.storage_guard_snapshot()
     }
-
-    pub async fn verify_mcp_auth_token(&self, token: &str) -> Option<ctx_mcp_auth::McpAuthContext> {
-        crate::daemon::verify_mcp_auth_token(&self.state, token).await
-    }
-
-    pub fn emit_mcp_token_denied(
-        &self,
-        mcp_auth: ctx_mcp_auth::McpAuthContext,
-        method: &str,
-        path: &str,
-        reason: &str,
-    ) {
-        crate::daemon::emit_mcp_token_denied(&self.state, mcp_auth, method, path, reason);
-    }
 }
 
 impl TelemetryHandle {
@@ -181,6 +178,74 @@ impl TelemetryHandle {
 pub struct TelemetryHandle {
     perf_telemetry: PerfTelemetry,
     telemetry: Telemetry,
+}
+
+#[derive(Clone)]
+pub struct AuthHandle {
+    auth_token: Option<String>,
+    mcp_auth: Arc<McpAuthRegistry>,
+    store: Store,
+    ops_events: OpsEvents,
+}
+
+impl AuthHandle {
+    pub(in crate::daemon) fn new(
+        auth_token: Option<String>,
+        mcp_auth: Arc<McpAuthRegistry>,
+        store: Store,
+        ops_events: OpsEvents,
+    ) -> Self {
+        Self {
+            auth_token,
+            mcp_auth,
+            store,
+            ops_events,
+        }
+    }
+
+    pub fn auth_token(&self) -> Option<&str> {
+        self.auth_token.as_deref()
+    }
+
+    pub fn has_auth_token(&self) -> bool {
+        self.auth_token.is_some()
+    }
+
+    pub async fn verify_mcp_auth_token(&self, token: &str) -> Option<ctx_mcp_auth::McpAuthContext> {
+        self.mcp_auth.verify_token(token).await
+    }
+
+    pub fn emit_mcp_token_denied(
+        &self,
+        mcp_auth: ctx_mcp_auth::McpAuthContext,
+        method: &str,
+        path: &str,
+        reason: &str,
+    ) {
+        let mut event = OpsEvent::new("warn", "mcp_token_denied");
+        event.session_id = Some(mcp_auth.session_id.0.to_string());
+        event.worktree_id = Some(mcp_auth.worktree_id.0.to_string());
+        event.meta = Some(serde_json::json!({
+            "workspace_id": mcp_auth.workspace_id.0.to_string(),
+            "capabilities": mcp_auth.capabilities.names(),
+            "detail": {
+                "method": method,
+                "path": path,
+                "reason": reason,
+            },
+        }));
+        self.ops_events.emit(event);
+    }
+
+    pub async fn verify_mobile_api_token_hash(
+        &self,
+        hash: &str,
+    ) -> Result<
+        Option<ctx_mobile_access_service::MobileAuthContext>,
+        ctx_mobile_access_service::MobileAuthContextError,
+    > {
+        ctx_mobile_access_service::verify_mobile_api_token_hash(&self.store, hash).await
+    }
 }
 
 #[derive(Clone)]

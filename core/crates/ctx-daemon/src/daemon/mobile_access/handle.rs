@@ -253,13 +253,6 @@ impl CoreHandle {
         super::load_mobile_auth_context_for_profile(&self.state, profile_id).await
     }
 
-    pub async fn verify_mobile_api_token_hash(
-        &self,
-        hash: &str,
-    ) -> Result<Option<MobileAuthContext>, MobileAuthContextError> {
-        super::verify_mobile_api_token_hash(&self.state, hash).await
-    }
-
     pub async fn mobile_access_status(
         &self,
     ) -> Result<MobileAccessStatusSnapshot, MobileAccessStatusError> {

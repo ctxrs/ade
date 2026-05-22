@@ -23,7 +23,7 @@ pub struct CoreState {
     pub(crate) public_base_url: Option<String>,
     pub(crate) auth_token: Option<String>,
     pub(crate) local_shutdown_token: Option<String>,
-    pub(crate) mcp_auth: McpAuthRegistry,
+    pub(crate) mcp_auth: Arc<McpAuthRegistry>,
     pub(crate) ask_user_question: Arc<AskUserQuestionBroker>,
     pub(crate) shutdown_tx: broadcast::Sender<()>,
     pub(crate) update_drain: Arc<UpdateDrainCoordinator>,
