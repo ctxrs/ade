@@ -342,7 +342,7 @@ describe("workspaceAuthority", () => {
     expect(replicaDispatch).not.toHaveBeenCalled();
   });
 
-  it("forwards workspace active-primary stream deltas to the foreground replica lane", () => {
+  it("does not spend transcript replica work on auto-subscribed active-primary sessions until retained", () => {
     const replicaDispatch = vi.fn();
     const event = makeDeltaEvent("session-active-primary");
     const host = makeIngestHost({
@@ -352,13 +352,7 @@ describe("workspaceAuthority", () => {
 
     ingestWorkspaceEvent(host, event);
 
-    expect(replicaDispatch).toHaveBeenCalledWith({
-      type: "workspace_event",
-      event,
-      lane: "foreground",
-      receivedAtMs: null,
-      streamSource: null,
-    });
+    expect(replicaDispatch).not.toHaveBeenCalled();
   });
 
   it("forwards retained foreground stream deltas to the session replica", () => {

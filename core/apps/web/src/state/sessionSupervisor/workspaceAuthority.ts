@@ -82,15 +82,13 @@ const workspaceReplicaLane = (
   if (evt.type === "session_gap" && streamSource === "replay") {
     return "workspace";
   }
-  return isActivePrimaryReplicaSession(host, sessionId) ? "foreground" : "workspace";
+  return isForegroundReplicaSession(host, sessionId) ? "foreground" : "workspace";
 };
 
-const isActivePrimaryReplicaSession = (
+const isForegroundReplicaSession = (
   host: SessionSupervisorWorkspaceAuthorityHost,
   sessionId: string,
-): boolean =>
-  host.getActiveTaskSessionIds().includes(sessionId) ||
-  host.getWorkspaceActivePrimarySessionIds().includes(sessionId);
+): boolean => host.getActiveTaskSessionIds().includes(sessionId);
 
 const isRetainedReplicaSession = (
   host: SessionSupervisorWorkspaceAuthorityHost,
@@ -99,7 +97,7 @@ const isRetainedReplicaSession = (
   const entry = host.entries.get(sessionId);
   if ((entry?.refCount ?? 0) > 0 || entry?.subscribed) return true;
   return (
-    isActivePrimaryReplicaSession(host, sessionId) ||
+    isForegroundReplicaSession(host, sessionId) ||
     host.getWarmSessionIds().includes(sessionId)
   );
 };
