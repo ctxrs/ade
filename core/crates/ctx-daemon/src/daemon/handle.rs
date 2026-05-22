@@ -1,10 +1,12 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use ctx_execution_runtime::ExecutionSetupCoordinator;
 use ctx_mcp_auth::McpAuthRegistry;
 use ctx_observability::ops_events::{OpsEvent, OpsEvents};
 use ctx_observability::perf_telemetry::PerfTelemetry;
 use ctx_observability::telemetry::Telemetry;
+use ctx_provider_runtime::ProviderRuntime;
 use ctx_storage_admission::{StorageGuardRuntime, StorageGuardStatus};
 use ctx_store::Store;
 
@@ -42,6 +44,15 @@ impl DaemonHandle {
             self.state.core.daemon_url.clone(),
             self.state.core.auth_token.clone(),
             Arc::clone(&self.state.core.storage_guard),
+        )
+    }
+
+    pub fn diagnostics(&self) -> DiagnosticsHandle {
+        DiagnosticsHandle::new(
+            self.health(),
+            self.state.core.data_root.clone(),
+            Arc::clone(&self.state.execution.setup),
+            Arc::clone(&self.state.providers),
         )
     }
 
@@ -259,7 +270,7 @@ impl AuthHandle {
 
 #[derive(Clone)]
 pub struct HealthHandle {
-    data_root: std::path::PathBuf,
+    data_root: PathBuf,
     daemon_url: String,
     auth_token: Option<String>,
     storage_guard: Arc<StorageGuardRuntime>,
@@ -267,7 +278,7 @@ pub struct HealthHandle {
 
 impl HealthHandle {
     pub(in crate::daemon) fn new(
-        data_root: std::path::PathBuf,
+        data_root: PathBuf,
         daemon_url: String,
         auth_token: Option<String>,
         storage_guard: Arc<StorageGuardRuntime>,
@@ -302,6 +313,46 @@ impl HealthHandle {
 }
 
 #[derive(Clone)]
+pub struct DiagnosticsHandle {
+    health: HealthHandle,
+    data_root: PathBuf,
+    execution_setup: Arc<ExecutionSetupCoordinator>,
+    providers: Arc<ProviderRuntime>,
+}
+
+impl DiagnosticsHandle {
+    pub(in crate::daemon) fn new(
+        health: HealthHandle,
+        data_root: PathBuf,
+        execution_setup: Arc<ExecutionSetupCoordinator>,
+        providers: Arc<ProviderRuntime>,
+    ) -> Self {
+        Self {
+            health,
+            data_root,
+            execution_setup,
+            providers,
+        }
+    }
+
+    pub(in crate::daemon) fn health(&self) -> &HealthHandle {
+        &self.health
+    }
+
+    pub(in crate::daemon) fn data_root(&self) -> &Path {
+        &self.data_root
+    }
+
+    pub(in crate::daemon) fn execution_setup(&self) -> &ExecutionSetupCoordinator {
+        &self.execution_setup
+    }
+
+    pub(in crate::daemon) fn providers(&self) -> &ProviderRuntime {
+        &self.providers
+    }
+}
+
+#[derive(Clone)]
 pub struct RequestBaseHandle {
     daemon_url: String,
     public_base_url: Option<String>,
@@ -326,11 +377,11 @@ impl RequestBaseHandle {
 
 #[derive(Clone)]
 pub struct LogsHandle {
-    data_root: std::path::PathBuf,
+    data_root: PathBuf,
 }
 
 impl LogsHandle {
-    pub(in crate::daemon) fn new(data_root: std::path::PathBuf) -> Self {
+    pub(in crate::daemon) fn new(data_root: PathBuf) -> Self {
         Self { data_root }
     }
 

@@ -1,7 +1,9 @@
+use std::path::Path;
 use std::sync::Arc;
 
 use ctx_observability::logs;
 use ctx_provider_runtime::provider_launch::status::mark_provider_status_with_managed_config_error;
+use ctx_provider_runtime::ProviderRuntime;
 use ctx_providers::adapters::ProviderStatus;
 
 use crate::daemon::DaemonState;
@@ -15,8 +17,15 @@ pub struct ProviderDiagnosticsSnapshot {
 pub async fn provider_diagnostics_snapshot(
     state: &Arc<DaemonState>,
 ) -> ProviderDiagnosticsSnapshot {
+    provider_diagnostics_snapshot_for_runtime(&state.core.data_root, &state.providers).await
+}
+
+pub(in crate::daemon) async fn provider_diagnostics_snapshot_for_runtime(
+    data_root: &Path,
+    providers: &ProviderRuntime,
+) -> ProviderDiagnosticsSnapshot {
     let (managed_installs, managed_config_error) =
-        match ctx_managed_installs::load_agent_server_config(&state.core.data_root).await {
+        match ctx_managed_installs::load_agent_server_config(data_root).await {
             Ok(config) => (
                 serde_json::to_value(config).unwrap_or_else(|_| serde_json::json!({})),
                 None,
@@ -28,7 +37,7 @@ pub async fn provider_diagnostics_snapshot(
         };
     let managed_installs = redact_json_value(managed_installs);
 
-    let mut providers = state.providers.provider_statuses().await;
+    let mut providers = providers.provider_statuses().await;
     if let Some(config_error) = managed_config_error.as_deref() {
         for status in &mut providers {
             mark_provider_status_with_managed_config_error(status, config_error);

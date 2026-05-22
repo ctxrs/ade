@@ -73,8 +73,8 @@ pub use activity::{
 pub use blobs::{BlobHandle, OpenedBlob};
 pub use diagnostics::DiagnosticsSnapshotError;
 pub use handle::{
-    AuthHandle, CoreHandle, DaemonHandle, ExecutionHandle, HealthHandle, LogsHandle,
-    ProvidersHandle, RequestBaseHandle, SessionsHandle, TasksHandle, TelemetryHandle,
+    AuthHandle, CoreHandle, DaemonHandle, DiagnosticsHandle, ExecutionHandle, HealthHandle,
+    LogsHandle, ProvidersHandle, RequestBaseHandle, SessionsHandle, TasksHandle, TelemetryHandle,
     TransportHandle, WorkspaceStreamHandle, WorkspacesHandle,
 };
 pub use health::HealthSnapshotError;

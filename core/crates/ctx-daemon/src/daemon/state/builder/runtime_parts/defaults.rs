@@ -34,8 +34,8 @@ pub(in crate::daemon::state::builder) fn build_workspace_runtime(
 
 pub(in crate::daemon::state::builder) fn build_provider_runtime(
     providers: HashMap<String, Arc<dyn ProviderAdapter>>,
-) -> ProviderRuntime {
-    ProviderRuntime::new(providers)
+) -> Arc<ProviderRuntime> {
+    Arc::new(ProviderRuntime::new(providers))
 }
 
 pub(in crate::daemon::state::builder) fn build_telemetry_runtime(

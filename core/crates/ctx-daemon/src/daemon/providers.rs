@@ -46,6 +46,7 @@ pub use auth_import::{
     list_provider_auth_import_profiles,
 };
 pub use diagnostics::provider_diagnostics_snapshot;
+pub(in crate::daemon) use diagnostics::provider_diagnostics_snapshot_for_runtime;
 pub use harness_config::{
     delete_provider_harness_endpoint, get_provider_harness_config,
     mark_provider_endpoint_verification, refresh_provider_endpoint_model_catalog,
