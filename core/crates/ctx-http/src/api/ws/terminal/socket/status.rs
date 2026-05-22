@@ -1,8 +1,9 @@
 use std::sync::{atomic::AtomicBool, Arc};
 
 use axum::extract::ws::Message as WsMessage;
-use ctx_daemon::daemon::terminals::{TerminalStreamStatusReceiver, TerminalStreamStatusRecv};
-use ctx_transport_runtime::terminals::TerminalServerMessage;
+use ctx_transport_runtime::terminals::{
+    TerminalServerMessage, TerminalStreamStatusReceiver, TerminalStreamStatusRecv,
+};
 use tokio::sync::mpsc;
 
 use super::super::queue::{

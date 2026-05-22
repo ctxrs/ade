@@ -1050,6 +1050,13 @@ test("daemon boundary guard rejects raw terminal stream runtime access in HTTP",
   const violations = scanText({
     filePath: "core/crates/ctx-http/src/api/ws/terminal/socket.rs",
     contents: `
+      use ctx_daemon::daemon::terminals::{
+        TerminalStreamInitialSnapshot,
+        TerminalStreamOutputRecv,
+        TerminalStreamSession,
+      };
+      use ctx_daemon::daemon::terminals as daemon_terminals;
+      use ctx_daemon::daemon::terminals::*;
       use ctx_transport_runtime::terminals::{TerminalSessionHandle, TerminalStatusEvent};
       use tokio::sync::broadcast;
       use tokio::sync::broadcast::Receiver;
@@ -1077,6 +1084,9 @@ test("daemon boundary guard rejects raw terminal stream runtime access in HTTP",
   assert.deepEqual(
     violations.map((violation) => violation.name),
     [
+      "terminal WS API imports terminal stream runtime from daemon",
+      "terminal WS API imports daemon terminals root",
+      "terminal WS API imports daemon terminals root",
       "terminal WS API imports raw terminal session handle",
       "terminal WS API imports raw terminal session handle",
       "terminal WS API imports raw terminal status event",

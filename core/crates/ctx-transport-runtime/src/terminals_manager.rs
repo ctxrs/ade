@@ -75,6 +75,21 @@ impl TerminalManager {
         sessions.get(&id).cloned()
     }
 
+    pub async fn require_stream_access(
+        &self,
+        id: TerminalId,
+        token: &str,
+    ) -> Result<TerminalStreamSession, TerminalStreamAccessError> {
+        let handle = self
+            .get(id)
+            .await
+            .ok_or(TerminalStreamAccessError::NotFound)?;
+        if !handle.consume_stream_token(token) {
+            return Err(TerminalStreamAccessError::Unauthorized);
+        }
+        Ok(TerminalStreamSession::new(handle))
+    }
+
     pub async fn remove(&self, id: TerminalId) -> Option<Arc<TerminalSessionHandle>> {
         let mut sessions = self.sessions.lock().await;
         sessions.remove(&id)

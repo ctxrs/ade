@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use axum::extract::ws::{Message as WsMessage, WebSocket};
-use ctx_daemon::daemon::terminals::TerminalStreamSession;
-use ctx_transport_runtime::terminals::{TerminalClientMessage, TerminalServerMessage};
+use ctx_transport_runtime::terminals::{
+    TerminalClientMessage, TerminalServerMessage, TerminalStreamSession,
+};
 use futures::stream::SplitStream;
 use futures::StreamExt;
 use tokio::sync::mpsc;

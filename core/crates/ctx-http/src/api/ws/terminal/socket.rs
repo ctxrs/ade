@@ -2,7 +2,7 @@ use std::sync::{atomic::AtomicBool, Arc};
 use std::time::Duration;
 
 use axum::extract::ws::{Message as WsMessage, WebSocket};
-use ctx_daemon::daemon::terminals::TerminalStreamSession;
+use ctx_transport_runtime::terminals::TerminalStreamSession;
 use futures::StreamExt;
 use tokio::task::JoinSet;
 

@@ -1,6 +1,5 @@
 use axum::extract::ws::{Message as WsMessage, WebSocket};
-use ctx_daemon::daemon::terminals::TerminalStreamInitialSnapshot;
-use ctx_transport_runtime::terminals::TerminalServerMessage;
+use ctx_transport_runtime::terminals::{TerminalServerMessage, TerminalStreamInitialSnapshot};
 
 pub(super) async fn send_initial_terminal_snapshot(
     socket: &mut WebSocket,

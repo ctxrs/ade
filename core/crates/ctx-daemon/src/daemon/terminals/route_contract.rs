@@ -5,12 +5,11 @@ pub use ctx_route_contracts::terminals::{
     TerminalStreamConnectRouteResponse, TerminalStreamRouteParams,
 };
 use ctx_transport_runtime::terminal_launch::{TerminalLaunchError, TerminalLaunchErrorKind};
+use ctx_transport_runtime::terminals::{TerminalStreamAccessError, TerminalStreamSession};
 
 use crate::daemon::TransportHandle;
 
-use super::{
-    launch::CreateTerminalLaunchRequest, TerminalStreamAccessError, TerminalStreamSession,
-};
+use super::launch::CreateTerminalLaunchRequest;
 
 pub struct TerminalStreamRouteAdmission {
     pub session: TerminalStreamSession,
@@ -89,10 +88,16 @@ impl TransportHandle {
     ) -> Result<TerminalStreamRouteAdmission, TerminalRouteError> {
         let terminal_id = params.parse_terminal_id()?;
         let tail_bytes = params.tail_bytes();
-        let session =
-            super::require_terminal_stream_access(&self.state, terminal_id, params.token())
-                .await
-                .map_err(terminal_stream_access_route_error)?;
+        let token = params
+            .token()
+            .ok_or_else(terminal_stream_missing_token_route_error)?;
+        let session = self
+            .state
+            .transport
+            .terminals
+            .require_stream_access(terminal_id, token)
+            .await
+            .map_err(terminal_stream_access_route_error)?;
 
         Ok(TerminalStreamRouteAdmission {
             session,
@@ -101,9 +106,13 @@ impl TransportHandle {
     }
 }
 
+fn terminal_stream_missing_token_route_error() -> TerminalRouteError {
+    TerminalRouteError::unauthorized("terminal stream token required")
+}
+
 fn terminal_stream_access_route_error(error: TerminalStreamAccessError) -> TerminalRouteError {
     match error {
-        TerminalStreamAccessError::MissingToken | TerminalStreamAccessError::Unauthorized => {
+        TerminalStreamAccessError::Unauthorized => {
             TerminalRouteError::unauthorized("terminal stream token required")
         }
         TerminalStreamAccessError::NotFound => TerminalRouteError::not_found("terminal not found"),
@@ -117,14 +126,14 @@ mod tests {
 
     #[test]
     fn terminal_stream_access_errors_map_to_route_errors() {
-        for error in [
-            TerminalStreamAccessError::MissingToken,
-            TerminalStreamAccessError::Unauthorized,
-        ] {
-            let route_error = terminal_stream_access_route_error(error);
-            assert_eq!(route_error.kind(), TerminalRouteErrorKind::Unauthorized);
-            assert_eq!(route_error.message(), "terminal stream token required");
-        }
+        let route_error = terminal_stream_missing_token_route_error();
+        assert_eq!(route_error.kind(), TerminalRouteErrorKind::Unauthorized);
+        assert_eq!(route_error.message(), "terminal stream token required");
+
+        let route_error =
+            terminal_stream_access_route_error(TerminalStreamAccessError::Unauthorized);
+        assert_eq!(route_error.kind(), TerminalRouteErrorKind::Unauthorized);
+        assert_eq!(route_error.message(), "terminal stream token required");
 
         let route_error = terminal_stream_access_route_error(TerminalStreamAccessError::NotFound);
         assert_eq!(route_error.kind(), TerminalRouteErrorKind::NotFound);

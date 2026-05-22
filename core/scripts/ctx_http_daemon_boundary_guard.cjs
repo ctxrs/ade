@@ -3437,6 +3437,18 @@ const WORKSPACE_VCS_LIVE_ROUTING_API_PATTERNS = [
 
 const TERMINAL_STREAM_RUNTIME_API_PATTERNS = [
   {
+    name: "terminal WS API imports terminal stream runtime from daemon",
+    regex:
+      /\bctx_daemon::daemon::terminals::(?:\{[^}]*\b(?:TerminalStreamSession|TerminalStreamConnection|TerminalStreamInitialSnapshot|TerminalStreamStatusUpdate|TerminalStreamOutputRecv|TerminalStreamStatusRecv|TerminalStreamOutputReceiver|TerminalStreamStatusReceiver|TerminalStreamAccessError)\b|(?:TerminalStreamSession|TerminalStreamConnection|TerminalStreamInitialSnapshot|TerminalStreamStatusUpdate|TerminalStreamOutputRecv|TerminalStreamStatusRecv|TerminalStreamOutputReceiver|TerminalStreamStatusReceiver|TerminalStreamAccessError)\b)/,
+    contentRegex:
+      /\buse\s+ctx_daemon::daemon::terminals::\s*\{(?=[^;]*\b(?:TerminalStreamSession|TerminalStreamConnection|TerminalStreamInitialSnapshot|TerminalStreamStatusUpdate|TerminalStreamOutputRecv|TerminalStreamStatusRecv|TerminalStreamOutputReceiver|TerminalStreamStatusReceiver|TerminalStreamAccessError)\b)[^;]*;/gm,
+  },
+  {
+    name: "terminal WS API imports daemon terminals root",
+    regex:
+      /\buse\s+ctx_daemon::daemon::terminals\s*(?:;|as\b|::\s*\*|::\s*\{[^}]*\bself\b)/,
+  },
+  {
     name: "terminal WS API imports raw terminal session handle",
     regex: /\bTerminalSessionHandle\b/,
   },

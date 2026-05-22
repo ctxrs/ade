@@ -176,6 +176,145 @@ pub struct TerminalSessionHandle {
     backend: TerminalBackend,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalStreamAccessError {
+    NotFound,
+    Unauthorized,
+}
+
+#[derive(Clone)]
+pub struct TerminalStreamSession {
+    handle: Arc<TerminalSessionHandle>,
+}
+
+pub struct TerminalStreamConnection {
+    pub session: TerminalStreamSession,
+    pub output_rx: TerminalStreamOutputReceiver,
+    pub status_rx: TerminalStreamStatusReceiver,
+    pub initial_snapshot: TerminalStreamInitialSnapshot,
+    _client_guard: TerminalStreamClientGuard,
+}
+
+#[derive(Clone, Debug)]
+pub struct TerminalStreamInitialSnapshot {
+    pub status: TerminalStatus,
+    pub exit_code: Option<i32>,
+    pub output_tail: Vec<u8>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TerminalStreamStatusUpdate {
+    pub status: TerminalStatus,
+    pub exit_code: Option<i32>,
+}
+
+pub enum TerminalStreamOutputRecv {
+    Bytes(Vec<u8>),
+    Lagged,
+    Closed,
+}
+
+pub enum TerminalStreamStatusRecv {
+    Update(TerminalStreamStatusUpdate),
+    Lagged,
+    Closed,
+}
+
+pub struct TerminalStreamOutputReceiver {
+    inner: tokio::sync::broadcast::Receiver<Vec<u8>>,
+}
+
+pub struct TerminalStreamStatusReceiver {
+    inner: tokio::sync::broadcast::Receiver<TerminalStatusEvent>,
+}
+
+struct TerminalStreamClientGuard {
+    handle: Arc<TerminalSessionHandle>,
+}
+
+impl Drop for TerminalStreamClientGuard {
+    fn drop(&mut self) {
+        self.handle.mark_client_disconnected();
+    }
+}
+
+impl TerminalStreamSession {
+    fn new(handle: Arc<TerminalSessionHandle>) -> Self {
+        Self { handle }
+    }
+
+    pub fn connect(&self, tail_bytes: usize) -> TerminalStreamConnection {
+        self.handle.mark_client_connected();
+        let output_rx = TerminalStreamOutputReceiver {
+            inner: self.handle.output_receiver(),
+        };
+        let status_rx = TerminalStreamStatusReceiver {
+            inner: self.handle.status_receiver(),
+        };
+        TerminalStreamConnection {
+            session: self.clone(),
+            output_rx,
+            status_rx,
+            initial_snapshot: self.initial_snapshot(tail_bytes),
+            _client_guard: TerminalStreamClientGuard {
+                handle: Arc::clone(&self.handle),
+            },
+        }
+    }
+
+    pub fn initial_snapshot(&self, tail_bytes: usize) -> TerminalStreamInitialSnapshot {
+        let snapshot = self.handle.snapshot();
+        TerminalStreamInitialSnapshot {
+            status: snapshot.status,
+            exit_code: snapshot.exit_code,
+            output_tail: self.output_tail(tail_bytes),
+        }
+    }
+
+    pub fn output_tail(&self, tail_bytes: usize) -> Vec<u8> {
+        self.handle.output_snapshot_tail(tail_bytes)
+    }
+
+    pub fn write_input(&self, data: Vec<u8>) {
+        self.handle.send_input(data);
+    }
+
+    pub fn resize_terminal(&self, cols: u16, rows: u16) -> Result<()> {
+        self.handle.resize(cols, rows)
+    }
+}
+
+impl TerminalStreamOutputReceiver {
+    pub async fn recv(&mut self) -> TerminalStreamOutputRecv {
+        match self.inner.recv().await {
+            Ok(bytes) => TerminalStreamOutputRecv::Bytes(bytes),
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                TerminalStreamOutputRecv::Lagged
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                TerminalStreamOutputRecv::Closed
+            }
+        }
+    }
+}
+
+impl TerminalStreamStatusReceiver {
+    pub async fn recv(&mut self) -> TerminalStreamStatusRecv {
+        match self.inner.recv().await {
+            Ok(event) => TerminalStreamStatusRecv::Update(TerminalStreamStatusUpdate {
+                status: event.status,
+                exit_code: event.exit_code,
+            }),
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                TerminalStreamStatusRecv::Lagged
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                TerminalStreamStatusRecv::Closed
+            }
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct TerminalManager {
     sessions: tokio::sync::Mutex<HashMap<TerminalId, Arc<TerminalSessionHandle>>>,
@@ -439,6 +578,108 @@ mod tests {
 
         for key in DAEMON_AUTH_ENV_VARS {
             assert_eq!(cmd.get_env(key), None, "expected {key} to be removed");
+        }
+    }
+
+    #[test]
+    fn terminal_stream_initial_snapshot_clamps_tail() {
+        let session =
+            TerminalStreamSession::new(TerminalSessionHandle::test_handle_with_output(b"abcdef"));
+
+        assert_eq!(session.initial_snapshot(0).output_tail, b"");
+        assert_eq!(session.initial_snapshot(3).output_tail, b"def");
+        assert_eq!(session.initial_snapshot(64).output_tail, b"abcdef");
+    }
+
+    #[tokio::test]
+    async fn terminal_stream_status_receiver_maps_runtime_events() {
+        let session =
+            TerminalStreamSession::new(TerminalSessionHandle::test_handle_with_output(b""));
+        let mut connection = session.connect(0);
+
+        session.handle.mark_exited(Some(7));
+
+        match connection.status_rx.recv().await {
+            TerminalStreamStatusRecv::Update(update) => {
+                assert!(matches!(update.status, TerminalStatus::Exited));
+                assert_eq!(update.exit_code, Some(7));
+            }
+            TerminalStreamStatusRecv::Lagged | TerminalStreamStatusRecv::Closed => {
+                panic!("expected status update")
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn terminal_stream_token_admission_requires_valid_one_shot_token() {
+        let handle = TerminalSessionHandle::test_handle_with_output(b"");
+        let terminal_id = handle.snapshot().id;
+        let manager = manager_with_handle(Arc::clone(&handle));
+
+        assert_eq!(
+            stream_access_error(
+                manager
+                    .require_stream_access(terminal_id, "bad-token")
+                    .await
+            ),
+            TerminalStreamAccessError::Unauthorized
+        );
+
+        let (stream_path, _) = handle.issue_stream_connect_path();
+        let token = stream_path
+            .split("token=")
+            .nth(1)
+            .expect("test stream path should contain token");
+        manager
+            .require_stream_access(terminal_id, token)
+            .await
+            .expect("fresh stream token should be accepted");
+        assert_eq!(
+            stream_access_error(manager.require_stream_access(terminal_id, token).await),
+            TerminalStreamAccessError::Unauthorized
+        );
+    }
+
+    #[tokio::test]
+    async fn terminal_stream_access_reports_missing_terminal() {
+        let manager = TerminalManager::default();
+
+        assert_eq!(
+            stream_access_error(
+                manager
+                    .require_stream_access(TerminalId::new(), "token")
+                    .await
+            ),
+            TerminalStreamAccessError::NotFound
+        );
+    }
+
+    #[tokio::test]
+    async fn terminal_stream_connection_updates_client_count_until_dropped() {
+        let handle = TerminalSessionHandle::test_handle_with_output(b"");
+        let manager = manager_with_handle(Arc::clone(&handle));
+        let session = TerminalStreamSession::new(handle);
+
+        assert_eq!(manager.stats().await.connected_clients, 0);
+        let connection = session.connect(0);
+        assert_eq!(manager.stats().await.connected_clients, 1);
+        drop(connection);
+        assert_eq!(manager.stats().await.connected_clients, 0);
+    }
+
+    fn manager_with_handle(handle: Arc<TerminalSessionHandle>) -> TerminalManager {
+        let terminal_id = handle.snapshot().id;
+        TerminalManager {
+            sessions: tokio::sync::Mutex::new(HashMap::from([(terminal_id, handle)])),
+        }
+    }
+
+    fn stream_access_error(
+        result: Result<TerminalStreamSession, TerminalStreamAccessError>,
+    ) -> TerminalStreamAccessError {
+        match result {
+            Ok(_) => panic!("expected terminal stream access error"),
+            Err(error) => error,
         }
     }
 }

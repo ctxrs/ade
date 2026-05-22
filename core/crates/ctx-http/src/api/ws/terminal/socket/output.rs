@@ -1,7 +1,7 @@
 use std::sync::{atomic::AtomicBool, Arc};
 
 use axum::extract::ws::Message as WsMessage;
-use ctx_daemon::daemon::terminals::{
+use ctx_transport_runtime::terminals::{
     TerminalStreamOutputReceiver, TerminalStreamOutputRecv, TerminalStreamSession,
 };
 use tokio::sync::mpsc;

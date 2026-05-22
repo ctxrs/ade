@@ -2,7 +2,7 @@ use std::sync::{atomic::AtomicBool, Arc};
 use std::time::Duration;
 
 use axum::extract::ws::Message as WsMessage;
-use ctx_daemon::daemon::terminals::TerminalStreamSession;
+use ctx_transport_runtime::terminals::TerminalStreamSession;
 use tokio::sync::mpsc;
 
 use super::super::queue::{queue_terminal_ws_tail_resync_if_requested, TerminalWsQueueOutcome};
