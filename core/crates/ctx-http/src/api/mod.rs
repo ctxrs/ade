@@ -78,7 +78,7 @@ use ws::{
 };
 
 use ctx_core::models::*;
-use ctx_daemon::daemon::mobile_access::MobileAuthContext;
+use ctx_mobile_access_service::MobileAuthContext;
 use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
 use ctx_provider_install::install_state::InstallId;
 use ctx_transport_runtime::web_sessions::{

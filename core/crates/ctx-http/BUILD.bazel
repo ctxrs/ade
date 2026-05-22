@@ -243,6 +243,7 @@ CTX_HTTP_SHARED_INTERNAL_DEPS = [
     "//core/crates/ctx-http-auth:lib",
     "//core/crates/ctx-mcp-auth:lib",
     "//core/crates/ctx-mcp-command:lib",
+    "//core/crates/ctx-mobile-access-service:lib",
     "//core/crates/ctx-observability:lib",
     "//core/crates/ctx-provider-accounts:lib",
     "//core/crates/ctx-provider-auth-import:lib",

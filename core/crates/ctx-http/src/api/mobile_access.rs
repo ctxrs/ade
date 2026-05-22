@@ -1,12 +1,10 @@
 use super::*;
-use ctx_daemon::daemon::{
-    mobile_access::{
-        CreateMobileConnectionProfileForRouteRequest, EnableMobileAccessRequest,
-        MobileAccessRouteError, MobileAccessRouteErrorKind, MobileAccessStatusSnapshot,
-        MobileConnectionProfileRouteParams, MobileSecureEnvelopeForRoute, PairMobileDeviceRequest,
-        RegisterMobileDeviceForRouteRequest,
-    },
-    CoreHandle,
+use ctx_daemon::daemon::CoreHandle;
+use ctx_mobile_access_service::route_contract::{
+    CreateMobileConnectionProfileForRouteRequest, EnableMobileAccessRequest,
+    MobileAccessRouteError, MobileAccessRouteErrorKind, MobileAccessStatusSnapshot,
+    MobileConnectionProfileRouteParams, MobileSecureEnvelopeForRoute, PairMobileDeviceRequest,
+    RegisterMobileDeviceForRouteRequest,
 };
 
 mod access_disable;

@@ -3,11 +3,9 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 
-use ctx_daemon::daemon::{
-    mobile_access::{
-        MobileAccessRouteError, MobileAccessRouteErrorKind, MobileSecureWorkspaceStreamRouteParams,
-    },
-    CoreHandle, WorkspaceStreamHandle,
+use ctx_daemon::daemon::{CoreHandle, WorkspaceStreamHandle};
+use ctx_mobile_access_service::route_contract::{
+    MobileAccessRouteError, MobileAccessRouteErrorKind, MobileSecureWorkspaceStreamRouteParams,
 };
 
 #[path = "secure_mobile/context.rs"]

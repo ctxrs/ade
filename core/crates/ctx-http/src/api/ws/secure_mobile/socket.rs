@@ -4,7 +4,8 @@ use futures::StreamExt;
 use super::super::workspace_stream;
 use super::context::decode_mobile_secure_client_message;
 use ctx_core::ids::WorkspaceId;
-use ctx_daemon::daemon::{mobile_access::MobileSecureStreamContext, WorkspaceStreamHandle};
+use ctx_daemon::daemon::WorkspaceStreamHandle;
+use ctx_mobile_access_service::route_contract::MobileSecureStreamContext;
 
 pub(super) async fn handle_mobile_secure_ws(
     socket: WebSocket,

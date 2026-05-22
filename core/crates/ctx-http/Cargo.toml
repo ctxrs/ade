@@ -25,6 +25,7 @@ ctx-linux-sandbox-runtime = { path = "../ctx-linux-sandbox-runtime" }
 ctx-http-auth = { path = "../ctx-http-auth" }
 ctx-mcp-auth = { path = "../ctx-mcp-auth" }
 ctx-mcp-command = { path = "../ctx-mcp-command" }
+ctx-mobile-access-service = { path = "../ctx-mobile-access-service" }
 ctx-observability = { path = "../ctx-observability" }
 ctx-transport-runtime = { path = "../ctx-transport-runtime" }
 ctx-update-service = { path = "../ctx-update-service" }

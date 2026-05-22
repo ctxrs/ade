@@ -50,6 +50,7 @@ const {
   MERGE_QUEUE_ISOLATION_TEST_STORE_ACCESS_PATTERNS,
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
+  MOBILE_ACCESS_DAEMON_IMPORT_PATTERNS,
   MOBILE_ACCESS_STORE_DTO_API_PATTERNS,
   MOBILE_ACCESS_ORCHESTRATION_API_PATTERNS,
   MOBILE_PROFILE_ROUTE_PARAM_API_PATTERNS,
@@ -2681,10 +2682,127 @@ test("daemon boundary guard rejects mobile access API orchestration leaks", () =
   );
 });
 
+test("daemon boundary guard rejects moved mobile access contracts from daemon", () => {
+  const violations = scanText({
+    filePath: "core/crates/ctx-http/src/api/mobile_access.rs",
+    contents: `
+      use ctx_daemon::daemon::{
+        mobile_access::{
+          EnableMobileAccessRequest,
+          MobileAccessRouteError,
+          MobileSecureStreamContext,
+        },
+        CoreHandle,
+      };
+      async fn handler() {
+        let _ = ctx_daemon::daemon::mobile_access::PairMobileDeviceRequest;
+      }
+    `,
+    patterns: [
+      ...MOBILE_ACCESS_STORE_DTO_API_PATTERNS,
+      ...MOBILE_ACCESS_ORCHESTRATION_API_PATTERNS,
+      ...MOBILE_ACCESS_DAEMON_IMPORT_PATTERNS,
+    ],
+  });
+
+  const names = violations.map((violation) => violation.name);
+  assert(names.includes("mobile access API imports moved mobile contracts from daemon mobile_access"));
+  assert(names.includes("mobile access API imports moved mobile contracts from nested daemon group"));
+});
+
+test("daemon boundary guard rejects moved mobile auth and stream contracts outside mobile_access routes", () => {
+  for (const [filePath, contents] of [
+    [
+      "core/crates/ctx-http/src/api/mod.rs",
+      `use ctx_daemon::daemon::{mobile_access::MobileAuthContext, CoreHandle};`,
+    ],
+    [
+      "core/crates/ctx-http/src/api/auth.rs",
+      `use ctx_daemon::daemon::{mobile_access::MobileAuthContext, CoreHandle};`,
+    ],
+    [
+      "core/crates/ctx-http/src/api/auth/mobile.rs",
+      `use ctx_daemon::daemon::{mobile_access::MobileAuthContext, CoreHandle};`,
+    ],
+    [
+      "core/crates/ctx-http/src/api/ws/secure_mobile/context.rs",
+      `use ctx_daemon::daemon::mobile_access::MobileSecureStreamContext;`,
+    ],
+    [
+      "core/crates/ctx-http/src/api/ws/secure_mobile/socket.rs",
+      `use ctx_daemon::daemon::{mobile_access::MobileSecureStreamContext, WorkspaceStreamHandle};`,
+    ],
+    [
+      "core/crates/ctx-http/src/api/ws/secure_mobile.rs",
+      `
+        use ctx_daemon::daemon::{
+          mobile_access::{MobileAccessRouteError, MobileSecureWorkspaceStreamRouteParams},
+          CoreHandle,
+        };
+      `,
+    ],
+  ]) {
+    const violations = scanText({
+      filePath,
+      contents,
+      patterns: mobileAccessStoreDtoApiPatternsForPath(filePath),
+    });
+    assert(
+      violations.some((violation) =>
+        violation.name.startsWith("mobile access API imports moved mobile contracts"),
+      ),
+      `expected moved mobile contract import violation for ${filePath}`,
+    );
+  }
+});
+
+test("daemon boundary guard rejects daemon mobile_access root imports", () => {
+  for (const [filePath, contents] of [
+    [
+      "core/crates/ctx-http/src/api/mod.rs",
+      `use ctx_daemon::daemon::{mobile_access, CoreHandle};`,
+    ],
+    [
+      "core/crates/ctx-http/src/api/auth.rs",
+      `use ctx_daemon::daemon::mobile_access as daemon_mobile_access;`,
+    ],
+    [
+      "core/crates/ctx-http/src/api/auth/mobile.rs",
+      `use ctx_daemon::daemon::mobile_access::*;`,
+    ],
+    [
+      "core/crates/ctx-http/src/api/ws/secure_mobile/context.rs",
+      `use ctx_daemon::daemon::mobile_access::{self, MobileAuthContext};`,
+    ],
+    [
+      "core/crates/ctx-http/src/api/ws/secure_mobile.rs",
+      `
+        use ctx_daemon::daemon::{
+          mobile_access::*,
+          CoreHandle,
+        };
+      `,
+    ],
+  ]) {
+    const violations = scanText({
+      filePath,
+      contents,
+      patterns: mobileAccessStoreDtoApiPatternsForPath(filePath),
+    });
+    assert(
+      violations.some(
+        (violation) => violation.name === "mobile access API imports daemon mobile_access root",
+      ),
+      `expected daemon mobile_access root import violation for ${filePath}`,
+    );
+  }
+});
+
 test("daemon boundary guard scopes mobile access storage DTO roots", () => {
   const mobileAccessPatterns = [
     ...MOBILE_ACCESS_STORE_DTO_API_PATTERNS,
     ...MOBILE_ACCESS_ORCHESTRATION_API_PATTERNS,
+    ...MOBILE_ACCESS_DAEMON_IMPORT_PATTERNS,
   ];
   for (const filePath of [
     "core/crates/ctx-http/src/api/mod.rs",
@@ -2700,6 +2818,16 @@ test("daemon boundary guard scopes mobile access storage DTO roots", () => {
   assert.deepEqual(
     mobileAccessStoreDtoApiPatternsForPath("core/crates/ctx-http/src/api/providers/status.rs"),
     [],
+  );
+  assert.deepEqual(
+    mobileAccessStoreDtoApiPatternsForPath("core/crates/ctx-http/src/api/auth.rs"),
+    MOBILE_ACCESS_DAEMON_IMPORT_PATTERNS,
+  );
+  assert.deepEqual(
+    mobileAccessStoreDtoApiPatternsForPath(
+      "core/crates/ctx-http/src/api/ws/secure_mobile/context.rs",
+    ),
+    MOBILE_ACCESS_DAEMON_IMPORT_PATTERNS,
   );
 });
 

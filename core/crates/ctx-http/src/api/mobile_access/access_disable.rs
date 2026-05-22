@@ -1,5 +1,5 @@
 use super::*;
-use ctx_daemon::daemon::mobile_access::DisableMobileAccessError;
+use ctx_mobile_access_service::route_contract::DisableMobileAccessError;
 
 pub(in crate::api) async fn disable_mobile_access(
     State(state): State<CoreHandle>,

@@ -1,6 +1,7 @@
+use ctx_mobile_access_service::route_contract::{
+    MobileAccessRouteError, MobileAccessRouteErrorKind,
+};
 use serde::Deserialize;
-
-use super::{MobileAccessRouteError, MobileAccessRouteErrorKind};
 
 const DEFAULT_TUNNEL_CONTROL_PLANE_URL: &str = "https://tunnel.ctx.rs";
 

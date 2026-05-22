@@ -156,6 +156,14 @@ const mobileAccessStoreDtoApiRoots = [
   "core/crates/ctx-http/src/api/mobile_access/",
 ];
 
+const mobileAccessMovedDaemonContractApiRoots = [
+  ...mobileAccessStoreDtoApiRoots,
+  "core/crates/ctx-http/src/api/auth.rs",
+  "core/crates/ctx-http/src/api/auth/mobile.rs",
+  "core/crates/ctx-http/src/api/ws/secure_mobile.rs",
+  "core/crates/ctx-http/src/api/ws/secure_mobile/",
+];
+
 const mobileProfileRouteApiRoots = [
   "core/crates/ctx-http/src/api/mobile_access/profiles.rs",
   "core/crates/ctx-http/src/api/mobile_access/profiles/",
@@ -1296,6 +1304,36 @@ const MOBILE_ACCESS_ORCHESTRATION_API_PATTERNS = [
     name: "mobile access API owns secure proxy request header filtering",
     regex:
       /\bHeaderMap\s*::\s*new\s*\(|\bHeaderName\s*::\s*from_bytes\s*\(|\bHeaderValue\s*::\s*from_str\s*\(/,
+  },
+];
+
+const mobileAccessMovedDaemonContractPattern = String.raw`(?:CreateMobileConnectionProfileForRouteRequest|CreateMobileConnectionProfileForRouteResult|DisableMobileAccessError|EnableMobileAccessRequest|EnableMobileAccessResult|MobileAccessRouteError(?:Kind)?|MobileAccessStatusSnapshot|MobileAuthContext|MobileConnectionProfileRouteParams|MobileSecureEnvelope(?:ForRoute)?|MobileSecureStreamContext|MobileSecureWorkspaceStreamRouteParams|PairMobileDeviceRequest|RegisterMobileDeviceForRouteRequest)`;
+
+const MOBILE_ACCESS_DAEMON_IMPORT_PATTERNS = [
+  {
+    name: "mobile access API imports moved mobile contracts from daemon mobile_access",
+    regex: new RegExp(
+      String.raw`\bctx_daemon::daemon::mobile_access::(?:\{[^}]*\b${mobileAccessMovedDaemonContractPattern}\b|${mobileAccessMovedDaemonContractPattern}\b)`,
+    ),
+    contentRegex: new RegExp(
+      String.raw`\buse\s+ctx_daemon::daemon::mobile_access::\s*\{(?=[^}]*\b${mobileAccessMovedDaemonContractPattern}\b)[^}]*\}\s*;`,
+      "gm",
+    ),
+  },
+  {
+    name: "mobile access API imports moved mobile contracts from nested daemon group",
+    regex: /\b\B/,
+    contentRegex: new RegExp(
+      String.raw`\buse\s+ctx_daemon::daemon::\s*\{(?=[^;]*\bmobile_access\s*::\s*(?:\{[^;]*\b${mobileAccessMovedDaemonContractPattern}\b|${mobileAccessMovedDaemonContractPattern}\b))[^;]*;`,
+      "gm",
+    ),
+  },
+  {
+    name: "mobile access API imports daemon mobile_access root",
+    regex:
+      /\buse\s+ctx_daemon::daemon::mobile_access\s*(?:;|as\b|::\s*\*|::\s*\{[^}]*\bself\b)/,
+    contentRegex:
+      /\buse\s+ctx_daemon::daemon::\s*\{(?=[^;]*\bmobile_access\b\s*(?:,|as\b|::\s*\*|::\s*\{[^}]*\bself\b))[^;]*;/gm,
   },
 ];
 
@@ -5618,13 +5656,17 @@ function geminiLiveModelCatalogStorePatternsForPath(relativePath) {
 }
 
 function mobileAccessStoreDtoApiPatternsForPath(relativePath) {
+  const patterns = [];
   if (mobileAccessStoreDtoApiRoots.some((root) => relativePath.startsWith(root))) {
-    return [
+    patterns.push(
       ...MOBILE_ACCESS_STORE_DTO_API_PATTERNS,
       ...MOBILE_ACCESS_ORCHESTRATION_API_PATTERNS,
-    ];
+    );
   }
-  return [];
+  if (mobileAccessMovedDaemonContractApiRoots.some((root) => relativePath.startsWith(root))) {
+    patterns.push(...MOBILE_ACCESS_DAEMON_IMPORT_PATTERNS);
+  }
+  return patterns;
 }
 
 function mobileProfileRouteApiPatternsForPath(relativePath) {
@@ -6705,6 +6747,7 @@ module.exports = {
   MERGE_QUEUE_ISOLATION_TEST_STORE_ACCESS_PATTERNS,
   MIGRATED_TEST_RAW_DAEMON_PATTERNS,
   MCP_DAEMON_TEST_STORE_ACCESS_PATTERNS,
+  MOBILE_ACCESS_DAEMON_IMPORT_PATTERNS,
   MOBILE_ACCESS_STORE_DTO_API_PATTERNS,
   MOBILE_ACCESS_ORCHESTRATION_API_PATTERNS,
   MOBILE_PROFILE_ROUTE_PARAM_API_PATTERNS,

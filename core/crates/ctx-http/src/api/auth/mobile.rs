@@ -1,6 +1,7 @@
 use axum::http::StatusCode;
 
-use ctx_daemon::daemon::{mobile_access::MobileAuthContext, CoreHandle};
+use ctx_daemon::daemon::CoreHandle;
+use ctx_mobile_access_service::MobileAuthContext;
 
 #[path = "mobile/tokens.rs"]
 mod tokens;

@@ -1,6 +1,7 @@
 mod auth;
 mod lifecycle;
 mod profiles;
+pub mod route_contract;
 mod secure;
 mod tokens;
 mod types;

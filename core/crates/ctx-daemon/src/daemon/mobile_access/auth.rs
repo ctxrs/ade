@@ -4,7 +4,7 @@ use ctx_core::ids::ConnectionProfileId;
 use ctx_core::models::MobileConnectionProfile;
 pub use ctx_mobile_access_service::{
     default_mobile_profile_scopes, mobile_scope_set_from_strings, MobileAuthContext,
-    MobileAuthContextError, MobileScope, MobileScopeSet,
+    MobileAuthContextError,
 };
 
 use crate::daemon::DaemonState;

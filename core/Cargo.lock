@@ -1129,6 +1129,7 @@ dependencies = [
  "ctx-managed-installs",
  "ctx-mcp-auth",
  "ctx-mcp-command",
+ "ctx-mobile-access-service",
  "ctx-observability",
  "ctx-provider-accounts",
  "ctx-provider-auth-import",

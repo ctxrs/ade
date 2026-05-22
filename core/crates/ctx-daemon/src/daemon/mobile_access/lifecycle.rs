@@ -2,8 +2,12 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use ctx_mobile_access_service::{
-    persist_mobile_access_enable_bootstrap, MobileAccessServiceError, MobileAccessServiceErrorKind,
-    PersistMobileAccessEnableBootstrapRequest,
+    persist_mobile_access_enable_bootstrap,
+    route_contract::{
+        DisableMobileAccessError, EnableMobileAccessRequest, EnableMobileAccessResult,
+        MobileAccessRouteError, MobileAccessStatusSnapshot,
+    },
+    MobileAccessConfigSnapshot, PersistMobileAccessEnableBootstrapRequest,
 };
 use serde_json::json;
 use url::Url;
@@ -12,77 +16,8 @@ use super::control_plane::{
     request_control_plane_enable, revoke_control_plane_mobile_access_best_effort,
     ControlPlaneEnableResp, PAIRING_TOKEN_TTL_SECS,
 };
-use super::{
-    DisableMobileAccessError, EnableMobileAccessRequest, MobileAccessConfigSnapshot,
-    MobileAccessStatusSnapshot, StartMobileTunnelRequest,
-};
+use super::StartMobileTunnelRequest;
 use crate::daemon::DaemonState;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MobileAccessRouteErrorKind {
-    BadRequest,
-    Unauthorized,
-    Forbidden,
-    Conflict,
-    NotFound,
-    BadGateway,
-    Internal,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MobileAccessRouteError {
-    kind: MobileAccessRouteErrorKind,
-    message: String,
-}
-
-impl MobileAccessRouteError {
-    pub fn new(kind: MobileAccessRouteErrorKind, message: impl Into<String>) -> Self {
-        Self {
-            kind,
-            message: message.into(),
-        }
-    }
-
-    pub fn bad_request(message: impl Into<String>) -> Self {
-        Self::new(MobileAccessRouteErrorKind::BadRequest, message)
-    }
-
-    pub fn unauthorized(message: impl Into<String>) -> Self {
-        Self::new(MobileAccessRouteErrorKind::Unauthorized, message)
-    }
-
-    pub fn internal(message: impl Into<String>) -> Self {
-        Self::new(MobileAccessRouteErrorKind::Internal, message)
-    }
-
-    pub fn kind(&self) -> MobileAccessRouteErrorKind {
-        self.kind
-    }
-
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-}
-
-impl From<MobileAccessServiceError> for MobileAccessRouteError {
-    fn from(error: MobileAccessServiceError) -> Self {
-        let kind = match error.kind() {
-            MobileAccessServiceErrorKind::BadRequest => MobileAccessRouteErrorKind::BadRequest,
-            MobileAccessServiceErrorKind::Unauthorized => MobileAccessRouteErrorKind::Unauthorized,
-            MobileAccessServiceErrorKind::Conflict => MobileAccessRouteErrorKind::Conflict,
-            MobileAccessServiceErrorKind::NotFound => MobileAccessRouteErrorKind::NotFound,
-            MobileAccessServiceErrorKind::Internal => MobileAccessRouteErrorKind::Internal,
-        };
-        Self::new(kind, error.message())
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct EnableMobileAccessResult {
-    pub status: MobileAccessStatusSnapshot,
-    pub qr_payload: serde_json::Value,
-    pub pairing_expires_at: DateTime<Utc>,
-}
 
 pub fn mobile_public_url_is_allowed(url: &Url) -> bool {
     if url.scheme() == "https" {
