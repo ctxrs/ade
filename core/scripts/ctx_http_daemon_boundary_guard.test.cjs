@@ -205,6 +205,9 @@ const {
   scanProviderRuntimeSurfaceHandleRatchet,
   scanProviderWorkspaceLaunchDaemonFacadeRatchet,
   scanProviderWorkspaceLaunchHandleRatchet,
+  scanResourceUtilizationDaemonImplementationRatchet,
+  scanResourceUtilizationHandleFieldRatchet,
+  scanResourceUtilizationRouteExtractorRatchet,
   scanTaskAdmissionDaemonImplementationRatchet,
   scanTaskAdmissionHandleFieldRatchet,
   scanTaskAdmissionHandleRatchet,
@@ -1850,6 +1853,118 @@ test("appstate guard rejects workspace active assembly through broad active load
 
   assert(violations.includes("workspace active assembly uses broad workspace handle"));
   assert(violations.includes("workspace active assembly uses old broad active loader"));
+});
+
+test("appstate guard rejects resource utilization route extraction outside resource route", () => {
+  const violations = scanResourceUtilizationRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/workspaces/management.rs",
+    contents: `
+      use ctx_daemon::daemon::ResourceUtilizationHandle;
+      async fn handler(
+        State(state): State<ResourceUtilizationHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(violations, [
+    "resource utilization route extracts ResourceUtilizationHandle outside resource route",
+  ]);
+
+  assert.deepEqual(
+    scanResourceUtilizationRouteExtractorRatchet({
+      filePath: "core/crates/ctx-http/src/api/resource_utilization.rs",
+      contents: `
+        async fn handler(
+          State(state): State<ResourceUtilizationHandle>,
+        ) {}
+      `,
+    }),
+    [],
+  );
+});
+
+test("appstate guard rejects resource utilization broad route and router composition", () => {
+  const routeViolations = scanResourceUtilizationRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/resource_utilization.rs",
+    contents: `
+      use ctx_daemon::daemon::WorkspacesHandle;
+      async fn handler(State(state): State<WorkspacesHandle>) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert(routeViolations.includes("resource utilization route uses broad workspace handle"));
+
+  const routerViolations = scanResourceUtilizationRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/router.rs",
+    contents: `
+      impl RouteHandles {
+        fn from_daemon_handle(handle: DaemonHandle) -> Self {
+          Self {
+            resource_utilization: handle.workspaces(),
+          }
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(routerViolations, [
+    "resource utilization router composed from broad workspace handle",
+  ]);
+});
+
+test("appstate guard rejects resource utilization daemon facade broad seams", () => {
+  const violations = scanResourceUtilizationDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/resource_utilization.rs",
+    contents: `
+      use crate::daemon::{DaemonHandle, WorkspacesHandle};
+      use crate::daemon::DaemonState;
+
+      impl WorkspacesHandle {
+        async fn broad(&self, state: Arc<DaemonState>, daemon: DaemonHandle) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(violations.includes("resource utilization daemon facade uses broad daemon state"));
+  assert(violations.includes("resource utilization daemon facade uses broad daemon handle"));
+  assert(violations.includes("resource utilization daemon facade uses broad workspace handle"));
+});
+
+test("appstate guard rejects resource utilization broad handle fields", () => {
+  const fieldViolations = scanResourceUtilizationHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct ResourceUtilizationHandle {
+        workspaces: WorkspacesHandle,
+        daemon: DaemonHandle,
+        state: Arc<DaemonState>,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    fieldViolations.includes(
+      "resource utilization capability stores broad handle or daemon state",
+    ),
+  );
+  assert(
+    fieldViolations.includes(
+      "resource utilization capability exposes generic full-state escape hatch",
+    ),
+  );
+
+  const narrowViolations = scanResourceUtilizationHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct ResourceUtilizationHandle {
+        workspace_stores: ProtectedWorkspaceStoreLookup,
+        providers: Arc<ProviderRuntime>,
+        resource_sampler: Arc<Mutex<ResourceSampler>>,
+      }
+    `,
+  });
+
+  assert.deepEqual(narrowViolations, []);
 });
 
 test("daemon boundary guard rejects route-visible store accessors", () => {

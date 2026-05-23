@@ -219,6 +219,10 @@ const workspaceActiveRouteExtractorAllowedPaths = new Set([
   "core/crates/ctx-http/src/api/workspaces/active.rs",
 ]);
 
+const resourceUtilizationRouteExtractorAllowedPaths = new Set([
+  "core/crates/ctx-http/src/api/resource_utilization.rs",
+]);
+
 const workspaceStreamActiveDaemonImplementationPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/workspaces/stream/access.rs",
   "core/crates/ctx-daemon/src/daemon/workspaces/stream/cursor_acceptance.rs",
@@ -8432,6 +8436,154 @@ function scanWorkspaceActiveAssemblyRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanResourceUtilizationRouteExtractorRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+
+  if (!resourceUtilizationRouteExtractorAllowedPaths.has(filePath)) {
+    const resourceExtractorRegex =
+      /\bState\s*(?:\(\s*[A-Za-z_][A-Za-z0-9_]*\s*\))?\s*:\s*State\s*<\s*ResourceUtilizationHandle\s*>/gu;
+    for (
+      let match = resourceExtractorRegex.exec(contents);
+      match;
+      match = resourceExtractorRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "resource utilization route extracts ResourceUtilizationHandle outside resource route",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  if (filePath === "core/crates/ctx-http/src/api/resource_utilization.rs") {
+    const broadRegex = /\bWorkspacesHandle\b/gu;
+    for (let match = broadRegex.exec(contents); match; match = broadRegex.exec(contents)) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "resource utilization route uses broad workspace handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  if (filePath === "core/crates/ctx-http/src/api/router.rs") {
+    const broadCompositionRegex =
+      /\bresource_utilization\s*:\s*handle\s*\.\s*workspaces\s*\(/gu;
+    for (
+      let match = broadCompositionRegex.exec(contents);
+      match;
+      match = broadCompositionRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "resource utilization router composed from broad workspace handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
+function scanResourceUtilizationDaemonImplementationRatchet({ filePath, contents }) {
+  if (filePath !== "core/crates/ctx-daemon/src/daemon/resource_utilization.rs") {
+    return [];
+  }
+
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const checks = [
+    {
+      name: "resource utilization daemon facade uses broad daemon state",
+      regex: /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu,
+    },
+    {
+      name: "resource utilization daemon facade uses broad daemon handle",
+      regex: /\bDaemonHandle\b/gu,
+    },
+    {
+      name: "resource utilization daemon facade uses broad workspace handle",
+      regex: /\bWorkspacesHandle\b/gu,
+    },
+  ];
+
+  for (const check of checks) {
+    for (let match = check.regex.exec(contents); match; match = check.regex.exec(contents)) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
+function scanResourceUtilizationHandleFieldRatchet({ filePath, contents }) {
+  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    return [];
+  }
+
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const broadFieldRegex =
+    /\b(?:TasksHandle|SessionsHandle|WorkspacesHandle|WorkspaceActiveHandle|WorkspaceStreamHandle|ProvidersHandle|TransportHandle|ExecutionHandle|DaemonHandle|DaemonState)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+  const genericEscapeFieldRegex =
+    /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:with_state|with_daemon|daemon|state)\s*:/gmu;
+
+  const handleStruct = rustStructBlockForType({
+    contents,
+    typeName: "ResourceUtilizationHandle",
+  });
+  if (!handleStruct) {
+    return violations;
+  }
+
+  broadFieldRegex.lastIndex = 0;
+  for (
+    let broad = broadFieldRegex.exec(handleStruct.text);
+    broad;
+    broad = broadFieldRegex.exec(handleStruct.text)
+  ) {
+    const offset = handleStruct.index + broad.index;
+    const line = contents.slice(0, offset).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "resource utilization capability stores broad handle or daemon state",
+      text: lines[line - 1]?.trim() ?? broad[0],
+    });
+  }
+
+  genericEscapeFieldRegex.lastIndex = 0;
+  for (
+    let escape = genericEscapeFieldRegex.exec(handleStruct.text);
+    escape;
+    escape = genericEscapeFieldRegex.exec(handleStruct.text)
+  ) {
+    const offset = handleStruct.index + escape.index;
+    const line = contents.slice(0, offset).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "resource utilization capability exposes generic full-state escape hatch",
+      text: lines[line - 1]?.trim() ?? escape[0],
+    });
+  }
+
+  return violations;
+}
+
 function scanSessionVcsHandleFieldRatchet({ filePath, contents }) {
   if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
     return [];
@@ -8597,6 +8749,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanResourceUtilizationRouteExtractorRatchet({
+        filePath: relativePath,
+        contents,
+      }),
     );
   }
 
@@ -8663,6 +8819,10 @@ function scanRepo() {
         contents,
       }),
       ...scanWorkspaceActiveAssemblyRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanResourceUtilizationHandleFieldRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -8749,6 +8909,10 @@ function scanRepo() {
         contents,
       }),
       ...scanWorkspaceActiveDaemonImplementationRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanResourceUtilizationDaemonImplementationRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -9359,6 +9523,9 @@ module.exports = {
   scanProviderRuntimeSurfaceHandleRatchet,
   scanProviderWorkspaceLaunchDaemonFacadeRatchet,
   scanProviderWorkspaceLaunchHandleRatchet,
+  scanResourceUtilizationDaemonImplementationRatchet,
+  scanResourceUtilizationHandleFieldRatchet,
+  scanResourceUtilizationRouteExtractorRatchet,
   scanTaskAdmissionDaemonImplementationRatchet,
   scanTaskAdmissionHandleFieldRatchet,
   scanTaskAdmissionHandleRatchet,

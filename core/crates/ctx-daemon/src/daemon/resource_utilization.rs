@@ -1,5 +1,4 @@
 use std::path::Path;
-use std::sync::Arc;
 use std::time::Instant;
 
 use ctx_core::ids::WorkspaceId;
@@ -8,7 +7,7 @@ use ctx_resource_utilization::route_contract::{
     ResourceUtilizationRouteError, ResourceUtilizationRouteQuery, ResourceUtilizationRouteResponse,
 };
 
-use crate::daemon::{DaemonState, StoreLookup, WorkspacesHandle};
+use crate::daemon::{ResourceUtilizationHandle, WorkspaceStoreAccessError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResourceUtilizationSnapshotError {
@@ -33,37 +32,40 @@ fn route_error_from_snapshot_error(
     }
 }
 
-pub async fn workspace_resource_utilization_snapshot(
-    state: &Arc<DaemonState>,
+async fn workspace_resource_utilization_snapshot_with_disabled(
+    handle: &ResourceUtilizationHandle,
     workspace_id: WorkspaceId,
+    disabled: bool,
 ) -> Result<resource_utilization::ResourceUtilizationSnapshot, ResourceUtilizationSnapshotError> {
-    if resource_utilization::resource_utilization_disabled_from_env() {
+    if disabled {
         return Err(ResourceUtilizationSnapshotError::Disabled);
     }
 
-    let workspace = state
+    let workspace = handle
         .global_store()
         .get_workspace(workspace_id)
         .await
         .map_err(|_| ResourceUtilizationSnapshotError::Internal)?
         .ok_or(ResourceUtilizationSnapshotError::WorkspaceNotFound)?;
 
-    let store = match state.lookup_workspace_store(workspace_id).await {
-        StoreLookup::Found(store) => store,
-        StoreLookup::Missing | StoreLookup::Deleting => {
-            return Err(ResourceUtilizationSnapshotError::WorkspaceNotFound);
+    let store = match handle.existing_workspace_store(workspace_id).await {
+        Ok(store) => store,
+        Err(WorkspaceStoreAccessError::NotFound) => {
+            return Err(ResourceUtilizationSnapshotError::WorkspaceNotFound)
         }
-        StoreLookup::Unavailable(_) => return Err(ResourceUtilizationSnapshotError::Internal),
+        Err(WorkspaceStoreAccessError::Unavailable(_)) => {
+            return Err(ResourceUtilizationSnapshotError::Internal)
+        }
     };
     let worktrees = store
         .list_worktrees(workspace_id)
         .await
         .map_err(|_| ResourceUtilizationSnapshotError::Internal)?;
 
-    let provider_processes = state.providers.list_provider_processes().await;
+    let provider_processes = handle.providers().list_provider_processes().await;
 
     let (system, disks, cache_age_ms, processes, disk_cache) = {
-        let mut sampler = state.telemetry.resource_sampler.lock().await;
+        let mut sampler = handle.resource_sampler().lock().await;
         let (system, disks, cache_age_ms) = sampler.system_snapshot();
         let processes = sampler.processes_snapshot_light(std::process::id(), &provider_processes);
         let disk_cache = sampler.disk_cache_entry(workspace_id);
@@ -88,7 +90,7 @@ pub async fn workspace_resource_utilization_snapshot(
         })
         .await
         .map_err(|_| ResourceUtilizationSnapshotError::Internal)?;
-        let mut sampler = state.telemetry.resource_sampler.lock().await;
+        let mut sampler = handle.resource_sampler().lock().await;
         sampler.update_disk_cache(workspace_id, now, snapshot.clone());
         (snapshot, 0)
     } else {
@@ -119,31 +121,65 @@ pub async fn workspace_resource_utilization_snapshot(
     })
 }
 
-impl WorkspacesHandle {
+pub async fn workspace_resource_utilization_snapshot(
+    handle: &ResourceUtilizationHandle,
+    workspace_id: WorkspaceId,
+) -> Result<resource_utilization::ResourceUtilizationSnapshot, ResourceUtilizationSnapshotError> {
+    workspace_resource_utilization_snapshot_with_disabled(
+        handle,
+        workspace_id,
+        resource_utilization::resource_utilization_disabled_from_env(),
+    )
+    .await
+}
+
+async fn workspace_resource_utilization_snapshot_for_route_with_disabled(
+    handle: &ResourceUtilizationHandle,
+    query: ResourceUtilizationRouteQuery,
+    disabled: bool,
+) -> Result<ResourceUtilizationRouteResponse, ResourceUtilizationRouteError> {
+    let workspace_id = query.parse_workspace_id()?;
+    workspace_resource_utilization_snapshot_with_disabled(handle, workspace_id, disabled)
+        .await
+        .map(ResourceUtilizationRouteResponse::new)
+        .map_err(route_error_from_snapshot_error)
+}
+
+impl ResourceUtilizationHandle {
     pub async fn workspace_resource_utilization_snapshot(
         &self,
         workspace_id: WorkspaceId,
     ) -> Result<resource_utilization::ResourceUtilizationSnapshot, ResourceUtilizationSnapshotError>
     {
-        workspace_resource_utilization_snapshot(&self.state, workspace_id).await
+        workspace_resource_utilization_snapshot(self, workspace_id).await
     }
 
     pub async fn workspace_resource_utilization_snapshot_for_route(
         &self,
         query: ResourceUtilizationRouteQuery,
     ) -> Result<ResourceUtilizationRouteResponse, ResourceUtilizationRouteError> {
-        let workspace_id = query.parse_workspace_id()?;
-        self.workspace_resource_utilization_snapshot(workspace_id)
-            .await
-            .map(ResourceUtilizationRouteResponse::new)
-            .map_err(route_error_from_snapshot_error)
+        workspace_resource_utilization_snapshot_for_route_with_disabled(
+            self,
+            query,
+            resource_utilization::resource_utilization_disabled_from_env(),
+        )
+        .await
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TestDaemon;
+    use ctx_core::models::VcsKind;
     use ctx_resource_utilization::route_contract::ResourceUtilizationRouteErrorKind;
+
+    fn resource_query(workspace_id: impl ToString) -> ResourceUtilizationRouteQuery {
+        serde_json::from_value(serde_json::json!({
+            "workspace_id": workspace_id.to_string(),
+        }))
+        .expect("resource utilization route query")
+    }
 
     #[test]
     fn snapshot_errors_map_to_route_errors() {
@@ -157,5 +193,101 @@ mod tests {
 
         let internal = route_error_from_snapshot_error(ResourceUtilizationSnapshotError::Internal);
         assert_eq!(internal.kind(), ResourceUtilizationRouteErrorKind::Internal);
+    }
+
+    #[tokio::test]
+    async fn resource_utilization_route_rejects_invalid_workspace_id_before_snapshot_lookup() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let daemon =
+            TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+                .await
+                .expect("test daemon");
+        let error = daemon
+            .handle()
+            .resource_utilization()
+            .workspace_resource_utilization_snapshot_for_route(resource_query("not-a-workspace"))
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.kind(), ResourceUtilizationRouteErrorKind::BadRequest);
+        assert_eq!(error.message(), "invalid workspace id");
+    }
+
+    #[tokio::test]
+    async fn resource_utilization_route_maps_missing_global_workspace_to_not_found() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let daemon =
+            TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+                .await
+                .expect("test daemon");
+        let handle = daemon.handle().resource_utilization();
+        let error = workspace_resource_utilization_snapshot_for_route_with_disabled(
+            &handle,
+            resource_query(WorkspaceId::new().0),
+            false,
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(error.kind(), ResourceUtilizationRouteErrorKind::NotFound);
+        assert_eq!(error.message(), "workspace not found");
+    }
+
+    #[tokio::test]
+    async fn resource_utilization_route_maps_deleting_workspace_store_to_not_found() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let daemon =
+            TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+                .await
+                .expect("test daemon");
+        let workspace = daemon
+            .seed_workspace_for_test("workspace", temp.path(), VcsKind::Git)
+            .await
+            .expect("workspace");
+        daemon
+            .cache_rehydration_begin_workspace_delete_for_test(workspace.id)
+            .await;
+        let handle = daemon.handle().resource_utilization();
+        let error = workspace_resource_utilization_snapshot_for_route_with_disabled(
+            &handle,
+            resource_query(workspace.id.0),
+            false,
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(error.kind(), ResourceUtilizationRouteErrorKind::NotFound);
+        assert_eq!(error.message(), "workspace not found");
+        daemon
+            .cache_rehydration_finish_workspace_delete_for_test(workspace.id)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn resource_utilization_route_maps_unavailable_workspace_store_to_internal() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let daemon =
+            TestDaemon::new_for_test(temp.path().to_path_buf(), "http://127.0.0.1:0".to_string())
+                .await
+                .expect("test daemon");
+        let workspace = daemon
+            .seed_workspace_for_test("workspace", temp.path(), VcsKind::Git)
+            .await
+            .expect("workspace");
+        daemon
+            .workspace_active_snapshot_make_store_unopenable_for_test(workspace.id)
+            .await
+            .expect("make workspace store unavailable");
+        let handle = daemon.handle().resource_utilization();
+        let error = workspace_resource_utilization_snapshot_for_route_with_disabled(
+            &handle,
+            resource_query(workspace.id.0),
+            false,
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(error.kind(), ResourceUtilizationRouteErrorKind::Internal);
+        assert_eq!(error.message(), "resource utilization unavailable");
     }
 }

@@ -12,11 +12,11 @@ use ctx_daemon::daemon::{
     ProviderAccountsHandle, ProviderAdminHandle, ProviderAuthImportHandle, ProviderBootstrapHandle,
     ProviderHarnessConfigHandle, ProviderInstallHandle, ProviderOptionsHandle,
     ProviderStatusHandle, ProviderUsageHandle, ProviderWorkspaceAuthHandle, RequestBaseHandle,
-    SessionArtifactsHandle, SessionVcsHandle, SessionsHandle, SettingsHandle, TaskCreationHandle,
-    TaskLifecycleHandle, TaskListingHandle, TaskReadStateHandle, TaskSessionAdmissionHandle,
-    TaskSessionListingHandle, TaskTitleHandle, TelemetryHandle, TransportHandle,
-    UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle, WorkspaceActiveHandle,
-    WorkspaceStreamHandle, WorkspacesHandle,
+    ResourceUtilizationHandle, SessionArtifactsHandle, SessionVcsHandle, SessionsHandle,
+    SettingsHandle, TaskCreationHandle, TaskLifecycleHandle, TaskListingHandle,
+    TaskReadStateHandle, TaskSessionAdmissionHandle, TaskSessionListingHandle, TaskTitleHandle,
+    TelemetryHandle, TransportHandle, UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle,
+    WorkspaceActiveHandle, WorkspaceStreamHandle, WorkspacesHandle,
 };
 
 use super::auth::auth_middleware;
@@ -93,6 +93,7 @@ pub struct RouteHandles {
     pub(in crate::api) mobile_store: MobileStoreHandle,
     pub(in crate::api) mobile_runtime: MobileRuntimeHandle,
     pub(in crate::api) mobile_secure_proxy: MobileSecureProxyHandle,
+    pub(in crate::api) resource_utilization: ResourceUtilizationHandle,
     pub(in crate::api) session_artifacts: SessionArtifactsHandle,
     pub(in crate::api) session_vcs: SessionVcsHandle,
     pub(in crate::api) sessions: SessionsHandle,
@@ -141,6 +142,7 @@ impl RouteHandles {
             mobile_store: handle.mobile_store(),
             mobile_runtime: handle.mobile_runtime(),
             mobile_secure_proxy: handle.mobile_secure_proxy(),
+            resource_utilization: handle.resource_utilization(),
             session_artifacts: handle.session_artifacts(),
             session_vcs: handle.session_vcs(),
             sessions: handle.sessions(),
@@ -194,6 +196,7 @@ impl_route_state_extractors! {
     MobileStoreHandle, mobile_store;
     MobileRuntimeHandle, mobile_runtime;
     MobileSecureProxyHandle, mobile_secure_proxy;
+    ResourceUtilizationHandle, resource_utilization;
     SessionArtifactsHandle, session_artifacts;
     SessionVcsHandle, session_vcs;
     SessionsHandle, sessions;

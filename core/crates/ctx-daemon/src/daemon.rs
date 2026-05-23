@@ -79,10 +79,10 @@ pub use handle::{
     ProviderAccountsHandle, ProviderAdminHandle, ProviderAuthImportHandle, ProviderBootstrapHandle,
     ProviderHarnessConfigHandle, ProviderInstallHandle, ProviderOptionsHandle,
     ProviderStatusHandle, ProviderUsageHandle, ProviderWorkspaceAuthHandle, ProvidersHandle,
-    RequestBaseHandle, SessionArtifactsHandle, SessionVcsHandle, SessionsHandle, SettingsHandle,
-    TaskCreationHandle, TaskLifecycleHandle, TaskListingHandle, TaskReadStateHandle,
-    TaskSessionAdmissionHandle, TaskSessionListingHandle, TaskTitleHandle, TelemetryHandle,
-    TransportHandle, UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle,
+    RequestBaseHandle, ResourceUtilizationHandle, SessionArtifactsHandle, SessionVcsHandle,
+    SessionsHandle, SettingsHandle, TaskCreationHandle, TaskLifecycleHandle, TaskListingHandle,
+    TaskReadStateHandle, TaskSessionAdmissionHandle, TaskSessionListingHandle, TaskTitleHandle,
+    TelemetryHandle, TransportHandle, UpdateActivityHandle, UpdateDrainHandle, UpdateReleaseHandle,
     WorkspaceActiveHandle, WorkspaceStreamHandle, WorkspacesHandle,
 };
 pub use health::HealthSnapshotError;

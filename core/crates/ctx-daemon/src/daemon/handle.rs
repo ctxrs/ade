@@ -158,6 +158,18 @@ impl DaemonHandle {
         )
     }
 
+    pub fn resource_utilization(&self) -> ResourceUtilizationHandle {
+        ResourceUtilizationHandle::new(
+            ProtectedWorkspaceStoreLookup::new(
+                self.state.core.stores.clone(),
+                Arc::clone(&self.state.sessions),
+                Arc::clone(&self.state.transport.merge_queue),
+            ),
+            Arc::clone(&self.state.providers),
+            Arc::clone(&self.state.telemetry.resource_sampler),
+        )
+    }
+
     pub fn sessions(&self) -> SessionsHandle {
         SessionsHandle::new(Arc::clone(&self.state))
     }
@@ -1481,6 +1493,48 @@ impl MobileSecureProxyHandle {
 
     pub(in crate::daemon) fn telemetry(&self) -> &Telemetry {
         &self.telemetry
+    }
+}
+
+#[derive(Clone)]
+pub struct ResourceUtilizationHandle {
+    workspace_stores: ProtectedWorkspaceStoreLookup,
+    providers: Arc<ProviderRuntime>,
+    resource_sampler: Arc<Mutex<ResourceSampler>>,
+}
+
+impl ResourceUtilizationHandle {
+    pub(in crate::daemon) fn new(
+        workspace_stores: ProtectedWorkspaceStoreLookup,
+        providers: Arc<ProviderRuntime>,
+        resource_sampler: Arc<Mutex<ResourceSampler>>,
+    ) -> Self {
+        Self {
+            workspace_stores,
+            providers,
+            resource_sampler,
+        }
+    }
+
+    pub(in crate::daemon) fn global_store(&self) -> &Store {
+        self.workspace_stores.global_store()
+    }
+
+    pub(in crate::daemon) async fn existing_workspace_store(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<Store, crate::daemon::WorkspaceStoreAccessError> {
+        self.workspace_stores
+            .existing_workspace_store(workspace_id)
+            .await
+    }
+
+    pub(in crate::daemon) fn providers(&self) -> &ProviderRuntime {
+        self.providers.as_ref()
+    }
+
+    pub(in crate::daemon) fn resource_sampler(&self) -> &Mutex<ResourceSampler> {
+        self.resource_sampler.as_ref()
     }
 }
 

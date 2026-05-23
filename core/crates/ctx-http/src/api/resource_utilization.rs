@@ -1,12 +1,12 @@
 use super::*;
-use ctx_daemon::daemon::WorkspacesHandle;
+use ctx_daemon::daemon::ResourceUtilizationHandle;
 use ctx_resource_utilization::route_contract::{
     ResourceUtilizationRouteError, ResourceUtilizationRouteErrorKind,
     ResourceUtilizationRouteQuery, ResourceUtilizationRouteResponse,
 };
 
 pub(in crate::api) async fn resource_utilization(
-    State(state): State<WorkspacesHandle>,
+    State(state): State<ResourceUtilizationHandle>,
     Query(query): Query<ResourceUtilizationRouteQuery>,
 ) -> Result<Json<ResourceUtilizationRouteResponse>, StatusCode> {
     state
