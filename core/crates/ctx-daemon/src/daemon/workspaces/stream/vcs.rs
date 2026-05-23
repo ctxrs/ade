@@ -15,9 +15,7 @@ use tokio::sync::broadcast;
 use crate::daemon::DaemonState;
 use crate::daemon::WorkspacesHandle;
 
-use super::access::{
-    require_existing_workspace_for_stream, workspace_stream_route_error_from_access,
-};
+use super::access::workspace_stream_route_error_from_access;
 use super::{WorkspaceStreamAccessError, WorkspaceStreamRouteAdmission};
 
 pub async fn filter_workspace_worktree_ids(
@@ -163,7 +161,17 @@ impl WorkspacesHandle {
         &self,
         workspace_id: WorkspaceId,
     ) -> Result<(), WorkspaceStreamAccessError> {
-        require_existing_workspace_for_stream(&self.state, workspace_id).await
+        let exists = self
+            .state
+            .global_store()
+            .get_workspace(workspace_id)
+            .await
+            .map_err(WorkspaceStreamAccessError::Internal)?
+            .is_some();
+        if !exists {
+            return Err(WorkspaceStreamAccessError::NotFound);
+        }
+        Ok(())
     }
 
     pub async fn admit_workspace_vcs_stream_for_route(

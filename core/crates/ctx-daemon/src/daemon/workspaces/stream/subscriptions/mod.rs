@@ -48,7 +48,7 @@ impl WorkspaceStreamHandle {
         event: &WorkspaceActiveSnapshotEvent,
     ) -> WorkspaceStreamSubscriptionEventApplication {
         apply_workspace_stream_subscription_event(
-            &self.state,
+            self,
             workspace_id,
             subscription_state,
             subscriptions,
@@ -65,7 +65,7 @@ impl WorkspaceStreamHandle {
         event: WorkspaceActiveSnapshotEvent,
     ) -> WorkspaceStreamLiveEventApplication {
         apply_workspace_stream_live_event(
-            &self.state,
+            self,
             workspace_id,
             subscription_state,
             subscriptions,
@@ -80,7 +80,7 @@ impl WorkspaceStreamHandle {
         message: WorkspaceActiveSnapshotClientMessage,
         existing: &HashMap<SessionId, SessionReplayCursor>,
     ) -> Result<WorkspaceStreamSubscriptionPlan, WorkspaceStreamSubscriptionResolutionError> {
-        super::prepare_subscription_read_model(&self.state, workspace_id)
+        super::prepare_subscription_read_model(self, workspace_id)
             .await
             .map_err(|error| {
                 tracing::error!(
@@ -91,7 +91,7 @@ impl WorkspaceStreamHandle {
                 WorkspaceStreamSubscriptionResolutionError::Hydration
             })?;
         let resolved = resolution::resolve_workspace_active_snapshot_subscriptions(
-            &self.state,
+            self,
             workspace_id,
             message.clone(),
             existing,
@@ -113,7 +113,7 @@ impl WorkspaceStreamHandle {
         WorkspaceStreamSubscriptionTransactionPlan,
         WorkspaceStreamSubscriptionResolutionError,
     > {
-        super::prepare_subscription_read_model(&self.state, workspace_id)
+        super::prepare_subscription_read_model(self, workspace_id)
             .await
             .map_err(|error| {
                 tracing::error!(
@@ -124,7 +124,7 @@ impl WorkspaceStreamHandle {
                 WorkspaceStreamSubscriptionResolutionError::Hydration
             })?;
         let resolved = resolution::resolve_workspace_active_snapshot_subscriptions(
-            &self.state,
+            self,
             workspace_id,
             message.clone(),
             current_subscriptions,

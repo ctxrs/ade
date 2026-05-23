@@ -7,11 +7,11 @@ use crate::daemon::WorkspaceStreamHandle;
 
 impl WorkspaceStreamHandle {
     pub async fn attach_session_pin(&self, session_id: SessionId) {
-        self.state.attach_session(session_id).await;
+        self.attach_workspace_stream_session_pin(session_id).await;
     }
 
     pub async fn detach_session_pin(&self, session_id: SessionId) {
-        self.state.detach_session(session_id).await;
+        self.detach_workspace_stream_session_pin(session_id).await;
     }
 
     pub async fn apply_workspace_stream_session_pin_changes(
@@ -19,10 +19,10 @@ impl WorkspaceStreamHandle {
         pin_changes: &super::WorkspaceStreamSessionPinChanges,
     ) {
         for session_id in &pin_changes.attach {
-            self.state.attach_session(*session_id).await;
+            self.attach_workspace_stream_session_pin(*session_id).await;
         }
         for session_id in &pin_changes.detach {
-            self.state.detach_session(*session_id).await;
+            self.detach_workspace_stream_session_pin(*session_id).await;
         }
     }
 
@@ -31,7 +31,7 @@ impl WorkspaceStreamHandle {
         I: IntoIterator<Item = SessionId>,
     {
         for session_id in session_ids {
-            self.state.detach_session(session_id).await;
+            self.detach_workspace_stream_session_pin(session_id).await;
         }
     }
 
@@ -46,7 +46,7 @@ impl WorkspaceStreamHandle {
         for (key, value) in labels {
             event = event.with_property(*key, value.clone());
         }
-        self.state.telemetry.telemetry.emit(event).await;
+        self.telemetry().emit(event).await;
     }
 
     pub async fn record_workspace_stream_receiver_drain(
@@ -62,9 +62,7 @@ impl WorkspaceStreamHandle {
             "hit_limit".to_string(),
             if hit_limit { "true" } else { "false" }.to_string(),
         );
-        self.state
-            .telemetry
-            .perf_telemetry
+        self.perf_telemetry()
             .record_metric(
                 ctx_observability::perf_telemetry::PerfMetric {
                     name: "workspace.stream.receiver_drain_event_count".to_string(),

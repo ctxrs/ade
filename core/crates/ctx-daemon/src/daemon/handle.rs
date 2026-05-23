@@ -22,7 +22,7 @@ use ctx_provider_install::install_state::{
 use ctx_provider_runtime::ProviderRuntime;
 use ctx_resource_utilization::resource_governance::ResourceGovernanceRuntime;
 use ctx_resource_utilization::ResourceSampler;
-use ctx_session_runtime::runtime::SessionRuntime;
+use ctx_session_runtime::runtime::{SessionLifecycleHost, SessionRuntime};
 use ctx_session_tools::model_resolution::ModelCatalog;
 use ctx_session_vcs_service::vcs::SessionVcsDiffBaseQuery;
 use ctx_settings_model::ExecutionSettings;
@@ -32,6 +32,7 @@ use ctx_store::{Store, StoreManager};
 use ctx_transport_runtime::mobile_tunnel::MobileTunnelManager;
 use ctx_transport_runtime::terminals::TerminalManager;
 use ctx_update_service::UpdateDrainCoordinator;
+use ctx_workspace_active_snapshot::WorkspaceActiveSnapshotHub;
 use ctx_workspace_runtime::HarnessRuntimeManager;
 use ctx_worktree_vcs_service::{
     GitStatusSnapshot, WorktreeDiffBaseResolution, WorktreeVcsCommitLookupSource,
@@ -779,7 +780,56 @@ impl DaemonHandle {
     }
 
     pub fn workspace_stream(&self) -> WorkspaceStreamHandle {
-        WorkspaceStreamHandle::new(Arc::clone(&self.state))
+        let workspace_stores = ProtectedWorkspaceStoreLookup::new(
+            self.state.core.stores.clone(),
+            Arc::clone(&self.state.sessions),
+            Arc::clone(&self.state.transport.merge_queue),
+        );
+        let session_stores =
+            SessionStoreLookup::new(self.state.global_store().clone(), workspace_stores.clone());
+        let lifecycle_host = Arc::new(WorkspaceStreamSessionLifecycleHost::new(
+            self.state.global_store().clone(),
+            Arc::clone(&self.state.workspaces.workspace_active_snapshot),
+            Arc::clone(&self.state.providers),
+        ));
+        let ensure_workspace_active_snapshot_hydrated = Arc::new({
+            let state = Arc::clone(&self.state);
+            move |workspace_id: WorkspaceId| {
+                let state = Arc::clone(&state);
+                Box::pin(async move {
+                    state
+                        .ensure_workspace_active_snapshot_hydrated(workspace_id)
+                        .await
+                }) as WorkspaceStreamFuture<_>
+            }
+        });
+        let activate_workspace_merge_queue = Arc::new({
+            let state = Arc::clone(&self.state);
+            move |workspace_id: WorkspaceId| {
+                let state = Arc::clone(&state);
+                Box::pin(async move {
+                    crate::daemon::merge_queue::activate_workspace_merge_queue(
+                        &state,
+                        workspace_id,
+                    )
+                    .await;
+                }) as WorkspaceStreamFuture<_>
+            }
+        });
+        WorkspaceStreamHandle::new(WorkspaceStreamHandleParts {
+            global_store: self.state.global_store().clone(),
+            workspace_stores,
+            session_stores,
+            active_snapshot: Arc::clone(&self.state.workspaces.workspace_active_snapshot),
+            sessions: Arc::clone(&self.state.sessions),
+            lifecycle_host,
+            telemetry: self.state.telemetry.telemetry.clone(),
+            perf_telemetry: self.state.telemetry.perf_telemetry.clone(),
+            effects: WorkspaceStreamEffects::new(WorkspaceStreamEffectsParts {
+                ensure_workspace_active_snapshot_hydrated,
+                activate_workspace_merge_queue,
+            }),
+        })
     }
 
     pub fn providers(&self) -> ProvidersHandle {
@@ -3496,9 +3546,192 @@ macro_rules! domain_handle_with_accessor {
     };
 }
 
+type WorkspaceStreamFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
+type WorkspaceStreamHydrationEffect = Arc<
+    dyn Fn(
+            WorkspaceId,
+        )
+            -> WorkspaceStreamFuture<Result<(), crate::daemon::workspaces::WorkspaceHydrationError>>
+        + Send
+        + Sync,
+>;
+type WorkspaceStreamUnitEffect =
+    Arc<dyn Fn(WorkspaceId) -> WorkspaceStreamFuture<()> + Send + Sync>;
+
+pub(in crate::daemon) struct WorkspaceStreamEffectsParts {
+    ensure_workspace_active_snapshot_hydrated: WorkspaceStreamHydrationEffect,
+    activate_workspace_merge_queue: WorkspaceStreamUnitEffect,
+}
+
+pub(in crate::daemon) struct WorkspaceStreamEffects {
+    ensure_workspace_active_snapshot_hydrated: WorkspaceStreamHydrationEffect,
+    activate_workspace_merge_queue: WorkspaceStreamUnitEffect,
+}
+
+impl WorkspaceStreamEffects {
+    pub(in crate::daemon) fn new(parts: WorkspaceStreamEffectsParts) -> Arc<Self> {
+        Arc::new(Self {
+            ensure_workspace_active_snapshot_hydrated: parts
+                .ensure_workspace_active_snapshot_hydrated,
+            activate_workspace_merge_queue: parts.activate_workspace_merge_queue,
+        })
+    }
+}
+
+#[derive(Clone)]
+pub struct WorkspaceStreamHandle {
+    global_store: Store,
+    workspace_stores: ProtectedWorkspaceStoreLookup,
+    session_stores: SessionStoreLookup,
+    active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
+    sessions: Arc<SessionRuntime<crate::daemon::scheduler::SchedulerCommand>>,
+    lifecycle_host: Arc<WorkspaceStreamSessionLifecycleHost>,
+    telemetry: Telemetry,
+    perf_telemetry: PerfTelemetry,
+    effects: Arc<WorkspaceStreamEffects>,
+}
+
+pub(in crate::daemon) struct WorkspaceStreamHandleParts {
+    global_store: Store,
+    workspace_stores: ProtectedWorkspaceStoreLookup,
+    session_stores: SessionStoreLookup,
+    active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
+    sessions: Arc<SessionRuntime<crate::daemon::scheduler::SchedulerCommand>>,
+    lifecycle_host: Arc<WorkspaceStreamSessionLifecycleHost>,
+    telemetry: Telemetry,
+    perf_telemetry: PerfTelemetry,
+    effects: Arc<WorkspaceStreamEffects>,
+}
+
+impl WorkspaceStreamHandle {
+    pub(in crate::daemon) fn new(parts: WorkspaceStreamHandleParts) -> Self {
+        Self {
+            global_store: parts.global_store,
+            workspace_stores: parts.workspace_stores,
+            session_stores: parts.session_stores,
+            active_snapshot: parts.active_snapshot,
+            sessions: parts.sessions,
+            lifecycle_host: parts.lifecycle_host,
+            telemetry: parts.telemetry,
+            perf_telemetry: parts.perf_telemetry,
+            effects: parts.effects,
+        }
+    }
+
+    pub(in crate::daemon) fn global_store(&self) -> &Store {
+        &self.global_store
+    }
+
+    pub(in crate::daemon) async fn store_for_workspace(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> anyhow::Result<Store> {
+        self.workspace_stores
+            .store_for_workspace(workspace_id)
+            .await
+    }
+
+    pub(in crate::daemon) async fn session_store_allow_archived(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Store, crate::daemon::SessionStoreAccessError> {
+        self.session_stores
+            .existing_session_store_allow_archived(session_id)
+            .await
+    }
+
+    pub(in crate::daemon) fn active_snapshot(&self) -> &WorkspaceActiveSnapshotHub {
+        &self.active_snapshot
+    }
+
+    pub(in crate::daemon) fn telemetry(&self) -> &Telemetry {
+        &self.telemetry
+    }
+
+    pub(in crate::daemon) fn perf_telemetry(&self) -> &PerfTelemetry {
+        &self.perf_telemetry
+    }
+
+    pub(in crate::daemon) async fn attach_workspace_stream_session_pin(
+        &self,
+        session_id: SessionId,
+    ) {
+        self.sessions
+            .attach_session_with_host(self.lifecycle_host.as_ref(), session_id)
+            .await;
+    }
+
+    pub(in crate::daemon) async fn detach_workspace_stream_session_pin(
+        &self,
+        session_id: SessionId,
+    ) {
+        self.sessions
+            .detach_session_with_host(self.lifecycle_host.as_ref(), session_id)
+            .await;
+    }
+
+    pub(in crate::daemon) async fn ensure_workspace_active_snapshot_hydrated(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<(), crate::daemon::workspaces::WorkspaceHydrationError> {
+        (self.effects.ensure_workspace_active_snapshot_hydrated)(workspace_id).await
+    }
+
+    pub(in crate::daemon) async fn activate_workspace_merge_queue(
+        &self,
+        workspace_id: WorkspaceId,
+    ) {
+        (self.effects.activate_workspace_merge_queue)(workspace_id).await
+    }
+}
+
+pub(in crate::daemon) struct WorkspaceStreamSessionLifecycleHost {
+    global_store: Store,
+    active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
+    providers: Arc<ProviderRuntime>,
+}
+
+impl WorkspaceStreamSessionLifecycleHost {
+    fn new(
+        global_store: Store,
+        active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
+        providers: Arc<ProviderRuntime>,
+    ) -> Self {
+        Self {
+            global_store,
+            active_snapshot,
+            providers,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl SessionLifecycleHost for WorkspaceStreamSessionLifecycleHost {
+    async fn set_provider_session_pinned(&self, session_id: SessionId, pinned: bool) {
+        self.providers
+            .set_provider_session_pinned(session_id.0.to_string(), pinned)
+            .await;
+    }
+
+    async fn remove_workspace_active_session(&self, session_id: SessionId) {
+        let workspace_id = self
+            .global_store
+            .get_workspace_id_for_session(session_id)
+            .await
+            .ok()
+            .flatten();
+        if let Some(workspace_id) = workspace_id {
+            self.active_snapshot
+                .remove_session_with_workspace_hint(workspace_id, session_id)
+                .await;
+        } else {
+            self.active_snapshot.remove_session(session_id).await;
+        }
+    }
+}
+
 domain_handle_with_accessor!(SessionsHandle, sessions);
 domain_handle_with_accessor!(WorkspacesHandle, workspaces);
-domain_handle_with_accessor!(WorkspaceStreamHandle, workspace_stream);
 domain_handle_with_accessor!(ProvidersHandle, providers);
 domain_handle_with_accessor!(TransportHandle, transport);
 domain_handle_with_accessor!(ExecutionHandle, execution);

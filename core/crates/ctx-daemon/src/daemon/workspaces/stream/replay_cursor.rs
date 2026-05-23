@@ -1,6 +1,3 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-
 use ctx_core::ids::{SessionId, WorkspaceId};
 use ctx_workspace_active_snapshot::SessionReplayCursor;
 pub use ctx_workspace_stream_service::replay_cursor::active_head_cursors_from_snapshot_read_model;
@@ -8,14 +5,14 @@ pub use ctx_workspace_stream_service::replay_cursor::active_head_cursors_from_sn
 pub use ctx_workspace_stream_service::replay_cursor::{
     plan_resume_replay_cursor, WorkspaceStreamResumeReplayCursorPlan,
 };
+use std::collections::HashMap;
 
 use super::read_model::WorkspaceStreamSnapshotReadModel;
-use crate::daemon::DaemonState;
 use crate::daemon::WorkspaceStreamHandle;
 
 #[cfg(test)]
 pub async fn head_only_snapshot_cursor(
-    state: &Arc<DaemonState>,
+    handle: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
     session_id: SessionId,
     live_cursor: Option<SessionReplayCursor>,
@@ -30,28 +27,27 @@ pub async fn head_only_snapshot_cursor(
     match snapshot_cursor {
         Some(cursor) => live_cursor.unwrap_or_default().cover(cursor),
         None => {
-            let current_tail = session_replay_tail_cursor(state, workspace_id, session_id).await;
+            let current_tail = session_replay_tail_cursor(handle, workspace_id, session_id).await;
             live_cursor.unwrap_or_default().cover(current_tail)
         }
     }
 }
 
 pub async fn active_task_subscription_cursor(
-    state: &Arc<DaemonState>,
+    handle: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
     session_id: SessionId,
 ) -> SessionReplayCursor {
-    session_replay_tail_cursor(state, workspace_id, session_id).await
+    session_replay_tail_cursor(handle, workspace_id, session_id).await
 }
 
 pub(super) async fn session_replay_tail_cursor(
-    state: &Arc<DaemonState>,
+    handle: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
     session_id: SessionId,
 ) -> SessionReplayCursor {
-    state
-        .workspaces
-        .workspace_active_snapshot
+    handle
+        .active_snapshot()
         .session_replay_cursor(workspace_id, session_id)
         .await
 }
@@ -62,7 +58,7 @@ impl WorkspaceStreamHandle {
         workspace_id: WorkspaceId,
         session_id: SessionId,
     ) -> SessionReplayCursor {
-        session_replay_tail_cursor(&self.state, workspace_id, session_id).await
+        session_replay_tail_cursor(self, workspace_id, session_id).await
     }
 
     pub fn active_head_cursors_from_snapshot_read_model(
@@ -77,6 +73,6 @@ impl WorkspaceStreamHandle {
         workspace_id: WorkspaceId,
         session_id: SessionId,
     ) -> SessionReplayCursor {
-        active_task_subscription_cursor(&self.state, workspace_id, session_id).await
+        active_task_subscription_cursor(self, workspace_id, session_id).await
     }
 }

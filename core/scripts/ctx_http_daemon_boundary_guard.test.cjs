@@ -220,6 +220,9 @@ const {
   scanSessionVcsDaemonImplementationRatchet,
   scanSessionVcsHandleFieldRatchet,
   scanSessionVcsHandleRatchet,
+  scanWorkspaceStreamActiveDaemonImplementationRatchet,
+  scanWorkspaceStreamHandleFieldRatchet,
+  scanWorkspaceStreamRouteExtractorRatchet,
   scanRepo,
   scanRouterComposition,
   scanText,
@@ -296,7 +299,9 @@ test("daemon boundary guard rejects broad daemon handle access in API code", () 
 
 test("appstate route handle ratchet rejects new full-state handle families", () => {
   assert.equal(APPSTATE_FULL_STATE_DOMAIN_HANDLE_BASELINE.has("CoreHandle"), false);
+  assert.equal(APPSTATE_FULL_STATE_DOMAIN_HANDLE_BASELINE.has("TasksHandle"), false);
   assert.equal(APPSTATE_FULL_STATE_DOMAIN_HANDLE_BASELINE.has("TelemetryHandle"), false);
+  assert.equal(APPSTATE_FULL_STATE_DOMAIN_HANDLE_BASELINE.has("WorkspaceStreamHandle"), false);
   const violations = scanAppStateRouteHandleRatchet({
     filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
     contents: `
@@ -310,9 +315,7 @@ test("appstate route handle ratchet rejects new full-state handle families", () 
         };
       }
       domain_handle_with_accessor!(SessionsHandle, sessions);
-      domain_handle_with_accessor!(TasksHandle, tasks);
       domain_handle_with_accessor!(WorkspacesHandle, workspaces);
-      domain_handle_with_accessor!(WorkspaceStreamHandle, workspace_stream);
       domain_handle_with_accessor!(ProvidersHandle, providers);
       domain_handle_with_accessor!(TransportHandle, transport);
       domain_handle_with_accessor!(ExecutionHandle, execution);
@@ -343,9 +346,7 @@ test("appstate route handle ratchet rejects migrated telemetry full-state reintr
         };
       }
       domain_handle_with_accessor!(SessionsHandle, sessions);
-      domain_handle_with_accessor!(TasksHandle, tasks);
       domain_handle_with_accessor!(WorkspacesHandle, workspaces);
-      domain_handle_with_accessor!(WorkspaceStreamHandle, workspace_stream);
       domain_handle_with_accessor!(ProvidersHandle, providers);
       domain_handle_with_accessor!(TransportHandle, transport);
       domain_handle_with_accessor!(ExecutionHandle, execution);
@@ -360,6 +361,70 @@ test("appstate route handle ratchet rejects migrated telemetry full-state reintr
       "unclassified full-state route handle",
     ],
   );
+});
+
+test("appstate route handle ratchet rejects stale tasks full-state reintroduction", () => {
+  const violations = scanAppStateRouteHandleRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      use std::sync::Arc;
+      use super::state::DaemonState;
+      macro_rules! domain_handle_with_accessor {
+        ($name:ident, $accessor:ident) => {
+          pub struct $name {
+            state: Arc<DaemonState>,
+          }
+        };
+      }
+      domain_handle_with_accessor!(SessionsHandle, sessions);
+      domain_handle_with_accessor!(WorkspacesHandle, workspaces);
+      domain_handle_with_accessor!(ProvidersHandle, providers);
+      domain_handle_with_accessor!(TransportHandle, transport);
+      domain_handle_with_accessor!(ExecutionHandle, execution);
+      domain_handle_with_accessor!(TasksHandle, tasks);
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "full-state route handle ratchet exceeded",
+      "unclassified full-state route handle",
+    ],
+  );
+  assert.deepEqual(violations.at(-1).text, "TasksHandle");
+});
+
+test("appstate route handle ratchet rejects workspace stream full-state reintroduction", () => {
+  const violations = scanAppStateRouteHandleRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      use std::sync::Arc;
+      use super::state::DaemonState;
+      macro_rules! domain_handle_with_accessor {
+        ($name:ident, $accessor:ident) => {
+          pub struct $name {
+            state: Arc<DaemonState>,
+          }
+        };
+      }
+      domain_handle_with_accessor!(SessionsHandle, sessions);
+      domain_handle_with_accessor!(WorkspacesHandle, workspaces);
+      domain_handle_with_accessor!(ProvidersHandle, providers);
+      domain_handle_with_accessor!(TransportHandle, transport);
+      domain_handle_with_accessor!(ExecutionHandle, execution);
+      domain_handle_with_accessor!(WorkspaceStreamHandle, workspace_stream);
+    `,
+  });
+
+  assert.deepEqual(
+    violations.map((violation) => violation.name),
+    [
+      "full-state route handle ratchet exceeded",
+      "unclassified full-state route handle",
+    ],
+  );
+  assert.deepEqual(violations.at(-1).text, "WorkspaceStreamHandle");
 });
 
 test("appstate route handle ratchet rejects direct full-state route handles", () => {
@@ -1454,6 +1519,168 @@ test("appstate guard rejects session VCS broad handle and generic effects fields
   });
 
   assert.deepEqual(narrowClosureViolations, []);
+});
+
+test("appstate guard rejects workspace stream route extraction outside entry routes", () => {
+  const violations = scanWorkspaceStreamRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/ws/workspace_stream.rs",
+    contents: `
+      use ctx_daemon::daemon::WorkspaceStreamHandle;
+      async fn handler(
+        State(state): State<WorkspaceStreamHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(violations, [
+    "workspace stream route extracts WorkspaceStreamHandle outside entry route",
+  ]);
+
+  for (const filePath of [
+    "core/crates/ctx-http/src/api/ws/workspace_active.rs",
+    "core/crates/ctx-http/src/api/ws/secure_mobile.rs",
+  ]) {
+    assert.deepEqual(
+      scanWorkspaceStreamRouteExtractorRatchet({
+        filePath,
+        contents: `
+          async fn handler(
+            State(state): State<WorkspaceStreamHandle>,
+          ) {}
+        `,
+      }),
+      [],
+    );
+  }
+
+  const routerViolations = scanWorkspaceStreamRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/router.rs",
+    contents: `
+      use ctx_daemon::daemon::WorkspaceStreamHandle;
+      impl_route_state_extractors! {
+        WorkspaceStreamHandle, workspace_stream;
+      }
+    `,
+  });
+  assert.deepEqual(routerViolations, []);
+});
+
+test("appstate guard rejects workspace stream active daemon broad seams", () => {
+  const violations = scanWorkspaceStreamActiveDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/stream/read_model.rs",
+    contents: `
+      use crate::daemon::{DaemonHandle, SessionsHandle, WorkspacesHandle};
+      use crate::daemon::DaemonState;
+
+      impl WorkspaceStreamHandle {
+        async fn broad(
+          &self,
+          handle: DaemonHandle,
+          sessions: SessionsHandle,
+          workspaces: WorkspacesHandle,
+          state: Arc<DaemonState>,
+        ) {
+          let _ = self.state.workspace_active_snapshot.clone();
+          let _ = state.global_store().clone();
+          let _ = state.store_for_session(session_id).await;
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(violations.includes("workspace stream daemon implementation uses broad daemon state"));
+  assert(violations.includes("workspace stream daemon implementation uses broad daemon handle"));
+  assert(
+    violations.includes(
+      "workspace stream daemon implementation uses broad session/workspace handle",
+    ),
+  );
+  assert(violations.includes("workspace stream daemon implementation uses broad state access"));
+
+  const vcsViolations = scanWorkspaceStreamActiveDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/stream/vcs.rs",
+    contents: `
+      use crate::daemon::{DaemonState, WorkspacesHandle};
+      async fn vcs_stream(state: Arc<DaemonState>, workspaces: WorkspacesHandle) {}
+    `,
+  });
+  assert.deepEqual(vcsViolations, []);
+});
+
+test("appstate guard rejects workspace stream broad handle and generic effects fields", () => {
+  const fieldViolations = scanWorkspaceStreamHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct WorkspaceStreamHandle {
+        sessions: SessionsHandle,
+        workspaces: WorkspacesHandle,
+        daemon: DaemonHandle,
+        state: Arc<DaemonState>,
+      }
+
+      pub(in crate::daemon) struct WorkspaceStreamHandleParts {
+        with_state: Arc<dyn Fn() -> WorkspaceStreamFuture<()>>,
+        sessions: SessionsHandle,
+        workspaces: WorkspacesHandle,
+        daemon: DaemonHandle,
+        state: Arc<DaemonState>,
+      }
+
+      pub(in crate::daemon) struct WorkspaceStreamEffectsParts {
+        with_state: Arc<dyn Fn() -> WorkspaceStreamFuture<()>>,
+        with_daemon: Arc<dyn Fn() -> WorkspaceStreamFuture<()>>,
+        daemon: DaemonHandle,
+        state: Arc<DaemonState>,
+      }
+
+      pub(in crate::daemon) struct WorkspaceStreamEffects {
+        with_state: Arc<dyn Fn() -> WorkspaceStreamFuture<()>>,
+        with_daemon: Arc<dyn Fn() -> WorkspaceStreamFuture<()>>,
+        daemon: DaemonHandle,
+        state: Arc<DaemonState>,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(fieldViolations.includes("workspace stream capability stores broad handle or daemon state"));
+  assert(
+    fieldViolations.includes(
+      "workspace stream capability exposes generic full-state escape hatch",
+    ),
+  );
+  assert(fieldViolations.includes("workspace stream effects stores broad handle or daemon state"));
+  assert(
+    fieldViolations.includes(
+      "workspace stream effects exposes generic full-state escape hatch",
+    ),
+  );
+
+  const narrowViolations = scanWorkspaceStreamHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct WorkspaceStreamHandle {
+        global_store: Store,
+        active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
+        effects: Arc<WorkspaceStreamEffects>,
+      }
+
+      pub(in crate::daemon) struct WorkspaceStreamHandleParts {
+        global_store: Store,
+        active_snapshot: Arc<WorkspaceActiveSnapshotHub>,
+        effects: Arc<WorkspaceStreamEffects>,
+      }
+
+      pub(in crate::daemon) struct WorkspaceStreamEffectsParts {
+        ensure_workspace_active_snapshot_hydrated: WorkspaceStreamHydrationEffect,
+      }
+
+      pub(in crate::daemon) struct WorkspaceStreamEffects {
+        ensure_workspace_active_snapshot_hydrated: WorkspaceStreamHydrationEffect,
+      }
+    `,
+  });
+
+  assert.deepEqual(narrowViolations, []);
 });
 
 test("daemon boundary guard rejects route-visible store accessors", () => {

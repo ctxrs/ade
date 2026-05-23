@@ -210,6 +210,25 @@ const sessionVcsDaemonImplementationPaths = new Set([
   "core/crates/ctx-daemon/src/daemon/sessions/vcs_route.rs",
 ]);
 
+const workspaceStreamRouteExtractorAllowedPaths = new Set([
+  "core/crates/ctx-http/src/api/ws/workspace_active.rs",
+  "core/crates/ctx-http/src/api/ws/secure_mobile.rs",
+]);
+
+const workspaceStreamActiveDaemonImplementationPaths = new Set([
+  "core/crates/ctx-daemon/src/daemon/workspaces/stream/access.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/stream/cursor_acceptance.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/stream/event_routing.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/stream/read_model.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/stream/replay.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/stream/replay_cursor.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/stream/runtime_facade.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/stream/subscriptions/application.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/stream/subscriptions/mod.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/stream/subscriptions/planning.rs",
+  "core/crates/ctx-daemon/src/daemon/workspaces/stream/subscriptions/resolution.rs",
+]);
+
 const mergeQueueSubmitApiRoots = [
   "core/crates/ctx-http/src/api/merge_queue_api/submit.rs",
 ];
@@ -1111,9 +1130,7 @@ const HANDLE_BACKDOOR_PATTERNS = [
 
 const APPSTATE_FULL_STATE_DOMAIN_HANDLE_BASELINE = new Set([
   "SessionsHandle",
-  "TasksHandle",
   "WorkspacesHandle",
-  "WorkspaceStreamHandle",
   "ProvidersHandle",
   "TransportHandle",
   "ExecutionHandle",
@@ -7777,6 +7794,31 @@ function scanSessionVcsHandleRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanWorkspaceStreamRouteExtractorRatchet({ filePath, contents }) {
+  if (workspaceStreamRouteExtractorAllowedPaths.has(filePath)) {
+    return [];
+  }
+
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const workspaceStreamExtractorRegex =
+    /\bState\s*(?:\(\s*[A-Za-z_][A-Za-z0-9_]*\s*\))?\s*:\s*State\s*<\s*WorkspaceStreamHandle\s*>/gu;
+  for (
+    let match = workspaceStreamExtractorRegex.exec(contents);
+    match;
+    match = workspaceStreamExtractorRegex.exec(contents)
+  ) {
+    const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "workspace stream route extracts WorkspaceStreamHandle outside entry route",
+      text: lines[line - 1]?.trim() ?? match[0],
+    });
+  }
+  return violations;
+}
+
 function rustImplBlocksForType({ contents, typeName }) {
   const blocks = [];
   const regex = new RegExp(`\\bimpl\\s+${typeName}\\s*\\{`, "gu");
@@ -7964,6 +8006,48 @@ function scanSessionVcsDaemonImplementationRatchet({ filePath, contents }) {
   return violations;
 }
 
+function scanWorkspaceStreamActiveDaemonImplementationRatchet({ filePath, contents }) {
+  if (!workspaceStreamActiveDaemonImplementationPaths.has(filePath)) {
+    return [];
+  }
+
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const checks = [
+    {
+      name: "workspace stream daemon implementation uses broad daemon state",
+      regex: /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu,
+    },
+    {
+      name: "workspace stream daemon implementation uses broad daemon handle",
+      regex: /\bDaemonHandle\b/gu,
+    },
+    {
+      name: "workspace stream daemon implementation uses broad session/workspace handle",
+      regex: /\b(?:SessionsHandle|WorkspacesHandle)\b/gu,
+    },
+    {
+      name: "workspace stream daemon implementation uses broad state access",
+      regex:
+        /\bself\s*\.\s*state\b|\bstate\s*\.\s*(?:core|sessions|workspaces|providers|telemetry|transport|execution|global_store|store_for_(?:workspace|worktree|task|session)|active_snapshot)\b/gu,
+    },
+  ];
+
+  for (const check of checks) {
+    for (let match = check.regex.exec(contents); match; match = check.regex.exec(contents)) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
 function scanSessionArtifactsHandleFieldRatchet({ filePath, contents }) {
   if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
     return [];
@@ -7987,6 +8071,98 @@ function scanSessionArtifactsHandleFieldRatchet({ filePath, contents }) {
         line,
         name: "session artifacts capability stores broad handle or daemon state",
         text: lines[line - 1]?.trim() ?? broad[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
+function scanWorkspaceStreamHandleFieldRatchet({ filePath, contents }) {
+  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    return [];
+  }
+
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const broadFieldRegex =
+    /\b(?:TasksHandle|SessionsHandle|WorkspacesHandle|ProvidersHandle|TransportHandle|ExecutionHandle|DaemonHandle|DaemonState)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+  const genericEscapeFieldRegex =
+    /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:with_state|with_daemon|daemon|state)\s*:/gmu;
+
+  const handleStructs = [
+    rustStructBlockForType({ contents, typeName: "WorkspaceStreamHandleParts" }),
+    rustStructBlockForType({ contents, typeName: "WorkspaceStreamHandle" }),
+  ].filter(Boolean);
+  for (const handleStruct of handleStructs) {
+    broadFieldRegex.lastIndex = 0;
+    for (
+      let broad = broadFieldRegex.exec(handleStruct.text);
+      broad;
+      broad = broadFieldRegex.exec(handleStruct.text)
+    ) {
+      const offset = handleStruct.index + broad.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "workspace stream capability stores broad handle or daemon state",
+        text: lines[line - 1]?.trim() ?? broad[0],
+      });
+    }
+
+    genericEscapeFieldRegex.lastIndex = 0;
+    for (
+      let escape = genericEscapeFieldRegex.exec(handleStruct.text);
+      escape;
+      escape = genericEscapeFieldRegex.exec(handleStruct.text)
+    ) {
+      const offset = handleStruct.index + escape.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "workspace stream capability exposes generic full-state escape hatch",
+        text: lines[line - 1]?.trim() ?? escape[0],
+      });
+    }
+  }
+
+  const effectStructs = [
+    rustStructBlockForType({ contents, typeName: "WorkspaceStreamEffectsParts" }),
+    rustStructBlockForType({ contents, typeName: "WorkspaceStreamEffects" }),
+  ].filter(Boolean);
+
+  for (const effectsStruct of effectStructs) {
+    broadFieldRegex.lastIndex = 0;
+    for (
+      let broad = broadFieldRegex.exec(effectsStruct.text);
+      broad;
+      broad = broadFieldRegex.exec(effectsStruct.text)
+    ) {
+      const offset = effectsStruct.index + broad.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "workspace stream effects stores broad handle or daemon state",
+        text: lines[line - 1]?.trim() ?? broad[0],
+      });
+    }
+
+    genericEscapeFieldRegex.lastIndex = 0;
+    for (
+      let escape = genericEscapeFieldRegex.exec(effectsStruct.text);
+      escape;
+      escape = genericEscapeFieldRegex.exec(effectsStruct.text)
+    ) {
+      const offset = effectsStruct.index + escape.index;
+      const line = contents.slice(0, offset).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "workspace stream effects exposes generic full-state escape hatch",
+        text: lines[line - 1]?.trim() ?? escape[0],
       });
     }
   }
@@ -8151,6 +8327,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanWorkspaceStreamRouteExtractorRatchet({
+        filePath: relativePath,
+        contents,
+      }),
     );
   }
 
@@ -8205,6 +8385,10 @@ function scanRepo() {
         contents,
       }),
       ...scanSessionVcsHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanWorkspaceStreamHandleFieldRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -8283,6 +8467,10 @@ function scanRepo() {
         contents,
       }),
       ...scanSessionVcsDaemonImplementationRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanWorkspaceStreamActiveDaemonImplementationRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -8908,6 +9096,9 @@ module.exports = {
   scanSessionVcsDaemonImplementationRatchet,
   scanSessionVcsHandleFieldRatchet,
   scanSessionVcsHandleRatchet,
+  scanWorkspaceStreamActiveDaemonImplementationRatchet,
+  scanWorkspaceStreamHandleFieldRatchet,
+  scanWorkspaceStreamRouteExtractorRatchet,
   scanRepo,
   scanRouterComposition,
   scanText,

@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use ctx_core::ids::{SessionId, WorkspaceId};
 use ctx_core::models::WorkspaceActiveSnapshotEvent;
@@ -9,17 +8,17 @@ pub use ctx_workspace_stream_service::subscriptions::application::{
     WorkspaceStreamLiveEventApplication, WorkspaceStreamSubscriptionEventApplication,
 };
 
-use crate::daemon::DaemonState;
+use crate::daemon::WorkspaceStreamHandle;
 
 pub async fn apply_workspace_stream_subscription_event(
-    state: &Arc<DaemonState>,
+    handle: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
     subscription_state: WorkspaceActiveSubscriptionState,
     subscriptions: HashMap<SessionId, SessionReplayCursor>,
     event: &WorkspaceActiveSnapshotEvent,
 ) -> WorkspaceStreamSubscriptionEventApplication {
     let seed = active_task_cursor_seed(
-        state,
+        handle,
         workspace_id,
         &subscription_state,
         &subscriptions,
@@ -36,7 +35,7 @@ pub async fn apply_workspace_stream_subscription_event(
         Err(missing) => {
             let session_id = missing.session_id;
             let cursor =
-                super::super::active_task_subscription_cursor(state, workspace_id, session_id)
+                super::super::active_task_subscription_cursor(handle, workspace_id, session_id)
                     .await;
             stream_subscription_application::apply_missing_active_task_cursor(missing, cursor)
         }
@@ -44,14 +43,14 @@ pub async fn apply_workspace_stream_subscription_event(
 }
 
 pub async fn apply_workspace_stream_live_event(
-    state: &Arc<DaemonState>,
+    handle: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
     subscription_state: WorkspaceActiveSubscriptionState,
     subscriptions: HashMap<SessionId, SessionReplayCursor>,
     event: WorkspaceActiveSnapshotEvent,
 ) -> WorkspaceStreamLiveEventApplication {
     let application = apply_workspace_stream_subscription_event(
-        state,
+        handle,
         workspace_id,
         subscription_state,
         subscriptions,
@@ -62,7 +61,7 @@ pub async fn apply_workspace_stream_live_event(
 }
 
 async fn active_task_cursor_seed(
-    state: &Arc<DaemonState>,
+    handle: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
     subscription_state: &WorkspaceActiveSubscriptionState,
     subscriptions: &HashMap<SessionId, SessionReplayCursor>,
@@ -74,7 +73,7 @@ async fn active_task_cursor_seed(
         event,
     )?;
     let cursor =
-        super::super::active_task_subscription_cursor(state, workspace_id, session_id).await;
+        super::super::active_task_subscription_cursor(handle, workspace_id, session_id).await;
     Some(
         stream_subscription_application::WorkspaceStreamActiveTaskCursorSeed { session_id, cursor },
     )

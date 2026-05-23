@@ -1,27 +1,30 @@
 use super::fixtures::{
     create_workspace_session, create_workspace_worktree, create_worktree_for_workspace, session_id,
-    test_state,
+    test_state, workspace_stream_handle,
 };
 use super::*;
 use std::collections::{HashMap, HashSet};
 
 use crate::daemon::DaemonHandle;
 use chrono::Utc;
-use ctx_core::ids::{SessionEventId, SessionId, TaskId, TurnId, WorkspaceId, WorktreeId};
+use ctx_core::ids::{
+    MergeQueueEntryId, SessionEventId, SessionId, TaskId, TurnId, WorkspaceId, WorktreeId,
+};
 use ctx_core::models::{
-    ExecutionEnvironment, SessionActivityState, SessionEvent, SessionEventType, SessionHeadDelta,
-    SessionHeadSnapshot, SessionHeadWindow, SessionMetadata, SessionSnapshotSummary, SessionStatus,
-    SessionSummaryDelta, Task, TaskDelta, TaskDeltaKind, TaskStatus, WorkspaceActiveHeadBatch,
-    WorkspaceActivePage, WorkspaceActiveSnapshot, WorkspaceActiveSnapshotClientMessage,
-    WorkspaceActiveSnapshotEvent, WorkspaceActiveSnapshotSessionIntent,
-    WorkspaceActiveSnapshotSessionReplay, WorkspaceActiveSnapshotSessionSubscription,
-    WorkspaceActiveTaskSummary, WorkspaceTaskSummary, WorktreeBootstrapNotice,
-    WorktreeBootstrapStatus, WorktreeVcsStreamTier,
+    ExecutionEnvironment, MergeQueueEntry, MergeQueueEntryStatus, MergeQueuePatchSource,
+    SessionActivityState, SessionEvent, SessionEventType, SessionHeadDelta, SessionHeadSnapshot,
+    SessionHeadWindow, SessionMetadata, SessionSnapshotSummary, SessionStatus, SessionSummaryDelta,
+    Task, TaskDelta, TaskDeltaKind, TaskStatus, WorkspaceActiveHeadBatch, WorkspaceActivePage,
+    WorkspaceActiveSnapshot, WorkspaceActiveSnapshotClientMessage, WorkspaceActiveSnapshotEvent,
+    WorkspaceActiveSnapshotSessionIntent, WorkspaceActiveSnapshotSessionReplay,
+    WorkspaceActiveSnapshotSessionSubscription, WorkspaceActiveTaskSummary, WorkspaceTaskSummary,
+    WorktreeBootstrapNotice, WorktreeBootstrapStatus, WorktreeVcsStreamTier,
 };
 use ctx_workspace_active_snapshot::{
     ResolvedWorkspaceActiveSessionReplay, ResolvedWorkspaceActiveSessionSubscription,
     ResolvedWorkspaceActiveSubscriptions, SessionReplayCursor, WorkspaceActiveSubscriptionState,
 };
+use ctx_workspace_config::{update_merge_queue_config, MergeQueueConfigUpdate};
 use std::sync::Arc;
 
 fn task(workspace_id: WorkspaceId, primary_session_id: Option<SessionId>) -> Task {
@@ -41,6 +44,28 @@ fn task(workspace_id: WorkspaceId, primary_session_id: Option<SessionId>) -> Tas
         last_activity_at: None,
         last_assistant_message_at: None,
         has_active_session: primary_session_id.is_some(),
+    }
+}
+
+fn queued_merge_queue_entry(workspace_id: WorkspaceId) -> MergeQueueEntry {
+    let now = Utc::now();
+    MergeQueueEntry {
+        id: MergeQueueEntryId::new(),
+        workspace_id,
+        worktree_id: None,
+        session_id: None,
+        target_branch: "main".to_string(),
+        message: Some("workspace stream activation".to_string()),
+        patch_source: MergeQueuePatchSource::Generated,
+        base_commit_sha: Some("base".to_string()),
+        head_commit_sha: Some("head".to_string()),
+        patch_path: "/tmp/workspace-stream-activation.patch".to_string(),
+        patch_size: 1,
+        status: MergeQueueEntryStatus::Queued,
+        result_commit_sha: None,
+        error_message: None,
+        created_at: now,
+        updated_at: now,
     }
 }
 
@@ -495,7 +520,7 @@ async fn subscription_resolution_filters_cross_workspace_session_references() {
     let (_workspace_b, session_b) = create_workspace_session(&state, root.path()).await;
 
     let resolved = resolve_workspace_active_snapshot_subscriptions(
-        &state,
+        &workspace_stream_handle(&state),
         workspace_a,
         WorkspaceActiveSnapshotClientMessage::Subscribe {
             session_ids: vec![session_a, session_b],
@@ -982,7 +1007,7 @@ async fn subscription_event_session_removed_updates_state_without_active_scope()
     let subscriptions = HashMap::from([(session_id, cursor(10, 11))]);
 
     let applied = apply_workspace_stream_subscription_event(
-        &state,
+        &workspace_stream_handle(&state),
         workspace_id,
         subscription_state,
         subscriptions,
@@ -1016,7 +1041,7 @@ async fn subscription_event_active_task_upsert_seeds_missing_and_preserves_exist
     subscription_state.active_scope = true;
 
     let seeded = apply_workspace_stream_subscription_event(
-        &state,
+        &workspace_stream_handle(&state),
         workspace_id,
         subscription_state.clone(),
         HashMap::new(),
@@ -1048,7 +1073,7 @@ async fn subscription_event_active_task_upsert_seeds_missing_and_preserves_exist
 
     let existing_cursor = cursor(12, 13);
     let preserved = apply_workspace_stream_subscription_event(
-        &state,
+        &workspace_stream_handle(&state),
         workspace_id,
         subscription_state,
         HashMap::from([(existing_session_id, existing_cursor)]),
@@ -1101,7 +1126,7 @@ async fn subscription_event_active_task_delete_retains_shared_and_explicit_sessi
     ]);
 
     let shared_retained = apply_workspace_stream_subscription_event(
-        &state,
+        &workspace_stream_handle(&state),
         workspace_id,
         subscription_state.clone(),
         subscriptions.clone(),
@@ -1116,7 +1141,7 @@ async fn subscription_event_active_task_delete_retains_shared_and_explicit_sessi
     assert!(shared_retained.pin_changes.detach.is_empty());
 
     let explicit_retained = apply_workspace_stream_subscription_event(
-        &state,
+        &workspace_stream_handle(&state),
         workspace_id,
         subscription_state,
         subscriptions,
@@ -1149,7 +1174,7 @@ async fn subscription_event_archive_removes_unused_active_session() {
         .insert(task_id, session_id);
 
     let applied = apply_workspace_stream_subscription_event(
-        &state,
+        &workspace_stream_handle(&state),
         workspace_id,
         subscription_state,
         HashMap::from([(session_id, cursor(4, 5))]),
@@ -1180,7 +1205,7 @@ async fn subscription_event_active_task_changes_noop_without_active_scope() {
     let subscription_state = WorkspaceActiveSubscriptionState::default();
 
     let applied = apply_workspace_stream_subscription_event(
-        &state,
+        &workspace_stream_handle(&state),
         workspace_id,
         subscription_state,
         HashMap::new(),
@@ -1208,7 +1233,7 @@ async fn live_event_accepts_head_delta_and_advances_cursor() {
     subscription_state.explicit_sessions.insert(session_id);
 
     let applied = apply_workspace_stream_live_event(
-        &state,
+        &workspace_stream_handle(&state),
         workspace_id,
         subscription_state,
         HashMap::from([(session_id, cursor(4, 6))]),
@@ -1248,7 +1273,7 @@ async fn live_event_routes_transient_head_delta_without_advancing_cursor() {
     let current = cursor(4, 6);
 
     let applied = apply_workspace_stream_live_event(
-        &state,
+        &workspace_stream_handle(&state),
         workspace_id,
         subscription_state,
         HashMap::from([(session_id, current)]),
@@ -1281,7 +1306,7 @@ async fn live_event_drops_head_delta_without_cursor_even_when_state_allows_route
     subscription_state.explicit_sessions.insert(session_id);
 
     let applied = apply_workspace_stream_live_event(
-        &state,
+        &workspace_stream_handle(&state),
         workspace_id,
         subscription_state,
         HashMap::new(),
@@ -1311,7 +1336,7 @@ async fn live_event_drops_stale_head_delta_and_head_seed_without_advancing_curso
     let current = cursor(5, 7);
 
     let stale_delta = apply_workspace_stream_live_event(
-        &state,
+        &workspace_stream_handle(&state),
         workspace_id,
         subscription_state.clone(),
         HashMap::from([(session_id, current)]),
@@ -1332,7 +1357,7 @@ async fn live_event_drops_stale_head_delta_and_head_seed_without_advancing_curso
     ));
 
     let stale_seed = apply_workspace_stream_live_event(
-        &state,
+        &workspace_stream_handle(&state),
         workspace_id,
         subscription_state,
         HashMap::from([(session_id, current)]),
@@ -1364,7 +1389,7 @@ async fn live_event_active_task_upsert_seeds_subscription_and_pin_delta() {
     subscription_state.active_scope = true;
 
     let applied = apply_workspace_stream_live_event(
-        &state,
+        &workspace_stream_handle(&state),
         workspace_id,
         subscription_state,
         HashMap::new(),
@@ -1398,7 +1423,7 @@ async fn live_event_session_removed_detaches_and_later_head_event_drops() {
     subscription_state.explicit_sessions.insert(session_id);
 
     let removed = apply_workspace_stream_live_event(
-        &state,
+        &workspace_stream_handle(&state),
         workspace_id,
         subscription_state,
         HashMap::from([(session_id, cursor(5, 7))]),
@@ -1422,7 +1447,7 @@ async fn live_event_session_removed_detaches_and_later_head_event_drops() {
     ));
 
     let head_after_removal = apply_workspace_stream_live_event(
-        &state,
+        &workspace_stream_handle(&state),
         workspace_id,
         removed.state,
         removed.subscriptions,
@@ -1448,7 +1473,7 @@ async fn live_event_summary_delta_routes_without_cursor_mutation() {
     let current = cursor(5, 7);
 
     let applied = apply_workspace_stream_live_event(
-        &state,
+        &workspace_stream_handle(&state),
         workspace_id,
         WorkspaceActiveSubscriptionState::default(),
         HashMap::from([(session_id, current)]),
@@ -1473,7 +1498,7 @@ async fn head_only_cursor_uses_snapshot_cursor_or_current_tail_fallback() {
     let (workspace_id, session_id) = create_workspace_session(&state, root.path()).await;
 
     let from_snapshot = head_only_snapshot_cursor(
-        &state,
+        &workspace_stream_handle(&state),
         workspace_id,
         session_id,
         Some(cursor(4, 5)),
@@ -1484,7 +1509,7 @@ async fn head_only_cursor_uses_snapshot_cursor_or_current_tail_fallback() {
     assert_eq!(from_snapshot, cursor(10, 5));
 
     let from_current_tail = head_only_snapshot_cursor(
-        &state,
+        &workspace_stream_handle(&state),
         workspace_id,
         session_id,
         Some(cursor(4, 5)),
@@ -1505,7 +1530,9 @@ async fn active_task_subscription_cursor_reads_daemon_tail() {
     let state = test_state(root.path()).await;
     let (workspace_id, session_id) = create_workspace_session(&state, root.path()).await;
 
-    let cursor = active_task_subscription_cursor(&state, workspace_id, session_id).await;
+    let cursor =
+        active_task_subscription_cursor(&workspace_stream_handle(&state), workspace_id, session_id)
+            .await;
 
     assert_eq!(cursor, SessionReplayCursor::default());
 }
@@ -1543,6 +1570,61 @@ async fn handle_subscription_resolution_hydrates_active_snapshot_without_initial
         1,
         "subscription resolution must prepare the daemon read model even without an initial snapshot",
     );
+}
+
+#[tokio::test]
+async fn handle_subscription_resolution_activates_merge_queue() {
+    let root = tempfile::tempdir().unwrap();
+    let state = test_state(root.path()).await;
+    let (workspace_id, session_id) = create_workspace_session(&state, root.path()).await;
+    let store = state.store_for_workspace(workspace_id).await.unwrap();
+    update_merge_queue_config(
+        &store,
+        MergeQueueConfigUpdate {
+            enabled: true,
+            target_branch: Some("main".to_string()),
+            verify_commands: Vec::new(),
+            push_on_success: None,
+            push_remote: None,
+            push_branch: None,
+            canonical_sync: None,
+        },
+    )
+    .await
+    .unwrap();
+    store
+        .create_merge_queue_entry(&queued_merge_queue_entry(workspace_id))
+        .await
+        .unwrap();
+    let mut schedule_rx = state
+        .transport
+        .merge_queue
+        .take_schedule_rx()
+        .await
+        .expect("test runtime has not started the merge queue runner");
+    let handle = workspace_stream_handle(&state);
+
+    handle
+        .resolve_workspace_active_snapshot_subscriptions(
+            workspace_id,
+            WorkspaceActiveSnapshotClientMessage::Subscribe {
+                session_ids: vec![session_id],
+                sessions: Vec::new(),
+                task_ids: Vec::new(),
+                foreground_session_id: None,
+                scope: None,
+                include_active_heads: false,
+            },
+            &HashMap::new(),
+        )
+        .await
+        .unwrap();
+
+    let scheduled = tokio::time::timeout(std::time::Duration::from_secs(1), schedule_rx.recv())
+        .await
+        .expect("workspace stream subscription should schedule active merge queue")
+        .expect("merge queue schedule channel should stay open");
+    assert_eq!(scheduled, workspace_id);
 }
 
 #[tokio::test]

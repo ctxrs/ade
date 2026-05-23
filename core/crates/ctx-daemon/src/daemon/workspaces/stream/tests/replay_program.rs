@@ -1,4 +1,4 @@
-use super::fixtures::test_state;
+use super::fixtures::{test_state, workspace_stream_handle};
 use super::*;
 use ctx_core::ids::{SessionId, WorkspaceId};
 use ctx_core::models::WorkspaceActiveSnapshotSessionIntent;
@@ -51,11 +51,12 @@ impl WorkspaceStreamReplayDrainHook for RecordingReplayStepHook {
 async fn replay_program_computes_head_only_cursor_in_daemon() {
     let root = tempfile::tempdir().unwrap();
     let state = test_state(root.path()).await;
+    let handle = workspace_stream_handle(&state);
     let workspace_id = WorkspaceId::new();
     let session_id = SessionId::new();
 
     let program = plan_workspace_stream_replay_program(
-        &state,
+        &handle,
         workspace_id,
         &[resolved(
             session_id,
@@ -82,13 +83,14 @@ async fn replay_program_computes_head_only_cursor_in_daemon() {
 async fn replay_program_step_hook_runs_before_each_planned_step() {
     let root = tempfile::tempdir().unwrap();
     let state = test_state(root.path()).await;
+    let handle = workspace_stream_handle(&state);
     let workspace_id = WorkspaceId::new();
     let head_session_id = SessionId::new();
     let replay_session_id = SessionId::new();
     let mut hook = RecordingReplayStepHook::default();
 
     let program = plan_workspace_stream_replay_program_with_step_hook(
-        &state,
+        &handle,
         workspace_id,
         &[
             resolved(
@@ -135,6 +137,7 @@ async fn replay_program_step_hook_runs_before_each_planned_step() {
 async fn replay_program_uses_live_cursor_after_step_hook_runs() {
     let root = tempfile::tempdir().unwrap();
     let state = test_state(root.path()).await;
+    let handle = workspace_stream_handle(&state);
     let workspace_id = WorkspaceId::new();
     let session_id = SessionId::new();
     let mut hook = RecordingReplayStepHook {
@@ -143,7 +146,7 @@ async fn replay_program_uses_live_cursor_after_step_hook_runs() {
     };
 
     let program = plan_workspace_stream_replay_program_with_step_hook(
-        &state,
+        &handle,
         workspace_id,
         &[resolved(
             session_id,
@@ -176,11 +179,12 @@ async fn replay_program_uses_live_cursor_after_step_hook_runs() {
 async fn replay_program_plans_resume_replay_with_covered_live_cursor() {
     let root = tempfile::tempdir().unwrap();
     let state = test_state(root.path()).await;
+    let handle = workspace_stream_handle(&state);
     let workspace_id = WorkspaceId::new();
     let session_id = SessionId::new();
 
     let program = plan_workspace_stream_replay_program(
-        &state,
+        &handle,
         workspace_id,
         &[resolved(
             session_id,
@@ -212,11 +216,12 @@ async fn replay_program_plans_resume_replay_with_covered_live_cursor() {
 async fn replay_program_keeps_noop_resume_as_initial_blocker_until_executed() {
     let root = tempfile::tempdir().unwrap();
     let state = test_state(root.path()).await;
+    let handle = workspace_stream_handle(&state);
     let workspace_id = WorkspaceId::new();
     let session_id = SessionId::new();
 
     let program = plan_workspace_stream_replay_program(
-        &state,
+        &handle,
         workspace_id,
         &[resolved(
             session_id,
@@ -247,11 +252,12 @@ async fn replay_program_keeps_noop_resume_as_initial_blocker_until_executed() {
 async fn replay_program_skips_reset_replay_entries() {
     let root = tempfile::tempdir().unwrap();
     let state = test_state(root.path()).await;
+    let handle = workspace_stream_handle(&state);
     let workspace_id = WorkspaceId::new();
     let session_id = SessionId::new();
 
     let program = plan_workspace_stream_replay_program(
-        &state,
+        &handle,
         workspace_id,
         &[resolved(
             session_id,

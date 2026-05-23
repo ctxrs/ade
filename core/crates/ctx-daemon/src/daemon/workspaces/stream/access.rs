@@ -1,7 +1,6 @@
 use ctx_core::ids::WorkspaceId;
 use ctx_route_contracts::workspaces::{WorkspaceStreamRouteError, WorkspaceStreamRouteParams};
 
-use crate::daemon::DaemonState;
 use crate::daemon::WorkspaceStreamHandle;
 
 #[derive(Debug)]
@@ -39,10 +38,10 @@ pub(super) fn workspace_stream_route_error_from_access(
 }
 
 pub(super) async fn require_existing_workspace_for_stream(
-    state: &DaemonState,
+    handle: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
 ) -> Result<(), WorkspaceStreamAccessError> {
-    let exists = state
+    let exists = handle
         .global_store()
         .get_workspace(workspace_id)
         .await
@@ -56,8 +55,7 @@ pub(super) async fn require_existing_workspace_for_stream(
 
 impl WorkspaceStreamHandle {
     pub async fn workspace_exists(&self, workspace_id: WorkspaceId) -> anyhow::Result<bool> {
-        self.state
-            .global_store()
+        self.global_store()
             .get_workspace(workspace_id)
             .await
             .map(|workspace| workspace.is_some())
@@ -67,7 +65,7 @@ impl WorkspaceStreamHandle {
         &self,
         workspace_id: WorkspaceId,
     ) -> Result<(), WorkspaceStreamAccessError> {
-        require_existing_workspace_for_stream(&self.state, workspace_id).await
+        require_existing_workspace_for_stream(self, workspace_id).await
     }
 
     pub async fn admit_workspace_active_stream_for_route(

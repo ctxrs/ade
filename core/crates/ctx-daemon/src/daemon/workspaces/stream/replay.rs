@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 
 use ctx_core::ids::{SessionId, WorkspaceId};
 use ctx_core::models::{
@@ -16,7 +15,6 @@ pub use ctx_workspace_stream_service::replay::{
     WorkspaceStreamReplayDrainHook, WorkspaceStreamReplayProgram, WorkspaceStreamReplayStep,
 };
 
-use crate::daemon::DaemonState;
 use crate::daemon::WorkspaceStreamHandle;
 
 use super::replay_cursor::session_replay_tail_cursor;
@@ -37,7 +35,7 @@ impl WorkspaceStreamReplayDrainHook for NoopWorkspaceStreamReplayStepHook {
 }
 
 struct DaemonWorkspaceStreamReplayStepHookAdapter<'a, H> {
-    state: &'a Arc<DaemonState>,
+    handle: &'a WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
     inner: &'a mut H,
 }
@@ -67,7 +65,7 @@ where
         &mut self,
         session_id: SessionId,
     ) -> Result<SessionReplayCursor, Self::Error> {
-        Ok(session_replay_tail_cursor(self.state, self.workspace_id, session_id).await)
+        Ok(session_replay_tail_cursor(self.handle, self.workspace_id, session_id).await)
     }
 }
 
@@ -79,7 +77,7 @@ const SESSION_REPLAY_HEAD_SEED_LIMIT: u32 = 60;
 const SESSION_REPLAY_DELTA_LIMIT: usize = SESSION_REPLAY_HEAD_SEED_LIMIT as usize;
 
 pub async fn plan_workspace_stream_replay_program(
-    state: &Arc<DaemonState>,
+    handle: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
     resolved_sessions: &[WorkspaceStreamResolvedSession],
     live_subscriptions: &HashMap<SessionId, SessionReplayCursor>,
@@ -88,7 +86,7 @@ pub async fn plan_workspace_stream_replay_program(
 ) -> WorkspaceStreamReplayProgram {
     let mut hook = NoopWorkspaceStreamReplayStepHook;
     plan_workspace_stream_replay_program_with_step_hook(
-        state,
+        handle,
         workspace_id,
         resolved_sessions,
         live_subscriptions,
@@ -101,7 +99,7 @@ pub async fn plan_workspace_stream_replay_program(
 }
 
 pub async fn plan_workspace_stream_replay_program_with_step_hook<H>(
-    state: &Arc<DaemonState>,
+    handle: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
     resolved_sessions: &[WorkspaceStreamResolvedSession],
     live_subscriptions: &HashMap<SessionId, SessionReplayCursor>,
@@ -113,7 +111,7 @@ where
     H: WorkspaceStreamReplayDrainHook + Send,
 {
     let mut service_hook = DaemonWorkspaceStreamReplayStepHookAdapter {
-        state,
+        handle,
         workspace_id,
         inner: step_hook,
     };
@@ -128,7 +126,7 @@ where
 }
 
 pub async fn replay_session_events<F, Fut>(
-    state: &Arc<DaemonState>,
+    handle: &WorkspaceStreamHandle,
     workspace_id: WorkspaceId,
     session_id: SessionId,
     after_cursor: SessionReplayCursor,
@@ -140,14 +138,14 @@ where
     F: FnMut(WorkspaceActiveSnapshotStreamMessage) -> Fut,
     Fut: std::future::Future<Output = Result<(), ()>>,
 {
-    let (snapshot_rev, _) =
-        crate::daemon::workspaces::load_workspace_active_snapshot_state(state, workspace_id).await;
+    let (snapshot_rev, _) = handle
+        .load_workspace_active_snapshot_state(workspace_id)
+        .await;
     if crate::fault_injection::maybe_fail(list_failpoint).is_err() {
         return Ok(WorkspaceStreamSessionReplayOutcome::ResetRequired);
     }
-    let replay = state
-        .workspaces
-        .workspace_active_snapshot
+    let replay = handle
+        .active_snapshot()
         .replay_session_stream(
             workspace_id,
             session_id,
@@ -168,14 +166,16 @@ where
                 .iter()
                 .any(|item| matches!(item, WorkspaceSessionReplayItem::Seed(_)));
             if saw_gap && !saw_seed {
-                let store = state.store_for_session(session_id).await.map_err(|_| ())?;
+                let store = handle
+                    .session_store_allow_archived(session_id)
+                    .await
+                    .map_err(|_| ())?;
                 if let Ok(Some(head)) = store
                     .get_session_head_snapshot(session_id, SESSION_REPLAY_HEAD_SEED_LIMIT, true)
                     .await
                 {
-                    state
-                        .workspaces
-                        .workspace_active_snapshot
+                    handle
+                        .active_snapshot()
                         .update_session_head(head.clone())
                         .await;
                     last_sent = SessionReplayCursor::from_head(&head);
@@ -248,7 +248,7 @@ impl WorkspaceStreamHandle {
         include_initial_snapshot: bool,
     ) -> WorkspaceStreamReplayProgram {
         plan_workspace_stream_replay_program(
-            &self.state,
+            self,
             workspace_id,
             resolved_sessions,
             live_subscriptions,
@@ -271,7 +271,7 @@ impl WorkspaceStreamHandle {
         H: WorkspaceStreamReplayDrainHook + Send,
     {
         plan_workspace_stream_replay_program_with_step_hook(
-            &self.state,
+            self,
             workspace_id,
             resolved_sessions,
             live_subscriptions,
@@ -296,7 +296,7 @@ impl WorkspaceStreamHandle {
         Fut: std::future::Future<Output = Result<(), ()>>,
     {
         replay_session_events(
-            &self.state,
+            self,
             workspace_id,
             session_id,
             after_cursor,
