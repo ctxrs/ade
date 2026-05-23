@@ -10,7 +10,7 @@ use crate::daemon::org_policy::{
     CacheOrgPolicySnapshotError, UpsertDaemonEnrollmentError, UpsertWorkspacePolicyOverlayError,
     WorkspacePolicyOverlayError,
 };
-use crate::daemon::{OrgPolicyHandle, WorkspacesHandle};
+use crate::daemon::{OrgPolicyHandle, WorkspaceOrgPolicyHandle};
 
 fn upsert_daemon_enrollment_route_error(error: UpsertDaemonEnrollmentError) -> OrgPolicyRouteError {
     match error {
@@ -134,7 +134,7 @@ impl OrgPolicyHandle {
     }
 }
 
-impl WorkspacesHandle {
+impl WorkspaceOrgPolicyHandle {
     pub async fn get_workspace_policy_overlay_for_route(
         &self,
         params: OrgPolicyWorkspaceRouteParams,
@@ -166,6 +166,9 @@ impl WorkspacesHandle {
             .map_err(upsert_workspace_policy_route_error)
     }
 }
+
+#[cfg(test)]
+mod workspace_overlay_tests;
 
 #[cfg(test)]
 mod tests {
@@ -316,7 +319,7 @@ mod tests {
         let (_temp, daemon) = test_daemon().await;
         let error = daemon
             .handle()
-            .workspaces()
+            .workspace_org_policy()
             .upsert_workspace_policy_overlay_for_route(
                 OrgPolicyWorkspaceRouteParams::new(WorkspaceId::new().0.to_string()),
                 UpsertWorkspacePolicyOverlayRouteRequest::from(overlay(
@@ -369,7 +372,7 @@ mod tests {
             .expect("create workspace");
         let overlay_error = daemon
             .handle()
-            .workspaces()
+            .workspace_org_policy()
             .upsert_workspace_policy_overlay_for_route(
                 OrgPolicyWorkspaceRouteParams::new(workspace.id.0.to_string()),
                 UpsertWorkspacePolicyOverlayRouteRequest::from(overlay(workspace.id, OrgId::new())),
@@ -392,7 +395,7 @@ mod tests {
         let missing_workspace_id = WorkspaceId::new();
         let missing_workspace_error = daemon
             .handle()
-            .workspaces()
+            .workspace_org_policy()
             .upsert_workspace_policy_overlay_for_route(
                 OrgPolicyWorkspaceRouteParams::new(missing_workspace_id.0.to_string()),
                 UpsertWorkspacePolicyOverlayRouteRequest::from(overlay(

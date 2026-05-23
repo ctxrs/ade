@@ -214,6 +214,9 @@ const {
   scanRunArchiveDaemonImplementationRatchet,
   scanRunArchiveHandleFieldRatchet,
   scanRunArchiveRouteExtractorRatchet,
+  scanWorkspaceOrgPolicyDaemonImplementationRatchet,
+  scanWorkspaceOrgPolicyHandleFieldRatchet,
+  scanWorkspaceOrgPolicyRouteExtractorRatchet,
   scanTaskAdmissionDaemonImplementationRatchet,
   scanTaskAdmissionHandleFieldRatchet,
   scanTaskAdmissionHandleRatchet,
@@ -2180,6 +2183,120 @@ test("appstate guard rejects run archive broad handle fields", () => {
     filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
     contents: `
       pub struct RunArchiveHandle {
+        workspace_stores: ProtectedWorkspaceStoreLookup,
+      }
+    `,
+  });
+
+  assert.deepEqual(narrowViolations, []);
+});
+
+test("appstate guard rejects workspace org policy route extraction outside overlay route", () => {
+  const violations = scanWorkspaceOrgPolicyRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/org_policy/enrollments.rs",
+    contents: `
+      use ctx_daemon::daemon::WorkspaceOrgPolicyHandle;
+      async fn handler(
+        State(state): State<WorkspaceOrgPolicyHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(violations, [
+    "workspace org policy route extracts WorkspaceOrgPolicyHandle outside workspace overlay route",
+  ]);
+
+  assert.deepEqual(
+    scanWorkspaceOrgPolicyRouteExtractorRatchet({
+      filePath: "core/crates/ctx-http/src/api/org_policy/workspace_overlay.rs",
+      contents: `
+        async fn handler(
+          State(state): State<WorkspaceOrgPolicyHandle>,
+        ) {}
+      `,
+    }),
+    [],
+  );
+});
+
+test("appstate guard rejects workspace org policy broad route and router composition", () => {
+  const routeViolations = scanWorkspaceOrgPolicyRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/org_policy/workspace_overlay.rs",
+    contents: `
+      use ctx_daemon::daemon::WorkspacesHandle;
+      async fn handler(State(state): State<WorkspacesHandle>) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert(routeViolations.includes("workspace org policy route uses broad workspace handle"));
+
+  const routerViolations = scanWorkspaceOrgPolicyRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/router.rs",
+    contents: `
+      impl RouteHandles {
+        fn from_daemon_handle(handle: DaemonHandle) -> Self {
+          Self {
+            workspace_org_policy: handle.org_policy(),
+            workspace_org_policy: handle.workspaces(),
+          }
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(routerViolations, [
+    "workspace org policy router composed from broad workspace/org-policy handle",
+    "workspace org policy router composed from broad workspace/org-policy handle",
+  ]);
+});
+
+test("appstate guard rejects workspace org policy daemon facade broad seams", () => {
+  const violations = scanWorkspaceOrgPolicyDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/org_policy_route.rs",
+    contents: `
+      use crate::daemon::{DaemonHandle, WorkspacesHandle};
+      use crate::daemon::DaemonState;
+
+      impl WorkspacesHandle {
+        async fn broad(&self, state: Arc<DaemonState>, daemon: DaemonHandle) {}
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(violations.includes("workspace org policy daemon facade uses broad daemon state"));
+  assert(violations.includes("workspace org policy daemon facade uses broad daemon handle"));
+  assert(violations.includes("workspace org policy daemon facade uses broad workspace handle"));
+});
+
+test("appstate guard rejects workspace org policy broad handle fields", () => {
+  const fieldViolations = scanWorkspaceOrgPolicyHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct WorkspaceOrgPolicyHandle {
+        org_policy: OrgPolicyHandle,
+        workspaces: WorkspacesHandle,
+        daemon: DaemonHandle,
+        state: Arc<DaemonState>,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    fieldViolations.includes(
+      "workspace org policy capability stores broad handle or daemon state",
+    ),
+  );
+  assert(
+    fieldViolations.includes(
+      "workspace org policy capability exposes generic full-state escape hatch",
+    ),
+  );
+
+  const narrowViolations = scanWorkspaceOrgPolicyHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct WorkspaceOrgPolicyHandle {
+        global_store: Store,
         workspace_stores: ProtectedWorkspaceStoreLookup,
       }
     `,

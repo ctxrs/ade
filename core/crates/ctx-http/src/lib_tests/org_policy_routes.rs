@@ -220,6 +220,63 @@ async fn workspace_policy_overlay_missing_workspace_returns_not_found() {
 }
 
 #[tokio::test]
+async fn workspace_policy_overlay_get_returns_null_then_stored_overlay() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let fixture = test_daemon_fixture_for_test(data_dir.path(), None).await;
+    let app = fixture.router();
+    let workspace = fixture
+        .daemon()
+        .seed_workspace_for_test(
+            "workspace",
+            &data_dir.path().join("workspace"),
+            VcsKind::Git,
+        )
+        .await
+        .expect("create workspace");
+
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/api/workspaces/{}/org_policy", workspace.id.0))
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(value, serde_json::Value::Null);
+
+    let org_id = OrgId::new();
+    fixture
+        .daemon()
+        .handle()
+        .org_policy()
+        .upsert_daemon_enrollment_checked(daemon_enrollment(org_id, "policy-signing-secret"))
+        .await
+        .expect("seed enrollment");
+    let overlay = workspace_overlay(workspace.id, org_id);
+    let req = Request::builder()
+        .method("PUT")
+        .uri(format!("/api/workspaces/{}/org_policy", workspace.id.0))
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_string(&overlay).unwrap()))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/api/workspaces/{}/org_policy", workspace.id.0))
+        .body(Body::empty())
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let stored: WorkspacePolicyOverlay = serde_json::from_slice(&body).unwrap();
+    assert_eq!(stored.workspace_id, workspace.id);
+    assert_eq!(stored.org_id, org_id);
+}
+
+#[tokio::test]
 async fn daemon_enrollment_unsupported_plan_returns_bad_request() {
     let data_dir = tempfile::tempdir().unwrap();
     let fixture = test_daemon_fixture_for_test(data_dir.path(), None).await;

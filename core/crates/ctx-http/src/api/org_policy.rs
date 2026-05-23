@@ -1,5 +1,5 @@
 use super::*;
-use ctx_daemon::daemon::{OrgPolicyHandle, WorkspacesHandle};
+use ctx_daemon::daemon::{OrgPolicyHandle, WorkspaceOrgPolicyHandle};
 use ctx_route_contracts::org_policy::{
     CacheOrgPolicySnapshotRouteRequest, DaemonEnrollmentRouteResponse,
     DaemonEnrollmentsRouteResponse, OrgPolicyOrgRouteParams, OrgPolicyRouteError,

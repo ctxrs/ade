@@ -1,7 +1,7 @@
 use ctx_core::ids::{OrgId, WorkspaceId};
 use ctx_core::models::{DaemonEnrollment, OrgPolicySnapshot, WorkspacePolicyOverlay};
 
-use crate::daemon::{OrgPolicyHandle, WorkspaceStoreAccessError, WorkspacesHandle};
+use crate::daemon::{OrgPolicyHandle, WorkspaceOrgPolicyHandle, WorkspaceStoreAccessError};
 
 pub use ctx_org_policy::{
     CacheOrgPolicySnapshotError, UpsertDaemonEnrollmentError, UpsertWorkspacePolicyOverlayError,
@@ -63,7 +63,7 @@ impl OrgPolicyHandle {
     }
 }
 
-impl WorkspacesHandle {
+impl WorkspaceOrgPolicyHandle {
     pub async fn get_workspace_policy_overlay(
         &self,
         workspace_id: WorkspaceId,
@@ -90,11 +90,8 @@ impl WorkspacesHandle {
         &self,
         overlay: WorkspacePolicyOverlay,
     ) -> Result<WorkspacePolicyOverlay, UpsertWorkspacePolicyOverlayError> {
-        ctx_org_policy::validate_daemon_enrollment_for_overlay(
-            self.state.global_store(),
-            overlay.org_id,
-        )
-        .await?;
+        ctx_org_policy::validate_daemon_enrollment_for_overlay(self.global_store(), overlay.org_id)
+            .await?;
         self.upsert_workspace_policy_overlay(overlay)
             .await
             .map_err(upsert_workspace_policy_overlay_error)
@@ -162,7 +159,7 @@ mod tests {
 
         let error = daemon
             .handle()
-            .workspaces()
+            .workspace_org_policy()
             .upsert_workspace_policy_overlay_checked(overlay(WorkspaceId::new(), OrgId::new()))
             .await
             .expect_err("missing enrollment should fail before workspace lookup");
@@ -186,7 +183,7 @@ mod tests {
 
         let error = daemon
             .handle()
-            .workspaces()
+            .workspace_org_policy()
             .upsert_workspace_policy_overlay_checked(overlay(WorkspaceId::new(), org_id))
             .await
             .expect_err("missing workspace should fail");
@@ -223,7 +220,7 @@ mod tests {
 
         let stored = daemon
             .handle()
-            .workspaces()
+            .workspace_org_policy()
             .upsert_workspace_policy_overlay_checked(overlay(workspace.id, org_id))
             .await
             .expect("upsert overlay");

@@ -2,7 +2,7 @@ use super::common::policy_api_error;
 use super::*;
 
 pub(in crate::api) async fn get_workspace_org_policy(
-    State(state): State<WorkspacesHandle>,
+    State(state): State<WorkspaceOrgPolicyHandle>,
     Path(id): Path<String>,
 ) -> Result<Json<WorkspacePolicyOverlayOptionalRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {
     state
@@ -13,7 +13,7 @@ pub(in crate::api) async fn get_workspace_org_policy(
 }
 
 pub(in crate::api) async fn upsert_workspace_org_policy(
-    State(state): State<WorkspacesHandle>,
+    State(state): State<WorkspaceOrgPolicyHandle>,
     Path(id): Path<String>,
     Json(overlay): Json<UpsertWorkspacePolicyOverlayRouteRequest>,
 ) -> Result<Json<WorkspacePolicyOverlayRouteResponse>, (StatusCode, Json<ApiErrorResp>)> {

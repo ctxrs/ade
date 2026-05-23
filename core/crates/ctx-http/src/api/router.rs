@@ -16,7 +16,8 @@ use ctx_daemon::daemon::{
     SessionVcsHandle, SessionsHandle, SettingsHandle, TaskCreationHandle, TaskLifecycleHandle,
     TaskListingHandle, TaskReadStateHandle, TaskSessionAdmissionHandle, TaskSessionListingHandle,
     TaskTitleHandle, TelemetryHandle, TransportHandle, UpdateActivityHandle, UpdateDrainHandle,
-    UpdateReleaseHandle, WorkspaceActiveHandle, WorkspaceStreamHandle, WorkspacesHandle,
+    UpdateReleaseHandle, WorkspaceActiveHandle, WorkspaceOrgPolicyHandle, WorkspaceStreamHandle,
+    WorkspacesHandle,
 };
 
 use super::auth::auth_middleware;
@@ -87,6 +88,7 @@ pub struct RouteHandles {
     pub(in crate::api) repo_onboarding: RepoOnboardingHandle,
     pub(in crate::api) logs: LogsHandle,
     pub(in crate::api) org_policy: OrgPolicyHandle,
+    pub(in crate::api) workspace_org_policy: WorkspaceOrgPolicyHandle,
     pub(in crate::api) dictation: DictationHandle,
     pub(in crate::api) update_release: UpdateReleaseHandle,
     pub(in crate::api) update_activity: UpdateActivityHandle,
@@ -138,6 +140,7 @@ impl RouteHandles {
             repo_onboarding: handle.repo_onboarding(),
             logs: handle.logs(),
             org_policy: handle.org_policy(),
+            workspace_org_policy: handle.workspace_org_policy(),
             dictation: handle.dictation(),
             update_release: handle.update_release(),
             update_activity: handle.update_activity(),
@@ -194,6 +197,7 @@ impl_route_state_extractors! {
     RepoOnboardingHandle, repo_onboarding;
     LogsHandle, logs;
     OrgPolicyHandle, org_policy;
+    WorkspaceOrgPolicyHandle, workspace_org_policy;
     DictationHandle, dictation;
     UpdateReleaseHandle, update_release;
     UpdateActivityHandle, update_activity;
