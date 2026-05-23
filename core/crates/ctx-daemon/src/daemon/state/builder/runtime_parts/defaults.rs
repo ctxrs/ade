@@ -49,8 +49,8 @@ pub(in crate::daemon::state::builder) fn build_telemetry_runtime(
         ops_events,
         perf_telemetry,
         provider_unknown_events,
-        resource_governance: Mutex::new(ResourceGovernanceRuntime::default()),
-        resource_sampler: Mutex::new(ResourceSampler::new()),
+        resource_governance: Arc::new(Mutex::new(ResourceGovernanceRuntime::default())),
+        resource_sampler: Arc::new(Mutex::new(ResourceSampler::new())),
     }
 }
 

@@ -74,8 +74,8 @@ pub use diagnostics::DiagnosticsSnapshotError;
 pub use handle::{
     AuthHandle, CoreHandle, DaemonHandle, DiagnosticsHandle, DictationHandle, ExecutionHandle,
     HealthHandle, LogsHandle, MobileStoreHandle, OrgPolicyHandle, ProvidersHandle,
-    RequestBaseHandle, SessionsHandle, TasksHandle, TelemetryHandle, TransportHandle,
-    UpdateReleaseHandle, WorkspaceStreamHandle, WorkspacesHandle,
+    RequestBaseHandle, SessionsHandle, SettingsHandle, TasksHandle, TelemetryHandle,
+    TransportHandle, UpdateReleaseHandle, WorkspaceStreamHandle, WorkspacesHandle,
 };
 pub use health::HealthSnapshotError;
 pub use lifecycle::spawn_deferred_daemon_shutdown;

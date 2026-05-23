@@ -122,6 +122,14 @@ where
     H: ProviderRestartHost,
 {
     let system = state.system_snapshot().await;
+    apply_settings_to_runtime(state.provider_restart_runtime(), settings, &system).await
+}
+
+pub async fn apply_settings_to_runtime(
+    provider_restart_runtime: &Mutex<ProviderRestartRuntime>,
+    settings: &ProviderRestartConfig,
+    system: &SystemSnapshot,
+) -> Result<()> {
     let effective = compute_effective_limits(settings, &system);
 
     let runtime = ProviderRestartRuntime {
@@ -130,7 +138,7 @@ where
         last_message: None,
     };
 
-    let mut guard = state.provider_restart_runtime().lock().await;
+    let mut guard = provider_restart_runtime.lock().await;
     *guard = runtime;
     Ok(())
 }
@@ -300,4 +308,38 @@ fn unix_ms_now() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn apply_settings_to_runtime_updates_restart_limits() {
+        let runtime = Mutex::new(ProviderRestartRuntime::default());
+        let system = SystemSnapshot {
+            memory_total_bytes: 8 * 1024 * 1024 * 1024,
+            memory_used_bytes: 1024 * 1024 * 1024,
+        };
+        let config = ProviderRestartConfig {
+            enabled: true,
+            mode: Some(ResourceGovernanceMode::Custom),
+            memory_high_mb: Some(384),
+            memory_max_mb: Some(768),
+            interval_ms: Some(300),
+            grace_period_ms: Some(1_500),
+        };
+
+        apply_settings_to_runtime(&runtime, &config, &system)
+            .await
+            .expect("apply restart settings");
+
+        let snapshot = runtime.lock().await.clone();
+        let limits = snapshot.last_applied.expect("restart limits");
+        assert!(snapshot.enabled);
+        assert_eq!(limits.memory_high_mb, 384);
+        assert_eq!(limits.memory_max_mb, DEFAULT_MIN_MEMORY_MB as u32);
+        assert_eq!(limits.interval, Duration::from_millis(300));
+        assert_eq!(limits.grace_period, Duration::from_millis(1_500));
+    }
 }

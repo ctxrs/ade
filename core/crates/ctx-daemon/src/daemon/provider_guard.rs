@@ -10,12 +10,34 @@ mod events;
 mod snapshot;
 
 use ctx_provider_runtime::provider_guard::{
-    ProviderGuardConfig, ProviderGuardRuntime, ResourceGovernanceMode as GuardMode,
+    ProviderGuardConfig, ProviderGuardRuntime, ResourceGovernanceMode as GuardMode, SystemSnapshot,
 };
+use ctx_provider_runtime::ProviderRuntime;
+use ctx_resource_utilization::ResourceSampler;
 
 pub async fn apply_settings(state: &DaemonState, settings: &Settings) -> Result<()> {
+    apply_settings_parts(
+        state.providers.as_ref(),
+        state.telemetry.resource_sampler.as_ref(),
+        settings,
+    )
+    .await
+}
+
+pub async fn apply_settings_parts(
+    providers: &ProviderRuntime,
+    resource_sampler: &Mutex<ResourceSampler>,
+    settings: &Settings,
+) -> Result<()> {
     let cfg = settings.provider_guard.clone().unwrap_or_default();
-    ctx_provider_runtime::provider_guard::apply_settings(state, &map_config(&cfg)).await
+    let config = map_config(&cfg);
+    let system = system_snapshot(resource_sampler).await;
+    ctx_provider_runtime::provider_guard::apply_settings_to_runtime(
+        providers.provider_guard_runtime(),
+        &config,
+        &system,
+    )
+    .await
 }
 
 pub fn spawn_provider_guard(state: Arc<DaemonState>) {
@@ -84,5 +106,16 @@ fn map_config(settings: &ProviderGuardSettings) -> ProviderGuardConfig {
         memory_max_mb: settings.memory_max_mb,
         interval_ms: settings.interval_ms,
         grace_period_ms: settings.grace_period_ms,
+    }
+}
+
+async fn system_snapshot(resource_sampler: &Mutex<ResourceSampler>) -> SystemSnapshot {
+    let (system, _disks, _cache_age_ms) = {
+        let mut sampler = resource_sampler.lock().await;
+        sampler.system_snapshot()
+    };
+    SystemSnapshot {
+        memory_total_bytes: system.memory_total_bytes,
+        memory_used_bytes: system.memory_used_bytes,
     }
 }

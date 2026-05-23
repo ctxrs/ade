@@ -2,7 +2,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
 
-use ctx_daemon::daemon::CoreHandle;
+use ctx_daemon::daemon::SettingsHandle;
 use ctx_settings_model as user_settings;
 use ctx_settings_service::route_contract::{SettingsRouteError, SettingsRouteErrorKind};
 
@@ -14,7 +14,7 @@ fn settings_route_status(error: SettingsRouteError) -> StatusCode {
 }
 
 pub(super) async fn get_settings(
-    State(state): State<CoreHandle>,
+    State(state): State<SettingsHandle>,
 ) -> Result<Json<user_settings::PublicSettings>, StatusCode> {
     state
         .settings_snapshot_for_response()
@@ -24,7 +24,7 @@ pub(super) async fn get_settings(
 }
 
 pub(super) async fn update_settings(
-    State(state): State<CoreHandle>,
+    State(state): State<SettingsHandle>,
     Json(req): Json<user_settings::UpdateSettingsReq>,
 ) -> Result<Json<user_settings::PublicSettings>, StatusCode> {
     state
@@ -84,7 +84,7 @@ mod tests {
         }))
         .expect("settings update request");
 
-        let err = update_settings(State(fixture.core()), Json(req))
+        let err = update_settings(State(fixture.settings()), Json(req))
             .await
             .expect_err("sandbox-only policy should reject host execution settings update");
 
@@ -105,7 +105,7 @@ mod tests {
         }))
         .expect("settings update request");
 
-        let Json(public) = update_settings(State(fixture.core()), Json(req))
+        let Json(public) = update_settings(State(fixture.settings()), Json(req))
             .await
             .expect("settings update should succeed");
 
@@ -113,7 +113,7 @@ mod tests {
         assert!(!telemetry.enabled);
         assert_eq!(telemetry.endpoint, endpoint);
         let persisted = fixture
-            .core()
+            .settings()
             .load_settings()
             .await
             .expect("persisted settings");
@@ -135,7 +135,7 @@ mod tests {
         }))
         .expect("settings update request");
 
-        let err = update_settings(State(fixture.core()), Json(req))
+        let err = update_settings(State(fixture.settings()), Json(req))
             .await
             .expect_err("invalid host execution policy should fail settings update");
 

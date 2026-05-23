@@ -32,7 +32,7 @@ async fn workspace_attachments_are_db_canonical_and_ignore_repo_file() {
     let state = &fixture.daemon;
     state
         .handle()
-        .core()
+        .settings()
         .save_settings(&Settings {
             execution: Some(ExecutionSettings {
                 mode: ExecutionMode::Host,

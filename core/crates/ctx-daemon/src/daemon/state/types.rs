@@ -69,8 +69,8 @@ pub struct TelemetryRuntime {
     pub(crate) perf_telemetry: PerfTelemetry,
     pub(crate) provider_unknown_events:
         ctx_observability::provider_unknown_events::ProviderUnknownEvents,
-    pub(crate) resource_governance: Mutex<ResourceGovernanceRuntime>,
-    pub(crate) resource_sampler: Mutex<ResourceSampler>,
+    pub(crate) resource_governance: Arc<Mutex<ResourceGovernanceRuntime>>,
+    pub(crate) resource_sampler: Arc<Mutex<ResourceSampler>>,
 }
 
 pub struct TransportRuntime {

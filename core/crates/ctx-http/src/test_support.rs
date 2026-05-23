@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
-use ctx_daemon::daemon::{CoreHandle, ProvidersHandle};
+use ctx_daemon::daemon::{ProvidersHandle, SettingsHandle};
 use ctx_daemon::test_support::TestDaemon;
 use ctx_providers::adapters::ProviderAdapter;
 use ctx_providers::fake::FakeProviderAdapter;
@@ -74,12 +74,12 @@ impl TestDaemonFixture {
         ))
     }
 
-    pub(crate) fn core(&self) -> CoreHandle {
-        self.daemon.handle().core()
-    }
-
     pub(crate) fn providers(&self) -> ProvidersHandle {
         self.daemon.handle().providers()
+    }
+
+    pub(crate) fn settings(&self) -> SettingsHandle {
+        self.daemon.handle().settings()
     }
 }
 
