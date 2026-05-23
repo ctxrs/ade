@@ -37,6 +37,7 @@ mod runtime;
 mod sandbox_binding;
 pub mod stream;
 pub mod vcs_hooks;
+mod workspace_file_completions_route;
 mod worktree_bootstrap;
 mod worktree_cleanup;
 mod worktree_provision;

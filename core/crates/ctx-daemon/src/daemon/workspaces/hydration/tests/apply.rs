@@ -75,7 +75,7 @@ fn test_workspace_runtime() -> WorkspaceRuntime {
     WorkspaceRuntime {
         worktree_vcs_enabled: true,
         file_completions_cache: AsyncMutex::new(HashMap::new()),
-        workspace_file_completions_cache: AsyncMutex::new(HashMap::new()),
+        workspace_file_completions_cache: Arc::new(AsyncMutex::new(HashMap::new())),
         git_status_snapshots: AsyncMutex::new(HashMap::new()),
         worktree_vcs_snapshots: AsyncMutex::new(HashMap::new()),
         worktree_vcs_active: AsyncMutex::new(HashMap::new()),

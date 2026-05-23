@@ -91,7 +91,9 @@ pub(super) fn workspace_harness_container_ensure_error(
     }
 }
 
-pub(super) fn file_completions_route_error(error: FileCompletionsError) -> WorkspaceRouteError {
+pub(in crate::daemon::workspaces) fn file_completions_route_error(
+    error: FileCompletionsError,
+) -> WorkspaceRouteError {
     match error.kind() {
         FileCompletionsErrorKind::NotFound => WorkspaceRouteError::not_found(error.message()),
         FileCompletionsErrorKind::Forbidden => WorkspaceRouteError::forbidden(error.message()),

@@ -223,6 +223,9 @@ const {
   scanWorkspaceExecutionConfigDaemonImplementationRatchet,
   scanWorkspaceExecutionConfigHandleFieldRatchet,
   scanWorkspaceExecutionConfigRouteExtractorRatchet,
+  scanWorkspaceFileCompletionsDaemonImplementationRatchet,
+  scanWorkspaceFileCompletionsHandleFieldRatchet,
+  scanWorkspaceFileCompletionsRouteExtractorRatchet,
   scanWorkspaceProviderModelPreferenceDaemonImplementationRatchet,
   scanWorkspaceProviderModelPreferenceHandleFieldRatchet,
   scanWorkspaceProviderModelPreferenceRouteExtractorRatchet,
@@ -2589,6 +2592,136 @@ test("appstate guard rejects workspace execution config broad handle fields", ()
         global_store: Store,
         workspace_stores: ProtectedWorkspaceStoreLookup,
         data_root: PathBuf,
+      }
+    `,
+  });
+
+  assert.deepEqual(narrowViolations, []);
+});
+
+test("appstate guard rejects workspace file completions extraction outside allowed route", () => {
+  const violations = scanWorkspaceFileCompletionsRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/workspaces/registry.rs",
+    contents: `
+      use ctx_daemon::daemon::WorkspaceFileCompletionsHandle;
+      async fn handler(
+        State(state): State<WorkspaceFileCompletionsHandle>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(violations, [
+    "workspace file completions route extracts WorkspaceFileCompletionsHandle outside file completions route",
+  ]);
+
+  assert.deepEqual(
+    scanWorkspaceFileCompletionsRouteExtractorRatchet({
+      filePath: "core/crates/ctx-http/src/api/workspaces/management/file_completions.rs",
+      contents: `
+        async fn workspace_file_completions(
+          State(state): State<WorkspaceFileCompletionsHandle>,
+        ) {}
+      `,
+    }),
+    [],
+  );
+});
+
+test("appstate guard rejects workspace file completions broad route and router composition", () => {
+  const routeViolations = scanWorkspaceFileCompletionsRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/workspaces/management/file_completions.rs",
+    contents: `
+      pub(in crate::api) async fn workspace_file_completions(
+        State(workspaces): State<WorkspacesHandle>,
+        Path(id): Path<String>,
+      ) {}
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(routeViolations, [
+    "workspace file completions route uses broad workspace handle",
+  ]);
+
+  const routerViolations = scanWorkspaceFileCompletionsRouteExtractorRatchet({
+    filePath: "core/crates/ctx-http/src/api/router.rs",
+    contents: `
+      impl RouteHandles {
+        fn from_daemon_handle(handle: DaemonHandle) -> Self {
+          Self {
+            workspace_file_completions: handle.workspaces(),
+          }
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert.deepEqual(routerViolations, [
+    "workspace file completions router composed from broad workspace handle",
+  ]);
+});
+
+test("appstate guard rejects workspace file completions daemon facade broad seams", () => {
+  const violations = scanWorkspaceFileCompletionsDaemonImplementationRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/workspaces/workspace_file_completions_route.rs",
+    contents: `
+      use crate::daemon::{DaemonHandle, WorkspacesHandle};
+      use crate::daemon::DaemonState;
+
+      impl WorkspacesHandle {
+        async fn broad(&self, state: Arc<DaemonState>, daemon: DaemonHandle) {
+          let _ = self.state.global_store();
+          let _ = daemon;
+        }
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    violations.includes("workspace file completions daemon facade uses broad daemon state"),
+  );
+  assert(
+    violations.includes("workspace file completions daemon facade uses broad daemon handle"),
+  );
+  assert(
+    violations.includes("workspace file completions daemon facade uses broad workspace handle"),
+  );
+  assert(
+    violations.includes(
+      "workspace file completions daemon facade exposes generic state/daemon escape hatch",
+    ),
+  );
+});
+
+test("appstate guard rejects workspace file completions broad handle fields", () => {
+  const fieldViolations = scanWorkspaceFileCompletionsHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct WorkspaceFileCompletionsHandle {
+        workspaces: WorkspacesHandle,
+        daemon: DaemonHandle,
+        state: Arc<DaemonState>,
+      }
+    `,
+  }).map((violation) => violation.name);
+
+  assert(
+    fieldViolations.includes(
+      "workspace file completions capability stores broad handle or daemon state",
+    ),
+  );
+  assert(
+    fieldViolations.includes(
+      "workspace file completions capability exposes generic full-state escape hatch",
+    ),
+  );
+
+  const narrowViolations = scanWorkspaceFileCompletionsHandleFieldRatchet({
+    filePath: "core/crates/ctx-daemon/src/daemon/handle.rs",
+    contents: `
+      pub struct WorkspaceFileCompletionsHandle {
+        global_store: Store,
+        workspace_file_completions_cache: WorkspaceFileCompletionsCache,
+        perf_telemetry: PerfTelemetry,
       }
     `,
   });

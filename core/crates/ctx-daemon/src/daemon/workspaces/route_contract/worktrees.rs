@@ -1,12 +1,9 @@
 use ctx_core::ids::WorktreeId;
 use ctx_route_contracts::downloads::TextRouteDownload;
-use ctx_route_contracts::workspaces::{
-    WorkspaceFileCompletionsRouteQuery, WorkspaceRouteParams, WorktreeRouteParams,
-    WorktreeRouteResponse,
-};
+use ctx_route_contracts::workspaces::{WorktreeRouteParams, WorktreeRouteResponse};
 
 use super::super::{WorkspaceRouteError, WorkspacesHandle};
-use super::common::{file_completions_route_error, route_file_download_error};
+use super::common::route_file_download_error;
 
 impl WorkspacesHandle {
     pub async fn get_worktree_for_route_params(
@@ -37,17 +34,5 @@ impl WorkspacesHandle {
         self.download_worktree_bootstrap_logs_for_route(worktree_id)
             .await
             .map_err(route_file_download_error)
-    }
-
-    pub async fn workspace_file_completions_for_route(
-        &self,
-        params: WorkspaceRouteParams,
-        query: WorkspaceFileCompletionsRouteQuery,
-    ) -> Result<Vec<String>, WorkspaceRouteError> {
-        let workspace_id = params.parse_workspace_id()?;
-        let (query, limit) = query.into_parts();
-        self.complete_files_for_workspace(workspace_id, query, limit)
-            .await
-            .map_err(file_completions_route_error)
     }
 }

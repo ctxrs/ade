@@ -42,7 +42,7 @@ use tokio::sync::{broadcast, mpsc, Mutex};
 
 use super::{
     blobs::BlobHandle,
-    state::{DaemonState, TelemetryRuntime},
+    state::{DaemonState, TelemetryRuntime, WorkspaceFileCompletionsCache},
 };
 
 #[derive(Clone)]
@@ -125,6 +125,14 @@ impl DaemonHandle {
 
     pub fn workspace_prompt_bootstrap_config(&self) -> WorkspacePromptBootstrapConfigHandle {
         WorkspacePromptBootstrapConfigHandle::new(self.protected_workspace_store_lookup())
+    }
+
+    pub fn workspace_file_completions(&self) -> WorkspaceFileCompletionsHandle {
+        WorkspaceFileCompletionsHandle::new(
+            self.state.global_store().clone(),
+            Arc::clone(&self.state.workspaces.workspace_file_completions_cache),
+            self.state.telemetry.perf_telemetry.clone(),
+        )
     }
 
     pub fn workspace_execution_config(&self) -> WorkspaceExecutionConfigHandle {
@@ -1360,6 +1368,41 @@ impl WorkspacePromptBootstrapConfigHandle {
         self.workspace_stores
             .existing_workspace_store(workspace_id)
             .await
+    }
+}
+
+#[derive(Clone)]
+pub struct WorkspaceFileCompletionsHandle {
+    global_store: Store,
+    workspace_file_completions_cache: WorkspaceFileCompletionsCache,
+    perf_telemetry: PerfTelemetry,
+}
+
+impl WorkspaceFileCompletionsHandle {
+    pub(in crate::daemon) fn new(
+        global_store: Store,
+        workspace_file_completions_cache: WorkspaceFileCompletionsCache,
+        perf_telemetry: PerfTelemetry,
+    ) -> Self {
+        Self {
+            global_store,
+            workspace_file_completions_cache,
+            perf_telemetry,
+        }
+    }
+
+    pub(in crate::daemon) fn global_store(&self) -> &Store {
+        &self.global_store
+    }
+
+    pub(in crate::daemon) fn workspace_file_completions_cache(
+        &self,
+    ) -> &WorkspaceFileCompletionsCache {
+        &self.workspace_file_completions_cache
+    }
+
+    pub(in crate::daemon) fn perf_telemetry(&self) -> &PerfTelemetry {
+        &self.perf_telemetry
     }
 }
 

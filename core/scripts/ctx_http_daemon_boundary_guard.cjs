@@ -248,6 +248,10 @@ const workspaceExecutionConfigRouteExtractorAllowedPaths = new Set([
   "core/crates/ctx-http/src/api/workspaces/management.rs",
 ]);
 
+const workspaceFileCompletionsRouteExtractorAllowedPaths = new Set([
+  "core/crates/ctx-http/src/api/workspaces/management/file_completions.rs",
+]);
+
 const workspaceProviderModelPreferenceRouteExtractorAllowedPaths = new Set([
   "core/crates/ctx-http/src/api/workspaces/management/provider_model_preferences.rs",
 ]);
@@ -9389,6 +9393,161 @@ function scanWorkspaceExecutionConfigHandleFieldRatchet({ filePath, contents }) 
   return violations;
 }
 
+function scanWorkspaceFileCompletionsRouteExtractorRatchet({ filePath, contents }) {
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+
+  if (!workspaceFileCompletionsRouteExtractorAllowedPaths.has(filePath)) {
+    const extractorRegex =
+      /\bState\s*(?:\(\s*[A-Za-z_][A-Za-z0-9_]*\s*\))?\s*:\s*State\s*<\s*WorkspaceFileCompletionsHandle\s*>/gu;
+    for (
+      let match = extractorRegex.exec(contents);
+      match;
+      match = extractorRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "workspace file completions route extracts WorkspaceFileCompletionsHandle outside file completions route",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  if (workspaceFileCompletionsRouteExtractorAllowedPaths.has(filePath)) {
+    const broadRegex = /\bWorkspacesHandle\b/gu;
+    for (let match = broadRegex.exec(contents); match; match = broadRegex.exec(contents)) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "workspace file completions route uses broad workspace handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  if (filePath === "core/crates/ctx-http/src/api/router.rs") {
+    const broadCompositionRegex =
+      /\bworkspace_file_completions\s*:\s*handle\s*\.\s*workspaces\s*\(/gu;
+    for (
+      let match = broadCompositionRegex.exec(contents);
+      match;
+      match = broadCompositionRegex.exec(contents)
+    ) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: "workspace file completions router composed from broad workspace handle",
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
+function scanWorkspaceFileCompletionsDaemonImplementationRatchet({ filePath, contents }) {
+  if (
+    filePath !==
+    "core/crates/ctx-daemon/src/daemon/workspaces/workspace_file_completions_route.rs"
+  ) {
+    return [];
+  }
+
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const checks = [
+    {
+      name: "workspace file completions daemon facade uses broad daemon state",
+      regex: /\bDaemonState\b|\bArc\s*<\s*DaemonState\s*>/gu,
+    },
+    {
+      name: "workspace file completions daemon facade uses broad daemon handle",
+      regex: /\bDaemonHandle\b/gu,
+    },
+    {
+      name: "workspace file completions daemon facade uses broad workspace handle",
+      regex: /\bWorkspacesHandle\b/gu,
+    },
+    {
+      name: "workspace file completions daemon facade exposes generic state/daemon escape hatch",
+      regex: /\b(?:state|daemon)\s*:(?!:)|\bself\s*\.\s*(?:state|daemon)\b/gu,
+    },
+  ];
+
+  for (const check of checks) {
+    for (let match = check.regex.exec(contents); match; match = check.regex.exec(contents)) {
+      const line = contents.slice(0, match.index).split(/\r?\n/u).length;
+      violations.push({
+        filePath,
+        line,
+        name: check.name,
+        text: lines[line - 1]?.trim() ?? match[0],
+      });
+    }
+  }
+
+  return violations;
+}
+
+function scanWorkspaceFileCompletionsHandleFieldRatchet({ filePath, contents }) {
+  if (filePath !== "core/crates/ctx-daemon/src/daemon/handle.rs") {
+    return [];
+  }
+
+  const violations = [];
+  const lines = contents.split(/\r?\n/u);
+  const broadFieldRegex =
+    /\b(?:TasksHandle|SessionsHandle|WorkspacesHandle|WorkspaceActiveHandle|WorkspaceStreamHandle|WorkspaceOrgPolicyHandle|WorkspacePromptBootstrapConfigHandle|WorkspaceExecutionConfigHandle|WorkspaceProviderModelPreferenceHandle|ResourceUtilizationHandle|RepoOnboardingHandle|RunArchiveHandle|OrgPolicyHandle|ProvidersHandle|ProviderOptionsHandle|DaemonHandle|DaemonState)\b|\bArc\s*<\s*DaemonState\s*>/gu;
+  const genericEscapeFieldRegex =
+    /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?:with_state|with_daemon|daemon|state)\s*:/gmu;
+
+  const handleStruct = rustStructBlockForType({
+    contents,
+    typeName: "WorkspaceFileCompletionsHandle",
+  });
+  if (!handleStruct) {
+    return violations;
+  }
+
+  broadFieldRegex.lastIndex = 0;
+  for (
+    let broad = broadFieldRegex.exec(handleStruct.text);
+    broad;
+    broad = broadFieldRegex.exec(handleStruct.text)
+  ) {
+    const offset = handleStruct.index + broad.index;
+    const line = contents.slice(0, offset).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "workspace file completions capability stores broad handle or daemon state",
+      text: lines[line - 1]?.trim() ?? broad[0],
+    });
+  }
+
+  genericEscapeFieldRegex.lastIndex = 0;
+  for (
+    let escape = genericEscapeFieldRegex.exec(handleStruct.text);
+    escape;
+    escape = genericEscapeFieldRegex.exec(handleStruct.text)
+  ) {
+    const offset = handleStruct.index + escape.index;
+    const line = contents.slice(0, offset).split(/\r?\n/u).length;
+    violations.push({
+      filePath,
+      line,
+      name: "workspace file completions capability exposes generic full-state escape hatch",
+      text: lines[line - 1]?.trim() ?? escape[0],
+    });
+  }
+
+  return violations;
+}
+
 function scanWorkspaceProviderModelPreferenceRouteExtractorRatchet({ filePath, contents }) {
   const violations = [];
   const lines = contents.split(/\r?\n/u);
@@ -9737,6 +9896,10 @@ function scanRepo() {
         filePath: relativePath,
         contents,
       }),
+      ...scanWorkspaceFileCompletionsRouteExtractorRatchet({
+        filePath: relativePath,
+        contents,
+      }),
       ...scanWorkspaceProviderModelPreferenceRouteExtractorRatchet({
         filePath: relativePath,
         contents,
@@ -9831,6 +9994,10 @@ function scanRepo() {
         contents,
       }),
       ...scanWorkspaceExecutionConfigHandleFieldRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanWorkspaceFileCompletionsHandleFieldRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -9945,6 +10112,10 @@ function scanRepo() {
         contents,
       }),
       ...scanWorkspaceExecutionConfigDaemonImplementationRatchet({
+        filePath: relativePath,
+        contents,
+      }),
+      ...scanWorkspaceFileCompletionsDaemonImplementationRatchet({
         filePath: relativePath,
         contents,
       }),
@@ -10577,6 +10748,9 @@ module.exports = {
   scanWorkspaceExecutionConfigDaemonImplementationRatchet,
   scanWorkspaceExecutionConfigHandleFieldRatchet,
   scanWorkspaceExecutionConfigRouteExtractorRatchet,
+  scanWorkspaceFileCompletionsDaemonImplementationRatchet,
+  scanWorkspaceFileCompletionsHandleFieldRatchet,
+  scanWorkspaceFileCompletionsRouteExtractorRatchet,
   scanWorkspaceProviderModelPreferenceDaemonImplementationRatchet,
   scanWorkspaceProviderModelPreferenceHandleFieldRatchet,
   scanWorkspaceProviderModelPreferenceRouteExtractorRatchet,

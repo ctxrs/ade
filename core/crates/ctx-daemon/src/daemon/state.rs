@@ -42,6 +42,7 @@ use runtime_adapters::{
 };
 
 pub use store_lookup::{SessionStoreAccessError, WorkspaceStoreAccessError};
+pub(crate) use types::WorkspaceFileCompletionsCache;
 pub use types::{
     AppRuntimeFlags, CoreState, DaemonState, ExecutionRuntime, ProviderRuntime, SessionRuntime,
     StoreLookup, TelemetryRuntime, TransportRuntime, WorkspaceRuntime,

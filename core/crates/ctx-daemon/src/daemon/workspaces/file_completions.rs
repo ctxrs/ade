@@ -5,14 +5,16 @@ use std::time::{Duration, Instant};
 
 use ctx_core::ids::{SessionId, WorkspaceId};
 use ctx_core::models::{ExecutionEnvironment, Worktree};
-use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind};
+use ctx_observability::perf_telemetry::{PerfMetric, PerfMetricKind, PerfTelemetry};
 use ctx_storage_admission::is_storage_exhaustion_error;
+use ctx_store::Store;
 use ctx_worktree_data_plane::resolve_worktree_data_plane_with_host as resolve_worktree_data_plane;
 use ctx_worktree_vcs_service::{
     filter_and_rank_paths, list_host_git_files as service_list_host_git_files,
     workspace_has_git_repo, CachedFileCompletions,
 };
 
+use crate::daemon::state::WorkspaceFileCompletionsCache;
 use crate::daemon::{DaemonState, StoreLookup, TimedEntry};
 
 mod container;
@@ -119,8 +121,26 @@ pub async fn complete_files_for_workspace(
     query: Option<String>,
     limit: Option<u32>,
 ) -> Result<Vec<String>, FileCompletionsError> {
-    let workspace = state
-        .global_store()
+    complete_files_for_workspace_with_runtime(
+        state.global_store(),
+        &state.workspaces.workspace_file_completions_cache,
+        &state.telemetry.perf_telemetry,
+        workspace_id,
+        query,
+        limit,
+    )
+    .await
+}
+
+pub(in crate::daemon::workspaces) async fn complete_files_for_workspace_with_runtime(
+    global_store: &Store,
+    workspace_file_completions_cache: &WorkspaceFileCompletionsCache,
+    perf_telemetry: &PerfTelemetry,
+    workspace_id: WorkspaceId,
+    query: Option<String>,
+    limit: Option<u32>,
+) -> Result<Vec<String>, FileCompletionsError> {
+    let workspace = global_store
         .get_workspace(workspace_id)
         .await
         .map_err(|err| FileCompletionsError::internal(format!("loading workspace: {err}")))?
@@ -131,7 +151,13 @@ pub async fn complete_files_for_workspace(
         return Ok(Vec::new());
     }
 
-    let files = cached_workspace_files(state, workspace_id, &root).await?;
+    let files = cached_workspace_files(
+        workspace_file_completions_cache,
+        perf_telemetry,
+        workspace_id,
+        &root,
+    )
+    .await?;
     Ok(rank_files(files.as_ref(), query, limit))
 }
 
@@ -182,16 +208,13 @@ async fn cached_worktree_files(
 }
 
 async fn cached_workspace_files(
-    state: &Arc<DaemonState>,
+    workspace_file_completions_cache: &WorkspaceFileCompletionsCache,
+    perf_telemetry: &PerfTelemetry,
     workspace_id: WorkspaceId,
     root: &Path,
 ) -> Result<Arc<Vec<String>>, FileCompletionsError> {
     let now = Instant::now();
-    let mut cache = state
-        .workspaces
-        .workspace_file_completions_cache
-        .lock()
-        .await;
+    let mut cache = workspace_file_completions_cache.lock().await;
     if let Some(entry) = cache.get_mut(&workspace_id) {
         entry.touch();
         if now.duration_since(entry.value.cached_at) <= CACHE_TTL {
@@ -199,7 +222,14 @@ async fn cached_workspace_files(
         }
     }
     drop(cache);
-    load_and_cache_workspace_files(state, workspace_id, root, now).await
+    load_and_cache_workspace_files(
+        workspace_file_completions_cache,
+        perf_telemetry,
+        workspace_id,
+        root,
+        now,
+    )
+    .await
 }
 
 async fn load_and_cache_worktree_files(
@@ -233,12 +263,18 @@ async fn load_and_cache_worktree_files(
             files: files.clone(),
         }),
     );
-    record_list_files_metric(state, "list_files_worktree", started_at).await;
+    record_list_files_metric(
+        &state.telemetry.perf_telemetry,
+        "list_files_worktree",
+        started_at,
+    )
+    .await;
     Ok(files)
 }
 
 async fn load_and_cache_workspace_files(
-    state: &Arc<DaemonState>,
+    workspace_file_completions_cache: &WorkspaceFileCompletionsCache,
+    perf_telemetry: &PerfTelemetry,
     workspace_id: WorkspaceId,
     root: &Path,
     now: Instant,
@@ -246,11 +282,7 @@ async fn load_and_cache_workspace_files(
     let started_at = Instant::now();
     let files = Arc::new(list_host_git_files(root).await?);
 
-    let mut cache = state
-        .workspaces
-        .workspace_file_completions_cache
-        .lock()
-        .await;
+    let mut cache = workspace_file_completions_cache.lock().await;
     cache.insert(
         workspace_id,
         TimedEntry::new(CachedFileCompletions {
@@ -258,7 +290,7 @@ async fn load_and_cache_workspace_files(
             files: files.clone(),
         }),
     );
-    record_list_files_metric(state, "list_files_workspace", started_at).await;
+    record_list_files_metric(perf_telemetry, "list_files_workspace", started_at).await;
     Ok(files)
 }
 
@@ -275,7 +307,7 @@ fn rank_files(paths: &[String], query: Option<String>, limit: Option<u32>) -> Ve
 }
 
 async fn record_list_files_metric(
-    state: &Arc<DaemonState>,
+    perf_telemetry: &PerfTelemetry,
     event: &'static str,
     started_at: Instant,
 ) {
@@ -289,11 +321,7 @@ async fn record_list_files_metric(
         value: started_at.elapsed().as_millis() as f64,
         labels,
     };
-    state
-        .telemetry
-        .perf_telemetry
-        .record_metric(metric, None, None, None)
-        .await;
+    perf_telemetry.record_metric(metric, None, None, None).await;
 }
 
 #[cfg(test)]

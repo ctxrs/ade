@@ -13,6 +13,9 @@ use ctx_worktree_vcs_service::{
     WorktreeVcsSnapshotCacheEntry,
 };
 
+pub(crate) type WorkspaceFileCompletionsCache =
+    Arc<Mutex<HashMap<WorkspaceId, TimedEntry<CachedFileCompletions>>>>;
+
 pub struct CoreState {
     pub(crate) data_root: PathBuf,
     pub(crate) storage_guard: Arc<StorageGuardRuntime>,
@@ -35,8 +38,7 @@ pub struct WorkspaceRuntime {
     pub(crate) worktree_vcs_enabled: bool,
     pub(crate) file_completions_cache:
         Mutex<HashMap<WorktreeId, TimedEntry<CachedFileCompletions>>>,
-    pub(crate) workspace_file_completions_cache:
-        Mutex<HashMap<WorkspaceId, TimedEntry<CachedFileCompletions>>>,
+    pub(crate) workspace_file_completions_cache: WorkspaceFileCompletionsCache,
     pub(crate) git_status_snapshots:
         Mutex<HashMap<WorktreeId, TimedEntry<GitStatusSnapshotCacheEntry>>>,
     pub(crate) worktree_vcs_snapshots:
